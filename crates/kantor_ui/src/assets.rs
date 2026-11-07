@@ -22,7 +22,14 @@ icon_assets!(
         Heading3,
         Pilcrow,
         ZoomIn,
-        ZoomOut
+        ZoomOut,
+        // Slides toolbar
+        Type,
+        Circle,
+        ImagePlus,
+        Presentation,
+        CopyPlus,
+        SquarePlus
     ]
 );
 

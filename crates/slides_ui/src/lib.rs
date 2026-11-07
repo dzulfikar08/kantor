@@ -1,0 +1,1844 @@
+//! Kantor Slides UI: a `.pptx` editor view.
+//!
+//! The model is [`slides_engine::Presentation`]; text boxes are laid out
+//! with [`docs_layout`] (parley) and painted through Docs' font bridge
+//! (ADR 0001), so Slides and Docs share one text engine.
+//!
+//! Layout of the view: a toolbar, a virtualised thumbnail strip on the
+//! left (click to go to a slide, drag to reorder), and the current slide
+//! scaled to fit the canvas. On the canvas: click selects a shape, drag
+//! moves it, the handles resize it, a second click (or typing, or Enter)
+//! edits its text. F5 presents in the pane.
+//!
+//! Text input, including IME composition, goes through GPUI's
+//! [`EntityInputHandler`] (see [`input`]).
+
+extern crate gpui_kit as gpui;
+
+mod draw;
+mod input;
+mod toolbar;
+
+use std::cell::Cell;
+use std::ops::Range;
+use std::path::PathBuf;
+use std::rc::Rc;
+
+use docs_engine::Toggle;
+use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::*;
+use kantor_ui::tokens::Elevation;
+use kantor_ui::{Tokens, metrics::*, tokens};
+use slides_engine::{
+    Focus, Geom, Layer, Position, Presentation, RunProps, Selection, ShapeKind, SlideSize, Xfrm,
+    text_ops,
+};
+
+use draw::{Item, Painter, View, paint_slide, text_origin};
+
+/// Key context of the editor.
+pub const KEY_CONTEXT: &str = "SlidesEditor";
+/// Key context while presenting.
+pub const PRESENTER_CONTEXT: &str = "SlidesPresenter";
+
+actions!(
+    slides,
+    [
+        Left,
+        Right,
+        Up,
+        Down,
+        ShiftLeft,
+        ShiftRight,
+        ShiftUp,
+        ShiftDown,
+        LineStart,
+        LineEnd,
+        SelectLineStart,
+        SelectLineEnd,
+        Backspace,
+        Delete,
+        Newline,
+        LineBreak,
+        Escape,
+        NextShape,
+        SelectAll,
+        Copy,
+        Cut,
+        Paste,
+        ToggleBold,
+        ToggleItalic,
+        ToggleUnderline,
+        NewSlide,
+        DuplicateSlide,
+        DeleteSlide,
+        MoveSlideUp,
+        MoveSlideDown,
+        InsertTextBox,
+        InsertRectangle,
+        InsertEllipse,
+        InsertImage,
+        Undo,
+        Redo,
+        Save,
+        SaveAs,
+        Present,
+        PresentFromCurrent,
+        PresentNext,
+        PresentPrev,
+        PresentFirst,
+        PresentLast,
+        PresentExit,
+    ]
+);
+
+/// Register Slides key bindings (Ctrl, and Super as Mac-style Cmd).
+pub fn init(cx: &mut App) {
+    let c = Some(KEY_CONTEXT);
+    let p = Some(PRESENTER_CONTEXT);
+    let mut keys = vec![
+        KeyBinding::new("left", Left, c),
+        KeyBinding::new("right", Right, c),
+        KeyBinding::new("up", Up, c),
+        KeyBinding::new("down", Down, c),
+        KeyBinding::new("shift-left", ShiftLeft, c),
+        KeyBinding::new("shift-right", ShiftRight, c),
+        KeyBinding::new("shift-up", ShiftUp, c),
+        KeyBinding::new("shift-down", ShiftDown, c),
+        KeyBinding::new("home", LineStart, c),
+        KeyBinding::new("end", LineEnd, c),
+        KeyBinding::new("shift-home", SelectLineStart, c),
+        KeyBinding::new("shift-end", SelectLineEnd, c),
+        KeyBinding::new("backspace", Backspace, c),
+        KeyBinding::new("shift-backspace", Backspace, c),
+        KeyBinding::new("delete", Delete, c),
+        KeyBinding::new("enter", Newline, c),
+        KeyBinding::new("shift-enter", LineBreak, c),
+        KeyBinding::new("escape", Escape, c),
+        KeyBinding::new("tab", NextShape, c),
+        KeyBinding::new("f5", Present, c),
+        KeyBinding::new("shift-f5", PresentFromCurrent, c),
+        // Presenting.
+        KeyBinding::new("right", PresentNext, p),
+        KeyBinding::new("down", PresentNext, p),
+        KeyBinding::new("space", PresentNext, p),
+        KeyBinding::new("enter", PresentNext, p),
+        KeyBinding::new("pagedown", PresentNext, p),
+        KeyBinding::new("n", PresentNext, p),
+        KeyBinding::new("left", PresentPrev, p),
+        KeyBinding::new("up", PresentPrev, p),
+        KeyBinding::new("pageup", PresentPrev, p),
+        KeyBinding::new("backspace", PresentPrev, p),
+        KeyBinding::new("p", PresentPrev, p),
+        KeyBinding::new("home", PresentFirst, p),
+        KeyBinding::new("end", PresentLast, p),
+        KeyBinding::new("escape", PresentExit, p),
+        KeyBinding::new("f5", PresentExit, p),
+    ];
+    macro_rules! primary {
+        ($($key:literal => $action:expr),* $(,)?) => {
+            keys.extend([$(
+                KeyBinding::new(concat!("ctrl-", $key), $action, c),
+                KeyBinding::new(concat!("super-", $key), $action, c),
+            )*]);
+        };
+    }
+    primary!(
+        "a" => SelectAll,
+        "c" => Copy,
+        "x" => Cut,
+        "v" => Paste,
+        "b" => ToggleBold,
+        "i" => ToggleItalic,
+        "u" => ToggleUnderline,
+        "m" => NewSlide,
+        "d" => DuplicateSlide,
+        "up" => MoveSlideUp,
+        "down" => MoveSlideDown,
+        "z" => Undo,
+        "shift-z" => Redo,
+        "y" => Redo,
+        "s" => Save,
+        "shift-s" => SaveAs,
+    );
+    cx.bind_keys(keys);
+}
+
+/// Facts for the inspector.
+pub struct SlidesInfo {
+    pub name: String,
+    pub path: Option<PathBuf>,
+    pub dirty: bool,
+    pub slides: usize,
+    pub current: usize,
+    pub layout: String,
+    /// Selected shape: name, kind and position/size in EMU.
+    pub shape: Option<(String, String, Xfrm)>,
+    pub unsupported: Vec<String>,
+}
+
+/// Text being edited in a shape of the current slide.
+#[derive(Clone, Debug)]
+struct Editing {
+    shape: usize,
+    sel: Selection,
+    /// IME composition range in the caret's paragraph.
+    marked: Option<Range<usize>>,
+    /// Formatting for the next typed text (Ctrl+B with no selection).
+    typing_props: Option<RunProps>,
+    goal_x: Option<f32>,
+}
+
+/// Which edges a resize handle moves: -1 left/top, 1 right/bottom, 0 none.
+type Handle = (i8, i8);
+
+const HANDLES: [Handle; 8] = [
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+    (1, 0),
+    (1, 1),
+    (0, 1),
+    (-1, 1),
+    (-1, 0),
+];
+
+enum Drag {
+    Move {
+        shape: usize,
+        start: Point<Pixels>,
+        orig: Xfrm,
+        moved: bool,
+        was_selected: bool,
+    },
+    Resize {
+        shape: usize,
+        handle: Handle,
+        start: Point<Pixels>,
+        orig: Xfrm,
+    },
+    Text,
+}
+
+/// A Slides document view.
+pub struct SlidesView {
+    pres: Presentation,
+    current: usize,
+    selected: Option<usize>,
+    editing: Option<Editing>,
+    painter: Rc<Painter>,
+    /// Canvas bounds from the last paint.
+    viewport: Rc<Cell<Bounds<Pixels>>>,
+    drag: Option<Drag>,
+    /// Live position of a shape being dragged (committed on mouse up).
+    preview: Option<(usize, Xfrm)>,
+    /// Thumbnail being dragged to a new place, and where it would land.
+    strip_drag: Option<usize>,
+    strip_drop: Option<usize>,
+    strip_scroll: UniformListScrollHandle,
+    /// The strip was clicked last (Delete then removes the slide).
+    strip_focused: bool,
+    presenting: Option<usize>,
+    focus: FocusHandle,
+    status: SharedString,
+}
+
+fn cm(emu: i64) -> String {
+    format!("{:.2} cm", emu as f64 / 360_000.0)
+}
+
+impl SlidesView {
+    pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let (pres, status) = match path.as_deref().map(Presentation::open) {
+            Some(Ok(p)) => {
+                let mut s = format!("Opened {}", p.title());
+                if p.has_unsupported_content() {
+                    s.push_str(" (has unsupported content; Save creates a copy)");
+                }
+                (p, s)
+            }
+            Some(Err(err)) => {
+                log::error!("{err:#}");
+                (Presentation::new(), format!("{err:#}"))
+            }
+            None => (Presentation::new(), String::new()),
+        };
+        let (engine, bridge) = docs_ui::shared_text(cx);
+        let _ = window;
+        Self {
+            pres,
+            current: 0,
+            selected: None,
+            editing: None,
+            painter: Rc::new(Painter::new(engine, bridge)),
+            viewport: Rc::default(),
+            drag: None,
+            preview: None,
+            strip_drag: None,
+            strip_drop: None,
+            strip_scroll: UniformListScrollHandle::new(),
+            strip_focused: false,
+            presenting: None,
+            focus: cx.focus_handle(),
+            status: status.into(),
+        }
+    }
+
+    // ── geometry ───────────────────────────────────────────────────────────
+
+    fn fit(&self, bounds: Bounds<Pixels>, margin: f32) -> (View, Bounds<Pixels>) {
+        fit_slide(bounds, self.pres.size, margin)
+    }
+
+    fn view(&self) -> View {
+        self.fit(self.viewport.get(), SLIDE_MARGIN).0
+    }
+
+    fn shape_xfrm(&self, i: usize) -> Option<Xfrm> {
+        if let Some((j, x)) = self.preview
+            && i == j
+        {
+            return Some(x);
+        }
+        let shape = self.pres.slide(self.current).shapes.get(i)?;
+        self.pres.effective_xfrm(self.current, shape)
+    }
+
+    /// The laid-out text of shape `i` (no prompt), with its box.
+    fn laid(&self, i: usize) -> Option<(Xfrm, draw::LaidText)> {
+        let xfrm = self.shape_xfrm(i)?;
+        let list = self.pres.render_list(self.current, false);
+        let r = list.iter().find(|r| r.layer == Layer::Slide(i))?;
+        let t = r.text.as_ref()?;
+        Some((xfrm, self.painter.place(t, &xfrm)))
+    }
+
+    /// Text position under a screen point, in shape `i`.
+    fn text_hit(&self, i: usize, p: Point<Pixels>) -> Option<Position> {
+        let (xfrm, t) = self.laid(i)?;
+        let v = self.view();
+        let o = text_origin(&t, &xfrm, v);
+        let s = v.px_scale();
+        let x = f32::from(p.x - o.x) / s;
+        let y = f32::from(p.y - o.y) / s;
+        let (para, offset) = t.layout.paged.hit_test(0, x, y)?;
+        let paras = self.pres.text_paras((self.current, i))?;
+        Some(text_ops::clamp(paras, Position::new(para, offset)))
+    }
+
+    /// Topmost slide shape under a screen point.
+    fn shape_at(&self, p: Point<Pixels>) -> Option<usize> {
+        let (x, y) = self.view().to_emu(p);
+        let slide = self.pres.slide(self.current);
+        (0..slide.shapes.len())
+            .rev()
+            .find(|&i| self.shape_xfrm(i).is_some_and(|b| b.contains(x, y)))
+    }
+
+    fn handle_bounds(&self, xfrm: &Xfrm, h: Handle) -> Bounds<Pixels> {
+        let b = self.view().rect(xfrm);
+        let x = match h.0 {
+            -1 => b.left(),
+            0 => b.center().x,
+            _ => b.right(),
+        };
+        let y = match h.1 {
+            -1 => b.top(),
+            0 => b.center().y,
+            _ => b.bottom(),
+        };
+        Bounds::centered_at(point(x, y), size(SLIDE_HANDLE, SLIDE_HANDLE))
+    }
+
+    fn handle_at(&self, p: Point<Pixels>) -> Option<(usize, Handle)> {
+        let i = self.selected?;
+        if self.editing.is_some() || !self.pres.slide(self.current).shapes.get(i)?.movable() {
+            return None;
+        }
+        let xfrm = self.shape_xfrm(i)?;
+        HANDLES
+            .iter()
+            .find(|h| self.handle_bounds(&xfrm, **h).dilate(px(3.)).contains(&p))
+            .map(|h| (i, *h))
+    }
+
+    // ── state changes ──────────────────────────────────────────────────────
+
+    fn set_status(&mut self, s: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.status = s.into();
+        cx.notify();
+    }
+
+    fn report<T>(&mut self, r: anyhow::Result<T>, cx: &mut Context<Self>) -> Option<T> {
+        match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                self.set_status(format!("{e:#}"), cx);
+                None
+            }
+        }
+    }
+
+    fn after_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.status = SharedString::default();
+        self.update_title(window, cx);
+        cx.notify();
+    }
+
+    fn go_to(&mut self, slide: usize, cx: &mut Context<Self>) {
+        let n = self.pres.len();
+        if n == 0 {
+            return;
+        }
+        let slide = slide.min(n - 1);
+        if slide != self.current {
+            self.pres.seal_history();
+        }
+        self.current = slide;
+        self.selected = None;
+        self.editing = None;
+        self.preview = None;
+        self.drag = None;
+        self.strip_scroll
+            .scroll_to_item(slide, ScrollStrategy::Center);
+        cx.notify();
+    }
+
+    /// Show where an undo/redo happened.
+    fn apply_focus(&mut self, f: Focus, cx: &mut Context<Self>) {
+        let n = self.pres.len();
+        self.current = f.slide.min(n.saturating_sub(1));
+        let shapes = self.pres.slide(self.current).shapes.len();
+        self.selected = f.shape.filter(|&s| s < shapes);
+        self.editing = match (self.selected, f.sel) {
+            (Some(shape), Some(sel)) => {
+                let paras = self.pres.text_paras((self.current, shape));
+                paras.map(|p| Editing {
+                    shape,
+                    sel: Selection {
+                        anchor: text_ops::clamp(p, sel.anchor),
+                        head: text_ops::clamp(p, sel.head),
+                    },
+                    marked: None,
+                    typing_props: None,
+                    goal_x: None,
+                })
+            }
+            _ => None,
+        };
+        self.strip_scroll
+            .scroll_to_item(self.current, ScrollStrategy::Center);
+        cx.notify();
+    }
+
+    fn select(&mut self, shape: Option<usize>, cx: &mut Context<Self>) {
+        if self.editing.as_ref().map(|e| e.shape) != shape {
+            self.editing = None;
+            self.pres.seal_history();
+        }
+        self.selected = shape;
+        self.strip_focused = false;
+        cx.notify();
+    }
+
+    /// Start editing shape `i`'s text with the caret at `pos` (end if `None`).
+    fn begin_editing(&mut self, i: usize, pos: Option<Position>, cx: &mut Context<Self>) -> bool {
+        let r = (self.current, i);
+        let slide = self.pres.slide(self.current);
+        let Some(shape) = slide.shapes.get(i) else {
+            return false;
+        };
+        if let Some(why) = &slide.locked {
+            self.set_status(format!("This slide can't be edited: {why}"), cx);
+            return false;
+        }
+        if let Some(why) = shape.text.as_ref().and_then(|t| t.locked.clone()) {
+            self.set_status(format!("This text can't be edited yet: it has {why}"), cx);
+            return false;
+        }
+        if !shape.text_editable() {
+            return false;
+        }
+        let paras = self.pres.text_paras(r).unwrap_or_default();
+        let pos = pos.unwrap_or_else(|| text_ops::end(paras));
+        self.selected = Some(i);
+        self.editing = Some(Editing {
+            shape: i,
+            sel: Selection::caret(pos),
+            marked: None,
+            typing_props: None,
+            goal_x: None,
+        });
+        self.pres.seal_history();
+        cx.notify();
+        true
+    }
+
+    // ── editing text ───────────────────────────────────────────────────────
+
+    fn text_edit(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut Presentation, (usize, usize), &mut Editing) -> anyhow::Result<Selection>,
+    ) {
+        let Some(mut e) = self.editing.clone() else {
+            return;
+        };
+        let r = (self.current, e.shape);
+        let result = f(&mut self.pres, r, &mut e);
+        if let Some(sel) = self.report(result, cx) {
+            e.sel = sel;
+            e.goal_x = None;
+            self.editing = Some(e);
+            self.after_edit(window, cx);
+        }
+    }
+
+    fn insert(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_none() {
+            let Some(i) = self.selected else {
+                return;
+            };
+            if !self.begin_editing(i, None, cx) {
+                return;
+            }
+        }
+        let text = text.to_owned();
+        self.text_edit(window, cx, |p, r, e| {
+            let props = e.typing_props.take();
+            e.marked = None;
+            p.insert_text(r, e.sel, &text, props)
+        });
+    }
+
+    fn toggle(&mut self, toggle: Toggle, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(e) = self.editing.clone() else {
+            self.set_status("Select text to format it", cx);
+            return;
+        };
+        let r = (self.current, e.shape);
+        if e.sel.is_empty() {
+            let mut props = e
+                .typing_props
+                .clone()
+                .unwrap_or_else(|| self.pres.run_props_at(r, e.sel.head));
+            let on = !self.is_on(toggle);
+            slides_engine::set_toggle(&mut props, toggle, on);
+            if let Some(ed) = &mut self.editing {
+                ed.typing_props = Some(props);
+            }
+            cx.notify();
+            return;
+        }
+        let res = self.pres.toggle(r, e.sel, toggle);
+        if self.report(res, cx).is_some() {
+            self.after_edit(window, cx);
+        }
+    }
+
+    /// Whether `toggle` is on at the caret / for the selected text.
+    pub fn is_on(&self, toggle: Toggle) -> bool {
+        let Some(e) = &self.editing else {
+            return false;
+        };
+        let r = (self.current, e.shape);
+        if e.sel.is_empty()
+            && let Some(props) = &e.typing_props
+        {
+            let shape = &self.pres.slide(self.current).shapes[e.shape];
+            let run = self
+                .pres
+                .resolve_run(self.current, shape, e.sel.head.para, props);
+            return match toggle {
+                Toggle::Bold => run.bold,
+                Toggle::Italic => run.italic,
+                Toggle::Underline => run.underline,
+            };
+        }
+        self.pres.is_on(r, e.sel, toggle)
+    }
+
+    fn move_caret(&mut self, pos: Position, extend: bool, cx: &mut Context<Self>) {
+        if let Some(e) = &mut self.editing {
+            if extend {
+                e.sel.head = pos;
+            } else {
+                e.sel = Selection::caret(pos);
+            }
+            e.typing_props = None;
+            e.marked = None;
+        }
+        self.pres.seal_history();
+        cx.notify();
+    }
+
+    fn caret_horizontal(&mut self, forward: bool, extend: bool, cx: &mut Context<Self>) {
+        let Some(e) = self.editing.clone() else {
+            return;
+        };
+        let Some(paras) = self.pres.text_paras((self.current, e.shape)) else {
+            return;
+        };
+        if !extend && !e.sel.is_empty() {
+            let (a, b) = e.sel.ordered();
+            self.move_caret(if forward { b } else { a }, false, cx);
+            return;
+        }
+        let h = text_ops::clamp(paras, e.sel.head);
+        let text = &paras[h.para].text;
+        let pos = if forward {
+            if h.offset < text.len() {
+                Position::new(h.para, docs_engine::model::next_grapheme(text, h.offset))
+            } else if h.para + 1 < paras.len() {
+                Position::new(h.para + 1, 0)
+            } else {
+                h
+            }
+        } else if h.offset > 0 {
+            Position::new(h.para, docs_engine::model::prev_grapheme(text, h.offset))
+        } else if h.para > 0 {
+            Position::new(h.para - 1, paras[h.para - 1].text.len())
+        } else {
+            h
+        };
+        self.move_caret(pos, extend, cx);
+    }
+
+    fn caret_vertical(&mut self, down: bool, extend: bool, cx: &mut Context<Self>) {
+        let Some(e) = self.editing.clone() else {
+            return;
+        };
+        let Some((_, t)) = self.laid(e.shape) else {
+            return;
+        };
+        let paged = &t.layout.paged;
+        let h = e.sel.head;
+        let x = match e.goal_x {
+            Some(x) => x,
+            None => match paged.caret(h.para, h.offset) {
+                Some(c) => c.x,
+                None => return,
+            },
+        };
+        let paras = self
+            .pres
+            .text_paras((self.current, e.shape))
+            .unwrap_or_default();
+        let pos = match paged.vertical(h.para, h.offset, x, down) {
+            Some((para, offset)) => Position::new(para, offset),
+            None if down => text_ops::end(paras),
+            None => Position::default(),
+        };
+        self.move_caret(pos, extend, cx);
+        if let Some(e) = &mut self.editing {
+            e.goal_x = Some(x);
+        }
+    }
+
+    fn caret_line_edge(&mut self, end: bool, extend: bool, cx: &mut Context<Self>) {
+        let Some(e) = self.editing.clone() else {
+            return;
+        };
+        let Some((_, t)) = self.laid(e.shape) else {
+            return;
+        };
+        let h = e.sel.head;
+        let Some((range, soft)) = t.layout.paged.line_range(h.para, h.offset) else {
+            return;
+        };
+        let Some(paras) = self.pres.text_paras((self.current, e.shape)) else {
+            return;
+        };
+        let text = &paras[h.para].text;
+        let offset = if !end {
+            range.start
+        } else {
+            let mut e = range.end.min(text.len());
+            if soft {
+                e = text[..e].trim_end_matches(' ').len().max(range.start);
+            } else if text[..e].ends_with(slides_engine::LINE_BREAK) {
+                e -= slides_engine::LINE_BREAK.len_utf8();
+            }
+            e
+        };
+        self.move_caret(Position::new(h.para, offset), extend, cx);
+    }
+
+    // ── keyboard commands (one key, several meanings) ──────────────────────
+
+    fn arrow(&mut self, dx: i8, dy: i8, shift: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            match (dx, dy) {
+                (1, _) => self.caret_horizontal(true, shift, cx),
+                (-1, _) => self.caret_horizontal(false, shift, cx),
+                (_, 1) => self.caret_vertical(true, shift, cx),
+                _ => self.caret_vertical(false, shift, cx),
+            }
+            return;
+        }
+        if let Some(i) = self.selected {
+            let Some(x) = self.shape_xfrm(i) else {
+                return;
+            };
+            let step = SLIDE_NUDGE_EMU * if shift { 10 } else { 1 };
+            let moved = Xfrm {
+                x: x.x + dx as i64 * step,
+                y: x.y + dy as i64 * step,
+                ..x
+            };
+            let res = self.pres.set_xfrm((self.current, i), moved, true);
+            if self.report(res, cx).is_some() {
+                self.after_edit(window, cx);
+            }
+            return;
+        }
+        let next = if dx + dy > 0 {
+            self.current + 1
+        } else {
+            self.current.saturating_sub(1)
+        };
+        self.go_to(next, cx);
+    }
+
+    fn escape(&mut self, cx: &mut Context<Self>) {
+        if self.editing.take().is_some() {
+            self.pres.seal_history();
+        } else {
+            self.selected = None;
+        }
+        cx.notify();
+    }
+
+    fn delete_key(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            self.text_edit(window, cx, |p, r, e| {
+                e.marked = None;
+                if forward {
+                    p.delete_forward(r, e.sel)
+                } else {
+                    p.backspace(r, e.sel)
+                }
+            });
+            return;
+        }
+        if let Some(i) = self.selected {
+            let res = self.pres.delete_shape((self.current, i));
+            if self.report(res, cx).is_some() {
+                self.selected = None;
+                self.after_edit(window, cx);
+            }
+            return;
+        }
+        if self.strip_focused {
+            self.delete_slide_doc(window, cx);
+        }
+    }
+
+    fn enter(&mut self, line_break: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            let text = if line_break {
+                slides_engine::LINE_BREAK.to_string()
+            } else {
+                "\n".into()
+            };
+            self.insert(&text, window, cx);
+        } else if let Some(i) = self.selected {
+            self.begin_editing(i, None, cx);
+        }
+    }
+
+    fn next_shape(&mut self, cx: &mut Context<Self>) {
+        let n = self.pres.slide(self.current).shapes.len();
+        if n == 0 || self.editing.is_some() {
+            return;
+        }
+        let next = self.selected.map_or(0, |i| (i + 1) % n);
+        self.select(Some(next), cx);
+    }
+
+    fn select_all(&mut self, cx: &mut Context<Self>) {
+        if let Some(e) = &mut self.editing
+            && let Some(paras) = self.pres.text_paras((self.current, e.shape))
+        {
+            e.sel = Selection {
+                anchor: Position::default(),
+                head: text_ops::end(paras),
+            };
+            cx.notify();
+        }
+    }
+
+    fn selected_text(&self) -> Option<String> {
+        let e = self.editing.as_ref()?;
+        let (a, b) = e.sel.ordered();
+        let paras = self.pres.text_paras((self.current, e.shape))?;
+        (a != b).then(|| text_ops::text_in(paras, a, b))
+    }
+
+    // ── shell API (tabs, status bar, inspector, palette, close prompt) ─────
+
+    pub fn copy_doc(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        match self.selected_text() {
+            Some(t) => cx.write_to_clipboard(ClipboardItem::new_string(t)),
+            None if self.selected.is_some() => {
+                self.set_status("Copying shapes isn't supported yet", cx)
+            }
+            None => {}
+        }
+    }
+
+    pub fn cut_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(t) = self.selected_text() {
+            cx.write_to_clipboard(ClipboardItem::new_string(t));
+            self.delete_key(false, window, cx);
+        }
+    }
+
+    pub fn paste_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
+            self.insert(&text, window, cx);
+        }
+    }
+
+    pub fn toggle_doc(&mut self, toggle: Toggle, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle(toggle, window, cx);
+    }
+
+    pub fn undo_doc(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        match self.pres.undo() {
+            Some(f) => self.apply_focus(f, cx),
+            None => self.set_status("Nothing to undo", cx),
+        }
+    }
+
+    pub fn redo_doc(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        match self.pres.redo() {
+            Some(f) => self.apply_focus(f, cx),
+            None => self.set_status("Nothing to redo", cx),
+        }
+    }
+
+    pub fn new_slide_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let after = (!self.pres.is_empty()).then_some(self.current);
+        let res = self.pres.new_slide(after);
+        if let Some(i) = self.report(res, cx) {
+            self.go_to(i, cx);
+            self.after_edit(window, cx);
+        }
+    }
+
+    pub fn duplicate_slide_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let res = self.pres.duplicate_slide(self.current);
+        if let Some(i) = self.report(res, cx) {
+            self.go_to(i, cx);
+            self.after_edit(window, cx);
+        }
+    }
+
+    pub fn delete_slide_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pres.is_empty() {
+            return;
+        }
+        let res = self.pres.delete_slide(self.current);
+        if self.report(res, cx).is_some() {
+            // The slide index stays; it now shows the next slide.
+            let next = self.current.min(self.pres.len().saturating_sub(1));
+            self.selected = None;
+            self.editing = None;
+            self.current = next;
+            self.strip_scroll
+                .scroll_to_item(next, ScrollStrategy::Center);
+            self.after_edit(window, cx);
+        }
+    }
+
+    pub fn move_slide_doc(&mut self, up: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let to = if up {
+            match self.current.checked_sub(1) {
+                Some(t) => t,
+                None => return,
+            }
+        } else {
+            self.current + 1
+        };
+        if to >= self.pres.len() {
+            return;
+        }
+        let res = self.pres.move_slide(self.current, to);
+        if self.report(res, cx).is_some() {
+            self.go_to(to, cx);
+            self.after_edit(window, cx);
+        }
+    }
+
+    fn inserted(
+        &mut self,
+        res: anyhow::Result<usize>,
+        edit: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(i) = self.report(res, cx) {
+            self.select(Some(i), cx);
+            if edit {
+                self.begin_editing(i, None, cx);
+            }
+            self.after_edit(window, cx);
+        }
+    }
+
+    pub fn insert_text_box_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let res = self.pres.add_text_box(self.current);
+        self.inserted(res, true, window, cx);
+    }
+
+    pub fn insert_shape_doc(&mut self, geom: Geom, window: &mut Window, cx: &mut Context<Self>) {
+        let res = self.pres.add_geometry(self.current, geom);
+        self.inserted(res, false, window, cx);
+    }
+
+    pub fn insert_image_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Insert picture (PNG or JPEG)".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                let res = std::fs::read(&path)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|bytes| this.pres.add_picture(this.current, bytes));
+                this.inserted(res, false, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    pub fn present_doc(&mut self, from_start: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pres.is_empty() {
+            return;
+        }
+        self.editing = None;
+        self.presenting = Some(if from_start { 0 } else { self.current });
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+
+    fn present_step(&mut self, delta: i64, cx: &mut Context<Self>) {
+        let Some(cur) = self.presenting else {
+            return;
+        };
+        let next = cur as i64 + delta;
+        if next < 0 {
+            return;
+        }
+        if next as usize >= self.pres.len() {
+            self.stop_presenting(cx);
+            return;
+        }
+        self.presenting = Some(next as usize);
+        cx.notify();
+    }
+
+    fn stop_presenting(&mut self, cx: &mut Context<Self>) {
+        if let Some(p) = self.presenting.take() {
+            self.go_to(p, cx);
+        }
+        cx.notify();
+    }
+
+    pub fn is_presenting(&self) -> bool {
+        self.presenting.is_some()
+    }
+
+    pub fn doc_name(&self, _: &App) -> String {
+        self.pres.title()
+    }
+
+    pub fn path(&self, _: &App) -> Option<PathBuf> {
+        self.pres.path().map(|p| p.to_path_buf())
+    }
+
+    pub fn is_dirty(&self, _: &App) -> bool {
+        self.pres.is_dirty()
+    }
+
+    pub fn title(&self, _: &App) -> String {
+        let dirty = if self.pres.is_dirty() { "• " } else { "" };
+        format!("{dirty}{} — Kantor Slides", self.pres.title())
+    }
+
+    fn update_title(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let title = self.title(cx);
+        window.set_window_title(&title);
+    }
+
+    pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus, cx);
+    }
+
+    pub fn status(&self) -> SharedString {
+        self.status.clone()
+    }
+
+    /// For the status bar: `Slide 2 of 12`.
+    pub fn location(&self) -> String {
+        format!("Slide {} of {}", self.current + 1, self.pres.len())
+    }
+
+    pub fn info(&self) -> SlidesInfo {
+        let shape = self.selected.and_then(|i| {
+            let s = self.pres.slide(self.current).shapes.get(i)?;
+            let kind = match &s.kind {
+                ShapeKind::Shape { text_box: true, .. } => "Text box".to_owned(),
+                ShapeKind::Shape { .. } if s.ph.is_some() => "Placeholder".to_owned(),
+                ShapeKind::Shape { geom, .. } => match geom {
+                    Geom::Ellipse => "Ellipse".into(),
+                    Geom::Rect => "Rectangle".into(),
+                    Geom::RoundRect => "Rounded rectangle".into(),
+                    Geom::Line => "Line".into(),
+                    Geom::Other(o) => format!("Shape ({o})"),
+                },
+                ShapeKind::Picture { .. } => "Picture".into(),
+                ShapeKind::Other { what } => what.clone(),
+            };
+            Some((s.name.clone(), kind, self.shape_xfrm(i)?))
+        });
+        SlidesInfo {
+            name: self.pres.title(),
+            path: self.pres.path().map(|p| p.to_path_buf()),
+            dirty: self.pres.is_dirty(),
+            slides: self.pres.len(),
+            current: self.current,
+            layout: if self.pres.is_empty() {
+                String::new()
+            } else {
+                self.pres.layout_of(self.current).name.clone()
+            },
+            shape,
+            unsupported: self.pres.unsupported_content(),
+        }
+    }
+
+    /// Position and size as text (for the inspector).
+    pub fn format_length(emu: i64) -> String {
+        cm(emu)
+    }
+
+    // ── saving ─────────────────────────────────────────────────────────────
+
+    pub fn save_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pres.needs_save_as() {
+            self.save_as_task(window, cx).detach();
+            return;
+        }
+        let result = self.pres.save();
+        self.after_save(result, window, cx);
+    }
+
+    pub fn save_doc_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_as_task(window, cx).detach();
+    }
+
+    /// Save before closing; resolves to whether the presentation is saved.
+    pub fn save_for_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        if self.pres.needs_save_as() {
+            return self.save_as_task(window, cx);
+        }
+        self.save_doc(window, cx);
+        Task::ready(!self.pres.is_dirty())
+    }
+
+    fn save_as_task(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        if self.pres.has_unsupported_content() {
+            self.status = format!(
+                "{} has content Kantor can't keep ({}), so it's saved as a new file; the original stays as it is",
+                self.pres.title(),
+                self.pres.unsupported_content().join(", ")
+            )
+            .into();
+            cx.notify();
+        }
+        let dir = self
+            .pres
+            .path()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let name = self.pres.suggested_file_name();
+        let path = cx.prompt_for_new_path(&dir, Some(&name));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(mut path))) = path.await else {
+                return false;
+            };
+            if path.extension().is_none() {
+                path.set_extension("pptx");
+            }
+            this.update_in(cx, |this, window, cx| {
+                let result = this.pres.save_as(&path);
+                this.after_save(result, window, cx);
+                !this.pres.is_dirty()
+            })
+            .unwrap_or(false)
+        })
+    }
+
+    fn after_save(
+        &mut self,
+        result: anyhow::Result<()>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.status = match result {
+            Ok(()) => format!("Saved {}", self.pres.title()).into(),
+            Err(err) => format!("Save failed: {err:#}").into(),
+        };
+        self.update_title(window, cx);
+        cx.notify();
+    }
+
+    // ── mouse ──────────────────────────────────────────────────────────────
+
+    fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus, cx);
+        self.strip_focused = false;
+        if self.pres.is_empty() {
+            return;
+        }
+        let p = ev.position;
+        if let Some((shape, handle)) = self.handle_at(p) {
+            let Some(orig) = self.shape_xfrm(shape) else {
+                return;
+            };
+            self.drag = Some(Drag::Resize {
+                shape,
+                handle,
+                start: p,
+                orig,
+            });
+            return;
+        }
+        if let Some(e) = self.editing.clone()
+            && self.shape_xfrm(e.shape).is_some_and(|x| {
+                let (ex, ey) = self.view().to_emu(p);
+                x.contains(ex, ey)
+            })
+        {
+            if let Some(pos) = self.text_hit(e.shape, p) {
+                let paras = self
+                    .pres
+                    .text_paras((self.current, e.shape))
+                    .unwrap_or_default();
+                let sel = match ev.click_count {
+                    2 => {
+                        let w = docs_engine::model::word_at(&paras[pos.para].text, pos.offset);
+                        Selection {
+                            anchor: Position::new(pos.para, w.start),
+                            head: Position::new(pos.para, w.end),
+                        }
+                    }
+                    n if n >= 3 => Selection {
+                        anchor: Position::new(pos.para, 0),
+                        head: Position::new(pos.para, paras[pos.para].text.len()),
+                    },
+                    _ if ev.modifiers.shift => Selection {
+                        anchor: e.sel.anchor,
+                        head: pos,
+                    },
+                    _ => Selection::caret(pos),
+                };
+                if let Some(ed) = &mut self.editing {
+                    ed.sel = sel;
+                    ed.marked = None;
+                    ed.typing_props = None;
+                    ed.goal_x = None;
+                }
+                self.pres.seal_history();
+                self.drag = (ev.click_count <= 1).then_some(Drag::Text);
+                cx.notify();
+            }
+            return;
+        }
+        match self.shape_at(p) {
+            Some(i) => {
+                let was_selected = self.selected == Some(i);
+                self.select(Some(i), cx);
+                if ev.click_count >= 2 {
+                    let pos = self.text_hit(i, p);
+                    self.begin_editing(i, pos, cx);
+                    return;
+                }
+                if let Some(orig) = self.shape_xfrm(i) {
+                    self.drag = Some(Drag::Move {
+                        shape: i,
+                        start: p,
+                        orig,
+                        moved: false,
+                        was_selected,
+                    });
+                }
+            }
+            None => self.select(None, cx),
+        }
+    }
+
+    fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let scale = self.view().scale;
+        if self.drag.is_some() && ev.pressed_button != Some(MouseButton::Left) {
+            self.drag = None;
+            self.preview = None;
+            cx.notify();
+            return;
+        }
+        let Some(drag) = &mut self.drag else {
+            return;
+        };
+        match drag {
+            Drag::Move {
+                shape,
+                start,
+                orig,
+                moved,
+                ..
+            } => {
+                let d = ev.position - *start;
+                if !*moved && f32::from(d.x).abs() + f32::from(d.y).abs() < 3.0 {
+                    return;
+                }
+                *moved = true;
+                let x = Xfrm {
+                    x: orig.x + (f32::from(d.x) / scale) as i64,
+                    y: orig.y + (f32::from(d.y) / scale) as i64,
+                    ..*orig
+                };
+                if self.pres.slide(self.current).shapes[*shape].movable() {
+                    self.preview = Some((*shape, x));
+                }
+            }
+            Drag::Resize {
+                shape,
+                handle,
+                start,
+                orig,
+            } => {
+                let d = ev.position - *start;
+                let (dx, dy) = (
+                    (f32::from(d.x) / scale) as i64,
+                    (f32::from(d.y) / scale) as i64,
+                );
+                let min = SLIDE_NUDGE_EMU * 4;
+                let mut x = *orig;
+                match handle.0 {
+                    -1 => {
+                        let w = (orig.cx - dx).max(min);
+                        x.x = orig.x + orig.cx - w;
+                        x.cx = w;
+                    }
+                    1 => x.cx = (orig.cx + dx).max(min),
+                    _ => {}
+                }
+                match handle.1 {
+                    -1 => {
+                        let h = (orig.cy - dy).max(min);
+                        x.y = orig.y + orig.cy - h;
+                        x.cy = h;
+                    }
+                    1 => x.cy = (orig.cy + dy).max(min),
+                    _ => {}
+                }
+                self.preview = Some((*shape, x));
+            }
+            Drag::Text => {
+                if let Some(e) = self.editing.clone()
+                    && let Some(pos) = self.text_hit(e.shape, ev.position)
+                    && let Some(ed) = &mut self.editing
+                {
+                    ed.sel.head = pos;
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn on_mouse_up(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let drag = self.drag.take();
+        if let Some((shape, x)) = self.preview.take() {
+            let res = self.pres.set_xfrm((self.current, shape), x, false);
+            if self.report(res, cx).is_some() {
+                self.after_edit(window, cx);
+            }
+            return;
+        }
+        if let Some(Drag::Move {
+            shape,
+            moved: false,
+            was_selected: true,
+            ..
+        }) = drag
+        {
+            let pos = self.text_hit(shape, ev.position);
+            self.begin_editing(shape, pos, cx);
+        }
+        cx.notify();
+    }
+
+    // ── thumbnail strip ────────────────────────────────────────────────────
+
+    fn thumb_size(&self) -> Size<Pixels> {
+        let s = self.pres.size;
+        let max_w = f32::from(SLIDE_STRIP_WIDTH) - 2.0 * f32::from(SPACE_7) - f32::from(SPACE_4);
+        let max_h = f32::from(SLIDE_THUMB_ROW) - 2.0 * f32::from(SPACE_4);
+        let k = (max_w / s.cx as f32).min(max_h / s.cy as f32);
+        size_px(s.cx as f32 * k, s.cy as f32 * k)
+    }
+
+    fn render_strip(&self, t: &Tokens, cx: &mut Context<Self>) -> impl IntoElement {
+        let view = cx.entity().downgrade();
+        let n = self.pres.len();
+        let thumb = self.thumb_size();
+        let t = *t;
+        uniform_list("slides-strip", n, move |range, _window, cx| {
+            let Some(this) = view.upgrade() else {
+                return Vec::new();
+            };
+            range
+                .map(|i| {
+                    let v = this.read(cx);
+                    let items = v.painter.items(&v.pres, i, false, None, cx);
+                    let bg = v.pres.background(i);
+                    let bridge = v.painter.bridge.clone();
+                    let current = v.current == i;
+                    let drop_here = v.strip_drag.is_some() && v.strip_drop == Some(i);
+                    let w = view.clone();
+                    let w2 = view.clone();
+                    let w3 = view.clone();
+                    let other = t.fg_muted;
+                    let slide_size = v.pres.size;
+                    let thumb_canvas = canvas(
+                        |_, _, _| {},
+                        move |bounds, _, window, _| {
+                            let (view, b) = fit_slide(bounds, slide_size, 0.0);
+                            paint_slide(&items, bg, b, view, other, &bridge, window);
+                        },
+                    )
+                    .size_full();
+                    h_flex()
+                        .id(("slide-thumb", i))
+                        .h(SLIDE_THUMB_ROW)
+                        .w_full()
+                        .px(SPACE_4)
+                        .gap(SPACE_3)
+                        .items_center()
+                        .when(drop_here, |d| d.border_t_2().border_color(t.accent))
+                        .child(
+                            div()
+                                .w(SPACE_7)
+                                .flex_none()
+                                .text_size(FONT_CAPTION)
+                                .text_color(if current { t.fg } else { t.fg_dim })
+                                .child(format!("{}", i + 1)),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .w(thumb.width)
+                                .h(thumb.height)
+                                .rounded(RADIUS_SM)
+                                .overflow_hidden()
+                                .border_2()
+                                .border_color(if current { t.accent } else { t.border })
+                                .child(thumb_canvas),
+                        )
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            let _ = w.update(cx, |v, cx| {
+                                v.go_to(i, cx);
+                                v.strip_drag = Some(i);
+                                v.strip_drop = None;
+                                v.strip_focused = true;
+                                window.focus(&v.focus, cx);
+                            });
+                        })
+                        .on_mouse_move(move |ev, _, cx| {
+                            let _ = w2.update(cx, |v, cx| {
+                                if v.strip_drag.is_some()
+                                    && ev.pressed_button == Some(MouseButton::Left)
+                                {
+                                    if v.strip_drop != Some(i) {
+                                        v.strip_drop = Some(i);
+                                        cx.notify();
+                                    }
+                                } else if v.strip_drag.take().is_some() {
+                                    v.strip_drop = None;
+                                    cx.notify();
+                                }
+                            });
+                        })
+                        .on_mouse_up(MouseButton::Left, move |_, window, cx| {
+                            let _ = w3.update(cx, |v, cx| {
+                                if let (Some(from), Some(to)) =
+                                    (v.strip_drag.take(), v.strip_drop.take())
+                                    && from != to
+                                {
+                                    let res = v.pres.move_slide(from, to);
+                                    if v.report(res, cx).is_some() {
+                                        v.go_to(to, cx);
+                                        v.after_edit(window, cx);
+                                    }
+                                }
+                                v.strip_focused = true;
+                                cx.notify();
+                            });
+                        })
+                })
+                .collect()
+        })
+        .track_scroll(&self.strip_scroll)
+        .h_full()
+    }
+
+    fn render_banner(&self, t: &Tokens) -> Option<Div> {
+        let what = self.pres.unsupported_content();
+        if what.is_empty() {
+            return None;
+        }
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(SPACE_4)
+                .px(SPACE_6)
+                .py(SPACE_3)
+                .bg(t.chrome)
+                .border_b_1()
+                .border_color(t.border)
+                .text_size(FONT_SMALL)
+                .text_color(t.fg_muted)
+                .child(kantor_ui::components::dot(t.warning))
+                .child(div().flex_1().min_w_0().child(format!(
+                    "This file has content Kantor can't keep yet: {}. Save writes a new copy; the original is never overwritten.",
+                    what.join(", ")
+                ))),
+        )
+    }
+
+    fn render_presenter(&mut self, slide: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+        let items = self.painter.items(&self.pres, slide, false, None, cx);
+        let bg = self.pres.background(slide);
+        let bridge = self.painter.bridge.clone();
+        let size = self.pres.size;
+        let other = tokens(cx).fg_muted;
+        let c = canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                let (v, b) = fit_slide(bounds, size, 0.0);
+                paint_slide(&items, bg, b, v, other, &bridge, window);
+            },
+        )
+        .size_full();
+        div()
+            .id("slides-presenter")
+            .key_context(PRESENTER_CONTEXT)
+            .track_focus(&self.focus)
+            .size_full()
+            // Letterbox around the slide, as in every slide show.
+            .bg(black())
+            .on_action(cx.listener(|v, _: &PresentNext, _, cx| v.present_step(1, cx)))
+            .on_action(cx.listener(|v, _: &PresentPrev, _, cx| v.present_step(-1, cx)))
+            .on_action(cx.listener(|v, _: &PresentFirst, _, cx| {
+                v.presenting = Some(0);
+                cx.notify()
+            }))
+            .on_action(cx.listener(|v, _: &PresentLast, _, cx| {
+                v.presenting = Some(v.pres.len().saturating_sub(1));
+                cx.notify()
+            }))
+            .on_action(cx.listener(|v, _: &PresentExit, _, cx| v.stop_presenting(cx)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|v, _: &MouseDownEvent, _, cx| v.present_step(1, cx)),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|v, _: &MouseDownEvent, _, cx| v.present_step(-1, cx)),
+            )
+            .child(c)
+    }
+}
+
+fn size_px(w: f32, h: f32) -> Size<Pixels> {
+    size(px(w), px(h))
+}
+
+/// Where a slide of `slide` size sits, centred and scaled to fit, in `bounds`.
+fn fit_slide(bounds: Bounds<Pixels>, slide: SlideSize, margin: f32) -> (View, Bounds<Pixels>) {
+    let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+    let scale = ((w - 2.0 * margin) / slide.cx as f32)
+        .min((h - 2.0 * margin) / slide.cy as f32)
+        .max(1e-7);
+    let (sw, sh) = (slide.cx as f32 * scale, slide.cy as f32 * scale);
+    let origin = point(
+        bounds.origin.x + px((w - sw) / 2.0),
+        bounds.origin.y + px((h - sh) / 2.0),
+    );
+    (View { origin, scale }, Bounds::new(origin, size_px(sw, sh)))
+}
+
+/// What the canvas needs to paint one frame.
+struct Frame {
+    items: Vec<Item>,
+    background: slides_engine::Rgb,
+    painter: Rc<Painter>,
+    /// Selected shape's box (screen space is computed at paint time).
+    selected: Option<(Xfrm, bool)>,
+    /// Editing: text layout placement, selection, composition, caret visible.
+    editing: Option<(Xfrm, draw::LaidText, Selection, Option<Range<usize>>)>,
+    t: Tokens,
+    focused: bool,
+    focus: FocusHandle,
+    view: Entity<SlidesView>,
+    slide_size: SlideSize,
+}
+
+impl Render for SlidesView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = tokens(cx);
+        if let Some(slide) = self.presenting {
+            if slide >= self.pres.len() {
+                self.presenting = None;
+            } else {
+                return self.render_presenter(slide, cx).into_any_element();
+            }
+        }
+        if self.current >= self.pres.len() {
+            self.current = self.pres.len().saturating_sub(1);
+        }
+        let editing_shape = self.editing.as_ref().map(|e| e.shape);
+        let mut items = if self.pres.is_empty() {
+            Vec::new()
+        } else {
+            self.painter
+                .items(&self.pres, self.current, true, self.preview, cx)
+        };
+        // The edited placeholder shows its (possibly empty) text, not the prompt.
+        if let Some(i) = editing_shape
+            && let Some((xfrm, laid)) = self.laid(i)
+            && let Some(item) = items.iter_mut().find(|it| it.layer == Layer::Slide(i))
+        {
+            item.xfrm = xfrm;
+            item.text = Some(laid);
+        }
+        let selected = self.selected.and_then(|i| {
+            let movable = self.pres.slide(self.current).shapes.get(i)?.movable();
+            Some((self.shape_xfrm(i)?, movable && self.editing.is_none()))
+        });
+        let editing = self.editing.as_ref().and_then(|e| {
+            let (x, laid) = self.laid(e.shape)?;
+            Some((x, laid, e.sel, e.marked.clone()))
+        });
+        let viewport = self.viewport.clone();
+        let entity = cx.entity().downgrade();
+        let frame = Frame {
+            items,
+            background: if self.pres.is_empty() {
+                slides_engine::Rgb([255, 255, 255])
+            } else {
+                self.pres.background(self.current)
+            },
+            painter: self.painter.clone(),
+            selected,
+            editing,
+            t,
+            focused: self.focus.is_focused(window),
+            focus: self.focus.clone(),
+            view: cx.entity(),
+            slide_size: self.pres.size,
+        };
+        let has_slides = !self.pres.is_empty();
+        let canvas_el = canvas(
+            move |bounds, _, cx| {
+                let old = viewport.replace(bounds);
+                if old.size != bounds.size {
+                    let _ = entity.update(cx, |_, cx| cx.notify());
+                }
+            },
+            move |bounds, _, window, cx| paint_frame(&frame, bounds, has_slides, window, cx),
+        )
+        .size_full();
+
+        let cursor = if self.editing.is_some() {
+            CursorStyle::IBeam
+        } else {
+            CursorStyle::Arrow
+        };
+        let area = div()
+            .id("slides-canvas")
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .relative()
+            .overflow_hidden()
+            .cursor(cursor)
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_move(cx.listener(Self::on_mouse_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .child(canvas_el);
+
+        let strip = div()
+            .flex_none()
+            .w(SLIDE_STRIP_WIDTH)
+            .h_full()
+            .py(SPACE_4)
+            .bg(t.chrome)
+            .border_r_1()
+            .border_color(t.border)
+            .child(self.render_strip(&t, cx));
+
+        let root = v_flex()
+            .key_context(KEY_CONTEXT)
+            .track_focus(&self.focus)
+            .size_full()
+            .bg(t.bg)
+            .text_color(t.fg)
+            .text_size(FONT_BODY);
+        macro_rules! on {
+            ($root:expr, [$($action:ident => |$this:ident, $w:ident, $c:ident| $body:expr),* $(,)?]) => {
+                $root$(.on_action(cx.listener(|$this: &mut SlidesView, _: &$action, $w: &mut Window, $c: &mut Context<SlidesView>| { $body; })))*
+            };
+        }
+        let root = on!(root, [
+            Left => |v, w, cx| v.arrow(-1, 0, false, w, cx),
+            Right => |v, w, cx| v.arrow(1, 0, false, w, cx),
+            Up => |v, w, cx| v.arrow(0, -1, false, w, cx),
+            Down => |v, w, cx| v.arrow(0, 1, false, w, cx),
+            ShiftLeft => |v, w, cx| v.arrow(-1, 0, true, w, cx),
+            ShiftRight => |v, w, cx| v.arrow(1, 0, true, w, cx),
+            ShiftUp => |v, w, cx| v.arrow(0, -1, true, w, cx),
+            ShiftDown => |v, w, cx| v.arrow(0, 1, true, w, cx),
+            LineStart => |v, _w, cx| {
+                if v.editing.is_some() { v.caret_line_edge(false, false, cx) } else { v.go_to(0, cx) }
+            },
+            LineEnd => |v, _w, cx| {
+                if v.editing.is_some() { v.caret_line_edge(true, false, cx) } else { let n = v.pres.len(); v.go_to(n.saturating_sub(1), cx) }
+            },
+            SelectLineStart => |v, _w, cx| v.caret_line_edge(false, true, cx),
+            SelectLineEnd => |v, _w, cx| v.caret_line_edge(true, true, cx),
+            Backspace => |v, w, cx| v.delete_key(false, w, cx),
+            Delete => |v, w, cx| v.delete_key(true, w, cx),
+            Newline => |v, w, cx| v.enter(false, w, cx),
+            LineBreak => |v, w, cx| v.enter(true, w, cx),
+            Escape => |v, _w, cx| v.escape(cx),
+            NextShape => |v, _w, cx| v.next_shape(cx),
+            SelectAll => |v, _w, cx| v.select_all(cx),
+            Copy => |v, w, cx| v.copy_doc(w, cx),
+            Cut => |v, w, cx| v.cut_doc(w, cx),
+            Paste => |v, w, cx| v.paste_doc(w, cx),
+            ToggleBold => |v, w, cx| v.toggle(Toggle::Bold, w, cx),
+            ToggleItalic => |v, w, cx| v.toggle(Toggle::Italic, w, cx),
+            ToggleUnderline => |v, w, cx| v.toggle(Toggle::Underline, w, cx),
+            NewSlide => |v, w, cx| v.new_slide_doc(w, cx),
+            DuplicateSlide => |v, w, cx| v.duplicate_slide_doc(w, cx),
+            DeleteSlide => |v, w, cx| v.delete_slide_doc(w, cx),
+            MoveSlideUp => |v, w, cx| v.move_slide_doc(true, w, cx),
+            MoveSlideDown => |v, w, cx| v.move_slide_doc(false, w, cx),
+            InsertTextBox => |v, w, cx| v.insert_text_box_doc(w, cx),
+            InsertRectangle => |v, w, cx| v.insert_shape_doc(Geom::Rect, w, cx),
+            InsertEllipse => |v, w, cx| v.insert_shape_doc(Geom::Ellipse, w, cx),
+            InsertImage => |v, w, cx| v.insert_image_doc(w, cx),
+            Undo => |v, w, cx| v.undo_doc(w, cx),
+            Redo => |v, w, cx| v.redo_doc(w, cx),
+            Save => |v, w, cx| v.save_doc(w, cx),
+            SaveAs => |v, w, cx| v.save_doc_as(w, cx),
+            Present => |v, w, cx| v.present_doc(true, w, cx),
+            PresentFromCurrent => |v, w, cx| v.present_doc(false, w, cx),
+        ]);
+        root.child(toolbar::render(self, cx))
+            .children(self.render_banner(&t))
+            .child(h_flex().flex_1().min_h_0().child(strip).child(area))
+            .into_any_element()
+    }
+}
+
+fn paint_frame(
+    f: &Frame,
+    bounds: Bounds<Pixels>,
+    has_slides: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let t = &f.t;
+    window.paint_quad(fill(bounds, t.desk));
+    if !has_slides {
+        return;
+    }
+    let (view, slide_bounds) = fit_slide(bounds, f.slide_size, SLIDE_MARGIN);
+    window.paint_drop_shadows(
+        slide_bounds,
+        Corners::default(),
+        &t.shadow(Elevation::Popover),
+    );
+    paint_slide(
+        &f.items,
+        f.background,
+        slide_bounds,
+        view,
+        t.fg_muted,
+        &f.painter.bridge,
+        window,
+    );
+
+    if let Some((x, handles)) = f.selected {
+        let b = view.rect(&x);
+        window.paint_quad(quad(
+            b,
+            Corners::default(),
+            transparent_black(),
+            Edges::all(SLIDE_OUTLINE),
+            t.accent,
+            if handles {
+                BorderStyle::Solid
+            } else {
+                BorderStyle::Dashed
+            },
+        ));
+        if handles {
+            for h in HANDLES {
+                let cx_ = match h.0 {
+                    -1 => b.left(),
+                    0 => b.center().x,
+                    _ => b.right(),
+                };
+                let cy_ = match h.1 {
+                    -1 => b.top(),
+                    0 => b.center().y,
+                    _ => b.bottom(),
+                };
+                let hb = Bounds::centered_at(point(cx_, cy_), size(SLIDE_HANDLE, SLIDE_HANDLE));
+                window.paint_quad(quad(
+                    hb,
+                    Corners::all(px(2.)),
+                    t.paper,
+                    Edges::all(SLIDE_OUTLINE),
+                    t.accent,
+                    BorderStyle::Solid,
+                ));
+            }
+        }
+    }
+
+    if let Some((x, laid, sel, marked)) = &f.editing {
+        let o = text_origin(laid, x, view);
+        let s = view.px_scale();
+        let paged = &laid.layout.paged;
+        let rect = |r: [f32; 4]| {
+            Bounds::new(
+                point(o.x + px(r[0] * s), o.y + px(r[1] * s)),
+                size_px(r[2] * s, r[3] * s),
+            )
+        };
+        let (a, b) = sel.ordered();
+        if a != b {
+            for (_, r) in paged.selection_rects((a.para, a.offset), (b.para, b.offset)) {
+                window.paint_quad(fill(rect(r), t.accent.opacity(0.3)));
+            }
+        }
+        if let Some(m) = marked {
+            let p = sel.head.para;
+            for (_, r) in paged.selection_rects((p, m.start), (p, m.end)) {
+                window.paint_quad(fill(
+                    rect([r[0], r[1] + r[3] - 1.5 / s, r[2], 1.5 / s]),
+                    t.paper_ink,
+                ));
+            }
+        }
+        if f.focused
+            && a == b
+            && let Some(c) = paged.caret(sel.head.para, sel.head.offset)
+        {
+            let top = point(o.x + px(c.x * s), o.y + px(c.top * s));
+            let caret = Bounds::new(top, size(CARET_WIDTH, px(c.height * s)));
+            // The caret contrasts with the slide, not the chrome.
+            let ink = if luminance(f.background) > 0.5 {
+                black()
+            } else {
+                white()
+            };
+            window.paint_quad(fill(caret, ink));
+        }
+    }
+    window.handle_input(
+        &f.focus,
+        ElementInputHandler::new(bounds, f.view.clone()),
+        cx,
+    );
+}
+
+fn luminance(c: slides_engine::Rgb) -> f32 {
+    let [r, g, b] = c.0;
+    (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) / 255.0
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+    use slides_engine::{Anchor, EMU_PER_PX};
+
+    #[std::prelude::v1::test]
+    fn slides_fit_centred_with_a_margin() {
+        let b = Bounds::new(point(px(10.), px(20.)), size(px(1000.), px(800.)));
+        let (v, sb) = fit_slide(b, SlideSize::WIDE, 32.0);
+        assert!(
+            (f32::from(sb.size.width) - 936.0).abs() < 0.01,
+            "width-bound"
+        );
+        let mid = sb.center();
+        assert!((f32::from(mid.x) - 510.0).abs() < 0.5 && (f32::from(mid.y) - 420.0).abs() < 0.5);
+        let (x, y) = v.to_emu(sb.origin);
+        assert!(x.abs() < 20_000 && y.abs() < 20_000);
+        let r = v.rect(&Xfrm::new(0, 0, SlideSize::WIDE.cx, SlideSize::WIDE.cy));
+        assert!((f32::from(r.size.width) - f32::from(sb.size.width)).abs() < 0.5);
+    }
+
+    /// Placeholder prompts lay out with the layout's formatting and sit
+    /// where the body anchors them (the Title Slide title is bottom-anchored).
+    #[std::prelude::v1::test]
+    fn prompt_text_is_laid_out_and_anchored() {
+        let painter = Painter::new(
+            Rc::new(RefCell::new(docs_layout::Engine::new())),
+            Rc::new(RefCell::new(docs_ui::FontBridge::default())),
+        );
+        let pres = Presentation::new();
+        let list = pres.render_list(0, true);
+        let title = list
+            .iter()
+            .find(|r| r.shape.ph.as_ref().is_some_and(|p| p.is_title()))
+            .unwrap();
+        let t = title.text.as_ref().unwrap();
+        assert_eq!(t.anchor, Anchor::Bottom);
+        let laid = painter.place(t, &title.xfrm);
+        let inner = (title.xfrm.cy - t.insets[1] - t.insets[3]) as f32 / EMU_PER_PX;
+        assert!(
+            laid.layout.height > 40.0,
+            "60 pt line: {}",
+            laid.layout.height
+        );
+        let bottom = laid.dy + laid.layout.height;
+        let expected = t.insets[1] as f32 / EMU_PER_PX + inner;
+        assert!((bottom - expected).abs() < 0.5, "{bottom} vs {expected}");
+        // Cached: same layout object for the same text and width.
+        let again = painter.place(t, &title.xfrm);
+        assert!(Rc::ptr_eq(&laid.layout, &again.layout));
+    }
+}

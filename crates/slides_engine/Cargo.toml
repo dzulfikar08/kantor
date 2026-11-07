@@ -10,11 +10,9 @@ repository.workspace = true
 anyhow.workspace = true
 # Rgb, Position/Selection, grapheme helpers and the font substitution table.
 docs_engine.workspace = true
-log.workspace = true
 # Reading: byte ranges of every element, so unmodelled XML is copied verbatim.
 roxmltree.workspace = true
 tempfile.workspace = true
-unicode-segmentation = "1"
 zip.workspace = true
 
 [lints]

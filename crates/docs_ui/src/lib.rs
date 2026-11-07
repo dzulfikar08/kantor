@@ -19,7 +19,7 @@
 
 extern crate gpui_kit as gpui;
 
-mod font_bridge;
+pub mod font_bridge;
 mod input;
 mod toolbar;
 
@@ -42,7 +42,7 @@ use gpui_kit::*;
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{Tokens, metrics::*, tokens};
 
-use font_bridge::FontBridge;
+pub use font_bridge::FontBridge;
 
 pub use docs_engine::Toggle as DocsToggle;
 
@@ -205,6 +205,12 @@ fn shared(cx: &mut App) -> (Rc<RefCell<Engine>>, Rc<RefCell<FontBridge>>) {
     }
     let s = cx.global::<Shared>();
     (s.engine.clone(), s.bridge.clone())
+}
+
+/// The parley engine and font bridge shared by every Docs view, for other
+/// views that lay out text the same way (Slides text boxes).
+pub fn shared_text(cx: &mut App) -> (Rc<RefCell<Engine>>, Rc<RefCell<FontBridge>>) {
+    shared(cx)
 }
 
 /// Document facts, for the inspector.

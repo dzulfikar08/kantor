@@ -63,3 +63,17 @@ pub const CARET_WIDTH: Pixels = px(1.5);
 pub const ZOOM_MIN: f32 = 0.25;
 pub const ZOOM_MAX: f32 = 4.0;
 pub const ZOOM_STEP: f32 = 1.1;
+
+// Slides view
+/// Width of the slide thumbnail strip.
+pub const SLIDE_STRIP_WIDTH: Pixels = px(176.);
+/// Height of one thumbnail row (16:9 thumbnail plus number and padding).
+pub const SLIDE_THUMB_ROW: Pixels = px(104.);
+/// Space around the slide on the canvas, in screen px.
+pub const SLIDE_MARGIN: f32 = 32.;
+/// Size of a resize handle on a selected shape.
+pub const SLIDE_HANDLE: Pixels = px(8.);
+/// Width of the selection outline.
+pub const SLIDE_OUTLINE: Pixels = px(1.5);
+/// Arrow-key nudge in EMU (1 pt; 10 pt with Shift).
+pub const SLIDE_NUDGE_EMU: i64 = 12_700;

@@ -1,0 +1,21 @@
+[package]
+name = "slides_ui"
+description = "Kantor Slides UI: slide canvas, thumbnail strip, text editing, presenter mode (GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+docs_engine.workspace = true
+docs_layout.workspace = true
+# Shares Docs' parley engine and fontique → GPUI font bridge (ADR 0001).
+docs_ui.workspace = true
+gpui-kit.workspace = true
+kantor_ui.workspace = true
+log.workspace = true
+slides_engine.workspace = true
+
+[lints]
+workspace = true
