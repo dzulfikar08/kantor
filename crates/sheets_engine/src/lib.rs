@@ -303,14 +303,14 @@ impl Workbook {
         Ok(true)
     }
 
-    /// File name for window titles, e.g. `budget.xlsx`, `data.ods` or `Untitled`.
+    /// File name for window titles, e.g. `budget.xlsx`, `data.ods` or `Untitled.xlsx`.
     pub fn title(&self) -> String {
         self.origin
             .path
             .as_deref()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Untitled".to_owned())
+            .unwrap_or_else(|| "Untitled.xlsx".to_owned())
     }
 
     /// Save to the current path.

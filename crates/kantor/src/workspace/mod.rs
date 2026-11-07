@@ -14,6 +14,7 @@ mod chrome;
 mod closing;
 mod doc;
 mod home;
+mod naming;
 mod palette;
 mod panels;
 mod splits;
@@ -198,6 +199,15 @@ impl Workspace {
         let id = self.alloc_id();
         if let Some(path) = view.path(cx) {
             Session::touch_recent(&mut self.recent, &path);
+        } else {
+            let open: Vec<String> = self
+                .docs
+                .values()
+                .filter(|d| d.view.kind() == kind && d.view.path(cx).is_none())
+                .map(|d| d.view.doc_name(cx))
+                .collect();
+            let name = naming::next_untitled_name(kind, open.iter().map(String::as_str));
+            view.set_untitled_name(name, cx);
         }
         let changes = match &view {
             DocView::Sheets(e) => cx.observe(e, |_, _, cx| cx.notify()),

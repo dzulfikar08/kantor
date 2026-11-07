@@ -4,7 +4,7 @@
 
 use docs_engine::Toggle;
 use gpui_kit::assets::IconName as Lucide;
-use gpui_kit::component::{h_flex, tooltip::Tooltip};
+use gpui_kit::component::{button::Button, h_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::components::icon_button;
@@ -22,10 +22,10 @@ fn tool(
     active: bool,
     run: Run,
     cx: &mut Context<SlidesView>,
-) -> Stateful<Div> {
+) -> Button {
     let view = cx.entity().downgrade();
     icon_button(id, icon, active, cx)
-        .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
+        .tooltip(tip)
         .on_click(move |_, window, cx| {
             let _ = view.update(cx, |v, cx| {
                 run(v, window, cx);
@@ -56,7 +56,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-new",
             Lucide::SquarePlus,
-            "New slide  Ctrl+M",
+            "New slide · Ctrl+M",
             false,
             |v, w, cx| v.new_slide_doc(w, cx),
             cx,
@@ -64,7 +64,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-duplicate",
             Lucide::CopyPlus,
-            "Duplicate slide  Ctrl+D",
+            "Duplicate slide · Ctrl+D",
             false,
             |v, w, cx| v.duplicate_slide_doc(w, cx),
             cx,
@@ -81,7 +81,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-text-box",
             Lucide::Type,
-            "Text box",
+            "Insert text box",
             false,
             |v, w, cx| v.insert_text_box_doc(w, cx),
             cx,
@@ -89,7 +89,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-rect",
             Lucide::Square,
-            "Rectangle",
+            "Insert rectangle",
             false,
             |v, w, cx| v.insert_shape_doc(Geom::Rect, w, cx),
             cx,
@@ -97,7 +97,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-ellipse",
             Lucide::Circle,
-            "Ellipse",
+            "Insert ellipse",
             false,
             |v, w, cx| v.insert_shape_doc(Geom::Ellipse, w, cx),
             cx,
@@ -105,7 +105,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-image",
             Lucide::ImagePlus,
-            "Picture (PNG or JPEG)",
+            "Insert picture (PNG or JPEG)",
             false,
             |v, w, cx| v.insert_image_doc(w, cx),
             cx,
@@ -114,7 +114,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-bold",
             Lucide::Bold,
-            "Bold  Ctrl+B",
+            "Bold · Ctrl+B",
             view.is_on(Toggle::Bold),
             |v, w, cx| v.toggle_doc(Toggle::Bold, w, cx),
             cx,
@@ -122,7 +122,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-italic",
             Lucide::Italic,
-            "Italic  Ctrl+I",
+            "Italic · Ctrl+I",
             view.is_on(Toggle::Italic),
             |v, w, cx| v.toggle_doc(Toggle::Italic, w, cx),
             cx,
@@ -130,7 +130,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-underline",
             Lucide::Underline,
-            "Underline  Ctrl+U",
+            "Underline · Ctrl+U",
             view.is_on(Toggle::Underline),
             |v, w, cx| v.toggle_doc(Toggle::Underline, w, cx),
             cx,
@@ -139,7 +139,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-present",
             Lucide::Presentation,
-            "Present  F5 (Shift+F5 from this slide)",
+            "Present · F5 (Shift+F5 from this slide)",
             false,
             |v, w, cx| v.present_doc(true, w, cx),
             cx,

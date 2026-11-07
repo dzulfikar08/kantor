@@ -325,6 +325,9 @@ pub struct SheetsView {
     status: SharedString,
     /// Last measured pane width (for compact layout).
     width: Rc<Cell<Pixels>>,
+    /// Name shown while the document has no file (`Untitled 2.xlsx`), given
+    /// by the shell so new documents are numbered across the session.
+    untitled_name: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -377,6 +380,7 @@ impl SheetsView {
             dragging: false,
             status: status.into(),
             width: Rc::new(Cell::new(px(0.))),
+            untitled_name: None,
             _subscriptions: subscriptions,
         };
         this.select_cell(0, 0, cx);
@@ -948,7 +952,7 @@ impl SheetsView {
     pub fn book_info(&self, cx: &App) -> BookInfo {
         let grid = self.table.read(cx).delegate();
         BookInfo {
-            name: grid.book.title(),
+            name: self.name(&grid.book),
             path: grid.book.path().map(|p| p.to_path_buf()),
             dirty: grid.book.is_dirty(),
             sheets: grid.book.sheet_names(),
@@ -972,9 +976,23 @@ impl SheetsView {
         self.range(cx).name()
     }
 
-    /// File name for tabs, e.g. `budget.xlsx`.
+    /// File name for tabs, e.g. `budget.xlsx` or `Untitled 2.xlsx`.
     pub fn doc_name(&self, cx: &App) -> String {
-        self.table.read(cx).delegate().book.title()
+        self.name(&self.table.read(cx).delegate().book)
+    }
+
+    /// Set the name shown while the workbook has no file.
+    pub fn set_untitled_name(&mut self, name: String, cx: &mut Context<Self>) {
+        self.untitled_name = Some(name);
+        cx.notify();
+    }
+
+    /// `book`'s file name, or the shell-given name while it has no file.
+    fn name(&self, book: &Workbook) -> String {
+        match &self.untitled_name {
+            Some(name) if book.source_path().is_none() => name.clone(),
+            _ => book.title(),
+        }
     }
 
     /// The file this document shows (an imported `.ods`/`.xls` too, though
@@ -1008,7 +1026,7 @@ impl SheetsView {
     pub fn title(&self, cx: &App) -> String {
         let book = &self.table.read(cx).delegate().book;
         let dirty = if book.is_dirty() { "• " } else { "" };
-        format!("{dirty}{} — Kantor Sheets", book.title())
+        format!("{dirty}{} — Kantor Sheets", self.name(book))
     }
 
     fn update_title(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1073,7 +1091,12 @@ impl SheetsView {
                 .map(|p| p.to_path_buf())
                 .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
                 .unwrap_or_else(|| PathBuf::from("."));
-            (dir, book.suggested_file_name())
+            let name = if book.source_path().is_none() {
+                self.name(book)
+            } else {
+                book.suggested_file_name()
+            };
+            (dir, name)
         };
         let path = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |this, cx| {

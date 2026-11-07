@@ -4,7 +4,7 @@
 use gpui_kit::component::{ActiveTheme as _, IconName, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use kantor_ui::components::{dot, icon_button, section_label};
+use kantor_ui::components::{IconButtonExt as _, dot, icon_button, section_label};
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 
@@ -21,6 +21,7 @@ impl Workspace {
         title: &'static str,
         close_id: &'static str,
         icon: IconName,
+        tip: (&'static str, &'static str),
         on_close: impl Fn(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -42,9 +43,11 @@ impl Workspace {
                     .child(title),
             )
             .child(
-                icon_button(close_id, icon, true, cx).on_click(move |_, window, cx| {
-                    let _ = entity.update(cx, |ws, cx| on_close(ws, window, cx));
-                }),
+                icon_button(close_id, icon, true, cx)
+                    .tip(tip.0, Some(tip.1))
+                    .on_click(move |_, window, cx| {
+                        let _ = entity.update(cx, |ws, cx| on_close(ws, window, cx));
+                    }),
             )
     }
 
@@ -77,6 +80,7 @@ impl Workspace {
             "Explorer",
             "hide-sidebar",
             IconName::PanelLeft,
+            ("Hide sidebar", "Ctrl+Shift+E"),
             |ws, window, cx| ws.toggle_sidebar(&ToggleSidebar, window, cx),
             cx,
         );
@@ -240,6 +244,7 @@ impl Workspace {
             "Inspector",
             "hide-inspector",
             IconName::PanelRight,
+            ("Hide inspector", "Ctrl+Shift+I"),
             |ws, window, cx| ws.toggle_inspector(&ToggleInspector, window, cx),
             cx,
         );

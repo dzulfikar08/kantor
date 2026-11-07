@@ -224,6 +224,9 @@ enum Drag {
 /// A Slides document view.
 pub struct SlidesView {
     pres: Presentation,
+    /// Name shown while the presentation has no file (`Untitled 2.pptx`), given
+    /// by the shell so new documents are numbered across the session.
+    untitled_name: Option<String>,
     current: usize,
     selected: Option<usize>,
     editing: Option<Editing>,
@@ -268,6 +271,7 @@ impl SlidesView {
         let _ = window;
         Self {
             pres,
+            untitled_name: None,
             current: 0,
             selected: None,
             editing: None,
@@ -961,7 +965,21 @@ impl SlidesView {
     }
 
     pub fn doc_name(&self, _: &App) -> String {
-        self.pres.title()
+        self.name()
+    }
+
+    /// Set the name shown while the presentation has no file.
+    pub fn set_untitled_name(&mut self, name: String, cx: &mut Context<Self>) {
+        self.untitled_name = Some(name);
+        cx.notify();
+    }
+
+    /// The file name, or the shell-given name while there is no file.
+    fn name(&self) -> String {
+        match &self.untitled_name {
+            Some(name) if self.pres.path().is_none() => name.clone(),
+            _ => self.pres.title(),
+        }
     }
 
     pub fn path(&self, _: &App) -> Option<PathBuf> {
@@ -974,7 +992,7 @@ impl SlidesView {
 
     pub fn title(&self, _: &App) -> String {
         let dirty = if self.pres.is_dirty() { "• " } else { "" };
-        format!("{dirty}{} — Kantor Slides", self.pres.title())
+        format!("{dirty}{} — Kantor Slides", self.name())
     }
 
     fn update_title(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1014,7 +1032,7 @@ impl SlidesView {
             Some((s.name.clone(), kind, self.shape_xfrm(i)?))
         });
         SlidesInfo {
-            name: self.pres.title(),
+            name: self.name(),
             path: self.pres.path().map(|p| p.to_path_buf()),
             dirty: self.pres.is_dirty(),
             slides: self.pres.len(),
@@ -1075,7 +1093,11 @@ impl SlidesView {
             .map(|p| p.to_path_buf())
             .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
             .unwrap_or_else(|| PathBuf::from("."));
-        let name = self.pres.suggested_file_name();
+        let name = if self.pres.path().is_none() {
+            self.name()
+        } else {
+            self.pres.suggested_file_name()
+        };
         let path = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(mut path))) = path.await else {
