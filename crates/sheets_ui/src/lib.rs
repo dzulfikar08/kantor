@@ -360,7 +360,7 @@ impl SheetsView {
         cx.notify();
     }
 
-    fn render_sheet_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sheet_tabs(&self, cx: &mut Context<Self>) -> Div {
         let grid = self.table.read(cx).delegate();
         let active = grid.sheet;
         let names = grid.book.sheet_names();
