@@ -1,0 +1,89 @@
+# File-format fidelity (plan.md §0 item 9, §5, §7).
+#  - The .xlsx corpus round-trip test. Known IronCalc gaps are listed in
+#    tests/corpus/xlsx/known-gaps.tsv, so they don't make main red; any new
+#    finding (or a listed gap that no longer happens) fails the job.
+#  - LibreOffice-headless PDFs of every original and round-tripped file, uploaded
+#    as an artifact for eyeballing. This part never fails the job.
+name: Fidelity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/sheets_engine/**"
+      - "tests/corpus/**"
+      - "scripts/corpus/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/fidelity.yml"
+  pull_request:
+    paths:
+      - "crates/sheets_engine/**"
+      - "tests/corpus/**"
+      - "scripts/corpus/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/fidelity.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: fidelity-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  xlsx:
+    name: xlsx corpus (x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      KANTOR_CORPUS_OUT: ${{ github.workspace }}/fidelity-out
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # sheets_engine is pure Rust: no GPUI system libraries needed here.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: fidelity
+          cache-on-failure: true
+
+      - name: Corpus matches its generator
+        run: python3 scripts/corpus/gen_xlsx.py --check
+
+      - name: Round-trip fidelity test
+        run: cargo test -p sheets_engine --test corpus -- --nocapture
+
+      - name: Report to job summary
+        if: always()
+        run: |
+          if [ -f fidelity-out/report.md ]; then
+            cat fidelity-out/report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Render PDFs with LibreOffice
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends libreoffice-calc
+          mkdir -p fidelity-out/pdf/original fidelity-out/pdf/roundtrip
+          soffice --headless --norestore --convert-to pdf \
+            --outdir fidelity-out/pdf/original tests/corpus/xlsx/*.xlsx
+          if compgen -G "fidelity-out/*.roundtrip.xlsx" >/dev/null; then
+            soffice --headless --norestore --convert-to pdf \
+              --outdir fidelity-out/pdf/roundtrip fidelity-out/*.roundtrip.xlsx
+          fi
+          ls -l fidelity-out/pdf/*
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fidelity-xlsx
+          path: fidelity-out/
+          if-no-files-found: ignore
+          retention-days: 14

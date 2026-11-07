@@ -1,0 +1,915 @@
+//! Round-trip fidelity over the `.xlsx` corpus (plan.md §0 item 9, §5, §7).
+//!
+//! For every file in `tests/corpus/xlsx/`:
+//!
+//! 1. **Round trip through Kantor**: open with [`sheets_engine::Workbook`],
+//!    `save_as` to a temp file, reopen, and compare `input` and
+//!    `display_value` of every used cell of every sheet.
+//! 2. **Import losses**: read the original independently with calamine (cell
+//!    values as cached by the producer, formulas, merged ranges, defined names,
+//!    sheet visibility) and compare with what IronCalc loaded.
+//! 3. **Export losses**: read the saved file with calamine too and compare it
+//!    with the original (values, formulas, styles, merges, names, hyperlinks),
+//!    plus layout (column widths, row heights, hidden, frozen panes), comments
+//!    and links as IronCalc sees them after reopening.
+//! 4. **Dropped parts**: zip entries of the original missing from the saved file.
+//! 5. **Expectations** written by the generator (`expectations.tsv`): what
+//!    Excel displays for formatted cells, and the layout that was written.
+//!
+//! Every difference is a *finding*. Known IronCalc gaps are listed, with a
+//! reason, in `tests/corpus/xlsx/known-gaps.tsv`. The test fails when a finding
+//! is not in that list (a new regression) and when a listed gap no longer
+//! happens (fixed: remove the line), so the list stays an honest record of
+//! what Kantor still drops (§5 "never drop content").
+//!
+//! Environment:
+//! - `KANTOR_CORPUS_BLESS=1` rewrites `known-gaps.tsv` from the current
+//!   findings, keeping existing reasons (new lines get `TODO`).
+//! - `KANTOR_CORPUS_OUT=<dir>` writes each round-tripped file as
+//!   `<name>.roundtrip.xlsx` and a Markdown report `report.md` there (used by
+//!   CI to render PDFs).
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
+use std::fs;
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
+
+use calamine::{Data, Reader as _, Xlsx, open_workbook};
+use ironcalc_base::Model;
+use ironcalc_base::cell::CellValue;
+use sheets_engine::{Workbook, cell_name, column_name};
+
+const GAPS_FILE: &str = "known-gaps.tsv";
+
+fn corpus_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/xlsx")
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Finding {
+    file: String,
+    check: &'static str,
+    location: String,
+    detail: String,
+}
+
+impl Finding {
+    fn key(&self) -> (String, String, String) {
+        (
+            self.file.clone(),
+            self.check.to_owned(),
+            self.location.clone(),
+        )
+    }
+}
+
+struct Findings {
+    file: String,
+    list: Vec<Finding>,
+}
+
+impl Findings {
+    fn add(&mut self, check: &'static str, location: impl Into<String>, detail: impl Into<String>) {
+        self.list.push(Finding {
+            file: self.file.clone(),
+            check,
+            location: location.into(),
+            detail: detail.into(),
+        });
+    }
+
+    /// Record a difference between two values, if any.
+    fn diff<T: PartialEq + std::fmt::Debug>(
+        &mut self,
+        check: &'static str,
+        location: impl Into<String>,
+        before: &T,
+        after: &T,
+    ) {
+        if before != after {
+            self.add(check, location, format!("{before:?} -> {after:?}"));
+        }
+    }
+}
+
+// ------------------------------------------------------------------ main test
+
+#[test]
+fn xlsx_corpus_fidelity() {
+    let dir = corpus_dir();
+    let mut files: Vec<PathBuf> = fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", dir.display()))
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "xlsx"))
+        .collect();
+    files.sort();
+    assert!(
+        files.len() >= 10,
+        "expected the corpus in {}",
+        dir.display()
+    );
+
+    let expectations = read_expectations(&dir.join("expectations.tsv"));
+    let out_dir = std::env::var_os("KANTOR_CORPUS_OUT").map(PathBuf::from);
+    if let Some(out) = &out_dir {
+        fs::create_dir_all(out).unwrap();
+    }
+    let tmp = tempfile::tempdir().unwrap();
+
+    let mut all = Vec::new();
+    for path in &files {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let saved = tmp.path().join(&name);
+        let mut f = Findings {
+            file: name.clone(),
+            list: Vec::new(),
+        };
+        check_file(path, &saved, &expectations, &mut f);
+        if let Some(out) = &out_dir
+            && saved.exists()
+        {
+            let stem = name.trim_end_matches(".xlsx");
+            fs::copy(&saved, out.join(format!("{stem}.roundtrip.xlsx"))).unwrap();
+        }
+        all.extend(f.list);
+    }
+    all.sort();
+    all.dedup_by(|a, b| a.key() == b.key());
+
+    let gaps_path = dir.join(GAPS_FILE);
+    let gaps = read_gaps(&gaps_path);
+    let (report, new, fixed) = compare(&all, &gaps, files.len());
+    println!("{report}");
+    if let Some(out) = &out_dir {
+        fs::write(out.join("report.md"), &report).unwrap();
+    }
+    if std::env::var_os("KANTOR_CORPUS_BLESS").is_some() {
+        write_gaps(&gaps_path, &all, &gaps);
+        println!(
+            "blessed {} findings into {}",
+            all.len(),
+            gaps_path.display()
+        );
+        return;
+    }
+
+    let mut msg = String::new();
+    if !new.is_empty() {
+        let _ = writeln!(
+            msg,
+            "{} NEW fidelity finding(s) (regressions, or new gaps to document in tests/corpus/xlsx/{GAPS_FILE}):",
+            new.len()
+        );
+        for f in &new {
+            let _ = writeln!(
+                msg,
+                "  {}\t{}\t{}\t{}",
+                f.file, f.check, f.location, f.detail
+            );
+        }
+    }
+    if !fixed.is_empty() {
+        let _ = writeln!(
+            msg,
+            "{} known gap(s) no longer happen; remove them from {GAPS_FILE}:",
+            fixed.len()
+        );
+        for (file, check, loc) in &fixed {
+            let _ = writeln!(msg, "  {file}\t{check}\t{loc}");
+        }
+    }
+    assert!(msg.is_empty(), "{msg}");
+}
+
+fn check_file(path: &Path, saved: &Path, expectations: &[Expectation], f: &mut Findings) {
+    // 1. Kantor round trip: open -> save_as -> reopen.
+    let mut original = match Workbook::open(path) {
+        Ok(wb) => wb,
+        Err(e) => {
+            f.add("open", "-", format!("{e:#}"));
+            return;
+        }
+    };
+    let snapshot = cells_of(&original);
+    if let Err(e) = original.save_as(saved) {
+        f.add("save", "-", format!("{e:#}"));
+        return;
+    }
+    let reopened = match Workbook::open(saved) {
+        Ok(wb) => wb,
+        Err(e) => {
+            f.add("reopen", "-", format!("{e:#}"));
+            return;
+        }
+    };
+    let after = cells_of(&reopened);
+    f.diff(
+        "roundtrip-sheets",
+        "-",
+        &original.sheet_names(),
+        &reopened.sheet_names(),
+    );
+    for key in snapshot.keys().chain(after.keys()).collect::<BTreeSet<_>>() {
+        let empty = (String::new(), String::new());
+        let (a, b) = (
+            snapshot.get(key).unwrap_or(&empty),
+            after.get(key).unwrap_or(&empty),
+        );
+        f.diff("roundtrip-input", key.clone(), &a.0, &b.0);
+        f.diff("roundtrip-display", key.clone(), &a.1, &b.1);
+    }
+
+    // IronCalc's models of both files, for checks the public API doesn't cover.
+    let model_a = load_model(path);
+    let model_b = load_model(saved);
+
+    // 2 + 3. Independent reads of both files.
+    let cal_a = CalamineView::read(path);
+    let cal_b = CalamineView::read(saved);
+    import_checks(&cal_a, &model_a, f);
+    export_checks(&cal_a, &cal_b, f);
+    layout_checks(&model_a, &model_b, f);
+
+    // 4. Dropped package parts.
+    let parts_a = zip_entries(path);
+    let parts_b = zip_entries(saved);
+    for part in parts_a.difference(&parts_b) {
+        f.add("dropped-part", part.clone(), "zip entry missing after save");
+    }
+
+    // 5. Generator expectations (what Excel shows / the layout written).
+    let file = f.file.clone();
+    for e in expectations.iter().filter(|e| e.file == file) {
+        expectation_check(e, &original, &model_a, f);
+    }
+}
+
+/// `"Sheet!A1" -> (input, display)` for every used cell.
+fn cells_of(wb: &Workbook) -> BTreeMap<String, (String, String)> {
+    let mut out = BTreeMap::new();
+    for (i, sheet) in wb.sheet_names().iter().enumerate() {
+        let i = i as u32;
+        let (rows, cols) = wb.used_size(i);
+        for r in 0..rows {
+            for c in 0..cols {
+                let input = wb.input(i, r, c);
+                let display = wb.display_value(i, r, c);
+                if !input.is_empty() || !display.is_empty() {
+                    out.insert(format!("{sheet}!{}", cell_name(r, c)), (input, display));
+                }
+            }
+        }
+    }
+    out
+}
+
+fn load_model(path: &Path) -> Model<'static> {
+    let mut model = ironcalc::import::load_from_xlsx(path.to_str().unwrap(), "en", "UTC", "en")
+        .unwrap_or_else(|e| panic!("IronCalc can't load {}: {e}", path.display()));
+    model.evaluate();
+    model
+}
+
+// ------------------------------------------------------------------ calamine view
+
+/// A canonical value, comparable across readers.
+#[derive(Clone, Debug, PartialEq)]
+enum Val {
+    Empty,
+    Num(f64),
+    Str(String),
+    Bool(bool),
+    Err(String),
+}
+
+impl Val {
+    fn from_calamine(d: &Data) -> Self {
+        match d {
+            Data::Empty => Val::Empty,
+            Data::Int(i) => Val::Num(*i as f64),
+            Data::Float(x) => Val::Num(*x),
+            Data::String(s) if s.is_empty() => Val::Empty,
+            Data::String(s) => Val::Str(s.clone()),
+            Data::Bool(b) => Val::Bool(*b),
+            Data::DateTime(d) => Val::Num(d.as_f64()),
+            Data::DateTimeIso(s) | Data::DurationIso(s) => Val::Str(s.clone()),
+            Data::Error(e) => Val::Err(e.to_string()),
+        }
+    }
+
+    fn from_ironcalc(v: CellValue) -> Self {
+        match v {
+            CellValue::None => Val::Empty,
+            CellValue::String(s) if s.is_empty() => Val::Empty,
+            CellValue::String(s) => Val::Str(s),
+            CellValue::Number(x) => Val::Num(x),
+            CellValue::Boolean(b) => Val::Bool(b),
+        }
+    }
+
+    /// Equal up to float noise; an error equals the same text as a string
+    /// (IronCalc reports errors as strings).
+    fn same(&self, other: &Val) -> bool {
+        match (self, other) {
+            (Val::Num(a), Val::Num(b)) => {
+                a == b || (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0)
+            }
+            (Val::Err(a), Val::Str(b)) | (Val::Str(b), Val::Err(a)) => a == b,
+            (a, b) => a == b,
+        }
+    }
+}
+
+#[derive(Default)]
+struct SheetView {
+    visible: String,
+    values: BTreeMap<(u32, u32), Val>,
+    formulas: BTreeMap<(u32, u32), String>,
+    /// `(row, col) -> [(property, debug value)]`, only for cells with a style.
+    styles: BTreeMap<(u32, u32), Vec<(&'static str, String)>>,
+    merges: BTreeSet<((u32, u32), (u32, u32))>,
+    links: BTreeSet<String>,
+    /// calamine could not read part of this sheet (`what: error`).
+    errors: Vec<String>,
+}
+
+struct CalamineView {
+    sheets: Vec<(String, SheetView)>,
+    names: BTreeSet<(String, String)>,
+}
+
+impl CalamineView {
+    fn read(path: &Path) -> Self {
+        let mut wb: Xlsx<_> = open_workbook(path)
+            .unwrap_or_else(|e| panic!("calamine can't open {}: {e}", path.display()));
+        let meta: Vec<_> = wb.sheets_metadata().to_vec();
+        let names = wb.defined_names().iter().cloned().collect();
+        let mut sheets = Vec::new();
+        for sheet in meta {
+            let name = sheet.name.clone();
+            let mut v = SheetView {
+                visible: format!("{:?}", sheet.visible),
+                ..Default::default()
+            };
+            match wb.worksheet_range(&name) {
+                Ok(range) => {
+                    let (r0, c0) = range.start().unwrap_or((0, 0));
+                    for (r, c, d) in range.used_cells() {
+                        let val = Val::from_calamine(d);
+                        if val != Val::Empty {
+                            v.values.insert((r0 + r as u32, c0 + c as u32), val);
+                        }
+                    }
+                }
+                Err(e) => v.errors.push(format!("values: {e}")),
+            }
+            match wb.worksheet_formula(&name) {
+                Ok(range) => {
+                    let (r0, c0) = range.start().unwrap_or((0, 0));
+                    for (r, c, formula) in range.used_cells() {
+                        if !formula.is_empty() {
+                            v.formulas
+                                .insert((r0 + r as u32, c0 + c as u32), formula.clone());
+                        }
+                    }
+                }
+                Err(e) => v.errors.push(format!("formulas: {e}")),
+            }
+            match wb.worksheet_style(&name) {
+                Ok(styles) => {
+                    for (r, c, style) in styles.cells() {
+                        let props = style_props(style);
+                        if !props.is_empty() {
+                            v.styles.insert((r, c), props);
+                        }
+                    }
+                }
+                Err(e) => v.errors.push(format!("styles: {e}")),
+            }
+            match wb.merge_cells_by_sheet_name(&name) {
+                Ok(dims) => v.merges.extend(dims.into_iter().map(|d| (d.start, d.end))),
+                Err(e) => v.errors.push(format!("merged cells: {e}")),
+            }
+            match wb.hyperlinks_by_sheet_name(&name) {
+                Ok(links) => v.links.extend(links.iter().map(|l| format!("{l:?}"))),
+                Err(e) => v.errors.push(format!("hyperlinks: {e}")),
+            }
+            sheets.push((name, v));
+        }
+        Self { sheets, names }
+    }
+
+    fn sheet(&self, name: &str) -> Option<&SheetView> {
+        self.sheets.iter().find(|(n, _)| n == name).map(|(_, s)| s)
+    }
+}
+
+/// Style properties that differ from a plain cell, as `(name, value)`.
+fn style_props(style: &calamine::Style) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    if let Some(font) = &style.font {
+        let f = font;
+        if f.is_bold() {
+            out.push(("bold", "true".into()));
+        }
+        if f.is_italic() {
+            out.push(("italic", "true".into()));
+        }
+        if f.has_underline() {
+            out.push(("underline", format!("{:?}", f.underline)));
+        }
+        if f.has_strikethrough() {
+            out.push(("strike", "true".into()));
+        }
+        if let Some(c) = &f.color {
+            out.push(("font-color", format!("{:08X}", c.to_argb())));
+        }
+        if let Some(sz) = f.size {
+            out.push(("font-size", format!("{sz}")));
+        }
+        if let Some(name) = &f.name {
+            out.push(("font-name", name.clone()));
+        }
+    }
+    if let Some(fill) = &style.fill
+        && fill.is_visible()
+    {
+        out.push((
+            "fill",
+            format!(
+                "{:?} {}",
+                fill.pattern,
+                fill.get_color()
+                    .map(|c| format!("{:08X}", c.to_argb()))
+                    .unwrap_or_default()
+            ),
+        ));
+    }
+    if let Some(b) = &style.borders {
+        for (side, border) in [
+            ("border-left", &b.left),
+            ("border-right", &b.right),
+            ("border-top", &b.top),
+            ("border-bottom", &b.bottom),
+        ] {
+            if border.is_visible() {
+                out.push((side, format!("{:?}", border.style)));
+            }
+        }
+    }
+    if let Some(a) = &style.alignment {
+        let s = format!("{:?}/{:?}", a.horizontal, a.vertical);
+        let default = format!(
+            "{:?}/{:?}",
+            calamine::HorizontalAlignment::default(),
+            calamine::VerticalAlignment::default()
+        );
+        if s != default {
+            out.push(("align", s));
+        }
+        if a.wrap_text {
+            out.push(("wrap", "true".into()));
+        }
+    }
+    if let Some(nf) = &style.number_format
+        && !nf.format_code.eq_ignore_ascii_case("general")
+        && !nf.format_code.is_empty()
+    {
+        out.push(("numfmt", nf.format_code.clone()));
+    }
+    out
+}
+
+fn a1(sheet: &str, (r, c): (u32, u32)) -> String {
+    format!("{sheet}!{}", cell_name(r, c))
+}
+
+// ------------------------------------------------------------------ checks
+
+/// What IronCalc loaded vs. what the original file holds.
+fn import_checks(cal: &CalamineView, model: &Model, f: &mut Findings) {
+    let names: Vec<String> = model
+        .workbook
+        .worksheets
+        .iter()
+        .map(|w| w.name.clone())
+        .collect();
+    let cal_names: Vec<String> = cal.sheets.iter().map(|(n, _)| n.clone()).collect();
+    f.diff("import-sheets", "-", &cal_names, &names);
+
+    for (idx, (sheet, view)) in cal.sheets.iter().enumerate() {
+        for e in &view.errors {
+            f.add("original-unreadable", sheet.clone(), e.clone());
+        }
+        let Some(ws) = model.workbook.worksheets.get(idx) else {
+            continue;
+        };
+        // Both crates name the states Visible / Hidden / VeryHidden.
+        let state = format!("{:?}", ws.state);
+        f.diff("import-visibility", sheet.clone(), &view.visible, &state);
+
+        // Values: every cell the original has (cached results for formulas).
+        for (&pos, val) in &view.values {
+            let ic = model
+                .get_cell_value_by_index(idx as u32, pos.0 as i32 + 1, pos.1 as i32 + 1)
+                .map(Val::from_ironcalc)
+                .unwrap_or(Val::Empty);
+            if !val.same(&ic) {
+                f.add("import-value", a1(sheet, pos), format!("{val:?} -> {ic:?}"));
+            }
+        }
+        // Formulas, as text.
+        for (&pos, formula) in &view.formulas {
+            let ic = model
+                .get_cell_formula(idx as u32, pos.0 as i32 + 1, pos.1 as i32 + 1)
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            let ic = ic.strip_prefix('=').unwrap_or(&ic).to_owned();
+            f.diff("import-formula", a1(sheet, pos), formula, &ic);
+        }
+        // Merged ranges.
+        let ic_merges: BTreeSet<_> = ws
+            .merged_cells
+            .iter()
+            .map(|m| {
+                (
+                    (m.row as u32 - 1, m.column as u32 - 1),
+                    (
+                        (m.row + m.height - 1) as u32 - 1,
+                        (m.column + m.width - 1) as u32 - 1,
+                    ),
+                )
+            })
+            .collect();
+        f.diff("import-merges", sheet.clone(), &view.merges, &ic_merges);
+    }
+
+    // Defined names (calamine drops the scope; compare name + formula).
+    let ic: BTreeSet<(String, String)> = model
+        .workbook
+        .defined_names
+        .iter()
+        .map(|d| (d.name.clone(), d.formula.clone()))
+        .collect();
+    for (name, formula) in &cal.names {
+        if !ic.contains(&(name.clone(), formula.clone())) {
+            let got = ic.iter().find(|(n, _)| n == name).map(|(_, f)| f.clone());
+            f.add(
+                "import-name",
+                name.clone(),
+                format!("{formula:?} -> {got:?}"),
+            );
+        }
+    }
+}
+
+/// The original vs. the file Kantor saved, both read by calamine.
+fn export_checks(a: &CalamineView, b: &CalamineView, f: &mut Findings) {
+    for (sheet, va) in &a.sheets {
+        let Some(vb) = b.sheet(sheet) else {
+            f.add("export-sheet", sheet.clone(), "sheet missing after save");
+            continue;
+        };
+        f.diff("export-visibility", sheet.clone(), &va.visible, &vb.visible);
+        if !vb.errors.is_empty() {
+            // One finding instead of a cascade of "value missing" ones.
+            f.add("export-unreadable", sheet.clone(), vb.errors.join("; "));
+            continue;
+        }
+        let keys: BTreeSet<_> = va.values.keys().chain(vb.values.keys()).collect();
+        for pos in keys {
+            let x = va.values.get(pos).cloned().unwrap_or(Val::Empty);
+            let y = vb.values.get(pos).cloned().unwrap_or(Val::Empty);
+            if !x.same(&y) {
+                f.add("export-value", a1(sheet, *pos), format!("{x:?} -> {y:?}"));
+            }
+        }
+        let keys: BTreeSet<_> = va.formulas.keys().chain(vb.formulas.keys()).collect();
+        for pos in keys {
+            f.diff(
+                "export-formula",
+                a1(sheet, *pos),
+                &va.formulas.get(pos),
+                &vb.formulas.get(pos),
+            );
+        }
+        let keys: BTreeSet<_> = va.styles.keys().chain(vb.styles.keys()).collect();
+        let none = Vec::new();
+        for pos in keys {
+            let sa = va.styles.get(pos).unwrap_or(&none);
+            let sb = vb.styles.get(pos).unwrap_or(&none);
+            let props: BTreeSet<&str> = sa.iter().chain(sb.iter()).map(|(k, _)| *k).collect();
+            for prop in props {
+                let get = |s: &Vec<(&str, String)>| {
+                    s.iter().find(|(k, _)| *k == prop).map(|(_, v)| v.clone())
+                };
+                f.diff(
+                    "export-style",
+                    format!("{} {prop}", a1(sheet, *pos)),
+                    &get(sa),
+                    &get(sb),
+                );
+            }
+        }
+        f.diff("export-merges", sheet.clone(), &va.merges, &vb.merges);
+        f.diff("export-links", sheet.clone(), &va.links, &vb.links);
+    }
+    for (name, formula) in &a.names {
+        let after = b.names.iter().find(|(n, _)| n == name).map(|(_, f)| f);
+        f.diff("export-name", name.clone(), &Some(formula), &after);
+    }
+}
+
+/// Layout, comments and links as IronCalc sees them, before and after saving.
+fn layout_checks(a: &Model, b: &Model, f: &mut Findings) {
+    for wa in &a.workbook.worksheets {
+        let Some(wb) = b.workbook.worksheets.iter().find(|w| w.name == wa.name) else {
+            continue;
+        };
+        let s = &wa.name;
+        let cols = |w: &ironcalc_base::types::Worksheet| -> BTreeMap<String, (String, bool)> {
+            let mut m = BTreeMap::new();
+            for col in &w.cols {
+                for c in col.min..=col.max.min(col.min + 255) {
+                    let width = if col.custom_width {
+                        format!("{:.2}", col.width)
+                    } else {
+                        "default".into()
+                    };
+                    m.insert(column_name(c as u32 - 1), (width, col.hidden));
+                }
+            }
+            m
+        };
+        let (ca, cb) = (cols(wa), cols(wb));
+        for key in ca.keys().chain(cb.keys()).collect::<BTreeSet<_>>() {
+            f.diff(
+                "export-column",
+                format!("{s}!{key}"),
+                &ca.get(key),
+                &cb.get(key),
+            );
+        }
+        let rows = |w: &ironcalc_base::types::Worksheet| -> BTreeMap<i32, (String, bool)> {
+            w.rows
+                .iter()
+                .filter(|r| r.custom_height || r.hidden)
+                .map(|r| (r.r, (format!("{:.2}", r.height), r.hidden)))
+                .collect()
+        };
+        let (ra, rb) = (rows(wa), rows(wb));
+        for key in ra.keys().chain(rb.keys()).collect::<BTreeSet<_>>() {
+            f.diff(
+                "export-row",
+                format!("{s}!{key}"),
+                &ra.get(key),
+                &rb.get(key),
+            );
+        }
+        f.diff(
+            "export-frozen",
+            s.clone(),
+            &(wa.frozen_rows, wa.frozen_columns),
+            &(wb.frozen_rows, wb.frozen_columns),
+        );
+        let comments = |w: &ironcalc_base::types::Worksheet| -> BTreeSet<String> {
+            w.comments
+                .iter()
+                .map(|c| format!("{} {}: {}", c.cell_ref, c.author_name, c.text))
+                .collect()
+        };
+        f.diff("export-comments", s.clone(), &comments(wa), &comments(wb));
+        let links = |w: &ironcalc_base::types::Worksheet| -> BTreeSet<String> {
+            w.links
+                .iter()
+                .map(|(k, v)| format!("{k:?} {v:?}"))
+                .collect()
+        };
+        f.diff("export-links-model", s.clone(), &links(wa), &links(wb));
+    }
+}
+
+fn zip_entries(path: &Path) -> BTreeSet<String> {
+    let mut archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
+    let mut out = BTreeSet::new();
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).unwrap();
+        let mut sink = Vec::new();
+        // Reading proves the entry is intact, not just listed.
+        entry.read_to_end(&mut sink).unwrap();
+        out.insert(entry.name().unwrap().into_owned());
+    }
+    out
+}
+
+// ------------------------------------------------------------------ expectations
+
+struct Expectation {
+    file: String,
+    kind: String,
+    sheet: String,
+    place: String,
+    expected: String,
+}
+
+fn read_expectations(path: &Path) -> Vec<Expectation> {
+    let text = fs::read_to_string(path).unwrap_or_default();
+    text.lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .map(|l| {
+            let p: Vec<&str> = l.split('\t').collect();
+            assert_eq!(p.len(), 5, "bad expectations line: {l}");
+            Expectation {
+                file: p[0].into(),
+                kind: p[1].into(),
+                sheet: p[2].into(),
+                place: p[3].into(),
+                expected: p[4].into(),
+            }
+        })
+        .collect()
+}
+
+fn expectation_check(e: &Expectation, wb: &Workbook, model: &Model, f: &mut Findings) {
+    let Some(idx) = wb.sheet_names().iter().position(|n| *n == e.sheet) else {
+        f.add(
+            "expect",
+            format!("{}!{}", e.sheet, e.place),
+            "sheet missing",
+        );
+        return;
+    };
+    let ws = &model.workbook.worksheets[idx];
+    let loc = format!("{}!{} {}", e.sheet, e.place, e.kind);
+    let col_of = |name: &str| -> i32 {
+        name.bytes()
+            .fold(0, |acc, b| acc * 26 + (b - b'A' + 1) as i32)
+    };
+    let got = match e.kind.as_str() {
+        "display" => {
+            let (r, c) = parse_a1(&e.place);
+            wb.display_value(idx as u32, r, c)
+        }
+        "colwidth" => {
+            let c = col_of(&e.place);
+            ws.cols
+                .iter()
+                .find(|col| col.min <= c && c <= col.max && col.custom_width)
+                .map(|col| format!("{}", col.width))
+                .unwrap_or_else(|| "default".into())
+        }
+        "colhidden" => {
+            let c = col_of(&e.place);
+            let hidden = ws
+                .cols
+                .iter()
+                .any(|col| col.min <= c && c <= col.max && col.hidden);
+            if hidden { "1" } else { "0" }.into()
+        }
+        "rowheight" => {
+            let r: i32 = e.place.parse().unwrap();
+            ws.rows
+                .iter()
+                .find(|row| row.r == r && row.custom_height)
+                .map(|row| format!("{}", row.height))
+                .unwrap_or_else(|| "default".into())
+        }
+        "rowhidden" => {
+            let r: i32 = e.place.parse().unwrap();
+            let hidden = ws.rows.iter().any(|row| row.r == r && row.hidden);
+            if hidden { "1" } else { "0" }.into()
+        }
+        "frozen" => format!("{},{}", ws.frozen_rows, ws.frozen_columns),
+        other => panic!("unknown expectation kind {other}"),
+    };
+    let ok = match (got.parse::<f64>(), e.expected.parse::<f64>()) {
+        (Ok(a), Ok(b)) if e.kind != "display" => (a - b).abs() < 1e-6,
+        _ => got == e.expected,
+    };
+    if !ok {
+        f.add("expect", loc, format!("{:?} -> {got:?}", e.expected));
+    }
+}
+
+fn parse_a1(s: &str) -> (u32, u32) {
+    let split = s.find(|ch: char| ch.is_ascii_digit()).unwrap();
+    let (letters, digits) = s.split_at(split);
+    let col = letters
+        .bytes()
+        .fold(0u32, |acc, b| acc * 26 + (b - b'A' + 1) as u32);
+    (digits.parse::<u32>().unwrap() - 1, col - 1)
+}
+
+// ------------------------------------------------------------------ allowlist
+
+type GapKey = (String, String, String);
+
+/// `known-gaps.tsv`: `file  check  location  reason`. A location of `*` matches
+/// every location of that check in that file.
+fn read_gaps(path: &Path) -> BTreeMap<GapKey, String> {
+    let text = fs::read_to_string(path).unwrap_or_default();
+    text.lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .map(|l| {
+            let p: Vec<&str> = l.splitn(4, '\t').collect();
+            assert!(p.len() >= 3, "bad {GAPS_FILE} line: {l}");
+            (
+                (p[0].into(), p[1].into(), p[2].into()),
+                p.get(3).copied().unwrap_or("").into(),
+            )
+        })
+        .collect()
+}
+
+fn gap_for<'a>(
+    f: &Finding,
+    gaps: &'a BTreeMap<GapKey, String>,
+) -> Option<(&'a GapKey, &'a String)> {
+    gaps.get_key_value(&f.key())
+        .or_else(|| gaps.get_key_value(&(f.file.clone(), f.check.to_owned(), "*".to_owned())))
+}
+
+fn compare(
+    all: &[Finding],
+    gaps: &BTreeMap<GapKey, String>,
+    file_count: usize,
+) -> (String, Vec<Finding>, Vec<GapKey>) {
+    let mut new = Vec::new();
+    let mut used = BTreeSet::new();
+    for f in all {
+        match gap_for(f, gaps) {
+            Some((key, _)) => {
+                used.insert(key.clone());
+            }
+            None => new.push(f.clone()),
+        }
+    }
+    let fixed: Vec<GapKey> = gaps
+        .keys()
+        .filter(|k| !used.contains(*k))
+        .cloned()
+        .collect();
+
+    let mut r = String::new();
+    let _ = writeln!(r, "# xlsx corpus fidelity report\n");
+    let _ = writeln!(
+        r,
+        "{file_count} files, {} findings ({} known gaps, {} new), {} known gaps fixed.\n",
+        all.len(),
+        all.len() - new.len(),
+        new.len(),
+        fixed.len()
+    );
+    let mut by_check: BTreeMap<(&str, &str), usize> = BTreeMap::new();
+    for f in all {
+        *by_check.entry((&f.file, f.check)).or_default() += 1;
+    }
+    let _ = writeln!(r, "| File | Check | Findings |\n|---|---|---|");
+    for ((file, check), n) in &by_check {
+        let _ = writeln!(r, "| {file} | {check} | {n} |");
+    }
+    let parts: Vec<_> = all.iter().filter(|f| f.check == "dropped-part").collect();
+    if !parts.is_empty() {
+        let _ = writeln!(r, "\n## Warnings: package parts dropped on save\n");
+        for f in parts {
+            let _ = writeln!(r, "- WARNING {}: `{}` dropped", f.file, f.location);
+        }
+    }
+    let _ = writeln!(r, "\n## All findings\n");
+    for f in all {
+        let mark = if gap_for(f, gaps).is_some() {
+            "known"
+        } else {
+            "NEW"
+        };
+        let _ = writeln!(
+            r,
+            "- [{mark}] {} `{}` {}: {}",
+            f.file, f.check, f.location, f.detail
+        );
+    }
+    (r, new, fixed)
+}
+
+fn write_gaps(path: &Path, all: &[Finding], old: &BTreeMap<GapKey, String>) {
+    let mut out = String::from(
+        "# Known fidelity gaps in the xlsx corpus (IronCalc 0.9.1 import/export).\n\
+         # Checked by crates/sheets_engine/tests/corpus.rs. Columns (tab-separated):\n\
+         # file  check  location  reason. A location of * matches the whole check for that file.\n\
+         # A finding not listed here fails the test; a listed gap that no longer happens fails too.\n",
+    );
+    // Keep wildcard lines that still match something.
+    let mut written = BTreeSet::new();
+    for f in all {
+        let (key, reason) = match gap_for(f, old) {
+            Some((k, reason)) => (k.clone(), reason.clone()),
+            None => (f.key(), format!("TODO: {}", f.detail)),
+        };
+        if written.insert(key.clone()) {
+            let _ = writeln!(out, "{}\t{}\t{}\t{}", key.0, key.1, key.2, reason);
+        }
+    }
+    fs::write(path, out).unwrap();
+}
