@@ -57,7 +57,8 @@ impl AppKind {
             "xlsx" | "xlsm" | "xls" | "xlsb" | "ods" | "csv" | "tsv" => Some(Self::Sheets),
             // Docs reads .docx only (.doc / .odt / .rtf aren't supported yet).
             "docx" => Some(Self::Docs),
-            "pptx" | "ppt" | "odp" => Some(Self::Slides),
+            // Slides reads .pptx only (.ppt / .odp aren't supported).
+            "pptx" => Some(Self::Slides),
             _ => None,
         }
     }
@@ -201,6 +202,7 @@ impl Workspace {
         let changes = match &view {
             DocView::Sheets(e) => cx.observe(e, |_, _, cx| cx.notify()),
             DocView::Docs(e) => cx.observe(e, |_, _, cx| cx.notify()),
+            DocView::Slides(e) => cx.observe(e, |_, _, cx| cx.notify()),
         };
         self.docs.insert(
             id,
@@ -329,12 +331,33 @@ impl Workspace {
         }
     }
 
+    /// Run `f` if the focused document is a presentation.
+    fn with_slides(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut slides_ui::SlidesView, &mut Window, &mut Context<slides_ui::SlidesView>),
+    ) {
+        if let Some(DocView::Slides(view)) = self.focused_view() {
+            view.update(cx, |v, cx| f(v, window, cx));
+        }
+    }
+
     fn new_spreadsheet(&mut self, _: &NewSpreadsheet, window: &mut Window, cx: &mut Context<Self>) {
         self.launch(AppKind::Sheets, None, window, cx);
     }
 
     fn new_document(&mut self, _: &NewDocument, window: &mut Window, cx: &mut Context<Self>) {
         self.launch(AppKind::Docs, None, window, cx);
+    }
+
+    fn new_presentation(
+        &mut self,
+        _: &NewPresentation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.launch(AppKind::Slides, None, window, cx);
     }
 
     fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
@@ -663,6 +686,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::palette_down))
             .on_action(cx.listener(Self::new_spreadsheet))
             .on_action(cx.listener(Self::new_document))
+            .on_action(cx.listener(Self::new_presentation))
             .on_action(cx.listener(Self::open_file))
             .on_action(cx.listener(Self::close_pane))
             .on_action(cx.listener(Self::close_active_tab))

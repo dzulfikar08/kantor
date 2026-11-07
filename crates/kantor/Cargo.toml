@@ -18,6 +18,8 @@ kantor_theme.workspace = true
 kantor_ui.workspace = true
 log.workspace = true
 sheets_ui.workspace = true
+slides_engine.workspace = true
+slides_ui.workspace = true
 
 [lints]
 workspace = true

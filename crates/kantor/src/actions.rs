@@ -20,6 +20,7 @@ actions!(
         PaletteDown,
         NewSpreadsheet,
         NewDocument,
+        NewPresentation,
         OpenFile,
         CloseTab,
         ClosePane,
@@ -41,6 +42,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-shift-p", TogglePalette, Some(WORKSPACE)),
         KeyBinding::new("ctrl-n", NewSpreadsheet, Some(WORKSPACE_KEYS)),
         KeyBinding::new("ctrl-shift-n", NewDocument, Some(WORKSPACE_KEYS)),
+        // Ctrl+M stays free for a new slide inside Slides.
+        KeyBinding::new("ctrl-alt-n", NewPresentation, Some(WORKSPACE_KEYS)),
         KeyBinding::new("ctrl-o", OpenFile, Some(WORKSPACE_KEYS)),
         KeyBinding::new("ctrl-w", ClosePane, Some(WORKSPACE_KEYS)),
         KeyBinding::new("ctrl-shift-w", CloseTab, Some(WORKSPACE_KEYS)),

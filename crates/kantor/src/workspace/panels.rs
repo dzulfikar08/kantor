@@ -161,7 +161,7 @@ impl Workspace {
         let create: Vec<_> = [
             (AppKind::Sheets, "New spreadsheet", t.sheets, true),
             (AppKind::Docs, "New document", t.docs, true),
-            (AppKind::Slides, "New presentation · soon", t.slides, false),
+            (AppKind::Slides, "New presentation", t.slides, true),
         ]
         .into_iter()
         .map(|(app, label, color, ready)| {
@@ -307,6 +307,73 @@ impl Workspace {
                             .when(!d.unsupported.is_empty(), |c| {
                                 c.child(field(
                                     "Not shown or kept",
+                                    format!(
+                                        "{}. Save writes a new copy; the original is never overwritten.",
+                                        d.unsupported.join(", ")
+                                    ),
+                                    false,
+                                ))
+                            }),
+                    )
+            }
+            Some(DocView::Slides(view)) => {
+                let d = view.read(cx).info();
+                let folder = d
+                    .path
+                    .as_deref()
+                    .and_then(|p| p.parent())
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "Not saved yet".to_owned());
+                let state = match (d.dirty, d.unsupported.is_empty()) {
+                    (true, _) => "Unsaved changes",
+                    (false, true) => "Saved",
+                    (false, false) => "Has content Kantor can't keep",
+                };
+                let len = slides_ui::SlidesView::format_length;
+                let shape = match d.shape {
+                    Some((name, kind, x)) => v_flex()
+                        .gap(SPACE_5)
+                        .child(section_label("Shape", cx))
+                        .child(field("Name", format!("{name} · {kind}"), false))
+                        .child(field(
+                            "Position",
+                            format!("{} × {}", len(x.x), len(x.y)),
+                            false,
+                        ))
+                        .child(field(
+                            "Size",
+                            format!("{} × {}", len(x.cx), len(x.cy)),
+                            false,
+                        )),
+                    None => v_flex()
+                        .gap(SPACE_5)
+                        .child(section_label("Shape", cx))
+                        .child(field("Selection", String::new(), false)),
+                };
+                v_flex()
+                    .gap(SPACE_7)
+                    .child(shape)
+                    .child(
+                        v_flex()
+                            .gap(SPACE_5)
+                            .child(section_label("Slide", cx))
+                            .child(field(
+                                "Slide",
+                                format!("{} of {}", d.current + 1, d.slides),
+                                false,
+                            ))
+                            .child(field("Layout", d.layout, false)),
+                    )
+                    .child(
+                        v_flex()
+                            .gap(SPACE_5)
+                            .child(section_label("Presentation", cx))
+                            .child(field("File", d.name, false))
+                            .child(field("Folder", folder, false))
+                            .child(field("State", state.to_owned(), false))
+                            .when(!d.unsupported.is_empty(), |c| {
+                                c.child(field(
+                                    "Not kept",
                                     format!(
                                         "{}. Save writes a new copy; the original is never overwritten.",
                                         d.unsupported.join(", ")

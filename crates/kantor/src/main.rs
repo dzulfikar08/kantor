@@ -26,7 +26,7 @@ struct Args {
 const USAGE: &str = "usage: kantor [--docs | --sheets | --slides] [FILE]\n\
     \n\
     Kantor is a native office suite. With no arguments it opens the Home screen.\n\
-    Sheets works today; Docs and Slides are on the roadmap (see plan.md).";
+    Docs opens .docx, Sheets .xlsx/.csv/.ods, Slides .pptx (see plan.md).";
 
 fn parse_args() -> Result<Args> {
     let mut app = None;
@@ -55,7 +55,7 @@ fn parse_args() -> Result<Args> {
 fn main() {
     env_logger::Builder::from_env(
         env_logger::Env::default()
-            .default_filter_or("warn,kantor=info,sheets_ui=info,docs_ui=info"),
+            .default_filter_or("warn,kantor=info,sheets_ui=info,docs_ui=info,slides_ui=info"),
     )
     .init();
     let args = match parse_args() {
@@ -73,6 +73,7 @@ fn main() {
             theme::init(cx);
             sheets_ui::init(cx);
             docs_ui::init(cx);
+            slides_ui::init(cx);
 
             actions::bind_keys(cx);
 

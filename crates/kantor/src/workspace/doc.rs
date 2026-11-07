@@ -6,14 +6,16 @@ use std::path::PathBuf;
 use docs_ui::DocsView;
 use gpui_kit::*;
 use sheets_ui::{Format, HAlign, SheetsView};
+use slides_ui::SlidesView;
 
 use super::AppKind;
 
-/// A document view: Sheets or Docs.
+/// A document view: Sheets, Docs or Slides.
 #[derive(Clone)]
 pub(super) enum DocView {
     Sheets(Entity<SheetsView>),
     Docs(Entity<DocsView>),
+    Slides(Entity<SlidesView>),
 }
 
 /// Formatting commands both apps understand (palette entries).
@@ -27,7 +29,7 @@ pub(super) enum CommonFormat {
     AlignRight,
 }
 
-/// Call a method that both views have with the same signature.
+/// Call a method that every view has with the same signature.
 macro_rules! both {
     ($self:expr, $cx:expr, |$v:ident| $body:expr) => {
         match $self {
@@ -36,6 +38,10 @@ macro_rules! both {
                 $body
             }
             DocView::Docs(e) => {
+                let $v = e.read($cx);
+                $body
+            }
+            DocView::Slides(e) => {
                 let $v = e.read($cx);
                 $body
             }
@@ -54,6 +60,10 @@ macro_rules! both_mut {
                 let $w = $window;
                 $body
             }),
+            DocView::Slides(e) => e.update($cx, |$v, $c| {
+                let $w = $window;
+                $body
+            }),
         }
     };
 }
@@ -69,7 +79,7 @@ impl DocView {
         Some(match kind {
             AppKind::Sheets => Self::Sheets(cx.new(|cx| SheetsView::new(file, window, cx))),
             AppKind::Docs => Self::Docs(cx.new(|cx| DocsView::new(file, window, cx))),
-            AppKind::Slides => return None,
+            AppKind::Slides => Self::Slides(cx.new(|cx| SlidesView::new(file, window, cx))),
         })
     }
 
@@ -77,6 +87,7 @@ impl DocView {
         match self {
             Self::Sheets(_) => AppKind::Sheets,
             Self::Docs(_) => AppKind::Docs,
+            Self::Slides(_) => AppKind::Slides,
         }
     }
 
@@ -84,6 +95,7 @@ impl DocView {
         match self {
             Self::Sheets(e) => e.clone().into(),
             Self::Docs(e) => e.clone().into(),
+            Self::Slides(e) => e.clone().into(),
         }
     }
 
@@ -107,11 +119,13 @@ impl DocView {
         both!(self, cx, |v| v.status())
     }
 
-    /// Where the user is: the cell (`B7`) or the page (`Page 2 of 5 · …`).
+    /// Where the user is: the cell (`B7`), the page (`Page 2 of 5 · …`) or
+    /// the slide (`Slide 3 of 12`).
     pub fn location(&self, cx: &App) -> String {
         match self {
             Self::Sheets(e) => e.read(cx).cell_ref(),
             Self::Docs(e) => e.read(cx).location(),
+            Self::Slides(e) => e.read(cx).location(),
         }
     }
 
@@ -173,6 +187,13 @@ impl DocView {
                 CommonFormat::AlignLeft => v.set_align_doc(Align::Left, window, cx),
                 CommonFormat::AlignCenter => v.set_align_doc(Align::Center, window, cx),
                 CommonFormat::AlignRight => v.set_align_doc(Align::Right, window, cx),
+            }),
+            // Paragraph alignment isn't editable in Slides yet.
+            Self::Slides(e) => e.update(cx, |v, cx| match format {
+                CommonFormat::Bold => v.toggle_doc(Toggle::Bold, window, cx),
+                CommonFormat::Italic => v.toggle_doc(Toggle::Italic, window, cx),
+                CommonFormat::Underline => v.toggle_doc(Toggle::Underline, window, cx),
+                _ => {}
             }),
         }
     }

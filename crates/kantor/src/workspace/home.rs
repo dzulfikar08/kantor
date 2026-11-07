@@ -21,7 +21,7 @@ impl Workspace {
         let (accent, ready) = match app {
             AppKind::Docs => (t.docs, true),
             AppKind::Sheets => (t.sheets, true),
-            AppKind::Slides => (t.slides, false),
+            AppKind::Slides => (t.slides, true),
         };
         let entity = cx.entity().downgrade();
         v_flex()
@@ -75,6 +75,7 @@ impl Workspace {
         let hints: Vec<Div> = [
             ("Ctrl N", "New spreadsheet"),
             ("Ctrl Shift N", "New document"),
+            ("Ctrl Alt N", "New presentation"),
             ("Ctrl O", "Open file"),
             ("Ctrl K", "All commands"),
         ]

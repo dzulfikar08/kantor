@@ -12,8 +12,8 @@ use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 use kantor_ui::tokens::Elevation;
 
+use super::Workspace;
 use super::doc::CommonFormat;
-use super::{AppKind, Workspace};
 use crate::actions::*;
 use crate::theme;
 use sheets_ui::{Format, NumberFormat};
@@ -41,7 +41,7 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: "Open File…",
-        detail: ".xlsx, .docx, .csv, .ods",
+        detail: ".xlsx, .docx, .pptx, .csv, .ods",
         keys: "Ctrl O",
         run: |ws, window, cx| ws.open_file(&OpenFile, window, cx),
     },
@@ -341,9 +341,83 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: "New Presentation",
-        detail: "Slides · coming soon",
+        detail: "Slides",
+        keys: "Ctrl Alt N",
+        run: |ws, window, cx| ws.new_presentation(&NewPresentation, window, cx),
+    },
+    Command {
+        title: "New Slide",
+        detail: "Slides",
+        keys: "Ctrl M",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.new_slide_doc(w, cx)),
+    },
+    Command {
+        title: "Duplicate Slide",
+        detail: "Slides",
+        keys: "Ctrl D",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.duplicate_slide_doc(w, cx)),
+    },
+    Command {
+        title: "Delete Slide",
+        detail: "Slides",
         keys: "",
-        run: |ws, _, cx| ws.not_yet(AppKind::Slides, cx),
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.delete_slide_doc(w, cx)),
+    },
+    Command {
+        title: "Move Slide Up",
+        detail: "Slides",
+        keys: "Ctrl Up",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.move_slide_doc(true, w, cx)),
+    },
+    Command {
+        title: "Move Slide Down",
+        detail: "Slides",
+        keys: "Ctrl Down",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.move_slide_doc(false, w, cx)),
+    },
+    Command {
+        title: "Insert Text Box",
+        detail: "Slides",
+        keys: "",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.insert_text_box_doc(w, cx)),
+    },
+    Command {
+        title: "Insert Rectangle",
+        detail: "Slides",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_slides(window, cx, |v, w, cx| {
+                v.insert_shape_doc(slides_engine::Geom::Rect, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Ellipse",
+        detail: "Slides",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_slides(window, cx, |v, w, cx| {
+                v.insert_shape_doc(slides_engine::Geom::Ellipse, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Picture…",
+        detail: "Slides · PNG or JPEG",
+        keys: "",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.insert_image_doc(w, cx)),
+    },
+    Command {
+        title: "Present",
+        detail: "Slides · from the first slide",
+        keys: "F5",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.present_doc(true, w, cx)),
+    },
+    Command {
+        title: "Present From This Slide",
+        detail: "Slides",
+        keys: "Shift F5",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.present_doc(false, w, cx)),
     },
     Command {
         title: "Choose Theme…",
