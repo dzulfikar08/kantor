@@ -8,6 +8,7 @@
 
 extern crate gpui_kit as gpui;
 
+mod actions;
 mod theme;
 mod workspace;
 
@@ -16,8 +17,6 @@ use std::path::PathBuf;
 use anyhow::{Result, bail};
 use gpui_kit::*;
 use workspace::{AppKind, Workspace};
-
-actions!(kantor, [Quit]);
 
 struct Args {
     app: Option<AppKind>,
@@ -71,11 +70,8 @@ fn main() {
         theme::init(cx);
         sheets_ui::init(cx);
 
-        cx.bind_keys([
-            KeyBinding::new("ctrl-q", Quit, None),
-            KeyBinding::new("super-q", Quit, None),
-        ]);
-        cx.on_action(|_: &Quit, cx| cx.quit());
+        actions::bind_keys(cx);
+        cx.on_action(|_: &actions::Quit, cx| cx.quit());
 
         let options = WindowOptions {
             app_id: Some("kantor".into()),
@@ -83,6 +79,12 @@ fn main() {
                 title: Some("Kantor".into()),
                 ..Default::default()
             }),
+            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                None,
+                size(px(1280.), px(800.)),
+                cx,
+            ))),
+            window_min_size: Some(size(px(720.), px(480.))),
             ..Default::default()
         };
 

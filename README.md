@@ -28,6 +28,9 @@ This installs `~/.local/bin/kantor`, a **Kantor** launcher (the suite's Home scr
 | Commit / cancel | `Enter` (moves down) / `Esc`; clicking another cell also commits |
 | Clear a cell | `Delete` |
 | Open / Save / Save as | `Ctrl`/`Super` + `O` / `S` / `Shift+S` |
+| Command palette | `Ctrl K` (or `Ctrl Shift P`) |
+| New spreadsheet / Open / Close tab | `Ctrl N` / `Ctrl O` / `Ctrl W` |
+| Next / previous tab | `Ctrl Tab` / `Ctrl Shift Tab` |
 | Quit | `Ctrl`/`Super` + `Q` |
 
 Edits happen in the formula bar for now (an in-cell editor is planned). With an input method such as fcitx5, press `Enter` first, then compose in the bar.
@@ -50,11 +53,17 @@ Expect `target/` to reach 10–20 GB and the first build to need plenty of RAM.
 
 ```
 crates/
-  kantor         binary: CLI, suite shell (Home screen), Omarchy theme -> GPUI theme
+  kantor         binary: CLI, suite shell (tabs, Home, command palette, status bar)
+  kantor_ui      design system: metrics, colour tokens from Omarchy, cached views
+  kantor_core    shared non-GPUI pieces (fuzzy search; later commands/undo/settings)
   kantor_theme   Omarchy palette parser (no GPUI)
   sheets_engine  IronCalc wrapper: open/save xlsx, cells, formulas (no GPUI)
   sheets_ui      grid, formula bar, sheet tabs
+vendor/
+  gpui-pre-wgpu  GPUI's wgpu renderer with memory patches for 8 GB Apple Silicon
 ```
+
+The shell's structure and styling follow [Voltrus Tools](https://github.com/VoltrusID/voltrus-explorers) (see `docs/reference-voltrus-tools.md`).
 
 More crates (`docs_*`, `slides_*`, `kantor_ooxml`, `kantor_pdf`, …) arrive with their milestones.
 

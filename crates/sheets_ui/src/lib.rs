@@ -13,17 +13,17 @@ extern crate gpui_kit as gpui;
 use std::path::PathBuf;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _,
-    button::{Button, ButtonVariants as _},
-    h_flex,
+    ActiveTheme as _, Sizable as _, h_flex,
     input::{self, Input, InputEvent, InputState},
     table::{Column, DataTable, TableDelegate, TableEvent, TableState},
     v_flex,
 };
+use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{Workbook, cell_name, column_name};
 
-actions!(sheets, [Open, Save, SaveAs]);
+actions!(sheets, [Save, SaveAs]);
 
 const KEY_CONTEXT: &str = "KantorSheets";
 const MIN_ROWS: u32 = 1000;
@@ -33,8 +33,6 @@ const MIN_COLS: u32 = 26;
 pub fn init(cx: &mut App) {
     let ctx = Some(KEY_CONTEXT);
     cx.bind_keys([
-        KeyBinding::new("ctrl-o", Open, ctx),
-        KeyBinding::new("super-o", Open, ctx),
         KeyBinding::new("ctrl-s", Save, ctx),
         KeyBinding::new("super-s", Save, ctx),
         KeyBinding::new("ctrl-shift-s", SaveAs, ctx),
@@ -370,6 +368,48 @@ impl SheetsView {
         self.focus_grid(window, cx);
     }
 
+    /// Status line for the app's status bar.
+    pub fn status(&self) -> SharedString {
+        self.status.clone()
+    }
+
+    /// The selected cell's name, e.g. `B7`.
+    pub fn cell_ref(&self) -> String {
+        cell_name(self.selected.0, self.selected.1)
+    }
+
+    /// File name for tabs, e.g. `budget.xlsx`.
+    pub fn doc_name(&self, cx: &App) -> String {
+        self.table.read(cx).delegate().book.title()
+    }
+
+    /// Path of the open file, if it has been saved.
+    pub fn path(&self, cx: &App) -> Option<PathBuf> {
+        self.table
+            .read(cx)
+            .delegate()
+            .book
+            .path()
+            .map(|p| p.to_path_buf())
+    }
+
+    pub fn is_dirty(&self, cx: &App) -> bool {
+        self.table.read(cx).delegate().book.is_dirty()
+    }
+
+    /// Give keyboard focus to the grid.
+    pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus_grid(window, cx);
+    }
+
+    pub fn save_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save(&Save, window, cx);
+    }
+
+    pub fn save_doc_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_as(&SaveAs, window, cx);
+    }
+
     pub fn title(&self, cx: &App) -> String {
         let book = &self.table.read(cx).delegate().book;
         let dirty = if book.is_dirty() { "• " } else { "" };
@@ -400,25 +440,6 @@ impl SheetsView {
             Err(err) => self.status = format!("{err:#}").into(),
         }
         cx.notify();
-    }
-
-    fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Open spreadsheet".into()),
-        });
-        cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(paths))) = paths.await else {
-                return;
-            };
-            let Some(path) = paths.into_iter().next() else {
-                return;
-            };
-            let _ = this.update_in(cx, |this, window, cx| this.open_path(path, window, cx));
-        })
-        .detach();
     }
 
     fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
@@ -480,64 +501,91 @@ impl SheetsView {
     }
 
     fn render_sheet_tabs(&self, cx: &mut Context<Self>) -> Div {
+        let t = tokens(cx);
         let grid = self.table.read(cx).delegate();
         let active = grid.sheet;
         let names = grid.book.sheet_names();
         h_flex()
-            .gap_1()
+            .gap(SPACE_1)
             .children(names.into_iter().enumerate().map(|(ix, name)| {
                 let ix = ix as u32;
                 let view = cx.entity().downgrade();
-                let button = Button::new(("sheet-tab", ix as usize)).label(name).xsmall();
-                let button = if ix == active {
-                    button.primary()
-                } else {
-                    button.ghost()
-                };
-                button.on_click(move |_, window, cx| {
-                    let _ = view.update(cx, |this, cx| this.select_sheet(ix, window, cx));
-                })
+                let selected = ix == active;
+                div()
+                    .id(("sheet-tab", ix as usize))
+                    .h(CONTROL_SM)
+                    .px(SPACE_5)
+                    .flex()
+                    .items_center()
+                    .rounded(RADIUS_SM)
+                    .text_size(FONT_SMALL)
+                    .font_weight(FontWeight::MEDIUM)
+                    .cursor_pointer()
+                    .when_else(
+                        selected,
+                        |d| {
+                            d.bg(t.bg)
+                                .border_1()
+                                .border_color(t.border_strong)
+                                .text_color(t.fg)
+                        },
+                        |d| d.text_color(t.fg_muted).hover(|s| s.bg(t.hover)),
+                    )
+                    .child(name)
+                    .on_click(move |_, window, cx| {
+                        let _ = view.update(cx, |this, cx| this.select_sheet(ix, window, cx));
+                    })
             }))
     }
 }
 
 impl Render for SheetsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (row, col) = self.selected;
-        let theme = cx.theme();
-        let (bg, fg, border, muted_fg, bar_bg, accent) = (
-            theme.background,
-            theme.foreground,
-            theme.border,
-            theme.muted_foreground,
-            theme.title_bar,
-            theme.primary,
-        );
+        let t = tokens(cx);
         let tabs = self.render_sheet_tabs(cx);
         let editing = self.editing.is_some();
 
         v_flex()
             .key_context(KEY_CONTEXT)
-            .on_action(cx.listener(Self::open))
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
             .size_full()
-            .bg(bg)
-            .text_color(fg)
-            .text_sm()
-            // Formula bar
+            .bg(t.bg)
+            .text_color(t.fg)
+            .text_size(FONT_BODY)
+            // Formula bar: name box + input
             .child(
                 h_flex()
-                    .gap_2()
-                    .px_2()
-                    .py_1()
+                    .flex_none()
+                    .h(CONTROL_LG + SPACE_3)
+                    .gap(SPACE_4)
+                    .px(SPACE_4)
+                    .bg(t.chrome)
                     .border_b_1()
-                    .border_color(border)
+                    .border_color(t.border)
                     .child(
                         div()
+                            .flex_none()
                             .w(px(72.))
-                            .text_color(if editing { accent } else { muted_fg })
-                            .child(SharedString::from(cell_name(row, col))),
+                            .h(CONTROL_MD)
+                            .px(SPACE_4)
+                            .flex()
+                            .items_center()
+                            .rounded(RADIUS_SM)
+                            .bg(t.surface)
+                            .border_1()
+                            .border_color(if editing { t.accent } else { t.border })
+                            .text_size(FONT_SMALL)
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(if editing { t.accent } else { t.fg_muted })
+                            .child(SharedString::from(self.cell_ref())),
+                    )
+                    .child(
+                        div()
+                            .text_size(FONT_EMPHASIS)
+                            .italic()
+                            .text_color(t.fg_dim)
+                            .child("fx"),
                     )
                     .child(
                         div()
@@ -552,25 +600,18 @@ impl Render for SheetsView {
                     .flex_1()
                     .min_h_0()
                     .on_key_down(cx.listener(Self::on_grid_key))
-                    .child(DataTable::new(&self.table).bordered(false)),
+                    .child(DataTable::new(&self.table).bordered(false).small()),
             )
-            // Sheet tabs + status
+            // Sheet tabs
             .child(
                 h_flex()
-                    .justify_between()
-                    .gap_2()
-                    .px_2()
-                    .py_1()
+                    .flex_none()
+                    .h(CONTROL_LG)
+                    .px(SPACE_4)
+                    .bg(t.chrome)
                     .border_t_1()
-                    .border_color(border)
-                    .bg(bar_bg)
-                    .child(tabs)
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted_fg)
-                            .child(self.status.clone()),
-                    ),
+                    .border_color(t.border)
+                    .child(tabs),
             )
     }
 }

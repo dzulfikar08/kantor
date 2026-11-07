@@ -10,6 +10,7 @@ repository.workspace = true
 anyhow.workspace = true
 gpui-kit.workspace = true
 log.workspace = true
+kantor_ui.workspace = true
 sheets_engine.workspace = true
 
 [lints]

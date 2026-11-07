@@ -167,6 +167,13 @@ pub fn omarchy_theme_dir() -> Option<PathBuf> {
         .filter(|d| d.join("colors.toml").is_file())
 }
 
+/// Name of the active Omarchy theme (e.g. `vantablack`), if any.
+pub fn theme_name() -> Option<String> {
+    let name = std::fs::read_to_string(omarchy_current_dir()?.join("theme.name")).ok()?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
 /// A cheap token that changes whenever the theme changes. Poll it to live-reload.
 ///
 /// Uses `theme.generation` (bumped by `omarchy theme set`), falling back to the

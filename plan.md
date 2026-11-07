@@ -250,6 +250,8 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 7. ☐ Open issues for every remaining M0 checkbox.
 8. ☐ Text layout spike (parley vs GPUI text), built and benchmarked in CI; numbers and decision in `docs/decisions/0001-text-engine.md`.
 9. ☐ Corpus: 10 files of each format; a CI job producing LibreOffice-headless reference PDFs.
+10. ✅ Shell and styling modelled on Voltrus Tools (`docs/reference-voltrus-tools.md`): `kantor_ui` metrics + Omarchy-derived tokens, tab strip as titlebar, status bar, Ctrl+K command palette with fuzzy search, cached chrome views. Still to adopt: sidebar/inspector panels, split panes, saved workspace, responsive toolbars.
+11. ✅ Renderer memory patch: vendored `gpui-pre-wgpu` allocates path textures only when used, no path MSAA by default.
 
 ## 12. Open questions
 

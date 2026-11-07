@@ -11,7 +11,9 @@ default-run = "kantor"
 anyhow.workspace = true
 env_logger.workspace = true
 gpui-kit.workspace = true
+kantor_core.workspace = true
 kantor_theme.workspace = true
+kantor_ui.workspace = true
 log.workspace = true
 sheets_ui.workspace = true
 

@@ -1,0 +1,10 @@
+[package]
+name = "kantor_core"
+description = "Kantor shared model pieces (no GPUI): fuzzy search, later commands/undo/settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
