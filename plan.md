@@ -26,7 +26,7 @@ Status: **M0 nearly done; Sheets MVP (M1) started**. Written 2026-11-07, last up
 **Next up, in order** (each item ends with a green CI and a nightly to try on the Mac):
 1. **Confirm on the Mac:** fractional scale 1.6 looks sharp, fcitx5 typing in the formula bar, RSS with a 10k-cell sheet (< 150 MB target), long session with Helium open (memory patch).
 2. ✅ **Unsaved-changes prompt** (Save / Don't Save / Cancel) when closing a pane or tab, quitting (Ctrl+Q), or closing the window from Hyprland. Save stores each dirty document in turn, untitled ones via Save As, and closes only if all were saved. ☐ Try it on the Mac (Hyprland's close-window path is untested).
-3. **Sheets undo/redo** — switch `sheets_engine` from `Model` to IronCalc's `UserModel` (has undo/redo built in); bind Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y.
+3. ✅ **Sheets undo/redo**: `sheets_engine` runs on IronCalc's `UserModel`; Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y in the grid (the formula bar keeps its own text undo), plus palette commands. "Unsaved" follows the undo history, so undoing back to the saved state is clean again.
 4. **Copy/paste** of cells and ranges as TSV (to/from browser and Excel), Ctrl+C/X/V; multi-cell selection (shift+arrows / drag).
 5. **In-cell editor** overlay (edit inside the cell, not only in the formula bar), with IME support.
 6. **Formatting basics**: bold/italic (Ctrl+B/I — kept free on purpose), number formats, alignment, column widths/row heights saved to xlsx; a per-pane toolbar that goes icon-only when narrow.
@@ -290,6 +290,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 11. ✅ Renderer memory patch: vendored `gpui-pre-wgpu` allocates path textures only when used, no path MSAA by default.
 12. ✅ Fixes after first use on the Mac: typing directly into cells; palette rows fill the panel width.
 13. ✅ Unsaved-changes prompt on close and quit (`crates/kantor/src/workspace/closing.rs`).
+14. ✅ Undo/redo for cell edits (IronCalc `UserModel`); dirty state tracked as a position in the history.
 
 ## 12. Open questions
 

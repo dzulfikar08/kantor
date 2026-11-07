@@ -50,6 +50,18 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.save_doc_as(w, cx)),
     },
     Command {
+        title: "Undo",
+        detail: "Last cell edit",
+        keys: "Ctrl Z",
+        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.undo_doc(w, cx)),
+    },
+    Command {
+        title: "Redo",
+        detail: "Last undone edit",
+        keys: "Ctrl Shift Z",
+        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.redo_doc(w, cx)),
+    },
+    Command {
         title: "Toggle Sidebar",
         detail: "Open documents, recent files",
         keys: "Ctrl Shift E",

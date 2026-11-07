@@ -25,9 +25,11 @@ use gpui_kit::*;
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{Workbook, cell_name, column_name};
 
-actions!(sheets, [Save, SaveAs]);
+actions!(sheets, [Save, SaveAs, Undo, Redo]);
 
 const KEY_CONTEXT: &str = "KantorSheets";
+/// The grid, not the formula bar: there Ctrl+Z undoes typing instead.
+const GRID_CONTEXT: &str = "KantorSheetsGrid";
 const MIN_ROWS: u32 = 1000;
 const MIN_COLS: u32 = 26;
 /// Below this pane width the formula bar drops its labels.
@@ -61,6 +63,11 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("super-s", Save, ctx),
         KeyBinding::new("ctrl-shift-s", SaveAs, ctx),
         KeyBinding::new("super-shift-s", SaveAs, ctx),
+        KeyBinding::new("ctrl-z", Undo, Some(GRID_CONTEXT)),
+        KeyBinding::new("super-z", Undo, Some(GRID_CONTEXT)),
+        KeyBinding::new("ctrl-shift-z", Redo, Some(GRID_CONTEXT)),
+        KeyBinding::new("super-shift-z", Redo, Some(GRID_CONTEXT)),
+        KeyBinding::new("ctrl-y", Redo, Some(GRID_CONTEXT)),
     ]);
 }
 
@@ -347,6 +354,51 @@ impl SheetsView {
         if let Err(err) = self.set_cell(row, col, "", cx) {
             self.status = format!("{err:#}").into();
         }
+        self.load_selected_into_formula(window, cx);
+        self.update_title(window, cx);
+        cx.notify();
+    }
+
+    pub fn undo_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.undo(&Undo, window, cx);
+    }
+
+    pub fn redo_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.redo(&Redo, window, cx);
+    }
+
+    fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
+        self.step_history(false, window, cx);
+    }
+
+    fn redo(&mut self, _: &Redo, window: &mut Window, cx: &mut Context<Self>) {
+        self.step_history(true, window, cx);
+    }
+
+    /// Undo (or redo) one workbook edit and refresh everything showing it.
+    fn step_history(&mut self, redo: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            return;
+        }
+        let result = self.table.update(cx, |table, cx| {
+            let grid = table.delegate_mut();
+            let res = if redo {
+                grid.book.redo()
+            } else {
+                grid.book.undo()
+            };
+            grid.resize();
+            table.refresh(cx);
+            cx.notify();
+            res
+        });
+        self.status = match (result, redo) {
+            (Ok(true), false) => "Undone".into(),
+            (Ok(true), true) => "Redone".into(),
+            (Ok(false), false) => "Nothing to undo".into(),
+            (Ok(false), true) => "Nothing to redo".into(),
+            (Err(err), _) => format!("{err:#}").into(),
+        };
         self.load_selected_into_formula(window, cx);
         self.update_title(window, cx);
         cx.notify();
@@ -686,6 +738,9 @@ impl Render for SheetsView {
                 div()
                     .flex_1()
                     .min_h_0()
+                    .key_context(GRID_CONTEXT)
+                    .on_action(cx.listener(Self::undo))
+                    .on_action(cx.listener(Self::redo))
                     .on_key_down(cx.listener(Self::on_grid_key))
                     .child(DataTable::new(&self.table).bordered(false).small()),
             )

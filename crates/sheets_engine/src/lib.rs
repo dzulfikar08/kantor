@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result, anyhow, bail};
 use ironcalc::export::save_xlsx_to_writer;
 use ironcalc::import::load_from_xlsx;
-use ironcalc_base::Model;
+use ironcalc_base::UserModel;
 use ironcalc_base::expressions::utils::number_to_column;
 
 const LOCALE: &str = "en";
@@ -23,21 +23,64 @@ pub const MAX_ROWS: u32 = 1_048_576;
 pub const MAX_COLS: u32 = 16_384;
 
 /// An open spreadsheet document.
+///
+/// Edits go through IronCalc's [`UserModel`], which records each one for
+/// undo/redo. Whether there are unsaved changes is tracked as a position in
+/// that history: every state gets an id, and the document is dirty when the
+/// current id differs from the one last saved. So undoing back to the saved
+/// state makes it clean again.
 pub struct Workbook {
-    model: Model<'static>,
+    model: UserModel<'static>,
     path: Option<PathBuf>,
-    dirty: bool,
+    history: Revisions,
+}
+
+/// Ids of the states reachable by undo and redo, mirroring IronCalc's stacks.
+#[derive(Default)]
+struct Revisions {
+    current: u64,
+    saved: u64,
+    next: u64,
+    undo: Vec<u64>,
+    redo: Vec<u64>,
+}
+
+impl Revisions {
+    fn edited(&mut self) {
+        self.next += 1;
+        self.undo.push(self.current);
+        self.current = self.next;
+        self.redo.clear();
+    }
+
+    fn undone(&mut self) {
+        if let Some(prev) = self.undo.pop() {
+            self.redo.push(self.current);
+            self.current = prev;
+        }
+    }
+
+    fn redone(&mut self) {
+        if let Some(next) = self.redo.pop() {
+            self.undo.push(self.current);
+            self.current = next;
+        }
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.current != self.saved
+    }
 }
 
 impl Workbook {
     /// A new, empty workbook with one sheet.
     pub fn new_empty() -> Result<Self> {
-        let model = Model::new_empty("Untitled", LOCALE, TIMEZONE, LANGUAGE)
+        let model = UserModel::new_empty("Untitled", LOCALE, TIMEZONE, LANGUAGE)
             .map_err(|e| anyhow!("creating workbook: {e}"))?;
         Ok(Self {
             model,
             path: None,
-            dirty: false,
+            history: Revisions::default(),
         })
     }
 
@@ -58,9 +101,9 @@ impl Workbook {
             .map_err(|e| anyhow!("opening {}: {e}", path.display()))?;
         model.evaluate();
         Ok(Self {
-            model,
+            model: UserModel::from_model(model),
             path: Some(path.to_path_buf()),
-            dirty: false,
+            history: Revisions::default(),
         })
     }
 
@@ -69,7 +112,35 @@ impl Workbook {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.dirty
+        self.history.is_dirty()
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.model.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.model.can_redo()
+    }
+
+    /// Undo the last edit (recalculates). Returns `false` if there was none.
+    pub fn undo(&mut self) -> Result<bool> {
+        if !self.model.can_undo() {
+            return Ok(false);
+        }
+        self.model.undo().map_err(|e| anyhow!("undo: {e}"))?;
+        self.history.undone();
+        Ok(true)
+    }
+
+    /// Redo the last undone edit (recalculates). Returns `false` if there was none.
+    pub fn redo(&mut self) -> Result<bool> {
+        if !self.model.can_redo() {
+            return Ok(false);
+        }
+        self.model.redo().map_err(|e| anyhow!("redo: {e}"))?;
+        self.history.redone();
+        Ok(true)
     }
 
     /// File name for window titles, e.g. `budget.xlsx` or `Untitled`.
@@ -103,7 +174,7 @@ impl Workbook {
         {
             let file =
                 fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
-            let writer = save_xlsx_to_writer(&self.model, BufWriter::new(file))
+            let writer = save_xlsx_to_writer(self.model.get_model(), BufWriter::new(file))
                 .map_err(|e| anyhow!("writing xlsx: {e}"))?;
             writer
                 .into_inner()
@@ -112,7 +183,7 @@ impl Workbook {
         }
         fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))?;
         self.path = Some(path.to_path_buf());
-        self.dirty = false;
+        self.history.saved = self.history.current;
         Ok(())
     }
 
@@ -127,7 +198,7 @@ impl Workbook {
 
     /// `(rows, cols)` spanned by data on `sheet`, counted from `A1`.
     pub fn used_size(&self, sheet: u32) -> (u32, u32) {
-        match self.model.workbook.worksheet(sheet) {
+        match self.model.get_model().workbook.worksheet(sheet) {
             Ok(ws) => {
                 let d = ws.dimension();
                 (d.max_row.max(0) as u32, d.max_column.max(0) as u32)
@@ -146,7 +217,7 @@ impl Workbook {
     /// What the user typed: the formula (`=SUM(A1:A3)`) or the raw value.
     pub fn input(&self, sheet: u32, row: u32, col: u32) -> String {
         self.model
-            .get_localized_cell_content(sheet, row as i32 + 1, col as i32 + 1)
+            .get_cell_content(sheet, row as i32 + 1, col as i32 + 1)
             .unwrap_or_default()
     }
 
@@ -156,10 +227,9 @@ impl Workbook {
             bail!("cell out of range");
         }
         self.model
-            .set_user_input(sheet, row as i32 + 1, col as i32 + 1, value.to_owned())
+            .set_user_input(sheet, row as i32 + 1, col as i32 + 1, value)
             .map_err(|e| anyhow!("{e}"))?;
-        self.model.evaluate();
-        self.dirty = true;
+        self.history.edited();
         Ok(())
     }
 }
@@ -221,6 +291,57 @@ mod tests {
         assert_eq!(back.input(0, 3, 0), "=SUM(A2:A3)");
         assert_eq!(back.sheet_names(), vec!["Sheet1".to_owned()]);
         assert_eq!(back.title(), "rt.xlsx");
+    }
+
+    #[test]
+    fn undo_redo() {
+        let mut wb = Workbook::new_empty().unwrap();
+        assert!(!wb.can_undo());
+        wb.set_input(0, 0, 0, "2").unwrap();
+        wb.set_input(0, 0, 1, "=A1*3").unwrap();
+        wb.set_input(0, 0, 0, "5").unwrap();
+        assert_eq!(wb.display_value(0, 0, 1), "15");
+
+        assert!(wb.undo().unwrap());
+        assert_eq!(wb.input(0, 0, 0), "2");
+        assert_eq!(wb.display_value(0, 0, 1), "6");
+        assert!(wb.can_redo());
+
+        assert!(wb.redo().unwrap());
+        assert_eq!(wb.display_value(0, 0, 1), "15");
+        assert!(!wb.redo().unwrap());
+
+        assert!(wb.undo().unwrap());
+        assert!(wb.undo().unwrap());
+        assert!(wb.undo().unwrap());
+        assert_eq!(wb.input(0, 0, 0), "");
+        assert!(!wb.undo().unwrap());
+    }
+
+    #[test]
+    fn dirty_follows_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("d.xlsx");
+        let mut wb = Workbook::new_empty().unwrap();
+        wb.set_input(0, 0, 0, "1").unwrap();
+        assert!(wb.is_dirty());
+        wb.save_as(&path).unwrap();
+        assert!(!wb.is_dirty());
+
+        wb.set_input(0, 0, 0, "2").unwrap();
+        assert!(wb.is_dirty());
+        wb.undo().unwrap();
+        assert!(!wb.is_dirty(), "undo back to the saved state is clean");
+        wb.undo().unwrap();
+        assert!(wb.is_dirty(), "undo past the save is dirty");
+        wb.redo().unwrap();
+        assert!(!wb.is_dirty());
+
+        // A new edit after undo drops the redo branch; the saved state stays reachable only by undo.
+        wb.undo().unwrap();
+        wb.set_input(0, 0, 0, "3").unwrap();
+        assert!(wb.is_dirty());
+        assert!(!wb.can_redo());
     }
 
     #[test]
