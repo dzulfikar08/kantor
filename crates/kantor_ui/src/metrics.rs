@@ -54,6 +54,16 @@ pub const PALETTE_THEME_ROW_HEIGHT: Pixels = px(50.);
 pub const PALETTE_FOOTER_HEIGHT: Pixels = px(34.);
 pub const PALETTE_MAX_ROWS: usize = 10;
 
+// Sheets grid
+/// Width of a cell gridline.
+pub const GRID_LINE: Pixels = px(1.);
+/// Width of the active cell's outline (and of the in-cell editor's border).
+pub const CELL_OUTLINE: Pixels = px(2.);
+/// The fill handle, a square at the selection's bottom-right corner.
+pub const FILL_HANDLE: Pixels = px(6.);
+/// Width of the row-number gutter.
+pub const ROW_GUTTER_WIDTH: Pixels = px(52.);
+
 // Docs page view
 /// Space around and between pages on the desk, in unzoomed page px.
 pub const PAGE_GAP: f32 = 24.;

@@ -45,6 +45,12 @@ pub struct Tokens {
     pub paper: Hsla,
     pub paper_ink: Hsla,
     pub paper_selection: Hsla,
+    /// Sheets: cell gridlines (quiet, but visible on both dark and light),
+    /// the column-header row and row-number gutter, and those headers for
+    /// the selected rows/columns (opaque, so text over them stays crisp).
+    pub grid_line: Hsla,
+    pub grid_header: Hsla,
+    pub grid_header_active: Hsla,
 }
 
 impl Global for Tokens {}
@@ -81,6 +87,12 @@ pub enum Elevation {
 impl Tokens {
     pub fn from_palette(p: &Palette) -> Self {
         let on_bg = |a: f32| c(mix(p.background, p.foreground, a));
+        // Sheets headers sit between chrome and surface, a step above the cells.
+        let header = mix(
+            p.background,
+            p.foreground,
+            if p.dark { 0.06 } else { 0.045 },
+        );
         let (chrome, surface, elevated, border, border_strong) = if p.dark {
             (
                 on_bg(0.03),
@@ -135,6 +147,9 @@ impl Tokens {
             paper: c(0xffffff),
             paper_ink: c(0x111111),
             paper_selection: alpha(p.accent, 0.30),
+            grid_line: if p.dark { on_bg(0.12) } else { on_bg(0.14) },
+            grid_header: c(header),
+            grid_header_active: c(mix(header, p.accent, if p.dark { 0.22 } else { 0.18 })),
         }
     }
 
@@ -222,13 +237,15 @@ pub fn apply_palette(p: &Palette, cx: &mut App) {
         k.tab_active_foreground = t.fg;
 
         k.table = t.bg;
-        k.table_head = t.surface;
+        // The only DataTable is the Sheets grid, which draws its own active
+        // cell (an outline, no fill), gridlines and header highlights.
+        k.table_head = t.grid_header;
         k.table_head_foreground = t.fg_muted;
         k.table_even = t.bg;
         k.table_hover = solid_hover;
-        k.table_active = t.selected;
+        k.table_active = Hsla::transparent_black();
         k.table_active_border = t.accent;
-        k.table_row_border = c(mix(p.background, p.foreground, 0.07));
+        k.table_row_border = t.grid_line;
 
         k.list = t.bg;
         k.list_head = t.surface;
@@ -242,4 +259,40 @@ pub fn apply_palette(p: &Palette, cx: &mut App) {
         k.scrollbar_thumb_hover = alpha(p.foreground, 0.38);
         k.window_border = t.border;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn light() -> Palette {
+        Palette {
+            dark: false,
+            background: 0xffffff,
+            foreground: 0x1f1f1f,
+            accent: 0x1a73e8,
+            ..Palette::default()
+        }
+    }
+
+    /// Gridlines and headers must stand apart from the cells in both modes.
+    #[std::prelude::v1::test]
+    fn grid_tokens_differ_from_cells() {
+        for p in [Palette::default(), light()] {
+            let t = Tokens::from_palette(&p);
+            let l = |h: Hsla| h.l;
+            assert!(
+                (l(t.grid_line) - l(t.bg)).abs() > 0.05,
+                "grid line, dark={}",
+                p.dark
+            );
+            assert!(
+                (l(t.grid_header) - l(t.bg)).abs() > 0.02,
+                "header, dark={}",
+                p.dark
+            );
+            assert_ne!(t.grid_header_active, t.grid_header);
+            assert_eq!(t.grid_header_active.a, 1.0);
+        }
+    }
 }
