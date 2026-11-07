@@ -12,7 +12,10 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use ironcalc::export::save_xlsx_to_writer;
 use ironcalc::import::load_from_xlsx;
 use ironcalc_base::UserModel;
+use ironcalc_base::expressions::types::Area;
 use ironcalc_base::expressions::utils::number_to_column;
+
+pub mod tsv;
 
 const LOCALE: &str = "en";
 const TIMEZONE: &str = "UTC";
@@ -232,6 +235,128 @@ impl Workbook {
         self.history.edited();
         Ok(())
     }
+
+    /// The inputs of `range` (formulas as typed) as tab-separated text, the
+    /// way spreadsheets copy cells to the clipboard.
+    pub fn range_tsv(&self, sheet: u32, range: CellRange) -> String {
+        let rows: Vec<Vec<String>> = (range.top..=range.bottom)
+            .map(|row| {
+                (range.left..=range.right)
+                    .map(|col| self.input(sheet, row, col))
+                    .collect()
+            })
+            .collect();
+        tsv::format(&rows)
+    }
+
+    /// Clear the contents of `range` (styles stay), as one undo step.
+    pub fn clear_range(&mut self, sheet: u32, range: CellRange) -> Result<()> {
+        if range.bottom >= MAX_ROWS || range.right >= MAX_COLS {
+            bail!("range out of bounds");
+        }
+        self.model
+            .range_clear_contents(&range.area(sheet))
+            .map_err(|e| anyhow!("{e}"))?;
+        self.history.edited();
+        Ok(())
+    }
+
+    /// Paste tab-separated text with its top-left cell at `(row, col)`, as one
+    /// undo step. Each cell is taken as user input, so `=formulas` stay
+    /// formulas (their references are not shifted). Short rows are padded with
+    /// empty cells, so the whole pasted rectangle is replaced. Returns the
+    /// pasted range, or `None` if the text had no cells.
+    pub fn paste_tsv(
+        &mut self,
+        sheet: u32,
+        row: u32,
+        col: u32,
+        text: &str,
+    ) -> Result<Option<CellRange>> {
+        let rows = tsv::parse(text);
+        let width = rows.iter().map(Vec::len).max().unwrap_or(0);
+        if rows.is_empty() || width == 0 {
+            return Ok(None);
+        }
+        let range = CellRange {
+            top: row,
+            left: col,
+            bottom: row + rows.len() as u32 - 1,
+            right: col + width as u32 - 1,
+        };
+        if range.bottom >= MAX_ROWS || range.right >= MAX_COLS {
+            bail!(
+                "pasting {} × {} cells at {} goes past the sheet's edge",
+                rows.len(),
+                width,
+                cell_name(row, col)
+            );
+        }
+        // IronCalc parses this back with a strict reader; see `format_rect_quoted`.
+        let csv = tsv::format_rect_quoted(&rows, width);
+        // `paste_csv_string` ends by selecting the pasted range in IronCalc's
+        // own view state, which fails (after recording the history entry) if
+        // that view's sheet and cell are elsewhere. Point the view at the
+        // target first.
+        self.model
+            .set_selected_sheet(sheet)
+            .and_then(|()| self.model.set_selected_cell(row as i32 + 1, col as i32 + 1))
+            .map_err(|e| anyhow!("{e}"))?;
+        self.model
+            .paste_csv_string(&range.area(sheet), &csv)
+            .map_err(|e| anyhow!("{e}"))?;
+        self.history.edited();
+        Ok(Some(range))
+    }
+}
+
+/// A rectangle of cells, 0-based and inclusive (`top..=bottom`, `left..=right`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CellRange {
+    pub top: u32,
+    pub left: u32,
+    pub bottom: u32,
+    pub right: u32,
+}
+
+impl CellRange {
+    /// The range spanned by two corner cells `(row, col)`, in either order.
+    pub fn from_corners(a: (u32, u32), b: (u32, u32)) -> Self {
+        Self {
+            top: a.0.min(b.0),
+            left: a.1.min(b.1),
+            bottom: a.0.max(b.0),
+            right: a.1.max(b.1),
+        }
+    }
+
+    pub fn contains(&self, row: u32, col: u32) -> bool {
+        (self.top..=self.bottom).contains(&row) && (self.left..=self.right).contains(&col)
+    }
+
+    pub fn is_single(&self) -> bool {
+        self.top == self.bottom && self.left == self.right
+    }
+
+    /// `A1` for one cell, `A1:C4` for a range.
+    pub fn name(&self) -> String {
+        let start = cell_name(self.top, self.left);
+        if self.is_single() {
+            start
+        } else {
+            format!("{start}:{}", cell_name(self.bottom, self.right))
+        }
+    }
+
+    fn area(&self, sheet: u32) -> Area {
+        Area {
+            sheet,
+            row: self.top as i32 + 1,
+            column: self.left as i32 + 1,
+            width: (self.right - self.left) as i32 + 1,
+            height: (self.bottom - self.top) as i32 + 1,
+        }
+    }
 }
 
 /// `0 -> "A"`, `25 -> "Z"`, `26 -> "AA"`.
@@ -342,6 +467,87 @@ mod tests {
         wb.set_input(0, 0, 0, "3").unwrap();
         assert!(wb.is_dirty());
         assert!(!wb.can_redo());
+    }
+
+    #[test]
+    fn ranges() {
+        let r = CellRange::from_corners((3, 2), (0, 0));
+        assert_eq!(r.name(), "A1:C4");
+        assert!(r.contains(3, 2) && r.contains(0, 0) && !r.contains(4, 0));
+        assert_eq!(CellRange::from_corners((1, 1), (1, 1)).name(), "B2");
+    }
+
+    #[test]
+    fn copy_range_as_tsv() {
+        let mut wb = Workbook::new_empty().unwrap();
+        wb.set_input(0, 0, 0, "Item").unwrap();
+        wb.set_input(0, 0, 1, "2").unwrap();
+        wb.set_input(0, 1, 1, "=B1*2").unwrap();
+        wb.set_input(0, 1, 0, "two\nlines").unwrap();
+        let r = CellRange::from_corners((0, 0), (1, 2));
+        assert_eq!(wb.range_tsv(0, r), "Item\t2\t\n\"two\nlines\"\t=B1*2\t");
+    }
+
+    #[test]
+    fn paste_is_one_undo_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.xlsx");
+        let mut wb = Workbook::new_empty().unwrap();
+        wb.set_input(0, 5, 5, "old").unwrap();
+        wb.set_input(0, 6, 6, "keep?").unwrap();
+        wb.save_as(&path).unwrap();
+
+        // Ragged rows, CRLF, a quoted multi-line cell and a formula.
+        let text = "1\t2\r\n\"a\nb\"\r\n=F6+F7\t\t\"x\"\"y\"\r\n";
+        let pasted = wb.paste_tsv(0, 5, 5, text).unwrap().unwrap();
+        assert_eq!(pasted, CellRange::from_corners((5, 5), (7, 7)));
+        assert_eq!(wb.input(0, 5, 5), "1");
+        assert_eq!(wb.input(0, 5, 6), "2");
+        assert_eq!(wb.input(0, 6, 5), "a\nb");
+        assert_eq!(
+            wb.input(0, 6, 6),
+            "",
+            "short rows clear the rest of the rectangle"
+        );
+        assert_eq!(wb.input(0, 7, 5), "=F6+F7");
+        assert_eq!(wb.input(0, 7, 7), "x\"y");
+        assert!(wb.is_dirty());
+
+        assert!(wb.undo().unwrap());
+        assert_eq!(wb.input(0, 5, 5), "old");
+        assert_eq!(wb.input(0, 6, 6), "keep?");
+        assert_eq!(wb.input(0, 7, 5), "");
+        assert!(!wb.is_dirty(), "one undo returns to the saved state");
+        assert!(wb.redo().unwrap());
+        assert_eq!(wb.input(0, 6, 5), "a\nb");
+
+        assert_eq!(wb.paste_tsv(0, 0, 0, "").unwrap(), None);
+        assert!(wb.paste_tsv(0, MAX_ROWS - 1, 0, "a\nb").is_err());
+    }
+
+    #[test]
+    fn paste_formula_recalculates() {
+        let mut wb = Workbook::new_empty().unwrap();
+        wb.paste_tsv(0, 0, 0, "2\t3\n=A1*B1").unwrap();
+        assert_eq!(wb.display_value(0, 1, 0), "6");
+    }
+
+    #[test]
+    fn clear_range_is_one_undo_step() {
+        let mut wb = Workbook::new_empty().unwrap();
+        wb.paste_tsv(0, 0, 0, "1\t2\n3\t4").unwrap();
+        wb.set_input(0, 0, 2, "=A1+B2").unwrap();
+        wb.clear_range(0, CellRange::from_corners((0, 0), (1, 1)))
+            .unwrap();
+        assert_eq!(wb.input(0, 1, 1), "");
+        assert_eq!(wb.display_value(0, 0, 2), "0");
+        assert!(wb.undo().unwrap());
+        assert_eq!(wb.input(0, 1, 1), "4");
+        assert_eq!(wb.display_value(0, 0, 2), "5");
+        assert!(wb.undo().unwrap()); // the formula
+        assert!(wb.undo().unwrap()); // the paste
+        assert!(!wb.can_undo());
+        assert!(!wb.is_dirty());
     }
 
     #[test]
