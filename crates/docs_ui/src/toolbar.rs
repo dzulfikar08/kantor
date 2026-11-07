@@ -4,7 +4,11 @@
 
 use docs_engine::{Align, ListKind, TableEdit, Toggle};
 use gpui_kit::assets::IconName as Lucide;
-use gpui_kit::component::{h_flex, tooltip::Tooltip};
+use gpui_kit::component::{
+    Sizable as _,
+    button::{Button, ButtonVariants as _},
+    h_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::components::icon_button;
@@ -21,10 +25,10 @@ fn tool(
     active: bool,
     run: Run,
     cx: &mut Context<DocsView>,
-) -> Stateful<Div> {
+) -> Button {
     let view = cx.entity().downgrade();
     icon_button(id, icon, active, cx)
-        .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
+        .tooltip(tip)
         .on_click(move |_, window, cx| {
             let _ = view.update(cx, |v, cx| {
                 run(v, window, cx);
@@ -53,7 +57,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
     let table_button = {
         let v = cx.entity().downgrade();
         icon_button("docs-table", Lucide::Table, false, cx)
-            .tooltip(|window, cx| Tooltip::new("Insert table").build(window, cx))
+            .tooltip("Insert table")
             .on_click(move |ev, _, cx| {
                 let at = ev.position();
                 let _ = v.update(cx, |v, cx| v.toggle_table_picker(at, cx));
@@ -61,20 +65,16 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
     };
     let reset = {
         let view = cx.entity().downgrade();
-        div()
-            .id("docs-zoom-reset")
-            .flex_none()
+        Button::new("docs-zoom-reset")
+            .ghost()
+            .xsmall()
+            .tab_stop(false)
             .h(CONTROL_SM)
             .px(SPACE_3)
-            .flex()
-            .items_center()
-            .rounded(RADIUS_MD)
             .text_size(FONT_SMALL)
             .text_color(t.fg_muted)
-            .cursor_pointer()
-            .hover(|s| s.bg(t.hover).text_color(t.fg))
-            .tooltip(|window, cx| Tooltip::new("Actual size  Ctrl+0").build(window, cx))
-            .child(zoom_label)
+            .tooltip("Actual size · Ctrl+0")
+            .label(zoom_label)
             .on_click(move |_, window, cx| {
                 let _ = view.update(cx, |v, cx| {
                     v.set_zoom(1.0, cx);
@@ -93,7 +93,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-bold",
             Lucide::Bold,
-            "Bold  Ctrl+B",
+            "Bold · Ctrl+B",
             view.is_on(Toggle::Bold),
             |v, w, cx| v.toggle_doc(Toggle::Bold, w, cx),
             cx,
@@ -101,7 +101,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-italic",
             Lucide::Italic,
-            "Italic  Ctrl+I",
+            "Italic · Ctrl+I",
             view.is_on(Toggle::Italic),
             |v, w, cx| v.toggle_doc(Toggle::Italic, w, cx),
             cx,
@@ -109,7 +109,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-underline",
             Lucide::Underline,
-            "Underline  Ctrl+U",
+            "Underline · Ctrl+U",
             view.is_on(Toggle::Underline),
             |v, w, cx| v.toggle_doc(Toggle::Underline, w, cx),
             cx,
@@ -118,7 +118,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-normal",
             Lucide::Pilcrow,
-            "Normal text  Ctrl+Alt+0",
+            "Normal text · Ctrl+Alt+0",
             is_style(None),
             |v, w, cx| v.set_style_doc(None, w, cx),
             cx,
@@ -126,7 +126,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-h1",
             Lucide::Heading1,
-            "Heading 1  Ctrl+Alt+1",
+            "Heading 1 · Ctrl+Alt+1",
             is_style(Some("Heading1")),
             |v, w, cx| v.set_style_doc(Some("Heading1"), w, cx),
             cx,
@@ -134,7 +134,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-h2",
             Lucide::Heading2,
-            "Heading 2  Ctrl+Alt+2",
+            "Heading 2 · Ctrl+Alt+2",
             is_style(Some("Heading2")),
             |v, w, cx| v.set_style_doc(Some("Heading2"), w, cx),
             cx,
@@ -142,7 +142,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-h3",
             Lucide::Heading3,
-            "Heading 3  Ctrl+Alt+3",
+            "Heading 3 · Ctrl+Alt+3",
             is_style(Some("Heading3")),
             |v, w, cx| v.set_style_doc(Some("Heading3"), w, cx),
             cx,
@@ -151,7 +151,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-left",
             Lucide::TextAlignStart,
-            "Align left  Ctrl+L",
+            "Align left · Ctrl+L",
             align == Align::Left,
             |v, w, cx| v.set_align_doc(Align::Left, w, cx),
             cx,
@@ -159,7 +159,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-center",
             Lucide::TextAlignCenter,
-            "Center  Ctrl+E",
+            "Center · Ctrl+E",
             align == Align::Center,
             |v, w, cx| v.set_align_doc(Align::Center, w, cx),
             cx,
@@ -167,7 +167,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-right",
             Lucide::TextAlignEnd,
-            "Align right  Ctrl+R",
+            "Align right · Ctrl+R",
             align == Align::Right,
             |v, w, cx| v.set_align_doc(Align::Right, w, cx),
             cx,
@@ -175,7 +175,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-justify",
             Lucide::TextAlignJustify,
-            "Justify  Ctrl+J",
+            "Justify · Ctrl+J",
             align == Align::Justify,
             |v, w, cx| v.set_align_doc(Align::Justify, w, cx),
             cx,
@@ -184,7 +184,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-bullets",
             Lucide::List,
-            "Bulleted list  Ctrl+Shift+8",
+            "Bulleted list · Ctrl+Shift+8",
             list == Some(ListKind::Bullet),
             |v, w, cx| v.toggle_list_doc(ListKind::Bullet, w, cx),
             cx,
@@ -192,7 +192,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-numbered",
             Lucide::ListOrdered,
-            "Numbered list  Ctrl+Shift+7",
+            "Numbered list · Ctrl+Shift+7",
             list == Some(ListKind::Numbered),
             |v, w, cx| v.toggle_list_doc(ListKind::Numbered, w, cx),
             cx,
@@ -200,7 +200,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-outdent",
             Lucide::ListIndentDecrease,
-            "Decrease list level  Shift+Tab",
+            "Decrease list level · Shift+Tab",
             false,
             |v, w, cx| v.list_level_doc(-1, w, cx),
             cx,
@@ -208,7 +208,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-indent",
             Lucide::ListIndentIncrease,
-            "Increase list level  Tab",
+            "Increase list level · Tab",
             false,
             |v, w, cx| v.list_level_doc(1, w, cx),
             cx,
@@ -270,7 +270,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-zoom-out",
             Lucide::ZoomOut,
-            "Zoom out  Ctrl+-",
+            "Zoom out · Ctrl+-",
             false,
             |v, _, cx| v.zoom_by(1.0 / ZOOM_STEP, cx),
             cx,
@@ -279,7 +279,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         .child(tool(
             "docs-zoom-in",
             Lucide::ZoomIn,
-            "Zoom in  Ctrl+=",
+            "Zoom in · Ctrl+=",
             false,
             |v, _, cx| v.zoom_by(ZOOM_STEP, cx),
             cx,

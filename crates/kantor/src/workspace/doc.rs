@@ -103,6 +103,15 @@ impl DocView {
         both!(self, cx, |v| v.doc_name(cx))
     }
 
+    /// Name the document shows while it has no file (`Untitled 2.xlsx`).
+    pub fn set_untitled_name(&self, name: String, cx: &mut App) {
+        match self {
+            Self::Sheets(e) => e.update(cx, |v, cx| v.set_untitled_name(name, cx)),
+            Self::Docs(e) => e.update(cx, |v, cx| v.set_untitled_name(name, cx)),
+            Self::Slides(e) => e.update(cx, |v, cx| v.set_untitled_name(name, cx)),
+        }
+    }
+
     pub fn path(&self, cx: &App) -> Option<PathBuf> {
         both!(self, cx, |v| v.path(cx))
     }

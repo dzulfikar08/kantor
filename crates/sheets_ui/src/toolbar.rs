@@ -11,11 +11,10 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
-    tooltip::Tooltip,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use kantor_ui::components::icon_button;
+use kantor_ui::components::{IconButtonExt as _, icon_button};
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{CellStyle, HAlign, NumberFormat};
 
@@ -103,16 +102,11 @@ fn apply(view: &WeakEntity<SheetsView>, format: Format, window: &mut Window, cx:
     let _ = view.update(cx, |view, cx| view.format_doc(format, window, cx));
 }
 
-fn tool_button(tool: &Tool, style: &CellStyle, cx: &mut Context<SheetsView>) -> Stateful<Div> {
+fn tool_button(tool: &Tool, style: &CellStyle, cx: &mut Context<SheetsView>) -> Button {
     let view = cx.entity().downgrade();
     let format = tool.format;
-    let tip: SharedString = if tool.keys.is_empty() {
-        tool.label.into()
-    } else {
-        format!("{}  {}", tool.label, tool.keys).into()
-    };
     icon_button(tool.id, tool.icon, is_on(format, style), cx)
-        .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+        .tip(tool.label, Some(tool.keys))
         .on_click(move |_, window, cx| apply(&view, format, window, cx))
 }
 

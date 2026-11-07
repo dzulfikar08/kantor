@@ -1,6 +1,9 @@
 //! Small stateless pieces styled from the tokens.
 
 use gpui_kit::component::Sizable as _;
+use gpui_kit::component::button::{
+    Button, ButtonCustomVariant, ButtonRounded, ButtonVariants as _,
+};
 use gpui_kit::*;
 
 use crate::metrics::*;
@@ -37,27 +40,65 @@ pub fn dot(color: Hsla) -> Div {
 }
 
 /// A square icon button (22 px), `active` shows the selected state.
+///
+/// Built on GPUI Kit's `Button` so its tooltip goes through the window's
+/// tooltip overlay; give it one with [`IconButtonExt::tip`].
 pub fn icon_button(
     id: impl Into<ElementId>,
     icon: impl Into<gpui_kit::component::Icon>,
     active: bool,
     cx: &App,
-) -> Stateful<Div> {
+) -> Button {
     let t = tokens(cx);
-    let base = div()
-        .id(id)
+    let colors = ButtonCustomVariant::new(cx)
+        .color(if active {
+            t.selected
+        } else {
+            Hsla::transparent_black()
+        })
+        .foreground(if active { t.fg } else { t.fg_muted })
+        .hover(if active { t.selected } else { t.hover })
+        .active(t.selected);
+    Button::new(id)
+        .custom(colors)
+        .tab_stop(false)
+        .rounded(ButtonRounded::Size(RADIUS_MD))
         .flex_none()
         .size(CONTROL_SM)
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(RADIUS_MD)
-        .cursor_pointer();
-    let base = if active {
-        base.bg(t.selected).text_color(t.fg)
-    } else {
-        base.text_color(t.fg_muted)
-            .hover(|s| s.bg(t.hover).text_color(t.fg))
-    };
-    base.child(gpui_kit::component::Icon::new(icon).with_size(ICON_MD))
+        .p_0()
+        .cursor_pointer()
+        .child(gpui_kit::component::Icon::new(icon).with_size(ICON_MD))
+}
+
+/// Tooltip text for a control: the action, then its shortcut if it has one
+/// (`Bold · Ctrl+B`).
+pub fn tip_text(label: &str, shortcut: Option<&str>) -> String {
+    match shortcut {
+        Some(keys) if !keys.is_empty() => format!("{label} · {keys}"),
+        _ => label.to_owned(),
+    }
+}
+
+/// Tooltips for [`icon_button`]s and other GPUI Kit buttons.
+pub trait IconButtonExt {
+    /// Show `label` and, if given, its keyboard `shortcut` on hover.
+    fn tip(self, label: &str, shortcut: Option<&str>) -> Self;
+}
+
+impl IconButtonExt for Button {
+    fn tip(self, label: &str, shortcut: Option<&str>) -> Self {
+        self.tooltip(tip_text(label, shortcut))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tip_text;
+
+    #[std::prelude::v1::test]
+    fn tip_text_adds_the_shortcut_when_there_is_one() {
+        assert_eq!(tip_text("Bold", Some("Ctrl+B")), "Bold · Ctrl+B");
+        assert_eq!(tip_text("Insert table", None), "Insert table");
+        assert_eq!(tip_text("Strikethrough", Some("")), "Strikethrough");
+    }
 }

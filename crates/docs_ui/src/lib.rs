@@ -330,6 +330,9 @@ impl Geometry {
 /// A Docs document view.
 pub struct DocsView {
     doc: Document,
+    /// Name shown while the document has no file (`Untitled 2.docx`), given
+    /// by the shell so new documents are numbered across the session.
+    untitled_name: Option<String>,
     sel: Selection,
     /// Remembered x (page coordinates) for repeated Up/Down.
     goal_x: Option<f32>,
@@ -399,6 +402,7 @@ impl DocsView {
         let focus = cx.focus_handle();
         let mut this = Self {
             doc,
+            untitled_name: None,
             sel: Selection::default(),
             goal_x: None,
             typing_props: None,
@@ -874,7 +878,21 @@ impl DocsView {
     // ── shell API (tabs, status bar, inspector, close prompt) ──────────────
 
     pub fn doc_name(&self, _: &App) -> String {
-        self.doc.title()
+        self.name()
+    }
+
+    /// Set the name shown while the document has no file.
+    pub fn set_untitled_name(&mut self, name: String, cx: &mut Context<Self>) {
+        self.untitled_name = Some(name);
+        cx.notify();
+    }
+
+    /// The file name, or the shell-given name while there is no file.
+    fn name(&self) -> String {
+        match &self.untitled_name {
+            Some(name) if self.doc.path().is_none() => name.clone(),
+            _ => self.doc.title(),
+        }
     }
 
     pub fn path(&self, _: &App) -> Option<PathBuf> {
@@ -887,7 +905,7 @@ impl DocsView {
 
     pub fn title(&self, _: &App) -> String {
         let dirty = if self.doc.is_dirty() { "• " } else { "" };
-        format!("{dirty}{} — Kantor Docs", self.doc.title())
+        format!("{dirty}{} — Kantor Docs", self.name())
     }
 
     fn update_title(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -931,7 +949,7 @@ impl DocsView {
             .unwrap_or_else(|| "Normal".to_owned());
         let r = self.doc.resolved_at(self.sel.head);
         DocInfo {
-            name: self.doc.title(),
+            name: self.name(),
             path: self.doc.path().map(|p| p.to_path_buf()),
             dirty: self.doc.is_dirty(),
             pages: self.laid.paged.pages.len(),
@@ -996,7 +1014,11 @@ impl DocsView {
             .map(|p| p.to_path_buf())
             .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
             .unwrap_or_else(|| PathBuf::from("."));
-        let name = self.doc.suggested_file_name();
+        let name = if self.doc.path().is_none() {
+            self.name()
+        } else {
+            self.doc.suggested_file_name()
+        };
         let path = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(mut path))) = path.await else {

@@ -4,7 +4,7 @@ use gpui_kit::component::{IconName, h_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_theme::catalog::ThemeId;
-use kantor_ui::components::{dot, icon_button, kbd};
+use kantor_ui::components::{IconButtonExt as _, dot, icon_button, kbd};
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 
@@ -22,12 +22,12 @@ impl Workspace {
 
         let sidebar_toggle = (!self.ui.sidebar_open).then(|| {
             let entity = entity.clone();
-            icon_button("show-sidebar", IconName::PanelLeft, false, cx).on_click(
-                move |_, window, cx| {
+            icon_button("show-sidebar", IconName::PanelLeft, false, cx)
+                .tip("Show sidebar", Some("Ctrl+Shift+E"))
+                .on_click(move |_, window, cx| {
                     let _ =
                         entity.update(cx, |ws, cx| ws.toggle_sidebar(&ToggleSidebar, window, cx));
-                },
-            )
+                })
         });
 
         let home = {
@@ -138,27 +138,30 @@ impl Workspace {
 
         let new_tab = {
             let entity = entity.clone();
-            icon_button("tab-new", IconName::Plus, false, cx).on_click(move |_, window, cx| {
-                let _ = entity.update(cx, |ws, cx| ws.new_spreadsheet(&NewSpreadsheet, window, cx));
-            })
+            icon_button("tab-new", IconName::Plus, false, cx)
+                .tip("New spreadsheet", Some("Ctrl+N"))
+                .on_click(move |_, window, cx| {
+                    let _ =
+                        entity.update(cx, |ws, cx| ws.new_spreadsheet(&NewSpreadsheet, window, cx));
+                })
         };
 
         let in_doc = self.active.is_some();
         let split_right = {
             let entity = entity.clone();
-            icon_button("split-right", IconName::LayoutDashboard, false, cx).on_click(
-                move |_, window, cx| {
+            icon_button("split-right", IconName::LayoutDashboard, false, cx)
+                .tip("Split right", Some("Ctrl+\\"))
+                .on_click(move |_, window, cx| {
                     let _ = entity.update(cx, |ws, cx| ws.split_right(&SplitRight, window, cx));
-                },
-            )
+                })
         };
         let split_down = {
             let entity = entity.clone();
-            icon_button("split-down", IconName::PanelBottom, false, cx).on_click(
-                move |_, window, cx| {
+            icon_button("split-down", IconName::PanelBottom, false, cx)
+                .tip("Split down", Some("Ctrl+Alt+\\"))
+                .on_click(move |_, window, cx| {
                     let _ = entity.update(cx, |ws, cx| ws.split_down(&SplitDown, window, cx));
-                },
-            )
+                })
         };
         let inspector_toggle = {
             let entity = entity.clone();
@@ -167,6 +170,14 @@ impl Workspace {
                 IconName::PanelRight,
                 self.ui.inspector_open,
                 cx,
+            )
+            .tip(
+                if self.ui.inspector_open {
+                    "Hide inspector"
+                } else {
+                    "Show inspector"
+                },
+                Some("Ctrl+Shift+I"),
             )
             .on_click(move |_, window, cx| {
                 let _ = entity.update(cx, |ws, cx| {
