@@ -152,7 +152,12 @@ impl Workspace {
             .border_1()
             .border_color(border)
             .child(div().w(px(36.)).h(px(6.)).rounded(px(3.)).bg(accent))
-            .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(title))
+            .child(
+                div()
+                    .text_lg()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title),
+            )
             .child(div().text_sm().text_color(muted).child(subtitle))
             .child({
                 let button = Button::new((id, 1usize)).small();

@@ -241,12 +241,7 @@ impl SheetsView {
 
     /// Keys pressed while the grid has focus. Arrow keys, Tab, Home/End and paging
     /// are handled by the table's own bindings before this runs.
-    fn on_grid_key(
-        &mut self,
-        event: &KeyDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_grid_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.editing.is_some() {
             return;
         }
@@ -271,12 +266,7 @@ impl SheetsView {
 
     /// Begin editing the selected cell. `initial` replaces its content (typing
     /// into a cell); `None` keeps the content (Enter/F2/double-click).
-    fn start_edit(
-        &mut self,
-        initial: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn start_edit(&mut self, initial: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         self.editing = Some(self.selected);
         if let Some(text) = initial {
             self.formula
