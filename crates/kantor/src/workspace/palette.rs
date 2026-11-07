@@ -411,6 +411,7 @@ impl Workspace {
             let entity = entity.clone();
             let base = div()
                 .id(("palette-row", ix))
+                .w_full()
                 .h(row_h)
                 .px(SPACE_6)
                 .flex()
@@ -547,6 +548,7 @@ impl Workspace {
         let visible = count.clamp(1, PALETTE_MAX_ROWS) as f32;
         let list = uniform_list("palette-list", count, rows_fn)
             .track_scroll(&palette.scroll)
+            .w_full()
             .h(row_h * visible);
 
         let panel = v_flex()
