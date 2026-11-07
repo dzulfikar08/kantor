@@ -1,0 +1,122 @@
+# Versioned releases. Push a tag `vX.Y.Z` that matches [workspace.package] version in
+# Cargo.toml and has a `## [X.Y.Z]` section in CHANGELOG.md:
+#   git tag -a v0.1.0 -m "Kantor 0.1.0" && git push origin v0.1.0
+# Produces kantor-X.Y.Z-{x86_64,aarch64}-linux.tar.gz + SHA256SUMS on a GitHub Release
+# whose notes are that CHANGELOG section. (The rolling nightly lives in build.yml.)
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  check:
+    name: check tag, version, changelog
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Tag matches Cargo.toml
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          cargo_version="$(awk '/^\[workspace.package\]/{s=1;next} /^\[/{s=0} s && /^version *=/{gsub(/.*= *"|".*/,""); print; exit}' Cargo.toml)"
+          echo "tag=${tag} Cargo.toml=${cargo_version}"
+          if [ -z "$cargo_version" ] || [ "$tag" != "v${cargo_version}" ]; then
+            echo "::error::tag ${tag} does not match workspace version ${cargo_version} in Cargo.toml (expected v${cargo_version})"
+            exit 1
+          fi
+          echo "version=${cargo_version}" >> "$GITHUB_OUTPUT"
+      - name: CHANGELOG has a section for this version
+        run: ./scripts/changelog-section.sh "${{ steps.v.outputs.version }}"
+
+  build:
+    name: build (${{ matrix.arch }})
+    needs: check
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { arch: aarch64, os: ubuntu-24.04-arm }
+          - { arch: x86_64, os: ubuntu-24.04 }
+    runs-on: ${{ matrix.os }}
+    env:
+      NAME: kantor-${{ needs.check.outputs.version }}-${{ matrix.arch }}-linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: ./scripts/ci-deps.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+          cache-on-failure: true
+      # Same build as the nightly: release profile, vendored memory-patched gpui-pre-wgpu
+      # via [patch.crates-io]. --locked: a release must build from the committed lockfile.
+      - run: cargo build --release --locked -p kantor
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          out="$(target/release/kantor --version)"
+          echo "$out"
+          case "$out" in *"${{ needs.check.outputs.version }}"*) ;; *) echo "::error::--version does not report the release version"; exit 1 ;; esac
+      - name: Package
+        run: |
+          ./scripts/package.sh target/release/kantor "dist/${NAME}"
+          tar -tzf "dist/${NAME}.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: dist/${{ env.NAME }}.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: [check, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum kantor-*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 2
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          ./scripts/changelog-section.sh "$VERSION" > notes.md
+          {
+            echo
+            echo "## Install"
+            echo
+            echo '```sh'
+            echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | KANTOR_VERSION=${GITHUB_REF_NAME} sh"
+            echo '```'
+            echo
+            echo 'Arch Linux: `kantor-bin` from the AUR. Verify downloads with `sha256sum -c SHA256SUMS --ignore-missing`.'
+          } >> notes.md
+          gh release create "$GITHUB_REF_NAME" dist/kantor-*.tar.gz dist/SHA256SUMS \
+            --verify-tag --title "Kantor ${VERSION}" --notes-file notes.md

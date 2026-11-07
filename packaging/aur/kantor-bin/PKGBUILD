@@ -1,0 +1,32 @@
+# Maintainer: Dzulfikar Ats Tsauri <dzulfikar.at at gmail dot com>
+# Source of truth: https://github.com/dzulfikar08/kantor/tree/main/packaging/aur/kantor-bin
+# Refresh pkgver, checksums and .SRCINFO with packaging/aur/update.sh <version>.
+pkgname=kantor-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Small, fast, native office suite (Sheets; Docs and Slides to come) built in Rust on GPUI'
+arch=('x86_64' 'aarch64')
+url='https://github.com/dzulfikar08/kantor'
+license=('AGPL-3.0-or-later')
+# ldd: libc, libm, libgcc_s, libxcb, libxkbcommon, libxkbcommon-x11. dlopen'ed at run time:
+# libwayland-client/-egl, libvulkan.so.1 (wgpu/ash). /etc/fonts/*.conf is parsed (pure Rust).
+depends=('glibc' 'gcc-libs' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'vulkan-icd-loader' 'fontconfig' 'hicolor-icon-theme')
+optdepends=('vulkan-driver: GPU rendering (mesa vulkan-radeon/-intel/-asahi or a vendor driver)'
+            'libglvnd: OpenGL ES fallback renderer when no Vulkan driver is available')
+provides=('kantor')
+conflicts=('kantor')
+options=('!strip' '!debug')
+_base="${url}/releases/download/v${pkgver}"
+source_x86_64=("kantor-${pkgver}-x86_64-linux.tar.gz::${_base}/kantor-${pkgver}-x86_64-linux.tar.gz")
+source_aarch64=("kantor-${pkgver}-aarch64-linux.tar.gz::${_base}/kantor-${pkgver}-aarch64-linux.tar.gz")
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+  cd "kantor-${pkgver}-${CARCH}-linux"
+  install -Dm755 bin/kantor "${pkgdir}/usr/bin/kantor"
+  install -Dm644 -t "${pkgdir}/usr/share/applications" share/applications/*.desktop
+  install -Dm644 -t "${pkgdir}/usr/share/icons/hicolor/scalable/apps" share/icons/hicolor/scalable/apps/*.svg
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}

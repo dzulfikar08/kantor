@@ -15,7 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/dzulfikar08/kantor/main/scripts/ins
 kantor budget.xlsx
 ```
 
-This installs `~/.local/bin/kantor`, a **Kantor** launcher (the suite's Home screen) and a **Kantor Sheets** launcher. Pin a release with `KANTOR_VERSION=v0.1.0`.
+This installs `~/.local/bin/kantor`, a **Kantor** launcher (the suite's Home screen) and a **Kantor Sheets** launcher. Pin a tagged release with `curl -fsSL …/install.sh | KANTOR_VERSION=v0.1.0 sh`. On Arch, `kantor-bin` from the AUR installs the latest release. Changes per release: [CHANGELOG.md](CHANGELOG.md).
 
 ## Using Sheets
 
@@ -37,7 +37,7 @@ This installs `~/.local/bin/kantor`, a **Kantor** launcher (the suite's Home scr
 | Next / previous tab | `Ctrl Tab` / `Ctrl Shift Tab` |
 | Quit | `Ctrl`/`Super` + `Q` |
 
-Edits happen in the formula bar for now (an in-cell editor is planned). With an input method such as fcitx5, press `Enter` first, then compose in the bar.
+Edits happen in the cell itself (synced live with the formula bar). With an input method such as fcitx5, press `Enter` first, then compose.
 
 By default the UI follows your Omarchy theme (live-reloading on `omarchy theme set`); *Choose Theme…* offers your Omarchy themes plus 900+ Ghostty themes. The UI font is SF Pro when installed (never bundled), else Inter / Adwaita Sans. Open tabs, splits and panel sizes are restored on the next launch. Settings: `~/.config/kantor/settings.toml`; session: `~/.local/state/kantor/workspace.json`.
 

@@ -1479,7 +1479,7 @@ dependencies = [
 
 [[package]]
 name = "docs_layout"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "gpui-pre",
  "gpui-pre-wgpu",
@@ -3651,7 +3651,7 @@ dependencies = [
 
 [[package]]
 name = "kantor"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "env_logger",
@@ -3665,7 +3665,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -3676,7 +3676,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_theme"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -3686,7 +3686,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_ui"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "kantor_theme",
@@ -6345,7 +6345,7 @@ dependencies = [
 
 [[package]]
 name = "sheets_engine"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "calamine",
@@ -6358,7 +6358,7 @@ dependencies = [
 
 [[package]]
 name = "sheets_ui"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
