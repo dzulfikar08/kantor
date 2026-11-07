@@ -6,8 +6,17 @@
 //! formatting. Units are the file's: font sizes in half-points, spacing in
 //! twentieths of a point (twips), line spacing in 240ths of a line (auto) or
 //! twips (exact / at least), so values round-trip exactly.
+//!
+//! Inline objects (images, and XML Kantor keeps without modelling it) are
+//! one [`OBJECT`] character in the text whose run carries the [`Object`].
+//! Paragraphs inside a table carry the [`CellRef`] of their cell; the table
+//! structure itself lives in [`crate::table`].
 
 use std::ops::Range;
+use std::sync::Arc;
+
+pub use crate::object::{Image, ImageFormat, Level, OBJECT, Object, Opaque};
+pub use crate::table::CellRef;
 
 use unicode_segmentation::UnicodeSegmentation as _;
 
@@ -67,6 +76,41 @@ impl Fonts {
     }
 }
 
+/// Child elements of a property element (`w:rPr`, `w:pPr`, `w:tcPr`) kept
+/// verbatim: the ones Kantor doesn't model, and modelled ones whose XML
+/// says more than the model holds (e.g. a theme colour). See `docx.rs`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Extras(pub Vec<Arc<str>>);
+
+impl Extras {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn push(&mut self, xml: &str) {
+        self.0.push(xml.into());
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|s| &**s)
+    }
+
+    /// Drop the elements with local name `name`.
+    pub fn remove(&mut self, name: &str) {
+        self.0.retain(|x| element_name(x) != name);
+    }
+}
+
+/// Local name of the first element in an XML fragment (`<w:b/>` → `b`).
+pub fn element_name(xml: &str) -> &str {
+    let s = xml.trim_start().trim_start_matches('<');
+    let end = s
+        .find(|c: char| c.is_whitespace() || c == '/' || c == '>')
+        .unwrap_or(s.len());
+    let name = &s[..end];
+    name.rsplit_once(':').map_or(name, |(_, l)| l)
+}
+
 /// Character formatting. `None` means "inherit from the style".
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct RunProps {
@@ -78,6 +122,10 @@ pub struct RunProps {
     pub underline: Option<bool>,
     /// `RRGGBB`, or `None` for automatic (black).
     pub color: Option<Rgb>,
+    /// Character style id (`w:rStyle`).
+    pub style: Option<String>,
+    /// Kept verbatim (not used by styles or layout).
+    pub extras: Extras,
 }
 
 /// An sRGB colour.
@@ -159,6 +207,41 @@ pub struct LineSpacing {
     pub rule: LineRule,
 }
 
+/// Paragraph indentation (`w:ind`), in twips. Each side inherits separately.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Indent {
+    pub left: Option<i32>,
+    pub right: Option<i32>,
+    /// First-line indent; negative for a hanging indent.
+    pub first: Option<i32>,
+}
+
+impl Indent {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    pub fn overlay(&mut self, o: &Indent) {
+        if o.left.is_some() {
+            self.left = o.left;
+        }
+        if o.right.is_some() {
+            self.right = o.right;
+        }
+        if o.first.is_some() {
+            self.first = o.first;
+        }
+    }
+}
+
+/// List membership (`w:numPr`): a `w:num` id and a level 0–8. Id 0 means
+/// "not a list" (it switches off a list inherited from the style).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct NumRef {
+    pub id: u32,
+    pub level: u8,
+}
+
 /// Paragraph formatting. `None` means "inherit from the style".
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ParaProps {
@@ -169,6 +252,13 @@ pub struct ParaProps {
     pub before: Option<u32>,
     pub after: Option<u32>,
     pub line: Option<LineSpacing>,
+    pub indent: Indent,
+    pub num: Option<NumRef>,
+    pub page_break_before: Option<bool>,
+    /// Ignore spacing between paragraphs of the same style (`w:contextualSpacing`).
+    pub contextual: Option<bool>,
+    /// Kept verbatim (not used by styles or layout).
+    pub extras: Extras,
 }
 
 impl ParaProps {
@@ -186,6 +276,16 @@ impl ParaProps {
         if o.line.is_some() {
             self.line = o.line;
         }
+        self.indent.overlay(&o.indent);
+        if o.num.is_some() {
+            self.num = o.num;
+        }
+        if o.page_break_before.is_some() {
+            self.page_break_before = o.page_break_before;
+        }
+        if o.contextual.is_some() {
+            self.contextual = o.contextual;
+        }
     }
 }
 
@@ -195,14 +295,34 @@ pub struct Run {
     /// Length in bytes of the paragraph text.
     pub len: usize,
     pub props: RunProps,
+    /// The object an [`OBJECT`] character stands for (such a run is exactly
+    /// that one character).
+    pub object: Option<Object>,
+    /// The hyperlink this run is part of: the original `<w:hyperlink …>`
+    /// start tag, written back around consecutive runs with the same link.
+    pub link: Option<Arc<str>>,
+}
+
+impl Run {
+    pub fn text(len: usize, props: RunProps) -> Self {
+        Self {
+            len,
+            props,
+            object: None,
+            link: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Paragraph {
-    /// Text; tabs are `\t`, line breaks (`w:br`) are `\n`.
+    /// Text; tabs are `\t`, line breaks (`w:br`) are U+2028, page breaks
+    /// U+000C, objects [`OBJECT`].
     pub text: String,
     pub runs: Vec<Run>,
     pub props: ParaProps,
+    /// The table cell holding this paragraph (`None` in the body).
+    pub cell: Option<CellRef>,
 }
 
 impl Default for Paragraph {
@@ -219,12 +339,10 @@ impl Paragraph {
     pub fn styled(text: impl Into<String>, props: RunProps) -> Self {
         let text = text.into();
         Self {
-            runs: vec![Run {
-                len: text.len(),
-                props,
-            }],
+            runs: vec![Run::text(text.len(), props)],
             text,
             props: ParaProps::default(),
+            cell: None,
         }
     }
 
@@ -239,11 +357,75 @@ impl Paragraph {
             self.runs.clear();
         }
         self.text.push_str(text);
+        self.runs.push(Run::text(text.len(), props));
+        self.normalize();
+    }
+
+    /// Append text inside a hyperlink (`link` is its start tag).
+    pub fn push_linked(&mut self, text: &str, props: RunProps, link: Option<Arc<str>>) {
+        if self.text.is_empty() {
+            self.runs.clear();
+        }
+        self.text.push_str(text);
         self.runs.push(Run {
-            len: text.len(),
-            props,
+            link,
+            ..Run::text(text.len(), props)
         });
         self.normalize();
+    }
+
+    /// Append an object (one [`OBJECT`] character).
+    pub fn push_object(&mut self, object: Object, props: RunProps, link: Option<Arc<str>>) {
+        if self.text.is_empty() {
+            self.runs.clear();
+        }
+        self.text.push(OBJECT);
+        self.runs.push(Run {
+            len: OBJECT.len_utf8(),
+            props,
+            object: Some(object),
+            link,
+        });
+        self.normalize();
+    }
+
+    /// Insert an object at `offset`.
+    pub fn insert_object(&mut self, offset: usize, object: Object, props: RunProps) {
+        if self.text.is_empty() {
+            self.runs.clear();
+        }
+        self.text.insert(offset, OBJECT);
+        let i = self.split_run_at(offset);
+        self.runs.insert(
+            i,
+            Run {
+                len: OBJECT.len_utf8(),
+                props,
+                object: Some(object),
+                link: None,
+            },
+        );
+        self.normalize();
+    }
+
+    /// The object whose character starts at `offset`.
+    pub fn object_at(&self, offset: usize) -> Option<&Object> {
+        self.run_ranges()
+            .find(|(r, run)| r.start == offset && run.object.is_some())
+            .and_then(|(_, run)| run.object.as_ref())
+    }
+
+    /// Objects with their byte offsets.
+    pub fn objects(&self) -> impl Iterator<Item = (usize, &Object)> {
+        self.run_ranges()
+            .filter_map(|(r, run)| run.object.as_ref().map(|o| (r.start, o)))
+    }
+
+    /// Whether the paragraph is only a block-level object (e.g. a content
+    /// control kept verbatim).
+    pub fn is_block_object(&self) -> bool {
+        self.runs.len() == 1
+            && matches!(&self.runs[0].object, Some(Object::Opaque(o)) if o.level == Level::Block)
     }
 
     /// Runs with their byte ranges.
@@ -283,6 +465,8 @@ impl Paragraph {
                 let right = Run {
                     len: start + len - offset,
                     props: self.runs[i].props.clone(),
+                    object: self.runs[i].object.clone(),
+                    link: self.runs[i].link.clone(),
                 };
                 self.runs[i].len = offset - start;
                 self.runs.insert(i + 1, right);
@@ -299,40 +483,85 @@ impl Paragraph {
         }
         if self.text.is_empty() {
             self.text.push_str(text);
-            self.runs = vec![Run {
-                len: text.len(),
-                props,
-            }];
+            self.runs = vec![Run::text(text.len(), props)];
             return;
         }
+        // Typing inside a hyperlink extends it; at its edges it doesn't.
+        let link = self
+            .run_ranges()
+            .find(|(r, run)| offset > r.start && offset < r.end && run.object.is_none())
+            .and_then(|(_, run)| run.link.clone());
         self.text.insert_str(offset, text);
         let i = self.split_run_at(offset);
         self.runs.insert(
             i,
             Run {
-                len: text.len(),
-                props,
+                link,
+                ..Run::text(text.len(), props)
             },
         );
         self.normalize();
     }
 
+    /// Delete a byte range. Position markers (bookmarks) in it survive at
+    /// the range start: deleting text never drops them.
     pub fn delete(&mut self, range: Range<usize>) {
         if range.is_empty() {
             return;
         }
+        let markers = self.markers_in(range.clone());
         let keep = self.props_at(range.start.max(1).min(self.text.len()));
         let a = self.split_run_at(range.start);
         let b = self.split_run_at(range.end);
         self.runs.drain(a..b);
-        self.text.replace_range(range, "");
+        self.text.replace_range(range.clone(), "");
         if self.text.is_empty() {
-            self.runs = vec![Run {
-                len: 0,
-                props: keep,
-            }];
+            self.runs = vec![Run::text(0, keep)];
         }
         self.normalize();
+        self.insert_runs(range.start, markers);
+    }
+
+    /// Clones of the marker-object runs inside `range`.
+    pub fn markers_in(&self, range: Range<usize>) -> Vec<Run> {
+        self.run_ranges()
+            .filter(|(r, run)| {
+                r.start >= range.start
+                    && r.end <= range.end
+                    && run.object.as_ref().is_some_and(Object::is_marker)
+            })
+            .map(|(_, run)| run.clone())
+            .collect()
+    }
+
+    /// Insert whole object runs (markers) at `offset`.
+    pub fn insert_runs(&mut self, offset: usize, runs: Vec<Run>) {
+        let mut at = offset;
+        for run in runs {
+            if let Some(o) = run.object {
+                if self.text.is_empty() {
+                    self.runs.clear();
+                }
+                self.text.insert(at, OBJECT);
+                let i = self.split_run_at(at);
+                self.runs.insert(
+                    i,
+                    Run {
+                        len: OBJECT.len_utf8(),
+                        props: run.props,
+                        object: Some(o),
+                        link: run.link,
+                    },
+                );
+                at += OBJECT.len_utf8();
+            }
+        }
+        self.normalize();
+    }
+
+    /// Whether the character at `offset` is a position marker.
+    pub fn is_marker_at(&self, offset: usize) -> bool {
+        self.object_at(offset).is_some_and(Object::is_marker)
     }
 
     /// Split at `offset`; `self` keeps the left part, the right part is returned
@@ -343,22 +572,19 @@ impl Paragraph {
         let mut runs = self.runs.split_off(i);
         let text = self.text.split_off(offset);
         if text.is_empty() {
-            runs = vec![Run {
-                len: 0,
-                props: carry.clone(),
-            }];
+            runs = vec![Run::text(0, carry.clone())];
         }
         if self.text.is_empty() {
-            self.runs = vec![Run {
-                len: 0,
-                props: carry,
-            }];
+            self.runs = vec![Run::text(0, carry)];
         }
         let mut right = Paragraph {
             text,
             runs,
             props: self.props.clone(),
+            cell: self.cell,
         };
+        // A section break belongs to the paragraph mark, which moves right.
+        self.props.extras.remove("sectPr");
         right.normalize();
         self.normalize();
         right
@@ -366,6 +592,20 @@ impl Paragraph {
 
     /// Append `other`'s text and runs (keeping `self`'s paragraph formatting).
     pub fn append(&mut self, other: Paragraph) {
+        // Keep a section break that ended the joined paragraph.
+        if !self
+            .props
+            .extras
+            .iter()
+            .any(|x| element_name(x) == "sectPr")
+            && let Some(sect) = other
+                .props
+                .extras
+                .iter()
+                .find(|x| element_name(x) == "sectPr")
+        {
+            self.props.extras.push(sect);
+        }
         if other.text.is_empty() {
             return;
         }
@@ -398,19 +638,25 @@ impl Paragraph {
         if self.text.is_empty() {
             self.runs.truncate(1);
             if self.runs.is_empty() {
-                self.runs.push(Run {
-                    len: 0,
-                    props: RunProps::default(),
-                });
+                self.runs.push(Run::text(0, RunProps::default()));
             }
             self.runs[0].len = 0;
+            self.runs[0].object = None;
+            self.runs[0].link = None;
             return;
         }
         self.runs.retain(|r| r.len > 0);
         let mut out: Vec<Run> = Vec::with_capacity(self.runs.len());
         for run in self.runs.drain(..) {
             match out.last_mut() {
-                Some(last) if last.props == run.props => last.len += run.len,
+                Some(last)
+                    if last.object.is_none()
+                        && run.object.is_none()
+                        && last.props == run.props
+                        && last.link == run.link =>
+                {
+                    last.len += run.len
+                }
                 _ => out.push(run),
             }
         }
@@ -562,6 +808,19 @@ mod tests {
         let right = p.split_off(1);
         assert_eq!(right.text, "");
         assert_eq!(right.runs[0].props, bold());
+    }
+
+    #[test]
+    fn section_break_moves_with_the_paragraph_mark() {
+        let mut p = Paragraph::new("ab");
+        p.props
+            .extras
+            .push("<w:sectPr><w:type w:val=\"nextPage\"/></w:sectPr>");
+        let right = p.split_off(1);
+        assert!(p.props.extras.is_empty());
+        assert_eq!(right.props.extras.0.len(), 1);
+        p.append(right);
+        assert_eq!(p.props.extras.0.len(), 1, "joined back, kept once");
     }
 
     #[test]

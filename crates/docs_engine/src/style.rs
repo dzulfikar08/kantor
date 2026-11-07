@@ -1,10 +1,15 @@
 //! Styles (`styles.xml`) and resolving a run's effective formatting.
 //!
-//! Resolution follows OOXML's order: document defaults, then the paragraph
-//! style's `basedOn` chain from the root down, then direct formatting.
-//! Character styles, toggle-property XOR and table styles aren't modelled.
+//! Resolution follows OOXML's order: document defaults, the table style
+//! (inside a table), the paragraph style's `basedOn` chain from the root
+//! down, the list level's indents, the character style, then direct
+//! formatting. Toggle-property XOR and conditional table formatting
+//! (first row, banding) aren't modelled.
 
-use crate::model::{Align, Fonts, LineRule, LineSpacing, ParaProps, Paragraph, Rgb, RunProps};
+use crate::model::{
+    Align, Fonts, Indent, LineRule, LineSpacing, NumRef, ParaProps, Paragraph, Rgb, RunProps,
+};
+use crate::table::{Borders, CellMargins};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StyleKind {
@@ -27,6 +32,14 @@ pub struct Style {
     pub is_default: bool,
     pub run: RunProps,
     pub para: ParaProps,
+    /// Table styles: borders and cell margins (`w:tblPr`).
+    pub table: Option<TableStyle>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TableStyle {
+    pub borders: Borders,
+    pub cell_margins: Option<CellMargins>,
 }
 
 /// Effective character formatting, ready for layout.
@@ -59,6 +72,14 @@ pub struct ResolvedPara {
     pub space_before_pt: f32,
     pub space_after_pt: f32,
     pub line: ResolvedLine,
+    pub indent_left_pt: f32,
+    pub indent_right_pt: f32,
+    /// First-line indent; negative = hanging.
+    pub first_line_pt: f32,
+    /// The list the paragraph is in (from direct formatting or its style).
+    pub num: Option<NumRef>,
+    pub page_break_before: bool,
+    pub contextual: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -104,6 +125,7 @@ impl StyleSheet {
                 color: Some(color),
                 ..RunProps::default()
             },
+            table: None,
             para: ParaProps {
                 before: Some(before),
                 after: Some(0),
@@ -140,6 +162,17 @@ impl StyleSheet {
                     is_default: true,
                     ..Style::default()
                 },
+                Style {
+                    id: "Hyperlink".into(),
+                    name: "Hyperlink".into(),
+                    kind: StyleKind::Character,
+                    run: RunProps {
+                        color: Some(Rgb([0x05, 0x63, 0xC1])),
+                        underline: Some(true),
+                        ..RunProps::default()
+                    },
+                    ..Style::default()
+                },
                 title,
                 heading("Heading1", "heading 1", 32, 240, blue),
                 heading("Heading2", "heading 2", 26, 40, blue),
@@ -162,11 +195,17 @@ impl StyleSheet {
 
     /// The style chain for a paragraph, root first.
     fn chain(&self, style: Option<&str>) -> Vec<&Style> {
-        let mut out = Vec::new();
-        let mut cur = match style {
+        let start = match style {
             Some(id) => self.get(id).or_else(|| self.default_para_style()),
             None => self.default_para_style(),
         };
+        self.chain_from(start)
+    }
+
+    /// The `basedOn` chain of a style, root first (empty if unknown).
+    fn chain_from<'a>(&'a self, start: Option<&'a Style>) -> Vec<&'a Style> {
+        let mut out = Vec::new();
+        let mut cur = start;
         while let Some(s) = cur {
             if out.len() > 16 || out.iter().any(|o: &&Style| o.id == s.id) {
                 break; // a cycle in a broken file
@@ -197,12 +236,45 @@ impl StyleSheet {
     }
 
     pub fn resolve_para(&self, para: &Paragraph) -> ResolvedPara {
+        self.resolve_para_with(para, None, &|_| None)
+    }
+
+    /// The list a paragraph is in: direct `w:numPr`, else its style's.
+    pub fn effective_num(&self, para: &Paragraph) -> Option<NumRef> {
+        let mut num = None;
+        for s in self.chain(para.props.style.as_deref()) {
+            if s.para.num.is_some() {
+                num = s.para.num;
+            }
+        }
+        if para.props.num.is_some() {
+            num = para.props.num;
+        }
+        num.filter(|n| n.id != 0)
+    }
+
+    /// Effective paragraph formatting inside a table with `table_style`;
+    /// `list_indent` gives a list level's indents (`numbering.xml`).
+    pub fn resolve_para_with(
+        &self,
+        para: &Paragraph,
+        table_style: Option<&str>,
+        list_indent: &dyn Fn(NumRef) -> Option<Indent>,
+    ) -> ResolvedPara {
         let mut p = self.default_para.clone();
+        for s in self.chain_from(table_style.and_then(|t| self.get(t))) {
+            p.overlay(&s.para);
+        }
         for s in self.chain(para.props.style.as_deref()) {
             p.overlay(&s.para);
         }
+        let num = self.effective_num(para);
+        if let Some(ind) = num.and_then(list_indent) {
+            p.indent.overlay(&ind);
+        }
         p.overlay(&para.props);
         let twips_pt = |t: u32| t as f32 / 20.0;
+        let itw = |t: Option<i32>| t.unwrap_or(0) as f32 / 20.0;
         let line = match p.line {
             None => ResolvedLine::Multiple(1.0),
             Some(LineSpacing {
@@ -223,13 +295,49 @@ impl StyleSheet {
             space_before_pt: twips_pt(p.before.unwrap_or(0)),
             space_after_pt: twips_pt(p.after.unwrap_or(0)),
             line,
+            indent_left_pt: itw(p.indent.left),
+            indent_right_pt: itw(p.indent.right),
+            first_line_pt: itw(p.indent.first),
+            num,
+            page_break_before: p.page_break_before.unwrap_or(false),
+            contextual: p.contextual.unwrap_or(false),
         }
+    }
+
+    /// Borders and cell margins of a table style, through `basedOn`.
+    pub fn table_style(&self, id: Option<&str>) -> TableStyle {
+        let mut out = TableStyle::default();
+        for s in self.chain_from(id.and_then(|i| self.get(i))) {
+            if let Some(t) = &s.table {
+                out.borders.overlay(&t.borders);
+                if t.cell_margins.is_some() {
+                    out.cell_margins = t.cell_margins;
+                }
+            }
+        }
+        out
     }
 
     /// Formatting of `run` in `para` after the style chain.
     pub fn resolve_run(&self, para: &Paragraph, run: &RunProps) -> ResolvedRun {
+        self.resolve_run_with(para, run, None)
+    }
+
+    /// Formatting of `run` in `para` inside a table with `table_style`.
+    pub fn resolve_run_with(
+        &self,
+        para: &Paragraph,
+        run: &RunProps,
+        table_style: Option<&str>,
+    ) -> ResolvedRun {
         let mut r = self.default_run.clone();
+        for s in self.chain_from(table_style.and_then(|t| self.get(t))) {
+            r.overlay(&s.run);
+        }
         for s in self.chain(para.props.style.as_deref()) {
+            r.overlay(&s.run);
+        }
+        for s in self.chain_from(run.style.as_deref().and_then(|c| self.get(c))) {
             r.overlay(&s.run);
         }
         r.overlay(run);

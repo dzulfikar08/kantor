@@ -29,7 +29,18 @@ icon_assets!(
         ImagePlus,
         Presentation,
         CopyPlus,
-        SquarePlus
+        SquarePlus,
+        // Docs toolbar
+        List,
+        ListOrdered,
+        ListIndentIncrease,
+        ListIndentDecrease,
+        Table,
+        BetweenHorizontalEnd,
+        BetweenVerticalEnd,
+        Rows3,
+        Columns3,
+        Trash
     ]
 );
 

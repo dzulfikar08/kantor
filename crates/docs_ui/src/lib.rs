@@ -19,6 +19,7 @@
 
 extern crate gpui_kit as gpui;
 
+mod blocks;
 pub mod font_bridge;
 mod input;
 mod toolbar;
@@ -32,10 +33,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use docs_engine::{
-    Align, Document, Position, ResolvedLine, RunProps, Selection, Toggle, font_stack,
+    Align, Document, ListKind, OBJECT, Object, Position, RunProps, Selection, TableEdit, Toggle,
 };
-use docs_layout::parley::{Layout, LineHeight};
-use docs_layout::{Engine, PT, PageSetup, PagedDocument, Rgba as LayoutRgba, Span};
+use docs_layout::{
+    Engine, ObjectKind, PageSetup, PagedDocument, ParaLayout, PlacedObject, RunSource,
+};
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -85,6 +87,20 @@ actions!(
         Newline,
         LineBreak,
         Tab,
+        BackTab,
+        ToggleBullets,
+        ToggleNumbered,
+        IndentList,
+        OutdentList,
+        InsertTable,
+        InsertImage,
+        InsertRowAbove,
+        InsertRowBelow,
+        InsertColumnLeft,
+        InsertColumnRight,
+        DeleteRow,
+        DeleteColumn,
+        DeleteTable,
         Copy,
         Cut,
         Paste,
@@ -146,6 +162,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("enter", Newline, c),
         KeyBinding::new("shift-enter", LineBreak, c),
         KeyBinding::new("tab", Tab, c),
+        KeyBinding::new("shift-tab", BackTab, c),
     ];
     // Shortcuts with the primary modifier: Ctrl, and Super as Mac-style Cmd.
     macro_rules! primary {
@@ -182,6 +199,12 @@ pub fn init(cx: &mut App) {
         "shift-=" => ZoomIn,
         "-" => ZoomOut,
         "0" => ZoomReset,
+        // Word's list shortcuts are Ctrl+Shift+L-ish per locale; Kantor uses
+        // Ctrl+Shift+7 / 8 (Google Docs). Both spellings of the shifted key.
+        "shift-7" => ToggleNumbered,
+        "&" => ToggleNumbered,
+        "shift-8" => ToggleBullets,
+        "*" => ToggleBullets,
     );
     cx.bind_keys(keys);
 }
@@ -227,6 +250,8 @@ pub struct DocInfo {
     /// Font and size at the caret, e.g. `Calibri 11 pt`.
     pub font: String,
     pub unsupported: Vec<String>,
+    /// Content kept on save but only shown as placeholders.
+    pub preserved: Vec<String>,
 }
 
 /// The laid-out document plus the source text of each paragraph (font
@@ -313,7 +338,12 @@ pub struct DocsView {
     /// IME composition: byte range in the caret's paragraph.
     marked: Option<Range<usize>>,
     laid: Rc<Laid>,
-    cache: HashMap<u64, Arc<Layout<LayoutRgba>>>,
+    cache: HashMap<u64, Arc<ParaLayout>>,
+    /// Decoded-on-demand pictures by relationship id.
+    images: HashMap<String, Arc<gpui_kit::Image>>,
+    /// The insert-table grid: where it opened (window coordinates) and the
+    /// size under the pointer.
+    table_picker: Option<(Point<Pixels>, (usize, usize))>,
     engine: Rc<RefCell<Engine>>,
     bridge: Rc<RefCell<FontBridge>>,
     zoom: f32,
@@ -329,53 +359,6 @@ pub struct DocsView {
     status: SharedString,
 }
 
-fn rgba(c: docs_engine::Rgb) -> LayoutRgba {
-    let [r, g, b] = c.0;
-    LayoutRgba([r, g, b, 255])
-}
-
-/// The layout paragraph for a model paragraph: every run fully resolved.
-fn layout_paragraph(doc: &Document, p: &docs_engine::Paragraph) -> docs_layout::Paragraph {
-    let styles = &doc.styles;
-    let rp = styles.resolve_para(p);
-    let first = styles.resolve_run(p, &p.runs[0].props);
-    // Tabs have no stops yet: lay them out as one space (same byte length,
-    // so offsets still match the model).
-    let mut lp = docs_layout::Paragraph::new(p.text.replace('\t', " "));
-    lp.family = font_stack(&first.font);
-    lp.size_pt = first.size_pt;
-    lp.line_height = Some(match rp.line {
-        ResolvedLine::Multiple(m) => LineHeight::MetricsRelative(m),
-        ResolvedLine::Exact(pt) => LineHeight::Absolute(pt * PT),
-        // Approximation: no "at least" in parley; take the larger of the
-        // minimum and a single line.
-        ResolvedLine::AtLeast(pt) => LineHeight::Absolute(pt.max(first.size_pt * 1.22) * PT),
-    });
-    lp.space_before_pt = rp.space_before_pt;
-    lp.space_after_pt = rp.space_after_pt;
-    lp.align = match rp.align {
-        Align::Left => docs_layout::Align::Start,
-        Align::Center => docs_layout::Align::Center,
-        Align::Right => docs_layout::Align::End,
-        Align::Justify => docs_layout::Align::Justify,
-    };
-    for (range, run) in p.run_ranges() {
-        let r = styles.resolve_run(p, &run.props);
-        lp.spans.push(Span {
-            range,
-            bold: r.bold,
-            italic: r.italic,
-            underline: r.underline,
-            size_pt: Some(r.size_pt),
-            color: Some(rgba(r.color)),
-            family: Some(font_stack(&r.font)),
-        });
-    }
-    // Empty paragraphs take their height from the paragraph defaults above.
-    lp.spans.retain(|s| !s.range.is_empty());
-    lp
-}
-
 /// Cache key: everything that affects shaping and line breaking.
 fn layout_key(p: &docs_layout::Paragraph, width: f32) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -385,6 +368,10 @@ fn layout_key(p: &docs_layout::Paragraph, width: f32) -> u64 {
     format!("{:?}", p.line_height).hash(&mut h);
     (p.align as u8).hash(&mut h);
     width.to_bits().hash(&mut h);
+    for v in [p.indent_left_pt, p.indent_right_pt, p.first_line_pt] {
+        v.to_bits().hash(&mut h);
+    }
+    format!("{:?}{:?}", p.marker, p.objects).hash(&mut h);
     for s in &p.spans {
         s.range.hash(&mut h);
         (s.bold, s.italic, s.underline).hash(&mut h);
@@ -393,20 +380,6 @@ fn layout_key(p: &docs_layout::Paragraph, width: f32) -> u64 {
         s.family.hash(&mut h);
     }
     h.finish()
-}
-
-fn page_setup(doc: &Document) -> PageSetup {
-    // Twips to px at 96 dpi.
-    let px = |t: u32| t as f32 / 15.0;
-    let g = doc.page;
-    PageSetup {
-        width: px(g.width),
-        height: px(g.height),
-        margin_top: px(g.margin_top),
-        margin_bottom: px(g.margin_bottom),
-        margin_left: px(g.margin_left),
-        margin_right: px(g.margin_right),
-    }
 }
 
 impl DocsView {
@@ -435,6 +408,8 @@ impl DocsView {
                 texts: Vec::new(),
             }),
             cache: HashMap::new(),
+            images: HashMap::new(),
+            table_picker: None,
             engine,
             bridge,
             zoom: 1.0,
@@ -454,19 +429,14 @@ impl DocsView {
 
     /// Lay out the document again, reusing cached paragraph layouts.
     fn relayout(&mut self) {
-        let setup = page_setup(&self.doc);
-        let width = setup.content_width();
-        let paras: Vec<docs_layout::Paragraph> = self
-            .doc
-            .paragraphs()
-            .iter()
-            .map(|p| layout_paragraph(&self.doc, p))
-            .collect();
+        let setup = blocks::page_setup(&self.doc);
+        let (paras, widths, blocks) = blocks::build(&self.doc);
         let mut engine = self.engine.borrow_mut();
         let mut fresh = HashMap::with_capacity(paras.len());
         let layouts = paras
             .iter()
-            .map(|p| {
+            .zip(&widths)
+            .map(|(p, &width)| {
                 let key = layout_key(p, width);
                 let layout = match self.cache.get(&key) {
                     Some(l) => l.clone(),
@@ -477,7 +447,7 @@ impl DocsView {
             })
             .collect();
         self.cache = fresh;
-        let paged = PagedDocument::paginate(&paras, layouts, setup);
+        let paged = PagedDocument::paginate_blocks(&paras, layouts, &blocks, setup);
         let texts = self
             .doc
             .paragraphs()
@@ -678,7 +648,7 @@ impl DocsView {
             && let Some(props) = &self.typing_props
         {
             let p = self.doc.paragraph(self.sel.head.para);
-            let r = self.doc.styles.resolve_run(p, props);
+            let r = self.doc.resolve_run(p, props);
             return match toggle {
                 Toggle::Bold => r.bold,
                 Toggle::Italic => r.italic,
@@ -700,7 +670,116 @@ impl DocsView {
 
     pub fn current_align(&self) -> Align {
         let p = self.doc.paragraph(self.sel.head.para);
-        self.doc.styles.resolve_para(p).align
+        self.doc.resolve_para(p).align
+    }
+
+    /// The list kind of the paragraph at the caret.
+    pub fn current_list(&self) -> Option<ListKind> {
+        self.doc.list_kind(self.sel.head.para)
+    }
+
+    /// Whether the caret is in a table.
+    pub fn in_table(&self) -> bool {
+        self.doc.cell_at(self.sel.head).is_some()
+    }
+
+    /// Bulleted or numbered list on/off for the selected paragraphs.
+    pub fn toggle_list_doc(&mut self, kind: ListKind, window: &mut Window, cx: &mut Context<Self>) {
+        let sel = self.sel;
+        self.doc.toggle_list(sel, kind);
+        self.edited(sel, window, cx);
+    }
+
+    /// Indent (`+1`) or outdent (`-1`) the selected list items.
+    pub fn list_level_doc(&mut self, delta: i32, window: &mut Window, cx: &mut Context<Self>) {
+        let sel = self.sel;
+        if self.doc.change_list_level(sel, delta) {
+            self.edited(sel, window, cx);
+        }
+    }
+
+    /// Insert a `rows` × `cols` table at the caret.
+    pub fn insert_table_doc(
+        &mut self,
+        rows: usize,
+        cols: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.table_picker = None;
+        match self.doc.insert_table(self.sel, rows, cols) {
+            Some(sel) => self.edited(sel, window, cx),
+            None => {
+                self.status = "Tables inside tables aren't supported yet".into();
+                cx.notify();
+            }
+        }
+    }
+
+    /// Change the structure of the table at the caret.
+    pub fn table_edit_doc(&mut self, edit: TableEdit, window: &mut Window, cx: &mut Context<Self>) {
+        match self.doc.edit_table(self.sel, edit) {
+            Ok(sel) => self.edited(sel, window, cx),
+            Err(msg) => {
+                self.status = msg.into();
+                cx.notify();
+            }
+        }
+    }
+
+    /// Ask for a PNG or JPEG and insert it at the caret.
+    pub fn insert_image_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Insert picture (PNG or JPEG)".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let result = std::fs::read(&path)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|bytes| this.doc.insert_image(this.sel, bytes, &name));
+                match result {
+                    Ok(sel) => this.edited(sel, window, cx),
+                    Err(err) => {
+                        this.status = format!("Can't insert {name}: {err:#}").into();
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Tab: list level, next table cell, or a tab character.
+    fn tab(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let sel = self.sel;
+        let head = sel.head;
+        let at_item_start = self.doc.list_kind(head.para).is_some()
+            && (!sel.is_empty() || {
+                let p = self.doc.paragraph(head.para);
+                p.text[..head.offset].chars().all(|c| c == OBJECT)
+            });
+        if at_item_start {
+            self.list_level_doc(if back { -1 } else { 1 }, window, cx);
+        } else if self.in_table() {
+            if let Some(s) = self.doc.next_cell(sel, !back) {
+                self.edited(s, window, cx);
+            }
+        } else if !back {
+            self.insert("\t", window, cx);
+        }
     }
 
     pub fn toggle_doc(&mut self, toggle: Toggle, window: &mut Window, cx: &mut Context<Self>) {
@@ -862,6 +941,7 @@ impl DocsView {
             style,
             font: format!("{} {} pt", r.font, r.size_pt),
             unsupported: self.doc.unsupported_content().to_vec(),
+            preserved: self.doc.preserved_content().to_vec(),
         }
     }
 
@@ -958,8 +1038,35 @@ impl DocsView {
         Some(self.doc.clamp(Position::new(para, offset)))
     }
 
+    /// The object box under a window point.
+    fn object_at(&self, p: Point<Pixels>) -> Option<PlacedObject> {
+        let g = self.geometry();
+        let paged = &self.laid.paged;
+        let (page, x, y) = g.screen_to_page(p, paged.pages.len());
+        paged.objects(page).into_iter().find(|o| {
+            let [ox, oy, w, h] = o.rect;
+            x >= ox && x <= ox + w && y >= oy && y <= oy + h
+        })
+    }
+
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
+        self.table_picker = None;
+        // A click on a picture or placeholder selects it as one character.
+        if !ev.modifiers.shift
+            && let Some(o) = self.object_at(ev.position)
+        {
+            self.sel = Selection {
+                anchor: Position::new(o.para, o.index),
+                head: Position::new(o.para, o.index + OBJECT.len_utf8()),
+            };
+            self.goal_x = None;
+            self.typing_props = None;
+            self.marked = None;
+            self.dragging = false;
+            cx.notify();
+            return;
+        }
         let Some(pos) = self.hit(ev.position) else {
             return;
         };
@@ -1026,6 +1133,126 @@ impl DocsView {
         cx.notify();
     }
 
+    /// Decode (through GPUI's asset cache) the pictures on visible pages.
+    fn visible_images(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> HashMap<(usize, usize), Arc<RenderImage>> {
+        let mut out = HashMap::new();
+        let laid = self.laid.clone();
+        let paged = &laid.paged;
+        let g = self.geometry();
+        for page in g.visible_pages(paged.pages.len()) {
+            for o in paged.objects(page) {
+                if o.kind != ObjectKind::Image {
+                    continue;
+                }
+                let Some(Object::Image(img)) = self.doc.paragraph(o.para).object_at(o.index) else {
+                    continue;
+                };
+                let image = match self.images.get(&img.rel_id) {
+                    Some(i) => i.clone(),
+                    None => {
+                        let Some(bytes) = self.doc.image_bytes(&img.rel_id) else {
+                            continue;
+                        };
+                        let format = match docs_engine::ImageFormat::sniff(&bytes) {
+                            docs_engine::ImageFormat::Png => ImageFormat::Png,
+                            docs_engine::ImageFormat::Jpeg => ImageFormat::Jpeg,
+                            docs_engine::ImageFormat::Other => continue,
+                        };
+                        let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes.to_vec()));
+                        self.images.insert(img.rel_id.clone(), i.clone());
+                        i
+                    }
+                };
+                if let Some(data) = image.use_render_image(window, cx) {
+                    out.insert((o.para, o.index), data);
+                }
+            }
+        }
+        out
+    }
+
+    fn render_table_picker(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        const N: usize = 8;
+        let (at, (hr, hc)) = self.table_picker?;
+        let t = tokens(cx);
+        let view = cx.entity().downgrade();
+        let mut grid = v_flex().gap(SPACE_1);
+        for r in 1..=N {
+            let mut row = gpui_kit::component::h_flex().gap(SPACE_1);
+            for c in 1..=N {
+                let on = r <= hr && c <= hc;
+                let v = view.clone();
+                let v2 = view.clone();
+                row = row.child(
+                    div()
+                        .id(("docs-table-cell", r * 16 + c))
+                        .size(SPACE_7)
+                        .rounded(RADIUS_SM)
+                        .border_1()
+                        .border_color(if on { t.accent } else { t.border })
+                        .bg(if on { t.accent_soft } else { t.surface })
+                        .on_hover(move |hovered, _, cx| {
+                            if *hovered {
+                                let _ = v.update(cx, |this, cx| {
+                                    if let Some(p) = &mut this.table_picker {
+                                        p.1 = (r, c);
+                                    }
+                                    cx.notify();
+                                });
+                            }
+                        })
+                        .on_click(move |_, window, cx| {
+                            let _ = v2.update(cx, |this, cx| {
+                                this.insert_table_doc(r, c, window, cx);
+                                this.focus(window, cx);
+                            });
+                        }),
+                );
+            }
+            grid = grid.child(row);
+        }
+        let label = if hr > 0 && hc > 0 {
+            format!("{hr} × {hc} table")
+        } else {
+            "Insert table".to_owned()
+        };
+        Some(deferred(
+            anchored().position(at).child(
+                v_flex()
+                    .id("docs-table-picker")
+                    .occlude()
+                    .gap(SPACE_3)
+                    .p(SPACE_4)
+                    .bg(t.elevated)
+                    .border_1()
+                    .border_color(t.border)
+                    .rounded(RADIUS_LG)
+                    .shadow(t.shadow(Elevation::Popover))
+                    .text_size(FONT_SMALL)
+                    .text_color(t.fg_muted)
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                        this.table_picker = None;
+                        cx.notify();
+                    }))
+                    .child(grid)
+                    .child(label),
+            ),
+        ))
+    }
+
+    /// Open (or close) the insert-table grid at a window position.
+    pub fn toggle_table_picker(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+        self.table_picker = match self.table_picker {
+            Some(_) => None,
+            None => Some((at, (0, 0))),
+        };
+        cx.notify();
+    }
+
     fn render_banner(&self, t: &Tokens) -> Option<Div> {
         let what = self.doc.unsupported_content();
         if what.is_empty() {
@@ -1057,6 +1284,11 @@ fn opened_status(doc: &Document) -> String {
     let mut s = format!("Opened {}", doc.title());
     if doc.has_unsupported_content() {
         s.push_str(" (has unsupported content; Save creates a copy)");
+    } else if !doc.preserved_content().is_empty() {
+        s.push_str(&format!(
+            " ({} shown as placeholders, kept as they are when saving)",
+            doc.preserved_content().join(", ")
+        ));
     }
     s
 }
@@ -1073,6 +1305,17 @@ fn group_thousands(n: usize) -> String {
     out
 }
 
+fn layout_color(c: docs_layout::Rgba) -> Hsla {
+    let [r, g, b, a] = c.0;
+    gpui_kit::Rgba {
+        r: r as f32 / 255.,
+        g: g as f32 / 255.,
+        b: b as f32 / 255.,
+        a: a as f32 / 255.,
+    }
+    .into()
+}
+
 macro_rules! listeners {
     ($el:expr, $cx:expr, [$($action:ident => |$this:ident, $window:ident, $c:ident| $body:expr),* $(,)?]) => {
         $el$(.on_action($cx.listener(|$this: &mut DocsView, _: &$action, $window: &mut Window, $c: &mut Context<DocsView>| { $body; })))*
@@ -1082,6 +1325,8 @@ macro_rules! listeners {
 /// What the canvas needs to paint one frame.
 struct Frame {
     laid: Rc<Laid>,
+    /// Decoded pictures on the visible pages, by `(paragraph, byte index)`.
+    images: HashMap<(usize, usize), Arc<RenderImage>>,
     sel: Selection,
     marked: Option<Range<usize>>,
     zoom: f32,
@@ -1131,25 +1376,57 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             for (_, r) in selection.iter().filter(|(p, _)| *p == page) {
                 window.paint_quad(fill(rect(page, *r), f.t.paper_selection));
             }
+            // Table borders (document content: the file's colours).
+            for rule in &paged.pages[page].rules {
+                let mut r = rule.rect;
+                // At least one device pixel at any zoom.
+                r[2] = r[2].max(1.0 / z);
+                r[3] = r[3].max(1.0 / z);
+                window.paint_quad(fill(rect(page, r), layout_color(rule.color)));
+            }
+            // Pictures and placeholders.
+            for o in paged.objects(page) {
+                let b = rect(page, o.rect);
+                let picture = (o.kind == ObjectKind::Image)
+                    .then(|| f.images.get(&(o.para, o.index)))
+                    .flatten();
+                match picture {
+                    Some(data) => {
+                        let _ =
+                            window.paint_image(b, b, Corners::default(), data.clone(), 0, false);
+                    }
+                    None => {
+                        window.paint_quad(fill(b, f.t.paper_selection.opacity(0.35)));
+                        window.paint_quad(outline(
+                            b,
+                            f.t.paper_ink.opacity(0.35),
+                            BorderStyle::Dashed,
+                        ));
+                    }
+                }
+                let selected = start != end
+                    && (start.para, start.offset) <= (o.para, o.index)
+                    && (end.para, end.offset) >= (o.para, o.index + OBJECT.len_utf8());
+                if selected {
+                    window.paint_quad(fill(b, f.t.paper_selection.opacity(0.6)));
+                    window.paint_quad(outline(b, f.t.accent, BorderStyle::Solid));
+                }
+            }
             let mut bridge = f.bridge.borrow_mut();
             for run in paged.glyph_runs(page) {
-                let sample = f
-                    .laid
-                    .texts
-                    .get(run.para)
-                    .and_then(|t| t.get(run.text_range.clone()))
+                let para_text = f.laid.texts.get(run.para).map_or("", String::as_str);
+                let sample = paged
+                    .run_text(&run, para_text)
+                    .get(run.text_range.clone())
                     .unwrap_or_default();
                 let Some(font_id) = bridge.font_id(&run.font, sample, &ts) else {
                     continue;
                 };
-                let [r, gr, b, a] = run.color.0;
-                let color: Hsla = gpui_kit::Rgba {
-                    r: r as f32 / 255.,
-                    g: gr as f32 / 255.,
-                    b: b as f32 / 255.,
-                    a: a as f32 / 255.,
-                }
-                .into();
+                let color: Hsla = match run.source {
+                    // Placeholder labels are Kantor's, not the document's.
+                    RunSource::Label(_) => f.t.paper_ink.opacity(0.6),
+                    _ => layout_color(run.color),
+                };
                 let size = px(run.font_size * z);
                 for glyph in &run.glyphs {
                     let origin = g.page_to_screen(page, glyph.x, glyph.y);
@@ -1193,8 +1470,10 @@ impl Render for DocsView {
             self.reveal_caret.set(false);
             self.scroll_to_caret();
         }
+        let images = self.visible_images(window, cx);
         let frame = Frame {
             laid: self.laid.clone(),
+            images,
             sel: self.sel,
             marked: self.marked.clone(),
             zoom: self.zoom,
@@ -1273,7 +1552,11 @@ impl Render for DocsView {
                 this.sel = Selection { anchor: Position::default(), head: this.doc.end() };
                 cx.notify()
             },
-            Collapse => |this, _w, cx| { let h = this.sel.head; this.move_to(h, false, cx) },
+            Collapse => |this, _w, cx| {
+                this.table_picker = None;
+                let h = this.sel.head;
+                this.move_to(h, false, cx)
+            },
             Backspace => |this, w, cx| { let s = this.doc.backspace(this.sel); this.edited(s, w, cx) },
             Delete => |this, w, cx| { let s = this.doc.delete_forward(this.sel); this.edited(s, w, cx) },
             DeleteWordBack => |this, w, cx| {
@@ -1286,9 +1569,28 @@ impl Render for DocsView {
                 let s = this.doc.delete_selection(this.sel);
                 this.edited(s, w, cx)
             },
-            Newline => |this, w, cx| this.insert("\n", w, cx),
+            Newline => |this, w, cx| {
+                let props = this.typing_props.take();
+                let s = this.doc.newline(this.sel, props);
+                this.marked = None;
+                this.edited(s, w, cx)
+            },
             LineBreak => |this, w, cx| this.insert(&docs_engine::LINE_BREAK.to_string(), w, cx),
-            Tab => |this, w, cx| this.insert("\t", w, cx),
+            Tab => |this, w, cx| this.tab(false, w, cx),
+            BackTab => |this, w, cx| this.tab(true, w, cx),
+            ToggleBullets => |this, w, cx| this.toggle_list_doc(ListKind::Bullet, w, cx),
+            ToggleNumbered => |this, w, cx| this.toggle_list_doc(ListKind::Numbered, w, cx),
+            IndentList => |this, w, cx| this.list_level_doc(1, w, cx),
+            OutdentList => |this, w, cx| this.list_level_doc(-1, w, cx),
+            InsertTable => |this, w, cx| this.insert_table_doc(3, 3, w, cx),
+            InsertImage => |this, w, cx| this.insert_image_doc(w, cx),
+            InsertRowAbove => |this, w, cx| this.table_edit_doc(TableEdit::RowAbove, w, cx),
+            InsertRowBelow => |this, w, cx| this.table_edit_doc(TableEdit::RowBelow, w, cx),
+            InsertColumnLeft => |this, w, cx| this.table_edit_doc(TableEdit::ColumnLeft, w, cx),
+            InsertColumnRight => |this, w, cx| this.table_edit_doc(TableEdit::ColumnRight, w, cx),
+            DeleteRow => |this, w, cx| this.table_edit_doc(TableEdit::DeleteRow, w, cx),
+            DeleteColumn => |this, w, cx| this.table_edit_doc(TableEdit::DeleteColumn, w, cx),
+            DeleteTable => |this, w, cx| this.table_edit_doc(TableEdit::DeleteTable, w, cx),
             Copy => |this, w, cx| this.copy_doc(w, cx),
             Cut => |this, w, cx| this.cut_doc(w, cx),
             Paste => |this, w, cx| this.paste_doc(w, cx),
@@ -1314,6 +1616,7 @@ impl Render for DocsView {
             .child(toolbar::render(self, cx))
             .children(self.render_banner(&t))
             .child(area)
+            .children(self.render_table_picker(cx))
     }
 }
 
@@ -1324,13 +1627,14 @@ mod tests {
 
     fn laid(doc: &Document) -> (Vec<docs_layout::Paragraph>, PagedDocument) {
         let mut engine = Engine::new();
-        let setup = page_setup(doc);
-        let paras: Vec<_> = doc
-            .paragraphs()
+        let setup = blocks::page_setup(doc);
+        let (paras, widths, blocks) = blocks::build(doc);
+        let layouts = paras
             .iter()
-            .map(|p| layout_paragraph(doc, p))
+            .zip(&widths)
+            .map(|(p, w)| Arc::new(engine.layout_paragraph(p, *w)))
             .collect();
-        let paged = engine.layout_document(&paras, setup);
+        let paged = PagedDocument::paginate_blocks(&paras, layouts, &blocks, setup);
         (paras, paged)
     }
 
@@ -1362,13 +1666,42 @@ mod tests {
         );
         let (paras, paged) = laid(&doc);
         assert_eq!(paras[0].spans[0].size_pt, Some(16.0));
-        assert_eq!(paras[1].text, "satu dua tebal", "tab laid out as a space");
+        assert_eq!(
+            paras[1].text, "satu\tdua tebal",
+            "tabs are the layout's job"
+        );
         assert!(paras[1].spans.iter().any(|s| s.bold));
         assert!(!paged.glyph_runs(0).is_empty());
         let w = paged.setup.content_width();
         assert_eq!(layout_key(&paras[1], w), layout_key(&paras[1].clone(), w));
         assert_ne!(layout_key(&paras[0], w), layout_key(&paras[1], w));
         assert_ne!(layout_key(&paras[1], w), layout_key(&paras[1], w + 1.0));
+    }
+
+    #[std::prelude::v1::test]
+    fn pictures_tables_and_lists_reach_the_page() {
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        png.extend(200u32.to_be_bytes());
+        png.extend(100u32.to_be_bytes());
+        png.extend([8, 6, 0, 0, 0]);
+        let mut doc = Document::new();
+        let c = doc.insert_text(Selection::default(), "Lihat ", None);
+        doc.insert_image(c, png, "grafik.png").unwrap();
+        doc.toggle_list(Selection::caret(Position::new(0, 0)), ListKind::Bullet);
+        doc.insert_table(Selection::caret(doc.end()), 2, 2);
+        let (_, paged) = laid(&doc);
+        let objects = paged.objects(0);
+        assert_eq!(objects.len(), 1);
+        assert_eq!(objects[0].kind, ObjectKind::Image);
+        assert!((objects[0].rect[2] - 200.0).abs() < 0.5, "{:?}", objects[0]);
+        assert!(!paged.pages[0].rules.is_empty(), "table borders");
+        assert!(
+            paged
+                .glyph_runs(0)
+                .iter()
+                .any(|r| r.source == RunSource::Marker),
+            "bullet drawn"
+        );
     }
 
     #[std::prelude::v1::test]

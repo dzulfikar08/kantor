@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use docs_layout::{Engine, PageSetup, PagedDocument, sample};
 use krilla::Document;
 use krilla::color::rgb;
-use krilla::geom::Point;
+use krilla::geom::{PathBuilder, Point, Rect};
 use krilla::num::NormalizedF32;
 use krilla::page::PageSettings;
 use krilla::paint::Fill;
@@ -26,6 +26,23 @@ fn write_pdf(doc: &PagedDocument, texts: &[&str]) -> Vec<u8> {
             .expect("valid page size");
         let mut page = pdf.start_page_with(settings);
         let mut surface = page.surface();
+        // Table borders.
+        for rule in &doc.pages[page_ix].rules {
+            let [x, y, w, h] = rule.rect;
+            let [r, g, b, _] = rule.color.0;
+            let mut pb = PathBuilder::new();
+            if let Some(rect) = Rect::from_xywh(x * TO_PT, y * TO_PT, w * TO_PT, h * TO_PT) {
+                pb.push_rect(rect);
+            }
+            if let Some(path) = pb.finish() {
+                surface.set_fill(Some(Fill {
+                    paint: rgb::Color::new(r, g, b).into(),
+                    opacity: NormalizedF32::ONE,
+                    rule: Default::default(),
+                }));
+                surface.draw_path(&path);
+            }
+        }
         for run in doc.glyph_runs(page_ix) {
             let font = fonts
                 .entry((run.font.data.id(), run.font.index))
@@ -64,7 +81,8 @@ fn write_pdf(doc: &PagedDocument, texts: &[&str]) -> Vec<u8> {
                     glyph
                 })
                 .collect();
-            let text = texts[run.para];
+            // List markers and placeholder labels have their own text.
+            let text = doc.run_text(&run, texts[run.para]);
             surface.draw_glyphs(
                 Point::from_xy(run.origin_x * TO_PT, run.baseline * TO_PT),
                 &glyphs,

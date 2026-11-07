@@ -2,18 +2,39 @@
 //! history.
 //!
 //! Every edit is one command, "replace paragraphs `start..start+old.len()`
-//! with `new`", which makes undo/redo generic: undo puts `old` back. Typing
-//! and deleting coalesce into one step per word.
+//! with `new`", which makes undo/redo generic: undo puts `old` back. Table
+//! structure edits also swap the table map (`tables`). Typing and deleting
+//! coalesce into one step per word.
+//!
+//! Containers: the body and every table cell. An edit never merges
+//! paragraphs of different containers; a selection across them is cleared
+//! paragraph by paragraph instead (whole tables inside a body selection
+//! are removed with it).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use crate::docx::{self, Package};
+use crate::docx::{self, Media, Package};
 use crate::model::*;
-use crate::style::{ResolvedRun, StyleSheet};
+use crate::numbering::{LevelDef, Numbering};
+use crate::style::{ResolvedPara, ResolvedRun, StyleSheet};
+use crate::table::{Table, Tables};
 
 /// Line break inside a paragraph (`w:br`). U+2028 is a mandatory break for
 /// the line breaker, so layout needs no special case.
 pub const LINE_BREAK: char = '\u{2028}';
+
+/// Page break inside a paragraph (`w:br w:type="page"`).
+pub const PAGE_BREAK: char = '\u{000C}';
+
+/// A picture inserted in Kantor, written as a new part on save.
+#[derive(Clone, Debug)]
+pub struct NewMedia {
+    pub rel_id: String,
+    pub part: String,
+    pub bytes: Arc<[u8]>,
+}
 
 /// Page size and margins, in twips (1/1440 inch).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,7 +62,7 @@ impl Default for PageGeometry {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Kind {
+pub(crate) enum Kind {
     Typing,
     Deleting,
     /// IME composition: every preedit update and the commit are one step.
@@ -58,6 +79,8 @@ struct Command {
     before: Selection,
     after: Selection,
     kind: Kind,
+    /// Table map before / after (structure edits only).
+    tables: Option<Box<(Tables, Tables)>>,
 }
 
 #[derive(Debug, Default)]
@@ -86,6 +109,8 @@ impl History {
             && !sealed
             && cmd.kind != Kind::Other
             && cmd.kind == last.kind
+            && cmd.tables.is_none()
+            && last.tables.is_none()
             && Some(last.id) != self.saved
             && last.start == cmd.start
             && last.new.len() == 1
@@ -125,24 +150,43 @@ impl Toggle {
     }
 
     pub fn set(self, p: &mut RunProps, on: bool) {
+        // A kept original element (e.g. a double underline) gives way.
         match self {
-            Self::Bold => p.bold = Some(on),
-            Self::Italic => p.italic = Some(on),
-            Self::Underline => p.underline = Some(on),
+            Self::Bold => {
+                p.bold = Some(on);
+                p.extras.remove("b");
+            }
+            Self::Italic => {
+                p.italic = Some(on);
+                p.extras.remove("i");
+            }
+            Self::Underline => {
+                p.underline = Some(on);
+                p.extras.remove("u");
+            }
         }
     }
 }
 
 pub struct Document {
-    paragraphs: Vec<Paragraph>,
+    pub(crate) paragraphs: Vec<Paragraph>,
+    pub(crate) tables: Tables,
     pub styles: StyleSheet,
+    /// List definitions (`numbering.xml`); Kantor only ever adds to them.
+    pub numbering: Numbering,
     pub page: PageGeometry,
     path: Option<PathBuf>,
     /// The `.docx` package this document was read from: Save copies its
     /// parts and regenerates only the body.
-    package: Option<Package>,
+    pub(crate) package: Option<Package>,
+    /// Pictures by relationship id.
+    pub(crate) media: HashMap<String, Media>,
+    /// Pictures inserted since the last save.
+    pub(crate) new_media: Vec<NewMedia>,
     /// Content the model doesn't hold (empty for a fully modelled file).
     unsupported: Vec<String>,
+    /// Content kept verbatim but only shown as a placeholder.
+    preserved: Vec<String>,
     history: History,
 }
 
@@ -157,11 +201,16 @@ impl Document {
     pub fn new() -> Self {
         Self {
             paragraphs: vec![Paragraph::default()],
+            tables: Tables::new(),
             styles: StyleSheet::builtin(),
+            numbering: Numbering::default(),
             page: PageGeometry::default(),
             path: None,
             package: None,
+            media: HashMap::new(),
+            new_media: Vec::new(),
             unsupported: Vec::new(),
+            preserved: Vec::new(),
             history: History::default(),
         }
     }
@@ -181,19 +230,29 @@ impl Document {
             .map_err(|e| anyhow::anyhow!("Can't read {}: {e}", path.display()))?;
         let read = docx::read(bytes)
             .map_err(|e| anyhow::anyhow!("Can't open {}: {e:#}", path.display()))?;
-        Ok(Self {
+        Ok(Self::from_read(read, Some(path.to_path_buf())))
+    }
+
+    /// A document from read `.docx` contents.
+    pub fn from_read(read: docx::Read, path: Option<PathBuf>) -> Self {
+        Self {
             paragraphs: if read.paragraphs.is_empty() {
                 vec![Paragraph::default()]
             } else {
                 read.paragraphs
             },
+            tables: read.tables,
             styles: read.styles,
+            numbering: read.numbering,
             page: read.page,
-            path: Some(path.to_path_buf()),
+            path,
             package: Some(read.package),
+            media: read.media,
+            new_media: Vec::new(),
             unsupported: read.unsupported,
+            preserved: read.preserved,
             history: History::default(),
-        })
+        }
     }
 
     // ── queries ────────────────────────────────────────────────────────────
@@ -262,6 +321,65 @@ impl Document {
         !self.unsupported.is_empty()
     }
 
+    /// Content kept byte for byte on save but shown only as a placeholder
+    /// (or not at all), e.g. "floating images", "headers and footers".
+    pub fn preserved_content(&self) -> &[String] {
+        &self.preserved
+    }
+
+    pub fn table(&self, id: u32) -> Option<&Table> {
+        self.tables.get(&id)
+    }
+
+    /// Bytes of a picture (PNG or JPEG), by relationship id.
+    pub fn image_bytes(&self, rel_id: &str) -> Option<Arc<[u8]>> {
+        self.media.get(rel_id).and_then(|m| m.bytes.clone())
+    }
+
+    pub fn new_media(&self) -> &[NewMedia] {
+        &self.new_media
+    }
+
+    /// The table style of the table holding `p`.
+    pub fn table_style_of(&self, p: &Paragraph) -> Option<&str> {
+        let c = p.cell?;
+        self.tables.get(&c.table)?.style.as_deref()
+    }
+
+    fn style_num(&self) -> impl Fn(&str) -> Option<u32> + '_ {
+        |id| self.styles.get(id).and_then(|s| s.para.num).map(|n| n.id)
+    }
+
+    /// The list level a paragraph uses, if it's in a list.
+    pub fn list_level(&self, p: &Paragraph) -> Option<&LevelDef> {
+        let r = self.styles.effective_num(p)?;
+        self.numbering.level(r, &self.style_num())
+    }
+
+    /// Effective paragraph formatting (style, table style, list indents).
+    pub fn resolve_para(&self, p: &Paragraph) -> ResolvedPara {
+        let link = self.style_num();
+        self.styles
+            .resolve_para_with(p, self.table_style_of(p), &|r| {
+                self.numbering.level(r, &link).map(|l| l.indent)
+            })
+    }
+
+    /// Effective character formatting of `run` in `p`.
+    pub fn resolve_run(&self, p: &Paragraph, run: &RunProps) -> ResolvedRun {
+        self.styles.resolve_run_with(p, run, self.table_style_of(p))
+    }
+
+    /// List marker text ("1.", "a)", "•") of every paragraph.
+    pub fn list_markers(&self) -> Vec<Option<String>> {
+        let refs: Vec<_> = self
+            .paragraphs
+            .iter()
+            .map(|p| self.styles.effective_num(p))
+            .collect();
+        self.numbering.markers(refs, &self.style_num())
+    }
+
     /// Whether Save must ask for a new file (untitled, or the original has
     /// content Kantor would drop).
     pub fn needs_save_as(&self) -> bool {
@@ -271,12 +389,20 @@ impl Document {
     pub fn word_count(&self) -> usize {
         self.paragraphs
             .iter()
-            .map(|p| p.text.split_whitespace().count())
+            .map(|p| {
+                p.text
+                    .split_whitespace()
+                    .filter(|w| w.chars().any(|c| c != OBJECT))
+                    .count()
+            })
             .sum()
     }
 
     pub fn char_count(&self) -> usize {
-        self.paragraphs.iter().map(|p| p.text.chars().count()).sum()
+        self.paragraphs
+            .iter()
+            .map(|p| p.text.chars().filter(|&c| c != OBJECT).count())
+            .sum()
     }
 
     /// Clamp a position into the document (and onto a char boundary).
@@ -303,10 +429,15 @@ impl Document {
     }
 
     /// One grapheme back, crossing into the previous paragraph's end.
+    /// Position markers (bookmarks) are stepped over with their neighbour.
     pub fn prev_position(&self, pos: Position) -> Position {
         if pos.offset > 0 {
-            let text = &self.paragraphs[pos.para].text;
-            Position::new(pos.para, prev_grapheme(text, pos.offset))
+            let p = &self.paragraphs[pos.para];
+            let mut o = prev_grapheme(&p.text, pos.offset);
+            while o > 0 && p.is_marker_at(o) {
+                o = prev_grapheme(&p.text, o);
+            }
+            Position::new(pos.para, o)
         } else if pos.para > 0 {
             Position::new(pos.para - 1, self.paragraphs[pos.para - 1].text.len())
         } else {
@@ -316,13 +447,18 @@ impl Document {
 
     /// One grapheme forward, crossing into the next paragraph's start.
     pub fn next_position(&self, pos: Position) -> Position {
-        let text = &self.paragraphs[pos.para].text;
-        if pos.offset < text.len() {
-            Position::new(pos.para, next_grapheme(text, pos.offset))
+        let p = &self.paragraphs[pos.para];
+        let text = &p.text;
+        let mut o = pos.offset;
+        while o < text.len() && p.is_marker_at(o) {
+            o = next_grapheme(text, o);
+        }
+        if o < text.len() {
+            Position::new(pos.para, next_grapheme(text, o))
         } else if pos.para + 1 < self.paragraphs.len() {
             Position::new(pos.para + 1, 0)
         } else {
-            pos
+            Position::new(pos.para, o)
         }
     }
 
@@ -360,7 +496,8 @@ impl Document {
                 out.push('\n');
             }
         }
-        out.replace(LINE_BREAK, "\n")
+        out.replace([LINE_BREAK, PAGE_BREAK], "\n")
+            .replace(OBJECT, "")
     }
 
     /// Formatting typed text takes at `pos`.
@@ -370,7 +507,7 @@ impl Document {
 
     pub fn resolved_at(&self, pos: Position) -> ResolvedRun {
         let p = self.paragraph(pos.para);
-        self.styles.resolve_run(p, &p.props_at(pos.offset))
+        self.resolve_run(p, &p.props_at(pos.offset))
     }
 
     /// Whether every character in the selection (or the caret's formatting)
@@ -392,7 +529,7 @@ impl Document {
             for (range, run) in p.run_ranges() {
                 if range.end > a && range.start < b {
                     any = true;
-                    if !toggle.get(&self.styles.resolve_run(p, &run.props)) {
+                    if !toggle.get(&self.resolve_run(p, &run.props)) {
                         return false;
                     }
                 }
@@ -403,7 +540,7 @@ impl Document {
 
     // ── edits ──────────────────────────────────────────────────────────────
 
-    fn replace(
+    pub(crate) fn replace(
         &mut self,
         start: usize,
         count: usize,
@@ -412,12 +549,39 @@ impl Document {
         kind: Kind,
         word_boundary: bool,
     ) {
-        debug_assert!(!new.is_empty());
+        self.replace_with_tables(
+            start,
+            count,
+            new,
+            None,
+            (before, after),
+            kind,
+            word_boundary,
+        );
+    }
+
+    /// [`Self::replace`] that also swaps in a new table map.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn replace_with_tables(
+        &mut self,
+        start: usize,
+        count: usize,
+        new: Vec<Paragraph>,
+        tables: Option<Tables>,
+        (before, after): (Selection, Selection),
+        kind: Kind,
+        word_boundary: bool,
+    ) {
         let old: Vec<Paragraph> = self
             .paragraphs
             .splice(start..start + count, new.iter().cloned())
             .collect();
-        if old == new {
+        if self.paragraphs.is_empty() {
+            self.paragraphs.push(Paragraph::default());
+        }
+        let tables =
+            tables.map(|t| Box::new((std::mem::replace(&mut self.tables, t), self.tables.clone())));
+        if old == new && tables.as_ref().is_none_or(|t| t.0 == t.1) {
             return;
         }
         self.history.push(
@@ -429,24 +593,93 @@ impl Document {
                 before,
                 after,
                 kind,
+                tables,
             },
             word_boundary,
         );
     }
 
-    /// The paragraphs `start.para..=end.para` with the range removed, merged
-    /// into one.
-    fn cut(&self, start: Position, end: Position) -> Paragraph {
+    /// Paragraph index range of a table.
+    pub fn table_range(&self, id: u32) -> std::ops::Range<usize> {
+        let first = self
+            .paragraphs
+            .iter()
+            .position(|p| p.cell.is_some_and(|c| c.table == id));
+        match first {
+            Some(a) => {
+                let len = self.paragraphs[a..]
+                    .iter()
+                    .take_while(|p| p.cell.is_some_and(|c| c.table == id))
+                    .count();
+                a..a + len
+            }
+            None => 0..0,
+        }
+    }
+
+    /// Whether paragraphs `a < b` can be merged: same container, and in the
+    /// body only whole tables between them.
+    pub fn can_merge(&self, a: usize, b: usize) -> bool {
+        let (ca, cb) = (self.paragraphs[a].cell, self.paragraphs[b].cell);
+        if ca != cb {
+            return false;
+        }
+        if ca.is_some() {
+            return true;
+        }
+        let mut i = a + 1;
+        while i < b {
+            match self.paragraphs[i].cell {
+                Some(c) => {
+                    let r = self.table_range(c.table);
+                    if r.start <= a || r.end > b {
+                        return false;
+                    }
+                    i = r.end;
+                }
+                None => i += 1,
+            }
+        }
+        true
+    }
+
+    /// The paragraphs `start.para..=end.para` with the range removed: merged
+    /// into one when they share a container, else each one trimmed.
+    fn cut(&self, start: Position, end: Position) -> Vec<Paragraph> {
         let mut first = self.paragraphs[start.para].clone();
         if start.para == end.para {
             first.delete(start.offset..end.offset);
-            return first;
+            return vec![first];
         }
-        first.delete(start.offset..first.text.len());
+        if !self.can_merge(start.para, end.para) {
+            return (start.para..=end.para)
+                .map(|i| {
+                    let mut p = self.paragraphs[i].clone();
+                    let a = if i == start.para { start.offset } else { 0 };
+                    let b = if i == end.para {
+                        end.offset
+                    } else {
+                        p.text.len()
+                    };
+                    p.delete(a..b);
+                    p
+                })
+                .collect();
+        }
+        let len = first.text.len();
+        first.delete(start.offset..len);
+        // Bookmarks in the paragraphs that disappear stay too (`delete`
+        // keeps the ones in `first` and `last` itself).
+        let mut markers = Vec::new();
+        for p in &self.paragraphs[start.para + 1..end.para] {
+            markers.extend(p.markers_in(0..p.text.len()));
+        }
+        let at = first.text.len();
+        first.insert_runs(at, markers);
         let mut last = self.paragraphs[end.para].clone();
         last.delete(0..end.offset);
         first.append(last);
-        first
+        vec![first]
     }
 
     /// Replace the selection with `text` (`\n` starts a new paragraph).
@@ -484,7 +717,8 @@ impl Document {
         let (start, end) = sel.ordered();
         let props = props.unwrap_or_else(|| self.run_props_at(start));
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
-        let mut merged = self.cut(start, end);
+        let mut rest = self.cut(start, end);
+        let mut merged = rest.remove(0);
         let mut pieces = text.split('\n');
         let first = pieces.next().unwrap_or_default();
         merged.insert(start.offset, first, props.clone());
@@ -507,6 +741,7 @@ impl Document {
             caret = Position::new(caret.para + 1, piece.len());
             out.push(right);
         }
+        out.extend(rest);
         let after = Selection::caret(caret);
         let typing = sel.is_empty() && !text.contains('\n') && text.chars().count() == 1;
         let boundary = text.chars().all(char::is_whitespace);
@@ -532,13 +767,13 @@ impl Document {
         if start == end {
             return Selection::caret(start);
         }
-        let merged = self.cut(start, end);
+        let out = self.cut(start, end);
         let after = Selection::caret(start);
         let boundary = start.para != end.para;
         self.replace(
             start.para,
             end.para - start.para + 1,
-            vec![merged],
+            out,
             (sel, after),
             kind,
             boundary,
@@ -553,6 +788,20 @@ impl Document {
             return self.delete_selection(sel);
         }
         let head = self.clamp(sel.head);
+        if head.offset == 0 || self.only_markers_before(head) {
+            // At the start of a list item, Backspace ends the list first.
+            if self
+                .styles
+                .effective_num(&self.paragraphs[head.para])
+                .is_some()
+            {
+                self.remove_list_at(head.para, sel);
+                return Selection::caret(head);
+            }
+            if head.para > 0 && !self.can_merge(head.para - 1, head.para) {
+                return Selection::caret(self.prev_position(Position::new(head.para, 0)));
+            }
+        }
         let prev = self.prev_position(head);
         self.delete_range(
             Selection {
@@ -563,6 +812,29 @@ impl Document {
         )
     }
 
+    /// Whether only position markers precede `pos` in its paragraph.
+    fn only_markers_before(&self, pos: Position) -> bool {
+        pos.offset > 0
+            && self.paragraphs[pos.para]
+                .run_ranges()
+                .filter(|(r, _)| r.start < pos.offset)
+                .all(|(_, run)| run.object.as_ref().is_some_and(Object::is_marker))
+    }
+
+    /// Take paragraph `i` out of its list (keeps a style's list off with
+    /// `numId` 0).
+    pub(crate) fn remove_list_at(&mut self, i: usize, sel: Selection) {
+        let mut p = self.paragraphs[i].clone();
+        let style_has_list = {
+            let mut q = p.clone();
+            q.props.num = None;
+            self.styles.effective_num(&q).is_some()
+        };
+        p.props.num = style_has_list.then_some(NumRef { id: 0, level: 0 });
+        p.props.indent = Indent::default();
+        self.replace(i, 1, vec![p], (sel, sel), Kind::Other, true);
+    }
+
     /// Delete: the selection, or the grapheme after the caret.
     pub fn delete_forward(&mut self, sel: Selection) -> Selection {
         if !sel.is_empty() {
@@ -570,6 +842,9 @@ impl Document {
         }
         let head = self.clamp(sel.head);
         let next = self.next_position(head);
+        if next.para != head.para && !self.can_merge(head.para, next.para) {
+            return Selection::caret(head);
+        }
         let after = self.delete_range(
             Selection {
                 anchor: head,
@@ -645,6 +920,9 @@ impl Document {
             cmd.start..cmd.start + cmd.new.len(),
             cmd.old.iter().cloned(),
         );
+        if let Some(t) = &cmd.tables {
+            self.tables = t.0.clone();
+        }
         let sel = cmd.before;
         self.history.redo.push(cmd);
         Some(self.clamp_selection(sel))
@@ -656,6 +934,9 @@ impl Document {
             cmd.start..cmd.start + cmd.old.len(),
             cmd.new.iter().cloned(),
         );
+        if let Some(t) = &cmd.tables {
+            self.tables = t.1.clone();
+        }
         let sel = cmd.after;
         self.history.undo.push(cmd);
         Some(self.clamp_selection(sel))
@@ -703,7 +984,13 @@ impl Document {
         let bytes = docx::write(self, self.package.as_ref())?;
         atomic_write(path, &bytes)?;
         // The written file is the template for the next save.
-        self.package = Some(docx::read(bytes)?.package);
+        let read = docx::read(bytes)?;
+        self.package = Some(read.package);
+        // Written pictures and list definitions are in the package now.
+        let pkg = self.package.as_ref().expect("just set");
+        self.new_media.retain(|m| !pkg.has_rel(&m.rel_id));
+        self.numbering.added_abstracts.clear();
+        self.numbering.added_nums.clear();
         self.history.saved = self.history.top();
         Ok(())
     }
