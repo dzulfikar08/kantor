@@ -651,11 +651,12 @@ impl Render for SheetsView {
                     )
                     .when(!compact, |d| {
                         d.child(
-                        div()
-                            .text_size(FONT_EMPHASIS)
-                            .italic()
-                            .text_color(t.fg_dim)
-                            .child("fx"))
+                            div()
+                                .text_size(FONT_EMPHASIS)
+                                .italic()
+                                .text_color(t.fg_dim)
+                                .child("fx"),
+                        )
                     })
                     .child(
                         div()

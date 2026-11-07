@@ -24,9 +24,8 @@ impl Workspace {
             let entity = entity.clone();
             icon_button("show-sidebar", IconName::PanelLeft, false, cx).on_click(
                 move |_, window, cx| {
-                    let _ = entity.update(cx, |ws, cx| {
-                        ws.toggle_sidebar(&ToggleSidebar, window, cx)
-                    });
+                    let _ =
+                        entity.update(cx, |ws, cx| ws.toggle_sidebar(&ToggleSidebar, window, cx));
                 },
             )
         });
@@ -141,9 +140,7 @@ impl Workspace {
         let new_tab = {
             let entity = entity.clone();
             icon_button("tab-new", IconName::Plus, false, cx).on_click(move |_, window, cx| {
-                let _ = entity.update(cx, |ws, cx| {
-                    ws.new_spreadsheet(&NewSpreadsheet, window, cx)
-                });
+                let _ = entity.update(cx, |ws, cx| ws.new_spreadsheet(&NewSpreadsheet, window, cx));
             })
         };
 
@@ -257,7 +254,9 @@ impl Workspace {
                     .child(div().text_color(t.fg).child(app)),
             )
             .when(!detail.is_empty(), |d| d.child(div().child(detail)))
-            .when(panes > 1, |d| d.child(div().child(format!("{panes} panes"))))
+            .when(panes > 1, |d| {
+                d.child(div().child(format!("{panes} panes")))
+            })
             .child(div().flex_1().min_w_0().truncate().child(status))
             .child(div().child(theme))
             .child(

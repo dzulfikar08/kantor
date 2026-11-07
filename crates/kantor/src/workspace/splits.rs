@@ -6,7 +6,7 @@
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use kantor_core::layout::{Axis, Branch, Layout, Path as LayoutPath, PaneId};
+use kantor_core::layout::{Axis, Branch, Layout, PaneId, Path as LayoutPath};
 use kantor_ui::tokens;
 
 use super::{Drag, Workspace};
@@ -162,11 +162,7 @@ impl Workspace {
             .capture_any_mouse_down(cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                 ws.focus_pane(pane, window, cx);
             }))
-            .child(
-                doc.view
-                    .clone()
-                    .cached(div().size_full().style().clone()),
-            )
+            .child(doc.view.clone().cached(div().size_full().style().clone()))
             // In a split, the focused pane gets an accent edge.
             .when(multi && pane == focused, |d| {
                 d.child(

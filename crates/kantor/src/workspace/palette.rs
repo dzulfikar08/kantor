@@ -200,8 +200,12 @@ pub(super) struct Palette {
 }
 
 impl Workspace {
-
-    pub(super) fn toggle_palette(&mut self, _: &TogglePalette, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn toggle_palette(
+        &mut self,
+        _: &TogglePalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.palette.is_some() {
             self.close_palette(true, window, cx);
         } else {
@@ -209,7 +213,12 @@ impl Workspace {
         }
     }
 
-    pub(super) fn open_palette(&mut self, mode: PaletteMode, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_palette(
+        &mut self,
+        mode: PaletteMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let placeholder = mode.placeholder();
         let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
         let subscription = cx.subscribe_in(&input, window, Self::on_palette_input);
@@ -264,7 +273,12 @@ impl Workspace {
     }
 
     /// Close the palette; `restore` undoes theme/font previews (Esc, click outside).
-    pub(super) fn close_palette(&mut self, restore: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn close_palette(
+        &mut self,
+        restore: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(p) = self.palette.take() else {
             return;
         };
@@ -279,7 +293,12 @@ impl Workspace {
         self.close_palette(true, window, cx);
     }
 
-    pub(super) fn palette_escape(&mut self, _: &input::Escape, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn palette_escape(
+        &mut self,
+        _: &input::Escape,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.close_palette(true, window, cx);
     }
 

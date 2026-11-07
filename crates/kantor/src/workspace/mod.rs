@@ -25,7 +25,7 @@ use std::sync::Arc;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use kantor_core::layout::{Axis, Layout, Path as LayoutPath, PaneId};
+use kantor_core::layout::{Axis, Layout, PaneId, Path as LayoutPath};
 use kantor_core::session::{PaneState, Session, TabState, UiState};
 use kantor_ui::metrics::*;
 use kantor_ui::{CachedView, tokens};
@@ -139,9 +139,7 @@ impl Workspace {
             }),
             status: CachedView::new(cx, |ws, _, cx| ws.render_status_bar(cx).into_any_element()),
             sidebar: CachedView::new(cx, |ws, _, cx| ws.render_sidebar(cx).into_any_element()),
-            inspector: CachedView::new(cx, |ws, _, cx| {
-                ws.render_inspector(cx).into_any_element()
-            }),
+            inspector: CachedView::new(cx, |ws, _, cx| ws.render_inspector(cx).into_any_element()),
         });
 
         let app = app.or_else(|| file.as_deref().and_then(AppKind::for_path));
@@ -626,7 +624,16 @@ impl Render for Workspace {
             .flex_1()
             .min_w_0()
             .h_full()
-            .child(tabs.cached(div().flex_none().w_full().h(TITLE_BAR_HEIGHT).style().clone()))
+            .child(
+                tabs.cached(
+                    div()
+                        .flex_none()
+                        .w_full()
+                        .h(TITLE_BAR_HEIGHT)
+                        .style()
+                        .clone(),
+                ),
+            )
             .child(
                 h_flex()
                     .flex_1()
@@ -664,7 +671,16 @@ impl Render for Workspace {
                 })
                 .child(column),
         )
-        .child(status.cached(div().flex_none().w_full().h(STATUS_BAR_HEIGHT).style().clone()))
+        .child(
+            status.cached(
+                div()
+                    .flex_none()
+                    .w_full()
+                    .h(STATUS_BAR_HEIGHT)
+                    .style()
+                    .clone(),
+            ),
+        )
         .children(palette)
     }
 }

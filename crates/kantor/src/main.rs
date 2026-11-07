@@ -68,36 +68,36 @@ fn main() {
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
-        gpui_kit::init(cx);
-        theme::init(cx);
-        sheets_ui::init(cx);
+            gpui_kit::init(cx);
+            theme::init(cx);
+            sheets_ui::init(cx);
 
-        actions::bind_keys(cx);
-        cx.on_action(|_: &actions::Quit, cx| cx.quit());
+            actions::bind_keys(cx);
+            cx.on_action(|_: &actions::Quit, cx| cx.quit());
 
-        let options = WindowOptions {
-            app_id: Some("kantor".into()),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Kantor".into()),
+            let options = WindowOptions {
+                app_id: Some("kantor".into()),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Kantor".into()),
+                    ..Default::default()
+                }),
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(px(1280.), px(800.)),
+                    cx,
+                ))),
+                window_min_size: Some(size(px(720.), px(480.))),
                 ..Default::default()
-            }),
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                None,
-                size(px(1280.), px(800.)),
-                cx,
-            ))),
-            window_min_size: Some(size(px(720.), px(480.))),
-            ..Default::default()
-        };
+            };
 
-        let Args { app, file } = args;
-        let opened = gpui_kit::open_window(options, cx, move |window, cx| {
-            cx.new(|cx| Workspace::new(app, file, window, cx))
+            let Args { app, file } = args;
+            let opened = gpui_kit::open_window(options, cx, move |window, cx| {
+                cx.new(|cx| Workspace::new(app, file, window, cx))
+            });
+            if let Err(err) = opened {
+                eprintln!("kantor: failed to open a window: {err:#}");
+                std::process::exit(1);
+            }
+            cx.activate(true);
         });
-        if let Err(err) = opened {
-            eprintln!("kantor: failed to open a window: {err:#}");
-            std::process::exit(1);
-        }
-        cx.activate(true);
-    });
 }

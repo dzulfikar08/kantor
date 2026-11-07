@@ -130,12 +130,21 @@ mod tests {
                 layout,
                 focused: 2,
                 panes: vec![
-                    PaneState { id: 1, path: "/a.xlsx".into() },
-                    PaneState { id: 2, path: "/b.xlsx".into() },
+                    PaneState {
+                        id: 1,
+                        path: "/a.xlsx".into(),
+                    },
+                    PaneState {
+                        id: 2,
+                        path: "/b.xlsx".into(),
+                    },
                 ],
             }],
             active: Some(0),
-            ui: UiState { sidebar_open: true, ..UiState::default() },
+            ui: UiState {
+                sidebar_open: true,
+                ..UiState::default()
+            },
             recent: vec!["/a.xlsx".into()],
         };
         s.save_to(&path).unwrap();

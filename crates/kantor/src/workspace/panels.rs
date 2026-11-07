@@ -62,7 +62,10 @@ impl Workspace {
             .when_else(
                 selected,
                 |d| d.bg(t.selected).text_color(t.fg),
-                |d| d.text_color(t.fg_muted).hover(|s| s.bg(t.hover).text_color(t.fg)),
+                |d| {
+                    d.text_color(t.fg_muted)
+                        .hover(|s| s.bg(t.hover).text_color(t.fg))
+                },
             )
     }
 
@@ -174,7 +177,12 @@ impl Workspace {
         let section = |label: &'static str, rows: Vec<Stateful<Div>>, cx: &App| {
             v_flex()
                 .gap(SPACE_1)
-                .child(div().px(SPACE_4).pb(SPACE_2).child(section_label(label, cx)))
+                .child(
+                    div()
+                        .px(SPACE_4)
+                        .pb(SPACE_2)
+                        .child(section_label(label, cx)),
+                )
                 .children(rows)
         };
         let has_recent = !recent.is_empty();
@@ -279,7 +287,11 @@ impl Workspace {
                         v_flex()
                             .gap(SPACE_5)
                             .child(section_label("Cell", cx))
-                            .child(field("Address", format!("{} · {sheet}", cell.address), false))
+                            .child(field(
+                                "Address",
+                                format!("{} · {sheet}", cell.address),
+                                false,
+                            ))
                             .child(field(
                                 if is_formula { "Formula" } else { "Content" },
                                 cell.input,
