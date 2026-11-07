@@ -1,0 +1,20 @@
+[package]
+name = "docs_layout"
+description = "Kantor Docs paged layout (no GPUI): parley paragraphs broken into fixed-size pages"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+parley = "0.12"
+
+[dev-dependencies]
+krilla = "0.8"
+# Only for examples/gpui_compare.rs: GPUI's Linux text system, used headless.
+gpui = { package = "gpui-pre", version = "0.3.11" }
+gpui_wgpu = { package = "gpui-pre-wgpu", version = "0.3.11" }
+skrifa = "0.42"
+
+[lints]
+workspace = true

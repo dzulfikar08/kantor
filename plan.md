@@ -4,7 +4,7 @@
 
 A small, fast, native office suite for Linux (first target: Omarchy on Apple Silicon), built in Rust on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui), the UI framework behind the Zed editor. Three apps: **Docs** (Word), **Sheets** (Excel), **Slides** (PowerPoint). They share one binary and one core.
 
-Status: **M0 nearly done; Sheets MVP (M1) started**. Written 2026-11-07, last updated 2026-11-07.
+Status: **M0 done; Sheets MVP (M1) feature-complete pending Mac checks**. Written 2026-11-07, last updated 2026-11-07.
 
 ---
 
@@ -31,7 +31,7 @@ Status: **M0 nearly done; Sheets MVP (M1) started**. Written 2026-11-07, last up
 5. ✅ **In-cell editor** over the active cell (gpui-component `Input`, so IME goes through GPUI), synced live with the formula bar; Enter/Tab/Shift variants commit and move, typed edits commit on arrows, F2 edits switch arrows to caret mode. ☐ Try on the Mac: alignment while scrolling/resizing, fcitx5 composition and popup position. Gaps: no Alt+Enter line breaks; editor hides if the cell is wheel-scrolled away.
 6. ✅ **Formatting basics**: bold/italic/underline/strike (Ctrl+B/I/U), alignment, number formats (General/Number/Percent/Rupiah/Dollar/Date), column widths saved to xlsx (resize is undoable); toolbar above the formula bar that collapses into a "…" menu when narrow. ☐ Try on the Mac. Gaps: row heights stored but not drawn (DataTable has one row height); colours/borders not wired; IronCalc rounds halves to even.
 7. ✅ **CSV/TSV open and save** (delimiter detection, BOM/UTF-16/Windows-1252; one sheet, displayed values; a leading `=` stays text) and **read-only `.ods`/`.xls`/`.xlsb` import** via calamine (values, dates, formulas; formulas that don't reproduce the file's cached result are kept as values; Save on an import goes to Save As `name.xlsx`). See `crates/sheets_engine/src/import.rs`. ☐ Open the same workbook in two panes (needs a shared document model; today a split opens a new blank sheet).
-8. **Text layout spike** (M0's last open item): parley vs GPUI text for paged layout → `docs/decisions/0001-text-engine.md`. Gates Docs (M2).
+8. ✅ **Text layout spike** → [`docs/decisions/0001-text-engine.md`](docs/decisions/0001-text-engine.md): **parley** lays out (GPUI-free `crates/docs_layout`: pages, widow/orphan, hit-testing, krilla PDF), GPUI only paints its glyphs via `Window::paint_glyph` through a verified fontique → `FontId` bridge. ~110 ms per 20 A4 pages full layout, ~50 µs per paragraph edit. Biggest risk: GPUI's rasterizer ignores variable-font axes and synthetic bold/italic.
 9. ◐ **Corpus + fidelity CI**: ✅ `.xlsx`: 12 generated CC0 files in `tests/corpus/xlsx/` (`scripts/corpus/gen_xlsx.py`), round-trip test `crates/sheets_engine/tests/corpus.rs` with known IronCalc gaps in `known-gaps.tsv`, `fidelity.yml` (report + LibreOffice-headless PDFs as an artifact). ☐ `.docx`/`.pptx` corpora with Docs/Slides; ☐ pixel-diff score.
 10. First tagged release `v0.1.0` (Sheets MVP) and an AUR `kantor-bin`.
 
@@ -168,7 +168,7 @@ Time estimates assume **one person, part-time (~10–15 h/week), with AI-assiste
 - [x] CI: build and test on **x86_64** and **`ubuntu-24.04-arm`** (GitHub's free ARM runners for public repos), clippy, fmt, `cargo deny`
 - [~] GPUI window on the M1 Air under Hyprland/Asahi: ✅ Vulkan, ✅ 16K-page kernel, ✅ ~210 ms to GPU-ready, ✅ 39 MB binary; ☐ fractional scale 1.6, ☐ fcitx5 input
 - [x] `kantor_theme`: read Omarchy theme colors, live-reload on `omarchy theme set`
-- [ ] **Text layout spike** (decides the hardest technical question): lay out and paint 50 pages of mixed-font text with parley vs GPUI's text system; measure speed, memory, caret/selection quality and fcitx5 IME support. Pick one and write the decision down.
+- [x] **Text layout spike** (decides the hardest technical question): lay out and paint 50 pages of mixed-font text with parley vs GPUI's text system; measure speed, memory, caret/selection quality and fcitx5 IME support. Pick one and write the decision down. → **parley**, see `docs/decisions/0001-text-engine.md` (painting in a real window and fcitx5 still to confirm with the first `docs_ui` element).
 - [ ] Corpus started: 30+ real `.docx/.xlsx/.pptx` files (see §7)
 
 **Exit:** a GPUI window on the Mac, themed, CI green on both architectures, text-engine decision recorded.
@@ -284,7 +284,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 5. ✅ First Sheets pixel: open `.xlsx` with IronCalc, show it in GPUI Kit's data table, edit via formula bar, atomic save.
 6. ◐ Run the nightly on the Mac: ✅ Vulkan on Asahi, ✅ 16K pages, ✅ GPU ready in ~210 ms, ✅ 39 MB binary; ⚠ wgpu OOM under memory pressure; ☐ fractional scale 1.6, ☐ fcitx5, ☐ RSS.
 7. ☐ Open issues for every remaining M0 checkbox (see §0 *Next up*).
-8. ☐ Text layout spike → §0 item 8.
+8. ✅ Text layout spike → §0 item 8.
 9. ◐ Corpus → §0 item 9. `.xlsx` done; IronCalc 0.9.1 drops comments and custom properties on save, writes a non-OOXML `#ERROR!` for 3-D refs, loses dashed/hair borders (full list: `tests/corpus/xlsx/known-gaps.tsv`).
 10. ✅ Shell and styling modelled on Voltrus Tools (`docs/reference-voltrus-tools.md`): `kantor_ui` metrics + Omarchy-derived tokens, tab strip as titlebar, status bar, Ctrl+K command palette with fuzzy search, cached chrome views. Then: sidebar + inspector (resizable), split panes with draggable dividers, saved workspace (tabs, layouts, panel sizes, recent files), responsive tab strip and formula bar, theme picker (Omarchy + 907 Ghostty themes, live preview) and UI font picker (SF Pro when installed).
 11. ✅ Renderer memory patch: vendored `gpui-pre-wgpu` allocates path textures only when used, no path MSAA by default.
@@ -293,6 +293,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 14. ✅ Undo/redo for cell edits (IronCalc `UserModel`); dirty state tracked as a position in the history.
 15. ✅ Range selection and TSV copy/paste (`sheets_engine::tsv`, `CellRange`).
 16. ✅ In-cell editor (`sheets_ui::cell_editor`), CSV/ODS/XLS import, formatting + toolbar (`sheets_engine::format`, `sheets_ui::toolbar`).
+17. ✅ Text engine decided: parley for Docs layout, GPUI paints the glyphs (ADR 0001); prototype `crates/docs_layout` with pagination, caret hit-testing, benchmark and krilla PDF examples.
 
 ## 12. Open questions
 
