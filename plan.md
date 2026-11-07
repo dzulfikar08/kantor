@@ -64,7 +64,7 @@ Nobody has built a serious office suite on GPUI. The building blocks now exist i
 
 | Goal | Target |
 |---|---|
-| Install size | **< 40 MB** (one binary plus assets; fonts and dictionaries come from the system) |
+| Install size | **< 60 MB** (one binary plus assets for all three apps; fonts and dictionaries come from the system). Raised from 40 MB on 2026-11-07: ~53 MB with Sheets, Docs and Slides is fine |
 | Cold start | **< 300 ms** to an empty document |
 | Memory | **< 150 MB** with a typical 20-page document or a 10k-cell sheet open |
 | Office files | Open and save `.docx`, `.xlsx`, `.pptx` as **first-class formats**, not "import" |
