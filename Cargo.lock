@@ -6352,6 +6352,8 @@ dependencies = [
  "encoding_rs",
  "ironcalc",
  "ironcalc_base",
+ "log",
+ "roxmltree 0.21.2",
  "tempfile",
  "zip",
 ]

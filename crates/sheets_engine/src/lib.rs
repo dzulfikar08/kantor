@@ -10,19 +10,24 @@
 
 mod csv;
 mod import;
+mod preserve;
 
 pub use import::SourceFormat;
+pub use preserve::package_problems;
 
+use std::borrow::Cow;
 use std::fs;
-use std::io::BufWriter;
+use std::io::{Cursor, Write as _};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use ironcalc::export::save_xlsx_to_writer;
-use ironcalc::import::load_from_xlsx;
-use ironcalc_base::UserModel;
+use ironcalc::import::{load_from_xlsx, load_from_xlsx_bytes};
 use ironcalc_base::expressions::types::Area;
 use ironcalc_base::expressions::utils::number_to_column;
+use ironcalc_base::types::Color;
+use ironcalc_base::{Model, UserModel};
 
 pub mod format;
 pub mod tsv;
@@ -50,6 +55,7 @@ pub struct Workbook {
     path: Option<PathBuf>,
     history: Revisions,
     origin: Origin,
+    save_notes: Vec<String>,
 }
 
 /// The file a workbook shows and how it got there.
@@ -59,6 +65,57 @@ struct Origin {
     /// The file last opened or saved (for imports, the `.ods`/`.xls` itself).
     path: Option<PathBuf>,
     notes: Vec<String>,
+    /// The last `.xlsx` opened or saved, whose parts IronCalc doesn't model
+    /// are carried into the next `.xlsx` save (see the `preserve` module).
+    xlsx: Option<XlsxSource>,
+}
+
+/// Files up to this size are kept in memory for part preservation; larger
+/// ones are read again at save time.
+const KEEP_IN_MEMORY: u64 = 64 * 1024 * 1024;
+
+/// Where the original package for part preservation comes from.
+enum XlsxSource {
+    Bytes(Vec<u8>),
+    /// A large file, read again at save. `len` and `modified` are checked so a
+    /// file changed by someone else is not mixed into ours.
+    File {
+        path: PathBuf,
+        len: u64,
+        modified: Option<SystemTime>,
+    },
+}
+
+impl XlsxSource {
+    fn file(path: &Path, meta: &fs::Metadata) -> Self {
+        XlsxSource::File {
+            path: path.to_path_buf(),
+            len: meta.len(),
+            modified: meta.modified().ok(),
+        }
+    }
+
+    fn bytes(&self) -> Result<Cow<'_, [u8]>, String> {
+        match self {
+            XlsxSource::Bytes(b) => Ok(Cow::Borrowed(b)),
+            XlsxSource::File {
+                path,
+                len,
+                modified,
+            } => {
+                let meta = fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+                if meta.len() != *len || meta.modified().ok() != *modified {
+                    return Err(format!(
+                        "{} changed on disk since it was opened",
+                        path.display()
+                    ));
+                }
+                fs::read(path)
+                    .map(Cow::Owned)
+                    .map_err(|e| format!("{}: {e}", path.display()))
+            }
+        }
+    }
 }
 
 /// Ids of the states reachable by undo and redo, mirroring IronCalc's stacks.
@@ -108,6 +165,7 @@ impl Workbook {
             path: None,
             history: Revisions::default(),
             origin: Origin::default(),
+            save_notes: Vec::new(),
         })
     }
 
@@ -124,11 +182,11 @@ impl Workbook {
             bail!("unsupported file type: .{ext}");
         };
         let mut notes = Vec::new();
+        let mut xlsx = None;
         let (mut model, format) = match format {
             SourceFormat::Xlsx => {
-                let name = path.to_str().context("path is not valid UTF-8")?;
-                let model = load_from_xlsx(name, LOCALE, TIMEZONE, LANGUAGE)
-                    .map_err(|e| anyhow!("opening {}: {e}", path.display()))?;
+                let (model, source) = open_xlsx(path)?;
+                xlsx = Some(source);
                 (model, format)
             }
             SourceFormat::Csv { delimiter } => {
@@ -151,7 +209,9 @@ impl Workbook {
                 format,
                 path: Some(path.to_path_buf()),
                 notes,
+                xlsx,
             },
+            save_notes: Vec::new(),
         })
     }
 
@@ -177,6 +237,13 @@ impl Workbook {
     /// `"2 formulas kept as values"`. Empty for xlsx and CSV.
     pub fn import_notes(&self) -> &[String] {
         &self.origin.notes
+    }
+
+    /// What the last save could not carry over from the original `.xlsx`
+    /// (e.g. `sheet "Data": tableParts not kept`), or error values it had to
+    /// rewrite. Empty when everything was kept.
+    pub fn save_notes(&self) -> &[String] {
+        &self.save_notes
     }
 
     /// File name to suggest in a Save As prompt: the current name, or for
@@ -264,22 +331,56 @@ impl Workbook {
     ///   written. `.tsv` uses tab; `.csv` keeps the delimiter the file was opened
     ///   with (else `,`). Use [`Workbook::sheets_lost_in_csv`] to warn first.
     /// * anything else (including `.ods` / `.xls`) is refused.
+    ///
+    /// For `.xlsx`, parts of the original `.xlsx` that IronCalc doesn't write
+    /// (comments, custom properties, drawings, print setup...) are carried
+    /// over; see [`Workbook::save_notes`] for what could not be.
     pub fn save_as(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or_default();
+        let mut xlsx = self.origin.xlsx.take();
         let format = match SourceFormat::from_extension(ext) {
             Some(SourceFormat::Xlsx) => {
-                write_atomic(path, |file| {
-                    let writer = save_xlsx_to_writer(self.model.get_model(), BufWriter::new(file))
-                        .map_err(|e| anyhow!("writing xlsx: {e}"))?;
-                    writer
-                        .into_inner()
-                        .map_err(|e| anyhow!("flushing xlsx: {e}"))?;
-                    Ok(())
-                })?;
+                let written = save_xlsx_to_writer(self.model.get_model(), Cursor::new(Vec::new()))
+                    .map_err(|e| anyhow!("writing xlsx: {e}"));
+                let written = match written {
+                    Ok(w) => w.into_inner(),
+                    Err(e) => {
+                        self.origin.xlsx = xlsx;
+                        return Err(e);
+                    }
+                };
+                let mut notes = Vec::new();
+                let original = xlsx.as_ref().and_then(|s| match s.bytes() {
+                    Ok(b) => Some(b),
+                    Err(e) => {
+                        notes.push(format!("extra parts of the original not kept: {e}"));
+                        None
+                    }
+                });
+                let finished = preserve::finish(written, original.as_deref(), &self.tab_colors());
+                drop(original);
+                notes.extend(finished.notes);
+                for note in &notes {
+                    log::warn!("saving {}: {note}", path.display());
+                }
+                let bytes = finished.bytes;
+                if let Err(e) = write_atomic(path, |file| Ok(file.write_all(&bytes)?)) {
+                    self.origin.xlsx = xlsx;
+                    return Err(e);
+                }
+                self.save_notes = notes;
+                xlsx = Some(if bytes.len() as u64 <= KEEP_IN_MEMORY {
+                    XlsxSource::Bytes(bytes)
+                } else {
+                    match fs::metadata(path) {
+                        Ok(meta) => XlsxSource::file(path, &meta),
+                        Err(_) => XlsxSource::Bytes(bytes),
+                    }
+                });
                 SourceFormat::Xlsx
             }
             Some(SourceFormat::Csv { delimiter }) => {
@@ -287,16 +388,28 @@ impl Workbook {
                     SourceFormat::Csv { delimiter: d } if delimiter != b'\t' && d != b'\t' => d,
                     _ => delimiter,
                 };
-                import::write_csv(self.model.get_model(), self.active_sheet(), path, delimiter)?;
+                let written =
+                    import::write_csv(self.model.get_model(), self.active_sheet(), path, delimiter);
+                if let Err(e) = written {
+                    self.origin.xlsx = xlsx;
+                    return Err(e);
+                }
+                self.save_notes = Vec::new();
                 SourceFormat::Csv { delimiter }
             }
-            _ => bail!("Kantor saves .xlsx or .csv, not .{ext}"),
+            _ => {
+                self.origin.xlsx = xlsx;
+                bail!("Kantor saves .xlsx or .csv, not .{ext}")
+            }
         };
         self.path = Some(path.to_path_buf());
+        // A CSV save keeps the xlsx source: a later .xlsx save still carries
+        // its parts, since the model still has every sheet.
         self.origin = Origin {
             format,
             path: Some(path.to_path_buf()),
             notes: Vec::new(),
+            xlsx,
         };
         self.history.saved = self.history.current;
         Ok(())
@@ -479,6 +592,54 @@ impl CellRange {
     }
 }
 
+impl Workbook {
+    /// Each sheet's tab colour as `<tabColor>` attributes, by `sheetId`.
+    fn tab_colors(&self) -> preserve::TabColors {
+        self.model
+            .get_model()
+            .workbook
+            .worksheets
+            .iter()
+            .map(|ws| {
+                let attrs = match &ws.color {
+                    Color::Rgb(hex) => hex
+                        .strip_prefix('#')
+                        .filter(|h| h.len() == 6 && h.chars().all(|c| c.is_ascii_hexdigit()))
+                        .map(|h| format!("rgb=\"FF{}\"", h.to_ascii_uppercase())),
+                    Color::Theme(slot, tint) if *tint == 0.0 => Some(format!("theme=\"{slot}\"")),
+                    Color::Theme(slot, tint) => Some(format!("theme=\"{slot}\" tint=\"{tint}\"")),
+                    Color::None => None,
+                };
+                (ws.sheet_id, attrs)
+            })
+            .collect()
+    }
+}
+
+/// Load an `.xlsx`, keeping what part preservation needs: the bytes for small
+/// files (read once, so the model and the kept bytes are the same file), the
+/// path and its size/mtime for large ones.
+fn open_xlsx(path: &Path) -> Result<(Model<'static>, XlsxSource)> {
+    let meta = fs::metadata(path).with_context(|| format!("opening {}", path.display()))?;
+    if meta.len() <= KEEP_IN_MEMORY {
+        let bytes = fs::read(path).with_context(|| format!("opening {}", path.display()))?;
+        let name = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let workbook = load_from_xlsx_bytes(&bytes, &name, LOCALE, TIMEZONE)
+            .map_err(|e| anyhow!("opening {}: {e}", path.display()))?;
+        let model = Model::from_workbook(workbook, LANGUAGE)
+            .map_err(|e| anyhow!("opening {}: {e}", path.display()))?;
+        Ok((model, XlsxSource::Bytes(bytes)))
+    } else {
+        let name = path.to_str().context("path is not valid UTF-8")?;
+        let model = load_from_xlsx(name, LOCALE, TIMEZONE, LANGUAGE)
+            .map_err(|e| anyhow!("opening {}: {e}", path.display()))?;
+        Ok((model, XlsxSource::file(path, &meta)))
+    }
+}
+
 /// Write a file via a temp file in the same directory and a rename.
 fn write_atomic(path: &Path, write: impl FnOnce(&mut fs::File) -> Result<()>) -> Result<()> {
     let dir = path
@@ -558,6 +719,115 @@ mod tests {
         assert_eq!(back.input(0, 3, 0), "=SUM(A2:A3)");
         assert_eq!(back.sheet_names(), vec!["Sheet1".to_owned()]);
         assert_eq!(back.title(), "rt.xlsx");
+    }
+
+    fn corpus(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/corpus/xlsx")
+            .join(name)
+    }
+
+    fn zip_names(path: &Path) -> Vec<String> {
+        let zip = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
+        let mut names: Vec<String> = zip
+            .file_names()
+            .map(|n| n.unwrap().into_owned())
+            .filter(|n| !n.ends_with('/'))
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn xlsx_extras_survive_edit_and_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rich.xlsx");
+        fs::write(&path, preserve::rich_fixture("")).unwrap();
+        let mut wb = Workbook::open(&path).unwrap();
+        wb.set_input(0, 2, 0, "new").unwrap();
+        wb.save().unwrap();
+        assert_eq!(wb.save_notes(), &[] as &[String]);
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(package_problems(&bytes), Vec::<String>::new());
+        let names = zip_names(&path);
+        for p in [
+            "docProps/custom.xml",
+            "xl/comments1.xml",
+            "xl/charts/chart1.xml",
+        ] {
+            assert!(names.iter().any(|n| n == p), "{p} dropped: {names:?}");
+        }
+        let sheet1 = preserve::parts_of(&bytes)["xl/worksheets/sheet1.xml"].clone();
+        let sheet1 = String::from_utf8(sheet1).unwrap();
+        // The tab colour comes from the model (IronCalc itself never writes it).
+        assert!(
+            sheet1.contains(r#"<sheetPr codeName="Sheet1"><tabColor rgb="FF00FF00"/><pageSetUpPr fitToPage="1"/></sheetPr>"#),
+            "{sheet1}"
+        );
+
+        // Save As elsewhere, then save again: still everything.
+        let other = dir.path().join("copy.xlsx");
+        wb.save_as(&other).unwrap();
+        wb.set_input(0, 3, 0, "again").unwrap();
+        wb.save().unwrap();
+        assert_eq!(zip_names(&other), names);
+        let back = Workbook::open(&other).unwrap();
+        assert_eq!(back.display_value(0, 3, 0), "again");
+    }
+
+    #[test]
+    fn unknown_error_codes_are_not_written() {
+        // Q1 Summary!B6 is a 3-D reference IronCalc evaluates to #ERROR!.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multi.xlsx");
+        let mut wb = Workbook::open(corpus("02_multi_sheet.xlsx")).unwrap();
+        wb.save_as(&path).unwrap();
+        let parts = preserve::parts_of(&fs::read(&path).unwrap());
+        assert!(
+            parts
+                .values()
+                .all(|p| !String::from_utf8_lossy(p).contains("#ERROR!"))
+        );
+        let workbook = String::from_utf8(parts["xl/workbook.xml"].clone()).unwrap();
+        assert!(workbook.contains(r#"<calcPr fullCalcOnLoad="1"/>"#));
+        assert!(wb.save_notes().iter().any(|n| n.contains("error value")));
+        // Every sheet is readable by a strict reader.
+        let mut xlsx: calamine::Xlsx<_> = calamine::open_workbook(&path).unwrap();
+        use calamine::Reader as _;
+        for name in xlsx.sheet_names() {
+            xlsx.worksheet_range(&name)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
+        // And the formula is still there.
+        let back = Workbook::open(&path).unwrap();
+        let q1 = back
+            .sheet_names()
+            .iter()
+            .position(|n| n == "Q1 Summary")
+            .unwrap();
+        assert_eq!(back.input(q1 as u32, 5, 1), wb.input(q1 as u32, 5, 1));
+    }
+
+    #[test]
+    fn changed_source_is_not_mixed_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.xlsx");
+        fs::write(&path, preserve::rich_fixture("")).unwrap();
+        let meta = fs::metadata(&path).unwrap();
+        let source = XlsxSource::file(&path, &meta);
+        assert!(source.bytes().is_ok());
+        fs::write(&path, b"something else entirely").unwrap();
+        assert!(source.bytes().unwrap_err().contains("changed on disk"));
+        fs::remove_file(&path).unwrap();
+        assert!(source.bytes().is_err());
+
+        // A workbook whose large source vanished still saves, without extras.
+        let mut wb = Workbook::open(corpus("12_comments_links_props.xlsx")).unwrap();
+        wb.origin.xlsx = Some(source);
+        let out = dir.path().join("out.xlsx");
+        wb.save_as(&out).unwrap();
+        assert!(wb.save_notes()[0].contains("not kept"));
+        assert!(!zip_names(&out).iter().any(|n| n == "xl/comments1.xml"));
     }
 
     #[test]

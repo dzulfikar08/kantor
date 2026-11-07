@@ -12,10 +12,12 @@ ironcalc.workspace = true
 ironcalc_base.workspace = true
 calamine.workspace = true
 encoding_rs.workspace = true
+log.workspace = true
+roxmltree.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [lints]
 workspace = true

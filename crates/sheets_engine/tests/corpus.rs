@@ -12,7 +12,11 @@
 //!    with the original (values, formulas, styles, merges, names, hyperlinks),
 //!    plus layout (column widths, row heights, hidden, frozen panes), comments
 //!    and links as IronCalc sees them after reopening.
-//! 4. **Dropped parts**: zip entries of the original missing from the saved file.
+//! 4. **Dropped parts**: zip entries of the original missing from the saved
+//!    file, top-level elements of an original worksheet missing from the saved
+//!    sheet (`dropped-element`), and package problems of the saved file
+//!    (`package`: a part without a content type, a relationship whose target is
+//!    missing; see [`sheets_engine::package_problems`]).
 //! 5. **Expectations** written by the generator (`expectations.tsv`): what
 //!    Excel displays for formatted cells, and the layout that was written.
 //!
@@ -236,6 +240,21 @@ fn check_file(path: &Path, saved: &Path, expectations: &[Expectation], f: &mut F
     let parts_b = zip_entries(saved);
     for part in parts_a.difference(&parts_b) {
         f.add("dropped-part", part.clone(), "zip entry missing after save");
+    }
+    for problem in sheets_engine::package_problems(&fs::read(saved).unwrap()) {
+        f.add("package", problem, "saved package is invalid");
+    }
+    let (elems_a, elems_b) = (sheet_elements(path), sheet_elements(saved));
+    for (sheet, ea) in &elems_a {
+        let none = BTreeSet::new();
+        let eb = elems_b.get(sheet).unwrap_or(&none);
+        for e in ea.difference(eb) {
+            f.add(
+                "dropped-element",
+                format!("{sheet} <{e}>"),
+                "sheet element missing after save",
+            );
+        }
     }
 
     // 5. Generator expectations (what Excel shows / the layout written).
@@ -681,6 +700,7 @@ fn layout_checks(a: &Model, b: &Model, f: &mut Findings) {
                 .collect()
         };
         f.diff("export-comments", s.clone(), &comments(wa), &comments(wb));
+        f.diff("export-tab-color", s.clone(), &wa.color, &wb.color);
         let links = |w: &ironcalc_base::types::Worksheet| -> BTreeSet<String> {
             w.links
                 .iter()
@@ -700,6 +720,53 @@ fn zip_entries(path: &Path) -> BTreeSet<String> {
         // Reading proves the entry is intact, not just listed.
         entry.read_to_end(&mut sink).unwrap();
         out.insert(entry.name().unwrap().into_owned());
+    }
+    out
+}
+
+/// Sheet name -> local names of the top-level elements of its worksheet XML.
+fn sheet_elements(path: &Path) -> BTreeMap<String, BTreeSet<String>> {
+    let mut archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
+    let mut read = |name: &str| -> String {
+        let mut s = String::new();
+        archive
+            .by_name(name)
+            .unwrap_or_else(|e| panic!("{name}: {e}"))
+            .read_to_string(&mut s)
+            .unwrap();
+        s
+    };
+    let rels_xml = read("xl/_rels/workbook.xml.rels");
+    let rels = roxmltree::Document::parse(&rels_xml).unwrap();
+    let target = |id: &str| -> String {
+        let t = rels
+            .descendants()
+            .find(|n| n.attribute("Id") == Some(id))
+            .and_then(|n| n.attribute("Target"))
+            .unwrap();
+        match t.strip_prefix('/') {
+            Some(abs) => abs.to_owned(),
+            None => format!("xl/{t}"),
+        }
+    };
+    let wb_xml = read("xl/workbook.xml");
+    let wb = roxmltree::Document::parse(&wb_xml).unwrap();
+    let mut out = BTreeMap::new();
+    for s in wb.descendants().filter(|n| n.has_tag_name("sheet")) {
+        let id = s
+            .attributes()
+            .find(|a| a.name() == "id" && a.namespace().is_some())
+            .unwrap()
+            .value();
+        let xml = read(&target(id));
+        let doc = roxmltree::Document::parse(&xml).unwrap();
+        let names = doc
+            .root_element()
+            .children()
+            .filter(|n| n.is_element())
+            .map(|n| n.tag_name().name().to_owned())
+            .collect();
+        out.insert(s.attribute("name").unwrap().to_owned(), names);
     }
     out
 }
