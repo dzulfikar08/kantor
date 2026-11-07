@@ -1,0 +1,16 @@
+[package]
+name = "sheets_ui"
+description = "Kantor Sheets UI: grid, formula bar, sheet tabs (GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+gpui-kit.workspace = true
+log.workspace = true
+sheets_engine.workspace = true
+
+[lints]
+workspace = true

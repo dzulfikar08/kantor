@@ -1,0 +1,11 @@
+name: File looks wrong / lost content
+description: A .xlsx/.docx/.pptx opens or saves incorrectly
+labels: [fidelity]
+body:
+  - type: textarea
+    id: what
+    attributes: { label: What is wrong, description: "Missing content is a high-priority bug: say so clearly." }
+    validations: { required: true }
+  - type: textarea
+    id: file
+    attributes: { label: Sample file, description: "Attach a minimal file that shows the problem, and state its licence (or that you made it)." }

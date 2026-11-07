@@ -1,0 +1,18 @@
+[package]
+name = "sheets_engine"
+description = "Kantor Sheets engine: a thin wrapper over IronCalc (no GPUI dependency)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ironcalc.workspace = true
+ironcalc_base.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,83 @@
+# Release binaries. The M1 Air never builds: it downloads these.
+#  - push to main  -> rolling "nightly" pre-release
+#  - tag v*        -> versioned release
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: aarch64, os: ubuntu-24.04-arm }
+          - { arch: x86_64, os: ubuntu-24.04 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: ./scripts/ci-deps.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - run: cargo build --release -p kantor
+      - name: Package
+        id: pkg
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then tag="${GITHUB_REF_NAME}"; else tag=nightly; fi
+          name="kantor-${tag}-${{ matrix.arch }}-linux"
+          ./scripts/package.sh "target/release/kantor" "dist/${name}"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.name }}
+          path: dist/${{ steps.pkg.outputs.name }}.tar.gz*
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            gh release create "$GITHUB_REF_NAME" dist/* --title "Kantor $GITHUB_REF_NAME" --generate-notes
+          else
+            # Rolling nightly: move the tag to this commit and replace the assets.
+            git tag -f nightly && git push -f origin nightly
+            if ! gh release view nightly >/dev/null 2>&1; then
+              gh release create nightly --prerelease --title "Nightly" \
+                --notes "Rolling build of main. Install: curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh"
+            fi
+            gh release edit nightly --prerelease --target "$GITHUB_SHA" \
+              --notes "Rolling build of main at ${GITHUB_SHA::7} ($(date -u +%F)). Install: curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh"
+            gh release upload nightly dist/* --clobber
+          fi

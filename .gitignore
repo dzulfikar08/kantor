@@ -1,0 +1,8 @@
+/target
+*.swp
+.DS_Store
+# never commit private documents; corpus files are added deliberately (see tests/corpus/README.md)
+*.xlsx
+*.docx
+*.pptx
+!tests/corpus/**

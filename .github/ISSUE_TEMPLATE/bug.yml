@@ -1,0 +1,14 @@
+name: Bug report
+description: Something is broken
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes: { label: What happened, description: "And what you expected." }
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes: { label: Steps to reproduce, description: "Attach a sample file if you can share it (never private documents)." }
+  - type: input
+    id: version
+    attributes: { label: "Version (`kantor --version`) and machine", placeholder: "nightly abc1234, M1 Air, Omarchy" }

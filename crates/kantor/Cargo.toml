@@ -1,0 +1,19 @@
+[package]
+name = "kantor"
+description = "A small, fast, native office suite for Linux, built on GPUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+default-run = "kantor"
+
+[dependencies]
+anyhow.workspace = true
+env_logger.workspace = true
+gpui-kit.workspace = true
+kantor_theme.workspace = true
+log.workspace = true
+sheets_ui.workspace = true
+
+[lints]
+workspace = true

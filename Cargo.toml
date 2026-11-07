@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dzulfikar08/kantor"
+authors = ["Dzulfikar Ats Tsauri"]
+
+[workspace.dependencies]
+# UI: gpui-kit pins the matching GPUI release (published as gpui-pre-*) and re-exports it.
+gpui-kit = "0.9"
+ironcalc = "0.9.1"
+ironcalc_base = "0.9.1"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+tempfile = "3"
+
+kantor_theme = { path = "crates/kantor_theme" }
+sheets_engine = { path = "crates/sheets_engine" }
+sheets_ui = { path = "crates/sheets_ui" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+
+# Keep debug builds light: GPUI's dependency tree with full debuginfo is huge.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1
+debug = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
+opt-level = 3

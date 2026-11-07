@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Kantor Sheets
+GenericName=Spreadsheet
+Comment=Open and edit Excel spreadsheets
+Exec=kantor --sheets %f
+Icon=x-office-spreadsheet
+Terminal=false
+Categories=Office;Spreadsheet;
+MimeType=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;application/vnd.ms-excel.sheet.macroEnabled.12;
+StartupWMClass=kantor-sheets
+Keywords=excel;xlsx;spreadsheet;calc;
