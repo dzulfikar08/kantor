@@ -1665,7 +1665,8 @@ mod tests {
         let rows = 40;
         let mut paras = vec![Paragraph::new("before")];
         for r in 0..rows {
-            paras.push(Paragraph::new(format!("r{r} left cell with some words")));
+            // Short enough never to wrap in a 200 px cell, whatever font CI has.
+            paras.push(Paragraph::new(format!("r{r} left")));
             paras.push(Paragraph::new(format!("r{r} right")));
         }
         paras.push(Paragraph::new("after"));
