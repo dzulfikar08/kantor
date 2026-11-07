@@ -25,6 +25,8 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.9"
 serde_json = "1"
 tempfile = "3"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+roxmltree = "0.21"
 
 kantor_core = { path = "crates/kantor_core" }
 kantor_theme = { path = "crates/kantor_theme" }

@@ -61,6 +61,9 @@ and on Asahi's 16K-page kernel).
   (nightly), or `KANTOR_VERSION=v0.1.0` for this release.
 - AUR package `kantor-bin`.
 - xlsx fidelity corpus (12 generated files) with a round-trip test and a Fidelity CI job.
+- Round-trip safety for `.xlsx`: comments, custom properties, drawings/charts/images, data
+  validation, print setup and other parts IronCalc doesn't model are carried over from the
+  original file on save.
 
 ### Known limitations
 - **Docs and Slides** are placeholders ("coming soon"). A text-layout prototype
@@ -73,9 +76,10 @@ and on Asahi's 16K-page kernel).
 - Splitting a pane opens a new blank sheet; the same workbook can't be shown in two panes.
 - `.ods`, `.xls` and `.xlsb` are import-only; Kantor never writes them.
 - IronCalc 0.9.1 file-fidelity gaps (full list in `tests/corpus/xlsx/known-gaps.tsv`):
-  - **Data loss on save:** cell comments and custom document properties are dropped.
-  - 3-D references (`SUM(Jan:Mar!B2:B4)`) evaluate to `#ERROR!`, and that result is saved as
-    a non-OOXML error code that Excel may report as damage.
+  - 3-D references (`SUM(Jan:Mar!B2:B4)`) evaluate to `#ERROR!` in Kantor; the file is saved
+    with the formula and no cached value, so Excel/LibreOffice recalculate it on open.
+  - Parts Kantor doesn't carry over on save (each reported, never silently): tables, pivot
+    tables, external links, VBA macros, chart sheets, embedded objects/form controls, slicers.
   - Defined names holding a constant (`Ten = 10`) give `#NAME?`.
   - Dashed and hair borders become thin borders.
   - Number formats: locale-tagged currency (`[$Rp-421]#,##0`) shows `#VALUE!`; fraction
