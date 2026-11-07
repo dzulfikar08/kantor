@@ -1510,6 +1510,7 @@ dependencies = [
  "docs_layout",
  "gpui-kit",
  "gpui-pre-wgpu",
+ "kantor_core",
  "kantor_ui",
  "log",
  "skrifa 0.44.0",

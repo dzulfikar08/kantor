@@ -81,6 +81,8 @@ struct Command {
     kind: Kind,
     /// Table map before / after (structure edits only).
     tables: Option<Box<(Tables, Tables)>>,
+    /// Page setup before / after (page setup changes only).
+    page: Option<(PageGeometry, PageGeometry)>,
 }
 
 #[derive(Debug, Default)]
@@ -111,6 +113,8 @@ impl History {
             && cmd.kind == last.kind
             && cmd.tables.is_none()
             && last.tables.is_none()
+            && cmd.page.is_none()
+            && last.page.is_none()
             && Some(last.id) != self.saved
             && last.start == cmd.start
             && last.new.len() == 1
@@ -594,6 +598,7 @@ impl Document {
                 after,
                 kind,
                 tables,
+                page: None,
             },
             word_boundary,
         );
@@ -913,6 +918,53 @@ impl Document {
         self.format_paragraphs(sel, |p| p.align = Some(align));
     }
 
+    /// Change paper size, orientation or margins: one undo step. `sel` is
+    /// restored on undo/redo.
+    pub fn set_page(&mut self, page: PageGeometry, sel: Selection) {
+        let page = page.clamped();
+        if page == self.page {
+            return;
+        }
+        let old = std::mem::replace(&mut self.page, page);
+        self.history.push(
+            Command {
+                id: 0,
+                start: 0,
+                old: Vec::new(),
+                new: Vec::new(),
+                before: sel,
+                after: sel,
+                kind: Kind::Other,
+                tables: None,
+                page: Some((old, page)),
+            },
+            true,
+        );
+    }
+
+    /// Set direct indents (twips; `first` negative = hanging) on every
+    /// paragraph the selection touches; `None` leaves that side alone. One
+    /// undo step. A kept original `w:ind` gives way to the new values.
+    pub fn set_indent(&mut self, sel: Selection, indent: Indent) {
+        let resolved: Vec<_> = {
+            let (start, end) = self.clamp_selection(sel).ordered();
+            (start.para..=end.para)
+                .map(|i| self.resolve_para(&self.paragraphs[i]))
+                .collect()
+        };
+        let i = std::cell::Cell::new(0);
+        self.format_paragraphs(sel, |p| {
+            let r = &resolved[i.get().min(resolved.len() - 1)];
+            i.set(i.get() + 1);
+            let tw = |pt: f32| (pt * 20.0).round() as i32;
+            // Keep the effective values of sides not being changed.
+            p.indent.left = Some(indent.left.unwrap_or(tw(r.indent_left_pt)));
+            p.indent.right = Some(indent.right.unwrap_or(tw(r.indent_right_pt)));
+            p.indent.first = Some(indent.first.unwrap_or(tw(r.first_line_pt)));
+            p.extras.remove("ind");
+        });
+    }
+
     /// Undo the last step; returns the selection to restore.
     pub fn undo(&mut self) -> Option<Selection> {
         let cmd = self.history.undo.pop()?;
@@ -922,6 +974,9 @@ impl Document {
         );
         if let Some(t) = &cmd.tables {
             self.tables = t.0.clone();
+        }
+        if let Some((old, _)) = cmd.page {
+            self.page = old;
         }
         let sel = cmd.before;
         self.history.redo.push(cmd);
@@ -936,6 +991,9 @@ impl Document {
         );
         if let Some(t) = &cmd.tables {
             self.tables = t.1.clone();
+        }
+        if let Some((_, new)) = cmd.page {
+            self.page = new;
         }
         let sel = cmd.after;
         self.history.undo.push(cmd);

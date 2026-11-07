@@ -22,6 +22,8 @@ extern crate gpui_kit as gpui;
 mod blocks;
 pub mod font_bridge;
 mod input;
+mod page_menu;
+mod ruler;
 mod toolbar;
 
 use std::cell::{Cell, RefCell};
@@ -44,7 +46,9 @@ use gpui_kit::*;
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{Tokens, metrics::*, tokens};
 
+pub use docs_engine::{MarginPreset, Orientation, PageGeometry, PaperSize};
 pub use font_bridge::FontBridge;
+pub use ruler::{ruler_visible, set_ruler_visible, toggle_ruler};
 
 pub use docs_engine::Toggle as DocsToggle;
 
@@ -127,6 +131,7 @@ actions!(
 
 /// Register Docs key bindings. Both Ctrl and Super work (Mac-style Cmd = Super).
 pub fn init(cx: &mut App) {
+    ruler::init(cx);
     let c = Some(KEY_CONTEXT);
     let mut keys = vec![
         KeyBinding::new("left", MoveLeft, c),
@@ -347,6 +352,12 @@ pub struct DocsView {
     /// The insert-table grid: where it opened (window coordinates) and the
     /// size under the pointer.
     table_picker: Option<(Point<Pixels>, (usize, usize))>,
+    /// The Page popover, and when it was last closed by a click outside
+    /// (so that click on the toolbar control doesn't reopen it).
+    page_menu: Option<page_menu::PageMenu>,
+    page_menu_closed: Option<std::time::Instant>,
+    /// A margin or indent being dragged on the ruler.
+    ruler_drag: Option<ruler::Drag>,
     engine: Rc<RefCell<Engine>>,
     bridge: Rc<RefCell<FontBridge>>,
     zoom: f32,
@@ -414,6 +425,9 @@ impl DocsView {
             cache: HashMap::new(),
             images: HashMap::new(),
             table_picker: None,
+            page_menu: None,
+            page_menu_closed: None,
+            ruler_drag: None,
             engine,
             bridge,
             zoom: 1.0,
@@ -1354,6 +1368,8 @@ struct Frame {
     zoom: f32,
     scroll: Point<f32>,
     focused: bool,
+    /// A ruler drag's guide line (page x).
+    guide: Option<f32>,
     t: Tokens,
     bridge: Rc<RefCell<FontBridge>>,
     focus: FocusHandle,
@@ -1463,6 +1479,10 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                 }
             }
             drop(bridge);
+            if let Some(x) = f.guide {
+                let line = [x - 0.5 / z, 0., 1. / z, g.page_h];
+                window.paint_quad(fill(rect(page, line), f.t.accent));
+            }
             // IME composition: underline the marked text.
             for (_, r) in marked.iter().flatten().filter(|(p, _)| *p == page) {
                 let ink = f.t.paper_ink;
@@ -1501,6 +1521,7 @@ impl Render for DocsView {
             zoom: self.zoom,
             scroll: self.scroll,
             focused: self.focus.is_focused(window),
+            guide: self.ruler_drag.map(|d| d.x),
             t,
             bridge: self.bridge.clone(),
             focus: self.focus.clone(),
@@ -1576,6 +1597,8 @@ impl Render for DocsView {
             },
             Collapse => |this, _w, cx| {
                 this.table_picker = None;
+                this.page_menu = None;
+                this.ruler_drag = None;
                 let h = this.sel.head;
                 this.move_to(h, false, cx)
             },
@@ -1637,8 +1660,10 @@ impl Render for DocsView {
             .on_action(cx.listener(Self::save_as))
             .child(toolbar::render(self, cx))
             .children(self.render_banner(&t))
+            .children(self.render_ruler(cx))
             .child(area)
             .children(self.render_table_picker(cx))
+            .children(self.render_page_menu(cx))
     }
 }
 

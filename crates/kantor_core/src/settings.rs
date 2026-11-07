@@ -15,6 +15,8 @@ pub struct Settings {
     pub theme: String,
     /// UI font family; `None` picks the best installed one (SF Pro, Inter, …).
     pub ui_font: Option<String>,
+    /// Show the ruler above Docs pages.
+    pub docs_ruler: bool,
 }
 
 impl Default for Settings {
@@ -22,6 +24,7 @@ impl Default for Settings {
         Self {
             theme: "omarchy".to_owned(),
             ui_font: None,
+            docs_ruler: true,
         }
     }
 }
@@ -80,6 +83,7 @@ mod tests {
         let s = Settings {
             theme: "ghostty:Dracula".into(),
             ui_font: Some("SF Pro Text".into()),
+            docs_ruler: false,
         };
         s.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), s);
@@ -90,5 +94,6 @@ mod tests {
         std::fs::write(&path, "theme = \"omarchy:nord\"\n").unwrap();
         assert_eq!(Settings::load_from(&path).theme, "omarchy:nord");
         assert_eq!(Settings::load_from(&path).ui_font, None);
+        assert!(Settings::load_from(&path).docs_ruler, "ruler on by default");
     }
 }
