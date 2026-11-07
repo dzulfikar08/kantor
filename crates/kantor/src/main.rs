@@ -54,7 +54,8 @@ fn parse_args() -> Result<Args> {
 
 fn main() {
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("warn,kantor=info,sheets_ui=info"),
+        env_logger::Env::default()
+            .default_filter_or("warn,kantor=info,sheets_ui=info,docs_ui=info"),
     )
     .init();
     let args = match parse_args() {
@@ -71,6 +72,7 @@ fn main() {
             gpui_kit::init(cx);
             theme::init(cx);
             sheets_ui::init(cx);
+            docs_ui::init(cx);
 
             actions::bind_keys(cx);
 

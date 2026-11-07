@@ -13,10 +13,11 @@
 //! sketch of the real `docs_layout`, not a stable surface.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use parley::{
-    Affinity, Alignment, AlignmentOptions, Cursor, FontContext, FontData, FontFamily, FontStyle,
-    FontWeight, Layout, LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
+    Affinity, Alignment, AlignmentOptions, BreakReason, Cursor, FontContext, FontData, FontFamily,
+    FontStyle, FontWeight, Layout, LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
 };
 
 pub use parley;
@@ -114,8 +115,12 @@ pub struct Paragraph {
     /// CSS-style family list, e.g. `"Carlito, Noto Sans CJK SC, Noto Sans Arabic"`.
     pub family: String,
     pub size_pt: f32,
-    /// Line height as a multiple of the font size (Word's "multiple").
+    /// Line height as a multiple of the font size.
     pub line_spacing: f32,
+    /// Overrides `line_spacing` when set: e.g. `MetricsRelative(1.08)` for
+    /// Word's "multiple" (a multiple of the font's own line height), or
+    /// `Absolute(px)` for "exactly".
+    pub line_height: Option<LineHeight>,
     pub space_before_pt: f32,
     pub space_after_pt: f32,
     /// BCP 47 language, used for shaping and line breaking.
@@ -131,6 +136,7 @@ impl Paragraph {
             family: "Carlito, Liberation Sans, Noto Sans, sans-serif".into(),
             size_pt: 11.0,
             line_spacing: 1.15,
+            line_height: None,
             space_before_pt: 0.0,
             space_after_pt: 8.0,
             locale: None,
@@ -169,9 +175,10 @@ impl Engine {
             para.family.as_str().into(),
         )));
         b.push_default(StyleProperty::FontSize(para.size_pt * PT));
-        b.push_default(StyleProperty::LineHeight(LineHeight::FontSizeRelative(
-            para.line_spacing,
-        )));
+        b.push_default(StyleProperty::LineHeight(
+            para.line_height
+                .unwrap_or(LineHeight::FontSizeRelative(para.line_spacing)),
+        ));
         b.push_default(StyleProperty::Brush(Rgba::BLACK));
         if let Some(locale) = para.locale.as_deref().and_then(|l| l.parse().ok()) {
             b.push_default(StyleProperty::Locale(Some(locale)));
@@ -217,7 +224,7 @@ impl Engine {
         let width = setup.content_width();
         let layouts = paras
             .iter()
-            .map(|p| self.layout_paragraph(p, width))
+            .map(|p| Arc::new(self.layout_paragraph(p, width)))
             .collect();
         PagedDocument::paginate(paras, layouts, setup)
     }
@@ -257,6 +264,10 @@ pub struct GlyphRun {
     /// plus the preceding advances plus the glyph's own offset.
     pub origin_x: f32,
     pub glyphs: Vec<PositionedGlyph>,
+    /// Width of the run (for decorations).
+    pub advance: f32,
+    /// Underline: `(offset below the baseline, thickness)` in px.
+    pub underline: Option<(f32, f32)>,
     /// Byte range of the source paragraph text covered by this run.
     pub para: usize,
     pub text_range: Range<usize>,
@@ -283,9 +294,12 @@ pub struct CaretRect {
 }
 
 /// The laid-out document: paragraph layouts plus their placement on pages.
+///
+/// Layouts are shared (`Arc`) so an editor can keep a per-paragraph cache and
+/// re-paginate after an edit without reshaping unchanged paragraphs.
 pub struct PagedDocument {
     pub setup: PageSetup,
-    pub layouts: Vec<Layout<Rgba>>,
+    pub layouts: Vec<Arc<Layout<Rgba>>>,
     pub pages: Vec<Page>,
     /// For each paragraph, the y (in its layout's coordinates) that maps to
     /// the top of each of its lines on the page, indexed like `layout.lines()`.
@@ -297,7 +311,11 @@ const MIN_LINES: usize = 2;
 
 impl PagedDocument {
     /// Flows already broken paragraph layouts onto pages.
-    pub fn paginate(paras: &[Paragraph], layouts: Vec<Layout<Rgba>>, setup: PageSetup) -> Self {
+    pub fn paginate(
+        paras: &[Paragraph],
+        layouts: Vec<Arc<Layout<Rgba>>>,
+        setup: PageSetup,
+    ) -> Self {
         let bottom = setup.height - setup.margin_bottom;
         let mut pages = vec![Page::default()];
         let mut line_pages = Vec::with_capacity(layouts.len());
@@ -371,7 +389,7 @@ impl PagedDocument {
     }
 
     pub fn line_count(&self) -> usize {
-        self.layouts.iter().map(Layout::len).sum()
+        self.layouts.iter().map(|l| l.len()).sum()
     }
 
     /// Positioned glyph runs on one page, in page coordinates.
@@ -410,6 +428,14 @@ impl PagedDocument {
                 }
                 let synthesis = run.synthesis();
                 let baseline = gr.baseline() + dy;
+                let size = run.font_size();
+                // parley 0.12 has no public run metrics; use typical values.
+                let underline = gr.style().underline.as_ref().map(|d| {
+                    (
+                        d.offset.unwrap_or(size * 0.1),
+                        d.size.unwrap_or((size / 14.0).max(1.0)),
+                    )
+                });
                 out.push(GlyphRun {
                     font: run.font().clone(),
                     font_size: run.font_size(),
@@ -423,6 +449,8 @@ impl PagedDocument {
                     skew_deg: synthesis.skew(),
                     baseline,
                     origin_x: x0 + gr.offset(),
+                    advance: gr.advance(),
+                    underline,
                     glyphs: gr
                         .positioned_glyphs()
                         .map(|g| {
@@ -448,17 +476,37 @@ impl PagedDocument {
     /// Maps a point on a page to `(paragraph, byte index)`.
     pub fn hit_test(&self, page: usize, x: f32, y: f32) -> Option<(usize, usize)> {
         let lines = &self.pages.get(page)?.lines;
-        let pl = lines
+        let i = lines
             .iter()
-            .find(|l| y < l.top + l.height)
-            .or(lines.last())?;
+            .position(|l| y < l.top + l.height)
+            .or(lines.len().checked_sub(1))?;
+        self.hit_placed(page, i, x)
+    }
+
+    /// Hit-test at `x` on line `i` of `page` (a click in the margin hits the
+    /// nearest end of that line).
+    fn hit_placed(&self, page: usize, i: usize, x: f32) -> Option<(usize, usize)> {
+        let pl = *self.pages.get(page)?.lines.get(i)?;
         let dy = self.line_pages[pl.para][pl.line].1;
         let layout = &self.layouts[pl.para];
-        // Clamp into the chosen line so a click in the margin hits that line.
         let m = *layout.get(pl.line)?.metrics();
-        let ly = (y - dy).clamp(m.block_min_coord, m.block_max_coord - 0.01);
+        let ly = ((m.block_min_coord + m.block_max_coord) / 2.0).max(pl.top - dy);
         let cursor = Cursor::from_point(layout, x - self.setup.margin_left, ly);
         Some((pl.para, cursor.index()))
+    }
+
+    /// The layout line (index into `layouts[para].lines()`) showing `index`.
+    fn layout_line_of(&self, para: usize, index: usize) -> Option<usize> {
+        let layout = self.layouts.get(para)?;
+        let cursor = Cursor::from_byte_index(layout, index, Affinity::Downstream);
+        let r = cursor.geometry(layout, 1.0);
+        let mid = ((r.y0 + r.y1) / 2.0) as f32;
+        Some(
+            layout
+                .lines()
+                .position(|l| mid < l.metrics().block_max_coord)
+                .unwrap_or(layout.len().saturating_sub(1)),
+        )
     }
 
     /// Caret rectangle for a byte index of a paragraph.
@@ -466,11 +514,7 @@ impl PagedDocument {
         let layout = self.layouts.get(para)?;
         let cursor = Cursor::from_byte_index(layout, index, Affinity::Downstream);
         let r = cursor.geometry(layout, 1.0);
-        let mid = ((r.y0 + r.y1) / 2.0) as f32;
-        let line = layout
-            .lines()
-            .position(|l| mid < l.metrics().block_max_coord)
-            .unwrap_or(layout.len().saturating_sub(1));
+        let line = self.layout_line_of(para, index)?;
         let (page, dy) = *self.line_pages[para].get(line)?;
         Some(CaretRect {
             page,
@@ -478,6 +522,112 @@ impl PagedDocument {
             top: r.y0 as f32 + dy,
             height: (r.y1 - r.y0) as f32,
         })
+    }
+
+    /// `(page, index into that page's lines)` of the line showing `index` of `para`.
+    pub fn placed_line(&self, para: usize, index: usize) -> Option<(usize, usize)> {
+        let k = self.layout_line_of(para, index)?;
+        let (page, _) = *self.line_pages.get(para)?.get(k)?;
+        let i = self.pages[page]
+            .lines
+            .iter()
+            .position(|l| l.para == para && l.line == k)?;
+        Some((page, i))
+    }
+
+    /// The position on the line above (`down == false`) or below the caret
+    /// at `para`/`index`, nearest to `x` (page coordinates). Crosses pages;
+    /// `None` at the first / last line of the document.
+    pub fn vertical(
+        &self,
+        para: usize,
+        index: usize,
+        x: f32,
+        down: bool,
+    ) -> Option<(usize, usize)> {
+        let (mut page, mut i) = self.placed_line(para, index)?;
+        if down {
+            if i + 1 < self.pages[page].lines.len() {
+                i += 1;
+            } else {
+                loop {
+                    page += 1;
+                    if !self.pages.get(page)?.lines.is_empty() {
+                        i = 0;
+                        break;
+                    }
+                }
+            }
+        } else if i > 0 {
+            i -= 1;
+        } else {
+            loop {
+                page = page.checked_sub(1)?;
+                if let Some(last) = self.pages[page].lines.len().checked_sub(1) {
+                    i = last;
+                    break;
+                }
+            }
+        }
+        self.hit_placed(page, i, x)
+    }
+
+    /// Byte range of the visual line showing `index` of `para`, and whether
+    /// that line ends softly (wrapped, so its range includes the trailing
+    /// space the line broke at).
+    pub fn line_range(&self, para: usize, index: usize) -> Option<(Range<usize>, bool)> {
+        let k = self.layout_line_of(para, index)?;
+        let line = self.layouts[para].get(k)?;
+        let soft = k + 1 < self.layouts[para].len() && line.break_reason() != BreakReason::Explicit;
+        Some((line.text_range(), soft))
+    }
+
+    /// Selection highlight rectangles `(page, [x, y, w, h])` from
+    /// `start` to `end` (`(paragraph, byte index)`, in order). A selection
+    /// that continues past a paragraph's end gets a small box there, like
+    /// Word's selected pilcrow.
+    pub fn selection_rects(
+        &self,
+        start: (usize, usize),
+        end: (usize, usize),
+    ) -> Vec<(usize, [f32; 4])> {
+        let mut out = Vec::new();
+        let x0 = self.setup.margin_left;
+        for para in start.0..=end.0.min(self.layouts.len().saturating_sub(1)) {
+            let layout = &self.layouts[para];
+            let len = layout.lines().last().map_or(0, |l| l.text_range().end);
+            let a = if para == start.0 { start.1 } else { 0 };
+            let b = if para == end.0 { end.1 } else { len };
+            let sel = parley::Selection::new(
+                Cursor::from_byte_index(layout, a, Affinity::Downstream),
+                Cursor::from_byte_index(layout, b, Affinity::Downstream),
+            );
+            for (bb, line) in sel.geometry(layout) {
+                if let Some(&(page, dy)) = self.line_pages[para].get(line) {
+                    out.push((
+                        page,
+                        [
+                            x0 + bb.x0 as f32,
+                            bb.y0 as f32 + dy,
+                            (bb.x1 - bb.x0) as f32,
+                            (bb.y1 - bb.y0) as f32,
+                        ],
+                    ));
+                }
+            }
+            if para != end.0
+                && let Some(c) = self.caret(para, len)
+            {
+                out.push((c.page, [c.x, c.top, c.height * 0.3, c.height]));
+            }
+        }
+        out
+    }
+
+    /// Height of every page stacked with `gap` px between them.
+    pub fn total_height(&self, gap: f32) -> f32 {
+        let n = self.pages.len() as f32;
+        n * self.setup.height + (n - 1.0).max(0.0) * gap
     }
 }
 
@@ -642,6 +792,49 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn empty_paragraph_has_a_line_and_caret() {
+        let mut engine = Engine::new();
+        let paras = vec![
+            Paragraph::new("one"),
+            Paragraph::new(""),
+            Paragraph::new("three"),
+        ];
+        let doc = engine.layout_document(&paras, PageSetup::a4());
+        assert_eq!(
+            doc.layouts[1].len(),
+            1,
+            "an empty paragraph still takes a line"
+        );
+        let c = doc.caret(1, 0).unwrap();
+        assert!(c.height > 5.0);
+        assert_eq!(doc.hit_test(0, c.x + 30.0, c.top + 1.0), Some((1, 0)));
+        // Down from "one" lands on the empty paragraph, then on "three".
+        assert_eq!(doc.vertical(0, 1, c.x, true), Some((1, 0)));
+        assert_eq!(doc.vertical(1, 0, c.x, true), Some((2, 0)));
+        assert_eq!(doc.vertical(2, 0, c.x, true), None);
+        assert_eq!(doc.vertical(0, 0, c.x, false), None);
+    }
+
+    #[test]
+    fn vertical_moves_cross_pages_and_selection_rects() {
+        let mut engine = Engine::new();
+        let doc = engine.layout_document(&sample::document(24), PageSetup::a4());
+        let last = doc.pages[0].lines.last().copied().unwrap();
+        let first_next = doc.pages[1].lines[0];
+        let layout = &doc.layouts[last.para];
+        let idx = layout.get(last.line).unwrap().text_range().start;
+        let x = PageSetup::a4().margin_left + 1.0;
+        let (p, _) = doc.vertical(last.para, idx, x, true).unwrap();
+        assert_eq!(p, first_next.para);
+        let (range, soft) = doc.line_range(1, 0).unwrap();
+        assert_eq!(range.start, 0);
+        assert!(soft, "the justified body wraps");
+        let rects = doc.selection_rects((1, 0), (2, 3));
+        assert!(rects.len() >= 3);
+        assert!(rects.iter().all(|(_, r)| r[2] >= 0.0 && r[3] > 0.0));
     }
 
     #[test]

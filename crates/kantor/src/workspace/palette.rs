@@ -12,10 +12,11 @@ use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 use kantor_ui::tokens::Elevation;
 
+use super::doc::CommonFormat;
 use super::{AppKind, Workspace};
 use crate::actions::*;
 use crate::theme;
-use sheets_ui::{Format, HAlign, NumberFormat};
+use sheets_ui::{Format, NumberFormat};
 
 /// A palette command.
 pub(super) struct Command {
@@ -33,8 +34,14 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.new_spreadsheet(&NewSpreadsheet, window, cx),
     },
     Command {
+        title: "New Document",
+        detail: "Docs",
+        keys: "Ctrl Shift N",
+        run: |ws, window, cx| ws.new_document(&NewDocument, window, cx),
+    },
+    Command {
         title: "Open File…",
-        detail: ".xlsx",
+        detail: ".xlsx, .docx, .csv, .ods",
         keys: "Ctrl O",
         run: |ws, window, cx| ws.open_file(&OpenFile, window, cx),
     },
@@ -42,67 +49,67 @@ pub(super) const COMMANDS: &[Command] = &[
         title: "Save",
         detail: "Current document",
         keys: "Ctrl S",
-        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.save_doc(w, cx)),
+        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.save(w, cx)),
     },
     Command {
         title: "Save As…",
         detail: "Current document",
         keys: "Ctrl Shift S",
-        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.save_doc_as(w, cx)),
+        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.save_as(w, cx)),
     },
     Command {
         title: "Undo",
-        detail: "Last cell edit",
+        detail: "Last edit",
         keys: "Ctrl Z",
-        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.undo_doc(w, cx)),
+        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.undo(w, cx)),
     },
     Command {
         title: "Redo",
         detail: "Last undone edit",
         keys: "Ctrl Shift Z",
-        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.redo_doc(w, cx)),
+        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.redo(w, cx)),
     },
     Command {
         title: "Copy",
-        detail: "Selected cells, as tab-separated text",
+        detail: "Selection (cells as tab-separated text)",
         keys: "Ctrl C",
-        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.copy_doc(w, cx)),
+        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.copy(w, cx)),
     },
     Command {
         title: "Cut",
-        detail: "Copy and clear the selected cells",
+        detail: "Copy and delete the selection",
         keys: "Ctrl X",
-        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.cut_doc(w, cx)),
+        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.cut(w, cx)),
     },
     Command {
         title: "Paste",
-        detail: "Tab-separated text, at the selected cell",
+        detail: "Plain text, at the caret or selected cell",
         keys: "Ctrl V",
-        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.paste_doc(w, cx)),
+        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.paste(w, cx)),
     },
     Command {
         title: "Bold",
-        detail: "Selected cells",
+        detail: "Selection",
         keys: "Ctrl B",
         run: |ws, window, cx| {
-            ws.with_active(window, cx, |v, w, cx| v.format_doc(Format::Bold, w, cx))
+            ws.with_active(window, cx, |v, w, cx| v.format(CommonFormat::Bold, w, cx))
         },
     },
     Command {
         title: "Italic",
-        detail: "Selected cells",
+        detail: "Selection",
         keys: "Ctrl I",
         run: |ws, window, cx| {
-            ws.with_active(window, cx, |v, w, cx| v.format_doc(Format::Italic, w, cx))
+            ws.with_active(window, cx, |v, w, cx| v.format(CommonFormat::Italic, w, cx))
         },
     },
     Command {
         title: "Underline",
-        detail: "Selected cells",
+        detail: "Selection",
         keys: "Ctrl U",
         run: |ws, window, cx| {
             ws.with_active(window, cx, |v, w, cx| {
-                v.format_doc(Format::Underline, w, cx)
+                v.format(CommonFormat::Underline, w, cx)
             })
         },
     },
@@ -111,38 +118,38 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Selected cells",
         keys: "",
         run: |ws, window, cx| {
-            ws.with_active(window, cx, |v, w, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
                 v.format_doc(Format::Strikethrough, w, cx)
             })
         },
     },
     Command {
         title: "Align Left",
-        detail: "Selected cells",
+        detail: "Selection or paragraphs",
         keys: "",
         run: |ws, window, cx| {
             ws.with_active(window, cx, |v, w, cx| {
-                v.format_doc(Format::Align(HAlign::Left), w, cx)
+                v.format(CommonFormat::AlignLeft, w, cx)
             })
         },
     },
     Command {
         title: "Align Center",
-        detail: "Selected cells",
+        detail: "Selection or paragraphs",
         keys: "",
         run: |ws, window, cx| {
             ws.with_active(window, cx, |v, w, cx| {
-                v.format_doc(Format::Align(HAlign::Center), w, cx)
+                v.format(CommonFormat::AlignCenter, w, cx)
             })
         },
     },
     Command {
         title: "Align Right",
-        detail: "Selected cells",
+        detail: "Selection or paragraphs",
         keys: "",
         run: |ws, window, cx| {
             ws.with_active(window, cx, |v, w, cx| {
-                v.format_doc(Format::Align(HAlign::Right), w, cx)
+                v.format(CommonFormat::AlignRight, w, cx)
             })
         },
     },
@@ -151,7 +158,7 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Number format",
         keys: "",
         run: |ws, window, cx| {
-            ws.with_active(window, cx, |v, w, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
                 v.format_doc(Format::Number(NumberFormat::General), w, cx)
             })
         },
@@ -161,7 +168,7 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Number format · 1,234.50",
         keys: "",
         run: |ws, window, cx| {
-            ws.with_active(window, cx, |v, w, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
                 v.format_doc(Format::Number(NumberFormat::Number), w, cx)
             })
         },
@@ -171,7 +178,7 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Number format · 12.50%",
         keys: "",
         run: |ws, window, cx| {
-            ws.with_active(window, cx, |v, w, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
                 v.format_doc(Format::Number(NumberFormat::Percent), w, cx)
             })
         },
@@ -181,7 +188,7 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Number format · Rp1,250,000",
         keys: "",
         run: |ws, window, cx| {
-            ws.with_active(window, cx, |v, w, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
                 v.format_doc(Format::Number(NumberFormat::CurrencyIdr), w, cx)
             })
         },
@@ -191,7 +198,7 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Number format · $1,234.50",
         keys: "",
         run: |ws, window, cx| {
-            ws.with_active(window, cx, |v, w, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
                 v.format_doc(Format::Number(NumberFormat::CurrencyUsd), w, cx)
             })
         },
@@ -201,7 +208,7 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Number format · 2026-11-07",
         keys: "",
         run: |ws, window, cx| {
-            ws.with_active(window, cx, |v, w, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
                 v.format_doc(Format::Number(NumberFormat::Date), w, cx)
             })
         },
@@ -261,10 +268,76 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.go_home(&GoHome, window, cx),
     },
     Command {
-        title: "New Document",
-        detail: "Docs · coming soon",
-        keys: "",
-        run: |ws, _, cx| ws.not_yet(AppKind::Docs, cx),
+        title: "Heading 1",
+        detail: "Docs · paragraph style",
+        keys: "Ctrl Alt 1",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_style_doc(Some("Heading1"), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Heading 2",
+        detail: "Docs · paragraph style",
+        keys: "Ctrl Alt 2",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_style_doc(Some("Heading2"), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Heading 3",
+        detail: "Docs · paragraph style",
+        keys: "Ctrl Alt 3",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_style_doc(Some("Heading3"), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Normal Text",
+        detail: "Docs · paragraph style",
+        keys: "Ctrl Alt 0",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.set_style_doc(None, w, cx)),
+    },
+    Command {
+        title: "Justify",
+        detail: "Docs · paragraphs",
+        keys: "Ctrl J",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_align_doc(docs_engine::Align::Justify, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Zoom In",
+        detail: "Docs · page zoom",
+        keys: "Ctrl =",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, _, cx| {
+                v.zoom_by(kantor_ui::metrics::ZOOM_STEP, cx)
+            })
+        },
+    },
+    Command {
+        title: "Zoom Out",
+        detail: "Docs · page zoom",
+        keys: "Ctrl -",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, _, cx| {
+                v.zoom_by(1.0 / kantor_ui::metrics::ZOOM_STEP, cx)
+            })
+        },
+    },
+    Command {
+        title: "Actual Size",
+        detail: "Docs · page zoom 100%",
+        keys: "Ctrl 0",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, _, cx| v.set_zoom(1.0, cx)),
     },
     Command {
         title: "New Presentation",

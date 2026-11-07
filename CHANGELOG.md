@@ -9,6 +9,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+- **Docs** (first slice): open, edit and save `.docx` on A4 pages laid out with parley — typing,
+  selection, Bold/Italic/Underline, headings (Ctrl+Alt+0–3), alignment, undo/redo, zoom, plain-text
+  clipboard, IME input. New Document is Ctrl+Shift+N. Saving an opened `.docx` rewrites only the
+  body and copies every other part unchanged; files with content Docs doesn't model yet (tables,
+  images, lists, headers/footers, comments, tracked changes…) show a banner and save to a new file.
+
 ## [0.1.0] - 2026-11-07
 
 First tagged release: the **Sheets MVP**. Docs and Slides are not started yet.

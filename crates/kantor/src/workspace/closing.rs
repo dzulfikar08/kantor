@@ -5,6 +5,8 @@
 //! Save stores each document in turn (untitled ones ask for a path) and only
 //! closes once all of them are saved.
 
+use super::Workspace;
+use super::doc::DocView;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogDescription, DialogFooter};
@@ -12,9 +14,6 @@ use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_core::layout::PaneId;
-use sheets_ui::SheetsView;
-
-use super::Workspace;
 
 /// What a close request will remove. Tabs are named by id, not index, so a
 /// request stays correct while the dialog is open.
@@ -43,12 +42,12 @@ impl Workspace {
     }
 
     /// Documents a close request would drop that have unsaved changes.
-    fn dirty_views(&self, closing: Closing, cx: &App) -> Vec<Entity<SheetsView>> {
+    fn dirty_views(&self, closing: Closing, cx: &App) -> Vec<DocView> {
         self.closing_panes(closing)
             .into_iter()
             .filter_map(|pane| self.docs.get(&pane))
             .map(|doc| doc.view.clone())
-            .filter(|view| view.read(cx).is_dirty(cx))
+            .filter(|view| view.is_dirty(cx))
             .collect()
     }
 
@@ -104,11 +103,11 @@ impl Workspace {
     fn ask_to_save(
         &mut self,
         closing: Closing,
-        dirty: Vec<Entity<SheetsView>>,
+        dirty: Vec<DocView>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let names: Vec<String> = dirty.iter().map(|v| v.read(cx).doc_name(cx)).collect();
+        let names: Vec<String> = dirty.iter().map(|v| v.doc_name(cx)).collect();
         let (title, save_label) = match names.as_slice() {
             [one] => (format!("Save changes to “{one}”?"), "Save"),
             many => (
@@ -192,19 +191,19 @@ impl Workspace {
     fn save_then_close(
         &mut self,
         closing: Closing,
-        dirty: Vec<Entity<SheetsView>>,
+        dirty: Vec<DocView>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         cx.spawn_in(window, async move |this, cx| {
             for view in dirty {
-                let Ok(saved) = view.update_in(cx, |v, window, cx| v.save_for_close(window, cx))
+                let Ok(saved) = this.update_in(cx, |_, window, cx| view.save_for_close(window, cx))
                 else {
                     return;
                 };
                 if !saved.await {
                     let _ = this.update(cx, |ws, cx| {
-                        let name = view.read(cx).doc_name(cx);
+                        let name = view.doc_name(cx);
                         ws.message = format!("Not closed: “{name}” wasn't saved.").into();
                         cx.notify();
                     });

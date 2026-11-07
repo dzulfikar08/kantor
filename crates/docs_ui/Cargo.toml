@@ -1,0 +1,24 @@
+[package]
+name = "docs_ui"
+description = "Kantor Docs UI: paged document view, caret, selection, IME (GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+docs_engine.workspace = true
+docs_layout.workspace = true
+gpui-kit.workspace = true
+kantor_ui.workspace = true
+log.workspace = true
+# Same version parley uses: reads family/weight/style for the font bridge.
+skrifa = "0.44"
+
+[dev-dependencies]
+# Headless GPUI text system for the font-bridge test (as in docs_layout's gpui_compare).
+gpui_wgpu = { package = "gpui-pre-wgpu", version = "0.3.11" }
+
+[lints]
+workspace = true

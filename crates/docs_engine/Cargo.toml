@@ -1,0 +1,25 @@
+[package]
+name = "docs_engine"
+description = "Kantor Docs document model, editing commands and .docx I/O (no GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+# Default features pull in image decoding, which Docs doesn't need yet.
+docx-rs = { version = "0.4.22", default-features = false }
+# Same versions docx-rs uses, for the package scan (no duplicate crates).
+zip = { version = "8", default-features = false, features = ["deflate"] }
+quick-xml = "0.41"
+unicode-segmentation = "1"
+log.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+zip = { version = "8", default-features = false, features = ["deflate"] }

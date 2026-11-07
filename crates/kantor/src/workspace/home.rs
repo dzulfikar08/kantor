@@ -19,7 +19,7 @@ impl Workspace {
     ) -> Stateful<Div> {
         let t = tokens(cx);
         let (accent, ready) = match app {
-            AppKind::Docs => (t.docs, false),
+            AppKind::Docs => (t.docs, true),
             AppKind::Sheets => (t.sheets, true),
             AppKind::Slides => (t.slides, false),
         };
@@ -74,6 +74,7 @@ impl Workspace {
         let slides = self.render_card("home-slides", AppKind::Slides, "Present .pptx decks", cx);
         let hints: Vec<Div> = [
             ("Ctrl N", "New spreadsheet"),
+            ("Ctrl Shift N", "New document"),
             ("Ctrl O", "Open file"),
             ("Ctrl K", "All commands"),
         ]

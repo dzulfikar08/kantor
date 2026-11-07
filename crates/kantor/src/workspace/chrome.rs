@@ -8,7 +8,7 @@ use kantor_ui::components::{dot, icon_button, kbd};
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 
-use super::{AppKind, Workspace};
+use super::Workspace;
 use crate::actions::*;
 
 /// Below this window width the tab strip drops its text labels.
@@ -60,12 +60,11 @@ impl Workspace {
             let Some(doc) = self.docs.get(&tab.focused) else {
                 continue;
             };
-            let name = SharedString::from(doc.view.read(cx).doc_name(cx));
-            let dirty = panes.iter().any(|p| {
-                self.docs
-                    .get(p)
-                    .is_some_and(|d| d.view.read(cx).is_dirty(cx))
-            });
+            let name = SharedString::from(doc.view.doc_name(cx));
+            let app_color = doc.view.kind().color(&t);
+            let dirty = panes
+                .iter()
+                .any(|p| self.docs.get(p).is_some_and(|d| d.view.is_dirty(cx)));
             let extra = panes.len().saturating_sub(1);
             let group = SharedString::from(format!("tab-{}", tab.id));
             let (on_select, on_close) = (entity.clone(), entity.clone());
@@ -94,7 +93,7 @@ impl Workspace {
                         },
                         |d| d.text_color(t.fg_muted).hover(|s| s.bg(t.hover)),
                     )
-                    .child(dot(if dirty { t.warning } else { t.sheets }))
+                    .child(dot(if dirty { t.warning } else { app_color }))
                     .child(
                         div()
                             .w(if compact { px(96.) } else { TAB_TITLE_WIDTH })
@@ -223,8 +222,13 @@ impl Workspace {
         let t = tokens(cx);
         let (app, color, detail, status) = match self.focused_view() {
             Some(view) => {
-                let v = view.read(cx);
-                (AppKind::Sheets.name(), t.sheets, v.cell_ref(), v.status())
+                let kind = view.kind();
+                (
+                    kind.name(),
+                    kind.color(&t),
+                    view.location(cx),
+                    view.status(cx),
+                )
             }
             None => ("Home", t.accent, String::new(), self.message.clone()),
         };

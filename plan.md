@@ -15,6 +15,7 @@ Status: **M0 done; Sheets MVP (M1) feature-complete pending Mac checks**. Writte
 **What works today** (nightly, verified running on the M1 Air under Asahi):
 - One binary, suite shell modelled on Voltrus Tools (`docs/reference-voltrus-tools.md`): Home screen, document **tabs** (tab strip = titlebar), **split panes** with draggable dividers, resizable **sidebar** (open/recent/create) and **inspector** (cell + workbook details), **status bar**, **Ctrl+K command palette** (fuzzy), **theme picker** (Follow Omarchy / 23 Omarchy / 907 Ghostty themes, live preview), **UI font picker** (SF Pro when installed). Tabs, layouts and panel sizes **persist** across runs.
 - **Sheets**: open/edit/save `.xlsx` via IronCalc (formulas recalc, atomic save), Excel-style typing into cells (type / Enter / F2 / Delete / Esc), name box + formula bar, multiple sheets.
+- **Docs** (M2 first slice, not yet tried on the Mac): new document (Ctrl+Shift+N, Home, sidebar, palette) and open/save `.docx`: paragraphs, runs (font, size, bold/italic/underline, colour), paragraph styles (Normal, Heading 1–3, the file's own), alignment and spacing. Paged A4 view (parley layout, GPUI paints the glyphs, only visible pages), zoom, caret/selection, typing via GPUI's input handler (IME), Enter/Backspace/Delete, arrows/Home/End/PageUp/PageDown, Ctrl+B/I/U, undo/redo, plain-text clipboard. **Round-trip safety:** saving copies every package part byte for byte and regenerates only the body; a file with content the model doesn't hold (tables, images, fields, comments, tracked changes, headers/footers, lists…) is marked and its Save goes to Save As: the original is never overwritten (`crates/docs_engine/src/docx.rs`).
 - Design system in `kantor_ui` (metrics + colour tokens derived from the palette; "views never use raw colours or sizes").
 - Renderer memory patch (`vendor/gpui-pre-wgpu`) — fixed the wgpu *Out of Memory* crash on 8 GB with a browser open.
 
@@ -35,8 +36,9 @@ Status: **M0 done; Sheets MVP (M1) feature-complete pending Mac checks**. Writte
 9. ◐ **Corpus + fidelity CI**: ✅ `.xlsx`: 12 generated CC0 files in `tests/corpus/xlsx/` (`scripts/corpus/gen_xlsx.py`), round-trip test `crates/sheets_engine/tests/corpus.rs` with known IronCalc gaps in `known-gaps.tsv`, `fidelity.yml` (report + LibreOffice-headless PDFs as an artifact). ☐ `.docx`/`.pptx` corpora with Docs/Slides; ☐ pixel-diff score.
    ✅ **xlsx part preservation** (§5): `Workbook::save_as` post-processes IronCalc's package (`crates/sheets_engine/src/preserve.rs`) and carries what IronCalc drops from the original: comments + VML, custom properties, drawings/charts/images, printer settings, custom XML, threaded comments, and sheet elements (`sheetPr`, `sheetFormatPr`, data validation, print setup, `legacyDrawing`...), matched to sheets by `sheetId`; tab colours are written from the model; non-OOXML error values (`#ERROR!` from 3-D refs) are no longer written. Anything ambiguous is skipped and listed in `Workbook::save_notes()`; the result is checked with `package_problems` and falls back to IronCalc's output. Not carried yet: tables, pivots, external links, VBA, OLE/controls.
 10. ◐ First tagged release `v0.1.0` (Sheets MVP) and an AUR `kantor-bin`: ✅ prepared — `release.yml` (tag `v*` must match the Cargo.toml version; tarballs + `SHA256SUMS`, notes from `CHANGELOG.md`), version 0.1.0, `packaging/aur/` (`update.sh`, publish steps in its README). ✅ Released 2026-11-07: https://github.com/dzulfikar08/kantor/releases/tag/v0.1.0 (both arches + `SHA256SUMS`); PKGBUILD checksums filled. ☐ Publish `kantor-bin` to the AUR (needs the user's AUR SSH key; steps in `packaging/aur/README.md`).
+11. ◐ **Docs M2, first slice** (`docs_engine`, `docs_ui`, shell wiring): see *What works today*. ☐ Try on the Mac: glyphs land where parley put them in a real window (ADR 0001 open risk 6), fcitx5 composition and candidate window, scrolling/zoom feel, a few real `.docx` files. Next: tables (read-only display first), lists, page breaks, tab stops, rich clipboard, `.docx` corpus + fidelity CI.
 
-**Known gaps / caveats:** Docs and Slides are placeholders ("coming soon"). Split-right uses the dashboard icon (GPUI Kit's default icon set has no columns icon). Window title/decorations come from Hyprland (server-side); no in-app window buttons, by design.
+**Known gaps / caveats:** Slides is a placeholder ("coming soon"). Docs gaps: no tables/images/lists/headers yet (such files open with a warning banner and save as a copy), tabs render as one space (no tab stops), "at least" line spacing is approximated, the clipboard is plain text, no spell check, PDF export or print yet. Split-right uses the dashboard icon (GPUI Kit's default icon set has no columns icon). Window title/decorations come from Hyprland (server-side); no in-app window buttons, by design.
 
 ## 1. Why
 
@@ -108,10 +110,10 @@ kantor/
 │   ├── kantor_pdf        # PDF export via krilla
 │   ├── sheets_engine     # ✅ thin wrapper over ironcalc (open/save xlsx, cells, formulas)
 │   ├── sheets_ui         # ✅ grid, formula bar, sheet tabs (later: in-cell editor, selection, fill handle)
-│   ├── docs_model        # document tree: sections, paragraphs, runs, tables, images
-│   ├── docs_layout       # pagination engine (pages, columns, tables, headers/footers)
-│   ├── docs_docx         # DOCX <-> docs_model (docx-rs + preserved extras)
-│   ├── docs_ui           # page view, caret, selection, toolbar, styles panel
+│   ├── docs_engine       # ✅ no GPUI: document model, styles, undo/redo, .docx read/write + preservation
+│   │                     #    (later: sections, tables, images; may split into docs_model / docs_docx)
+│   ├── docs_layout       # ✅ no GPUI: parley paragraphs → pages (later: tables, headers/footers)
+│   ├── docs_ui           # ✅ page view, caret, selection, IME, toolbar (later: styles panel)
 │   ├── slides_model      # slides, layouts, masters, shapes, text boxes, images
 │   ├── slides_pptx       # PPTX <-> slides_model (own, on kantor_ooxml)
 │   └── slides_ui         # slide canvas, sorter, presenter mode
@@ -296,6 +298,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 15. ✅ Range selection and TSV copy/paste (`sheets_engine::tsv`, `CellRange`).
 16. ✅ In-cell editor (`sheets_ui::cell_editor`), CSV/ODS/XLS import, formatting + toolbar (`sheets_engine::format`, `sheets_ui::toolbar`).
 17. ✅ Text engine decided: parley for Docs layout, GPUI paints the glyphs (ADR 0001); prototype `crates/docs_layout` with pagination, caret hit-testing, benchmark and krilla PDF examples.
+18. ✅ Docs first slice: `docs_engine` (model, undo stack, `.docx` via a quick-xml reader of the modelled subset + docx-rs writer, unsupported content → Save As only), `docs_ui` (`DocsView`: pages on a desk, zoom, caret/selection, keyboard, `EntityInputHandler`, per-paragraph layout cache, verified font bridge incl. the Arabic fallback case, with a headless test), and the shell's `Doc` generalised to Sheets or Docs (tabs, splits, session, recent, close prompt, palette, Home, inspector, status bar).
 
 ## 12. Open questions
 

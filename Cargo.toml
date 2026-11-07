@@ -33,6 +33,9 @@ kantor_theme = { path = "crates/kantor_theme" }
 kantor_ui = { path = "crates/kantor_ui" }
 sheets_engine = { path = "crates/sheets_engine" }
 sheets_ui = { path = "crates/sheets_ui" }
+docs_engine = { path = "crates/docs_engine" }
+docs_layout = { path = "crates/docs_layout" }
+docs_ui = { path = "crates/docs_ui" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

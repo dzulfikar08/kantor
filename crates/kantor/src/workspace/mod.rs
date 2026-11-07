@@ -12,6 +12,7 @@
 
 mod chrome;
 mod closing;
+mod doc;
 mod home;
 mod palette;
 mod panels;
@@ -31,6 +32,8 @@ use kantor_core::session::{PaneState, Session, TabState, UiState};
 use kantor_ui::metrics::*;
 use kantor_ui::{CachedView, tokens};
 use sheets_ui::SheetsView;
+
+use doc::DocView;
 
 use crate::actions::*;
 use closing::Closing;
@@ -52,9 +55,19 @@ impl AppKind {
         let ext = path.extension()?.to_str()?.to_ascii_lowercase();
         match ext.as_str() {
             "xlsx" | "xlsm" | "xls" | "xlsb" | "ods" | "csv" | "tsv" => Some(Self::Sheets),
-            "docx" | "doc" | "odt" | "rtf" => Some(Self::Docs),
+            // Docs reads .docx only (.doc / .odt / .rtf aren't supported yet).
+            "docx" => Some(Self::Docs),
             "pptx" | "ppt" | "odp" => Some(Self::Slides),
             _ => None,
+        }
+    }
+
+    /// The app's colour (Docs blue, Sheets green, Slides orange).
+    fn color(self, t: &kantor_ui::Tokens) -> Hsla {
+        match self {
+            Self::Docs => t.docs,
+            Self::Sheets => t.sheets,
+            Self::Slides => t.slides,
         }
     }
 
@@ -69,7 +82,7 @@ impl AppKind {
 
 /// An open document; shown by exactly one pane.
 struct Doc {
-    view: Entity<SheetsView>,
+    view: DocView,
     _changes: Subscription,
 }
 
@@ -171,19 +184,24 @@ impl Workspace {
 
     // ── documents, tabs, panes ─────────────────────────────────────────────
 
-    /// Create a document view (empty, or loading `file`) and return its pane id.
+    /// Create a document view of app `kind` (empty, or loading `file`) and
+    /// return its pane id; `None` for apps that don't exist yet.
     fn new_doc(
         &mut self,
+        kind: AppKind,
         file: Option<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> PaneId {
+    ) -> Option<PaneId> {
+        let view = DocView::new(kind, file, window, cx)?;
         let id = self.alloc_id();
-        let view = cx.new(|cx| SheetsView::new(file, window, cx));
-        if let Some(path) = view.read(cx).path(cx) {
+        if let Some(path) = view.path(cx) {
             Session::touch_recent(&mut self.recent, &path);
         }
-        let changes = cx.observe(&view, |_, _, cx| cx.notify());
+        let changes = match &view {
+            DocView::Sheets(e) => cx.observe(e, |_, _, cx| cx.notify()),
+            DocView::Docs(e) => cx.observe(e, |_, _, cx| cx.notify()),
+        };
         self.docs.insert(
             id,
             Doc {
@@ -191,7 +209,7 @@ impl Workspace {
                 _changes: changes,
             },
         );
-        id
+        Some(id)
     }
 
     /// Find the tab and pane showing `path`.
@@ -199,7 +217,7 @@ impl Workspace {
         self.tabs.iter().enumerate().find_map(|(ti, tab)| {
             tab.layout.panes().into_iter().find_map(|pane| {
                 let doc = self.docs.get(&pane)?;
-                (doc.view.read(cx).path(cx).as_deref() == Some(path)).then_some((ti, pane))
+                (doc.view.path(cx).as_deref() == Some(path)).then_some((ti, pane))
             })
         })
     }
@@ -211,26 +229,24 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match app {
-            AppKind::Sheets => {
-                if let Some(path) = &file
-                    && let Some((ti, pane)) = self.find_path(path, cx)
-                {
-                    self.tabs[ti].focused = pane;
-                    self.activate(Some(ti), window, cx);
-                    return;
-                }
-                let pane = self.new_doc(file, window, cx);
-                let id = self.alloc_id();
-                self.tabs.push(Tab {
-                    id,
-                    layout: Layout::Leaf(pane),
-                    focused: pane,
-                });
-                self.activate(Some(self.tabs.len() - 1), window, cx);
-            }
-            AppKind::Docs | AppKind::Slides => self.not_yet(app, cx),
+        if let Some(path) = &file
+            && let Some((ti, pane)) = self.find_path(path, cx)
+        {
+            self.tabs[ti].focused = pane;
+            self.activate(Some(ti), window, cx);
+            return;
         }
+        let Some(pane) = self.new_doc(app, file, window, cx) else {
+            self.not_yet(app, cx);
+            return;
+        };
+        let id = self.alloc_id();
+        self.tabs.push(Tab {
+            id,
+            layout: Layout::Leaf(pane),
+            focused: pane,
+        });
+        self.activate(Some(self.tabs.len() - 1), window, cx);
     }
 
     fn not_yet(&mut self, app: AppKind, cx: &mut Context<Self>) {
@@ -238,7 +254,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn focused_view(&self) -> Option<Entity<SheetsView>> {
+    fn focused_view(&self) -> Option<DocView> {
         let tab = self.tabs.get(self.active?)?;
         Some(self.docs.get(&tab.focused)?.view.clone())
     }
@@ -248,9 +264,9 @@ impl Workspace {
         self.active = ix.filter(|&i| i < self.tabs.len());
         match self.focused_view() {
             Some(view) => {
-                let title = view.read(cx).title(cx);
+                let title = view.title(cx);
                 window.set_window_title(&title);
-                view.update(cx, |v, cx| v.focus(window, cx));
+                view.focus(window, cx);
             }
             None => {
                 window.set_window_title("Kantor");
@@ -271,25 +287,54 @@ impl Workspace {
         }
         tab.focused = pane;
         if let Some(view) = self.focused_view() {
-            let title = view.read(cx).title(cx);
+            let title = view.title(cx);
             window.set_window_title(&title);
         }
         cx.notify();
     }
 
+    /// Run `f` on the focused document, whatever its app.
     fn with_active(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&DocView, &mut Window, &mut App),
+    ) {
+        if let Some(view) = self.focused_view() {
+            f(&view, window, cx);
+        }
+    }
+
+    /// Run `f` if the focused document is a spreadsheet.
+    fn with_sheets(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
         f: impl FnOnce(&mut SheetsView, &mut Window, &mut Context<SheetsView>),
     ) {
-        if let Some(view) = self.focused_view() {
+        if let Some(DocView::Sheets(view)) = self.focused_view() {
+            view.update(cx, |v, cx| f(v, window, cx));
+        }
+    }
+
+    /// Run `f` if the focused document is a Docs document.
+    fn with_docs(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut docs_ui::DocsView, &mut Window, &mut Context<docs_ui::DocsView>),
+    ) {
+        if let Some(DocView::Docs(view)) = self.focused_view() {
             view.update(cx, |v, cx| f(v, window, cx));
         }
     }
 
     fn new_spreadsheet(&mut self, _: &NewSpreadsheet, window: &mut Window, cx: &mut Context<Self>) {
         self.launch(AppKind::Sheets, None, window, cx);
+    }
+
+    fn new_document(&mut self, _: &NewDocument, window: &mut Window, cx: &mut Context<Self>) {
+        self.launch(AppKind::Docs, None, window, cx);
     }
 
     fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
@@ -322,11 +367,14 @@ impl Workspace {
     }
 
     fn split(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
+        let kind = self.focused_view().map_or(AppKind::Sheets, |v| v.kind());
         let Some(ti) = self.active else {
-            self.launch(AppKind::Sheets, None, window, cx);
+            self.launch(kind, None, window, cx);
             return;
         };
-        let pane = self.new_doc(None, window, cx);
+        let Some(pane) = self.new_doc(kind, None, window, cx) else {
+            return;
+        };
         let tab = &mut self.tabs[ti];
         if let Some(layout) = tab.layout.split(tab.focused, pane, axis) {
             tab.layout = layout;
@@ -510,8 +558,10 @@ impl Workspace {
         for saved in &session.tabs {
             let mut ids = HashMap::new();
             for p in &saved.panes {
-                if p.path.is_file() {
-                    let id = self.new_doc(Some(p.path.clone()), window, cx);
+                if p.path.is_file()
+                    && let Some(kind) = AppKind::for_path(&p.path)
+                    && let Some(id) = self.new_doc(kind, Some(p.path.clone()), window, cx)
+                {
                     ids.insert(p.id, id);
                 }
             }
@@ -538,7 +588,7 @@ impl Workspace {
         for (ti, tab) in self.tabs.iter().enumerate() {
             let mut panes = Vec::new();
             let layout = tab.layout.map_panes(&mut |pane| {
-                let path = self.docs.get(&pane)?.view.read(cx).path(cx)?;
+                let path = self.docs.get(&pane)?.view.path(cx)?;
                 panes.push(PaneState { id: pane, path });
                 Some(pane)
             });
@@ -612,6 +662,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::palette_up))
             .on_action(cx.listener(Self::palette_down))
             .on_action(cx.listener(Self::new_spreadsheet))
+            .on_action(cx.listener(Self::new_document))
             .on_action(cx.listener(Self::open_file))
             .on_action(cx.listener(Self::close_pane))
             .on_action(cx.listener(Self::close_active_tab))

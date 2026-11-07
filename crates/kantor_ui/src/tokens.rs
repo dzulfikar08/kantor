@@ -39,6 +39,12 @@ pub struct Tokens {
     pub sheets: Hsla,
     pub slides: Hsla,
     pub scrim: Hsla,
+    /// Docs: the desk behind the pages, the paper, ink on paper (caret) and
+    /// the selection on paper. Paper stays white in dark themes, like Word.
+    pub desk: Hsla,
+    pub paper: Hsla,
+    pub paper_ink: Hsla,
+    pub paper_selection: Hsla,
 }
 
 impl Global for Tokens {}
@@ -125,6 +131,10 @@ impl Tokens {
                 l: 0.,
                 a: if p.dark { 0.45 } else { 0.2 },
             },
+            desk: if p.dark { on_bg(0.06) } else { on_bg(0.07) },
+            paper: c(0xffffff),
+            paper_ink: c(0x111111),
+            paper_selection: alpha(p.accent, 0.30),
         }
     }
 

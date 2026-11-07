@@ -61,7 +61,8 @@ fn main() {
         let PagedDocument {
             mut layouts, setup, ..
         } = doc;
-        layouts[target] = engine.layout_paragraph(&paras[target], setup.content_width());
+        layouts[target] =
+            std::sync::Arc::new(engine.layout_paragraph(&paras[target], setup.content_width()));
         doc = PagedDocument::paginate(&paras, layouts, setup);
         edit.push(t.elapsed());
     }
