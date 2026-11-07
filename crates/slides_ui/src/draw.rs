@@ -53,6 +53,8 @@ pub(crate) struct Item {
     pub xfrm: Xfrm,
     pub look: Look,
     pub text: Option<LaidText>,
+    /// A slide placeholder with no text (dashed outline on the canvas).
+    pub empty_placeholder: bool,
 }
 
 /// Caches shared by every surface of one view.
@@ -81,7 +83,8 @@ pub(crate) fn hsla(c: Rgb) -> Hsla {
 
 /// Layout paragraphs for a resolved text body.
 pub(crate) fn layout_paragraphs(t: &RenderText) -> Vec<docs_layout::Paragraph> {
-    let alpha = if t.prompt { 140 } else { 255 };
+    // Prompts are the placeholder's own colour, faded to a muted grey.
+    let alpha = if t.prompt { 110 } else { 255 };
     t.paras
         .iter()
         .map(|p| {
@@ -264,6 +267,7 @@ impl Painter {
                     xfrm,
                     look,
                     text,
+                    empty_placeholder: r.is_empty_placeholder(),
                 }
             })
             .collect()
@@ -346,17 +350,40 @@ fn paint_outline(
     }
 }
 
-/// Paint `items` with `view`; `other` is the colour for objects Kantor
-/// can't draw yet (a chrome token).
+/// How `paint_slide` draws: `other` is the colour for objects Kantor
+/// can't draw yet (a chrome token); `editor` adds the editor-only dashed
+/// outline around empty placeholders (not in thumbnails or presenting).
+#[derive(Clone, Copy)]
+pub(crate) struct Surface {
+    pub other: Hsla,
+    pub editor: bool,
+}
+
+/// Dashed outline of an empty placeholder: grey that reads on the slide's
+/// own background (dark on light slides, light on dark ones).
+pub(crate) fn placeholder_outline(background: Rgb) -> Hsla {
+    let [r, g, b] = background.0;
+    let lum = (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) / 255.0;
+    let l = if lum > 0.5 { 0.0 } else { 1.0 };
+    Hsla {
+        h: 0.,
+        s: 0.,
+        l,
+        a: 0.38,
+    }
+}
+
+/// Paint `items` with `view` into `slide_bounds`.
 pub(crate) fn paint_slide(
     items: &[Item],
     background: Rgb,
     slide_bounds: Bounds<Pixels>,
     view: View,
-    other: Hsla,
+    surface: Surface,
     bridge: &RefCell<FontBridge>,
     window: &mut Window,
 ) {
+    let other = surface.other;
     window.paint_quad(fill(slide_bounds, hsla(background)));
     window.with_content_mask(
         Some(ContentMask {
@@ -409,6 +436,16 @@ pub(crate) fn paint_slide(
                         window.paint_quad(fill(b, other.opacity(0.12)));
                         paint_outline(window, b, false, other.opacity(0.6), px(1.));
                     }
+                }
+                if surface.editor && item.empty_placeholder {
+                    window.paint_quad(quad(
+                        b,
+                        Corners::default(),
+                        transparent_black(),
+                        Edges::all(px(1.)),
+                        placeholder_outline(background),
+                        BorderStyle::Dashed,
+                    ));
                 }
                 if let Some(t) = &item.text {
                     paint_text(t, &item.xfrm, view, bridge, window);
