@@ -8,8 +8,9 @@ extern crate gpui_kit as gpui;
 use std::path::PathBuf;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _, h_flex,
+    ActiveTheme as _, Sizable as _,
     button::{Button, ButtonVariants as _},
+    h_flex,
     input::{Input, InputEvent, InputState},
     table::{Column, DataTable, TableDelegate, TableEvent, TableState},
     v_flex,
@@ -46,7 +47,12 @@ pub struct SheetGrid {
 
 impl SheetGrid {
     fn new(book: Workbook) -> Self {
-        let mut grid = Self { book, sheet: 0, rows: 0, cols: 0 };
+        let mut grid = Self {
+            book,
+            sheet: 0,
+            rows: 0,
+            cols: 0,
+        };
         grid.resize();
         grid
     }
@@ -97,7 +103,9 @@ impl TableDelegate for SheetGrid {
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from((row_ix + 1).to_string()));
         }
-        let text = self.book.display_value(self.sheet, row_ix as u32, col_ix as u32 - 1);
+        let text = self
+            .book
+            .display_value(self.sheet, row_ix as u32, col_ix as u32 - 1);
         div().truncate().child(SharedString::from(text))
     }
 
@@ -129,9 +137,15 @@ impl SheetsView {
             }
             Some(Err(err)) => {
                 log::error!("{err:#}");
-                (Workbook::new_empty().expect("empty workbook"), format!("{err:#}"))
+                (
+                    Workbook::new_empty().expect("empty workbook"),
+                    format!("{err:#}"),
+                )
             }
-            None => (Workbook::new_empty().expect("empty workbook"), "Ready".to_owned()),
+            None => (
+                Workbook::new_empty().expect("empty workbook"),
+                "Ready".to_owned(),
+            ),
         };
 
         let table = cx.new(|cx| {
@@ -261,8 +275,12 @@ impl SheetsView {
             prompt: Some("Open spreadsheet".into()),
         });
         cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(paths))) = paths.await else { return };
-            let Some(path) = paths.into_iter().next() else { return };
+            let Ok(Ok(Some(paths))) = paths.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
             let _ = this.update_in(cx, |this, window, cx| {
                 match Workbook::open(&path) {
                     Ok(book) => {
@@ -312,7 +330,9 @@ impl SheetsView {
         };
         let path = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(mut path))) = path.await else { return };
+            let Ok(Ok(Some(mut path))) = path.await else {
+                return;
+            };
             if path.extension().is_none() {
                 path.set_extension("xlsx");
             }
@@ -326,7 +346,12 @@ impl SheetsView {
         .detach();
     }
 
-    fn after_save(&mut self, result: anyhow::Result<()>, window: &mut Window, cx: &mut Context<Self>) {
+    fn after_save(
+        &mut self,
+        result: anyhow::Result<()>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.status = match result {
             Ok(()) => format!("Saved {}", self.table.read(cx).delegate().book.title()).into(),
             Err(err) => format!("Save failed: {err:#}").into(),
@@ -339,15 +364,21 @@ impl SheetsView {
         let grid = self.table.read(cx).delegate();
         let active = grid.sheet;
         let names = grid.book.sheet_names();
-        h_flex().gap_1().children(names.into_iter().enumerate().map(|(ix, name)| {
-            let ix = ix as u32;
-            let view = cx.entity().downgrade();
-            let button = Button::new(("sheet-tab", ix as usize)).label(name).xsmall();
-            let button = if ix == active { button.primary() } else { button.ghost() };
-            button.on_click(move |_, window, cx| {
-                let _ = view.update(cx, |this, cx| this.select_sheet(ix, window, cx));
-            })
-        }))
+        h_flex()
+            .gap_1()
+            .children(names.into_iter().enumerate().map(|(ix, name)| {
+                let ix = ix as u32;
+                let view = cx.entity().downgrade();
+                let button = Button::new(("sheet-tab", ix as usize)).label(name).xsmall();
+                let button = if ix == active {
+                    button.primary()
+                } else {
+                    button.ghost()
+                };
+                button.on_click(move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| this.select_sheet(ix, window, cx));
+                })
+            }))
     }
 }
 
@@ -407,7 +438,12 @@ impl Render for SheetsView {
                     .border_color(border)
                     .bg(bar_bg)
                     .child(tabs)
-                    .child(div().text_xs().text_color(muted_fg).child(self.status.clone())),
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted_fg)
+                            .child(self.status.clone()),
+                    ),
             )
     }
 }

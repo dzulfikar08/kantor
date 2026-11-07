@@ -92,7 +92,11 @@ fn luminance(c: Rgb) -> f32 {
 /// Linear mix of two colors; `t = 0` gives `a`, `t = 1` gives `b`.
 pub fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
     let ch = |c: Rgb, s: u32| ((c >> s) & 0xff) as f32;
-    let m = |s| (ch(a, s) + (ch(b, s) - ch(a, s)) * t).round().clamp(0.0, 255.0) as u32;
+    let m = |s| {
+        (ch(a, s) + (ch(b, s) - ch(a, s)) * t)
+            .round()
+            .clamp(0.0, 255.0) as u32
+    };
     (m(16) << 16) | (m(8) << 8) | m(0)
 }
 
@@ -103,7 +107,10 @@ impl Palette {
         let background = parse_hex(&raw.background)?;
         let foreground = parse_hex(&raw.foreground)?;
         let opt = |v: &Option<String>, fallback: Rgb| -> Result<Rgb> {
-            v.as_deref().map(parse_hex).transpose().map(|c| c.unwrap_or(fallback))
+            v.as_deref()
+                .map(parse_hex)
+                .transpose()
+                .map(|c| c.unwrap_or(fallback))
         };
         let dark = match raw.mode.as_deref() {
             Some("light") => false,

@@ -34,7 +34,11 @@ impl Workbook {
     pub fn new_empty() -> Result<Self> {
         let model = Model::new_empty("Untitled", LOCALE, TIMEZONE, LANGUAGE)
             .map_err(|e| anyhow!("creating workbook: {e}"))?;
-        Ok(Self { model, path: None, dirty: false })
+        Ok(Self {
+            model,
+            path: None,
+            dirty: false,
+        })
     }
 
     /// Open an `.xlsx` file.
@@ -53,7 +57,11 @@ impl Workbook {
         let mut model = load_from_xlsx(name, LOCALE, TIMEZONE, LANGUAGE)
             .map_err(|e| anyhow!("opening {}: {e}", path.display()))?;
         model.evaluate();
-        Ok(Self { model, path: Some(path.to_path_buf()), dirty: false })
+        Ok(Self {
+            model,
+            path: Some(path.to_path_buf()),
+            dirty: false,
+        })
     }
 
     pub fn path(&self) -> Option<&Path> {
@@ -75,7 +83,10 @@ impl Workbook {
 
     /// Save to the current path.
     pub fn save(&mut self) -> Result<()> {
-        let path = self.path.clone().context("workbook has no path yet; use save_as")?;
+        let path = self
+            .path
+            .clone()
+            .context("workbook has no path yet; use save_as")?;
         self.save_as(path)
     }
 
@@ -90,8 +101,8 @@ impl Workbook {
         let file_name = path.file_name().context("save path has no file name")?;
         let tmp = dir.join(format!(".{}.kantor-tmp", file_name.to_string_lossy()));
         {
-            let file = fs::File::create(&tmp)
-                .with_context(|| format!("creating {}", tmp.display()))?;
+            let file =
+                fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
             let writer = save_xlsx_to_writer(&self.model, BufWriter::new(file))
                 .map_err(|e| anyhow!("writing xlsx: {e}"))?;
             writer

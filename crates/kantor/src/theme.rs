@@ -18,7 +18,11 @@ fn ca(rgb: Rgb, alpha: f32) -> Hsla {
 
 /// Apply `p` to the global theme and refresh every window.
 pub fn apply(p: &Palette, cx: &mut App) {
-    let mode = if p.dark { ThemeMode::Dark } else { ThemeMode::Light };
+    let mode = if p.dark {
+        ThemeMode::Dark
+    } else {
+        ThemeMode::Light
+    };
     // Load the matching base theme first, then override colors in a second update
     // (see `Theme::update` docs: a mode switch replaces colors).
     Theme::change(mode, None, cx);

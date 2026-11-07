@@ -52,7 +52,11 @@ fn parse_args() -> Result<Args> {
     }
     let app = match (app, &file) {
         (Some(app), _) => app,
-        (None, Some(f)) => match f.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase) {
+        (None, Some(f)) => match f
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+        {
             Some(e) if matches!(e.as_str(), "xlsx" | "xlsm") => Mode::Sheets,
             Some(e) if matches!(e.as_str(), "docx" | "pptx") => {
                 bail!(".{e} files are not supported yet (Docs and Slides are planned)")
