@@ -199,7 +199,10 @@ mod tests {
     fn ghostty_table_parses() {
         let themes = ghostty_themes();
         assert!(themes.len() > 800, "only {} themes", themes.len());
-        let dracula = themes.iter().find(|t| t.name == "Dracula").expect("Dracula");
+        let dracula = themes
+            .iter()
+            .find(|t| t.name == "Dracula")
+            .expect("Dracula");
         assert!(dracula.palette.dark);
         assert_eq!(dracula.palette.background, 0x282a36);
     }

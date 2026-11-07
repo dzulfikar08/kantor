@@ -938,20 +938,15 @@ impl Workspace {
             let row_el = match &p.mode {
                 PaletteMode::Commands => {
                     let cmd = &COMMANDS[ix];
-                    base.child(
-                        div()
-                            .text_size(FONT_BODY)
-                            .text_color(t.fg)
-                            .child(cmd.title),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_size(FONT_SMALL)
-                            .text_color(t.fg_dim)
-                            .child(cmd.detail),
-                    )
-                    .when(!cmd.keys.is_empty(), |d| d.child(kbd(cmd.keys, cx)))
+                    base.child(div().text_size(FONT_BODY).text_color(t.fg).child(cmd.title))
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_size(FONT_SMALL)
+                                .text_color(t.fg_dim)
+                                .child(cmd.detail),
+                        )
+                        .when(!cmd.keys.is_empty(), |d| d.child(kbd(cmd.keys, cx)))
                 }
                 PaletteMode::Themes(themes) => {
                     let e = &themes[ix];
@@ -1014,10 +1009,7 @@ impl Workspace {
                     let (label, family) = match font {
                         Some(f) => (f.clone(), f.clone()),
                         None => (
-                            format!(
-                                "Automatic ({})",
-                                automatic.as_deref().unwrap_or("system")
-                            ),
+                            format!("Automatic ({})", automatic.as_deref().unwrap_or("system")),
                             automatic.clone().unwrap_or_default(),
                         ),
                     };
@@ -1079,26 +1071,22 @@ impl Workspace {
                     .border_color(t.border)
                     .child(Input::new(&palette.input).appearance(false)),
             )
-            .child(
-                div()
-                    .p(SPACE_3)
-                    .when_else(
-                        count == 0,
-                        |d| {
-                            d.child(
-                                div()
-                                    .h(PALETTE_ROW_HEIGHT)
-                                    .px(SPACE_6)
-                                    .flex()
-                                    .items_center()
-                                    .text_size(FONT_SMALL)
-                                    .text_color(t.fg_dim)
-                                    .child("No matches"),
-                            )
-                        },
-                        |d| d.child(list),
-                    ),
-            )
+            .child(div().p(SPACE_3).when_else(
+                count == 0,
+                |d| {
+                    d.child(
+                        div()
+                            .h(PALETTE_ROW_HEIGHT)
+                            .px(SPACE_6)
+                            .flex()
+                            .items_center()
+                            .text_size(FONT_SMALL)
+                            .text_color(t.fg_dim)
+                            .child("No matches"),
+                    )
+                },
+                |d| d.child(list),
+            ))
             .child(
                 h_flex()
                     .h(PALETTE_FOOTER_HEIGHT)
