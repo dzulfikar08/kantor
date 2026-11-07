@@ -162,7 +162,11 @@ impl Workspace {
             .capture_any_mouse_down(cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                 ws.focus_pane(pane, window, cx);
             }))
-            .child(doc.view.clone().cached(div().size_full().style().clone()))
+            .child(
+                doc.view
+                    .any_view()
+                    .cached(div().size_full().style().clone()),
+            )
             // In a split, the focused pane gets an accent edge.
             .when(multi && pane == focused, |d| {
                 d.child(

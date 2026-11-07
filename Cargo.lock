@@ -1509,6 +1509,7 @@ dependencies = [
  "docs_engine",
  "docs_layout",
  "gpui-kit",
+ "gpui-pre-wgpu",
  "kantor_ui",
  "log",
  "skrifa 0.44.0",
@@ -3696,6 +3697,8 @@ name = "kantor"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "docs_engine",
+ "docs_ui",
  "env_logger",
  "gpui-kit",
  "kantor_core",

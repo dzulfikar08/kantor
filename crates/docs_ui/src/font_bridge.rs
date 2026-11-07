@@ -155,10 +155,13 @@ impl FontBridge {
 }
 
 /// Same family name and the same advances as the face's own `hmtx`.
+/// Faces GPUI loaded only as fallbacks have no `Font` record; for those the
+/// advances decide alone, so at least a few distinct ones must match.
 fn verify(face: &Face, id: FontId, ts: &TextSystem) -> bool {
-    let family_ok = ts
-        .get_font_for_id(id)
-        .is_some_and(|f| f.family.as_ref().eq_ignore_ascii_case(&face.family));
+    let family_ok = match ts.get_font_for_id(id) {
+        Some(f) => f.family.as_ref().eq_ignore_ascii_case(&face.family),
+        None => face.samples.iter().filter(|(_, adv)| *adv > 0.0).count() >= 3,
+    };
     if !family_ok || face.samples.is_empty() {
         return false;
     }
@@ -167,4 +170,52 @@ fn verify(face: &Face, id: FontId, ts: &TextSystem) -> bool {
         ts.advance(id, size, *ch)
             .is_ok_and(|a| (f32::from(a.width) - adv).abs() <= 0.5 + adv * 0.002)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use docs_layout::{Engine, PageSetup, sample};
+
+    use super::*;
+
+    /// ADR 0001 risk 2: every face parley picks for the sample document
+    /// (Latin, CJK, and the Arabic face GPUI only reaches as a fallback)
+    /// maps to a verified GPUI font. Skipped where the sample fonts aren't
+    /// installed.
+    #[std::prelude::v1::test]
+    fn sample_faces_map_to_gpui_fonts() {
+        let platform = Arc::new(gpui_wgpu::CosmicTextSystem::new("Liberation Sans"));
+        let ts = WindowTextSystem::new(Arc::new(TextSystem::new(platform)));
+        let mut engine = Engine::new();
+        let paras = sample::document(2);
+        let doc = engine.layout_document(&paras, PageSetup::a4());
+        let mut bridge = FontBridge::default();
+        let (mut faces, mut mapped) = (0, 0);
+        let mut seen = std::collections::HashSet::new();
+        for run in doc.glyph_runs(0) {
+            if !seen.insert((run.font.data.id(), run.font.index)) {
+                continue;
+            }
+            faces += 1;
+            let sample = &paras[run.para].text[run.text_range.clone()];
+            let name = describe(&run.font).map(|f| f.family).unwrap_or_default();
+            match bridge.font_id(&run.font, sample, &ts) {
+                Some(_) => mapped += 1,
+                None => eprintln!("unmapped face: {name}"),
+            }
+        }
+        let has = |family: &str| {
+            ts.all_font_names()
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(family))
+        };
+        if !(has("Carlito") && has("Noto Sans Arabic")) {
+            eprintln!("sample fonts not installed; skipping strict check");
+            return;
+        }
+        assert!(faces >= 3, "{faces} faces");
+        assert_eq!(mapped, faces, "every face maps to the same GPUI font file");
+    }
 }

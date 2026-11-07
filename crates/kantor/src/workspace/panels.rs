@@ -8,6 +8,7 @@ use kantor_ui::components::{dot, icon_button, section_label};
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 
+use super::doc::DocView;
 use super::{AppKind, Drag, Workspace};
 use crate::actions::*;
 
@@ -87,13 +88,14 @@ impl Workspace {
                 let Some(doc) = self.docs.get(&pane) else {
                     continue;
                 };
-                let v = doc.view.read(cx);
+                let v = &doc.view;
                 let (name, dirty) = (v.doc_name(cx), v.is_dirty(cx));
+                let app_color = v.kind().color(&t);
                 let selected = self.active == Some(ix) && tab.focused == pane;
                 let entity = entity.clone();
                 open.push(
                     self.sidebar_row(("open-doc", pane as usize), selected, cx)
-                        .child(dot(if dirty { t.warning } else { t.sheets }))
+                        .child(dot(if dirty { t.warning } else { app_color }))
                         .child(div().flex_1().min_w_0().truncate().child(name))
                         .on_click(move |_, window, cx| {
                             let _ = entity.update(cx, |ws, cx| {
@@ -158,7 +160,7 @@ impl Workspace {
         // Create
         let create: Vec<_> = [
             (AppKind::Sheets, "New spreadsheet", t.sheets, true),
-            (AppKind::Docs, "New document · soon", t.docs, false),
+            (AppKind::Docs, "New document", t.docs, true),
             (AppKind::Slides, "New presentation · soon", t.slides, false),
         ]
         .into_iter()
@@ -265,7 +267,56 @@ impl Workspace {
         };
 
         let body = match self.focused_view() {
-            Some(view) => {
+            Some(DocView::Docs(view)) => {
+                let d = view.read(cx).info();
+                let folder = d
+                    .path
+                    .as_deref()
+                    .and_then(|p| p.parent())
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "Not saved yet".to_owned());
+                let state = match (d.dirty, d.unsupported.is_empty()) {
+                    (true, _) => "Unsaved changes",
+                    (false, true) => "Saved",
+                    (false, false) => "Opened with unsupported content",
+                };
+                v_flex()
+                    .gap(SPACE_7)
+                    .child(
+                        v_flex()
+                            .gap(SPACE_5)
+                            .child(section_label("Paragraph", cx))
+                            .child(field("Style", d.style, false))
+                            .child(field("Font", d.font, false)),
+                    )
+                    .child(
+                        v_flex()
+                            .gap(SPACE_5)
+                            .child(section_label("Document", cx))
+                            .child(field("File", d.name, false))
+                            .child(field("Folder", folder, false))
+                            .child(field(
+                                "Length",
+                                format!(
+                                    "{} pages · {} words · {} characters · {} paragraphs",
+                                    d.pages, d.words, d.chars, d.paragraphs
+                                ),
+                                false,
+                            ))
+                            .child(field("State", state.to_owned(), false))
+                            .when(!d.unsupported.is_empty(), |c| {
+                                c.child(field(
+                                    "Not shown or kept",
+                                    format!(
+                                        "{}. Save writes a new copy; the original is never overwritten.",
+                                        d.unsupported.join(", ")
+                                    ),
+                                    false,
+                                ))
+                            }),
+                    )
+            }
+            Some(DocView::Sheets(view)) => {
                 let v = view.read(cx);
                 let cell = v.cell_info(cx);
                 let book = v.book_info(cx);

@@ -1310,3 +1310,76 @@ impl Render for DocsView {
             .child(area)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use docs_engine::Paragraph;
+
+    fn laid(doc: &Document) -> (Vec<docs_layout::Paragraph>, PagedDocument) {
+        let mut engine = Engine::new();
+        let setup = page_setup(doc);
+        let paras: Vec<_> = doc
+            .paragraphs()
+            .iter()
+            .map(|p| layout_paragraph(doc, p))
+            .collect();
+        let paged = engine.layout_document(&paras, setup);
+        (paras, paged)
+    }
+
+    #[std::prelude::v1::test]
+    fn new_document_lays_out_one_a4_page_with_a_caret() {
+        let doc = Document::new();
+        let (paras, paged) = laid(&doc);
+        assert_eq!(paged.pages.len(), 1);
+        assert!((paged.setup.width - 793.7).abs() < 0.1, "A4 from twips");
+        assert_eq!(paras[0].size_pt, 11.0);
+        let c = paged.caret(0, 0).expect("caret in an empty document");
+        assert!(c.height > 10.0 && c.height < 25.0, "{c:?}");
+    }
+
+    #[std::prelude::v1::test]
+    fn runs_resolve_to_spans_and_keys_track_content() {
+        let mut doc = Document::from_paragraphs(vec![
+            Paragraph::new("Judul").with_style("Heading1"),
+            Paragraph::new("satu\tdua"),
+        ]);
+        let end = doc.end();
+        doc.insert_text(
+            Selection::caret(end),
+            " tebal",
+            Some(RunProps {
+                bold: Some(true),
+                ..RunProps::default()
+            }),
+        );
+        let (paras, paged) = laid(&doc);
+        assert_eq!(paras[0].spans[0].size_pt, Some(16.0));
+        assert_eq!(paras[1].text, "satu dua tebal", "tab laid out as a space");
+        assert!(paras[1].spans.iter().any(|s| s.bold));
+        assert!(!paged.glyph_runs(0).is_empty());
+        let w = paged.setup.content_width();
+        assert_eq!(layout_key(&paras[1], w), layout_key(&paras[1].clone(), w));
+        assert_ne!(layout_key(&paras[0], w), layout_key(&paras[1], w));
+        assert_ne!(layout_key(&paras[1], w), layout_key(&paras[1], w + 1.0));
+    }
+
+    #[std::prelude::v1::test]
+    fn geometry_round_trips_and_culls_pages() {
+        let g = Geometry {
+            origin: point(px(100.), px(50.)),
+            size: size(px(1000.), px(800.)),
+            zoom: 1.5,
+            scroll: point(0., 1500.),
+            page_w: 793.7,
+            page_h: 1122.5,
+        };
+        let p = g.page_to_screen(1, 120.0, 300.0);
+        let (page, x, y) = g.screen_to_page(p, 10);
+        assert_eq!(page, 1);
+        assert!((x - 120.0).abs() < 0.01 && (y - 300.0).abs() < 0.01);
+        let vis = g.visible_pages(10);
+        assert!(vis.contains(&1) && !vis.contains(&5), "{vis:?}");
+    }
+}

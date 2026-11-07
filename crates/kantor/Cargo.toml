@@ -9,6 +9,8 @@ default-run = "kantor"
 
 [dependencies]
 anyhow.workspace = true
+docs_engine.workspace = true
+docs_ui.workspace = true
 env_logger.workspace = true
 gpui-kit.workspace = true
 kantor_core.workspace = true
