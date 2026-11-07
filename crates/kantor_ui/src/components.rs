@@ -39,7 +39,7 @@ pub fn dot(color: Hsla) -> Div {
 /// A square icon button (22 px), `active` shows the selected state.
 pub fn icon_button(
     id: impl Into<ElementId>,
-    icon: gpui_kit::component::IconName,
+    icon: impl Into<gpui_kit::component::Icon>,
     active: bool,
     cx: &App,
 ) -> Stateful<Div> {

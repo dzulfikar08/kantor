@@ -24,7 +24,10 @@ use ironcalc_base::UserModel;
 use ironcalc_base::expressions::types::Area;
 use ironcalc_base::expressions::utils::number_to_column;
 
+pub mod format;
 pub mod tsv;
+
+pub use format::{CellStyle, HAlign, NumberFormat, StyleChange, ValueKind};
 
 const LOCALE: &str = "en";
 const TIMEZONE: &str = "UTC";

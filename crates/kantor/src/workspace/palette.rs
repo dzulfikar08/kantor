@@ -15,6 +15,7 @@ use kantor_ui::tokens::Elevation;
 use super::{AppKind, Workspace};
 use crate::actions::*;
 use crate::theme;
+use sheets_ui::{Format, HAlign, NumberFormat};
 
 /// A palette command.
 pub(super) struct Command {
@@ -78,6 +79,132 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Tab-separated text, at the selected cell",
         keys: "Ctrl V",
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.paste_doc(w, cx)),
+    },
+    Command {
+        title: "Bold",
+        detail: "Selected cells",
+        keys: "Ctrl B",
+        run: |ws, window, cx| {
+            ws.with_active(window, cx, |v, w, cx| v.format_doc(Format::Bold, w, cx))
+        },
+    },
+    Command {
+        title: "Italic",
+        detail: "Selected cells",
+        keys: "Ctrl I",
+        run: |ws, window, cx| {
+            ws.with_active(window, cx, |v, w, cx| v.format_doc(Format::Italic, w, cx))
+        },
+    },
+    Command {
+        title: "Underline",
+        detail: "Selected cells",
+        keys: "Ctrl U",
+        run: |ws, window, cx| {
+            ws.with_active(window, cx, |v, w, cx| {
+                v.format_doc(Format::Underline, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Strikethrough",
+        detail: "Selected cells",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_active(window, cx, |v, w, cx| {
+                v.format_doc(Format::Strikethrough, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Align Left",
+        detail: "Selected cells",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_active(window, cx, |v, w, cx| {
+                v.format_doc(Format::Align(HAlign::Left), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Align Center",
+        detail: "Selected cells",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_active(window, cx, |v, w, cx| {
+                v.format_doc(Format::Align(HAlign::Center), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Align Right",
+        detail: "Selected cells",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_active(window, cx, |v, w, cx| {
+                v.format_doc(Format::Align(HAlign::Right), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Format as General",
+        detail: "Number format",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_active(window, cx, |v, w, cx| {
+                v.format_doc(Format::Number(NumberFormat::General), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Format as Number",
+        detail: "Number format · 1,234.50",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_active(window, cx, |v, w, cx| {
+                v.format_doc(Format::Number(NumberFormat::Number), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Format as Percent",
+        detail: "Number format · 12.50%",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_active(window, cx, |v, w, cx| {
+                v.format_doc(Format::Number(NumberFormat::Percent), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Format as Rupiah",
+        detail: "Number format · Rp1,250,000",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_active(window, cx, |v, w, cx| {
+                v.format_doc(Format::Number(NumberFormat::CurrencyIdr), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Format as Dollars",
+        detail: "Number format · $1,234.50",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_active(window, cx, |v, w, cx| {
+                v.format_doc(Format::Number(NumberFormat::CurrencyUsd), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Format as Date",
+        detail: "Number format · 2026-11-07",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_active(window, cx, |v, w, cx| {
+                v.format_doc(Format::Number(NumberFormat::Date), w, cx)
+            })
+        },
     },
     Command {
         title: "Toggle Sidebar",
