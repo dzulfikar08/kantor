@@ -19,8 +19,8 @@ options=('!strip' '!debug')
 _base="${url}/releases/download/v${pkgver}"
 source_x86_64=("kantor-${pkgver}-x86_64-linux.tar.gz::${_base}/kantor-${pkgver}-x86_64-linux.tar.gz")
 source_aarch64=("kantor-${pkgver}-aarch64-linux.tar.gz::${_base}/kantor-${pkgver}-aarch64-linux.tar.gz")
-sha256sums_x86_64=('SKIP')
-sha256sums_aarch64=('SKIP')
+sha256sums_x86_64=('d81cb58cb1be7128b21e7a9ca7752833413218afd1d4c5eafc614359a7fff0ef')
+sha256sums_aarch64=('3ab3fe35f9e6015a9c20aa5f2fdc77aa72ab9cd3cb090d9b41874f06157e546d')
 
 package() {
   cd "kantor-${pkgver}-${CARCH}-linux"
