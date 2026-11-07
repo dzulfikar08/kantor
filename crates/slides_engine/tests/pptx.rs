@@ -106,6 +106,51 @@ fn new_presentation_is_a_valid_package() {
     );
 }
 
+/// Empty placeholders are flagged for the editor's dashed outline; prompts
+/// are display-only and never reach the file. Once the placeholder has
+/// text, both go away.
+#[test]
+fn prompts_are_display_only() {
+    let mut p = Presentation::new();
+    let list = p.render_list(0, true);
+    let empty: Vec<_> = list.iter().filter(|r| r.is_empty_placeholder()).collect();
+    assert_eq!(empty.len(), 2, "title and subtitle");
+    let sub = empty
+        .iter()
+        .find(|r| r.shape.ph.as_ref().is_some_and(|p| !p.is_title()))
+        .unwrap();
+    assert_eq!(
+        sub.text.as_ref().unwrap().paras[0].text,
+        "Click to add subtitle"
+    );
+    let bytes = p.to_bytes().unwrap();
+    let xml = String::from_utf8_lossy(&parts(&bytes)["ppt/slides/slide1.xml"]).into_owned();
+    assert!(!xml.contains("Click to add"), "{xml}");
+
+    let t = title_ref(&p, 0);
+    p.insert_text(t, Selection::default(), "Hello", None)
+        .unwrap();
+    let list = p.render_list(0, true);
+    let title = list.iter().find(|r| r.layer == Layer::Slide(t.1)).unwrap();
+    assert!(!title.is_empty_placeholder());
+    let tt = title.text.as_ref().unwrap();
+    assert!(!tt.prompt);
+    assert_eq!(tt.paras[0].text, "Hello");
+
+    let i = p.new_slide(Some(0)).unwrap();
+    let list = p.render_list(i, true);
+    let texts: Vec<_> = list
+        .iter()
+        .filter(|r| r.is_empty_placeholder())
+        .map(|r| r.text.as_ref().unwrap().paras[0].text.clone())
+        .collect();
+    assert!(
+        texts.contains(&"Click to add title".to_owned()),
+        "{texts:?}"
+    );
+    assert!(texts.contains(&"Click to add text".to_owned()), "{texts:?}");
+}
+
 #[test]
 fn unchanged_save_copies_every_part() {
     let p = Presentation::new();

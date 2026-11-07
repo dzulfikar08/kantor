@@ -6,7 +6,8 @@
 //!
 //! Layout of the view: a toolbar, a virtualised thumbnail strip on the
 //! left (click to go to a slide, drag to reorder), and the current slide
-//! scaled to fit the canvas. On the canvas: click selects a shape, drag
+//! scaled to fit the canvas, centred with an even margin (Ctrl+= / Ctrl+-
+//! or Ctrl+wheel zoom, Ctrl+0 fits again). On the canvas: click selects a shape, drag
 //! moves it, the handles resize it, a second click (or typing, or Enter)
 //! edits its text. F5 presents in the pane.
 //!
@@ -16,6 +17,7 @@
 extern crate gpui_kit as gpui;
 
 mod draw;
+mod fit;
 mod input;
 mod toolbar;
 
@@ -35,7 +37,8 @@ use slides_engine::{
     text_ops,
 };
 
-use draw::{Item, Painter, View, paint_slide, text_origin};
+use draw::{Item, Painter, Surface, View, paint_slide, text_origin};
+use fit::{canvas_margin, handle_cursor, place_slide, scroll_keeping};
 
 /// Key context of the editor.
 pub const KEY_CONTEXT: &str = "SlidesEditor";
@@ -79,6 +82,9 @@ actions!(
         InsertRectangle,
         InsertEllipse,
         InsertImage,
+        ZoomIn,
+        ZoomOut,
+        ZoomFit,
         Undo,
         Redo,
         Save,
@@ -161,6 +167,11 @@ pub fn init(cx: &mut App) {
         "y" => Redo,
         "s" => Save,
         "shift-s" => SaveAs,
+        "=" => ZoomIn,
+        "+" => ZoomIn,
+        "shift-=" => ZoomIn,
+        "-" => ZoomOut,
+        "0" => ZoomFit,
     );
     cx.bind_keys(keys);
 }
@@ -243,6 +254,12 @@ pub struct SlidesView {
     /// The strip was clicked last (Delete then removes the slide).
     strip_focused: bool,
     presenting: Option<usize>,
+    /// Canvas zoom relative to fit (1.0 = the slide fits the pane).
+    zoom: f32,
+    /// Canvas scroll in screen px, used only while zoomed past the pane.
+    scroll: Point<f32>,
+    /// Pointer shape for what the mouse is over (handle, shape, text).
+    hover_cursor: CursorStyle,
     focus: FocusHandle,
     status: SharedString,
 }
@@ -284,6 +301,9 @@ impl SlidesView {
             strip_scroll: UniformListScrollHandle::new(),
             strip_focused: false,
             presenting: None,
+            zoom: 1.0,
+            scroll: point(0., 0.),
+            hover_cursor: CursorStyle::Arrow,
             focus: cx.focus_handle(),
             status: status.into(),
         }
@@ -291,12 +311,80 @@ impl SlidesView {
 
     // ── geometry ───────────────────────────────────────────────────────────
 
-    fn fit(&self, bounds: Bounds<Pixels>, margin: f32) -> (View, Bounds<Pixels>) {
-        fit_slide(bounds, self.pres.size, margin)
+    /// The slide's placement on the canvas (mapping, screen rect, scroll).
+    fn placement(&self) -> (View, Bounds<Pixels>, Point<f32>) {
+        let b = self.viewport.get();
+        place_slide(
+            b,
+            self.pres.size,
+            canvas_margin(b.size),
+            self.zoom,
+            self.scroll,
+        )
     }
 
     fn view(&self) -> View {
-        self.fit(self.viewport.get(), SLIDE_MARGIN).0
+        self.placement().0
+    }
+
+    /// Zoom to `zoom` × fit, keeping the slide point under `at` (the
+    /// pointer; the pane's centre when `None`) where it is.
+    fn set_zoom(&mut self, zoom: f32, at: Option<Point<Pixels>>, cx: &mut Context<Self>) {
+        let zoom = zoom.clamp(ZOOM_MIN, ZOOM_MAX);
+        if (zoom - self.zoom).abs() < 1e-4 {
+            return;
+        }
+        let b = self.viewport.get();
+        let at = at.unwrap_or_else(|| b.center());
+        let v = self.view();
+        let emu = (
+            f32::from(at.x - v.origin.x) / v.scale,
+            f32::from(at.y - v.origin.y) / v.scale,
+        );
+        // The scale is fit × zoom, so it changes by the zoom ratio.
+        let scale = v.scale * zoom / self.zoom;
+        self.zoom = zoom;
+        self.scroll = scroll_keeping(b, canvas_margin(b.size), scale, emu, at);
+        self.scroll = self.placement().2;
+        cx.notify();
+    }
+
+    /// Back to fit (Ctrl+0).
+    pub fn zoom_to_fit(&mut self, cx: &mut Context<Self>) {
+        self.zoom = 1.0;
+        self.scroll = point(0., 0.);
+        cx.notify();
+    }
+
+    pub fn zoom_by(&mut self, factor: f32, cx: &mut Context<Self>) {
+        self.set_zoom(self.zoom * factor, None, cx);
+    }
+
+    /// Canvas zoom relative to fit.
+    pub fn zoom(&self) -> f32 {
+        self.zoom
+    }
+
+    fn on_scroll(&mut self, ev: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let delta = ev.delta.pixel_delta(window.line_height());
+        if ev.modifiers.control || ev.modifiers.platform {
+            let dy = f32::from(delta.y);
+            if dy != 0.0 {
+                let f = if dy > 0.0 { ZOOM_STEP } else { 1.0 / ZOOM_STEP };
+                self.set_zoom(self.zoom * f, Some(ev.position), cx);
+            }
+            return;
+        }
+        let (mut dx, mut dy) = (f32::from(delta.x), f32::from(delta.y));
+        if ev.modifiers.shift && dx == 0.0 {
+            (dx, dy) = (dy, 0.0);
+        }
+        let before = self.scroll;
+        self.scroll = point(self.scroll.x - dx, self.scroll.y - dy);
+        self.scroll = self.placement().2;
+        if self.scroll != before {
+            cx.notify();
+        }
     }
 
     fn shape_xfrm(&self, i: usize) -> Option<Xfrm> {
@@ -1223,6 +1311,11 @@ impl SlidesView {
             return;
         }
         let Some(drag) = &mut self.drag else {
+            let c = self.cursor_at(ev.position);
+            if c != self.hover_cursor {
+                self.hover_cursor = c;
+                cx.notify();
+            }
             return;
         };
         match drag {
@@ -1294,6 +1387,7 @@ impl SlidesView {
 
     fn on_mouse_up(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         let drag = self.drag.take();
+        self.hover_cursor = self.cursor_at(ev.position);
         if let Some((shape, x)) = self.preview.take() {
             let res = self.pres.set_xfrm((self.current, shape), x, false);
             if self.report(res, cx).is_some() {
@@ -1312,6 +1406,37 @@ impl SlidesView {
             self.begin_editing(shape, pos, cx);
         }
         cx.notify();
+    }
+
+    /// Pointer over the canvas: resize arrows on handles, an I-beam over
+    /// the text being edited, an open hand over shapes that can be dragged.
+    fn cursor_at(&self, p: Point<Pixels>) -> CursorStyle {
+        if self.pres.is_empty() {
+            return CursorStyle::Arrow;
+        }
+        if let Some((_, h)) = self.handle_at(p) {
+            return handle_cursor(h);
+        }
+        let (x, y) = self.view().to_emu(p);
+        if let Some(e) = &self.editing
+            && self.shape_xfrm(e.shape).is_some_and(|b| b.contains(x, y))
+        {
+            return CursorStyle::IBeam;
+        }
+        match self.shape_at(p) {
+            Some(i) if self.pres.slide(self.current).shapes[i].movable() => CursorStyle::OpenHand,
+            _ => CursorStyle::Arrow,
+        }
+    }
+
+    /// The canvas cursor: what a drag is doing, else what's under the pointer.
+    fn canvas_cursor(&self) -> CursorStyle {
+        match &self.drag {
+            Some(Drag::Move { .. }) if self.preview.is_some() => CursorStyle::ClosedHand,
+            Some(Drag::Resize { handle, .. }) => handle_cursor(*handle),
+            Some(Drag::Text) => CursorStyle::IBeam,
+            _ => self.hover_cursor,
+        }
     }
 
     // ── thumbnail strip ────────────────────────────────────────────────────
@@ -1349,11 +1474,17 @@ impl SlidesView {
                     let thumb_canvas = canvas(
                         |_, _, _| {},
                         move |bounds, _, window, _| {
-                            let (view, b) = fit_slide(bounds, slide_size, 0.0);
-                            paint_slide(&items, bg, b, view, other, &bridge, window);
+                            let (view, b) = fit_slide(bounds, slide_size);
+                            let surface = Surface {
+                                other,
+                                editor: false,
+                            };
+                            paint_slide(&items, bg, b, view, surface, &bridge, window);
                         },
                     )
                     .size_full();
+                    // The thumbnail is a small page: shadow and hairline
+                    // border; the current one gets an accent ring and row.
                     h_flex()
                         .id(("slide-thumb", i))
                         .h(SLIDE_THUMB_ROW)
@@ -1361,13 +1492,16 @@ impl SlidesView {
                         .px(SPACE_4)
                         .gap(SPACE_3)
                         .items_center()
+                        .when(current, |d| d.bg(t.selected))
+                        .when(!current, |d| d.hover(|d| d.bg(t.hover)))
                         .when(drop_here, |d| d.border_t_2().border_color(t.accent))
                         .child(
                             div()
                                 .w(SPACE_7)
                                 .flex_none()
                                 .text_size(FONT_CAPTION)
-                                .text_color(if current { t.fg } else { t.fg_dim })
+                                .text_color(if current { t.accent } else { t.fg_dim })
+                                .when(current, |d| d.font_weight(FontWeight::SEMIBOLD))
                                 .child(format!("{}", i + 1)),
                         )
                         .child(
@@ -1376,10 +1510,21 @@ impl SlidesView {
                                 .w(thumb.width)
                                 .h(thumb.height)
                                 .rounded(RADIUS_SM)
-                                .overflow_hidden()
                                 .border_2()
-                                .border_color(if current { t.accent } else { t.border })
-                                .child(thumb_canvas),
+                                .border_color(if current {
+                                    t.accent
+                                } else {
+                                    transparent_black()
+                                })
+                                .child(
+                                    div()
+                                        .size_full()
+                                        .border_1()
+                                        .border_color(t.border_strong)
+                                        .shadow(t.shadow(Elevation::Raised))
+                                        .overflow_hidden()
+                                        .child(thumb_canvas),
+                                ),
                         )
                         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                             let _ = w.update(cx, |v, cx| {
@@ -1463,8 +1608,12 @@ impl SlidesView {
         let c = canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
-                let (v, b) = fit_slide(bounds, size, 0.0);
-                paint_slide(&items, bg, b, v, other, &bridge, window);
+                let (v, b) = fit_slide(bounds, size);
+                let surface = Surface {
+                    other,
+                    editor: false,
+                };
+                paint_slide(&items, bg, b, v, surface, &bridge, window);
             },
         )
         .size_full();
@@ -1502,18 +1651,11 @@ fn size_px(w: f32, h: f32) -> Size<Pixels> {
     size(px(w), px(h))
 }
 
-/// Where a slide of `slide` size sits, centred and scaled to fit, in `bounds`.
-fn fit_slide(bounds: Bounds<Pixels>, slide: SlideSize, margin: f32) -> (View, Bounds<Pixels>) {
-    let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
-    let scale = ((w - 2.0 * margin) / slide.cx as f32)
-        .min((h - 2.0 * margin) / slide.cy as f32)
-        .max(1e-7);
-    let (sw, sh) = (slide.cx as f32 * scale, slide.cy as f32 * scale);
-    let origin = point(
-        bounds.origin.x + px((w - sw) / 2.0),
-        bounds.origin.y + px((h - sh) / 2.0),
-    );
-    (View { origin, scale }, Bounds::new(origin, size_px(sw, sh)))
+/// A slide of `slide` size scaled to fill `bounds` and centred
+/// (thumbnails, presenter mode).
+fn fit_slide(bounds: Bounds<Pixels>, slide: SlideSize) -> (View, Bounds<Pixels>) {
+    let (v, b, _) = place_slide(bounds, slide, 0.0, 1.0, point(0., 0.));
+    (v, b)
 }
 
 /// What the canvas needs to paint one frame.
@@ -1530,6 +1672,8 @@ struct Frame {
     focus: FocusHandle,
     view: Entity<SlidesView>,
     slide_size: SlideSize,
+    zoom: f32,
+    scroll: Point<f32>,
 }
 
 impl Render for SlidesView {
@@ -1585,6 +1729,8 @@ impl Render for SlidesView {
             focus: self.focus.clone(),
             view: cx.entity(),
             slide_size: self.pres.size,
+            zoom: self.zoom,
+            scroll: self.scroll,
         };
         let has_slides = !self.pres.is_empty();
         let canvas_el = canvas(
@@ -1598,11 +1744,7 @@ impl Render for SlidesView {
         )
         .size_full();
 
-        let cursor = if self.editing.is_some() {
-            CursorStyle::IBeam
-        } else {
-            CursorStyle::Arrow
-        };
+        let cursor = self.canvas_cursor();
         let area = div()
             .id("slides-canvas")
             .flex_1()
@@ -1614,6 +1756,7 @@ impl Render for SlidesView {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_scroll(cx.listener(Self::on_scroll))
             .child(canvas_el);
 
         let strip = div()
@@ -1683,6 +1826,9 @@ impl Render for SlidesView {
             SaveAs => |v, w, cx| v.save_doc_as(w, cx),
             Present => |v, w, cx| v.present_doc(true, w, cx),
             PresentFromCurrent => |v, w, cx| v.present_doc(false, w, cx),
+            ZoomIn => |v, _w, cx| v.zoom_by(ZOOM_STEP, cx),
+            ZoomOut => |v, _w, cx| v.zoom_by(1.0 / ZOOM_STEP, cx),
+            ZoomFit => |v, _w, cx| v.zoom_to_fit(cx),
         ]);
         root.child(toolbar::render(self, cx))
             .children(self.render_banner(&t))
@@ -1703,21 +1849,53 @@ fn paint_frame(
     if !has_slides {
         return;
     }
-    let (view, slide_bounds) = fit_slide(bounds, f.slide_size, SLIDE_MARGIN);
+    let (view, slide_bounds, _) = place_slide(
+        bounds,
+        f.slide_size,
+        canvas_margin(bounds.size),
+        f.zoom,
+        f.scroll,
+    );
+    window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        paint_canvas(f, view, slide_bounds, window)
+    });
+    window.handle_input(
+        &f.focus,
+        ElementInputHandler::new(bounds, f.view.clone()),
+        cx,
+    );
+}
+
+/// The slide as a page on the desk (shadow and hairline border, as Docs'
+/// pages), its content, then selection, handles, text selection and caret.
+fn paint_canvas(f: &Frame, view: View, slide_bounds: Bounds<Pixels>, window: &mut Window) {
+    let t = &f.t;
     window.paint_drop_shadows(
         slide_bounds,
         Corners::default(),
         &t.shadow(Elevation::Popover),
     );
+    let surface = Surface {
+        other: t.fg_muted,
+        editor: true,
+    };
     paint_slide(
         &f.items,
         f.background,
         slide_bounds,
         view,
-        t.fg_muted,
+        surface,
         &f.painter.bridge,
         window,
     );
+    window.paint_quad(quad(
+        slide_bounds.dilate(px(1.)),
+        Corners::default(),
+        transparent_black(),
+        Edges::all(px(1.)),
+        t.border_strong,
+        BorderStyle::Solid,
+    ));
 
     if let Some((x, handles)) = f.selected {
         let b = view.rect(&x);
@@ -1746,6 +1924,7 @@ fn paint_frame(
                     _ => b.bottom(),
                 };
                 let hb = Bounds::centered_at(point(cx_, cy_), size(SLIDE_HANDLE, SLIDE_HANDLE));
+                window.paint_drop_shadows(hb, Corners::all(px(2.)), &t.shadow(Elevation::Raised));
                 window.paint_quad(quad(
                     hb,
                     Corners::all(px(2.)),
@@ -1798,11 +1977,6 @@ fn paint_frame(
             window.paint_quad(fill(caret, ink));
         }
     }
-    window.handle_input(
-        &f.focus,
-        ElementInputHandler::new(bounds, f.view.clone()),
-        cx,
-    );
 }
 
 fn luminance(c: slides_engine::Rgb) -> f32 {
@@ -1816,22 +1990,6 @@ mod tests {
 
     use super::*;
     use slides_engine::{Anchor, EMU_PER_PX};
-
-    #[std::prelude::v1::test]
-    fn slides_fit_centred_with_a_margin() {
-        let b = Bounds::new(point(px(10.), px(20.)), size(px(1000.), px(800.)));
-        let (v, sb) = fit_slide(b, SlideSize::WIDE, 32.0);
-        assert!(
-            (f32::from(sb.size.width) - 936.0).abs() < 0.01,
-            "width-bound"
-        );
-        let mid = sb.center();
-        assert!((f32::from(mid.x) - 510.0).abs() < 0.5 && (f32::from(mid.y) - 420.0).abs() < 0.5);
-        let (x, y) = v.to_emu(sb.origin);
-        assert!(x.abs() < 20_000 && y.abs() < 20_000);
-        let r = v.rect(&Xfrm::new(0, 0, SlideSize::WIDE.cx, SlideSize::WIDE.cy));
-        assert!((f32::from(r.size.width) - f32::from(sb.size.width)).abs() < 0.5);
-    }
 
     /// Placeholder prompts lay out with the layout's formatting and sit
     /// where the body anchors them (the Title Slide title is bottom-anchored).

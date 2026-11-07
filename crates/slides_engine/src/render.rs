@@ -60,6 +60,17 @@ pub struct RenderShape<'a> {
     pub text: Option<RenderText>,
 }
 
+impl RenderShape<'_> {
+    /// A slide placeholder with no text yet (title, body, subtitle...; not
+    /// date/footer/slide number). The editor outlines these with a dashed
+    /// line and shows a prompt in them; neither is ever saved.
+    pub fn is_empty_placeholder(&self) -> bool {
+        matches!(self.layer, Layer::Slide(_))
+            && self.shape.ph.as_ref().is_some_and(|p| !p.is_footer())
+            && self.shape.text.as_ref().is_some_and(|t| t.is_empty())
+    }
+}
+
 /// The placeholder in `shapes` that `ph` inherits from.
 fn find_ph<'a>(shapes: &'a [Shape], ph: &Placeholder, by_idx: bool) -> Option<&'a Shape> {
     let phs = || shapes.iter().filter_map(|s| Some((s, s.ph.as_ref()?)));
