@@ -12,4 +12,4 @@ Thanks for helping! Short version:
    Never commit private documents.
 
 You don't need to build locally: push a branch and CI builds and tests it on both architectures.
-Contributions are dual-licensed MIT OR Apache-2.0, as the project is.
+Contributions are licensed under AGPL-3.0-or-later, as the project is.

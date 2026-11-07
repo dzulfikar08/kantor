@@ -129,7 +129,7 @@ Time estimates assume **one person, part-time (~10–15 h/week), with AI-assiste
 
 ### M0 — Foundations (2–3 weeks)
 
-- [ ] Repo, workspace, MIT/Apache-2.0 dual licence, CONTRIBUTING, issue templates
+- [ ] Repo, workspace, AGPL-3.0-or-later licence, CONTRIBUTING, issue templates
 - [ ] CI: build and test on **x86_64** and **`ubuntu-24.04-arm`** (GitHub's free ARM runners for public repos), clippy, fmt, `cargo deny`
 - [ ] GPUI "hello window" on the M1 Air under Hyprland/Asahi: confirm Vulkan rendering, fractional scale 1.6, fcitx5 input, and the 16K-page kernel
 - [ ] `kantor_theme`: read Omarchy theme colors, live-reload on `omarchy theme set`
@@ -241,7 +241,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 
 ## 11. First two weeks: concrete steps
 
-1. ✅ Public GitHub repo (MIT/Apache-2.0), this plan pushed.
+1. ✅ Public GitHub repo (AGPL-3.0-or-later), this plan pushed.
 2. ✅ Workspace: `kantor`, `kantor_theme`, `sheets_engine`, `sheets_ui` on `gpui-kit` 0.9 (pins GPUI) and IronCalc 0.9.1.
 3. ✅ CI on x86_64 and `ubuntu-24.04-arm`; nightly release with downloadable aarch64 tarball; `scripts/install.sh` for the Mac.
 4. ✅ `kantor_theme`: reads Omarchy's `colors.toml`, live-reloads when `theme.generation` changes.
@@ -254,6 +254,6 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 ## 12. Open questions
 
 - **Name**: keep "Kantor"?
-- **Licence**: started as MIT/Apache-2.0 dual (Rust norm; compatible with GPUI, IronCalc, docx-rs). Switch to GPL now if forks must stay open; it gets harder later.
+- ~~**Licence**~~: decided **AGPL-3.0-or-later** (2026-11-07) so forks and hosted versions stay open. Dependencies are MIT/Apache-2.0/MPL-2.0, all AGPLv3-compatible; check new ones with `cargo deny`.
 - **Which app matters most to you day to day?** If it's Docs, it may be worth starting Docs in parallel with Sheets, accepting a slower first release.
 - **Collaboration**: confirm it stays out of 1.0.

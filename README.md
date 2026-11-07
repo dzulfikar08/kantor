@@ -51,4 +51,4 @@ More crates (`docs_*`, `slides_*`, `kantor_ooxml`, `kantor_pdf`, …) arrive wit
 
 ## License
 
-Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+[GNU Affero General Public License v3.0 or later](LICENSE) (AGPL-3.0-or-later). Modified versions, including ones offered over a network, must publish their source under the same licence.
