@@ -623,15 +623,24 @@ mod tests {
     #[test]
     fn glyph_runs_carry_font_data() {
         let mut engine = Engine::new();
-        let doc = engine.layout_document(&sample::document(2), PageSetup::a4());
+        let paragraphs = sample::document(2);
+        let doc = engine.layout_document(&paragraphs, PageSetup::a4());
         let runs = doc.glyph_runs(0);
         assert!(!runs.is_empty());
         for run in &runs {
             assert!(!run.font.data.as_ref().is_empty());
-            assert!(
-                run.glyphs.iter().all(|g| g.id != 0),
-                "no .notdef in {run:?}"
-            );
+            // Only Latin text is guaranteed a font everywhere: CI runners have
+            // no CJK/Arabic fonts, so those runs fall back to .notdef there.
+            let text = &paragraphs[run.para].text[run.text_range.clone()];
+            if text
+                .chars()
+                .all(|c| (c as u32) < 0x0250 || c.is_whitespace())
+            {
+                assert!(
+                    run.glyphs.iter().all(|g| g.id != 0),
+                    "no .notdef in {run:?}"
+                );
+            }
         }
     }
 
