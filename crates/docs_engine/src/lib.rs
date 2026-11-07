@@ -5,16 +5,28 @@
 //! - [`style`]: the style sheet and resolving effective formatting.
 //! - [`Document`]: edits (each one undoable), dirty tracking, open/save.
 //! - [`docx`]: reading and writing `.docx`, and the round-trip safety rules
-//!   (what counts as "unsupported content" and why Save then goes to Save As).
+//!   (what's modelled, kept verbatim, carried as an opaque object, or
+//!   "unsupported content" that sends Save to Save As).
+//! - [`numbering`]: lists; [`table`]: tables; [`object`]: inline pictures
+//!   and opaque elements.
 
 mod document;
 pub mod docx;
+mod edit;
 pub mod model;
+pub mod numbering;
+pub mod object;
 pub mod style;
+pub mod table;
+mod xml;
 
-pub use document::{Document, LINE_BREAK, PageGeometry, Toggle};
+pub use document::{Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, Toggle};
+pub use edit::TableEdit;
 pub use model::{
-    Align, Fonts, LineRule, LineSpacing, ParaProps, Paragraph, Position, Rgb, Run, RunProps,
-    Selection,
+    Align, CellRef, Fonts, Indent, LineRule, LineSpacing, NumRef, ParaProps, Paragraph, Position,
+    Rgb, Run, RunProps, Selection,
 };
+pub use numbering::ListKind;
+pub use object::{Image, ImageFormat, Level, OBJECT, Object, Opaque};
 pub use style::{HEADING_STYLES, ResolvedLine, ResolvedPara, ResolvedRun, StyleSheet, font_stack};
+pub use table::{Border, Borders, Table, VMerge};
