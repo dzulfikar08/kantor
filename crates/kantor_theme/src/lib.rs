@@ -6,6 +6,8 @@
 //! It deliberately has no GPUI dependency: the app shell maps a [`Palette`]
 //! onto the UI theme.
 
+pub mod catalog;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, anyhow};
@@ -30,6 +32,8 @@ pub struct Palette {
     pub green: Rgb,
     pub yellow: Rgb,
     pub blue: Rgb,
+    pub magenta: Rgb,
+    pub cyan: Rgb,
 }
 
 impl Default for Palette {
@@ -49,6 +53,8 @@ impl Default for Palette {
             green: 0xa6e3a1,
             yellow: 0xf9e2af,
             blue: 0x89b4fa,
+            magenta: 0xcba6f7,
+            cyan: 0x94e2d5,
         }
     }
 }
@@ -68,6 +74,8 @@ struct RawColors {
     green: Option<String>,
     yellow: Option<String>,
     blue: Option<String>,
+    magenta: Option<String>,
+    cyan: Option<String>,
 }
 
 /// Parse `#rrggbb` / `rrggbb` (an optional alpha byte is ignored).
@@ -82,7 +90,7 @@ pub fn parse_hex(s: &str) -> Result<Rgb> {
 }
 
 /// Relative luminance in 0..=1 (sRGB, unlinearised; good enough to pick light/dark).
-fn luminance(c: Rgb) -> f32 {
+pub fn luminance(c: Rgb) -> f32 {
     let r = ((c >> 16) & 0xff) as f32;
     let g = ((c >> 8) & 0xff) as f32;
     let b = (c & 0xff) as f32;
@@ -132,6 +140,8 @@ impl Palette {
             green: opt(&raw.green, 0x98c379)?,
             yellow: opt(&raw.yellow, 0xe5c07b)?,
             blue: opt(&raw.blue, accent)?,
+            magenta: opt(&raw.magenta, 0xc678dd)?,
+            cyan: opt(&raw.cyan, 0x56b6c2)?,
         })
     }
 

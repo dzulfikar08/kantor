@@ -14,10 +14,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui_kit::component::input::{self, Input, InputEvent, InputState};
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_core::fuzzy;
+use kantor_theme::catalog::{self, ThemeEntry};
 use kantor_ui::components::{dot, kbd, section_label};
 use kantor_ui::metrics::*;
 use kantor_ui::tokens::Elevation;
@@ -25,6 +26,7 @@ use kantor_ui::{CachedView, tokens};
 use sheets_ui::SheetsView;
 
 use crate::actions::*;
+use crate::theme;
 
 const LOGO_SVG: &[u8] = include_bytes!("../../../assets/icons/kantor.svg");
 
@@ -134,6 +136,18 @@ const COMMANDS: &[Command] = &[
         run: |ws, _, cx| ws.not_yet(AppKind::Slides, cx),
     },
     Command {
+        title: "Choose Theme…",
+        detail: "Omarchy, Ghostty",
+        keys: "",
+        run: |ws, window, cx| ws.open_palette(PaletteMode::themes(), window, cx),
+    },
+    Command {
+        title: "Choose UI Font…",
+        detail: "SF Pro, Inter, …",
+        keys: "",
+        run: |ws, window, cx| ws.open_palette(PaletteMode::fonts(cx), window, cx),
+    },
+    Command {
         title: "Quit Kantor",
         detail: "",
         keys: "Ctrl Q",
@@ -141,11 +155,67 @@ const COMMANDS: &[Command] = &[
     },
 ];
 
+/// What the palette is listing.
+enum PaletteMode {
+    Commands,
+    Themes(Vec<ThemeEntry>),
+    /// `None` = automatic font choice.
+    Fonts(Vec<Option<String>>),
+}
+
+impl PaletteMode {
+    fn themes() -> Self {
+        Self::Themes(catalog::all())
+    }
+
+    fn fonts(cx: &App) -> Self {
+        let mut fonts = vec![None];
+        fonts.extend(kantor_ui::fonts::installed(cx).into_iter().map(Some));
+        Self::Fonts(fonts)
+    }
+
+    fn names(&self) -> Vec<String> {
+        match self {
+            Self::Commands => COMMANDS.iter().map(|c| c.title.to_owned()).collect(),
+            Self::Themes(t) => t.iter().map(|e| e.name.clone()).collect(),
+            Self::Fonts(f) => f
+                .iter()
+                .map(|f| f.clone().unwrap_or_else(|| "Automatic".to_owned()))
+                .collect(),
+        }
+    }
+
+    fn placeholder(&self) -> &'static str {
+        match self {
+            Self::Commands => "Type a command…",
+            Self::Themes(_) => "Search themes…",
+            Self::Fonts(_) => "Search fonts…",
+        }
+    }
+
+    fn row_height(&self) -> Pixels {
+        match self {
+            Self::Themes(_) => PALETTE_THEME_ROW_HEIGHT,
+            _ => PALETTE_ROW_HEIGHT,
+        }
+    }
+
+    fn noun(&self) -> &'static str {
+        match self {
+            Self::Commands => "commands",
+            Self::Themes(_) => "themes",
+            Self::Fonts(_) => "fonts",
+        }
+    }
+}
+
 struct Palette {
+    mode: PaletteMode,
     input: Entity<InputState>,
-    /// Indices into [`COMMANDS`], best match first.
+    /// Indices into the mode's items, best match first.
     matches: Vec<usize>,
     selected: usize,
+    scroll: UniformListScrollHandle,
     _subscription: Subscription,
 }
 
@@ -344,16 +414,38 @@ impl Workspace {
 
     fn toggle_palette(&mut self, _: &TogglePalette, window: &mut Window, cx: &mut Context<Self>) {
         if self.palette.is_some() {
-            self.close_palette(window, cx);
-            return;
+            self.close_palette(true, window, cx);
+        } else {
+            self.open_palette(PaletteMode::Commands, window, cx);
         }
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a command…"));
+    }
+
+    fn open_palette(&mut self, mode: PaletteMode, window: &mut Window, cx: &mut Context<Self>) {
+        let placeholder = mode.placeholder();
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
         let subscription = cx.subscribe_in(&input, window, Self::on_palette_input);
         input.update(cx, |i, cx| i.focus(window, cx));
+        let matches: Vec<usize> = (0..mode.names().len()).collect();
+        // Start on the active theme/font so the picker opens where you are.
+        let selected = match &mode {
+            PaletteMode::Commands => 0,
+            PaletteMode::Themes(t) => {
+                let active = &theme::current(cx).theme;
+                t.iter().position(|e| &e.id == active).unwrap_or(0)
+            }
+            PaletteMode::Fonts(f) => {
+                let active = &theme::current(cx).ui_font;
+                f.iter().position(|x| x == active).unwrap_or(0)
+            }
+        };
+        let scroll = UniformListScrollHandle::new();
+        scroll.scroll_to_item(selected, ScrollStrategy::Center);
         self.palette = Some(Palette {
+            mode,
             input,
-            matches: (0..COMMANDS.len()).collect(),
-            selected: 0,
+            matches,
+            selected,
+            scroll,
             _subscription: subscription,
         });
         cx.notify();
@@ -370,8 +462,10 @@ impl Workspace {
             InputEvent::Change => {
                 let query = input.read(cx).value().to_string();
                 if let Some(p) = self.palette.as_mut() {
-                    p.matches = fuzzy::rank(&query, COMMANDS.iter().map(|c| c.title));
+                    let names = p.mode.names();
+                    p.matches = fuzzy::rank(&query, names.iter().map(String::as_str));
                     p.selected = 0;
+                    p.scroll.scroll_to_item(0, ScrollStrategy::Top);
                 }
                 cx.notify();
             }
@@ -380,27 +474,57 @@ impl Workspace {
         }
     }
 
-    fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.palette.take().is_some() {
-            // Return focus to whatever the palette covered.
-            self.activate(self.active, window, cx);
+    /// Close the palette; `restore` undoes theme/font previews (Esc, click outside).
+    fn close_palette(&mut self, restore: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(p) = self.palette.take() else {
+            return;
+        };
+        if restore && !matches!(p.mode, PaletteMode::Commands) {
+            theme::restore(cx);
         }
+        // Return focus to whatever the palette covered.
+        self.activate(self.active, window, cx);
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_palette(window, cx);
+        self.close_palette(true, window, cx);
     }
 
     fn palette_escape(&mut self, _: &input::Escape, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_palette(window, cx);
+        self.close_palette(true, window, cx);
     }
 
     fn palette_move(&mut self, delta: isize, cx: &mut Context<Self>) {
-        if let Some(p) = self.palette.as_mut() {
-            let n = p.matches.len().min(PALETTE_MAX_ROWS) as isize;
-            if n > 0 {
-                p.selected = (p.selected as isize + delta).rem_euclid(n) as usize;
-                cx.notify();
+        let Some(p) = self.palette.as_mut() else {
+            return;
+        };
+        let n = p.matches.len() as isize;
+        if n == 0 {
+            return;
+        }
+        p.selected = (p.selected as isize + delta).rem_euclid(n) as usize;
+        p.scroll.scroll_to_item(p.selected, ScrollStrategy::Center);
+        self.preview_selected(cx);
+        cx.notify();
+    }
+
+    /// Live preview of the highlighted theme or font.
+    fn preview_selected(&mut self, cx: &mut Context<Self>) {
+        let Some(p) = self.palette.as_ref() else {
+            return;
+        };
+        let Some(&ix) = p.matches.get(p.selected) else {
+            return;
+        };
+        match &p.mode {
+            PaletteMode::Commands => {}
+            PaletteMode::Themes(t) => {
+                let palette = t[ix].palette.clone();
+                theme::preview_palette(&palette, cx);
+            }
+            PaletteMode::Fonts(f) => {
+                let font = f[ix].clone();
+                theme::preview_font(font.as_deref(), cx);
             }
         }
     }
@@ -413,10 +537,33 @@ impl Workspace {
         self.palette_move(1, cx);
     }
 
-    fn run_command(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_palette(window, cx);
-        if let Some(cmd) = COMMANDS.get(ix) {
-            (cmd.run)(self, window, cx);
+    /// Run/apply item `ix` of the current mode.
+    fn palette_pick(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(p) = self.palette.take() else {
+            return;
+        };
+        match p.mode {
+            PaletteMode::Commands => {
+                self.activate(self.active, window, cx);
+                if let Some(cmd) = COMMANDS.get(ix) {
+                    (cmd.run)(self, window, cx);
+                }
+            }
+            PaletteMode::Themes(t) => {
+                if let Some(e) = t.into_iter().nth(ix) {
+                    self.message = format!("Theme: {}", e.name).into();
+                    theme::set_theme(e.id, cx);
+                }
+                self.activate(self.active, window, cx);
+            }
+            PaletteMode::Fonts(f) => {
+                if let Some(font) = f.into_iter().nth(ix) {
+                    self.message =
+                        format!("Font: {}", font.as_deref().unwrap_or("Automatic")).into();
+                    theme::set_font(font, cx);
+                }
+                self.activate(self.active, window, cx);
+            }
         }
     }
 
@@ -426,8 +573,8 @@ impl Workspace {
             .as_ref()
             .and_then(|p| p.matches.get(p.selected).copied());
         match ix {
-            Some(ix) => self.run_command(ix, window, cx),
-            None => self.close_palette(window, cx),
+            Some(ix) => self.palette_pick(ix, window, cx),
+            None => self.close_palette(true, window, cx),
         }
     }
 
@@ -741,30 +888,62 @@ impl Workspace {
             )
     }
 
-    fn render_palette(&mut self, cx: &mut Context<Self>) -> Option<Div> {
+    fn render_palette_rows(
+        &mut self,
+        range: std::ops::Range<usize>,
+        cx: &mut Context<Self>,
+    ) -> Vec<Stateful<Div>> {
         let t = tokens(cx);
         let entity = cx.entity().downgrade();
-        let palette = self.palette.as_ref()?;
-
+        let (active_theme, active_font) = {
+            let a = theme::current(cx);
+            (a.theme.clone(), a.ui_font.clone())
+        };
+        let automatic = kantor_ui::fonts::automatic_ui_font(cx);
+        let Some(p) = self.palette.as_ref() else {
+            return Vec::new();
+        };
+        let row_h = p.mode.row_height();
         let mut rows = Vec::new();
-        for (row, &ix) in palette.matches.iter().take(PALETTE_MAX_ROWS).enumerate() {
-            let cmd = &COMMANDS[ix];
-            let selected = row == palette.selected;
+        for row in range {
+            let Some(&ix) = p.matches.get(row) else {
+                continue;
+            };
+            let selected = row == p.selected;
             let entity = entity.clone();
-            rows.push(
-                h_flex()
-                    .id(("palette-row", ix))
-                    .h(PALETTE_ROW_HEIGHT)
-                    .px(SPACE_6)
-                    .gap(SPACE_4)
-                    .rounded(RADIUS_MD)
-                    .cursor_pointer()
-                    .when_else(
-                        selected,
-                        |d| d.bg(t.selected),
-                        |d| d.hover(|s| s.bg(t.hover)),
+            let base = div()
+                .id(("palette-row", ix))
+                .h(row_h)
+                .px(SPACE_6)
+                .flex()
+                .items_center()
+                .gap(SPACE_4)
+                .rounded(RADIUS_MD)
+                .cursor_pointer()
+                .when_else(
+                    selected,
+                    |d| d.bg(t.selected),
+                    |d| d.hover(|s| s.bg(t.hover)),
+                )
+                .on_click(move |_, window, cx| {
+                    let _ = entity.update(cx, |ws, cx| ws.palette_pick(ix, window, cx));
+                });
+            let check = |on: bool| {
+                div()
+                    .w(px(14.))
+                    .text_size(FONT_SMALL)
+                    .text_color(t.accent)
+                    .child(if on { "✓" } else { "" })
+            };
+            let row_el = match &p.mode {
+                PaletteMode::Commands => {
+                    let cmd = &COMMANDS[ix];
+                    base.child(
+                        div()
+                            .text_size(FONT_BODY)
+                            .text_color(t.fg)
+                            .child(cmd.title),
                     )
-                    .child(div().text_size(FONT_BODY).text_color(t.fg).child(cmd.title))
                     .child(
                         div()
                             .flex_1()
@@ -773,18 +952,113 @@ impl Workspace {
                             .child(cmd.detail),
                     )
                     .when(!cmd.keys.is_empty(), |d| d.child(kbd(cmd.keys, cx)))
-                    .on_click(move |_, window, cx| {
-                        let _ = entity.update(cx, |ws, cx| ws.run_command(ix, window, cx));
-                    }),
-            );
+                }
+                PaletteMode::Themes(themes) => {
+                    let e = &themes[ix];
+                    let pal = &e.palette;
+                    let swatch = h_flex()
+                        .h(px(14.))
+                        .w_full()
+                        .rounded(px(3.))
+                        .overflow_hidden()
+                        .border_1()
+                        .border_color(t.border)
+                        .child(
+                            div()
+                                .w(CONTROL_MD)
+                                .h_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(rgb(pal.background))
+                                .text_color(rgb(pal.foreground))
+                                .text_size(FONT_CAPTION)
+                                .font_weight(FontWeight::MEDIUM)
+                                .child("Ab"),
+                        )
+                        .children(
+                            e.swatch()
+                                .into_iter()
+                                .map(|c| div().flex_1().h_full().bg(rgb(c))),
+                        );
+                    base.child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap(SPACE_2)
+                            .child(
+                                h_flex()
+                                    .gap(SPACE_3)
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_size(FONT_BODY)
+                                            .text_color(t.fg)
+                                            .child(e.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(FONT_CAPTION)
+                                            .text_color(t.fg_dim)
+                                            .child(e.group.label()),
+                                    )
+                                    .child(check(e.id == active_theme)),
+                            )
+                            .child(swatch),
+                    )
+                }
+                PaletteMode::Fonts(fonts) => {
+                    let font = &fonts[ix];
+                    let (label, family) = match font {
+                        Some(f) => (f.clone(), f.clone()),
+                        None => (
+                            format!(
+                                "Automatic ({})",
+                                automatic.as_deref().unwrap_or("system")
+                            ),
+                            automatic.clone().unwrap_or_default(),
+                        ),
+                    };
+                    base.child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(FONT_EMPHASIS)
+                            .text_color(t.fg)
+                            .when(!family.is_empty(), |d| d.font_family(family))
+                            .child(label),
+                    )
+                    .child(check(font == &active_font))
+                }
+            };
+            rows.push(row_el);
         }
+        rows
+    }
 
-        let count = palette.matches.len();
-        let hints: Vec<Div> = [("↑↓", "navigate"), ("↵", "run"), ("Esc", "close")]
+    fn render_palette(&mut self, cx: &mut Context<Self>) -> Option<Div> {
+        let t = tokens(cx);
+        let entity = cx.entity().downgrade();
+        let hints: Vec<Div> = [("↑↓", "navigate"), ("↵", "choose"), ("Esc", "close")]
             .into_iter()
             .map(|(keys, label)| h_flex().gap(SPACE_2).child(kbd(keys, cx)).child(label))
             .collect();
         let on_escape = cx.listener(Self::palette_escape);
+        let rows_fn = cx.processor(|ws: &mut Self, range: std::ops::Range<usize>, _, cx| {
+            ws.render_palette_rows(range, cx)
+        });
+        let palette = self.palette.as_ref()?;
+
+        let count = palette.matches.len();
+        let row_h = palette.mode.row_height();
+        let visible = count.clamp(1, PALETTE_MAX_ROWS) as f32;
+        let list = uniform_list("palette-list", count, rows_fn)
+            .track_scroll(&palette.scroll)
+            .h(row_h * visible);
+
         let panel = v_flex()
             .id("palette")
             .key_context(PALETTE)
@@ -806,22 +1080,24 @@ impl Workspace {
                     .child(Input::new(&palette.input).appearance(false)),
             )
             .child(
-                v_flex()
+                div()
                     .p(SPACE_3)
-                    .gap(SPACE_1)
-                    .children(rows)
-                    .when(count == 0, |d| {
-                        d.child(
-                            div()
-                                .h(PALETTE_ROW_HEIGHT)
-                                .px(SPACE_6)
-                                .flex()
-                                .items_center()
-                                .text_size(FONT_SMALL)
-                                .text_color(t.fg_dim)
-                                .child("No matching commands"),
-                        )
-                    }),
+                    .when_else(
+                        count == 0,
+                        |d| {
+                            d.child(
+                                div()
+                                    .h(PALETTE_ROW_HEIGHT)
+                                    .px(SPACE_6)
+                                    .flex()
+                                    .items_center()
+                                    .text_size(FONT_SMALL)
+                                    .text_color(t.fg_dim)
+                                    .child("No matches"),
+                            )
+                        },
+                        |d| d.child(list),
+                    ),
             )
             .child(
                 h_flex()
@@ -835,7 +1111,7 @@ impl Workspace {
                     .text_color(t.fg_muted)
                     .children(hints)
                     .child(div().flex_1())
-                    .child(format!("{count} commands")),
+                    .child(format!("{count} {}", palette.mode.noun())),
             );
 
         Some(
@@ -848,7 +1124,7 @@ impl Workspace {
                 .bg(t.scrim)
                 .occlude()
                 .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                    let _ = entity.update(cx, |ws, cx| ws.close_palette(window, cx));
+                    let _ = entity.update(cx, |ws, cx| ws.close_palette(true, window, cx));
                 })
                 .child(panel),
         )
@@ -892,7 +1168,8 @@ impl Render for Workspace {
             .size_full()
             .bg(t.bg)
             .text_color(t.fg)
-            .text_size(FONT_BODY);
+            .text_size(FONT_BODY)
+            .font_family(cx.theme().font_family.clone());
         if let Some((tabs, _)) = &chrome {
             let style = div()
                 .flex_none()

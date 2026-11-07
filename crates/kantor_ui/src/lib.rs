@@ -6,6 +6,7 @@
 
 pub mod cached;
 pub mod components;
+pub mod fonts;
 pub mod metrics;
 pub mod tokens;
 

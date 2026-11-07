@@ -49,5 +49,7 @@ pub const ROW_HEIGHT: Pixels = px(28.);
 pub const PALETTE_WIDTH: Pixels = px(600.);
 pub const PALETTE_TOP: Pixels = px(96.);
 pub const PALETTE_ROW_HEIGHT: Pixels = px(36.);
+/// Theme rows show a name and a swatch strip.
+pub const PALETTE_THEME_ROW_HEIGHT: Pixels = px(50.);
 pub const PALETTE_FOOTER_HEIGHT: Pixels = px(34.);
 pub const PALETTE_MAX_ROWS: usize = 10;
