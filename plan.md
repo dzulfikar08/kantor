@@ -29,7 +29,7 @@ Status: **M0 nearly done; Sheets MVP (M1) started**. Written 2026-11-07, last up
 3. ✅ **Sheets undo/redo**: `sheets_engine` runs on IronCalc's `UserModel`; Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y in the grid (the formula bar keeps its own text undo), plus palette commands. "Unsaved" follows the undo history, so undoing back to the saved state is clean again.
 4. ✅ **Copy/paste** of ranges as TSV (Ctrl+C/X/V in the grid; one undo step per paste/clear), range selection with Shift+arrows, Shift+click and drag. ☐ Try on the Mac: mouse selection, clipboard to/from browser/LibreOffice. Pasted formulas are not reference-shifted yet (`=A1` stays `=A1`).
 5. ✅ **In-cell editor** over the active cell (gpui-component `Input`, so IME goes through GPUI), synced live with the formula bar; Enter/Tab/Shift variants commit and move, typed edits commit on arrows, F2 edits switch arrows to caret mode. ☐ Try on the Mac: alignment while scrolling/resizing, fcitx5 composition and popup position. Gaps: no Alt+Enter line breaks; editor hides if the cell is wheel-scrolled away.
-6. **Formatting basics**: bold/italic (Ctrl+B/I — kept free on purpose), number formats, alignment, column widths/row heights saved to xlsx; a per-pane toolbar that goes icon-only when narrow.
+6. ✅ **Formatting basics**: bold/italic/underline/strike (Ctrl+B/I/U), alignment, number formats (General/Number/Percent/Rupiah/Dollar/Date), column widths saved to xlsx (resize is undoable); toolbar above the formula bar that collapses into a "…" menu when narrow. ☐ Try on the Mac. Gaps: row heights stored but not drawn (DataTable has one row height); colours/borders not wired; IronCalc rounds halves to even.
 7. ✅ **CSV/TSV open and save** (delimiter detection, BOM/UTF-16/Windows-1252; one sheet, displayed values; a leading `=` stays text) and **read-only `.ods`/`.xls`/`.xlsb` import** via calamine (values, dates, formulas; formulas that don't reproduce the file's cached result are kept as values; Save on an import goes to Save As `name.xlsx`). See `crates/sheets_engine/src/import.rs`. ☐ Open the same workbook in two panes (needs a shared document model; today a split opens a new blank sheet).
 8. **Text layout spike** (M0's last open item): parley vs GPUI text for paged layout → `docs/decisions/0001-text-engine.md`. Gates Docs (M2).
 9. ◐ **Corpus + fidelity CI**: ✅ `.xlsx`: 12 generated CC0 files in `tests/corpus/xlsx/` (`scripts/corpus/gen_xlsx.py`), round-trip test `crates/sheets_engine/tests/corpus.rs` with known IronCalc gaps in `known-gaps.tsv`, `fidelity.yml` (report + LibreOffice-headless PDFs as an artifact). ☐ `.docx`/`.pptx` corpora with Docs/Slides; ☐ pixel-diff score.
@@ -292,6 +292,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 13. ✅ Unsaved-changes prompt on close and quit (`crates/kantor/src/workspace/closing.rs`).
 14. ✅ Undo/redo for cell edits (IronCalc `UserModel`); dirty state tracked as a position in the history.
 15. ✅ Range selection and TSV copy/paste (`sheets_engine::tsv`, `CellRange`).
+16. ✅ In-cell editor (`sheets_ui::cell_editor`), CSV/ODS/XLS import, formatting + toolbar (`sheets_engine::format`, `sheets_ui::toolbar`).
 
 ## 12. Open questions
 
