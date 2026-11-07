@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icons/kantor.svg" width="128" alt="Kantor"></p>
+
 # Kantor
 
 A small, fast, native office suite for Linux, written in Rust on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui) (the UI framework behind Zed). Three apps in one binary: **Sheets**, **Docs** and **Slides**. First target: [Omarchy](https://omarchy.org) on Apple Silicon (aarch64 Linux).
@@ -13,15 +15,22 @@ curl -fsSL https://raw.githubusercontent.com/dzulfikar08/kantor/main/scripts/ins
 kantor budget.xlsx
 ```
 
-This installs `~/.local/bin/kantor` and a *Kantor Sheets* launcher entry. Pin a release with `KANTOR_VERSION=v0.1.0`.
+This installs `~/.local/bin/kantor`, a **Kantor** launcher (the suite's Home screen) and a **Kantor Sheets** launcher. Pin a release with `KANTOR_VERSION=v0.1.0`.
 
 ## Using Sheets
 
+`kantor` opens the Home screen (Docs · Sheets · Slides); `kantor file.xlsx` or `kantor --sheets` goes straight to Sheets.
+
 | Action | Keys |
 |---|---|
+| Move | arrows, `Tab`/`Shift+Tab`, `Home`/`End`, `PgUp`/`PgDn` |
+| Edit a cell | just type (replaces), or `Enter`/`F2`/double-click (keeps content) |
+| Commit / cancel | `Enter` (moves down) / `Esc`; clicking another cell also commits |
+| Clear a cell | `Delete` |
 | Open / Save / Save as | `Ctrl`/`Super` + `O` / `S` / `Shift+S` |
-| Edit a cell | select it, type in the formula bar, `Enter` (double-click jumps to the bar) |
 | Quit | `Ctrl`/`Super` + `Q` |
+
+Edits happen in the formula bar for now (an in-cell editor is planned). With an input method such as fcitx5, press `Enter` first, then compose in the bar.
 
 The UI follows your Omarchy theme and live-reloads on `omarchy theme set`.
 
@@ -41,7 +50,7 @@ Expect `target/` to reach 10–20 GB and the first build to need plenty of RAM.
 
 ```
 crates/
-  kantor         binary: CLI, windows, Omarchy theme -> GPUI theme
+  kantor         binary: CLI, suite shell (Home screen), Omarchy theme -> GPUI theme
   kantor_theme   Omarchy palette parser (no GPUI)
   sheets_engine  IronCalc wrapper: open/save xlsx, cells, formulas (no GPUI)
   sheets_ui      grid, formula bar, sheet tabs

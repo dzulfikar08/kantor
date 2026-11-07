@@ -21,10 +21,12 @@ curl -fsSL -o "$tmp/k.sha256" "$url.sha256"
 ( cd "$tmp" && echo "$(cut -d' ' -f1 k.sha256)  k.tar.gz" | sha256sum -c - >/dev/null )
 tar -C "$tmp" -xzf "$tmp/k.tar.gz"
 
-mkdir -p "$prefix/bin" "$prefix/share/applications"
+mkdir -p "$prefix/bin" "$prefix/share/applications" "$prefix/share/icons/hicolor/scalable/apps"
 install -m755 "$tmp/$name/bin/kantor" "$prefix/bin/kantor"
 for f in "$tmp/$name"/share/applications/*.desktop; do
   sed "s|^Exec=kantor|Exec=$prefix/bin/kantor|" "$f" > "$prefix/share/applications/$(basename "$f")"
 done
+install -m644 "$tmp/$name"/share/icons/hicolor/scalable/apps/*.svg "$prefix/share/icons/hicolor/scalable/apps/" 2>/dev/null || true
+command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$prefix/share/icons/hicolor" 2>/dev/null || true
 command -v update-desktop-database >/dev/null && update-desktop-database "$prefix/share/applications" 2>/dev/null || true
 echo "Installed $("$prefix/bin/kantor" --version) to $prefix/bin/kantor"

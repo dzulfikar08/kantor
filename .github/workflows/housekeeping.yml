@@ -1,11 +1,11 @@
-# Keeps Cargo.lock in the repo without anyone running cargo locally.
-# Runs when manifests change (or by hand) and commits the refreshed lockfile.
-name: Lockfile
+# Does the jobs a local toolchain normally would, so nobody needs one:
+# refreshes Cargo.lock and applies `cargo fmt`, then commits the result to main.
+# (Pull requests are still checked strictly by ci.yml.)
+name: Housekeeping
 
 on:
   push:
     branches: [main]
-    paths: ["**/Cargo.toml"]
   workflow_dispatch:
     inputs:
       update:
@@ -16,24 +16,35 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: housekeeping
+  cancel-in-progress: false
+
 jobs:
-  lock:
+  tidy:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Resolve dependencies
+        with:
+          components: rustfmt
+      - name: Lockfile
         run: |
           if [ -f Cargo.lock ] && [ "${{ inputs.update }}" != "true" ]; then
             cargo metadata --format-version 1 >/dev/null   # minimal update for changed manifests
           else
             cargo generate-lockfile
           fi
+      - name: Format
+        run: cargo fmt --all
       - name: Commit if changed
         run: |
-          git add Cargo.lock
-          if git diff --cached --quiet; then echo "Cargo.lock up to date"; exit 0; fi
+          git add -A
+          if git diff --cached --quiet; then echo "nothing to tidy"; exit 0; fi
+          git diff --cached --stat
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: update Cargo.lock"
+          git commit -m "chore: cargo fmt / Cargo.lock"
+          git pull --rebase
           git push

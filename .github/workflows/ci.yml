@@ -28,7 +28,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: cargo fmt --all --check
+      - name: rustfmt (PRs only; main is auto-formatted by housekeeping.yml)
+        if: github.event_name == 'pull_request'
+        run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:

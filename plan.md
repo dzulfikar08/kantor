@@ -86,7 +86,7 @@ kantor/
 └── packaging/            # PKGBUILD, .desktop files, MIME types, icons
 ```
 
-One binary, `kantor`, holds all three apps. `kantor-docs`, `kantor-sheets` and `kantor-slides` `.desktop` entries launch it in the right mode, so each one shows up in omacast.
+One binary, `kantor`, holds all three apps: **an all-in-one suite**. `kantor` with no file opens a Home screen (Docs · Sheets · Slides · Open file); a file or `--docs/--sheets/--slides` jumps straight into an app. A main `Kantor` launcher plus per-app launchers (`kantor-sheets.desktop` now, Docs/Slides as they land) all start the same binary. Icons live in `assets/icons/` (the K is Docs-blue stem, Sheets-green arm, Slides-orange leg).
 
 ### 4.2 Key libraries
 
@@ -222,7 +222,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 |---|---|---|
 | **Paged text layout is very hard** (tables, floats, bidi, CJK) | High | Sheets first; dedicated M0 spike; scope tables and floats tightly in M2; study Typst's layout design |
 | **GPUI is pre-1.0** and changes often | Medium | Pin through `gpui-kit`; isolate GPUI behind the view layer (model and layout don't import it); upgrade on a schedule |
-| **GPUI on Asahi** (Vulkan driver maturity, 16K pages) | Medium | Verify in M0; report driver bugs to linux-aurora / Mesa; CI tests on generic ARM |
+| **GPUI on Asahi** (Vulkan driver maturity, 16K pages) | Medium | 16K pages and Vulkan verified working (2026-11-07). Under memory pressure (≈1 GB free, browser open) wgpu reports *Out of Memory* / device lost and GPUI panics after 3 recoveries; with the browser closed it runs fine. Mitigate: keep GPU footprint small, push upstream for graceful recovery instead of a panic, study VoltrusID/gpui's memory fixes (`docs/reference-voltrus-tools.md`) |
 | **OOXML breadth** | High | Preservation layer from day one; read-only fallback; a fidelity score drives priorities |
 | **Microsoft font metrics** | Medium | Carlito/Caladea/Liberation mapping; warn when a document font is missing |
 | **IronCalc is pre-1.0** | Low–medium | Keep it behind `sheets_engine`; contribute fixes upstream |
@@ -246,7 +246,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 3. ✅ CI on x86_64 and `ubuntu-24.04-arm`; nightly release with downloadable aarch64 tarball; `scripts/install.sh` for the Mac.
 4. ✅ `kantor_theme`: reads Omarchy's `colors.toml`, live-reloads when `theme.generation` changes.
 5. ✅ First Sheets pixel: open `.xlsx` with IronCalc, show it in GPUI Kit's data table, edit via formula bar, atomic save.
-6. ☐ Run the nightly on the Mac under Hyprland/Asahi: Vulkan, fractional scale 1.6, fcitx5 input. Record RSS and startup time.
+6. ◐ Run the nightly on the Mac: ✅ Vulkan on Asahi, ✅ 16K pages, ✅ GPU ready in ~210 ms, ✅ 39 MB binary; ⚠ wgpu OOM under memory pressure; ☐ fractional scale 1.6, ☐ fcitx5, ☐ RSS.
 7. ☐ Open issues for every remaining M0 checkbox.
 8. ☐ Text layout spike (parley vs GPUI text), built and benchmarked in CI; numbers and decision in `docs/decisions/0001-text-engine.md`.
 9. ☐ Corpus: 10 files of each format; a CI job producing LibreOffice-headless reference PDFs.

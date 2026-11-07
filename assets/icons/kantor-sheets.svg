@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3fd488"/>
+      <stop offset="1" stop-color="#14894b"/>
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#bg)"/>
+  <rect x="24.5" y="24.5" width="463" height="463" rx="111.5" fill="none" stroke="#ffffff" stroke-opacity="0.15"/>
+  <!-- sheet -->
+  <rect x="112" y="120" width="288" height="272" rx="28" fill="#ffffff"/>
+  <path d="M112 148a28 28 0 0 1 28-28h232a28 28 0 0 1 28 28v44H112z" fill="#d6f5e4"/>
+  <g stroke="#14894b" stroke-opacity="0.35" stroke-width="6">
+    <line x1="112" y1="192" x2="400" y2="192"/>
+    <line x1="112" y1="259" x2="400" y2="259"/>
+    <line x1="112" y1="326" x2="400" y2="326"/>
+    <line x1="208" y1="120" x2="208" y2="392"/>
+    <line x1="304" y1="120" x2="304" y2="392"/>
+  </g>
+  <!-- active cell -->
+  <rect x="208" y="259" width="96" height="67" fill="#22b86a" fill-opacity="0.18" stroke="#14894b" stroke-width="10" stroke-linejoin="round"/>
+</svg>

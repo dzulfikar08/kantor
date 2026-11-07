@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="24" x2="0" y2="488" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2a3042"/>
+      <stop offset="1" stop-color="#11141c"/>
+    </linearGradient>
+    <linearGradient id="docs" x1="0" y1="120" x2="0" y2="392" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6fa8ff"/>
+      <stop offset="1" stop-color="#3769ea"/>
+    </linearGradient>
+    <linearGradient id="sheets" x1="200" y1="290" x2="356" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1fae63"/>
+      <stop offset="1" stop-color="#5be39a"/>
+    </linearGradient>
+    <linearGradient id="slides" x1="262" y1="258" x2="358" y2="386" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffa25a"/>
+      <stop offset="1" stop-color="#ee5a24"/>
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#bg)"/>
+  <rect x="24.5" y="24.5" width="463" height="463" rx="111.5" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
+  <!-- K = Docs (stem) + Sheets (arm) + Slides (leg) -->
+  <g stroke-linecap="round" fill="none" stroke-width="62">
+    <line x1="270" y1="262" x2="352" y2="378" stroke="url(#slides)"/>
+    <line x1="182" y1="290" x2="348" y2="134" stroke="url(#sheets)"/>
+    <line x1="160" y1="134" x2="160" y2="378" stroke="url(#docs)"/>
+  </g>
+</svg>
