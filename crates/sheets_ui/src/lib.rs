@@ -23,7 +23,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::{metrics::*, tokens};
-use sheets_engine::{Workbook, cell_name, column_name};
+use sheets_engine::{SourceFormat, Workbook, cell_name, column_name};
 
 actions!(sheets, [Save, SaveAs, Undo, Redo]);
 
@@ -53,6 +53,19 @@ pub struct BookInfo {
     pub active_sheet: usize,
     /// Used range of the active sheet, `(rows, cols)`.
     pub used: (u32, u32),
+}
+
+/// Status line after opening: imports say that Save writes a copy as `.xlsx`.
+fn opened_status(book: &Workbook) -> String {
+    let mut s = format!("Opened {}", book.title());
+    if book.source_format().is_imported() {
+        s.push_str(" (imported; Save creates an .xlsx copy)");
+    }
+    for note in book.import_notes() {
+        s.push_str("; ");
+        s.push_str(note);
+    }
+    s
 }
 
 /// Register Sheets key bindings. Both Ctrl and Super work (Mac-style Cmd = Super).
@@ -170,7 +183,7 @@ impl SheetsView {
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (book, status) = match path.as_deref().map(Workbook::open) {
             Some(Ok(book)) => {
-                let s = format!("Opened {}", book.title());
+                let s = opened_status(&book);
                 (book, s)
             }
             Some(Err(err)) => {
@@ -438,6 +451,7 @@ impl SheetsView {
         self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
             grid.sheet = sheet;
+            let _ = grid.book.set_active_sheet(sheet);
             grid.resize();
             table.refresh(cx);
             cx.notify();
@@ -484,13 +498,14 @@ impl SheetsView {
         self.table.read(cx).delegate().book.title()
     }
 
-    /// Path of the open file, if it has been saved.
+    /// The file this document shows (an imported `.ods`/`.xls` too, though
+    /// Save never writes there), if any.
     pub fn path(&self, cx: &App) -> Option<PathBuf> {
         self.table
             .read(cx)
             .delegate()
             .book
-            .path()
+            .source_path()
             .map(|p| p.to_path_buf())
     }
 
@@ -526,7 +541,7 @@ impl SheetsView {
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         match Workbook::open(&path) {
             Ok(book) => {
-                self.status = format!("Opened {}", book.title()).into();
+                self.status = opened_status(&book).into();
                 self.editing = None;
                 self.table.update(cx, |table, cx| {
                     *table.delegate_mut() = SheetGrid::new(book);
@@ -573,16 +588,12 @@ impl SheetsView {
         let (dir, name) = {
             let book = &self.table.read(cx).delegate().book;
             let dir = book
-                .path()
+                .source_path()
                 .and_then(|p| p.parent())
                 .map(|p| p.to_path_buf())
                 .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
                 .unwrap_or_else(|| PathBuf::from("."));
-            let name = match book.path() {
-                Some(_) => book.title(),
-                None => "Untitled.xlsx".to_owned(),
-            };
-            (dir, name)
+            (dir, book.suggested_file_name())
         };
         let path = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |this, cx| {
@@ -610,7 +621,21 @@ impl SheetsView {
         cx: &mut Context<Self>,
     ) {
         self.status = match result {
-            Ok(()) => format!("Saved {}", self.table.read(cx).delegate().book.title()).into(),
+            Ok(()) => {
+                let book = &self.table.read(cx).delegate().book;
+                let lost = book.sheets_lost_in_csv();
+                if matches!(book.source_format(), SourceFormat::Csv { .. }) && lost > 0 {
+                    let sheet = book.active_sheet() as usize;
+                    let name = book.sheet_names().get(sheet).cloned().unwrap_or_default();
+                    format!(
+                        "Saved {} with values of sheet \"{name}\" only; CSV can't hold the other {lost}",
+                        book.title()
+                    )
+                    .into()
+                } else {
+                    format!("Saved {}", book.title()).into()
+                }
+            }
             Err(err) => format!("Save failed: {err:#}").into(),
         };
         self.update_title(window, cx);

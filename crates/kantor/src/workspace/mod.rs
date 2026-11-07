@@ -51,7 +51,7 @@ impl AppKind {
     pub fn for_path(path: &std::path::Path) -> Option<Self> {
         let ext = path.extension()?.to_str()?.to_ascii_lowercase();
         match ext.as_str() {
-            "xlsx" | "xlsm" | "xls" | "ods" | "csv" => Some(Self::Sheets),
+            "xlsx" | "xlsm" | "xls" | "xlsb" | "ods" | "csv" | "tsv" => Some(Self::Sheets),
             "docx" | "doc" | "odt" | "rtf" => Some(Self::Docs),
             "pptx" | "ppt" | "odp" => Some(Self::Slides),
             _ => None,
