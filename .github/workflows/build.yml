@@ -1,12 +1,11 @@
-# Release binaries. The M1 Air never builds: it downloads these.
+# Nightly binaries. The M1 Air never builds: it downloads these.
 #  - push to main  -> rolling "nightly" pre-release
-#  - tag v*        -> versioned release
+# Versioned releases (tags v*) are built by release.yml.
 name: Build
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
 
 concurrency:
@@ -42,7 +41,7 @@ jobs:
       - name: Package
         id: pkg
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then tag="${GITHUB_REF_NAME}"; else tag=nightly; fi
+          tag=nightly
           name="kantor-${tag}-${{ matrix.arch }}-linux"
           ./scripts/package.sh "target/release/kantor" "dist/${name}"
           echo "name=${name}" >> "$GITHUB_OUTPUT"
@@ -69,16 +68,12 @@ jobs:
         run: |
           set -euo pipefail
           ls -l dist
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            gh release create "$GITHUB_REF_NAME" dist/* --title "Kantor $GITHUB_REF_NAME" --generate-notes
-          else
-            # Rolling nightly: move the tag to this commit and replace the assets.
-            git tag -f nightly && git push -f origin nightly
-            if ! gh release view nightly >/dev/null 2>&1; then
-              gh release create nightly --prerelease --title "Nightly" \
-                --notes "Rolling build of main. Install: curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh"
-            fi
-            gh release edit nightly --prerelease --target "$GITHUB_SHA" \
-              --notes "Rolling build of main at ${GITHUB_SHA::7} ($(date -u +%F)). Install: curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh"
-            gh release upload nightly dist/* --clobber
+          # Rolling nightly: move the tag to this commit and replace the assets.
+          git tag -f nightly && git push -f origin nightly
+          if ! gh release view nightly >/dev/null 2>&1; then
+            gh release create nightly --prerelease --title "Nightly" \
+              --notes "Rolling build of main. Install: curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh"
           fi
+          gh release edit nightly --prerelease --target "$GITHUB_SHA" \
+            --notes "Rolling build of main at ${GITHUB_SHA::7} ($(date -u +%F)). Install: curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh"
+          gh release upload nightly dist/* --clobber

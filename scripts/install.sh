@@ -1,24 +1,40 @@
 #!/bin/sh
 # Install a prebuilt Kantor from GitHub Releases into ~/.local (no compiling).
 #   curl -fsSL https://raw.githubusercontent.com/dzulfikar08/kantor/main/scripts/install.sh | sh
-#   KANTOR_VERSION=v0.1.0 sh install.sh      # a tagged release instead of nightly
+#   curl -fsSL .../install.sh | KANTOR_VERSION=v0.1.0 sh   # a tagged release instead of nightly
 set -eu
 repo="dzulfikar08/kantor"
 tag="${KANTOR_VERSION:-nightly}"
+case "$tag" in
+  nightly) ;;
+  v[0-9]*) ;;
+  [0-9]*) tag="v$tag" ;;
+  *) echo "KANTOR_VERSION must be 'nightly' or a release tag like v0.1.0 (got '$tag')" >&2; exit 1 ;;
+esac
 case "$(uname -m)" in
   aarch64|arm64) arch=aarch64 ;;
   x86_64|amd64)  arch=x86_64 ;;
   *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
-name="kantor-${tag}-${arch}-linux"
-url="https://github.com/${repo}/releases/download/${tag}/${name}.tar.gz"
+# Nightly assets are kantor-nightly-ARCH-linux.tar.gz with a .sha256 beside each;
+# tagged releases (release.yml) are kantor-X.Y.Z-ARCH-linux.tar.gz with one SHA256SUMS.
+if [ "$tag" = nightly ]; then name="kantor-nightly-${arch}-linux"; else name="kantor-${tag#v}-${arch}-linux"; fi
+base="https://github.com/${repo}/releases/download/${tag}"
+url="${base}/${name}.tar.gz"
 prefix="${PREFIX:-$HOME/.local}"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
 echo "Downloading $url"
 curl -fL --progress-bar -o "$tmp/k.tar.gz" "$url"
-curl -fsSL -o "$tmp/k.sha256" "$url.sha256"
-( cd "$tmp" && echo "$(cut -d' ' -f1 k.sha256)  k.tar.gz" | sha256sum -c - >/dev/null )
+if [ "$tag" = nightly ]; then
+  curl -fsSL -o "$tmp/k.sha256" "$url.sha256"
+  sum="$(cut -d' ' -f1 "$tmp/k.sha256")"
+else
+  curl -fsSL -o "$tmp/SHA256SUMS" "${base}/SHA256SUMS"
+  sum="$(awk -v f="${name}.tar.gz" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")"
+fi
+[ -n "$sum" ] || { echo "no checksum for ${name}.tar.gz" >&2; exit 1; }
+( cd "$tmp" && echo "$sum  k.tar.gz" | sha256sum -c - >/dev/null ) || { echo "checksum mismatch for ${name}.tar.gz" >&2; exit 1; }
 tar -C "$tmp" -xzf "$tmp/k.tar.gz"
 
 mkdir -p "$prefix/bin" "$prefix/share/applications" "$prefix/share/icons/hicolor/scalable/apps"
