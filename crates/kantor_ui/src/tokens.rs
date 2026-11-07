@@ -141,6 +141,7 @@ impl Tokens {
             offset: point(px(0.), px(y)),
             blur_radius: px(blur),
             spread_radius: px(0.),
+            inset: false,
         };
         match elevation {
             Elevation::Raised => vec![s(1., 2., 0.18)],
