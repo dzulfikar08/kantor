@@ -15,6 +15,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   clipboard, IME input. New Document is Ctrl+Shift+N. Saving an opened `.docx` rewrites only the
   body and copies every other part unchanged; files with content Docs doesn't model yet (tables,
   images, lists, headers/footers, comments, tracked changes…) show a banner and save to a new file.
+- **Slides** (first slice): new presentation (Ctrl+Alt+N, Home, sidebar, palette) and open/save
+  `.pptx`. Slides look like the file: placeholder positions and text formatting come from the
+  layout, master and theme, and master/layout decorations, backgrounds and pictures are drawn.
+  Thumbnail strip (drag to reorder, Ctrl+Up/Down), new/duplicate/delete slide (Ctrl+M / Ctrl+D),
+  select, move (drag or arrows) and resize shapes, edit text in text boxes and placeholders
+  (Bold/Italic/Underline, IME), insert text box, rectangle, ellipse or PNG/JPEG picture, undo/redo,
+  and a simple presenter mode (F5 / Shift+F5; arrows, space, Esc). Saving copies every part it
+  doesn't rewrite byte for byte, keeps unchanged shapes verbatim and, for edited ones, replaces
+  only the position or the paragraphs; tables, charts, groups and SmartArt are kept untouched
+  (shown as boxes). When slides are added, removed or reordered in a file with slide sections or
+  custom shows, those can't be kept, so Save goes to a new file and the original is never
+  overwritten.
 
 ## [0.1.0] - 2026-11-07
 

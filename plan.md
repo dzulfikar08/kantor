@@ -4,7 +4,7 @@
 
 A small, fast, native office suite for Linux (first target: Omarchy on Apple Silicon), built in Rust on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui), the UI framework behind the Zed editor. Three apps: **Docs** (Word), **Sheets** (Excel), **Slides** (PowerPoint). They share one binary and one core.
 
-Status: **M0 done; Sheets MVP (M1) feature-complete pending Mac checks**. Written 2026-11-07, last updated 2026-11-07.
+Status: **M0 done; Sheets MVP (M1) feature-complete pending Mac checks; Docs (M2) and Slides (M3) first slices in**. Written 2026-11-07, last updated 2026-11-07.
 
 ---
 
@@ -16,6 +16,7 @@ Status: **M0 done; Sheets MVP (M1) feature-complete pending Mac checks**. Writte
 - One binary, suite shell modelled on Voltrus Tools (`docs/reference-voltrus-tools.md`): Home screen, document **tabs** (tab strip = titlebar), **split panes** with draggable dividers, resizable **sidebar** (open/recent/create) and **inspector** (cell + workbook details), **status bar**, **Ctrl+K command palette** (fuzzy), **theme picker** (Follow Omarchy / 23 Omarchy / 907 Ghostty themes, live preview), **UI font picker** (SF Pro when installed). Tabs, layouts and panel sizes **persist** across runs.
 - **Sheets**: open/edit/save `.xlsx` via IronCalc (formulas recalc, atomic save), Excel-style typing into cells (type / Enter / F2 / Delete / Esc), name box + formula bar, multiple sheets.
 - **Docs** (M2 first slice, not yet tried on the Mac): new document (Ctrl+Shift+N, Home, sidebar, palette) and open/save `.docx`: paragraphs, runs (font, size, bold/italic/underline, colour), paragraph styles (Normal, Heading 1–3, the file's own), alignment and spacing. Paged A4 view (parley layout, GPUI paints the glyphs, only visible pages), zoom, caret/selection, typing via GPUI's input handler (IME), Enter/Backspace/Delete, arrows/Home/End/PageUp/PageDown, Ctrl+B/I/U, undo/redo, plain-text clipboard. **Round-trip safety:** saving copies every package part byte for byte and regenerates only the body; a file with content the model doesn't hold (tables, images, fields, comments, tracked changes, headers/footers, lists…) is marked and its Save goes to Save As: the original is never overwritten (`crates/docs_engine/src/docx.rs`).
+- **Slides** (M3 first slice, not yet tried in a window): new presentation (Ctrl+Alt+N, Home, sidebar, palette; 16:9 with "Title Slide" and "Title and Content" layouts) and open/save `.pptx`. Display inheritance (read-only): placeholder positions, list styles and body settings from layout/master, theme colours (incl. lumMod/lumOff) and fonts, backgrounds, master/layout decorations, pictures. Editing: thumbnail strip (virtualised, drag to reorder, Ctrl+Up/Down), new/duplicate/delete slide (Ctrl+M / Ctrl+D), select/move (drag, arrows)/resize (handles), text editing in text boxes and placeholders (caret, selection, Enter/Shift+Enter, Ctrl+B/I/U, IME via `EntityInputHandler`), insert text box/rectangle/ellipse/picture, Delete, undo/redo (typing/nudges coalesce), Save/Save As, F5 presenter mode in the pane. Text is laid out by `docs_layout` and painted through Docs' font bridge. **Round-trip safety** (`crates/slides_engine/src/presentation.rs`): every part not rewritten is raw-copied; unchanged slides are copied, unchanged shapes written verbatim, moved shapes get only `a:xfrm` replaced, edited text only its paragraphs (each run's/paragraph's unmodelled attributes and children kept); tables, charts, groups, SmartArt, transitions and timing stay untouched. Text with fields/equations is shown but locked; slides with unusual XML prefixes are kept verbatim and locked. Deleting a slide also drops its notes. Unsupported content (slide sections / custom shows after slides are added, removed or reordered) forces Save As.
 - Design system in `kantor_ui` (metrics + colour tokens derived from the palette; "views never use raw colours or sizes").
 - Renderer memory patch (`vendor/gpui-pre-wgpu`) — fixed the wgpu *Out of Memory* crash on 8 GB with a browser open.
 
@@ -37,8 +38,9 @@ Status: **M0 done; Sheets MVP (M1) feature-complete pending Mac checks**. Writte
    ✅ **xlsx part preservation** (§5): `Workbook::save_as` post-processes IronCalc's package (`crates/sheets_engine/src/preserve.rs`) and carries what IronCalc drops from the original: comments + VML, custom properties, drawings/charts/images, printer settings, custom XML, threaded comments, and sheet elements (`sheetPr`, `sheetFormatPr`, data validation, print setup, `legacyDrawing`...), matched to sheets by `sheetId`; tab colours are written from the model; non-OOXML error values (`#ERROR!` from 3-D refs) are no longer written. Anything ambiguous is skipped and listed in `Workbook::save_notes()`; the result is checked with `package_problems` and falls back to IronCalc's output. Not carried yet: tables, pivots, external links, VBA, OLE/controls.
 10. ◐ First tagged release `v0.1.0` (Sheets MVP) and an AUR `kantor-bin`: ✅ prepared — `release.yml` (tag `v*` must match the Cargo.toml version; tarballs + `SHA256SUMS`, notes from `CHANGELOG.md`), version 0.1.0, `packaging/aur/` (`update.sh`, publish steps in its README). ✅ Released 2026-11-07: https://github.com/dzulfikar08/kantor/releases/tag/v0.1.0 (both arches + `SHA256SUMS`); PKGBUILD checksums filled. ☐ Publish `kantor-bin` to the AUR (needs the user's AUR SSH key; steps in `packaging/aur/README.md`).
 11. ◐ **Docs M2, first slice** (`docs_engine`, `docs_ui`, shell wiring): see *What works today*. ☐ Try on the Mac: glyphs land where parley put them in a real window (ADR 0001 open risk 6), fcitx5 composition and candidate window, scrolling/zoom feel, a few real `.docx` files. Next: tables (read-only display first), lists, page breaks, tab stops, rich clipboard, `.docx` corpus + fidelity CI.
+12. ◐ **Slides M3, first slice** (`slides_engine`, `slides_ui`, shell wiring): see *What works today*. ☐ Try in a window / on the Mac: canvas and thumbnails render where expected, drag/resize feel, text caret placement in placeholders, fcitx5, presenter mode, a few real `.pptx` decks (open → edit → save → open in PowerPoint/LibreOffice). Next: rotation/flip display, bullets and paragraph spacing, tables and charts (display), shape fill/line editing, copy/paste of shapes, speaker notes, PDF export, a `.pptx` corpus + fidelity CI.
 
-**Known gaps / caveats:** Slides is a placeholder ("coming soon"). Docs gaps: no tables/images/lists/headers yet (such files open with a warning banner and save as a copy), tabs render as one space (no tab stops), "at least" line spacing is approximated, the clipboard is plain text, no spell check, PDF export or print yet. Split-right uses the dashboard icon (GPUI Kit's default icon set has no columns icon). Window title/decorations come from Hyprland (server-side); no in-app window buttons, by design.
+**Known gaps / caveats:** Slides gaps: no rotation/flip display (kept in the file), no bullets/numbering or paragraph spacing in the display, tables/charts/groups/SmartArt shown as boxes (kept), gradients drawn as their first colour, no shape copy/paste, fill/line editing, notes view or PDF export; text with fields (slide numbers, dates) can't be edited. Docs gaps: no tables/images/lists/headers yet (such files open with a warning banner and save as a copy), tabs render as one space (no tab stops), "at least" line spacing is approximated, the clipboard is plain text, no spell check, PDF export or print yet. Split-right uses the dashboard icon (GPUI Kit's default icon set has no columns icon). Window title/decorations come from Hyprland (server-side); no in-app window buttons, by design.
 
 ## 1. Why
 
@@ -114,9 +116,9 @@ kantor/
 │   │                     #    (later: sections, tables, images; may split into docs_model / docs_docx)
 │   ├── docs_layout       # ✅ no GPUI: parley paragraphs → pages (later: tables, headers/footers)
 │   ├── docs_ui           # ✅ page view, caret, selection, IME, toolbar (later: styles panel)
-│   ├── slides_model      # slides, layouts, masters, shapes, text boxes, images
-│   ├── slides_pptx       # PPTX <-> slides_model (own, on kantor_ooxml)
-│   └── slides_ui         # slide canvas, sorter, presenter mode
+│   ├── slides_engine     # ✅ no GPUI: slides/shapes/text model, undo/redo, .pptx read/write + preservation,
+│   │                     #    layout/master/theme inheritance for display (may split into slides_model / slides_pptx)
+│   └── slides_ui         # ✅ slide canvas, thumbnail strip, text editing, presenter mode
 ├── vendor/gpui-pre-wgpu  # ✅ GPUI's wgpu renderer + Kantor memory patches (KANTOR_PATCHES.md)
 ├── assets/               # ✅ icons (suite K, Sheets), themes/ghostty.tsv (MIT)
 ├── docs/                 # ✅ reference-voltrus-tools.md, decisions/
@@ -204,10 +206,10 @@ Time estimates assume **one person, part-time (~10–15 h/week), with AI-assiste
 
 ### M3 — Slides MVP (2–3 months)
 
-- [ ] PPTX read/write on `kantor_ooxml`: masters, layouts, placeholders, shapes, text boxes, images, notes
-- [ ] Slide canvas (move, resize, align guides), slide sorter, themes from the file
-- [ ] Text boxes reuse `kantor_text`
-- [ ] Presenter mode: fullscreen on one display, notes and timer on the other
+- [~] PPTX read/write: ✅ placeholders, shapes, text boxes, images, verbatim preservation (own reader/writer in `slides_engine`, not yet a shared `kantor_ooxml`); ✅ masters/layouts read-only for display; ☐ notes view, ☐ editing masters/layouts
+- [~] Slide canvas: ✅ move, resize, thumbnail strip with reorder, theme colours/fonts from the file; ☐ align guides, ☐ grid sorter view
+- [x] Text boxes reuse the Docs text engine (`docs_layout` + `docs_ui`'s font bridge; no separate `kantor_text` yet)
+- [~] Presenter mode: ✅ in-pane slide show (F5); ☐ fullscreen on one display, notes and timer on the other
 - [ ] PDF export (one slide per page)
 
 **Exit:** open a colleague's deck, fix a few slides, present it, save the `.pptx`, and it looks right in PowerPoint.
@@ -299,6 +301,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 16. ✅ In-cell editor (`sheets_ui::cell_editor`), CSV/ODS/XLS import, formatting + toolbar (`sheets_engine::format`, `sheets_ui::toolbar`).
 17. ✅ Text engine decided: parley for Docs layout, GPUI paints the glyphs (ADR 0001); prototype `crates/docs_layout` with pagination, caret hit-testing, benchmark and krilla PDF examples.
 18. ✅ Docs first slice: `docs_engine` (model, undo stack, `.docx` via a quick-xml reader of the modelled subset + docx-rs writer, unsupported content → Save As only), `docs_ui` (`DocsView`: pages on a desk, zoom, caret/selection, keyboard, `EntityInputHandler`, per-paragraph layout cache, verified font bridge incl. the Arabic fallback case, with a headless test), and the shell's `Doc` generalised to Sheets or Docs (tabs, splits, session, recent, close prompt, palette, Home, inspector, status bar).
+19. ✅ Slides first slice: `slides_engine` (model, roxmltree reader with byte ranges + string writer that splices only changed `a:xfrm`/paragraphs, raw-copy of every other part, read-only layout/master/theme inheritance for display, new-presentation template, undo/redo, package-validity checks; verified with python-pptx), `slides_ui` (`SlidesView`: fit-to-pane canvas, virtualised thumbnail strip, move/resize/nudge, text editing with IME, insert shapes/pictures, presenter mode; reuses Docs' parley engine and font bridge, now `pub` in `docs_ui`), and the shell's `Doc` extended to a third kind (AppKind::Slides for `.pptx`, Home, sidebar, palette, Ctrl+Alt+N, status "Slide x of n", inspector, session, close prompt).
 
 ## 12. Open questions
 
