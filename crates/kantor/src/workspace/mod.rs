@@ -11,6 +11,7 @@
 //! Open tabs, layouts and panel sizes persist across runs (`kantor_core::session`).
 
 mod chrome;
+mod closing;
 mod home;
 mod palette;
 mod panels;
@@ -32,6 +33,7 @@ use kantor_ui::{CachedView, tokens};
 use sheets_ui::SheetsView;
 
 use crate::actions::*;
+use closing::Closing;
 use palette::Palette;
 
 const LOGO_SVG: &[u8] = include_bytes!("../../../../assets/icons/kantor.svg");
@@ -133,6 +135,11 @@ impl Workspace {
             drag: None,
             split_bounds: Rc::default(),
         };
+        let ws = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            ws.update(cx, |ws, cx| ws.should_close_window(window, cx))
+                .unwrap_or(true)
+        });
         this.chrome = Some(Chrome {
             tabs: CachedView::new(cx, |ws, window, cx| {
                 ws.render_tab_strip(window, cx).into_any_element()
@@ -336,8 +343,9 @@ impl Workspace {
         self.split(Axis::Vertical, window, cx);
     }
 
-    /// Close one pane; a tab's last pane closes the tab.
-    fn close_pane_id(
+    /// Remove one pane, discarding its document; a tab's last pane removes
+    /// the tab. Use [`Self::request_close`] to ask about unsaved changes first.
+    fn remove_pane(
         &mut self,
         ti: usize,
         pane: PaneId,
@@ -347,7 +355,6 @@ impl Workspace {
         let Some(tab) = self.tabs.get_mut(ti) else {
             return;
         };
-        // TODO(M1): ask before discarding unsaved changes.
         match tab.layout.without(pane) {
             Some(layout) => {
                 self.docs.remove(&pane);
@@ -357,22 +364,32 @@ impl Workspace {
                 tab.layout = layout;
                 self.activate(Some(ti), window, cx);
             }
-            None => self.close_tab(ti, window, cx),
+            None => self.remove_tab(ti, window, cx),
         }
     }
 
     fn close_pane(&mut self, _: &ClosePane, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ti) = self.active {
-            let pane = self.tabs[ti].focused;
-            self.close_pane_id(ti, pane, window, cx);
+        if let Some(tab) = self.active.and_then(|ti| self.tabs.get(ti)) {
+            let closing = Closing::Pane {
+                tab: tab.id,
+                pane: tab.focused,
+            };
+            self.request_close(closing, window, cx);
         }
     }
 
+    /// Close tab `ix`, asking first if it has unsaved changes.
     fn close_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get(ix) {
+            self.request_close(Closing::Tab(tab.id), window, cx);
+        }
+    }
+
+    /// Remove tab `ix` and discard its documents.
+    fn remove_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         if ix >= self.tabs.len() {
             return;
         }
-        // TODO(M1): ask before discarding unsaved changes.
         let tab = self.tabs.remove(ix);
         for pane in tab.layout.panes() {
             self.docs.remove(&pane);
@@ -428,9 +445,13 @@ impl Workspace {
         cx.notify();
     }
 
-    fn quit(&mut self, _: &Quit, _: &mut Window, cx: &mut Context<Self>) {
-        self.persist(cx);
-        cx.quit();
+    fn quit(&mut self, _: &Quit, window: &mut Window, cx: &mut Context<Self>) {
+        self.request_close(Closing::Quit, window, cx);
+    }
+
+    /// Quit from outside the workspace's focus (e.g. while a dialog has it).
+    pub fn request_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.request_close(Closing::Quit, window, cx);
     }
 
     // ── dragging (panel edges, split dividers) ─────────────────────────────

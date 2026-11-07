@@ -73,7 +73,6 @@ fn main() {
             sheets_ui::init(cx);
 
             actions::bind_keys(cx);
-            cx.on_action(|_: &actions::Quit, cx| cx.quit());
 
             let options = WindowOptions {
                 app_id: Some("kantor".into()),
@@ -94,10 +93,21 @@ fn main() {
             let opened = gpui_kit::open_window(options, cx, move |window, cx| {
                 cx.new(|cx| Workspace::new(app, file, window, cx))
             });
-            if let Err(err) = opened {
-                eprintln!("kantor: failed to open a window: {err:#}");
-                std::process::exit(1);
-            }
+            let (window, workspace) = match opened {
+                Ok(opened) => opened,
+                Err(err) => {
+                    eprintln!("kantor: failed to open a window: {err:#}");
+                    std::process::exit(1);
+                }
+            };
+            // Ctrl+Q while focus is outside the workspace (a dialog): still
+            // goes through the unsaved-changes check.
+            cx.on_action(move |_: &actions::Quit, cx| {
+                let workspace = workspace.clone();
+                let _ = window.update(cx, |_, window, cx| {
+                    workspace.update(cx, |ws, cx| ws.request_quit(window, cx))
+                });
+            });
             cx.activate(true);
         });
 }

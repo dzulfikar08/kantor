@@ -25,7 +25,7 @@ Status: **M0 nearly done; Sheets MVP (M1) started**. Written 2026-11-07, last up
 
 **Next up, in order** (each item ends with a green CI and a nightly to try on the Mac):
 1. **Confirm on the Mac:** fractional scale 1.6 looks sharp, fcitx5 typing in the formula bar, RSS with a 10k-cell sheet (< 150 MB target), long session with Helium open (memory patch).
-2. **Unsaved-changes prompt** when closing a tab/pane/window or quitting (currently TODO; closing discards). Use a gpui-component dialog.
+2. ✅ **Unsaved-changes prompt** (Save / Don't Save / Cancel) when closing a pane or tab, quitting (Ctrl+Q), or closing the window from Hyprland. Save stores each dirty document in turn, untitled ones via Save As, and closes only if all were saved. ☐ Try it on the Mac (Hyprland's close-window path is untested).
 3. **Sheets undo/redo** — switch `sheets_engine` from `Model` to IronCalc's `UserModel` (has undo/redo built in); bind Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y.
 4. **Copy/paste** of cells and ranges as TSV (to/from browser and Excel), Ctrl+C/X/V; multi-cell selection (shift+arrows / drag).
 5. **In-cell editor** overlay (edit inside the cell, not only in the formula bar), with IME support.
@@ -289,6 +289,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 10. ✅ Shell and styling modelled on Voltrus Tools (`docs/reference-voltrus-tools.md`): `kantor_ui` metrics + Omarchy-derived tokens, tab strip as titlebar, status bar, Ctrl+K command palette with fuzzy search, cached chrome views. Then: sidebar + inspector (resizable), split panes with draggable dividers, saved workspace (tabs, layouts, panel sizes, recent files), responsive tab strip and formula bar, theme picker (Omarchy + 907 Ghostty themes, live preview) and UI font picker (SF Pro when installed).
 11. ✅ Renderer memory patch: vendored `gpui-pre-wgpu` allocates path textures only when used, no path MSAA by default.
 12. ✅ Fixes after first use on the Mac: typing directly into cells; palette rows fill the panel width.
+13. ✅ Unsaved-changes prompt on close and quit (`crates/kantor/src/workspace/closing.rs`).
 
 ## 12. Open questions
 

@@ -503,6 +503,21 @@ impl SheetsView {
     }
 
     fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_as_task(window, cx).detach();
+    }
+
+    /// Save before the document closes. Resolves to `true` once the workbook
+    /// is saved; `false` if the Save As prompt was cancelled or saving failed.
+    pub fn save_for_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        if self.table.read(cx).delegate().book.path().is_none() {
+            return self.save_as_task(window, cx);
+        }
+        self.save(&Save, window, cx);
+        Task::ready(!self.is_dirty(cx))
+    }
+
+    /// Ask for a path and save there; resolves to whether the workbook is saved.
+    fn save_as_task(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
         let (dir, name) = {
             let book = &self.table.read(cx).delegate().book;
             let dir = book
@@ -520,19 +535,20 @@ impl SheetsView {
         let path = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(mut path))) = path.await else {
-                return;
+                return false;
             };
             if path.extension().is_none() {
                 path.set_extension("xlsx");
             }
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 let result = this
                     .table
                     .update(cx, |table, _| table.delegate_mut().book.save_as(&path));
                 this.after_save(result, window, cx);
-            });
+                !this.is_dirty(cx)
+            })
+            .unwrap_or(false)
         })
-        .detach();
     }
 
     fn after_save(
