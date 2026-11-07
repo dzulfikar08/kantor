@@ -26,6 +26,8 @@ jobs:
           components: rustfmt, clippy
       - run: ./scripts/ci-deps.sh
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -43,6 +45,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: ./scripts/ci-deps.sh
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: cargo test --workspace
 
   deny:

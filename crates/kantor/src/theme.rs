@@ -29,7 +29,8 @@ pub fn apply(p: &Palette, cx: &mut App) {
 
     let border = mix(p.background, p.foreground, 0.16);
     let hover = mix(p.background, p.foreground, 0.06);
-    Theme::update(cx, |t| {
+    Theme::update(cx, |theme| {
+        let t = &mut theme.colors;
         t.background = c(p.background);
         t.foreground = c(p.foreground);
         t.border = c(border);
