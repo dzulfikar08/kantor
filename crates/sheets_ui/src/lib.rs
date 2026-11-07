@@ -10,7 +10,9 @@
 
 extern crate gpui_kit as gpui;
 
+use std::cell::Cell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use gpui_kit::component::{
     ActiveTheme as _, Sizable as _, h_flex,
@@ -28,6 +30,28 @@ actions!(sheets, [Save, SaveAs]);
 const KEY_CONTEXT: &str = "KantorSheets";
 const MIN_ROWS: u32 = 1000;
 const MIN_COLS: u32 = 26;
+/// Below this pane width the formula bar drops its labels.
+const COMPACT_WIDTH: Pixels = px(560.);
+
+/// The selected cell, for the inspector.
+pub struct CellInfo {
+    pub address: String,
+    /// Formula or raw input.
+    pub input: String,
+    /// Displayed (formatted) value.
+    pub value: String,
+}
+
+/// Workbook facts, for the inspector.
+pub struct BookInfo {
+    pub name: String,
+    pub path: Option<PathBuf>,
+    pub dirty: bool,
+    pub sheets: Vec<String>,
+    pub active_sheet: usize,
+    /// Used range of the active sheet, `(rows, cols)`.
+    pub used: (u32, u32),
+}
 
 /// Register Sheets key bindings. Both Ctrl and Super work (Mac-style Cmd = Super).
 pub fn init(cx: &mut App) {
@@ -130,6 +154,8 @@ pub struct SheetsView {
     /// The cell being edited in the formula bar, if an edit is in progress.
     editing: Option<(u32, u32)>,
     status: SharedString,
+    /// Last measured pane width (for compact layout).
+    width: Rc<Cell<Pixels>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -175,6 +201,7 @@ impl SheetsView {
             selected: (0, 0),
             editing: None,
             status: status.into(),
+            width: Rc::new(Cell::new(px(0.))),
             _subscriptions: subscriptions,
         };
         this.select_cell(0, 0, cx);
@@ -368,6 +395,28 @@ impl SheetsView {
         self.focus_grid(window, cx);
     }
 
+    pub fn cell_info(&self, cx: &App) -> CellInfo {
+        let (row, col) = self.selected;
+        let grid = self.table.read(cx).delegate();
+        CellInfo {
+            address: cell_name(row, col),
+            input: grid.book.input(grid.sheet, row, col),
+            value: grid.book.display_value(grid.sheet, row, col),
+        }
+    }
+
+    pub fn book_info(&self, cx: &App) -> BookInfo {
+        let grid = self.table.read(cx).delegate();
+        BookInfo {
+            name: grid.book.title(),
+            path: grid.book.path().map(|p| p.to_path_buf()),
+            dirty: grid.book.is_dirty(),
+            sheets: grid.book.sheet_names(),
+            active_sheet: grid.sheet as usize,
+            used: grid.book.used_size(grid.sheet),
+        }
+    }
+
     /// Status line for the app's status bar.
     pub fn status(&self) -> SharedString {
         self.status.clone()
@@ -544,15 +593,35 @@ impl Render for SheetsView {
         let t = tokens(cx);
         let tabs = self.render_sheet_tabs(cx);
         let editing = self.editing.is_some();
+        let width = self.width.get();
+        let compact = width > px(0.) && width < COMPACT_WIDTH;
+        // Measure our width after layout; re-render when crossing the threshold.
+        let measure = {
+            let cell = self.width.clone();
+            let view = cx.entity().downgrade();
+            canvas(
+                move |bounds, _, cx| {
+                    let old = cell.replace(bounds.size.width);
+                    if (old < COMPACT_WIDTH) != (bounds.size.width < COMPACT_WIDTH) {
+                        let _ = view.update(cx, |_, cx| cx.notify());
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .inset_0()
+        };
 
         v_flex()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
+            .relative()
             .size_full()
             .bg(t.bg)
             .text_color(t.fg)
             .text_size(FONT_BODY)
+            .child(measure)
             // Formula bar: name box + input
             .child(
                 h_flex()
@@ -566,7 +635,7 @@ impl Render for SheetsView {
                     .child(
                         div()
                             .flex_none()
-                            .w(px(72.))
+                            .w(if compact { px(52.) } else { px(72.) })
                             .h(CONTROL_MD)
                             .px(SPACE_4)
                             .flex()
@@ -580,13 +649,14 @@ impl Render for SheetsView {
                             .text_color(if editing { t.accent } else { t.fg_muted })
                             .child(SharedString::from(self.cell_ref())),
                     )
-                    .child(
+                    .when(!compact, |d| {
+                        d.child(
                         div()
                             .text_size(FONT_EMPHASIS)
                             .italic()
                             .text_color(t.fg_dim)
-                            .child("fx"),
-                    )
+                            .child("fx"))
+                    })
                     .child(
                         div()
                             .flex_1()

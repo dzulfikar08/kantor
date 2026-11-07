@@ -65,7 +65,9 @@ fn main() {
         }
     };
 
-    gpui_kit::application().run(move |cx| {
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .run(move |cx| {
         gpui_kit::init(cx);
         theme::init(cx);
         sheets_ui::init(cx);

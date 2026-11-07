@@ -29,13 +29,17 @@ This installs `~/.local/bin/kantor`, a **Kantor** launcher (the suite's Home scr
 | Clear a cell | `Delete` |
 | Open / Save / Save as | `Ctrl`/`Super` + `O` / `S` / `Shift+S` |
 | Command palette | `Ctrl K` (or `Ctrl Shift P`) |
-| New spreadsheet / Open / Close tab | `Ctrl N` / `Ctrl O` / `Ctrl W` |
+| New spreadsheet / Open | `Ctrl N` / `Ctrl O` |
+| Close pane / close tab | `Ctrl W` / `Ctrl Shift W` |
+| Split right / down | `Ctrl \` / `Ctrl Alt \` (drag the divider to resize) |
+| Sidebar / inspector | `Ctrl Shift E` / `Ctrl Shift I` (drag the edge to resize) |
+| Theme / UI font | `Ctrl K` → *Choose Theme…* / *Choose UI Font…* |
 | Next / previous tab | `Ctrl Tab` / `Ctrl Shift Tab` |
 | Quit | `Ctrl`/`Super` + `Q` |
 
 Edits happen in the formula bar for now (an in-cell editor is planned). With an input method such as fcitx5, press `Enter` first, then compose in the bar.
 
-The UI follows your Omarchy theme and live-reloads on `omarchy theme set`.
+By default the UI follows your Omarchy theme (live-reloading on `omarchy theme set`); *Choose Theme…* offers your Omarchy themes plus 900+ Ghostty themes. The UI font is SF Pro when installed (never bundled), else Inter / Adwaita Sans. Open tabs, splits and panel sizes are restored on the next launch. Settings: `~/.config/kantor/settings.toml`; session: `~/.local/state/kantor/workspace.json`.
 
 ## Building
 
