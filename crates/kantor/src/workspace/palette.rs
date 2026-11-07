@@ -314,6 +314,108 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "Bulleted List",
+        detail: "Docs · lists",
+        keys: "Ctrl Shift 8",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.toggle_list_doc(docs_engine::ListKind::Bullet, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Numbered List",
+        detail: "Docs · lists",
+        keys: "Ctrl Shift 7",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.toggle_list_doc(docs_engine::ListKind::Numbered, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Table",
+        detail: "Docs · 3 × 3 (toolbar grid for other sizes)",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.insert_table_doc(3, 3, w, cx)),
+    },
+    Command {
+        title: "Insert Row Above",
+        detail: "Docs · table",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.table_edit_doc(docs_engine::TableEdit::RowAbove, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Row Below",
+        detail: "Docs · table",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.table_edit_doc(docs_engine::TableEdit::RowBelow, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Column Left",
+        detail: "Docs · table",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.table_edit_doc(docs_engine::TableEdit::ColumnLeft, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Column Right",
+        detail: "Docs · table",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.table_edit_doc(docs_engine::TableEdit::ColumnRight, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Delete Row",
+        detail: "Docs · table",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.table_edit_doc(docs_engine::TableEdit::DeleteRow, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Delete Column",
+        detail: "Docs · table",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.table_edit_doc(docs_engine::TableEdit::DeleteColumn, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Delete Table",
+        detail: "Docs · table",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.table_edit_doc(docs_engine::TableEdit::DeleteTable, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Picture…",
+        detail: "Docs · PNG or JPEG",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.insert_image_doc(w, cx)),
+    },
+    Command {
         title: "Zoom In",
         detail: "Docs · page zoom",
         keys: "Ctrl =",
