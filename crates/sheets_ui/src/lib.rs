@@ -5,8 +5,8 @@
 //!
 //! Editing is spreadsheet-style: with a cell selected, typing starts an edit,
 //! Enter/F2 edits the existing content, Delete clears, Escape cancels and Enter
-//! commits and moves down. The edit happens in the formula bar for now; an
-//! in-cell editor overlay comes later.
+//! commits and moves down. The edit happens in an editor drawn over the cell,
+//! mirrored live in the formula bar (see [`cell_editor`]).
 //!
 //! The table only knows a single selected cell, which is the *active* cell
 //! (the anchor of a range). Range selection is ours: Shift+arrows, Shift+click
@@ -19,13 +19,15 @@
 
 extern crate gpui_kit as gpui;
 
+mod cell_editor;
+
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui_kit::component::{
     ActiveTheme as _, Sizable as _, h_flex,
-    input::{self, Input, InputEvent, InputState},
+    input::{Input, InputEvent, InputState},
     table::{Column, DataTable, TableDelegate, TableEvent, TableState},
     v_flex,
 };
@@ -33,6 +35,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{CellRange, SourceFormat, Workbook, cell_name, column_name};
+
+use cell_editor::{CellEditor, EditMode};
 
 actions!(
     sheets,
@@ -117,6 +121,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("shift-left", ExtendLeft, Some(GRID_CONTEXT)),
         KeyBinding::new("shift-right", ExtendRight, Some(GRID_CONTEXT)),
     ]);
+    cell_editor::bind_keys(cx);
 }
 
 /// Feeds one sheet of a [`Workbook`] to the table.
@@ -131,6 +136,8 @@ pub struct SheetGrid {
     /// the opposite corner, in sheet coordinates `(row, col)`.
     anchor: (u32, u32),
     end: (u32, u32),
+    /// The in-cell editor, drawn over its cell while an edit is in progress.
+    editor: Option<CellEditor>,
 }
 
 impl SheetGrid {
@@ -143,6 +150,7 @@ impl SheetGrid {
             view,
             anchor: (0, 0),
             end: (0, 0),
+            editor: None,
         };
         grid.resize();
         grid
@@ -242,6 +250,10 @@ impl TableDelegate for SheetGrid {
                     let _ = move_view.update(cx, |view, cx| view.cell_drag(row, col, cx));
                 }
             })
+            .when_some(
+                self.editor.as_ref().filter(|e| e.cell == (row, col)),
+                |d, editor| d.child(editor.render(cx)),
+            )
     }
 
     fn cell_label(&self, row_ix: usize, col_ix: usize, _: &App) -> Option<SharedString> {
@@ -257,10 +269,15 @@ impl TableDelegate for SheetGrid {
 pub struct SheetsView {
     table: Entity<TableState<SheetGrid>>,
     formula: Entity<InputState>,
+    /// The in-cell editor's text (kept in sync with `formula`).
+    cell_input: Entity<InputState>,
     /// Selected cell in sheet coordinates `(row, col)`.
     selected: (u32, u32),
-    /// The cell being edited in the formula bar, if an edit is in progress.
+    /// The cell being edited, if an edit is in progress. Change it with
+    /// `set_editing`, which also shows or hides the in-cell editor.
     editing: Option<(u32, u32)>,
+    /// Whether arrows move the caret or commit (Excel's Edit / Enter mode).
+    edit_mode: EditMode,
     /// A mouse drag that started on a cell is extending the range.
     dragging: bool,
     status: SharedString,
@@ -300,17 +317,21 @@ impl SheetsView {
                 .sortable(false)
         });
         let formula = cx.new(|cx| InputState::new(window, cx).placeholder("Value or =formula"));
+        let cell_input = cx.new(|cx| InputState::new(window, cx));
 
         let subscriptions = vec![
             cx.subscribe_in(&table, window, Self::on_table_event),
             cx.subscribe_in(&formula, window, Self::on_formula_event),
+            cx.subscribe_in(&cell_input, window, Self::on_cell_input_event),
         ];
 
         let mut this = Self {
             table,
             formula,
+            cell_input,
             selected: (0, 0),
             editing: None,
+            edit_mode: EditMode::Edit,
             dragging: false,
             status: status.into(),
             width: Rc::new(Cell::new(px(0.))),
@@ -376,13 +397,18 @@ impl SheetsView {
         match event {
             InputEvent::Focus => {
                 if self.editing.is_none() {
-                    self.editing = Some(self.selected);
+                    self.edit_mode = EditMode::Edit;
+                    self.set_editing(Some(self.selected), cx);
+                    let text = self.formula.read(cx).value();
+                    self.cell_input
+                        .update(cx, |input, cx| input.set_value(text, window, cx));
                 }
             }
-            InputEvent::PressEnter { .. } => self.commit_edit(true, window, cx),
+            InputEvent::Change => self.mirror_formula(window, cx),
+            // Ctrl+Enter (Enter itself is `CommitDown`).
+            InputEvent::PressEnter { .. } => self.commit_edit(Some((1, 0)), window, cx),
             // Clicking elsewhere (e.g. another cell) commits, like a spreadsheet.
-            InputEvent::Blur => self.commit_edit(false, window, cx),
-            _ => {}
+            InputEvent::Blur => self.on_editor_blur(window, cx),
         }
     }
 
@@ -411,37 +437,68 @@ impl SheetsView {
         cx.stop_propagation();
     }
 
-    /// Begin editing the selected cell. `initial` replaces its content (typing
-    /// into a cell); `None` keeps the content (Enter/F2/double-click).
+    /// Begin editing the selected cell in the in-cell editor. `initial`
+    /// replaces its content (typing into a cell, Enter mode); `None` keeps the
+    /// content (Enter/F2/double-click, Edit mode).
     fn start_edit(&mut self, initial: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        self.editing = Some(self.selected);
+        let (row, col) = self.selected;
+        self.edit_mode = if initial.is_some() {
+            EditMode::Enter
+        } else {
+            EditMode::Edit
+        };
         if let Some(text) = initial {
             self.formula
                 .update(cx, |input, cx| input.set_value(text, window, cx));
         } else {
             self.load_selected_into_formula(window, cx);
         }
-        self.formula.update(cx, |input, cx| input.focus(window, cx));
+        let text = self.formula.read(cx).value();
+        self.cell_input
+            .update(cx, |input, cx| input.set_value(text, window, cx));
+        // The editor only exists while its cell is rendered.
+        self.table.update(cx, |table, cx| {
+            table.scroll_to_row(row as usize, cx);
+            table.scroll_to_col(col as usize + 1, cx);
+        });
+        self.set_editing(Some((row, col)), cx);
+        self.cell_input
+            .update(cx, |input, cx| input.focus(window, cx));
         cx.notify();
     }
 
     /// Escape while editing: restore the cell's content and return to the grid.
-    fn cancel_edit(&mut self, _: &input::Escape, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editing.take().is_none() {
+    fn cancel_edit(
+        &mut self,
+        _: &cell_editor::CancelEdit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.editing.is_none() {
             cx.propagate();
             return;
         }
+        self.set_editing(None, cx);
         self.load_selected_into_formula(window, cx);
         self.focus_grid(window, cx);
         self.status = "Edit cancelled".into();
         cx.notify();
     }
 
-    fn commit_edit(&mut self, move_down: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((row, col)) = self.editing.take() else {
+    /// Store the edit. `step` moves the active cell afterwards (Enter, Tab,
+    /// arrows) and returns focus to the grid; `None` means focus already went
+    /// elsewhere (another cell was clicked).
+    fn commit_edit(
+        &mut self,
+        step: Option<(i64, i64)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((row, col)) = self.editing else {
             return;
         };
-        let value = self.formula.read(cx).value().to_string();
+        let value = self.edit_value(window, cx);
+        self.set_editing(None, cx);
         let changed = {
             let grid = self.table.read(cx).delegate();
             grid.book.input(grid.sheet, row, col) != value
@@ -453,8 +510,14 @@ impl SheetsView {
                 Err(err) => format!("{err:#}").into(),
             };
         }
-        if move_down {
-            self.select_cell(row + 1, col, cx);
+        if let Some(step) = step {
+            let (rows, cols) = {
+                let grid = self.table.read(cx).delegate();
+                (grid.rows, grid.cols)
+            };
+            let (row, col) = cell_editor::step_cell((row, col), step, rows, cols);
+            self.select_cell(row, col, cx);
+            self.load_selected_into_formula(window, cx);
             self.focus_grid(window, cx);
         } else {
             // Focus went elsewhere (another cell was clicked): show its content.
@@ -727,7 +790,7 @@ impl SheetsView {
     }
 
     fn select_sheet(&mut self, sheet: u32, window: &mut Window, cx: &mut Context<Self>) {
-        self.editing = None;
+        self.set_editing(None, cx);
         self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
             grid.sheet = sheet;
@@ -827,7 +890,7 @@ impl SheetsView {
         match Workbook::open(&path) {
             Ok(book) => {
                 self.status = opened_status(&book).into();
-                self.editing = None;
+                self.set_editing(None, cx);
                 let view = cx.entity().downgrade();
                 self.table.update(cx, |table, cx| {
                     *table.delegate_mut() = SheetGrid::new(book, view);
@@ -991,8 +1054,8 @@ impl Render for SheetsView {
             .inset_0()
         };
 
-        v_flex()
-            .key_context(KEY_CONTEXT)
+        let root = self.editor_actions(v_flex(), cx);
+        root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
             .relative()
@@ -1045,7 +1108,7 @@ impl Render for SheetsView {
                     .child(
                         div()
                             .flex_1()
-                            .on_action(cx.listener(Self::cancel_edit))
+                            .key_context(cell_editor::FORMULA_BAR_CONTEXT)
                             .child(Input::new(&self.formula).small()),
                     ),
             )
