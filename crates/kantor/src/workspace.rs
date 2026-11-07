@@ -539,9 +539,8 @@ impl Workspace {
                 .hover(|s| s.bg(t.hover).text_color(t.fg))
                 .child("+")
                 .on_click(move |_, window, cx| {
-                    let _ = entity.update(cx, |ws, cx| {
-                        ws.new_spreadsheet(&NewSpreadsheet, window, cx)
-                    });
+                    let _ =
+                        entity.update(cx, |ws, cx| ws.new_spreadsheet(&NewSpreadsheet, window, cx));
                 })
         };
 
@@ -675,7 +674,12 @@ impl Workspace {
     fn render_home(&mut self, cx: &mut Context<Self>) -> Div {
         let t = tokens(cx);
         let docs = self.render_card("home-docs", AppKind::Docs, "Write .docx documents", cx);
-        let sheets = self.render_card("home-sheets", AppKind::Sheets, "Edit .xlsx spreadsheets", cx);
+        let sheets = self.render_card(
+            "home-sheets",
+            AppKind::Sheets,
+            "Edit .xlsx spreadsheets",
+            cx,
+        );
         let slides = self.render_card("home-slides", AppKind::Slides, "Present .pptx decks", cx);
         let hints: Vec<Div> = [
             ("Ctrl N", "New spreadsheet"),
@@ -713,16 +717,13 @@ impl Workspace {
                     ),
             )
             .child(
-                v_flex()
-                    .gap(SPACE_4)
-                    .child(create)
-                    .child(
-                        h_flex()
-                            .gap(SPACE_6)
-                            .child(docs)
-                            .child(sheets)
-                            .child(slides),
-                    ),
+                v_flex().gap(SPACE_4).child(create).child(
+                    h_flex()
+                        .gap(SPACE_6)
+                        .child(docs)
+                        .child(sheets)
+                        .child(slides),
+                ),
             )
             .child(
                 h_flex()
@@ -763,12 +764,7 @@ impl Workspace {
                         |d| d.bg(t.selected),
                         |d| d.hover(|s| s.bg(t.hover)),
                     )
-                    .child(
-                        div()
-                            .text_size(FONT_BODY)
-                            .text_color(t.fg)
-                            .child(cmd.title),
-                    )
+                    .child(div().text_size(FONT_BODY).text_color(t.fg).child(cmd.title))
                     .child(
                         div()
                             .flex_1()
@@ -898,7 +894,12 @@ impl Render for Workspace {
             .text_color(t.fg)
             .text_size(FONT_BODY);
         if let Some((tabs, _)) = &chrome {
-            let style = div().flex_none().w_full().h(TITLE_BAR_HEIGHT).style().clone();
+            let style = div()
+                .flex_none()
+                .w_full()
+                .h(TITLE_BAR_HEIGHT)
+                .style()
+                .clone();
             root = root.child(tabs.clone().cached(style));
         }
         root = root.child(div().flex_1().min_h_0().child(content));

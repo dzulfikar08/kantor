@@ -2713,8 +2713,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre-wgpu"
 version = "0.3.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "211cf352de1a0b0c9bea3f105df5572ce1d2c899389b924a888e5af36b50f93d"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3562,10 +3560,16 @@ dependencies = [
  "anyhow",
  "env_logger",
  "gpui-kit",
+ "kantor_core",
  "kantor_theme",
+ "kantor_ui",
  "log",
  "sheets_ui",
 ]
+
+[[package]]
+name = "kantor_core"
+version = "0.0.1"
 
 [[package]]
 name = "kantor_theme"
@@ -3575,6 +3579,14 @@ dependencies = [
  "serde",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "kantor_ui"
+version = "0.0.1"
+dependencies = [
+ "gpui-kit",
+ "kantor_theme",
 ]
 
 [[package]]
@@ -6137,6 +6149,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "gpui-kit",
+ "kantor_ui",
  "log",
  "sheets_engine",
 ]

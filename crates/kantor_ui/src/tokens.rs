@@ -76,9 +76,21 @@ impl Tokens {
     pub fn from_palette(p: &Palette) -> Self {
         let on_bg = |a: f32| c(mix(p.background, p.foreground, a));
         let (chrome, surface, elevated, border, border_strong) = if p.dark {
-            (on_bg(0.03), on_bg(0.05), on_bg(0.07), on_bg(0.10), on_bg(0.18))
+            (
+                on_bg(0.03),
+                on_bg(0.05),
+                on_bg(0.07),
+                on_bg(0.10),
+                on_bg(0.18),
+            )
         } else {
-            (on_bg(0.025), on_bg(0.035), c(0xffffff), on_bg(0.11), on_bg(0.20))
+            (
+                on_bg(0.025),
+                on_bg(0.035),
+                c(0xffffff),
+                on_bg(0.11),
+                on_bg(0.20),
+            )
         };
         Self {
             dark: p.dark,
