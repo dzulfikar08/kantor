@@ -16,6 +16,11 @@
 //! Ctrl+C / Ctrl+X / Ctrl+V copy and paste the range as tab-separated text
 //! (inputs, so formulas copy as typed). Cut copies and clears the range at
 //! once, rather than waiting for the paste.
+//!
+//! Formatting (bold/italic/underline/strikethrough, alignment, number formats)
+//! applies to the whole range as one undo step; see [`toolbar`]. Column widths
+//! come from the workbook and a resize is saved back to it. Row heights are
+//! kept in the file but not drawn: the table has one height for every row.
 
 extern crate gpui_kit as gpui;
 
@@ -32,7 +37,11 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::{metrics::*, tokens};
-use sheets_engine::{CellRange, Workbook, cell_name, column_name};
+use sheets_engine::{CellRange, CellStyle, StyleChange, Workbook, cell_name, column_name};
+
+mod toolbar;
+
+pub use sheets_engine::{HAlign, NumberFormat};
 
 actions!(
     sheets,
@@ -47,9 +56,26 @@ actions!(
         ExtendUp,
         ExtendDown,
         ExtendLeft,
-        ExtendRight
+        ExtendRight,
+        ToggleBold,
+        ToggleItalic,
+        ToggleUnderline
     ]
 );
+
+/// A formatting command from the toolbar, a shortcut or the palette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    /// Toggles, like the rest of the font flags: on for the whole range
+    /// unless the active cell already has it.
+    Bold,
+    Italic,
+    Underline,
+    Strikethrough,
+    /// Choosing the active alignment again goes back to `General`.
+    Align(HAlign),
+    Number(NumberFormat),
+}
 
 const KEY_CONTEXT: &str = "KantorSheets";
 /// The grid, not the formula bar: there Ctrl+Z undoes typing instead.
@@ -103,6 +129,12 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("shift-down", ExtendDown, Some(GRID_CONTEXT)),
         KeyBinding::new("shift-left", ExtendLeft, Some(GRID_CONTEXT)),
         KeyBinding::new("shift-right", ExtendRight, Some(GRID_CONTEXT)),
+        KeyBinding::new("ctrl-b", ToggleBold, Some(GRID_CONTEXT)),
+        KeyBinding::new("super-b", ToggleBold, Some(GRID_CONTEXT)),
+        KeyBinding::new("ctrl-i", ToggleItalic, Some(GRID_CONTEXT)),
+        KeyBinding::new("super-i", ToggleItalic, Some(GRID_CONTEXT)),
+        KeyBinding::new("ctrl-u", ToggleUnderline, Some(GRID_CONTEXT)),
+        KeyBinding::new("super-u", ToggleUnderline, Some(GRID_CONTEXT)),
     ]);
 }
 
@@ -166,8 +198,9 @@ impl TableDelegate for SheetGrid {
                 .text_right()
         } else {
             let name = column_name(col_ix as u32 - 1);
+            let width = self.book.column_width(self.sheet, col_ix as u32 - 1);
             Column::new(SharedString::from(name.clone()), name)
-                .width(px(100.))
+                .width(px(width as f32))
                 .min_width(px(24.))
                 .resizable(true)
                 // `render_td` fills the whole cell (to draw the range) and pads itself.
@@ -189,6 +222,8 @@ impl TableDelegate for SheetGrid {
         }
         let (row, col) = (row_ix as u32, col_ix as u32 - 1);
         let text = self.book.display_value(self.sheet, row, col);
+        let style = self.book.cell_style(self.sheet, row, col);
+        let align = self.book.display_align(self.sheet, row, col);
         let range = self.range();
         let t = tokens(cx);
         let down_view = self.view.clone();
@@ -204,6 +239,12 @@ impl TableDelegate for SheetGrid {
                     .flex_1()
                     .min_w_0()
                     .truncate()
+                    .when(style.bold, |d| d.font_weight(FontWeight::BOLD))
+                    .when(style.italic, |d| d.italic())
+                    .when(style.underline, |d| d.underline())
+                    .when(style.strikethrough, |d| d.line_through())
+                    .when(align == HAlign::Center, |d| d.text_center())
+                    .when(align == HAlign::Right, |d| d.text_right())
                     .child(SharedString::from(text)),
             )
             .when(!range.is_single() && range.contains(row, col), |d| {
@@ -349,6 +390,7 @@ impl SheetsView {
                 self.selected = (*row as u32, *col as u32 - 1);
                 self.start_edit(None, window, cx);
             }
+            TableEvent::ColumnWidthsChanged(widths) => self.save_column_widths(widths, window, cx),
             _ => {}
         }
     }
@@ -635,6 +677,94 @@ impl SheetsView {
             Err(err) => format!("{err:#}").into(),
         };
         self.load_selected_into_formula(window, cx);
+        self.update_title(window, cx);
+        cx.notify();
+    }
+
+    /// The active cell's formatting, for the toolbar.
+    fn active_style(&self, cx: &App) -> CellStyle {
+        let (row, col) = self.selected;
+        let grid = self.table.read(cx).delegate();
+        grid.book.cell_style(grid.sheet, row, col)
+    }
+
+    /// Apply a formatting command to the selected range (one undo step).
+    pub fn format_doc(&mut self, format: Format, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            return;
+        }
+        let style = self.active_style(cx);
+        let (change, what) = match format {
+            Format::Bold => (StyleChange::Bold(!style.bold), "Bold"),
+            Format::Italic => (StyleChange::Italic(!style.italic), "Italic"),
+            Format::Underline => (StyleChange::Underline(!style.underline), "Underline"),
+            Format::Strikethrough => (
+                StyleChange::Strikethrough(!style.strikethrough),
+                "Strikethrough",
+            ),
+            Format::Align(a) => {
+                let a = if style.align == a { HAlign::General } else { a };
+                (StyleChange::Align(a), "Alignment")
+            }
+            Format::Number(f) => (StyleChange::NumberFormat(f), f.label()),
+        };
+        let range = self.range(cx);
+        let result = self.table.update(cx, |table, cx| {
+            let grid = table.delegate_mut();
+            let sheet = grid.sheet;
+            let res = grid.book.set_range_style(sheet, range, change);
+            cx.notify();
+            res
+        });
+        self.status = match result {
+            Ok(()) => format!("{what}: {}", range.name()).into(),
+            Err(err) => format!("{err:#}").into(),
+        };
+        self.update_title(window, cx);
+        cx.notify();
+    }
+
+    fn toggle_bold(&mut self, _: &ToggleBold, window: &mut Window, cx: &mut Context<Self>) {
+        self.format_doc(Format::Bold, window, cx);
+    }
+
+    fn toggle_italic(&mut self, _: &ToggleItalic, window: &mut Window, cx: &mut Context<Self>) {
+        self.format_doc(Format::Italic, window, cx);
+    }
+
+    fn toggle_underline(
+        &mut self,
+        _: &ToggleUnderline,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.format_doc(Format::Underline, window, cx);
+    }
+
+    /// The user resized a column (or double-clicked to fit it): store the new
+    /// width in the workbook, one undo step per changed column.
+    fn save_column_widths(
+        &mut self,
+        widths: &[Pixels],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let result = self.table.update(cx, |table, _| {
+            let grid = table.delegate_mut();
+            let sheet = grid.sheet;
+            // Table column 0 is the row-number gutter.
+            for (ix, width) in widths.iter().enumerate().skip(1) {
+                let col = ix as u32 - 1;
+                let width = f64::from(f32::from(*width));
+                if (grid.book.column_width(sheet, col) - width).abs() >= 0.5 {
+                    grid.book.set_column_width(sheet, col, col, width)?;
+                }
+            }
+            anyhow::Ok(())
+        });
+        if let Err(err) = result {
+            self.status = format!("{err:#}").into();
+        }
         self.update_title(window, cx);
         cx.notify();
     }
@@ -976,6 +1106,7 @@ impl Render for SheetsView {
             .text_color(t.fg)
             .text_size(FONT_BODY)
             .child(measure)
+            .child(toolbar::render(&self.active_style(cx), compact, cx))
             // Formula bar: name box + input
             .child(
                 h_flex()
@@ -1039,6 +1170,9 @@ impl Render for SheetsView {
                     .on_action(cx.listener(Self::extend_down))
                     .on_action(cx.listener(Self::extend_left))
                     .on_action(cx.listener(Self::extend_right))
+                    .on_action(cx.listener(Self::toggle_bold))
+                    .on_action(cx.listener(Self::toggle_italic))
+                    .on_action(cx.listener(Self::toggle_underline))
                     // A drag only extends the range if it started on a cell
                     // (cells set `dragging` after this capture listener runs).
                     .capture_any_mouse_down(cx.listener(|this, _, _, _| this.dragging = false))
