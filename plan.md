@@ -30,7 +30,7 @@ Status: **M0 nearly done; Sheets MVP (M1) started**. Written 2026-11-07, last up
 4. ✅ **Copy/paste** of ranges as TSV (Ctrl+C/X/V in the grid; one undo step per paste/clear), range selection with Shift+arrows, Shift+click and drag. ☐ Try on the Mac: mouse selection, clipboard to/from browser/LibreOffice. Pasted formulas are not reference-shifted yet (`=A1` stays `=A1`).
 5. **In-cell editor** overlay (edit inside the cell, not only in the formula bar), with IME support.
 6. **Formatting basics**: bold/italic (Ctrl+B/I — kept free on purpose), number formats, alignment, column widths/row heights saved to xlsx; a per-pane toolbar that goes icon-only when narrow.
-7. **CSV import/export**, `.ods`/`.xls` read via calamine; open the same workbook in two panes (needs a shared document model; today a split opens a new blank sheet).
+7. ✅ **CSV/TSV open and save** (delimiter detection, BOM/UTF-16/Windows-1252; one sheet, displayed values; a leading `=` stays text) and **read-only `.ods`/`.xls`/`.xlsb` import** via calamine (values, dates, formulas; formulas that don't reproduce the file's cached result are kept as values; Save on an import goes to Save As `name.xlsx`). See `crates/sheets_engine/src/import.rs`. ☐ Open the same workbook in two panes (needs a shared document model; today a split opens a new blank sheet).
 8. **Text layout spike** (M0's last open item): parley vs GPUI text for paged layout → `docs/decisions/0001-text-engine.md`. Gates Docs (M2).
 9. **Corpus + fidelity CI**: 10 files per format in `tests/corpus/` (licences listed), LibreOffice-headless reference PDFs in CI.
 10. First tagged release `v0.1.0` (Sheets MVP) and an AUR `kantor-bin`.

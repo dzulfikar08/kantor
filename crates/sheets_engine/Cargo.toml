@@ -10,6 +10,8 @@ repository.workspace = true
 anyhow.workspace = true
 ironcalc.workspace = true
 ironcalc_base.workspace = true
+calamine.workspace = true
+encoding_rs.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
