@@ -2356,7 +2356,8 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
     xml.push_str("<w:body>");
     xml.push_str(&body_xml(doc));
     match &pkg.sect_pr {
-        Some(s) => xml.push_str(s),
+        // Only pgSz/pgMar attributes that differ change; the rest is verbatim.
+        Some(s) => xml.push_str(&crate::page::update_sect_pr(s, &doc.page)),
         None => {
             let pg = &doc.page;
             xml.push_str(&format!(

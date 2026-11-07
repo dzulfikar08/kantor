@@ -632,3 +632,109 @@ fn not_a_docx_is_an_error() {
     let doc = Document::from_paragraphs(vec![Paragraph::new("x")]);
     assert_eq!(doc.title(), "Untitled.docx");
 }
+
+#[test]
+fn page_setup_changes_only_pgsz_and_pgmar_attributes() {
+    use docs_engine::{MarginPreset, Orientation, PaperSize};
+    let dir = tempfile::tempdir().unwrap();
+    let original = package(WORD_BODY, "");
+    let path = write_temp(dir.path(), "page.docx", &original);
+    let mut doc = Document::open(&path).unwrap();
+    let before = doc.page;
+    let page = doc
+        .page
+        .with_paper(PaperSize::A4)
+        .with_orientation(Orientation::Landscape)
+        .with_margins(MarginPreset::Narrow);
+    doc.set_page(page, Selection::default());
+    assert!(doc.is_dirty());
+    // One undo step, and redo brings it back.
+    doc.undo();
+    assert_eq!(doc.page, before);
+    assert!(!doc.is_dirty());
+    doc.redo();
+    assert_eq!(doc.page, page);
+    doc.save().unwrap();
+
+    let saved = std::fs::read(&path).unwrap();
+    let old = String::from_utf8(zip_entry(&original, "word/document.xml")).unwrap();
+    let new = String::from_utf8(zip_entry(&saved, "word/document.xml")).unwrap();
+    let sect = |s: &str| {
+        let a = s.find("<w:sectPr").unwrap();
+        let b = s[a..].find("</w:sectPr>").unwrap() + a + "</w:sectPr>".len();
+        s[a..b].to_owned()
+    };
+    assert_eq!(
+        sect(&new),
+        sect(&old)
+            .replace(
+                r#"<w:pgSz w:w="12240" w:h="15840"/>"#,
+                r#"<w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/>"#
+            )
+            .replace(
+                r#"w:top="1440" w:right="1080" w:bottom="1440" w:left="1080""#,
+                r#"w:top="720" w:right="720" w:bottom="720" w:left="720""#
+            )
+    );
+    for part in [
+        "word/styles.xml",
+        "word/settings.xml",
+        "customXml/item1.xml",
+    ] {
+        assert_eq!(
+            zip_entry(&saved, part),
+            zip_entry(&original, part),
+            "{part}"
+        );
+    }
+    let back = Document::open(&path).unwrap();
+    assert_eq!(back.page, page);
+    assert_eq!(back.page.orientation(), Orientation::Landscape);
+}
+
+#[test]
+fn new_document_saves_its_page_setup() {
+    use docs_engine::{Orientation, PaperSize};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f4.docx");
+    let mut doc = Document::new();
+    assert_eq!(PaperSize::of(&doc.page), Some(PaperSize::A4));
+    let page = doc
+        .page
+        .with_paper(PaperSize::F4)
+        .with_orientation(Orientation::Landscape);
+    doc.set_page(page, Selection::default());
+    doc.save_as(&path).unwrap();
+    let back = Document::open(&path).unwrap();
+    assert_eq!(back.page, page);
+    let xml = String::from_utf8(zip_entry(
+        &std::fs::read(&path).unwrap(),
+        "word/document.xml",
+    ))
+    .unwrap();
+    assert!(xml.contains("orient=\"landscape\""), "{xml}");
+}
+
+#[test]
+fn ruler_indents_are_one_undo_step() {
+    let mut doc = Document::from_paragraphs(vec![Paragraph::new("a"), Paragraph::new("b")]);
+    let all = Selection {
+        anchor: Position::new(0, 0),
+        head: Position::new(1, 1),
+    };
+    doc.set_indent(
+        all,
+        docs_engine::Indent {
+            left: Some(720),
+            right: None,
+            first: Some(-360),
+        },
+    );
+    for p in doc.paragraphs() {
+        assert_eq!(p.props.indent.left, Some(720));
+        assert_eq!(p.props.indent.first, Some(-360));
+        assert_eq!(p.props.indent.right, Some(0));
+    }
+    doc.undo();
+    assert!(doc.paragraphs().iter().all(|p| p.props.indent.is_empty()));
+}

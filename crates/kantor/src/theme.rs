@@ -55,6 +55,8 @@ fn save(cx: &App) {
     let settings = Settings {
         theme: a.theme.to_setting(),
         ui_font: a.ui_font.clone(),
+        // Keep settings owned by other parts of the app (e.g. the Docs ruler).
+        ..Settings::load()
     };
     if let Err(err) = settings.save() {
         log::error!("saving settings: {err:#}");

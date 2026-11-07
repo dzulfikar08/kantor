@@ -416,6 +416,128 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.insert_image_doc(w, cx)),
     },
     Command {
+        title: "Page Setup…",
+        detail: "Docs · paper size, orientation, margins",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.toggle_page_menu(None, w, cx)),
+    },
+    Command {
+        title: "Paper Size: A4",
+        detail: "Docs · page size, 21 × 29.7 cm",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_paper_doc(docs_ui::PaperSize::A4, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Paper Size: Letter",
+        detail: "Docs · page size, 21.59 × 27.94 cm",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_paper_doc(docs_ui::PaperSize::Letter, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Paper Size: Legal",
+        detail: "Docs · page size, 21.59 × 35.56 cm",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_paper_doc(docs_ui::PaperSize::Legal, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Paper Size: A5",
+        detail: "Docs · page size, 14.8 × 21 cm",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_paper_doc(docs_ui::PaperSize::A5, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Paper Size: F4 / Folio",
+        detail: "Docs · page size, 21.5 × 33 cm",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_paper_doc(docs_ui::PaperSize::F4, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Orientation: Portrait",
+        detail: "Docs · page setup",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_orientation_doc(docs_ui::Orientation::Portrait, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Orientation: Landscape",
+        detail: "Docs · page setup",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_orientation_doc(docs_ui::Orientation::Landscape, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Margins: Normal",
+        detail: "Docs · 2.54 cm all sides",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_margins_doc(docs_ui::MarginPreset::Normal, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Margins: Narrow",
+        detail: "Docs · 1.27 cm all sides",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_margins_doc(docs_ui::MarginPreset::Narrow, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Margins: Moderate",
+        detail: "Docs · 2.54 cm top/bottom, 1.91 cm sides",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_margins_doc(docs_ui::MarginPreset::Moderate, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Margins: Wide",
+        detail: "Docs · 2.54 cm top/bottom, 5.08 cm sides",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.set_margins_doc(docs_ui::MarginPreset::Wide, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Toggle Ruler",
+        detail: "Docs · show or hide the ruler",
+        keys: "",
+        run: |_, _, cx| docs_ui::toggle_ruler(cx),
+    },
+    Command {
         title: "Zoom In",
         detail: "Docs · page zoom",
         keys: "Ctrl =",

@@ -11,6 +11,7 @@ anyhow.workspace = true
 docs_engine.workspace = true
 docs_layout.workspace = true
 gpui-kit.workspace = true
+kantor_core.workspace = true
 kantor_ui.workspace = true
 log.workspace = true
 # Same version parley uses: reads family/weight/style for the font bridge.

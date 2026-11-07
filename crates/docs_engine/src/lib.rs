@@ -16,6 +16,7 @@ mod edit;
 pub mod model;
 pub mod numbering;
 pub mod object;
+pub mod page;
 pub mod style;
 pub mod table;
 mod xml;
@@ -28,5 +29,6 @@ pub use model::{
 };
 pub use numbering::ListKind;
 pub use object::{Image, ImageFormat, Level, OBJECT, Object, Opaque};
+pub use page::{MarginPreset, Orientation, PaperSize, cm_to_twips, twips_to_cm};
 pub use style::{HEADING_STYLES, ResolvedLine, ResolvedPara, ResolvedRun, StyleSheet, font_stack};
 pub use table::{Border, Borders, Table, VMerge};

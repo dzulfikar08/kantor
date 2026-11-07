@@ -72,6 +72,30 @@ impl PageSetup {
         }
     }
 
+    /// US Letter portrait (8.5 × 11 in) with 1 in margins.
+    pub fn letter() -> Self {
+        Self {
+            width: 215.9 * MM,
+            height: 279.4 * MM,
+            ..Self::a4()
+        }
+    }
+
+    /// The same page turned sideways (margins turn with it).
+    pub fn landscape(self) -> Self {
+        if self.width >= self.height {
+            return self;
+        }
+        Self {
+            width: self.height,
+            height: self.width,
+            margin_top: self.margin_left,
+            margin_left: self.margin_top,
+            margin_bottom: self.margin_right,
+            margin_right: self.margin_bottom,
+        }
+    }
+
     pub fn content_width(&self) -> f32 {
         self.width - self.margin_left - self.margin_right
     }
@@ -1406,6 +1430,39 @@ mod tests {
                 assert!(l.top + l.height <= setup.height - setup.margin_bottom + 0.01);
             }
         }
+    }
+
+    /// Pages for `n` one-word paragraphs (never wrap, whatever the font).
+    fn short_lines(setup: PageSetup, n: usize) -> PagedDocument {
+        let mut engine = Engine::new();
+        let paras: Vec<Paragraph> = (0..n).map(|_| Paragraph::new("ok")).collect();
+        let doc = engine.layout_document(&paras, setup);
+        assert_eq!(doc.setup, setup);
+        for page in &doc.pages {
+            for l in &page.lines {
+                assert!(l.top >= setup.margin_top - 0.01);
+                assert!(l.top + l.height <= setup.height - setup.margin_bottom + 0.01);
+            }
+        }
+        doc
+    }
+
+    #[test]
+    fn repaginates_for_landscape_and_letter() {
+        let a4 = short_lines(PageSetup::a4(), 150);
+        let land = short_lines(PageSetup::a4().landscape(), 150);
+        let letter = short_lines(PageSetup::letter(), 150);
+        let per_page = |d: &PagedDocument| d.pages[0].lines.len();
+        assert!(a4.pages.len() >= 2);
+        // Landscape pages are shorter: fewer lines each, more pages.
+        assert!(per_page(&land) < per_page(&a4));
+        assert!(land.pages.len() > a4.pages.len());
+        // Letter is 18 mm shorter than A4.
+        assert!(per_page(&letter) < per_page(&a4));
+        assert!(letter.pages.len() >= a4.pages.len());
+        let l = PageSetup::a4().landscape();
+        assert!(l.width > l.height);
+        assert_eq!(l.landscape(), l);
     }
 
     #[test]

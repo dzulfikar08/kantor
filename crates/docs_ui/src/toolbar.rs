@@ -284,4 +284,6 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
             |v, _, cx| v.zoom_by(ZOOM_STEP, cx),
             cx,
         ))
+        .child(separator(cx))
+        .child(crate::page_menu::page_button(view, cx))
 }
