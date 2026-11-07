@@ -4,9 +4,38 @@
 
 A small, fast, native office suite for Linux (first target: Omarchy on Apple Silicon), built in Rust on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui), the UI framework behind the Zed editor. Three apps: **Docs** (Word), **Sheets** (Excel), **Slides** (PowerPoint). They share one binary and one core.
 
-Status: **M0 in progress**. Written 2026-11-07.
+Status: **M0 nearly done; Sheets MVP (M1) started**. Written 2026-11-07, last updated 2026-11-07.
 
 ---
+
+## 0. Where we are / pick up here
+
+**Repo:** https://github.com/dzulfikar08/kantor (public, AGPL-3.0-or-later). `main` is always green; every push publishes a **nightly** aarch64 + x86_64 build.
+
+**What works today** (nightly, verified running on the M1 Air under Asahi):
+- One binary, suite shell modelled on Voltrus Tools (`docs/reference-voltrus-tools.md`): Home screen, document **tabs** (tab strip = titlebar), **split panes** with draggable dividers, resizable **sidebar** (open/recent/create) and **inspector** (cell + workbook details), **status bar**, **Ctrl+K command palette** (fuzzy), **theme picker** (Follow Omarchy / 23 Omarchy / 907 Ghostty themes, live preview), **UI font picker** (SF Pro when installed). Tabs, layouts and panel sizes **persist** across runs.
+- **Sheets**: open/edit/save `.xlsx` via IronCalc (formulas recalc, atomic save), Excel-style typing into cells (type / Enter / F2 / Delete / Esc), name box + formula bar, multiple sheets.
+- Design system in `kantor_ui` (metrics + colour tokens derived from the palette; "views never use raw colours or sizes").
+- Renderer memory patch (`vendor/gpui-pre-wgpu`) — fixed the wgpu *Out of Memory* crash on 8 GB with a browser open.
+
+**Machines and rules** (details in §8):
+- **M1 Air**: target only. Never build or install toolchains there; install the nightly with `curl -fsSL https://raw.githubusercontent.com/dzulfikar08/kantor/main/scripts/install.sh | sh`.
+- **Linux box** (x86_64, 30 GB RAM): fine for local `cargo build`/`cargo test`/`cargo run`. Setup: `rustup` stable, then on Arch `sudo pacman -S --needed base-devel clang cmake wayland libxkbcommon vulkan-icd-loader fontconfig freetype2 alsa-lib openssl zstd dbus` (Ubuntu: `./scripts/ci-deps.sh`). `cargo run -p kantor` / `cargo test --workspace`.
+- **GitHub Actions** does the real aarch64 builds and releases. `housekeeping.yml` auto-applies `cargo fmt` and refreshes `Cargo.lock` on `main` (it commits as github-actions — `git pull --rebase` before pushing). PRs are checked strictly (fmt + clippy `-D warnings` + tests on both arches).
+
+**Next up, in order** (each item ends with a green CI and a nightly to try on the Mac):
+1. **Confirm on the Mac:** fractional scale 1.6 looks sharp, fcitx5 typing in the formula bar, RSS with a 10k-cell sheet (< 150 MB target), long session with Helium open (memory patch).
+2. **Unsaved-changes prompt** when closing a tab/pane/window or quitting (currently TODO; closing discards). Use a gpui-component dialog.
+3. **Sheets undo/redo** — switch `sheets_engine` from `Model` to IronCalc's `UserModel` (has undo/redo built in); bind Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y.
+4. **Copy/paste** of cells and ranges as TSV (to/from browser and Excel), Ctrl+C/X/V; multi-cell selection (shift+arrows / drag).
+5. **In-cell editor** overlay (edit inside the cell, not only in the formula bar), with IME support.
+6. **Formatting basics**: bold/italic (Ctrl+B/I — kept free on purpose), number formats, alignment, column widths/row heights saved to xlsx; a per-pane toolbar that goes icon-only when narrow.
+7. **CSV import/export**, `.ods`/`.xls` read via calamine; open the same workbook in two panes (needs a shared document model; today a split opens a new blank sheet).
+8. **Text layout spike** (M0's last open item): parley vs GPUI text for paged layout → `docs/decisions/0001-text-engine.md`. Gates Docs (M2).
+9. **Corpus + fidelity CI**: 10 files per format in `tests/corpus/` (licences listed), LibreOffice-headless reference PDFs in CI.
+10. First tagged release `v0.1.0` (Sheets MVP) and an AUR `kantor-bin`.
+
+**Known gaps / caveats:** Docs and Slides are placeholders ("coming soon"). Split-right uses the dashboard icon (GPUI Kit's default icon set has no columns icon). Window title/decorations come from Hyprland (server-side); no in-app window buttons, by design.
 
 ## 1. Why
 
@@ -62,19 +91,22 @@ Each app is **released on its own** as soon as it reaches its MVP. There's no wa
 
 ### 4.1 Workspace layout
 
+✅ = exists today; the rest arrive with their milestone.
+
 ```
 kantor/
 ├── crates/
-│   ├── kantor            # binary: app shell, window/tab management, CLI (`kantor file.xlsx`)
-│   ├── kantor_core       # shared model: units, colors, fonts, styles, document trait,
-│   │                     #   undo/redo command log, autosave/recovery, settings
-│   ├── kantor_theme      # Omarchy theme bridge (reads ~/.local/state/omarchy/current/theme/colors.toml)
+│   ├── kantor            # ✅ binary: CLI, suite shell (workspace/: tabs, splits, panels, palette, home), actions
+│   ├── kantor_ui         # ✅ design system: metrics, Omarchy-derived tokens, CachedView, fonts, small components
+│   ├── kantor_core       # ✅ no GPUI: fuzzy search, split layout tree, session + settings persistence
+│   │                     #    (later: units, styles, document trait, undo/redo command log, autosave)
+│   ├── kantor_theme      # ✅ Omarchy palette parser + theme catalog (Omarchy themes, 907 Ghostty themes)
 │   ├── kantor_text       # rich-text model + paragraph layout (shared by Docs and Slides)
 │   ├── kantor_ooxml      # shared OOXML plumbing: zip, [Content_Types], relationships,
 │   │                     #   theme/style parts, unknown-part preservation
 │   ├── kantor_pdf        # PDF export via krilla
-│   ├── sheets_engine     # thin wrapper over ironcalc_base
-│   ├── sheets_ui         # grid, formula bar, cell editor, selection, fill handle
+│   ├── sheets_engine     # ✅ thin wrapper over ironcalc (open/save xlsx, cells, formulas)
+│   ├── sheets_ui         # ✅ grid, formula bar, sheet tabs (later: in-cell editor, selection, fill handle)
 │   ├── docs_model        # document tree: sections, paragraphs, runs, tables, images
 │   ├── docs_layout       # pagination engine (pages, columns, tables, headers/footers)
 │   ├── docs_docx         # DOCX <-> docs_model (docx-rs + preserved extras)
@@ -82,8 +114,11 @@ kantor/
 │   ├── slides_model      # slides, layouts, masters, shapes, text boxes, images
 │   ├── slides_pptx       # PPTX <-> slides_model (own, on kantor_ooxml)
 │   └── slides_ui         # slide canvas, sorter, presenter mode
+├── vendor/gpui-pre-wgpu  # ✅ GPUI's wgpu renderer + Kantor memory patches (KANTOR_PATCHES.md)
+├── assets/               # ✅ icons (suite K, Sheets), themes/ghostty.tsv (MIT)
+├── docs/                 # ✅ reference-voltrus-tools.md, decisions/
 ├── tests/corpus/         # real-world .docx/.xlsx/.pptx samples (see §7)
-└── packaging/            # PKGBUILD, .desktop files, MIME types, icons
+└── packaging/            # ✅ .desktop files (later: PKGBUILD, MIME types)
 ```
 
 One binary, `kantor`, holds all three apps: **an all-in-one suite**. `kantor` with no file opens a Home screen (Docs · Sheets · Slides · Open file); a file or `--docs/--sheets/--slides` jumps straight into an app. A main `Kantor` launcher plus per-app launchers (`kantor-sheets.desktop` now, Docs/Slides as they land) all start the same binary. Icons live in `assets/icons/` (the K is Docs-blue stem, Sheets-green arm, Slides-orange leg).
@@ -129,10 +164,10 @@ Time estimates assume **one person, part-time (~10–15 h/week), with AI-assiste
 
 ### M0 — Foundations (2–3 weeks)
 
-- [ ] Repo, workspace, AGPL-3.0-or-later licence, CONTRIBUTING, issue templates
-- [ ] CI: build and test on **x86_64** and **`ubuntu-24.04-arm`** (GitHub's free ARM runners for public repos), clippy, fmt, `cargo deny`
-- [ ] GPUI "hello window" on the M1 Air under Hyprland/Asahi: confirm Vulkan rendering, fractional scale 1.6, fcitx5 input, and the 16K-page kernel
-- [ ] `kantor_theme`: read Omarchy theme colors, live-reload on `omarchy theme set`
+- [x] Repo, workspace, AGPL-3.0-or-later licence, CONTRIBUTING, issue templates
+- [x] CI: build and test on **x86_64** and **`ubuntu-24.04-arm`** (GitHub's free ARM runners for public repos), clippy, fmt, `cargo deny`
+- [~] GPUI window on the M1 Air under Hyprland/Asahi: ✅ Vulkan, ✅ 16K-page kernel, ✅ ~210 ms to GPU-ready, ✅ 39 MB binary; ☐ fractional scale 1.6, ☐ fcitx5 input
+- [x] `kantor_theme`: read Omarchy theme colors, live-reload on `omarchy theme set`
 - [ ] **Text layout spike** (decides the hardest technical question): lay out and paint 50 pages of mixed-font text with parley vs GPUI's text system; measure speed, memory, caret/selection quality and fcitx5 IME support. Pick one and write the decision down.
 - [ ] Corpus started: 30+ real `.docx/.xlsx/.pptx` files (see §7)
 
@@ -140,9 +175,9 @@ Time estimates assume **one person, part-time (~10–15 h/week), with AI-assiste
 
 ### M1 — Sheets MVP (6–10 weeks)
 
-- [ ] Open, edit and save `.xlsx` through IronCalc; `.csv` import/export; `.ods`/`.xls` read via calamine
-- [ ] Grid: virtual scrolling, frozen panes, resize rows/columns, multiple sheets (tabs)
-- [ ] Cell editing, formula bar, autocomplete for function names, error display
+- [~] Open, edit and save `.xlsx` through IronCalc ✅; `.csv` import/export ☐; `.ods`/`.xls` read via calamine ☐
+- [~] Grid: virtual scrolling ✅, multiple sheets ✅, resize columns ✅ (not saved yet); frozen panes ☐, row heights ☐
+- [~] Cell editing ✅ (Excel-style keys), formula bar ✅; in-cell editor ☐, function autocomplete ☐, error display ☐
 - [ ] Selection, copy/paste (including from Helium/web as TSV), fill handle, undo/redo
 - [ ] Formatting: number formats, bold/italic/colors, borders, alignment, merge cells
 - [ ] Sort, filter, find and replace
@@ -199,18 +234,19 @@ Time estimates assume **one person, part-time (~10–15 h/week), with AI-assiste
 
 ## 8. Development environment and resources
 
-The M1 Air has **8 GB RAM** and is the *target*, not a build machine. **Nothing is compiled or installed on the Mac** — not even `rustup`. The project is public so GitHub's free runners do all the work:
+The M1 Air has **8 GB RAM** and is the *target*, not a build machine. **Nothing is compiled or installed on the Mac** — not even `rustup`. The project is public so GitHub's free runners do the release work:
 
 | Where | Use for |
 |---|---|
 | **M1 Air** (aarch64, the real target) | Editing code, running prebuilt binaries, manual testing |
+| **Linux box** (x86_64, 30 GB RAM) | Local development: `cargo run -p kantor`, `cargo test --workspace`, `cargo clippy`. Fast iteration on UI; still push to get the aarch64 build |
 | **GitHub Actions `ubuntu-24.04-arm`** | aarch64 tests and release builds (native ARM, free for public repos) |
 | **GitHub Actions `ubuntu-24.04`** | x86_64 tests and release builds, fmt, clippy, cargo-deny, `Cargo.lock` upkeep, later LibreOffice-headless fidelity diffs |
 
 Workflow:
 
-1. Edit on the Mac, push a branch (or `main`).
-2. `ci.yml` runs fmt, clippy, tests on both architectures; `lockfile.yml` keeps `Cargo.lock` committed so nobody runs cargo locally.
+1. Edit (on the Mac or the Linux box), push a branch (or `main`).
+2. `ci.yml` runs clippy and tests on both architectures (fmt is checked on PRs); `housekeeping.yml` applies `cargo fmt` and refreshes `Cargo.lock` on `main` and commits the result — always `git pull --rebase` before pushing.
 3. `build.yml` publishes a rolling **nightly** release from `main` (and versioned releases from `v*` tags).
 4. On the Mac: `scripts/install.sh` downloads the aarch64 build into `~/.local/bin` (sha256-checked). `gh run watch` shows CI progress.
 
@@ -222,7 +258,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 |---|---|---|
 | **Paged text layout is very hard** (tables, floats, bidi, CJK) | High | Sheets first; dedicated M0 spike; scope tables and floats tightly in M2; study Typst's layout design |
 | **GPUI is pre-1.0** and changes often | Medium | Pin through `gpui-kit`; isolate GPUI behind the view layer (model and layout don't import it); upgrade on a schedule |
-| **GPUI on Asahi** (Vulkan driver maturity, 16K pages) | Medium | 16K pages and Vulkan verified working (2026-11-07). Under memory pressure (≈1 GB free, browser open) wgpu reports *Out of Memory* / device lost and GPUI panics after 3 recoveries; with the browser closed it runs fine. Mitigate: keep GPU footprint small, push upstream for graceful recovery instead of a panic, study VoltrusID/gpui's memory fixes (`docs/reference-voltrus-tools.md`) |
+| **GPUI on Asahi** (Vulkan driver maturity, 16K pages) | Medium | 16K pages and Vulkan verified working (2026-11-07). Under memory pressure (≈1 GB free, browser open) wgpu reports *Out of Memory* / device lost and GPUI panics after 3 recoveries; with the browser closed it runs fine. **Mitigated 2026-11-07** by `vendor/gpui-pre-wgpu` (path textures only when used, no path MSAA by default): no crash in repeated launches with the browser open. Still to do: upstream the patch; ask GPUI to recover instead of panicking |
 | **OOXML breadth** | High | Preservation layer from day one; read-only fallback; a fidelity score drives priorities |
 | **Microsoft font metrics** | Medium | Carlito/Caladea/Liberation mapping; warn when a document font is missing |
 | **IronCalc is pre-1.0** | Low–medium | Keep it behind `sheets_engine`; contribute fixes upstream |
@@ -239,7 +275,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 - **[Typst](https://github.com/typst/typst)**: modern layout engine design in Rust, krilla PDF output
 - **LibreOffice** (`sw` Writer, `sc` Calc, `sd` Impress) and **OnlyOffice** (native OOXML model): reference behaviour for format edge cases
 
-## 11. First two weeks: concrete steps
+## 11. Progress log (first sessions, 2026-11-07)
 
 1. ✅ Public GitHub repo (AGPL-3.0-or-later), this plan pushed.
 2. ✅ Workspace: `kantor`, `kantor_theme`, `sheets_engine`, `sheets_ui` on `gpui-kit` 0.9 (pins GPUI) and IronCalc 0.9.1.
@@ -247,11 +283,12 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 4. ✅ `kantor_theme`: reads Omarchy's `colors.toml`, live-reloads when `theme.generation` changes.
 5. ✅ First Sheets pixel: open `.xlsx` with IronCalc, show it in GPUI Kit's data table, edit via formula bar, atomic save.
 6. ◐ Run the nightly on the Mac: ✅ Vulkan on Asahi, ✅ 16K pages, ✅ GPU ready in ~210 ms, ✅ 39 MB binary; ⚠ wgpu OOM under memory pressure; ☐ fractional scale 1.6, ☐ fcitx5, ☐ RSS.
-7. ☐ Open issues for every remaining M0 checkbox.
-8. ☐ Text layout spike (parley vs GPUI text), built and benchmarked in CI; numbers and decision in `docs/decisions/0001-text-engine.md`.
-9. ☐ Corpus: 10 files of each format; a CI job producing LibreOffice-headless reference PDFs.
+7. ☐ Open issues for every remaining M0 checkbox (see §0 *Next up*).
+8. ☐ Text layout spike → §0 item 8.
+9. ☐ Corpus → §0 item 9.
 10. ✅ Shell and styling modelled on Voltrus Tools (`docs/reference-voltrus-tools.md`): `kantor_ui` metrics + Omarchy-derived tokens, tab strip as titlebar, status bar, Ctrl+K command palette with fuzzy search, cached chrome views. Then: sidebar + inspector (resizable), split panes with draggable dividers, saved workspace (tabs, layouts, panel sizes, recent files), responsive tab strip and formula bar, theme picker (Omarchy + 907 Ghostty themes, live preview) and UI font picker (SF Pro when installed).
 11. ✅ Renderer memory patch: vendored `gpui-pre-wgpu` allocates path textures only when used, no path MSAA by default.
+12. ✅ Fixes after first use on the Mac: typing directly into cells; palette rows fill the panel width.
 
 ## 12. Open questions
 
