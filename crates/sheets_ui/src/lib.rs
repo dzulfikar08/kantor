@@ -7,6 +7,15 @@
 //! Enter/F2 edits the existing content, Delete clears, Escape cancels and Enter
 //! commits and moves down. The edit happens in the formula bar for now; an
 //! in-cell editor overlay comes later.
+//!
+//! The table only knows a single selected cell, which is the *active* cell
+//! (the anchor of a range). Range selection is ours: Shift+arrows, Shift+click
+//! and mouse drag move the range's other corner, kept in [`SheetGrid`] and
+//! drawn by `render_td`.
+//!
+//! Ctrl+C / Ctrl+X / Ctrl+V copy and paste the range as tab-separated text
+//! (inputs, so formulas copy as typed). Cut copies and clears the range at
+//! once, rather than waiting for the paste.
 
 extern crate gpui_kit as gpui;
 
@@ -23,9 +32,24 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::{metrics::*, tokens};
-use sheets_engine::{Workbook, cell_name, column_name};
+use sheets_engine::{CellRange, Workbook, cell_name, column_name};
 
-actions!(sheets, [Save, SaveAs, Undo, Redo]);
+actions!(
+    sheets,
+    [
+        Save,
+        SaveAs,
+        Undo,
+        Redo,
+        Copy,
+        Cut,
+        Paste,
+        ExtendUp,
+        ExtendDown,
+        ExtendLeft,
+        ExtendRight
+    ]
+);
 
 const KEY_CONTEXT: &str = "KantorSheets";
 /// The grid, not the formula bar: there Ctrl+Z undoes typing instead.
@@ -68,6 +92,17 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-shift-z", Redo, Some(GRID_CONTEXT)),
         KeyBinding::new("super-shift-z", Redo, Some(GRID_CONTEXT)),
         KeyBinding::new("ctrl-y", Redo, Some(GRID_CONTEXT)),
+        // The formula bar keeps its own text clipboard.
+        KeyBinding::new("ctrl-c", Copy, Some(GRID_CONTEXT)),
+        KeyBinding::new("super-c", Copy, Some(GRID_CONTEXT)),
+        KeyBinding::new("ctrl-x", Cut, Some(GRID_CONTEXT)),
+        KeyBinding::new("super-x", Cut, Some(GRID_CONTEXT)),
+        KeyBinding::new("ctrl-v", Paste, Some(GRID_CONTEXT)),
+        KeyBinding::new("super-v", Paste, Some(GRID_CONTEXT)),
+        KeyBinding::new("shift-up", ExtendUp, Some(GRID_CONTEXT)),
+        KeyBinding::new("shift-down", ExtendDown, Some(GRID_CONTEXT)),
+        KeyBinding::new("shift-left", ExtendLeft, Some(GRID_CONTEXT)),
+        KeyBinding::new("shift-right", ExtendRight, Some(GRID_CONTEXT)),
     ]);
 }
 
@@ -77,18 +112,31 @@ pub struct SheetGrid {
     sheet: u32,
     rows: u32,
     cols: u32,
+    /// The view, for mouse selection in `render_td`.
+    view: WeakEntity<SheetsView>,
+    /// Selected range: the active cell (same as the table's selected cell) and
+    /// the opposite corner, in sheet coordinates `(row, col)`.
+    anchor: (u32, u32),
+    end: (u32, u32),
 }
 
 impl SheetGrid {
-    fn new(book: Workbook) -> Self {
+    fn new(book: Workbook, view: WeakEntity<SheetsView>) -> Self {
         let mut grid = Self {
             book,
             sheet: 0,
             rows: 0,
             cols: 0,
+            view,
+            anchor: (0, 0),
+            end: (0, 0),
         };
         grid.resize();
         grid
+    }
+
+    fn range(&self) -> CellRange {
+        CellRange::from_corners(self.anchor, self.end)
     }
 
     /// Recompute grid extents: the used range plus headroom, never below the minimum.
@@ -122,6 +170,8 @@ impl TableDelegate for SheetGrid {
                 .width(px(100.))
                 .min_width(px(24.))
                 .resizable(true)
+                // `render_td` fills the whole cell (to draw the range) and pads itself.
+                .p_0()
         }
     }
 
@@ -137,10 +187,48 @@ impl TableDelegate for SheetGrid {
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from((row_ix + 1).to_string()));
         }
-        let text = self
-            .book
-            .display_value(self.sheet, row_ix as u32, col_ix as u32 - 1);
-        div().truncate().child(SharedString::from(text))
+        let (row, col) = (row_ix as u32, col_ix as u32 - 1);
+        let text = self.book.display_value(self.sheet, row, col);
+        let range = self.range();
+        let t = tokens(cx);
+        let down_view = self.view.clone();
+        let move_view = self.view.clone();
+        div()
+            .size_full()
+            .relative()
+            .flex()
+            .items_center()
+            .px(SPACE_3)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .child(SharedString::from(text)),
+            )
+            .when(!range.is_single() && range.contains(row, col), |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .when((row, col) != self.anchor, |d| d.bg(t.accent_soft))
+                        .border_color(t.accent)
+                        .when(row == range.top, |d| d.border_t_1())
+                        .when(row == range.bottom, |d| d.border_b_1())
+                        .when(col == range.left, |d| d.border_l_1())
+                        .when(col == range.right, |d| d.border_r_1()),
+                )
+            })
+            .on_mouse_down(MouseButton::Left, move |e, window, cx| {
+                let _ = down_view.update(cx, |view, cx| {
+                    view.cell_mouse_down(row, col, e.modifiers.shift, window, cx)
+                });
+            })
+            .on_mouse_move(move |e, _, cx| {
+                if e.pressed_button == Some(MouseButton::Left) {
+                    let _ = move_view.update(cx, |view, cx| view.cell_drag(row, col, cx));
+                }
+            })
     }
 
     fn cell_label(&self, row_ix: usize, col_ix: usize, _: &App) -> Option<SharedString> {
@@ -160,6 +248,8 @@ pub struct SheetsView {
     selected: (u32, u32),
     /// The cell being edited in the formula bar, if an edit is in progress.
     editing: Option<(u32, u32)>,
+    /// A mouse drag that started on a cell is extending the range.
+    dragging: bool,
     status: SharedString,
     /// Last measured pane width (for compact layout).
     width: Rc<Cell<Pixels>>,
@@ -186,8 +276,9 @@ impl SheetsView {
             ),
         };
 
+        let view = cx.entity().downgrade();
         let table = cx.new(|cx| {
-            TableState::new(SheetGrid::new(book), window, cx)
+            TableState::new(SheetGrid::new(book, view), window, cx)
                 .cell_selectable(true)
                 .row_header(false)
                 .row_selectable(false)
@@ -207,6 +298,7 @@ impl SheetsView {
             formula,
             selected: (0, 0),
             editing: None,
+            dragging: false,
             status: status.into(),
             width: Rc::new(Cell::new(px(0.))),
             _subscriptions: subscriptions,
@@ -238,6 +330,16 @@ impl SheetsView {
         match event {
             TableEvent::SelectCell(row, col) if *col > 0 => {
                 self.selected = (*row as u32, *col as u32 - 1);
+                // A new active cell starts a new range.
+                let cell = self.selected;
+                self.table.update(cx, |table, cx| {
+                    let grid = table.delegate_mut();
+                    if grid.anchor != cell || grid.end != cell {
+                        grid.anchor = cell;
+                        grid.end = cell;
+                        cx.notify();
+                    }
+                });
                 if self.editing.is_none() {
                     self.load_selected_into_formula(window, cx);
                 }
@@ -349,11 +451,189 @@ impl SheetsView {
         cx.notify();
     }
 
+    /// Delete: clear every cell in the selected range (one undo step).
     fn clear_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (row, col) = self.selected;
-        if let Err(err) = self.set_cell(row, col, "", cx) {
+        let range = self.range(cx);
+        let result = self.table.update(cx, |table, cx| {
+            let grid = table.delegate_mut();
+            let sheet = grid.sheet;
+            let res = grid.book.clear_range(sheet, range);
+            grid.resize();
+            table.refresh(cx);
+            cx.notify();
+            res
+        });
+        if let Err(err) = result {
             self.status = format!("{err:#}").into();
         }
+        self.load_selected_into_formula(window, cx);
+        self.update_title(window, cx);
+        cx.notify();
+    }
+
+    /// The selected range (a single cell when nothing is extended).
+    fn range(&self, cx: &App) -> CellRange {
+        self.table.read(cx).delegate().range()
+    }
+
+    /// Move the range's far corner (not the active cell) by one step.
+    fn extend(&mut self, d_row: i64, d_col: i64, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            return;
+        }
+        self.table.update(cx, |table, cx| {
+            let grid = table.delegate_mut();
+            let row = (grid.end.0 as i64 + d_row).clamp(0, grid.rows as i64 - 1) as u32;
+            let col = (grid.end.1 as i64 + d_col).clamp(0, grid.cols as i64 - 1) as u32;
+            grid.end = (row, col);
+            if d_row != 0 {
+                table
+                    .vertical_scroll_handle
+                    .scroll_to_item(row as usize, ScrollStrategy::Nearest);
+            }
+            if d_col != 0 {
+                table.scroll_to_col(col as usize + 1, cx);
+            }
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    fn extend_up(&mut self, _: &ExtendUp, _: &mut Window, cx: &mut Context<Self>) {
+        self.extend(-1, 0, cx);
+    }
+
+    fn extend_down(&mut self, _: &ExtendDown, _: &mut Window, cx: &mut Context<Self>) {
+        self.extend(1, 0, cx);
+    }
+
+    fn extend_left(&mut self, _: &ExtendLeft, _: &mut Window, cx: &mut Context<Self>) {
+        self.extend(0, -1, cx);
+    }
+
+    fn extend_right(&mut self, _: &ExtendRight, _: &mut Window, cx: &mut Context<Self>) {
+        self.extend(0, 1, cx);
+    }
+
+    /// Left button down on a cell. A plain press selects it right away (not on
+    /// release, so a drag can grow the range from it); Shift extends the range.
+    fn cell_mouse_down(
+        &mut self,
+        row: u32,
+        col: u32,
+        shift: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.dragging = true;
+        if !shift {
+            self.select_cell(row, col, cx);
+            return;
+        }
+        // Keep the table from turning this into a click, which would move the
+        // active cell.
+        cx.stop_propagation();
+        self.table.update(cx, |table, cx| {
+            table.delegate_mut().end = (row, col);
+            cx.notify();
+        });
+        if self.editing.is_none() {
+            self.focus_grid(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// The mouse moved over a cell with the left button held.
+    fn cell_drag(&mut self, row: u32, col: u32, cx: &mut Context<Self>) {
+        if !self.dragging {
+            return;
+        }
+        let changed = self.table.update(cx, |table, cx| {
+            let grid = table.delegate_mut();
+            let changed = grid.end != (row, col);
+            if changed {
+                grid.end = (row, col);
+                cx.notify();
+            }
+            changed
+        });
+        if changed {
+            cx.notify();
+        }
+    }
+
+    pub fn copy_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.copy(&Copy, window, cx);
+    }
+
+    pub fn cut_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cut(&Cut, window, cx);
+    }
+
+    pub fn paste_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.paste(&Paste, window, cx);
+    }
+
+    /// Put the selected range on the clipboard as tab-separated inputs.
+    fn copy_range(&mut self, cx: &mut Context<Self>) -> CellRange {
+        let range = self.range(cx);
+        let text = {
+            let grid = self.table.read(cx).delegate();
+            grid.book.range_tsv(grid.sheet, range)
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        range
+    }
+
+    fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            return;
+        }
+        let range = self.copy_range(cx);
+        self.status = format!("Copied {}", range.name()).into();
+        cx.notify();
+    }
+
+    /// Copy, then clear the range straight away (not when pasted, as Excel does).
+    fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            return;
+        }
+        let range = self.copy_range(cx);
+        self.clear_selected(window, cx);
+        self.status = format!("Cut {}", range.name()).into();
+        cx.notify();
+    }
+
+    /// Paste clipboard text (tab-separated) at the active cell and select what
+    /// was pasted.
+    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            return;
+        }
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            self.status = "Nothing to paste".into();
+            cx.notify();
+            return;
+        };
+        let (row, col) = self.selected;
+        let result = self.table.update(cx, |table, cx| {
+            let grid = table.delegate_mut();
+            let sheet = grid.sheet;
+            let res = grid.book.paste_tsv(sheet, row, col, &text);
+            if let Ok(Some(range)) = &res {
+                grid.end = (range.bottom, range.right);
+            }
+            grid.resize();
+            table.refresh(cx);
+            cx.notify();
+            res
+        });
+        self.status = match result {
+            Ok(Some(range)) => format!("Pasted {}", range.name()).into(),
+            Ok(None) => "Nothing to paste".into(),
+            Err(err) => format!("{err:#}").into(),
+        };
         self.load_selected_into_formula(window, cx);
         self.update_title(window, cx);
         cx.notify();
@@ -479,6 +759,11 @@ impl SheetsView {
         cell_name(self.selected.0, self.selected.1)
     }
 
+    /// The name box text: the cell (`B7`) or the selected range (`A1:C4`).
+    fn selection_ref(&self, cx: &App) -> String {
+        self.range(cx).name()
+    }
+
     /// File name for tabs, e.g. `budget.xlsx`.
     pub fn doc_name(&self, cx: &App) -> String {
         self.table.read(cx).delegate().book.title()
@@ -528,8 +813,9 @@ impl SheetsView {
             Ok(book) => {
                 self.status = format!("Opened {}", book.title()).into();
                 self.editing = None;
+                let view = cx.entity().downgrade();
                 self.table.update(cx, |table, cx| {
-                    *table.delegate_mut() = SheetGrid::new(book);
+                    *table.delegate_mut() = SheetGrid::new(book, view);
                     table.refresh(cx);
                     cx.notify();
                 });
@@ -715,7 +1001,12 @@ impl Render for SheetsView {
                             .text_size(FONT_SMALL)
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(if editing { t.accent } else { t.fg_muted })
-                            .child(SharedString::from(self.cell_ref())),
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(SharedString::from(self.selection_ref(cx))),
+                            ),
                     )
                     .when(!compact, |d| {
                         d.child(
@@ -741,6 +1032,17 @@ impl Render for SheetsView {
                     .key_context(GRID_CONTEXT)
                     .on_action(cx.listener(Self::undo))
                     .on_action(cx.listener(Self::redo))
+                    .on_action(cx.listener(Self::copy))
+                    .on_action(cx.listener(Self::cut))
+                    .on_action(cx.listener(Self::paste))
+                    .on_action(cx.listener(Self::extend_up))
+                    .on_action(cx.listener(Self::extend_down))
+                    .on_action(cx.listener(Self::extend_left))
+                    .on_action(cx.listener(Self::extend_right))
+                    // A drag only extends the range if it started on a cell
+                    // (cells set `dragging` after this capture listener runs).
+                    .capture_any_mouse_down(cx.listener(|this, _, _, _| this.dragging = false))
+                    .capture_any_mouse_up(cx.listener(|this, _, _, _| this.dragging = false))
                     .on_key_down(cx.listener(Self::on_grid_key))
                     .child(DataTable::new(&self.table).bordered(false).small()),
             )

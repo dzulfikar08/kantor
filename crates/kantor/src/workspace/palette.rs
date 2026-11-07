@@ -62,6 +62,24 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.redo_doc(w, cx)),
     },
     Command {
+        title: "Copy",
+        detail: "Selected cells, as tab-separated text",
+        keys: "Ctrl C",
+        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.copy_doc(w, cx)),
+    },
+    Command {
+        title: "Cut",
+        detail: "Copy and clear the selected cells",
+        keys: "Ctrl X",
+        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.cut_doc(w, cx)),
+    },
+    Command {
+        title: "Paste",
+        detail: "Tab-separated text, at the selected cell",
+        keys: "Ctrl V",
+        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.paste_doc(w, cx)),
+    },
+    Command {
         title: "Toggle Sidebar",
         detail: "Open documents, recent files",
         keys: "Ctrl Shift E",
