@@ -27,7 +27,7 @@ Status: **M0 nearly done; Sheets MVP (M1) started**. Written 2026-11-07, last up
 1. **Confirm on the Mac:** fractional scale 1.6 looks sharp, fcitx5 typing in the formula bar, RSS with a 10k-cell sheet (< 150 MB target), long session with Helium open (memory patch).
 2. ✅ **Unsaved-changes prompt** (Save / Don't Save / Cancel) when closing a pane or tab, quitting (Ctrl+Q), or closing the window from Hyprland. Save stores each dirty document in turn, untitled ones via Save As, and closes only if all were saved. ☐ Try it on the Mac (Hyprland's close-window path is untested).
 3. ✅ **Sheets undo/redo**: `sheets_engine` runs on IronCalc's `UserModel`; Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y in the grid (the formula bar keeps its own text undo), plus palette commands. "Unsaved" follows the undo history, so undoing back to the saved state is clean again.
-4. **Copy/paste** of cells and ranges as TSV (to/from browser and Excel), Ctrl+C/X/V; multi-cell selection (shift+arrows / drag).
+4. ✅ **Copy/paste** of ranges as TSV (Ctrl+C/X/V in the grid; one undo step per paste/clear), range selection with Shift+arrows, Shift+click and drag. ☐ Try on the Mac: mouse selection, clipboard to/from browser/LibreOffice. Pasted formulas are not reference-shifted yet (`=A1` stays `=A1`).
 5. **In-cell editor** overlay (edit inside the cell, not only in the formula bar), with IME support.
 6. **Formatting basics**: bold/italic (Ctrl+B/I — kept free on purpose), number formats, alignment, column widths/row heights saved to xlsx; a per-pane toolbar that goes icon-only when narrow.
 7. **CSV import/export**, `.ods`/`.xls` read via calamine; open the same workbook in two panes (needs a shared document model; today a split opens a new blank sheet).
@@ -291,6 +291,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 12. ✅ Fixes after first use on the Mac: typing directly into cells; palette rows fill the panel width.
 13. ✅ Unsaved-changes prompt on close and quit (`crates/kantor/src/workspace/closing.rs`).
 14. ✅ Undo/redo for cell edits (IronCalc `UserModel`); dirty state tracked as a position in the history.
+15. ✅ Range selection and TSV copy/paste (`sheets_engine::tsv`, `CellRange`).
 
 ## 12. Open questions
 
