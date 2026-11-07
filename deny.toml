@@ -6,6 +6,17 @@ all-features = false
 # Pre-1.0 GPUI pulls in a lot; review advisories rather than hard-failing on unmaintained crates.
 unmaintained = "workspace"
 yanked = "warn"
+# zip 8.x (only via docx-rs 0.4.22, which requires ^8.6): these advisories are all about
+# `ZipArchive::extract` / `ZipStreamReader::extract` writing entries to disk (symlinks,
+# permissions). Neither Kantor nor docx-rs ever extracts: entries are read by name into
+# memory and archives are written fresh. Our own code uses zip 9. Drop these when docx-rs
+# moves to zip 9.
+ignore = [
+    { id = "RUSTSEC-2026-0367", reason = "zip 8 via docx-rs; extract() never called" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 8 via docx-rs; extract() never called" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 8 via docx-rs; extract() never called" },
+    { id = "RUSTSEC-2026-0429", reason = "zip 8 via docx-rs; extract() never called" },
+]
 
 [licenses]
 confidence-threshold = 0.8

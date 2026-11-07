@@ -984,7 +984,8 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
     let mut wrote_doc = false;
     for i in 0..src.len() {
         let file = src.by_index_raw(i)?;
-        if file.name() == pkg.document_part {
+        let is_document = file.name()? == pkg.document_part.as_str();
+        if is_document {
             let opts = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated);
             out.start_file(pkg.document_part.as_str(), opts)?;

@@ -1487,7 +1487,7 @@ dependencies = [
  "quick-xml 0.41.0",
  "tempfile",
  "unicode-segmentation",
- "zip 8.6.0",
+ "zip 9.4.1",
 ]
 
 [[package]]

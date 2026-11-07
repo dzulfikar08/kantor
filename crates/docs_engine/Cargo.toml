@@ -11,7 +11,7 @@ anyhow.workspace = true
 # Default features pull in image decoding, which Docs doesn't need yet.
 docx-rs = { version = "0.4.22", default-features = false }
 # Same versions docx-rs uses, for the package scan (no duplicate crates).
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip.workspace = true
 quick-xml = "0.41"
 unicode-segmentation = "1"
 log.workspace = true
@@ -22,4 +22,4 @@ workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip.workspace = true
