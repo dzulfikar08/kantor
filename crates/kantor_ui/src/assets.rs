@@ -15,7 +15,14 @@ icon_assets!(
         Strikethrough,
         TextAlignStart,
         TextAlignCenter,
-        TextAlignEnd
+        TextAlignEnd,
+        TextAlignJustify,
+        Heading1,
+        Heading2,
+        Heading3,
+        Pilcrow,
+        ZoomIn,
+        ZoomOut
     ]
 );
 

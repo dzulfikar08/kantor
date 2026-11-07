@@ -53,3 +53,13 @@ pub const PALETTE_ROW_HEIGHT: Pixels = px(36.);
 pub const PALETTE_THEME_ROW_HEIGHT: Pixels = px(50.);
 pub const PALETTE_FOOTER_HEIGHT: Pixels = px(34.);
 pub const PALETTE_MAX_ROWS: usize = 10;
+
+// Docs page view
+/// Space around and between pages on the desk, in unzoomed page px.
+pub const PAGE_GAP: f32 = 24.;
+/// Width of the text caret on the page (screen px, not zoomed).
+pub const CARET_WIDTH: Pixels = px(1.5);
+/// Minimum / maximum page zoom and the step of Ctrl+= / Ctrl+-.
+pub const ZOOM_MIN: f32 = 0.25;
+pub const ZOOM_MAX: f32 = 4.0;
+pub const ZOOM_STEP: f32 = 1.1;
