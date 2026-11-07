@@ -31,7 +31,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _, h_flex,
+    Sizable as _, h_flex,
     input::{Input, InputEvent, InputState},
     table::{Column, DataTable, TableDelegate, TableEvent, TableState},
     v_flex,
@@ -213,11 +213,12 @@ impl TableDelegate for SheetGrid {
     fn column(&self, col_ix: usize, _: &App) -> Column {
         if col_ix == 0 {
             Column::new("#", "")
-                .width(px(52.))
+                .width(ROW_GUTTER_WIDTH)
                 .fixed_left()
                 .resizable(false)
                 .selectable(false)
-                .text_right()
+                // `render_td` / `render_th` fill the cell (header background).
+                .p_0()
         } else {
             let name = column_name(col_ix as u32 - 1);
             let width = self.book.column_width(self.sheet, col_ix as u32 - 1);
@@ -230,6 +231,45 @@ impl TableDelegate for SheetGrid {
         }
     }
 
+    /// Column letters, centred; the columns of the selection are highlighted
+    /// with an accent edge towards the grid, like Excel.
+    fn render_th(
+        &mut self,
+        col_ix: usize,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        let t = tokens(cx);
+        // Absolute, so it fills the header cell including the padding the
+        // table reserves for a sort icon.
+        let cell = div().absolute().inset_0();
+        if col_ix == 0 {
+            return cell;
+        }
+        let col = col_ix as u32 - 1;
+        let range = self.range();
+        let active = (range.left..=range.right).contains(&col);
+        cell.flex()
+            .items_center()
+            .justify_center()
+            .child(SharedString::from(column_name(col)))
+            .child(grid_line_right(t.grid_line))
+            .when(active, |d| {
+                d.bg(t.grid_header_active)
+                    .text_color(t.fg)
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .bottom_0()
+                            .h(CELL_OUTLINE)
+                            .bg(t.accent),
+                    )
+            })
+    }
+
     fn render_td(
         &mut self,
         row_ix: usize,
@@ -237,17 +277,42 @@ impl TableDelegate for SheetGrid {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        let t = tokens(cx);
+        let range = self.range();
         if col_ix == 0 {
+            // Row-number gutter, highlighted for the rows of the selection.
+            let row = row_ix as u32;
+            let active = (range.top..=range.bottom).contains(&row);
             return div()
-                .text_color(cx.theme().muted_foreground)
+                .size_full()
+                .relative()
+                .flex()
+                .items_center()
+                .justify_end()
+                .px(SPACE_3)
+                .bg(if active {
+                    t.grid_header_active
+                } else {
+                    t.grid_header
+                })
+                .text_color(if active { t.fg } else { t.fg_muted })
+                .when(active, |d| {
+                    d.font_weight(FontWeight::MEDIUM).child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .right_0()
+                            .w(CELL_OUTLINE)
+                            .bg(t.accent),
+                    )
+                })
                 .child(SharedString::from((row_ix + 1).to_string()));
         }
         let (row, col) = (row_ix as u32, col_ix as u32 - 1);
         let text = self.book.display_value(self.sheet, row, col);
         let style = self.book.cell_style(self.sheet, row, col);
         let align = self.book.display_align(self.sheet, row, col);
-        let range = self.range();
-        let t = tokens(cx);
         let down_view = self.view.clone();
         let move_view = self.view.clone();
         div()
@@ -256,6 +321,8 @@ impl TableDelegate for SheetGrid {
             .flex()
             .items_center()
             .px(SPACE_3)
+            // Vertical gridline; the row's bottom border is the horizontal one.
+            .child(grid_line_right(t.grid_line))
             .child(
                 div()
                     .flex_1()
@@ -282,6 +349,30 @@ impl TableDelegate for SheetGrid {
                         .when(col == range.right, |d| d.border_r_1()),
                 )
             })
+            // The active cell: a strong outline and no fill, even inside a range.
+            .when((row, col) == self.anchor, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .border(CELL_OUTLINE)
+                        .border_color(t.accent),
+                )
+            })
+            // Fill handle (drawn only, not draggable yet) at the selection's
+            // bottom-right corner. Cells clip, so it sits just inside it.
+            .when((row, col) == (range.bottom, range.right), |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .right_0()
+                        .bottom_0()
+                        .size(FILL_HANDLE)
+                        .bg(t.accent)
+                        .border_1()
+                        .border_color(t.bg),
+                )
+            })
             .on_mouse_down(MouseButton::Left, move |e, window, cx| {
                 let _ = down_view.update(cx, |view, cx| {
                     view.cell_mouse_down(row, col, e.modifiers.shift, window, cx)
@@ -305,6 +396,18 @@ impl TableDelegate for SheetGrid {
                 .into()
         })
     }
+}
+
+/// A gridline down the right edge of a cell (absolute, so it costs no width
+/// and the active cell's outline paints over it).
+fn grid_line_right(color: Hsla) -> Div {
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .right_0()
+        .w(GRID_LINE)
+        .bg(color)
 }
 
 /// A Sheets document view.

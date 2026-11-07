@@ -114,7 +114,8 @@ impl CellEditor {
             .flex()
             .items_center()
             .bg(t.bg)
-            .border_1()
+            // Same width as the active cell's outline, which it covers.
+            .border(CELL_OUTLINE)
             .border_color(t.accent)
             .shadow_md()
             // Keep clicks away from the cell and the table underneath.
@@ -127,7 +128,8 @@ impl CellEditor {
                 Input::new(&self.input)
                     .appearance(false)
                     .small()
-                    .px(SPACE_3)
+                    // Text starts where the cell's own text does.
+                    .px(SPACE_3 - CELL_OUTLINE)
                     .w_full(),
             );
         Overlay {
