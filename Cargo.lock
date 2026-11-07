@@ -819,7 +819,7 @@ dependencies = [
  "log",
  "quick-xml 0.42.0",
  "serde",
- "zip",
+ "zip 9.4.1",
 ]
 
 [[package]]
@@ -1478,6 +1478,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "docs_engine"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "docx-rs",
+ "log",
+ "quick-xml 0.41.0",
+ "tempfile",
+ "unicode-segmentation",
+ "zip 8.6.0",
+]
+
+[[package]]
 name = "docs_layout"
 version = "0.0.1"
 dependencies = [
@@ -1489,12 +1502,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "docs_ui"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "docs_engine",
+ "docs_layout",
+ "gpui-kit",
+ "kantor_ui",
+ "log",
+ "skrifa 0.44.0",
+]
+
+[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
 dependencies = [
  "litrs",
+]
+
+[[package]]
+name = "docx-rs"
+version = "0.4.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fdf00e8af6d0b3e92d4bbf9b76f773d8b84ea80f310324ad16cbdc2e653e02c"
+dependencies = [
+ "base64 0.22.1",
+ "crc32fast",
+ "quick-xml 0.41.0",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror 2.0.21",
+ "zip 8.6.0",
 ]
 
 [[package]]
@@ -3473,7 +3515,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "zip",
+ "zip 9.4.1",
 ]
 
 [[package]]
@@ -5362,6 +5404,7 @@ version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
 dependencies = [
+ "encoding_rs",
  "memchr",
 ]
 
@@ -6353,7 +6396,7 @@ dependencies = [
  "ironcalc",
  "ironcalc_base",
  "tempfile",
- "zip",
+ "zip 9.4.1",
 ]
 
 [[package]]
@@ -7230,6 +7273,12 @@ checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 dependencies = [
  "core_maths",
 ]
+
+[[package]]
+name = "typed-path"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54ec2755506471f54baf5e4bb5499d8e510cc1caf271270e778a736bd2d7336c"
 
 [[package]]
 name = "typed-path"
@@ -9017,6 +9066,20 @@ dependencies = [
 
 [[package]]
 name = "zip"
+version = "8.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "typed-path 0.12.4",
+ "zopfli",
+]
+
+[[package]]
+name = "zip"
 version = "9.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23f17fbc870bfac28c6228aed7d6e6df352e26bf7015c4313727e16a7a01ce5e"
@@ -9028,7 +9091,7 @@ dependencies = [
  "libc",
  "memchr",
  "nix",
- "typed-path",
+ "typed-path 0.13.0",
  "windows-sys 0.61.2",
  "zopfli",
 ]
