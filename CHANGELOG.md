@@ -15,6 +15,19 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   clipboard, IME input. New Document is Ctrl+Shift+N. Saving an opened `.docx` rewrites only the
   body and copies every other part unchanged; files with content Docs doesn't model yet (tables,
   images, lists, headers/footers, comments, tracked changes…) show a banner and save to a new file.
+- **Docs: lists, tables and pictures.** Bulleted and numbered lists (Ctrl+Shift+8 / Ctrl+Shift+7,
+  toolbar; Enter continues, Enter on an empty item ends the list, Tab / Shift+Tab change level,
+  Backspace at the start removes the number) with markers drawn in the hanging indent. Tables with
+  merged cells and borders, laid out row by row across pages; Tab moves to the next cell (and adds a
+  row at the end), toolbar grid to insert a table, insert/delete rows and columns, delete table.
+  Inline PNG/JPEG pictures, shown at their size, selectable and deletable like a character; insert a
+  picture from a file. All of it is undoable and saves in place.
+- **Docs: keeps what it can't show yet.** Floating pictures, shapes and text boxes, content
+  controls, page-number and date fields, equations, footnote references, bookmarks, nested tables,
+  headers/footers and unmodelled formatting are carried byte for byte and shown as placeholders, so
+  ordinary Word files now open as fully supported and save in place. Only tracked changes, comments
+  and fields that depend on the document (tables of contents, cross-references) still make Save go
+  to a new file. Page breaks and hyperlinks (editable text) are supported too.
 
 ## [0.1.0] - 2026-11-07
 

@@ -1,7 +1,8 @@
-//! The Docs toolbar: B / I / U, paragraph styles, alignment and zoom, each
-//! showing the state at the caret.
+//! The Docs toolbar: B / I / U, paragraph styles, alignment, lists,
+//! insert table / picture, table tools (when the caret is in a table) and
+//! zoom, each showing the state at the caret.
 
-use docs_engine::{Align, Toggle};
+use docs_engine::{Align, ListKind, TableEdit, Toggle};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::{h_flex, tooltip::Tooltip};
 use gpui_kit::prelude::*;
@@ -47,6 +48,17 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
     let align = view.current_align();
     let is_style = |s: Option<&str>| style.as_deref() == s;
     let zoom_label = format!("{:.0}%", view.zoom() * 100.0);
+    let list = view.current_list();
+    let in_table = view.in_table();
+    let table_button = {
+        let v = cx.entity().downgrade();
+        icon_button("docs-table", Lucide::Table, false, cx)
+            .tooltip(|window, cx| Tooltip::new("Insert table").build(window, cx))
+            .on_click(move |ev, _, cx| {
+                let at = ev.position();
+                let _ = v.update(cx, |v, cx| v.toggle_table_picker(at, cx));
+            })
+    };
     let reset = {
         let view = cx.entity().downgrade();
         div()
@@ -168,6 +180,92 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
             |v, w, cx| v.set_align_doc(Align::Justify, w, cx),
             cx,
         ))
+        .child(separator(cx))
+        .child(tool(
+            "docs-bullets",
+            Lucide::List,
+            "Bulleted list  Ctrl+Shift+8",
+            list == Some(ListKind::Bullet),
+            |v, w, cx| v.toggle_list_doc(ListKind::Bullet, w, cx),
+            cx,
+        ))
+        .child(tool(
+            "docs-numbered",
+            Lucide::ListOrdered,
+            "Numbered list  Ctrl+Shift+7",
+            list == Some(ListKind::Numbered),
+            |v, w, cx| v.toggle_list_doc(ListKind::Numbered, w, cx),
+            cx,
+        ))
+        .child(tool(
+            "docs-outdent",
+            Lucide::ListIndentDecrease,
+            "Decrease list level  Shift+Tab",
+            false,
+            |v, w, cx| v.list_level_doc(-1, w, cx),
+            cx,
+        ))
+        .child(tool(
+            "docs-indent",
+            Lucide::ListIndentIncrease,
+            "Increase list level  Tab",
+            false,
+            |v, w, cx| v.list_level_doc(1, w, cx),
+            cx,
+        ))
+        .child(separator(cx))
+        .child(table_button)
+        .child(tool(
+            "docs-image",
+            Lucide::ImagePlus,
+            "Insert picture (PNG or JPEG)",
+            false,
+            |v, w, cx| v.insert_image_doc(w, cx),
+            cx,
+        ))
+        .when(in_table, |bar| {
+            bar.child(separator(cx))
+                .child(tool(
+                    "docs-row-below",
+                    Lucide::BetweenHorizontalEnd,
+                    "Insert row below",
+                    false,
+                    |v, w, cx| v.table_edit_doc(TableEdit::RowBelow, w, cx),
+                    cx,
+                ))
+                .child(tool(
+                    "docs-col-right",
+                    Lucide::BetweenVerticalEnd,
+                    "Insert column right",
+                    false,
+                    |v, w, cx| v.table_edit_doc(TableEdit::ColumnRight, w, cx),
+                    cx,
+                ))
+                .child(tool(
+                    "docs-del-row",
+                    Lucide::Rows3,
+                    "Delete row",
+                    false,
+                    |v, w, cx| v.table_edit_doc(TableEdit::DeleteRow, w, cx),
+                    cx,
+                ))
+                .child(tool(
+                    "docs-del-col",
+                    Lucide::Columns3,
+                    "Delete column",
+                    false,
+                    |v, w, cx| v.table_edit_doc(TableEdit::DeleteColumn, w, cx),
+                    cx,
+                ))
+                .child(tool(
+                    "docs-del-table",
+                    Lucide::Trash,
+                    "Delete table",
+                    false,
+                    |v, w, cx| v.table_edit_doc(TableEdit::DeleteTable, w, cx),
+                    cx,
+                ))
+        })
         .child(div().flex_1())
         .child(tool(
             "docs-zoom-out",

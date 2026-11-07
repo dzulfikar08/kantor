@@ -2107,14 +2107,14 @@ fn write_paragraph(out: &mut String, p: &Paragraph) {
     flush(out, &mut seg);
 }
 
-fn write_table(out: &mut String, t: &Table, id: u32, paras: &[Paragraph]) {
+fn write_table(out: &mut String, t: &Table, id: u32, paras: &[Paragraph], available: u32) {
     out.push_str("<w:tbl>");
     match &t.tbl_pr {
         Some(x) => out.push_str(x),
         None => out.push_str("<w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>"),
     }
     out.push_str("<w:tblGrid>");
-    for w in t.column_widths(9000) {
+    for w in t.column_widths(available) {
         out.push_str(&format!("<w:gridCol w:w=\"{w}\"/>"));
     }
     out.push_str("</w:tblGrid>");
@@ -2178,7 +2178,7 @@ fn body_xml(doc: &Document) -> String {
                 while j < paras.len() && paras[j].cell.map(|c| c.table) == Some(id) {
                     j += 1;
                 }
-                write_table(&mut out, t, id, &paras[i..j]);
+                write_table(&mut out, t, id, &paras[i..j], doc.content_width());
                 i = j;
             }
             None => {

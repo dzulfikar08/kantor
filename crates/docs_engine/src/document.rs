@@ -389,7 +389,12 @@ impl Document {
     pub fn word_count(&self) -> usize {
         self.paragraphs
             .iter()
-            .map(|p| p.text.split_whitespace().count())
+            .map(|p| {
+                p.text
+                    .split_whitespace()
+                    .filter(|w| w.chars().any(|c| c != OBJECT))
+                    .count()
+            })
             .sum()
     }
 

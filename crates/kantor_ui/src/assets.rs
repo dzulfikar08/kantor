@@ -22,7 +22,18 @@ icon_assets!(
         Heading3,
         Pilcrow,
         ZoomIn,
-        ZoomOut
+        ZoomOut,
+        List,
+        ListOrdered,
+        ListIndentIncrease,
+        ListIndentDecrease,
+        Table,
+        ImagePlus,
+        BetweenHorizontalEnd,
+        BetweenVerticalEnd,
+        Rows3,
+        Columns3,
+        Trash
     ]
 );
 

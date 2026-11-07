@@ -583,6 +583,8 @@ impl Paragraph {
             props: self.props.clone(),
             cell: self.cell,
         };
+        // A section break belongs to the paragraph mark, which moves right.
+        self.props.extras.remove("sectPr");
         right.normalize();
         self.normalize();
         right
@@ -590,6 +592,20 @@ impl Paragraph {
 
     /// Append `other`'s text and runs (keeping `self`'s paragraph formatting).
     pub fn append(&mut self, other: Paragraph) {
+        // Keep a section break that ended the joined paragraph.
+        if !self
+            .props
+            .extras
+            .iter()
+            .any(|x| element_name(x) == "sectPr")
+            && let Some(sect) = other
+                .props
+                .extras
+                .iter()
+                .find(|x| element_name(x) == "sectPr")
+        {
+            self.props.extras.push(sect);
+        }
         if other.text.is_empty() {
             return;
         }
@@ -792,6 +808,19 @@ mod tests {
         let right = p.split_off(1);
         assert_eq!(right.text, "");
         assert_eq!(right.runs[0].props, bold());
+    }
+
+    #[test]
+    fn section_break_moves_with_the_paragraph_mark() {
+        let mut p = Paragraph::new("ab");
+        p.props
+            .extras
+            .push("<w:sectPr><w:type w:val=\"nextPage\"/></w:sectPr>");
+        let right = p.split_off(1);
+        assert!(p.props.extras.is_empty());
+        assert_eq!(right.props.extras.0.len(), 1);
+        p.append(right);
+        assert_eq!(p.props.extras.0.len(), 1, "joined back, kept once");
     }
 
     #[test]
