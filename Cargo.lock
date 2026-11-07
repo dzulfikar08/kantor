@@ -6199,6 +6199,7 @@ dependencies = [
  "ironcalc",
  "ironcalc_base",
  "tempfile",
+ "zip",
 ]
 
 [[package]]

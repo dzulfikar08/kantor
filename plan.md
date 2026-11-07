@@ -32,7 +32,7 @@ Status: **M0 nearly done; Sheets MVP (M1) started**. Written 2026-11-07, last up
 6. **Formatting basics**: bold/italic (Ctrl+B/I — kept free on purpose), number formats, alignment, column widths/row heights saved to xlsx; a per-pane toolbar that goes icon-only when narrow.
 7. ✅ **CSV/TSV open and save** (delimiter detection, BOM/UTF-16/Windows-1252; one sheet, displayed values; a leading `=` stays text) and **read-only `.ods`/`.xls`/`.xlsb` import** via calamine (values, dates, formulas; formulas that don't reproduce the file's cached result are kept as values; Save on an import goes to Save As `name.xlsx`). See `crates/sheets_engine/src/import.rs`. ☐ Open the same workbook in two panes (needs a shared document model; today a split opens a new blank sheet).
 8. **Text layout spike** (M0's last open item): parley vs GPUI text for paged layout → `docs/decisions/0001-text-engine.md`. Gates Docs (M2).
-9. **Corpus + fidelity CI**: 10 files per format in `tests/corpus/` (licences listed), LibreOffice-headless reference PDFs in CI.
+9. ◐ **Corpus + fidelity CI**: ✅ `.xlsx`: 12 generated CC0 files in `tests/corpus/xlsx/` (`scripts/corpus/gen_xlsx.py`), round-trip test `crates/sheets_engine/tests/corpus.rs` with known IronCalc gaps in `known-gaps.tsv`, `fidelity.yml` (report + LibreOffice-headless PDFs as an artifact). ☐ `.docx`/`.pptx` corpora with Docs/Slides; ☐ pixel-diff score.
 10. First tagged release `v0.1.0` (Sheets MVP) and an AUR `kantor-bin`.
 
 **Known gaps / caveats:** Docs and Slides are placeholders ("coming soon"). Split-right uses the dashboard icon (GPUI Kit's default icon set has no columns icon). Window title/decorations come from Hyprland (server-side); no in-app window buttons, by design.
@@ -285,7 +285,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 6. ◐ Run the nightly on the Mac: ✅ Vulkan on Asahi, ✅ 16K pages, ✅ GPU ready in ~210 ms, ✅ 39 MB binary; ⚠ wgpu OOM under memory pressure; ☐ fractional scale 1.6, ☐ fcitx5, ☐ RSS.
 7. ☐ Open issues for every remaining M0 checkbox (see §0 *Next up*).
 8. ☐ Text layout spike → §0 item 8.
-9. ☐ Corpus → §0 item 9.
+9. ◐ Corpus → §0 item 9. `.xlsx` done; IronCalc 0.9.1 drops comments and custom properties on save, writes a non-OOXML `#ERROR!` for 3-D refs, loses dashed/hair borders (full list: `tests/corpus/xlsx/known-gaps.tsv`).
 10. ✅ Shell and styling modelled on Voltrus Tools (`docs/reference-voltrus-tools.md`): `kantor_ui` metrics + Omarchy-derived tokens, tab strip as titlebar, status bar, Ctrl+K command palette with fuzzy search, cached chrome views. Then: sidebar + inspector (resizable), split panes with draggable dividers, saved workspace (tabs, layouts, panel sizes, recent files), responsive tab strip and formula bar, theme picker (Omarchy + 907 Ghostty themes, live preview) and UI font picker (SF Pro when installed).
 11. ✅ Renderer memory patch: vendored `gpui-pre-wgpu` allocates path textures only when used, no path MSAA by default.
 12. ✅ Fixes after first use on the Mac: typing directly into cells; palette rows fill the panel width.
