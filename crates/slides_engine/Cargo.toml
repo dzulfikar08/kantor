@@ -1,0 +1,26 @@
+[package]
+name = "slides_engine"
+description = "Kantor Slides presentation model, editing commands and .pptx I/O (no GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+# Rgb, Position/Selection, grapheme helpers and the font substitution table.
+docs_engine.workspace = true
+log.workspace = true
+# Reading: byte ranges of every element, so unmodelled XML is copied verbatim.
+roxmltree.workspace = true
+tempfile.workspace = true
+unicode-segmentation = "1"
+zip.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+zip.workspace = true
+roxmltree.workspace = true
