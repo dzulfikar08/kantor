@@ -19,12 +19,17 @@
 //!
 //! Formatting (bold/italic/underline/strikethrough, alignment, number formats)
 //! applies to the whole range as one undo step; see [`toolbar`]. Column widths
-//! come from the workbook and a resize is saved back to it. Row heights are
-//! kept in the file but not drawn: the table has one height for every row.
+//! come from the workbook and a resize (or a double-click autofit on the
+//! header border) is saved back to it. Row heights are kept in the file but
+//! not drawn: the table has one height for every row.
+//!
+//! Header selection, Ctrl+arrows, the fill handle, inserting/deleting rows and
+//! columns, frozen panes and the status-bar sums are in [`grid_ops`].
 
 extern crate gpui_kit as gpui;
 
 mod cell_editor;
+mod grid_ops;
 
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -46,6 +51,8 @@ use sheets_engine::{
 mod toolbar;
 
 use cell_editor::{CellEditor, EditMode};
+pub use grid_ops::GridCommand;
+use grid_ops::{GridDrag, Header, Span};
 pub use sheets_engine::{HAlign, NumberFormat};
 
 actions!(
@@ -155,6 +162,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("super-u", ToggleUnderline, Some(GRID_CONTEXT)),
     ]);
     cell_editor::bind_keys(cx);
+    grid_ops::bind_keys(cx);
 }
 
 /// Feeds one sheet of a [`Workbook`] to the table.
@@ -169,6 +177,10 @@ pub struct SheetGrid {
     /// the opposite corner, in sheet coordinates `(row, col)`.
     anchor: (u32, u32),
     end: (u32, u32),
+    /// Whether the range is whole columns or rows (see [`grid_ops`]).
+    span: Span,
+    /// The range a fill-handle drag would cover, drawn as a preview.
+    fill_preview: Option<CellRange>,
     /// The in-cell editor, drawn over its cell while an edit is in progress.
     editor: Option<CellEditor>,
 }
@@ -183,6 +195,8 @@ impl SheetGrid {
             view,
             anchor: (0, 0),
             end: (0, 0),
+            span: Span::Cells,
+            fill_preview: None,
             editor: None,
         };
         grid.resize();
@@ -190,7 +204,7 @@ impl SheetGrid {
     }
 
     fn range(&self) -> CellRange {
-        CellRange::from_corners(self.anchor, self.end)
+        self.span.range(self.anchor, self.end)
     }
 
     /// Recompute grid extents: the used range plus headroom, never below the minimum.
@@ -220,15 +234,30 @@ impl TableDelegate for SheetGrid {
                 // `render_td` / `render_th` fill the cell (header background).
                 .p_0()
         } else {
-            let name = column_name(col_ix as u32 - 1);
-            let width = self.book.column_width(self.sheet, col_ix as u32 - 1);
+            let col = col_ix as u32 - 1;
+            let name = column_name(col);
+            let width = self.book.column_width(self.sheet, col);
+            let frozen = col < self.book.frozen(self.sheet).1;
             Column::new(SharedString::from(name.clone()), name)
                 .width(px(width as f32))
                 .min_width(px(24.))
                 .resizable(true)
+                // Frozen columns stay put while the rest scrolls.
+                .when(frozen, |c| c.fixed_left())
                 // `render_td` fills the whole cell (to draw the range) and pads itself.
                 .p_0()
         }
+    }
+
+    /// Double-click on a column's right border: the width of its widest cell.
+    fn fit_column(
+        &mut self,
+        col_ix: usize,
+        window: &mut Window,
+        _: &mut Context<TableState<Self>>,
+    ) -> Option<Pixels> {
+        let col = (col_ix as u32).checked_sub(1)?;
+        grid_ops::fit_width(&self.book, self.sheet, col, window)
     }
 
     /// Column letters, centred; the columns of the selection are highlighted
@@ -244,12 +273,22 @@ impl TableDelegate for SheetGrid {
         // table reserves for a sort icon.
         let cell = div().absolute().inset_0();
         if col_ix == 0 {
-            return cell;
+            // The corner selects everything.
+            let all = self.range() == CellRange::all();
+            let cell = cell
+                .id("select-all")
+                .cursor_pointer()
+                .when(all, |d| d.bg(t.grid_header_active))
+                .hover(|s| s.bg(t.grid_header_active));
+            return grid_ops::corner_element(cell, &self.view);
         }
         let col = col_ix as u32 - 1;
         let range = self.range();
         let active = (range.left..=range.right).contains(&col);
-        cell.flex()
+        let whole = active && range.is_whole_columns();
+        let cell = cell
+            .id(("col-head", col_ix))
+            .flex()
             .items_center()
             .justify_center()
             .child(SharedString::from(column_name(col)))
@@ -268,6 +307,8 @@ impl TableDelegate for SheetGrid {
                             .bg(t.accent),
                     )
             })
+            .when(whole, |d| d.bg(t.accent_soft).text_color(t.accent));
+        grid_ops::header_element(cell, Header::Column(col), &self.view)
     }
 
     fn render_td(
@@ -283,7 +324,9 @@ impl TableDelegate for SheetGrid {
             // Row-number gutter, highlighted for the rows of the selection.
             let row = row_ix as u32;
             let active = (range.top..=range.bottom).contains(&row);
-            return div()
+            let whole = active && range.is_whole_rows();
+            let gutter = div()
+                .id(("row-head", row_ix))
                 .size_full()
                 .relative()
                 .flex()
@@ -307,7 +350,9 @@ impl TableDelegate for SheetGrid {
                             .bg(t.accent),
                     )
                 })
+                .when(whole, |d| d.bg(t.accent_soft).text_color(t.accent))
                 .child(SharedString::from((row_ix + 1).to_string()));
+            return grid_ops::header_element(gutter, Header::Row(row), &self.view);
         }
         let (row, col) = (row_ix as u32, col_ix as u32 - 1);
         let text = self.book.display_value(self.sheet, row, col);
@@ -315,6 +360,8 @@ impl TableDelegate for SheetGrid {
         let align = self.book.display_align(self.sheet, row, col);
         let down_view = self.view.clone();
         let move_view = self.view.clone();
+        let fill_view = self.view.clone();
+        let frozen_rows = self.book.frozen(self.sheet).0;
         div()
             .size_full()
             .relative()
@@ -359,8 +406,38 @@ impl TableDelegate for SheetGrid {
                         .border_color(t.accent),
                 )
             })
-            // Fill handle (drawn only, not draggable yet) at the selection's
-            // bottom-right corner. Cells clip, so it sits just inside it.
+            // Where a fill-handle drag would fill: an outline, no fill.
+            .when_some(
+                self.fill_preview.filter(|p| p.contains(row, col)),
+                |d, p| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .border_dashed()
+                            .border_color(t.accent)
+                            .when(row == p.top, |d| d.border_t_1())
+                            .when(row == p.bottom, |d| d.border_b_1())
+                            .when(col == p.left, |d| d.border_l_1())
+                            .when(col == p.right, |d| d.border_r_1()),
+                    )
+                },
+            )
+            // Frozen rows: a stronger line under the last one. (The table
+            // can't pin rows yet; frozen columns are pinned.)
+            .when(frozen_rows > 0 && row + 1 == frozen_rows, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .h(GRID_LINE)
+                        .bg(t.border_strong),
+                )
+            })
+            // Fill handle at the selection's bottom-right corner; drag it
+            // to fill. Cells clip, so it sits just inside the corner.
             .when((row, col) == (range.bottom, range.right), |d| {
                 d.child(
                     div()
@@ -370,7 +447,13 @@ impl TableDelegate for SheetGrid {
                         .size(FILL_HANDLE)
                         .bg(t.accent)
                         .border_1()
-                        .border_color(t.bg),
+                        .border_color(t.bg)
+                        .cursor_crosshair()
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            // Not a click on the cell under it.
+                            cx.stop_propagation();
+                            let _ = fill_view.update(cx, |view, cx| view.fill_handle_down(cx));
+                        }),
                 )
             })
             .on_mouse_down(MouseButton::Left, move |e, window, cx| {
@@ -387,6 +470,7 @@ impl TableDelegate for SheetGrid {
                 self.editor.as_ref().filter(|e| e.cell == (row, col)),
                 |d, editor| d.child(editor.render(cx)),
             )
+            .into_any_element()
     }
 
     fn cell_label(&self, row_ix: usize, col_ix: usize, _: &App) -> Option<SharedString> {
@@ -425,6 +509,11 @@ pub struct SheetsView {
     edit_mode: EditMode,
     /// A mouse drag that started on a cell is extending the range.
     dragging: bool,
+    /// A drag that started on a header or the fill handle.
+    grid_drag: Option<GridDrag>,
+    /// The range to apply when the next `SelectCell` arrives (see
+    /// `grid_ops::select_range`).
+    pending_selection: Option<((u32, u32), Span)>,
     status: SharedString,
     /// Last measured pane width (for compact layout).
     width: Rc<Cell<Pixels>>,
@@ -481,6 +570,8 @@ impl SheetsView {
             editing: None,
             edit_mode: EditMode::Edit,
             dragging: false,
+            grid_drag: None,
+            pending_selection: None,
             status: status.into(),
             width: Rc::new(Cell::new(px(0.))),
             untitled_name: None,
@@ -513,13 +604,16 @@ impl SheetsView {
         match event {
             TableEvent::SelectCell(row, col) if *col > 0 => {
                 self.selected = (*row as u32, *col as u32 - 1);
-                // A new active cell starts a new range.
+                // A new active cell starts a new range (unless a header
+                // click asked for one).
                 let cell = self.selected;
+                let (end, span) = self.pending_selection.take().unwrap_or((cell, Span::Cells));
                 self.table.update(cx, |table, cx| {
                     let grid = table.delegate_mut();
-                    if grid.anchor != cell || grid.end != cell {
+                    if grid.anchor != cell || grid.end != end || grid.span != span {
                         grid.anchor = cell;
-                        grid.end = cell;
+                        grid.end = end;
+                        grid.span = span;
                         cx.notify();
                     }
                 });
@@ -575,6 +669,8 @@ impl SheetsView {
         }
         match ks.key.as_str() {
             "enter" | "f2" => self.start_edit(None, window, cx),
+            // Backspace clears a range at once; on one cell it clears and edits.
+            "backspace" if !self.range(cx).is_single() => self.clear_selected(window, cx),
             "backspace" => self.start_edit(Some(String::new()), window, cx),
             "delete" => self.clear_selected(window, cx),
             _ => match ks.key_char.as_deref() {
@@ -679,7 +775,9 @@ impl SheetsView {
 
     /// Delete: clear every cell in the selected range (one undo step).
     fn clear_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let range = self.range(cx);
+        let Some(range) = self.op_range(cx) else {
+            return;
+        };
         let result = self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
             let sheet = grid.sheet;
@@ -709,9 +807,21 @@ impl SheetsView {
         }
         self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
-            let row = (grid.end.0 as i64 + d_row).clamp(0, grid.rows as i64 - 1) as u32;
-            let col = (grid.end.1 as i64 + d_col).clamp(0, grid.cols as i64 - 1) as u32;
+            // Only the axis that moves is kept inside the grid (a whole
+            // column's end row is the sheet's last).
+            let step = |at: u32, d: i64, len: u32| {
+                if d == 0 {
+                    at
+                } else {
+                    (at as i64 + d).clamp(0, len as i64 - 1) as u32
+                }
+            };
+            let row = step(grid.end.0, d_row, grid.rows);
+            let col = step(grid.end.1, d_col, grid.cols);
             grid.end = (row, col);
+            if grid.span == Span::All {
+                grid.span = Span::Cells;
+            }
             if d_row != 0 {
                 table
                     .vertical_scroll_handle
@@ -771,7 +881,7 @@ impl SheetsView {
 
     /// The mouse moved over a cell with the left button held.
     fn cell_drag(&mut self, row: u32, col: u32, cx: &mut Context<Self>) {
-        if !self.dragging {
+        if self.drag_over(row, col, cx) || !self.dragging {
             return;
         }
         let changed = self.table.update(cx, |table, cx| {
@@ -802,7 +912,7 @@ impl SheetsView {
 
     /// Put the selected range on the clipboard as tab-separated inputs.
     fn copy_range(&mut self, cx: &mut Context<Self>) -> CellRange {
-        let range = self.range(cx);
+        let range = self.op_range(cx).unwrap_or_else(|| self.range(cx));
         let text = {
             let grid = self.table.read(cx).delegate();
             grid.book.range_tsv(grid.sheet, range)
@@ -849,6 +959,7 @@ impl SheetsView {
             let res = grid.book.paste_tsv(sheet, row, col, &text);
             if let Ok(Some(range)) = &res {
                 grid.end = (range.bottom, range.right);
+                grid.span = Span::Cells;
             }
             grid.resize();
             table.refresh(cx);
@@ -892,7 +1003,9 @@ impl SheetsView {
             }
             Format::Number(f) => (StyleChange::NumberFormat(f), f.label()),
         };
-        let range = self.range(cx);
+        let Some(range) = self.op_range(cx) else {
+            return;
+        };
         let result = self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
             let sheet = grid.sheet;
@@ -926,7 +1039,7 @@ impl SheetsView {
     }
 
     /// The user resized a column (or double-clicked to fit it): store the new
-    /// width in the workbook, one undo step per changed column.
+    /// widths in the workbook, as one undo step.
     fn save_column_widths(
         &mut self,
         widths: &[Pixels],
@@ -937,14 +1050,13 @@ impl SheetsView {
             let grid = table.delegate_mut();
             let sheet = grid.sheet;
             // Table column 0 is the row-number gutter.
-            for (ix, width) in widths.iter().enumerate().skip(1) {
-                let col = ix as u32 - 1;
-                let width = f64::from(f32::from(*width));
-                if (grid.book.column_width(sheet, col) - width).abs() >= 0.5 {
-                    grid.book.set_column_width(sheet, col, col, width)?;
-                }
-            }
-            anyhow::Ok(())
+            let widths: Vec<(u32, f64)> = widths
+                .iter()
+                .enumerate()
+                .skip(1)
+                .map(|(ix, w)| (ix as u32 - 1, f64::from(f32::from(*w))))
+                .collect();
+            grid.book.set_column_widths(sheet, &widths)
         });
         if let Err(err) = result {
             self.status = format!("{err:#}").into();
@@ -1372,7 +1484,7 @@ impl Render for SheetsView {
             )
             // Grid
             .child(
-                div()
+                self.grid_actions(div(), cx)
                     .flex_1()
                     .min_h_0()
                     .key_context(GRID_CONTEXT)
@@ -1390,8 +1502,14 @@ impl Render for SheetsView {
                     .on_action(cx.listener(Self::toggle_underline))
                     // A drag only extends the range if it started on a cell
                     // (cells set `dragging` after this capture listener runs).
-                    .capture_any_mouse_down(cx.listener(|this, _, _, _| this.dragging = false))
-                    .capture_any_mouse_up(cx.listener(|this, _, _, _| this.dragging = false))
+                    .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
+                        this.dragging = false;
+                        this.reset_grid_drag(cx);
+                    }))
+                    .capture_any_mouse_up(cx.listener(|this, _, window, cx| {
+                        this.dragging = false;
+                        this.end_grid_drag(window, cx);
+                    }))
                     .on_key_down(cx.listener(Self::on_grid_key))
                     .child(DataTable::new(&self.table).bordered(false).small()),
             )

@@ -16,7 +16,7 @@ use super::Workspace;
 use super::doc::CommonFormat;
 use crate::actions::*;
 use crate::theme;
-use sheets_ui::{Format, NumberFormat};
+use sheets_ui::{Format, GridCommand, NumberFormat};
 
 /// A palette command.
 pub(super) struct Command {
@@ -210,6 +210,156 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
                 v.format_doc(Format::Number(NumberFormat::Date), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Row Above",
+        detail: "Sheets · rows of the selection",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::InsertRowsAbove, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Row Below",
+        detail: "Sheets · rows of the selection",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::InsertRowsBelow, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Delete Rows",
+        detail: "Sheets · rows of the selection",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::DeleteRows, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Column Left",
+        detail: "Sheets · columns of the selection",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::InsertColumnsLeft, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Column Right",
+        detail: "Sheets · columns of the selection",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::InsertColumnsRight, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Delete Columns",
+        detail: "Sheets · columns of the selection",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::DeleteColumns, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Autofit Column Width",
+        detail: "Sheets · fit the selected columns to their content",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::AutofitColumns, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Standard Column Width",
+        detail: "Sheets · reset the selected columns",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::ResetColumnWidth, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Freeze Top Row",
+        detail: "Sheets · keep row 1 in view",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::FreezeTopRow, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Freeze First Column",
+        detail: "Sheets · keep column A in view",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::FreezeFirstColumn, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Freeze Panes",
+        detail: "Sheets · rows above and columns left of the active cell",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::FreezePanes, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Unfreeze Panes",
+        detail: "Sheets",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::Unfreeze, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Select All Cells",
+        detail: "Sheets",
+        keys: "Ctrl A",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::SelectAll, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Fill Down",
+        detail: "Sheets · copy the top row down the selection",
+        keys: "Ctrl D",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::FillDown, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Fill Right",
+        detail: "Sheets · copy the left column across the selection",
+        keys: "Ctrl R",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::FillRight, w, cx)
             })
         },
     },
