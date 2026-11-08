@@ -17,6 +17,10 @@
 //! (inputs, so formulas copy as typed). Cut copies and clears the range at
 //! once, rather than waiting for the paste.
 //!
+//! Formulas get help while they are typed: clicking or arrowing to cells
+//! inserts their references, references are coloured, F4 toggles `$`, and
+//! function names autocomplete; see [`point`].
+//!
 //! Formatting (bold/italic/underline/strikethrough, alignment, number formats)
 //! applies to the whole range as one undo step; see [`toolbar`]. Column widths
 //! come from the workbook and a resize is saved back to it. Row heights are
@@ -25,8 +29,10 @@
 extern crate gpui_kit as gpui;
 
 mod cell_editor;
+mod point;
 
 use std::cell::Cell;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -155,6 +161,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("super-u", ToggleUnderline, Some(GRID_CONTEXT)),
     ]);
     cell_editor::bind_keys(cx);
+    point::bind_keys(cx);
 }
 
 /// Feeds one sheet of a [`Workbook`] to the table.
@@ -171,6 +178,10 @@ pub struct SheetGrid {
     end: (u32, u32),
     /// The in-cell editor, drawn over its cell while an edit is in progress.
     editor: Option<CellEditor>,
+    /// References in the formula being edited: cells on this sheet with their
+    /// colour slots, and every reference's place in the text.
+    ref_marks: Vec<(CellRange, usize)>,
+    ref_spans: Vec<(Range<usize>, usize)>,
 }
 
 impl SheetGrid {
@@ -184,6 +195,8 @@ impl SheetGrid {
             anchor: (0, 0),
             end: (0, 0),
             editor: None,
+            ref_marks: Vec::new(),
+            ref_spans: Vec::new(),
         };
         grid.resize();
         grid
@@ -198,6 +211,14 @@ impl SheetGrid {
         let (r, c) = self.book.used_size(self.sheet);
         self.rows = (r + 200).max(MIN_ROWS);
         self.cols = (c + 10).max(MIN_COLS);
+    }
+
+    /// The formula's references with their colours, for the editors.
+    fn ref_span_colors(&self, t: &kantor_ui::Tokens) -> Vec<(Range<usize>, Hsla)> {
+        self.ref_spans
+            .iter()
+            .map(|(span, slot)| (span.clone(), point::ref_color(t, *slot)))
+            .collect()
     }
 }
 
@@ -315,6 +336,23 @@ impl TableDelegate for SheetGrid {
         let align = self.book.display_align(self.sheet, row, col);
         let down_view = self.view.clone();
         let move_view = self.view.clone();
+        // References of the formula being edited: coloured border and fill.
+        let marks = self
+            .ref_marks
+            .iter()
+            .filter(|(r, _)| r.contains(row, col))
+            .map(|(r, slot)| {
+                let color = point::ref_color(&t, *slot);
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(color.opacity(0.12))
+                    .border_color(color)
+                    .when(row == r.top, |d| d.border_t(CELL_OUTLINE))
+                    .when(row == r.bottom, |d| d.border_b(CELL_OUTLINE))
+                    .when(col == r.left, |d| d.border_l(CELL_OUTLINE))
+                    .when(col == r.right, |d| d.border_r(CELL_OUTLINE))
+            });
         div()
             .size_full()
             .relative()
@@ -349,6 +387,7 @@ impl TableDelegate for SheetGrid {
                         .when(col == range.right, |d| d.border_r_1()),
                 )
             })
+            .children(marks)
             // The active cell: a strong outline and no fill, even inside a range.
             .when((row, col) == self.anchor, |d| {
                 d.child(
@@ -378,14 +417,16 @@ impl TableDelegate for SheetGrid {
                     view.cell_mouse_down(row, col, e.modifiers.shift, window, cx)
                 });
             })
-            .on_mouse_move(move |e, _, cx| {
+            .on_mouse_move(move |e, window, cx| {
                 if e.pressed_button == Some(MouseButton::Left) {
-                    let _ = move_view.update(cx, |view, cx| view.cell_drag(row, col, cx));
+                    let _ = move_view.update(cx, |view, cx| view.cell_drag(row, col, window, cx));
                 }
             })
             .when_some(
-                self.editor.as_ref().filter(|e| e.cell == (row, col)),
-                |d, editor| d.child(editor.render(cx)),
+                self.editor
+                    .as_ref()
+                    .filter(|e| e.cell == (row, col) && e.sheet == self.sheet),
+                |d, editor| d.child(editor.render(self.ref_span_colors(&t), cx)),
             )
     }
 
@@ -423,8 +464,16 @@ pub struct SheetsView {
     editing: Option<(u32, u32)>,
     /// Whether arrows move the caret or commit (Excel's Edit / Enter mode).
     edit_mode: EditMode,
+    /// The sheet of the cell being edited (the grid may show another one
+    /// while pointing).
+    edit_sheet: u32,
+    /// The reference last inserted by pointing, and the function list.
+    point: Option<point::PointRef>,
+    completion: Option<point::Completion>,
     /// A mouse drag that started on a cell is extending the range.
     dragging: bool,
+    /// A mouse drag that started by pointing is growing the reference.
+    point_dragging: bool,
     status: SharedString,
     /// Last measured pane width (for compact layout).
     width: Rc<Cell<Pixels>>,
@@ -480,7 +529,11 @@ impl SheetsView {
             selected: (0, 0),
             editing: None,
             edit_mode: EditMode::Edit,
+            edit_sheet: 0,
+            point: None,
+            completion: None,
             dragging: false,
+            point_dragging: false,
             status: status.into(),
             width: Rc::new(Cell::new(px(0.))),
             untitled_name: None,
@@ -552,6 +605,7 @@ impl SheetsView {
                     let text = self.formula.read(cx).value();
                     self.cell_input
                         .update(cx, |input, cx| input.set_value(text, window, cx));
+                    self.refresh_refs(cx);
                 }
             }
             InputEvent::Change => self.mirror_formula(window, cx),
@@ -628,7 +682,15 @@ impl SheetsView {
             cx.propagate();
             return;
         }
+        if self.dismiss_completion(cx) {
+            return;
+        }
+        let edit_sheet = self.edit_sheet;
         self.set_editing(None, cx);
+        if self.grid_sheet(cx) != edit_sheet {
+            self.show_sheet(edit_sheet, cx);
+            self.select_cell(self.selected.0, self.selected.1, cx);
+        }
         self.load_selected_into_formula(window, cx);
         self.focus_grid(window, cx);
         self.status = "Edit cancelled".into();
@@ -648,19 +710,21 @@ impl SheetsView {
             return;
         };
         let value = self.edit_value(window, cx);
+        let sheet = self.edit_sheet;
         self.set_editing(None, cx);
-        let changed = {
-            let grid = self.table.read(cx).delegate();
-            grid.book.input(grid.sheet, row, col) != value
-        };
+        let changed = self.table.read(cx).delegate().book.input(sheet, row, col) != value;
         if changed {
-            let result = self.set_cell(row, col, &value, cx);
+            let result = self.set_cell(sheet, row, col, &value, cx);
             self.status = match result {
                 Ok(()) => format!("{} updated", cell_name(row, col)).into(),
                 Err(err) => format!("{err:#}").into(),
             };
         }
         if let Some(step) = step {
+            // Pointing may have left another sheet on screen.
+            if self.grid_sheet(cx) != sheet {
+                self.show_sheet(sheet, cx);
+            }
             let (rows, cols) = {
                 let grid = self.table.read(cx).delegate();
                 (grid.rows, grid.cols)
@@ -751,6 +815,22 @@ impl SheetsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // While a formula is being typed, a click can insert the cell's
+        // reference instead (Shift+click grows the pointed one into a range).
+        if self.editing.is_some() {
+            let sheet = self.grid_sheet(cx);
+            let anchor = self
+                .live_point(window, cx)
+                .filter(|p| shift && p.sheet == sheet)
+                .map_or((row, col), |p| p.anchor);
+            if self.point_to(anchor, (row, col), window, cx) {
+                // Keep focus in the editor and the table from selecting.
+                window.prevent_default();
+                cx.stop_propagation();
+                self.point_dragging = true;
+                return;
+            }
+        }
         self.dragging = true;
         if !shift {
             self.select_cell(row, col, cx);
@@ -770,7 +850,15 @@ impl SheetsView {
     }
 
     /// The mouse moved over a cell with the left button held.
-    fn cell_drag(&mut self, row: u32, col: u32, cx: &mut Context<Self>) {
+    fn cell_drag(&mut self, row: u32, col: u32, window: &mut Window, cx: &mut Context<Self>) {
+        if self.point_dragging {
+            if let Some(point) = self.live_point(window, cx)
+                && point.end != (row, col)
+            {
+                self.point_to(point.anchor, (row, col), window, cx);
+            }
+            return;
+        }
         if !self.dragging {
             return;
         }
@@ -1000,6 +1088,7 @@ impl SheetsView {
 
     fn set_cell(
         &mut self,
+        sheet: u32,
         row: u32,
         col: u32,
         value: &str,
@@ -1007,7 +1096,6 @@ impl SheetsView {
     ) -> anyhow::Result<()> {
         self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
-            let sheet = grid.sheet;
             let res = grid.book.set_input(sheet, row, col, value);
             grid.resize();
             table.refresh(cx);
@@ -1027,8 +1115,24 @@ impl SheetsView {
         cx.notify();
     }
 
+    /// A sheet tab was clicked. While a formula is pointing, the edit goes on
+    /// (see [`point`]); any other edit is committed first.
     fn select_sheet(&mut self, sheet: u32, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_editing(None, cx);
+        if self.editing.is_some() {
+            if self.can_point(window, cx) {
+                self.point_to_sheet(sheet, window, cx);
+                return;
+            }
+            self.commit_edit(None, window, cx);
+        }
+        self.show_sheet(sheet, cx);
+        self.select_cell(0, 0, cx);
+        self.load_selected_into_formula(window, cx);
+        self.focus_grid(window, cx);
+    }
+
+    /// Show `sheet` in the grid, leaving the selection and any edit alone.
+    fn show_sheet(&mut self, sheet: u32, cx: &mut Context<Self>) {
         self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
             grid.sheet = sheet;
@@ -1037,9 +1141,7 @@ impl SheetsView {
             table.refresh(cx);
             cx.notify();
         });
-        self.select_cell(0, 0, cx);
-        self.load_selected_into_formula(window, cx);
-        self.focus_grid(window, cx);
+        self.refresh_refs(cx);
     }
 
     pub fn cell_info(&self, cx: &App) -> CellInfo {
@@ -1288,8 +1390,15 @@ impl SheetsView {
 }
 
 impl Render for SheetsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = tokens(cx);
+        let completion = self.render_completion(window, cx);
+        // The bar colours references only while it holds the edit.
+        let bar_refs = if self.editing.is_some() {
+            self.table.read(cx).delegate().ref_span_colors(&t)
+        } else {
+            Vec::new()
+        };
         let tabs = self.render_sheet_tabs(cx);
         let editing = self.editing.is_some();
         let width = self.width.get();
@@ -1312,6 +1421,7 @@ impl Render for SheetsView {
         };
 
         let root = self.editor_actions(v_flex(), cx);
+        let root = self.point_actions(root, cx);
         root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
@@ -1366,8 +1476,10 @@ impl Render for SheetsView {
                     .child(
                         div()
                             .flex_1()
+                            .relative()
                             .key_context(cell_editor::FORMULA_BAR_CONTEXT)
-                            .child(Input::new(&self.formula).small()),
+                            .child(Input::new(&self.formula).small())
+                            .child(point::colored_refs(self.formula.clone(), bar_refs)),
                     ),
             )
             // Grid
@@ -1390,8 +1502,14 @@ impl Render for SheetsView {
                     .on_action(cx.listener(Self::toggle_underline))
                     // A drag only extends the range if it started on a cell
                     // (cells set `dragging` after this capture listener runs).
-                    .capture_any_mouse_down(cx.listener(|this, _, _, _| this.dragging = false))
-                    .capture_any_mouse_up(cx.listener(|this, _, _, _| this.dragging = false))
+                    .capture_any_mouse_down(cx.listener(|this, _, _, _| {
+                        this.dragging = false;
+                        this.point_dragging = false;
+                    }))
+                    .capture_any_mouse_up(cx.listener(|this, _, _, _| {
+                        this.dragging = false;
+                        this.point_dragging = false;
+                    }))
                     .on_key_down(cx.listener(Self::on_grid_key))
                     .child(DataTable::new(&self.table).bordered(false).small()),
             )
@@ -1406,5 +1524,6 @@ impl Render for SheetsView {
                     .border_color(t.border)
                     .child(tabs),
             )
+            .children(completion)
     }
 }
