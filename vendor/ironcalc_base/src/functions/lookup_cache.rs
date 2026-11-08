@@ -141,6 +141,9 @@ pub(crate) struct SearchVector {
     /// The length of the whole vector. The positions from `values.len()` on lie
     /// beyond the used area and are empty cells.
     len: usize,
+    /// The length up to the last cell that is not empty: what approximate
+    /// (binary) searches look at.
+    sorted_len: usize,
     /// Lowercase text to first and last position, for text lookups in
     /// `ExactMode::Wildcard`.
     lowercase: OnceLock<HashMap<String, (usize, usize)>>,
@@ -154,9 +157,14 @@ pub(crate) struct SearchVector {
 impl SearchVector {
     pub(crate) fn new(values: Vec<CalcResult>, len: usize, indexed: bool) -> SearchVector {
         debug_assert!(values.len() <= len);
+        let sorted_len = values
+            .iter()
+            .rposition(|v| !matches!(v, CalcResult::EmptyCell))
+            .map_or(0, |p| p + 1);
         SearchVector {
             values,
             len,
+            sorted_len,
             lowercase: OnceLock::new(),
             compare: OnceLock::new(),
             equal: OnceLock::new(),
@@ -164,8 +172,10 @@ impl SearchVector {
         }
     }
 
-    pub(crate) fn len(&self) -> usize {
-        self.len
+    /// The length approximate matches search: the vector without its trailing
+    /// empty cells.
+    pub(crate) fn sorted_len(&self) -> usize {
+        self.sorted_len
     }
 
     /// The value at `index`, which must be below `len()`.
@@ -320,11 +330,16 @@ impl SearchVector {
     }
 }
 
-/// `binary_search_on_array` over a search vector, empty cells past the used
-/// area included.
+/// `binary_search_on_array` over a search vector without its trailing empty
+/// cells.
+///
+/// KANTOR PATCH (Excel compatibility): upstream searched the whole range, and
+/// read the empty cells below the data as 0 or "" (`compare_values`), so an
+/// approximate VLOOKUP or MATCH over `A:B`, or over a range longer than its
+/// data, could land on a blank row. Excel ignores them.
 pub(crate) fn binary_search_on_vector(target: &CalcResult, vector: &SearchVector) -> i32 {
     let mut l = 0;
-    let mut r = vector.len();
+    let mut r = vector.sorted_len();
     while l < r {
         let m = (l + r) / 2;
         match compare_values(vector.get(m), target) {
@@ -697,17 +712,28 @@ mod tests {
     }
 
     #[test]
-    fn binary_search_sees_the_empty_tail() {
-        let values = vec![CalcResult::Number(1.0), CalcResult::Number(5.0)];
-        let vector = SearchVector::new(values.clone(), 6, true);
-        let mut full = values;
-        full.resize(6, CalcResult::EmptyCell);
+    fn binary_search_ignores_trailing_blanks() {
+        let data = vec![
+            CalcResult::Number(1.0),
+            CalcResult::EmptyCell,
+            CalcResult::Number(5.0),
+        ];
+        let mut values = data.clone();
+        values.extend([CalcResult::EmptyCell, CalcResult::EmptyCell]);
+        // Two blank cells in the used area and three past it.
+        let vector = SearchVector::new(values, 8, true);
+        assert_eq!(vector.sorted_len(), 3);
         for target in [-1.0, 0.0, 1.0, 3.0, 5.0, 9.0] {
             let target = CalcResult::Number(target);
             assert_eq!(
                 binary_search_on_vector(&target, &vector),
-                crate::functions::binary_search::binary_search_on_array(&target, &full)
+                crate::functions::binary_search::binary_search_on_array(&target, &data)
             );
         }
+        let blank = SearchVector::new(vec![CalcResult::EmptyCell], 4, true);
+        assert_eq!(
+            binary_search_on_vector(&CalcResult::Number(1.0), &blank),
+            -2
+        );
     }
 }

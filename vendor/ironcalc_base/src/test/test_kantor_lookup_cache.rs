@@ -184,7 +184,7 @@ fn hlookup_by_row() {
 /// Approximate match over a sorted column, and the empty rows below it that a
 /// whole-column range includes.
 #[test]
-fn approximate_match_is_unaffected() {
+fn approximate_match_ignores_trailing_blanks() {
     let model = same_with_and_without_cache(|model| {
         for i in 1..=50 {
             model._set(&format!("A{i}"), &format!("{}", i * 10));
@@ -213,9 +213,15 @@ fn approximate_match_is_unaffected() {
     });
     assert_eq!(model._get_text("K4"), "row 1");
     assert_eq!(model._get_text("K5"), "row 25");
-    // Upstream reads the empty rows below the data as 0 and binary-searches
-    // into them, unlike Excel; kept as it is.
-    assert_eq!(model._get_text("E4"), "0");
+    // The empty rows below the data are not searched, as in Excel (upstream
+    // read them as 0 and could land on a blank row: "0").
+    for column in ["E", "F", "I", "K"] {
+        assert_eq!(model._get_text(&format!("{column}4")), "row 1");
+        assert_eq!(model._get_text(&format!("{column}6")), "row 50");
+    }
+    assert_eq!(model._get_text("G7"), "50");
+    assert_eq!(model._get_text("H7"), "50");
+    assert_eq!(model._get_text("E1"), "#N/A");
 }
 
 /// A lookup whose range holds the formula being evaluated reads it as a

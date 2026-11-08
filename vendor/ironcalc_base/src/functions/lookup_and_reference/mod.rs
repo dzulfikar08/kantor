@@ -496,7 +496,9 @@ impl<'a> Model<'a> {
             -1 => {
                 // We apply binary search leftmost for value in the vector
                 let mut l = 0;
-                let mut r = values.len();
+                // KANTOR PATCH: trailing empty cells are not searched (see
+                // `binary_search_on_vector`).
+                let mut r = values.sorted_len();
                 while l < r {
                     let m = (l + r) / 2;
                     if compare_values(values.get(m), &target) >= 0 {

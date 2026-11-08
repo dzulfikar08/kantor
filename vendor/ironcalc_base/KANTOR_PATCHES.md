@@ -14,7 +14,7 @@ VLOOKUP/HLOOKUP/MATCH/LOOKUP materialise their whole search vector on every call
 and scan it linearly: quadratic in the number of rows. Worse, they do not clip a
 whole-column range to the used area, so `A:B` meant 1,048,576 reads per call, each
 one also put on record in `Evaluation::seen`. With the patch the same workbook
-evaluates in about 5 s with identical results.
+evaluates in a few seconds with results identical to upstream (before section 2).
 
 What (`src/functions/lookup_cache.rs`, documented at the top of the file):
 
@@ -34,7 +34,7 @@ What (`src/functions/lookup_cache.rs`, documented at the top of the file):
   return the first (XLOOKUP/XMATCH search mode -1: the last) position.
 * Used by VLOOKUP, HLOOKUP, MATCH, LOOKUP, XLOOKUP and XMATCH (range arguments;
   in-formula arrays take the old path). Approximate/binary searches go through the
-  same vectors, unchanged.
+  same vectors (but see section 2).
 * SUMIF/SUMIFS/AVERAGEIF(S)/MAXIFS/MINIFS (`run_ifs`) and COUNTIF/COUNTIFS (their
   own loop) over a single column read their first criteria range as a cached vector. Later
   criteria ranges, which upstream reads only for rows that pass the earlier ones,
@@ -65,12 +65,23 @@ Validity (why results are identical to upstream):
   evaluations). `lookup_cache::tests` checks the hash indexes against the linear
   scans over random vectors.
 
-Known upstream behaviour kept as is: an approximate lookup over a whole column
-(`VLOOKUP(x, A:B, 2)`, `MATCH(x, A:A)`) binary-searches the empty rows below the
-data as if they were 0/"" and can land on a blank row, where Excel ignores
-trailing blanks.
+## 2. Approximate lookups ignore trailing blanks (Excel compatibility)
 
-## 2. build.rs
+Why: upstream binary-searched the whole range of an approximate lookup and read
+the empty cells below the data as 0 or "" (`compare_values`). `VLOOKUP(x, A:C, 2,
+TRUE)` over whole columns, or over a range longer than its data, then landed on a
+blank row and returned 0 where Excel returns the matching row. In the customer
+workbook every one of the 12,574 formula cells (of 767,272) that differed from the
+values Excel stored traced back to two such columns; with this change none differ.
+
+What: `binary_search_on_vector` (VLOOKUP, HLOOKUP and LOOKUP in sorted mode, MATCH
+with match type 1) and MATCH with match type -1 search up to the last non-empty
+cell of the vector (`SearchVector::sorted_len`). Blank cells between values are
+still read as upstream reads them. In-formula arrays and XLOOKUP/XMATCH binary
+modes are unchanged. Unlike section 1 this changes results, deliberately; drop it
+separately if upstream fixes the behaviour (or if it ever disagrees with Excel).
+
+## 3. build.rs
 
 Upstream runs `git describe` for `INFO("release")`. Inside the Kantor repository
 that would report Kantor's commit, so the value a crates.io build gets
