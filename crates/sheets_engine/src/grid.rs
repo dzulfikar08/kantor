@@ -564,6 +564,20 @@ impl Workbook {
     /// Status-bar numbers for `range`. Small ranges are read cell by cell,
     /// large ones (whole columns) by walking the cells that exist.
     pub fn range_stats(&self, sheet: u32, range: CellRange) -> RangeStats {
+        let cached = self.cached(|c| {
+            c.stats
+                .filter(|(s, r, _)| (*s, *r) == (sheet, range))
+                .map(|(_, _, stats)| stats)
+        });
+        if let Some(stats) = cached {
+            return stats;
+        }
+        let stats = self.count_range(sheet, range);
+        self.cached(|c| c.stats = Some((sheet, range, stats)));
+        stats
+    }
+
+    fn count_range(&self, sheet: u32, range: CellRange) -> RangeStats {
         let mut stats = RangeStats::default();
         let model = self.model.get_model();
         let Ok(ws) = model.workbook.worksheet(sheet) else {

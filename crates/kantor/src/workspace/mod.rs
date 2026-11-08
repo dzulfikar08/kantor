@@ -85,7 +85,7 @@ impl AppKind {
 /// An open document; shown by exactly one pane.
 struct Doc {
     view: DocView,
-    _changes: Subscription,
+    _changes: Vec<Subscription>,
 }
 
 struct Tab {
@@ -210,9 +210,15 @@ impl Workspace {
             view.set_untitled_name(name, cx);
         }
         let changes = match &view {
-            DocView::Sheets(e) => cx.observe(e, |_, _, cx| cx.notify()),
-            DocView::Docs(e) => cx.observe(e, |_, _, cx| cx.notify()),
-            DocView::Slides(e) => cx.observe(e, |_, _, cx| cx.notify()),
+            DocView::Sheets(e) => vec![
+                cx.observe(e, |_, _, cx| cx.notify()),
+                // Opening cancelled: the pane goes away.
+                cx.subscribe_in(e, window, move |ws, _, event, window, cx| match event {
+                    sheets_ui::SheetsEvent::Close => ws.remove_doc(id, window, cx),
+                }),
+            ],
+            DocView::Docs(e) => vec![cx.observe(e, |_, _, cx| cx.notify())],
+            DocView::Slides(e) => vec![cx.observe(e, |_, _, cx| cx.notify())],
         };
         self.docs.insert(
             id,
@@ -446,6 +452,17 @@ impl Workspace {
                 self.activate(Some(ti), window, cx);
             }
             None => self.remove_tab(ti, window, cx),
+        }
+    }
+
+    /// Remove the pane showing document `pane`, without asking.
+    fn remove_doc(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ti) = self
+            .tabs
+            .iter()
+            .position(|t| t.layout.panes().contains(&pane))
+        {
+            self.remove_pane(ti, pane, window, cx);
         }
     }
 

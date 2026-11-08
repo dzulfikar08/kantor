@@ -16,7 +16,7 @@ use super::Workspace;
 use super::doc::CommonFormat;
 use crate::actions::*;
 use crate::theme;
-use sheets_ui::{Format, GridCommand, NumberFormat};
+use sheets_ui::{CalcMode, Format, GridCommand, NumberFormat};
 
 /// A palette command.
 pub(super) struct Command {
@@ -372,6 +372,32 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
                 v.grid_command(GridCommand::FillRight, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Calculate Now",
+        detail: "Sheets · recalculate every formula",
+        keys: "F9",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.calculate_doc(w, cx)),
+    },
+    Command {
+        title: "Automatic Calculation",
+        detail: "Sheets · recalculate after every edit",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.set_calc_mode_doc(CalcMode::Automatic, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Manual Calculation",
+        detail: "Sheets · recalculate only with F9 (for big workbooks)",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.set_calc_mode_doc(CalcMode::Manual, w, cx)
             })
         },
     },

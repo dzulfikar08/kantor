@@ -3,7 +3,6 @@
 # file  check  location  reason. A location of * matches the whole check for that file.
 # A finding not listed here fails the test; a listed gap that no longer happens fails too.
 01_formulas.xlsx	import-formula	Calc!B13	IronCalc shows INDEX(...) as @INDEX(...) (implicit-intersection marker added to the formula text); value is right
-02_multi_sheet.xlsx	export-value	Q1 Summary!B6	follows from the 3-D ref import gap below: IronCalc computes #ERROR! (not an OOXML error code), so the formula is saved without a cached value and fullCalcOnLoad is set; Excel/LibreOffice recompute 776.25, calamine reads the empty cache
 02_multi_sheet.xlsx	import-value	Q1 Summary!B6	3-D references (SUM(Jan:Mar!B2:B4)) are not supported: evaluates to #ERROR! instead of 776.25
 03_number_formats.xlsx	expect	Formats!B12 display	locale-tagged currency format [$Rp-421]#,##0 displays #VALUE!
 03_number_formats.xlsx	expect	Formats!B16 display	built-in numFmtId 14 is shown as mm-dd-yy (08-17-25) instead of Excel's m/d/yyyy for en-US
@@ -15,12 +14,9 @@
 05_styles.xlsx	export-style	Styles!B13 border-right	dashed borders are not in IronCalc's BorderStyle: become thin
 05_styles.xlsx	export-style	Styles!B13 border-top	dashed borders are not in IronCalc's BorderStyle: become thin
 05_styles.xlsx	export-style	Styles!B14 border-top	hair borders are not in IronCalc's BorderStyle: become thin
-08_defined_names.xlsx	export-value	Report!B3	follows from the import gap below: the saved cached value is #NAME?
 08_defined_names.xlsx	import-value	Report!B3	defined names holding a constant (Ten = 10) don't evaluate: =Ten*2 gives #NAME? (the name itself is kept)
 09_unicode.xlsx	export-formula	Emoji 🎉!B1	quotes around a non-ASCII sheet name are dropped ('数据'!B2 -> 数据!B2); still valid for Excel, text differs
 09_unicode.xlsx	export-value	Teks!B13	shared strings are written without xml:space="preserve": strict readers (calamine) trim leading/trailing spaces; IronCalc and openpyxl keep them
-09_unicode.xlsx	export-value	Teks!C10	follows from the LEN import gap below (cached value saved as IronCalc computed it)
-09_unicode.xlsx	export-value	Teks!C9	follows from the LEN import gap below (cached value saved as IronCalc computed it)
 09_unicode.xlsx	import-formula	Emoji 🎉!B1	quotes around a non-ASCII sheet name are dropped in the formula text ('数据'!B2 -> 数据!B2)
 09_unicode.xlsx	import-value	Teks!C10	LEN counts Unicode scalar values, Excel counts UTF-16 code units (ZWJ emoji family: 5 vs 8)
 09_unicode.xlsx	import-value	Teks!C9	LEN counts Unicode scalar values, Excel counts UTF-16 code units (emoji + flag: 12 vs 17)

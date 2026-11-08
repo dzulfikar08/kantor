@@ -146,6 +146,15 @@ impl DocView {
         }
     }
 
+    /// A spreadsheet's calculation state, when worth showing (manual mode,
+    /// calculating).
+    pub fn calc_status(&self, cx: &App) -> Option<String> {
+        match self {
+            Self::Sheets(e) => e.read(cx).calc_status(cx),
+            _ => None,
+        }
+    }
+
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         both_mut!(self, window, cx, |v, w, c| v.focus(w, c))
     }

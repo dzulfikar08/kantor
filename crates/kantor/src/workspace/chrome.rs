@@ -231,7 +231,7 @@ impl Workspace {
 
     pub(super) fn render_status_bar(&mut self, cx: &mut Context<Self>) -> Div {
         let t = tokens(cx);
-        let (app, color, detail, status, summary) = match self.focused_view() {
+        let (app, color, detail, status, summary, calc) = match self.focused_view() {
             Some(view) => {
                 let kind = view.kind();
                 (
@@ -240,9 +240,17 @@ impl Workspace {
                     view.location(cx),
                     view.status(cx),
                     view.selection_summary(cx),
+                    view.calc_status(cx),
                 )
             }
-            None => ("Home", t.accent, String::new(), self.message.clone(), None),
+            None => (
+                "Home",
+                t.accent,
+                String::new(),
+                self.message.clone(),
+                None,
+                None,
+            ),
         };
         let panes = self
             .active
@@ -277,6 +285,10 @@ impl Workspace {
             // Excel's Sum / Average / Count for a selected range.
             .when_some(summary, |d, summary| {
                 d.child(div().flex_none().text_color(t.fg).child(summary))
+            })
+            // Manual calculation, like Excel's "Calculate" in its status bar.
+            .when_some(calc, |d, calc| {
+                d.child(div().flex_none().text_color(t.warning).child(calc))
             })
             .child(div().child(theme))
             .child(
