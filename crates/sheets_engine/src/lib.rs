@@ -16,6 +16,8 @@ pub use import::SourceFormat;
 pub use preserve::package_problems;
 
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Cursor, Write as _};
 use std::path::{Path, PathBuf};
@@ -26,7 +28,7 @@ use ironcalc::export::save_xlsx_to_writer;
 use ironcalc::import::{load_from_xlsx, load_from_xlsx_bytes};
 use ironcalc_base::expressions::types::Area;
 use ironcalc_base::expressions::utils::number_to_column;
-use ironcalc_base::types::Color;
+use ironcalc_base::types::{Cell, Color, FormulaValue};
 use ironcalc_base::{Model, UserModel};
 
 pub mod format;
@@ -59,6 +61,67 @@ pub struct Workbook {
     history: Revisions,
     origin: Origin,
     save_notes: Vec<String>,
+    calc: Calc,
+    /// Answers that take a walk over every cell, for the current state.
+    cache: RefCell<Cache>,
+}
+
+/// See [`Workbook::cached`].
+#[derive(Default)]
+struct Cache {
+    /// `(history state, calculation epoch)` the entries belong to.
+    key: (u64, u64),
+    used: HashMap<u32, (u32, u32)>,
+    stats: Option<(u32, CellRange, RangeStats)>,
+}
+
+/// When formulas are recalculated, like Excel's calculation options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CalcMode {
+    /// After every edit (IronCalc recalculates the whole workbook).
+    #[default]
+    Automatic,
+    /// Only on request ([`Workbook::recalculate`]). Edits leave other
+    /// formulas' values as they were; a formula typed in is pending
+    /// ([`Workbook::is_pending`]) until then. (Auto-fill is the exception:
+    /// IronCalc recalculates after it in any mode.)
+    Manual,
+}
+
+/// Workbooks with more formula cells than this open in [`CalcMode::Manual`]:
+/// IronCalc recalculates everything after each edit, which takes seconds to
+/// minutes at this size.
+pub const MANUAL_CALC_FORMULAS: usize = 50_000;
+
+/// Calculation state of a workbook.
+struct Calc {
+    mode: CalcMode,
+    /// The history state whose formula values are up to date (the opened
+    /// file's cached values count as up to date).
+    fresh: u64,
+    /// Formula cells when the workbook was opened.
+    formulas: usize,
+    /// Switched back to automatic with values out of date and not
+    /// recalculated since (automatic mode only recalculates on the next edit).
+    stale: bool,
+    /// Counts recalculations (they can change spilled cells).
+    epoch: u64,
+}
+
+impl Calc {
+    fn new(formulas: usize) -> Self {
+        Self {
+            mode: if formulas > MANUAL_CALC_FORMULAS {
+                CalcMode::Manual
+            } else {
+                CalcMode::Automatic
+            },
+            fresh: 0,
+            formulas,
+            stale: false,
+            epoch: 0,
+        }
+    }
 }
 
 /// The file a workbook shows and how it got there.
@@ -74,8 +137,9 @@ struct Origin {
 }
 
 /// Files up to this size are kept in memory for part preservation; larger
-/// ones are read again at save time.
-const KEEP_IN_MEMORY: u64 = 64 * 1024 * 1024;
+/// ones are read again at save time. (A 28 MB file holding 2 million cells
+/// parses to ~300 MB; keeping its bytes too adds 10% for nothing until Save.)
+const KEEP_IN_MEMORY: u64 = 16 * 1024 * 1024;
 
 /// Where the original package for part preservation comes from.
 enum XlsxSource {
@@ -187,6 +251,8 @@ impl Workbook {
             history: Revisions::default(),
             origin: Origin::default(),
             save_notes: Vec::new(),
+            calc: Calc::new(0),
+            cache: RefCell::default(),
         })
     }
 
@@ -204,26 +270,49 @@ impl Workbook {
         };
         let mut notes = Vec::new();
         let mut xlsx = None;
-        let (mut model, format) = match format {
+        // The file asked for a recalculation that wasn't done (too big).
+        let mut stale = false;
+        let (model, format) = match format {
             SourceFormat::Xlsx => {
-                let (model, source) = open_xlsx(path)?;
+                // Excel saved every formula's value; show those rather than
+                // recalculating (which can take minutes for big workbooks),
+                // unless the file asks for a recalculation and is small.
+                let (mut model, source, full_calc) = open_xlsx(path)?;
                 xlsx = Some(source);
+                if full_calc && count_formulas(&model) <= MANUAL_CALC_FORMULAS {
+                    model.evaluate();
+                } else {
+                    stale = full_calc;
+                    model.evaluate_conditional_formatting();
+                }
                 (model, format)
             }
             SourceFormat::Csv { delimiter } => {
                 let forced = (delimiter == b'\t').then_some(delimiter);
-                let (model, delimiter) = import::read_csv(path, forced)?;
+                let (mut model, delimiter) = import::read_csv(path, forced)?;
+                model.evaluate();
                 (model, SourceFormat::Csv { delimiter })
             }
             _ => {
+                // Evaluated by the import, which compares with the file's values.
                 let (model, n) = import::read_calamine(path, format)?;
                 notes = n;
                 (model, format)
             }
         };
-        model.evaluate();
+        let mut calc = Calc::new(count_formulas(&model));
+        if stale {
+            // No history state is up to date: F9 is due, and a save asks
+            // Excel to recalculate again.
+            calc.fresh = u64::MAX;
+        }
+        let mut model = UserModel::from_model(model);
+        if calc.mode == CalcMode::Manual {
+            model.pause_evaluation();
+        }
         Ok(Self {
-            model: UserModel::from_model(model),
+            calc,
+            model,
             path: (!format.is_imported()).then(|| path.to_path_buf()),
             history: Revisions::default(),
             origin: Origin {
@@ -233,6 +322,7 @@ impl Workbook {
                 xlsx,
             },
             save_notes: Vec::new(),
+            cache: RefCell::default(),
         })
     }
 
@@ -392,7 +482,10 @@ impl Workbook {
                         None
                     }
                 });
-                let finished = preserve::finish(written, original.as_deref(), &self.tab_colors());
+                // Values left stale by manual calculation: Excel recalculates.
+                let stale = self.needs_recalc() || self.has_pending();
+                let finished =
+                    preserve::finish(written, original.as_deref(), &self.tab_colors(), stale);
                 drop(original);
                 notes.extend(finished.notes);
                 for note in &notes {
@@ -463,15 +556,34 @@ impl Workbook {
             .collect()
     }
 
-    /// `(rows, cols)` spanned by data on `sheet`, counted from `A1`.
+    /// `(rows, cols)` spanned by data on `sheet`, counted from `A1`. Cached:
+    /// working it out visits every cell of the sheet.
     pub fn used_size(&self, sheet: u32) -> (u32, u32) {
-        match self.model.get_model().workbook.worksheet(sheet) {
+        if let Some(size) = self.cached(|c| c.used.get(&sheet).copied()) {
+            return size;
+        }
+        let size = match self.model.get_model().workbook.worksheet(sheet) {
             Ok(ws) => {
                 let d = ws.dimension();
                 (d.max_row.max(0) as u32, d.max_column.max(0) as u32)
             }
             Err(_) => (0, 0),
+        };
+        self.cached(|c| c.used.insert(sheet, size));
+        size
+    }
+
+    /// Run `f` on the cache, emptied first if the workbook changed since.
+    fn cached<R>(&self, f: impl FnOnce(&mut Cache) -> R) -> R {
+        let mut cache = self.cache.borrow_mut();
+        let key = (self.history.current, self.calc.epoch);
+        if cache.key != key {
+            *cache = Cache {
+                key,
+                ..Cache::default()
+            };
         }
+        f(&mut cache)
     }
 
     /// Cells of `sheet` that have content, `(row, col)` in reading order
@@ -483,16 +595,36 @@ impl Workbook {
         let mut cells: Vec<(u32, u32)> = ws
             .sheet_data
             .cells()
-            .filter(|(row, col, _)| *row >= 1 && *col >= 1)
+            .filter(|(row, col, cell)| *row >= 1 && *col >= 1 && self.has_input(cell))
             .map(|(row, col, _)| (row as u32 - 1, col as u32 - 1))
-            .filter(|&(row, col)| !self.input(sheet, row, col).is_empty())
             .collect();
         cells.sort_unstable();
         cells
     }
 
+    /// Whether `cell` has something typed in (a value or a formula; not just
+    /// a style or a spilled value). Cheaper than `input` (no formula text).
+    fn has_input(&self, cell: &Cell) -> bool {
+        match cell {
+            Cell::EmptyCell { .. } | Cell::SpillCell { .. } => false,
+            Cell::SharedString { si, .. } => self
+                .model
+                .get_model()
+                .workbook
+                .shared_strings
+                .get(*si as usize)
+                .is_some_and(|s| !s.is_empty()),
+            _ => true,
+        }
+    }
+
     /// The value as displayed in the grid (number formats applied).
+    /// Blank for a formula still waiting for a recalculation (see
+    /// [`Workbook::is_pending`]).
     pub fn display_value(&self, sheet: u32, row: u32, col: u32) -> String {
+        if self.calc.mode == CalcMode::Manual && self.is_pending(sheet, row, col) {
+            return String::new();
+        }
         self.model
             .get_formatted_cell_value(sheet, row as i32 + 1, col as i32 + 1)
             .unwrap_or_default()
@@ -541,8 +673,10 @@ impl Workbook {
             }
             done += 1;
         }
-        self.model.resume_evaluation();
-        self.model.evaluate();
+        if self.calc.mode == CalcMode::Automatic {
+            self.model.resume_evaluation();
+            self.model.evaluate();
+        }
         if done > 0 {
             self.history.edited_steps(done);
         }
@@ -744,10 +878,114 @@ impl Workbook {
     }
 }
 
+/// Calculation: mode and staleness.
+impl Workbook {
+    pub fn calc_mode(&self) -> CalcMode {
+        self.calc.mode
+    }
+
+    /// Switch between automatic and manual calculation. Doesn't recalculate:
+    /// after switching to automatic, [`Workbook::needs_recalc`] says whether
+    /// a recalculation is due.
+    pub fn set_calc_mode(&mut self, mode: CalcMode) {
+        if self.calc.mode == CalcMode::Automatic && mode == CalcMode::Manual && !self.calc.stale {
+            // Automatic mode kept every value up to date so far.
+            self.calc.fresh = self.history.current;
+        }
+        if self.calc.mode == CalcMode::Manual && mode == CalcMode::Automatic {
+            self.calc.stale = self.history.current != self.calc.fresh;
+        }
+        self.calc.mode = mode;
+        match mode {
+            CalcMode::Automatic => self.model.resume_evaluation(),
+            CalcMode::Manual => self.model.pause_evaluation(),
+        }
+    }
+
+    /// Formula cells the workbook had when it was opened.
+    pub fn formula_count(&self) -> usize {
+        self.calc.formulas
+    }
+
+    /// Whether formula values may be out of date: edits were made since the
+    /// last recalculation (always `false` in automatic mode once calculated).
+    pub fn needs_recalc(&self) -> bool {
+        match self.calc.mode {
+            CalcMode::Automatic => self.calc.stale,
+            CalcMode::Manual => self.history.current != self.calc.fresh,
+        }
+    }
+
+    /// Recalculate every formula. Slow for big workbooks (minutes): a UI
+    /// should move the workbook to another thread for it (it is `Send`).
+    pub fn recalculate(&mut self) {
+        self.model.evaluate();
+        self.calc.fresh = self.history.current;
+        self.calc.stale = false;
+        self.calc.epoch += 1;
+    }
+
+    /// A formula entered in manual mode that has no value yet.
+    pub fn is_pending(&self, sheet: u32, row: u32, col: u32) -> bool {
+        let Ok(ws) = self.model.get_model().workbook.worksheet(sheet) else {
+            return false;
+        };
+        matches!(
+            ws.cell(row as i32 + 1, col as i32 + 1).as_deref(),
+            Some(
+                Cell::CellFormula {
+                    v: FormulaValue::Unevaluated,
+                    ..
+                } | Cell::ArrayFormula {
+                    v: FormulaValue::Unevaluated,
+                    ..
+                }
+            )
+        )
+    }
+
+    /// Whether any formula has no value yet (see [`Workbook::is_pending`]).
+    fn has_pending(&self) -> bool {
+        self.calc.mode == CalcMode::Manual
+            && self.model.get_model().workbook.worksheets.iter().any(|ws| {
+                ws.sheet_data.cells().any(|(_, _, cell)| {
+                    matches!(
+                        *cell,
+                        Cell::CellFormula {
+                            v: FormulaValue::Unevaluated,
+                            ..
+                        } | Cell::ArrayFormula {
+                            v: FormulaValue::Unevaluated,
+                            ..
+                        }
+                    )
+                })
+            })
+    }
+}
+
+/// Formula cells in all sheets (one pass over the cells, no evaluation).
+fn count_formulas(model: &Model) -> usize {
+    model
+        .workbook
+        .worksheets
+        .iter()
+        .map(|ws| {
+            ws.sheet_data
+                .cells()
+                .filter(|(_, _, cell)| {
+                    matches!(**cell, Cell::CellFormula { .. } | Cell::ArrayFormula { .. })
+                })
+                .count()
+        })
+        .sum()
+}
+
 /// Load an `.xlsx`, keeping what part preservation needs: the bytes for small
 /// files (read once, so the model and the kept bytes are the same file), the
-/// path and its size/mtime for large ones.
-fn open_xlsx(path: &Path) -> Result<(Model<'static>, XlsxSource)> {
+/// path and its size/mtime for large ones. Also says whether the workbook asks
+/// to be recalculated when opened (`fullCalcOnLoad`).
+fn open_xlsx(path: &Path) -> Result<(Model<'static>, XlsxSource, bool)> {
     let meta = fs::metadata(path).with_context(|| format!("opening {}", path.display()))?;
     if meta.len() <= KEEP_IN_MEMORY {
         let bytes = fs::read(path).with_context(|| format!("opening {}", path.display()))?;
@@ -759,12 +997,14 @@ fn open_xlsx(path: &Path) -> Result<(Model<'static>, XlsxSource)> {
             .map_err(|e| anyhow!("opening {}: {e}", path.display()))?;
         let model = Model::from_workbook(workbook, LANGUAGE)
             .map_err(|e| anyhow!("opening {}: {e}", path.display()))?;
-        Ok((model, XlsxSource::Bytes(bytes)))
+        let full_calc = preserve::asks_full_calc(Cursor::new(&bytes[..]));
+        Ok((model, XlsxSource::Bytes(bytes), full_calc))
     } else {
         let name = path.to_str().context("path is not valid UTF-8")?;
         let model = load_from_xlsx(name, LOCALE, TIMEZONE, LANGUAGE)
             .map_err(|e| anyhow!("opening {}: {e}", path.display()))?;
-        Ok((model, XlsxSource::file(path, &meta)))
+        let full_calc = fs::File::open(path).is_ok_and(preserve::asks_full_calc);
+        Ok((model, XlsxSource::file(path, &meta), full_calc))
     }
 }
 
@@ -933,6 +1173,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("multi.xlsx");
         let mut wb = Workbook::open(corpus("02_multi_sheet.xlsx")).unwrap();
+        // Opening shows Excel's cached values; IronCalc's own come with a recalculation.
+        wb.recalculate();
         wb.save_as(&path).unwrap();
         let parts = preserve::parts_of(&fs::read(&path).unwrap());
         assert!(
@@ -1121,6 +1363,199 @@ mod tests {
         assert!(wb.undo().unwrap()); // the paste
         assert!(!wb.can_undo());
         assert!(!wb.is_dirty());
+    }
+
+    /// Rewrite parts of the `.xlsx` at `path`: `edit(name, text)` returns new text.
+    fn rewrite_xlsx(path: &Path, edit: impl Fn(&str, String) -> String) {
+        use std::io::Read as _;
+        let bytes = fs::read(path).unwrap();
+        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for i in 0..zip.len() {
+            let mut entry = zip.by_index(i).unwrap();
+            let name = entry.name().unwrap().into_owned();
+            let mut data = Vec::new();
+            entry.read_to_end(&mut data).unwrap();
+            if name.ends_with(".xml") {
+                data = edit(&name, String::from_utf8(data).unwrap()).into_bytes();
+            }
+            out.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            out.write_all(&data).unwrap();
+        }
+        fs::write(path, out.finish().unwrap().into_inner()).unwrap();
+    }
+
+    fn sum_fixture(dir: &Path) -> PathBuf {
+        let path = dir.join("sum.xlsx");
+        let mut wb = Workbook::new_empty().unwrap();
+        wb.set_input(0, 0, 0, "10").unwrap();
+        wb.set_input(0, 1, 0, "32").unwrap();
+        wb.set_input(0, 2, 0, "=SUM(A1:A2)").unwrap();
+        wb.save_as(&path).unwrap();
+        // Pretend Excel computed something else: opening must show it as saved.
+        rewrite_xlsx(&path, |_, xml| xml.replace("<v>42</v>", "<v>99</v>"));
+        path
+    }
+
+    #[test]
+    fn xlsx_opens_with_cached_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = sum_fixture(dir.path());
+        let mut wb = Workbook::open(&path).unwrap();
+        assert_eq!(wb.display_value(0, 2, 0), "99");
+        assert_eq!(wb.calc_mode(), CalcMode::Automatic);
+        assert_eq!(wb.formula_count(), 1);
+        assert!(!wb.needs_recalc());
+        // The first edit recalculates (automatic mode).
+        wb.set_input(0, 0, 0, "11").unwrap();
+        assert_eq!(wb.display_value(0, 2, 0), "43");
+
+        // A file asking for a recalculation on load gets one.
+        rewrite_xlsx(&path, |name, xml| {
+            if name == "xl/workbook.xml" {
+                xml.replace("<calcPr/>", "<calcPr fullCalcOnLoad=\"1\"/>")
+            } else {
+                xml
+            }
+        });
+        assert_eq!(Workbook::open(&path).unwrap().display_value(0, 2, 0), "42");
+    }
+
+    #[test]
+    fn manual_calculation() {
+        let mut wb = Workbook::new_empty().unwrap();
+        wb.set_input(0, 0, 0, "2").unwrap();
+        wb.set_input(0, 0, 1, "=A1*3").unwrap();
+        wb.set_calc_mode(CalcMode::Manual);
+        assert!(!wb.needs_recalc(), "automatic mode kept it up to date");
+
+        wb.set_input(0, 0, 0, "5").unwrap();
+        assert_eq!(wb.display_value(0, 0, 1), "6", "not recalculated yet");
+        assert!(wb.needs_recalc());
+        wb.set_input(0, 1, 1, "=A1+1").unwrap();
+        assert!(wb.is_pending(0, 1, 1));
+        assert_eq!(wb.display_value(0, 1, 1), "");
+        wb.set_inputs(0, &[(0, 0, "7".to_owned())]).unwrap();
+        assert_eq!(wb.display_value(0, 0, 1), "6");
+
+        wb.recalculate();
+        assert_eq!(wb.display_value(0, 0, 1), "21");
+        assert_eq!(wb.display_value(0, 1, 1), "8");
+        assert!(!wb.is_pending(0, 1, 1));
+        assert!(!wb.needs_recalc());
+
+        // Back to automatic with a stale value: a recalculation is due.
+        wb.set_calc_mode(CalcMode::Manual);
+        wb.set_input(0, 0, 0, "3").unwrap();
+        wb.set_calc_mode(CalcMode::Automatic);
+        assert!(wb.needs_recalc());
+        wb.recalculate();
+        assert!(!wb.needs_recalc());
+        // Edits recalculate again.
+        wb.set_input(0, 0, 0, "1").unwrap();
+        assert_eq!(wb.display_value(0, 0, 1), "3");
+    }
+
+    #[test]
+    fn calculation_runs_on_another_thread() {
+        let mut wb = Workbook::new_empty().unwrap();
+        wb.set_calc_mode(CalcMode::Manual);
+        wb.set_input(0, 0, 0, "4").unwrap();
+        wb.set_input(0, 0, 1, "=A1*A1").unwrap();
+        let wb = std::thread::spawn(move || {
+            wb.recalculate();
+            wb
+        })
+        .join()
+        .unwrap();
+        assert_eq!(wb.display_value(0, 0, 1), "16");
+        assert!(!wb.needs_recalc());
+        assert_eq!(wb.calc_mode(), CalcMode::Manual);
+    }
+
+    #[test]
+    fn stale_save_asks_for_recalculation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = sum_fixture(dir.path());
+        let mut wb = Workbook::open(&path).unwrap();
+        wb.set_calc_mode(CalcMode::Manual);
+        wb.set_input(0, 0, 0, "1").unwrap();
+        let out = dir.path().join("stale.xlsx");
+        wb.save_as(&out).unwrap();
+        let parts = preserve::parts_of(&fs::read(&out).unwrap());
+        let workbook = String::from_utf8(parts["xl/workbook.xml"].clone()).unwrap();
+        assert!(workbook.contains(r#"fullCalcOnLoad="1""#), "{workbook}");
+        let sheet = String::from_utf8(parts["xl/worksheets/sheet1.xml"].clone()).unwrap();
+        assert!(
+            sheet.contains("<v>99</v>"),
+            "the cached value is kept: {sheet}"
+        );
+
+        // Recalculated: nothing to ask for.
+        wb.recalculate();
+        wb.save_as(&out).unwrap();
+        let parts = preserve::parts_of(&fs::read(&out).unwrap());
+        let workbook = String::from_utf8(parts["xl/workbook.xml"].clone()).unwrap();
+        assert!(!workbook.contains("fullCalcOnLoad"), "{workbook}");
+    }
+
+    /// Opening a big private workbook, for timing and memory:
+    /// `KANTOR_BIG_XLSX=/path/file.xlsx cargo test --release -p sheets_engine big_open -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn big_open() {
+        let Some(path) = std::env::var_os("KANTOR_BIG_XLSX") else {
+            return;
+        };
+        let rss = |key: &str| {
+            fs::read_to_string("/proc/self/status")
+                .unwrap_or_default()
+                .lines()
+                .find(|l| l.starts_with(key))
+                .map(|l| l.trim_start_matches(key).trim().to_owned())
+                .unwrap_or_default()
+        };
+        let t = std::time::Instant::now();
+        let wb = Workbook::open(&path).unwrap();
+        let opened = t.elapsed();
+        let sheet = (0..wb.sheet_names().len() as u32)
+            .max_by_key(|&s| wb.used_size(s).0)
+            .unwrap_or(0);
+        let (rows, cols) = wb.used_size(sheet);
+        // What the grid asks for to draw one screen (60 rows) at `top`.
+        let screen = |top: u32| {
+            let t = std::time::Instant::now();
+            for row in top..top + 60 {
+                for col in 0..cols {
+                    std::hint::black_box(wb.display_value(sheet, row, col));
+                    std::hint::black_box(wb.cell_style(sheet, row, col));
+                    std::hint::black_box(wb.display_align(sheet, row, col));
+                }
+            }
+            t.elapsed()
+        };
+        let (first, middle) = (screen(0), screen(rows / 2));
+        let t = std::time::Instant::now();
+        wb.used_size(sheet);
+        let used = t.elapsed();
+        let t = std::time::Instant::now();
+        let stats = wb.range_stats(sheet, CellRange::columns(0, 0));
+        let column_stats = t.elapsed();
+        let t = std::time::Instant::now();
+        let filled = wb.filled_cells(sheet).len();
+        let filled_time = t.elapsed();
+        eprintln!(
+            "opened in {opened:.2?}: {} formula cells, {:?}; biggest sheet {rows}x{cols}\n\
+             screen of cells: first {first:.2?}, middle {middle:.2?}\n\
+             used_size (cached) {used:.2?}; column A stats {column_stats:.2?} ({stats:?}); \
+             filled_cells {filled} in {filled_time:.2?}\n\
+             VmHWM {} VmRSS {}",
+            wb.formula_count(),
+            wb.calc_mode(),
+            rss("VmHWM:"),
+            rss("VmRSS:"),
+        );
     }
 
     #[test]

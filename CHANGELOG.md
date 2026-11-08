@@ -10,6 +10,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ## [Unreleased]
 
 ### Added
+- **Sheets: big workbooks stay responsive.** Spreadsheets open in the background: the pane appears
+  at once with the file name, size, elapsed time and a Cancel button. `.xlsx` files show the values
+  Excel saved instead of recalculating everything on open. Workbooks with more than 50,000 formulas
+  switch to **manual calculation** (status bar: "Manual calculation"): edits don't recalculate the
+  workbook, F9 (or Shift+F9, or the palette's "Calculate Now") does, in the background with a
+  "Calculating…" pane. Palette: "Automatic Calculation" / "Manual Calculation". A workbook saved
+  with out-of-date values asks Excel to recalculate when opened. Status-bar sums and the used range
+  are no longer recomputed over every cell on each frame.
 - **Sheets: formula point mode.** While typing a formula with the caret after `=`, `(`, `,` or an
   operator, clicking a cell inserts its reference (drag or Shift+click for a range; clicking again
   replaces it), and arrows / Shift+arrows point too; a click elsewhere in the text still commits as

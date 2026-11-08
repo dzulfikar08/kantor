@@ -21,6 +21,7 @@ use gpui_kit::*;
 use kantor_ui::metrics::*;
 use sheets_engine::{CellRange, Fill, Step, Workbook, cell_name};
 
+use crate::calc::Job;
 use crate::{GRID_CONTEXT, SheetsView};
 
 actions!(
@@ -425,38 +426,38 @@ impl SheetsView {
         grid.book.range_stats(grid.sheet, range).summary()
     }
 
+    /// Fill, in the background for big workbooks: IronCalc recalculates
+    /// the whole workbook after a fill, even in manual calculation.
     fn apply_fill(&mut self, fill: Fill, window: &mut Window, cx: &mut Context<Self>) {
-        let result = self.table.update(cx, |table, cx| {
-            let grid = table.delegate_mut();
-            let sheet = grid.sheet;
-            let res = grid.book.fill(sheet, &fill);
-            grid.resize();
-            table.refresh(cx);
-            cx.notify();
-            res
-        });
-        match result {
-            Ok(target) => {
-                // Select what was filled, keeping the active cell.
-                let (row, col) = self.selected;
-                let end_row = if target.top == row {
-                    target.bottom
-                } else {
-                    target.top
-                };
-                let end_col = if target.left == col {
-                    target.right
-                } else {
-                    target.left
-                };
-                self.set_end((end_row, end_col), Span::Cells, cx);
-                self.status = format!("Filled {}", target.name()).into();
-            }
-            Err(err) => self.status = format!("{err:#}").into(),
+        if self.blocked(cx) {
+            return;
         }
-        self.load_selected_into_formula(window, cx);
-        self.update_title(window, cx);
-        cx.notify();
+        let sheet = self.table.read(cx).delegate().sheet;
+        self.run_book_job(
+            Job::Editing("Filling"),
+            move |book| book.fill(sheet, &fill),
+            |this, result, _, _, cx| match result {
+                Ok(target) => {
+                    // Select what was filled, keeping the active cell.
+                    let (row, col) = this.selected;
+                    let end_row = if target.top == row {
+                        target.bottom
+                    } else {
+                        target.top
+                    };
+                    let end_col = if target.left == col {
+                        target.right
+                    } else {
+                        target.left
+                    };
+                    this.set_end((end_row, end_col), Span::Cells, cx);
+                    this.status = format!("Filled {}", target.name()).into();
+                }
+                Err(err) => this.status = format!("{err:#}").into(),
+            },
+            window,
+            cx,
+        );
     }
 
     /// Run a grid command (palette, header menu, shortcut).
@@ -466,7 +467,7 @@ impl SheetsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.editing.is_some() {
+        if self.editing.is_some() || self.blocked(cx) {
             return;
         }
         let range = self.range(cx);

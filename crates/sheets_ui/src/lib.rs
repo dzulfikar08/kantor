@@ -32,6 +32,7 @@
 
 extern crate gpui_kit as gpui;
 
+mod calc;
 mod cell_editor;
 mod find;
 mod grid_ops;
@@ -57,9 +58,11 @@ use sheets_engine::{
 
 mod toolbar;
 
+pub use calc::SheetsEvent;
 use cell_editor::{CellEditor, EditMode};
 pub use grid_ops::GridCommand;
 use grid_ops::{GridDrag, Header, Span};
+pub use sheets_engine::CalcMode;
 pub use sheets_engine::{HAlign, NumberFormat};
 
 actions!(
@@ -192,6 +195,7 @@ pub fn init(cx: &mut App) {
     point::bind_keys(cx);
     find::bind_keys(KEY_CONTEXT, cx);
     grid_ops::bind_keys(cx);
+    calc::bind_keys(cx);
 }
 
 /// Feeds one sheet of a [`Workbook`] to the table.
@@ -398,7 +402,12 @@ impl TableDelegate for SheetGrid {
             return grid_ops::header_element(gutter, Header::Row(row), &self.view);
         }
         let (row, col) = (row_ix as u32, col_ix as u32 - 1);
-        let text = self.book.display_value(self.sheet, row, col);
+        let mut text = self.book.display_value(self.sheet, row, col);
+        // A formula typed in manual calculation has no value until F9.
+        let pending = text.is_empty() && self.book.is_pending(self.sheet, row, col);
+        if pending {
+            text.push('…');
+        }
         let style = self.book.cell_style(self.sheet, row, col);
         let align = self.book.display_align(self.sheet, row, col);
         let down_view = self.view.clone();
@@ -435,6 +444,7 @@ impl TableDelegate for SheetGrid {
                     .flex_1()
                     .min_w_0()
                     .truncate()
+                    .when(pending, |d| d.text_color(t.fg_dim))
                     .when(style.bold, |d| d.font_weight(FontWeight::BOLD))
                     .when(style.italic, |d| d.italic())
                     .when(style.underline, |d| d.underline())
@@ -593,28 +603,21 @@ pub struct SheetsView {
     untitled_name: Option<String>,
     /// Find & Replace (Ctrl+F / Ctrl+H).
     find: find::SheetsFind,
+    /// Opening or recalculating in the background (see [`calc`]).
+    busy: Option<calc::Busy>,
+    /// The file being opened (or that failed to open), until it is shown.
+    opening: Option<PathBuf>,
+    /// Holds keyboard focus while the grid is replaced by the busy pane.
+    busy_focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
 impl SheetsView {
+    /// A new workbook, or the file at `path`, which opens in the background
+    /// (the pane shows its progress meanwhile).
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let (book, status) = match path.as_deref().map(Workbook::open) {
-            Some(Ok(book)) => {
-                let s = opened_status(&book);
-                (book, s)
-            }
-            Some(Err(err)) => {
-                log::error!("{err:#}");
-                (
-                    Workbook::new_empty().expect("empty workbook"),
-                    format!("{err:#}"),
-                )
-            }
-            None => (
-                Workbook::new_empty().expect("empty workbook"),
-                "Ready".to_owned(),
-            ),
-        };
+        let book = Workbook::new_empty().expect("empty workbook");
+        let status = "Ready".to_owned();
 
         let view = cx.entity().downgrade();
         let table = cx.new(|cx| {
@@ -653,11 +656,29 @@ impl SheetsView {
             width: Rc::new(Cell::new(px(0.))),
             untitled_name: None,
             find: find::SheetsFind::new(window, cx),
+            busy: None,
+            opening: None,
+            busy_focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         };
         this.select_cell(0, 0, cx);
-        this.focus_grid(window, cx);
+        match path {
+            Some(path) => {
+                this.start_open(path, window, cx);
+                window.focus(&this.busy_focus, cx);
+            }
+            None => this.focus_grid(window, cx),
+        }
         this
+    }
+
+    /// While opening or recalculating, refuse a command (and say why).
+    fn blocked(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.busy.is_some() {
+            self.status = "Please wait until the workbook is ready".into();
+            cx.notify();
+        }
+        self.busy.is_some()
     }
 
     /// Select a sheet cell in the table (scrolls to it and emits `SelectCell`).
@@ -766,6 +787,9 @@ impl SheetsView {
     /// replaces its content (typing into a cell, Enter mode); `None` keeps the
     /// content (Enter/F2/double-click, Edit mode).
     fn start_edit(&mut self, initial: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.blocked(cx) {
+            return;
+        }
         let (row, col) = self.selected;
         self.edit_mode = if initial.is_some() {
             EditMode::Enter
@@ -836,7 +860,13 @@ impl SheetsView {
         let changed = self.table.read(cx).delegate().book.input(sheet, row, col) != value;
         if changed {
             let result = self.set_cell(sheet, row, col, &value, cx);
+            let manual = self.table.read(cx).delegate().book.calc_mode() == CalcMode::Manual;
             self.status = match result {
+                Ok(()) if manual => format!(
+                    "{} updated — manual calculation, press F9 to recalculate",
+                    cell_name(row, col)
+                )
+                .into(),
                 Ok(()) => format!("{} updated", cell_name(row, col)).into(),
                 Err(err) => format!("{err:#}").into(),
             };
@@ -864,6 +894,9 @@ impl SheetsView {
 
     /// Delete: clear every cell in the selected range (one undo step).
     fn clear_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.blocked(cx) {
+            return;
+        }
         let Some(range) = self.op_range(cx) else {
             return;
         };
@@ -1045,7 +1078,7 @@ impl SheetsView {
 
     /// Copy, then clear the range straight away (not when pasted, as Excel does).
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editing.is_some() {
+        if self.editing.is_some() || self.blocked(cx) {
             return;
         }
         let range = self.copy_range(cx);
@@ -1057,7 +1090,7 @@ impl SheetsView {
     /// Paste clipboard text (tab-separated) at the active cell and select what
     /// was pasted.
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editing.is_some() {
+        if self.editing.is_some() || self.blocked(cx) {
             return;
         }
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
@@ -1098,7 +1131,7 @@ impl SheetsView {
 
     /// Apply a formatting command to the selected range (one undo step).
     pub fn format_doc(&mut self, format: Format, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editing.is_some() {
+        if self.editing.is_some() || self.blocked(cx) {
             return;
         }
         let style = self.active_style(cx);
@@ -1196,7 +1229,7 @@ impl SheetsView {
 
     /// Undo (or redo) one workbook edit and refresh everything showing it.
     fn step_history(&mut self, redo: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editing.is_some() {
+        if self.editing.is_some() || self.blocked(cx) {
             return;
         }
         let result = self.table.update(cx, |table, cx| {
@@ -1320,6 +1353,9 @@ impl SheetsView {
 
     /// File name for tabs, e.g. `budget.xlsx` or `Untitled 2.xlsx`.
     pub fn doc_name(&self, cx: &App) -> String {
+        if let Some(busy) = &self.busy {
+            return busy.name.clone();
+        }
         self.name(&self.table.read(cx).delegate().book)
     }
 
@@ -1331,6 +1367,11 @@ impl SheetsView {
 
     /// `book`'s file name, or the shell-given name while it has no file.
     fn name(&self, book: &Workbook) -> String {
+        if book.source_path().is_none()
+            && let Some(name) = self.opening.as_deref().and_then(|p| p.file_name())
+        {
+            return name.to_string_lossy().into_owned();
+        }
         match &self.untitled_name {
             Some(name) if book.source_path().is_none() => name.clone(),
             _ => book.title(),
@@ -1340,6 +1381,9 @@ impl SheetsView {
     /// The file this document shows (an imported `.ods`/`.xls` too, though
     /// Save never writes there), if any.
     pub fn path(&self, cx: &App) -> Option<PathBuf> {
+        if let Some(busy) = &self.busy {
+            return busy.path.clone();
+        }
         self.table
             .read(cx)
             .delegate()
@@ -1349,6 +1393,9 @@ impl SheetsView {
     }
 
     pub fn is_dirty(&self, cx: &App) -> bool {
+        if let Some(busy) = &self.busy {
+            return busy.dirty;
+        }
         self.table.read(cx).delegate().book.is_dirty()
     }
 
@@ -1366,9 +1413,8 @@ impl SheetsView {
     }
 
     pub fn title(&self, cx: &App) -> String {
-        let book = &self.table.read(cx).delegate().book;
-        let dirty = if book.is_dirty() { "• " } else { "" };
-        format!("{dirty}{} — Kantor Sheets", self.name(book))
+        let dirty = if self.is_dirty(cx) { "• " } else { "" };
+        format!("{dirty}{} — Kantor Sheets", self.doc_name(cx))
     }
 
     fn update_title(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1376,29 +1422,20 @@ impl SheetsView {
         window.set_window_title(&title);
     }
 
-    /// Replace the open workbook with the file at `path`.
+    /// Replace the open workbook with the file at `path` (opened in the
+    /// background).
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        match Workbook::open(&path) {
-            Ok(book) => {
-                self.status = opened_status(&book).into();
-                self.set_editing(None, cx);
-                let view = cx.entity().downgrade();
-                self.table.update(cx, |table, cx| {
-                    *table.delegate_mut() = SheetGrid::new(book, view);
-                    table.refresh(cx);
-                    cx.notify();
-                });
-                self.select_cell(0, 0, cx);
-                self.load_selected_into_formula(window, cx);
-                self.update_title(window, cx);
-                self.focus_grid(window, cx);
-            }
-            Err(err) => self.status = format!("{err:#}").into(),
+        if self.busy.is_some() {
+            return;
         }
-        cx.notify();
+        self.start_open(path, window, cx);
+        window.focus(&self.busy_focus, cx);
     }
 
     fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
+        if self.blocked(cx) {
+            return;
+        }
         if self.table.read(cx).delegate().book.path().is_none() {
             self.save_as(&SaveAs, window, cx);
             return;
@@ -1416,6 +1453,9 @@ impl SheetsView {
     /// Save before the document closes. Resolves to `true` once the workbook
     /// is saved; `false` if the Save As prompt was cancelled or saving failed.
     pub fn save_for_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        if self.blocked(cx) {
+            return Task::ready(false);
+        }
         if self.table.read(cx).delegate().book.path().is_none() {
             return self.save_as_task(window, cx);
         }
@@ -1425,6 +1465,9 @@ impl SheetsView {
 
     /// Ask for a path and save there; resolves to whether the workbook is saved.
     fn save_as_task(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        if self.blocked(cx) {
+            return Task::ready(false);
+        }
         let (dir, name) = {
             let book = &self.table.read(cx).delegate().book;
             let dir = book
@@ -1557,8 +1600,19 @@ impl Render for SheetsView {
             .inset_0()
         };
 
+        if let Some(busy) = self.render_busy(cx) {
+            return v_flex()
+                .key_context(KEY_CONTEXT)
+                .size_full()
+                .bg(t.bg)
+                .text_color(t.fg)
+                .text_size(FONT_BODY)
+                .child(busy)
+                .into_any_element();
+        }
         let root = self.editor_actions(v_flex(), cx);
         let root = self.point_actions(root, cx);
+        let root = self.calc_actions(root, cx);
         use kantor_ui::find_bar as fb;
         root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
@@ -1672,5 +1726,6 @@ impl Render for SheetsView {
             )
             .children(completion)
             .children(self.render_find_bar(cx))
+            .into_any_element()
     }
 }

@@ -159,7 +159,15 @@ pub(crate) type TabColors = HashMap<u32, Option<String>>;
 /// and IronCalc dropped, write tab colours, fix error values. Never fails: on
 /// any problem the result falls back to IronCalc's own output (with tab
 /// colours and error values fixed when possible).
-pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, tabs: &TabColors) -> Finished {
+///
+/// `full_calc` asks Excel to recalculate when it opens the file
+/// (`fullCalcOnLoad`), for workbooks saved with values that may be stale.
+pub(crate) fn finish(
+    ironcalc: Vec<u8>,
+    original: Option<&[u8]>,
+    tabs: &TabColors,
+    full_calc: bool,
+) -> Finished {
     let mut notes = Vec::new();
     let new = match Package::read(&ironcalc) {
         Ok(p) => p,
@@ -172,7 +180,8 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, tabs: &TabColor
         }
     };
     let mut base = new.clone();
-    let baseline = match polish(&mut base, tabs, &mut notes).and_then(|()| base.write()) {
+    let baseline = match polish(&mut base, tabs, full_calc, &mut notes).and_then(|()| base.write())
+    {
         Ok(b) => b,
         Err(e) => {
             notes.push(format!("could not post-process the saved package: {e}"));
@@ -196,7 +205,9 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, tabs: &TabColor
                 notes,
             };
         }
-        Ok(true) => polish(&mut merged, tabs, &mut Vec::new()).and_then(|()| merged.write()),
+        Ok(true) => {
+            polish(&mut merged, tabs, full_calc, &mut Vec::new()).and_then(|()| merged.write())
+        }
         Err(e) => Err(e),
     };
     notes.extend(merge_notes);
@@ -225,10 +236,52 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, tabs: &TabColor
     }
 }
 
-/// The fixes every save gets: tab colours and valid error values.
-fn polish(pkg: &mut Package, tabs: &TabColors, notes: &mut Vec<String>) -> Result<(), String> {
+/// The fixes every save gets: tab colours and valid error values (and the
+/// recalculation request, when asked for).
+fn polish(
+    pkg: &mut Package,
+    tabs: &TabColors,
+    full_calc: bool,
+    notes: &mut Vec<String>,
+) -> Result<(), String> {
     write_tab_colors(pkg, tabs)?;
-    fix_error_values(pkg, notes)
+    fix_error_values(pkg, notes)?;
+    if full_calc {
+        request_full_calc(pkg)?;
+    }
+    Ok(())
+}
+
+/// Ask for a full recalculation when the workbook is opened.
+fn request_full_calc(pkg: &mut Package) -> Result<(), String> {
+    if let Some(wb) = pkg.text("xl/workbook.xml")?
+        && wb.matches("<calcPr/>").count() == 1
+    {
+        let wb = wb.replace("<calcPr/>", "<calcPr fullCalcOnLoad=\"1\"/>");
+        pkg.set("xl/workbook.xml", wb.into_bytes());
+    }
+    Ok(())
+}
+
+/// Whether an `.xlsx` asks to be recalculated when opened (`fullCalcOnLoad`
+/// in `xl/workbook.xml`). Reads only that part; `false` on any problem.
+pub(crate) fn asks_full_calc(reader: impl Read + std::io::Seek) -> bool {
+    let Ok(mut zip) = zip::ZipArchive::new(reader) else {
+        return false;
+    };
+    let Ok(entry) = zip.by_name("xl/workbook.xml") else {
+        return false;
+    };
+    let mut xml = String::new();
+    if entry.take(MAX_PART).read_to_string(&mut xml).is_err() {
+        return false;
+    }
+    let Some(at) = xml.find("<calcPr") else {
+        return false;
+    };
+    let tag = &xml[at..];
+    let tag = &tag[..tag.find('>').unwrap_or(tag.len())];
+    tag.contains("fullCalcOnLoad=\"1\"") || tag.contains("fullCalcOnLoad=\"true\"")
 }
 
 // ------------------------------------------------------------------ packages
@@ -1608,7 +1661,7 @@ mod tests {
             .iter()
             .map(|ws| (ws.sheet_id, None))
             .collect();
-        let done = finish(out, original, &tabs);
+        let done = finish(out, original, &tabs, false);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());
         done
     }
