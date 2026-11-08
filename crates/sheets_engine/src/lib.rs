@@ -31,9 +31,11 @@ use ironcalc_base::{Model, UserModel};
 
 pub mod format;
 pub mod formula;
+pub mod grid;
 pub mod tsv;
 
 pub use format::{CellStyle, HAlign, NumberFormat, StyleChange, ValueKind};
+pub use grid::{Fill, FillDirection, RangeStats, Step};
 
 const LOCALE: &str = "en";
 const TIMEZONE: &str = "UTC";
@@ -120,17 +122,18 @@ impl XlsxSource {
 }
 
 /// Ids of the states reachable by undo and redo, mirroring IronCalc's stacks.
-/// Each revision also records how many IronCalc steps it took (a replace-all
-/// sets many cells, one IronCalc step each, but undoes as one).
+///
+/// One entry is usually one IronCalc history step; an edit made of several
+/// IronCalc calls (see [`Workbook::set_frozen`]) records how many, so it
+/// undoes as one.
 #[derive(Default)]
 struct Revisions {
     current: u64,
     saved: u64,
     next: u64,
+    /// `(state id, IronCalc steps to get back to it)`.
     undo: Vec<(u64, u32)>,
     redo: Vec<(u64, u32)>,
-    /// IronCalc steps of the current revision.
-    steps: u32,
 }
 
 impl Revisions {
@@ -140,39 +143,31 @@ impl Revisions {
 
     fn edited_steps(&mut self, steps: u32) {
         self.next += 1;
-        self.undo.push((self.current, self.steps));
+        self.undo.push((self.current, steps));
         self.current = self.next;
-        self.steps = steps;
         self.redo.clear();
     }
 
-    /// IronCalc steps to undo for the current revision.
+    /// IronCalc steps the next undo spans.
     fn undo_steps(&self) -> u32 {
-        if self.undo.is_empty() {
-            1
-        } else {
-            self.steps.max(1)
-        }
+        self.undo.last().map_or(1, |e| e.1)
     }
 
-    /// IronCalc steps to redo for the next revision.
     fn redo_steps(&self) -> u32 {
-        self.redo.last().map_or(1, |r| r.1.max(1))
+        self.redo.last().map_or(1, |e| e.1)
     }
 
     fn undone(&mut self) {
-        if let Some((prev, prev_steps)) = self.undo.pop() {
-            self.redo.push((self.current, self.steps));
+        if let Some((prev, steps)) = self.undo.pop() {
+            self.redo.push((self.current, steps));
             self.current = prev;
-            self.steps = prev_steps;
         }
     }
 
     fn redone(&mut self) {
         if let Some((next, steps)) = self.redo.pop() {
-            self.undo.push((self.current, self.steps));
+            self.undo.push((self.current, steps));
             self.current = next;
-            self.steps = steps;
         }
     }
 
@@ -656,11 +651,59 @@ impl CellRange {
         self.top == self.bottom && self.left == self.right
     }
 
-    /// `A1` for one cell, `A1:C4` for a range.
+    /// Whole columns `left..=right` (every row).
+    pub fn columns(left: u32, right: u32) -> Self {
+        Self::from_corners((0, left), (MAX_ROWS - 1, right))
+    }
+
+    /// Whole rows `top..=bottom` (every column).
+    pub fn rows(top: u32, bottom: u32) -> Self {
+        Self::from_corners((top, 0), (bottom, MAX_COLS - 1))
+    }
+
+    /// The whole sheet.
+    pub fn all() -> Self {
+        Self::from_corners((0, 0), (MAX_ROWS - 1, MAX_COLS - 1))
+    }
+
+    /// Spans every row (one or more whole columns).
+    pub fn is_whole_columns(&self) -> bool {
+        self.top == 0 && self.bottom == MAX_ROWS - 1
+    }
+
+    /// Spans every column (one or more whole rows).
+    pub fn is_whole_rows(&self) -> bool {
+        self.left == 0 && self.right == MAX_COLS - 1
+    }
+
+    pub fn rows_count(&self) -> u32 {
+        self.bottom - self.top + 1
+    }
+
+    pub fn cols_count(&self) -> u32 {
+        self.right - self.left + 1
+    }
+
+    /// The part of the range inside the first `rows` × `cols` cells, if any
+    /// (to keep whole-column selections to the used area).
+    pub fn clip(&self, rows: u32, cols: u32) -> Option<Self> {
+        (self.top < rows && self.left < cols).then(|| Self {
+            bottom: self.bottom.min(rows - 1),
+            right: self.right.min(cols - 1),
+            ..*self
+        })
+    }
+
+    /// `A1` for one cell, `A1:C4` for a range, `B:D` for whole columns and
+    /// `2:5` for whole rows, like Excel's name box.
     pub fn name(&self) -> String {
         let start = cell_name(self.top, self.left);
         if self.is_single() {
             start
+        } else if self.is_whole_columns() && !self.is_whole_rows() {
+            format!("{}:{}", column_name(self.left), column_name(self.right))
+        } else if self.is_whole_rows() && !self.is_whole_columns() {
+            format!("{}:{}", self.top + 1, self.bottom + 1)
         } else {
             format!("{start}:{}", cell_name(self.bottom, self.right))
         }
@@ -996,6 +1039,15 @@ mod tests {
         assert_eq!(r.name(), "A1:C4");
         assert!(r.contains(3, 2) && r.contains(0, 0) && !r.contains(4, 0));
         assert_eq!(CellRange::from_corners((1, 1), (1, 1)).name(), "B2");
+        assert_eq!(CellRange::columns(3, 1).name(), "B:D");
+        assert_eq!(CellRange::rows(4, 4).name(), "5:5");
+        assert_eq!(CellRange::all().name(), "A1:XFD1048576");
+        let col = CellRange::columns(2, 2);
+        assert_eq!(
+            col.clip(10, 26),
+            Some(CellRange::from_corners((0, 2), (9, 2)))
+        );
+        assert_eq!(col.clip(10, 2), None);
     }
 
     #[test]

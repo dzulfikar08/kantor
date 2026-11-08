@@ -17,6 +17,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   References are coloured in the editor and outlined in the same colour on the grid; F4 cycles
   `A1 → $A$1 → A$1 → $A1`; typing a function name lists matching IronCalc functions (Tab/Enter
   inserts `SUM(`).
+- **Sheets: grid manipulation.** Click a column letter or row number to select it (Shift+click or
+  drag across headers for several), the corner or Ctrl+A for everything; Ctrl+arrows jump to the
+  edge of the data and Ctrl+Shift+arrows extend to it. Drag the fill handle to fill down, up, left
+  or right (series such as 1, 2 → 3, 4 and dates continue, other values repeat, relative references
+  in formulas shift), or use Ctrl+D / Ctrl+R; each fill is one undo step. Double-click a column
+  border to fit it to its content. Right-click a header to insert or delete rows and columns,
+  autofit or reset widths, or freeze panes; the palette has the same commands plus Freeze Top Row /
+  First Column / Panes and Unfreeze (saved in the `.xlsx`; frozen columns stay in view, frozen rows
+  are marked with a line but still scroll). Backspace clears a selected range. The status bar shows
+  Average, Count and Sum for a selected range.
 - **Docs** (first slice): open, edit and save `.docx` on A4 pages laid out with parley — typing,
   selection, Bold/Italic/Underline, headings (Ctrl+Alt+0–3), alignment, undo/redo, zoom, plain-text
   clipboard, IME input. New Document is Ctrl+Shift+N. Saving an opened `.docx` rewrites only the

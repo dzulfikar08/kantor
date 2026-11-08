@@ -138,6 +138,14 @@ impl DocView {
         }
     }
 
+    /// Sum / Average / Count of a spreadsheet's selected numbers.
+    pub fn selection_summary(&self, cx: &App) -> Option<String> {
+        match self {
+            Self::Sheets(e) => e.read(cx).selection_summary(cx),
+            _ => None,
+        }
+    }
+
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         both_mut!(self, window, cx, |v, w, c| v.focus(w, c))
     }
