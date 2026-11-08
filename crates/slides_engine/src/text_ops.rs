@@ -111,6 +111,50 @@ pub fn format(paras: &mut [TextPara], sel: Selection, f: &impl Fn(&mut RunProps)
     }
 }
 
+/// The position of character `c` of the paragraphs' text joined with
+/// one separator character between paragraphs.
+fn char_pos(paras: &[TextPara], mut c: usize) -> Position {
+    for (i, p) in paras.iter().enumerate() {
+        let n = p.text.chars().count();
+        if c <= n || i + 1 == paras.len() {
+            let off = p
+                .text
+                .char_indices()
+                .nth(c)
+                .map_or(p.text.len(), |(o, _)| o);
+            return Position::new(i, off);
+        }
+        c -= n + 1;
+    }
+    Position::default()
+}
+
+/// Make the paragraphs' text `new` (paragraphs and line breaks as `\n`)
+/// by replacing only what differs: the common start and end keep their
+/// runs and paragraph formatting.
+pub fn replace_changed(paras: &mut Vec<TextPara>, new: &str) {
+    let old: Vec<char> = paras
+        .iter()
+        .map(|p| p.text.replace(docs_engine::LINE_BREAK, "\n"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .chars()
+        .collect();
+    let new: Vec<char> = new.chars().collect();
+    let pre = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+    let max_suf = old.len().min(new.len()) - pre;
+    let suf = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take(max_suf)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let (a, b) = (char_pos(paras, pre), char_pos(paras, old.len() - suf));
+    let middle: String = new[pre..new.len() - suf].iter().collect();
+    insert_text(paras, Selection { anchor: a, head: b }, &middle, None);
+}
+
 pub fn text_in(paras: &[TextPara], start: Position, end: Position) -> String {
     let mut out = String::new();
     let last = end.para.min(paras.len().saturating_sub(1));
@@ -166,5 +210,29 @@ mod tests {
             text_in(&p, Position::new(0, 0), Position::new(0, 5)),
             "hello"
         );
+    }
+
+    #[test]
+    fn replace_changed_keeps_formatting_outside_the_edit() {
+        let mut p = paras(&["one", "two"]);
+        p[1].format(0..3, &|r| r.bold = Some(true));
+        p[0].props.level = 2;
+        replace_changed(&mut p, "one!\ntwo");
+        replace_changed(&mut p, "one!\ntwo\nthree");
+        assert_eq!(
+            p.iter().map(|p| p.text.as_str()).collect::<Vec<_>>(),
+            ["one!", "two", "three"]
+        );
+        assert_eq!(p[0].props.level, 2);
+        assert_eq!(p[1].runs[0].props.bold, Some(true));
+        replace_changed(&mut p, "two");
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0].text, "two");
+        replace_changed(&mut p, "");
+        assert_eq!(p[0].text, "");
+        // Multibyte text: positions are characters, not bytes.
+        let mut p = paras(&["héllo wörld"]);
+        replace_changed(&mut p, "héllo, wörld");
+        assert_eq!(p[0].text, "héllo, wörld");
     }
 }

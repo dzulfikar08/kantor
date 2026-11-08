@@ -762,6 +762,48 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.move_slide_doc(false, w, cx)),
     },
     Command {
+        title: "Duplicate Shape",
+        detail: "Slides · the selected shape",
+        keys: "Ctrl D",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.duplicate_doc(w, cx)),
+    },
+    Command {
+        title: "Bulleted List",
+        detail: "Slides · Tab / Shift Tab change the level",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_slides(window, cx, |v, w, cx| v.toggle_list_doc(false, w, cx))
+        },
+    },
+    Command {
+        title: "Numbered List",
+        detail: "Slides",
+        keys: "",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.toggle_list_doc(true, w, cx)),
+    },
+    Command {
+        title: "Shape Fill…",
+        detail: "Slides · theme colours, no fill",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_slides(window, cx, |v, _, cx| v.open_paint_menu_doc(false, cx))
+        },
+    },
+    Command {
+        title: "Shape Outline…",
+        detail: "Slides · colour and width",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_slides(window, cx, |v, _, cx| v.open_paint_menu_doc(true, cx))
+        },
+    },
+    Command {
+        title: "Toggle Speaker Notes",
+        detail: "Slides · the notes pane under the slide",
+        keys: "",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.toggle_notes_doc(w, cx)),
+    },
+    Command {
         title: "Insert Text Box",
         detail: "Slides",
         keys: "",

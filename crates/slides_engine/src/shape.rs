@@ -10,7 +10,7 @@ use docs_engine::{LINE_BREAK, Rgb};
 use roxmltree::Node;
 
 use crate::model::*;
-use crate::theme::{ColorCtx, ListStyle};
+use crate::theme::{ColorCtx, ListStyle, bullet_of, is_bullet_el, para_style};
 use crate::xml::*;
 
 /// What shape parsing needs from the part being read.
@@ -51,11 +51,15 @@ pub(crate) fn parse_tree(tree: Node, cx: &ParseCtx) -> (Vec<Shape>, Range<usize>
 fn xfrm_of(x: Node) -> Option<Xfrm> {
     let off = child(x, NS_A, "off")?;
     let ext = child(x, NS_A, "ext")?;
+    let full = 360 * ROT_PER_DEG as i64;
     Some(Xfrm {
         x: attr_i64(off, "x")?,
         y: attr_i64(off, "y")?,
         cx: attr_i64(ext, "cx")?,
         cy: attr_i64(ext, "cy")?,
+        rot: attr_i64(x, "rot").unwrap_or(0).rem_euclid(full) as i32,
+        flip_h: attr_bool(x, "flipH").unwrap_or(false),
+        flip_v: attr_bool(x, "flipV").unwrap_or(false),
     })
 }
 
@@ -106,6 +110,42 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
             } else {
                 XfrmAt::Insert(sp.range().start - base + tag.len())
             }
+        }
+    });
+
+    let sppr = sp_pr.map(|sp| {
+        let tag = start_tag(src, sp);
+        let rel = |r: Range<usize>| r.start - base..r.end - base;
+        let fill = sp
+            .children()
+            .find(|c| is_in(*c, NS_A, &FILLS))
+            .map(|f| rel(f.range()));
+        let fill_at = sp
+            .children()
+            .filter(|c| is_in(*c, NS_A, &["xfrm", "custGeom", "prstGeom"]))
+            .map(|c| c.range().end)
+            .max()
+            .unwrap_or(sp.range().start + tag.len())
+            - base;
+        let ln = child(sp, NS_A, "ln").map(|l| {
+            let lt = start_tag(src, l);
+            LnAt {
+                range: rel(l.range()),
+                attrs: tag_attrs(lt).to_owned(),
+                inner_at: (!lt.ends_with("/>")).then(|| l.range().start - base + lt.len()),
+                fill: l
+                    .children()
+                    .find(|c| is_in(*c, NS_A, &["noFill", "solidFill", "gradFill", "pattFill"]))
+                    .map(|f| rel(f.range())),
+            }
+        });
+        SpPrAt {
+            range: rel(sp.range()),
+            attrs: tag_attrs(tag).to_owned(),
+            empty: tag.ends_with("/>"),
+            fill,
+            fill_at,
+            ln,
         }
     });
 
@@ -205,6 +245,11 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
             xfrm_at
         },
         paras_at,
+        sppr: if matches!(kind, ShapeKind::Other { .. }) {
+            None
+        } else {
+            sppr
+        },
         max_id,
     };
     Shape {
@@ -215,8 +260,14 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
         ph,
         look,
         text,
+        paint: PaintEdit::default(),
         src: Some(Arc::new(src_rec)),
     }
+}
+
+/// Whether `n` is an element in `ns` named one of `names`.
+fn is_in(n: Node, ns: &str, names: &[&str]) -> bool {
+    n.is_element() && n.tag_name().namespace() == Some(ns) && names.contains(&n.tag_name().name())
 }
 
 /// Body properties (`a:bodyPr`).
@@ -231,9 +282,13 @@ pub(crate) fn body_props(n: Node) -> BodyProps {
         _ => Anchor::Top,
     });
     b.no_wrap = n.attribute("wrap").map(|w| w == "none");
-    b.font_scale = child(n, NS_A, "normAutofit")
+    let fit = child(n, NS_A, "normAutofit");
+    b.font_scale = fit
         .and_then(|a| attr_i64(a, "fontScale"))
         .map(|v| v.clamp(1000, 100_000) as u32);
+    b.line_reduction = fit
+        .and_then(|a| attr_i64(a, "lnSpcReduction"))
+        .map(|v| v.clamp(0, 90_000) as u32);
     b
 }
 
@@ -282,15 +337,7 @@ fn parse_para(p: Node, cx: &ParseCtx, locked: &mut Option<String>) -> TextPara {
     for c in p.children().filter(|c| c.is_element()) {
         let in_a = c.tag_name().namespace() == Some(NS_A);
         match (in_a, c.tag_name().name()) {
-            (true, "pPr") => {
-                para.props.align = c.attribute("algn").and_then(Align::from_attr);
-                para.props.level = attr_i64(c, "lvl").unwrap_or(0).clamp(0, 8) as u8;
-                para.props.extra = Extra {
-                    attrs: attrs_except(c, src, &["algn", "lvl"]),
-                    pre: String::new(),
-                    post: inner_where(c, src, |_| true),
-                };
-            }
+            (true, "pPr") => para.props = para_props(c, cx),
             (true, "r" | "fld") => {
                 if c.tag_name().name() == "fld" && locked.is_none() {
                     *locked = Some("fields (slide numbers, dates)".into());
@@ -341,6 +388,40 @@ fn parse_para(p: Node, cx: &ParseCtx, locked: &mut Option<String>) -> TextPara {
     para
 }
 
+/// Children of `a:pPr` that come before the bullet element (schema order).
+const PPR_PRE: [&str; 10] = [
+    "lnSpc", "spcBef", "spcAft", "buClrTx", "buClr", "buSzTx", "buSzPct", "buSzPts", "buFontTx",
+    "buFont",
+];
+
+pub(crate) fn para_props(c: Node, cx: &ParseCtx) -> ParaProps {
+    let src = cx.src;
+    let mut style = para_style(c, &cx.colors);
+    let mut pre = String::new();
+    let mut post = String::new();
+    for k in c.children().filter(|k| k.is_element()) {
+        let name = k.tag_name().name();
+        let in_a = k.tag_name().namespace() == Some(NS_A);
+        if in_a && is_bullet_el(name) {
+            style.bullet = bullet_of(k, raw(src, k));
+        } else if in_a && PPR_PRE.contains(&name) && post.is_empty() {
+            pre.push_str(raw(src, k));
+        } else {
+            post.push_str(raw(src, k));
+        }
+    }
+    ParaProps {
+        align: c.attribute("algn").and_then(Align::from_attr),
+        level: attr_i64(c, "lvl").unwrap_or(0).clamp(0, 8) as u8,
+        style,
+        extra: Extra {
+            attrs: attrs_except(c, src, &["algn", "lvl", "marL", "indent"]),
+            pre,
+            post,
+        },
+    }
+}
+
 fn push_run(para: &mut TextPara, text: &str, props: RunProps) {
     para.text.push_str(text);
     para.runs.push(Run {
@@ -352,6 +433,21 @@ fn push_run(para: &mut TextPara, text: &str, props: RunProps) {
 /// Wrap a raw `a:` fragment so it parses on its own.
 fn wrap_ns(fragment: &str) -> String {
     format!("<w xmlns:a=\"{NS_A}\" xmlns:r=\"{NS_R}\">{fragment}</w>")
+}
+
+/// A raw fragment of `a:` elements without the elements named `drop`.
+pub(crate) fn strip_elements(fragment: &str, drop: &[&str]) -> String {
+    let wrapped = wrap_ns(fragment);
+    let Ok(d) = roxmltree::Document::parse(&wrapped) else {
+        return fragment.to_owned();
+    };
+    let mut out = String::new();
+    for c in d.root_element().children().filter(|c| c.is_element()) {
+        if !drop.contains(&c.tag_name().name()) {
+            out.push_str(raw(&wrapped, c));
+        }
+    }
+    out
 }
 
 /// Run properties of a raw `a:endParaRPr`.
@@ -487,25 +583,7 @@ pub(crate) fn write_rpr(out: &mut String, tag: &str, p: &RunProps) {
 
 pub(crate) fn write_para(out: &mut String, p: &TextPara) {
     out.push_str("<a:p>");
-    let pp = &p.props;
-    if pp.align.is_some() || pp.level > 0 || !pp.extra.is_empty() {
-        out.push_str("<a:pPr");
-        if pp.level > 0 {
-            let _ = write!(out, " lvl=\"{}\"", pp.level);
-        }
-        if let Some(a) = pp.align {
-            let _ = write!(out, " algn=\"{}\"", a.attr());
-        }
-        write_attrs(out, &pp.extra.attrs);
-        if pp.extra.post.is_empty() && pp.extra.pre.is_empty() {
-            out.push_str("/>");
-        } else {
-            out.push('>');
-            out.push_str(&pp.extra.pre);
-            out.push_str(&pp.extra.post);
-            out.push_str("</a:pPr>");
-        }
-    }
+    write_ppr(out, &p.props);
     for (range, run) in p.run_ranges() {
         let text = &p.text[range];
         for (i, seg) in text.split(LINE_BREAK).enumerate() {
@@ -531,12 +609,76 @@ pub(crate) fn write_para(out: &mut String, p: &TextPara) {
     out.push_str("</a:p>");
 }
 
+/// The bullet element of a paragraph.
+pub(crate) fn write_bullet(out: &mut String, b: &Bullet) {
+    match b {
+        Bullet::None => out.push_str("<a:buNone/>"),
+        Bullet::Char(c) => {
+            let _ = write!(out, "<a:buChar char=\"{}\"/>", esc_attr(c));
+        }
+        Bullet::AutoNum { scheme, start } => {
+            let _ = write!(out, "<a:buAutoNum type=\"{}\"", esc_attr(scheme));
+            if *start != 1 {
+                let _ = write!(out, " startAt=\"{start}\"");
+            }
+            out.push_str("/>");
+        }
+        Bullet::Picture(raw) => out.push_str(raw),
+    }
+}
+
+fn write_ppr(out: &mut String, pp: &ParaProps) {
+    let st = &pp.style;
+    let has_attrs = pp.align.is_some()
+        || pp.level > 0
+        || st.mar_l.is_some()
+        || st.indent.is_some()
+        || !pp.extra.attrs.is_empty();
+    let has_children = st.bullet.is_some() || !pp.extra.pre.is_empty() || !pp.extra.post.is_empty();
+    if !has_attrs && !has_children {
+        return;
+    }
+    out.push_str("<a:pPr");
+    if let Some(m) = st.mar_l {
+        let _ = write!(out, " marL=\"{m}\"");
+    }
+    if pp.level > 0 {
+        let _ = write!(out, " lvl=\"{}\"", pp.level);
+    }
+    if let Some(i) = st.indent {
+        let _ = write!(out, " indent=\"{i}\"");
+    }
+    if let Some(a) = pp.align {
+        let _ = write!(out, " algn=\"{}\"", a.attr());
+    }
+    write_attrs(out, &pp.extra.attrs);
+    if !has_children {
+        out.push_str("/>");
+        return;
+    }
+    out.push('>');
+    out.push_str(&pp.extra.pre);
+    if let Some(b) = &st.bullet {
+        write_bullet(out, b);
+    }
+    out.push_str(&pp.extra.post);
+    out.push_str("</a:pPr>");
+}
+
 fn write_xfrm(out: &mut String, attrs: &str, x: &Xfrm) {
     out.push_str("<a:xfrm");
-    if !attrs.is_empty() {
-        out.push(' ');
-        out.push_str(attrs);
+    let mut attrs = split_attrs(attrs);
+    attrs.retain(|(k, _)| !matches!(k.as_str(), "rot" | "flipH" | "flipV"));
+    if x.rot != 0 {
+        attrs.push(("rot".into(), x.rot.to_string()));
     }
+    if x.flip_h {
+        attrs.push(("flipH".into(), "1".into()));
+    }
+    if x.flip_v {
+        attrs.push(("flipV".into(), "1".into()));
+    }
+    write_attrs(out, &attrs);
     let _ = write!(
         out,
         "><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm>",
@@ -552,6 +694,86 @@ fn write_paras(paras: &[TextPara]) -> String {
     s
 }
 
+pub(crate) fn write_paint(out: &mut String, p: &Paint) {
+    match p {
+        Paint::None => out.push_str("<a:noFill/>"),
+        Paint::Scheme(s) => {
+            let _ = write!(
+                out,
+                "<a:solidFill><a:schemeClr val=\"{}\"/></a:solidFill>",
+                esc_attr(s)
+            );
+        }
+        Paint::Rgb(c) => out.push_str(&solid(*c)),
+    }
+}
+
+/// `a:ln` attributes with the width set.
+fn ln_attrs(attrs: &str, w: Option<Emu>) -> Vec<(String, String)> {
+    let mut a = split_attrs(attrs);
+    if let Some(w) = w {
+        a.retain(|(k, _)| k != "w");
+        a.insert(0, ("w".into(), w.to_string()));
+    }
+    a
+}
+
+/// A whole new `a:ln` for a shape that has none (or `<a:ln/>`).
+fn new_ln(attrs: &str, p: &PaintEdit) -> String {
+    let mut s = String::from("<a:ln");
+    write_attrs(&mut s, &ln_attrs(attrs, p.line_w));
+    match &p.line {
+        Some(c) => {
+            s.push('>');
+            write_paint(&mut s, c);
+            s.push_str("</a:ln>");
+        }
+        None => s.push_str("/>"),
+    }
+    s
+}
+
+/// Edits (range, text, order at equal positions) for fill and outline
+/// changes inside `p:spPr`; `None` when `p:spPr` must be rewritten whole.
+fn paint_edits(at: &SpPrAt, p: &PaintEdit) -> Vec<(Range<usize>, String, u8)> {
+    let mut edits = Vec::new();
+    if let Some(f) = &p.fill {
+        let mut buf = String::new();
+        write_paint(&mut buf, f);
+        match &at.fill {
+            Some(r) => edits.push((r.clone(), buf, 1)),
+            None => edits.push((at.fill_at..at.fill_at, buf, 1)),
+        }
+    }
+    if p.line.is_none() && p.line_w.is_none() {
+        return edits;
+    }
+    match &at.ln {
+        Some(ln) => match ln.inner_at {
+            Some(inner) => {
+                let mut tag = String::from("<a:ln");
+                write_attrs(&mut tag, &ln_attrs(&ln.attrs, p.line_w));
+                tag.push('>');
+                edits.push((ln.range.start..inner, tag, 2));
+                if let Some(c) = &p.line {
+                    let mut buf = String::new();
+                    write_paint(&mut buf, c);
+                    match &ln.fill {
+                        Some(r) => edits.push((r.clone(), buf, 2)),
+                        None => edits.push((inner..inner, buf, 3)),
+                    }
+                }
+            }
+            None => edits.push((ln.range.clone(), new_ln(&ln.attrs, p), 2)),
+        },
+        None => {
+            let pos = at.fill.as_ref().map_or(at.fill_at, |r| r.end);
+            edits.push((pos..pos, new_ln("", p), 2));
+        }
+    }
+    edits
+}
+
 /// Write one shape: raw when unchanged, spliced when edited, generated when new.
 pub(crate) fn write_shape(out: &mut String, s: &Shape) {
     let Some(src) = &s.src else {
@@ -562,19 +784,45 @@ pub(crate) fn write_shape(out: &mut String, s: &Shape) {
         out.push_str(&src.raw);
         return;
     }
-    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+    let mut edits: Vec<(Range<usize>, String, u8)> = Vec::new();
+    // `<p:spPr/>` with a new fill or outline: written whole (with the xfrm).
+    let whole_sppr = !s.paint.is_empty() && src.sppr.as_ref().is_some_and(|a| a.empty);
+    if whole_sppr && let Some(at) = &src.sppr {
+        let mut buf = String::from("<p:spPr");
+        if !at.attrs.is_empty() {
+            buf.push(' ');
+            buf.push_str(&at.attrs);
+        }
+        buf.push('>');
+        if let Some(x) = &s.xfrm {
+            write_xfrm(&mut buf, "", x);
+        }
+        if let Some(f) = &s.paint.fill {
+            write_paint(&mut buf, f);
+        }
+        if s.paint.line.is_some() || s.paint.line_w.is_some() {
+            buf.push_str(&new_ln("", &s.paint));
+        }
+        buf.push_str("</p:spPr>");
+        edits.push((at.range.clone(), buf, 0));
+    } else if !s.paint.is_empty()
+        && let Some(at) = &src.sppr
+    {
+        edits.extend(paint_edits(at, &s.paint));
+    }
     if s.xfrm != src.xfrm
+        && !whole_sppr
         && let (Some(x), Some(at)) = (&s.xfrm, &src.xfrm_at)
     {
         let mut buf = String::new();
         match at {
             XfrmAt::Replace(r, attrs) => {
                 write_xfrm(&mut buf, attrs, x);
-                edits.push((r.clone(), buf));
+                edits.push((r.clone(), buf, 0));
             }
             XfrmAt::Insert(i) => {
                 write_xfrm(&mut buf, "", x);
-                edits.push((*i..*i, buf));
+                edits.push((*i..*i, buf, 0));
             }
             XfrmAt::Expand(r, attrs) => {
                 buf.push_str("<p:spPr");
@@ -585,18 +833,20 @@ pub(crate) fn write_shape(out: &mut String, s: &Shape) {
                 buf.push('>');
                 write_xfrm(&mut buf, "", x);
                 buf.push_str("</p:spPr>");
-                edits.push((r.clone(), buf));
+                edits.push((r.clone(), buf, 0));
             }
         }
     }
     if let (Some(t), Some(at)) = (&s.text, &src.paras_at)
         && src.text.as_ref() != Some(&t.paras)
     {
-        edits.push((at.clone(), write_paras(&t.paras)));
+        edits.push((at.clone(), write_paras(&t.paras), 0));
     }
     let mut raw = src.raw.clone();
-    edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
-    for (r, text) in edits {
+    // From the end; at one position the later child (higher order) first,
+    // so it ends up after the earlier one.
+    edits.sort_by_key(|(r, _, o)| (std::cmp::Reverse(r.start), std::cmp::Reverse(*o)));
+    for (r, text, _) in edits {
         raw.replace_range(r, &text);
     }
     out.push_str(&raw);
@@ -623,7 +873,14 @@ fn generate(out: &mut String, s: &Shape) {
             if let Some(x) = &s.xfrm {
                 write_xfrm(out, "", x);
             }
-            out.push_str("<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></p:spPr></p:pic>");
+            out.push_str("<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>");
+            if let Some(f) = &s.paint.fill {
+                write_paint(out, f);
+            }
+            if s.paint.line.is_some() || s.paint.line_w.is_some() {
+                out.push_str(&new_ln("", &s.paint));
+            }
+            out.push_str("</p:spPr></p:pic>");
         }
         ShapeKind::Shape { geom, text_box } => {
             let _ = write!(
@@ -661,12 +918,26 @@ fn generate(out: &mut String, s: &Shape) {
                     Geom::Rect | Geom::Other(_) => "rect",
                 };
                 let _ = write!(out, "<a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>");
-                match s.look.fill {
-                    Some(c) => out.push_str(&solid(c)),
-                    None => out.push_str("<a:noFill/>"),
+                match (&s.paint.fill, s.look.fill) {
+                    (Some(p), _) => write_paint(out, p),
+                    (None, Some(c)) => out.push_str(&solid(c)),
+                    (None, None) => out.push_str("<a:noFill/>"),
                 }
-                if let Some((c, w)) = s.look.line {
-                    let _ = write!(out, "<a:ln w=\"{w}\">{}</a:ln>", solid(c));
+                let line = match (&s.paint.line, s.look.line) {
+                    (Some(Paint::None), _) => Some(Paint::None),
+                    (Some(p), _) => Some(p.clone()),
+                    (None, Some((c, _))) => Some(Paint::Rgb(c)),
+                    (None, None) => None,
+                };
+                if let Some(p) = line {
+                    let w = s
+                        .paint
+                        .line_w
+                        .or(s.look.line.map(|l| l.1))
+                        .unwrap_or(12_700);
+                    let _ = write!(out, "<a:ln w=\"{w}\">");
+                    write_paint(out, &p);
+                    out.push_str("</a:ln>");
                 }
             }
             out.push_str("</p:spPr>");
@@ -736,7 +1007,11 @@ mod tests {
     fn unchanged_shape_is_written_verbatim() {
         with_shapes(SP, |shapes, _| {
             let s = &shapes[0];
-            assert_eq!(s.xfrm, Some(Xfrm::new(1, 2, 3, 4)));
+            let rotated = Xfrm {
+                rot: 60_000,
+                ..Xfrm::new(1, 2, 3, 4)
+            };
+            assert_eq!(s.xfrm, Some(rotated));
             let t = s.text.as_ref().unwrap();
             assert_eq!(t.paras[0].text, format!("Hi & bye{LINE_BREAK}two"));
             assert_eq!(t.paras[0].props.align, Some(Align::Center));
@@ -767,7 +1042,14 @@ mod tests {
             assert!(forced.contains("<a:br><a:rPr lang=\"en-US\"/></a:br>"));
             assert!(forced.contains("Hi &amp; bye"));
             // Move: only the xfrm changes, rotation kept.
-            s.xfrm = Some(Xfrm::new(10, 20, 30, 40));
+            let x = s.xfrm.unwrap();
+            s.xfrm = Some(Xfrm {
+                x: 10,
+                y: 20,
+                cx: 30,
+                cy: 40,
+                ..x
+            });
             let mut out = String::new();
             write_shape(&mut out, &s);
             assert!(out.contains(
@@ -837,6 +1119,7 @@ mod tests {
                 text_color: Some(Rgb([255, 255, 255])),
             },
             text: Some(TextBody::new(vec![TextPara::new("A <b>")])),
+            paint: PaintEdit::default(),
             src: None,
         };
         let mut out = String::new();

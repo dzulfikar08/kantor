@@ -1,6 +1,6 @@
 //! The Slides toolbar: slides (new / duplicate / delete), insert (text box,
-//! rectangle, ellipse, picture), B / I / U for the text being edited, and
-//! Present.
+//! rectangle, ellipse, picture), B / I / U and lists for the text being
+//! edited, and Present.
 
 use docs_engine::Toggle;
 use gpui_kit::assets::IconName as Lucide;
@@ -12,6 +12,7 @@ use kantor_ui::{metrics::*, tokens};
 use slides_engine::Geom;
 
 use crate::SlidesView;
+use crate::paint_menu::PaintKind;
 
 type Run = fn(&mut SlidesView, &mut Window, &mut Context<SlidesView>);
 
@@ -110,6 +111,8 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
             |v, w, cx| v.insert_image_doc(w, cx),
             cx,
         ))
+        .child(crate::paint_menu::paint_button(view, PaintKind::Fill, cx))
+        .child(crate::paint_menu::paint_button(view, PaintKind::Line, cx))
         .child(separator(cx))
         .child(tool(
             "slides-bold",
@@ -135,7 +138,32 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
             |v, w, cx| v.toggle_doc(Toggle::Underline, w, cx),
             cx,
         ))
+        .child(separator(cx))
+        .child(tool(
+            "slides-bullets",
+            Lucide::List,
+            "Bulleted list · Tab / Shift+Tab change the level",
+            view.is_list(false),
+            |v, w, cx| v.toggle_list_doc(false, w, cx),
+            cx,
+        ))
+        .child(tool(
+            "slides-numbering",
+            Lucide::ListOrdered,
+            "Numbered list",
+            view.is_list(true),
+            |v, w, cx| v.toggle_list_doc(true, w, cx),
+            cx,
+        ))
         .child(div().flex_1())
+        .child(tool(
+            "slides-notes",
+            Lucide::NotepadText,
+            "Speaker notes",
+            view.notes_open(),
+            |v, w, cx| v.toggle_notes_doc(w, cx),
+            cx,
+        ))
         .child(tool(
             "slides-present",
             Lucide::Presentation,

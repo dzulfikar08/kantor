@@ -44,6 +44,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   (shown as boxes). When slides are added, removed or reordered in a file with slide sections or
   custom shows, those can't be kept, so Save goes to a new file and the original is never
   overwritten.
+- **Slides: lists, rotation, notes, fill and outline, copy/paste.** Bullets and numbering (from the
+  master and layout, or the toolbar's list buttons), indent levels (Tab / Shift+Tab) and paragraph
+  spacing are shown and edited; unmodelled paragraph settings are kept. Rotated and flipped shapes,
+  pictures and text are drawn as in the file, with a rotate handle (Shift snaps to 15°). A
+  resizable speaker-notes pane under the slide (notes are created with their part, relationships
+  and notes master when needed) and notes under the slide while presenting (S hides them). Fill and
+  outline popovers with the theme's colours, no fill / no outline and outline widths. Copy, cut and
+  paste shapes within and between presentations (pictures take their image along) and Ctrl+D to
+  duplicate the selected shape. All undoable.
 - **Docs: lists, tables and pictures.** Bulleted and numbered lists (Ctrl+Shift+8 / Ctrl+Shift+7,
   toolbar; Enter continues, Enter on an empty item ends the list, Tab / Shift+Tab change level,
   Backspace at the start removes the number) with markers drawn in the hanging indent. Tables with

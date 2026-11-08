@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read as _, Write as _};
 
+use slides_engine::render::LineSpacing;
 use slides_engine::*;
 
 fn parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
@@ -511,4 +512,352 @@ fn locked_slides_refuse_edits_but_are_kept() {
     let out = p.to_bytes().unwrap();
     assert_valid(&out);
     assert_eq!(text(&out, "ppt/slides/slide1.xml"), weird);
+}
+
+fn body_ref(p: &Presentation, slide: usize) -> ShapeRef {
+    let i = p
+        .slide(slide)
+        .shapes
+        .iter()
+        .position(|s| s.ph.as_ref().is_some_and(|ph| !ph.is_title()))
+        .expect("body placeholder");
+    (slide, i)
+}
+
+fn markers(p: &Presentation, r: ShapeRef) -> Vec<Option<String>> {
+    let list = p.render_list(r.0, false);
+    let shape = list.iter().find(|x| x.layer == Layer::Slide(r.1)).unwrap();
+    shape
+        .text
+        .as_ref()
+        .unwrap()
+        .paras
+        .iter()
+        .map(|p| p.marker.as_ref().map(|m| m.text.clone()))
+        .collect()
+}
+
+fn all(p: &Presentation, r: ShapeRef) -> Selection {
+    let paras = p.text_paras(r).unwrap();
+    Selection {
+        anchor: Position::default(),
+        head: text_ops::end(paras),
+    }
+}
+
+/// Bullets come from the master's body style; levels, numbering and
+/// bullet toggles are written as DrawingML and survive a reopen.
+#[test]
+fn bullets_levels_and_numbering_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("lists.pptx");
+    let mut p = Presentation::new();
+    let s = p.new_slide(Some(0)).unwrap();
+    let body = body_ref(&p, s);
+    p.insert_text(body, Selection::default(), "One\nTwo\nThree", None)
+        .unwrap();
+    // Inherited: "•", marL 228600 (18 pt), hanging 18 pt, 10 pt before, 90 % lines.
+    assert_eq!(markers(&p, body), vec![Some("•".to_owned()); 3]);
+    let list = p.render_list(s, false);
+    let t = list
+        .iter()
+        .find(|x| x.layer == Layer::Slide(body.1))
+        .unwrap()
+        .text
+        .clone()
+        .unwrap();
+    assert_eq!(t.paras[0].indent_pt, 18.0);
+    assert_eq!(t.paras[0].first_line_pt, -18.0);
+    assert_eq!(t.paras[0].space_before_pt, 0.0, "first paragraph");
+    assert_eq!(t.paras[1].space_before_pt, 10.0);
+    assert_eq!(t.paras[1].line, Some(LineSpacing::Multiple(0.9)));
+
+    // Tab on "Two": level 2 (smaller text from lvl2pPr).
+    let two = Selection::caret(Position::new(1, 0));
+    p.change_level(body, two, 1).unwrap();
+    assert_eq!(p.text_paras(body).unwrap()[1].props.level, 1);
+    assert!(p.is_list(body, all(&p, body), false));
+    // Numbered: levels count separately.
+    p.toggle_list(body, all(&p, body), true).unwrap();
+    assert!(p.is_list(body, all(&p, body), true));
+    assert_eq!(
+        markers(&p, body),
+        [Some("1."), Some("1."), Some("2.")].map(|m| m.map(str::to_owned))
+    );
+    // "Three" off: an explicit buNone over the inherited bullet.
+    let three = Selection::caret(Position::new(2, 0));
+    p.toggle_list(body, three, true).unwrap();
+    assert_eq!(markers(&p, body)[2], None);
+    p.change_level(body, two, -1).unwrap();
+
+    // A text box has no bullets; turning them on adds a hanging indent.
+    let tb = p.add_text_box(s).unwrap();
+    p.insert_text((s, tb), Selection::default(), "a\nb", None)
+        .unwrap();
+    assert_eq!(markers(&p, (s, tb)), vec![None, None]);
+    p.toggle_list((s, tb), all(&p, (s, tb)), false).unwrap();
+    assert_eq!(markers(&p, (s, tb)), vec![Some("•".to_owned()); 2]);
+    // Undo and redo the toggle.
+    p.undo().unwrap();
+    assert_eq!(markers(&p, (s, tb)), vec![None, None]);
+    p.redo().unwrap();
+
+    p.save_as(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert_valid(&bytes);
+    let xml = text(&bytes, &p.slide(s).part);
+    assert!(
+        xml.contains(r#"<a:buAutoNum type="arabicPeriod"/>"#),
+        "{xml}"
+    );
+    assert!(xml.contains("<a:buNone/>"), "{xml}");
+    assert!(
+        xml.contains(r#"<a:pPr marL="342900" indent="-342900"><a:buChar char="•"/></a:pPr>"#),
+        "{xml}"
+    );
+    let q = Presentation::open(&path).unwrap();
+    assert_eq!(
+        markers(&q, body),
+        [Some("1."), Some("2."), None].map(|m| m.map(str::to_owned))
+    );
+    assert_eq!(markers(&q, (s, tb)), vec![Some("•".to_owned()); 2]);
+}
+
+/// Paragraph properties Kantor doesn't model (spacing, tab stops, other
+/// attributes) are kept when the bullet changes; a symbol bullet font is
+/// dropped with the symbol it drew.
+#[test]
+fn bullet_changes_keep_unmodelled_paragraph_xml() {
+    let base = Presentation::new().to_bytes().unwrap();
+    let para = r#"<a:p><a:pPr marL="285750" indent="-285750" fontAlgn="base"><a:lnSpc><a:spcPct val="150000"/></a:lnSpc><a:buFont typeface="Wingdings" pitchFamily="2" charset="2"/><a:buChar char="§"/><a:tabLst><a:tab pos="914400" algn="l"/></a:tabLst></a:pPr><a:r><a:rPr lang="en-US"/><a:t>Point</a:t></a:r></a:p>"#;
+    let shape = format!(
+        r#"<p:sp><p:nvSpPr><p:cNvPr id="9" name="TextBox 8"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="3000000" cy="1000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/>{para}</p:txBody></p:sp>"#
+    );
+    let slide =
+        text(&base, "ppt/slides/slide1.xml").replace("</p:spTree>", &format!("{shape}</p:spTree>"));
+    let mut p =
+        Presentation::from_bytes(with_parts(&base, &[("ppt/slides/slide1.xml", slide)])).unwrap();
+    let r = (0, p.slide(0).shapes.len() - 1);
+    // Wingdings § is a square bullet.
+    assert_eq!(markers(&p, r), vec![Some("■".to_owned())]);
+    let unchanged = p.to_bytes().unwrap();
+    assert!(text(&unchanged, "ppt/slides/slide1.xml").contains(para));
+    p.toggle_list(r, all(&p, r), true).unwrap();
+    let xml = text(&p.to_bytes().unwrap(), "ppt/slides/slide1.xml");
+    assert!(
+        xml.contains(r#"<a:pPr marL="285750" indent="-285750" fontAlgn="base"><a:lnSpc><a:spcPct val="150000"/></a:lnSpc><a:buAutoNum type="arabicPeriod"/><a:tabLst><a:tab pos="914400" algn="l"/></a:tabLst></a:pPr>"#),
+        "{xml}"
+    );
+}
+
+/// Notes are created with their part, relationships, content type and a
+/// notes master; edits are undoable and survive save, reopen and edit.
+#[test]
+fn speaker_notes_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.pptx");
+    let mut p = Presentation::new();
+    assert_eq!(p.notes_text(0), "");
+    assert_eq!(p.notes_locked(0), None);
+    p.set_notes_text(0, "Say hello").unwrap();
+    p.set_notes_text(0, "Say hello\nThen bye").unwrap();
+    assert_eq!(p.notes_text(0), "Say hello\nThen bye");
+    // Typing in the notes is one undo step.
+    p.undo().unwrap();
+    assert_eq!(p.notes_text(0), "");
+    p.redo().unwrap();
+    assert_eq!(p.notes_text(0), "Say hello\nThen bye");
+    // Duplicating the slide copies its notes into a new part.
+    let dup = p.duplicate_slide(0).unwrap();
+    assert_eq!(p.notes_text(dup), "Say hello\nThen bye");
+    p.save_as(&path).unwrap();
+
+    let bytes = std::fs::read(&path).unwrap();
+    assert_valid(&bytes);
+    let all = parts(&bytes);
+    let masters: Vec<_> = all
+        .keys()
+        .filter(|k| k.starts_with("ppt/notesMasters/notesMaster"))
+        .collect();
+    assert_eq!(masters, ["ppt/notesMasters/notesMaster1.xml"]);
+    assert!(all.contains_key("ppt/notesSlides/notesSlide1.xml"));
+    assert!(all.contains_key("ppt/notesSlides/notesSlide2.xml"));
+    let pres = text(&bytes, "ppt/presentation.xml");
+    let a = pres.find("</p:sldMasterIdLst>").unwrap();
+    let b = pres.find("<p:notesMasterIdLst>").unwrap();
+    let c = pres.find("<p:sldIdLst>").unwrap();
+    assert!(a < b && b < c, "schema order: {pres}");
+    let notes = text(&bytes, "ppt/notesSlides/notesSlide1.xml");
+    assert!(notes.contains("<a:t>Then bye</a:t>"), "{notes}");
+    let ct = text(&bytes, "[Content_Types].xml");
+    assert!(ct.contains("/ppt/notesSlides/notesSlide1.xml"));
+    assert!(ct.contains("notesMaster+xml"));
+
+    // Reopen, edit, save again: the notes part is rewritten in place.
+    let mut q = Presentation::open(&path).unwrap();
+    assert_eq!(q.notes_text(0), "Say hello\nThen bye");
+    q.set_notes_text(0, "Say hello!\nThen bye").unwrap();
+    q.save().unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert_valid(&bytes);
+    let r = Presentation::open(&path).unwrap();
+    assert_eq!(r.notes_text(0), "Say hello!\nThen bye");
+    assert_eq!(r.notes_text(1), "Say hello\nThen bye");
+    assert_eq!(
+        parts(&bytes)
+            .keys()
+            .filter(|k| k.starts_with("ppt/notesMasters/notesMaster") && k.ends_with(".xml"))
+            .count(),
+        1
+    );
+}
+
+/// Notes without a notes text box are kept but can't be edited.
+#[test]
+fn notes_without_a_body_are_read_only() {
+    let mut p = Presentation::from_bytes(rich_deck()).unwrap();
+    assert!(p.notes_locked(0).is_some());
+    assert!(p.set_notes_text(0, "x").is_err());
+    assert!(!p.has_unsupported_content());
+}
+
+/// Rotation and flips are written to `a:xfrm` and read back.
+#[test]
+fn rotation_round_trips() {
+    let mut p = Presentation::new();
+    let r = p.add_geometry(0, Geom::Rect).unwrap();
+    let x = p.slide(0).shapes[r].xfrm.unwrap();
+    let turned = Xfrm {
+        flip_h: true,
+        ..x.with_degrees(-30.0)
+    };
+    assert_eq!(turned.rot, 330 * 60_000);
+    p.set_xfrm((0, r), turned, false).unwrap();
+    let bytes = p.to_bytes().unwrap();
+    let xml = text(&bytes, "ppt/slides/slide1.xml");
+    assert!(
+        xml.contains(r#"<a:xfrm rot="19800000" flipH="1">"#),
+        "{xml}"
+    );
+    let q = Presentation::from_bytes(bytes).unwrap();
+    assert_eq!(q.slide(0).shapes[r].xfrm, Some(turned));
+}
+
+/// Fill and outline edits replace only the fill and the outline's colour
+/// and width in `p:spPr`; dashes, effects and the rest are kept.
+#[test]
+fn fill_and_line_edits_keep_the_rest_of_sppr() {
+    let base = Presentation::new().to_bytes().unwrap();
+    let styled = r#"<p:sp><p:nvSpPr><p:cNvPr id="9" name="Styled"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:ln w="12700" cap="rnd"><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill><a:prstDash val="dash"/></a:ln><a:effectLst/></p:spPr></p:sp>"#;
+    let bare = r#"<p:sp><p:nvSpPr><p:cNvPr id="10" name="Bare"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:sp>"#;
+    let slide = text(&base, "ppt/slides/slide1.xml")
+        .replace("</p:spTree>", &format!("{styled}{bare}</p:spTree>"));
+    let mut p =
+        Presentation::from_bytes(with_parts(&base, &[("ppt/slides/slide1.xml", slide)])).unwrap();
+    let n = p.slide(0).shapes.len();
+    let (title, styled_i, bare_i) = (title_ref(&p, 0), n - 2, n - 1);
+    let accent2 = p
+        .theme_colors(0)
+        .into_iter()
+        .find(|(k, _)| *k == "accent2")
+        .unwrap()
+        .1;
+    p.set_fill((0, styled_i), Paint::Scheme("accent2".into()))
+        .unwrap();
+    p.set_line((0, styled_i), None, Some(38_100)).unwrap();
+    assert_eq!(p.slide(0).shapes[styled_i].look.fill, Some(accent2));
+    p.set_line((0, bare_i), Some(Paint::Rgb(Rgb([1, 2, 3]))), None)
+        .unwrap();
+    p.set_fill((0, bare_i), Paint::None).unwrap();
+    // The title placeholder has `<p:spPr/>`: moved and filled at once.
+    p.set_xfrm(title, Xfrm::new(1, 2, 3, 4), false).unwrap();
+    p.set_fill(title, Paint::Rgb(Rgb([0x12, 0x34, 0x56])))
+        .unwrap();
+
+    let bytes = p.to_bytes().unwrap();
+    assert_valid(&bytes);
+    let xml = text(&bytes, "ppt/slides/slide1.xml");
+    assert!(xml.contains(r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:schemeClr val="accent2"/></a:solidFill><a:ln w="38100" cap="rnd"><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill><a:prstDash val="dash"/></a:ln><a:effectLst/></p:spPr>"#), "{xml}");
+    assert!(xml.contains(r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln w="12700"><a:solidFill><a:srgbClr val="010203"/></a:solidFill></a:ln></p:spPr>"#), "{xml}");
+    assert!(xml.contains(r#"<p:spPr><a:xfrm><a:off x="1" y="2"/><a:ext cx="3" cy="4"/></a:xfrm><a:solidFill><a:srgbClr val="123456"/></a:solidFill></p:spPr>"#), "{xml}");
+    // Undo restores the original shape exactly.
+    for _ in 0..6 {
+        p.undo().unwrap();
+    }
+    let xml = text(&p.to_bytes().unwrap(), "ppt/slides/slide1.xml");
+    assert!(xml.contains(styled) && xml.contains(bare), "{xml}");
+    let q = Presentation::from_bytes(bytes).unwrap();
+    assert_eq!(q.slide(0).shapes[styled_i].look.fill, Some(accent2));
+    assert_eq!(
+        q.slide(0).shapes[styled_i].look.line.map(|l| l.1),
+        Some(38_100)
+    );
+}
+
+/// Shapes copy within a presentation (offset when they'd cover the
+/// original) and into another one (pictures take their media along);
+/// pastes are undoable and the packages stay valid.
+#[test]
+fn copy_paste_and_duplicate_shapes() {
+    let mut a = Presentation::new();
+    let pic = a.add_picture(0, PNG.to_vec()).unwrap();
+    let rect = a.add_geometry(0, Geom::Rect).unwrap();
+    a.insert_text((0, rect), Selection::default(), "Box", None)
+        .unwrap();
+    a.set_fill((0, rect), Paint::Scheme("accent2".into()))
+        .unwrap();
+    let a_bytes = a.to_bytes().unwrap();
+    let mut a = Presentation::from_bytes(a_bytes).unwrap();
+
+    // Duplicate: same slide, offset, new id, same picture part.
+    let dup = a.duplicate_shape((0, pic)).unwrap();
+    let (orig, copy) = (&a.slide(0).shapes[pic], &a.slide(0).shapes[dup]);
+    assert_ne!(orig.id, copy.id);
+    let (ox, cx_) = (orig.xfrm.unwrap(), copy.xfrm.unwrap());
+    assert_eq!((cx_.x - ox.x, cx_.y - ox.y), (228_600, 228_600));
+    let bytes = a.to_bytes().unwrap();
+    assert_valid(&bytes);
+    assert_eq!(
+        parts(&bytes)
+            .keys()
+            .filter(|k| k.starts_with("ppt/media/"))
+            .count(),
+        1,
+        "the copy shares the picture"
+    );
+
+    // Into another presentation, on a slide of its own.
+    let clip = a.copy_shapes(0, &[pic, rect]).unwrap();
+    assert_eq!(clip.text, "Box");
+    let mut b = Presentation::new();
+    let s = b.new_slide(Some(0)).unwrap();
+    let before = b.slide(s).shapes.len();
+    let added = b.paste_shapes(s, &clip).unwrap();
+    assert_eq!(added, vec![before, before + 1]);
+    let ids: Vec<u32> = b.slide(s).shapes.iter().map(|x| x.id).collect();
+    let mut uniq = ids.clone();
+    uniq.dedup();
+    assert_eq!(ids.len(), uniq.len(), "unique ids: {ids:?}");
+    assert_eq!(b.text_paras((s, before + 1)).unwrap()[0].text, "Box");
+    // Not offset: nothing there on this slide.
+    assert_eq!(b.slide(s).shapes[before].xfrm, a.slide(0).shapes[pic].xfrm);
+    let bytes = b.to_bytes().unwrap();
+    assert_valid(&bytes);
+    let xml = text(&bytes, &b.slide(s).part);
+    assert!(xml.contains(r#"<a:schemeClr val="accent2"/>"#), "{xml}");
+    assert!(
+        parts(&bytes)
+            .keys()
+            .any(|k| k.starts_with("ppt/media/image"))
+    );
+    let reopened = Presentation::from_bytes(bytes).unwrap();
+    assert!(reopened.slide(s).shapes[before].is_picture());
+
+    b.undo().unwrap();
+    assert_eq!(b.slide(s).shapes.len(), before);
+
+    // Tables, charts and groups aren't copied yet.
+    let c = Presentation::from_bytes(rich_deck()).unwrap();
+    let table = c.slide(0).shapes.len() - 1;
+    assert!(c.copy_shapes(0, &[table]).is_err());
 }

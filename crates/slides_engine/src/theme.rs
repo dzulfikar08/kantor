@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use docs_engine::Rgb;
 use roxmltree::Node;
 
-use crate::model::Align;
+use crate::model::{Align, Bullet, ParaStyle, Spacing};
 use crate::xml::*;
 
 /// Theme colours (`a:clrScheme`) and fonts (`a:fontScheme`).
@@ -52,6 +52,11 @@ impl Theme {
     }
 
     /// A typeface name with theme references (`+mj-lt`, `+mn-lt`) resolved.
+    /// A theme colour slot (`accent1`, `dk1`, ...).
+    pub fn color(&self, slot: &str) -> Option<Rgb> {
+        self.colors.get(slot).copied()
+    }
+
     pub fn font(&self, face: &str) -> Option<String> {
         match face {
             "+mj-lt" | "+mj-ea" | "+mj-cs" => self.major_font.clone(),
@@ -103,7 +108,7 @@ pub struct ColorCtx<'a> {
 }
 
 impl ColorCtx<'_> {
-    fn scheme(&self, name: &str) -> Option<Rgb> {
+    pub(crate) fn scheme(&self, name: &str) -> Option<Rgb> {
         if name == "phClr" {
             return self.ph;
         }
@@ -261,6 +266,8 @@ pub struct LevelStyle {
     pub color: Option<Rgb>,
     /// Typeface, theme references resolved.
     pub font: Option<String>,
+    /// Indents, spacing and bullets.
+    pub para: ParaStyle,
 }
 
 impl LevelStyle {
@@ -269,6 +276,7 @@ impl LevelStyle {
             ($($f:ident),*) => {$( if o.$f.is_some() { self.$f = o.$f.clone(); } )*};
         }
         take!(align, size, bold, italic, underline, color, font);
+        self.para.overlay(&o.para);
     }
 }
 
@@ -303,10 +311,79 @@ impl ListStyle {
 pub fn level_style(ppr: Node, cx: &ColorCtx) -> LevelStyle {
     let mut s = LevelStyle {
         align: ppr.attribute("algn").and_then(Align::from_attr),
+        para: para_style(ppr, cx),
         ..LevelStyle::default()
     };
     if let Some(d) = child(ppr, NS_A, "defRPr") {
         run_style(d, cx, &mut s);
+    }
+    s
+}
+
+/// Spacing child (`a:spcPct` / `a:spcPts`) of `a:lnSpc`, `a:spcBef`, ...
+fn spacing(n: Node) -> Option<Spacing> {
+    let c = n.children().find(|c| c.is_element())?;
+    let v = attr_i64(c, "val")?.clamp(-10_000_000, 10_000_000) as i32;
+    match c.tag_name().name() {
+        "spcPct" => Some(Spacing::Pct(v)),
+        "spcPts" => Some(Spacing::Pts(v)),
+        _ => None,
+    }
+}
+
+/// Whether `name` is a bullet-type element (`a:buNone`...).
+pub(crate) fn is_bullet_el(name: &str) -> bool {
+    matches!(name, "buNone" | "buChar" | "buAutoNum" | "buBlip")
+}
+
+/// The bullet of a bullet-type element; `raw` is its source text.
+pub(crate) fn bullet_of(n: Node, raw: &str) -> Option<Bullet> {
+    Some(match n.tag_name().name() {
+        "buNone" => Bullet::None,
+        "buChar" => Bullet::Char(n.attribute("char").unwrap_or("•").to_owned()),
+        "buAutoNum" => Bullet::AutoNum {
+            scheme: n.attribute("type").unwrap_or("arabicPeriod").to_owned(),
+            start: attr_i64(n, "startAt").unwrap_or(1).clamp(1, 32_767) as u32,
+        },
+        "buBlip" => Bullet::Picture(raw.to_owned()),
+        _ => return None,
+    })
+}
+
+/// Paragraph formatting of a `pPr`-like element (attributes and children).
+pub fn para_style(ppr: Node, cx: &ColorCtx) -> ParaStyle {
+    let mut s = ParaStyle {
+        mar_l: attr_i64(ppr, "marL"),
+        indent: attr_i64(ppr, "indent"),
+        ..ParaStyle::default()
+    };
+    for c in ppr.children().filter(|c| c.is_element()) {
+        if c.tag_name().namespace() != Some(NS_A) {
+            continue;
+        }
+        match c.tag_name().name() {
+            "lnSpc" => s.line_spacing = spacing(c),
+            "spcBef" => s.space_before = spacing(c),
+            "spcAft" => s.space_after = spacing(c),
+            "buClrTx" => s.bu_color = Some(None),
+            "buClr" => s.bu_color = Some(cx.first_color(c)),
+            "buSzTx" => s.bu_size = Some(None),
+            "buSzPct" => {
+                s.bu_size = attr_i64(c, "val").map(|v| Some(Spacing::Pct(v as i32)));
+            }
+            "buSzPts" => {
+                s.bu_size = attr_i64(c, "val").map(|v| Some(Spacing::Pts(v as i32)));
+            }
+            "buFontTx" => s.bu_font = Some(None),
+            "buFont" => {
+                s.bu_font = Some(c.attribute("typeface").and_then(|f| cx.theme.font(f)));
+            }
+            n if is_bullet_el(n) => {
+                let src = c.document().input_text();
+                s.bullet = bullet_of(c, &src[c.range()]);
+            }
+            _ => {}
+        }
     }
     s
 }

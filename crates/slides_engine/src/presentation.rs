@@ -10,9 +10,14 @@
 //! - slides whose shapes changed: the shape tree's other content and
 //!   everything around it (background, transitions, timing, extensions)
 //!   is copied from the source text, unchanged shapes are copied verbatim,
-//!   moved shapes get only their `a:xfrm` replaced and edited text bodies
+//!   moved shapes get only their `a:xfrm` replaced, edited text bodies
 //!   only their paragraphs (with each paragraph's and run's unmodelled
-//!   attributes and children written back);
+//!   attributes and children written back) and recoloured shapes only the
+//!   fill and the outline's colour and width in `p:spPr`;
+//! - notes slides whose notes text changed (only the notes body's
+//!   paragraphs); new notes parts get their relationships and content
+//!   type, and a notes master (with a copy of the theme) is added to
+//!   `presentation.xml` when the file has none;
 //! - `presentation.xml` (only `p:sldIdLst`), its relationships and
 //!   `[Content_Types].xml` when slides are added, removed or reordered;
 //! - relationship parts of slides that gained a picture.
@@ -32,7 +37,7 @@ use roxmltree::Node;
 
 use crate::history::History;
 use crate::model::*;
-use crate::shape::{ParseCtx, parse_tree, write_shape};
+use crate::shape::{ParseCtx, parse_shape, parse_tree, write_shape};
 use crate::template;
 use crate::theme::{ClrMap, ColorCtx, ListStyle, Theme};
 use crate::xml::*;
@@ -44,6 +49,7 @@ pub struct Master {
     pub shapes: Vec<Shape>,
     pub bg: Option<Rgb>,
     pub(crate) theme: Arc<Theme>,
+    pub(crate) theme_part: Option<String>,
     pub(crate) clr_map: ClrMap,
     pub(crate) title_style: ListStyle,
     pub(crate) body_style: ListStyle,
@@ -84,6 +90,82 @@ pub(crate) struct Origin {
     pub sld_id_raw: String,
 }
 
+/// A slide's speaker notes (`p:notes`): the notes body placeholder is
+/// modelled (edited like any text body); everything around it is kept.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Notes {
+    pub part: String,
+    /// The part is in the original file (else it's new and gets its
+    /// relationships and content type on save).
+    pub existing: bool,
+    pub prefix: Arc<str>,
+    pub suffix: Arc<str>,
+    /// The notes body placeholder; `None` when the notes have none (kept
+    /// as they are, not editable).
+    pub body: Option<Shape>,
+}
+
+impl Notes {
+    fn unchanged(&self) -> bool {
+        self.body.as_ref().is_none_or(Shape::unchanged)
+    }
+
+    fn xml(&self) -> String {
+        let mut s = String::from(&*self.prefix);
+        if let Some(b) = &self.body {
+            write_shape(&mut s, b);
+        }
+        s.push_str(&self.suffix);
+        s
+    }
+}
+
+/// Read a notes slide; `None` if its XML can't be read.
+pub(crate) fn read_notes(
+    xml: &str,
+    part: &str,
+    rels: &[Rel],
+    master: &Master,
+    existing: bool,
+) -> Option<Notes> {
+    let doc = roxmltree::Document::parse(xml).ok()?;
+    let tree = path(doc.root_element(), &[(NS_P, "cSld"), (NS_P, "spTree")])?;
+    let cx = ParseCtx {
+        src: xml,
+        part,
+        rels,
+        colors: ColorCtx {
+            theme: &master.theme,
+            map: &master.clr_map,
+            ph: None,
+        },
+    };
+    let body = tree
+        .children()
+        .filter(|n| is(*n, NS_P, "sp"))
+        .find_map(|n| {
+            let s = parse_shape(n, &cx);
+            let ok = s.ph.as_ref().is_some_and(|p| p.ty() == "body") && s.text.is_some();
+            ok.then_some((n.range(), s))
+        });
+    Some(match body {
+        Some((range, shape)) => Notes {
+            part: part.to_owned(),
+            existing,
+            prefix: Arc::from(&xml[..range.start]),
+            suffix: Arc::from(&xml[range.end..]),
+            body: Some(shape),
+        },
+        None => Notes {
+            part: part.to_owned(),
+            existing,
+            prefix: Arc::from(xml),
+            suffix: Arc::from(""),
+            body: None,
+        },
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct Slide {
     /// `p:sldId/@id`.
@@ -99,6 +181,7 @@ pub struct Slide {
     pub(crate) rels: Arc<Vec<Rel>>,
     pub(crate) src: Arc<SlideSrc>,
     pub(crate) origin: Option<Origin>,
+    pub(crate) notes: Option<Notes>,
 }
 
 impl PartialEq for Slide {
@@ -110,6 +193,7 @@ impl PartialEq for Slide {
             && self.rels == o.rels
             && Arc::ptr_eq(&self.src, &o.src)
             && self.origin == o.origin
+            && self.notes == o.notes
     }
 }
 
@@ -132,6 +216,32 @@ impl Slide {
         s
     }
 
+    /// Declare namespace prefixes on the slide's root element.
+    pub(crate) fn declare_ns(&mut self, ns: &[(String, String)]) {
+        let mut prefix = self.src.prefix.clone();
+        let Some(start) = prefix.find("<p:sld") else {
+            return;
+        };
+        let Some(len) = tag_end(&prefix[start..]) else {
+            return;
+        };
+        let mut decl = String::new();
+        write_attrs(&mut decl, ns);
+        let at = start + len
+            - if prefix[start..start + len].ends_with("/>") {
+                2
+            } else {
+                1
+            };
+        prefix.insert_str(at, &decl);
+        self.src = Arc::new(SlideSrc {
+            prefix,
+            suffix: self.src.suffix.clone(),
+            shapes: self.src.shapes.clone(),
+            rels: self.src.rels.clone(),
+        });
+    }
+
     pub(crate) fn next_shape_id(&self) -> u32 {
         self.shapes.iter().map(Shape::max_id).max().unwrap_or(1) + 1
     }
@@ -146,6 +256,8 @@ pub(crate) struct Package {
     pub pres_part: String,
     pub pres_xml: String,
     pub pres_rels: Vec<Rel>,
+    /// The notes master part, if the file has one.
+    pub notes_master: Option<String>,
     /// Slide parts in order, with their relationships, as in the file.
     pub orig_slides: Vec<(String, Vec<Rel>)>,
     pub has_sections: bool,
@@ -153,6 +265,8 @@ pub(crate) struct Package {
 }
 
 pub struct Presentation {
+    /// Identifies this presentation (copied shapes know where they came from).
+    pub(crate) deck: u64,
     pub size: SlideSize,
     pub(crate) slides: Vec<Arc<Slide>>,
     pub masters: Vec<Master>,
@@ -397,20 +511,32 @@ impl Presentation {
                     sld_id_raw: raw(&pres_xml, s).to_owned(),
                 };
                 orig_slides.push((part.clone(), rels.clone()));
-                slides.push(Arc::new(read_slide(
-                    &xml,
-                    &part,
-                    rels,
-                    layout,
-                    master,
-                    sld_id,
-                    Some(origin),
-                )));
+                let notes_part = rels
+                    .iter()
+                    .find(|r| r.kind() == "notesSlide")
+                    .and_then(|r| r.part(&part));
+                let mut notes = None;
+                if let Some(np) = notes_part
+                    && let Some(nx) = rd.text(&np)?
+                {
+                    let nrels = rd.rels(&np)?;
+                    notes = read_notes(&nx, &np, &nrels, master, true);
+                    if notes.is_none() {
+                        unsupported.push(format!("speaker notes that can't be read ({np})"));
+                    }
+                }
+                let mut slide = read_slide(&xml, &part, rels, layout, master, sld_id, Some(origin));
+                slide.notes = notes;
+                slides.push(Arc::new(slide));
             }
         }
         if layouts.is_empty() {
             bail!("the presentation has no slide layouts");
         }
+        let notes_master = pres_rels
+            .iter()
+            .find(|r| r.kind() == "notesMaster")
+            .and_then(|r| r.part(&pres_part));
         let next_slide_num = names
             .iter()
             .filter_map(|n| {
@@ -423,6 +549,7 @@ impl Presentation {
             .unwrap_or(0)
             + 1;
         Ok(Self {
+            deck: crate::clip::new_deck_id(),
             size,
             slides,
             masters,
@@ -435,6 +562,7 @@ impl Presentation {
                 pres_part,
                 pres_xml,
                 pres_rels,
+                notes_master,
                 orig_slides,
                 has_sections,
                 has_custom_shows,
@@ -629,22 +757,87 @@ impl Presentation {
                 }
             }
         }
+        // Speaker notes: edited ones are rewritten; new ones get their
+        // relationships (notes master, slide) and content type, and the
+        // presentation gets a notes master if it has none.
+        let any_new_notes = self
+            .slides
+            .iter()
+            .any(|s| s.notes.as_ref().is_some_and(|n| !n.existing));
+        let mut new_master = None;
+        let master_part = match &pkg.notes_master {
+            Some(m) => Some(m.clone()),
+            None if any_new_notes => {
+                let free = |dir: &str, stem: &str| {
+                    (1..)
+                        .map(|i| format!("ppt/{dir}/{stem}{i}.xml"))
+                        .find(|p| !pkg.names.contains(p))
+                        .expect("a free part name")
+                };
+                let m = free("notesMasters", "notesMaster");
+                let theme = free("theme", "theme");
+                let theme_bytes = self.masters[0]
+                    .theme_part
+                    .as_deref()
+                    .and_then(|t| self.part_bytes(t))
+                    .map(|b| b.as_ref().clone())
+                    .unwrap_or_else(|| template::theme().into_bytes());
+                out_parts.push((m.clone(), template::notes_master().into_bytes()));
+                let mrels = vec![Rel {
+                    id: "rId1".into(),
+                    ty: rel_type("theme"),
+                    target: relative(&m, &theme),
+                    external: false,
+                }];
+                out_parts.push((rels_name(&m), write_rels(&mrels).into_bytes()));
+                out_parts.push((theme.clone(), theme_bytes));
+                ct.set_override(&m, CT_NOTES_MASTER);
+                ct.set_override(&theme, CT_THEME);
+                new_master = Some(m.clone());
+                Some(m)
+            }
+            None => None,
+        };
+        for slide in &self.slides {
+            let Some(n) = &slide.notes else { continue };
+            if n.existing {
+                if !n.unchanged() {
+                    out_parts.push((n.part.clone(), n.xml().into_bytes()));
+                }
+                continue;
+            }
+            let Some(m) = &master_part else { continue };
+            out_parts.push((n.part.clone(), n.xml().into_bytes()));
+            let nrels = vec![
+                Rel {
+                    id: "rId1".into(),
+                    ty: rel_type("notesMaster"),
+                    target: relative(&n.part, m),
+                    external: false,
+                },
+                Rel {
+                    id: "rId2".into(),
+                    ty: rel_type("slide"),
+                    target: relative(&n.part, &slide.part),
+                    external: false,
+                },
+            ];
+            out_parts.push((rels_name(&n.part), write_rels(&nrels).into_bytes()));
+            ct.set_override(&n.part, CT_NOTES);
+        }
         // Media added this session that some slide uses.
         for (part, bytes) in &self.media {
             if kept_targets.contains(part) {
                 let ext = part.rsplit('.').next().unwrap_or("png");
-                let ty = if ext == "png" {
-                    "image/png"
-                } else {
-                    "image/jpeg"
-                };
-                ct.ensure_default(ext, ty);
+                if !ct.covers(part) {
+                    ct.ensure_default(ext, media_type(ext));
+                }
                 out_parts.push((part.clone(), bytes.as_ref().clone()));
             }
         }
         // presentation.xml and its relationships.
-        if self.structure_changed() {
-            let (xml, rels) = self.presentation_parts()?;
+        if self.structure_changed() || new_master.is_some() {
+            let (xml, rels) = self.presentation_parts(new_master.as_deref())?;
             out_parts.push((pkg.pres_part.clone(), xml.into_bytes()));
             out_parts.push((rels_name(&pkg.pres_part), write_rels(&rels).into_bytes()));
         }
@@ -680,9 +873,11 @@ impl Presentation {
         Ok(out.finish()?.into_inner())
     }
 
-    /// `presentation.xml` with a new `p:sldIdLst`, and its relationships.
-    fn presentation_parts(&self) -> anyhow::Result<(String, Vec<Rel>)> {
+    /// `presentation.xml` with a new `p:sldIdLst` (and a notes master
+    /// list when `notes_master` is new), and its relationships.
+    fn presentation_parts(&self, notes_master: Option<&str>) -> anyhow::Result<(String, Vec<Rel>)> {
         let pkg = &self.pkg;
+        let restructured = self.structure_changed();
         let slide_rel = |r: &Rel| r.kind() == "slide";
         let live_rids: HashSet<&str> = self
             .slides
@@ -719,9 +914,36 @@ impl Presentation {
         let doc = roxmltree::Document::parse(&pkg.pres_xml)?;
         let root = doc.root_element();
         let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+        let mut notes_list = String::new();
+        if let Some(m) = notes_master {
+            let id = next_rel_id(&rels);
+            notes_list = format!(
+                "<p:notesMasterIdLst><p:notesMasterId r:id=\"{id}\"/></p:notesMasterIdLst>"
+            );
+            rels.push(Rel {
+                id,
+                ty: rel_type("notesMaster"),
+                target: relative(&pkg.pres_part, m),
+                external: false,
+            });
+        }
+        let masters_end = child(root, NS_P, "sldMasterIdLst")
+            .map(|n| n.range().end)
+            .context("presentation.xml has no master list")?;
         match child(root, NS_P, "sldIdLst") {
-            Some(l) => edits.push((l.range(), list)),
+            Some(l) => {
+                edits.push((l.range(), list));
+                if !notes_list.is_empty() {
+                    edits.push((masters_end..masters_end, notes_list));
+                }
+            }
+            None if !notes_list.is_empty() && child(root, NS_P, "handoutMasterIdLst").is_none() => {
+                edits.push((masters_end..masters_end, notes_list + &list));
+            }
             None => {
+                if !notes_list.is_empty() {
+                    edits.push((masters_end..masters_end, notes_list));
+                }
                 let after = ["sldMasterIdLst", "notesMasterIdLst", "handoutMasterIdLst"]
                     .iter()
                     .filter_map(|n| child(root, NS_P, n))
@@ -731,12 +953,13 @@ impl Presentation {
                 edits.push((after..after, list));
             }
         }
-        if pkg.has_custom_shows
+        if restructured
+            && pkg.has_custom_shows
             && let Some(c) = child(root, NS_P, "custShowLst")
         {
             edits.push((c.range(), String::new()));
         }
-        if pkg.has_sections {
+        if restructured && pkg.has_sections {
             for d in root
                 .descendants()
                 .filter(|d| d.tag_name().name() == "sectionLst")
@@ -766,11 +989,13 @@ impl Default for Presentation {
 fn read_master(rd: &mut Reader, part: &str) -> anyhow::Result<(Master, Vec<String>)> {
     let xml = rd.text(part)?.with_context(|| format!("missing {part}"))?;
     let rels = rd.rels(part)?;
-    let theme = rels
+    let theme_part = rels
         .iter()
         .find(|r| r.kind() == "theme")
-        .and_then(|r| r.part(part))
-        .map(|t| rd.text(&t))
+        .and_then(|r| r.part(part));
+    let theme = theme_part
+        .as_ref()
+        .map(|t| rd.text(t))
         .transpose()?
         .flatten()
         .map(|t| Theme::parse(&t))
@@ -822,6 +1047,7 @@ fn read_master(rd: &mut Reader, part: &str) -> anyhow::Result<(Master, Vec<Strin
             shapes,
             bg,
             theme: theme.clone(),
+            theme_part,
             clr_map: clr_map.clone(),
             title_style,
             body_style,
@@ -900,6 +1126,7 @@ pub(crate) fn read_slide(
             rels: rels0.clone(),
         }),
         origin: origin0.clone(),
+        notes: None,
     };
     let Ok(doc) = roxmltree::Document::parse(xml) else {
         return locked_slide("its XML could not be read");
@@ -947,6 +1174,7 @@ pub(crate) fn read_slide(
         }),
         shapes,
         origin,
+        notes: None,
     };
     if let Some(why) = locked {
         let mut l = locked_slide(&why);
@@ -956,6 +1184,27 @@ pub(crate) fn read_slide(
         return l;
     }
     slide
+}
+
+/// Content type of a media part by its extension.
+fn media_type(ext: &str) -> &'static str {
+    match ext.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "tif" | "tiff" => "image/tiff",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "emf" => "image/x-emf",
+        "wmf" => "image/x-wmf",
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "m4a" => "audio/mp4",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        _ => "application/octet-stream",
+    }
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {
