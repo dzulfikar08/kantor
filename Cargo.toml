@@ -30,6 +30,7 @@ roxmltree = "0.21"
 # Already in GPUI's tree; Slides builds rotated picture rasters with it.
 image = { version = "0.25", default-features = false }
 
+kantor_ai = { path = "crates/kantor_ai" }
 kantor_core = { path = "crates/kantor_core" }
 kantor_theme = { path = "crates/kantor_theme" }
 kantor_ui = { path = "crates/kantor_ui" }

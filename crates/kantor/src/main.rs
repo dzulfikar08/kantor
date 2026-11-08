@@ -9,6 +9,7 @@
 extern crate gpui_kit as gpui;
 
 mod actions;
+mod ai;
 mod theme;
 mod workspace;
 
@@ -76,6 +77,7 @@ fn main() {
             docs_ui::init(cx);
             slides_ui::init(cx);
 
+            ai::init(cx);
             actions::bind_keys(cx);
 
             let options = WindowOptions {

@@ -10,6 +10,21 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ## [Unreleased]
 
 ### Added
+- **AI features, opt-in.** *AI Settings* (command palette) has a master switch (off by default),
+  a provider picker (Anthropic, OpenAI, OpenRouter, Groq, DeepSeek, Google Gemini, Ollama running
+  locally, or any OpenAI-compatible server), the API key (stored in the system keychain, never in the
+  settings file), base URL, model and *Test connection*. Requests go only to the provider you chose;
+  Kantor runs no AI service of its own.
+- **Sheets: Ask AI for a formula.** Describe what you want in English or Indonesian ("jumlah penjualan
+  untuk region Jakarta"); Kantor sends only the column headers, up to 20 sample rows near the
+  selection and the active cell's address, checks the suggested formula with IronCalc (it must parse
+  and calculate) and shows it with a one-line explanation; *Insert* puts it in the active cell as one
+  undo step. *Explain This Formula* explains the active cell's formula. Sparkle button in the
+  toolbar while AI is on.
+- **Docs: Rewrite / Translate selection.** Fix grammar, More formal, Shorter, or translate between
+  Indonesian and English. Only the selected paragraphs' text is sent; the result is shown first and
+  *Replace* applies it as one undo step, keeping paragraph styles (formatting inside a paragraph
+  becomes that of its first word).
 - **Sheets: formula point mode.** While typing a formula with the caret after `=`, `(`, `,` or an
   operator, clicking a cell inserts its reference (drag or Shift+click for a range; clicking again
   replaces it), and arrows / Shift+arrows point too; a click elsewhere in the text still commits as

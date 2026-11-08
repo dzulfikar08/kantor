@@ -3,6 +3,7 @@
 //! A missing or corrupt file yields defaults (and is never overwritten until the
 //! user changes a setting).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
@@ -17,6 +18,30 @@ pub struct Settings {
     pub ui_font: Option<String>,
     /// Show the ruler above Docs pages.
     pub docs_ruler: bool,
+    /// AI assistant (provider, models). API keys are never stored here: they
+    /// live in the OS keychain (see `kantor_ai::keys`).
+    pub ai: AiSettings,
+}
+
+/// AI settings. Everything is off until the user picks a provider and turns
+/// the master switch on.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AiSettings {
+    /// Master switch: no request is ever sent while this is off.
+    pub enabled: bool,
+    /// The chosen provider's id (`anthropic`, `openai`, `ollama`, …).
+    pub provider: String,
+    /// Per-provider overrides, keyed by provider id.
+    pub providers: BTreeMap<String, AiProviderSettings>,
+}
+
+/// What the user changed for one provider; `None` uses the provider default.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AiProviderSettings {
+    pub model: Option<String>,
+    pub base_url: Option<String>,
 }
 
 impl Default for Settings {
@@ -25,6 +50,7 @@ impl Default for Settings {
             theme: "omarchy".to_owned(),
             ui_font: None,
             docs_ruler: true,
+            ai: AiSettings::default(),
         }
     }
 }
@@ -84,6 +110,17 @@ mod tests {
             theme: "ghostty:Dracula".into(),
             ui_font: Some("SF Pro Text".into()),
             docs_ruler: false,
+            ai: AiSettings {
+                enabled: true,
+                provider: "ollama".into(),
+                providers: BTreeMap::from([(
+                    "ollama".into(),
+                    AiProviderSettings {
+                        model: Some("llama3.2".into()),
+                        base_url: None,
+                    },
+                )]),
+            },
         };
         s.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), s);
@@ -95,5 +132,6 @@ mod tests {
         assert_eq!(Settings::load_from(&path).theme, "omarchy:nord");
         assert_eq!(Settings::load_from(&path).ui_font, None);
         assert!(Settings::load_from(&path).docs_ruler, "ruler on by default");
+        assert!(!Settings::load_from(&path).ai.enabled, "AI off by default");
     }
 }

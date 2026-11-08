@@ -1,0 +1,31 @@
+[package]
+name = "kantor_ai"
+description = "Kantor AI: provider abstraction, HTTP clients, prompts and API-key storage (no GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kantor_core.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+# Blocking HTTP on a worker thread: no async runtime, one small TLS stack
+# (rustls + ring, Mozilla roots). GPUI has no native HTTP client of its own.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+keyring-core = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Secret Service over the zbus GPUI already links (accesskit), pure-Rust crypto.
+zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -41,6 +41,16 @@ Edits happen in the cell itself (synced live with the formula bar). With an inpu
 
 By default the UI follows your Omarchy theme (live-reloading on `omarchy theme set`); *Choose Theme…* offers your Omarchy themes plus 900+ Ghostty themes. The UI font is SF Pro when installed (never bundled), else Inter / Adwaita Sans. Open tabs, splits and panel sizes are restored on the next launch. Settings: `~/.config/kantor/settings.toml`; session: `~/.local/state/kantor/workspace.json`.
 
+## AI features (optional) and privacy
+
+AI is **off** until you turn it on in `Ctrl K` → *AI Settings* and choose a provider: Anthropic, OpenAI, OpenRouter, Groq, DeepSeek, Google Gemini, any OpenAI-compatible server, or **Ollama** running on your own computer (nothing leaves it). Kantor has no AI service of its own: your data goes **only to the provider you chose**, and only when you run an AI command. Each command sends only what it needs:
+
+- *Ask AI for a Formula…* (Sheets): the column headers, up to 20 sample rows near the selection and the active cell's address — never the whole sheet;
+- *Explain This Formula* (Sheets): the formula and the column headers;
+- *Rewrite / Translate Selection…* (Docs): the selected paragraphs' text.
+
+API keys are stored in the system keychain (Secret Service on Linux, Keychain on macOS); if none is available Kantor says so and keeps the key in `~/.config/kantor/ai-keys.toml`, readable only by you. Keys are never written to `settings.toml` or logs. What the provider does with your requests is governed by its own terms.
+
 ## Building
 
 All builds run on **GitHub Actions** (`ubuntu-24.04-arm` and `ubuntu-24.04`); contributors don't need a powerful machine. If you do want to build locally:
@@ -59,7 +69,8 @@ Expect `target/` to reach 10–20 GB and the first build to need plenty of RAM.
 crates/
   kantor         binary: CLI, suite shell (tabs, Home, command palette, status bar)
   kantor_ui      design system: metrics, colour tokens from Omarchy, cached views
-  kantor_core    shared non-GPUI pieces (fuzzy search; later commands/undo/settings)
+  kantor_core    shared non-GPUI pieces (fuzzy search, find, settings, session)
+  kantor_ai      AI providers, streaming HTTP clients, prompts, keychain (no GPUI)
   kantor_theme   Omarchy palette parser (no GPUI)
   sheets_engine  IronCalc wrapper: open/save xlsx, cells, formulas (no GPUI)
   sheets_ui      grid, formula bar, sheet tabs

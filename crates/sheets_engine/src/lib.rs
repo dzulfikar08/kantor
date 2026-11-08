@@ -29,6 +29,7 @@ use ironcalc_base::expressions::utils::number_to_column;
 use ironcalc_base::types::Color;
 use ironcalc_base::{Model, UserModel};
 
+pub mod check;
 pub mod format;
 pub mod formula;
 pub mod grid;

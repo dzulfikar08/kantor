@@ -10,6 +10,7 @@
 //! document. Home shows when no tab is active. Chrome regions are cached views.
 //! Open tabs, layouts and panel sizes persist across runs (`kantor_core::session`).
 
+mod ai;
 mod chrome;
 mod closing;
 mod doc;
@@ -115,6 +116,8 @@ pub struct Workspace {
     active: Option<usize>,
     next_id: u64,
     palette: Option<Palette>,
+    /// An open AI panel (settings, formula assistant, rewrite).
+    ai: Option<ai::AiOverlay>,
     message: SharedString,
     logo: Arc<Image>,
     focus: FocusHandle,
@@ -141,6 +144,7 @@ impl Workspace {
             active: None,
             next_id: 1,
             palette: None,
+            ai: None,
             message: SharedString::default(),
             logo: Arc::new(Image::from_bytes(ImageFormat::Svg, LOGO_SVG.to_vec())),
             focus: cx.focus_handle(),
@@ -669,6 +673,7 @@ impl Render for Workspace {
         let t = tokens(cx);
         let content = self.render_content(cx);
         let palette = self.render_palette(cx);
+        let ai_panel = self.render_ai(cx);
         let chrome = self.chrome.as_ref().map(|c| {
             (
                 c.tabs.clone(),
@@ -708,6 +713,10 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::split_right))
             .on_action(cx.listener(Self::split_down))
             .on_action(cx.listener(Self::quit))
+            .on_action(cx.listener(Self::open_ai_settings))
+            .on_action(cx.listener(Self::ask_for_formula))
+            .on_action(cx.listener(Self::explain_formula))
+            .on_action(cx.listener(Self::rewrite_selection))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(
                 MouseButton::Left,
@@ -788,5 +797,6 @@ impl Render for Workspace {
             ),
         )
         .children(palette)
+        .children(ai_panel)
     }
 }
