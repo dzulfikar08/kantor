@@ -10,9 +10,14 @@
 //! - slides whose shapes changed: the shape tree's other content and
 //!   everything around it (background, transitions, timing, extensions)
 //!   is copied from the source text, unchanged shapes are copied verbatim,
-//!   moved shapes get only their `a:xfrm` replaced and edited text bodies
+//!   moved shapes get only their `a:xfrm` replaced, edited text bodies
 //!   only their paragraphs (with each paragraph's and run's unmodelled
-//!   attributes and children written back);
+//!   attributes and children written back) and recoloured shapes only the
+//!   fill and the outline's colour and width in `p:spPr`;
+//! - notes slides whose notes text changed (only the notes body's
+//!   paragraphs); new notes parts get their relationships and content
+//!   type, and a notes master (with a copy of the theme) is added to
+//!   `presentation.xml` when the file has none;
 //! - `presentation.xml` (only `p:sldIdLst`), its relationships and
 //!   `[Content_Types].xml` when slides are added, removed or reordered;
 //! - relationship parts of slides that gained a picture.
@@ -211,6 +216,32 @@ impl Slide {
         s
     }
 
+    /// Declare namespace prefixes on the slide's root element.
+    pub(crate) fn declare_ns(&mut self, ns: &[(String, String)]) {
+        let mut prefix = self.src.prefix.clone();
+        let Some(start) = prefix.find("<p:sld") else {
+            return;
+        };
+        let Some(len) = tag_end(&prefix[start..]) else {
+            return;
+        };
+        let mut decl = String::new();
+        write_attrs(&mut decl, ns);
+        let at = start + len
+            - if prefix[start..start + len].ends_with("/>") {
+                2
+            } else {
+                1
+            };
+        prefix.insert_str(at, &decl);
+        self.src = Arc::new(SlideSrc {
+            prefix,
+            suffix: self.src.suffix.clone(),
+            shapes: self.src.shapes.clone(),
+            rels: self.src.rels.clone(),
+        });
+    }
+
     pub(crate) fn next_shape_id(&self) -> u32 {
         self.shapes.iter().map(Shape::max_id).max().unwrap_or(1) + 1
     }
@@ -234,6 +265,8 @@ pub(crate) struct Package {
 }
 
 pub struct Presentation {
+    /// Identifies this presentation (copied shapes know where they came from).
+    pub(crate) deck: u64,
     pub size: SlideSize,
     pub(crate) slides: Vec<Arc<Slide>>,
     pub masters: Vec<Master>,
@@ -516,6 +549,7 @@ impl Presentation {
             .unwrap_or(0)
             + 1;
         Ok(Self {
+            deck: crate::clip::new_deck_id(),
             size,
             slides,
             masters,
@@ -795,12 +829,9 @@ impl Presentation {
         for (part, bytes) in &self.media {
             if kept_targets.contains(part) {
                 let ext = part.rsplit('.').next().unwrap_or("png");
-                let ty = if ext == "png" {
-                    "image/png"
-                } else {
-                    "image/jpeg"
-                };
-                ct.ensure_default(ext, ty);
+                if !ct.covers(part) {
+                    ct.ensure_default(ext, media_type(ext));
+                }
                 out_parts.push((part.clone(), bytes.as_ref().clone()));
             }
         }
@@ -1153,6 +1184,27 @@ pub(crate) fn read_slide(
         return l;
     }
     slide
+}
+
+/// Content type of a media part by its extension.
+fn media_type(ext: &str) -> &'static str {
+    match ext.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "tif" | "tiff" => "image/tiff",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "emf" => "image/x-emf",
+        "wmf" => "image/x-wmf",
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "m4a" => "audio/mp4",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        _ => "application/octet-stream",
+    }
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {

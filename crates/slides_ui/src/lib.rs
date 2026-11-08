@@ -9,7 +9,9 @@
 //! scaled to fit the canvas, centred with an even margin (Ctrl+= / Ctrl+-
 //! or Ctrl+wheel zoom, Ctrl+0 fits again). On the canvas: click selects a shape, drag
 //! moves it, the handles resize it, a second click (or typing, or Enter)
-//! edits its text. F5 presents in the pane.
+//! edits its text, the round handle above it rotates it (Shift snaps to
+//! 15°). Under the canvas, a resizable speaker-notes pane ([`notes`]).
+//! F5 presents in the pane, with the notes under the slide (S hides them).
 //!
 //! Text input, including IME composition, goes through GPUI's
 //! [`EntityInputHandler`] (see [`input`]).
@@ -19,6 +21,8 @@ extern crate gpui_kit as gpui;
 mod draw;
 mod fit;
 mod input;
+mod notes;
+mod paint_menu;
 mod toolbar;
 
 use std::cell::Cell;
@@ -80,6 +84,7 @@ actions!(
         ToggleItalic,
         ToggleUnderline,
         NewSlide,
+        Duplicate,
         DuplicateSlide,
         DeleteSlide,
         MoveSlideUp,
@@ -102,6 +107,8 @@ actions!(
         PresentFirst,
         PresentLast,
         PresentExit,
+        PresentToggleNotes,
+        ToggleNotes,
     ]
 );
 
@@ -148,6 +155,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("end", PresentLast, p),
         KeyBinding::new("escape", PresentExit, p),
         KeyBinding::new("f5", PresentExit, p),
+        KeyBinding::new("s", PresentToggleNotes, p),
     ];
     macro_rules! primary {
         ($($key:literal => $action:expr),* $(,)?) => {
@@ -166,7 +174,7 @@ pub fn init(cx: &mut App) {
         "i" => ToggleItalic,
         "u" => ToggleUnderline,
         "m" => NewSlide,
-        "d" => DuplicateSlide,
+        "d" => Duplicate,
         "up" => MoveSlideUp,
         "down" => MoveSlideDown,
         "z" => Undo,
@@ -182,6 +190,16 @@ pub fn init(cx: &mut App) {
     );
     cx.bind_keys(keys);
 }
+
+/// Shapes copied in any Slides view (so they paste into another
+/// presentation), and the clipboard text written with them: a paste uses
+/// the shapes while the system clipboard still holds that text.
+struct ShapeClipboard {
+    clip: slides_engine::ShapeClip,
+    written: String,
+}
+
+impl Global for ShapeClipboard {}
 
 /// Facts for the inspector.
 pub struct SlidesInfo {
@@ -243,6 +261,9 @@ enum Drag {
     Text,
 }
 
+/// Clipboard metadata marking text Kantor wrote for copied shapes.
+const SHAPES_METADATA: &str = "kantor-slides-shapes";
+
 /// Distance of the rotate handle above the selected shape's top edge.
 const ROTATE_GAP: Pixels = SPACE_8;
 
@@ -276,6 +297,11 @@ pub struct SlidesView {
     hover_cursor: CursorStyle,
     focus: FocusHandle,
     status: SharedString,
+    notes: notes::NotesPane,
+    paint_menu: Option<paint_menu::PaintMenu>,
+    paint_menu_closed: Option<std::time::Instant>,
+    /// Speaker notes under the slide while presenting.
+    present_notes: bool,
 }
 
 fn cm(emu: i64) -> String {
@@ -299,7 +325,7 @@ impl SlidesView {
             None => (Presentation::new(), String::new()),
         };
         let (engine, bridge) = docs_ui::shared_text(cx);
-        let _ = window;
+        let notes = notes::NotesPane::new(window, cx);
         Self {
             pres,
             untitled_name: None,
@@ -320,6 +346,10 @@ impl SlidesView {
             hover_cursor: CursorStyle::Arrow,
             focus: cx.focus_handle(),
             status: status.into(),
+            notes,
+            paint_menu: None,
+            paint_menu_closed: None,
+            present_notes: true,
         }
     }
 
@@ -866,6 +896,9 @@ impl SlidesView {
     /// list or over several paragraphs; else a tab character); otherwise
     /// the next shape. Shift+Tab: a level up, or the previous shape.
     fn tab(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.notes.focused {
+            return;
+        }
         if let Some(e) = self.editing.clone() {
             let r = (self.current, e.shape);
             let (a, b) = e.sel.ordered();
@@ -956,25 +989,95 @@ impl SlidesView {
     // ── shell API (tabs, status bar, inspector, palette, close prompt) ─────
 
     pub fn copy_doc(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        match self.selected_text() {
-            Some(t) => cx.write_to_clipboard(ClipboardItem::new_string(t)),
-            None if self.selected.is_some() => {
-                self.set_status("Copying shapes isn't supported yet", cx)
+        if self.editing.is_some() {
+            if let Some(t) = self.selected_text() {
+                cx.write_to_clipboard(ClipboardItem::new_string(t));
             }
-            None => {}
+            return;
         }
+        self.copy_shape(cx);
+    }
+
+    /// Copy the selected shape (as shapes for Kantor, as text elsewhere).
+    fn copy_shape(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(i) = self.selected else {
+            return false;
+        };
+        let res = self.pres.copy_shapes(self.current, &[i]);
+        let Some(clip) = self.report(res, cx) else {
+            return false;
+        };
+        let written = if clip.text.trim().is_empty() {
+            format!(
+                "[{} shape{}]",
+                clip.len(),
+                if clip.len() == 1 { "" } else { "s" }
+            )
+        } else {
+            clip.text.clone()
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string_with_metadata(
+            written.clone(),
+            SHAPES_METADATA.into(),
+        ));
+        cx.set_global(ShapeClipboard { clip, written });
+        true
     }
 
     pub fn cut_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(t) = self.selected_text() {
-            cx.write_to_clipboard(ClipboardItem::new_string(t));
+        if self.editing.is_some() {
+            if let Some(t) = self.selected_text() {
+                cx.write_to_clipboard(ClipboardItem::new_string(t));
+                self.delete_key(false, window, cx);
+            }
+            return;
+        }
+        if self.copy_shape(cx) {
             self.delete_key(false, window, cx);
         }
     }
 
     pub fn paste_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        let text = item.text();
+        // Copied shapes, if the clipboard still holds what Kantor put there.
+        let shapes = (self.editing.is_none() && !self.pres.is_empty())
+            .then(|| cx.try_global::<ShapeClipboard>())
+            .flatten()
+            .filter(|g| {
+                item.metadata().is_some_and(|m| m == SHAPES_METADATA)
+                    && text.as_deref() == Some(g.written.as_str())
+            })
+            .map(|g| g.clip.clone());
+        if let Some(clip) = shapes {
+            let res = self.pres.paste_shapes(self.current, &clip);
+            if let Some(added) = self.report(res, cx) {
+                self.select(added.last().copied(), cx);
+                self.after_edit(window, cx);
+            }
+            return;
+        }
+        if let Some(text) = text {
             self.insert(&text, window, cx);
+        }
+    }
+
+    /// Ctrl+D: duplicate the selected shape, else the slide.
+    pub fn duplicate_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.notes.focused {
+            return;
+        }
+        match (self.selected, &self.editing) {
+            (Some(i), None) => {
+                let res = self.pres.duplicate_shape((self.current, i));
+                if let Some(j) = self.report(res, cx) {
+                    self.select(Some(j), cx);
+                    self.after_edit(window, cx);
+                }
+            }
+            _ => self.duplicate_slide_doc(window, cx),
         }
     }
 
@@ -1681,6 +1784,7 @@ impl SlidesView {
     }
 
     fn render_presenter(&mut self, slide: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+        let notes = self.render_presenter_notes(slide, cx);
         let items = self.painter.items(&self.pres, slide, false, None, cx);
         let bg = self.pres.background(slide);
         let bridge = self.painter.bridge.clone();
@@ -1720,11 +1824,18 @@ impl SlidesView {
                 MouseButton::Left,
                 cx.listener(|v, _: &MouseDownEvent, _, cx| v.present_step(1, cx)),
             )
+            .on_action(cx.listener(|v, _: &PresentToggleNotes, _, cx| {
+                v.present_notes = !v.present_notes;
+                cx.notify()
+            }))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|v, _: &MouseDownEvent, _, cx| v.present_step(-1, cx)),
             )
-            .child(c)
+            .flex()
+            .flex_col()
+            .child(div().flex_1().min_h_0().child(c))
+            .children(notes)
     }
 }
 
@@ -1770,6 +1881,7 @@ impl Render for SlidesView {
         if self.current >= self.pres.len() {
             self.current = self.pres.len().saturating_sub(1);
         }
+        self.sync_notes(window, cx);
         let editing_shape = self.editing.as_ref().map(|e| e.shape);
         let mut items = if self.pres.is_empty() {
             Vec::new()
@@ -1829,8 +1941,8 @@ impl Render for SlidesView {
         let area = div()
             .id("slides-canvas")
             .flex_1()
-            .min_w_0()
-            .h_full()
+            .min_h_0()
+            .w_full()
             .relative()
             .overflow_hidden()
             .cursor(cursor)
@@ -1894,6 +2006,7 @@ impl Render for SlidesView {
             ToggleItalic => |v, w, cx| v.toggle(Toggle::Italic, w, cx),
             ToggleUnderline => |v, w, cx| v.toggle(Toggle::Underline, w, cx),
             NewSlide => |v, w, cx| v.new_slide_doc(w, cx),
+            Duplicate => |v, w, cx| v.duplicate_doc(w, cx),
             DuplicateSlide => |v, w, cx| v.duplicate_slide_doc(w, cx),
             DeleteSlide => |v, w, cx| v.delete_slide_doc(w, cx),
             MoveSlideUp => |v, w, cx| v.move_slide_doc(true, w, cx),
@@ -1911,10 +2024,32 @@ impl Render for SlidesView {
             ZoomIn => |v, _w, cx| v.zoom_by(ZOOM_STEP, cx),
             ZoomOut => |v, _w, cx| v.zoom_by(1.0 / ZOOM_STEP, cx),
             ZoomFit => |v, _w, cx| v.zoom_to_fit(cx),
+            ToggleNotes => |v, w, cx| v.toggle_notes_doc(w, cx),
         ]);
+        let notes_pane = self.render_notes(cx);
+        let root = root
+            .on_mouse_move(cx.listener(|v, ev: &MouseMoveEvent, _, cx| v.on_notes_drag(ev, cx)))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|v, _: &MouseUpEvent, _, cx| {
+                    if v.notes.drag.take().is_some() {
+                        cx.notify();
+                    }
+                }),
+            );
         root.child(toolbar::render(self, cx))
             .children(self.render_banner(&t))
-            .child(h_flex().flex_1().min_h_0().child(strip).child(area))
+            .children(self.render_paint_menu(cx))
+            .child(
+                h_flex().flex_1().min_h_0().child(strip).child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .child(area)
+                        .children(notes_pane),
+                ),
+            )
             .into_any_element()
     }
 }

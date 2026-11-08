@@ -4,9 +4,12 @@
 //! - [`model`]: shapes, text bodies, units (EMU, hundredths of a point).
 //! - [`Presentation`]: slides, layouts, masters; open/save and the
 //!   round-trip rules (see the module docs of [`presentation`]).
-//! - Editing ([`edit`]): move/resize, text, shapes, slides; each undoable.
+//! - Editing ([`edit`]): move/resize/rotate, text, lists, fill/outline,
+//!   shapes, slides, speaker notes; each undoable. [`clip`]: copy/paste of
+//!   shapes within and between presentations.
 //! - [`render`]: what to draw, with layout/master/theme inheritance.
 
+pub mod clip;
 pub mod edit;
 mod history;
 pub mod model;
@@ -18,6 +21,7 @@ pub mod text_ops;
 pub mod theme;
 mod xml;
 
+pub use clip::ShapeClip;
 pub use docs_engine::{LINE_BREAK, Position, Rgb, Selection, Toggle};
 pub use edit::{ShapeRef, image_ext, image_size, set_toggle};
 pub use history::Focus;

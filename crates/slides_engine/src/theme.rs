@@ -108,7 +108,7 @@ pub struct ColorCtx<'a> {
 }
 
 impl ColorCtx<'_> {
-    fn scheme(&self, name: &str) -> Option<Rgb> {
+    pub(crate) fn scheme(&self, name: &str) -> Option<Rgb> {
         if name == "phClr" {
             return self.ph;
         }

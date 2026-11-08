@@ -12,6 +12,7 @@ use kantor_ui::{metrics::*, tokens};
 use slides_engine::Geom;
 
 use crate::SlidesView;
+use crate::paint_menu::PaintKind;
 
 type Run = fn(&mut SlidesView, &mut Window, &mut Context<SlidesView>);
 
@@ -110,6 +111,8 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
             |v, w, cx| v.insert_image_doc(w, cx),
             cx,
         ))
+        .child(crate::paint_menu::paint_button(view, PaintKind::Fill, cx))
+        .child(crate::paint_menu::paint_button(view, PaintKind::Line, cx))
         .child(separator(cx))
         .child(tool(
             "slides-bold",
@@ -153,6 +156,14 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
             cx,
         ))
         .child(div().flex_1())
+        .child(tool(
+            "slides-notes",
+            Lucide::NotepadText,
+            "Speaker notes",
+            view.notes_open(),
+            |v, w, cx| v.toggle_notes_doc(w, cx),
+            cx,
+        ))
         .child(tool(
             "slides-present",
             Lucide::Presentation,

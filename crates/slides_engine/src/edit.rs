@@ -73,7 +73,7 @@ pub fn image_ext(bytes: &[u8]) -> Option<&'static str> {
 impl Presentation {
     // ── command plumbing ───────────────────────────────────────────────────
 
-    fn slide_mut(&mut self, i: usize) -> anyhow::Result<&mut Slide> {
+    pub(crate) fn slide_mut(&mut self, i: usize) -> anyhow::Result<&mut Slide> {
         let s = self.slides.get_mut(i).context("no such slide")?;
         if let Some(why) = &s.locked {
             bail!("This slide can't be edited: {why}");
@@ -82,7 +82,7 @@ impl Presentation {
     }
 
     /// Run an edit and record it if it changed anything.
-    fn record<R>(
+    pub(crate) fn record<R>(
         &mut self,
         kind: Kind,
         target: Option<ShapeRef>,
@@ -191,6 +191,7 @@ impl Presentation {
                 ph: None,
                 look: Look::default(),
                 text: Some(TextBody::new(vec![TextPara::default()])),
+                paint: PaintEdit::default(),
                 src: None,
             },
         )
@@ -228,6 +229,7 @@ impl Presentation {
                     text_color: Some(Rgb([0xFF, 0xFF, 0xFF])),
                 },
                 text: Some(body),
+                paint: PaintEdit::default(),
                 src: None,
             },
         )
@@ -273,10 +275,114 @@ impl Presentation {
                 ph: None,
                 look: Look::default(),
                 text: None,
+                paint: PaintEdit::default(),
                 src: None,
             });
             let i = s.shapes.len() - 1;
             Ok((i, Focus::shape(slide, i)))
+        })
+    }
+
+    /// Theme colours offered for fills and outlines, as written
+    /// (`bg1`, `tx1`, `bg2`, `tx2`, `accent1`–`accent6`) with their colour
+    /// on `slide`.
+    pub fn theme_colors(&self, slide: usize) -> Vec<(&'static str, Rgb)> {
+        const NAMES: [&str; 10] = [
+            "bg1", "tx1", "bg2", "tx2", "accent1", "accent2", "accent3", "accent4", "accent5",
+            "accent6",
+        ];
+        if slide >= self.slides.len() {
+            return Vec::new();
+        }
+        NAMES
+            .iter()
+            .filter_map(|n| Some((*n, self.paint_rgb(slide, &Paint::Scheme((*n).into()))?)))
+            .collect()
+    }
+
+    /// What a paint looks like on `slide`.
+    pub fn paint_rgb(&self, slide: usize, p: &Paint) -> Option<Rgb> {
+        match p {
+            Paint::None => None,
+            Paint::Rgb(c) => Some(*c),
+            Paint::Scheme(s) => {
+                let m = self.master_of(slide);
+                crate::theme::ColorCtx {
+                    theme: &m.theme,
+                    map: &m.clr_map,
+                    ph: None,
+                }
+                .scheme(s)
+            }
+        }
+    }
+
+    fn paint_shape(
+        &mut self,
+        r: ShapeRef,
+        f: impl FnOnce(&mut Shape, &dyn Fn(&Paint) -> Option<Rgb>),
+    ) -> anyhow::Result<()> {
+        let focus = Focus::shape(r.0, r.1);
+        let shape = self
+            .slides
+            .get(r.0)
+            .and_then(|s| s.shapes.get(r.1))
+            .context("no such shape")?;
+        if !shape.paintable() {
+            bail!("This object's fill and outline can't be changed yet");
+        }
+        // Theme colours resolved up front (the slide is borrowed mutably below).
+        let palette = self.theme_colors(r.0);
+        let lookup = move |c: &Paint| match c {
+            Paint::None => None,
+            Paint::Rgb(c) => Some(*c),
+            Paint::Scheme(n) => palette.iter().find(|(k, _)| k == n).map(|(_, v)| *v),
+        };
+        self.record(Kind::Other, None, focus.clone(), false, |p| {
+            let s = p.slide_mut(r.0)?;
+            f(&mut s.shapes[r.1], &lookup);
+            Ok(((), focus))
+        })
+    }
+
+    /// Set a shape's fill (`Paint::None` = no fill).
+    pub fn set_fill(&mut self, r: ShapeRef, fill: Paint) -> anyhow::Result<()> {
+        self.paint_shape(r, |shape, rgb| {
+            shape.look.fill = rgb(&fill);
+            shape.paint.fill = Some(fill);
+        })
+    }
+
+    /// Set a shape's outline colour and/or width. A width on a shape
+    /// without an outline gives it one in the text colour.
+    pub fn set_line(
+        &mut self,
+        r: ShapeRef,
+        color: Option<Paint>,
+        width: Option<Emu>,
+    ) -> anyhow::Result<()> {
+        self.paint_shape(r, |shape, rgb| {
+            let color = match (color, shape.look.line) {
+                (Some(c), _) => Some(c),
+                (None, None) => Some(Paint::Scheme("tx1".into())),
+                (None, Some(_)) => shape.paint.line.clone(),
+            };
+            let w = width
+                .or(shape.paint.line_w)
+                .or(shape.look.line.map(|l| l.1))
+                .unwrap_or(12_700);
+            shape.look.line = match &color {
+                Some(Paint::None) => None,
+                Some(c) => rgb(c).map(|c| (c, w)),
+                None => shape.look.line.map(|(c, _)| (c, w)),
+            };
+            if color.is_some() {
+                shape.paint.line = color;
+            }
+            // A new outline is written with the width it's shown with.
+            if width.is_some() || shape.paint.line_w.is_none() {
+                shape.paint.line_w = Some(w);
+            }
         })
     }
 
@@ -684,6 +790,7 @@ impl Presentation {
                 ph: Some(ph.clone()),
                 look: Look::default(),
                 text: Some(TextBody::new(vec![TextPara::default()])),
+                paint: PaintEdit::default(),
                 src: None,
             });
         }

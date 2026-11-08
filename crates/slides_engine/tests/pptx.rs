@@ -742,3 +742,122 @@ fn rotation_round_trips() {
     let q = Presentation::from_bytes(bytes).unwrap();
     assert_eq!(q.slide(0).shapes[r].xfrm, Some(turned));
 }
+
+/// Fill and outline edits replace only the fill and the outline's colour
+/// and width in `p:spPr`; dashes, effects and the rest are kept.
+#[test]
+fn fill_and_line_edits_keep_the_rest_of_sppr() {
+    let base = Presentation::new().to_bytes().unwrap();
+    let styled = r#"<p:sp><p:nvSpPr><p:cNvPr id="9" name="Styled"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:ln w="12700" cap="rnd"><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill><a:prstDash val="dash"/></a:ln><a:effectLst/></p:spPr></p:sp>"#;
+    let bare = r#"<p:sp><p:nvSpPr><p:cNvPr id="10" name="Bare"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:sp>"#;
+    let slide = text(&base, "ppt/slides/slide1.xml")
+        .replace("</p:spTree>", &format!("{styled}{bare}</p:spTree>"));
+    let mut p =
+        Presentation::from_bytes(with_parts(&base, &[("ppt/slides/slide1.xml", slide)])).unwrap();
+    let n = p.slide(0).shapes.len();
+    let (title, styled_i, bare_i) = (title_ref(&p, 0), n - 2, n - 1);
+    let accent2 = p
+        .theme_colors(0)
+        .into_iter()
+        .find(|(k, _)| *k == "accent2")
+        .unwrap()
+        .1;
+    p.set_fill((0, styled_i), Paint::Scheme("accent2".into()))
+        .unwrap();
+    p.set_line((0, styled_i), None, Some(38_100)).unwrap();
+    assert_eq!(p.slide(0).shapes[styled_i].look.fill, Some(accent2));
+    p.set_line((0, bare_i), Some(Paint::Rgb(Rgb([1, 2, 3]))), None)
+        .unwrap();
+    p.set_fill((0, bare_i), Paint::None).unwrap();
+    // The title placeholder has `<p:spPr/>`: moved and filled at once.
+    p.set_xfrm(title, Xfrm::new(1, 2, 3, 4), false).unwrap();
+    p.set_fill(title, Paint::Rgb(Rgb([0x12, 0x34, 0x56])))
+        .unwrap();
+
+    let bytes = p.to_bytes().unwrap();
+    assert_valid(&bytes);
+    let xml = text(&bytes, "ppt/slides/slide1.xml");
+    assert!(xml.contains(r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:schemeClr val="accent2"/></a:solidFill><a:ln w="38100" cap="rnd"><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill><a:prstDash val="dash"/></a:ln><a:effectLst/></p:spPr>"#), "{xml}");
+    assert!(xml.contains(r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln w="12700"><a:solidFill><a:srgbClr val="010203"/></a:solidFill></a:ln></p:spPr>"#), "{xml}");
+    assert!(xml.contains(r#"<p:spPr><a:xfrm><a:off x="1" y="2"/><a:ext cx="3" cy="4"/></a:xfrm><a:solidFill><a:srgbClr val="123456"/></a:solidFill></p:spPr>"#), "{xml}");
+    // Undo restores the original shape exactly.
+    for _ in 0..6 {
+        p.undo().unwrap();
+    }
+    let xml = text(&p.to_bytes().unwrap(), "ppt/slides/slide1.xml");
+    assert!(xml.contains(styled) && xml.contains(bare), "{xml}");
+    let q = Presentation::from_bytes(bytes).unwrap();
+    assert_eq!(q.slide(0).shapes[styled_i].look.fill, Some(accent2));
+    assert_eq!(
+        q.slide(0).shapes[styled_i].look.line.map(|l| l.1),
+        Some(38_100)
+    );
+}
+
+/// Shapes copy within a presentation (offset when they'd cover the
+/// original) and into another one (pictures take their media along);
+/// pastes are undoable and the packages stay valid.
+#[test]
+fn copy_paste_and_duplicate_shapes() {
+    let mut a = Presentation::new();
+    let pic = a.add_picture(0, PNG.to_vec()).unwrap();
+    let rect = a.add_geometry(0, Geom::Rect).unwrap();
+    a.insert_text((0, rect), Selection::default(), "Box", None)
+        .unwrap();
+    a.set_fill((0, rect), Paint::Scheme("accent2".into()))
+        .unwrap();
+    let a_bytes = a.to_bytes().unwrap();
+    let mut a = Presentation::from_bytes(a_bytes).unwrap();
+
+    // Duplicate: same slide, offset, new id, same picture part.
+    let dup = a.duplicate_shape((0, pic)).unwrap();
+    let (orig, copy) = (&a.slide(0).shapes[pic], &a.slide(0).shapes[dup]);
+    assert_ne!(orig.id, copy.id);
+    let (ox, cx_) = (orig.xfrm.unwrap(), copy.xfrm.unwrap());
+    assert_eq!((cx_.x - ox.x, cx_.y - ox.y), (228_600, 228_600));
+    let bytes = a.to_bytes().unwrap();
+    assert_valid(&bytes);
+    assert_eq!(
+        parts(&bytes)
+            .keys()
+            .filter(|k| k.starts_with("ppt/media/"))
+            .count(),
+        1,
+        "the copy shares the picture"
+    );
+
+    // Into another presentation, on a slide of its own.
+    let clip = a.copy_shapes(0, &[pic, rect]).unwrap();
+    assert_eq!(clip.text, "Box");
+    let mut b = Presentation::new();
+    let s = b.new_slide(Some(0)).unwrap();
+    let before = b.slide(s).shapes.len();
+    let added = b.paste_shapes(s, &clip).unwrap();
+    assert_eq!(added, vec![before, before + 1]);
+    let ids: Vec<u32> = b.slide(s).shapes.iter().map(|x| x.id).collect();
+    let mut uniq = ids.clone();
+    uniq.dedup();
+    assert_eq!(ids.len(), uniq.len(), "unique ids: {ids:?}");
+    assert_eq!(b.text_paras((s, before + 1)).unwrap()[0].text, "Box");
+    // Not offset: nothing there on this slide.
+    assert_eq!(b.slide(s).shapes[before].xfrm, a.slide(0).shapes[pic].xfrm);
+    let bytes = b.to_bytes().unwrap();
+    assert_valid(&bytes);
+    let xml = text(&bytes, &b.slide(s).part);
+    assert!(xml.contains(r#"<a:schemeClr val="accent2"/>"#), "{xml}");
+    assert!(
+        parts(&bytes)
+            .keys()
+            .any(|k| k.starts_with("ppt/media/image"))
+    );
+    let reopened = Presentation::from_bytes(bytes).unwrap();
+    assert!(reopened.slide(s).shapes[before].is_picture());
+
+    b.undo().unwrap();
+    assert_eq!(b.slide(s).shapes.len(), before);
+
+    // Tables, charts and groups aren't copied yet.
+    let c = Presentation::from_bytes(rich_deck()).unwrap();
+    let table = c.slide(0).shapes.len() - 1;
+    assert!(c.copy_shapes(0, &[table]).is_err());
+}

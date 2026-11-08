@@ -632,6 +632,32 @@ impl Placeholder {
     }
 }
 
+/// A fill or line colour chosen in Kantor.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Paint {
+    /// No fill / no line.
+    None,
+    /// A theme colour (`accent1`, `tx1`, `bg1`, ...).
+    Scheme(String),
+    Rgb(Rgb),
+}
+
+/// Fill and outline edits of a shape, written into its `p:spPr` (the rest
+/// of `p:spPr` is kept). Empty = as read.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct PaintEdit {
+    pub fill: Option<Paint>,
+    pub line: Option<Paint>,
+    /// Outline width, EMU.
+    pub line_w: Option<Emu>,
+}
+
+impl PaintEdit {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// How a shape looks, resolved for display when read (fills from the
 /// theme and `p:style`). Not written back: unmodelled formatting stays in
 /// the source XML; new shapes are generated from it.
@@ -667,6 +693,32 @@ pub(crate) enum XfrmAt {
     Expand(Range<usize>, String),
 }
 
+/// Where `a:ln` sits in a shape's `p:spPr` (offsets into the raw XML).
+#[derive(Debug, PartialEq)]
+pub(crate) struct LnAt {
+    pub range: Range<usize>,
+    /// Raw attributes of its start tag.
+    pub attrs: String,
+    /// End of the start tag (`None` = `<a:ln .../>`).
+    pub inner_at: Option<usize>,
+    /// Its fill child (`a:solidFill`, `a:noFill`, ...).
+    pub fill: Option<Range<usize>>,
+}
+
+/// Where a shape's `p:spPr` and its fill and outline are.
+#[derive(Debug, PartialEq)]
+pub(crate) struct SpPrAt {
+    pub range: Range<usize>,
+    /// Raw attributes of `p:spPr`.
+    pub attrs: String,
+    /// `<p:spPr/>`: rewritten whole when edited.
+    pub empty: bool,
+    pub fill: Option<Range<usize>>,
+    /// Where a new fill goes: after `a:xfrm` and the geometry.
+    pub fill_at: usize,
+    pub ln: Option<LnAt>,
+}
+
 /// Where a shape came from in the file, for verbatim / spliced writing.
 #[derive(Debug, PartialEq)]
 pub(crate) struct ShapeSrc {
@@ -679,6 +731,8 @@ pub(crate) struct ShapeSrc {
     pub xfrm_at: Option<XfrmAt>,
     /// Byte range of the paragraphs inside `p:txBody`.
     pub paras_at: Option<Range<usize>>,
+    /// `p:spPr` (shapes and pictures), for fill and outline edits.
+    pub sppr: Option<SpPrAt>,
     /// Highest `cNvPr/@id` inside the element (groups nest shapes).
     pub max_id: u32,
 }
@@ -694,6 +748,8 @@ pub struct Shape {
     pub ph: Option<Placeholder>,
     pub look: Look,
     pub text: Option<TextBody>,
+    /// Fill and outline edits (written into `p:spPr`).
+    pub paint: PaintEdit,
     pub(crate) src: Option<Arc<ShapeSrc>>,
 }
 
@@ -706,6 +762,7 @@ impl PartialEq for Shape {
             && self.ph == o.ph
             && self.look == o.look
             && self.text == o.text
+            && self.paint == o.paint
             && match (&self.src, &o.src) {
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b),
                 (None, None) => true,
@@ -719,6 +776,14 @@ impl Shape {
     pub fn text_editable(&self) -> bool {
         matches!(self.kind, ShapeKind::Shape { .. })
             && self.text.as_ref().is_some_and(|t| t.locked.is_none())
+    }
+
+    /// Whether fill and outline can be changed.
+    pub fn paintable(&self) -> bool {
+        matches!(
+            self.kind,
+            ShapeKind::Shape { .. } | ShapeKind::Picture { .. }
+        ) && self.src.as_ref().is_none_or(|s| s.sppr.is_some())
     }
 
     /// Whether the shape can be moved and resized.
@@ -736,9 +801,10 @@ impl Shape {
 
     /// Whether the shape is exactly as read (so its raw XML is written).
     pub(crate) fn unchanged(&self) -> bool {
-        self.src.as_ref().is_some_and(|s| {
-            s.xfrm == self.xfrm && s.text.as_ref() == self.text.as_ref().map(|t| &t.paras)
-        })
+        self.paint.is_empty()
+            && self.src.as_ref().is_some_and(|s| {
+                s.xfrm == self.xfrm && s.text.as_ref() == self.text.as_ref().map(|t| &t.paras)
+            })
     }
 }
 
