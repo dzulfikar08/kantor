@@ -21,18 +21,22 @@ env:
 
 jobs:
   build:
-    name: build (${{ matrix.arch }})
+    name: build (${{ matrix.arch }}-${{ matrix.platform || 'linux' }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - { arch: aarch64, os: ubuntu-24.04-arm }
           - { arch: x86_64, os: ubuntu-24.04 }
+          - { arch: aarch64, os: macos-15, platform: macos }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: ./scripts/ci-deps.sh
+      - if: runner.os == 'Linux'
+        run: ./scripts/ci-deps.sh
+      - if: runner.os == 'macOS'
+        run: brew install librsvg
       - uses: Swatinem/rust-cache@v2
         with:
           key: release
@@ -42,8 +46,13 @@ jobs:
         id: pkg
         run: |
           tag=nightly
-          name="kantor-${tag}-${{ matrix.arch }}-linux"
-          ./scripts/package.sh "target/release/kantor" "dist/${name}"
+          platform="${{ matrix.platform || 'linux' }}"
+          name="kantor-${tag}-${{ matrix.arch }}-${platform}"
+          if [ "$platform" = macos ]; then
+            ./scripts/package-macos.sh "target/release/kantor" "dist/${name}"
+          else
+            ./scripts/package.sh "target/release/kantor" "dist/${name}"
+          fi
           echo "name=${name}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           ls -l dist
@@ -55,6 +64,8 @@ jobs:
 
   publish:
     needs: build
+    # Publish whatever built: one platform failing shouldn't hold back the others.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

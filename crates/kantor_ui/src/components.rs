@@ -21,7 +21,7 @@ pub fn kbd(keys: impl Into<SharedString>, cx: &App) -> Div {
         .bg(t.surface)
         .text_size(FONT_CAPTION)
         .text_color(t.fg_muted)
-        .child(keys.into())
+        .child(crate::keys::label(&keys.into()))
 }
 
 /// An uppercase caption used to label sections.
@@ -74,7 +74,7 @@ pub fn icon_button(
 /// (`Bold · Ctrl+B`).
 pub fn tip_text(label: &str, shortcut: Option<&str>) -> String {
     match shortcut {
-        Some(keys) if !keys.is_empty() => format!("{label} · {keys}"),
+        Some(keys) if !keys.is_empty() => format!("{label} · {}", crate::keys::label(keys)),
         _ => label.to_owned(),
     }
 }

@@ -58,9 +58,9 @@ pub fn init(cx: &mut App) {
 pub fn bind_app_keys(context: &'static str, cx: &mut App) {
     let c = Some(context);
     cx.bind_keys([
-        KeyBinding::new("ctrl-f", OpenFind, c),
+        KeyBinding::new(crate::keys::primary("ctrl-f"), OpenFind, c),
         KeyBinding::new("super-f", OpenFind, c),
-        KeyBinding::new("ctrl-h", OpenReplace, c),
+        KeyBinding::new(crate::keys::primary("ctrl-h"), OpenReplace, c),
         KeyBinding::new("super-h", OpenReplace, c),
         KeyBinding::new("f3", FindNext, c),
         KeyBinding::new("shift-f3", FindPrev, c),

@@ -46,7 +46,11 @@ pub(crate) fn bind_keys(cx: &mut App) {
     macro_rules! both {
         ($key:literal, $action:expr) => {
             [
-                KeyBinding::new(concat!("ctrl-", $key), $action, ctx),
+                KeyBinding::new(
+                    kantor_ui::keys::primary(concat!("ctrl-", $key)),
+                    $action,
+                    ctx,
+                ),
                 KeyBinding::new(concat!("super-", $key), $action, ctx),
             ]
         };

@@ -144,18 +144,30 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("shift-right", SelectRight, c),
         KeyBinding::new("shift-up", SelectUp, c),
         KeyBinding::new("shift-down", SelectDown, c),
-        KeyBinding::new("ctrl-left", MoveWordLeft, c),
-        KeyBinding::new("ctrl-right", MoveWordRight, c),
-        KeyBinding::new("ctrl-shift-left", SelectWordLeft, c),
-        KeyBinding::new("ctrl-shift-right", SelectWordRight, c),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-left"), MoveWordLeft, c),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-right"), MoveWordRight, c),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-shift-left"),
+            SelectWordLeft,
+            c,
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-shift-right"),
+            SelectWordRight,
+            c,
+        ),
         KeyBinding::new("home", MoveLineStart, c),
         KeyBinding::new("end", MoveLineEnd, c),
         KeyBinding::new("shift-home", SelectLineStart, c),
         KeyBinding::new("shift-end", SelectLineEnd, c),
-        KeyBinding::new("ctrl-home", MoveDocStart, c),
-        KeyBinding::new("ctrl-end", MoveDocEnd, c),
-        KeyBinding::new("ctrl-shift-home", SelectDocStart, c),
-        KeyBinding::new("ctrl-shift-end", SelectDocEnd, c),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-home"), MoveDocStart, c),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-end"), MoveDocEnd, c),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-shift-home"),
+            SelectDocStart,
+            c,
+        ),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-shift-end"), SelectDocEnd, c),
         KeyBinding::new("pageup", PageUp, c),
         KeyBinding::new("pagedown", PageDown, c),
         KeyBinding::new("shift-pageup", SelectPageUp, c),
@@ -164,8 +176,16 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("backspace", Backspace, c),
         KeyBinding::new("shift-backspace", Backspace, c),
         KeyBinding::new("delete", Delete, c),
-        KeyBinding::new("ctrl-backspace", DeleteWordBack, c),
-        KeyBinding::new("ctrl-delete", DeleteWordForward, c),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-backspace"),
+            DeleteWordBack,
+            c,
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-delete"),
+            DeleteWordForward,
+            c,
+        ),
         KeyBinding::new("enter", Newline, c),
         KeyBinding::new("shift-enter", LineBreak, c),
         KeyBinding::new("tab", Tab, c),
@@ -175,7 +195,7 @@ pub fn init(cx: &mut App) {
     macro_rules! primary {
         ($($key:literal => $action:expr),* $(,)?) => {
             keys.extend([$(
-                KeyBinding::new(concat!("ctrl-", $key), $action, c),
+                KeyBinding::new(kantor_ui::keys::primary(concat!("ctrl-", $key)), $action, c),
                 KeyBinding::new(concat!("super-", $key), $action, c),
             )*]);
         };
@@ -1160,7 +1180,7 @@ impl DocsView {
 
     fn on_scroll(&mut self, ev: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
         let delta = ev.delta.pixel_delta(window.line_height());
-        if ev.modifiers.control {
+        if ev.modifiers.control || ev.modifiers.platform {
             let dy = f32::from(delta.y);
             if dy != 0.0 {
                 self.zoom_by(if dy > 0.0 { ZOOM_STEP } else { 1.0 / ZOOM_STEP }, cx);

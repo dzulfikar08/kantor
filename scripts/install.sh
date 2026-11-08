@@ -16,9 +16,14 @@ case "$(uname -m)" in
   x86_64|amd64)  arch=x86_64 ;;
   *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
-# Nightly assets are kantor-nightly-ARCH-linux.tar.gz with a .sha256 beside each;
+case "$(uname -s)" in
+  Darwin) os=macos ;;
+  *)      os=linux ;;
+esac
+sha256() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+# Nightly assets are kantor-nightly-ARCH-OS.tar.gz with a .sha256 beside each;
 # tagged releases (release.yml) are kantor-X.Y.Z-ARCH-linux.tar.gz with one SHA256SUMS.
-if [ "$tag" = nightly ]; then name="kantor-nightly-${arch}-linux"; else name="kantor-${tag#v}-${arch}-linux"; fi
+if [ "$tag" = nightly ]; then name="kantor-nightly-${arch}-${os}"; else name="kantor-${tag#v}-${arch}-${os}"; fi
 base="https://github.com/${repo}/releases/download/${tag}"
 url="${base}/${name}.tar.gz"
 prefix="${PREFIX:-$HOME/.local}"
@@ -34,8 +39,20 @@ else
   sum="$(awk -v f="${name}.tar.gz" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")"
 fi
 [ -n "$sum" ] || { echo "no checksum for ${name}.tar.gz" >&2; exit 1; }
-( cd "$tmp" && echo "$sum  k.tar.gz" | sha256sum -c - >/dev/null ) || { echo "checksum mismatch for ${name}.tar.gz" >&2; exit 1; }
+( cd "$tmp" && [ "$(sha256 k.tar.gz | cut -d' ' -f1)" = "$sum" ] ) || { echo "checksum mismatch for ${name}.tar.gz" >&2; exit 1; }
 tar -C "$tmp" -xzf "$tmp/k.tar.gz"
+
+if [ "$os" = macos ]; then
+  # Kantor.app into ~/Applications (no sudo), plus a `kantor` command.
+  apps="${KANTOR_APPS:-$HOME/Applications}"
+  mkdir -p "$apps" "$prefix/bin"
+  rm -rf "$apps/Kantor.app"
+  cp -R "$tmp/$name/Kantor.app" "$apps/Kantor.app"
+  xattr -dr com.apple.quarantine "$apps/Kantor.app" 2>/dev/null || true
+  ln -sf "$apps/Kantor.app/Contents/MacOS/kantor" "$prefix/bin/kantor"
+  echo "Installed $("$prefix/bin/kantor" --version) to $apps/Kantor.app"
+  exit 0
+fi
 
 mkdir -p "$prefix/bin" "$prefix/share/applications" "$prefix/share/icons/hicolor/scalable/apps"
 install -m755 "$tmp/$name/bin/kantor" "$prefix/bin/kantor"

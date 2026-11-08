@@ -163,7 +163,7 @@ pub fn init(cx: &mut App) {
     macro_rules! primary {
         ($($key:literal => $action:expr),* $(,)?) => {
             keys.extend([$(
-                KeyBinding::new(concat!("ctrl-", $key), $action, c),
+                KeyBinding::new(kantor_ui::keys::primary(concat!("ctrl-", $key)), $action, c),
                 KeyBinding::new(concat!("super-", $key), $action, c),
             )*]);
         };

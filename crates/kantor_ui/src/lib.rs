@@ -9,6 +9,7 @@ pub mod cached;
 pub mod components;
 pub mod find_bar;
 pub mod fonts;
+pub mod keys;
 pub mod metrics;
 pub mod tokens;
 

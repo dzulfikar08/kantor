@@ -141,31 +141,51 @@ fn opened_status(book: &Workbook) -> String {
 pub fn init(cx: &mut App) {
     let ctx = Some(KEY_CONTEXT);
     cx.bind_keys([
-        KeyBinding::new("ctrl-s", Save, ctx),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-s"), Save, ctx),
         KeyBinding::new("super-s", Save, ctx),
-        KeyBinding::new("ctrl-shift-s", SaveAs, ctx),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-shift-s"), SaveAs, ctx),
         KeyBinding::new("super-shift-s", SaveAs, ctx),
-        KeyBinding::new("ctrl-z", Undo, Some(GRID_CONTEXT)),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-z"), Undo, Some(GRID_CONTEXT)),
         KeyBinding::new("super-z", Undo, Some(GRID_CONTEXT)),
-        KeyBinding::new("ctrl-shift-z", Redo, Some(GRID_CONTEXT)),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-shift-z"),
+            Redo,
+            Some(GRID_CONTEXT),
+        ),
         KeyBinding::new("super-shift-z", Redo, Some(GRID_CONTEXT)),
-        KeyBinding::new("ctrl-y", Redo, Some(GRID_CONTEXT)),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-y"), Redo, Some(GRID_CONTEXT)),
         // The formula bar keeps its own text clipboard.
-        KeyBinding::new("ctrl-c", Copy, Some(GRID_CONTEXT)),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-c"), Copy, Some(GRID_CONTEXT)),
         KeyBinding::new("super-c", Copy, Some(GRID_CONTEXT)),
-        KeyBinding::new("ctrl-x", Cut, Some(GRID_CONTEXT)),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-x"), Cut, Some(GRID_CONTEXT)),
         KeyBinding::new("super-x", Cut, Some(GRID_CONTEXT)),
-        KeyBinding::new("ctrl-v", Paste, Some(GRID_CONTEXT)),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-v"),
+            Paste,
+            Some(GRID_CONTEXT),
+        ),
         KeyBinding::new("super-v", Paste, Some(GRID_CONTEXT)),
         KeyBinding::new("shift-up", ExtendUp, Some(GRID_CONTEXT)),
         KeyBinding::new("shift-down", ExtendDown, Some(GRID_CONTEXT)),
         KeyBinding::new("shift-left", ExtendLeft, Some(GRID_CONTEXT)),
         KeyBinding::new("shift-right", ExtendRight, Some(GRID_CONTEXT)),
-        KeyBinding::new("ctrl-b", ToggleBold, Some(GRID_CONTEXT)),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-b"),
+            ToggleBold,
+            Some(GRID_CONTEXT),
+        ),
         KeyBinding::new("super-b", ToggleBold, Some(GRID_CONTEXT)),
-        KeyBinding::new("ctrl-i", ToggleItalic, Some(GRID_CONTEXT)),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-i"),
+            ToggleItalic,
+            Some(GRID_CONTEXT),
+        ),
         KeyBinding::new("super-i", ToggleItalic, Some(GRID_CONTEXT)),
-        KeyBinding::new("ctrl-u", ToggleUnderline, Some(GRID_CONTEXT)),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-u"),
+            ToggleUnderline,
+            Some(GRID_CONTEXT),
+        ),
         KeyBinding::new("super-u", ToggleUnderline, Some(GRID_CONTEXT)),
     ]);
     cell_editor::bind_keys(cx);

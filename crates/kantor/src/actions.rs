@@ -36,31 +36,103 @@ actions!(
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("ctrl-q", Quit, None),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-q"), Quit, None),
         KeyBinding::new("super-q", Quit, None),
-        KeyBinding::new("ctrl-k", TogglePalette, Some(WORKSPACE)),
-        KeyBinding::new("ctrl-shift-p", TogglePalette, Some(WORKSPACE)),
-        KeyBinding::new("ctrl-n", NewSpreadsheet, Some(WORKSPACE_KEYS)),
-        KeyBinding::new("ctrl-shift-n", NewDocument, Some(WORKSPACE_KEYS)),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-k"),
+            TogglePalette,
+            Some(WORKSPACE),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-shift-p"),
+            TogglePalette,
+            Some(WORKSPACE),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-n"),
+            NewSpreadsheet,
+            Some(WORKSPACE_KEYS),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-shift-n"),
+            NewDocument,
+            Some(WORKSPACE_KEYS),
+        ),
         // Ctrl+M stays free for a new slide inside Slides.
-        KeyBinding::new("ctrl-alt-n", NewPresentation, Some(WORKSPACE_KEYS)),
-        KeyBinding::new("ctrl-o", OpenFile, Some(WORKSPACE_KEYS)),
-        KeyBinding::new("ctrl-w", ClosePane, Some(WORKSPACE_KEYS)),
-        KeyBinding::new("ctrl-shift-w", CloseTab, Some(WORKSPACE_KEYS)),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-alt-n"),
+            NewPresentation,
+            Some(WORKSPACE_KEYS),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-o"),
+            OpenFile,
+            Some(WORKSPACE_KEYS),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-w"),
+            ClosePane,
+            Some(WORKSPACE_KEYS),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-shift-w"),
+            CloseTab,
+            Some(WORKSPACE_KEYS),
+        ),
         // Ctrl+B / Ctrl+I stay free for bold / italic.
-        KeyBinding::new("ctrl-shift-e", ToggleSidebar, Some(WORKSPACE_KEYS)),
-        KeyBinding::new("ctrl-shift-i", ToggleInspector, Some(WORKSPACE_KEYS)),
-        KeyBinding::new("ctrl-\\", SplitRight, Some(WORKSPACE_KEYS)),
-        KeyBinding::new("ctrl-alt-\\", SplitDown, Some(WORKSPACE_KEYS)),
-        KeyBinding::new("ctrl-tab", NextTab, Some(WORKSPACE_KEYS)),
-        KeyBinding::new("ctrl-pagedown", NextTab, Some(WORKSPACE_KEYS)),
-        KeyBinding::new("ctrl-shift-tab", PrevTab, Some(WORKSPACE_KEYS)),
-        KeyBinding::new("ctrl-pageup", PrevTab, Some(WORKSPACE_KEYS)),
-        KeyBinding::new("ctrl-shift-h", GoHome, Some(WORKSPACE_KEYS)),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-shift-e"),
+            ToggleSidebar,
+            Some(WORKSPACE_KEYS),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-shift-i"),
+            ToggleInspector,
+            Some(WORKSPACE_KEYS),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-\\"),
+            SplitRight,
+            Some(WORKSPACE_KEYS),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-alt-\\"),
+            SplitDown,
+            Some(WORKSPACE_KEYS),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-tab"),
+            NextTab,
+            Some(WORKSPACE_KEYS),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-pagedown"),
+            NextTab,
+            Some(WORKSPACE_KEYS),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-shift-tab"),
+            PrevTab,
+            Some(WORKSPACE_KEYS),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-pageup"),
+            PrevTab,
+            Some(WORKSPACE_KEYS),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-shift-h"),
+            GoHome,
+            Some(WORKSPACE_KEYS),
+        ),
         KeyBinding::new("escape", Dismiss, Some(PALETTE)),
         KeyBinding::new("up", PaletteUp, Some(PALETTE_INPUT)),
         KeyBinding::new("down", PaletteDown, Some(PALETTE_INPUT)),
-        KeyBinding::new("ctrl-p", PaletteUp, Some(PALETTE)),
-        KeyBinding::new("ctrl-n", PaletteDown, Some(PALETTE)),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-p"), PaletteUp, Some(PALETTE)),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-n"),
+            PaletteDown,
+            Some(PALETTE),
+        ),
     ]);
 }
