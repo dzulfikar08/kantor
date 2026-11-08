@@ -59,8 +59,10 @@ opt-level = 1
 debug = false
 
 [profile.release]
-lto = "thin"
-codegen-units = 4
+# Fat LTO + one codegen unit: 60.3 MB -> 51.0 MB on x86_64 Linux (2026-11-08),
+# keeping the install under the 60 MB budget. Costs build time, not speed.
+lto = "fat"
+codegen-units = 1
 strip = true
 opt-level = 3
 
