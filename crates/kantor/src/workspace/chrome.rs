@@ -252,6 +252,7 @@ impl Workspace {
                 None,
             ),
         };
+        let status = self.notice.clone().unwrap_or(status);
         let panes = self
             .active
             .and_then(|i| self.tabs.get(i))

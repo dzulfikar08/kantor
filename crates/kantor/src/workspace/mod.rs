@@ -10,6 +10,7 @@
 //! document. Home shows when no tab is active. Chrome regions are cached views.
 //! Open tabs, layouts and panel sizes persist across runs (`kantor_core::session`).
 
+mod agent;
 mod chrome;
 mod closing;
 mod doc;
@@ -116,6 +117,10 @@ pub struct Workspace {
     next_id: u64,
     palette: Option<Palette>,
     message: SharedString,
+    /// A short-lived status-bar message shown over any document's (agent
+    /// edits, "copied"); see `Workspace::notice`.
+    notice: Option<SharedString>,
+    notice_id: u64,
     logo: Arc<Image>,
     focus: FocusHandle,
     chrome: Option<Chrome>,
@@ -142,6 +147,8 @@ impl Workspace {
             next_id: 1,
             palette: None,
             message: SharedString::default(),
+            notice: None,
+            notice_id: 0,
             logo: Arc::new(Image::from_bytes(ImageFormat::Svg, LOGO_SVG.to_vec())),
             focus: cx.focus_handle(),
             chrome: None,

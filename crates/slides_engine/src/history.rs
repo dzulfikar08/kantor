@@ -152,6 +152,35 @@ impl History {
         self.undo.last()
     }
 
+    /// Number of undo steps (see [`Self::squash_since`]).
+    pub fn depth(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// Drop the steps recorded after `depth` (an aborted transaction).
+    pub fn truncate(&mut self, depth: usize) {
+        self.undo.truncate(depth);
+    }
+
+    /// Replace the steps recorded after `depth` with one command going
+    /// from `before` to `after` (a transaction). Nothing if none were.
+    pub fn squash_since(
+        &mut self,
+        depth: usize,
+        before: Vec<Arc<Slide>>,
+        after: Vec<Arc<Slide>>,
+        focus: (Focus, Focus),
+    ) {
+        if self.undo.len() <= depth {
+            return;
+        }
+        self.undo.truncate(depth);
+        self.sealed = true;
+        let cmd = Command::new(before, after, focus.0, focus.1, Kind::Other, None);
+        self.push(cmd, true);
+        self.sealed = true;
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }

@@ -46,6 +46,12 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.open_file(&OpenFile, window, cx),
     },
     Command {
+        title: "Copy MCP Setup for Claude Code",
+        detail: "AI agents can edit open documents (kantor mcp)",
+        keys: "",
+        run: |ws, _, cx| ws.copy_mcp_setup(cx),
+    },
+    Command {
         title: "Save",
         detail: "Current document",
         keys: "Ctrl S",

@@ -763,7 +763,21 @@ impl Presentation {
 
     /// Insert a new slide after `after` (`None` = at the start); returns its index.
     pub fn new_slide(&mut self, after: Option<usize>) -> anyhow::Result<usize> {
-        let layout = self.layout_for_new(after);
+        self.new_slide_with_layout(after, None)
+    }
+
+    /// [`Self::new_slide`] with layout `layout` (an index into
+    /// [`Presentation::layouts`]) instead of the usual choice.
+    pub fn new_slide_with_layout(
+        &mut self,
+        after: Option<usize>,
+        layout: Option<usize>,
+    ) -> anyhow::Result<usize> {
+        let layout = match layout {
+            Some(l) if l < self.layouts.len() => l,
+            Some(l) => bail!("layout {l} doesn't exist"),
+            None => self.layout_for_new(after),
+        };
         let part = self.new_part();
         let sld_id = self.new_sld_id();
         let l = &self.layouts[layout];

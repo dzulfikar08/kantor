@@ -281,6 +281,19 @@ pub fn accepts_reference(formula: &str, caret: usize) -> bool {
     before.is_some_and(|c| BEFORE_REF.contains(&c)) && after.is_none_or(|c| AFTER_REF.contains(&c))
 }
 
+/// A cell (`B7`, `$B$7`) or a range (`A1:D20`) typed on its own, without a
+/// sheet prefix; surrounding spaces are allowed. `None` for anything else.
+pub fn parse_range(text: &str) -> Option<CellRange> {
+    let text = text.trim();
+    if text.is_empty() || !text.is_ascii() {
+        return None;
+    }
+    match parse_ref_at(text, 0)? {
+        (end, range) if end == text.len() => Some(range),
+        _ => None,
+    }
+}
+
 /// The text for a reference: `A1`, `A1:B7`, or with a sheet `'Sheet 2'!A1`.
 pub fn format_reference(sheet: Option<&str>, range: CellRange) -> String {
     let cells = range.name();
@@ -1020,5 +1033,26 @@ mod tests {
         assert!(su.contains(&"SUMPRODUCT"));
         assert!(matching_functions("", 5).is_empty());
         assert_eq!(matching_functions("su", 2).len(), 2);
+    }
+
+    #[test]
+    fn parses_typed_ranges() {
+        assert_eq!(parse_range("B7"), Some(r(6, 1, 6, 1)));
+        assert_eq!(parse_range(" $a$1:d20 "), Some(r(0, 0, 19, 3)));
+        assert_eq!(parse_range("D20:A1"), Some(r(0, 0, 19, 3)));
+        for bad in [
+            "",
+            "A",
+            "1",
+            "A0",
+            "A1:",
+            "A1:B",
+            "Sheet1!A1",
+            "A1 B2",
+            "AAAA1",
+            "Ä1",
+        ] {
+            assert_eq!(parse_range(bad), None, "{bad}");
+        }
     }
 }

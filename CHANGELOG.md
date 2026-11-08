@@ -18,6 +18,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   "Calculating…" pane. Palette: "Automatic Calculation" / "Manual Calculation". A workbook saved
   with out-of-date values asks Excel to recalculate when opened. Status-bar sums and the used range
   are no longer recomputed over every cell on each frame.
+- **AI agents can edit open documents (`kantor mcp`).** An MCP server on stdio for Claude Code,
+  Claude Desktop, Cursor and other agents (`claude mcp add kantor -- kantor mcp`; JSON setup via
+  `kantor mcp --print-config` or the palette's *Copy MCP Setup for Claude Code*). It talks to the
+  running Kantor over a private Unix socket (started on demand) and offers 26 tools: list, open,
+  create, save and show documents; read and write cell ranges, select, format, insert and delete
+  rows/columns in Sheets; read, insert, replace and delete paragraphs and find & replace in Docs;
+  list slides, add a slide with title and bullets, set a shape's text or the speaker notes, delete
+  and show slides in Slides. Each change is one undo step, selects what changed and shows
+  "Agent: …" in the status bar. Speaks MCP 2026-07-28 (stateless) and the 2025-11-25 … 2024-11-05
+  handshake revisions.
 - **Sheets: formula point mode.** While typing a formula with the caret after `=`, `(`, `,` or an
   operator, clicking a cell inserts its reference (drag or Shift+click for a range; clicking again
   replaces it), and arrows / Shift+arrows point too; a click elsewhere in the text still commits as

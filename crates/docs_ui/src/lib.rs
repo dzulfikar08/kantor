@@ -19,6 +19,7 @@
 
 extern crate gpui_kit as gpui;
 
+mod agent;
 mod blocks;
 mod find;
 pub mod font_bridge;
