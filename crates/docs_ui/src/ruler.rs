@@ -263,7 +263,9 @@ impl DocsView {
         let marks = self.ruler_marks();
         // Ruler-local x of a page x.
         let sx = |x: f32| px((g.page_x() + x - g.scroll.x) * z);
-        let ink = t.paper_ink;
+        // Drawn in the chrome palette, not paper white: the ruler is UI,
+        // and a white strip glares on dark themes.
+        let ink = t.fg;
         let h = CONTROL_SM;
 
         let mut ruler = div()
@@ -273,7 +275,7 @@ impl DocsView {
             .w_full()
             .h(h)
             .overflow_hidden()
-            .bg(t.desk)
+            .bg(t.chrome)
             .border_b_1()
             .border_color(t.border)
             .text_size(FONT_CAPTION);
@@ -287,10 +289,16 @@ impl DocsView {
                 .w(px(w * z))
         };
         ruler = ruler
-            .child(band(0.0, marks.page_w).bg(t.paper))
-            .child(band(0.0, marks.margin_left).bg(ink.opacity(0.12)))
             .child(
-                band(marks.page_w - marks.margin_right, marks.margin_right).bg(ink.opacity(0.12)),
+                band(0.0, marks.page_w)
+                    .rounded(RADIUS_SM)
+                    .bg(t.elevated)
+                    .border_1()
+                    .border_color(t.border),
+            )
+            .child(band(0.0, marks.margin_left).bg(t.bg.opacity(0.6)))
+            .child(
+                band(marks.page_w - marks.margin_right, marks.margin_right).bg(t.bg.opacity(0.6)),
             );
         // Ticks and numbers; numbers thin out when zoomed far out.
         let every = [1, 2, 5, 10]
@@ -310,7 +318,7 @@ impl DocsView {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .text_color(ink.opacity(0.7))
+                            .text_color(t.fg_muted)
                             .child(n.abs().to_string()),
                     );
                 }
@@ -322,7 +330,7 @@ impl DocsView {
                             .bottom(SPACE_5)
                             .left(sx(x))
                             .w(px(1.))
-                            .bg(ink.opacity(0.4)),
+                            .bg(t.fg_dim),
                     );
                 }
                 None if CM * z / 2.0 >= 6.0 => {
@@ -333,7 +341,7 @@ impl DocsView {
                             .bottom(SPACE_6 - px(1.))
                             .left(sx(x))
                             .w(px(1.))
-                            .bg(ink.opacity(0.3)),
+                            .bg(ink.opacity(0.22)),
                     );
                 }
                 None => {}
@@ -381,11 +389,7 @@ impl DocsView {
             (Handle::Right, "docs-ruler-right", false),
         ] {
             let Some(x) = at(hd) else { continue };
-            let color = if dragging(hd) {
-                t.accent
-            } else {
-                ink.opacity(0.6)
-            };
+            let color = if dragging(hd) { t.accent } else { t.fg_muted };
             let marker = div()
                 .id(id)
                 .absolute()
@@ -395,7 +399,7 @@ impl DocsView {
                 .rounded(RADIUS_SM)
                 .bg(color)
                 .border_1()
-                .border_color(t.paper)
+                .border_color(t.chrome)
                 .cursor(CursorStyle::ResizeLeftRight)
                 .on_mouse_down(MouseButton::Left, start_drag(hd, cx));
             ruler = ruler.child(if top {
