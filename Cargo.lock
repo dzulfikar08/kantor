@@ -3737,6 +3737,7 @@ name = "kantor_ui"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "kantor_core",
  "kantor_theme",
 ]
 
@@ -6413,6 +6414,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
+ "kantor_core",
  "kantor_ui",
  "log",
  "sheets_engine",
@@ -6545,6 +6547,7 @@ dependencies = [
  "docs_layout",
  "docs_ui",
  "gpui-kit",
+ "kantor_core",
  "kantor_ui",
  "log",
  "slides_engine",

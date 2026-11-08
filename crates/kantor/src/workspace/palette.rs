@@ -88,6 +88,18 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.paste(w, cx)),
     },
     Command {
+        title: "Find",
+        detail: "Text, cells or slides",
+        keys: "Ctrl F",
+        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.find(false, w, cx)),
+    },
+    Command {
+        title: "Replace",
+        detail: "Find and replace",
+        keys: "Ctrl H",
+        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.find(true, w, cx)),
+    },
+    Command {
         title: "Bold",
         detail: "Selection",
         keys: "Ctrl B",

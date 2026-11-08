@@ -45,6 +45,9 @@ pub struct Tokens {
     pub paper: Hsla,
     pub paper_ink: Hsla,
     pub paper_selection: Hsla,
+    /// Find matches on the page (Docs) and the current match, stronger.
+    pub find_match: Hsla,
+    pub find_match_current: Hsla,
     /// Sheets: cell gridlines (quiet, but visible on both dark and light),
     /// the column-header row and row-number gutter, and those headers for
     /// the selected rows/columns (opaque, so text over them stays crisp).
@@ -147,6 +150,8 @@ impl Tokens {
             paper: c(0xffffff),
             paper_ink: c(0x111111),
             paper_selection: alpha(p.accent, 0.30),
+            find_match: alpha(p.yellow, 0.35),
+            find_match_current: alpha(p.yellow, 0.80),
             grid_line: if p.dark { on_bg(0.12) } else { on_bg(0.14) },
             grid_header: c(header),
             grid_header_active: c(mix(header, p.accent, if p.dark { 0.22 } else { 0.18 })),

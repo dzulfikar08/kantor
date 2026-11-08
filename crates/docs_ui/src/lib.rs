@@ -20,6 +20,7 @@
 extern crate gpui_kit as gpui;
 
 mod blocks;
+mod find;
 pub mod font_bridge;
 mod input;
 mod page_menu;
@@ -132,6 +133,7 @@ actions!(
 /// Register Docs key bindings. Both Ctrl and Super work (Mac-style Cmd = Super).
 pub fn init(cx: &mut App) {
     ruler::init(cx);
+    kantor_ui::find_bar::bind_app_keys(KEY_CONTEXT, cx);
     let c = Some(KEY_CONTEXT);
     let mut keys = vec![
         KeyBinding::new("left", MoveLeft, c),
@@ -371,6 +373,11 @@ pub struct DocsView {
     dragging: bool,
     focus: FocusHandle,
     status: SharedString,
+    /// Find & Replace: the bar, its matches and the current one.
+    find: Entity<kantor_ui::find_bar::FindBar>,
+    found: find::Found,
+    found_current: Option<usize>,
+    _find_sub: Subscription,
 }
 
 /// Cache key: everything that affects shaping and line breaking.
@@ -411,6 +418,7 @@ impl DocsView {
         };
         let (engine, bridge) = shared(cx);
         let focus = cx.focus_handle();
+        let (find, find_sub) = find::new_bar(window, cx);
         let mut this = Self {
             doc,
             untitled_name: None,
@@ -437,9 +445,12 @@ impl DocsView {
             dragging: false,
             focus,
             status: status.into(),
+            find,
+            found: Rc::default(),
+            found_current: None,
+            _find_sub: find_sub,
         };
         this.relayout();
-        let _ = window;
         this
     }
 
@@ -533,6 +544,7 @@ impl DocsView {
         self.sel = self.doc.clamp_selection(sel);
         self.goal_x = None;
         self.relayout();
+        self.refresh_find(cx);
         self.reveal_caret.set(true);
         self.status = SharedString::default();
         if self.title(cx) != was_dirty_title {
@@ -945,12 +957,10 @@ impl DocsView {
             .paged
             .caret(self.sel.head.para, self.sel.head.offset)
             .map_or(1, |c| c.page + 1);
-        let words = self.doc.word_count();
-        format!(
-            "Page {page} of {pages} · {} word{}",
-            group_thousands(words),
-            if words == 1 { "" } else { "s" }
-        )
+        let total = (self.doc.word_count(), self.doc.char_count());
+        let (start, end) = self.sel.ordered();
+        let selected = (start != end).then(|| self.doc.stats_in(start, end));
+        format!("Page {page} of {pages} · {}", count_text(total, selected))
     }
 
     pub fn info(&self) -> DocInfo {
@@ -1329,6 +1339,31 @@ fn opened_status(doc: &Document) -> String {
     s
 }
 
+/// `1,234 words · 6,789 characters`, or for a selection
+/// `12 of 1,234 words · 60 characters`.
+fn count_text(total: (usize, usize), selected: Option<(usize, usize)>) -> String {
+    let plural = |n: usize, word: &str| {
+        format!(
+            "{} {word}{}",
+            group_thousands(n),
+            if n == 1 { "" } else { "s" }
+        )
+    };
+    match selected {
+        Some((words, chars)) => format!(
+            "{} of {} · {}",
+            group_thousands(words),
+            plural(total.0, "word"),
+            plural(chars, "character")
+        ),
+        None => format!(
+            "{} · {}",
+            plural(total.0, "word"),
+            plural(total.1, "character")
+        ),
+    }
+}
+
 fn group_thousands(n: usize) -> String {
     let s = n.to_string();
     let mut out = String::new();
@@ -1370,6 +1405,9 @@ struct Frame {
     focused: bool,
     /// A ruler drag's guide line (page x).
     guide: Option<f32>,
+    /// Find matches to highlight and the current one.
+    found: find::Found,
+    found_current: Option<usize>,
     t: Tokens,
     bridge: Rc<RefCell<FontBridge>>,
     focus: FocusHandle,
@@ -1393,6 +1431,20 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
     } else {
         Vec::new()
     };
+    // Find matches: all of them light, the current one stronger.
+    let visible = g.visible_pages(paged.pages.len());
+    let found: Vec<(usize, [f32; 4], bool)> = f
+        .found
+        .iter()
+        .enumerate()
+        .flat_map(|(i, (p, r))| {
+            paged
+                .selection_rects((*p, r.start), (*p, r.end))
+                .into_iter()
+                .map(move |(page, rect)| (page, rect, Some(i) == f.found_current))
+        })
+        .filter(|(page, _, _)| visible.contains(page))
+        .collect();
     let marked = f.marked.as_ref().map(|m| {
         let p = f.sel.head.para;
         paged.selection_rects((p, m.start), (p, m.end))
@@ -1411,6 +1463,14 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             let pb = rect(page, [0., 0., g.page_w, g.page_h]);
             window.paint_drop_shadows(pb, Corners::default(), &shadow);
             window.paint_quad(fill(pb, f.t.paper));
+            for (_, r, current) in found.iter().filter(|(p, _, _)| *p == page) {
+                let color = if *current {
+                    f.t.find_match_current
+                } else {
+                    f.t.find_match
+                };
+                window.paint_quad(fill(rect(page, *r), color));
+            }
             for (_, r) in selection.iter().filter(|(p, _)| *p == page) {
                 window.paint_quad(fill(rect(page, *r), f.t.paper_selection));
             }
@@ -1522,6 +1582,8 @@ impl Render for DocsView {
             scroll: self.scroll,
             focused: self.focus.is_focused(window),
             guide: self.ruler_drag.map(|d| d.x),
+            found: self.found.clone(),
+            found_current: self.found_current,
             t,
             bridge: self.bridge.clone(),
             focus: self.focus.clone(),
@@ -1557,7 +1619,10 @@ impl Render for DocsView {
                 cx.listener(|this, _: &MouseUpEvent, _, _| this.dragging = false),
             )
             .on_scroll(cx.listener(Self::on_scroll))
-            .child(page);
+            .child(page)
+            .when(self.find.read(cx).is_open(), |el| {
+                el.child(self.find.clone())
+            });
 
         let root = v_flex()
             .key_context(KEY_CONTEXT)
@@ -1656,8 +1721,15 @@ impl Render for DocsView {
             ZoomOut => |this, _w, cx| this.zoom_by(1.0 / ZOOM_STEP, cx),
             ZoomReset => |this, _w, cx| this.set_zoom(1.0, cx),
         ]);
+        use kantor_ui::find_bar as fb;
         root.on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
+            .on_action(cx.listener(|this, _: &fb::OpenFind, w, cx| this.open_find(false, w, cx)))
+            .on_action(cx.listener(|this, _: &fb::OpenReplace, w, cx| this.open_find(true, w, cx)))
+            .on_action(cx.listener(|this, _: &fb::FindNext, w, cx| this.find_next_doc(true, w, cx)))
+            .on_action(
+                cx.listener(|this, _: &fb::FindPrev, w, cx| this.find_next_doc(false, w, cx)),
+            )
             .child(toolbar::render(self, cx))
             .children(self.render_banner(&t))
             .children(self.render_ruler(cx))
@@ -1748,6 +1820,19 @@ mod tests {
                 .iter()
                 .any(|r| r.source == RunSource::Marker),
             "bullet drawn"
+        );
+    }
+
+    #[std::prelude::v1::test]
+    fn counts_read_like_a_status_bar() {
+        assert_eq!(
+            count_text((1234, 6789), None),
+            "1,234 words · 6,789 characters"
+        );
+        assert_eq!(count_text((1, 1), None), "1 word · 1 character");
+        assert_eq!(
+            count_text((1234, 6789), Some((12, 60))),
+            "12 of 1,234 words · 60 characters"
         );
     }
 

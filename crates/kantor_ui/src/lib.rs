@@ -7,6 +7,7 @@
 pub mod assets;
 pub mod cached;
 pub mod components;
+pub mod find_bar;
 pub mod fonts;
 pub mod metrics;
 pub mod tokens;

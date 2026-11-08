@@ -175,6 +175,11 @@ impl DocView {
         both_mut!(self, window, cx, |v, w, c| v.paste_doc(w, c))
     }
 
+    /// Open the Find bar (`replace`: with the replace row).
+    pub fn find(&self, replace: bool, window: &mut Window, cx: &mut App) {
+        both_mut!(self, window, cx, |v, w, c| v.open_find(replace, w, c))
+    }
+
     pub fn format(&self, format: CommonFormat, window: &mut Window, cx: &mut App) {
         use docs_engine::{Align, Toggle};
         match self {

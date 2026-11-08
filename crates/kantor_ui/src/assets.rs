@@ -40,7 +40,16 @@ icon_assets!(
         BetweenVerticalEnd,
         Rows3,
         Columns3,
-        Trash
+        Trash,
+        // Find & Replace bar
+        CaseSensitive,
+        WholeWord,
+        SquareFunction,
+        ChevronUp,
+        ChevronDown,
+        Replace,
+        ReplaceAll,
+        X
     ]
 );
 

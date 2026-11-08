@@ -119,34 +119,59 @@ impl XlsxSource {
 }
 
 /// Ids of the states reachable by undo and redo, mirroring IronCalc's stacks.
+/// Each revision also records how many IronCalc steps it took (a replace-all
+/// sets many cells, one IronCalc step each, but undoes as one).
 #[derive(Default)]
 struct Revisions {
     current: u64,
     saved: u64,
     next: u64,
-    undo: Vec<u64>,
-    redo: Vec<u64>,
+    undo: Vec<(u64, u32)>,
+    redo: Vec<(u64, u32)>,
+    /// IronCalc steps of the current revision.
+    steps: u32,
 }
 
 impl Revisions {
     fn edited(&mut self) {
+        self.edited_steps(1);
+    }
+
+    fn edited_steps(&mut self, steps: u32) {
         self.next += 1;
-        self.undo.push(self.current);
+        self.undo.push((self.current, self.steps));
         self.current = self.next;
+        self.steps = steps;
         self.redo.clear();
     }
 
+    /// IronCalc steps to undo for the current revision.
+    fn undo_steps(&self) -> u32 {
+        if self.undo.is_empty() {
+            1
+        } else {
+            self.steps.max(1)
+        }
+    }
+
+    /// IronCalc steps to redo for the next revision.
+    fn redo_steps(&self) -> u32 {
+        self.redo.last().map_or(1, |r| r.1.max(1))
+    }
+
     fn undone(&mut self) {
-        if let Some(prev) = self.undo.pop() {
-            self.redo.push(self.current);
+        if let Some((prev, prev_steps)) = self.undo.pop() {
+            self.redo.push((self.current, self.steps));
             self.current = prev;
+            self.steps = prev_steps;
         }
     }
 
     fn redone(&mut self) {
-        if let Some(next) = self.redo.pop() {
-            self.undo.push(self.current);
+        if let Some((next, steps)) = self.redo.pop() {
+            self.undo.push((self.current, self.steps));
             self.current = next;
+            self.steps = steps;
         }
     }
 
@@ -288,7 +313,12 @@ impl Workbook {
         if !self.model.can_undo() {
             return Ok(false);
         }
-        self.model.undo().map_err(|e| anyhow!("undo: {e}"))?;
+        for _ in 0..self.history.undo_steps() {
+            if !self.model.can_undo() {
+                break;
+            }
+            self.model.undo().map_err(|e| anyhow!("undo: {e}"))?;
+        }
         self.history.undone();
         Ok(true)
     }
@@ -298,7 +328,12 @@ impl Workbook {
         if !self.model.can_redo() {
             return Ok(false);
         }
-        self.model.redo().map_err(|e| anyhow!("redo: {e}"))?;
+        for _ in 0..self.history.redo_steps() {
+            if !self.model.can_redo() {
+                break;
+            }
+            self.model.redo().map_err(|e| anyhow!("redo: {e}"))?;
+        }
         self.history.redone();
         Ok(true)
     }
@@ -443,6 +478,23 @@ impl Workbook {
         }
     }
 
+    /// Cells of `sheet` that have content, `(row, col)` in reading order
+    /// (row by row). Cells that only carry a style are left out.
+    pub fn filled_cells(&self, sheet: u32) -> Vec<(u32, u32)> {
+        let Ok(ws) = self.model.get_model().workbook.worksheet(sheet) else {
+            return Vec::new();
+        };
+        let mut cells: Vec<(u32, u32)> = ws
+            .sheet_data
+            .cells()
+            .filter(|(row, col, _)| *row >= 1 && *col >= 1)
+            .map(|(row, col, _)| (row as u32 - 1, col as u32 - 1))
+            .filter(|&(row, col)| !self.input(sheet, row, col).is_empty())
+            .collect();
+        cells.sort_unstable();
+        cells
+    }
+
     /// The value as displayed in the grid (number formats applied).
     pub fn display_value(&self, sheet: u32, row: u32, col: u32) -> String {
         self.model
@@ -467,6 +519,38 @@ impl Workbook {
             .map_err(|e| anyhow!("{e}"))?;
         self.history.edited();
         Ok(())
+    }
+
+    /// Set many cells from user input, as one undo step (Replace All).
+    /// Recalculates once at the end. Stops at the first error; the cells
+    /// set until then still undo as one step.
+    pub fn set_inputs(&mut self, sheet: u32, cells: &[(u32, u32, String)]) -> Result<()> {
+        if cells.is_empty() {
+            return Ok(());
+        }
+        self.model.pause_evaluation();
+        let mut done = 0;
+        let mut result = Ok(());
+        for (row, col, value) in cells {
+            if *row >= MAX_ROWS || *col >= MAX_COLS {
+                result = Err(anyhow!("cell out of range"));
+                break;
+            }
+            if let Err(e) =
+                self.model
+                    .set_user_input(sheet, *row as i32 + 1, *col as i32 + 1, value)
+            {
+                result = Err(anyhow!("{e}"));
+                break;
+            }
+            done += 1;
+        }
+        self.model.resume_evaluation();
+        self.model.evaluate();
+        if done > 0 {
+            self.history.edited_steps(done);
+        }
+        result
     }
 
     /// The inputs of `range` (formulas as typed) as tab-separated text, the
@@ -675,6 +759,30 @@ pub fn cell_name(row: u32, col: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn set_inputs_undoes_as_one_step() {
+        let mut wb = Workbook::new_empty().unwrap();
+        wb.set_input(0, 0, 0, "cat").unwrap();
+        wb.set_input(0, 2, 1, "a cat").unwrap();
+        assert_eq!(wb.filled_cells(0), vec![(0, 0), (2, 1)]);
+        let cells = vec![(0, 0, "dog".to_owned()), (2, 1, "a dog".to_owned())];
+        wb.set_inputs(0, &cells).unwrap();
+        assert_eq!(wb.input(0, 2, 1), "a dog");
+        assert!(wb.undo().unwrap());
+        assert_eq!(wb.input(0, 0, 0), "cat");
+        assert_eq!(wb.input(0, 2, 1), "a cat");
+        assert!(wb.redo().unwrap());
+        assert_eq!(wb.input(0, 0, 0), "dog");
+        assert_eq!(wb.input(0, 2, 1), "a dog");
+        // Undo all the way back to the first edit, one step at a time.
+        assert!(wb.undo().unwrap());
+        assert!(wb.undo().unwrap());
+        assert_eq!(wb.input(0, 2, 1), "");
+        assert_eq!(wb.input(0, 0, 0), "cat");
+        assert!(wb.undo().unwrap());
+        assert!(!wb.is_dirty());
+    }
 
     #[test]
     fn names() {

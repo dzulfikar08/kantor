@@ -25,6 +25,7 @@
 extern crate gpui_kit as gpui;
 
 mod cell_editor;
+mod find;
 
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -155,6 +156,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("super-u", ToggleUnderline, Some(GRID_CONTEXT)),
     ]);
     cell_editor::bind_keys(cx);
+    find::bind_keys(KEY_CONTEXT, cx);
 }
 
 /// Feeds one sheet of a [`Workbook`] to the table.
@@ -431,6 +433,8 @@ pub struct SheetsView {
     /// Name shown while the document has no file (`Untitled 2.xlsx`), given
     /// by the shell so new documents are numbered across the session.
     untitled_name: Option<String>,
+    /// Find & Replace (Ctrl+F / Ctrl+H).
+    find: find::SheetsFind,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -484,6 +488,7 @@ impl SheetsView {
             status: status.into(),
             width: Rc::new(Cell::new(px(0.))),
             untitled_name: None,
+            find: find::SheetsFind::new(window, cx),
             _subscriptions: subscriptions,
         };
         this.select_cell(0, 0, cx);
@@ -1312,9 +1317,16 @@ impl Render for SheetsView {
         };
 
         let root = self.editor_actions(v_flex(), cx);
+        use kantor_ui::find_bar as fb;
         root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
+            .on_action(cx.listener(|this, _: &fb::OpenFind, w, cx| this.open_find(false, w, cx)))
+            .on_action(cx.listener(|this, _: &fb::OpenReplace, w, cx| this.open_find(true, w, cx)))
+            .on_action(cx.listener(|this, _: &fb::FindNext, w, cx| this.find_next_doc(true, w, cx)))
+            .on_action(
+                cx.listener(|this, _: &fb::FindPrev, w, cx| this.find_next_doc(false, w, cx)),
+            )
             .relative()
             .size_full()
             .bg(t.bg)
@@ -1406,5 +1418,6 @@ impl Render for SheetsView {
                     .border_color(t.border)
                     .child(tabs),
             )
+            .children(self.render_find_bar(cx))
     }
 }

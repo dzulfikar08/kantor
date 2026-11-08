@@ -40,6 +40,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   ordinary Word files now open as fully supported and save in place. Only tracked changes, comments
   and fields that depend on the document (tables of contents, cross-references) still make Save go
   to a new file. Page breaks and hyperlinks (editable text) are supported too.
+- **Find & Replace in Docs, Sheets and Slides.** Ctrl+F opens a small find bar at the top right
+  (match count "3 of 12", Enter / Shift+Enter or F3 / Shift+F3 for next / previous, Match case and
+  Whole word toggles, Esc closes); Ctrl+H adds the replace row, and Replace All is one undo step.
+  Docs highlights every match on the page and selects the current one; Sheets searches the active
+  sheet's displayed values (or formulas, with "Look in formulas") and selects the cell; Slides
+  searches every slide's text and jumps to it. Also in the palette (Find, Replace).
+- **Docs: word and character count** in the status bar, for the selection when there is one
+  ("12 of 1,234 words · 60 characters").
 
 ## [0.1.0] - 2026-11-07
 
