@@ -14,7 +14,9 @@ mod engineering;
 mod financial;
 mod information;
 mod logical;
+// KANTOR PATCH: per-pass cache of lookup search vectors.
 mod lookup_and_reference;
+pub(crate) mod lookup_cache;
 mod macros;
 mod math_and_trigonometry;
 mod spill_functions;

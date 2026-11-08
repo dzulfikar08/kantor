@@ -978,6 +978,18 @@ impl<'a> Model<'a> {
         let original_range = cell.array;
         let s = cell.s;
         let formula = cell.f;
+        // KANTOR PATCH: an array anchor is about to write cells: what the lookup
+        // cache read of them is stale (see `functions/lookup_cache.rs`).
+        // Dynamic anchors do it where they write or remove spill cells.
+        if let Some((false, (width, height))) = original_range {
+            self.evaluation.lookups.area_written(
+                sheet,
+                row,
+                column,
+                row + height - 1,
+                column + width - 1,
+            );
+        }
         // Handle array results separately: they always return early, writing all cells
         // themselves. By dispatching here we avoid needing an unreachable arm in the
         // `new_cell` match below.
@@ -1320,6 +1332,10 @@ impl<'a> Model<'a> {
         if self.spill_contradicts_a_read(anchor, &writes, &clears) {
             return Ok(None);
         }
+        // KANTOR PATCH: spill cells change; see `functions/lookup_cache.rs`.
+        if !writes.is_empty() || !clears.is_empty() {
+            self.evaluation.lookups.sheet_changed(sheet);
+        }
 
         let worksheet = self.workbook.worksheet_mut(sheet)?;
         for r in row..row + height {
@@ -1363,6 +1379,10 @@ impl<'a> Model<'a> {
         let clears = self.own_spill_cells_outside(anchor, old_area, keep_area)?;
         if self.spill_contradicts_a_read(anchor, &[], &clears) {
             return Ok(false);
+        }
+        // KANTOR PATCH: spill cells change; see `functions/lookup_cache.rs`.
+        if !clears.is_empty() {
+            self.evaluation.lookups.sheet_changed(anchor.sheet);
         }
         let worksheet = self.workbook.worksheet_mut(anchor.sheet)?;
         for (_, r, c) in clears {

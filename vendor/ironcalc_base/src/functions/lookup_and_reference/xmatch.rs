@@ -8,11 +8,14 @@ use crate::{
     calc_result::CalcResult, expressions::parser::Node, expressions::token::Error, model::Model,
 };
 
+use std::sync::Arc;
+
 use crate::functions::{
     binary_search::{
         binary_search_descending_or_greater, binary_search_descending_or_smaller,
         binary_search_or_greater, binary_search_or_smaller,
     },
+    lookup_cache::{ExactMode, SearchVector},
     util::{compare_values, from_wildcard_to_regex, result_matches_regex},
 };
 
@@ -205,7 +208,8 @@ impl<'a> Model<'a> {
         // Materialise `lookup_array` into a one-dimensional vector of values.
         // It may be a range reference or an in-formula array constant `{…}`;
         // either way it must be a single row or single column.
-        let array: Vec<CalcResult> = match self.evaluate_node_in_context(&args[1], cell) {
+        // KANTOR PATCH: a range is read through the lookup cache.
+        let vector: Arc<SearchVector> = match self.evaluate_node_in_context(&args[1], cell) {
             CalcResult::Range { left, right } => {
                 let is_col_vec = left.column == right.column;
                 let is_row_vec = left.row == right.row;
@@ -227,12 +231,7 @@ impl<'a> Model<'a> {
                     }
                     Err(message) => return CalcResult::new_error(Error::ERROR, cell, message),
                 }
-                let right = CellReferenceIndex {
-                    sheet: right.sheet,
-                    row: row2,
-                    column: col2,
-                };
-                self.prepare_array(&left, &right, is_col_vec)
+                self.search_vector(left.sheet, left.row, left.column, row2, col2)
             }
             CalcResult::Array(rows) => {
                 // An array constant must be a single row or single column.
@@ -247,10 +246,13 @@ impl<'a> Model<'a> {
                         "lookup_array must be a single row or column".to_string(),
                     );
                 }
-                rows.iter()
+                let values: Vec<CalcResult> = rows
+                    .iter()
                     .flatten()
                     .map(|node| super::array_node_to_calc_result(node, cell))
-                    .collect()
+                    .collect();
+                let len = values.len();
+                Arc::new(SearchVector::new(values, len, false))
             }
             error @ CalcResult::Error { .. } => return error,
             _ => {
@@ -261,6 +263,23 @@ impl<'a> Model<'a> {
                 )
             }
         };
+
+        if match_mode == MatchMode::Exact
+            && matches!(
+                search_mode,
+                SearchMode::FirstToLast | SearchMode::LastToFirst
+            )
+        {
+            return match vector.find_exact(
+                &lookup_value,
+                ExactMode::Compare,
+                search_mode == SearchMode::LastToFirst,
+            ) {
+                Some(idx) => CalcResult::Number(idx as f64 + 1.0),
+                None => CalcResult::new_error(Error::NA, cell, "Not found".to_string()),
+            };
+        }
+        let array = vector.to_vec();
 
         match search_mode {
             SearchMode::FirstToLast | SearchMode::LastToFirst => {

@@ -8,7 +8,8 @@ use crate::{
 };
 
 use super::binary_search::binary_search_on_array;
-use super::util::{compare_values, from_wildcard_to_regex, result_matches_regex, values_are_equal};
+use super::lookup_cache::{binary_search_on_vector, ExactMode, SearchVector};
+use super::util::{compare_values, from_wildcard_to_regex, result_matches_regex};
 
 mod address_areas;
 mod choosecols_chooserows;
@@ -83,6 +84,37 @@ impl LookupTable {
         }
     }
 
+    /// KANTOR PATCH: finds `lookup_value` in the first row (`by_row`) or the
+    /// first column of the table, as `lookup_index` over `first_row` or
+    /// `first_column` would. A range is read through the lookup cache.
+    fn find(
+        &self,
+        model: &mut Model,
+        lookup_value: &CalcResult,
+        is_sorted: bool,
+        by_row: bool,
+        cell: CellReferenceIndex,
+    ) -> Option<usize> {
+        match self {
+            LookupTable::Range { left, right } => {
+                let vector = if by_row {
+                    model.search_vector(left.sheet, left.row, left.column, left.row, right.column)
+                } else {
+                    model.search_vector(left.sheet, left.row, left.column, right.row, left.column)
+                };
+                lookup_in_vector(lookup_value, &vector, is_sorted)
+            }
+            LookupTable::Array(_) => {
+                let search_vector = if by_row {
+                    self.first_row(model, cell)
+                } else {
+                    self.first_column(model, cell)
+                };
+                lookup_index(lookup_value, &search_vector, is_sorted)
+            }
+        }
+    }
+
     /// Materializes the first row of the table (the search vector for HLOOKUP).
     fn first_row(&self, model: &mut Model, cell: CellReferenceIndex) -> Vec<CalcResult> {
         (0..self.columns())
@@ -126,6 +158,22 @@ fn lookup_index(
                 Box::new(move |x| compare_values(x, &lookup_value) == 0)
             };
         search_vector.iter().position(result_matches)
+    }
+}
+
+/// KANTOR PATCH: `lookup_index` over a search vector of the lookup cache.
+fn lookup_in_vector(
+    lookup_value: &CalcResult,
+    vector: &SearchVector,
+    is_sorted: bool,
+) -> Option<usize> {
+    if is_sorted {
+        match binary_search_on_vector(lookup_value, vector) {
+            -2 => None,
+            l => Some(l as usize),
+        }
+    } else {
+        vector.find_exact(lookup_value, ExactMode::Wildcard { compare: true }, false)
     }
 }
 
@@ -243,6 +291,31 @@ impl<'a> Model<'a> {
                 origin: cell,
                 message: "Invalid".to_string(),
             }),
+        }
+    }
+
+    /// KANTOR PATCH: `as_vector`, as a search vector of the lookup cache.
+    fn as_search_vector(
+        &mut self,
+        value: CalcResult,
+        cell: CellReferenceIndex,
+    ) -> Result<std::sync::Arc<SearchVector>, CalcResult> {
+        match value {
+            CalcResult::Range { left, right } => {
+                if left.row != right.row && left.column != right.column {
+                    return Err(CalcResult::Error {
+                        error: Error::ERROR,
+                        origin: cell,
+                        message: "Argument must be a vector".to_string(),
+                    });
+                }
+                Ok(self.search_vector(left.sheet, left.row, left.column, right.row, right.column))
+            }
+            other => {
+                let values = self.as_vector(other, cell)?;
+                let len = values.len();
+                Ok(std::sync::Arc::new(SearchVector::new(values, len, false)))
+            }
         }
     }
 
@@ -413,7 +486,8 @@ impl<'a> Model<'a> {
         // MATCH operates on a vector (a single row or single column). We
         // materialize the second argument, be it a range reference or an array
         // literal, into a flat list of values and then run the search on it.
-        let values = match self.as_vector(match_range, cell) {
+        // KANTOR PATCH: read through the lookup cache.
+        let values = match self.as_search_vector(match_range, cell) {
             Ok(values) => values,
             Err(error) => return error,
         };
@@ -425,7 +499,7 @@ impl<'a> Model<'a> {
                 let mut r = values.len();
                 while l < r {
                     let m = (l + r) / 2;
-                    if compare_values(&values[m], &target) >= 0 {
+                    if compare_values(values.get(m), &target) >= 0 {
                         l = m + 1;
                     } else {
                         r = m;
@@ -444,31 +518,20 @@ impl<'a> Model<'a> {
                 CalcResult::Number(l as f64)
             }
             0 => {
-                // We apply linear search
-                let result_matches: Box<dyn Fn(&CalcResult) -> bool> =
-                    if let CalcResult::String(s) = &target {
-                        if let Ok(reg) = from_wildcard_to_regex(&s.to_lowercase(), true) {
-                            Box::new(move |x| result_matches_regex(x, &reg))
-                        } else {
-                            Box::new(move |_| false)
-                        }
-                    } else {
-                        Box::new(move |x| values_are_equal(x, &target))
-                    };
-                for (l, value) in values.iter().enumerate() {
-                    if result_matches(value) {
-                        return CalcResult::Number(l as f64 + 1.0);
-                    }
-                }
-                CalcResult::Error {
-                    error: Error::NA,
-                    origin: cell,
-                    message: "Not found".to_string(),
+                // Exact match: text as a wildcard pattern, the rest with
+                // `values_are_equal` (see `lookup_cache::ExactMode`).
+                match values.find_exact(&target, ExactMode::Wildcard { compare: false }, false) {
+                    Some(l) => CalcResult::Number(l as f64 + 1.0),
+                    None => CalcResult::Error {
+                        error: Error::NA,
+                        origin: cell,
+                        message: "Not found".to_string(),
+                    },
                 }
             }
             _ => {
                 // l is the number of elements less than target in the vector
-                let l = binary_search_on_array(&target, &values);
+                let l = binary_search_on_vector(&target, &values);
                 if l == -2 {
                     return CalcResult::Error {
                         error: Error::NA,
@@ -535,8 +598,7 @@ impl<'a> Model<'a> {
             };
         }
         // We look for `lookup_value` in the first row of the table
-        let search_vector = table.first_row(self, cell);
-        match lookup_index(&lookup_value, &search_vector, is_sorted) {
+        match table.find(self, &lookup_value, is_sorted, true, cell) {
             Some(column) => table.get(self, row_index - 1, column as i32, cell),
             None => CalcResult::Error {
                 error: Error::NA,
@@ -599,8 +661,7 @@ impl<'a> Model<'a> {
             };
         }
         // We look for `lookup_value` in the first column of the table
-        let search_vector = table.first_column(self, cell);
-        match lookup_index(&lookup_value, &search_vector, is_sorted) {
+        match table.find(self, &lookup_value, is_sorted, false, cell) {
             Some(row) => table.get(self, row as i32, column_index - 1, cell),
             None => CalcResult::Error {
                 error: Error::NA,
@@ -643,11 +704,11 @@ impl<'a> Model<'a> {
             // Vector form: search the lookup vector, return from the result
             // vector at the same position.
             let value = self.evaluate_node_in_context(&args[1], cell);
-            let lookup_vector = match self.as_vector(value, cell) {
-                Ok(values) => values,
+            let lookup_vector = match self.as_search_vector(value, cell) {
+                Ok(vector) => vector,
                 Err(error) => return error,
             };
-            let l = match lookup_index(&target, &lookup_vector, true) {
+            let l = match lookup_in_vector(&target, &lookup_vector, true) {
                 Some(l) => l,
                 None => return not_found,
             };
@@ -676,15 +737,13 @@ impl<'a> Model<'a> {
         };
         if table.columns() > table.rows() {
             // Search the first row, return from the last row.
-            let search_vector = table.first_row(self, cell);
-            match lookup_index(&target, &search_vector, true) {
+            match table.find(self, &target, true, true, cell) {
                 Some(column) => table.get(self, table.rows() - 1, column as i32, cell),
                 None => not_found,
             }
         } else {
             // Search the first column, return from the last column.
-            let search_vector = table.first_column(self, cell);
-            match lookup_index(&target, &search_vector, true) {
+            match table.find(self, &target, true, false, cell) {
                 Some(row) => table.get(self, row as i32, table.columns() - 1, cell),
                 None => not_found,
             }

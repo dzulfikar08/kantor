@@ -99,8 +99,9 @@ impl<'a> Model<'a> {
         let right_row = first_range.right.row;
         let right_column = first_range.right.column;
 
-        let dimension = match self.workbook.worksheet(first_range.left.sheet) {
-            Ok(s) => s.dimension(),
+        // KANTOR PATCH: the used area is kept for the pass (lookup cache).
+        let dimension = match self.used_dimension(first_range.left.sheet) {
+            Ok(d) => d,
             Err(_) => {
                 return CalcResult::new_error(
                     Error::ERROR,
@@ -135,6 +136,38 @@ impl<'a> Model<'a> {
                 self.record_seen_empty_range(sheet, top, first_skipped, last_walked_row, right);
             }
         }
+
+        // KANTOR PATCH: over a single column the criteria ranges are read as
+        // search vectors of the lookup cache, as in `run_ifs`.
+        let walked_rows = if open_row {
+            right_row.min(max_row)
+        } else {
+            right_row
+        } - left_row
+            + 1;
+        let vectors: Vec<Option<std::sync::Arc<crate::functions::lookup_cache::SearchVector>>> =
+            if left_column == right_column && !open_column && walked_rows > 0 {
+                let mut vectors = Vec::with_capacity(ranges.len());
+                for (index, range) in ranges.iter().enumerate() {
+                    let row1 = range.left.row + left_row - first_range.left.row;
+                    let column = range.left.column + left_column - first_range.left.column;
+                    let key = (
+                        range.left.sheet,
+                        row1,
+                        column,
+                        row1 + walked_rows - 1,
+                        column,
+                    );
+                    vectors.push(if index == 0 {
+                        Some(self.search_vector(key.0, key.1, key.2, key.3, key.4))
+                    } else {
+                        self.evaluated_search_vector(key)
+                    });
+                }
+                vectors
+            } else {
+                vec![None; ranges.len()]
+            };
 
         for row in left_row..right_row + 1 {
             if open_row && row > max_row {
@@ -173,12 +206,18 @@ impl<'a> Model<'a> {
                     // We check if value in range n meets criterion n
                     let range = &ranges[case_index];
                     let fn_criterion = &fn_criteria[case_index];
-                    let value = self.evaluate_cell(CellReferenceIndex {
-                        sheet: range.left.sheet,
-                        row: range.left.row + row - first_range.left.row,
-                        column: range.left.column + column - first_range.left.column,
-                    });
-                    if !fn_criterion(&value) {
+                    let meets = match &vectors[case_index] {
+                        Some(vector) => fn_criterion(vector.get((row - left_row) as usize)),
+                        None => {
+                            let value = self.evaluate_cell(CellReferenceIndex {
+                                sheet: range.left.sheet,
+                                row: range.left.row + row - first_range.left.row,
+                                column: range.left.column + column - first_range.left.column,
+                            });
+                            fn_criterion(&value)
+                        }
+                    };
+                    if !meets {
                         is_true = false;
                         break;
                     }
@@ -302,17 +341,51 @@ impl<'a> Model<'a> {
             Err(message) => return Err(CalcResult::new_error(Error::ERROR, cell, message)),
         }
 
+        // KANTOR PATCH: over a single column, the criteria ranges are read as
+        // search vectors of the lookup cache (`functions/lookup_cache.rs`),
+        // so that a SUMIFS per row does not read its columns cell by cell
+        // again. The first range is read in full below anyway; the others
+        // only for the rows the earlier criteria let through, so for them a
+        // vector is used only if reading it evaluates nothing
+        // (`evaluated_search_vector`).
+        let height = right_row - left_row + 1;
+        let vectors: Vec<Option<std::sync::Arc<crate::functions::lookup_cache::SearchVector>>> =
+            if left_column == right_column && height > 0 {
+                let mut vectors = Vec::with_capacity(ranges.len());
+                for (index, range) in ranges.iter().enumerate() {
+                    let row1 = range.left.row + left_row - sum_range.left.row;
+                    let column = range.left.column + left_column - sum_range.left.column;
+                    let key = (range.left.sheet, row1, column, row1 + height - 1, column);
+                    vectors.push(if index == 0 {
+                        Some(self.search_vector(key.0, key.1, key.2, key.3, key.4))
+                    } else {
+                        self.evaluated_search_vector(key)
+                    });
+                }
+                vectors
+            } else {
+                vec![None; ranges.len()]
+            };
+
         for row in left_row..right_row + 1 {
             for column in left_column..right_column + 1 {
                 let mut is_true = true;
-                for (range, fn_criterion) in ranges.iter().zip(fn_criteria.iter()) {
+                for ((range, fn_criterion), vector) in
+                    ranges.iter().zip(fn_criteria.iter()).zip(vectors.iter())
+                {
                     // We check if value in range n meets criterion n
-                    let value = self.evaluate_cell(CellReferenceIndex {
-                        sheet: range.left.sheet,
-                        row: range.left.row + row - sum_range.left.row,
-                        column: range.left.column + column - sum_range.left.column,
-                    });
-                    if !fn_criterion(&value) {
+                    let meets = match vector {
+                        Some(vector) => fn_criterion(vector.get((row - left_row) as usize)),
+                        None => {
+                            let value = self.evaluate_cell(CellReferenceIndex {
+                                sheet: range.left.sheet,
+                                row: range.left.row + row - sum_range.left.row,
+                                column: range.left.column + column - sum_range.left.column,
+                            });
+                            fn_criterion(&value)
+                        }
+                    };
+                    if !meets {
                         is_true = false;
                         break;
                     }

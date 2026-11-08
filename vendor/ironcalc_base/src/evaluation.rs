@@ -46,6 +46,7 @@ use crate::calc_result::CalcResult;
 use crate::constants::{LAST_COLUMN, LAST_ROW};
 use crate::expressions::token::Error;
 use crate::expressions::types::CellReferenceIndex;
+use crate::functions::lookup_cache::LookupCache;
 use crate::model::Model;
 use crate::types::{ArrayKind, Cell, Worksheet};
 
@@ -421,6 +422,15 @@ pub(crate) struct Evaluation {
     /// restart, the cells stay on `stack`, still `Evaluating`, to be run again
     /// from the top once the recursion has unwound.
     pub(crate) unwinding: bool,
+    /// KANTOR PATCH: search vectors and used areas kept for the current pass
+    /// (see `functions/lookup_cache.rs`).
+    pub(crate) lookups: LookupCache,
+    /// KANTOR PATCH: how many reads in this pass found a cell on a cycle. A
+    /// search vector whose reads changed it is not kept.
+    pub(crate) cycle_reads: u64,
+    /// KANTOR PATCH: off, every lookup reads and scans its vector again, as
+    /// upstream does. For tests that compare the two.
+    pub(crate) lookup_cache_enabled: bool,
 }
 
 /// How deep the recursion may go when nobody has said otherwise, in formulas
@@ -471,6 +481,9 @@ impl Default for Evaluation {
             max_stack: DEFAULT_MAX_STACK,
             stack_base: 0,
             unwinding: false,
+            lookups: LookupCache::default(),
+            cycle_reads: 0,
+            lookup_cache_enabled: true,
         }
     }
 }
@@ -695,6 +708,9 @@ impl<'a> Model<'a> {
         state.depth = 0;
         state.unwinding = false;
         state.circular = circular_anchors.iter().copied().collect();
+        // KANTOR PATCH: nothing read in an earlier pass is reused.
+        state.lookups.clear();
+        state.cycle_reads = 0;
         state.in_pass = true;
         // dynamic links (HYPERLINK) are rebuilt on every evaluation
         self.links.clear();
@@ -714,6 +730,8 @@ impl<'a> Model<'a> {
         }
         self.evaluation.in_pass = false;
         self.evaluation.root = None;
+        // KANTOR PATCH: the cache is only valid within the pass.
+        self.evaluation.lookups.clear();
         restart
     }
 
@@ -828,6 +846,7 @@ impl<'a> Model<'a> {
         let key = key(cell_reference);
         match self.evaluation.cells.get(&key) {
             Some(CellState::Evaluating) => {
+                self.evaluation.cycle_reads += 1;
                 self.mark_cycle(cell_reference);
                 return circular_reference(cell_reference);
             }
@@ -1064,11 +1083,8 @@ impl<'a> Model<'a> {
         if !whole_rows && !whole_columns {
             return Ok((row2, column2));
         }
-        let dimension = self
-            .workbook
-            .worksheet(sheet)
-            .map_err(|_| format!("Invalid worksheet index: '{sheet}'"))?
-            .dimension();
+        // KANTOR PATCH: kept for the pass instead of a walk over the sheet per call.
+        let dimension = self.used_dimension(sheet)?;
         let last_row = if whole_rows { dimension.max_row } else { row2 };
         let last_column = if whole_columns {
             dimension.max_column

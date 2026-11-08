@@ -8,6 +8,7 @@ use super::{
         binary_search_descending_or_greater, binary_search_descending_or_smaller,
         binary_search_or_greater, binary_search_or_smaller,
     },
+    lookup_cache::ExactMode,
     util::{compare_values, from_wildcard_to_regex, result_matches_regex},
 };
 
@@ -269,8 +270,29 @@ impl<'a> Model<'a> {
                         };
                         match search_mode {
                             SearchMode::StartAtFirstItem | SearchMode::StartAtLastItem => {
-                                let array = &self.prepare_array(&left, &right, is_row_vector);
-                                match linear_search(&lookup_value, array, search_mode, match_mode) {
+                                // KANTOR PATCH: read through the lookup cache.
+                                let vector = self.search_vector(
+                                    left.sheet,
+                                    left.row,
+                                    left.column,
+                                    right.row,
+                                    right.column,
+                                );
+                                let found = if match_mode == MatchMode::ExactMatch {
+                                    vector.find_exact(
+                                        &lookup_value,
+                                        ExactMode::Compare,
+                                        search_mode == SearchMode::StartAtLastItem,
+                                    )
+                                } else {
+                                    linear_search(
+                                        &lookup_value,
+                                        &vector.to_vec(),
+                                        search_mode,
+                                        match_mode,
+                                    )
+                                };
+                                match found {
                                     Some(index) => {
                                         let row_index =
                                             if is_row_vector { index as i32 } else { 0 };

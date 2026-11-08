@@ -1,23 +1,6 @@
-// At build time, we grab the release version from the git tag.
-// This is used by INFO("release")
-use std::process::Command;
-
-fn run_git(args: &[&str]) -> Option<String> {
-    let out = Command::new("git").args(args).output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
+// KANTOR PATCH: upstream asks `git describe` for the release (INFO("release")).
+// Vendored inside the Kantor repo that would report Kantor's commit, so the
+// value a crates.io build gets ("unknown": no git repository) is fixed here.
 fn main() {
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/refs");
-
-    // Prefer exact tag
-    let version = run_git(&["describe", "--tags", "--exact-match"])
-        .or_else(|| run_git(&["describe", "--tags", "--dirty", "--always"]))
-        .unwrap_or_else(|| "unknown".into());
-
-    println!("cargo:rustc-env=GIT_VERSION={}", version);
+    println!("cargo:rustc-env=GIT_VERSION=unknown");
 }
