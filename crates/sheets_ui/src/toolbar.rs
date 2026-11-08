@@ -206,5 +206,13 @@ pub(crate) fn render(style: &CellStyle, compact: bool, cx: &mut Context<SheetsVi
                     .dropdown_menu(move |menu, _, _| number_items(menu, current, &view)),
             );
     }
+    if kantor_ui::ai::ai_enabled(cx) {
+        row = row.child(div().flex_1()).child(kantor_ui::ai::ai_button(
+            "ai-formula",
+            "Ask AI for a formula",
+            kantor_ui::ai::AskForFormula,
+            cx,
+        ));
+    }
     row
 }

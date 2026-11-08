@@ -19,6 +19,7 @@ pub mod model;
 pub mod numbering;
 pub mod object;
 pub mod page;
+mod rewrite;
 pub mod style;
 pub mod table;
 mod xml;

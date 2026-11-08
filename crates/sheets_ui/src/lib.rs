@@ -33,6 +33,7 @@
 extern crate gpui_kit as gpui;
 
 mod agent;
+mod ai;
 mod calc;
 mod cell_editor;
 mod find;
@@ -59,6 +60,7 @@ use sheets_engine::{
 
 mod toolbar;
 
+pub use ai::AiTarget;
 pub use calc::SheetsEvent;
 use cell_editor::{CellEditor, EditMode};
 pub use grid_ops::GridCommand;

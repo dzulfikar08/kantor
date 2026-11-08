@@ -880,6 +880,30 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.present_doc(false, w, cx)),
     },
     Command {
+        title: "AI Settings",
+        detail: "Provider, API key, model · off by default",
+        keys: "",
+        run: |ws, window, cx| ws.open_ai_settings(&kantor_ui::ai::OpenAiSettings, window, cx),
+    },
+    Command {
+        title: "Ask AI for a Formula…",
+        detail: "Sheets · describe it in English or Indonesian",
+        keys: "",
+        run: |ws, window, cx| ws.ask_for_formula(&kantor_ui::ai::AskForFormula, window, cx),
+    },
+    Command {
+        title: "Explain This Formula",
+        detail: "Sheets · AI, active cell",
+        keys: "",
+        run: |ws, window, cx| ws.explain_formula(&kantor_ui::ai::ExplainFormula, window, cx),
+    },
+    Command {
+        title: "Rewrite / Translate Selection…",
+        detail: "Docs · AI: Indonesian ↔ English, formal, shorter, grammar",
+        keys: "",
+        run: |ws, window, cx| ws.rewrite_selection(&kantor_ui::ai::RewriteSelection, window, cx),
+    },
+    Command {
         title: "Choose Theme…",
         detail: "Omarchy, Ghostty",
         keys: "",

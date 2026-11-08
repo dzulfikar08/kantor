@@ -49,6 +49,8 @@ icon_assets!(
         ChevronDown,
         Replace,
         ReplaceAll,
+        // AI
+        Sparkles,
         X
     ]
 );

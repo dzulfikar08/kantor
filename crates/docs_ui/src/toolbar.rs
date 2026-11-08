@@ -267,6 +267,15 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
                 ))
         })
         .child(div().flex_1())
+        .when(kantor_ui::ai::ai_enabled(cx), |d| {
+            d.child(kantor_ui::ai::ai_button(
+                "docs-ai-rewrite",
+                "Rewrite or translate with AI",
+                kantor_ui::ai::RewriteSelection,
+                cx,
+            ))
+            .child(separator(cx))
+        })
         .child(tool(
             "docs-zoom-out",
             Lucide::ZoomOut,

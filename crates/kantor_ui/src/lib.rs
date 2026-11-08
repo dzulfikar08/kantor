@@ -4,6 +4,7 @@
 //! Sizes come from [`metrics`], colours from [`tokens`], which are derived from the
 //! Omarchy palette and also mapped onto GPUI Kit's theme so its components match.
 
+pub mod ai;
 pub mod assets;
 pub mod cached;
 pub mod components;
