@@ -17,6 +17,7 @@
 extern crate gpui_kit as gpui;
 
 mod draw;
+mod find;
 mod fit;
 mod input;
 mod toolbar;
@@ -30,6 +31,7 @@ use docs_engine::Toggle;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::find_bar::{FindNext, FindPrev, OpenFind, OpenReplace};
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{Tokens, metrics::*, tokens};
 use slides_engine::{
@@ -101,6 +103,7 @@ actions!(
 
 /// Register Slides key bindings (Ctrl, and Super as Mac-style Cmd).
 pub fn init(cx: &mut App) {
+    kantor_ui::find_bar::bind_app_keys(KEY_CONTEXT, cx);
     let c = Some(KEY_CONTEXT);
     let p = Some(PRESENTER_CONTEXT);
     let mut keys = vec![
@@ -262,6 +265,8 @@ pub struct SlidesView {
     hover_cursor: CursorStyle,
     focus: FocusHandle,
     status: SharedString,
+    /// Find & Replace (Ctrl+F / Ctrl+H).
+    find: find::SlidesFind,
 }
 
 fn cm(emu: i64) -> String {
@@ -285,7 +290,7 @@ impl SlidesView {
             None => (Presentation::new(), String::new()),
         };
         let (engine, bridge) = docs_ui::shared_text(cx);
-        let _ = window;
+        let find = find::SlidesFind::new(window, cx);
         Self {
             pres,
             untitled_name: None,
@@ -306,6 +311,7 @@ impl SlidesView {
             hover_cursor: CursorStyle::Arrow,
             focus: cx.focus_handle(),
             status: status.into(),
+            find,
         }
     }
 
@@ -1757,7 +1763,8 @@ impl Render for SlidesView {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_scroll(cx.listener(Self::on_scroll))
-            .child(canvas_el);
+            .child(canvas_el)
+            .children(self.find.bar(cx));
 
         let strip = div()
             .flex_none()
@@ -1829,6 +1836,10 @@ impl Render for SlidesView {
             ZoomIn => |v, _w, cx| v.zoom_by(ZOOM_STEP, cx),
             ZoomOut => |v, _w, cx| v.zoom_by(1.0 / ZOOM_STEP, cx),
             ZoomFit => |v, _w, cx| v.zoom_to_fit(cx),
+            OpenFind => |v, w, cx| v.open_find(false, w, cx),
+            OpenReplace => |v, w, cx| v.open_find(true, w, cx),
+            FindNext => |v, w, cx| v.find_next_doc(true, w, cx),
+            FindPrev => |v, w, cx| v.find_next_doc(false, w, cx),
         ]);
         root.child(toolbar::render(self, cx))
             .children(self.render_banner(&t))

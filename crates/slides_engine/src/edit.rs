@@ -68,7 +68,7 @@ pub fn image_ext(bytes: &[u8]) -> Option<&'static str> {
 impl Presentation {
     // ── command plumbing ───────────────────────────────────────────────────
 
-    fn slide_mut(&mut self, i: usize) -> anyhow::Result<&mut Slide> {
+    pub(crate) fn slide_mut(&mut self, i: usize) -> anyhow::Result<&mut Slide> {
         let s = self.slides.get_mut(i).context("no such slide")?;
         if let Some(why) = &s.locked {
             bail!("This slide can't be edited: {why}");
@@ -77,7 +77,7 @@ impl Presentation {
     }
 
     /// Run an edit and record it if it changed anything.
-    fn record<R>(
+    pub(crate) fn record<R>(
         &mut self,
         kind: Kind,
         target: Option<ShapeRef>,

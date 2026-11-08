@@ -54,6 +54,11 @@ pub const PALETTE_THEME_ROW_HEIGHT: Pixels = px(50.);
 pub const PALETTE_FOOTER_HEIGHT: Pixels = px(34.);
 pub const PALETTE_MAX_ROWS: usize = 10;
 
+// Find & Replace bar
+pub const FIND_BAR_WIDTH: Pixels = px(400.);
+/// Room for "999 of 999" next to the query.
+pub const FIND_COUNT_WIDTH: Pixels = px(76.);
+
 // Sheets grid
 /// Width of a cell gridline.
 pub const GRID_LINE: Pixels = px(1.);

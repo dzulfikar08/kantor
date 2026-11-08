@@ -8,6 +8,7 @@
 //! - [`render`]: what to draw, with layout/master/theme inheritance.
 
 pub mod edit;
+pub mod find;
 mod history;
 pub mod model;
 pub mod presentation;
@@ -20,6 +21,7 @@ mod xml;
 
 pub use docs_engine::{LINE_BREAK, Position, Rgb, Selection, Toggle};
 pub use edit::{ShapeRef, image_ext, image_size, set_toggle};
+pub use find::TextMatch;
 pub use history::Focus;
 pub use model::*;
 pub use presentation::{Layout, Master, Presentation, Slide, package_problems};

@@ -13,6 +13,7 @@
 mod document;
 pub mod docx;
 mod edit;
+pub mod find;
 pub mod model;
 pub mod numbering;
 pub mod object;
