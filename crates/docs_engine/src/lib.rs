@@ -10,6 +10,7 @@
 //! - [`numbering`]: lists; [`table`]: tables; [`object`]: inline pictures
 //!   and opaque elements.
 
+pub mod agent;
 mod document;
 pub mod docx;
 mod edit;

@@ -9,6 +9,7 @@
 //!   shapes within and between presentations.
 //! - [`render`]: what to draw, with layout/master/theme inheritance.
 
+pub mod agent;
 pub mod clip;
 pub mod edit;
 pub mod find;

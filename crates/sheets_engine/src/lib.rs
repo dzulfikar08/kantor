@@ -8,6 +8,7 @@
 //! (one sheet, values only); `.ods` / `.xls` / `.xlsb` open read-only and save
 //! as `.xlsx`. See [`SourceFormat`] and the `import` module docs.
 
+mod batch;
 mod csv;
 mod import;
 mod preserve;

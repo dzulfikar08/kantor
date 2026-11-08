@@ -3701,14 +3701,18 @@ dependencies = [
  "docs_engine",
  "docs_ui",
  "env_logger",
+ "futures",
  "gpui-kit",
  "kantor_core",
  "kantor_theme",
  "kantor_ui",
  "log",
+ "serde_json",
+ "sheets_engine",
  "sheets_ui",
  "slides_engine",
  "slides_ui",
+ "tempfile",
 ]
 
 [[package]]

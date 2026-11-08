@@ -32,6 +32,7 @@
 
 extern crate gpui_kit as gpui;
 
+mod agent;
 mod cell_editor;
 mod find;
 mod grid_ops;

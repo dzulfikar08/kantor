@@ -41,6 +41,33 @@ Edits happen in the cell itself (synced live with the formula bar). With an inpu
 
 By default the UI follows your Omarchy theme (live-reloading on `omarchy theme set`); *Choose Theme…* offers your Omarchy themes plus 900+ Ghostty themes. The UI font is SF Pro when installed (never bundled), else Inter / Adwaita Sans. Open tabs, splits and panel sizes are restored on the next launch. Settings: `~/.config/kantor/settings.toml`; session: `~/.local/state/kantor/workspace.json`.
 
+## AI agents (MCP)
+
+`kantor mcp` is an [MCP](https://modelcontextprotocol.io) server: Claude Code, Claude Desktop,
+Cursor and other agents can read and edit the documents open in the **running** Kantor while you
+watch. Every change is one undo step (`Ctrl Z` takes it back), the changed cells, paragraphs or
+slide are selected, and the status bar says what the agent did. Nothing is saved until the agent
+(or you) saves.
+
+```sh
+claude mcp add kantor -- kantor mcp      # Claude Code (palette: "Copy MCP Setup for Claude Code")
+kantor mcp --print-config                # JSON for Claude Desktop, Cursor and others
+```
+
+```json
+{ "mcpServers": { "kantor": { "command": "/home/you/.local/bin/kantor", "args": ["mcp"] } } }
+```
+
+If Kantor isn't running, the first tool call starts it (`kantor mcp --no-launch` returns an error
+instead). Tools: `list_documents`, `open_document`, `new_document`, `save_document`,
+`activate_document`, `get_selection`; Sheets `sheets_read_range`, `sheets_write_range`,
+`sheets_select`, `sheets_format`, insert/delete rows and columns; Docs `docs_get_paragraphs`,
+`docs_insert_paragraphs`, `docs_replace_paragraph`, `docs_delete_paragraphs`, `docs_find_replace`;
+Slides `slides_list`, `slides_add_slide`, `slides_set_shape_text`, `slides_delete_slide`,
+`slides_set_notes`, `slides_go_to`. The app listens only on a private Unix socket
+(`$XDG_RUNTIME_DIR/kantor/`, on macOS `~/Library/Application Support/Kantor/run/`), readable by
+you alone.
+
 ## Building
 
 All builds run on **GitHub Actions** (`ubuntu-24.04-arm` and `ubuntu-24.04`); contributors don't need a powerful machine. If you do want to build locally:
@@ -57,7 +84,7 @@ Expect `target/` to reach 10–20 GB and the first build to need plenty of RAM.
 
 ```
 crates/
-  kantor         binary: CLI, suite shell (tabs, Home, command palette, status bar)
+  kantor         binary: CLI, suite shell (tabs, Home, command palette, status bar), `kantor mcp`
   kantor_ui      design system: metrics, colour tokens from Omarchy, cached views
   kantor_core    shared non-GPUI pieces (fuzzy search; later commands/undo/settings)
   kantor_theme   Omarchy palette parser (no GPUI)

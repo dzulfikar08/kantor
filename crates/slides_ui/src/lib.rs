@@ -18,6 +18,7 @@
 
 extern crate gpui_kit as gpui;
 
+mod agent;
 mod draw;
 mod find;
 mod fit;

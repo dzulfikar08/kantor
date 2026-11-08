@@ -4,11 +4,17 @@
 //! kantor                    open the Home screen
 //! kantor FILE               open FILE in the app matching its extension
 //! kantor --sheets [FILE]    start Sheets (likewise --docs, --slides)
+//! kantor mcp                MCP server on stdio for AI agents (see mcp/)
 //! ```
 
 extern crate gpui_kit as gpui;
 
 mod actions;
+mod agent;
+#[cfg(unix)]
+mod ipc;
+#[cfg(unix)]
+mod mcp;
 mod theme;
 mod workspace;
 
@@ -24,9 +30,11 @@ struct Args {
 }
 
 const USAGE: &str = "usage: kantor [--docs | --sheets | --slides] [FILE]\n\
+    \x20      kantor mcp [--no-launch] [--print-config]\n\
     \n\
     Kantor is a native office suite. With no arguments it opens the Home screen.\n\
-    Docs opens .docx, Sheets .xlsx/.csv/.ods, Slides .pptx (see plan.md).";
+    Docs opens .docx, Sheets .xlsx/.csv/.ods, Slides .pptx (see plan.md).\n\
+    `kantor mcp` lets AI agents edit the open documents (kantor mcp --help).";
 
 fn parse_args() -> Result<Args> {
     let mut app = None;
@@ -53,6 +61,18 @@ fn parse_args() -> Result<Args> {
 }
 
 fn main() {
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().map(String::as_str) == Some("mcp") {
+        // stdout carries the protocol; logs go to stderr.
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+        #[cfg(unix)]
+        std::process::exit(mcp::main(&raw[1..]));
+        #[cfg(not(unix))]
+        {
+            eprintln!("kantor mcp: not supported on this platform");
+            std::process::exit(2);
+        }
+    }
     env_logger::Builder::from_env(
         env_logger::Env::default()
             .default_filter_or("warn,kantor=info,sheets_ui=info,docs_ui=info,slides_ui=info"),
@@ -104,6 +124,8 @@ fn main() {
                     std::process::exit(1);
                 }
             };
+            #[cfg(unix)]
+            start_agent_endpoint(window, workspace.clone(), cx);
             // Ctrl+Q while focus is outside the workspace (a dialog): still
             // goes through the unsaved-changes check.
             cx.on_action(move |_: &actions::Quit, cx| {
@@ -114,4 +136,41 @@ fn main() {
             });
             cx.activate(true);
         });
+}
+
+/// Listen for `kantor mcp` (see [`ipc`]) and run its tool calls on the main
+/// thread against `workspace`. The socket is removed when Kantor quits.
+#[cfg(unix)]
+fn start_agent_endpoint(window: AnyWindowHandle, workspace: Entity<Workspace>, cx: &mut App) {
+    use futures::StreamExt as _;
+
+    let Some(dir) = ipc::socket_dir() else {
+        log::warn!("MCP endpoint off: HOME is not set");
+        return;
+    };
+    let (server, mut requests) = match ipc::serve(&dir) {
+        Ok(s) => s,
+        Err(err) => {
+            log::warn!("MCP endpoint off: can't listen in {}: {err}", dir.display());
+            return;
+        }
+    };
+    log::info!("MCP endpoint at {}", server.path.display());
+    cx.spawn(async move |cx| {
+        while let Some(req) = requests.next().await {
+            let (tool, args) = (req.tool.clone(), req.args.clone());
+            let result = window
+                .update(cx, |_, window, cx| {
+                    workspace.update(cx, |ws, cx| ws.agent_call(&tool, args, window, cx))
+                })
+                .unwrap_or_else(|_| Err("Kantor's window is closed".into()));
+            req.respond(result);
+        }
+    })
+    .detach();
+    cx.on_app_quit(move |_| {
+        server.remove();
+        async {}
+    })
+    .detach();
 }
