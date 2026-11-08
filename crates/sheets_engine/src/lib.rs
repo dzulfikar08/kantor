@@ -30,6 +30,7 @@ use ironcalc_base::types::Color;
 use ironcalc_base::{Model, UserModel};
 
 pub mod format;
+pub mod formula;
 pub mod tsv;
 
 pub use format::{CellStyle, HAlign, NumberFormat, StyleChange, ValueKind};

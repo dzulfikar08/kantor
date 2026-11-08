@@ -10,6 +10,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ## [Unreleased]
 
 ### Added
+- **Sheets: formula point mode.** While typing a formula with the caret after `=`, `(`, `,` or an
+  operator, clicking a cell inserts its reference (drag or Shift+click for a range; clicking again
+  replaces it), and arrows / Shift+arrows point too; a click elsewhere in the text still commits as
+  before. Clicking another sheet's tab keeps the edit in the formula bar and inserts `'Sheet2'!A1`.
+  References are coloured in the editor and outlined in the same colour on the grid; F4 cycles
+  `A1 → $A$1 → A$1 → $A1`; typing a function name lists matching IronCalc functions (Tab/Enter
+  inserts `SUM(`).
 - **Docs** (first slice): open, edit and save `.docx` on A4 pages laid out with parley — typing,
   selection, Bold/Italic/Underline, headings (Ctrl+Alt+0–3), alignment, undo/redo, zoom, plain-text
   clipboard, IME input. New Document is Ctrl+Shift+N. Saving an opened `.docx` rewrites only the

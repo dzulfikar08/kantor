@@ -35,7 +35,10 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::{metrics::*, tokens};
 
+use std::ops::Range;
+
 use crate::SheetsView;
+use crate::point::colored_refs;
 
 actions!(
     sheets,
@@ -53,7 +56,7 @@ actions!(
     ]
 );
 
-const EDITOR_CONTEXT: &str = "KantorCellEditor";
+pub(crate) const EDITOR_CONTEXT: &str = "KantorCellEditor";
 pub(crate) const FORMULA_BAR_CONTEXT: &str = "KantorFormulaBar";
 /// Room for the caret past the last character, so text never scrolls while
 /// the editor can still grow.
@@ -81,21 +84,26 @@ pub(crate) fn bind_keys(cx: &mut App) {
             KeyBinding::new("escape", CancelEdit, ctx),
         ]);
     }
-    let ctx = Some(editor.as_str());
-    cx.bind_keys([
-        KeyBinding::new("up", EditUp, ctx),
-        KeyBinding::new("down", EditDown, ctx),
-        KeyBinding::new("left", EditLeft, ctx),
-        KeyBinding::new("right", EditRight, ctx),
-        KeyBinding::new("f2", ToggleEditMode, ctx),
-    ]);
+    // In the formula bar arrows only point (or move the function list's
+    // selection); otherwise they fall through to the caret.
+    for ctx in [editor.as_str(), bar.as_str()] {
+        let ctx = Some(ctx);
+        cx.bind_keys([
+            KeyBinding::new("up", EditUp, ctx),
+            KeyBinding::new("down", EditDown, ctx),
+            KeyBinding::new("left", EditLeft, ctx),
+            KeyBinding::new("right", EditRight, ctx),
+        ]);
+    }
+    cx.bind_keys([KeyBinding::new("f2", ToggleEditMode, Some(editor.as_str()))]);
 }
 
 /// What the grid needs to draw the editor over the edited cell.
 #[derive(Clone)]
 pub(crate) struct CellEditor {
-    /// The edited cell, sheet coordinates `(row, col)`.
+    /// The edited cell, sheet coordinates `(row, col)`, and its sheet.
     pub cell: (u32, u32),
+    pub sheet: u32,
     input: Entity<InputState>,
     view: WeakEntity<SheetsView>,
     /// The table's scroll handles; their bounds are the visible body.
@@ -105,7 +113,8 @@ pub(crate) struct CellEditor {
 
 impl CellEditor {
     /// The overlay element, to be added as a child of the edited cell.
-    pub fn render(&self, cx: &App) -> impl IntoElement + use<> {
+    /// `refs` are the formula's references with their colours.
+    pub fn render(&self, refs: Vec<(Range<usize>, Hsla)>, cx: &App) -> impl IntoElement + use<> {
         let t = tokens(cx);
         let view = self.view.clone();
         let editor = div()
@@ -125,12 +134,20 @@ impl CellEditor {
                 let _ = view.update(cx, |view, _| view.edit_mode = EditMode::Edit);
             })
             .child(
-                Input::new(&self.input)
-                    .appearance(false)
-                    .small()
-                    // Text starts where the cell's own text does.
-                    .px(SPACE_3 - CELL_OUTLINE)
-                    .w_full(),
+                div()
+                    .relative()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .child(
+                        Input::new(&self.input)
+                            .appearance(false)
+                            .small()
+                            // Text starts where the cell's own text does.
+                            .px(SPACE_3 - CELL_OUTLINE)
+                            .w_full(),
+                    )
+                    .child(colored_refs(self.input.clone(), refs)),
             );
         Overlay {
             input: self.input.clone(),
@@ -264,13 +281,19 @@ impl IntoElement for Overlay {
 
 impl SheetsView {
     /// Show (or hide) the editor overlay in the grid for `cell`.
+    /// The edit belongs to the sheet shown now.
     pub(crate) fn set_editing(&mut self, cell: Option<(u32, u32)>, cx: &mut Context<Self>) {
         self.editing = cell;
+        self.point = None;
+        self.completion = None;
         let view = cx.entity().downgrade();
         let input = self.cell_input.clone();
+        let sheet = self.grid_sheet(cx);
+        self.edit_sheet = sheet;
         self.table.update(cx, |table, cx| {
             let editor = cell.map(|cell| CellEditor {
                 cell,
+                sheet,
                 input,
                 view,
                 rows: table.vertical_scroll_handle.clone(),
@@ -279,6 +302,7 @@ impl SheetsView {
             table.delegate_mut().editor = editor;
             cx.notify();
         });
+        self.refresh_refs(cx);
         cx.notify();
     }
 
@@ -299,7 +323,7 @@ impl SheetsView {
     }
 
     /// Copy `from`'s text into `to` if it differs.
-    fn mirror(
+    pub(crate) fn mirror(
         from: &Entity<InputState>,
         to: &Entity<InputState>,
         window: &mut Window,
@@ -319,7 +343,10 @@ impl SheetsView {
         cx: &mut Context<Self>,
     ) {
         match event {
-            InputEvent::Change => Self::mirror(&self.cell_input, &self.formula, window, cx),
+            InputEvent::Change => {
+                Self::mirror(&self.cell_input, &self.formula, window, cx);
+                self.on_edit_changed(window, cx);
+            }
             // Ctrl+Enter (Enter itself is our `CommitDown`).
             InputEvent::PressEnter { .. } => self.commit_edit(Some((1, 0)), window, cx),
             InputEvent::Blur => self.on_editor_blur(window, cx),
@@ -331,6 +358,7 @@ impl SheetsView {
     pub(crate) fn mirror_formula(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.editing.is_some() {
             Self::mirror(&self.formula, &self.cell_input, window, cx);
+            self.on_edit_changed(window, cx);
         }
     }
 
@@ -345,7 +373,9 @@ impl SheetsView {
     }
 
     fn commit_down(&mut self, _: &CommitDown, window: &mut Window, cx: &mut Context<Self>) {
-        self.commit_edit(Some((1, 0)), window, cx);
+        if !self.accept_completion(None, window, cx) {
+            self.commit_edit(Some((1, 0)), window, cx);
+        }
     }
 
     fn commit_up(&mut self, _: &CommitUp, window: &mut Window, cx: &mut Context<Self>) {
@@ -353,17 +383,28 @@ impl SheetsView {
     }
 
     fn commit_right(&mut self, _: &CommitRight, window: &mut Window, cx: &mut Context<Self>) {
-        self.commit_edit(Some((0, 1)), window, cx);
+        if !self.accept_completion(None, window, cx) {
+            self.commit_edit(Some((0, 1)), window, cx);
+        }
     }
 
     fn commit_left(&mut self, _: &CommitLeft, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_edit(Some((0, -1)), window, cx);
     }
 
-    /// An arrow in the cell editor: commit and move in Enter mode, otherwise
-    /// let the input move the caret.
+    /// An arrow while editing: move the function list's selection or point
+    /// (see [`crate::point`]); otherwise in the cell editor commit and move in
+    /// Enter mode, and everywhere else let the input move the caret.
     fn edit_arrow(&mut self, step: (i64, i64), window: &mut Window, cx: &mut Context<Self>) {
-        if self.editing.is_none() || self.edit_mode == EditMode::Edit {
+        if self.editing.is_none() {
+            cx.propagate();
+            return;
+        }
+        if self.assist_arrow(step, window, cx) {
+            return;
+        }
+        let in_bar = self.formula.read(cx).focus_handle(cx).is_focused(window);
+        if in_bar || self.edit_mode == EditMode::Edit {
             cx.propagate();
             return;
         }
