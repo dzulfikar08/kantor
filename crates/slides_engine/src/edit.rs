@@ -8,10 +8,15 @@ use docs_engine::{Rgb, Selection, Toggle};
 
 use crate::history::{Command, Focus, Kind};
 use crate::model::*;
-use crate::presentation::{Presentation, Slide, SlideSrc};
+use crate::presentation::{Notes, Presentation, Slide, SlideSrc, read_notes};
 use crate::template;
 use crate::text_ops;
 use crate::xml::*;
+
+/// Left margin added per outline level (half an inch, as PowerPoint).
+const LEVEL_STEP: Emu = 457_200;
+/// Hanging indent of a new bullet (0.375 in, as PowerPoint's text boxes).
+const HANGING: Emu = 342_900;
 
 /// A shape on a slide: `(slide index, shape index)`.
 pub type ShapeRef = (usize, usize);
@@ -406,6 +411,117 @@ impl Presentation {
         Ok(())
     }
 
+    /// Paragraph indices a selection touches (clamped to the body).
+    fn sel_paras(&self, r: ShapeRef, sel: Selection) -> std::ops::RangeInclusive<usize> {
+        let n = self.text_paras(r).map_or(1, |p| p.len().max(1));
+        let (a, b) = sel.ordered();
+        a.para.min(n - 1)..=b.para.min(n - 1)
+    }
+
+    /// Tab / Shift+Tab: move the selected paragraphs `delta` outline levels
+    /// (0–8). A paragraph with its own left margin moves it by half an inch.
+    pub fn change_level(&mut self, r: ShapeRef, sel: Selection, delta: i8) -> anyhow::Result<()> {
+        let range = self.sel_paras(r, sel);
+        self.edit_text(r, Kind::Other, sel, true, |paras| {
+            for p in &mut paras[range] {
+                let level = (p.props.level as i8 + delta).clamp(0, 8) as u8;
+                let moved = level as i64 - p.props.level as i64;
+                if moved == 0 {
+                    continue;
+                }
+                p.props.level = level;
+                if let Some(m) = &mut p.props.style.mar_l {
+                    *m = (*m + moved * LEVEL_STEP).max(0);
+                }
+            }
+            sel
+        })?;
+        Ok(())
+    }
+
+    /// Whether every selected paragraph is a bulleted (`numbered` false)
+    /// or numbered list item, with inheritance.
+    pub fn is_list(&self, r: ShapeRef, sel: Selection, numbered: bool) -> bool {
+        let Some(shape) = self.slides.get(r.0).and_then(|s| s.shapes.get(r.1)) else {
+            return false;
+        };
+        if shape.text.is_none() {
+            return false;
+        }
+        self.sel_paras(r, sel).all(|i| {
+            let b = self.para_style(r.0, shape, i, true).bullet;
+            match b {
+                Some(b) if !b.is_none() => b.is_numbered() == numbered,
+                _ => false,
+            }
+        })
+    }
+
+    /// Turn the selected paragraphs into a bulleted or numbered list, or
+    /// back into plain paragraphs. Inherited bullets (a body placeholder's)
+    /// are used when they are of the kind asked for.
+    pub fn toggle_list(
+        &mut self,
+        r: ShapeRef,
+        sel: Selection,
+        numbered: bool,
+    ) -> anyhow::Result<()> {
+        let on = !self.is_list(r, sel, numbered);
+        let range = self.sel_paras(r, sel);
+        let shape = self
+            .slides
+            .get(r.0)
+            .and_then(|s| s.shapes.get(r.1))
+            .context("no such shape")?;
+        // What each paragraph would have without its own formatting.
+        let inherited: Vec<ParaStyle> = range
+            .clone()
+            .map(|i| self.para_style(r.0, shape, i, false))
+            .collect();
+        self.edit_text(r, Kind::Other, sel, true, |paras| {
+            for (p, inh) in paras[range].iter_mut().zip(inherited) {
+                let st = &mut p.props.style;
+                let inh_has = inh.bullet.as_ref().is_some_and(|b| !b.is_none());
+                let inh_kind =
+                    inh_has && inh.bullet.as_ref().is_some_and(|b| b.is_numbered()) == numbered;
+                if on {
+                    if inh_kind {
+                        st.bullet = None;
+                    } else {
+                        st.bullet = Some(if numbered {
+                            Bullet::AutoNum {
+                                scheme: "arabicPeriod".into(),
+                                start: 1,
+                            }
+                        } else {
+                            Bullet::Char("•".into())
+                        });
+                        // A symbol font would garble a new bullet or number.
+                        st.bu_font = None;
+                        p.props.extra.pre = crate::shape::strip_elements(
+                            &p.props.extra.pre,
+                            &["buFont", "buFontTx"],
+                        );
+                    }
+                    let indent = st.indent.or(inh.indent).unwrap_or(0);
+                    if indent >= 0 {
+                        let level = p.props.level as i64;
+                        st.mar_l = Some(HANGING + level * LEVEL_STEP);
+                        st.indent = Some(-HANGING);
+                    }
+                } else {
+                    st.bullet = if inh_has { Some(Bullet::None) } else { None };
+                    if !inh_has && st.indent.is_some_and(|i| i < 0) {
+                        st.mar_l = None;
+                        st.indent = None;
+                    }
+                }
+            }
+            sel
+        })?;
+        Ok(())
+    }
+
     /// Formatting typed text takes at `pos`.
     pub fn run_props_at(&self, r: ShapeRef, pos: docs_engine::Position) -> RunProps {
         self.text_paras(r)
@@ -414,6 +530,97 @@ impl Presentation {
                 paras[p.para].props_at(p.offset)
             })
             .unwrap_or_default()
+    }
+
+    // ── speaker notes ──────────────────────────────────────────────────────
+
+    /// A slide's speaker notes as plain text (paragraphs and line breaks
+    /// as `\n`).
+    pub fn notes_text(&self, slide: usize) -> String {
+        self.slides
+            .get(slide)
+            .and_then(|s| s.notes.as_ref())
+            .and_then(|n| n.body.as_ref())
+            .and_then(|b| b.text.as_ref())
+            .map(|t| t.plain_text().replace(docs_engine::LINE_BREAK, "\n"))
+            .unwrap_or_default()
+    }
+
+    /// Why a slide's notes can't be edited, if so.
+    pub fn notes_locked(&self, slide: usize) -> Option<String> {
+        let s = self.slides.get(slide)?;
+        if let Some(why) = &s.locked {
+            return Some(format!("this slide can't be edited: {why}"));
+        }
+        let n = s.notes.as_ref()?;
+        match n.body.as_ref().and_then(|b| b.text.as_ref()) {
+            None => Some("these notes have no notes text box".into()),
+            Some(t) => t.locked.as_ref().map(|w| format!("these notes have {w}")),
+        }
+    }
+
+    /// A new, empty notes part for `slide` (its name is unused in the file
+    /// and by `others`), and the slide's relationship to it.
+    fn new_notes(&self, slide: &Slide, others: &[&str]) -> anyhow::Result<(Notes, Rel)> {
+        let used: Vec<&str> = self
+            .slides
+            .iter()
+            .filter_map(|s| s.notes.as_ref().map(|n| n.part.as_str()))
+            .chain(others.iter().copied())
+            .collect();
+        let part = (1..)
+            .map(|i| format!("ppt/notesSlides/notesSlide{i}.xml"))
+            .find(|p| !self.pkg.names.contains(p) && !used.contains(&p.as_str()))
+            .context("no free notes part name")?;
+        let master = &self.masters[self.layouts[slide.layout.min(self.layouts.len() - 1)].master];
+        let notes = read_notes(&template::notes_slide(), &part, &[], master, false)
+            .context("notes template")?;
+        let rel = Rel {
+            id: next_rel_id(&slide.rels),
+            ty: rel_type("notesSlide"),
+            target: relative(&slide.part, &part),
+            external: false,
+        };
+        Ok((notes, rel))
+    }
+
+    /// Replace a slide's notes text (creating the notes part if needed).
+    /// Only the changed part of the text is replaced, so formatting of the
+    /// rest is kept. Typing coalesces into one undo step per slide.
+    pub fn set_notes_text(&mut self, slide: usize, text: &str) -> anyhow::Result<()> {
+        if self.notes_text(slide) == text {
+            return Ok(());
+        }
+        if let Some(why) = self.notes_locked(slide) {
+            bail!("The notes can't be edited: {why}");
+        }
+        let focus = Focus::slide(slide);
+        self.record(
+            Kind::Notes,
+            Some((slide, usize::MAX)),
+            focus.clone(),
+            false,
+            |p| {
+                let fresh = match &p.slides.get(slide).context("no such slide")?.notes {
+                    None => Some(p.new_notes(&p.slides[slide], &[])?),
+                    Some(_) => None,
+                };
+                let s = p.slide_mut(slide)?;
+                if let Some((notes, rel)) = fresh {
+                    s.notes = Some(notes);
+                    Arc::make_mut(&mut s.rels).push(rel);
+                }
+                let paras = s
+                    .notes
+                    .as_mut()
+                    .and_then(|n| n.body.as_mut())
+                    .and_then(|b| b.text.as_mut())
+                    .map(|t| &mut t.paras)
+                    .context("no notes text")?;
+                text_ops::replace_changed(paras, text);
+                Ok(((), focus))
+            },
+        )
     }
 
     // ── slides ─────────────────────────────────────────────────────────────
@@ -502,6 +709,7 @@ impl Presentation {
                 rels: Vec::new(),
             }),
             origin: None,
+            notes: None,
         };
         let at = after.map_or(0, |i| (i + 1).min(self.slides.len()));
         let before = Focus::slide(after.unwrap_or(0));
@@ -536,13 +744,30 @@ impl Presentation {
                 None => r.clone(),
             })
             .collect();
-        let copy = Slide {
+        let mut copy = Slide {
             sld_id,
             part,
             rels: Arc::new(rels),
             origin: None,
+            notes: None,
             ..(*src).clone()
         };
+        // The copy gets its own notes part with the same text.
+        if let Some(paras) = src
+            .notes
+            .as_ref()
+            .and_then(|n| n.body.as_ref())
+            .and_then(|b| b.text.as_ref())
+            .map(|t| t.paras.clone())
+            .filter(|p| p.iter().any(|p| !p.text.is_empty()))
+        {
+            let (mut notes, rel) = self.new_notes(&copy, &[])?;
+            if let Some(t) = notes.body.as_mut().and_then(|b| b.text.as_mut()) {
+                t.paras = paras;
+            }
+            copy.notes = Some(notes);
+            Arc::make_mut(&mut copy.rels).push(rel);
+        }
         self.record(Kind::Other, None, Focus::slide(i), false, |p| {
             p.slides.insert(i + 1, Arc::new(copy));
             Ok((i + 1, Focus::slide(i + 1)))

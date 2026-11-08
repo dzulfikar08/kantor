@@ -35,23 +35,182 @@ impl SlideSize {
     };
 }
 
-/// Offset and extent of a shape (`a:xfrm`). Rotation and flips stay in the
-/// source XML (not modelled; kept when the shape moves).
+/// Rotation units per degree (`a:xfrm/@rot` is in 60 000ths of a degree).
+pub const ROT_PER_DEG: i32 = 60_000;
+
+/// Offset, extent, rotation and flips of a shape (`a:xfrm`). The box is
+/// the unrotated one; the shape turns clockwise by `rot` about its centre
+/// (after flipping).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Xfrm {
     pub x: Emu,
     pub y: Emu,
     pub cx: Emu,
     pub cy: Emu,
+    /// Clockwise, in 60 000ths of a degree, normalised to `0..21_600_000`.
+    pub rot: i32,
+    pub flip_h: bool,
+    pub flip_v: bool,
 }
 
 impl Xfrm {
     pub const fn new(x: Emu, y: Emu, cx: Emu, cy: Emu) -> Self {
-        Self { x, y, cx, cy }
+        Self {
+            x,
+            y,
+            cx,
+            cy,
+            rot: 0,
+            flip_h: false,
+            flip_v: false,
+        }
     }
 
+    pub fn center(&self) -> (f64, f64) {
+        (
+            self.x as f64 + self.cx as f64 / 2.0,
+            self.y as f64 + self.cy as f64 / 2.0,
+        )
+    }
+
+    /// Rotation in radians (clockwise on screen, y down).
+    pub fn angle(&self) -> f64 {
+        (self.rot as f64 / ROT_PER_DEG as f64).to_radians()
+    }
+
+    /// A slide point in the shape's own unrotated frame (the inverse of
+    /// [`Xfrm::to_slide`]).
+    pub fn to_local(&self, x: f64, y: f64) -> (f64, f64) {
+        if self.rot == 0 {
+            return (x, y);
+        }
+        let (cx, cy) = self.center();
+        let (s, c) = (-self.angle()).sin_cos();
+        let (dx, dy) = (x - cx, y - cy);
+        (cx + dx * c - dy * s, cy + dx * s + dy * c)
+    }
+
+    /// A point of the unrotated box turned with the shape.
+    pub fn to_slide(&self, x: f64, y: f64) -> (f64, f64) {
+        if self.rot == 0 {
+            return (x, y);
+        }
+        let (cx, cy) = self.center();
+        let (s, c) = self.angle().sin_cos();
+        let (dx, dy) = (x - cx, y - cy);
+        (cx + dx * c - dy * s, cy + dx * s + dy * c)
+    }
+
+    /// Whether a slide point is inside the (rotated) shape box.
     pub fn contains(&self, x: Emu, y: Emu) -> bool {
-        x >= self.x && x <= self.x + self.cx && y >= self.y && y <= self.y + self.cy
+        let (x, y) = self.to_local(x as f64, y as f64);
+        x >= self.x as f64
+            && x <= (self.x + self.cx) as f64
+            && y >= self.y as f64
+            && y <= (self.y + self.cy) as f64
+    }
+
+    /// Corners of the rotated box, clockwise from the (unrotated) top left.
+    pub fn corners(&self) -> [(f64, f64); 4] {
+        let (x0, y0) = (self.x as f64, self.y as f64);
+        let (x1, y1) = (x0 + self.cx as f64, y0 + self.cy as f64);
+        [(x0, y0), (x1, y0), (x1, y1), (x0, y1)].map(|(x, y)| self.to_slide(x, y))
+    }
+
+    /// The unrotated box around the rotated one.
+    pub fn bounding_box(&self) -> Xfrm {
+        if self.rot == 0 {
+            return Xfrm::new(self.x, self.y, self.cx, self.cy);
+        }
+        let c = self.corners();
+        let xs = c.map(|p| p.0);
+        let ys = c.map(|p| p.1);
+        let min = |v: [f64; 4]| v.iter().copied().fold(f64::MAX, f64::min);
+        let max = |v: [f64; 4]| v.iter().copied().fold(f64::MIN, f64::max);
+        let (x0, y0) = (min(xs).floor() as Emu, min(ys).floor() as Emu);
+        Xfrm::new(
+            x0,
+            y0,
+            max(xs).ceil() as Emu - x0,
+            max(ys).ceil() as Emu - y0,
+        )
+    }
+
+    /// The rotation set to `deg` degrees (normalised).
+    pub fn with_degrees(self, deg: f64) -> Self {
+        let full = 360 * ROT_PER_DEG;
+        let rot = ((deg * ROT_PER_DEG as f64).round() as i64).rem_euclid(full as i64) as i32;
+        Self { rot, ..self }
+    }
+}
+
+/// Spacing (`a:spcPct` / `a:spcPts`): a percentage of a line in 1/1000 %
+/// (100 000 = one line), or hundredths of a point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Spacing {
+    Pct(i32),
+    Pts(i32),
+}
+
+/// A paragraph's bullet (`a:buNone`, `a:buChar`, `a:buAutoNum`, `a:buBlip`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Bullet {
+    None,
+    Char(String),
+    /// `type` (`arabicPeriod`, `alphaLcParenR`, ...) and `startAt`.
+    AutoNum {
+        scheme: String,
+        start: u32,
+    },
+    /// A picture bullet, kept as raw XML (shown as "•").
+    Picture(String),
+}
+
+impl Bullet {
+    pub fn is_none(&self) -> bool {
+        matches!(self, Bullet::None)
+    }
+
+    pub fn is_numbered(&self) -> bool {
+        matches!(self, Bullet::AutoNum { .. })
+    }
+}
+
+/// Paragraph formatting from a `a:pPr` or a list-style level. `None` =
+/// inherit. For `Option<Option<_>>` fields, `Some(None)` means "follow the
+/// text" (`a:buFontTx`, `a:buClrTx`, `a:buSzTx`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ParaStyle {
+    /// Left margin of the text (`marL`), EMU.
+    pub mar_l: Option<Emu>,
+    /// First-line offset from `mar_l` (`indent`, negative = hanging), EMU.
+    pub indent: Option<Emu>,
+    pub bullet: Option<Bullet>,
+    pub line_spacing: Option<Spacing>,
+    pub space_before: Option<Spacing>,
+    pub space_after: Option<Spacing>,
+    /// Bullet typeface (theme references resolved).
+    pub bu_font: Option<Option<String>>,
+    pub bu_color: Option<Option<Rgb>>,
+    pub bu_size: Option<Option<Spacing>>,
+}
+
+impl ParaStyle {
+    pub fn overlay(&mut self, o: &ParaStyle) {
+        macro_rules! take {
+            ($($f:ident),*) => {$( if o.$f.is_some() { self.$f = o.$f.clone(); } )*};
+        }
+        take!(
+            mar_l,
+            indent,
+            bullet,
+            line_spacing,
+            space_before,
+            space_after,
+            bu_font,
+            bu_color,
+            bu_size
+        );
     }
 }
 
@@ -122,12 +281,18 @@ pub struct RunProps {
 }
 
 /// Paragraph formatting (`a:pPr`).
+///
+/// Written from the model: `lvl`, `algn`, `marL`, `indent` and the bullet
+/// element (`style.bullet`). The other `style` fields are display only:
+/// spacing and bullet font/colour/size stay as raw XML in `extra.pre`
+/// (children before the bullet), tab stops and the rest in `extra.post`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ParaProps {
     pub align: Option<Align>,
     /// Outline level, 0-based (`lvl`).
     pub level: u8,
-    /// Other attributes and all children (spacing, bullets, tabs...).
+    pub style: ParaStyle,
+    /// Other attributes, and the children around the bullet element.
     pub extra: Extra,
 }
 
@@ -358,6 +523,8 @@ pub struct BodyProps {
     pub no_wrap: Option<bool>,
     /// `normAutofit/@fontScale` in 1/1000 %.
     pub font_scale: Option<u32>,
+    /// `normAutofit/@lnSpcReduction` in 1/1000 %.
+    pub line_reduction: Option<u32>,
 }
 
 impl BodyProps {
@@ -375,6 +542,9 @@ impl BodyProps {
         }
         if o.font_scale.is_some() {
             self.font_scale = o.font_scale;
+        }
+        if o.line_reduction.is_some() {
+            self.line_reduction = o.line_reduction;
         }
     }
 }
@@ -593,6 +763,23 @@ mod tests {
             bold: Some(true),
             ..RunProps::default()
         }
+    }
+
+    #[test]
+    fn rotated_boxes_hit_test_in_their_own_frame() {
+        // A wide box turned 90°: it now covers a tall area about its centre.
+        let x = Xfrm::new(0, 40, 100, 20).with_degrees(90.0);
+        assert_eq!(x.rot, 5_400_000);
+        assert!(x.contains(50, 0) && x.contains(50, 95));
+        assert!(!x.contains(5, 50));
+        let (lx, ly) = x.to_local(50.0, 0.0);
+        assert!((lx - 0.0).abs() < 1e-6 && (ly - 50.0).abs() < 1e-6);
+        let (sx, sy) = x.to_slide(lx, ly);
+        assert!((sx - 50.0).abs() < 1e-6 && sy.abs() < 1e-6);
+        assert_eq!(
+            Xfrm::new(0, 0, 1, 1).with_degrees(-15.0).rot,
+            345 * ROT_PER_DEG
+        );
     }
 
     #[test]

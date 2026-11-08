@@ -13,6 +13,12 @@ const REL_BASE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/re
 
 pub const CT_SLIDE: &str = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml";
 
+pub const CT_NOTES: &str =
+    "application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml";
+pub const CT_NOTES_MASTER: &str =
+    "application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml";
+pub const CT_THEME: &str = "application/vnd.openxmlformats-officedocument.theme+xml";
+
 pub const XML_DECL: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n";
 
 /// Relationship type by its short name (`slideLayout`, `image`, ...).
@@ -177,17 +183,6 @@ pub fn write_attrs(out: &mut String, attrs: &[(String, String)]) {
         out.push_str(&v.replace('"', "&quot;"));
         out.push('"');
     }
-}
-
-/// Raw XML of the element children of `n` that `keep` accepts.
-pub fn inner_where(n: Node, src: &str, keep: impl Fn(Node) -> bool) -> String {
-    let mut out = String::new();
-    for c in n.children().filter(|c| c.is_element()) {
-        if keep(c) {
-            out.push_str(raw(src, c));
-        }
-    }
-    out
 }
 
 // ── OPC ────────────────────────────────────────────────────────────────────

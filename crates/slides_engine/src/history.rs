@@ -48,6 +48,8 @@ pub(crate) enum Kind {
     Deleting,
     Composing,
     Nudge,
+    /// Typing in a slide's speaker notes.
+    Notes,
     Other,
 }
 
@@ -123,7 +125,7 @@ impl History {
             && cmd.target == last.target
             && Some(last.id) != self.saved
             && match cmd.kind {
-                Kind::Composing | Kind::Nudge => true,
+                Kind::Composing | Kind::Nudge | Kind::Notes => true,
                 _ => !word_boundary && last.focus_after == cmd.focus_before,
             }
         {

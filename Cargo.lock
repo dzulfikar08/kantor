@@ -6545,6 +6545,7 @@ dependencies = [
  "docs_layout",
  "docs_ui",
  "gpui-kit",
+ "image",
  "kantor_ui",
  "log",
  "slides_engine",

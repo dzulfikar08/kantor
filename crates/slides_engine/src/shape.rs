@@ -10,7 +10,7 @@ use docs_engine::{LINE_BREAK, Rgb};
 use roxmltree::Node;
 
 use crate::model::*;
-use crate::theme::{ColorCtx, ListStyle};
+use crate::theme::{ColorCtx, ListStyle, bullet_of, is_bullet_el, para_style};
 use crate::xml::*;
 
 /// What shape parsing needs from the part being read.
@@ -51,11 +51,15 @@ pub(crate) fn parse_tree(tree: Node, cx: &ParseCtx) -> (Vec<Shape>, Range<usize>
 fn xfrm_of(x: Node) -> Option<Xfrm> {
     let off = child(x, NS_A, "off")?;
     let ext = child(x, NS_A, "ext")?;
+    let full = 360 * ROT_PER_DEG as i64;
     Some(Xfrm {
         x: attr_i64(off, "x")?,
         y: attr_i64(off, "y")?,
         cx: attr_i64(ext, "cx")?,
         cy: attr_i64(ext, "cy")?,
+        rot: attr_i64(x, "rot").unwrap_or(0).rem_euclid(full) as i32,
+        flip_h: attr_bool(x, "flipH").unwrap_or(false),
+        flip_v: attr_bool(x, "flipV").unwrap_or(false),
     })
 }
 
@@ -231,9 +235,13 @@ pub(crate) fn body_props(n: Node) -> BodyProps {
         _ => Anchor::Top,
     });
     b.no_wrap = n.attribute("wrap").map(|w| w == "none");
-    b.font_scale = child(n, NS_A, "normAutofit")
+    let fit = child(n, NS_A, "normAutofit");
+    b.font_scale = fit
         .and_then(|a| attr_i64(a, "fontScale"))
         .map(|v| v.clamp(1000, 100_000) as u32);
+    b.line_reduction = fit
+        .and_then(|a| attr_i64(a, "lnSpcReduction"))
+        .map(|v| v.clamp(0, 90_000) as u32);
     b
 }
 
@@ -282,15 +290,7 @@ fn parse_para(p: Node, cx: &ParseCtx, locked: &mut Option<String>) -> TextPara {
     for c in p.children().filter(|c| c.is_element()) {
         let in_a = c.tag_name().namespace() == Some(NS_A);
         match (in_a, c.tag_name().name()) {
-            (true, "pPr") => {
-                para.props.align = c.attribute("algn").and_then(Align::from_attr);
-                para.props.level = attr_i64(c, "lvl").unwrap_or(0).clamp(0, 8) as u8;
-                para.props.extra = Extra {
-                    attrs: attrs_except(c, src, &["algn", "lvl"]),
-                    pre: String::new(),
-                    post: inner_where(c, src, |_| true),
-                };
-            }
+            (true, "pPr") => para.props = para_props(c, cx),
             (true, "r" | "fld") => {
                 if c.tag_name().name() == "fld" && locked.is_none() {
                     *locked = Some("fields (slide numbers, dates)".into());
@@ -341,6 +341,40 @@ fn parse_para(p: Node, cx: &ParseCtx, locked: &mut Option<String>) -> TextPara {
     para
 }
 
+/// Children of `a:pPr` that come before the bullet element (schema order).
+const PPR_PRE: [&str; 10] = [
+    "lnSpc", "spcBef", "spcAft", "buClrTx", "buClr", "buSzTx", "buSzPct", "buSzPts", "buFontTx",
+    "buFont",
+];
+
+pub(crate) fn para_props(c: Node, cx: &ParseCtx) -> ParaProps {
+    let src = cx.src;
+    let mut style = para_style(c, &cx.colors);
+    let mut pre = String::new();
+    let mut post = String::new();
+    for k in c.children().filter(|k| k.is_element()) {
+        let name = k.tag_name().name();
+        let in_a = k.tag_name().namespace() == Some(NS_A);
+        if in_a && is_bullet_el(name) {
+            style.bullet = bullet_of(k, raw(src, k));
+        } else if in_a && PPR_PRE.contains(&name) && post.is_empty() {
+            pre.push_str(raw(src, k));
+        } else {
+            post.push_str(raw(src, k));
+        }
+    }
+    ParaProps {
+        align: c.attribute("algn").and_then(Align::from_attr),
+        level: attr_i64(c, "lvl").unwrap_or(0).clamp(0, 8) as u8,
+        style,
+        extra: Extra {
+            attrs: attrs_except(c, src, &["algn", "lvl", "marL", "indent"]),
+            pre,
+            post,
+        },
+    }
+}
+
 fn push_run(para: &mut TextPara, text: &str, props: RunProps) {
     para.text.push_str(text);
     para.runs.push(Run {
@@ -352,6 +386,21 @@ fn push_run(para: &mut TextPara, text: &str, props: RunProps) {
 /// Wrap a raw `a:` fragment so it parses on its own.
 fn wrap_ns(fragment: &str) -> String {
     format!("<w xmlns:a=\"{NS_A}\" xmlns:r=\"{NS_R}\">{fragment}</w>")
+}
+
+/// A raw fragment of `a:` elements without the elements named `drop`.
+pub(crate) fn strip_elements(fragment: &str, drop: &[&str]) -> String {
+    let wrapped = wrap_ns(fragment);
+    let Ok(d) = roxmltree::Document::parse(&wrapped) else {
+        return fragment.to_owned();
+    };
+    let mut out = String::new();
+    for c in d.root_element().children().filter(|c| c.is_element()) {
+        if !drop.contains(&c.tag_name().name()) {
+            out.push_str(raw(&wrapped, c));
+        }
+    }
+    out
 }
 
 /// Run properties of a raw `a:endParaRPr`.
@@ -487,25 +536,7 @@ pub(crate) fn write_rpr(out: &mut String, tag: &str, p: &RunProps) {
 
 pub(crate) fn write_para(out: &mut String, p: &TextPara) {
     out.push_str("<a:p>");
-    let pp = &p.props;
-    if pp.align.is_some() || pp.level > 0 || !pp.extra.is_empty() {
-        out.push_str("<a:pPr");
-        if pp.level > 0 {
-            let _ = write!(out, " lvl=\"{}\"", pp.level);
-        }
-        if let Some(a) = pp.align {
-            let _ = write!(out, " algn=\"{}\"", a.attr());
-        }
-        write_attrs(out, &pp.extra.attrs);
-        if pp.extra.post.is_empty() && pp.extra.pre.is_empty() {
-            out.push_str("/>");
-        } else {
-            out.push('>');
-            out.push_str(&pp.extra.pre);
-            out.push_str(&pp.extra.post);
-            out.push_str("</a:pPr>");
-        }
-    }
+    write_ppr(out, &p.props);
     for (range, run) in p.run_ranges() {
         let text = &p.text[range];
         for (i, seg) in text.split(LINE_BREAK).enumerate() {
@@ -531,12 +562,76 @@ pub(crate) fn write_para(out: &mut String, p: &TextPara) {
     out.push_str("</a:p>");
 }
 
+/// The bullet element of a paragraph.
+pub(crate) fn write_bullet(out: &mut String, b: &Bullet) {
+    match b {
+        Bullet::None => out.push_str("<a:buNone/>"),
+        Bullet::Char(c) => {
+            let _ = write!(out, "<a:buChar char=\"{}\"/>", esc_attr(c));
+        }
+        Bullet::AutoNum { scheme, start } => {
+            let _ = write!(out, "<a:buAutoNum type=\"{}\"", esc_attr(scheme));
+            if *start != 1 {
+                let _ = write!(out, " startAt=\"{start}\"");
+            }
+            out.push_str("/>");
+        }
+        Bullet::Picture(raw) => out.push_str(raw),
+    }
+}
+
+fn write_ppr(out: &mut String, pp: &ParaProps) {
+    let st = &pp.style;
+    let has_attrs = pp.align.is_some()
+        || pp.level > 0
+        || st.mar_l.is_some()
+        || st.indent.is_some()
+        || !pp.extra.attrs.is_empty();
+    let has_children = st.bullet.is_some() || !pp.extra.pre.is_empty() || !pp.extra.post.is_empty();
+    if !has_attrs && !has_children {
+        return;
+    }
+    out.push_str("<a:pPr");
+    if let Some(m) = st.mar_l {
+        let _ = write!(out, " marL=\"{m}\"");
+    }
+    if pp.level > 0 {
+        let _ = write!(out, " lvl=\"{}\"", pp.level);
+    }
+    if let Some(i) = st.indent {
+        let _ = write!(out, " indent=\"{i}\"");
+    }
+    if let Some(a) = pp.align {
+        let _ = write!(out, " algn=\"{}\"", a.attr());
+    }
+    write_attrs(out, &pp.extra.attrs);
+    if !has_children {
+        out.push_str("/>");
+        return;
+    }
+    out.push('>');
+    out.push_str(&pp.extra.pre);
+    if let Some(b) = &st.bullet {
+        write_bullet(out, b);
+    }
+    out.push_str(&pp.extra.post);
+    out.push_str("</a:pPr>");
+}
+
 fn write_xfrm(out: &mut String, attrs: &str, x: &Xfrm) {
     out.push_str("<a:xfrm");
-    if !attrs.is_empty() {
-        out.push(' ');
-        out.push_str(attrs);
+    let mut attrs = split_attrs(attrs);
+    attrs.retain(|(k, _)| !matches!(k.as_str(), "rot" | "flipH" | "flipV"));
+    if x.rot != 0 {
+        attrs.push(("rot".into(), x.rot.to_string()));
     }
+    if x.flip_h {
+        attrs.push(("flipH".into(), "1".into()));
+    }
+    if x.flip_v {
+        attrs.push(("flipV".into(), "1".into()));
+    }
+    write_attrs(out, &attrs);
     let _ = write!(
         out,
         "><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm>",
@@ -736,7 +831,11 @@ mod tests {
     fn unchanged_shape_is_written_verbatim() {
         with_shapes(SP, |shapes, _| {
             let s = &shapes[0];
-            assert_eq!(s.xfrm, Some(Xfrm::new(1, 2, 3, 4)));
+            let rotated = Xfrm {
+                rot: 60_000,
+                ..Xfrm::new(1, 2, 3, 4)
+            };
+            assert_eq!(s.xfrm, Some(rotated));
             let t = s.text.as_ref().unwrap();
             assert_eq!(t.paras[0].text, format!("Hi & bye{LINE_BREAK}two"));
             assert_eq!(t.paras[0].props.align, Some(Align::Center));
@@ -767,7 +866,14 @@ mod tests {
             assert!(forced.contains("<a:br><a:rPr lang=\"en-US\"/></a:br>"));
             assert!(forced.contains("Hi &amp; bye"));
             // Move: only the xfrm changes, rotation kept.
-            s.xfrm = Some(Xfrm::new(10, 20, 30, 40));
+            let x = s.xfrm.unwrap();
+            s.xfrm = Some(Xfrm {
+                x: 10,
+                y: 20,
+                cx: 30,
+                cy: 40,
+                ..x
+            });
             let mut out = String::new();
             write_shape(&mut out, &s);
             assert!(out.contains(

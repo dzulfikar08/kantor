@@ -4,7 +4,7 @@
 
 use gpui_kit::*;
 use kantor_ui::metrics::SLIDE_MARGIN;
-use slides_engine::SlideSize;
+use slides_engine::{SlideSize, Xfrm};
 
 use crate::draw::View;
 
@@ -72,6 +72,79 @@ pub(crate) fn scroll_keeping(
     )
 }
 
+/// Resize `orig` by dragging `handle` by (`dx`, `dy`) EMU on the slide.
+/// The drag is measured along the shape's own (rotated) axes, and the
+/// opposite edge or corner stays where it is on the slide.
+pub(crate) fn resize_box(orig: &Xfrm, handle: (i8, i8), dx: f64, dy: f64, min: i64) -> Xfrm {
+    let (s, c) = orig.angle().sin_cos();
+    let lx = (dx * c + dy * s) as i64;
+    let ly = (-dx * s + dy * c) as i64;
+    let mut x = *orig;
+    match handle.0 {
+        -1 => {
+            let w = (orig.cx - lx).max(min);
+            x.x = orig.x + orig.cx - w;
+            x.cx = w;
+        }
+        1 => x.cx = (orig.cx + lx).max(min),
+        _ => {}
+    }
+    match handle.1 {
+        -1 => {
+            let h = (orig.cy - ly).max(min);
+            x.y = orig.y + orig.cy - h;
+            x.cy = h;
+        }
+        1 => x.cy = (orig.cy + ly).max(min),
+        _ => {}
+    }
+    if orig.rot != 0 {
+        // The box grew about its unrotated corner; turn the centre's shift.
+        let (ox, oy) = orig.center();
+        let (nx, ny) = x.center();
+        let (ddx, ddy) = (nx - ox, ny - oy);
+        let (tx, ty) = (ddx * c - ddy * s, ddx * s + ddy * c);
+        x.x = (ox + tx - x.cx as f64 / 2.0).round() as i64;
+        x.y = (oy + ty - x.cy as f64 / 2.0).round() as i64;
+    }
+    x
+}
+
+/// Rotation in degrees (clockwise from straight up) of a pointer at
+/// (`dx`, `dy`) screen px from the shape's centre; `snap` rounds to 15°.
+pub(crate) fn pointer_degrees(dx: f32, dy: f32, snap: bool) -> f64 {
+    let deg = (dx as f64).atan2(-dy as f64).to_degrees();
+    if snap {
+        (deg / 15.0).round() * 15.0
+    } else {
+        deg.round()
+    }
+}
+
+/// Cursor over a resize handle of a shape turned `rot` (60 000ths of a
+/// degree): the handle's direction turned with it, to the nearest 45°.
+pub(crate) fn turned_handle_cursor(h: (i8, i8), rot: i32) -> CursorStyle {
+    if rot == 0 {
+        return handle_cursor(h);
+    }
+    let a = (rot as f64 / 60_000.0).to_radians();
+    let (s, c) = a.sin_cos();
+    let (x, y) = (h.0 as f64, h.1 as f64);
+    let (tx, ty) = (x * c - y * s, x * s + y * c);
+    let oct = (ty.atan2(tx) / std::f64::consts::FRAC_PI_4).round() as i32;
+    let dir = match oct.rem_euclid(8) {
+        0 => (1, 0),
+        1 => (1, 1),
+        2 => (0, 1),
+        3 => (-1, 1),
+        4 => (-1, 0),
+        5 => (-1, -1),
+        6 => (0, -1),
+        _ => (1, -1),
+    };
+    handle_cursor(dir)
+}
+
 /// Cursor over a resize handle: which edges it moves (-1, 0, 1 per axis).
 pub(crate) fn handle_cursor(h: (i8, i8)) -> CursorStyle {
     match h {
@@ -85,6 +158,38 @@ pub(crate) fn handle_cursor(h: (i8, i8)) -> CursorStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[std::prelude::v1::test]
+    fn resize_unrotated_and_rotated() {
+        let o = Xfrm::new(100, 100, 200, 100);
+        assert_eq!(
+            resize_box(&o, (-1, -1), 50.0, -20.0, 10),
+            Xfrm::new(150, 80, 150, 120)
+        );
+        // Turned 90°: dragging the right handle (now at the bottom) down
+        // widens the box; its left edge (now at the top) stays put.
+        let t = o.with_degrees(90.0);
+        let r = resize_box(&t, (1, 0), 0.0, 40.0, 10);
+        assert_eq!((r.cx, r.cy), (240, 100));
+        let edge = |x: &Xfrm| x.to_slide(x.x as f64, x.y as f64 + x.cy as f64 / 2.0);
+        let (a, b) = (edge(&t), edge(&r));
+        assert!(
+            (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0,
+            "{a:?} {b:?}"
+        );
+    }
+
+    #[std::prelude::v1::test]
+    fn rotate_pointer_angles() {
+        assert_eq!(pointer_degrees(0., -10., false), 0.0);
+        assert_eq!(pointer_degrees(10., 0., false), 90.0);
+        assert_eq!(pointer_degrees(-10., 0., false), -90.0);
+        assert_eq!(pointer_degrees(10., -9., true), 45.0);
+        assert_eq!(
+            turned_handle_cursor((1, 0), 90 * 60_000),
+            CursorStyle::ResizeUpDown
+        );
+    }
 
     fn pane(w: f32, h: f32) -> Bounds<Pixels> {
         Bounds::new(point(px(10.), px(20.)), size(px(w), px(h)))

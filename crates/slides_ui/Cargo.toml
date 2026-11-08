@@ -13,6 +13,7 @@ docs_layout.workspace = true
 # Shares Docs' parley engine and fontique → GPUI font bridge (ADR 0001).
 docs_ui.workspace = true
 gpui-kit.workspace = true
+image.workspace = true
 kantor_ui.workspace = true
 log.workspace = true
 slides_engine.workspace = true

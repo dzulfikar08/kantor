@@ -11,6 +11,199 @@ use crate::model::*;
 use crate::presentation::{Layout, Master, Presentation, Slide};
 use crate::theme::{LevelStyle, ListStyle};
 
+/// Paragraph numbering through a text body: one counter per outline
+/// level; a shallower paragraph restarts the deeper ones, a paragraph at
+/// the same level without a number ends the list.
+#[derive(Default)]
+struct Numbering {
+    counters: [Option<(String, u32)>; 9],
+}
+
+/// What a paragraph's marker shows.
+enum Shown {
+    Char(String),
+    Number(String),
+}
+
+impl Numbering {
+    /// The marker for the next paragraph. Empty paragraphs don't take a number.
+    fn next(&mut self, level: u8, bullet: Option<&Bullet>, counts: bool) -> Option<Shown> {
+        let l = (level as usize).min(8);
+        for c in &mut self.counters[l + 1..] {
+            *c = None;
+        }
+        match bullet? {
+            Bullet::None => {
+                self.counters[l] = None;
+                None
+            }
+            Bullet::Char(c) => {
+                self.counters[l] = None;
+                Some(Shown::Char(c.clone()))
+            }
+            Bullet::Picture(_) => {
+                self.counters[l] = None;
+                Some(Shown::Char("•".into()))
+            }
+            Bullet::AutoNum { scheme, start } => {
+                let n = match &self.counters[l] {
+                    Some((s, n)) if s == scheme => n + 1,
+                    _ => *start,
+                };
+                if counts {
+                    self.counters[l] = Some((scheme.clone(), n));
+                }
+                Some(Shown::Number(auto_number(scheme, n)))
+            }
+        }
+    }
+}
+
+fn roman(mut n: u32) -> String {
+    const T: [(u32, &str); 13] = [
+        (1000, "m"),
+        (900, "cm"),
+        (500, "d"),
+        (400, "cd"),
+        (100, "c"),
+        (90, "xc"),
+        (50, "l"),
+        (40, "xl"),
+        (10, "x"),
+        (9, "ix"),
+        (5, "v"),
+        (4, "iv"),
+        (1, "i"),
+    ];
+    let mut s = String::new();
+    for (v, r) in T {
+        while n >= v {
+            s.push_str(r);
+            n -= v;
+        }
+    }
+    s
+}
+
+fn alpha(n: u32) -> String {
+    // a..z, then aa..zz, aaa... (as PowerPoint).
+    let n = n.max(1) - 1;
+    let letter = (b'a' + (n % 26) as u8) as char;
+    letter.to_string().repeat(n as usize / 26 + 1)
+}
+
+/// The text of number `n` in an `a:buAutoNum` scheme (`arabicPeriod` →
+/// "3.", `alphaUcParenR` → "C)", `romanLcParenBoth` → "(iii)").
+pub fn auto_number(scheme: &str, n: u32) -> String {
+    let (digits, rest) = if let Some(r) = scheme.strip_prefix("arabic") {
+        (n.to_string(), r)
+    } else if let Some(r) = scheme.strip_prefix("alphaLc") {
+        (alpha(n), r)
+    } else if let Some(r) = scheme.strip_prefix("alphaUc") {
+        (alpha(n).to_uppercase(), r)
+    } else if let Some(r) = scheme.strip_prefix("romanLc") {
+        (roman(n), r)
+    } else if let Some(r) = scheme.strip_prefix("romanUc") {
+        (roman(n).to_uppercase(), r)
+    } else {
+        // Circled, East Asian and other schemes: plain numbers.
+        (n.to_string(), "Period")
+    };
+    match rest {
+        "ParenR" => format!("{digits})"),
+        "ParenBoth" => format!("({digits})"),
+        "Plain" => digits,
+        "Minus" => format!("- {digits} -"),
+        _ => format!("{digits}."),
+    }
+}
+
+/// A bullet character as Unicode: symbol fonts (Wingdings, Symbol) map
+/// their private code points to common shapes. Returns the text and
+/// whether the bullet font can be used to draw it.
+pub fn bullet_text(c: &str, font: Option<&str>) -> (String, bool) {
+    let symbol = font.is_some_and(|f| {
+        let f = f.to_ascii_lowercase();
+        f.starts_with("wingdings") || f == "symbol" || f.starts_with("webdings")
+    });
+    if !symbol {
+        return (c.to_owned(), true);
+    }
+    let ch = c.chars().next().unwrap_or('•');
+    // Symbol fonts are often addressed in the U+F0xx private area.
+    let code = match ch as u32 {
+        v @ 0xF020..=0xF0FF => v - 0xF000,
+        v => v,
+    };
+    let mapped = match code {
+        0xA7 | 0x6E => '■',
+        0x6C | 0xB7 => '●',
+        0xD8 => '➢',
+        0xFC => '✓',
+        0x71 => '❑',
+        0x76 => '❖',
+        0x75 => '◆',
+        0xE0 | 0xE8 => '➔',
+        0xA8 => '◻',
+        0x77 => '⬥',
+        _ => '•',
+    };
+    (mapped.to_string(), false)
+}
+
+/// Indents, spacing and the marker of a paragraph from its effective style.
+fn apply_para_style(
+    p: &mut RenderPara,
+    st: &ParaStyle,
+    shown: Option<Shown>,
+    first: bool,
+    scale: f32,
+    reduction: Option<u32>,
+) {
+    p.indent_pt = st.mar_l.unwrap_or(0) as f32 / EMU_PER_PT;
+    p.first_line_pt = st.indent.unwrap_or(0) as f32 / EMU_PER_PT;
+    let line_pt = p.base.size_pt * 1.2;
+    let space = |s: Option<Spacing>| match s {
+        Some(Spacing::Pct(v)) => v as f32 / 100_000.0 * line_pt,
+        Some(Spacing::Pts(v)) => v as f32 / 100.0 * scale,
+        None => 0.0,
+    };
+    // PowerPoint doesn't add space before a text body's first paragraph.
+    p.space_before_pt = if first { 0.0 } else { space(st.space_before) };
+    p.space_after_pt = space(st.space_after);
+    let reduce = 1.0 - reduction.unwrap_or(0) as f32 / 100_000.0;
+    p.line = match st.line_spacing {
+        Some(Spacing::Pct(v)) => Some(LineSpacing::Multiple(v as f32 / 100_000.0 * reduce)),
+        Some(Spacing::Pts(v)) => Some(LineSpacing::Points(v as f32 / 100.0 * scale)),
+        None if reduce < 1.0 => Some(LineSpacing::Multiple(reduce)),
+        None => None,
+    };
+    let Some(shown) = shown else {
+        return;
+    };
+    let base = &p.base;
+    let bu_font = st.bu_font.clone().flatten();
+    let (text, own_font) = match shown {
+        Shown::Char(c) => bullet_text(&c, bu_font.as_deref()),
+        Shown::Number(n) => (n, true),
+    };
+    let size_pt = match st.bu_size.flatten() {
+        Some(Spacing::Pct(v)) => base.size_pt * v as f32 / 100_000.0,
+        Some(Spacing::Pts(v)) => v as f32 / 100.0 * scale,
+        None => base.size_pt,
+    };
+    p.marker = Some(RenderMarker {
+        text,
+        size_pt: size_pt.max(1.0),
+        color: st.bu_color.flatten().unwrap_or(base.color),
+        font: bu_font
+            .filter(|_| own_font)
+            .unwrap_or_else(|| base.font.clone()),
+        bold: base.bold,
+        italic: base.italic,
+    });
+}
+
 /// Which part a drawn shape belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layer {
@@ -31,6 +224,26 @@ pub struct RenderRun {
     pub font: String,
 }
 
+/// Line spacing of a paragraph.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LineSpacing {
+    /// A multiple of the font's single line height.
+    Multiple(f32),
+    /// Exactly this many points.
+    Points(f32),
+}
+
+/// A bullet or number drawn in the paragraph's hanging indent.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderMarker {
+    pub text: String,
+    pub size_pt: f32,
+    pub color: Rgb,
+    pub font: String,
+    pub bold: bool,
+    pub italic: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderPara {
     pub text: String,
@@ -39,6 +252,15 @@ pub struct RenderPara {
     pub runs: Vec<RenderRun>,
     /// Formatting of an empty paragraph (its height) and of the caret.
     pub base: RenderRun,
+    pub marker: Option<RenderMarker>,
+    /// Left margin of the text and the first line's offset from it
+    /// (negative = hanging), points.
+    pub indent_pt: f32,
+    pub first_line_pt: f32,
+    pub space_before_pt: f32,
+    pub space_after_pt: f32,
+    /// `None` = single.
+    pub line: Option<LineSpacing>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -195,6 +417,7 @@ impl Presentation {
             underline: props.underline.or(props.shown_underline.then_some(true)),
             color: props.color.or(props.shown_color),
             font: props.shown_font.clone(),
+            para: ParaStyle::default(),
         };
         s.overlay(&explicit);
         RenderRun {
@@ -228,6 +451,19 @@ impl Presentation {
         self.resolve(slide, &ls.0[level.min(8)], props, 1.0)
     }
 
+    /// Effective paragraph formatting of paragraph `para` of a slide shape
+    /// (list styles, then the paragraph's own `a:pPr` unless `own` is false).
+    pub fn para_style(&self, slide: usize, shape: &Shape, para: usize, own: bool) -> ParaStyle {
+        let (ls, _) = self.text_chain(slide, shape);
+        let p = shape.text.as_ref().and_then(|t| t.paras.get(para));
+        let level = p.map_or(0, |p| p.props.level as usize).min(8);
+        let mut st = ls.0[level].para.clone();
+        if own && let Some(p) = p {
+            st.overlay(&p.props.style);
+        }
+        st
+    }
+
     fn render_text(&self, slide: usize, shape: &Shape, prompts: bool) -> Option<RenderText> {
         let body = shape.text.as_ref()?;
         let (ls, bp) = self.text_chain(slide, shape);
@@ -251,7 +487,11 @@ impl Presentation {
                 let mut base = self.resolve(slide, level, &body.paras[0].runs[0].props, scale);
                 let text = text.replace('\n', " ");
                 base.range = 0..text.len();
-                vec![RenderPara {
+                let mut st = level.para.clone();
+                st.overlay(&body.paras[0].props.style);
+                let mut numbers = Numbering::default();
+                let shown = numbers.next(0, st.bullet.as_ref(), true);
+                let mut para = RenderPara {
                     align: body.paras[0]
                         .props
                         .align
@@ -261,30 +501,57 @@ impl Presentation {
                     runs: vec![base.clone()],
                     base,
                     text,
-                }]
+                    marker: None,
+                    indent_pt: 0.0,
+                    first_line_pt: 0.0,
+                    space_before_pt: 0.0,
+                    space_after_pt: 0.0,
+                    line: None,
+                };
+                apply_para_style(&mut para, &st, shown, true, scale, bp.line_reduction);
+                vec![para]
             }
-            None => body
-                .paras
-                .iter()
-                .map(|p| {
-                    let level = &ls.0[p.props.level.min(8) as usize];
-                    let runs: Vec<RenderRun> = p
-                        .run_ranges()
-                        .filter(|(r, _)| !r.is_empty())
-                        .map(|(range, run)| RenderRun {
-                            range,
-                            ..self.resolve(slide, level, &run.props, scale)
-                        })
-                        .collect();
-                    RenderPara {
-                        text: p.text.clone(),
-                        align: p.props.align.or(level.align).unwrap_or_default(),
-                        level: p.props.level,
-                        base: self.resolve(slide, level, &p.runs[0].props, scale),
-                        runs,
-                    }
-                })
-                .collect(),
+            None => {
+                let mut numbers = Numbering::default();
+                body.paras
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        let level = &ls.0[p.props.level.min(8) as usize];
+                        let mut st = level.para.clone();
+                        st.overlay(&p.props.style);
+                        let runs: Vec<RenderRun> = p
+                            .run_ranges()
+                            .filter(|(r, _)| !r.is_empty())
+                            .map(|(range, run)| RenderRun {
+                                range,
+                                ..self.resolve(slide, level, &run.props, scale)
+                            })
+                            .collect();
+                        // The bullet takes the first character's formatting.
+                        let first = p.runs.iter().find(|r| r.len > 0).unwrap_or(&p.runs[0]);
+                        let has_text = !p.text.is_empty();
+                        let shown = numbers.next(p.props.level, st.bullet.as_ref(), has_text);
+                        let mut para = RenderPara {
+                            text: p.text.clone(),
+                            align: p.props.align.or(level.align).unwrap_or_default(),
+                            level: p.props.level,
+                            base: self.resolve(slide, level, &first.props, scale),
+                            runs,
+                            marker: None,
+                            indent_pt: 0.0,
+                            first_line_pt: 0.0,
+                            space_before_pt: 0.0,
+                            space_after_pt: 0.0,
+                            line: None,
+                        };
+                        // Empty paragraphs show their bullet only while editing.
+                        let shown = shown.filter(|_| has_text || prompts);
+                        apply_para_style(&mut para, &st, shown, i == 0, scale, bp.line_reduction);
+                        para
+                    })
+                    .collect()
+            }
         };
         let d = [91_440, 45_720, 91_440, 45_720];
         Some(RenderText {
@@ -346,5 +613,56 @@ impl Presentation {
     fn decoration_text(&self, slide: usize, shape: &Shape) -> Option<RenderText> {
         shape.text.as_ref().filter(|t| !t.is_empty())?;
         self.render_text(slide, shape, false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn numbering_schemes() {
+        assert_eq!(auto_number("arabicPeriod", 3), "3.");
+        assert_eq!(auto_number("arabicParenR", 12), "12)");
+        assert_eq!(auto_number("alphaUcParenBoth", 28), "(BB)");
+        assert_eq!(auto_number("alphaLcPeriod", 1), "a.");
+        assert_eq!(auto_number("romanLcPeriod", 14), "xiv.");
+        assert_eq!(auto_number("romanUcPlain", 1999), "MCMXCIX");
+        assert_eq!(auto_number("circleNumDbPlain", 2), "2.");
+    }
+
+    #[test]
+    fn symbol_bullets_map_to_unicode() {
+        assert_eq!(bullet_text("§", Some("Wingdings")), ("■".into(), false));
+        assert_eq!(
+            bullet_text("\u{F0D8}", Some("Wingdings")),
+            ("➢".into(), false)
+        );
+        assert_eq!(bullet_text("–", Some("Arial")), ("–".into(), true));
+        assert_eq!(bullet_text("•", None), ("•".into(), true));
+    }
+
+    #[test]
+    fn numbering_restarts_per_level_and_skips_empty_paragraphs() {
+        let num = Bullet::AutoNum {
+            scheme: "arabicPeriod".into(),
+            start: 1,
+        };
+        let mut n = Numbering::default();
+        let text = |s: Option<Shown>| match s {
+            Some(Shown::Number(t) | Shown::Char(t)) => t,
+            None => "-".into(),
+        };
+        let seq = [
+            text(n.next(0, Some(&num), true)),
+            text(n.next(1, Some(&num), true)),
+            text(n.next(1, Some(&num), false)),
+            text(n.next(1, Some(&num), true)),
+            text(n.next(0, Some(&num), true)),
+            text(n.next(1, Some(&num), true)),
+            text(n.next(0, Some(&Bullet::None), true)),
+            text(n.next(0, Some(&num), true)),
+        ];
+        assert_eq!(seq, ["1.", "1.", "2.", "2.", "2.", "1.", "-", "1."]);
     }
 }

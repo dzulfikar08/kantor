@@ -27,6 +27,8 @@ serde_json = "1"
 tempfile = "3"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 roxmltree = "0.21"
+# Already in GPUI's tree; Slides builds rotated picture rasters with it.
+image = { version = "0.25", default-features = false }
 
 kantor_core = { path = "crates/kantor_core" }
 kantor_theme = { path = "crates/kantor_theme" }

@@ -1,6 +1,6 @@
 //! The Slides toolbar: slides (new / duplicate / delete), insert (text box,
-//! rectangle, ellipse, picture), B / I / U for the text being edited, and
-//! Present.
+//! rectangle, ellipse, picture), B / I / U and lists for the text being
+//! edited, and Present.
 
 use docs_engine::Toggle;
 use gpui_kit::assets::IconName as Lucide;
@@ -133,6 +133,23 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
             "Underline · Ctrl+U",
             view.is_on(Toggle::Underline),
             |v, w, cx| v.toggle_doc(Toggle::Underline, w, cx),
+            cx,
+        ))
+        .child(separator(cx))
+        .child(tool(
+            "slides-bullets",
+            Lucide::List,
+            "Bulleted list · Tab / Shift+Tab change the level",
+            view.is_list(false),
+            |v, w, cx| v.toggle_list_doc(false, w, cx),
+            cx,
+        ))
+        .child(tool(
+            "slides-numbering",
+            Lucide::ListOrdered,
+            "Numbered list",
+            view.is_list(true),
+            |v, w, cx| v.toggle_list_doc(true, w, cx),
             cx,
         ))
         .child(div().flex_1())

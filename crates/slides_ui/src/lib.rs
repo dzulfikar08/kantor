@@ -37,8 +37,13 @@ use slides_engine::{
     text_ops,
 };
 
-use draw::{Item, Painter, Surface, View, paint_slide, text_origin};
-use fit::{canvas_margin, handle_cursor, place_slide, scroll_keeping};
+use draw::{
+    Item, Painter, Surface, Turn, View, fill_polygon, paint_slide, stroke_polygon, text_origin,
+    turned, turned_rect,
+};
+use fit::{
+    canvas_margin, place_slide, pointer_degrees, resize_box, scroll_keeping, turned_handle_cursor,
+};
 
 /// Key context of the editor.
 pub const KEY_CONTEXT: &str = "SlidesEditor";
@@ -66,6 +71,7 @@ actions!(
         LineBreak,
         Escape,
         NextShape,
+        PrevShape,
         SelectAll,
         Copy,
         Cut,
@@ -123,6 +129,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("shift-enter", LineBreak, c),
         KeyBinding::new("escape", Escape, c),
         KeyBinding::new("tab", NextShape, c),
+        KeyBinding::new("shift-tab", PrevShape, c),
         KeyBinding::new("f5", Present, c),
         KeyBinding::new("shift-f5", PresentFromCurrent, c),
         // Presenting.
@@ -229,8 +236,15 @@ enum Drag {
         start: Point<Pixels>,
         orig: Xfrm,
     },
+    Rotate {
+        shape: usize,
+        orig: Xfrm,
+    },
     Text,
 }
+
+/// Distance of the rotate handle above the selected shape's top edge.
+const ROTATE_GAP: Pixels = SPACE_8;
 
 /// A Slides document view.
 pub struct SlidesView {
@@ -410,6 +424,8 @@ impl SlidesView {
     fn text_hit(&self, i: usize, p: Point<Pixels>) -> Option<Position> {
         let (xfrm, t) = self.laid(i)?;
         let v = self.view();
+        // Rotated text: measure in the shape's own frame.
+        let p = Turn::of(&xfrm, v).map_or(p, |t| t.unapply(p));
         let o = text_origin(&t, &xfrm, v);
         let s = v.px_scale();
         let x = f32::from(p.x - o.x) / s;
@@ -429,18 +445,23 @@ impl SlidesView {
     }
 
     fn handle_bounds(&self, xfrm: &Xfrm, h: Handle) -> Bounds<Pixels> {
-        let b = self.view().rect(xfrm);
-        let x = match h.0 {
-            -1 => b.left(),
-            0 => b.center().x,
-            _ => b.right(),
-        };
-        let y = match h.1 {
-            -1 => b.top(),
-            0 => b.center().y,
-            _ => b.bottom(),
-        };
-        Bounds::centered_at(point(x, y), size(SLIDE_HANDLE, SLIDE_HANDLE))
+        let v = self.view();
+        Bounds::centered_at(handle_point(v, xfrm, h), size(SLIDE_HANDLE, SLIDE_HANDLE))
+    }
+
+    /// The selected shape if the pointer is on its rotate handle.
+    fn rotate_handle_at(&self, p: Point<Pixels>) -> Option<usize> {
+        let i = self.selected?;
+        let shape = self.pres.slide(self.current).shapes.get(i)?;
+        if self.editing.is_some() || !shape.movable() {
+            return None;
+        }
+        let xfrm = self.shape_xfrm(i)?;
+        let c = rotate_handle_point(self.view(), &xfrm);
+        Bounds::centered_at(c, size(SLIDE_HANDLE, SLIDE_HANDLE))
+            .dilate(px(4.))
+            .contains(&p)
+            .then_some(i)
     }
 
     fn handle_at(&self, p: Point<Pixels>) -> Option<(usize, Handle)> {
@@ -841,13 +862,76 @@ impl SlidesView {
         }
     }
 
-    fn next_shape(&mut self, cx: &mut Context<Self>) {
-        let n = self.pres.slide(self.current).shapes.len();
-        if n == 0 || self.editing.is_some() {
+    /// Tab: in text, a level deeper (at the start of a paragraph, in a
+    /// list or over several paragraphs; else a tab character); otherwise
+    /// the next shape. Shift+Tab: a level up, or the previous shape.
+    fn tab(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(e) = self.editing.clone() {
+            let r = (self.current, e.shape);
+            let (a, b) = e.sel.ordered();
+            let in_list = self.pres.is_list(r, e.sel, false) || self.pres.is_list(r, e.sel, true);
+            if !back && a.para == b.para && a.offset > 0 && !in_list {
+                self.insert("\t", window, cx);
+                return;
+            }
+            let res = self.pres.change_level(r, e.sel, if back { -1 } else { 1 });
+            if self.report(res, cx).is_some() {
+                self.after_edit(window, cx);
+            }
             return;
         }
-        let next = self.selected.map_or(0, |i| (i + 1) % n);
+        let n = self.pres.slide(self.current).shapes.len();
+        if n == 0 {
+            return;
+        }
+        let next = match (self.selected, back) {
+            (None, false) => 0,
+            (None, true) => n - 1,
+            (Some(i), false) => (i + 1) % n,
+            (Some(i), true) => (i + n - 1) % n,
+        };
         self.select(Some(next), cx);
+    }
+
+    /// Bulleted (`numbered` false) or numbered list on the paragraphs being
+    /// edited, or all paragraphs of the selected shape.
+    pub fn toggle_list_doc(&mut self, numbered: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((r, sel)) = self.list_target() else {
+            self.set_status("Select a text box or placeholder to make a list", cx);
+            return;
+        };
+        let res = self.pres.toggle_list(r, sel, numbered);
+        if self.report(res, cx).is_some() {
+            self.after_edit(window, cx);
+        }
+    }
+
+    /// The text a list toggle applies to: the edited selection, or the
+    /// whole text of the selected shape.
+    fn list_target(&self) -> Option<((usize, usize), Selection)> {
+        if let Some(e) = &self.editing {
+            return Some(((self.current, e.shape), e.sel));
+        }
+        let i = self.selected?;
+        let r = (self.current, i);
+        let shape = self.pres.slide(self.current).shapes.get(i)?;
+        if !shape.text_editable() {
+            return None;
+        }
+        let paras = self.pres.text_paras(r)?;
+        Some((
+            r,
+            Selection {
+                anchor: Position::default(),
+                head: text_ops::end(paras),
+            },
+        ))
+    }
+
+    /// Whether the list toggle for `numbered` shows as on.
+    pub fn is_list(&self, numbered: bool) -> bool {
+        self.list_target()
+            .is_some_and(|(r, sel)| self.pres.is_list(r, sel, numbered))
     }
 
     fn select_all(&mut self, cx: &mut Context<Self>) {
@@ -1226,6 +1310,12 @@ impl SlidesView {
             return;
         }
         let p = ev.position;
+        if let Some(shape) = self.rotate_handle_at(p)
+            && let Some(orig) = self.shape_xfrm(shape)
+        {
+            self.drag = Some(Drag::Rotate { shape, orig });
+            return;
+        }
         if let Some((shape, handle)) = self.handle_at(p) {
             let Some(orig) = self.shape_xfrm(shape) else {
                 return;
@@ -1303,7 +1393,8 @@ impl SlidesView {
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let scale = self.view().scale;
+        let view = self.view();
+        let scale = view.scale;
         if self.drag.is_some() && ev.pressed_button != Some(MouseButton::Left) {
             self.drag = None;
             self.preview = None;
@@ -1347,31 +1438,16 @@ impl SlidesView {
                 orig,
             } => {
                 let d = ev.position - *start;
-                let (dx, dy) = (
-                    (f32::from(d.x) / scale) as i64,
-                    (f32::from(d.y) / scale) as i64,
-                );
+                let (dx, dy) = (f32::from(d.x) / scale, f32::from(d.y) / scale);
                 let min = SLIDE_NUDGE_EMU * 4;
-                let mut x = *orig;
-                match handle.0 {
-                    -1 => {
-                        let w = (orig.cx - dx).max(min);
-                        x.x = orig.x + orig.cx - w;
-                        x.cx = w;
-                    }
-                    1 => x.cx = (orig.cx + dx).max(min),
-                    _ => {}
-                }
-                match handle.1 {
-                    -1 => {
-                        let h = (orig.cy - dy).max(min);
-                        x.y = orig.y + orig.cy - h;
-                        x.cy = h;
-                    }
-                    1 => x.cy = (orig.cy + dy).max(min),
-                    _ => {}
-                }
+                let x = resize_box(orig, *handle, dx as f64, dy as f64, min);
                 self.preview = Some((*shape, x));
+            }
+            Drag::Rotate { shape, orig } => {
+                let c = view.rect(orig).center();
+                let d = ev.position - c;
+                let deg = pointer_degrees(f32::from(d.x), f32::from(d.y), ev.modifiers.shift);
+                self.preview = Some((*shape, orig.with_degrees(deg)));
             }
             Drag::Text => {
                 if let Some(e) = self.editing.clone()
@@ -1414,8 +1490,12 @@ impl SlidesView {
         if self.pres.is_empty() {
             return CursorStyle::Arrow;
         }
-        if let Some((_, h)) = self.handle_at(p) {
-            return handle_cursor(h);
+        if self.rotate_handle_at(p).is_some() {
+            return CursorStyle::PointingHand;
+        }
+        if let Some((i, h)) = self.handle_at(p) {
+            let rot = self.shape_xfrm(i).map_or(0, |x| x.rot);
+            return turned_handle_cursor(h, rot);
         }
         let (x, y) = self.view().to_emu(p);
         if let Some(e) = &self.editing
@@ -1433,7 +1513,8 @@ impl SlidesView {
     fn canvas_cursor(&self) -> CursorStyle {
         match &self.drag {
             Some(Drag::Move { .. }) if self.preview.is_some() => CursorStyle::ClosedHand,
-            Some(Drag::Resize { handle, .. }) => handle_cursor(*handle),
+            Some(Drag::Resize { handle, orig, .. }) => turned_handle_cursor(*handle, orig.rot),
+            Some(Drag::Rotate { .. }) => CursorStyle::ClosedHand,
             Some(Drag::Text) => CursorStyle::IBeam,
             _ => self.hover_cursor,
         }
@@ -1803,7 +1884,8 @@ impl Render for SlidesView {
             Newline => |v, w, cx| v.enter(false, w, cx),
             LineBreak => |v, w, cx| v.enter(true, w, cx),
             Escape => |v, _w, cx| v.escape(cx),
-            NextShape => |v, _w, cx| v.next_shape(cx),
+            NextShape => |v, w, cx| v.tab(false, w, cx),
+            PrevShape => |v, w, cx| v.tab(true, w, cx),
             SelectAll => |v, _w, cx| v.select_all(cx),
             Copy => |v, w, cx| v.copy_doc(w, cx),
             Cut => |v, w, cx| v.cut_doc(w, cx),
@@ -1859,6 +1941,7 @@ fn paint_frame(
     window.with_content_mask(Some(ContentMask { bounds }), |window| {
         paint_canvas(f, view, slide_bounds, window)
     });
+    f.painter.drop_evicted(window);
     window.handle_input(
         &f.focus,
         ElementInputHandler::new(bounds, f.view.clone()),
@@ -1899,31 +1982,48 @@ fn paint_canvas(f: &Frame, view: View, slide_bounds: Bounds<Pixels>, window: &mu
 
     if let Some((x, handles)) = f.selected {
         let b = view.rect(&x);
-        window.paint_quad(quad(
-            b,
-            Corners::default(),
-            transparent_black(),
-            Edges::all(SLIDE_OUTLINE),
-            t.accent,
-            if handles {
-                BorderStyle::Solid
-            } else {
-                BorderStyle::Dashed
-            },
-        ));
+        let turn = Turn::of(&x, view);
+        if turn.is_some() {
+            stroke_polygon(window, &turned_rect(b, turn), t.accent, SLIDE_OUTLINE);
+        } else {
+            window.paint_quad(quad(
+                b,
+                Corners::default(),
+                transparent_black(),
+                Edges::all(SLIDE_OUTLINE),
+                t.accent,
+                if handles {
+                    BorderStyle::Solid
+                } else {
+                    BorderStyle::Dashed
+                },
+            ));
+        }
         if handles {
+            // Rotate handle: a round knob on a stem above the top edge.
+            let top = handle_point(view, &x, (0, -1));
+            let knob = rotate_handle_point(view, &x);
+            let mut stem = PathBuilder::stroke(SLIDE_OUTLINE);
+            stem.move_to(top);
+            stem.line_to(knob);
+            if let Ok(path) = stem.build() {
+                window.paint_path(path, t.accent);
+            }
+            let kb = Bounds::centered_at(knob, size(SLIDE_HANDLE, SLIDE_HANDLE));
+            window.paint_drop_shadows(kb, Corners::all(SLIDE_HANDLE), &t.shadow(Elevation::Raised));
+            window.paint_quad(quad(
+                kb,
+                Corners::all(SLIDE_HANDLE),
+                t.paper,
+                Edges::all(SLIDE_OUTLINE),
+                t.accent,
+                BorderStyle::Solid,
+            ));
             for h in HANDLES {
-                let cx_ = match h.0 {
-                    -1 => b.left(),
-                    0 => b.center().x,
-                    _ => b.right(),
-                };
-                let cy_ = match h.1 {
-                    -1 => b.top(),
-                    0 => b.center().y,
-                    _ => b.bottom(),
-                };
-                let hb = Bounds::centered_at(point(cx_, cy_), size(SLIDE_HANDLE, SLIDE_HANDLE));
+                let hb = Bounds::centered_at(
+                    handle_point(view, &x, h),
+                    size(SLIDE_HANDLE, SLIDE_HANDLE),
+                );
                 window.paint_drop_shadows(hb, Corners::all(px(2.)), &t.shadow(Elevation::Raised));
                 window.paint_quad(quad(
                     hb,
@@ -1939,6 +2039,14 @@ fn paint_canvas(f: &Frame, view: View, slide_bounds: Bounds<Pixels>, window: &mu
 
     if let Some((x, laid, sel, marked)) = &f.editing {
         let o = text_origin(laid, x, view);
+        let turn = Turn::of(x, view);
+        let paint_rect = |window: &mut Window, b: Bounds<Pixels>, color: Hsla| {
+            if turn.is_some() {
+                fill_polygon(window, &turned_rect(b, turn), color);
+            } else {
+                window.paint_quad(fill(b, color));
+            }
+        };
         let s = view.px_scale();
         let paged = &laid.layout.paged;
         let rect = |r: [f32; 4]| {
@@ -1950,16 +2058,17 @@ fn paint_canvas(f: &Frame, view: View, slide_bounds: Bounds<Pixels>, window: &mu
         let (a, b) = sel.ordered();
         if a != b {
             for (_, r) in paged.selection_rects((a.para, a.offset), (b.para, b.offset)) {
-                window.paint_quad(fill(rect(r), t.accent.opacity(0.3)));
+                paint_rect(window, rect(r), t.accent.opacity(0.3));
             }
         }
         if let Some(m) = marked {
             let p = sel.head.para;
             for (_, r) in paged.selection_rects((p, m.start), (p, m.end)) {
-                window.paint_quad(fill(
+                paint_rect(
+                    window,
                     rect([r[0], r[1] + r[3] - 1.5 / s, r[2], 1.5 / s]),
                     t.paper_ink,
-                ));
+                );
             }
         }
         if f.focused
@@ -1974,9 +2083,31 @@ fn paint_canvas(f: &Frame, view: View, slide_bounds: Bounds<Pixels>, window: &mu
             } else {
                 white()
             };
-            window.paint_quad(fill(caret, ink));
+            paint_rect(window, caret, ink);
         }
     }
+}
+
+/// Screen position of a resize handle of a (possibly rotated) box.
+fn handle_point(view: View, x: &Xfrm, h: Handle) -> Point<Pixels> {
+    let b = view.rect(x);
+    let px_ = match h.0 {
+        -1 => b.left(),
+        0 => b.center().x,
+        _ => b.right(),
+    };
+    let py = match h.1 {
+        -1 => b.top(),
+        0 => b.center().y,
+        _ => b.bottom(),
+    };
+    turned(Turn::of(x, view), point(px_, py))
+}
+
+/// Screen position of the rotate handle: above the top edge's middle.
+fn rotate_handle_point(view: View, x: &Xfrm) -> Point<Pixels> {
+    let b = view.rect(x);
+    turned(Turn::of(x, view), point(b.center().x, b.top() - ROTATE_GAP))
 }
 
 fn luminance(c: slides_engine::Rgb) -> f32 {
