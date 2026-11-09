@@ -1,0 +1,35 @@
+# A macOS build with symbols, for profiling on the M1 Air with `sample`.
+# Run by hand (gh workflow run profile-build.yml); it only uploads an
+# artifact and never touches the nightly release.
+name: Profile build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_RELEASE_STRIP: "false"
+  CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
+  CARGO_PROFILE_RELEASE_LTO: thin
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: profile
+      - run: cargo build --release -p kantor
+      - run: tar -C target/release -czf kantor-profile-macos.tar.gz kantor
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kantor-profile-macos
+          path: kantor-profile-macos.tar.gz
+          retention-days: 3
