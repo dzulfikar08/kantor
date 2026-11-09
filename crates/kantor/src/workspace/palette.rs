@@ -1231,6 +1231,12 @@ impl Workspace {
                     .child(if on { "✓" } else { "" })
             };
             let row_el = match &p.mode {
+                PaletteMode::Commands if bench_variant() == 2 => base.child(
+                    div()
+                        .text_size(FONT_BODY)
+                        .text_color(t.fg)
+                        .child(COMMANDS[ix].title),
+                ),
                 PaletteMode::Commands => {
                     let cmd = &COMMANDS[ix];
                     base.child(div().text_size(FONT_BODY).text_color(t.fg).child(cmd.title))
@@ -1357,7 +1363,9 @@ impl Workspace {
             .bg(t.elevated)
             .border_1()
             .border_color(t.border_strong)
-            .shadow(t.shadow(Elevation::Modal))
+            .when(bench_variant() != 3, |d| {
+                d.shadow(t.shadow(Elevation::Modal))
+            })
             .overflow_hidden()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
@@ -1405,7 +1413,7 @@ impl Workspace {
                 .flex()
                 .justify_center()
                 .items_start()
-                .bg(t.scrim)
+                .when(bench_variant() != 3, |d| d.bg(t.scrim))
                 .occlude()
                 .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     let _ = entity.update(cx, |ws, cx| ws.close_palette(true, window, cx));
@@ -1415,15 +1423,29 @@ impl Workspace {
     }
 }
 
+/// What `KANTOR_BENCH_PALETTE` leaves out of the palette while timing it.
+/// 0 = nothing, 2 = row details and shortcut keys, 3 = shadow and backdrop.
+static BENCH_VARIANT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+fn bench_variant() -> u8 {
+    BENCH_VARIANT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 impl Workspace {
-    /// `KANTOR_BENCH_PALETTE=<rounds>`: once the document has loaded, open
-    /// the palette and type a query one letter at a time (`rounds` times),
-    /// printing how long each letter takes to reach the screen; then time a
-    /// few full redraws, and quit.
+    /// `KANTOR_BENCH_PALETTE=1`: once the document has loaded, open the
+    /// palette and time how long changes take to reach the screen: typing,
+    /// moving the highlight, typing with parts of the rows left out, and
+    /// full redraws. Prints the averages, then quits.
     pub(super) fn bench_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         use std::cell::Cell;
         use std::rc::Rc;
+        use std::sync::atomic::Ordering;
         use std::time::{Duration, Instant};
+        enum Step {
+            Type(&'static str),
+            Move,
+            Refresh,
+        }
         cx.spawn_in(window, async move |this, cx| {
             let executor = cx.background_executor().clone();
             let pause = |ms| executor.timer(Duration::from_millis(ms));
@@ -1432,8 +1454,7 @@ impl Workspace {
                 let ready = this
                     .update(cx, |ws, cx| match ws.focused_view() {
                         Some(super::doc::DocView::Sheets(v)) => !v.read(cx).is_busy(),
-                        Some(_) => true,
-                        None => false,
+                        _ => true,
                     })
                     .unwrap_or(false);
                 if ready {
@@ -1444,65 +1465,68 @@ impl Workspace {
             let _ = this.update_in(cx, |ws, window, cx| {
                 ws.open_palette(PaletteMode::Commands, window, cx)
             });
-            pause(500).await;
-            let query = "insert row below";
-            let mut total = Duration::ZERO;
-            let rounds: usize = std::env::var("KANTOR_BENCH_PALETTE")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(1)
-                .max(1);
-            for step in 0..query.len() * rounds {
-                let typed = &query[..step % query.len() + 1];
-                let start = Instant::now();
-                let frames = Rc::new(Cell::new(0u8));
-                let _ = this.update_in(cx, |ws, window, cx| {
-                    let Some(p) = ws.palette.as_mut() else {
-                        return;
-                    };
-                    p.input
-                        .update(cx, |i, cx| i.set_value(typed.to_owned(), window, cx));
-                    let names = p.mode.names();
-                    p.matches = fuzzy::rank(typed, names.iter().map(String::as_str));
-                    p.selected = 0;
-                    ws.notify_palette(cx);
-                    let f = frames.clone();
-                    window.on_next_frame(move |window, _| {
-                        f.set(1);
-                        window.on_next_frame(move |_, _| f.set(2));
+            pause(800).await;
+            // Each query keeps the list full (10 rows).
+            let typing = || {
+                ["i", "in", "ins", "inse", "inser", "insert", "s", "se", "sel", "e"]
+                    .map(Step::Type)
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            };
+            let cases: Vec<(&str, u8, Vec<Step>)> = vec![
+                ("typing", 0, typing()),
+                ("moving highlight", 0, (0..10).map(|_| Step::Move).collect()),
+                ("typing, names only", 2, typing()),
+                ("typing, no shadow", 3, typing()),
+                ("full redraw", 0, (0..5).map(|_| Step::Refresh).collect()),
+            ];
+            for (label, variant, steps) in cases {
+                BENCH_VARIANT.store(variant, Ordering::Relaxed);
+                let mut times = Vec::new();
+                let mut rows = 0;
+                for step in steps {
+                    let start = Instant::now();
+                    let frames = Rc::new(Cell::new(0u8));
+                    let _ = this.update_in(cx, |ws, window, cx| {
+                        match step {
+                            Step::Type(q) => {
+                                if let Some(p) = ws.palette.as_mut() {
+                                    p.input.update(cx, |i, cx| i.set_value(q, window, cx));
+                                    let names = p.mode.names();
+                                    p.matches = fuzzy::rank(q, names.iter().map(String::as_str));
+                                    p.selected = 0;
+                                }
+                                ws.notify_palette(cx);
+                            }
+                            Step::Move => ws.palette_move(1, cx),
+                            Step::Refresh => window.refresh(),
+                        }
+                        rows = ws.palette.as_ref().map_or(0, |p| p.matches.len());
+                        let f = frames.clone();
+                        window.on_next_frame(move |window, _| {
+                            f.set(1);
+                            window.on_next_frame(move |_, _| f.set(2));
+                        });
                     });
-                });
-                while frames.get() < 2 && start.elapsed() < Duration::from_secs(10) {
-                    pause(1).await;
+                    while frames.get() < 2 && start.elapsed() < Duration::from_secs(5) {
+                        pause(1).await;
+                    }
+                    if frames.get() == 2 {
+                        times.push(start.elapsed().as_secs_f64() * 1000.0);
+                    }
+                    pause(120).await;
                 }
-                let took = start.elapsed();
-                total += took;
-                eprintln!("[bench] {typed:<18} {:8.2} ms", took.as_secs_f64() * 1000.0);
-                pause(150).await;
-            }
-            eprintln!(
-                "[bench] average {:8.2} ms per letter",
-                total.as_secs_f64() * 1000.0 / (query.len() * rounds) as f64
-            );
-            for i in 0..5 {
-                let start = Instant::now();
-                let frames = Rc::new(Cell::new(0u8));
-                let _ = this.update_in(cx, |_, window, _| {
-                    window.refresh();
-                    let f = frames.clone();
-                    window.on_next_frame(move |window, _| {
-                        f.set(1);
-                        window.on_next_frame(move |_, _| f.set(2));
-                    });
-                });
-                while frames.get() < 2 && start.elapsed() < Duration::from_secs(10) {
-                    pause(1).await;
+                times.sort_by(f64::total_cmp);
+                match times.get(times.len() / 2) {
+                    Some(median) => eprintln!(
+                        "[bench] {label:<20} median {median:7.1} ms  (max {:7.1}, {} of them, {rows} matches)",
+                        times.last().copied().unwrap_or_default(),
+                        times.len(),
+                    ),
+                    None => eprintln!(
+                        "[bench] {label:<20} no frames drawn (is the window visible?)"
+                    ),
                 }
-                eprintln!(
-                    "[bench] full redraw {i}     {:8.2} ms",
-                    start.elapsed().as_secs_f64() * 1000.0
-                );
-                pause(150).await;
             }
             let _ = this.update(cx, |_, cx| cx.quit());
         })
