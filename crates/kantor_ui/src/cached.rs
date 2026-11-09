@@ -11,7 +11,7 @@ type RenderFn<M> = Box<dyn Fn(&mut M, &mut Window, &mut Context<M>) -> AnyElemen
 pub struct CachedView<M: 'static> {
     model: WeakEntity<M>,
     render: RenderFn<M>,
-    _model_changes: Subscription,
+    _model_changes: Option<Subscription>,
 }
 
 impl<M: 'static> CachedView<M> {
@@ -24,7 +24,22 @@ impl<M: 'static> CachedView<M> {
         cx.new(|cx| Self {
             model: model.downgrade(),
             render: Box::new(render),
-            _model_changes: cx.observe(&model, |_, _, cx| cx.notify()),
+            _model_changes: Some(cx.observe(&model, |_, _, cx| cx.notify())),
+        })
+    }
+
+    /// Like [`CachedView::new`], but it only re-renders when notified itself
+    /// (or on a full redraw), not whenever `model` notifies. For a region
+    /// that changes often while the rest of the model stays put.
+    pub fn manual(
+        cx: &mut Context<M>,
+        render: impl Fn(&mut M, &mut Window, &mut Context<M>) -> AnyElement + 'static,
+    ) -> Entity<Self> {
+        let model = cx.entity();
+        cx.new(|_| Self {
+            model: model.downgrade(),
+            render: Box::new(render),
+            _model_changes: None,
         })
     }
 }

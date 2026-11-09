@@ -1037,6 +1037,14 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Redraw just the palette (typing, moving the highlight); the rest of
+    /// the window keeps its last frame.
+    pub(super) fn notify_palette(&self, cx: &mut Context<Self>) {
+        if let Some(c) = &self.chrome {
+            c.palette.update(cx, |_, cx| cx.notify());
+        }
+    }
+
     pub(super) fn on_palette_input(
         &mut self,
         input: &Entity<InputState>,
@@ -1053,7 +1061,7 @@ impl Workspace {
                     p.selected = 0;
                     p.scroll.scroll_to_item(0, ScrollStrategy::Top);
                 }
-                cx.notify();
+                self.notify_palette(cx);
             }
             InputEvent::PressEnter { .. } => self.run_selected(window, cx),
             _ => {}
@@ -1101,7 +1109,7 @@ impl Workspace {
         p.selected = (p.selected as isize + delta).rem_euclid(n) as usize;
         p.scroll.scroll_to_item(p.selected, ScrollStrategy::Center);
         self.preview_selected(cx);
-        cx.notify();
+        self.notify_palette(cx);
     }
 
     /// Live preview of the highlighted theme or font.
@@ -1457,7 +1465,7 @@ impl Workspace {
                     let names = p.mode.names();
                     p.matches = fuzzy::rank(typed, names.iter().map(String::as_str));
                     p.selected = 0;
-                    cx.notify();
+                    ws.notify_palette(cx);
                     let f = frames.clone();
                     window.on_next_frame(move |window, _| {
                         f.set(1);

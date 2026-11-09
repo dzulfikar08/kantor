@@ -108,6 +108,9 @@ struct Chrome {
     status: Entity<CachedView<Workspace>>,
     sidebar: Entity<CachedView<Workspace>>,
     inspector: Entity<CachedView<Workspace>>,
+    /// The command palette, redrawn on its own while typing (see
+    /// `Workspace::notify_palette`) so a letter doesn't redraw the chrome.
+    palette: Entity<CachedView<Workspace>>,
 }
 
 pub struct Workspace {
@@ -173,6 +176,10 @@ impl Workspace {
             status: CachedView::new(cx, |ws, _, cx| ws.render_status_bar(cx).into_any_element()),
             sidebar: CachedView::new(cx, |ws, _, cx| ws.render_sidebar(cx).into_any_element()),
             inspector: CachedView::new(cx, |ws, _, cx| ws.render_inspector(cx).into_any_element()),
+            palette: CachedView::manual(cx, |ws, _, cx| {
+                ws.render_palette(cx)
+                    .map_or_else(|| div().into_any_element(), IntoElement::into_any_element)
+            }),
         });
 
         let app = app.or_else(|| file.as_deref().and_then(AppKind::for_path));
@@ -700,7 +707,11 @@ impl Render for Workspace {
         window.set_rem_size(REM);
         let t = tokens(cx);
         let content = self.render_content(cx);
-        let palette = self.render_palette(cx);
+        let palette = self
+            .palette
+            .as_ref()
+            .and(self.chrome.as_ref())
+            .map(|c| c.palette.clone());
         let ai_panel = self.render_ai(cx);
         let chrome = self.chrome.as_ref().map(|c| {
             (
