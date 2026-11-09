@@ -12,6 +12,7 @@ pub mod find_bar;
 pub mod fonts;
 pub mod keys;
 pub mod metrics;
+pub mod perf;
 pub mod tokens;
 
 pub use assets::KantorAssets;

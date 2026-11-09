@@ -1574,6 +1574,7 @@ impl SheetsView {
 
 impl Render for SheetsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _span = kantor_ui::perf::span("sheets view");
         let t = tokens(cx);
         let completion = self.render_completion(window, cx);
         // The bar colours references only while it holds the edit.

@@ -1406,3 +1406,98 @@ impl Workspace {
         )
     }
 }
+
+impl Workspace {
+    /// `KANTOR_BENCH_PALETTE=<rounds>`: once the document has loaded, open
+    /// the palette and type a query one letter at a time (`rounds` times),
+    /// printing how long each letter takes to reach the screen; then time a
+    /// few full redraws, and quit.
+    pub(super) fn bench_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        use std::time::{Duration, Instant};
+        cx.spawn_in(window, async move |this, cx| {
+            let executor = cx.background_executor().clone();
+            let pause = |ms| executor.timer(Duration::from_millis(ms));
+            for _ in 0..600 {
+                pause(200).await;
+                let ready = this
+                    .update(cx, |ws, cx| match ws.focused_view() {
+                        Some(super::doc::DocView::Sheets(v)) => !v.read(cx).is_busy(),
+                        Some(_) => true,
+                        None => false,
+                    })
+                    .unwrap_or(false);
+                if ready {
+                    break;
+                }
+            }
+            pause(1500).await;
+            let _ = this.update_in(cx, |ws, window, cx| {
+                ws.open_palette(PaletteMode::Commands, window, cx)
+            });
+            pause(500).await;
+            let query = "insert row below";
+            let mut total = Duration::ZERO;
+            let rounds: usize = std::env::var("KANTOR_BENCH_PALETTE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1)
+                .max(1);
+            for step in 0..query.len() * rounds {
+                let typed = &query[..step % query.len() + 1];
+                let start = Instant::now();
+                let frames = Rc::new(Cell::new(0u8));
+                let _ = this.update_in(cx, |ws, window, cx| {
+                    let Some(p) = ws.palette.as_mut() else {
+                        return;
+                    };
+                    p.input
+                        .update(cx, |i, cx| i.set_value(typed.to_owned(), window, cx));
+                    let names = p.mode.names();
+                    p.matches = fuzzy::rank(typed, names.iter().map(String::as_str));
+                    p.selected = 0;
+                    cx.notify();
+                    let f = frames.clone();
+                    window.on_next_frame(move |window, _| {
+                        f.set(1);
+                        window.on_next_frame(move |_, _| f.set(2));
+                    });
+                });
+                while frames.get() < 2 && start.elapsed() < Duration::from_secs(10) {
+                    pause(1).await;
+                }
+                let took = start.elapsed();
+                total += took;
+                eprintln!("[bench] {typed:<18} {:8.2} ms", took.as_secs_f64() * 1000.0);
+                pause(150).await;
+            }
+            eprintln!(
+                "[bench] average {:8.2} ms per letter",
+                total.as_secs_f64() * 1000.0 / (query.len() * rounds) as f64
+            );
+            for i in 0..5 {
+                let start = Instant::now();
+                let frames = Rc::new(Cell::new(0u8));
+                let _ = this.update_in(cx, |_, window, _| {
+                    window.refresh();
+                    let f = frames.clone();
+                    window.on_next_frame(move |window, _| {
+                        f.set(1);
+                        window.on_next_frame(move |_, _| f.set(2));
+                    });
+                });
+                while frames.get() < 2 && start.elapsed() < Duration::from_secs(10) {
+                    pause(1).await;
+                }
+                eprintln!(
+                    "[bench] full redraw {i}     {:8.2} ms",
+                    start.elapsed().as_secs_f64() * 1000.0
+                );
+                pause(150).await;
+            }
+            let _ = this.update(cx, |_, cx| cx.quit());
+        })
+        .detach();
+    }
+}

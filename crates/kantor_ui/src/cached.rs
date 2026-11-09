@@ -31,6 +31,7 @@ impl<M: 'static> CachedView<M> {
 
 impl<M: 'static> Render for CachedView<M> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _span = crate::perf::span("chrome region");
         let render = &self.render;
         self.model
             .update(cx, |model, cx| render(model, window, cx))

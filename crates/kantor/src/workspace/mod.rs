@@ -186,6 +186,9 @@ impl Workspace {
                 this.activate(active, window, cx);
             }
         }
+        if std::env::var_os("KANTOR_BENCH_PALETTE").is_some() {
+            this.bench_palette(window, cx);
+        }
         this
     }
 
@@ -693,6 +696,7 @@ impl Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _span = kantor_ui::perf::span("workspace");
         window.set_rem_size(REM);
         let t = tokens(cx);
         let content = self.render_content(cx);
