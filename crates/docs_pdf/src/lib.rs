@@ -41,6 +41,9 @@ use krilla::paint::{Fill, Stroke};
 use krilla::surface::Surface;
 use krilla::text::{Font, GlyphId, KrillaGlyph};
 
+/// The model's object character as text.
+const OBJECT_STR: &str = "\u{FFFC}";
+
 /// CSS px (96 dpi, the layout's unit) to PDF points.
 const TO_PT: f32 = 72.0 / 96.0;
 
@@ -158,7 +161,11 @@ pub fn scene(doc: &Document, paged: &PagedDocument) -> Scene {
                     RunSource::Label(_) => None,
                 };
                 let Some(text) = text else { continue };
-                if run.glyphs.is_empty() {
+                // The object character is laid out as a zero-width glyph
+                // holding the picture's place; it isn't text to extract.
+                let mut glyphs = run.glyphs;
+                glyphs.retain(|g| text.get(g.cluster.clone()) != Some(OBJECT_STR));
+                if glyphs.is_empty() {
                     continue;
                 }
                 out.runs.push(TextRun {
@@ -171,7 +178,7 @@ pub fn scene(doc: &Document, paged: &PagedDocument) -> Scene {
                     baseline: run.baseline,
                     advance: run.advance,
                     underline: run.underline,
-                    glyphs: run.glyphs,
+                    glyphs,
                     text,
                 });
             }

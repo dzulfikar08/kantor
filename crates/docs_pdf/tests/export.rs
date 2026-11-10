@@ -3,40 +3,13 @@
 //! with ToUnicode, pictures, colours) by reading it back, so nothing here
 //! depends on which system fonts lay the text out (CI fonts differ).
 
-use std::io::{Read as _, Write as _};
-use std::path::Path;
+mod fixture;
 
-use docs_engine::{Document, ListKind, Position, RunProps, Selection};
+use std::io::Read as _;
+
+use docs_engine::{Document, Selection};
 use docs_layout::Engine;
-
-/// A valid RGB PNG, `w` × `h`, one colour (stored deflate via flate2).
-fn png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
-    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
-        out.extend((data.len() as u32).to_be_bytes());
-        let mut c = flate2::Crc::new();
-        c.update(kind);
-        c.update(data);
-        out.extend(kind);
-        out.extend(data);
-        out.extend(c.sum().to_be_bytes());
-    }
-    // Each row: filter byte 0, then the pixels.
-    let row: Vec<u8> = std::iter::once(0)
-        .chain(rgb.into_iter().cycle().take(3 * w as usize))
-        .collect();
-    let raw = row.repeat(h as usize);
-    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
-    z.write_all(&raw).unwrap();
-    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
-    let mut ihdr = Vec::new();
-    ihdr.extend(w.to_be_bytes());
-    ihdr.extend(h.to_be_bytes());
-    ihdr.extend([8, 2, 0, 0, 0]);
-    chunk(&mut out, b"IHDR", &ihdr);
-    chunk(&mut out, b"IDAT", &z.finish().unwrap());
-    chunk(&mut out, b"IEND", &[]);
-    out
-}
+use fixture::report;
 
 /// Every stream of the PDF, inflated when it's Flate-compressed.
 fn streams(pdf: &[u8]) -> Vec<Vec<u8>> {
@@ -111,56 +84,6 @@ fn mapped_chars(pdf: &[u8]) -> String {
     chars
 }
 
-/// A document like a short report: heading, coloured and bold runs, a
-/// numbered list, a 3 × 2 table and a picture; saved as .docx and opened.
-fn report(dir: &Path, picture: bool, extra_paragraphs: usize) -> Document {
-    let mut doc = Document::new();
-    let mut c = doc.insert_text(Selection::default(), "Laporan Pemeliharaan\n", None);
-    doc.set_style(
-        Selection::caret(Position::new(0, 0)),
-        Some(docs_engine::HEADING_STYLES[0]),
-    );
-    c = doc.insert_text(c, "Ketersediaan mesin ", None);
-    c = doc.insert_text(
-        c,
-        "naik",
-        Some(RunProps {
-            bold: Some(true),
-            color: Some(docs_engine::Rgb([0xC0, 0x00, 0x00])),
-            ..RunProps::default()
-        }),
-    );
-    c = doc.insert_text(c, " pada kuartal ketiga.\nPompa\nKompresor", None);
-    doc.toggle_list(
-        Selection {
-            anchor: Position::new(2, 0),
-            head: c.head,
-        },
-        ListKind::Numbered,
-    );
-    c = doc.insert_text(c, "\n", None);
-    doc.toggle_list(c, ListKind::Numbered);
-    if picture {
-        c = doc
-            .insert_image(c, png(120, 60, [0x20, 0x80, 0xE0]), "grafik.png")
-            .unwrap();
-    }
-    for k in 0..extra_paragraphs {
-        c = doc.insert_text(
-            c,
-            &format!(
-                "\nParagraf {k}: perawatan berkala mengurangi waktu henti dan \
-                 menjaga mesin tetap andal sepanjang tahun produksi."
-            ),
-            None,
-        );
-    }
-    doc.insert_table(Selection::caret(doc.end()), 3, 2);
-    let path = dir.join("report.docx");
-    doc.save_as(&path).unwrap();
-    Document::open(&path).unwrap()
-}
-
 #[test]
 fn report_exports_with_text_fonts_rules_and_picture() {
     let dir = tempfile::tempdir().unwrap();
@@ -180,6 +103,10 @@ fn report_exports_with_text_fonts_rules_and_picture() {
     for c in "LaporanPemeliharaKtsdiknu.12".chars() {
         assert!(chars.contains(c), "{c:?} has no ToUnicode entry: {chars:?}");
     }
+    assert!(
+        !chars.contains('\u{FFFC}'),
+        "the object character isn't text"
+    );
     // The picture, the table borders and the red run.
     assert_eq!(scene.pages[0].pictures.len(), 1);
     assert!(count(&pdf, b"/Subtype/Image") >= 1, "picture embedded");
