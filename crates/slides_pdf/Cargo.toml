@@ -1,0 +1,25 @@
+[package]
+name = "slides_pdf"
+description = "Kantor Slides → PDF with krilla: one page per slide from the same scenes the canvas paints (no GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+# Glyph runs, font embedding (subset + ToUnicode), picture embedding.
+docs_pdf.workspace = true
+docs_layout.workspace = true
+log.workspace = true
+slides_engine.workspace = true
+slides_scene.workspace = true
+krilla = { version = "0.8", default-features = false, features = ["raster-images"] }
+
+[dev-dependencies]
+flate2 = "1"
+tempfile.workspace = true
+zip.workspace = true
+
+[lints]
+workspace = true

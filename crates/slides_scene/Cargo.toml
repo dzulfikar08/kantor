@@ -1,0 +1,18 @@
+[package]
+name = "slides_scene"
+description = "Kantor Slides display lists (no GPUI): paths, gradients, pictures and glyph runs per slide, for the screen and for PDF"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Rgb and the font substitution table.
+docs_engine.workspace = true
+# Text bodies are laid out with the Docs engine (parley), as on screen.
+docs_layout.workspace = true
+log.workspace = true
+slides_engine.workspace = true
+
+[lints]
+workspace = true
