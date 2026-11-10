@@ -49,6 +49,16 @@ icon_assets!(
         ChevronDown,
         Replace,
         ReplaceAll,
+        // Sheets toolbar
+        PaintBucket,
+        Baseline,
+        AArrowUp,
+        AArrowDown,
+        Grid3x3,
+        Square,
+        SquareDashed,
+        TextWrap,
+        TableCellsMerge,
         // AI
         Sparkles,
         X

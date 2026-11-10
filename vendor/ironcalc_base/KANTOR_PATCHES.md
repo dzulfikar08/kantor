@@ -87,6 +87,13 @@ Upstream runs `git describe` for `INFO("release")`. Inside the Kantor repository
 that would report Kantor's commit, so the value a crates.io build gets
 (`unknown`) is fixed instead.
 
+## 4. Public style lookup
+
+`Styles::get_style(index)` is `pub` (upstream: `pub(crate)`). The Sheets grid
+resolves each style index once and caches it (`sheets_engine::look`), instead of
+cloning a whole `Style` (font name, number format, border items) through
+`Model::get_style_for_cell` for every visible cell on every frame.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the
@@ -98,6 +105,6 @@ crate over this directory, reapply the `KANTOR PATCH` hunks (the new file
 `functions/lookup_cache.rs` and `test/test_kantor_lookup_cache.rs`, plus small
 call-site edits in `evaluation.rs`, `model.rs`, `functions/mod.rs`,
 `functions/lookup_and_reference/{mod,xmatch}.rs`, `functions/xlookup.rs`,
-`functions/statistical/if_ifs.rs`, `test/mod.rs`, `build.rs`) and run the crate's
+`functions/statistical/if_ifs.rs`, `test/mod.rs`, `build.rs`, `styles.rs`) and run the crate's
 tests in it (`cargo test`, also with `IRONCALC_MAX_DEPTH=1`). The crate's
 `Cargo.lock` is upstream's and only used when testing in this directory.

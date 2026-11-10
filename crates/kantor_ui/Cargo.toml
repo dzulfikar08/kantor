@@ -11,5 +11,9 @@ gpui-kit.workspace = true
 kantor_core.workspace = true
 kantor_theme.workspace = true
 
+[dev-dependencies]
+# Headless GPUI text system for the font tests.
+gpui_wgpu = { package = "gpui-pre-wgpu", version = "0.3.11" }
+
 [lints]
 workspace = true

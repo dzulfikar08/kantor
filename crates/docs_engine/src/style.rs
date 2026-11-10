@@ -362,14 +362,7 @@ impl StyleSheet {
 /// when installed), then its metric-compatible free substitute (plan §5),
 /// then broad fallbacks for other scripts.
 pub fn font_stack(font: &str) -> String {
-    let substitute = match font.to_ascii_lowercase().as_str() {
-        "calibri" | "calibri light" => Some("Carlito"),
-        "cambria" | "cambria math" => Some("Caladea"),
-        "arial" | "helvetica" => Some("Liberation Sans"),
-        "times new roman" | "times" => Some("Liberation Serif"),
-        "courier new" | "courier" => Some("Liberation Mono"),
-        _ => None,
-    };
+    let substitute = kantor_core::fonts::metric_substitute(font);
     let mut s = String::new();
     s.push('"');
     s.push_str(&font.replace('"', ""));

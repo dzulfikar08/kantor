@@ -11,6 +11,7 @@
 mod batch;
 mod csv;
 mod import;
+mod look;
 mod preserve;
 
 pub use import::SourceFormat;
@@ -38,8 +39,12 @@ pub mod formula;
 pub mod grid;
 pub mod tsv;
 
-pub use format::{CellStyle, HAlign, NumberFormat, StyleChange, ValueKind};
+pub use format::{
+    BorderLine, BorderPreset, Borders, CellStyle, HAlign, LineStyle, NumberFormat, Rgb,
+    StyleChange, VAlign, ValueKind,
+};
 pub use grid::{Fill, FillDirection, RangeStats, Step};
+pub use look::CellLook;
 
 const LOCALE: &str = "en";
 const TIMEZONE: &str = "UTC";
@@ -75,6 +80,7 @@ struct Cache {
     key: (u64, u64),
     used: HashMap<u32, (u32, u32)>,
     stats: Option<(u32, CellRange, RangeStats)>,
+    look: look::LookCache,
 }
 
 /// When formulas are recalculated, like Excel's calculation options.
@@ -575,10 +581,16 @@ impl Workbook {
         size
     }
 
+    /// Identifies the workbook's current state (edits, undo/redo and
+    /// recalculation change it), for callers that memoise answers.
+    pub fn revision(&self) -> (u64, u64) {
+        (self.history.current, self.calc.epoch)
+    }
+
     /// Run `f` on the cache, emptied first if the workbook changed since.
     fn cached<R>(&self, f: impl FnOnce(&mut Cache) -> R) -> R {
         let mut cache = self.cache.borrow_mut();
-        let key = (self.history.current, self.calc.epoch);
+        let key = self.revision();
         if cache.key != key {
             *cache = Cache {
                 key,
@@ -845,7 +857,7 @@ impl CellRange {
         }
     }
 
-    fn area(&self, sheet: u32) -> Area {
+    pub(crate) fn area(&self, sheet: u32) -> Area {
         Area {
             sheet,
             row: self.top as i32 + 1,

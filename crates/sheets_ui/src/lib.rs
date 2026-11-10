@@ -34,10 +34,12 @@ extern crate gpui_kit as gpui;
 
 mod agent;
 mod ai;
+mod bench;
 mod calc;
 mod cell_editor;
 mod find;
 mod grid_ops;
+mod look;
 mod point;
 
 use std::cell::Cell;
@@ -66,7 +68,7 @@ use cell_editor::{CellEditor, EditMode};
 pub use grid_ops::GridCommand;
 use grid_ops::{GridDrag, Header, Span};
 pub use sheets_engine::CalcMode;
-pub use sheets_engine::{HAlign, NumberFormat};
+pub use sheets_engine::{BorderPreset, HAlign, NumberFormat, Rgb, VAlign};
 
 actions!(
     sheets,
@@ -99,7 +101,19 @@ pub enum Format {
     Strikethrough,
     /// Choosing the active alignment again goes back to `General`.
     Align(HAlign),
+    VAlign(VAlign),
     Number(NumberFormat),
+    /// Fill colour (`None`: no fill).
+    Fill(Option<Rgb>),
+    /// Text colour (`None`: automatic).
+    FontColor(Option<Rgb>),
+    /// Font size, in points, up (positive) or down.
+    FontSize(i32),
+    /// Toggles wrapping, like the font flags.
+    Wrap,
+    Borders(BorderPreset),
+    /// Merge & center the range, or unmerge it if it holds merged cells.
+    Merge,
 }
 
 const KEY_CONTEXT: &str = "KantorSheets";
@@ -223,6 +237,21 @@ pub struct SheetGrid {
     /// colour slots, and every reference's place in the text.
     ref_marks: Vec<(CellRange, usize)>,
     ref_spans: Vec<(Range<usize>, usize)>,
+    /// Cell font families, resolved once per name.
+    fonts: look::FontCache,
+    /// [`Self::selection`] for its inputs, as it is asked for every cell.
+    selection_memo: Cell<Option<(SelectionKey, Selection)>>,
+}
+
+/// What [`SheetGrid::selection`] depends on.
+type SelectionKey = ((u32, u32), (u32, u32), Span, u32, (u64, u64));
+
+/// The selected range grown to whole merged cells, and the active cell's
+/// area (the merged cell it anchors, or itself).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Selection {
+    range: CellRange,
+    active: CellRange,
 }
 
 impl SheetGrid {
@@ -240,13 +269,45 @@ impl SheetGrid {
             editor: None,
             ref_marks: Vec::new(),
             ref_spans: Vec::new(),
+            fonts: look::FontCache::default(),
+            selection_memo: Cell::new(None),
         };
         grid.resize();
         grid
     }
 
+    /// The selected range; a range of cells includes every merged cell it
+    /// touches whole, as in Excel.
     fn range(&self) -> CellRange {
-        self.span.range(self.anchor, self.end)
+        self.selection().range
+    }
+
+    fn selection(&self) -> Selection {
+        let key = (
+            self.anchor,
+            self.end,
+            self.span,
+            self.sheet,
+            self.book.revision(),
+        );
+        if let Some((k, sel)) = self.selection_memo.get()
+            && k == key
+        {
+            return sel;
+        }
+        let raw = self.span.range(self.anchor, self.end);
+        let range = match self.span {
+            Span::Cells => self.book.expand_to_merges(self.sheet, raw),
+            _ => raw,
+        };
+        let (r, c) = self.anchor;
+        let active = self
+            .book
+            .merge_at(self.sheet, r, c)
+            .unwrap_or_else(|| CellRange::from_corners(self.anchor, self.anchor));
+        let sel = Selection { range, active };
+        self.selection_memo.set(Some((key, sel)));
+        sel
     }
 
     /// Recompute grid extents: the used range plus headroom, never below the minimum.
@@ -361,15 +422,27 @@ impl TableDelegate for SheetGrid {
         grid_ops::header_element(cell, Header::Column(col), &self.view)
     }
 
+    /// Rows have no border of their own: cells draw their gridlines, so a
+    /// fill, a border or a merged cell can cover them.
+    fn render_tr(
+        &mut self,
+        row_ix: usize,
+        _: &mut Window,
+        _: &mut Context<TableState<Self>>,
+    ) -> Stateful<Div> {
+        div().id(("row", row_ix)).border_b(px(0.))
+    }
+
     fn render_td(
         &mut self,
         row_ix: usize,
         col_ix: usize,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        let _timer = kantor_ui::perf::frame_timer("sheets cells", window);
         let t = tokens(cx);
-        let range = self.range();
+        let Selection { range, active } = self.selection();
         if col_ix == 0 {
             // Row-number gutter, highlighted for the rows of the selection.
             let row = row_ix as u32;
@@ -401,18 +474,54 @@ impl TableDelegate for SheetGrid {
                     )
                 })
                 .when(whole, |d| d.bg(t.accent_soft).text_color(t.accent))
-                .child(SharedString::from((row_ix + 1).to_string()));
+                .child(SharedString::from((row_ix + 1).to_string()))
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .h(GRID_LINE)
+                        .bg(t.grid_line),
+                );
             return grid_ops::header_element(gutter, Header::Row(row), &self.view);
         }
         let (row, col) = (row_ix as u32, col_ix as u32 - 1);
-        let mut text = self.book.display_value(self.sheet, row, col);
+        let sheet = self.sheet;
+        let look = self.book.cell_look(sheet, row, col);
+        // A merged cell shows its anchor's value.
+        let (vr, vc) = look.merge.map_or((row, col), |m| (m.top, m.left));
+        let mut text = self.book.display_value(sheet, vr, vc);
         // A formula typed in manual calculation has no value until F9.
-        let pending = text.is_empty() && self.book.is_pending(self.sheet, row, col);
+        let pending = text.is_empty() && self.book.is_pending(sheet, vr, vc);
         if pending {
             text.push('…');
         }
-        let style = self.book.cell_style(self.sheet, row, col);
-        let align = self.book.display_align(self.sheet, row, col);
+        let style = &look.style;
+        let align = self.book.display_align_of(style, sheet, vr, vc);
+        let geometry = look
+            .merge
+            .map(|m| look::merge_geometry(&self.book, sheet, m, row, col));
+        let content = look::Content {
+            text: SharedString::from(text),
+            style,
+            align,
+            color: if pending {
+                t.fg_dim
+            } else {
+                look::text_color(style, &t)
+            },
+            base_size: FONT_BODY,
+            default_font_size: self.book.default_font_size(),
+            family: self.fonts.for_style(style, cx),
+            height: geometry.map_or(look::row_height(), |g| g.3),
+        }
+        .render();
+        let content = match geometry {
+            // The whole merged block, shifted so this cell shows its slice.
+            Some((x, y, w, h)) => div().absolute().left(-x).top(-y).w(w).h(h).child(content),
+            None => div().absolute().inset_0().child(content),
+        };
         let down_view = self.view.clone();
         let move_view = self.view.clone();
         // References of the formula being edited: coloured border and fill.
@@ -432,36 +541,22 @@ impl TableDelegate for SheetGrid {
                     .when(col == r.left, |d| d.border_l(CELL_OUTLINE))
                     .when(col == r.right, |d| d.border_r(CELL_OUTLINE))
             });
+        // A selected merged cell counts as one cell.
+        let single = range == active;
         let fill_view = self.view.clone();
         let frozen_rows = self.book.frozen(self.sheet).0;
         div()
             .size_full()
             .relative()
-            .flex()
-            .items_center()
-            .px(SPACE_3)
-            // Vertical gridline; the row's bottom border is the horizontal one.
-            .child(grid_line_right(t.grid_line))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .when(pending, |d| d.text_color(t.fg_dim))
-                    .when(style.bold, |d| d.font_weight(FontWeight::BOLD))
-                    .when(style.italic, |d| d.italic())
-                    .when(style.underline, |d| d.underline())
-                    .when(style.strikethrough, |d| d.line_through())
-                    .when(align == HAlign::Center, |d| d.text_center())
-                    .when(align == HAlign::Right, |d| d.text_right())
-                    .child(SharedString::from(text)),
-            )
-            .when(!range.is_single() && range.contains(row, col), |d| {
+            .when_some(style.fill, |d, fill| d.bg(look::hsla(fill)))
+            .child(content)
+            .children(look::decorations(&look, &t))
+            .when(!single && range.contains(row, col), |d| {
                 d.child(
                     div()
                         .absolute()
                         .inset_0()
-                        .when((row, col) != self.anchor, |d| d.bg(t.accent_soft))
+                        .when(!active.contains(row, col), |d| d.bg(t.accent_soft))
                         .border_color(t.accent)
                         .when(row == range.top, |d| d.border_t_1())
                         .when(row == range.bottom, |d| d.border_b_1())
@@ -470,14 +565,18 @@ impl TableDelegate for SheetGrid {
                 )
             })
             .children(marks)
-            // The active cell: a strong outline and no fill, even inside a range.
-            .when((row, col) == self.anchor, |d| {
+            // The active cell (or merged cell): a strong outline and no fill,
+            // even inside a range.
+            .when(active.contains(row, col), |d| {
                 d.child(
                     div()
                         .absolute()
                         .inset_0()
-                        .border(CELL_OUTLINE)
-                        .border_color(t.accent),
+                        .border_color(t.accent)
+                        .when(row == active.top, |d| d.border_t(CELL_OUTLINE))
+                        .when(row == active.bottom, |d| d.border_b(CELL_OUTLINE))
+                        .when(col == active.left, |d| d.border_l(CELL_OUTLINE))
+                        .when(col == active.right, |d| d.border_r(CELL_OUTLINE)),
                 )
             })
             // Where a fill-handle drag would fill: an outline, no fill.
@@ -598,6 +697,9 @@ pub struct SheetsView {
     /// The range to apply when the next `SelectCell` arrives (see
     /// `grid_ops::select_range`).
     pending_selection: Option<((u32, u32), Span)>,
+    /// The cell a plain click went to, so the table's `SelectCell` for it
+    /// selects the merged cell there rather than stepping over it.
+    clicked: Option<(u32, u32)>,
     status: SharedString,
     /// Last measured pane width (for compact layout).
     width: Rc<Cell<Pixels>>,
@@ -612,6 +714,8 @@ pub struct SheetsView {
     opening: Option<PathBuf>,
     /// Holds keyboard focus while the grid is replaced by the busy pane.
     busy_focus: FocusHandle,
+    /// `KANTOR_PERF_SCROLL` benchmark in progress (see [`bench`]).
+    bench: Option<bench::ScrollBench>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -655,6 +759,7 @@ impl SheetsView {
             point_dragging: false,
             grid_drag: None,
             pending_selection: None,
+            clicked: None,
             status: status.into(),
             width: Rc::new(Cell::new(px(0.))),
             untitled_name: None,
@@ -662,6 +767,7 @@ impl SheetsView {
             busy: None,
             opening: None,
             busy_focus: cx.focus_handle(),
+            bench: bench::ScrollBench::from_env(),
             _subscriptions: subscriptions,
         };
         this.select_cell(0, 0, cx);
@@ -705,10 +811,22 @@ impl SheetsView {
     ) {
         match event {
             TableEvent::SelectCell(row, col) if *col > 0 => {
-                self.selected = (*row as u32, *col as u32 - 1);
+                let cell = (*row as u32, *col as u32 - 1);
+                // Pressing a cell selects (the anchor) at once; the table's
+                // click selects the cell itself on release.
+                let clicked = self.clicked == Some(cell);
+                if clicked {
+                    self.clicked = None;
+                }
+                if let Some(target) = self.merge_redirect(self.selected, cell, clicked, cx) {
+                    // Inside a merged cell: select its anchor, or step past it.
+                    self.selected = target;
+                    self.select_cell(target.0, target.1, cx);
+                    return;
+                }
+                self.selected = cell;
                 // A new active cell starts a new range (unless a header
                 // click asked for one).
-                let cell = self.selected;
                 let (end, span) = self.pending_selection.take().unwrap_or((cell, Span::Cells));
                 self.table.update(cx, |table, cx| {
                     let grid = table.delegate_mut();
@@ -731,6 +849,23 @@ impl SheetsView {
             TableEvent::ColumnWidthsChanged(widths) => self.save_column_widths(widths, window, cx),
             _ => {}
         }
+    }
+
+    /// Where the active cell goes when the table selects `to` (coming from
+    /// `from`) and `to` lies inside a merged cell other than its anchor:
+    /// the anchor, unless the move started at that anchor (an arrow key or
+    /// Enter from the merged cell), which steps past the merge in the same
+    /// direction. `None` when `to` needs no redirect.
+    fn merge_redirect(
+        &self,
+        from: (u32, u32),
+        to: (u32, u32),
+        clicked: bool,
+        cx: &App,
+    ) -> Option<(u32, u32)> {
+        let grid = self.table.read(cx).delegate();
+        let m = grid.book.merge_at(grid.sheet, to.0, to.1)?;
+        look::merge_step(m, from, to, clicked, (grid.rows, grid.cols))
     }
 
     fn on_formula_event(
@@ -1004,6 +1139,13 @@ impl SheetsView {
         }
         self.dragging = true;
         if !shift {
+            self.clicked = Some((row, col));
+            let (row, col) = {
+                let grid = self.table.read(cx).delegate();
+                grid.book
+                    .merge_at(grid.sheet, row, col)
+                    .map_or((row, col), |m| (m.top, m.left))
+            };
             self.select_cell(row, col, cx);
             return;
         }
@@ -1126,7 +1268,7 @@ impl SheetsView {
     }
 
     /// The active cell's formatting, for the toolbar.
-    fn active_style(&self, cx: &App) -> CellStyle {
+    fn active_style(&self, cx: &App) -> std::sync::Arc<CellStyle> {
         let (row, col) = self.selected;
         let grid = self.table.read(cx).delegate();
         grid.book.cell_style(grid.sheet, row, col)
@@ -1138,27 +1280,55 @@ impl SheetsView {
             return;
         }
         let style = self.active_style(cx);
-        let (change, what) = match format {
-            Format::Bold => (StyleChange::Bold(!style.bold), "Bold"),
-            Format::Italic => (StyleChange::Italic(!style.italic), "Italic"),
-            Format::Underline => (StyleChange::Underline(!style.underline), "Underline"),
+        let Some(range) = self.op_range(cx) else {
+            return;
+        };
+        enum Edit {
+            Style(StyleChange),
+            Borders(BorderPreset),
+            Merge,
+            Unmerge,
+        }
+        let (edit, what) = match format {
+            Format::Bold => (Edit::Style(StyleChange::Bold(!style.bold)), "Bold"),
+            Format::Italic => (Edit::Style(StyleChange::Italic(!style.italic)), "Italic"),
+            Format::Underline => (
+                Edit::Style(StyleChange::Underline(!style.underline)),
+                "Underline",
+            ),
             Format::Strikethrough => (
-                StyleChange::Strikethrough(!style.strikethrough),
+                Edit::Style(StyleChange::Strikethrough(!style.strikethrough)),
                 "Strikethrough",
             ),
             Format::Align(a) => {
                 let a = if style.align == a { HAlign::General } else { a };
-                (StyleChange::Align(a), "Alignment")
+                (Edit::Style(StyleChange::Align(a)), "Alignment")
             }
-            Format::Number(f) => (StyleChange::NumberFormat(f), f.label()),
-        };
-        let Some(range) = self.op_range(cx) else {
-            return;
+            Format::VAlign(a) => (Edit::Style(StyleChange::VAlign(a)), "Vertical alignment"),
+            Format::Number(f) => (Edit::Style(StyleChange::NumberFormat(f)), f.label()),
+            Format::Fill(c) => (Edit::Style(StyleChange::Fill(c)), "Fill colour"),
+            Format::FontColor(c) => (Edit::Style(StyleChange::FontColor(c)), "Text colour"),
+            Format::FontSize(d) => (Edit::Style(StyleChange::FontSizeDelta(d)), "Font size"),
+            Format::Wrap => (Edit::Style(StyleChange::Wrap(!style.wrap)), "Wrap text"),
+            Format::Borders(p) => (Edit::Borders(p), "Borders"),
+            Format::Merge => {
+                let grid = self.table.read(cx).delegate();
+                if grid.book.merges_in(grid.sheet, range).is_empty() {
+                    (Edit::Merge, "Merged")
+                } else {
+                    (Edit::Unmerge, "Unmerged")
+                }
+            }
         };
         let result = self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
             let sheet = grid.sheet;
-            let res = grid.book.set_range_style(sheet, range, change);
+            let res = match edit {
+                Edit::Style(change) => grid.book.set_range_style(sheet, range, change),
+                Edit::Borders(preset) => grid.book.set_range_borders(sheet, range, preset),
+                Edit::Merge => grid.book.merge_range(sheet, range),
+                Edit::Unmerge => grid.book.unmerge_range(sheet, range).map(|_| ()),
+            };
             cx.notify();
             res
         });
@@ -1166,6 +1336,13 @@ impl SheetsView {
             Ok(()) => format!("{what}: {}", range.name()).into(),
             Err(err) => format!("{err:#}").into(),
         };
+        // A merge moves the active cell to its anchor.
+        if matches!(format, Format::Merge) {
+            let (r, c) = (range.top, range.left);
+            self.selected = (r, c);
+            self.select_cell(r, c, cx);
+        }
+        self.load_selected_into_formula(window, cx);
         self.update_title(window, cx);
         cx.notify();
     }
@@ -1614,6 +1791,9 @@ impl Render for SheetsView {
                 .child(busy)
                 .into_any_element();
         }
+        if self.opening.is_none() {
+            self.bench_step(window, cx);
+        }
         let root = self.editor_actions(v_flex(), cx);
         let root = self.point_actions(root, cx);
         let root = self.calc_actions(root, cx);
@@ -1633,7 +1813,22 @@ impl Render for SheetsView {
             .text_color(t.fg)
             .text_size(FONT_BODY)
             .child(measure)
-            .child(toolbar::render(&self.active_style(cx), compact, cx))
+            .child({
+                let style = self.active_style(cx);
+                let merged = {
+                    let grid = self.table.read(cx).delegate();
+                    let (r, c) = self.selected;
+                    grid.book.merge_at(grid.sheet, r, c).is_some()
+                };
+                toolbar::render(
+                    &toolbar::Active {
+                        style: &style,
+                        merged,
+                    },
+                    compact,
+                    cx,
+                )
+            })
             // Formula bar: name box + input
             .child(
                 h_flex()
