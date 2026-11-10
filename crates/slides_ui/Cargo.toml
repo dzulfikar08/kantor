@@ -17,7 +17,11 @@ kantor_core.workspace = true
 image.workspace = true
 kantor_ui.workspace = true
 log.workspace = true
+# Stroke caps and joins for GPUI paths (the version GPUI uses).
+lyon_tessellation = "1"
 slides_engine.workspace = true
+slides_pdf.workspace = true
+slides_scene.workspace = true
 
 [lints]
 workspace = true

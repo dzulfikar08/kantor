@@ -4,7 +4,7 @@
 
 A small, fast, native office suite for Linux, written in Rust on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui) (the UI framework behind Zed). Three apps in one binary: **Sheets**, **Docs** and **Slides**. First target: [Omarchy](https://omarchy.org) on Apple Silicon (aarch64 Linux).
 
-> **Status: early, all three apps work.** Sheets opens, edits and saves `.xlsx` (formulas via [IronCalc](https://github.com/ironcalc/IronCalc)) and imports `.csv`, `.ods`, `.xls` and `.xlsb`. Docs opens, edits and saves `.docx` and exports PDF. Slides opens, edits, presents and saves `.pptx`. Saving keeps what Kantor doesn't show yet, byte for byte. `kantor convert` and `kantor pdf` work from the command line, and AI agents can edit open documents over MCP. Not yet checked against a large set of real-world files; see [plan.md](plan.md).
+> **Status: early, all three apps work.** Sheets opens, edits and saves `.xlsx` (formulas via [IronCalc](https://github.com/ironcalc/IronCalc)) and imports `.csv`, `.ods`, `.xls` and `.xlsb`. Docs opens, edits and saves `.docx` and exports PDF. Slides opens, edits, presents and saves `.pptx` and exports PDF. Saving keeps what Kantor doesn't show yet, byte for byte. `kantor convert` and `kantor pdf` work from the command line, and AI agents can edit open documents over MCP. Not yet checked against a large set of real-world files; see [plan.md](plan.md).
 
 ## Install (prebuilt, no compiling)
 
@@ -60,6 +60,7 @@ slide show with notes (`F5`).
 
 ```sh
 kantor convert report.docx report.pdf          # also .ods/.xls → .xlsx, a sheet → .csv
+kantor convert deck.pptx deck.pdf              # one page per slide, hidden slides left out
 kantor convert -o out/ --to pdf a.docx b.docx
 kantor pdf merge a.pdf b.pdf -o both.pdf       # also split, extract, delete, reorder, rotate,
                                                # info, images, watermark, page-numbers, compress
@@ -133,6 +134,8 @@ crates/
   docs_pdf       .docx → PDF with the same layout as the screen
   docs_ui        page view, caret, selection, IME, toolbar, ruler
   slides_engine  slide/shape/text model, undo, .pptx read/write and preservation (no GPUI)
+  slides_scene   slide → display list (paths, gradients, pictures, glyph runs), shared by screen and PDF
+  slides_pdf     slide scenes → PDF (krilla)
   slides_ui      slide canvas, thumbnails, notes, slide show
 vendor/
   gpui-pre-wgpu  GPUI's wgpu renderer with memory patches for 8 GB Apple Silicon

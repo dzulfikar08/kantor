@@ -45,7 +45,7 @@ use slides_engine::{
 };
 
 use draw::{
-    Item, Painter, Surface, Turn, View, fill_polygon, paint_slide, stroke_polygon, text_origin,
+    Painted, Painter, Surface, Turn, View, fill_polygon, paint_slide, stroke_polygon, text_origin,
     turned, turned_rect,
 };
 use fit::{
@@ -103,6 +103,7 @@ actions!(
         Redo,
         Save,
         SaveAs,
+        ExportPdf,
         Present,
         PresentFromCurrent,
         PresentNext,
@@ -450,7 +451,7 @@ impl SlidesView {
     }
 
     /// The laid-out text of shape `i` (no prompt), with its box.
-    fn laid(&self, i: usize) -> Option<(Xfrm, draw::LaidText)> {
+    fn laid(&self, i: usize) -> Option<(Xfrm, slides_scene::LaidText)> {
         let xfrm = self.shape_xfrm(i)?;
         let list = self.pres.render_list(self.current, false);
         let r = list.iter().find(|r| r.layer == Layer::Slide(i))?;
@@ -1350,6 +1351,69 @@ impl SlidesView {
         self.save_as_task(window, cx).detach();
     }
 
+    /// Ask where, then write the slides (hidden ones left out) to a PDF,
+    /// one page per slide. The scenes come from the same renderer as the
+    /// canvas (quick, here); encoding and writing run in the background.
+    pub fn export_pdf_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let dir = self
+            .pres
+            .path()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let name = std::path::Path::new(&self.name())
+            .with_extension("pdf")
+            .to_string_lossy()
+            .into_owned();
+        let path = cx.prompt_for_new_path(&dir, Some(&name));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(mut path))) = path.await else {
+                return;
+            };
+            if path.extension().is_none() {
+                path.set_extension("pdf");
+            }
+            let Ok((pages, task)) = this.update(cx, |this, cx| {
+                let slides = (0..this.pres.len())
+                    .filter(|&i| !this.pres.slide(i).hidden)
+                    .map(|i| this.painter.scene(&this.pres, i, &Default::default()))
+                    .collect();
+                let deck = slides_pdf::Deck {
+                    title: this.pres.title(),
+                    width: this.pres.size.cx as f32 / slides_engine::EMU_PER_PX,
+                    height: this.pres.size.cy as f32 / slides_engine::EMU_PER_PX,
+                    slides,
+                };
+                let pages = deck.slides.len().max(1);
+                this.status = format!("Exporting {}…", display_name(&path)).into();
+                cx.notify();
+                let file = path.clone();
+                let task = cx.background_spawn(async move {
+                    let bytes = slides_pdf::write(&deck)?;
+                    slides_pdf::write_file(&file, &bytes)
+                });
+                (pages, task)
+            }) else {
+                return;
+            };
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                let name = display_name(&path);
+                this.status = match result {
+                    Ok(()) => format!(
+                        "Exported {name} ({pages} slide{})",
+                        if pages == 1 { "" } else { "s" }
+                    )
+                    .into(),
+                    Err(err) => format!("Export to PDF failed: {err:#}").into(),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Save before closing; resolves to whether the presentation is saved.
     pub fn save_for_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
         if self.pres.needs_save_as() {
@@ -1653,8 +1717,7 @@ impl SlidesView {
             range
                 .map(|i| {
                     let v = this.read(cx);
-                    let items = v.painter.items(&v.pres, i, false, None, cx);
-                    let bg = v.pres.background(i);
+                    let painted = v.painter.painted(&v.pres, i, Default::default(), cx);
                     let bridge = v.painter.bridge.clone();
                     let current = v.current == i;
                     let drop_here = v.strip_drag.is_some() && v.strip_drop == Some(i);
@@ -1671,7 +1734,7 @@ impl SlidesView {
                                 other,
                                 editor: false,
                             };
-                            paint_slide(&items, bg, b, view, surface, &bridge, window);
+                            paint_slide(&painted, b, view, surface, &bridge, window);
                         },
                     )
                     .size_full();
@@ -1793,8 +1856,9 @@ impl SlidesView {
 
     fn render_presenter(&mut self, slide: usize, cx: &mut Context<Self>) -> Stateful<Div> {
         let notes = self.render_presenter_notes(slide, cx);
-        let items = self.painter.items(&self.pres, slide, false, None, cx);
-        let bg = self.pres.background(slide);
+        let painted = self
+            .painter
+            .painted(&self.pres, slide, Default::default(), cx);
         let bridge = self.painter.bridge.clone();
         let size = self.pres.size;
         let other = tokens(cx).fg_muted;
@@ -1806,7 +1870,7 @@ impl SlidesView {
                     other,
                     editor: false,
                 };
-                paint_slide(&items, bg, b, v, surface, &bridge, window);
+                paint_slide(&painted, b, v, surface, &bridge, window);
             },
         )
         .size_full();
@@ -1847,6 +1911,13 @@ impl SlidesView {
     }
 }
 
+fn display_name(path: &std::path::Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
+}
+
 fn size_px(w: f32, h: f32) -> Size<Pixels> {
     size(px(w), px(h))
 }
@@ -1860,13 +1931,18 @@ fn fit_slide(bounds: Bounds<Pixels>, slide: SlideSize) -> (View, Bounds<Pixels>)
 
 /// What the canvas needs to paint one frame.
 struct Frame {
-    items: Vec<Item>,
+    painted: Option<Rc<Painted>>,
     background: slides_engine::Rgb,
     painter: Rc<Painter>,
     /// Selected shape's box (screen space is computed at paint time).
     selected: Option<(Xfrm, bool)>,
     /// Editing: text layout placement, selection, composition, caret visible.
-    editing: Option<(Xfrm, draw::LaidText, Selection, Option<Range<usize>>)>,
+    editing: Option<(
+        Xfrm,
+        slides_scene::LaidText,
+        Selection,
+        Option<Range<usize>>,
+    )>,
     t: Tokens,
     focused: bool,
     focus: FocusHandle,
@@ -1891,20 +1967,15 @@ impl Render for SlidesView {
         }
         self.sync_notes(window, cx);
         let editing_shape = self.editing.as_ref().map(|e| e.shape);
-        let mut items = if self.pres.is_empty() {
-            Vec::new()
-        } else {
-            self.painter
-                .items(&self.pres, self.current, true, self.preview, cx)
-        };
         // The edited placeholder shows its (possibly empty) text, not the prompt.
-        if let Some(i) = editing_shape
-            && let Some((xfrm, laid)) = self.laid(i)
-            && let Some(item) = items.iter_mut().find(|it| it.layer == Layer::Slide(i))
-        {
-            item.xfrm = xfrm;
-            item.text = Some(laid);
-        }
+        let painted = (!self.pres.is_empty()).then(|| {
+            let opts = slides_scene::Options {
+                prompts: true,
+                preview: self.preview,
+                editing: editing_shape,
+            };
+            self.painter.painted(&self.pres, self.current, opts, cx)
+        });
         let selected = self.selected.and_then(|i| {
             let movable = self.pres.slide(self.current).shapes.get(i)?.movable();
             Some((self.shape_xfrm(i)?, movable && self.editing.is_none()))
@@ -1916,12 +1987,10 @@ impl Render for SlidesView {
         let viewport = self.viewport.clone();
         let entity = cx.entity().downgrade();
         let frame = Frame {
-            items,
-            background: if self.pres.is_empty() {
-                slides_engine::Rgb([255, 255, 255])
-            } else {
-                self.pres.background(self.current)
-            },
+            background: painted
+                .as_ref()
+                .map_or(slides_engine::Rgb([255, 255, 255]), |p| p.background),
+            painted,
             painter: self.painter.clone(),
             selected,
             editing,
@@ -2028,6 +2097,7 @@ impl Render for SlidesView {
             Redo => |v, w, cx| v.redo_doc(w, cx),
             Save => |v, w, cx| v.save_doc(w, cx),
             SaveAs => |v, w, cx| v.save_doc_as(w, cx),
+            ExportPdf => |v, w, cx| v.export_pdf_doc(w, cx),
             Present => |v, w, cx| v.present_doc(true, w, cx),
             PresentFromCurrent => |v, w, cx| v.present_doc(false, w, cx),
             ZoomIn => |v, _w, cx| v.zoom_by(ZOOM_STEP, cx),
@@ -2110,15 +2180,16 @@ fn paint_canvas(f: &Frame, view: View, slide_bounds: Bounds<Pixels>, window: &mu
         other: t.fg_muted,
         editor: true,
     };
-    paint_slide(
-        &f.items,
-        f.background,
-        slide_bounds,
-        view,
-        surface,
-        &f.painter.bridge,
-        window,
-    );
+    if let Some(painted) = &f.painted {
+        paint_slide(
+            painted,
+            slide_bounds,
+            view,
+            surface,
+            &f.painter.bridge,
+            window,
+        );
+    }
     window.paint_quad(quad(
         slide_bounds.dilate(px(1.)),
         Corners::default(),

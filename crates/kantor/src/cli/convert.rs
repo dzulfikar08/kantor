@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! kantor convert report.docx report.pdf
+//! kantor convert deck.pptx deck.pdf
 //! kantor convert budget.ods budget.xlsx
 //! kantor convert --sheet Summary book.xlsx summary.csv
 //! kantor convert -o out/ --to pdf a.docx b.docx
@@ -20,6 +21,8 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \n\
     Supported conversions:\n\
     \x20 .docx                                      -> .pdf\n\
+    \x20 .pptx                                      -> .pdf (one page per slide,\n\
+    \x20                                               hidden slides left out)\n\
     \x20 .xlsx .xlsm .xls .xlsb .ods .csv .tsv      -> .xlsx .csv .tsv\n\
     \n\
     Options:\n\
@@ -65,6 +68,7 @@ const SHEET_OUTPUTS: &[&str] = &["xlsx", "csv", "tsv"];
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Kind {
     DocxToPdf,
+    PptxToPdf,
     Sheets,
 }
 
@@ -81,10 +85,13 @@ fn kind(input: &Path, output: &Path) -> Result<Kind, Usage> {
     if i == "docx" && o == "pdf" {
         return Ok(Kind::DocxToPdf);
     }
+    if i == "pptx" && o == "pdf" {
+        return Ok(Kind::PptxToPdf);
+    }
     if SHEET_INPUTS.contains(&i.as_str()) && SHEET_OUTPUTS.contains(&o.as_str()) {
         return Ok(Kind::Sheets);
     }
-    let later = (SHEET_INPUTS.contains(&i.as_str()) || i == "pptx") && o == "pdf"
+    let later = SHEET_INPUTS.contains(&i.as_str()) && o == "pdf"
         || i == "pdf" && matches!(o.as_str(), "png" | "jpg" | "jpeg");
     let why = if later {
         "is not supported yet"
@@ -231,6 +238,7 @@ fn convert(
     let kind = kind(input, output).map_err(|Usage(m)| anyhow!(m))?;
     match kind {
         Kind::DocxToPdf => docx_to_pdf(input, output, engine),
+        Kind::PptxToPdf => pptx_to_pdf(input, output, engine),
         Kind::Sheets => sheets(input, output, opts.sheet.as_deref()),
     }
 }
@@ -263,6 +271,36 @@ fn docx_to_pdf(
     Ok(format!(
         "{pages} page{}, {}",
         if pages == 1 { "" } else { "s" },
+        size(bytes.len())
+    ))
+}
+
+fn pptx_to_pdf(
+    input: &Path,
+    output: &Path,
+    engine: &mut Option<docs_pdf::Engine>,
+) -> Result<String> {
+    let pres = slides_engine::Presentation::open(input).context("can't open the presentation")?;
+    let engine = engine.get_or_insert_with(docs_pdf::Engine::new);
+    let (bytes, pages) = slides_pdf::export(&pres, engine)?;
+    docs_pdf::write_file(output, &bytes)?;
+    let hidden = (0..pres.len()).filter(|&i| pres.slide(i).hidden).count();
+    let what = pres.unsupported_objects();
+    if !what.is_empty() {
+        eprintln!(
+            "kantor convert: note: {}: not in the PDF yet: {}",
+            input.display(),
+            what.join(", ")
+        );
+    }
+    Ok(format!(
+        "{pages} page{}{}, {}",
+        if pages == 1 { "" } else { "s" },
+        match hidden {
+            0 => String::new(),
+            1 => ", 1 hidden slide left out".to_owned(),
+            n => format!(", {n} hidden slides left out"),
+        },
         size(bytes.len())
     ))
 }
@@ -390,7 +428,11 @@ mod tests {
     #[std::prelude::v1::test]
     fn unsupported_pairs_are_named() {
         assert!(err(&["a.xlsx", "a.pdf"]).contains(".xlsx to .pdf is not supported yet"));
-        assert!(err(&["a.pptx", "a.pdf"]).contains("not supported yet"));
+        assert_eq!(
+            kind(Path::new("deck.PPTX"), Path::new("deck.pdf")).unwrap(),
+            Kind::PptxToPdf
+        );
+        assert!(err(&["a.pptx", "a.png"]).contains(".pptx to .png is not supported ("));
         assert!(err(&["a.pdf", "a.png"]).contains("not supported yet"));
         assert!(err(&["a.docx", "a.xlsx"]).contains(".docx to .xlsx is not supported ("));
         assert!(err(&["a", "b.pdf"]).contains("(no extension)"));

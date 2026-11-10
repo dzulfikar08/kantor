@@ -130,7 +130,7 @@ impl SlidesView {
         let t = tokens(cx);
         let view = cx.entity().downgrade();
         let kind = menu.kind;
-        let look = self.pres.slide(self.current).shapes[i].look;
+        let look = self.pres.slide(self.current).shapes[i].look.clone();
         let current = match kind {
             PaintKind::Fill => look.fill,
             PaintKind::Line => look.line.map(|l| l.0),

@@ -227,6 +227,7 @@ impl Presentation {
                     fill: Some(Rgb([0x44, 0x72, 0xC4])),
                     line: Some((Rgb([0x2F, 0x52, 0x8F]), 12_700)),
                     text_color: Some(Rgb([0xFF, 0xFF, 0xFF])),
+                    ..Look::default()
                 },
                 text: Some(body),
                 paint: PaintEdit::default(),
@@ -820,7 +821,9 @@ impl Presentation {
             layout,
             shapes,
             bg: None,
+            background: None,
             show_master_sp: true,
+            hidden: false,
             locked: None,
             rels: Arc::new(rels),
             src: Arc::new(SlideSrc {

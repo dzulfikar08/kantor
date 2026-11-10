@@ -65,9 +65,12 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: "Export as PDF…",
-        detail: "Docs · the pages as laid out on screen",
+        detail: "Docs pages as laid out · Slides, one page per slide",
         keys: "",
-        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.export_pdf_doc(w, cx)),
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| v.export_pdf_doc(w, cx));
+            ws.with_slides(window, cx, |v, w, cx| v.export_pdf_doc(w, cx));
+        },
     },
     Command {
         title: "Undo",

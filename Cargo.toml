@@ -44,6 +44,8 @@ docs_layout = { path = "crates/docs_layout" }
 docs_pdf = { path = "crates/docs_pdf" }
 docs_ui = { path = "crates/docs_ui" }
 slides_engine = { path = "crates/slides_engine" }
+slides_pdf = { path = "crates/slides_pdf" }
+slides_scene = { path = "crates/slides_scene" }
 slides_ui = { path = "crates/slides_ui" }
 
 [workspace.lints.rust]

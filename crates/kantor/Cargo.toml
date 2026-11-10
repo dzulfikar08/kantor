@@ -26,6 +26,7 @@ serde_json.workspace = true
 sheets_engine.workspace = true
 sheets_ui.workspace = true
 slides_engine.workspace = true
+slides_pdf.workspace = true
 slides_ui.workspace = true
 
 [dev-dependencies]

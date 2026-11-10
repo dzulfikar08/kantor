@@ -119,3 +119,28 @@ fn usage_errors_exit_2_with_the_supported_list() {
         .unwrap();
     assert!(String::from_utf8_lossy(&top.stdout).contains("kantor convert"));
 }
+
+#[test]
+fn pptx_to_pdf_one_page_per_slide() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let mut p = slides_engine::Presentation::new();
+    p.new_slide(Some(0)).unwrap();
+    p.new_slide(Some(1)).unwrap();
+    p.save_as(&d.join("deck.pptx")).unwrap();
+    let out = kantor(d, &["deck.pptx", "deck.pdf"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("3 pages"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let pdf = std::fs::read(d.join("deck.pdf")).unwrap();
+    assert!(pdf.starts_with(b"%PDF-"));
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(text.contains("/MediaBox[0 0 960 540]"), "16:9 slide size");
+    // Other pairs from a presentation are still refused.
+    let out = kantor(d, &["deck.pptx", "deck.png"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains(".pptx to .png is not supported"));
+}

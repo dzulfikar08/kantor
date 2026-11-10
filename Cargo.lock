@@ -3861,6 +3861,7 @@ dependencies = [
  "sheets_engine",
  "sheets_ui",
  "slides_engine",
+ "slides_pdf",
  "slides_ui",
  "tempfile",
 ]
@@ -6783,6 +6784,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "slides_pdf"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "docs_layout",
+ "docs_pdf",
+ "flate2",
+ "krilla",
+ "log",
+ "slides_engine",
+ "slides_scene",
+ "tempfile",
+ "zip 9.4.1",
+]
+
+[[package]]
+name = "slides_scene"
+version = "0.1.0"
+dependencies = [
+ "docs_engine",
+ "docs_layout",
+ "log",
+ "slides_engine",
+]
+
+[[package]]
 name = "slides_ui"
 version = "0.1.0"
 dependencies = [
@@ -6795,7 +6822,10 @@ dependencies = [
  "kantor_core",
  "kantor_ui",
  "log",
+ "lyon_tessellation",
  "slides_engine",
+ "slides_pdf",
+ "slides_scene",
 ]
 
 [[package]]

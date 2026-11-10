@@ -80,6 +80,25 @@ pub struct TextRun {
     pub text: Arc<str>,
 }
 
+impl TextRun {
+    /// A laid-out glyph run with the text its clusters index.
+    pub fn from_glyph_run(run: &docs_layout::GlyphRun, text: Arc<str>) -> Self {
+        Self {
+            font: run.font.clone(),
+            font_size: run.font_size,
+            color: run.color,
+            embolden: run.embolden,
+            skew_deg: run.skew_deg,
+            origin_x: run.origin_x,
+            baseline: run.baseline,
+            advance: run.advance,
+            underline: run.underline,
+            glyphs: run.glyphs.clone(),
+            text,
+        }
+    }
+}
+
 /// A picture's format and file bytes.
 type PictureData = (ImageFormat, Arc<[u8]>);
 
@@ -163,24 +182,13 @@ pub fn scene(doc: &Document, paged: &PagedDocument) -> Scene {
                 let Some(text) = text else { continue };
                 // The object character is laid out as a zero-width glyph
                 // holding the picture's place; it isn't text to extract.
-                let mut glyphs = run.glyphs;
-                glyphs.retain(|g| text.get(g.cluster.clone()) != Some(OBJECT_STR));
-                if glyphs.is_empty() {
+                let mut run = run;
+                run.glyphs
+                    .retain(|g| text.get(g.cluster.clone()) != Some(OBJECT_STR));
+                if run.glyphs.is_empty() {
                     continue;
                 }
-                out.runs.push(TextRun {
-                    font: run.font,
-                    font_size: run.font_size,
-                    color: run.color,
-                    embolden: run.embolden,
-                    skew_deg: run.skew_deg,
-                    origin_x: run.origin_x,
-                    baseline: run.baseline,
-                    advance: run.advance,
-                    underline: run.underline,
-                    glyphs,
-                    text,
-                });
+                out.runs.push(TextRun::from_glyph_run(&run, text));
             }
             out
         })
@@ -202,13 +210,76 @@ pub fn export(doc: &Document, engine: &mut Engine) -> Result<Vec<u8>> {
 /// Encode a scene as PDF. Pictures krilla can't decode are left out (with
 /// a warning) rather than failing the export.
 pub fn write(scene: &Scene) -> Result<Vec<u8>> {
+    encode_retrying(|images| encode(scene, images))
+}
+
+/// Pictures embedded so far (by the address of their bytes), and those
+/// krilla failed to decode on an earlier attempt.
+#[derive(Default)]
+pub struct Images {
+    skip: HashSet<*const u8>,
+    made: HashMap<*const u8, Option<Image>>,
+}
+
+impl Images {
+    /// The picture in `data` (PNG, JPEG, GIF or WebP, by signature), once
+    /// per distinct buffer; `None` for other formats and pictures that
+    /// failed before.
+    pub fn get(&mut self, data: Arc<dyn AsRef<[u8]> + Send + Sync>) -> Option<Image> {
+        let bytes: &[u8] = (*data).as_ref();
+        let key = bytes.as_ptr();
+        if self.skip.contains(&key) {
+            return None;
+        }
+        let kind = picture_kind(bytes);
+        self.made
+            .entry(key)
+            .or_insert_with(|| {
+                let made = match kind {
+                    Some("png") => Image::from_png(data.into(), true),
+                    Some("jpeg") => Image::from_jpeg(data.into(), true),
+                    Some("gif") => Image::from_gif(data.into(), true),
+                    Some("webp") => Image::from_webp(data.into(), true),
+                    _ => Err("not PNG, JPEG, GIF or WebP".into()),
+                };
+                made.map_err(|e| log::warn!("PDF export: picture left out: {e}"))
+                    .ok()
+            })
+            .clone()
+    }
+}
+
+/// `png`, `jpeg`, `gif` or `webp` from a file's signature.
+pub fn picture_kind(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG") {
+        Some("png")
+    } else if bytes.starts_with(&[0xFF, 0xD8]) {
+        Some("jpeg")
+    } else if bytes.starts_with(b"GIF8") {
+        Some("gif")
+    } else if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
+    }
+}
+
+/// Run `encode` until krilla stops failing on a picture: a picture it
+/// can't decode is reported, skipped, and the document encoded again.
+pub fn encode_retrying(
+    mut encode: impl FnMut(&mut Images) -> Result<Vec<u8>, KrillaError>,
+) -> Result<Vec<u8>> {
     let mut skip: HashSet<*const u8> = HashSet::new();
     loop {
-        let mut images: HashMap<*const u8, Option<Image>> = HashMap::new();
-        match encode(scene, &skip, &mut images) {
+        let mut images = Images {
+            skip: skip.clone(),
+            made: HashMap::new(),
+        };
+        match encode(&mut images) {
             Ok(bytes) => return Ok(bytes),
             Err(KrillaError::Image(bad, _, why)) => {
                 let key = images
+                    .made
                     .iter()
                     .find(|(_, i)| i.as_ref() == Some(&bad))
                     .map(|(k, _)| *k)
@@ -218,6 +289,28 @@ pub fn write(scene: &Scene) -> Result<Vec<u8>> {
             }
             Err(e) => return Err(anyhow!("writing PDF: {e}")),
         }
+    }
+}
+
+/// Fonts embedded so far, by font data and index.
+#[derive(Default)]
+pub struct Fonts(HashMap<(u64, u32), Option<Font>>);
+
+impl Fonts {
+    /// The krilla font for `font`; `None` (with a warning, once) when
+    /// krilla can't read it.
+    pub fn get(&mut self, font: &FontData) -> Option<Font> {
+        self.0
+            .entry((font.data.id(), font.index))
+            .or_insert_with(|| {
+                let (data, _) = font.data.clone().into_raw_parts();
+                let made = Font::new(data.into(), font.index);
+                if made.is_none() {
+                    log::warn!("PDF export: a font krilla can't read; its text is left out");
+                }
+                made
+            })
+            .clone()
     }
 }
 
@@ -238,7 +331,8 @@ pub fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn fill(c: Rgba) -> Fill {
+/// A solid fill of `c` (with its opacity).
+pub fn fill(c: Rgba) -> Fill {
     let [r, g, b, a] = c.0;
     Fill {
         paint: rgb::Color::new(r, g, b).into(),
@@ -259,19 +353,10 @@ fn fill_rect(surface: &mut Surface, [x, y, w, h]: [f32; 4], color: Rgba) {
     }
 }
 
-fn encode(
-    scene: &Scene,
-    skip: &HashSet<*const u8>,
-    images: &mut HashMap<*const u8, Option<Image>>,
-) -> Result<Vec<u8>, KrillaError> {
-    let mut fonts: HashMap<(u64, u32), Option<Font>> = HashMap::new();
+fn encode(scene: &Scene, images: &mut Images) -> Result<Vec<u8>, KrillaError> {
+    let mut fonts = Fonts::default();
     let mut pdf = krilla::Document::new();
-    pdf.set_metadata(
-        Metadata::new()
-            .title(scene.title.clone())
-            .creator("Kantor".into())
-            .producer(format!("Kantor {}", env!("CARGO_PKG_VERSION"))),
-    );
+    pdf.set_metadata(metadata(&scene.title));
     let settings = || {
         PageSettings::from_wh(
             (scene.width * TO_PT).max(1.0),
@@ -292,23 +377,8 @@ fn encode(
             fill_rect(&mut surface, *rect, *color);
         }
         for pic in &content.pictures {
-            let key = pic.bytes.as_ptr();
-            if skip.contains(&key) {
-                continue;
-            }
-            let image = images
-                .entry(key)
-                .or_insert_with(|| {
-                    let data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(pic.bytes.clone());
-                    let made = match pic.format {
-                        ImageFormat::Png => Image::from_png(data.into(), true),
-                        ImageFormat::Jpeg => Image::from_jpeg(data.into(), true),
-                        ImageFormat::Other => Err("not PNG or JPEG".into()),
-                    };
-                    made.map_err(|e| log::warn!("PDF export: picture left out: {e}"))
-                        .ok()
-                })
-                .clone();
+            let data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(pic.bytes.clone());
+            let image = images.get(data);
             let [x, y, w, h] = pic.rect;
             let (Some(image), Some(size)) = (image, Size::from_wh(w * TO_PT, h * TO_PT)) else {
                 continue;
@@ -318,18 +388,9 @@ fn encode(
             surface.pop();
         }
         for run in &content.runs {
-            let font = fonts
-                .entry((run.font.data.id(), run.font.index))
-                .or_insert_with(|| {
-                    let (data, _) = run.font.data.clone().into_raw_parts();
-                    let font = Font::new(data.into(), run.font.index);
-                    if font.is_none() {
-                        log::warn!("PDF export: a font krilla can't read; its text is left out");
-                    }
-                    font
-                })
-                .clone();
-            let Some(font) = font else { continue };
+            let Some(font) = fonts.get(&run.font) else {
+                continue;
+            };
             draw_run(&mut surface, run, font);
         }
         surface.finish();
@@ -338,7 +399,17 @@ fn encode(
     pdf.finish()
 }
 
-fn draw_run(surface: &mut Surface, run: &TextRun, font: Font) {
+/// Document metadata: title, and Kantor as creator and producer.
+pub fn metadata(title: &str) -> Metadata {
+    Metadata::new()
+        .title(title.to_owned())
+        .creator("Kantor".into())
+        .producer(format!("Kantor {}", env!("CARGO_PKG_VERSION")))
+}
+
+/// Draw a glyph run given in px (96 dpi) on a surface in points: krilla
+/// writes the glyphs with their text, so the PDF's text can be copied.
+pub fn draw_run(surface: &mut Surface, run: &TextRun, font: Font) {
     let size = run.font_size;
     if size <= 0.0 {
         return;
