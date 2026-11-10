@@ -83,3 +83,5 @@ opt-level = 3
 gpui-pre-wgpu = { path = "vendor/gpui-pre-wgpu" }
 # IronCalc with fast lookups (see vendor/ironcalc_base/KANTOR_PATCHES.md).
 ironcalc_base = { path = "vendor/ironcalc_base" }
+# IronCalc's xlsx reader/writer with fidelity fixes (see vendor/ironcalc/KANTOR_PATCHES.md).
+ironcalc = { path = "vendor/ironcalc" }

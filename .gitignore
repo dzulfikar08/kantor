@@ -6,3 +6,5 @@
 *.docx
 *.pptx
 !tests/corpus/**
+# Upstream IronCalc test workbooks (MIT OR Apache-2.0), see vendor/ironcalc/KANTOR_PATCHES.md
+!vendor/ironcalc/tests/**
