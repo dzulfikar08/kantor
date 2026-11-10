@@ -446,6 +446,35 @@ impl<'a> Model<'a> {
         self.parser.set_language(language);
     }
 
+    // KANTOR PATCH (fidelity): defined names follow inserted, deleted and
+    // moved rows and columns, as in Excel (print areas, filter ranges, named
+    // ranges); upstream left them pointing at the old cells. A reference to
+    // deleted cells becomes #REF!. Names are stored in English.
+    fn displace_defined_names(&mut self, displace_data: &DisplaceData) {
+        if self.workbook.defined_names.is_empty() {
+            return;
+        }
+        let context = self.defined_name_context();
+        let locale = self.locale;
+        let language = self.language;
+        self.parser.set_locale(get_default_locale());
+        self.parser.set_language(get_default_language());
+        let mut changed = false;
+        for i in 0..self.workbook.defined_names.len() {
+            let formula = self.workbook.defined_names[i].formula.clone();
+            let moved = displace_cf_formula_str(&mut self.parser, &formula, &context, displace_data);
+            if moved != formula {
+                self.workbook.defined_names[i].formula = moved;
+                changed = true;
+            }
+        }
+        self.parser.set_locale(locale);
+        self.parser.set_language(language);
+        if changed {
+            self.reset_parsed_structures();
+        }
+    }
+
     /// Retrieves the column indices for a specific row in a given sheet, sorted in ascending or descending order.
     ///
     /// # Arguments
@@ -689,6 +718,7 @@ impl<'a> Model<'a> {
         };
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
+        self.displace_defined_names(&disp); // KANTOR PATCH (fidelity)
 
         // In the list of columns:
         // * Keep all the columns to the left
@@ -818,6 +848,7 @@ impl<'a> Model<'a> {
         };
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
+        self.displace_defined_names(&disp); // KANTOR PATCH (fidelity)
         let worksheet = &mut self.workbook.worksheet_mut(sheet)?;
 
         // deletes all the column styles
@@ -1094,6 +1125,7 @@ impl<'a> Model<'a> {
         };
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
+        self.displace_defined_names(&disp); // KANTOR PATCH (fidelity)
 
         Ok(())
     }
@@ -1203,6 +1235,7 @@ impl<'a> Model<'a> {
         };
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
+        self.displace_defined_names(&disp); // KANTOR PATCH (fidelity)
         Ok(())
     }
 
@@ -1360,6 +1393,7 @@ impl<'a> Model<'a> {
         };
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
+        self.displace_defined_names(&disp); // KANTOR PATCH (fidelity)
         Ok(())
     }
 
@@ -1507,6 +1541,7 @@ impl<'a> Model<'a> {
         let disp = DisplaceData::RowMove { sheet, row, delta };
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
+        self.displace_defined_names(&disp); // KANTOR PATCH (fidelity)
         Ok(())
     }
 

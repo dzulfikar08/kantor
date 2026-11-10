@@ -14,6 +14,7 @@ mod import;
 mod look;
 mod numfmt;
 mod preserve;
+mod shift;
 
 pub use import::SourceFormat;
 pub use preserve::package_problems;
@@ -144,6 +145,9 @@ struct Origin {
     /// The last `.xlsx` opened or saved, whose parts IronCalc doesn't model
     /// are carried into the next `.xlsx` save (see the `preserve` module).
     xlsx: Option<XlsxSource>,
+    /// Rows and columns moved between the opened file and the state `xlsx`
+    /// was read or written in: what references carried from it follow.
+    xlsx_layout: shift::Layout,
 }
 
 /// Files up to this size are kept in memory for part preservation; larger
@@ -208,6 +212,8 @@ struct Revisions {
     /// `(state id, IronCalc steps to get back to it)`.
     undo: Vec<(u64, u32)>,
     redo: Vec<(u64, u32)>,
+    /// Rows and columns inserted or deleted to reach each state.
+    layouts: shift::Layouts,
 }
 
 impl Revisions {
@@ -216,10 +222,24 @@ impl Revisions {
     }
 
     fn edited_steps(&mut self, steps: u32) {
+        let layout = self.layout();
         self.next += 1;
         self.undo.push((self.current, steps));
         self.current = self.next;
         self.redo.clear();
+        self.layouts.set(self.current, layout);
+    }
+
+    /// An edit that inserted or deleted rows or columns.
+    fn moved(&mut self, op: shift::Op) {
+        self.edited();
+        let layout = self.layout().with(op);
+        self.layouts.set(self.current, layout);
+    }
+
+    /// The rows and columns moved to reach the current state.
+    fn layout(&self) -> shift::Layout {
+        self.layouts.get(self.current)
     }
 
     /// IronCalc steps the next undo spans.
@@ -330,6 +350,7 @@ impl Workbook {
                 path: Some(path.to_path_buf()),
                 notes,
                 xlsx,
+                xlsx_layout: shift::Layout::default(),
             },
             save_notes: Vec::new(),
             cache: RefCell::default(),
@@ -494,8 +515,29 @@ impl Workbook {
                 });
                 // Values left stale by manual calculation: Excel recalculates.
                 let stale = self.needs_recalc() || self.has_pending();
-                let finished =
-                    preserve::finish(written, original.as_deref(), &self.tab_colors(), stale);
+                let layout = self.history.layout();
+                let moves = self.origin.xlsx_layout.moves_to(&layout);
+                let model = self.model.get_model();
+                let cell_text = |sheet_id: u32, row: u32, col: u32| {
+                    model
+                        .workbook
+                        .worksheets
+                        .iter()
+                        .position(|w| w.sheet_id == sheet_id)
+                        .and_then(|i| {
+                            model
+                                .get_formatted_cell_value(i as u32, row as i32 + 1, col as i32 + 1)
+                                .ok()
+                        })
+                        .unwrap_or_default()
+                };
+                let ctx = preserve::Context {
+                    tabs: &self.tab_colors(),
+                    full_calc: stale,
+                    moves: &moves,
+                    cell_text: &cell_text,
+                };
+                let finished = preserve::finish(written, original.as_deref(), &ctx);
                 drop(original);
                 notes.extend(finished.notes);
                 for note in &notes {
@@ -539,11 +581,16 @@ impl Workbook {
         self.path = Some(path.to_path_buf());
         // A CSV save keeps the xlsx source: a later .xlsx save still carries
         // its parts, since the model still has every sheet.
+        let xlsx_layout = match format {
+            SourceFormat::Xlsx => self.history.layout(),
+            _ => self.origin.xlsx_layout.clone(),
+        };
         self.origin = Origin {
             format,
             path: Some(path.to_path_buf()),
             notes: Vec::new(),
             xlsx,
+            xlsx_layout,
         };
         self.history.saved = self.history.current;
         Ok(())
@@ -882,6 +929,16 @@ impl CellRange {
 }
 
 impl Workbook {
+    /// The `sheetId` of the sheet at index `sheet`.
+    pub(crate) fn sheet_id(&self, sheet: u32) -> u32 {
+        self.model
+            .get_model()
+            .workbook
+            .worksheets
+            .get(sheet as usize)
+            .map_or(u32::MAX, |w| w.sheet_id)
+    }
+
     /// Each sheet's tab colour as `<tabColor>` attributes, by `sheetId`.
     fn tab_colors(&self) -> preserve::TabColors {
         self.model

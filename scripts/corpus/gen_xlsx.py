@@ -930,6 +930,16 @@ FILES = [
 ]
 
 
+# Written by scripts/corpus/gen_features_xlsx.py (XlsxWriter), which checks them itself.
+FEATURE_FILES = [
+    "13_tables.xlsx",
+    "14_charts_images.xlsx",
+    "15_sparklines_cf_dv.xlsx",
+    "16_print_protect_outline.xlsx",
+    "17_cell_styles.xlsx",
+]
+
+
 def generate(out: str) -> list[str]:
     EXPECT.clear()
     os.makedirs(out, exist_ok=True)
@@ -959,7 +969,7 @@ def check() -> int:
         stale = [n for n in generate(tmp)
                  if unpacked(os.path.join(tmp, n)) != unpacked(os.path.join(DEFAULT_OUT, n))]
     committed = {n for n in os.listdir(DEFAULT_OUT) if n.endswith(".xlsx")}
-    extra = sorted(committed - {n for n, _ in FILES})
+    extra = sorted(committed - {n for n, _ in FILES} - set(FEATURE_FILES))
     for n in stale:
         print(f"out of date: tests/corpus/xlsx/{n}")
     for n in extra:

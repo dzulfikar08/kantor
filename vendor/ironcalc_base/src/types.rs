@@ -253,6 +253,10 @@ pub struct Row {
     pub custom_height: bool,
     pub s: i32,
     pub hidden: bool,
+    // KANTOR PATCH (fidelity): outline (group) level 0-7 and whether the
+    // group ending here is collapsed (`outlineLevel`, `collapsed`).
+    pub outline_level: u8,
+    pub collapsed: bool,
 }
 
 // ECMA-376-1:2016 section 18.3.1.13
@@ -267,6 +271,9 @@ pub struct Col {
     pub custom_width: bool,
     pub hidden: bool,
     pub style: Option<i32>,
+    // KANTOR PATCH (fidelity): see `Row::outline_level`.
+    pub outline_level: u8,
+    pub collapsed: bool,
 }
 
 /// Cell type enum matching Excel TYPE() function values.
@@ -523,6 +530,28 @@ pub struct Style {
     pub font: Font,
     pub border: Border,
     pub quote_prefix: bool,
+    // KANTOR PATCH (fidelity): cell protection (`<xf><protection>`), what a
+    // protected sheet lets users edit. `None` is Excel's default: locked,
+    // formula shown.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protection: Option<CellProtection>,
+}
+
+// KANTOR PATCH (fidelity): CT_CellProtection.
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone)]
+pub struct CellProtection {
+    pub locked: bool,
+    pub hidden: bool,
+}
+
+impl Default for CellProtection {
+    fn default() -> Self {
+        CellProtection {
+            locked: true,
+            hidden: false,
+        }
+    }
 }
 
 impl Default for Style {
@@ -534,6 +563,7 @@ impl Default for Style {
             font: Font::default(),
             border: Border::default(),
             quote_prefix: false,
+            protection: None,
         }
     }
 }
@@ -708,6 +738,23 @@ pub struct Alignment {
     #[serde(default = "default_as_false")]
     #[serde(skip_serializing_if = "is_false")]
     pub wrap_text: bool,
+    // KANTOR PATCH (fidelity): the rest of CT_CellAlignment that changes how
+    // a cell looks, so files keep it. `indent` is in steps of three spaces;
+    // `text_rotation` is OOXML's: 0-90 counter-clockwise, 91-180 clockwise by
+    // (value - 90), 255 stacked letters.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "is_zero")]
+    pub indent: u32,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "is_zero")]
+    pub text_rotation: u32,
+    #[serde(default = "default_as_false")]
+    #[serde(skip_serializing_if = "is_false")]
+    pub shrink_to_fit: bool,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 #[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
@@ -785,6 +832,8 @@ pub struct CellXfs {
     pub apply_fill: bool,
     pub quote_prefix: bool,
     pub alignment: Option<Alignment>,
+    // KANTOR PATCH (fidelity): see `Style::protection`.
+    pub protection: Option<CellProtection>,
 }
 
 #[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
@@ -816,6 +865,54 @@ pub enum BorderStyle {
     MediumDashed,
     MediumDashDotDot,
     MediumDashDot,
+    // KANTOR PATCH (fidelity): the rest of ST_BorderStyle, so no border
+    // style turns into thin on import. Added last: bitcode numbers variants.
+    Hair,
+    Dashed,
+    DashDot,
+    DashDotDot,
+}
+
+impl BorderStyle {
+    // KANTOR PATCH (fidelity): the ST_BorderStyle name (case matters in OOXML).
+    pub fn ooxml_name(&self) -> &'static str {
+        match self {
+            BorderStyle::Thin => "thin",
+            BorderStyle::Medium => "medium",
+            BorderStyle::Thick => "thick",
+            BorderStyle::Double => "double",
+            BorderStyle::Dotted => "dotted",
+            BorderStyle::SlantDashDot => "slantDashDot",
+            BorderStyle::MediumDashed => "mediumDashed",
+            BorderStyle::MediumDashDotDot => "mediumDashDotDot",
+            BorderStyle::MediumDashDot => "mediumDashDot",
+            BorderStyle::Hair => "hair",
+            BorderStyle::Dashed => "dashed",
+            BorderStyle::DashDot => "dashDot",
+            BorderStyle::DashDotDot => "dashDotDot",
+        }
+    }
+
+    // KANTOR PATCH (fidelity): parses an ST_BorderStyle name (and the
+    // lower-case names `Display` gives). `None` for "none" and unknown names.
+    pub fn from_ooxml(name: &str) -> Option<BorderStyle> {
+        Some(match name {
+            "thin" => BorderStyle::Thin,
+            "medium" => BorderStyle::Medium,
+            "thick" => BorderStyle::Thick,
+            "double" => BorderStyle::Double,
+            "dotted" => BorderStyle::Dotted,
+            "slantDashDot" | "slantdashdot" => BorderStyle::SlantDashDot,
+            "mediumDashed" | "mediumdashed" => BorderStyle::MediumDashed,
+            "mediumDashDotDot" | "mediumdashdotdot" => BorderStyle::MediumDashDotDot,
+            "mediumDashDot" | "mediumdashdot" => BorderStyle::MediumDashDot,
+            "hair" => BorderStyle::Hair,
+            "dashed" => BorderStyle::Dashed,
+            "dashDot" | "dashdot" => BorderStyle::DashDot,
+            "dashDotDot" | "dashdotdot" => BorderStyle::DashDotDot,
+            _ => return None,
+        })
+    }
 }
 
 impl Display for BorderStyle {
@@ -830,6 +927,10 @@ impl Display for BorderStyle {
             BorderStyle::Medium => write!(formatter, "medium"),
             BorderStyle::Double => write!(formatter, "double"),
             BorderStyle::Dotted => write!(formatter, "dotted"),
+            BorderStyle::Hair => write!(formatter, "hair"),
+            BorderStyle::Dashed => write!(formatter, "dashed"),
+            BorderStyle::DashDot => write!(formatter, "dashdot"),
+            BorderStyle::DashDotDot => write!(formatter, "dashdotdot"),
         }
     }
 }

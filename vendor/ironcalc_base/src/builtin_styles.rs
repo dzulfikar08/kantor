@@ -95,6 +95,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Good".to_string(),
         Style {
+            protection: None,
             font: Font {
                 color: Color::Rgb("#006100".to_string()),
                 ..Default::default()
@@ -107,6 +108,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Bad".to_string(),
         Style {
+            protection: None,
             font: Font {
                 color: Color::Rgb("#9C0006".to_string()),
                 ..Default::default()
@@ -119,6 +121,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Neutral".to_string(),
         Style {
+            protection: None,
             font: Font {
                 color: Color::Rgb("#9C5700".to_string()),
                 ..Default::default()
@@ -140,6 +143,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Calculation".to_string(),
         Style {
+            protection: None,
             font: Font {
                 b: true,
                 color: Color::Rgb("#FA7D00".to_string()),
@@ -154,6 +158,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Check Cell".to_string(),
         Style {
+            protection: None,
             font: Font {
                 b: true,
                 color: Color::Rgb("#FFFFFF".to_string()),
@@ -168,6 +173,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Explanatory Text".to_string(),
         Style {
+            protection: None,
             font: Font {
                 i: true,
                 color: Color::Rgb("#7F7F7F".to_string()),
@@ -180,6 +186,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Input".to_string(),
         Style {
+            protection: None,
             font: Font {
                 color: Color::Rgb("#3F3F76".to_string()),
                 ..Default::default()
@@ -193,6 +200,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Linked Cell".to_string(),
         Style {
+            protection: None,
             font: Font {
                 color: Color::Rgb("#FA7D00".to_string()),
                 ..Default::default()
@@ -211,6 +219,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Note".to_string(),
         Style {
+            protection: None,
             fill: solid_fill(Color::Rgb("#FFFFE1".to_string())),
             border: thin_box_border(Color::Rgb("#B2B2B2".to_string())),
             ..Default::default()
@@ -220,6 +229,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Output".to_string(),
         Style {
+            protection: None,
             font: Font {
                 b: true,
                 color: Color::Rgb("#3F3F3F".to_string()),
@@ -234,6 +244,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Warning Text".to_string(),
         Style {
+            protection: None,
             font: Font {
                 color: Color::Rgb("#FF0000".to_string()),
                 ..Default::default()
@@ -247,6 +258,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Title".to_string(),
         Style {
+            protection: None,
             font: Font {
                 sz: 18,
                 color: Color::Theme(IDX_DK2, 0.0),
@@ -260,6 +272,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Heading 1".to_string(),
         Style {
+            protection: None,
             font: Font {
                 b: true,
                 sz: 15,
@@ -274,6 +287,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Heading 2".to_string(),
         Style {
+            protection: None,
             font: Font {
                 b: true,
                 sz: 13,
@@ -288,6 +302,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Heading 3".to_string(),
         Style {
+            protection: None,
             font: Font {
                 b: true,
                 color: Color::Theme(IDX_DK2, 0.0),
@@ -307,6 +322,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Heading 4".to_string(),
         Style {
+            protection: None,
             font: Font {
                 b: true,
                 i: true,
@@ -320,6 +336,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Total".to_string(),
         Style {
+            protection: None,
             font: Font {
                 b: true,
                 ..Default::default()
@@ -342,6 +359,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
         result.push((
             format!("20% - {accent_name}"),
             Style {
+                protection: None,
                 fill: solid_fill(Color::Theme(idx, 0.8)),
                 ..Default::default()
             },
@@ -350,6 +368,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
         result.push((
             format!("40% - {accent_name}"),
             Style {
+                protection: None,
                 fill: solid_fill(Color::Theme(idx, 0.6)),
                 ..Default::default()
             },
@@ -358,6 +377,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
         result.push((
             format!("60% - {accent_name}"),
             Style {
+                protection: None,
                 fill: solid_fill(Color::Theme(idx, 0.4)),
                 ..Default::default()
             },
@@ -366,6 +386,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
         result.push((
             accent_name.to_string(),
             Style {
+                protection: None,
                 fill: solid_fill(Color::Theme(idx, 0.0)),
                 ..Default::default()
             },
@@ -377,6 +398,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Comma".to_string(),
         Style {
+            protection: None,
             num_fmt: "#,##0.00".to_string(),
             ..Default::default()
         },
@@ -385,6 +407,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Comma [0]".to_string(),
         Style {
+            protection: None,
             num_fmt: "#,##0".to_string(),
             ..Default::default()
         },
@@ -393,6 +416,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Currency".to_string(),
         Style {
+            protection: None,
             num_fmt: r#"_("$"* #,##0.00_);_("$"* \(#,##0.00\);_("$"* "-"??_);_(@_)"#.to_string(),
             ..Default::default()
         },
@@ -401,6 +425,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Currency [0]".to_string(),
         Style {
+            protection: None,
             num_fmt: r#"_("$"* #,##0_);_("$"* \(#,##0\);_("$"* "-"_);_(@_)"#.to_string(),
             ..Default::default()
         },
@@ -409,6 +434,7 @@ pub fn builtin_named_styles() -> Vec<(String, Style, StyleIncludes)> {
     result.push((
         "Percent".to_string(),
         Style {
+            protection: None,
             num_fmt: "0%".to_string(),
             ..Default::default()
         },

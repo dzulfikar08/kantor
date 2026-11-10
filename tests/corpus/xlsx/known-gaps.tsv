@@ -5,14 +5,32 @@
 01_formulas.xlsx	import-formula	Calc!B13	IronCalc shows INDEX(...) as @INDEX(...) (implicit-intersection marker added to the formula text); value is right
 02_multi_sheet.xlsx	import-value	Q1 Summary!B6	3-D references (SUM(Jan:Mar!B2:B4)) are not supported: evaluates to #ERROR! instead of 776.25
 03_number_formats.xlsx	expect	Formats!B12 display	deliberate: Kantor takes separators from the locale tag (0x421, Indonesian) and shows Rp1.500.000, as an Indonesian Excel does; Excel on an en-US system shows Rp1,500,000
-05_styles.xlsx	export-style	Styles!B13 border-bottom	dashed borders are not in IronCalc's BorderStyle: become thin
-05_styles.xlsx	export-style	Styles!B13 border-left	dashed borders are not in IronCalc's BorderStyle: become thin
-05_styles.xlsx	export-style	Styles!B13 border-right	dashed borders are not in IronCalc's BorderStyle: become thin
-05_styles.xlsx	export-style	Styles!B13 border-top	dashed borders are not in IronCalc's BorderStyle: become thin
-05_styles.xlsx	export-style	Styles!B14 border-top	hair borders are not in IronCalc's BorderStyle: become thin
 08_defined_names.xlsx	import-value	Report!B3	defined names holding a constant (Ten = 10) don't evaluate: =Ten*2 gives #NAME? (the name itself is kept)
 09_unicode.xlsx	export-formula	Emoji 🎉!B1	quotes around a non-ASCII sheet name are dropped ('数据'!B2 -> 数据!B2); still valid for Excel, text differs
 09_unicode.xlsx	export-value	Teks!B13	shared strings are written without xml:space="preserve": strict readers (calamine) trim leading/trailing spaces; IronCalc and openpyxl keep them
 09_unicode.xlsx	import-formula	Emoji 🎉!B1	quotes around a non-ASCII sheet name are dropped in the formula text ('数据'!B2 -> 数据!B2)
 09_unicode.xlsx	import-value	Teks!C10	LEN counts Unicode scalar values, Excel counts UTF-16 code units (ZWJ emoji family: 5 vs 8)
 09_unicode.xlsx	import-value	Teks!C9	LEN counts Unicode scalar values, Excel counts UTF-16 code units (emoji + flag: 12 vs 17)
+13_tables.xlsx	export-formula	Sales!F1	IronCalc turns structured references (Sales[Units]) into A1 ranges on import
+13_tables.xlsx	export-formula	Sales!F2	IronCalc turns structured references (Sales[Units]) into A1 ranges on import
+13_tables.xlsx	export-value	Sales!B8	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
+13_tables.xlsx	export-value	Sales!D2	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
+13_tables.xlsx	export-value	Sales!D3	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
+13_tables.xlsx	export-value	Sales!D4	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
+13_tables.xlsx	export-value	Sales!D5	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
+13_tables.xlsx	export-value	Sales!D6	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
+13_tables.xlsx	export-value	Sales!D7	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
+13_tables.xlsx	export-value	Sales!D8	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
+13_tables.xlsx	export-value	Sales!F2	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
+13_tables.xlsx	import-formula	Sales!F1	IronCalc turns structured references (Sales[Units]) into A1 ranges on import
+13_tables.xlsx	import-formula	Sales!F2	IronCalc turns structured references (Sales[Units]) into A1 ranges on import
+13_tables.xlsx	import-value	Sales!B8	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
+13_tables.xlsx	import-value	Sales!D2	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
+13_tables.xlsx	import-value	Sales!D3	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
+13_tables.xlsx	import-value	Sales!D4	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
+13_tables.xlsx	import-value	Sales!D5	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
+13_tables.xlsx	import-value	Sales!D6	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
+13_tables.xlsx	import-value	Sales!D7	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
+13_tables.xlsx	import-value	Sales!D8	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
+13_tables.xlsx	import-value	Sales!F2	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
+16_print_protect_outline.xlsx	export-links	Print	the display attribute of the internal link is not written (IronCalc's Link has no display text; Excel shows the cell value)

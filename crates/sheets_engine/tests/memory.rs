@@ -1,4 +1,5 @@
-//! Resident memory of a big workbook once opened (plan.md, "Big workbooks").
+//! Resident memory of a big workbook once opened, and its peak while saving
+//! (plan.md, "Big workbooks").
 //!
 //! ```text
 //! uv run --with xlsxwriter scripts/corpus/gen_big_xlsx.py ~/.cache/big90k.xlsx
@@ -18,6 +19,12 @@ use sheets_engine::Workbook;
 /// no longer kept); IronCalc's cells are most of it. Some room for allocator
 /// and platform differences.
 const STEADY_LIMIT_MB: f64 = 115.0;
+
+/// Peak while saving it (IronCalc writes the package in memory, then
+/// `preserve` merges the original's extras): 310 MB on 2026-11-10, 1849 MB
+/// before the merge stopped parsing whole sheets and IronCalc's writer
+/// stopped copying the cells three times.
+const SAVE_PEAK_LIMIT_MB: f64 = 420.0;
 
 fn status_mb(key: &str) -> f64 {
     std::fs::read_to_string("/proc/self/status")
@@ -51,6 +58,23 @@ fn big_workbook_steady_memory() {
         assert!(
             steady <= STEADY_LIMIT_MB,
             "steady RSS {steady:.0} MB over {STEADY_LIMIT_MB:.0} MB"
+        );
+    }
+    let mut book = book;
+    book.set_input(0, 0, 0, "edited").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let t = Instant::now();
+    book.save_as(dir.path().join("saved.xlsx")).unwrap();
+    let peak = status_mb("VmHWM:");
+    eprintln!(
+        "saved in {:.2?}: peak {peak:.0} MB (limit {SAVE_PEAK_LIMIT_MB:.0} MB), notes {:?}",
+        t.elapsed(),
+        book.save_notes()
+    );
+    if cfg!(target_os = "linux") && !cfg!(debug_assertions) {
+        assert!(
+            peak <= SAVE_PEAK_LIMIT_MB,
+            "save peak {peak:.0} MB over {SAVE_PEAK_LIMIT_MB:.0} MB"
         );
     }
     drop(book);
