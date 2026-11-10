@@ -9,6 +9,7 @@
 //! as `.xlsx`. See [`SourceFormat`] and the `import` module docs.
 
 mod batch;
+mod cond_format;
 mod csv;
 mod import;
 mod look;
@@ -41,6 +42,7 @@ pub mod formula;
 pub mod grid;
 pub mod tsv;
 
+pub use cond_format::{CfIcon, Conditional, DataBar, IconShape};
 pub use format::{
     BorderLine, BorderPreset, Borders, CellStyle, HAlign, LineStyle, NumberFormat, Rgb,
     StyleChange, VAlign, ValueKind,
@@ -74,6 +76,8 @@ pub struct Workbook {
     calc: Calc,
     /// Answers that take a walk over every cell, for the current state.
     cache: RefCell<Cache>,
+    /// Conditional formatting evaluated for the current state.
+    cond: cond_format::CondState,
 }
 
 /// See [`Workbook::cached`].
@@ -270,9 +274,17 @@ impl Revisions {
     }
 }
 
+/// Conditional formatting is evaluated by `cond_format`, for the cells on
+/// screen; IronCalc's pass over every rule's whole range after each
+/// recalculation is turned off.
+fn lazy_conditional_formatting() {
+    ironcalc_base::set_eager_conditional_formatting(false);
+}
+
 impl Workbook {
     /// A new, empty workbook with one sheet.
     pub fn new_empty() -> Result<Self> {
+        lazy_conditional_formatting();
         let model = UserModel::new_empty("Untitled", LOCALE, TIMEZONE, LANGUAGE)
             .map_err(|e| anyhow!("creating workbook: {e}"))?;
         Ok(Self {
@@ -283,6 +295,7 @@ impl Workbook {
             save_notes: Vec::new(),
             calc: Calc::new(0),
             cache: RefCell::default(),
+            cond: Default::default(),
         })
     }
 
@@ -290,6 +303,7 @@ impl Workbook {
     /// (delimiter detected for `.csv`), or a read-only import of
     /// `.ods`/`.xls`/`.xlsb`. The workbook starts clean with no undo history.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        lazy_conditional_formatting();
         let path = path.as_ref();
         let ext = path
             .extension()
@@ -354,6 +368,7 @@ impl Workbook {
             },
             save_notes: Vec::new(),
             cache: RefCell::default(),
+            cond: Default::default(),
         })
     }
 

@@ -313,7 +313,11 @@ fn parse_x14_icon_set_rule(rule: &XmlNode) -> Option<CfRule> {
             show_value,
         })
     } else {
-        let icon_colors = icon_set_icons(icon_set_attr)?;
+        let mut icon_colors = icon_set_icons(icon_set_attr)?;
+        // KANTOR PATCH (conditional formatting): "Reverse Icon Order".
+        if matches!(is_node.attribute("reverse"), Some("1" | "true")) {
+            icon_colors.reverse();
+        }
         let thresholds: Vec<IconThreshold> = icon_colors
             .into_iter()
             .zip(cfvo_with_strict)
@@ -642,10 +646,14 @@ pub(super) fn load_conditional_formatting(
                             show_value,
                         }
                     } else {
-                        let icon_colors = match icon_set_icons(icon_set_attr) {
+                        let mut icon_colors = match icon_set_icons(icon_set_attr) {
                             Some(v) => v,
                             None => continue,
                         };
+                        // KANTOR PATCH (conditional formatting): "Reverse Icon Order".
+                        if matches!(is_node.attribute("reverse"), Some("1" | "true")) {
+                            icon_colors.reverse();
+                        }
                         let thresholds = icon_colors
                             .into_iter()
                             .zip(cfvo_vec.into_iter().zip(is_strict_vec))

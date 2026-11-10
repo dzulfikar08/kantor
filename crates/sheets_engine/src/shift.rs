@@ -302,6 +302,88 @@ impl Moves {
     }
 }
 
+impl Moves {
+    /// A conditional formatting formula of a rule on `area` (of `home`),
+    /// moved. Its relative references are relative to the top-left cell of
+    /// the area; when that cell was deleted, the area's new top-left is a
+    /// cell further down or right, and the formula is first re-based on it
+    /// (as Excel does), then moved like any formula.
+    pub fn cf_formula<'a>(
+        &self,
+        formula: &'a str,
+        home: u32,
+        sheets: &HashMap<String, u32>,
+        area: Area,
+    ) -> Cow<'a, str> {
+        if !self.touches(home) {
+            return Cow::Borrowed(formula);
+        }
+        let first =
+            |rows: bool, lo: u32, hi: u32| (lo..=hi).find(|&x| self.line_kept(home, x, rows));
+        let (Some(top), Some(left)) = (
+            first(true, area.top, area.bottom),
+            first(false, area.left, area.right),
+        ) else {
+            return self.formula(formula, Some(home), sheets);
+        };
+        let (dr, dc) = (top - area.top, left - area.left);
+        if dr == 0 && dc == 0 {
+            return self.formula(formula, Some(home), sheets);
+        }
+        let mut rebased = String::with_capacity(formula.len());
+        let mut last = 0;
+        for token in references(formula) {
+            if token.sheet.is_some() {
+                continue;
+            }
+            let shift = |(r, c, ar, ac): (u32, u32, bool, bool)| {
+                (
+                    if ar { r } else { (r + dr).min(MAX_ROWS - 1) },
+                    if ac { c } else { (c + dc).min(MAX_COLS - 1) },
+                    ar,
+                    ac,
+                )
+            };
+            let moved = RangeRef {
+                kind: token.range.kind,
+                a: shift(token.range.a),
+                b: shift(token.range.b),
+            };
+            rebased.push_str(&formula[last..token.range_span.start]);
+            rebased.push_str(&moved.to_string());
+            last = token.range_span.end;
+        }
+        rebased.push_str(&formula[last..]);
+        Cow::Owned(self.formula(&rebased, Some(home), sheets).into_owned())
+    }
+
+    /// Whether row (`rows`) or column `x` of `sheet` is still there.
+    fn line_kept(&self, sheet: u32, x: u32, rows: bool) -> bool {
+        let mut x = x;
+        for op in self.0.iter().filter(|op| op.sheet() == sheet) {
+            match (*op, rows) {
+                (Op::InsertRows { at, count, .. }, true)
+                | (Op::InsertColumns { at, count, .. }, false) => {
+                    if x >= at {
+                        x += count;
+                    }
+                }
+                (Op::DeleteRows { at, count, .. }, true)
+                | (Op::DeleteColumns { at, count, .. }, false) => {
+                    if (at..at + count).contains(&x) {
+                        return false;
+                    }
+                    if x >= at + count {
+                        x -= count;
+                    }
+                }
+                _ => {}
+            }
+        }
+        true
+    }
+}
+
 fn apply_area(op: Op, sheet: u32, a: Area) -> Option<Area> {
     if op.sheet() != sheet {
         return Some(a);

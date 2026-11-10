@@ -55,6 +55,8 @@ mod cut_paste;
 mod evaluation;
 mod functions;
 mod implicit_intersection;
+// KANTOR PATCH (conditional formatting): lazy rule evaluation API.
+mod kantor_cf;
 pub mod links;
 mod merged_cells;
 mod model;
@@ -76,6 +78,7 @@ pub use merged_cells::MergeStructure;
 pub use model::get_milliseconds_since_epoch;
 pub use model::FmtSettings;
 pub use model::Model;
+pub use kantor_cf::{set_eager_conditional_formatting, CfFormula, CfValue};
 pub use user_model::BorderArea;
 pub use user_model::ClipboardData;
 pub use user_model::UserModel;

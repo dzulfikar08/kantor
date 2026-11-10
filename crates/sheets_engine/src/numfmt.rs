@@ -131,7 +131,7 @@ pub(crate) fn display_model_cell(model: &Model<'_>, sheet: u32, row: i32, col: i
     display_cell(model, sheet, row, col, &compile(model, style))
 }
 
-fn language() -> &'static ironcalc_base::language::Language {
+pub(crate) fn language() -> &'static ironcalc_base::language::Language {
     ironcalc_base::language::get_language(crate::LANGUAGE).expect("IronCalc has English")
 }
 

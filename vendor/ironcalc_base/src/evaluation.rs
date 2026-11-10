@@ -403,6 +403,9 @@ pub(crate) struct Evaluation {
     /// formatting at load time, formula helpers) there is no driver to restart
     /// anything, so cells are simply evaluated on demand.
     pub(crate) in_pass: bool,
+    /// KANTOR PATCH (conditional formatting): formula cells read give their
+    /// stored value and are not evaluated (`Model::cf_evaluate`).
+    pub(crate) stored_only: bool,
     /// Number of restarts the last `evaluate()` needed. For tests and tuning.
     pub(crate) restarts_in_last_evaluation: u32,
     /// Number of formulas running right now, that is the depth of the
@@ -485,6 +488,7 @@ impl Default for Evaluation {
             seen_ranges: Vec::new(),
             restart: None,
             in_pass: false,
+            stored_only: false,
             restarts_in_last_evaluation: 0,
             depth: 0,
             max_depth: default_max_depth(),
@@ -790,6 +794,10 @@ impl<'a> Model<'a> {
             Found::Nothing => {
                 self.record_seen(cell_reference, Seen::Empty);
                 CalcResult::EmptyCell
+            }
+            // KANTOR PATCH (conditional formatting): see `stored_only`.
+            Found::Spill(_) | Found::Formula(_) if self.evaluation.stored_only => {
+                self.stored_value(cell_reference)
             }
             Found::Spill(anchor) => self.evaluate_spill_cell(cell_reference, anchor),
             Found::Formula(formula_cell) => {
