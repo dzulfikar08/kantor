@@ -9,7 +9,70 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-10
+
+Docs and Slides join Sheets: all three apps open, edit and save their Office formats, and Docs and
+Slides export PDF. New: macOS builds (a notarised `Kantor.dmg`), Linux AppImages, `kantor convert`
+and `kantor pdf` on the command line, opt-in AI features, and an MCP server for AI agents.
+
 ### Added
+
+#### Docs
+- **Docs** (first slice): open, edit and save `.docx` on A4 pages laid out with parley — typing,
+  selection, Bold/Italic/Underline, headings (Ctrl+Alt+0–3), alignment, undo/redo, zoom, plain-text
+  clipboard, IME input. New Document is Ctrl+Shift+N. Saving an opened `.docx` rewrites only the
+  body and copies every other part unchanged.
+- **Docs: lists, tables and pictures.** Bulleted and numbered lists (Ctrl+Shift+8 / Ctrl+Shift+7,
+  toolbar; Enter continues, Enter on an empty item ends the list, Tab / Shift+Tab change level,
+  Backspace at the start removes the number) with markers drawn in the hanging indent. Tables with
+  merged cells and borders, laid out row by row across pages; Tab moves to the next cell (and adds a
+  row at the end), toolbar grid to insert a table, insert/delete rows and columns, delete table.
+  Inline PNG/JPEG pictures, shown at their size, selectable and deletable like a character; insert a
+  picture from a file. All of it is undoable and saves in place.
+- **Docs: keeps what it can't show yet.** Floating pictures, shapes and text boxes, content
+  controls, page-number and date fields, equations, footnote references, bookmarks, nested tables,
+  headers/footers and unmodelled formatting are carried byte for byte and shown as placeholders, so
+  ordinary Word files now open as fully supported and save in place. Only tracked changes, comments
+  and fields that depend on the document (tables of contents, cross-references) still make Save go
+  to a new file. Page breaks and hyperlinks (editable text) are supported too.
+- **Docs: Export as PDF…** (command palette) writes the document with the same layout as the
+  screen: fonts subset and embedded (text stays selectable and searchable), pictures, colours,
+  underline, tables and list markers. Headers and footers are not in the PDF yet.
+- **Docs: page setup and ruler.** Paper size (A4, Letter, Legal, A5, F4), orientation and margins
+  from the toolbar's Page control or the palette; a centimetre ruler with the margins shaded and
+  indent markers you can drag. Saving changes only those settings in the file.
+- **Docs: word and character count** in the status bar, for the selection when there is one
+  ("12 of 1,234 words · 60 characters").
+- **Docs: Rewrite / Translate selection.** Fix grammar, More formal, Shorter, or translate between
+  Indonesian and English. Only the selected paragraphs' text is sent; the result is shown first and
+  *Replace* applies it as one undo step, keeping paragraph styles (formatting inside a paragraph
+  becomes that of its first word).
+
+#### Slides
+- **Slides** (first slice): new presentation (Ctrl+Alt+N, Home, sidebar, palette) and open/save
+  `.pptx`. Slides look like the file: placeholder positions and text formatting come from the
+  layout, master and theme, and master/layout decorations, backgrounds and pictures are drawn.
+  Thumbnail strip (drag to reorder, Ctrl+Up/Down), new/duplicate/delete slide (Ctrl+M / Ctrl+D),
+  select, move (drag or arrows) and resize shapes, edit text in text boxes and placeholders
+  (Bold/Italic/Underline, IME), insert text box, rectangle, ellipse or PNG/JPEG picture, undo/redo,
+  and a simple presenter mode (F5 / Shift+F5; arrows, space, Esc). Saving copies every part it
+  doesn't rewrite byte for byte, keeps unchanged shapes verbatim and, for edited ones, replaces
+  only the position or the paragraphs; tables, charts, groups and SmartArt are written back
+  untouched. When slides are added, removed or reordered in a file with slide sections or
+  custom shows, those can't be kept, so Save goes to a new file and the original is never
+  overwritten.
+- **Slides: lists, rotation, notes, fill and outline, copy/paste.** Bullets and numbering (from the
+  master and layout, or the toolbar's list buttons), indent levels (Tab / Shift+Tab) and paragraph
+  spacing are shown and edited; unmodelled paragraph settings are kept. Rotated and flipped shapes,
+  pictures and text are drawn as in the file, with a rotate handle (Shift snaps to 15°). A
+  resizable speaker-notes pane under the slide (notes are created with their part, relationships
+  and notes master when needed) and notes under the slide while presenting (S hides them). Fill and
+  outline popovers with the theme's colours, no fill / no outline and outline widths. Copy, cut and
+  paste shapes within and between presentations (pictures take their image along) and Ctrl+D to
+  duplicate the selected shape. All undoable.
+- **Slides: canvas.** The slide fits the pane and stays centred; zoom with Ctrl+= / Ctrl+- /
+  Ctrl+wheel and back to fit with Ctrl+0. Empty placeholders show a dashed outline and a grey
+  prompt in the editor only. Resize, move and text cursors over shapes.
 - **Slides: shapes keep their real outlines.** All 187 PowerPoint preset shapes (arrows, chevrons,
   stars, callouts, flowchart symbols, brackets, clouds, hearts, connectors…), their adjustments
   (handle positions such as an arrow's head size) and custom freeform shapes are drawn with their
@@ -17,6 +80,19 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   shades. Connectors are now shapes: they can be selected, moved and recoloured. Geometry XML is
   still written back unchanged. The evaluator (`slides_engine::geom`, no GPUI) follows ECMA-376
   shape guides and paths.
+- **Slides: slides look like PowerPoint's.** Gradient and picture fills, transparency, dashed
+  lines, line caps and arrowheads, and slide, layout and master backgrounds are drawn. Groups,
+  tables (merged cells, borders, PowerPoint's table styles and banding) and SmartArt (from the
+  drawing PowerPoint saves with it) are drawn instead of grey boxes. Charts are drawn from the
+  values saved in the file: column and bar (clustered, stacked, 100 %), line, area, pie,
+  doughnut, scatter and combinations, with titles, legends, axes, gridlines and data labels;
+  other chart types still show a placeholder. All of this is display only: the XML of these
+  objects is written back unchanged.
+- **Slides: Export as PDF…** (command palette), one page per slide at the slide's size, hidden
+  slides left out: real gradients, dashes, rotated text and pictures, embedded fonts. Exporting
+  runs in the background.
+
+#### Sheets
 - **Sheets: big workbooks stay responsive.** Spreadsheets open in the background: the pane appears
   at once with the file name, size, elapsed time and a Cancel button. `.xlsx` files show the values
   Excel saved instead of recalculating everything on open. Workbooks with more than 50,000 formulas
@@ -25,31 +101,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   "Calculating…" pane. Palette: "Automatic Calculation" / "Manual Calculation". A workbook saved
   with out-of-date values asks Excel to recalculate when opened. Status-bar sums and the used range
   are no longer recomputed over every cell on each frame.
-- **AI agents can edit open documents (`kantor mcp`).** An MCP server on stdio for Claude Code,
-  Claude Desktop, Cursor and other agents (`claude mcp add kantor -- kantor mcp`; JSON setup via
-  `kantor mcp --print-config` or the palette's *Copy MCP Setup for Claude Code*). It talks to the
-  running Kantor over a private Unix socket (started on demand) and offers 26 tools: list, open,
-  create, save and show documents; read and write cell ranges, select, format, insert and delete
-  rows/columns in Sheets; read, insert, replace and delete paragraphs and find & replace in Docs;
-  list slides, add a slide with title and bullets, set a shape's text or the speaker notes, delete
-  and show slides in Slides. Each change is one undo step, selects what changed and shows
-  "Agent: …" in the status bar. Speaks MCP 2026-07-28 (stateless) and the 2025-11-25 … 2024-11-05
-  handshake revisions.
-- **AI features, opt-in.** *AI Settings* (command palette) has a master switch (off by default),
-  a provider picker (Anthropic, OpenAI, OpenRouter, Groq, DeepSeek, Google Gemini, Ollama running
-  locally, or any OpenAI-compatible server), the API key (stored in the system keychain, never in the
-  settings file), base URL, model and *Test connection*. Requests go only to the provider you chose;
-  Kantor runs no AI service of its own.
-- **Sheets: Ask AI for a formula.** Describe what you want in English or Indonesian ("jumlah penjualan
-  untuk region Jakarta"); Kantor sends only the column headers, up to 20 sample rows near the
-  selection and the active cell's address, checks the suggested formula with IronCalc (it must parse
-  and calculate) and shows it with a one-line explanation; *Insert* puts it in the active cell as one
-  undo step. *Explain This Formula* explains the active cell's formula. Sparkle button in the
-  toolbar while AI is on.
-- **Docs: Rewrite / Translate selection.** Fix grammar, More formal, Shorter, or translate between
-  Indonesian and English. Only the selected paragraphs' text is sent; the result is shown first and
-  *Replace* applies it as one undo step, keeping paragraph styles (formatting inside a paragraph
-  becomes that of its first word).
+- **Sheets: faster recalculation of lookup-heavy workbooks.** Kantor now carries a patched copy of
+  IronCalc that caches lookups during a recalculation: a real 767,000-formula workbook went from
+  more than 10 minutes to about 3 seconds.
+- **Sheets: gridlines and headers.** Gridlines, a 2 px outline around the active cell and
+  highlighted headers for the selected rows and columns.
 - **Sheets: formula point mode.** While typing a formula with the caret after `=`, `(`, `,` or an
   operator, clicking a cell inserts its reference (drag or Shift+click for a range; clicking again
   replaces it), and arrows / Shift+arrows point too; a click elsewhere in the text still commits as
@@ -67,53 +123,90 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   First Column / Panes and Unfreeze (saved in the `.xlsx`; frozen columns stay in view, frozen rows
   are marked with a line but still scroll). Backspace clears a selected range. The status bar shows
   Average, Count and Sum for a selected range.
-- **Docs** (first slice): open, edit and save `.docx` on A4 pages laid out with parley — typing,
-  selection, Bold/Italic/Underline, headings (Ctrl+Alt+0–3), alignment, undo/redo, zoom, plain-text
-  clipboard, IME input. New Document is Ctrl+Shift+N. Saving an opened `.docx` rewrites only the
-  body and copies every other part unchanged; files with content Docs doesn't model yet (tables,
-  images, lists, headers/footers, comments, tracked changes…) show a banner and save to a new file.
-- **Slides** (first slice): new presentation (Ctrl+Alt+N, Home, sidebar, palette) and open/save
-  `.pptx`. Slides look like the file: placeholder positions and text formatting come from the
-  layout, master and theme, and master/layout decorations, backgrounds and pictures are drawn.
-  Thumbnail strip (drag to reorder, Ctrl+Up/Down), new/duplicate/delete slide (Ctrl+M / Ctrl+D),
-  select, move (drag or arrows) and resize shapes, edit text in text boxes and placeholders
-  (Bold/Italic/Underline, IME), insert text box, rectangle, ellipse or PNG/JPEG picture, undo/redo,
-  and a simple presenter mode (F5 / Shift+F5; arrows, space, Esc). Saving copies every part it
-  doesn't rewrite byte for byte, keeps unchanged shapes verbatim and, for edited ones, replaces
-  only the position or the paragraphs; tables, charts, groups and SmartArt are kept untouched
-  (shown as boxes). When slides are added, removed or reordered in a file with slide sections or
-  custom shows, those can't be kept, so Save goes to a new file and the original is never
-  overwritten.
-- **Slides: lists, rotation, notes, fill and outline, copy/paste.** Bullets and numbering (from the
-  master and layout, or the toolbar's list buttons), indent levels (Tab / Shift+Tab) and paragraph
-  spacing are shown and edited; unmodelled paragraph settings are kept. Rotated and flipped shapes,
-  pictures and text are drawn as in the file, with a rotate handle (Shift snaps to 15°). A
-  resizable speaker-notes pane under the slide (notes are created with their part, relationships
-  and notes master when needed) and notes under the slide while presenting (S hides them). Fill and
-  outline popovers with the theme's colours, no fill / no outline and outline widths. Copy, cut and
-  paste shapes within and between presentations (pictures take their image along) and Ctrl+D to
-  duplicate the selected shape. All undoable.
-- **Docs: lists, tables and pictures.** Bulleted and numbered lists (Ctrl+Shift+8 / Ctrl+Shift+7,
-  toolbar; Enter continues, Enter on an empty item ends the list, Tab / Shift+Tab change level,
-  Backspace at the start removes the number) with markers drawn in the hanging indent. Tables with
-  merged cells and borders, laid out row by row across pages; Tab moves to the next cell (and adds a
-  row at the end), toolbar grid to insert a table, insert/delete rows and columns, delete table.
-  Inline PNG/JPEG pictures, shown at their size, selectable and deletable like a character; insert a
-  picture from a file. All of it is undoable and saves in place.
-- **Docs: keeps what it can't show yet.** Floating pictures, shapes and text boxes, content
-  controls, page-number and date fields, equations, footnote references, bookmarks, nested tables,
-  headers/footers and unmodelled formatting are carried byte for byte and shown as placeholders, so
-  ordinary Word files now open as fully supported and save in place. Only tracked changes, comments
-  and fields that depend on the document (tables of contents, cross-references) still make Save go
-  to a new file. Page breaks and hyperlinks (editable text) are supported too.
+- **Sheets: Ask AI for a formula.** Describe what you want in English or Indonesian ("jumlah penjualan
+  untuk region Jakarta"); Kantor sends only the column headers, up to 20 sample rows near the
+  selection and the active cell's address, checks the suggested formula with IronCalc (it must parse
+  and calculate) and shows it with a one-line explanation; *Insert* puts it in the active cell as one
+  undo step. *Explain This Formula* explains the active cell's formula. Sparkle button in the
+  toolbar while AI is on.
+
+#### All apps
 - **Find & Replace in Docs, Sheets and Slides.** Ctrl+F opens a small find bar at the top right
   (match count "3 of 12", Enter / Shift+Enter or F3 / Shift+F3 for next / previous, Match case and
   Whole word toggles, Esc closes); Ctrl+H adds the replace row, and Replace All is one undo step.
   Docs highlights every match on the page and selects the current one; Sheets searches the active
   sheet's displayed values (or formulas, with "Look in formulas") and selects the cell; Slides
   searches every slide's text and jumps to it. Also in the palette (Find, Replace).
-- **Docs: word and character count** in the status bar, for the selection when there is one
-  ("12 of 1,234 words · 60 characters").
+- **Untitled documents and tooltips.** New documents are named Untitled.xlsx, Untitled 2.xlsx …
+  per app, and every toolbar button has a tooltip with its shortcut ("Bold · Ctrl+B").
+- **AI features, opt-in.** *AI Settings* (command palette) has a master switch (off by default),
+  a provider picker (Anthropic, OpenAI, OpenRouter, Groq, DeepSeek, Google Gemini, Ollama running
+  locally, or any OpenAI-compatible server), the API key (stored in the system keychain, never in the
+  settings file), base URL, model and *Test connection*. Requests go only to the provider you chose;
+  Kantor runs no AI service of its own.
+- **AI agents can edit open documents (`kantor mcp`).** An MCP server on stdio for Claude Code,
+  Claude Desktop, Cursor and other agents (`claude mcp add kantor -- kantor mcp`; JSON setup via
+  `kantor mcp --print-config` or the palette's *Copy MCP Setup for Claude Code*). It talks to the
+  running Kantor over a private Unix socket (started on demand) and offers 26 tools: list, open,
+  create, save and show documents; read and write cell ranges, select, format, insert and delete
+  rows/columns in Sheets; read, insert, replace and delete paragraphs and find & replace in Docs;
+  list slides, add a slide with title and bullets, set a shape's text or the speaker notes, delete
+  and show slides in Slides. Each change is one undo step, selects what changed and shows
+  "Agent: …" in the status bar. Speaks MCP 2026-07-28 (stateless) and the 2025-11-25 … 2024-11-05
+  handshake revisions.
+
+#### Command line
+- **`kantor convert`** converts documents without opening a window (no display needed):
+  `.docx` → `.pdf`, `.pptx` → `.pdf`, and spreadsheets (`.xlsx`, `.xlsm`, `.xls`, `.xlsb`, `.ods`,
+  `.csv`, `.tsv`) → `.xlsx`, `.csv` or `.tsv` (`--sheet` picks the sheet). `kantor convert IN OUT`,
+  or `-o DIR --to FORMAT FILES…` for many. It never overwrites without `-f` and never writes over
+  its input. Spreadsheet → PDF is not supported yet.
+- **`kantor pdf`** tools for PDF files: `merge` (with page ranges per file), `split`, `extract`,
+  `delete`, `reorder`, `rotate`, `info`, `images` (JPEG/PNG to PDF), `watermark`, `page-numbers`
+  and lossless `compress`. Password-protected PDFs open with `--password`. Outputs are never
+  overwritten without `-f`.
+
+#### Downloads and install
+- **macOS.** Kantor runs on macOS: `Kantor.dmg` is a universal app (Apple Silicon and Intel,
+  macOS 11 or later), signed with a Developer ID and notarised by Apple, so it opens with a
+  double-click. Shortcuts use ⌘ instead of Ctrl (Ctrl+Tab stays), and shortcut labels show ⌘⇧⌥.
+- **Linux AppImages** for x86_64 and aarch64 (`Kantor-x86_64.AppImage`,
+  `Kantor-aarch64.AppImage`): download, make executable, run. They need glibc 2.39 or newer
+  (Ubuntu 24.04, Debian 13, Fedora 40 or later), like the tarballs.
+- **Stable download links.** Every release has `Kantor.dmg`, `Kantor-x86_64.AppImage` and
+  `Kantor-aarch64.AppImage` under the same names (plus versioned copies), so
+  `https://github.com/dzulfikar08/kantor/releases/latest/download/<name>` always points at the
+  newest release.
+- **Install script:** `--uninstall` removes what it installed (binary or link, Kantor.app,
+  launchers, icons; settings are kept); when `~/.local/bin` is not on `PATH` it prints the line to
+  add for zsh, bash or fish; macOS installs from tagged releases (v0.2.0 on), with a clear message
+  for releases that have no macOS build.
+
+### Changed
+- Release builds use fat LTO and one codegen unit: the Linux binary shrank from 60.3 MB to
+  51.0 MB.
+- The command palette reacts faster: typing redraws only the palette, and the list of system fonts
+  is read once (on macOS each letter took about 190 ms before).
+
+### Fixed
+- Sheets: approximate lookups (`VLOOKUP`/`HLOOKUP`/`LOOKUP` with sorted data, `MATCH` with match
+  type 1 or -1) stop at the last non-empty cell, as Excel does. Before, a lookup over whole
+  columns could land on a blank row and return 0.
+- Docs: the ruler is drawn in the theme's chrome colours instead of paper white.
+- Release notes and README no longer claim a `kantor-bin` AUR package: it was prepared
+  (`packaging/aur/`) but never published.
+
+### Known limitations
+- Not yet checked against a large set of real-world files; expect layout differences from Word
+  and PowerPoint.
+- Docs: headers and footers, footnotes, fields and floating objects are kept in the file but shown
+  only as placeholders, and are not in the PDF; tracked changes, comments and tables of contents make Save go to a new file.
+- Slides: charts other than the types above show a placeholder; the content of charts, tables,
+  groups and SmartArt can't be edited yet. On screen, rotated text stays upright (the PDF turns it).
+- Sheets: no sort, filter, charts, cell colours/borders editing, printing or autosave yet; `.ods`,
+  `.xls` and `.xlsb` are import-only.
+- `kantor convert` can't turn spreadsheets into PDF yet.
+- The Linux builds need glibc 2.39 or newer.
 
 ## [0.1.0] - 2026-11-07
 
@@ -165,7 +258,7 @@ and on Asahi's 16K-page kernel).
 #### Project
 - Install script: `curl -fsSL https://raw.githubusercontent.com/dzulfikar08/kantor/main/scripts/install.sh | sh`
   (nightly), or `KANTOR_VERSION=v0.1.0` for this release.
-- AUR package `kantor-bin`.
+- A PKGBUILD for an AUR package `kantor-bin` (`packaging/aur/`; not published).
 - xlsx fidelity corpus (12 generated files) with a round-trip test and a Fidelity CI job.
 - Round-trip safety for `.xlsx`: comments, custom properties, drawings/charts/images, data
   validation, print setup and other parts IronCalc doesn't model are carried over from the
@@ -197,5 +290,6 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dzulfikar08/kantor/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dzulfikar08/kantor/releases/tag/v0.1.0
