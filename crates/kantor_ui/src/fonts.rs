@@ -5,6 +5,7 @@
 
 use gpui_kit::component::Theme;
 use gpui_kit::*;
+use std::sync::OnceLock;
 
 /// Preferred UI fonts, best first.
 pub const UI_FONTS: &[&str] = &[
@@ -26,9 +27,11 @@ pub const MONO_FONTS: &[&str] = &[
     "Noto Sans Mono",
 ];
 
-/// Installed font families, sorted.
-pub fn installed(cx: &App) -> Vec<String> {
-    cx.text_system().all_font_names()
+/// Installed font families, sorted. Read once per run: listing the system's
+/// fonts takes about 150 ms on macOS, too slow for a render path.
+pub fn installed(cx: &App) -> &'static [String] {
+    static FONTS: OnceLock<Vec<String>> = OnceLock::new();
+    FONTS.get_or_init(|| cx.text_system().all_font_names())
 }
 
 fn first_installed(installed: &[String], prefs: &[&str]) -> Option<String> {
@@ -40,7 +43,7 @@ fn first_installed(installed: &[String], prefs: &[&str]) -> Option<String> {
 
 /// The UI font Kantor uses when the user hasn't chosen one.
 pub fn automatic_ui_font(cx: &App) -> Option<String> {
-    first_installed(&installed(cx), UI_FONTS)
+    first_installed(installed(cx), UI_FONTS)
 }
 
 /// Apply `ui_font` (or the automatic choice) and the best monospace font to the theme.
@@ -49,8 +52,8 @@ pub fn apply(ui_font: Option<&str>, cx: &mut App) {
     let ui = ui_font
         .filter(|f| fonts.iter().any(|i| i == f))
         .map(str::to_owned)
-        .or_else(|| first_installed(&fonts, UI_FONTS));
-    let mono = first_installed(&fonts, MONO_FONTS);
+        .or_else(|| first_installed(fonts, UI_FONTS));
+    let mono = first_installed(fonts, MONO_FONTS);
     Theme::update(cx, |theme| {
         if let Some(ui) = ui {
             theme.font_family = ui.into();

@@ -938,7 +938,7 @@ impl PaletteMode {
 
     pub(super) fn fonts(cx: &App) -> Self {
         let mut fonts = vec![None];
-        fonts.extend(kantor_ui::fonts::installed(cx).into_iter().map(Some));
+        fonts.extend(kantor_ui::fonts::installed(cx).iter().cloned().map(Some));
         Self::Fonts(fonts)
     }
 
@@ -1193,11 +1193,14 @@ impl Workspace {
             let a = theme::current(cx);
             (a.theme.clone(), a.ui_font.clone())
         };
-        let automatic = kantor_ui::fonts::automatic_ui_font(cx);
         let Some(p) = self.palette.as_ref() else {
             return Vec::new();
         };
         let row_h = p.mode.row_height();
+        let automatic = match p.mode {
+            PaletteMode::Fonts(_) => kantor_ui::fonts::automatic_ui_font(cx),
+            _ => None,
+        };
         let mut rows = Vec::new();
         for row in range {
             let Some(&ix) = p.matches.get(row) else {
