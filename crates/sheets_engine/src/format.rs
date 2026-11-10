@@ -607,11 +607,11 @@ mod tests {
     fn number_formats_display() {
         let mut wb = Workbook::new_empty().unwrap();
         wb.set_input(0, 0, 0, "1234.5").unwrap();
-        // IronCalc rounds halves to even, so 1234.5 shows as Rp1,234 (Excel: Rp1,235).
+        // Halves round away from zero, as in Excel.
         let cases = [
             (NumberFormat::Number, "1,234.50"),
             (NumberFormat::Percent, "123450.00%"),
-            (NumberFormat::CurrencyIdr, "Rp1,234"),
+            (NumberFormat::CurrencyIdr, "Rp1,235"),
             (NumberFormat::CurrencyUsd, "$1,234.50"),
             (NumberFormat::General, "1234.5"),
         ];

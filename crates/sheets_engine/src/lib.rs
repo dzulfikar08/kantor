@@ -12,6 +12,7 @@ mod batch;
 mod csv;
 mod import;
 mod look;
+mod numfmt;
 mod preserve;
 
 pub use import::SourceFormat;
@@ -45,6 +46,7 @@ pub use format::{
 };
 pub use grid::{Fill, FillDirection, RangeStats, Step};
 pub use look::CellLook;
+pub use numfmt::Display;
 
 const LOCALE: &str = "en";
 const TIMEZONE: &str = "UTC";
@@ -632,16 +634,27 @@ impl Workbook {
         }
     }
 
-    /// The value as displayed in the grid (number formats applied).
-    /// Blank for a formula still waiting for a recalculation (see
-    /// [`Workbook::is_pending`]).
+    /// The value as displayed in the grid (number formats applied, as
+    /// Excel shows them). Blank for a formula still waiting for a
+    /// recalculation (see [`Workbook::is_pending`]).
     pub fn display_value(&self, sheet: u32, row: u32, col: u32) -> String {
+        self.display(sheet, row, col).text
+    }
+
+    /// [`Self::display_value`] with the colour (`[Red]`) and repeat fill
+    /// (`* `) its number format asks for.
+    pub fn display(&self, sheet: u32, row: u32, col: u32) -> Display {
         if self.calc.mode == CalcMode::Manual && self.is_pending(sheet, row, col) {
-            return String::new();
+            return Display::default();
         }
-        self.model
-            .get_formatted_cell_value(sheet, row as i32 + 1, col as i32 + 1)
-            .unwrap_or_default()
+        let fmt = self.number_format_by_index(self.style_index(sheet, row, col));
+        numfmt::display_cell(
+            self.model.get_model(),
+            sheet,
+            row as i32 + 1,
+            col as i32 + 1,
+            &fmt,
+        )
     }
 
     /// What the user typed: the formula (`=SUM(A1:A3)`) or the raw value.

@@ -495,7 +495,8 @@ impl TableDelegate for SheetGrid {
         let look = self.book.cell_look(sheet, row, col);
         // A merged cell shows its anchor's value.
         let (vr, vc) = look.merge.map_or((row, col), |m| (m.top, m.left));
-        let mut text = self.book.display_value(sheet, vr, vc);
+        let shown = self.book.display(sheet, vr, vc);
+        let mut text = shown.text;
         // A formula typed in manual calculation has no value until F9.
         let pending = text.is_empty() && self.book.is_pending(sheet, vr, vc);
         if pending {
@@ -513,12 +514,13 @@ impl TableDelegate for SheetGrid {
             color: if pending {
                 t.fg_dim
             } else {
-                look::text_color(style, &t)
+                look::value_color(style, shown.color, &t)
             },
             base_size: FONT_BODY,
             default_font_size: self.book.default_font_size(),
             family: self.fonts.for_style(style, cx),
             height: geometry.map_or(look::row_height(), |g| g.3),
+            fill: shown.fill,
         };
         let cell = div()
             .size_full()

@@ -140,14 +140,13 @@ pub(crate) fn write_csv(model: &Model<'_>, sheet: u32, path: &Path, delimiter: u
     let (rows, cols) = (dim.max_row.max(0), dim.max_column.max(0));
     let mut out = String::new();
     let mut fields = Vec::with_capacity(cols as usize);
+    let mut formats = crate::numfmt::Formats::default();
     for row in 1..=rows {
         fields.clear();
         for col in 1..=cols {
-            fields.push(
-                model
-                    .get_formatted_cell_value(sheet, row, col)
-                    .unwrap_or_default(),
-            );
+            let style = ws.cell(row, col).map_or(0, |c| c.get_style());
+            let fmt = formats.get(model, style);
+            fields.push(crate::numfmt::display_cell(model, sheet, row, col, fmt).text);
         }
         csv::write_record(&mut out, &fields, delimiter);
     }

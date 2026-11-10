@@ -90,6 +90,17 @@ pub(crate) fn text_color(style: &CellStyle, t: &Tokens) -> Hsla {
     text_color_on(style, t.fg, t.bg)
 }
 
+/// The colour a cell's value is drawn in: its number format's (`[Red]`)
+/// when it has one, kept like a set font colour (rescued when it would vanish
+/// into the theme's background on no fill), else [`text_color`].
+pub(crate) fn value_color(style: &CellStyle, format: Option<u32>, t: &Tokens) -> Hsla {
+    match format.map(hsla) {
+        Some(c) if style.fill.is_some() || contrast(c, t.bg) >= 1.8 => c,
+        Some(_) => t.fg,
+        None => text_color(style, t),
+    }
+}
+
 fn text_color_on(style: &CellStyle, fg: Hsla, bg: Hsla) -> Hsla {
     match (style.font_color.map(hsla), style.fill.map(hsla)) {
         (Some(c), Some(_)) => c,
@@ -245,7 +256,14 @@ pub(crate) struct Content<'a> {
     pub default_font_size: i32,
     pub family: Option<SharedString>,
     pub height: Pixels,
+    /// Repeat character from the number format's `*x` and its byte position
+    /// in `text`: the text splits there and the character fills the gap, so
+    /// `_("Rp"* #,##0_)` puts `Rp` at the left edge and the number at the right.
+    pub fill: Option<(char, usize)>,
 }
+
+/// Repeat characters laid out for a fill gap (the rest is clipped).
+const FILL_REPEAT: usize = 256;
 
 impl Content<'_> {
     /// Lay the text out in `d` (which becomes a flex box); an empty cell
@@ -276,15 +294,45 @@ impl Content<'_> {
             .when(s.underline, |d| d.underline())
             .when(s.strikethrough, |d| d.line_through())
             .when(self.align == HAlign::Center, |d| d.text_center())
-            .when(self.align == HAlign::Right, |d| d.text_right())
-            .map(|d| {
-                if s.wrap {
-                    d.whitespace_normal().overflow_hidden()
+            .when(self.align == HAlign::Right, |d| d.text_right());
+        let fill = self
+            .fill
+            .filter(|&(_, at)| !s.wrap && self.text.is_char_boundary(at));
+        let text = match fill {
+            // Like Excel, a fill ignores the alignment: the text spans the cell.
+            Some((c, at)) => {
+                let (left, right) = self.text.split_at(at);
+                let gap = div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap();
+                let gap = if c == ' ' {
+                    gap
                 } else {
-                    d.truncate()
-                }
-            })
-            .child(self.text);
+                    gap.child(SharedString::from(c.to_string().repeat(FILL_REPEAT)))
+                };
+                text.flex()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .child(div().flex_none().child(SharedString::from(left.to_owned())))
+                    .child(gap)
+                    .child(
+                        div()
+                            .flex_none()
+                            .child(SharedString::from(right.to_owned())),
+                    )
+            }
+            None => text
+                .map(|d| {
+                    if s.wrap {
+                        d.whitespace_normal().overflow_hidden()
+                    } else {
+                        d.truncate()
+                    }
+                })
+                .child(self.text),
+        };
         d.flex()
             .px(SPACE_3)
             .map(|d| match s.valign {

@@ -72,7 +72,7 @@ pub fn evaluate_in_copy(
     let (r, c) = (row as i32 + 1, col as i32 + 1);
     model.set_user_input(sheet, r, c, formula)?;
     model.evaluate();
-    let value = model.get_formatted_cell_value(sheet, r, c)?;
+    let value = crate::numfmt::display_model_cell(model.get_model(), sheet, r, c).text;
     let warning = match value.as_str() {
         "#NAME?" => return Err("it uses a function or name Kantor doesn't know (#NAME?)".into()),
         "#ERROR!" => return Err("it can't be calculated (#ERROR!)".into()),

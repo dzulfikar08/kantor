@@ -4,11 +4,7 @@
 # A finding not listed here fails the test; a listed gap that no longer happens fails too.
 01_formulas.xlsx	import-formula	Calc!B13	IronCalc shows INDEX(...) as @INDEX(...) (implicit-intersection marker added to the formula text); value is right
 02_multi_sheet.xlsx	import-value	Q1 Summary!B6	3-D references (SUM(Jan:Mar!B2:B4)) are not supported: evaluates to #ERROR! instead of 776.25
-03_number_formats.xlsx	expect	Formats!B12 display	locale-tagged currency format [$Rp-421]#,##0 displays #VALUE!
-03_number_formats.xlsx	expect	Formats!B16 display	built-in numFmtId 14 is shown as mm-dd-yy (08-17-25) instead of Excel's m/d/yyyy for en-US
-03_number_formats.xlsx	expect	Formats!B22 display	date-time 14:30 displays 14:29 (seconds truncated after float rounding)
-03_number_formats.xlsx	expect	Formats!B23 display	fraction formats (# ?/?) are not supported
-03_number_formats.xlsx	expect	Formats!B3 display	format "0" rounds 1234.5 to 1234 (Excel rounds half away from zero: 1235)
+03_number_formats.xlsx	expect	Formats!B12 display	deliberate: Kantor takes separators from the locale tag (0x421, Indonesian) and shows Rp1.500.000, as an Indonesian Excel does; Excel on an en-US system shows Rp1,500,000
 05_styles.xlsx	export-style	Styles!B13 border-bottom	dashed borders are not in IronCalc's BorderStyle: become thin
 05_styles.xlsx	export-style	Styles!B13 border-left	dashed borders are not in IronCalc's BorderStyle: become thin
 05_styles.xlsx	export-style	Styles!B13 border-right	dashed borders are not in IronCalc's BorderStyle: become thin
