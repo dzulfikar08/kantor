@@ -6,6 +6,9 @@
 #   Kantor-{x86_64,aarch64}.AppImage, Kantor-X.Y.Z-{x86_64,aarch64}.AppImage    Linux
 #   kantor-X.Y.Z-{x86_64,aarch64}-linux.tar.gz, kantor-X.Y.Z-universal-macos.tar.gz  (install.sh)
 #   SHA256SUMS
+#   update-stable.json, update-stable.json.sig   in-app update manifest, Ed25519-signed with the
+#     `release` environment secret UPDATE_SIGNING_KEY (scripts/update-manifest.sh); the app
+#     fetches it through https://kantor.paparanai.id/update/stable.json (site/static/_redirects)
 # The unversioned names are what https://github.com/dzulfikar08/kantor/releases/latest/download/<name>
 # (and the download site) link to, so they must not change.
 #
@@ -136,6 +139,11 @@ jobs:
     env:
       VERSION: ${{ needs.check.outputs.version }}
     steps:
+      # Fail now rather than after notarising: publish signs the update manifest with it.
+      - name: Update signing key is set
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: '[ -n "$UPDATE_SIGNING_KEY" ] || { echo "::error::secret UPDATE_SIGNING_KEY is missing from the release environment"; exit 1; }'
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -192,6 +200,8 @@ jobs:
     needs: [check, linux, macos]
     if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-24.04
+    # UPDATE_SIGNING_KEY for the update manifest; only main and v* tags may use it.
+    environment: release
     permissions:
       contents: write
     env:
@@ -212,6 +222,21 @@ jobs:
           sha256sum kantor-*.tar.gz Kantor*.dmg Kantor*.AppImage > SHA256SUMS
           cat SHA256SUMS
           test "$(wc -l < SHA256SUMS)" -eq 9
+      - name: Update manifest (signed)
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          ./scripts/update-manifest.sh stable "$VERSION" 0 \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}" \
+            dist/update-stable.json \
+            "macos-universal-app=dist/kantor-${VERSION}-universal-macos.tar.gz" \
+            "linux-x86_64-appimage=dist/Kantor-${VERSION}-x86_64.AppImage" \
+            "linux-aarch64-appimage=dist/Kantor-${VERSION}-aarch64.AppImage" \
+            "linux-x86_64-tarball=dist/kantor-${VERSION}-x86_64-linux.tar.gz" \
+            "linux-aarch64-tarball=dist/kantor-${VERSION}-aarch64-linux.tar.gz"
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -234,4 +259,5 @@ jobs:
           Verify downloads with \`sha256sum -c SHA256SUMS --ignore-missing\`. The Linux builds need glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40 or later).
           EOF
           gh release create "$tag" dist/kantor-*.tar.gz dist/Kantor*.dmg dist/Kantor*.AppImage dist/SHA256SUMS \
+            dist/update-stable.json dist/update-stable.json.sig \
             --verify-tag --latest --title "Kantor ${VERSION}" --notes-file notes.md

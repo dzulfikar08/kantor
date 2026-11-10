@@ -129,6 +129,31 @@ AI is **off** until you turn it on in `Ctrl K` → *AI Settings* and choose a pr
 
 API keys are stored in the system keychain (Secret Service on Linux, Keychain on macOS); if none is available Kantor says so and keeps the key in `~/.config/kantor/ai-keys.toml`, readable only by you. Keys are never written to `settings.toml` or logs. What the provider does with your requests is governed by its own terms.
 
+## Updates
+
+Kantor downloaded from the site, the GitHub releases or the install script keeps itself up to date:
+
+- **When it checks:** at most once a day, at launch, and when you choose `Ctrl K` → *Check for Updates…*. A check fetches a small manifest from `https://kantor.paparanai.id/update/stable.json` (redirected to the GitHub release) and sends **only Kantor's version and your OS and CPU type**, in the User-Agent (`Kantor/0.2.1 (linux; x86_64)`). No identifier, no usage data, nothing about your files. `kantor mcp`, `kantor convert` and `kantor pdf` never check.
+- **How it's protected:** the manifest is signed (Ed25519) and Kantor checks the signature with a key built into the app before trusting anything in it; every download must then match the manifest's size and SHA-256, and the new build must start and report the promised version before it is used. On macOS the new `Kantor.app` must also pass `codesign` (Developer ID team `F6Q6UFUK69`) and Gatekeeper (notarised) checks.
+- **What you see:** nothing while it downloads in the background. When the new version is ready, the status bar says *Kantor X.Y.Z is ready — Restart to update*. Click it (or `Ctrl K` → *Restart to Update*): Kantor asks about unsaved documents as when quitting, installs the update and reopens. If you just quit, the update is installed then and you get it next time.
+- **How each install updates:**
+  - **macOS app** (`Kantor.dmg` or the install script): the new notarised `Kantor.app` replaces the old one where it is. If Kantor can't write there (an Applications folder you don't own), it offers the download page instead.
+  - **AppImage:** the new AppImage replaces the file you run, under the same name.
+  - **Install script on Linux** (`~/.local/bin/kantor`): the binary, launchers and icons are replaced.
+  - **Packages and source builds** (AUR, `cargo build`, …) are never changed: Kantor only tells you a new version exists. Update those the usual way.
+
+  Each replacement is all-or-nothing: if any step fails, the old version stays as it was.
+- **Channels:** releases follow `stable`; nightly builds (the install script's default) follow `nightly`. The nightly macOS build is not notarised, so on macOS nightly Kantor only tells you about new nightlies.
+- **Turn it off** in `~/.config/kantor/settings.toml`; Kantor then makes no update requests at all, not even from the palette:
+
+  ```toml
+  [update]
+  enabled = false
+  # channel = "nightly"   # or "stable"; unset follows the build
+  ```
+
+For testing, `KANTOR_UPDATE_URL` replaces the manifest URL and `KANTOR_UPDATE_CURRENT=0.1.0` makes Kantor compare as if it were that version; signatures, checksums and code-signing checks still apply.
+
 ## Building
 
 All builds run on **GitHub Actions** (`ubuntu-24.04-arm`, `ubuntu-24.04` and `macos-15`); contributors don't need a powerful machine. If you do want to build locally:

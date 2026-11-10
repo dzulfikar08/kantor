@@ -21,6 +21,30 @@ pub struct Settings {
     /// AI assistant (provider, models). API keys are never stored here: they
     /// live in the OS keychain (see `kantor_ai::keys`).
     pub ai: AiSettings,
+    /// In-app updates for direct-download installs (see `kantor_update`).
+    pub update: UpdateSettings,
+}
+
+/// `[update]`: checks at most daily, sending only Kantor's version and OS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// Off: Kantor never contacts the update server, not even for
+    /// "Check for Updates…".
+    pub enabled: bool,
+    /// `stable` or `nightly`; unset follows the build (nightly builds follow
+    /// the nightly channel, releases the stable one).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            channel: None,
+        }
+    }
 }
 
 /// AI settings. Everything is off until the user picks a provider and turns
@@ -51,6 +75,7 @@ impl Default for Settings {
             ui_font: None,
             docs_ruler: true,
             ai: AiSettings::default(),
+            update: UpdateSettings::default(),
         }
     }
 }
@@ -121,6 +146,10 @@ mod tests {
                     },
                 )]),
             },
+            update: UpdateSettings {
+                enabled: false,
+                channel: Some("nightly".into()),
+            },
         };
         s.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), s);
@@ -133,5 +162,14 @@ mod tests {
         assert_eq!(Settings::load_from(&path).ui_font, None);
         assert!(Settings::load_from(&path).docs_ruler, "ruler on by default");
         assert!(!Settings::load_from(&path).ai.enabled, "AI off by default");
+        assert!(
+            Settings::load_from(&path).update.enabled,
+            "updates on by default"
+        );
+
+        std::fs::write(&path, "[update]\nenabled = false\n").unwrap();
+        let s = Settings::load_from(&path);
+        assert!(!s.update.enabled);
+        assert_eq!(s.update.channel, None);
     }
 }

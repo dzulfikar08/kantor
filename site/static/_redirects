@@ -1,0 +1,7 @@
+# In-app update manifests (crates/kantor_update): the app asks this site, which points it at
+# the signed manifests attached to GitHub releases (written by .github/workflows/release.yml
+# and build.yml). 302 so a moved release is picked up at once.
+/update/stable.json       https://github.com/dzulfikar08/kantor/releases/latest/download/update-stable.json       302
+/update/stable.json.sig   https://github.com/dzulfikar08/kantor/releases/latest/download/update-stable.json.sig   302
+/update/nightly.json      https://github.com/dzulfikar08/kantor/releases/download/nightly/update-nightly.json      302
+/update/nightly.json.sig  https://github.com/dzulfikar08/kantor/releases/download/nightly/update-nightly.json.sig  302

@@ -20,6 +20,7 @@ mod naming;
 mod palette;
 mod panels;
 mod splits;
+mod update;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -136,6 +137,8 @@ pub struct Workspace {
     /// Bounds of each split container in the active tab, recorded at paint time
     /// so divider drags can turn pixels into ratios.
     split_bounds: Rc<RefCell<HashMap<LayoutPath, Bounds<Pixels>>>>,
+    /// In-app updates (see `update`).
+    updates: update::Updates,
 }
 
 impl Workspace {
@@ -163,6 +166,7 @@ impl Workspace {
             recent: session.recent.clone(),
             drag: None,
             split_bounds: Rc::default(),
+            updates: update::Updates::default(),
         };
         let ws = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -196,6 +200,7 @@ impl Workspace {
         if std::env::var_os("KANTOR_BENCH_PALETTE").is_some() {
             this.bench_palette(window, cx);
         }
+        this.init_updates(cx);
         this
     }
 

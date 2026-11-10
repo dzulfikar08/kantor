@@ -84,6 +84,10 @@ export const en = {
     ["Export to PDF", "Docs and Slides save a PDF that looks like what you see on screen."],
     ["Offline, no account", "Your files stay on your computer. There is nothing to sign up for."],
     [
+      "Updates",
+      'Kantor checks for updates at most once a day, sending only its version and operating system, and installs a new version when you restart it. You can <a href="' + GH + '#updates">turn this off</a>.',
+    ],
+    [
       "AI only if you want it",
       "Off until you turn it on. Use your own key from a provider such as Anthropic, OpenAI or Google, or run a model on your own computer with Ollama. Kantor has no AI service of its own.",
     ],
@@ -241,6 +245,10 @@ export const id = {
   more: [
     ["Ekspor ke PDF", "Docs dan Slides menyimpan PDF yang sama dengan tampilan di layar."],
     ["Tanpa internet, tanpa akun", "File Anda tetap di komputer Anda. Tidak perlu mendaftar apa pun."],
+    [
+      "Pembaruan",
+      'Kantor memeriksa pembaruan paling sering sekali sehari, hanya dengan mengirim versi dan sistem operasinya, lalu memasang versi baru saat Anda membukanya ulang. Fitur ini <a href="' + GH + '#updates">bisa dimatikan</a> (bahasa Inggris).',
+    ],
     [
       "AI hanya kalau Anda mau",
       "Mati sampai Anda menyalakannya. Pakai kunci API Anda sendiri dari penyedia seperti Anthropic, OpenAI, atau Google, atau jalankan model di komputer sendiri dengan Ollama. Kantor tidak punya layanan AI sendiri.",

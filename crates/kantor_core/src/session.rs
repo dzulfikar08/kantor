@@ -67,13 +67,19 @@ pub struct Session {
 
 pub const MAX_RECENT: usize = 12;
 
-/// `$XDG_STATE_HOME/kantor/workspace.json` (default `~/.local/state/kantor/workspace.json`).
-pub fn session_path() -> Option<PathBuf> {
+/// `$XDG_STATE_HOME/kantor` (default `~/.local/state/kantor`): the session,
+/// the update checker's state.
+pub fn state_dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
-    Some(base.join("kantor/workspace.json"))
+    Some(base.join("kantor"))
+}
+
+/// `$XDG_STATE_HOME/kantor/workspace.json` (default `~/.local/state/kantor/workspace.json`).
+pub fn session_path() -> Option<PathBuf> {
+    Some(state_dir()?.join("workspace.json"))
 }
 
 impl Session {

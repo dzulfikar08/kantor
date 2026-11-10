@@ -55,7 +55,8 @@ fn parse_args() -> Result<Args> {
                 std::process::exit(0);
             }
             Some("-V" | "--version") => {
-                println!("kantor {}", env!("CARGO_PKG_VERSION"));
+                // `kantor 0.2.0`, nightlies `kantor 0.2.0 (nightly 2026-11-10 14:30)`.
+                println!("kantor {}", kantor_update::current_build().display());
                 std::process::exit(0);
             }
             Some("--docs") => app = Some(AppKind::Docs),
@@ -144,6 +145,13 @@ fn main() {
             };
             #[cfg(unix)]
             start_agent_endpoint(window, workspace.clone(), cx);
+            // A downloaded update goes in place when Kantor quits.
+            let updating = workspace.clone();
+            cx.on_app_quit(move |cx| {
+                updating.update(cx, |ws, _| ws.apply_update_on_quit());
+                async {}
+            })
+            .detach();
             // Ctrl+Q while focus is outside the workspace (a dialog): still
             // goes through the unsaved-changes check.
             cx.on_action(move |_: &actions::Quit, cx| {

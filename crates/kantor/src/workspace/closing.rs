@@ -19,9 +19,14 @@ use kantor_core::layout::PaneId;
 /// request stays correct while the dialog is open.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Closing {
-    Pane { tab: u64, pane: PaneId },
+    Pane {
+        tab: u64,
+        pane: PaneId,
+    },
     Tab(u64),
     Quit,
+    /// Quit, swap in the downloaded update and start it.
+    Restart,
 }
 
 impl Workspace {
@@ -37,7 +42,9 @@ impl Workspace {
                 .tab_index(id)
                 .map(|ti| self.tabs[ti].layout.panes())
                 .unwrap_or_default(),
-            Closing::Quit => self.tabs.iter().flat_map(|t| t.layout.panes()).collect(),
+            Closing::Quit | Closing::Restart => {
+                self.tabs.iter().flat_map(|t| t.layout.panes()).collect()
+            }
         }
     }
 
@@ -96,6 +103,12 @@ impl Workspace {
             Closing::Quit => {
                 self.persist(cx);
                 cx.quit();
+            }
+            Closing::Restart => {
+                self.persist(cx);
+                if self.apply_update_and_relaunch(cx) {
+                    cx.quit();
+                }
             }
         }
     }

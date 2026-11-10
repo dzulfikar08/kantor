@@ -3857,6 +3857,7 @@ dependencies = [
  "kantor_pdf",
  "kantor_theme",
  "kantor_ui",
+ "kantor_update",
  "log",
  "serde_json",
  "sheets_engine",
@@ -3920,6 +3921,20 @@ dependencies = [
  "gpui-pre-wgpu",
  "kantor_core",
  "kantor_theme",
+]
+
+[[package]]
+name = "kantor_update"
+version = "0.2.0"
+dependencies = [
+ "base64 0.22.1",
+ "kantor_core",
+ "log",
+ "ring",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "ureq",
 ]
 
 [[package]]
