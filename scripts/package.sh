@@ -8,6 +8,7 @@ mkdir -p "$stage/bin" "$stage/share/applications" "$stage/share/icons/hicolor/sc
 install -m755 "$bin" "$stage/bin/kantor"
 install -m644 "$root"/packaging/*.desktop "$stage/share/applications/"
 install -m644 "$root"/assets/icons/*.svg "$stage/share/icons/hicolor/scalable/apps/"
-install -m644 "$root"/LICENSE "$root"/NOTICE "$root"/README.md "$stage/"
+tpl="$root/THIRD_PARTY_LICENSES.txt"; [ -f "$tpl" ] || python3 "$root/scripts/third-party-licenses.py" "$tpl"
+install -m644 "$root"/LICENSE "$root"/NOTICE "$tpl" "$root"/README.md "$stage/"
 tar -C "$(dirname "$stage")" -czf "$out.tar.gz" "$(basename "$stage")"
 ( cd "$(dirname "$out")" && sha256sum "$(basename "$out").tar.gz" > "$(basename "$out").tar.gz.sha256" )

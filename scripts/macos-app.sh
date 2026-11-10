@@ -22,6 +22,9 @@ for s in 16 32 128 256 512; do
   rsvg-convert -w $((s * 2)) -h $((s * 2)) "$root/assets/icons/kantor.svg" -o "$iconset/icon_${s}x${s}@2x.png"
 done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/kantor.icns"
+# Licences travel inside the bundle (signed with it).
+tpl="$root/THIRD_PARTY_LICENSES.txt"; [ -f "$tpl" ] || python3 "$root/scripts/third-party-licenses.py" "$tpl"
+install -m644 "$root/LICENSE" "$root/NOTICE" "$tpl" "$app/Contents/Resources/"
 
 doc_type() { # name role exts...
   local name="$1" role="$2"; shift 2

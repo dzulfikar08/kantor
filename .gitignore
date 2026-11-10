@@ -6,3 +6,4 @@
 *.docx
 *.pptx
 !tests/corpus/**
+THIRD_PARTY_LICENSES.txt

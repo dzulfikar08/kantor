@@ -12,6 +12,7 @@ case "$src" in
   *.app|*.app/) ditto "$src" "$stage/Kantor.app" ;;
   *) "$root/scripts/macos-app.sh" "$src" "$stage" ;;
 esac
-install -m644 "$root"/LICENSE "$root"/NOTICE "$root"/README.md "$stage/"
+tpl="$root/THIRD_PARTY_LICENSES.txt"; [ -f "$tpl" ] || python3 "$root/scripts/third-party-licenses.py" "$tpl"
+install -m644 "$root"/LICENSE "$root"/NOTICE "$tpl" "$root"/README.md "$stage/"
 tar -C "$(dirname "$stage")" -czf "$out.tar.gz" "$(basename "$stage")"
 ( cd "$(dirname "$out")" && shasum -a 256 "$(basename "$out").tar.gz" > "$(basename "$out").tar.gz.sha256" )

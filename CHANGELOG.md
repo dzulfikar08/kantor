@@ -11,6 +11,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+#### Packaging
+- Every download (dmg, AppImage, tarballs) ships `THIRD_PARTY_LICENSES.txt`: the licence texts of
+  all ~610 crates linked into Kantor, generated at packaging time by
+  `scripts/third-party-licenses.py`. On macOS it is inside `Kantor.app/Contents/Resources`.
+
 #### Sheets
 - Formatted workbooks look as they do in Excel: cell fills (theme colours with tints and indexed
   colours resolved), text colour, font size and family (Calibri → Carlito, Arial → Liberation
