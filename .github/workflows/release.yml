@@ -1,13 +1,31 @@
 # Versioned releases. Push a tag `vX.Y.Z` that matches [workspace.package] version in
 # Cargo.toml and has a `## [X.Y.Z]` section in CHANGELOG.md:
-#   git tag -a v0.1.0 -m "Kantor 0.1.0" && git push origin v0.1.0
-# Produces kantor-X.Y.Z-{x86_64,aarch64}-linux.tar.gz + SHA256SUMS on a GitHub Release
-# whose notes are that CHANGELOG section. (The rolling nightly lives in build.yml.)
+#   git tag -a v0.2.0 -m "Kantor 0.2.0" && git push origin v0.2.0
+# The GitHub Release (notes = that CHANGELOG section) gets:
+#   Kantor.dmg, Kantor-X.Y.Z.dmg                    macOS universal, Developer ID, notarised
+#   Kantor-{x86_64,aarch64}.AppImage, Kantor-X.Y.Z-{x86_64,aarch64}.AppImage    Linux
+#   kantor-X.Y.Z-{x86_64,aarch64}-linux.tar.gz, kantor-X.Y.Z-universal-macos.tar.gz  (install.sh)
+#   SHA256SUMS
+# The unversioned names are what https://github.com/dzulfikar08/kantor/releases/latest/download/<name>
+# (and the download site) link to, so they must not change.
+#
+# Dry run (builds, signs and notarises everything, uploads workflow artifacts only, no release):
+#   gh workflow run release.yml --ref main            # dry_run defaults to true
+# The macOS job uses the `release` environment (Developer ID + App Store Connect secrets),
+# which only main and v* tags may use. dry_run=false is only accepted on a v* tag ref, to
+# redo a release whose tag push failed:  gh workflow run release.yml --ref v0.2.0 -f dry_run=false
+# (The rolling nightly lives in build.yml.)
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build, sign and notarise, but upload workflow artifacts only (no GitHub Release)"
+        type: boolean
+        default: true
 
 concurrency:
   group: release-${{ github.ref }}
@@ -26,25 +44,39 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
       - id: v
-        name: Tag matches Cargo.toml
+        name: Version (and tag) match Cargo.toml
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
           cargo_version="$(awk '/^\[workspace.package\]/{s=1;next} /^\[/{s=0} s && /^version *=/{gsub(/.*= *"|".*/,""); print; exit}' Cargo.toml)"
-          echo "tag=${tag} Cargo.toml=${cargo_version}"
-          if [ -z "$cargo_version" ] || [ "$tag" != "v${cargo_version}" ]; then
-            echo "::error::tag ${tag} does not match workspace version ${cargo_version} in Cargo.toml (expected v${cargo_version})"
+          [ -n "$cargo_version" ] || { echo "::error::no [workspace.package] version in Cargo.toml"; exit 1; }
+          publish=true
+          if [ "$DRY_RUN" = true ]; then
+            publish=false
+          elif [ "$GITHUB_REF_TYPE" != tag ]; then
+            echo "::error::publishing needs a v* tag ref (got ${GITHUB_REF}); use dry_run=true from a branch"
             exit 1
           fi
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "tag=${GITHUB_REF_NAME} Cargo.toml=${cargo_version}"
+            if [ "$GITHUB_REF_NAME" != "v${cargo_version}" ]; then
+              echo "::error::tag ${GITHUB_REF_NAME} does not match workspace version ${cargo_version} in Cargo.toml (expected v${cargo_version})"
+              exit 1
+            fi
+          fi
+          echo "version=${cargo_version} publish=${publish}"
           echo "version=${cargo_version}" >> "$GITHUB_OUTPUT"
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
       - name: CHANGELOG has a section for this version
         run: ./scripts/changelog-section.sh "${{ steps.v.outputs.version }}"
 
-  build:
-    name: build (${{ matrix.arch }})
+  linux:
+    name: linux (${{ matrix.arch }})
     needs: check
     strategy:
       fail-fast: true
@@ -52,9 +84,12 @@ jobs:
         include:
           - { arch: aarch64, os: ubuntu-24.04-arm }
           - { arch: x86_64, os: ubuntu-24.04 }
+    # Ubuntu 24.04 sets the glibc baseline (2.39) for the tarballs and AppImages.
     runs-on: ${{ matrix.os }}
     env:
+      VERSION: ${{ needs.check.outputs.version }}
       NAME: kantor-${{ needs.check.outputs.version }}-${{ matrix.arch }}-linux
+      APPIMAGE: Kantor-${{ needs.check.outputs.version }}-${{ matrix.arch }}.AppImage
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -71,52 +106,132 @@ jobs:
           set -euo pipefail
           out="$(target/release/kantor --version)"
           echo "$out"
-          case "$out" in *"${{ needs.check.outputs.version }}"*) ;; *) echo "::error::--version does not report the release version"; exit 1 ;; esac
-      - name: Package
+          case "$out" in *"${VERSION}"*) ;; *) echo "::error::--version does not report the release version"; exit 1 ;; esac
+      - name: Tarball
         run: |
           ./scripts/package.sh target/release/kantor "dist/${NAME}"
           tar -tzf "dist/${NAME}.tar.gz"
+      - name: AppImage
+        run: |
+          set -euo pipefail
+          ./scripts/package-appimage.sh target/release/kantor "dist/${APPIMAGE}"
+          out="$("./dist/${APPIMAGE}" --appimage-extract-and-run --version)"
+          case "$out" in *"${VERSION}"*) ;; *) echo "::error::the AppImage does not report the release version"; exit 1 ;; esac
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.NAME }}
-          path: dist/${{ env.NAME }}.tar.gz
+          name: release-linux-${{ matrix.arch }}
+          path: |
+            dist/${{ env.NAME }}.tar.gz
+            dist/${{ env.APPIMAGE }}
+          if-no-files-found: error
+          retention-days: 30
+
+  macos:
+    name: macos (universal, notarised)
+    needs: check
+    runs-on: macos-15
+    timeout-minutes: 150
+    # Developer ID + App Store Connect secrets; only main and v* tags may deploy to it.
+    environment: release
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: brew install librsvg
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-macos-universal
+          cache-on-failure: true
+      - name: Signing keychain and notary key
+        env:
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+        run: ./scripts/ci-keychain.sh setup
+      - name: Build, sign, notarise, staple (Kantor.app + DMG)
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: ./scripts/build-dmg.sh --notarize --name "Kantor-${VERSION}" dist
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          bin=dist/Kantor.app/Contents/MacOS/kantor
+          lipo -archs "$bin"
+          out="$("$bin" --version)"
+          echo "$out"
+          case "$out" in *"${VERSION}"*) ;; *) echo "::error::--version does not report the release version"; exit 1 ;; esac
+          # The x86_64 slice, through Rosetta when the runner has it.
+          arch -x86_64 "$bin" --version || echo "::warning::could not run the x86_64 slice (no Rosetta?)"
+          # The DMG mounts and holds the app and the Applications link.
+          mnt="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "dist/Kantor-${VERSION}.dmg"
+          ls -l "$mnt"
+          test -d "$mnt/Kantor.app" && test -L "$mnt/Applications"
+          codesign --verify --strict "$mnt/Kantor.app"
+          hdiutil detach "$mnt"
+      - name: Tarball (for install.sh)
+        run: ./scripts/package-macos.sh dist/Kantor.app "dist/kantor-${VERSION}-universal-macos"
+      - name: Remove keychain and notary key
+        if: always()
+        run: ./scripts/ci-keychain.sh cleanup
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: |
+            dist/Kantor-${{ env.VERSION }}.dmg
+            dist/kantor-${{ env.VERSION }}-universal-macos.tar.gz
           if-no-files-found: error
           retention-days: 30
 
   publish:
-    needs: [check, build]
+    needs: [check, linux, macos]
+    if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: release-*
           merge-multiple: true
-      - name: Checksums
+      - name: Stable names and checksums
         run: |
           set -euo pipefail
           cd dist
-          sha256sum kantor-*.tar.gz > SHA256SUMS
+          cp "Kantor-${VERSION}.dmg" Kantor.dmg
+          for arch in x86_64 aarch64; do cp "Kantor-${VERSION}-${arch}.AppImage" "Kantor-${arch}.AppImage"; done
+          sha256sum kantor-*.tar.gz Kantor*.dmg Kantor*.AppImage > SHA256SUMS
           cat SHA256SUMS
-          test "$(wc -l < SHA256SUMS)" -eq 2
+          test "$(wc -l < SHA256SUMS)" -eq 9
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.check.outputs.version }}
         run: |
           set -euo pipefail
+          tag="v${VERSION}"
           ./scripts/changelog-section.sh "$VERSION" > notes.md
-          {
-            echo
-            echo "## Install"
-            echo
-            echo '```sh'
-            echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | KANTOR_VERSION=${GITHUB_REF_NAME} sh"
-            echo '```'
-            echo
-            echo 'Arch Linux: `kantor-bin` from the AUR. Verify downloads with `sha256sum -c SHA256SUMS --ignore-missing`.'
-          } >> notes.md
-          gh release create "$GITHUB_REF_NAME" dist/kantor-*.tar.gz dist/SHA256SUMS \
-            --verify-tag --title "Kantor ${VERSION}" --notes-file notes.md
+          cat >> notes.md <<EOF
+
+          ## Download
+
+          - macOS (Apple Silicon and Intel): [Kantor.dmg](https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Kantor-${VERSION}.dmg). Open it and drag Kantor to Applications.
+          - Linux: [x86_64 AppImage](https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Kantor-${VERSION}-x86_64.AppImage) or [aarch64 AppImage](https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Kantor-${VERSION}-aarch64.AppImage). Make it executable (\`chmod +x Kantor-*.AppImage\`) and run it.
+          - Terminal (Linux or macOS):
+
+          \`\`\`sh
+          curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | KANTOR_VERSION=${tag} sh
+          \`\`\`
+
+          Verify downloads with \`sha256sum -c SHA256SUMS --ignore-missing\`. The Linux builds need glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40 or later).
+          EOF
+          gh release create "$tag" dist/kantor-*.tar.gz dist/Kantor*.dmg dist/Kantor*.AppImage dist/SHA256SUMS \
+            --verify-tag --latest --title "Kantor ${VERSION}" --notes-file notes.md
