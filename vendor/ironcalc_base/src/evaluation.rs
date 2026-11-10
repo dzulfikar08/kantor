@@ -431,6 +431,16 @@ pub(crate) struct Evaluation {
     /// KANTOR PATCH: off, every lookup reads and scans its vector again, as
     /// upstream does. For tests that compare the two.
     pub(crate) lookup_cache_enabled: bool,
+    /// KANTOR PATCH: whether reads are put on record (`seen`, `seen_ranges`)
+    /// in this pass. Only a dynamic anchor's spill asks what was read, so a
+    /// workbook without dynamic anchors records nothing: on a big sheet the
+    /// records of every cell read took more memory than the cells.
+    pub(crate) record_reads: bool,
+    /// KANTOR PATCH: for tests, how many positions the last pass recorded
+    /// and its rectangles (`seen` and `seen_ranges` are freed when the
+    /// evaluation ends).
+    #[cfg(test)]
+    pub(crate) last_records: (usize, Vec<SeenRange>),
 }
 
 /// How deep the recursion may go when nobody has said otherwise, in formulas
@@ -484,6 +494,9 @@ impl Default for Evaluation {
             lookups: LookupCache::default(),
             cycle_reads: 0,
             lookup_cache_enabled: true,
+            record_reads: true,
+            #[cfg(test)]
+            last_records: (0, Vec::new()),
         }
     }
 }
@@ -492,7 +505,7 @@ impl Evaluation {
     /// See `Model::record_seen`. Here so that a read can be put on record
     /// while the sheet it was made in is still borrowed.
     pub(crate) fn record_seen(&mut self, position: CellReferenceIndex, seen: Seen) {
-        if !self.in_pass {
+        if !self.in_pass || !self.record_reads {
             return;
         }
         if let Some(root) = self.root {
@@ -543,6 +556,17 @@ impl<'a> Model<'a> {
             self.restore_dynamic_spills(&spills_before);
         }
         self.evaluation.restarts_in_last_evaluation = log.restarts;
+        // KANTOR PATCH: what was read is only asked within a pass; give the
+        // memory back rather than keep it for the next evaluation.
+        #[cfg(test)]
+        {
+            self.evaluation.last_records = (
+                self.evaluation.seen.len(),
+                self.evaluation.seen_ranges.clone(),
+            );
+        }
+        self.evaluation.seen = HashMap::default();
+        self.evaluation.seen_ranges = Vec::new();
         self.evaluate_conditional_formatting();
     }
 
@@ -595,11 +619,10 @@ impl<'a> Model<'a> {
     fn formula_positions(&self) -> Vec<CellReferenceIndex> {
         let mut found = Vec::new();
         for (sheet, worksheet) in self.sheets_with_formulas() {
-            for (row, column, cell) in worksheet.sheet_data.cells() {
-                if FormulaCell::of(&cell).is_some() {
-                    found.push(CellReferenceIndex { sheet, row, column });
-                }
-            }
+            // KANTOR PATCH: without making cells of packed rows.
+            worksheet.sheet_data.for_each_formula(|row, column| {
+                found.push(CellReferenceIndex { sheet, row, column });
+            });
         }
         found
     }
@@ -610,13 +633,11 @@ impl<'a> Model<'a> {
     fn dynamic_spills(&self) -> Vec<(CellReferenceIndex, Cell)> {
         let mut found = Vec::new();
         for (sheet, worksheet) in self.sheets_with_formulas() {
-            for (row, column, cell) in worksheet.sheet_data.cells() {
-                if !matches!(*cell, Cell::ArrayFormula { .. } | Cell::SpillCell { .. }) {
-                    continue;
-                }
+            // KANTOR PATCH: only the rows that can hold arrays are read.
+            for (row, column, cell) in worksheet.sheet_data.array_cells() {
                 let position = CellReferenceIndex { sheet, row, column };
-                if self.belongs_to_a_dynamic_array(position, &cell) {
-                    found.push((position, cell.into_owned()));
+                if self.belongs_to_a_dynamic_array(position, cell) {
+                    found.push((position, cell.clone()));
                 }
             }
         }
@@ -681,7 +702,8 @@ impl<'a> Model<'a> {
     fn dynamic_anchors_in_natural_order(&self) -> Vec<CellReferenceIndex> {
         let mut found = Vec::new();
         for (sheet, worksheet) in self.sheets_with_formulas() {
-            for (row, column, cell) in worksheet.sheet_data.cells() {
+            // KANTOR PATCH: only the rows that can hold arrays are read.
+            for (row, column, cell) in worksheet.sheet_data.array_cells() {
                 if matches!(
                     *cell,
                     Cell::ArrayFormula {
@@ -711,6 +733,9 @@ impl<'a> Model<'a> {
         // KANTOR PATCH: nothing read in an earlier pass is reused.
         state.lookups.clear();
         state.cycle_reads = 0;
+        // KANTOR PATCH: see `Evaluation::record_reads`. Anchors exist before
+        // the evaluation starts (`sync_anchor_order`); a pass makes none.
+        state.record_reads = !state.anchor_order.is_empty();
         state.in_pass = true;
         // dynamic links (HYPERLINK) are rebuilt on every evaluation
         self.links.clear();
@@ -1049,7 +1074,11 @@ impl<'a> Model<'a> {
         row2: i32,
         column2: i32,
     ) {
-        if !self.evaluation.in_pass || row1 > row2 || column1 > column2 {
+        if !self.evaluation.in_pass
+            || !self.evaluation.record_reads
+            || row1 > row2
+            || column1 > column2
+        {
             return;
         }
         if let Some(root) = self.evaluation.root {

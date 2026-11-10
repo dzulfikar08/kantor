@@ -118,6 +118,13 @@ impl SheetData {
         self.row_mut(row)?.get_mut(column)
     }
 
+    /// KANTOR PATCH: sets the style of the cell at a position in place, if
+    /// there is a cell (see `Row::set_style`). Returns whether there was.
+    pub fn set_cell_style(&mut self, row: i32, column: i32, style: i32) -> bool {
+        self.row_mut(row)
+            .is_some_and(|row_data| row_data.set_style(column, style))
+    }
+
     /// Puts a cell at a position and returns the one that was there.
     pub fn set_cell(&mut self, row: i32, column: i32, cell: Cell) -> Option<Cell> {
         self.row_or_insert(row)?.insert(column, cell)
@@ -144,6 +151,25 @@ impl SheetData {
         self.rows_in_order().flat_map(|(row, row_data)| {
             row_data
                 .iter()
+                .map(move |(column, cell)| (row, column, cell))
+        })
+    }
+
+    /// KANTOR PATCH: the positions of the formula cells (`CellFormula` and
+    /// `ArrayFormula`) in natural order, like `cells` but without making a
+    /// cell of every packed one (which copies text values).
+    pub fn for_each_formula(&self, mut found: impl FnMut(i32, i32)) {
+        for (row, row_data) in self.rows_in_order() {
+            row_data.formula_columns(|column| found(row, column));
+        }
+    }
+
+    /// KANTOR PATCH: the array formulas and spill cells in natural order. Rows
+    /// of numbers and of packed cells hold none and are skipped.
+    pub fn array_cells(&self) -> impl Iterator<Item = (i32, i32, &Cell)> {
+        self.rows_in_order().flat_map(|(row, row_data)| {
+            row_data
+                .array_cells()
                 .map(move |(column, cell)| (row, column, cell))
         })
     }
@@ -205,7 +231,7 @@ impl SheetData {
                 let last = Row::offset(*row_first_column, values, last_column)?;
                 values.get(first..=last)
             }
-            Row::Cells(_) => None,
+            Row::Cells(_) | Row::Packed(_) => None,
         }
     }
 

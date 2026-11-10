@@ -20,6 +20,10 @@
 //! the spot when it holds a number. Writing anything else into the row turns
 //! it into a row of cells; nothing but `set_row` turns it back.
 //!
+//! KANTOR PATCH: a row of any cells but array formulas and spill cells is
+//! held as packed cells (`packed.rs`), 32 bytes each with its column instead
+//! of 56, and like the numbers they are cells only while looked at.
+//!
 //! ```text
 //!   chunks ──► [ chunk 0 | (none) | chunk 2 | ... ]        row >> CHUNK_BITS
 //!                  │
@@ -37,6 +41,7 @@
 //! large sheet cost more than running the formulas.
 
 mod chunks;
+mod packed;
 mod row;
 mod saved;
 #[cfg(test)]

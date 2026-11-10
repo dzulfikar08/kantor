@@ -219,13 +219,9 @@ impl Worksheet {
         column: i32,
         style_index: i32,
     ) -> Result<(), String> {
-        match self.cell_mut(row, column) {
-            Some(cell) => {
-                cell.set_style(style_index);
-            }
-            None => {
-                self.cell_clear_contents_with_style(row, column, style_index)?;
-            }
+        // KANTOR PATCH: in place, so a row of packed cells stays packed.
+        if !self.sheet_data.set_cell_style(row, column, style_index) {
+            self.cell_clear_contents_with_style(row, column, style_index)?;
         }
         Ok(())
 

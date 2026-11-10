@@ -87,17 +87,69 @@ Upstream runs `git describe` for `INFO("release")`. Inside the Kantor repository
 that would report Kantor's commit, so the value a crates.io build gets
 (`unknown`) is fixed instead.
 
+## 4. Packed rows (memory)
+
+Why: a generated 32 MB workbook (180k rows, 1.62M formulas) held 211 MB of live
+heap after load, 184 MB of it the rows' `Vec<(i32, Cell)>`: 56 bytes a cell, because
+`Cell` is as large as its largest kind (`ArrayFormula`, 48 bytes) and most cells
+need far less. That made Kantor ~410 MB with the file open on an 8 GB Mac.
+
+What (`src/sheet_data/packed.rs`, and `KANTOR PATCH` hunks in `sheet_data/`):
+
+* `Row::Packed(Vec<Packed>)`, next to upstream's `Row::Cells` and `Row::Numbers`:
+  a private 32-byte enum carrying the column and one of empty, boolean, number,
+  error, shared string, or a plain formula (`CellFormula`) with its value split by
+  kind; text values are `Box<str>`. `set_row` (the xlsx importer, bitcode loading)
+  packs every row whose cells all pack; a row with an `ArrayFormula` or
+  `SpillCell` stays a row of cells, and inserting one turns a packed row into
+  cells. A row of numbers given another cell that packs becomes packed.
+* Like a row of numbers, a packed cell is a `Cell` only while looked at:
+  `cell()`/`cells()` hand out `Cow::Owned` (a text value is copied); `cell_mut`
+  turns the row into cells, so the writers that run per cell avoid it:
+  evaluation stores a plain formula's value with `update_cell` (`model.rs`),
+  `Worksheet::set_cell_style` uses `SheetData::set_cell_style` (in place).
+* The full-sheet scans of every evaluation don't build cells for packed rows:
+  `SheetData::for_each_formula` (formula positions) and `SheetData::array_cells`
+  (dynamic anchors and spills, which only a row of cells can hold).
+* Saved bytes (`saved.rs`) are the cells, as for rows of numbers: the format is
+  unchanged.
+
+Effect on that workbook: 257 → 182 MB resident after load (engine only),
+evaluation 1.90 → 1.95 s, every formula value identical (`eval_timing --dump`).
+Tests: `sheet_data/test.rs` (`KANTOR PATCH` section).
+
+## 5. Read records only for dynamic arrays, freed after evaluation
+
+Why: `Evaluation::seen`/`seen_ranges` record every empty position a formula reads,
+for every pass, but only a dynamic anchor's spill (`spill_contradicts_a_read`)
+ever asks; `run_pass` only `clear()`ed them, so their capacity stayed allocated.
+
+What: `Evaluation::record_reads` is set per pass to "the workbook has dynamic
+anchors" (they all exist before the first pass: `sync_anchor_order`); without it
+nothing is recorded. When `evaluate()` ends, both are replaced by empty ones.
+`last_records` (tests only) keeps what the last pass recorded:
+`test_range_reads.rs` now puts a dynamic anchor in its whole-column test and checks
+that nothing is recorded without one. `Evaluation::cells` (each formula's state)
+is kept as upstream keeps it: reads outside a pass use it to return stored values.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the
 `[patch.crates-io]` line and `vendor/ironcalc_base`) once upstream caches lookup
-vectors or indexes exact matches itself; time
+vectors or indexes exact matches itself and stores cells about as compactly as
+section 4 (compare `cargo run --release -p sheets_engine --example open_memory --
+<big.xlsx> --recalc`); time
 `cargo run --release -p sheets_engine --example eval_timing -- <big.xlsx>` before
 and after. To move to a newer upstream with the patch still needed: copy the new
 crate over this directory, reapply the `KANTOR PATCH` hunks (the new file
 `functions/lookup_cache.rs` and `test/test_kantor_lookup_cache.rs`, plus small
 call-site edits in `evaluation.rs`, `model.rs`, `functions/mod.rs`,
 `functions/lookup_and_reference/{mod,xmatch}.rs`, `functions/xlookup.rs`,
-`functions/statistical/if_ifs.rs`, `test/mod.rs`, `build.rs`) and run the crate's
+`functions/statistical/if_ifs.rs`, `test/mod.rs`, `build.rs`; for sections 4
+and 5 the new file `sheet_data/packed.rs` and edits in `sheet_data/{mod,row,chunks,
+saved,test}.rs`, `worksheet.rs`, `test/dynamic_evaluation/test_range_reads.rs`)
+and run the crate's
 tests in it (`cargo test`, also with `IRONCALC_MAX_DEPTH=1`). The crate's
 `Cargo.lock` is upstream's and only used when testing in this directory.
+With it, `test::user_model::test_to_from_bytes::errors` fails also without any
+patch (the bitcode error message changed); everything else passes.
