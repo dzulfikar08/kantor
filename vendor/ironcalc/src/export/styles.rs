@@ -2,7 +2,7 @@ use ironcalc_base::types::{Color, Styles, Workbook};
 
 use crate::export::{
     dxfs_styles::get_dxfs_xml,
-    styles_util::{get_alignment, get_border_xml, get_fill_xml},
+    styles_util::{get_alignment, get_border_xml, get_fill_xml, get_protection},
 };
 
 use super::{escape::escape_xml, xml_constants::XML_DECLARATION};
@@ -204,6 +204,12 @@ fn get_cell_xfs_xml(styles: &Styles) -> String {
         } else {
             ""
         };
+        // KANTOR PATCH (fidelity): cell protection.
+        let apply_protection_str = if cell_xf.apply_protection || cell_xf.protection.is_some() {
+            r#" applyProtection="1""#
+        } else {
+            ""
+        };
         let properties = format!(
             "xfId=\"{xf_id}\" \
                 borderId=\"{border_id}\" \
@@ -215,13 +221,23 @@ fn get_cell_xfs_xml(styles: &Styles) -> String {
                 {apply_font_str}\
                 {apply_fill_str}\
                 {apply_number_format_str}\
-                {apply_border_str}"
+                {apply_border_str}\
+                {apply_protection_str}"
         );
-        if let Some(alignment) = &cell_xf.alignment {
-            let alignment = get_alignment(alignment);
-            cell_xfs_str.push(format!("<xf {properties}>{alignment}</xf>"));
-        } else {
+        let alignment = cell_xf
+            .alignment
+            .as_ref()
+            .map(get_alignment)
+            .unwrap_or_default();
+        let protection = cell_xf
+            .protection
+            .as_ref()
+            .map(get_protection)
+            .unwrap_or_default();
+        if alignment.is_empty() && protection.is_empty() {
             cell_xfs_str.push(format!("<xf {properties}/>"));
+        } else {
+            cell_xfs_str.push(format!("<xf {properties}>{alignment}{protection}</xf>"));
         }
     }
     let style_count = cell_xfs.len();

@@ -98,6 +98,8 @@ impl Worksheet {
             custom_width: false,
             style: Some(style_index),
             hidden: false,
+            outline_level: 0,
+            collapsed: false,
         }];
         Ok(())
     }
@@ -127,6 +129,8 @@ impl Worksheet {
             custom_height: false,
             s: style_index,
             hidden: false,
+            outline_level: 0,
+            collapsed: false,
         });
         Ok(())
     }
@@ -182,6 +186,8 @@ impl Worksheet {
                 custom_width,
                 style: cols[index].style,
                 hidden: cols[index].hidden,
+                outline_level: cols[index].outline_level,
+                collapsed: cols[index].collapsed,
             };
             let col = Col {
                 min: column,
@@ -190,6 +196,9 @@ impl Worksheet {
                 custom_width,
                 style: None,
                 hidden: false,
+                // KANTOR PATCH (fidelity): the column stays in its group.
+                outline_level: cols[index].outline_level,
+                collapsed: cols[index].collapsed,
             };
             let post = Col {
                 min: column + 1,
@@ -198,6 +207,8 @@ impl Worksheet {
                 custom_width,
                 style: cols[index].style,
                 hidden: cols[index].hidden,
+                outline_level: cols[index].outline_level,
+                collapsed: cols[index].collapsed,
             };
             cols.remove(index);
             if column != max {
@@ -406,6 +417,8 @@ impl Worksheet {
             custom_height: false,
             s: 0,
             hidden,
+            outline_level: 0,
+            collapsed: false,
         });
         Ok(())
     }
@@ -438,6 +451,8 @@ impl Worksheet {
             custom_height: true,
             s: 0,
             hidden,
+            outline_level: 0,
+            collapsed: false,
         });
         Ok(())
     }
@@ -482,6 +497,8 @@ impl Worksheet {
             custom_width: width != constants::DEFAULT_COLUMN_WIDTH,
             style,
             hidden,
+            outline_level: 0,
+            collapsed: false,
         };
         let mut index = 0;
         let mut split = false;
@@ -515,6 +532,8 @@ impl Worksheet {
                 custom_width: cols[index].custom_width,
                 style: cols[index].style,
                 hidden: cols[index].hidden,
+                outline_level: cols[index].outline_level,
+                collapsed: cols[index].collapsed,
             };
             let post = Col {
                 min: column + 1,
@@ -523,8 +542,13 @@ impl Worksheet {
                 custom_width: cols[index].custom_width,
                 style: cols[index].style,
                 hidden: cols[index].hidden,
+                outline_level: cols[index].outline_level,
+                collapsed: cols[index].collapsed,
             };
             col.style = cols[index].style;
+            // KANTOR PATCH (fidelity): the column stays in its group.
+            col.outline_level = cols[index].outline_level;
+            col.collapsed = cols[index].collapsed;
             cols.remove(index);
             if column != max {
                 cols.insert(index, post);

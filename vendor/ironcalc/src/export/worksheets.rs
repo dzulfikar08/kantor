@@ -78,6 +78,16 @@ fn split_external_target(target: &str) -> (&str, Option<&str>) {
     }
 }
 
+// KANTOR PATCH (fidelity): `outlineLevel` / `collapsed` of a row or column.
+fn get_outline_attributes(level: u8, collapsed: bool) -> String {
+    let level = match level {
+        0 => "".to_string(),
+        n => format!(" outlineLevel=\"{n}\""),
+    };
+    let collapsed = if collapsed { " collapsed=\"1\"" } else { "" };
+    format!("{level}{collapsed}")
+}
+
 /// The `<hyperlinks>` section of the worksheet or an empty string if there are none.
 /// External links reference a relationship (`rId1`, `rId2`...) in the sheet rels part,
 /// see [`get_worksheet_xml_rels`].
@@ -201,8 +211,10 @@ pub(crate) fn get_worksheet_xml(
             None => "".to_string(),
         };
         let hidden = if col.hidden { " hidden=\"1\"" } else { "" };
+        // KANTOR PATCH (fidelity): column groups.
+        let outline = get_outline_attributes(col.outline_level, col.collapsed);
         cols_str.push(format!(
-            "<col min=\"{min}\" max=\"{max}\" width=\"{width}\" customWidth=\"{custom_width}\"{column_style}{hidden}/>"
+            "<col min=\"{min}\" max=\"{max}\" width=\"{width}\" customWidth=\"{custom_width}\"{column_style}{hidden}{outline}/>"
         ));
     }
 
@@ -565,12 +577,14 @@ pub(crate) fn get_worksheet_xml(
                     ""
                 };
                 format!(
-                    r#" s="{}" ht="{}" customHeight="{}" customFormat="{}"{}"#,
+                    r#" s="{}" ht="{}" customHeight="{}" customFormat="{}"{}{}"#,
                     row_style.s,
                     row_style.height,
                     i32::from(row_style.custom_height),
                     i32::from(row_style.custom_format),
                     hidden_str,
+                    // KANTOR PATCH (fidelity): row groups.
+                    get_outline_attributes(row_style.outline_level, row_style.collapsed),
                 )
             }
             None => "".to_string(),

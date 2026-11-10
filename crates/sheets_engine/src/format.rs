@@ -251,8 +251,8 @@ impl VAlign {
     }
 }
 
-/// How a border edge is drawn. IronCalc's model has no hair, dashed or dotted
-/// lines (its reader turns them into thin), so those never show up here.
+/// How a border edge is drawn. Hair lines are drawn thin; thin dashed,
+/// dash-dot and dash-dot-dot lines dotted (files keep their real style).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineStyle {
     Thin,
@@ -267,11 +267,14 @@ pub enum LineStyle {
 impl LineStyle {
     fn from_ironcalc(s: &BorderStyle) -> Self {
         match s {
-            BorderStyle::Thin => Self::Thin,
+            BorderStyle::Thin | BorderStyle::Hair => Self::Thin,
             BorderStyle::Medium => Self::Medium,
             BorderStyle::Thick => Self::Thick,
             BorderStyle::Double => Self::Double,
-            BorderStyle::Dotted => Self::Dotted,
+            BorderStyle::Dotted
+            | BorderStyle::Dashed
+            | BorderStyle::DashDot
+            | BorderStyle::DashDotDot => Self::Dotted,
             BorderStyle::SlantDashDot
             | BorderStyle::MediumDashed
             | BorderStyle::MediumDashDot

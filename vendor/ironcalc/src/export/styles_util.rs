@@ -1,5 +1,6 @@
 use ironcalc_base::types::{
-    Alignment, Border, BorderItem, Color, Fill, HorizontalAlignment, VerticalAlignment,
+    Alignment, Border, BorderItem, CellProtection, Color, Fill, HorizontalAlignment,
+    VerticalAlignment,
 };
 
 pub(crate) fn get_color_xml(color: &Color, name: &str) -> String {
@@ -35,13 +36,46 @@ pub(crate) fn get_alignment(alignment: &Alignment) -> String {
     } else {
         "".to_string()
     };
-    format!("<alignment{wrap_text}{horizontal}{vertical}/>")
+    // KANTOR PATCH (fidelity): indent, rotation and shrink-to-fit.
+    let indent = match alignment.indent {
+        0 => "".to_string(),
+        n => format!(" indent=\"{n}\""),
+    };
+    let rotation = match alignment.text_rotation {
+        0 => "".to_string(),
+        n => format!(" textRotation=\"{n}\""),
+    };
+    let shrink = if alignment.shrink_to_fit {
+        " shrinkToFit=\"1\""
+    } else {
+        ""
+    };
+    format!("<alignment{wrap_text}{horizontal}{vertical}{indent}{rotation}{shrink}/>")
+}
+
+// KANTOR PATCH (fidelity): `<protection>` of a cell xf.
+pub(crate) fn get_protection(protection: &CellProtection) -> String {
+    let locked = if protection.locked {
+        ""
+    } else {
+        " locked=\"0\""
+    };
+    let hidden = if protection.hidden {
+        " hidden=\"1\""
+    } else {
+        ""
+    };
+    format!("<protection{locked}{hidden}/>")
 }
 
 fn get_border_xml_inner(border: &Option<BorderItem>, name: &str) -> String {
     if let Some(border_item) = border {
         let color = get_color_xml(&border_item.color, "color");
-        return format!("<{name} style=\"{}\">{color}</{name}>", border_item.style);
+        // KANTOR PATCH (fidelity): OOXML's names (`Display` is lower case).
+        return format!(
+            "<{name} style=\"{}\">{color}</{name}>",
+            border_item.style.ooxml_name()
+        );
     }
     format!("<{name}/>")
 }
@@ -52,7 +86,18 @@ pub(crate) fn get_border_xml(border: &Border) -> String {
     let top = get_border_xml_inner(&border.top, "top");
     let bottom = get_border_xml_inner(&border.bottom, "bottom");
     let diagonal = get_border_xml_inner(&border.diagonal, "diagonal");
-    format!("<border>{left}{right}{top}{bottom}{diagonal}</border>")
+    // KANTOR PATCH (fidelity): which diagonals a diagonal border draws.
+    let up = if border.diagonal_up {
+        " diagonalUp=\"1\""
+    } else {
+        ""
+    };
+    let down = if border.diagonal_down {
+        " diagonalDown=\"1\""
+    } else {
+        ""
+    };
+    format!("<border{up}{down}>{left}{right}{top}{bottom}{diagonal}</border>")
 }
 
 pub(crate) fn get_fill_xml(fill: &Fill) -> String {

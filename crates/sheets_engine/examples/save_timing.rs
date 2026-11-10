@@ -34,7 +34,9 @@ fn report(step: &str, t: Instant) {
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
-    let path = args.next().expect("usage: save_timing BOOK.xlsx [OUT.xlsx]");
+    let path = args
+        .next()
+        .expect("usage: save_timing BOOK.xlsx [OUT.xlsx]");
     let tmp = tempfile::tempdir()?;
     let out = args
         .next()

@@ -9,11 +9,6 @@
 03_number_formats.xlsx	expect	Formats!B22 display	date-time 14:30 displays 14:29 (seconds truncated after float rounding)
 03_number_formats.xlsx	expect	Formats!B23 display	fraction formats (# ?/?) are not supported
 03_number_formats.xlsx	expect	Formats!B3 display	format "0" rounds 1234.5 to 1234 (Excel rounds half away from zero: 1235)
-05_styles.xlsx	export-style	Styles!B13 border-bottom	dashed borders are not in IronCalc's BorderStyle: become thin
-05_styles.xlsx	export-style	Styles!B13 border-left	dashed borders are not in IronCalc's BorderStyle: become thin
-05_styles.xlsx	export-style	Styles!B13 border-right	dashed borders are not in IronCalc's BorderStyle: become thin
-05_styles.xlsx	export-style	Styles!B13 border-top	dashed borders are not in IronCalc's BorderStyle: become thin
-05_styles.xlsx	export-style	Styles!B14 border-top	hair borders are not in IronCalc's BorderStyle: become thin
 08_defined_names.xlsx	import-value	Report!B3	defined names holding a constant (Ten = 10) don't evaluate: =Ten*2 gives #NAME? (the name itself is kept)
 09_unicode.xlsx	export-formula	Emoji 🎉!B1	quotes around a non-ASCII sheet name are dropped ('数据'!B2 -> 数据!B2); still valid for Excel, text differs
 09_unicode.xlsx	export-value	Teks!B13	shared strings are written without xml:space="preserve": strict readers (calamine) trim leading/trailing spaces; IronCalc and openpyxl keep them
@@ -71,64 +66,4 @@
 15_sparklines_cf_dv.xlsx	feature	sparkline data range	not kept on save yet
 15_sparklines_cf_dv.xlsx	feature	sparkline group settings	not kept on save yet
 15_sparklines_cf_dv.xlsx	feature	sparklines	not kept on save yet
-16_print_protect_outline.xlsx	export-links	Print	hyperlink display text is not written
-16_print_protect_outline.xlsx	feature	collapsed row	not kept on save yet
-16_print_protect_outline.xlsx	feature	column outline level	not kept on save yet
-16_print_protect_outline.xlsx	feature	hidden formula	not kept on save yet
-16_print_protect_outline.xlsx	feature	row outline level	not kept on save yet
-16_print_protect_outline.xlsx	feature	row outline level 2	not kept on save yet
-16_print_protect_outline.xlsx	feature	unlocked cell	not kept on save yet
-17_cell_styles.xlsx	export-style	Borders!B14 border-bottom	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B14 border-left	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B14 border-right	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B14 border-top	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B16 border-bottom	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B16 border-left	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B16 border-right	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B16 border-top	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B18 border-bottom	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B18 border-left	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B18 border-right	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B18 border-top	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B20 border-bottom	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B20 border-left	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B20 border-right	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B20 border-top	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B22 border-bottom	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B22 border-left	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B22 border-right	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B22 border-top	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B24 border-bottom	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B24 border-left	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B24 border-right	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B24 border-top	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B26 border-bottom	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B26 border-left	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B26 border-right	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B26 border-top	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B6 border-bottom	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B6 border-left	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B6 border-right	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B6 border-top	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B8 border-bottom	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B8 border-left	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B8 border-right	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	export-style	Borders!B8 border-top	border style not in IronCalc's BorderStyle / not read: becomes thin
-17_cell_styles.xlsx	feature	border dashDot	not kept on save yet
-17_cell_styles.xlsx	feature	border dashDotDot	not kept on save yet
-17_cell_styles.xlsx	feature	border dashed	not kept on save yet
-17_cell_styles.xlsx	feature	border dotted	not kept on save yet
-17_cell_styles.xlsx	feature	border hair	not kept on save yet
-17_cell_styles.xlsx	feature	border mediumDashDot	not kept on save yet
-17_cell_styles.xlsx	feature	border mediumDashDotDot	not kept on save yet
-17_cell_styles.xlsx	feature	border mediumDashed	not kept on save yet
-17_cell_styles.xlsx	feature	border slantDashDot	not kept on save yet
-17_cell_styles.xlsx	feature	diagonal border	not kept on save yet
-17_cell_styles.xlsx	feature	indent	not kept on save yet
-17_cell_styles.xlsx	feature	indent with right align	not kept on save yet
-17_cell_styles.xlsx	feature	shrink to fit	not kept on save yet
-17_cell_styles.xlsx	feature	stacked text	not kept on save yet
-17_cell_styles.xlsx	feature	text rotation -30	not kept on save yet
-17_cell_styles.xlsx	feature	text rotation 45	not kept on save yet
-17_cell_styles.xlsx	feature	text rotation 90	not kept on save yet
-17_cell_styles.xlsx	feature	wrap with indent	not kept on save yet
+16_print_protect_outline.xlsx	export-links	Print	the display attribute of the internal link is not written (IronCalc's Link has no display text; Excel shows the cell value)

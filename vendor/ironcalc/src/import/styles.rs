@@ -1,8 +1,9 @@
 use std::{collections::HashMap, io::Read};
 
 use ironcalc_base::types::{
-    Alignment, Border, BorderItem, BorderStyle, CellStyleXfs, CellStyles, CellXfs, Color, Dxf,
-    DxfFont, Fill, Font, FontScheme, HorizontalAlignment, NumFmt, Styles, Theme, VerticalAlignment,
+    Alignment, Border, BorderItem, BorderStyle, CellProtection, CellStyleXfs, CellStyles, CellXfs,
+    Color, Dxf, DxfFont, Fill, Font, FontScheme, HorizontalAlignment, NumFmt, Styles, Theme,
+    VerticalAlignment,
 };
 use std::io::BufReader;
 
@@ -56,17 +57,14 @@ fn get_border(
         .collect::<Vec<&XmlNode>>();
     if border_nodes.len() == 1 {
         let border = border_nodes[0];
+        // KANTOR PATCH (fidelity): every ST_BorderStyle (case-sensitive, as
+        // Excel writes them); upstream matched lower-case names only, so
+        // dotted, dashed, hair... became thin. "none" is no border.
         style = match border.attribute("style") {
-            Some("thin") => BorderStyle::Thin,
-            Some("medium") => BorderStyle::Medium,
-            Some("thick") => BorderStyle::Thick,
-            Some("double") => BorderStyle::Double,
-            Some("slantdashdot") => BorderStyle::SlantDashDot,
-            Some("mediumdashed") => BorderStyle::MediumDashed,
-            Some("mediumdashdot") => BorderStyle::MediumDashDot,
-            Some("mediumdashdotdot") => BorderStyle::MediumDashDotDot,
-            // TODO: Should we fail in this case or set the border to None?
-            Some(_) => BorderStyle::Thin,
+            Some(name) => match BorderStyle::from_ooxml(name) {
+                Some(style) => style,
+                None => return Ok(None),
+            },
             None => {
                 return Ok(None);
             }
@@ -252,8 +250,9 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
         .filter(|n| n.has_tag_name("borders"))
         .collect::<Vec<&XmlNode>>()[0];
     for border in border_nodes.children() {
-        let diagonal_up = get_bool_false(border, "diagonal_up");
-        let diagonal_down = get_bool_false(border, "diagonal_down");
+        // KANTOR PATCH (fidelity): the attributes are diagonalUp/diagonalDown.
+        let diagonal_up = get_bool_false(border, "diagonalUp");
+        let diagonal_down = get_bool_false(border, "diagonalDown");
         let left = get_border(border, "left", theme, indexed)?;
         let right = get_border(border, "right", theme, indexed)?;
         let top = get_border(border, "top", theme, indexed)?;
@@ -386,14 +385,33 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
                 None => VerticalAlignment::default(),
             };
 
+            // KANTOR PATCH (fidelity): indent, rotation and shrink-to-fit.
+            let number = |name: &str| {
+                alignment_node
+                    .attribute(name)
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(0)
+            };
             Some(Alignment {
                 horizontal,
                 vertical,
                 wrap_text,
+                indent: number("indent"),
+                text_rotation: number("textRotation"),
+                shrink_to_fit: get_bool_false(alignment_node, "shrinkToFit"),
             })
         } else {
             None
         };
+        // KANTOR PATCH (fidelity): cell protection (locked defaults to true).
+        let protection = xfs
+            .children()
+            .find(|n| n.has_tag_name("protection"))
+            .map(|p| CellProtection {
+                locked: get_bool(p, "locked"),
+                hidden: get_bool_false(p, "hidden"),
+            })
+            .filter(|p| p != &CellProtection::default());
 
         cell_xfs.push(CellXfs {
             xf_id,
@@ -409,6 +427,7 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
             apply_fill,
             quote_prefix,
             alignment,
+            protection,
         });
     }
 
@@ -562,6 +581,7 @@ pub(super) fn parse_dxf(
                     horizontal,
                     vertical,
                     wrap_text,
+                    ..Default::default()
                 });
             }
             _ => {}

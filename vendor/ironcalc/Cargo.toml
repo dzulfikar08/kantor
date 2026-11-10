@@ -97,6 +97,11 @@ path = "tests/test_import_randarray.rs"
 name = "test_import_shared_formula_volatile"
 path = "tests/test_import_shared_formula_volatile.rs"
 
+# KANTOR PATCH (fidelity)
+[[test]]
+name = "test_kantor_fidelity"
+path = "tests/test_kantor_fidelity.rs"
+
 [dependencies.bitcode]
 version = "0.6.9"
 
@@ -105,6 +110,8 @@ version = "0.4"
 
 [dependencies.ironcalc_base]
 version = "0.9"
+# KANTOR PATCH: the vendored, patched copy (also when testing in this directory).
+path = "../ironcalc_base"
 
 [dependencies.itertools]
 version = "0.15"

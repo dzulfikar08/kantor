@@ -139,6 +139,29 @@ nothing is recorded. When `evaluate()` ends, both are replaced by empty ones.
 that nothing is recorded without one. `Evaluation::cells` (each formula's state)
 is kept as upstream keeps it: reads outside a pass use it to return stored values.
 
+## 7. Model fields for xlsx fidelity
+
+Why: the xlsx reader (`vendor/ironcalc`, its KANTOR_PATCHES.md §1) had nowhere
+to put some formatting, so it was lost on save.
+
+What (`src/types.rs`, `KANTOR PATCH (fidelity)`):
+
+* `BorderStyle` gains `Hair`, `Dashed`, `DashDot`, `DashDotDot` (added last:
+  bitcode numbers variants), with `ooxml_name()` / `from_ooxml()` for the
+  case-sensitive OOXML names. `Display` and serde keep upstream's lower case.
+* `Alignment` gains `indent`, `text_rotation` (OOXML's encoding) and
+  `shrink_to_fit` (serde defaults, skipped when unset).
+* `CellProtection { locked, hidden }`, as `Style::protection` and
+  `CellXfs::protection` (`None` = Excel's default, locked and shown); carried
+  through `Styles::create_new_style`, `get_style`, `get_style_index` and
+  applying a named style (`src/styles.rs`), so restyling a cell keeps it.
+  `builtin_styles.rs` gets `protection: None` in every literal.
+* `Row` and `Col` gain `outline_level` and `collapsed`; splitting a column
+  range keeps them (`src/worksheet.rs`); other literals (including tests) set
+  0 / false.
+
+Struct literals in the tests got `..Default::default()` or the new fields.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the
@@ -154,7 +177,9 @@ call-site edits in `evaluation.rs`, `model.rs`, `functions/mod.rs`,
 `functions/lookup_and_reference/{mod,xmatch}.rs`, `functions/xlookup.rs`,
 `functions/statistical/if_ifs.rs`, `test/mod.rs`, `build.rs`; for sections 5
 and 6 the new file `sheet_data/packed.rs` and edits in `sheet_data/{mod,row,chunks,
-saved,test}.rs`, `worksheet.rs`, `test/dynamic_evaluation/test_range_reads.rs`)
+saved,test}.rs`, `worksheet.rs`, `test/dynamic_evaluation/test_range_reads.rs`; for
+section 7 `types.rs`, `styles.rs`, `builtin_styles.rs`, `worksheet.rs`,
+`user_model/common.rs` and test literals)
 and run the crate's
 tests in it (`cargo test`, also with `IRONCALC_MAX_DEPTH=1`). The crate's
 `Cargo.lock` is upstream's and only used when testing in this directory.

@@ -272,7 +272,11 @@ fn check_file(
 
     // 6. Features (`features.tsv`): each probe matches in the original, after
     //    open -> save, and after saving the saved file again.
-    let probes: Vec<FeatureProbe> = features.iter().filter(|p| p.file == file).cloned().collect();
+    let probes: Vec<FeatureProbe> = features
+        .iter()
+        .filter(|p| p.file == file)
+        .cloned()
+        .collect();
     if probes.is_empty() {
         return;
     }
@@ -293,7 +297,11 @@ fn check_file(
         if let Err(e) = p.check(&pb) {
             f.add("feature", p.feature.clone(), format!("lost on save: {e}"));
         } else if let Some(Err(e)) = second.as_ref().map(|s| p.check(s)) {
-            f.add("feature", p.feature.clone(), format!("lost on second save: {e}"));
+            f.add(
+                "feature",
+                p.feature.clone(),
+                format!("lost on second save: {e}"),
+            );
         }
     }
 }
@@ -524,7 +532,10 @@ impl FeatureProbe {
         } else {
             panic!("unknown part selector {sel}")
         };
-        let parts: Vec<String> = parts.into_iter().filter(|p| pkg.0.contains_key(p)).collect();
+        let parts: Vec<String> = parts
+            .into_iter()
+            .filter(|p| pkg.0.contains_key(p))
+            .collect();
         if parts.is_empty() {
             return Err(format!("no part {sel}"));
         }
