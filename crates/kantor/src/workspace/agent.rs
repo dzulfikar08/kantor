@@ -396,12 +396,24 @@ impl Workspace {
                 )
             }
             "sheets_format" => {
-                let (range, changes) = sheets::plan_format(args)?;
+                let plan = sheets::plan_format(args)?;
+                let range = plan.range;
                 let what = format!("formatted {}", range.name());
                 let edit: Edit = Box::new(move |b| {
-                    changes
-                        .into_iter()
-                        .try_for_each(|c| b.set_range_style(sheet, range, c))
+                    for c in plan.changes {
+                        b.set_range_style(sheet, range, c)?;
+                    }
+                    if let Some(preset) = plan.borders {
+                        b.set_range_borders(sheet, range, preset)?;
+                    }
+                    match plan.merge {
+                        Some(true) => b.merge_range(sheet, range)?,
+                        Some(false) => {
+                            b.unmerge_range(sheet, range)?;
+                        }
+                        None => {}
+                    }
+                    Ok(())
                 });
                 (what, Some(range), edit)
             }

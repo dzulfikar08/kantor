@@ -479,7 +479,9 @@ impl Styles {
         cell_xf.quote_prefix
     }
 
-    pub(crate) fn get_style(&self, index: i32) -> Result<Style, String> {
+    // KANTOR PATCH: public, so Kantor can resolve each style index once and
+    // cache it (see KANTOR_PATCHES.md, section "Public style lookup").
+    pub fn get_style(&self, index: i32) -> Result<Style, String> {
         let cell_xf = &self
             .cell_xfs
             .get(index as usize)

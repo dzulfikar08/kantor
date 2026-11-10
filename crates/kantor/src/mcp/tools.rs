@@ -187,7 +187,7 @@ const SPECS: &[Spec] = &[
     (
         "sheets_format",
         "Format cells",
-        "Set formatting on a range: font flags, horizontal alignment and number format. Only the given properties change. One undo step.",
+        "Set formatting on a range: font flags, alignment, wrapping, number format, fill and text colour, font size, borders, merging. Only the given properties change. One undo step.",
         || {
             json!({
                 "document": document(), "sheet": sheet(),
@@ -199,6 +199,13 @@ const SPECS: &[Spec] = &[
                 "align": {"type": "string", "enum": ["general", "left", "center", "right"]},
                 "number_format": {"type": "string", "enum": ["general", "number", "percent", "rupiah", "dollar", "date"],
                     "description": "number = #,##0.00; percent = 0.00%; rupiah = Rp#,##0; dollar = $#,##0.00; date = yyyy-mm-dd."},
+                "valign": {"type": "string", "enum": ["top", "center", "bottom"]},
+                "wrap": {"type": "boolean", "description": "Wrap text onto several lines."},
+                "fill": {"type": "string", "description": "Background colour #RRGGBB, or none."},
+                "font_color": {"type": "string", "description": "Text colour #RRGGBB, or auto."},
+                "font_size_delta": {"type": "integer", "description": "Points to grow (or, negative, shrink) the font by."},
+                "borders": {"type": "string", "enum": ["all", "outline", "none"], "description": "Thin borders on every edge, around the range, or removed."},
+                "merge": {"type": "boolean", "description": "true: merge and centre the range (at most one cell may have content); false: unmerge merged cells in it."},
             })
         },
         &["range"],

@@ -1580,6 +1580,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "docx-rs",
+ "kantor_core",
  "log",
  "quick-xml 0.41.0",
  "tempfile",
@@ -3916,6 +3917,7 @@ name = "kantor_ui"
 version = "0.2.0"
 dependencies = [
  "gpui-kit",
+ "gpui-pre-wgpu",
  "kantor_core",
  "kantor_theme",
 ]
@@ -6649,6 +6651,7 @@ dependencies = [
  "ironcalc_base",
  "log",
  "roxmltree 0.21.2",
+ "serde_json",
  "tempfile",
  "zip 9.4.1",
 ]

@@ -16,7 +16,7 @@ use super::Workspace;
 use super::doc::CommonFormat;
 use crate::actions::*;
 use crate::theme;
-use sheets_ui::{CalcMode, Format, GridCommand, NumberFormat};
+use sheets_ui::{BorderPreset, CalcMode, Format, GridCommand, NumberFormat, VAlign};
 
 /// A palette command.
 pub(super) struct Command {
@@ -237,6 +237,192 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
                 v.format_doc(Format::Number(NumberFormat::Date), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Fill: Light Yellow",
+        detail: "Sheets · cell background",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::Fill(Some(0xFFF2CC)), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Fill: Light Blue",
+        detail: "Sheets · cell background",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::Fill(Some(0xDDEBF7)), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Fill: Light Green",
+        detail: "Sheets · cell background",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::Fill(Some(0xE2EFDA)), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Fill: Light Grey",
+        detail: "Sheets · cell background",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::Fill(Some(0xF2F2F2)), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "No Fill",
+        detail: "Sheets · cell background",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::Fill(None), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Text Colour: Red",
+        detail: "Sheets",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::FontColor(Some(0xC00000)), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Text Colour: Blue",
+        detail: "Sheets",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::FontColor(Some(0x0070C0)), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Text Colour: Green",
+        detail: "Sheets",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::FontColor(Some(0x00B050)), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Text Colour: Automatic",
+        detail: "Sheets",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::FontColor(None), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Increase Font Size",
+        detail: "Sheets · one point larger",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::FontSize(1), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Decrease Font Size",
+        detail: "Sheets · one point smaller",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::FontSize(-1), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "All Borders",
+        detail: "Sheets · every edge of the selection",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::Borders(BorderPreset::All), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Outside Borders",
+        detail: "Sheets · outline of the selection",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::Borders(BorderPreset::Outline), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "No Borders",
+        detail: "Sheets · remove borders",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::Borders(BorderPreset::None), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Wrap Text",
+        detail: "Sheets · toggle",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.format_doc(Format::Wrap, w, cx))
+        },
+    },
+    Command {
+        title: "Merge & Center / Unmerge",
+        detail: "Sheets · selected cells",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.format_doc(Format::Merge, w, cx))
+        },
+    },
+    Command {
+        title: "Align Top",
+        detail: "Sheets · vertical alignment",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::VAlign(VAlign::Top), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Align Middle",
+        detail: "Sheets · vertical alignment",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::VAlign(VAlign::Center), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Align Bottom",
+        detail: "Sheets · vertical alignment",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.format_doc(Format::VAlign(VAlign::Bottom), w, cx)
             })
         },
     },

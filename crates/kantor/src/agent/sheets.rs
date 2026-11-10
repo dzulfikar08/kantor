@@ -5,8 +5,8 @@ use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use sheets_engine::formula::parse_range;
 use sheets_engine::{
-    CellRange, HAlign, MAX_COLS, MAX_ROWS, NumberFormat, StyleChange, Workbook, cell_name,
-    column_name,
+    BorderPreset, CellRange, HAlign, MAX_COLS, MAX_ROWS, NumberFormat, Rgb, StyleChange, VAlign,
+    Workbook, cell_name, column_name,
 };
 
 use super::{check_len, opt_bool, opt_count, opt_str, req_str};
@@ -201,7 +201,31 @@ pub fn plan_write(args: &Value) -> Result<WritePlan> {
     })
 }
 
-pub fn plan_format(args: &Value) -> Result<(CellRange, Vec<StyleChange>)> {
+/// A `sheets_format` request: style changes, then borders, then a merge or
+/// unmerge (`Some(true)` / `Some(false)`).
+pub struct FormatPlan {
+    pub range: CellRange,
+    pub changes: Vec<StyleChange>,
+    pub borders: Option<BorderPreset>,
+    pub merge: Option<bool>,
+}
+
+/// `#RRGGBB` (or `RRGGBB`), or `none` / `auto` for no colour.
+fn color_arg(args: &Value, key: &str) -> Result<Option<Option<Rgb>>> {
+    let Some(v) = opt_str(args, key)? else {
+        return Ok(None);
+    };
+    if v.eq_ignore_ascii_case("none") || v.eq_ignore_ascii_case("auto") {
+        return Ok(Some(None));
+    }
+    let hex = v.strip_prefix('#').unwrap_or(v);
+    match (hex.len(), u32::from_str_radix(hex, 16)) {
+        (6, Ok(c)) => Ok(Some(Some(c))),
+        _ => bail!("`{key}` must be #RRGGBB, none or auto"),
+    }
+}
+
+pub fn plan_format(args: &Value) -> Result<FormatPlan> {
     let range = range_arg(args, "range")?;
     let mut changes = Vec::new();
     for (key, make) in [
@@ -209,6 +233,7 @@ pub fn plan_format(args: &Value) -> Result<(CellRange, Vec<StyleChange>)> {
         ("italic", StyleChange::Italic),
         ("underline", StyleChange::Underline),
         ("strikethrough", StyleChange::Strikethrough),
+        ("wrap", StyleChange::Wrap),
     ] {
         if let Some(on) = opt_bool(args, key)? {
             changes.push(make(on));
@@ -234,10 +259,46 @@ pub fn plan_format(args: &Value) -> Result<(CellRange, Vec<StyleChange>)> {
             _ => bail!("`number_format` must be general, number, percent, rupiah, dollar or date"),
         }));
     }
-    if changes.is_empty() {
-        bail!("give at least one of bold, italic, underline, strikethrough, align, number_format");
+    if let Some(a) = opt_str(args, "valign")? {
+        changes.push(StyleChange::VAlign(match a {
+            "top" => VAlign::Top,
+            "center" => VAlign::Center,
+            "bottom" => VAlign::Bottom,
+            _ => bail!("`valign` must be top, center or bottom"),
+        }));
     }
-    Ok((range, changes))
+    if let Some(c) = color_arg(args, "fill")? {
+        changes.push(StyleChange::Fill(c));
+    }
+    if let Some(c) = color_arg(args, "font_color")? {
+        changes.push(StyleChange::FontColor(c));
+    }
+    if let Some(d) = crate::agent::opt_int(args, "font_size_delta")? {
+        if d == 0 || d.abs() > 100 {
+            bail!("`font_size_delta` must be a non-zero number of points");
+        }
+        changes.push(StyleChange::FontSizeDelta(d as i32));
+    }
+    let borders = match opt_str(args, "borders")? {
+        None => None,
+        Some("all") => Some(BorderPreset::All),
+        Some("outline") => Some(BorderPreset::Outline),
+        Some("none") => Some(BorderPreset::None),
+        Some(_) => bail!("`borders` must be all, outline or none"),
+    };
+    let merge = opt_bool(args, "merge")?;
+    if changes.is_empty() && borders.is_none() && merge.is_none() {
+        bail!(
+            "give at least one of bold, italic, underline, strikethrough, align, valign, wrap, \
+             number_format, fill, font_color, font_size_delta, borders, merge"
+        );
+    }
+    Ok(FormatPlan {
+        range,
+        changes,
+        borders,
+        merge,
+    })
 }
 
 pub fn selection(book: &Workbook, sheet: u32, range: CellRange, active: (u32, u32)) -> Value {
@@ -323,11 +384,27 @@ mod tests {
     fn plans_formats() {
         let (range, changes) =
             plan_format(&json!({"range": "B2:C3", "bold": true, "number_format": "rupiah"}))
+                .map(|p| (p.range, p.changes))
                 .unwrap();
         assert_eq!(range.name(), "B2:C3");
         assert_eq!(changes.len(), 2);
         assert!(plan_format(&json!({"range": "B2"})).is_err());
         assert!(plan_format(&json!({"range": "B2", "align": "middle"})).is_err());
+        let p = plan_format(&json!({
+            "range": "A1:C1", "fill": "#FFF2CC", "font_color": "auto", "wrap": true,
+            "valign": "top", "font_size_delta": 2, "borders": "outline", "merge": true,
+        }))
+        .unwrap();
+        assert_eq!(p.changes.len(), 5);
+        assert!(p.changes.contains(&StyleChange::Fill(Some(0xFFF2CC))));
+        assert!(p.changes.contains(&StyleChange::FontColor(None)));
+        assert_eq!(
+            (p.borders, p.merge),
+            (Some(BorderPreset::Outline), Some(true))
+        );
+        assert!(plan_format(&json!({"range": "B2", "fill": "#FFF"})).is_err());
+        assert!(plan_format(&json!({"range": "B2", "borders": "thick"})).is_err());
+        assert!(plan_format(&json!({"range": "B2", "font_size_delta": 0})).is_err());
         assert_eq!(column_arg(&json!({"c": "aa"}), "c").unwrap(), Some(26));
         assert!(column_arg(&json!({"c": "A1"}), "c").is_err());
         assert_eq!(row_arg(&json!({"r": 5}), "r").unwrap(), Some(4));

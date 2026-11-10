@@ -5,7 +5,13 @@
 //! step), so each calls `history.edited()` exactly once.
 
 use anyhow::{Result, anyhow, bail};
-use ironcalc_base::types::{Cell, CellType, HorizontalAlignment, Style};
+use std::borrow::Cow;
+use std::sync::Arc;
+
+use ironcalc_base::types::{
+    BorderItem, BorderStyle, Cell, CellType, Color, HorizontalAlignment, Style, Theme,
+    VerticalAlignment,
+};
 
 use crate::{CellRange, MAX_COLS, MAX_ROWS, Workbook};
 
@@ -119,6 +125,9 @@ impl NumberFormat {
 }
 
 /// The formatting of one cell, as the grid and toolbar need it.
+///
+/// Colours are resolved (theme colours with their tint, indexed colours) to
+/// `0xRRGGBB`; `None` means automatic (no fill, the default text colour).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CellStyle {
     pub bold: bool,
@@ -126,28 +135,222 @@ pub struct CellStyle {
     pub underline: bool,
     pub strikethrough: bool,
     pub align: HAlign,
+    pub valign: VAlign,
+    /// Wrap text onto several lines inside the cell.
+    pub wrap: bool,
     /// The raw Excel format code (`general`, `#,##0.00`, …).
     pub num_fmt: String,
+    /// Background of a solid (or patterned, drawn solid) fill.
+    pub fill: Option<Rgb>,
+    /// Text colour; `None` also when it is the workbook default font's colour.
+    pub font_color: Option<Rgb>,
+    /// Font size in points (IronCalc keeps whole points).
+    pub font_size: i32,
+    /// Font family, or `None` for the workbook's default font (which the grid
+    /// draws in the UI font).
+    pub font_name: Option<Arc<str>>,
+    pub borders: Borders,
 }
 
 impl CellStyle {
-    fn from_ironcalc(s: &Style) -> Self {
+    pub(crate) fn from_ironcalc(s: &Style, defaults: &FontDefaults, theme: &Theme) -> Self {
+        let alignment = s.alignment.as_ref();
+        let font_color = resolve(&s.font.color, theme).filter(|c| Some(*c) != defaults.color);
+        let font_name = (!s.font.name.eq_ignore_ascii_case(&defaults.name))
+            .then(|| Arc::<str>::from(s.font.name.as_str()));
+        let line = |b: &Option<BorderItem>| {
+            b.as_ref().map(|b| BorderLine {
+                style: LineStyle::from_ironcalc(&b.style),
+                color: resolve(&b.color, theme),
+            })
+        };
         Self {
             bold: s.font.b,
             italic: s.font.i,
             underline: s.font.u,
             strikethrough: s.font.strike,
-            align: s
-                .alignment
-                .as_ref()
+            align: alignment
                 .map(|a| HAlign::from_ironcalc(&a.horizontal))
                 .unwrap_or_default(),
+            valign: alignment
+                .map(|a| VAlign::from_ironcalc(&a.vertical))
+                .unwrap_or_default(),
+            wrap: alignment.is_some_and(|a| a.wrap_text),
             num_fmt: s.num_fmt.clone(),
+            fill: resolve(&s.fill.color, theme),
+            font_color,
+            font_size: s.font.sz,
+            font_name,
+            borders: Borders {
+                left: line(&s.border.left),
+                right: line(&s.border.right),
+                top: line(&s.border.top),
+                bottom: line(&s.border.bottom),
+            },
         }
     }
 
     pub fn number_format(&self) -> NumberFormat {
         NumberFormat::from_code(&self.num_fmt)
+    }
+}
+
+/// A colour as `0xRRGGBB`.
+pub type Rgb = u32;
+
+/// Parse `#RRGGBB` (IronCalc's resolved form).
+pub fn parse_rgb(hex: &str) -> Option<Rgb> {
+    let digits = hex.strip_prefix('#')?;
+    (digits.len() == 6)
+        .then(|| u32::from_str_radix(digits, 16).ok())
+        .flatten()
+}
+
+fn resolve(color: &Color, theme: &Theme) -> Option<Rgb> {
+    match color {
+        Color::None => None,
+        c => parse_rgb(&c.to_rgb(theme)),
+    }
+}
+
+/// What "default" means for fonts: the workbook's first font (Excel's
+/// "Normal" style font).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct FontDefaults {
+    pub name: String,
+    pub size: i32,
+    pub color: Option<Rgb>,
+}
+
+/// Vertical alignment of a cell's text. Excel's default is the bottom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VAlign {
+    Top,
+    Center,
+    #[default]
+    Bottom,
+}
+
+impl VAlign {
+    fn from_ironcalc(v: &VerticalAlignment) -> Self {
+        match v {
+            VerticalAlignment::Top => Self::Top,
+            VerticalAlignment::Center
+            | VerticalAlignment::Justify
+            | VerticalAlignment::Distributed => Self::Center,
+            VerticalAlignment::Bottom => Self::Bottom,
+        }
+    }
+
+    fn ironcalc(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Center => "center",
+            Self::Bottom => "bottom",
+        }
+    }
+}
+
+/// How a border edge is drawn. IronCalc's model has no hair, dashed or dotted
+/// lines (its reader turns them into thin), so those never show up here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineStyle {
+    Thin,
+    Medium,
+    Thick,
+    Double,
+    Dotted,
+    /// Medium dashed, dash-dot and dash-dot-dot.
+    MediumDashed,
+}
+
+impl LineStyle {
+    fn from_ironcalc(s: &BorderStyle) -> Self {
+        match s {
+            BorderStyle::Thin => Self::Thin,
+            BorderStyle::Medium => Self::Medium,
+            BorderStyle::Thick => Self::Thick,
+            BorderStyle::Double => Self::Double,
+            BorderStyle::Dotted => Self::Dotted,
+            BorderStyle::SlantDashDot
+            | BorderStyle::MediumDashed
+            | BorderStyle::MediumDashDot
+            | BorderStyle::MediumDashDotDot => Self::MediumDashed,
+        }
+    }
+
+    /// Line width in pixels on screen.
+    pub fn width(self) -> f32 {
+        match self {
+            Self::Thin | Self::Dotted => 1.0,
+            Self::Medium | Self::MediumDashed => 2.0,
+            Self::Thick | Self::Double => 3.0,
+        }
+    }
+
+    /// Which line wins where two cells' borders meet, as in Excel: the
+    /// heavier one.
+    fn weight(self) -> u8 {
+        match self {
+            Self::Dotted => 1,
+            Self::Thin => 2,
+            Self::MediumDashed => 3,
+            Self::Medium => 4,
+            Self::Double => 5,
+            Self::Thick => 6,
+        }
+    }
+}
+
+/// One border edge. `color: None` is automatic (black).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BorderLine {
+    pub style: LineStyle,
+    pub color: Option<Rgb>,
+}
+
+impl BorderLine {
+    /// The edge two neighbouring cells share: `mine` (this cell's side) or
+    /// `theirs` (the neighbour's side facing it), whichever is heavier; on a
+    /// tie, the coloured one, then this cell's.
+    pub fn shared(mine: Option<Self>, theirs: Option<Self>) -> Option<Self> {
+        match (mine, theirs) {
+            (Some(a), Some(b)) => {
+                let key = |l: &Self| (l.style.weight(), l.color.is_some());
+                Some(if key(&b) > key(&a) { b } else { a })
+            }
+            (a, b) => a.or(b),
+        }
+    }
+}
+
+/// A cell's own border edges (before sharing with neighbours).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Borders {
+    pub left: Option<BorderLine>,
+    pub right: Option<BorderLine>,
+    pub top: Option<BorderLine>,
+    pub bottom: Option<BorderLine>,
+}
+
+/// Which borders a border command draws over a range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BorderPreset {
+    /// Every edge of every cell.
+    All,
+    /// The outline of the range.
+    Outline,
+    /// Remove every border in the range (and the neighbours' edges facing it).
+    None,
+}
+
+impl BorderPreset {
+    fn ironcalc(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Outline => "Outer",
+            Self::None => "None",
+        }
     }
 }
 
@@ -159,23 +362,42 @@ pub enum StyleChange {
     Underline(bool),
     Strikethrough(bool),
     Align(HAlign),
+    VAlign(VAlign),
+    Wrap(bool),
     /// `Custom` is rejected: it has no code to apply.
     NumberFormat(NumberFormat),
+    /// `None` removes the fill.
+    Fill(Option<Rgb>),
+    /// `None` goes back to automatic.
+    FontColor(Option<Rgb>),
+    /// Grow (or shrink) every cell's font by this many points.
+    FontSizeDelta(i32),
 }
 
 impl StyleChange {
-    fn path_and_value(self) -> Result<(&'static str, &'static str)> {
-        let flag = |b: bool| if b { "true" } else { "false" };
+    fn path_and_value(self) -> Result<(&'static str, Cow<'static, str>)> {
+        let flag = |b: bool| Cow::Borrowed(if b { "true" } else { "false" });
+        let color = |c: Option<Rgb>| match c {
+            Some(c) => Cow::Owned(format!("#{:06X}", c & 0xFF_FFFF)),
+            None => Cow::Borrowed(""),
+        };
         Ok(match self {
             Self::Bold(b) => ("font.b", flag(b)),
             Self::Italic(b) => ("font.i", flag(b)),
             Self::Underline(b) => ("font.u", flag(b)),
             Self::Strikethrough(b) => ("font.strike", flag(b)),
-            Self::Align(a) => ("alignment.horizontal", a.ironcalc()),
+            Self::Align(a) => ("alignment.horizontal", a.ironcalc().into()),
+            Self::VAlign(a) => ("alignment.vertical", a.ironcalc().into()),
+            Self::Wrap(b) => ("alignment.wrap_text", flag(b)),
             Self::NumberFormat(f) => (
                 "num_fmt",
-                f.code().ok_or_else(|| anyhow!("no format code to apply"))?,
+                f.code()
+                    .ok_or_else(|| anyhow!("no format code to apply"))?
+                    .into(),
             ),
+            Self::Fill(c) => ("fill.fg_color", color(c)),
+            Self::FontColor(c) => ("font.color", color(c)),
+            Self::FontSizeDelta(d) => ("font.size_delta", d.to_string().into()),
         })
     }
 }
@@ -190,16 +412,11 @@ pub enum ValueKind {
 }
 
 impl Workbook {
-    /// The formatting of a cell (including row and column styles).
-    pub fn cell_style(&self, sheet: u32, row: u32, col: u32) -> CellStyle {
-        // `Model::get_style_for_cell` rather than `UserModel::get_cell_style`:
-        // the latter also looks up four neighbours for borders, which the
-        // grid does not draw yet, and this runs for every visible cell.
-        self.model
-            .get_model()
-            .get_style_for_cell(sheet, row as i32 + 1, col as i32 + 1)
-            .map(|s| CellStyle::from_ironcalc(&s))
-            .unwrap_or_default()
+    /// The formatting of a cell (including row and column styles). Cached
+    /// per style index, so this is cheap enough for every visible cell.
+    pub fn cell_style(&self, sheet: u32, row: u32, col: u32) -> Arc<CellStyle> {
+        let index = self.style_index(sheet, row, col);
+        self.style_by_index(index)
     }
 
     /// The kind of value a cell shows (a formula counts as its result; an
@@ -225,7 +442,12 @@ impl Workbook {
     /// How a cell's text is drawn: its alignment, with `General` resolved by
     /// value kind the way Excel does. Never returns `General`.
     pub fn display_align(&self, sheet: u32, row: u32, col: u32) -> HAlign {
-        match self.cell_style(sheet, row, col).align {
+        self.display_align_of(&self.cell_style(sheet, row, col), sheet, row, col)
+    }
+
+    /// [`Self::display_align`] for a cell whose style is already at hand.
+    pub fn display_align_of(&self, style: &CellStyle, sheet: u32, row: u32, col: u32) -> HAlign {
+        match style.align {
             HAlign::General => match self.value_kind(sheet, row, col) {
                 ValueKind::Number => HAlign::Right,
                 ValueKind::Boolean | ValueKind::Error => HAlign::Center,
@@ -242,19 +464,63 @@ impl Workbook {
         range: CellRange,
         change: StyleChange,
     ) -> Result<()> {
-        if range.bottom >= MAX_ROWS || range.right >= MAX_COLS {
-            bail!("range out of bounds");
-        }
-        let cells = (range.bottom - range.top + 1) as u64 * (range.right - range.left + 1) as u64;
-        if cells > MAX_STYLED_CELLS {
-            bail!("too many cells to format at once ({cells}); select fewer");
-        }
+        check_style_range(range)?;
         let (path, value) = change.path_and_value()?;
         self.model
-            .update_range_style(&range.area(sheet), path, value)
+            .update_range_style(&range.area(sheet), path, &value)
             .map_err(|e| anyhow!("{e}"))?;
         self.history.edited();
         Ok(())
+    }
+
+    /// Draw `preset` borders (thin, automatic colour) over `range`, as one
+    /// undo step.
+    pub fn set_range_borders(
+        &mut self,
+        sheet: u32,
+        range: CellRange,
+        preset: BorderPreset,
+    ) -> Result<()> {
+        check_style_range(range)?;
+        // `BorderArea`'s fields are private to IronCalc; it is built through
+        // its serde form.
+        let area: ironcalc_base::BorderArea = serde_json::from_value(serde_json::json!({
+            "item": { "style": "thin", "color": "#000000" },
+            "type": preset.ironcalc(),
+        }))?;
+        self.model
+            .set_area_with_border(&range.area(sheet), &area)
+            .map_err(|e| anyhow!("{e}"))?;
+        self.history.edited();
+        Ok(())
+    }
+
+    /// Merge `range` into one cell, centred ("Merge & Center"), as one undo
+    /// step. Like IronCalc (and unlike Excel, which asks first), it refuses
+    /// when more than one of the cells has content.
+    pub fn merge_range(&mut self, sheet: u32, range: CellRange) -> Result<()> {
+        if range.is_single() {
+            bail!("select more than one cell to merge");
+        }
+        check_style_range(range)?;
+        self.model
+            .merge_cells_center(&range.area(sheet))
+            .map_err(|e| anyhow!("{e}"))?;
+        self.history.edited();
+        Ok(())
+    }
+
+    /// Unmerge every merged cell touching `range`, as one undo step. Returns
+    /// whether there was any.
+    pub fn unmerge_range(&mut self, sheet: u32, range: CellRange) -> Result<bool> {
+        if self.merges_in(sheet, range).is_empty() {
+            return Ok(false);
+        }
+        self.model
+            .unmerge_cells(&range.area(sheet))
+            .map_err(|e| anyhow!("{e}"))?;
+        self.history.edited();
+        Ok(true)
     }
 
     /// Width of a column in pixels (IronCalc's unit; the default is 90).
@@ -316,6 +582,17 @@ impl Workbook {
         self.history.edited();
         Ok(())
     }
+}
+
+fn check_style_range(range: CellRange) -> Result<()> {
+    if range.bottom >= MAX_ROWS || range.right >= MAX_COLS {
+        bail!("range out of bounds");
+    }
+    let cells = range.rows_count() as u64 * range.cols_count() as u64;
+    if cells > MAX_STYLED_CELLS {
+        bail!("too many cells to format at once ({cells}); select fewer");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
