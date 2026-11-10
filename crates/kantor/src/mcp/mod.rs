@@ -16,9 +16,21 @@ pub const USAGE: &str = "usage: kantor mcp [--no-launch] [--print-config]\n\
     (unless --no-launch). --print-config prints setup for Claude Code,\n\
     Claude Desktop and Cursor.";
 
+/// The executable that starts Kantor: the `.AppImage` file itself when
+/// running from one (the binary inside lives on a mount that disappears when
+/// this process exits), else this binary.
+fn exe_path() -> std::io::Result<std::path::PathBuf> {
+    if let Some(appimage) = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from)
+        && appimage.is_file()
+    {
+        return Ok(appimage);
+    }
+    std::env::current_exe()
+}
+
 /// The `kantor` binary as the agent should start it.
 fn exe() -> String {
-    std::env::current_exe()
+    exe_path()
         .ok()
         .and_then(|p| p.to_str().map(str::to_owned))
         .unwrap_or_else(|| "kantor".to_owned())
