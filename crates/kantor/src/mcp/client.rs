@@ -76,8 +76,7 @@ impl AppClient {
     /// for its socket.
     fn launch() -> Result<Conn, String> {
         use std::os::unix::process::CommandExt as _;
-        let exe =
-            std::env::current_exe().map_err(|e| format!("can't find the kantor binary: {e}"))?;
+        let exe = super::exe_path().map_err(|e| format!("can't find the kantor binary: {e}"))?;
         log::info!("starting {}", exe.display());
         std::process::Command::new(&exe)
             .stdin(std::process::Stdio::null())

@@ -255,7 +255,7 @@ The M1 Air (macOS since 2026-11-08) has **8 GB RAM** and is the *test machine*, 
 | **M1 Air** (macOS, Apple Silicon) | Running the prebuilt nightly, manual testing (shared machine: touch only Kantor's install) |
 | **Linux box** (x86_64, 30 GB RAM) | Local development: `cargo run -p kantor`, `cargo test --workspace`, `cargo clippy`. Fast iteration on UI; still push to get the aarch64 build |
 | **GitHub Actions `ubuntu-24.04-arm`** | aarch64 Linux tests and release builds (native ARM, free for public repos) |
-| **GitHub Actions `macos-15`** | macOS (Apple Silicon) release builds: `Kantor.app`, ad-hoc signed (`scripts/package-macos.sh`) |
+| **GitHub Actions `macos-15`** | macOS builds: nightly `Kantor.app` + DMG, ad-hoc signed (Apple Silicon); tagged releases a universal, Developer ID signed, notarised `Kantor.dmg` (`scripts/build-dmg.sh`, `release.yml`, environment `release`) |
 | **GitHub Actions `ubuntu-24.04`** | x86_64 tests and release builds, fmt, clippy, cargo-deny, `Cargo.lock` upkeep, later LibreOffice-headless fidelity diffs |
 
 Workflow:

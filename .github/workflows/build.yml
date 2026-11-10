@@ -1,5 +1,9 @@
 # Nightly binaries. The M1 Air never builds: it downloads these.
-#  - push to main  -> rolling "nightly" pre-release
+#  - push to main  -> rolling "nightly" pre-release: kantor-nightly-ARCH-{linux,macos}.tar.gz
+#    (install.sh), Kantor-nightly-{x86_64,aarch64}.AppImage and Kantor-nightly-aarch64.dmg
+#    (ad-hoc signed, not notarised: notarisation runs only in release.yml)
+#  - workflow_dispatch on another branch -> the same builds as workflow artifacts only;
+#    the nightly release is published from main only
 # Versioned releases (tags v*) are built by release.yml.
 name: Build
 
@@ -7,6 +11,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      universal:
+        description: "macOS: build the universal (arm64 + x86_64) app and DMG as release.yml does, unsigned"
+        type: boolean
+        default: false
 
 concurrency:
   group: build-${{ github.ref }}
@@ -33,6 +42,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && inputs.universal && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - if: runner.os == 'Linux'
         run: ./scripts/ci-deps.sh
       - if: runner.os == 'macOS'
@@ -41,7 +52,8 @@ jobs:
         with:
           key: release
           cache-on-failure: true
-      - run: cargo build --release -p kantor
+      - if: ${{ !(runner.os == 'macOS' && inputs.universal) }}
+        run: cargo build --release -p kantor
       - name: Package
         id: pkg
         run: |
@@ -49,9 +61,27 @@ jobs:
           platform="${{ matrix.platform || 'linux' }}"
           name="kantor-${tag}-${{ matrix.arch }}-${platform}"
           if [ "$platform" = macos ]; then
-            ./scripts/package-macos.sh "target/release/kantor" "dist/${name}"
+            # Unsigned (ad-hoc) DMG of this runner's arch; release.yml makes the universal,
+            # notarised one.
+            if [ "${{ inputs.universal }}" = true ]; then
+              ./scripts/build-dmg.sh --name "Kantor-${tag}-universal" dist
+              lipo -archs dist/Kantor.app/Contents/MacOS/kantor
+              arch -x86_64 dist/Kantor.app/Contents/MacOS/kantor --version || echo "::warning::could not run the x86_64 slice"
+              dmg="Kantor-${tag}-universal.dmg"
+            else
+              ./scripts/build-dmg.sh --binary target/release/kantor \
+                --name "Kantor-${tag}-${{ matrix.arch }}" dist
+              dmg="Kantor-${tag}-${{ matrix.arch }}.dmg"
+            fi
+            dist/Kantor.app/Contents/MacOS/kantor --version
+            ./scripts/package-macos.sh dist/Kantor.app "dist/${name}"
+            rm -rf dist/Kantor.app
+            ( cd dist && shasum -a 256 "$dmg" > "$dmg.sha256" )
           else
             ./scripts/package.sh "target/release/kantor" "dist/${name}"
+            appimage="Kantor-${tag}-${{ matrix.arch }}.AppImage"
+            ./scripts/package-appimage.sh target/release/kantor "dist/${appimage}"
+            ( cd dist && sha256sum "$appimage" > "$appimage.sha256" )
           fi
           echo "name=${name}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
@@ -59,13 +89,17 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.pkg.outputs.name }}
-          path: dist/${{ steps.pkg.outputs.name }}.tar.gz*
+          path: |
+            dist/${{ steps.pkg.outputs.name }}.tar.gz*
+            dist/Kantor-*
+          if-no-files-found: error
           retention-days: 14
 
   publish:
     needs: build
     # Publish whatever built: one platform failing shouldn't hold back the others.
-    if: ${{ !cancelled() }}
+    # Only from main: a manual run on a branch must not replace main's nightly.
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
