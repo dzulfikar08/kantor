@@ -1,0 +1,320 @@
+// All page text, per language. Values may contain inline HTML (links, <code>).
+// Keep both languages in step: every key in `en` must exist in `id`.
+
+const GH = "https://github.com/dzulfikar08/kantor";
+
+export const en = {
+  lang: "en",
+  path: "/",
+  locale: "en_US",
+  title: "Kantor: Sheets, Docs and Slides for Mac and Linux",
+  description:
+    "A small, fast office suite that opens and saves Word, Excel and PowerPoint files. Works offline, no account. Free and open source.",
+  ogAlt: "Kantor icon next to a budget spreadsheet open in Kantor Sheets",
+  skip: "Skip to content",
+  navLabel: "Main",
+  navDownload: "Download",
+  navLimits: "What's missing",
+  navSource: "GitHub",
+  switchLang: "Bahasa Indonesia",
+  switchLangShort: "ID",
+  switchLangLabel: "Baca dalam Bahasa Indonesia",
+
+  h1: "Sheets, Docs and Slides that open your Office files",
+  lede:
+    "Kantor is a small, fast office app for Mac and Linux. Open a Word document, an Excel sheet or a PowerPoint deck, edit it, and save it back in the same format. It works offline and needs no account.",
+  facts: ["Free and open source", "About 55 MB", "Mac and Linux"],
+  preview:
+    'Early preview: Kantor is new and some things are still missing. <a href="#limits">Read the list</a> before you rely on it for important work.',
+
+  ctaChoose: "Choose your download",
+  ctaMac: "Download for Mac",
+  ctaMacMeta: "Kantor.dmg, for macOS 11 or later (Apple Silicon or Intel)",
+  ctaLinux: "Download for Linux",
+  ctaLinuxMetaX64: "Kantor-x86_64.AppImage, for most PCs (Intel or AMD)",
+  ctaLinuxMetaArm: "Kantor-aarch64.AppImage, for ARM computers",
+  ctaOtherFiles: "Other downloads",
+  ctaWindows: "See the Mac and Linux downloads",
+  ctaWindowsNote: "Kantor isn't available for Windows yet.",
+  ctaMobile: "See the downloads",
+  ctaMobileNote: "Kantor is a desktop app for Mac and Linux. Open this page on your computer to download it.",
+
+  shotsLabel: "Screenshots of Kantor",
+  shots: {
+    sheets: {
+      tab: "Sheets",
+      alt: "Kantor Sheets with a six-month budget open. A block of cells is selected and the status bar shows their sum, average and count.",
+      caption: "A budget in Sheets. Select cells and their sum, average and count appear at the bottom.",
+    },
+    docs: {
+      tab: "Docs",
+      alt: "Kantor Docs showing a one-page letter on an A4 page, with headings, a bulleted list and a table, below the formatting toolbar and ruler.",
+      caption: "A letter in Docs, on an A4 page with headings, a list and a table.",
+    },
+    slides: {
+      tab: "Slides",
+      alt: "Kantor Slides with a three-slide deck. The thumbnails are on the left and the second slide, with bullet points and two coloured boxes, is open for editing.",
+      caption: "A presentation in Slides, with thumbnails to reorder and a notes area below.",
+    },
+  },
+  shotsNote: "Real screenshots of Kantor on Linux. It follows your system's light or dark look.",
+
+  whatH2: "Made for the files you already have",
+  apps: {
+    sheets: {
+      name: "Sheets",
+      formats: [".xlsx", ".csv", ".ods", ".xls"],
+      text: "Spreadsheets with formulas, several sheets and number formats. Opens .csv, .ods and .xls files too, and saves as .xlsx.",
+    },
+    docs: {
+      name: "Docs",
+      formats: [".docx"],
+      text: "Letters and reports with headings, lists, tables, pictures and page sizes such as A4, Letter and F4. Find and replace, and a word count.",
+    },
+    slides: {
+      name: "Slides",
+      formats: [".pptx"],
+      text: "Presentations with text, shapes and pictures you can move and resize, speaker notes, and a full-screen slide show.",
+    },
+  },
+  keepH3: "Saving doesn't throw away what Kantor can't show yet",
+  keepText:
+    "If a file holds something Kantor doesn't understand yet, such as a Word header or an Excel comment, Kantor leaves it as it was and writes it back when you save. When it can't do that safely, it saves to a new file or tells you what will be left out.",
+  more: [
+    ["Export to PDF", "Docs and Slides save a PDF that looks like what you see on screen."],
+    ["Offline, no account", "Your files stay on your computer. There is nothing to sign up for."],
+    [
+      "AI only if you want it",
+      "Off until you turn it on. Use your own key from a provider such as Anthropic, OpenAI or Google, or run a model on your own computer with Ollama. Kantor has no AI service of its own.",
+    ],
+    [
+      "AI assistants can edit open files",
+      'Assistants such as Claude can read and change the documents you have open, while you watch. Each change is one step you can undo. This uses <a href="https://modelcontextprotocol.io">MCP</a>; the setup is in the <a href="' + GH + '#ai-agents-mcp">README</a>.',
+    ],
+  ],
+
+  dlH2: "Download Kantor",
+  dlIntro: "Free, with no account and no trial period.",
+  verLoading: "Checking the latest version…",
+  verOk: "Latest version: {tag}, released {date}.",
+  verNotes: "What's new",
+  verError: "Couldn't check the latest version just now. The download buttons still get the newest release.",
+  verNone: "No release is published yet, so the download buttons won't work. Check back soon.",
+  assetMissing:
+    'The newest release ({tag}) doesn\'t have this download yet. <a href="{url}">See the files it does have</a>.',
+  yourComputer: "Looks like your computer",
+  mac: {
+    name: "Mac",
+    req: "macOS 11 or later, Apple Silicon or Intel",
+    button: "Download Kantor.dmg",
+    steps: [
+      "Open <strong>Kantor.dmg</strong> from your Downloads folder.",
+      "Drag <strong>Kantor</strong> into the Applications folder.",
+      "Open Kantor from Applications or Launchpad. It's signed and notarised by Apple, so it opens like any other app.",
+    ],
+  },
+  linux: {
+    name: "Linux",
+    req: "64-bit Linux. One file, nothing else to install.",
+    buttonX64: "Download for most PCs",
+    buttonX64Meta: "x86_64, Intel or AMD",
+    buttonArm: "Download for ARM",
+    buttonArmMeta: "aarch64",
+    steps: [
+      "Download the file for your computer. If you're not sure, it's almost always the first one.",
+      "Allow it to run: right-click the file, choose <strong>Properties</strong> and turn on <strong>Allow executing file as program</strong>. The wording differs a little between file managers.",
+      "Double-click the file to open Kantor.",
+    ],
+    termH: "Prefer the terminal?",
+    termText:
+      "This command installs Kantor in <code>~/.local/bin</code> and adds it to your app menu. It picks the right file for your computer and installs the nightly build, made from the newest code and tested less than a release.",
+    copy: "Copy",
+    copied: "Copied",
+    copyFail: "Couldn't copy. Select the command and copy it yourself.",
+  },
+  windows: {
+    name: "Windows",
+    text: "Not available yet. Kantor runs on Mac and Linux for now.",
+  },
+
+  limitsH2: "What's missing in this preview",
+  limitsIntro:
+    "Kantor is early software and hasn't been tried on a large set of real-world files yet. Keep a copy of anything important, and expect these gaps:",
+  limits: [
+    "No printing yet. Export to PDF and print the PDF instead.",
+    "No spell check yet.",
+    "Word: headers, footers, floating pictures, shapes and equations aren't shown properly yet. Kantor keeps them and saves them unchanged.",
+    "Word: table rows don't break across pages, and tab stops show as a single space.",
+    "Word files with tracked changes or comments are saved as a new file, so the original stays as it was.",
+    "Excel: cell colours and borders aren't shown or editable yet (they stay in the file), every row has the same height, and there's no sort or filter.",
+    "Excel: macros, pivot tables and Excel tables aren't carried over when you save. Kantor tells you when that happens.",
+    "PowerPoint: tables, charts and SmartArt can't be edited yet, and some SmartArt shows as a plain box.",
+  ],
+  reportH3: "Found a file that Kantor gets wrong?",
+  reportText:
+    "Tell us what happened. Attach the file only if it holds nothing private.",
+  reportButton: "Report a problem on GitHub",
+
+  footSource: "Source code",
+  footChangelog: "Changelog",
+  footLicense: "AGPL-3.0 licence",
+  footBy: "by",
+};
+
+export const id = {
+  lang: "id",
+  path: "/id/",
+  locale: "id_ID",
+  title: "Kantor: Sheets, Docs, dan Slides untuk Mac dan Linux",
+  description:
+    "Aplikasi perkantoran yang ringan dan cepat untuk membuka dan menyimpan file Word, Excel, dan PowerPoint. Bisa tanpa internet, tanpa akun. Gratis dan open source.",
+  ogAlt: "Ikon Kantor di samping lembar anggaran yang dibuka di Kantor Sheets",
+  skip: "Langsung ke isi",
+  navLabel: "Utama",
+  navDownload: "Unduh",
+  navLimits: "Yang belum ada",
+  navSource: "GitHub",
+  switchLang: "English",
+  switchLangShort: "EN",
+  switchLangLabel: "Read in English",
+
+  h1: "Sheets, Docs, dan Slides untuk file Office Anda",
+  lede:
+    "Kantor adalah aplikasi perkantoran yang ringan dan cepat untuk Mac dan Linux. Buka dokumen Word, lembar Excel, atau presentasi PowerPoint, edit, lalu simpan lagi dalam format yang sama. Bisa dipakai tanpa internet dan tanpa akun.",
+  facts: ["Gratis dan open source", "Sekitar 55 MB", "Mac dan Linux"],
+  preview:
+    'Versi awal: Kantor masih baru dan beberapa hal belum ada. <a href="#limits">Baca daftarnya</a> sebelum memakainya untuk pekerjaan penting.',
+
+  ctaChoose: "Pilih file unduhan",
+  ctaMac: "Unduh untuk Mac",
+  ctaMacMeta: "Kantor.dmg, untuk macOS 11 ke atas (Apple Silicon atau Intel)",
+  ctaLinux: "Unduh untuk Linux",
+  ctaLinuxMetaX64: "Kantor-x86_64.AppImage, untuk kebanyakan PC (Intel atau AMD)",
+  ctaLinuxMetaArm: "Kantor-aarch64.AppImage, untuk komputer ARM",
+  ctaOtherFiles: "Unduhan lain",
+  ctaWindows: "Lihat unduhan untuk Mac dan Linux",
+  ctaWindowsNote: "Kantor belum tersedia untuk Windows.",
+  ctaMobile: "Lihat unduhan",
+  ctaMobileNote: "Kantor adalah aplikasi desktop untuk Mac dan Linux. Buka halaman ini di komputer untuk mengunduhnya.",
+
+  shotsLabel: "Tangkapan layar Kantor",
+  shots: {
+    sheets: {
+      tab: "Sheets",
+      alt: "Kantor Sheets membuka anggaran enam bulan. Sekelompok sel dipilih dan bilah status menampilkan jumlah, rata-rata, dan banyaknya.",
+      caption: "Anggaran di Sheets. Pilih beberapa sel, lalu jumlah, rata-rata, dan banyaknya muncul di bagian bawah.",
+    },
+    docs: {
+      tab: "Docs",
+      alt: "Kantor Docs menampilkan surat satu halaman di kertas A4, dengan judul, daftar berpoin, dan tabel, di bawah toolbar dan penggaris.",
+      caption: "Surat di Docs, di kertas A4 dengan judul, daftar, dan tabel.",
+    },
+    slides: {
+      tab: "Slides",
+      alt: "Kantor Slides dengan presentasi tiga slide. Gambar kecil slide ada di kiri, dan slide kedua yang berisi poin-poin dan dua kotak berwarna sedang dibuka.",
+      caption: "Presentasi di Slides, dengan gambar kecil slide untuk mengatur urutan dan kolom catatan di bawah.",
+    },
+  },
+  shotsNote: "Tangkapan layar asli Kantor di Linux. Tampilannya mengikuti mode terang atau gelap sistem Anda.",
+
+  whatH2: "Dibuat untuk file yang sudah Anda punya",
+  apps: {
+    sheets: {
+      name: "Sheets",
+      formats: [".xlsx", ".csv", ".ods", ".xls"],
+      text: "Lembar kerja dengan rumus, beberapa sheet, dan format angka (termasuk Rupiah). Bisa membuka file .csv, .ods, dan .xls, lalu menyimpannya sebagai .xlsx.",
+    },
+    docs: {
+      name: "Docs",
+      formats: [".docx"],
+      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, dan ukuran kertas seperti A4, Letter, dan F4. Ada cari dan ganti, juga penghitung kata.",
+    },
+    slides: {
+      name: "Slides",
+      formats: [".pptx"],
+      text: "Presentasi dengan teks, bentuk, dan gambar yang bisa dipindah dan diubah ukurannya, catatan pembicara, dan tayangan layar penuh.",
+    },
+  },
+  keepH3: "Menyimpan tidak membuang yang belum bisa ditampilkan Kantor",
+  keepText:
+    "Kalau file berisi sesuatu yang belum dipahami Kantor, misalnya header di Word atau komentar di Excel, Kantor membiarkannya apa adanya dan menuliskannya kembali saat Anda menyimpan. Kalau itu tidak bisa dilakukan dengan aman, Kantor menyimpan ke file baru atau memberi tahu bagian mana yang tidak ikut tersimpan.",
+  more: [
+    ["Ekspor ke PDF", "Docs dan Slides menyimpan PDF yang sama dengan tampilan di layar."],
+    ["Tanpa internet, tanpa akun", "File Anda tetap di komputer Anda. Tidak perlu mendaftar apa pun."],
+    [
+      "AI hanya kalau Anda mau",
+      "Mati sampai Anda menyalakannya. Pakai kunci API Anda sendiri dari penyedia seperti Anthropic, OpenAI, atau Google, atau jalankan model di komputer sendiri dengan Ollama. Kantor tidak punya layanan AI sendiri.",
+    ],
+    [
+      "Asisten AI bisa mengedit file yang terbuka",
+      'Asisten seperti Claude bisa membaca dan mengubah dokumen yang sedang Anda buka, sementara Anda melihatnya. Setiap perubahan bisa dibatalkan satu per satu. Fitur ini memakai <a href="https://modelcontextprotocol.io">MCP</a>; cara memasangnya ada di <a href="' + GH + '#ai-agents-mcp">README</a> (bahasa Inggris).',
+    ],
+  ],
+
+  dlH2: "Unduh Kantor",
+  dlIntro: "Gratis, tanpa akun dan tanpa masa percobaan.",
+  verLoading: "Memeriksa versi terbaru…",
+  verOk: "Versi terbaru: {tag}, dirilis {date}.",
+  verNotes: "Apa yang baru",
+  verError: "Versi terbaru tidak bisa diperiksa saat ini. Tombol unduh tetap mengambil rilis terbaru.",
+  verNone: "Belum ada rilis yang diterbitkan, jadi tombol unduh belum berfungsi. Coba lagi nanti.",
+  assetMissing:
+    'Rilis terbaru ({tag}) belum menyertakan unduhan ini. <a href="{url}">Lihat file yang tersedia di rilis itu</a>.',
+  yourComputer: "Sepertinya komputer Anda",
+  mac: {
+    name: "Mac",
+    req: "macOS 11 ke atas, Apple Silicon atau Intel",
+    button: "Unduh Kantor.dmg",
+    steps: [
+      "Buka <strong>Kantor.dmg</strong> dari folder Downloads.",
+      "Seret <strong>Kantor</strong> ke folder Applications.",
+      "Buka Kantor dari Applications atau Launchpad. Aplikasinya sudah ditandatangani dan dinotarisasi Apple, jadi bisa dibuka seperti aplikasi lain.",
+    ],
+  },
+  linux: {
+    name: "Linux",
+    req: "Linux 64-bit. Satu file, tidak perlu memasang apa pun lagi.",
+    buttonX64: "Unduh untuk kebanyakan PC",
+    buttonX64Meta: "x86_64, Intel atau AMD",
+    buttonArm: "Unduh untuk ARM",
+    buttonArmMeta: "aarch64",
+    steps: [
+      "Unduh file untuk komputer Anda. Kalau ragu, hampir selalu yang pertama.",
+      "Izinkan file dijalankan: klik kanan file, pilih <strong>Properties</strong>, lalu nyalakan <strong>Allow executing file as program</strong>. Tulisannya sedikit berbeda di tiap pengelola file.",
+      "Klik dua kali file itu untuk membuka Kantor.",
+    ],
+    termH: "Lebih suka terminal?",
+    termText:
+      "Perintah ini memasang Kantor di <code>~/.local/bin</code> dan menambahkannya ke menu aplikasi. File yang cocok dipilih otomatis. Yang terpasang adalah versi nightly: dibuat dari kode terbaru dan belum diuji sebanyak rilis.",
+    copy: "Salin",
+    copied: "Tersalin",
+    copyFail: "Tidak bisa menyalin. Pilih perintahnya dan salin sendiri.",
+  },
+  windows: {
+    name: "Windows",
+    text: "Belum tersedia. Untuk saat ini Kantor hanya untuk Mac dan Linux.",
+  },
+
+  limitsH2: "Yang belum ada di versi awal ini",
+  limitsIntro:
+    "Kantor masih baru dan belum dicoba dengan banyak file dari dunia nyata. Simpan salinan file penting, dan perhatikan kekurangan berikut:",
+  limits: [
+    "Belum bisa mencetak. Ekspor ke PDF dulu, lalu cetak PDF-nya.",
+    "Belum ada pemeriksa ejaan.",
+    "Word: header, footer, gambar mengambang, bentuk, dan persamaan belum tampil dengan benar. Kantor menyimpannya tanpa diubah.",
+    "Word: baris tabel tidak terpotong ke halaman berikutnya, dan tab tampil sebagai satu spasi.",
+    "File Word dengan lacak perubahan (track changes) atau komentar disimpan sebagai file baru, jadi file aslinya tetap utuh.",
+    "Excel: warna dan garis tepi sel belum tampil dan belum bisa diubah (tetap ada di file), tinggi semua baris sama, dan belum ada urutkan atau filter.",
+    "Excel: makro, pivot table, dan tabel Excel tidak ikut tersimpan. Kantor memberi tahu Anda saat itu terjadi.",
+    "PowerPoint: tabel, grafik, dan SmartArt belum bisa diedit, dan sebagian SmartArt tampil sebagai kotak polos.",
+  ],
+  reportH3: "Menemukan file yang salah tampil di Kantor?",
+  reportText:
+    "Ceritakan apa yang terjadi. Lampirkan file-nya hanya jika tidak berisi data pribadi.",
+  reportButton: "Laporkan masalah di GitHub",
+
+  footSource: "Kode sumber",
+  footChangelog: "Catatan perubahan",
+  footLicense: "Lisensi AGPL-3.0",
+  footBy: "oleh",
+};
