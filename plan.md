@@ -2,17 +2,19 @@
 
 > **Kantor** is a working name (Indonesian for "office"). Rename freely.
 
-A small, fast, native office suite for Linux (first target: Omarchy on Apple Silicon), built in Rust on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui), the UI framework behind the Zed editor. Three apps: **Docs** (Word), **Sheets** (Excel), **Slides** (PowerPoint). They share one binary and one core.
+A small, fast, native office suite for Linux and macOS (Linux on x86_64 and aarch64, made with Omarchy in mind; macOS on Apple Silicon), built in Rust on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui), the UI framework behind the Zed editor. Three apps: **Docs** (Word), **Sheets** (Excel), **Slides** (PowerPoint). They share one binary and one core.
 
-Status: **M0 done; Sheets MVP (M1) feature-complete pending Mac checks; Docs (M2) and Slides (M3) first slices in**. Written 2026-11-07, last updated 2026-11-07.
+Status: **M0 done; Sheets MVP (M1) feature-complete pending Mac checks; Docs (M2) and Slides (M3) first slices in**. Written 2026-11-07, last updated 2026-11-10.
+
+> **Platform change (2026-11-08):** the M1 Air no longer runs Asahi Linux; it runs macOS, and Kantor ships a macOS build (`Kantor.app`, Metal renderer). Linux stays a first-class platform on x86_64 and aarch64. Notes below about Asahi, 16K pages and the M1 under Linux are history from the first week.
 
 ---
 
 ## 0. Where we are / pick up here
 
-**Repo:** https://github.com/dzulfikar08/kantor (public, AGPL-3.0-or-later). `main` is always green; every push publishes a **nightly** aarch64 + x86_64 build.
+**Repo:** https://github.com/dzulfikar08/kantor (public, AGPL-3.0-or-later). `main` is always green; every push publishes a **nightly** build for Linux (x86_64, aarch64) and macOS (Apple Silicon).
 
-**What works today** (nightly, verified running on the M1 Air under Asahi):
+**What works today** (nightly; first verified on the M1 Air under Asahi, since 2026-11-08 on the same Air under macOS):
 - One binary, suite shell modelled on Voltrus Tools (`docs/reference-voltrus-tools.md`): Home screen, document **tabs** (tab strip = titlebar), **split panes** with draggable dividers, resizable **sidebar** (open/recent/create) and **inspector** (cell + workbook details), **status bar**, **Ctrl+K command palette** (fuzzy), **theme picker** (Follow Omarchy / 23 Omarchy / 907 Ghostty themes, live preview), **UI font picker** (SF Pro when installed). Tabs, layouts and panel sizes **persist** across runs.
 - **Sheets**: open/edit/save `.xlsx` via IronCalc (formulas recalc, atomic save), Excel-style typing into cells (type / Enter / F2 / Delete / Esc), name box + formula bar, multiple sheets. Formula help: point mode (click/drag/arrows insert references, other sheets as `'Sheet2'!A1`), coloured references in the editor and on the grid, F4 `$` cycling, function-name autocomplete (`crates/sheets_engine/src/formula.rs`, `crates/sheets_ui/src/point.rs`). ☐ Try in a window: reference text colouring is painted over the input's glyphs (single-line `InputState` has no styled-runs hook), check it lines up; arrow pointing in the cell editor doesn't scroll (scrolling the edited cell away would commit).
 - **Docs** (M2, not yet tried on the Mac): new document (Ctrl+Shift+N, Home, sidebar, palette) and open/save `.docx`: paragraphs, runs (font, size, bold/italic/underline, colour, character styles), paragraph styles (Normal, Heading 1–3, the file's own), alignment, spacing and indents, **lists** (bulleted/numbered, 9 levels, `numbering.xml`; Enter/Tab/Shift+Tab/Backspace behave like Word; Ctrl+Shift+7/8), **tables** (grid, merged cells, borders, rows paginate; Tab between cells, insert table grid, insert/delete rows/columns), **inline pictures** (PNG/JPEG, insert from file), page breaks, hyperlinks. **Page setup** (toolbar "Page" control + palette: A4/Letter/Legal/A5/F4 215×330 mm, portrait/landscape, Normal/Narrow/Moderate/Wide or custom margins in cm; one undo step; saved by rewriting only the changed `w:pgSz`/`w:pgMar` attributes inside the original `w:sectPr`, `crates/docs_engine/src/page.rs`; new documents are A4 portrait with 2.54 cm margins, since Word's own default follows the Windows region: Letter on US-English installs, A4 on Indonesian ones). **Ruler** in cm above the page (margins shaded, caret paragraph's first-line/left/right indent markers; drag margins or indents, one undo step each; "Toggle Ruler" in the palette, saved as `docs_ruler` in settings). Paged view (parley layout, GPUI paints the glyphs, only visible pages), zoom, caret/selection, typing via GPUI's input handler (IME), Ctrl+B/I/U, undo/redo for every edit, plain-text clipboard. **Round-trip safety:** saving copies every package part byte for byte and regenerates only the body (plus `numbering.xml`/media/rels when Kantor added lists or pictures, originals untouched). Unmodelled elements are carried byte for byte as **opaque objects** with a placeholder (floating images, shapes, content controls, simple fields, equations, footnote refs, bookmarks, nested tables) or as verbatim property extras; only tracked changes, comments and content-dependent fields (TOC, REF…) still mark the file unsupported, which sends Save to Save As (rules in `crates/docs_engine/src/docx.rs`).
@@ -25,9 +27,9 @@ Status: **M0 done; Sheets MVP (M1) feature-complete pending Mac checks; Docs (M2
 - Renderer memory patch (`vendor/gpui-pre-wgpu`) — fixed the wgpu *Out of Memory* crash on 8 GB with a browser open.
 
 **Machines and rules** (details in §8):
-- **M1 Air**: target only. Never build or install toolchains there; install the nightly with `curl -fsSL https://raw.githubusercontent.com/dzulfikar08/kantor/main/scripts/install.sh | sh`.
+- **M1 Air** (macOS, shared machine): test target only. Never build or install toolchains there; install the nightly (it puts `Kantor.app` in `~/Applications` and links `~/.local/bin/kantor`) with `curl -fsSL https://raw.githubusercontent.com/dzulfikar08/kantor/main/scripts/install.sh | sh`.
 - **Linux box** (x86_64, 30 GB RAM): fine for local `cargo build`/`cargo test`/`cargo run`. Setup: `rustup` stable, then on Arch `sudo pacman -S --needed base-devel clang cmake wayland libxkbcommon vulkan-icd-loader fontconfig freetype2 alsa-lib openssl zstd dbus` (Ubuntu: `./scripts/ci-deps.sh`). `cargo run -p kantor` / `cargo test --workspace`.
-- **GitHub Actions** does the real aarch64 builds and releases. `housekeeping.yml` auto-applies `cargo fmt` and refreshes `Cargo.lock` on `main` (it commits as github-actions — `git pull --rebase` before pushing). PRs are checked strictly (fmt + clippy `-D warnings` + tests on both arches).
+- **GitHub Actions** does the real builds and releases (Linux x86_64 and aarch64, macOS on `macos-15`). `housekeeping.yml` auto-applies `cargo fmt` and refreshes `Cargo.lock` on `main` (it commits as github-actions — `git pull --rebase` before pushing). PRs are checked strictly (fmt + clippy `-D warnings` + tests on both arches).
 
 **Next up, in order** (each item ends with a green CI and a nightly to try on the Mac):
 1. ◐ **Confirm on the Mac:** ✅ 2026-11-07, nightly `a395ecf` on the M1 Air (Arch Linux ARM, 16K pages): Sheets, Docs and Slides open, edit and render correctly; **~120 MB RAM with a sheet, a document and two presentations open** (target < 150 MB). ☐ Still to check: fractional scale 1.6 looks sharp, fcitx5 typing in the formula bar, RSS with a 10k-cell sheet (< 150 MB target), long session with Helium open (memory patch).
@@ -48,7 +50,7 @@ Status: **M0 done; Sheets MVP (M1) feature-complete pending Mac checks; Docs (M2
 
 ## 1. Why
 
-On an 8 GB M1 MacBook Air running Omarchy (aarch64, 16K-page kernel), every option today trades something away:
+On an 8 GB M1 MacBook Air (first under Omarchy on Asahi Linux, now macOS), every option today trades something away:
 
 | Option | Problem |
 |---|---|
@@ -64,7 +66,7 @@ Nobody has built a serious office suite on GPUI. The building blocks now exist i
 
 ## 2. Goals and non-goals
 
-### Goals (targets, measured on the M1 Air)
+### Goals (targets, measured on the M1 Air, now under macOS)
 
 | Goal | Target |
 |---|---|
@@ -74,7 +76,7 @@ Nobody has built a serious office suite on GPUI. The building blocks now exist i
 | Office files | Open and save `.docx`, `.xlsx`, `.pptx` as **first-class formats**, not "import" |
 | Round-trip safety | Opening and saving a file **never drops content we don't understand** (see §5) |
 | Look and feel | Native GPUI, keyboard-first, follows the Omarchy theme, Mac-style shortcuts |
-| Platform | aarch64 Linux first (Asahi/Aurora, 16K pages); x86_64 Linux second |
+| Platform | Linux on x86_64 and aarch64 (Wayland, Omarchy/Hyprland in mind), and macOS on Apple Silicon. Asahi (16K pages) was the first target until 2026-11-08 and should keep working, but isn't tested any more |
 | Output | Accurate PDF export and printing |
 
 ### Non-goals for 1.0
@@ -84,7 +86,7 @@ Nobody has built a serious office suite on GPUI. The building blocks now exist i
 - Full track changes and comments UI (preserve them in files, read-only display at most)
 - Mail merge, pivot tables, advanced charts, embedded OLE objects, SmartArt editing
 - Legacy binary formats (`.doc`, `.xls`, `.ppt`) beyond, at most, read-only
-- Windows and macOS builds (GPUI supports them, so this stays possible later)
+- Windows builds (GPUI supports Windows, so this stays possible later). macOS builds were added on 2026-11-08
 
 ## 3. Strategy: Sheets first, then Docs, then Slides
 
@@ -246,13 +248,14 @@ Time estimates assume **one person, part-time (~10–15 h/week), with AI-assiste
 
 ## 8. Development environment and resources
 
-The M1 Air has **8 GB RAM** and is the *target*, not a build machine. **Nothing is compiled or installed on the Mac** — not even `rustup`. The project is public so GitHub's free runners do the release work:
+The M1 Air (macOS since 2026-11-08) has **8 GB RAM** and is the *test machine*, not a build machine. **Nothing is compiled or installed on the Mac** — not even `rustup`. The project is public so GitHub's free runners do the release work:
 
 | Where | Use for |
 |---|---|
-| **M1 Air** (aarch64, the real target) | Editing code, running prebuilt binaries, manual testing |
+| **M1 Air** (macOS, Apple Silicon) | Running the prebuilt nightly, manual testing (shared machine: touch only Kantor's install) |
 | **Linux box** (x86_64, 30 GB RAM) | Local development: `cargo run -p kantor`, `cargo test --workspace`, `cargo clippy`. Fast iteration on UI; still push to get the aarch64 build |
-| **GitHub Actions `ubuntu-24.04-arm`** | aarch64 tests and release builds (native ARM, free for public repos) |
+| **GitHub Actions `ubuntu-24.04-arm`** | aarch64 Linux tests and release builds (native ARM, free for public repos) |
+| **GitHub Actions `macos-15`** | macOS (Apple Silicon) release builds: `Kantor.app`, ad-hoc signed (`scripts/package-macos.sh`) |
 | **GitHub Actions `ubuntu-24.04`** | x86_64 tests and release builds, fmt, clippy, cargo-deny, `Cargo.lock` upkeep, later LibreOffice-headless fidelity diffs |
 
 Workflow:
@@ -260,9 +263,9 @@ Workflow:
 1. Edit (on the Mac or the Linux box), push a branch (or `main`).
 2. `ci.yml` runs clippy and tests on both architectures (fmt is checked on PRs); `housekeeping.yml` applies `cargo fmt` and refreshes `Cargo.lock` on `main` and commits the result — always `git pull --rebase` before pushing.
 3. `build.yml` publishes a rolling **nightly** release from `main` (and versioned releases from `v*` tags).
-4. On the Mac: `scripts/install.sh` downloads the aarch64 build into `~/.local/bin` (sha256-checked). `gh run watch` shows CI progress.
+4. On the Mac: `scripts/install.sh` downloads the macOS build, installs `~/Applications/Kantor.app` and links `~/.local/bin/kantor` (sha256-checked). On Linux it installs the matching Linux build into `~/.local/bin`. `gh run watch` shows CI progress.
 
-Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's default 64K max page size on aarch64 keeps them compatible with the Asahi 16K-page kernel.
+Linux binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's default 64K max page size on aarch64 keeps them compatible with 16K-page kernels such as Asahi's. The macOS build targets macOS 11 and later.
 
 ## 9. Risks
 
@@ -270,7 +273,7 @@ Binaries are built on Ubuntu 24.04 (glibc 2.39), so they run on Arch. GNU ld's d
 |---|---|---|
 | **Paged text layout is very hard** (tables, floats, bidi, CJK) | High | Sheets first; dedicated M0 spike; scope tables and floats tightly in M2; study Typst's layout design |
 | **GPUI is pre-1.0** and changes often | Medium | Pin through `gpui-kit`; isolate GPUI behind the view layer (model and layout don't import it); upgrade on a schedule |
-| **GPUI on Asahi** (Vulkan driver maturity, 16K pages) | Medium | 16K pages and Vulkan verified working (2026-11-07). Under memory pressure (≈1 GB free, browser open) wgpu reports *Out of Memory* / device lost and GPUI panics after 3 recoveries; with the browser closed it runs fine. **Mitigated 2026-11-07** by `vendor/gpui-pre-wgpu` (path textures only when used, no path MSAA by default): no crash in repeated launches with the browser open. Still to do: upstream the patch; ask GPUI to recover instead of panicking |
+| **GPUI on Asahi** (Vulkan driver maturity, 16K pages; no longer the main target since 2026-11-08) | Low | 16K pages and Vulkan verified working (2026-11-07). Under memory pressure (≈1 GB free, browser open) wgpu reports *Out of Memory* / device lost and GPUI panics after 3 recoveries; with the browser closed it runs fine. **Mitigated 2026-11-07** by `vendor/gpui-pre-wgpu` (path textures only when used, no path MSAA by default): no crash in repeated launches with the browser open. Still to do: upstream the patch; ask GPUI to recover instead of panicking |
 | **OOXML breadth** | High | Preservation layer from day one; read-only fallback; a fidelity score drives priorities |
 | **Microsoft font metrics** | Medium | Carlito/Caladea/Liberation mapping; warn when a document font is missing |
 | **IronCalc is pre-1.0** | Low–medium | Keep it behind `sheets_engine`; contribute fixes upstream |
