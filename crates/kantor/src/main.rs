@@ -6,6 +6,7 @@
 //! kantor --sheets [FILE]    start Sheets (likewise --docs, --slides)
 //! kantor mcp                MCP server on stdio for AI agents (see mcp/)
 //! kantor pdf TOOL ...       PDF tools without a window (see cli/pdf.rs)
+//! kantor convert IN OUT     convert without a window (see cli/convert.rs)
 //! ```
 
 extern crate gpui_kit as gpui;
@@ -35,11 +36,14 @@ struct Args {
 const USAGE: &str = "usage: kantor [--docs | --sheets | --slides] [FILE]\n\
     \x20      kantor mcp [--no-launch] [--print-config]\n\
     \x20      kantor pdf <tool> [options]\n\
+    \x20      kantor convert [options] INPUT OUTPUT\n\
     \n\
     Kantor is a native office suite. With no arguments it opens the Home screen.\n\
     Docs opens .docx, Sheets .xlsx/.csv/.ods, Slides .pptx (see plan.md).\n\
     `kantor mcp` lets AI agents edit the open documents (kantor mcp --help).\n\
-    `kantor pdf` merges, splits, rotates, watermarks and numbers PDFs (kantor pdf --help).";
+    `kantor pdf` merges, splits, rotates, watermarks and numbers PDFs (kantor pdf --help).\n\
+    `kantor convert` converts .docx to .pdf and between spreadsheet formats\n\
+    without opening a window (kantor convert --help).";
 
 fn parse_args() -> Result<Args> {
     let mut app = None;
@@ -80,6 +84,11 @@ fn main() {
             eprintln!("kantor mcp: not supported on this platform");
             std::process::exit(2);
         }
+    }
+    if raw.first().map(String::as_str) == Some("convert") {
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+        let args: Vec<_> = std::env::args_os().skip(2).collect();
+        std::process::exit(cli::convert::main(&args));
     }
     env_logger::Builder::from_env(
         env_logger::Env::default()

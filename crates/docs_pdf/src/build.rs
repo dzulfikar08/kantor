@@ -1,5 +1,7 @@
 //! The model → layout bridge: resolved paragraphs (indents, list markers,
 //! inline objects), table blocks and the width each paragraph is broken at.
+//! The Docs view and PDF export both lay out from [`build`], so the page on
+//! screen and the page in the PDF are the same layout.
 
 use docs_engine::{Align, Document, Level, Object, ResolvedLine, VMerge, font_stack};
 use docs_layout::parley::LineHeight;
@@ -13,12 +15,14 @@ fn tw(t: impl Into<f64>) -> f32 {
     (t.into() / 15.0) as f32
 }
 
-pub(crate) fn rgba(c: docs_engine::Rgb) -> Rgba {
+/// A model colour as a layout colour.
+pub fn rgba(c: docs_engine::Rgb) -> Rgba {
     let [r, g, b] = c.0;
     Rgba([r, g, b, 255])
 }
 
-pub(crate) fn page_setup(doc: &Document) -> PageSetup {
+/// Page size and margins from the document's section properties.
+pub fn page_setup(doc: &Document) -> PageSetup {
     let g = doc.page;
     PageSetup {
         width: tw(g.width),
@@ -32,7 +36,7 @@ pub(crate) fn page_setup(doc: &Document) -> PageSetup {
 
 /// The layout paragraph for a model paragraph: every run resolved, broken
 /// at `width` px (the column it sits in).
-pub(crate) fn layout_paragraph(
+pub fn layout_paragraph(
     doc: &Document,
     p: &docs_engine::Paragraph,
     marker: Option<&str>,
@@ -256,7 +260,7 @@ fn table_block(doc: &Document, id: u32, range: std::ops::Range<usize>) -> Option
 
 /// Everything layout needs: paragraphs, the width each is broken at, and
 /// the block structure.
-pub(crate) fn build(doc: &Document) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
+pub fn build(doc: &Document) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
     let setup = page_setup(doc);
     let body_w = setup.content_width();
     let paras = doc.paragraphs();

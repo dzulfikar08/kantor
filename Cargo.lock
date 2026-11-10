@@ -1599,12 +1599,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "docs_pdf"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "docs_engine",
+ "docs_layout",
+ "flate2",
+ "krilla",
+ "log",
+ "tempfile",
+]
+
+[[package]]
 name = "docs_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "docs_engine",
  "docs_layout",
+ "docs_pdf",
  "gpui-kit",
  "gpui-pre-wgpu",
  "kantor_core",
@@ -3832,6 +3846,7 @@ dependencies = [
  "anyhow",
  "async-channel",
  "docs_engine",
+ "docs_pdf",
  "docs_ui",
  "env_logger",
  "futures",
