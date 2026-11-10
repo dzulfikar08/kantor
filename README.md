@@ -2,20 +2,20 @@
 
 # Kantor
 
-A small, fast, native office suite for Linux, written in Rust on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui) (the UI framework behind Zed). Three apps in one binary: **Sheets**, **Docs** and **Slides**. First target: [Omarchy](https://omarchy.org) on Apple Silicon (aarch64 Linux).
+A small, fast, native office suite for Linux and macOS, written in Rust on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui) (the UI framework behind Zed). Three apps in one binary: **Sheets**, **Docs** and **Slides**. Builds: Linux on x86_64 and aarch64 (made with [Omarchy](https://omarchy.org) in mind), and macOS on Apple Silicon.
 
 > **Status: early, all three apps work.** Sheets opens, edits and saves `.xlsx` (formulas via [IronCalc](https://github.com/ironcalc/IronCalc)) and imports `.csv`, `.ods`, `.xls` and `.xlsb`. Docs opens, edits and saves `.docx` and exports PDF. Slides opens, edits, presents and saves `.pptx` and exports PDF. Saving keeps what Kantor doesn't show yet, byte for byte. `kantor convert` and `kantor pdf` work from the command line, and AI agents can edit open documents over MCP. Not yet checked against a large set of real-world files; see [plan.md](plan.md).
 
 ## Install (prebuilt, no compiling)
 
-Every push to `main` publishes a rolling **nightly** build for aarch64 and x86_64 Linux.
+Every push to `main` publishes a rolling **nightly** build for Linux (x86_64, aarch64) and macOS (Apple Silicon).
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/dzulfikar08/kantor/main/scripts/install.sh | sh
 kantor budget.xlsx
 ```
 
-This installs `~/.local/bin/kantor`, a **Kantor** launcher (the suite's Home screen) and a **Kantor Sheets** launcher. Pin a tagged release with `curl -fsSL …/install.sh | KANTOR_VERSION=v0.1.0 sh`. On Arch, `kantor-bin` from the AUR installs the latest release. Changes per release: [CHANGELOG.md](CHANGELOG.md).
+On Linux this installs `~/.local/bin/kantor`, a **Kantor** launcher (the suite's Home screen) and a **Kantor Sheets** launcher. On macOS it installs `~/Applications/Kantor.app` (ad-hoc signed, not notarised yet) and links `~/.local/bin/kantor` to it; on macOS, the `Ctrl` shortcuts below are `⌘`. Pin a tagged release with `curl -fsSL …/install.sh | KANTOR_VERSION=v0.1.0 sh`. On Arch, `kantor-bin` from the AUR installs the latest release. Changes per release: [CHANGELOG.md](CHANGELOG.md).
 
 ## Using Sheets
 
@@ -107,10 +107,10 @@ API keys are stored in the system keychain (Secret Service on Linux, Keychain on
 
 ## Building
 
-All builds run on **GitHub Actions** (`ubuntu-24.04-arm` and `ubuntu-24.04`); contributors don't need a powerful machine. If you do want to build locally:
+All builds run on **GitHub Actions** (`ubuntu-24.04-arm`, `ubuntu-24.04` and `macos-15`); contributors don't need a powerful machine. If you do want to build locally:
 
 ```sh
-./scripts/ci-deps.sh            # Ubuntu packages; on Arch: wayland libxkbcommon vulkan-icd-loader fontconfig
+./scripts/ci-deps.sh            # Ubuntu packages; on Arch: wayland libxkbcommon vulkan-icd-loader fontconfig; macOS needs only Xcode's tools
 cargo run -p kantor -- file.xlsx
 cargo test --workspace
 ```
@@ -138,7 +138,7 @@ crates/
   slides_pdf     slide scenes → PDF (krilla)
   slides_ui      slide canvas, thumbnails, notes, slide show
 vendor/
-  gpui-pre-wgpu  GPUI's wgpu renderer with memory patches for 8 GB Apple Silicon
+  gpui-pre-wgpu  GPUI's wgpu renderer (Linux) with memory patches for low-memory GPUs
   ironcalc_base  IronCalc with cached lookups for large workbooks
 ```
 
