@@ -365,6 +365,17 @@ impl Presentation {
         &self.masters[self.layout_of(slide).master]
     }
 
+    /// What colours on `slide` resolve against (its master's theme and
+    /// colour map), for parts drawn with the slide's theme (charts).
+    pub fn color_ctx(&self, slide: usize) -> crate::theme::ColorCtx<'_> {
+        let m = self.master_of(slide);
+        crate::theme::ColorCtx {
+            theme: &m.theme,
+            map: &m.clr_map,
+            ph: None,
+        }
+    }
+
     /// The slide's background colour (white when it has none we can show).
     pub fn background(&self, slide: usize) -> Rgb {
         let s = &self.slides[slide];
@@ -392,6 +403,7 @@ impl Presentation {
             for r in self.render_list(i, false) {
                 if let ShapeKind::Other { what, frame } = &r.shape.kind
                     && !self.drawable(i, frame)
+                    && r.shape.chart_part().is_none()
                 {
                     // Name what's missing as precisely as the frame allows.
                     let what = match frame.get() {

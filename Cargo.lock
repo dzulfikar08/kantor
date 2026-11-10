@@ -6806,6 +6806,7 @@ dependencies = [
  "docs_engine",
  "docs_layout",
  "log",
+ "roxmltree 0.21.2",
  "slides_engine",
 ]
 

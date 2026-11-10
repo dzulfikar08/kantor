@@ -16,10 +16,13 @@
 //! - Pictures: cropping (`srcRect`), opacity.
 //! - Text: glyph runs from `docs_layout`, turned with the shape but never
 //!   flipped (as PowerPoint draws it).
+//! - Charts: bar, line, area, pie, doughnut and scatter charts drawn from
+//!   the values cached in their parts ([`chart`]).
 //!
 //! A scene is `Send`: it owns its glyph runs, fonts and picture bytes.
 
 mod build;
+pub mod chart;
 pub mod geom;
 pub mod paint;
 pub mod table;

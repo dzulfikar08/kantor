@@ -785,6 +785,8 @@ pub(crate) struct ShapeSrc {
     pub sppr: Option<SpPrAt>,
     /// Highest `cNvPr/@id` inside the element (groups nest shapes).
     pub max_id: u32,
+    /// The chart part of a chart frame (`ppt/charts/chartN.xml`).
+    pub chart: Option<String>,
 }
 
 /// A shape on a slide (or a layout / master, read-only).
@@ -839,6 +841,12 @@ impl Shape {
     /// Whether the shape can be moved and resized.
     pub fn movable(&self) -> bool {
         !matches!(self.kind, ShapeKind::Other { .. }) || self.src.is_none()
+    }
+
+    /// The chart part a chart frame shows (read-only: the frame and the
+    /// part are written back as read).
+    pub fn chart_part(&self) -> Option<&str> {
+        self.src.as_ref()?.chart.as_deref()
     }
 
     pub fn is_picture(&self) -> bool {

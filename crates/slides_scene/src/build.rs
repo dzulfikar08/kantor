@@ -35,7 +35,11 @@ pub struct Builder {
     bytes: RefCell<HashMap<String, Option<Arc<Vec<u8>>>>>,
     /// SmartArt drawings by data part.
     diagrams: RefCell<HashMap<String, Option<Arc<Group>>>>,
+    /// Chart items by chart part, master and frame size.
+    charts: RefCell<HashMap<ChartKey, Option<Arc<Vec<Item>>>>>,
 }
+
+type ChartKey = (String, String, u32, u32);
 
 pub(crate) fn px(emu: i64) -> f32 {
     emu as f32 / EMU_PER_PX
@@ -89,6 +93,37 @@ impl Builder {
     pub fn clear_pictures(&self) {
         self.bytes.borrow_mut().clear();
         self.diagrams.borrow_mut().clear();
+        self.charts.borrow_mut().clear();
+    }
+
+    /// A chart part's items in a `w` × `h` frame (cached).
+    fn chart(
+        &self,
+        engine: &mut Engine,
+        pres: &Presentation,
+        slide: usize,
+        part: &str,
+        w: f32,
+        h: f32,
+    ) -> Option<Arc<Vec<Item>>> {
+        let key = (
+            part.to_owned(),
+            pres.master_of(slide).part.clone(),
+            w.to_bits(),
+            h.to_bits(),
+        );
+        if let Some(c) = self.charts.borrow().get(&key) {
+            return c.clone();
+        }
+        let items = self.bytes(pres, part).and_then(|xml| {
+            crate::chart::chart_items(engine, &xml, &pres.color_ctx(slide), w, h).map(Arc::new)
+        });
+        let mut cache = self.charts.borrow_mut();
+        if cache.len() > 128 {
+            cache.clear();
+        }
+        cache.insert(key, items.clone());
+        items
     }
 
     /// Everything drawn on slide `slide`.
@@ -393,19 +428,32 @@ impl Builder {
         }
     }
 
-    /// Charts: drawn by the chart renderer once it lands; `false` keeps
-    /// the placeholder box.
+    /// Charts, from the chart part's cached values ([`crate::chart`]);
+    /// `false` (uncommon chart types, a missing part) keeps the placeholder.
     #[allow(clippy::too_many_arguments)]
     fn chart_frame(
         &self,
-        _engine: &mut Engine,
-        _pres: &Presentation,
-        _d: Draw,
-        _chart: &ChartRef,
-        _xfrm: &Xfrm,
-        _out: &mut Vec<Item>,
+        engine: &mut Engine,
+        pres: &Presentation,
+        d: Draw,
+        chart: &ChartRef,
+        xfrm: &Xfrm,
+        out: &mut Vec<Item>,
     ) -> bool {
-        false
+        let Some(part) = chart.part.as_deref() else {
+            return false;
+        };
+        let (w, h) = (px(xfrm.cx), px(xfrm.cy));
+        let Some(items) = self.chart(engine, pres, d.slide, part, w, h) else {
+            return false;
+        };
+        let t = shape_transform(xfrm);
+        out.extend(items.iter().map(|i| Item {
+            layer: d.layer,
+            transform: i.transform.then(t),
+            prim: i.prim.clone(),
+        }));
+        true
     }
 
     /// The children of a group (child space `space`) drawn into `xfrm`.
