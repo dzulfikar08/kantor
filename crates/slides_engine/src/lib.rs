@@ -9,12 +9,14 @@
 //!   shapes within and between presentations.
 //! - [`render`]: what to draw, with layout/master/theme inheritance;
 //!   [`fill`]: gradients, picture fills and line formatting for display.
+//! - [`geom`]: shape outlines (preset and custom DrawingML geometry).
 
 pub mod agent;
 pub mod clip;
 pub mod edit;
 pub mod fill;
 pub mod find;
+pub mod geom;
 mod history;
 pub mod model;
 pub mod presentation;

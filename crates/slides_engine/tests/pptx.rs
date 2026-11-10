@@ -861,3 +861,92 @@ fn copy_paste_and_duplicate_shapes() {
     let table = c.slide(0).shapes.len() - 1;
     assert!(c.copy_shapes(0, &[table]).is_err());
 }
+
+/// Adjusted presets, custom geometry and connectors are read for display
+/// and written back exactly as they were (unchanged or moved).
+#[test]
+fn shape_geometry_reads_and_round_trips() {
+    let base = Presentation::new().to_bytes().unwrap();
+    let arrow = r#"<p:sp><p:nvSpPr><p:cNvPr id="20" name="Arrow"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="100" y="100"/><a:ext cx="2000000" cy="1000000"/></a:xfrm><a:prstGeom prst="rightArrow"><a:avLst><a:gd name="adj1" fmla="val 80000"/><a:gd name="adj2" fmla="val 20000"/></a:avLst></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Go</a:t></a:r></a:p></p:txBody></p:sp>"#;
+    let custom = r#"<p:sp><p:nvSpPr><p:cNvPr id="21" name="Free"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000" cy="1000"/></a:xfrm><a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="l" t="t" r="r" b="b"/><a:pathLst><a:path w="10" h="10"><a:moveTo><a:pt x="0" y="10"/></a:moveTo><a:lnTo><a:pt x="5" y="0"/></a:lnTo><a:lnTo><a:pt x="10" y="10"/></a:lnTo><a:close/></a:path></a:pathLst></a:custGeom></p:spPr></p:sp>"#;
+    let elbow = r#"<p:cxnSp><p:nvCxnSpPr><p:cNvPr id="22" name="Elbow"/><p:cNvCxnSpPr><a:stCxn id="20" idx="3"/><a:endCxn id="21" idx="1"/></p:cNvCxnSpPr><p:nvPr/></p:nvCxnSpPr><p:spPr><a:xfrm flipV="1"><a:off x="10" y="20"/><a:ext cx="3000" cy="4000"/></a:xfrm><a:prstGeom prst="bentConnector3"><a:avLst><a:gd name="adj1" fmla="val 25000"/></a:avLst></a:prstGeom><a:ln w="12700"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:ln></p:spPr></p:cxnSp>"#;
+    let straight = r#"<p:cxnSp><p:nvCxnSpPr><p:cNvPr id="23" name="Straight"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="10" cy="10"/></a:xfrm><a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom></p:spPr></p:cxnSp>"#;
+    let slide = text(&base, "ppt/slides/slide1.xml").replace(
+        "</p:spTree>",
+        &format!("{arrow}{custom}{elbow}{straight}</p:spTree>"),
+    );
+    let deck = with_parts(&base, &[("ppt/slides/slide1.xml", slide.clone())]);
+    let mut p = Presentation::from_bytes(deck.clone()).unwrap();
+    let n = p.slide(0).shapes.len();
+    let shapes = &p.slide(0).shapes[n - 4..];
+
+    let g = shapes[0].kind.geometry().unwrap();
+    assert_eq!(g.preset_name(), Some("rightArrow"));
+    let o = geom::outline(&g, 2_000_000.0, 1_000_000.0);
+    let b = o.bounds().unwrap();
+    assert!((b.r - 2_000_000.0).abs() < 1.0 && b.l.abs() < 1.0);
+    assert!(matches!(
+        &shapes[1].kind,
+        ShapeKind::Shape { geom: Geom::Other(o), geometry: Some(Geometry::Custom(_)), .. } if o == "custom"
+    ));
+    let tri = geom::outline(&shapes[1].kind.geometry().unwrap(), 1000.0, 1000.0);
+    assert_eq!(tri.paths[0].cmds[1], geom::PathCmd::LineTo((500.0, 0.0)));
+    // Connectors are shapes with their own geometry and outline.
+    let Some(Geometry::Preset { name, adjust }) = shapes[2].kind.geometry() else {
+        panic!("{:?}", shapes[2].kind)
+    };
+    assert_eq!((name.as_str(), adjust.len()), ("bentConnector3", 1));
+    assert_eq!(shapes[2].look.line.map(|l| l.0), Some(Rgb([0xFF, 0, 0])));
+    assert!(shapes[2].xfrm.unwrap().flip_v);
+    assert!(matches!(
+        shapes[3].kind,
+        ShapeKind::Shape {
+            geom: Geom::Line,
+            ..
+        }
+    ));
+    let line = shapes[3].kind.geometry().unwrap();
+    assert!(line.is_basic());
+    assert_eq!(
+        geom::outline(&line, 10.0, 10.0).paths[0].flatten(1.0),
+        [(vec![(0.0, 0.0), (10.0, 10.0)], false)]
+    );
+    // Unchanged: every part byte for byte.
+    assert_eq!(parts(&p.to_bytes().unwrap()), parts(&deck));
+    // Moved: only the offsets change; geometry XML is kept verbatim.
+    for i in n - 4..n {
+        let x = p.slide(0).shapes[i].xfrm.unwrap();
+        p.set_xfrm((0, i), Xfrm { x: x.x + 7, ..x }, false).unwrap();
+    }
+    let out = p.to_bytes().unwrap();
+    assert_valid(&out);
+    let xml = text(&out, "ppt/slides/slide1.xml");
+    for (src, from, to) in [
+        (arrow, r#"<a:off x="100" "#, r#"<a:off x="107" "#),
+        (
+            custom,
+            r#"<a:off x="0" y="0"/><a:ext cx="1000""#,
+            r#"<a:off x="7" y="0"/><a:ext cx="1000""#,
+        ),
+        (elbow, r#"<a:off x="10" "#, r#"<a:off x="17" "#),
+        (
+            straight,
+            r#"<a:off x="0" y="0"/><a:ext cx="10""#,
+            r#"<a:off x="7" y="0"/><a:ext cx="10""#,
+        ),
+    ] {
+        let moved = src.replace(from, to);
+        assert_ne!(moved, src);
+        assert!(xml.contains(&moved), "{moved}\n{xml}");
+    }
+    // Reopened: the same geometry.
+    let q = Presentation::from_bytes(out).unwrap();
+    for i in n - 4..n {
+        assert_eq!(q.slide(0).shapes[i].kind, p.slide(0).shapes[i].kind);
+    }
+    // A copy keeps the adjustments too.
+    let clip = p.copy_shapes(0, &[n - 4]).unwrap();
+    p.paste_shapes(0, &clip).unwrap();
+    let last = p.slide(0).shapes.last().unwrap();
+    assert_eq!(last.kind, p.slide(0).shapes[n - 4].kind);
+}

@@ -10,6 +10,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ## [Unreleased]
 
 ### Added
+- **Slides: shapes keep their real outlines.** All 187 PowerPoint preset shapes (arrows, chevrons,
+  stars, callouts, flowchart symbols, brackets, clouds, hearts, connectors…), their adjustments
+  (handle positions such as an arrow's head size) and custom freeform shapes are drawn with their
+  own outline instead of a box; 3D-style faces (cans, cubes, bevels) get their lighter and darker
+  shades. Connectors are now shapes: they can be selected, moved and recoloured. Geometry XML is
+  still written back unchanged. The evaluator (`slides_engine::geom`, no GPUI) follows ECMA-376
+  shape guides and paths.
 - **Sheets: big workbooks stay responsive.** Spreadsheets open in the background: the pane appears
   at once with the file name, size, elapsed time and a Cancel button. `.xlsx` files show the values
   Excel saved instead of recalculating everything on open. Workbooks with more than 50,000 formulas

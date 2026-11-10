@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use docs_engine::Rgb;
 
+pub use crate::geom::Geometry;
 use crate::theme::ListStyle;
 
 pub type Emu = i64;
@@ -592,7 +593,8 @@ pub enum Geom {
     Ellipse,
     /// Lines and connectors.
     Line,
-    /// Any other preset or a custom geometry: drawn as its bounding box.
+    /// Any other preset (by name) or a custom geometry (`custom`); the
+    /// outline comes from [`ShapeKind::Shape`]'s `geometry`.
     Other(String),
 }
 
@@ -605,6 +607,18 @@ impl Geom {
             "line" | "straightConnector1" => Self::Line,
             o => Self::Other(o.to_owned()),
         }
+    }
+
+    /// The preset this stands for (`Other` names that aren't presets,
+    /// such as `custom`, draw as rectangles).
+    pub fn geometry(&self) -> Geometry {
+        Geometry::preset(match self {
+            Self::Rect => "rect",
+            Self::RoundRect => "roundRect",
+            Self::Ellipse => "ellipse",
+            Self::Line => "line",
+            Self::Other(o) => o,
+        })
     }
 }
 
@@ -680,13 +694,32 @@ pub struct Look {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ShapeKind {
-    /// `p:sp`: geometry with optional text.
-    Shape { geom: Geom, text_box: bool },
+    /// `p:sp` (geometry with optional text) and `p:cxnSp` (connectors).
+    Shape {
+        geom: Geom,
+        text_box: bool,
+        /// The geometry as read (`a:prstGeom` with its adjustments, or
+        /// `a:custGeom`), for drawing; `None` = `geom`'s plain preset.
+        /// See [`crate::geom::outline`] and [`ShapeKind::geometry`].
+        geometry: Option<Geometry>,
+    },
     /// `p:pic`: `rel` in the slide's relationships, `part` the media part.
     Picture { rel: String, part: Option<String> },
     /// Groups, tables, charts, connectors, SmartArt...: kept verbatim and
     /// drawn as a labelled box.
     Other { what: String },
+}
+
+impl ShapeKind {
+    /// What to draw for a shape (`None` for pictures and other objects).
+    pub fn geometry(&self) -> Option<Geometry> {
+        match self {
+            Self::Shape { geom, geometry, .. } => {
+                Some(geometry.clone().unwrap_or_else(|| geom.geometry()))
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Where a shape's `a:xfrm` sits in its source element (byte offsets

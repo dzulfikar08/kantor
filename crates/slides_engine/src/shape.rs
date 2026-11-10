@@ -216,17 +216,18 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
     let kind = match (in_p, local) {
         // Connectors are drawn like shapes (lines with arrowheads).
         (true, "sp" | "cxnSp") => {
-            let geom = sp_pr
-                .and_then(|s| child(s, NS_A, "prstGeom"))
-                .and_then(|g| g.attribute("prst"))
-                .map(Geom::from_prst)
-                .unwrap_or_else(|| {
-                    if sp_pr.and_then(|s| child(s, NS_A, "custGeom")).is_some() {
-                        Geom::Other("custom".into())
-                    } else {
-                        Geom::Rect
-                    }
-                });
+            let geometry = sp_pr.and_then(|s| {
+                s.children()
+                    .find(|c| is_in(*c, NS_A, &["prstGeom", "custGeom"]))
+                    .and_then(Geometry::from_xml)
+            });
+            let geom = match &geometry {
+                Some(Geometry::Preset { name, .. }) => Geom::from_prst(name),
+                Some(Geometry::Custom(_)) => Geom::Other("custom".into()),
+                None => Geom::Rect,
+            };
+            // Plain presets the display kind already says aren't stored.
+            let geometry = geometry.filter(|g| *g != geom.geometry());
             let text_box = nv
                 .and_then(|nv| child(nv, NS_P, "cNvSpPr"))
                 .and_then(|c| attr_bool(c, "txBox"))
@@ -236,7 +237,11 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
                 text = Some(body);
                 paras_at = Some(at.start - base..at.end - base);
             }
-            ShapeKind::Shape { geom, text_box }
+            ShapeKind::Shape {
+                geom,
+                text_box,
+                geometry,
+            }
         }
         (true, "pic") => {
             let rel = child(n, NS_P, "blipFill")
@@ -909,7 +914,11 @@ fn generate(out: &mut String, s: &Shape) {
             }
             out.push_str("</p:spPr></p:pic>");
         }
-        ShapeKind::Shape { geom, text_box } => {
+        ShapeKind::Shape {
+            geom,
+            text_box,
+            geometry,
+        } => {
             let _ = write!(
                 out,
                 "<p:sp><p:nvSpPr><p:cNvPr id=\"{}\" name=\"{name}\"/>",
@@ -938,13 +947,40 @@ fn generate(out: &mut String, s: &Shape) {
                 write_xfrm(out, "", x);
             }
             if s.ph.is_none() {
-                let prst = match geom {
-                    Geom::Ellipse => "ellipse",
-                    Geom::RoundRect => "roundRect",
-                    Geom::Line => "line",
-                    Geom::Rect | Geom::Other(_) => "rect",
-                };
-                let _ = write!(out, "<a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>");
+                // A preset read from a file keeps its name and adjustments;
+                // custom geometry isn't generated (shapes read from a file
+                // are written from their own XML).
+                match geometry {
+                    Some(Geometry::Preset { name, adjust })
+                        if crate::geom::preset(name).is_some() =>
+                    {
+                        let _ = write!(out, "<a:prstGeom prst=\"{}\"><a:avLst", esc_attr(name));
+                        if adjust.is_empty() {
+                            out.push_str("/>");
+                        } else {
+                            out.push('>');
+                            for g in adjust {
+                                let _ = write!(
+                                    out,
+                                    "<a:gd name=\"{}\" fmla=\"{}\"/>",
+                                    esc_attr(&g.name),
+                                    esc_attr(&g.fmla.to_string())
+                                );
+                            }
+                            out.push_str("</a:avLst>");
+                        }
+                        out.push_str("</a:prstGeom>");
+                    }
+                    _ => {
+                        let prst = match geom {
+                            Geom::Ellipse => "ellipse",
+                            Geom::RoundRect => "roundRect",
+                            Geom::Line => "line",
+                            Geom::Rect | Geom::Other(_) => "rect",
+                        };
+                        let _ = write!(out, "<a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>");
+                    }
+                }
                 match (&s.paint.fill, s.look.fill) {
                     (Some(p), _) => write_paint(out, p),
                     (None, Some(c)) => out.push_str(&solid(c)),
@@ -1137,6 +1173,7 @@ mod tests {
             kind: ShapeKind::Shape {
                 geom: Geom::Ellipse,
                 text_box: false,
+                geometry: None,
             },
             xfrm: Some(Xfrm::new(1, 2, 3, 4)),
             ph: None,
@@ -1166,5 +1203,19 @@ mod tests {
             );
             assert_eq!(b.text.as_ref().unwrap().paras[0].text, "A <b>");
         });
+        // A preset with adjustments is written with them.
+        let mut arrow = s.clone();
+        arrow.kind = ShapeKind::Shape {
+            geom: Geom::Other("rightArrow".into()),
+            text_box: false,
+            geometry: Some(Geometry::Preset {
+                name: "rightArrow".into(),
+                adjust: vec![crate::geom::Guide::new("adj1", "val 80000").unwrap()],
+            }),
+        };
+        let mut out = String::new();
+        write_shape(&mut out, &arrow);
+        assert!(out.contains(r#"<a:prstGeom prst="rightArrow"><a:avLst><a:gd name="adj1" fmla="val 80000"/></a:avLst></a:prstGeom>"#), "{out}");
+        with_shapes(&out, |shapes, _| assert_eq!(shapes[0].kind, arrow.kind));
     }
 }

@@ -2,6 +2,7 @@
 //! lines, quadratic and cubic curves (arcs become cubics), and the outline
 //! of a shape ([`shape_outline`]).
 
+use slides_engine::geom as engine_geom;
 use slides_engine::{Geom, Shape, ShapeKind};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -555,15 +556,11 @@ fn ellipse_arc(pa: &mut Path, c: P, rx: f32, ry: f32, t1: f32, t2: f32) {
 /// The outline of a shape in its own box (`w` × `h`, origin top left,
 /// before rotation and flips).
 ///
-/// This is the one place that knows shape geometry. It draws rectangles,
-/// rounded rectangles, ellipses, lines and the common connectors itself;
-/// every other preset is drawn as its box. The preset-geometry module
-/// (all DrawingML presets and `a:custGeom`) plugs in here.
+/// This is the one place that knows shape geometry. Rectangles, plain
+/// rounded rectangles, ellipses and straight lines are drawn directly; every
+/// other preset (all 187 DrawingML presets, with their adjustments) and
+/// `a:custGeom` comes from [`slides_engine::geom::outline`].
 pub fn shape_outline(shape: &Shape, w: f32, h: f32) -> Vec<SubPath> {
-    let geom = match &shape.kind {
-        ShapeKind::Shape { geom, .. } => geom,
-        _ => &Geom::Rect,
-    };
     let filled = |path| {
         vec![SubPath {
             path,
@@ -571,47 +568,62 @@ pub fn shape_outline(shape: &Shape, w: f32, h: f32) -> Vec<SubPath> {
             stroke: true,
         }]
     };
-    let open = |path| {
-        vec![SubPath {
-            path,
-            fill: PathFill::None,
-            stroke: true,
-        }]
+    let geometry = match shape.kind.geometry() {
+        Some(g) if !g.is_basic() => g,
+        _ => {
+            let geom = match &shape.kind {
+                ShapeKind::Shape { geom, .. } => geom,
+                _ => &Geom::Rect,
+            };
+            return match geom {
+                // PowerPoint's default corner: 16 667 / 100 000 of the short side.
+                Geom::RoundRect => filled(Path::round_rect(w, h, w.min(h) * 0.166_67)),
+                Geom::Ellipse => filled(Path::ellipse(w / 2.0, h / 2.0, w / 2.0, h / 2.0)),
+                Geom::Line => {
+                    let mut pa = Path::default();
+                    pa.move_to(p(0.0, 0.0));
+                    pa.line_to(p(w, h));
+                    vec![SubPath {
+                        path: pa,
+                        fill: PathFill::None,
+                        stroke: true,
+                    }]
+                }
+                _ => filled(Path::rect(0.0, 0.0, w, h)),
+            };
+        }
     };
-    match geom {
-        Geom::Rect => filled(Path::rect(0.0, 0.0, w, h)),
-        // PowerPoint's default corner: 16 667 / 100 000 of the short side.
-        Geom::RoundRect => filled(Path::round_rect(w, h, w.min(h) * 0.166_67)),
-        Geom::Ellipse => filled(Path::ellipse(w / 2.0, h / 2.0, w / 2.0, h / 2.0)),
-        Geom::Line => {
-            let mut pa = Path::default();
-            pa.move_to(p(0.0, 0.0));
-            pa.line_to(p(w, h));
-            open(pa)
-        }
-        Geom::Other(name) => {
-            let mut pa = Path::default();
-            if name.starts_with("bentConnector2") {
-                pa.move_to(p(0.0, 0.0));
-                pa.line_to(p(w, 0.0));
-                pa.line_to(p(w, h));
-                open(pa)
-            } else if name.starts_with("bentConnector") {
-                // Default adjustment: the bend half way.
-                pa.move_to(p(0.0, 0.0));
-                pa.line_to(p(w / 2.0, 0.0));
-                pa.line_to(p(w / 2.0, h));
-                pa.line_to(p(w, h));
-                open(pa)
-            } else if name.starts_with("curvedConnector") {
-                pa.move_to(p(0.0, 0.0));
-                pa.cubic_to(p(w / 2.0, 0.0), p(w / 2.0, h), p(w, h));
-                open(pa)
-            } else {
-                filled(Path::rect(0.0, 0.0, w, h))
+    let pt = |(x, y): engine_geom::Pt| p(x as f32, y as f32);
+    engine_geom::outline(&geometry, f64::from(w), f64::from(h))
+        .paths
+        .into_iter()
+        .map(|sub| {
+            let mut path = Path::default();
+            for cmd in sub.cmds {
+                match cmd {
+                    engine_geom::PathCmd::MoveTo(a) => path.move_to(pt(a)),
+                    engine_geom::PathCmd::LineTo(a) => path.line_to(pt(a)),
+                    engine_geom::PathCmd::QuadTo(c, a) => path.quad_to(pt(c), pt(a)),
+                    engine_geom::PathCmd::CubicTo(c1, c2, a) => {
+                        path.cubic_to(pt(c1), pt(c2), pt(a))
+                    }
+                    engine_geom::PathCmd::Close => path.close(),
+                }
             }
-        }
-    }
+            SubPath {
+                path,
+                fill: match sub.fill {
+                    engine_geom::FillMode::None => PathFill::None,
+                    engine_geom::FillMode::Norm => PathFill::Norm,
+                    engine_geom::FillMode::Lighten => PathFill::Lighten,
+                    engine_geom::FillMode::LightenLess => PathFill::LightenLess,
+                    engine_geom::FillMode::Darken => PathFill::Darken,
+                    engine_geom::FillMode::DarkenLess => PathFill::DarkenLess,
+                },
+                stroke: sub.stroke,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
