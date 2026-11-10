@@ -21,7 +21,6 @@ extern crate gpui_kit as gpui;
 
 mod agent;
 mod ai;
-mod blocks;
 mod find;
 pub mod font_bridge;
 mod input;
@@ -43,6 +42,7 @@ use docs_engine::{
 use docs_layout::{
     Engine, ObjectKind, PageSetup, PagedDocument, ParaLayout, PlacedObject, RunSource,
 };
+use docs_pdf::build as blocks;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::*;

@@ -10,6 +10,7 @@ repository.workspace = true
 anyhow.workspace = true
 docs_engine.workspace = true
 docs_layout.workspace = true
+docs_pdf.workspace = true
 gpui-kit.workspace = true
 kantor_core.workspace = true
 kantor_ui.workspace = true

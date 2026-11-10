@@ -40,6 +40,7 @@ sheets_engine = { path = "crates/sheets_engine" }
 sheets_ui = { path = "crates/sheets_ui" }
 docs_engine = { path = "crates/docs_engine" }
 docs_layout = { path = "crates/docs_layout" }
+docs_pdf = { path = "crates/docs_pdf" }
 docs_ui = { path = "crates/docs_ui" }
 slides_engine = { path = "crates/slides_engine" }
 slides_ui = { path = "crates/slides_ui" }

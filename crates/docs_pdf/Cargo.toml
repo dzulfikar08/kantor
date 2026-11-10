@@ -1,0 +1,24 @@
+[package]
+name = "docs_pdf"
+description = "Kantor Docs model → layout bridge and PDF export with krilla (no GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+docs_engine.workspace = true
+docs_layout.workspace = true
+log.workspace = true
+tempfile.workspace = true
+# PDF writer (ADR 0001). No "simple-text": layout is parley's, krilla only
+# embeds the glyphs it is given. "raster-images" embeds PNG/JPEG pictures.
+krilla = { version = "0.8", default-features = false, features = ["raster-images"] }
+
+[dev-dependencies]
+# Builds PNG fixtures and inflates PDF streams in the tests.
+flate2 = "1"
+
+[lints]
+workspace = true
