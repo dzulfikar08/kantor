@@ -3916,6 +3916,13 @@ name = "kantor_mem"
 version = "0.2.0"
 
 [[package]]
+name = "kantor_numfmt"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+]
+
+[[package]]
 name = "kantor_pdf"
 version = "0.2.0"
 dependencies = [
@@ -6692,6 +6699,7 @@ dependencies = [
  "ironcalc",
  "ironcalc_base",
  "kantor_mem",
+ "kantor_numfmt",
  "log",
  "roxmltree 0.21.2",
  "serde_json",

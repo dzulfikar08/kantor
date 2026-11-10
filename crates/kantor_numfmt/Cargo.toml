@@ -1,0 +1,15 @@
+[package]
+name = "kantor_numfmt"
+description = "Excel number formats (format codes, General, TEXT) for Kantor; adapted from GridCraft's gridcraft-numfmt"
+version.workspace = true
+edition.workspace = true
+# Adapted from GridCraft (MIT OR Apache-2.0); Kantor's changes are under the same terms.
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+authors = ["ArtCraft Team and the GridCraft contributors", "Dzulfikar Ats Tsauri"]
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true

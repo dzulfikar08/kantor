@@ -1,0 +1,3 @@
+# GridCraft's rustfmt settings, kept so this crate diffs cleanly against upstream.
+max_width = 150
+use_small_heuristics = "Max"

@@ -37,10 +37,13 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 # Already linked through rustls: Ed25519 and SHA-256 for kantor_update.
 ring = "0.17"
 base64 = "0.22"
+# Calendar arithmetic for kantor_numfmt (already in the tree through IronCalc).
+chrono = { version = "0.4", default-features = false }
 
 kantor_ai = { path = "crates/kantor_ai" }
 kantor_core = { path = "crates/kantor_core" }
 kantor_mem = { path = "crates/kantor_mem" }
+kantor_numfmt = { path = "crates/kantor_numfmt" }
 kantor_pdf = { path = "crates/kantor_pdf" }
 kantor_theme = { path = "crates/kantor_theme" }
 kantor_ui = { path = "crates/kantor_ui" }
