@@ -77,6 +77,9 @@ pub struct TextRun {
     pub text: Arc<str>,
 }
 
+/// A picture's format and file bytes.
+type PictureData = (ImageFormat, Arc<[u8]>);
+
 /// A whole document ready to encode: page size (px) and pages.
 #[derive(Clone, Debug)]
 pub struct Scene {
@@ -108,7 +111,8 @@ pub fn scene(doc: &Document, paged: &PagedDocument) -> Scene {
         .map(|p| Arc::from(p.text.as_str()))
         .collect();
     let mut markers: HashMap<usize, Arc<str>> = HashMap::new();
-    let mut pictures: HashMap<String, Option<(ImageFormat, Arc<[u8]>)>> = HashMap::new();
+    // Picture bytes by relationship id; `None` when not PNG/JPEG.
+    let mut pictures: HashMap<String, Option<PictureData>> = HashMap::new();
     let pages = (0..paged.pages.len())
         .map(|page| {
             let mut out = PageScene {

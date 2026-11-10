@@ -126,6 +126,7 @@ actions!(
         Redo,
         Save,
         SaveAs,
+        ExportPdf,
         ZoomIn,
         ZoomOut,
         ZoomReset,
@@ -1082,6 +1083,64 @@ impl DocsView {
         })
     }
 
+    pub fn export_pdf_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.export_pdf(&ExportPdf, window, cx);
+    }
+
+    /// Ask where, then write the document as it is laid out on screen to a
+    /// PDF. Collecting the pages is quick and stays here; encoding (font
+    /// subsetting, pictures) and writing run in the background.
+    fn export_pdf(&mut self, _: &ExportPdf, window: &mut Window, cx: &mut Context<Self>) {
+        let dir = self
+            .doc
+            .path()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let name = std::path::Path::new(&self.name())
+            .with_extension("pdf")
+            .to_string_lossy()
+            .into_owned();
+        let path = cx.prompt_for_new_path(&dir, Some(&name));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(mut path))) = path.await else {
+                return;
+            };
+            if path.extension().is_none() {
+                path.set_extension("pdf");
+            }
+            let Ok((pages, task)) = this.update(cx, |this, cx| {
+                let scene = docs_pdf::scene(&this.doc, &this.laid.paged);
+                let file = path.clone();
+                let pages = scene.pages.len().max(1);
+                this.status = format!("Exporting {}…", display_name(&path)).into();
+                cx.notify();
+                let task = cx.background_spawn(async move {
+                    let bytes = docs_pdf::write(&scene)?;
+                    docs_pdf::write_file(&file, &bytes)
+                });
+                (pages, task)
+            }) else {
+                return;
+            };
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                let name = display_name(&path);
+                this.status = match result {
+                    Ok(()) => format!(
+                        "Exported {name} ({pages} page{})",
+                        if pages == 1 { "" } else { "s" }
+                    )
+                    .into(),
+                    Err(err) => format!("Export to PDF failed: {err:#}").into(),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn after_save(
         &mut self,
         result: anyhow::Result<()>,
@@ -1436,6 +1495,13 @@ struct Frame {
     view: Entity<DocsView>,
 }
 
+fn display_name(path: &std::path::Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
+}
+
 fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
     let paged = &f.laid.paged;
     let g = Geometry {
@@ -1746,6 +1812,7 @@ impl Render for DocsView {
         use kantor_ui::find_bar as fb;
         root.on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
+            .on_action(cx.listener(Self::export_pdf))
             .on_action(cx.listener(|this, _: &fb::OpenFind, w, cx| this.open_find(false, w, cx)))
             .on_action(cx.listener(|this, _: &fb::OpenReplace, w, cx| this.open_find(true, w, cx)))
             .on_action(cx.listener(|this, _: &fb::FindNext, w, cx| this.find_next_doc(true, w, cx)))

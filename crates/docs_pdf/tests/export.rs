@@ -20,13 +20,11 @@ fn png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
         out.extend(data);
         out.extend(c.sum().to_be_bytes());
     }
-    let mut raw = Vec::new();
-    for _ in 0..h {
-        raw.push(0);
-        for _ in 0..w {
-            raw.extend(rgb);
-        }
-    }
+    // Each row: filter byte 0, then the pixels.
+    let row: Vec<u8> = std::iter::once(0)
+        .chain(rgb.into_iter().cycle().take(3 * w as usize))
+        .collect();
+    let raw = row.repeat(h as usize);
     let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
     z.write_all(&raw).unwrap();
     let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
