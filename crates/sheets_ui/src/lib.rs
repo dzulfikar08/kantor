@@ -21,11 +21,15 @@
 //! inserts their references, references are coloured, F4 toggles `$`, and
 //! function names autocomplete; see [`point`].
 //!
-//! Formatting (bold/italic/underline/strikethrough, alignment, number formats)
-//! applies to the whole range as one undo step; see [`toolbar`]. Column widths
-//! come from the workbook and a resize (or a double-click autofit on the
-//! header border) is saved back to it. Row heights are kept in the file but
-//! not drawn: the table has one height for every row.
+//! Formatting is drawn as in the file: fills, text colour, size and font,
+//! vertical alignment, wrapping, borders (shared edges resolved like Excel),
+//! merged cells and per-sheet gridlines; see [`look`]. The table has one
+//! height for every row, so row heights are kept in the file but not drawn
+//! (larger text is capped to fit, wrapped text shows the lines that fit).
+//! Formatting commands (font flags, alignment, number formats, fill and text
+//! colour, font size, borders, wrap, merge) apply to the whole range as one
+//! undo step; see [`toolbar`]. Column widths come from the workbook and a
+//! resize (or a double-click autofit on the header border) is saved back.
 //!
 //! Header selection, Ctrl+arrows, the fill handle, inserting/deleting rows and
 //! columns, frozen panes and the status-bar sums are in [`grid_ops`].
@@ -515,12 +519,18 @@ impl TableDelegate for SheetGrid {
             default_font_size: self.book.default_font_size(),
             family: self.fonts.for_style(style, cx),
             height: geometry.map_or(look::row_height(), |g| g.3),
-        }
-        .render();
-        let content = match geometry {
+        };
+        let cell = div()
+            .size_full()
+            .relative()
+            .when_some(style.fill, |d, fill| d.bg(look::hsla(fill)));
+        let cell = look::gridlines(cell, &look, &t);
+        let cell = match geometry {
             // The whole merged block, shifted so this cell shows its slice.
-            Some((x, y, w, h)) => div().absolute().left(-x).top(-y).w(w).h(h).child(content),
-            None => div().absolute().inset_0().child(content),
+            Some((x, y, w, h)) => {
+                cell.child(content.apply(div().absolute().left(-x).top(-y).w(w).h(h)))
+            }
+            None => content.apply(cell),
         };
         let down_view = self.view.clone();
         let move_view = self.view.clone();
@@ -545,12 +555,7 @@ impl TableDelegate for SheetGrid {
         let single = range == active;
         let fill_view = self.view.clone();
         let frozen_rows = self.book.frozen(self.sheet).0;
-        div()
-            .size_full()
-            .relative()
-            .when_some(style.fill, |d, fill| d.bg(look::hsla(fill)))
-            .child(content)
-            .children(look::decorations(&look, &t))
+        cell.children(look::borders(&look, &t))
             .when(!single && range.contains(row, col), |d| {
                 d.child(
                     div()
@@ -1528,7 +1533,13 @@ impl SheetsView {
 
     /// The name box text: the cell (`B7`) or the selected range (`A1:C4`).
     fn selection_ref(&self, cx: &App) -> String {
-        self.range(cx).name()
+        let sel = self.table.read(cx).delegate().selection();
+        // A selected merged cell is named by its anchor, as in Excel.
+        if sel.range == sel.active {
+            cell_name(sel.active.top, sel.active.left)
+        } else {
+            sel.range.name()
+        }
     }
 
     /// File name for tabs, e.g. `budget.xlsx` or `Untitled 2.xlsx`.

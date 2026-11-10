@@ -105,13 +105,14 @@ fn text_color_on(style: &CellStyle, fg: Hsla, bg: Hsla) -> Hsla {
     }
 }
 
-/// An automatic-colour border: the theme's text colour (black in a light
-/// theme, readable in a dark one) unless it sits on a fill.
+/// A border's colour: an automatic one is black on a fill, else the theme's
+/// text colour (black in a light theme, readable in a dark one); a set one
+/// is kept unless, on no fill, it would vanish into the theme's background.
 fn border_color(line: &BorderLine, filled: bool, t: &Tokens) -> Hsla {
-    match line.color {
-        Some(c) => hsla(c),
+    match line.color.map(hsla) {
+        Some(c) if filled || contrast(c, t.bg) >= 1.8 => c,
         None if filled => hsla(0x000000),
-        None => t.fg,
+        _ => t.fg,
     }
 }
 
@@ -157,21 +158,20 @@ fn border_edge(edge: Edge, line: &BorderLine, color: Hsla) -> Div {
     }
 }
 
-/// The fill, gridlines and borders of a cell (absolute, under the overlays).
-pub(crate) fn decorations(look: &CellLook, t: &Tokens) -> impl Iterator<Item = Div> {
+/// The gridlines of a cell, as its own right / bottom border (no extra
+/// elements: this runs for every visible cell).
+pub(crate) fn gridlines(d: Div, look: &CellLook, t: &Tokens) -> Div {
+    d.when(look.grid_right, |d| d.border_r(GRID_LINE))
+        .when(look.grid_bottom, |d| d.border_b(GRID_LINE))
+        .when(look.grid_right || look.grid_bottom, |d| {
+            d.border_color(t.grid_line)
+        })
+}
+
+/// The border edges of a cell (absolute, under the overlays).
+pub(crate) fn borders(look: &CellLook, t: &Tokens) -> impl Iterator<Item = Div> {
     let filled = look.style.fill.is_some();
-    let grid = |edge: Edge| {
-        let d = div().absolute().bg(t.grid_line);
-        match edge {
-            Edge::Right => d.top_0().bottom_0().right_0().w(GRID_LINE),
-            _ => d.left_0().right_0().bottom_0().h(GRID_LINE),
-        }
-    };
-    let gridlines = [
-        look.grid_right.then(|| grid(Edge::Right)),
-        look.grid_bottom.then(|| grid(Edge::Bottom)),
-    ];
-    let borders = [
+    [
         (Edge::Right, look.right),
         (Edge::Bottom, look.bottom),
         (Edge::Top, look.top),
@@ -180,8 +180,7 @@ pub(crate) fn decorations(look: &CellLook, t: &Tokens) -> impl Iterator<Item = D
     .into_iter()
     .filter_map(move |(edge, line)| {
         line.map(|line| border_edge(edge, &line, border_color(&line, filled, t)))
-    });
-    gridlines.into_iter().flatten().chain(borders)
+    })
 }
 
 /// Where the active cell goes when the table selects `to` (coming from
@@ -249,7 +248,12 @@ pub(crate) struct Content<'a> {
 }
 
 impl Content<'_> {
-    pub(crate) fn render(self) -> Div {
+    /// Lay the text out in `d` (which becomes a flex box); an empty cell
+    /// gets no text element.
+    pub(crate) fn apply(self, d: Div) -> Div {
+        if self.text.is_empty() {
+            return d;
+        }
         let s = self.style;
         let scale = s.font_size.max(1) as f32 / self.default_font_size.max(1) as f32;
         // Larger fonts are capped to what fits one line in the box.
@@ -281,11 +285,8 @@ impl Content<'_> {
                 }
             })
             .child(self.text);
-        div()
-            .size_full()
-            .flex()
+        d.flex()
             .px(SPACE_3)
-            .overflow_hidden()
             .map(|d| match s.valign {
                 VAlign::Top => d.items_start().pt(V_PAD.min(slack / 2.)),
                 VAlign::Center => d.items_center(),

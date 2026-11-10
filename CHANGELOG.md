@@ -9,6 +9,27 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+#### Sheets
+- Formatted workbooks look as they do in Excel: cell fills (theme colours with tints and indexed
+  colours resolved), text colour, font size and family (Calibri → Carlito, Arial → Liberation
+  Sans when the original isn't installed), vertical alignment, wrapped text, borders (thin, medium,
+  thick, double, dotted, medium dashed; shared edges resolved like Excel), merged cells (drawn as
+  one cell; clicking or arrowing into one selects it as a whole) and gridlines off per sheet.
+- Toolbar and command palette: fill and text colour, larger / smaller font, all / outside / no
+  borders, wrap text, merge & center / unmerge, and vertical alignment (palette). Each is one
+  undo step.
+
+### Changed
+- Linux: the automatic UI font skips variable fonts (such as a single-file Inter or Adwaita Sans)
+  when a family with static bold faces is installed, since GPUI draws only a variable font's
+  default weight there and bold text looked regular. macOS is unchanged.
+
+### Performance
+- Sheets resolves each cell style once per workbook state instead of cloning it for every
+  visible cell on every frame.
+
 ## [0.2.0] - 2026-11-10
 
 Docs and Slides join Sheets: all three apps open, edit and save their Office formats, and Docs and
