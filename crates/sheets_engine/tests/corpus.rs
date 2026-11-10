@@ -115,6 +115,7 @@ fn xlsx_corpus_fidelity() {
     );
 
     let expectations = read_expectations(&dir.join("expectations.tsv"));
+    let features = read_features(&dir.join("features.tsv"));
     let out_dir = std::env::var_os("KANTOR_CORPUS_OUT").map(PathBuf::from);
     if let Some(out) = &out_dir {
         fs::create_dir_all(out).unwrap();
@@ -129,7 +130,7 @@ fn xlsx_corpus_fidelity() {
             file: name.clone(),
             list: Vec::new(),
         };
-        check_file(path, &saved, &expectations, &mut f);
+        check_file(path, &saved, &expectations, &features, &mut f);
         if let Some(out) = &out_dir
             && saved.exists()
         {
@@ -186,7 +187,13 @@ fn xlsx_corpus_fidelity() {
     assert!(msg.is_empty(), "{msg}");
 }
 
-fn check_file(path: &Path, saved: &Path, expectations: &[Expectation], f: &mut Findings) {
+fn check_file(
+    path: &Path,
+    saved: &Path,
+    expectations: &[Expectation],
+    features: &[FeatureProbe],
+    f: &mut Findings,
+) {
     // 1. Kantor round trip: open -> save_as -> reopen.
     let mut original = match Workbook::open(path) {
         Ok(wb) => wb,
@@ -200,7 +207,7 @@ fn check_file(path: &Path, saved: &Path, expectations: &[Expectation], f: &mut F
         f.add("save", "-", format!("{e:#}"));
         return;
     }
-    let reopened = match Workbook::open(saved) {
+    let mut reopened = match Workbook::open(saved) {
         Ok(wb) => wb,
         Err(e) => {
             f.add("reopen", "-", format!("{e:#}"));
@@ -261,6 +268,283 @@ fn check_file(path: &Path, saved: &Path, expectations: &[Expectation], f: &mut F
     let file = f.file.clone();
     for e in expectations.iter().filter(|e| e.file == file) {
         expectation_check(e, &original, &model_a, f);
+    }
+
+    // 6. Features (`features.tsv`): each probe matches in the original, after
+    //    open -> save, and after saving the saved file again.
+    let probes: Vec<FeatureProbe> = features.iter().filter(|p| p.file == file).cloned().collect();
+    if probes.is_empty() {
+        return;
+    }
+    let twice = saved.with_extension("twice.xlsx");
+    let second = match reopened.save_as(&twice) {
+        Ok(()) => Some(Parts::read(&twice)),
+        Err(e) => {
+            f.add("save", "second", format!("{e:#}"));
+            None
+        }
+    };
+    let (pa, pb) = (Parts::read(path), Parts::read(saved));
+    for p in &probes {
+        if let Err(e) = p.check(&pa) {
+            f.add("feature-fixture", p.feature.clone(), e);
+            continue;
+        }
+        if let Err(e) = p.check(&pb) {
+            f.add("feature", p.feature.clone(), format!("lost on save: {e}"));
+        } else if let Some(Err(e)) = second.as_ref().map(|s| p.check(s)) {
+            f.add("feature", p.feature.clone(), format!("lost on second save: {e}"));
+        }
+    }
+}
+
+// ------------------------------------------------------------------ feature probes
+
+/// A line of `features.tsv` (see `scripts/corpus/gen_features_xlsx.py`).
+#[derive(Clone)]
+struct FeatureProbe {
+    file: String,
+    feature: String,
+    part: String,
+    probe: String,
+}
+
+fn read_features(path: &Path) -> Vec<FeatureProbe> {
+    let text = fs::read_to_string(path).unwrap_or_default();
+    text.lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .map(|l| {
+            let p: Vec<&str> = l.split('\t').collect();
+            assert_eq!(p.len(), 4, "bad features line: {l}");
+            FeatureProbe {
+                file: p[0].into(),
+                feature: p[1].into(),
+                part: p[2].into(),
+                probe: p[3].into(),
+            }
+        })
+        .collect()
+}
+
+/// Every part of a package, by name.
+struct Parts(BTreeMap<String, Vec<u8>>);
+
+impl Parts {
+    fn read(path: &Path) -> Self {
+        let mut archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
+        let mut parts = BTreeMap::new();
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).unwrap();
+            let mut data = Vec::new();
+            entry.read_to_end(&mut data).unwrap();
+            parts.insert(entry.name().unwrap().into_owned(), data);
+        }
+        Parts(parts)
+    }
+
+    fn text(&self, name: &str) -> Option<String> {
+        self.0
+            .get(name)
+            .map(|d| String::from_utf8_lossy(d).into_owned())
+    }
+
+    /// `(kind, target part)` of the relationships of `source`.
+    fn rels(&self, source: &str) -> Vec<(String, String)> {
+        let (dir, file) = source.rsplit_once('/').unwrap_or(("", source));
+        let rels = format!("{dir}/_rels/{file}.rels");
+        let Some(xml) = self.text(&rels) else {
+            return Vec::new();
+        };
+        let doc = roxmltree::Document::parse(&xml).unwrap();
+        doc.descendants()
+            .filter(|n| n.has_tag_name("Relationship") && n.attribute("TargetMode").is_none())
+            .map(|n| {
+                let kind = n.attribute("Type").unwrap().rsplit('/').next().unwrap();
+                let target = n.attribute("Target").unwrap();
+                (kind.to_owned(), resolve_target(dir, target))
+            })
+            .collect()
+    }
+
+    /// The worksheet or chart sheet part of the sheet called `name`.
+    fn sheet_part(&self, name: &str) -> Option<String> {
+        let xml = self.text("xl/workbook.xml")?;
+        let doc = roxmltree::Document::parse(&xml).unwrap();
+        let sheet = doc
+            .descendants()
+            .find(|n| n.has_tag_name("sheet") && n.attribute("name") == Some(name))?;
+        let id = sheet
+            .attributes()
+            .find(|a| a.name() == "id" && a.namespace().is_some())?
+            .value()
+            .to_owned();
+        let rels_xml = self.text("xl/_rels/workbook.xml.rels")?;
+        let rels = roxmltree::Document::parse(&rels_xml).unwrap();
+        let target = rels
+            .descendants()
+            .find(|n| n.attribute("Id") == Some(id.as_str()))?
+            .attribute("Target")?;
+        Some(resolve_target("xl", target))
+    }
+}
+
+fn resolve_target(dir: &str, target: &str) -> String {
+    let joined = match target.strip_prefix('/') {
+        Some(abs) => abs.to_owned(),
+        None => format!("{dir}/{target}"),
+    };
+    let mut segs: Vec<&str> = Vec::new();
+    for s in joined.split('/') {
+        match s {
+            "" | "." => {}
+            ".." => {
+                segs.pop();
+            }
+            s => segs.push(s),
+        }
+    }
+    segs.join("/")
+}
+
+/// One step of a probe: an element name and conditions on it.
+struct Step {
+    /// Searched among all descendants (`//`), not only children.
+    deep: bool,
+    name: String,
+    /// `(attribute, value)`; `None` asks only for the attribute; the attribute
+    /// `text()` is the element's text.
+    conds: Vec<(String, Option<String>)>,
+}
+
+fn parse_probe(probe: &str) -> Vec<Step> {
+    // Split on `/` outside brackets.
+    let mut raw: Vec<(bool, String)> = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0;
+    let mut deep = false;
+    let mut chars = probe.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '[' => depth += 1,
+            ']' => depth -= 1,
+            '/' if depth == 0 => {
+                raw.push((deep, std::mem::take(&mut cur)));
+                deep = chars.peek() == Some(&'/');
+                if deep {
+                    chars.next();
+                }
+                continue;
+            }
+            _ => {}
+        }
+        cur.push(ch);
+    }
+    raw.push((deep, cur));
+    raw.into_iter()
+        .enumerate()
+        .map(|(i, (deep, s))| {
+            let (name, rest) = s.split_once('[').map_or((s.as_str(), ""), |(n, r)| (n, r));
+            let conds = rest
+                .trim_end_matches(']')
+                .split("][")
+                .filter(|c| !c.is_empty())
+                .map(|c| {
+                    let c = c.strip_prefix('@').unwrap_or(c);
+                    match c.split_once('=') {
+                        Some((k, v)) => (k.to_owned(), Some(v.to_owned())),
+                        None => (c.to_owned(), None),
+                    }
+                })
+                .collect();
+            Step {
+                deep: deep || i == 0,
+                name: name.to_owned(),
+                conds,
+            }
+        })
+        .collect()
+}
+
+fn step_matches(n: roxmltree::Node, step: &Step) -> bool {
+    n.is_element()
+        && n.tag_name().name() == step.name
+        && step.conds.iter().all(|(k, v)| {
+            let got = if k == "text()" {
+                Some(n.text().unwrap_or_default())
+            } else {
+                n.attributes().find(|a| a.name() == k).map(|a| a.value())
+            };
+            match (got, v) {
+                (Some(g), Some(v)) => g == v,
+                (Some(_), None) => true,
+                (None, _) => false,
+            }
+        })
+}
+
+fn probe_matches(node: roxmltree::Node, steps: &[Step]) -> bool {
+    let Some((step, rest)) = steps.split_first() else {
+        return true;
+    };
+    let candidates: Box<dyn Iterator<Item = roxmltree::Node>> = if step.deep {
+        Box::new(node.descendants().skip(1))
+    } else {
+        Box::new(node.children())
+    };
+    candidates
+        .filter(|c| step_matches(*c, step))
+        .any(|c| probe_matches(c, rest))
+}
+
+impl FeatureProbe {
+    /// The parts the selector names.
+    fn parts(&self, pkg: &Parts) -> Result<Vec<String>, String> {
+        let sel = self.part.as_str();
+        let parts = if let Some(name) = sel.strip_prefix("pkg:") {
+            vec![name.to_owned()]
+        } else if sel == "styles" {
+            vec!["xl/styles.xml".to_owned()]
+        } else if sel == "workbook" {
+            vec!["xl/workbook.xml".to_owned()]
+        } else if let Some(sheet) = sel.strip_prefix("sheet:") {
+            vec![
+                pkg.sheet_part(sheet)
+                    .ok_or_else(|| format!("no sheet {sheet:?}"))?,
+            ]
+        } else if let Some(rest) = sel.strip_prefix("rel:") {
+            let (sheet, kind) = rest.rsplit_once(':').expect("rel:<sheet>:<kind>");
+            let part = pkg
+                .sheet_part(sheet)
+                .ok_or_else(|| format!("no sheet {sheet:?}"))?;
+            pkg.rels(&part)
+                .into_iter()
+                .filter(|(k, _)| k == kind)
+                .map(|(_, t)| t)
+                .collect()
+        } else {
+            panic!("unknown part selector {sel}")
+        };
+        let parts: Vec<String> = parts.into_iter().filter(|p| pkg.0.contains_key(p)).collect();
+        if parts.is_empty() {
+            return Err(format!("no part {sel}"));
+        }
+        Ok(parts)
+    }
+
+    fn check(&self, pkg: &Parts) -> Result<(), String> {
+        let parts = self.parts(pkg)?;
+        if self.probe.is_empty() {
+            return Ok(());
+        }
+        let steps = parse_probe(&self.probe);
+        for part in &parts {
+            let xml = pkg.text(part).unwrap_or_default();
+            let doc = roxmltree::Document::parse(&xml).map_err(|e| format!("{part}: {e}"))?;
+            if probe_matches(doc.root(), &steps) {
+                return Ok(());
+            }
+        }
+        Err(format!("{} not in {}", self.probe, parts.join(", ")))
     }
 }
 
@@ -366,6 +650,10 @@ impl CalamineView {
         let names = wb.defined_names().iter().cloned().collect();
         let mut sheets = Vec::new();
         for sheet in meta {
+            // Chart sheets have no cells; the feature probes cover them.
+            if sheet.typ == calamine::SheetType::ChartSheet {
+                continue;
+            }
             let name = sheet.name.clone();
             let mut v = SheetView {
                 visible: format!("{:?}", sheet.visible),
