@@ -1,7 +1,7 @@
 # AUR: `kantor-bin`
 
-`kantor-bin/` holds the PKGBUILD and `.SRCINFO` published to
-<https://aur.archlinux.org/packages/kantor-bin>. It repackages the prebuilt release
+`kantor-bin/` holds the PKGBUILD and `.SRCINFO` for
+<https://aur.archlinux.org/packages/kantor-bin> (not published yet). It repackages the prebuilt release
 tarballs (`kantor-X.Y.Z-{x86_64,aarch64}-linux.tar.gz`) that `.github/workflows/release.yml`
 attaches to each GitHub Release, so nothing is compiled on the user's machine.
 

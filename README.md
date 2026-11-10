@@ -6,16 +6,40 @@ A small, fast, native office suite for Linux and macOS, written in Rust on [GPUI
 
 > **Status: early, all three apps work.** Sheets opens, edits and saves `.xlsx` (formulas via [IronCalc](https://github.com/ironcalc/IronCalc)) and imports `.csv`, `.ods`, `.xls` and `.xlsb`. Docs opens, edits and saves `.docx` and exports PDF. Slides opens, edits, presents and saves `.pptx` and exports PDF. Saving keeps what Kantor doesn't show yet, byte for byte. `kantor convert` and `kantor pdf` work from the command line, and AI agents can edit open documents over MCP. Not yet checked against a large set of real-world files; see [plan.md](plan.md).
 
-## Install (prebuilt, no compiling)
+## Install
 
-Every push to `main` publishes a rolling **nightly** build for Linux (x86_64, aarch64) and macOS (Apple Silicon).
+**Most people:** download Kantor from **<https://kantor.paparanai.id>** and open it.
+
+- **macOS** (Apple Silicon and Intel, macOS 11 or later): open `Kantor.dmg` and drag Kantor to Applications. The app is signed and notarised by Apple.
+- **Linux** (x86_64 or aarch64): download the AppImage, make it executable and run it. No install step:
+
+  ```sh
+  chmod +x Kantor-x86_64.AppImage
+  ./Kantor-x86_64.AppImage budget.xlsx
+  ```
+
+  Most file managers can also mark the file as executable (Properties → Permissions) and open it with a double-click. The AppImage needs glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40, current Arch or later) and FUSE 3; without FUSE, run it with `--appimage-extract-and-run`. It doesn't add a launcher to your app menu; the install script below does.
+
+The same files are on every [GitHub Release](https://github.com/dzulfikar08/kantor/releases/latest): `Kantor.dmg`, `Kantor-x86_64.AppImage`, `Kantor-aarch64.AppImage`, plus versioned copies and `SHA256SUMS`. Changes per release: [CHANGELOG.md](CHANGELOG.md).
+
+**From a terminal** (Linux or macOS, no compiling, no sudo):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/dzulfikar08/kantor/main/scripts/install.sh | sh
 kantor budget.xlsx
 ```
 
-On Linux this installs `~/.local/bin/kantor`, a **Kantor** launcher (the suite's Home screen) and a **Kantor Sheets** launcher. On macOS it installs `~/Applications/Kantor.app` (ad-hoc signed, not notarised yet) and links `~/.local/bin/kantor` to it; on macOS, the `Ctrl` shortcuts below are `⌘`. Pin a tagged release with `curl -fsSL …/install.sh | KANTOR_VERSION=v0.1.0 sh`. On Arch, `kantor-bin` from the AUR installs the latest release. Changes per release: [CHANGELOG.md](CHANGELOG.md).
+This installs the rolling **nightly** build of `main`. Pin a tagged release with `curl -fsSL …/install.sh | KANTOR_VERSION=v0.2.0 sh` (macOS builds start with v0.2.0). On Linux it installs `~/.local/bin/kantor`, a **Kantor** launcher (the suite's Home screen) and a **Kantor Sheets** launcher. On macOS it installs `~/Applications/Kantor.app` and links `~/.local/bin/kantor` to it (the nightly is Apple Silicon only and not notarised; tagged releases are universal and notarised). If `~/.local/bin` is not on your `PATH`, the script prints the line to add for your shell. On macOS, the `Ctrl` shortcuts below are `⌘`.
+
+**Uninstall:** delete the AppImage, or drag Kantor from Applications to the Bin. To remove what the install script installed:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dzulfikar08/kantor/main/scripts/install.sh | sh -s -- --uninstall
+```
+
+Settings (`~/.config/kantor`) and the saved session (`~/.local/state/kantor`) are kept; delete them by hand if you want them gone.
+
+Arch Linux: a PKGBUILD for a future `kantor-bin` AUR package lives in [packaging/aur/](packaging/aur/); it is not published yet.
 
 ## Using Sheets
 
