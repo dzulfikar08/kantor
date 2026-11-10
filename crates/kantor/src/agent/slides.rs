@@ -25,7 +25,7 @@ fn shape_kind(kind: &ShapeKind) -> String {
         ShapeKind::Shape { text_box: true, .. } => "text box".into(),
         ShapeKind::Shape { .. } => "shape".into(),
         ShapeKind::Picture { .. } => "picture".into(),
-        ShapeKind::Other { what } => what.clone(),
+        ShapeKind::Other { what, .. } => what.clone(),
     }
 }
 

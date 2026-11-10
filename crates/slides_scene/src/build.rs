@@ -5,8 +5,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use docs_layout::Engine;
+use slides_engine::frame::{ChartRef, Frame, FrameContent, Group, Vert, compose};
 use slides_engine::{
-    EMU_PER_PX, Fill, Layer, LineStyle, Presentation, RenderShape, RenderText, Rgb, ShapeKind, Xfrm,
+    EMU_PER_PX, Fill, Layer, LineStyle, Presentation, RenderShape, RenderText, Rgb, Shape,
+    ShapeKind, Xfrm,
 };
 
 use crate::geom::{Affine, P, Path, PathFill, p, shape_outline};
@@ -31,9 +33,11 @@ pub struct Options {
 pub struct Builder {
     pub texts: TextCache,
     bytes: RefCell<HashMap<String, Option<Arc<Vec<u8>>>>>,
+    /// SmartArt drawings by data part.
+    diagrams: RefCell<HashMap<String, Option<Arc<Group>>>>,
 }
 
-fn px(emu: i64) -> f32 {
+pub(crate) fn px(emu: i64) -> f32 {
     emu as f32 / EMU_PER_PX
 }
 
@@ -84,6 +88,7 @@ impl Builder {
     /// Forget cached picture bytes (the presentation was replaced).
     pub fn clear_pictures(&self) {
         self.bytes.borrow_mut().clear();
+        self.diagrams.borrow_mut().clear();
     }
 
     /// Everything drawn on slide `slide`.
@@ -116,7 +121,7 @@ impl Builder {
                 (Layer::Slide(i), Some((j, x))) if i == j => x,
                 _ => r.xfrm,
             };
-            self.shape(engine, pres, r, &xfrm, opts.prompts, &mut items);
+            self.shape(engine, pres, slide, r, &xfrm, opts.prompts, &mut items);
         }
         SlideScene {
             width: w,
@@ -165,7 +170,7 @@ impl Builder {
         }
     }
 
-    fn blip(
+    pub(crate) fn blip(
         &self,
         pres: &Presentation,
         b: &slides_engine::BlipFill,
@@ -184,17 +189,48 @@ impl Builder {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn shape(
         &self,
         engine: &mut Engine,
         pres: &Presentation,
+        slide: usize,
         r: &RenderShape,
         xfrm: &Xfrm,
         editor: bool,
         out: &mut Vec<Item>,
     ) {
-        let shape = r.shape;
-        let layer = Some(r.layer);
+        let outline = editor && r.is_empty_placeholder();
+        let d = Draw {
+            slide,
+            layer: Some(r.layer),
+        };
+        self.draw(
+            engine,
+            pres,
+            d,
+            r.shape,
+            xfrm,
+            r.text.as_ref(),
+            outline,
+            out,
+        );
+    }
+
+    /// One shape at `xfrm` with its resolved text.
+    #[allow(clippy::too_many_arguments)]
+    fn draw(
+        &self,
+        engine: &mut Engine,
+        pres: &Presentation,
+        d: Draw,
+        shape: &Shape,
+        xfrm: &Xfrm,
+        text: Option<&RenderText>,
+        outline: bool,
+        out: &mut Vec<Item>,
+    ) {
+        let layer = d.layer;
         let (w, h) = (px(xfrm.cx), px(xfrm.cy));
         let t = shape_transform(xfrm);
         let push = |out: &mut Vec<Item>, prim: Prim| {
@@ -293,31 +329,178 @@ impl Builder {
                     strokes(rect, *color, *width, style, &mut |prim| push(out, prim));
                 }
             }
-            ShapeKind::Other { .. } => push(out, Prim::Unsupported { w, h }),
+            ShapeKind::Other { frame, .. } => {
+                let own = shape.xfrm.unwrap_or(*xfrm);
+                if !self.frame(engine, pres, d, frame, &own, xfrm, out) {
+                    push(out, Prim::Unsupported { w, h });
+                }
+            }
         }
         let tt = text_transform(xfrm);
-        if editor && r.is_empty_placeholder() {
+        if outline {
             out.push(Item {
                 layer,
                 transform: tt,
                 prim: Prim::PlaceholderOutline { w, h },
             });
         }
-        if let Some(text) = &r.text {
-            let laid = self.texts.place(engine, text, xfrm);
-            let runs = glyph_runs(&laid.layout);
-            if !runs.is_empty() {
-                out.push(Item {
-                    layer,
-                    transform: tt,
-                    prim: Prim::Text(Text {
-                        origin: p(laid.dx, laid.dy),
-                        runs,
-                    }),
-                });
+        if let Some(text) = text {
+            let local = Xfrm::new(0, 0, xfrm.cx, xfrm.cy);
+            self.push_text(engine, text, &local, &tt, layer, out);
+        }
+    }
+
+    /// The content of a group or graphic frame drawn at `xfrm` (`own` is
+    /// its box as read). `false` if there's nothing Kantor can draw.
+    #[allow(clippy::too_many_arguments)]
+    fn frame(
+        &self,
+        engine: &mut Engine,
+        pres: &Presentation,
+        d: Draw,
+        frame: &Frame,
+        own: &Xfrm,
+        xfrm: &Xfrm,
+        out: &mut Vec<Item>,
+    ) -> bool {
+        match frame.get() {
+            Some(FrameContent::Group(g)) => {
+                self.group(engine, pres, d, g, &g.child_box, xfrm, out);
+                true
+            }
+            Some(FrameContent::Table(t)) => self.table(engine, pres, d, t, xfrm, out),
+            Some(FrameContent::Diagram(dg)) => {
+                let Some(key) = dg.data.clone() else {
+                    return false;
+                };
+                let cached = self.diagrams.borrow().get(&key).cloned();
+                let g = match cached {
+                    Some(g) => g,
+                    None => {
+                        let g = pres.diagram_drawing(d.slide, dg).map(Arc::new);
+                        self.diagrams.borrow_mut().insert(key, g.clone());
+                        g
+                    }
+                };
+                let Some(g) = g else { return false };
+                // The drawing is in the frame's own space.
+                let space = Xfrm::new(0, 0, own.cx, own.cy);
+                self.group(engine, pres, d, &g, &space, xfrm, out);
+                true
+            }
+            Some(FrameContent::Chart(c)) => self.chart_frame(engine, pres, d, c, xfrm, out),
+            None => false,
+        }
+    }
+
+    /// Charts: drawn by the chart renderer once it lands; `false` keeps
+    /// the placeholder box.
+    #[allow(clippy::too_many_arguments)]
+    fn chart_frame(
+        &self,
+        _engine: &mut Engine,
+        _pres: &Presentation,
+        _d: Draw,
+        _chart: &ChartRef,
+        _xfrm: &Xfrm,
+        _out: &mut Vec<Item>,
+    ) -> bool {
+        false
+    }
+
+    /// The children of a group (child space `space`) drawn into `xfrm`.
+    #[allow(clippy::too_many_arguments)]
+    fn group(
+        &self,
+        engine: &mut Engine,
+        pres: &Presentation,
+        d: Draw,
+        g: &Group,
+        space: &Xfrm,
+        xfrm: &Xfrm,
+        out: &mut Vec<Item>,
+    ) {
+        for (i, child) in g.children.iter().enumerate() {
+            let Some(own) = child.xfrm else { continue };
+            let at = compose(xfrm, space, &own);
+            match g.text_boxes.get(i).copied().flatten() {
+                Some(tb) => {
+                    // SmartArt: the text has its own box.
+                    let tx = compose(xfrm, space, &tb);
+                    self.draw(engine, pres, d, child, &at, None, false, out);
+                    if let Some(text) = pres.shape_text(d.slide, child, &tx, true) {
+                        let local = Xfrm::new(0, 0, tx.cx, tx.cy);
+                        self.push_text(engine, &text, &local, &text_transform(&tx), d.layer, out);
+                    }
+                }
+                None => {
+                    let text = pres.shape_text(d.slide, child, &at, false);
+                    self.draw(engine, pres, d, child, &at, text.as_ref(), false, out);
+                }
             }
         }
     }
+
+    /// Text laid out in `bx` (EMU, in the coordinates `base` maps to slide
+    /// px), turned a quarter for vertical text.
+    pub(crate) fn push_text(
+        &self,
+        engine: &mut Engine,
+        text: &RenderText,
+        bx: &Xfrm,
+        base: &Affine,
+        layer: Option<Layer>,
+        out: &mut Vec<Item>,
+    ) {
+        let (x, y, w, h) = (px(bx.x), px(bx.y), px(bx.cx), px(bx.cy));
+        let (laid, transform) = match text.vert {
+            Vert::Horz => {
+                let laid = self
+                    .texts
+                    .place(engine, text, &Xfrm::new(0, 0, bx.cx, bx.cy));
+                (laid, Affine::translate(x, y).then(*base))
+            }
+            v => {
+                // Laid out in the box turned a quarter: its insets turn too.
+                let [l, t, r, b] = text.insets;
+                let (insets, angle) = match v {
+                    Vert::Down => ([t, r, b, l], std::f32::consts::FRAC_PI_2),
+                    _ => ([b, l, t, r], -std::f32::consts::FRAC_PI_2),
+                };
+                let turned = RenderText {
+                    insets,
+                    ..text.clone()
+                };
+                let laid = self
+                    .texts
+                    .place(engine, &turned, &Xfrm::new(0, 0, bx.cy, bx.cx));
+                let t = Affine::translate(-h / 2.0, -w / 2.0)
+                    .then(Affine::rotate(angle))
+                    .then(Affine::translate(x + w / 2.0, y + h / 2.0))
+                    .then(*base);
+                (laid, t)
+            }
+        };
+        let runs = glyph_runs(&laid.layout);
+        if !runs.is_empty() {
+            out.push(Item {
+                layer,
+                transform,
+                prim: Prim::Text(Text {
+                    origin: p(laid.dx, laid.dy),
+                    runs,
+                }),
+            });
+        }
+    }
+}
+
+/// Where a shape is drawn from: the slide (for its master, rels and
+/// text styles) and the layer its items belong to.
+#[derive(Clone, Copy)]
+pub(crate) struct Draw {
+    pub slide: usize,
+    pub layer: Option<Layer>,
 }
 
 /// The strokes of `paths` (and their arrowheads: the head on the first

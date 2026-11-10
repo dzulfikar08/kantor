@@ -22,6 +22,7 @@
 mod build;
 pub mod geom;
 pub mod paint;
+pub mod table;
 pub mod text;
 
 use std::sync::Arc;

@@ -351,3 +351,223 @@ fn pdf_has_one_page_per_shown_slide_fonts_shadings_and_text() {
         2
     );
 }
+
+// ── groups, tables, SmartArt ────────────────────────────────────────────
+
+const DIAGRAM_DRAWING: &str =
+    "http://schemas.microsoft.com/office/2007/relationships/diagramDrawing";
+
+/// A long cell text in a narrow column: the row has to grow.
+const LONG: &str = "many words that wrap over several lines in this narrow cell";
+
+fn frame_shapes() -> String {
+    let cell = |t: &str, attrs: &str| {
+        format!(
+            r#"<a:tc{attrs}><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>{t}</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc>"#
+        )
+    };
+    let row = |cells: String| format!(r#"<a:tr h="370840">{cells}</a:tr>"#);
+    let table = format!(
+        r#"<a:tbl><a:tblPr firstRow="1" bandRow="1"><a:tableStyleId>{{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}}</a:tableStyleId></a:tblPr><a:tblGrid><a:gridCol w="1828800"/><a:gridCol w="1828800"/><a:gridCol w="1828800"/></a:tblGrid>{}{}{}</a:tbl>"#,
+        row(cell("Head", "") + &cell("Hb", "") + &cell("Hc", "")),
+        row(cell("Merged", r#" gridSpan="2""#)
+            + &cell("", r#" hMerge="1""#)
+            + &cell("Tall", r#" rowSpan="2""#)),
+        row(cell(LONG, "") + &cell("Body", "") + &cell("", r#" vMerge="1""#)),
+    );
+    format!(
+        r#"<p:grpSp><p:nvGrpSpPr><p:cNvPr id="30" name="Group"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm flipH="1"><a:off x="914400" y="914400"/><a:ext cx="1828800" cy="914400"/><a:chOff x="0" y="0"/><a:chExt cx="914400" cy="457200"/></a:xfrm><a:solidFill><a:srgbClr val="FF00FF"/></a:solidFill></p:grpSpPr><p:sp><p:nvSpPr><p:cNvPr id="31" name="Child"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="457200" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:grpFill/></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Grouped</a:t></a:r></a:p></p:txBody></p:sp><p:grpSp><p:nvGrpSpPr><p:cNvPr id="32" name="Inner"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm rot="5400000"><a:off x="457200" y="0"/><a:ext cx="457200" cy="457200"/><a:chOff x="0" y="0"/><a:chExt cx="100" cy="100"/></a:xfrm></p:grpSpPr><p:sp><p:nvSpPr><p:cNvPr id="33" name="Leaf"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="50" cy="50"/></a:xfrm><a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="00FFFF"/></a:solidFill></p:spPr></p:sp></p:grpSp></p:grpSp>
+<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="35" name="Table"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="914400" y="2743200"/><a:ext cx="5486400" cy="1112520"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">{table}</a:graphicData></a:graphic></p:graphicFrame>
+<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="40" name="Diagram"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="7315200" y="3657600"/><a:ext cx="2743200" cy="1371600"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" r:dm="rIdDm"/></a:graphicData></a:graphic></p:graphicFrame>
+<p:sp><p:nvSpPr><p:cNvPr id="41" name="Star"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="7315200" y="914400"/><a:ext cx="1828800" cy="1828800"/></a:xfrm><a:prstGeom prst="star5"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Star</a:t></a:r></a:p></p:txBody></p:sp>"#
+    )
+}
+
+/// A one-slide deck with a flipped group (nested turned group, `grpFill`),
+/// a styled table with merged cells, SmartArt with its cached drawing and
+/// a star with text.
+fn frames_deck(dir: &std::path::Path) -> std::path::PathBuf {
+    let plain = dir.join("plain.pptx");
+    Presentation::new().save_as(&plain).unwrap();
+    let mut all = parts(&std::fs::read(&plain).unwrap());
+    let edit = |all: &mut BTreeMap<String, Vec<u8>>, k: &str, f: &dyn Fn(String) -> String| {
+        let s = String::from_utf8(all[k].clone()).unwrap();
+        all.insert(k.to_owned(), f(s).into_bytes());
+    };
+    edit(&mut all, "ppt/slides/slide1.xml", &|s| {
+        s.replace("</p:spTree>", &format!("{}</p:spTree>", frame_shapes()))
+    });
+    edit(&mut all, "ppt/slides/_rels/slide1.xml.rels", &|s| {
+        s.replace(
+            "</Relationships>",
+            &format!(
+                r#"<Relationship Id="rIdDm" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData" Target="../diagrams/data1.xml"/><Relationship Id="rIdDr" Type="{DIAGRAM_DRAWING}" Target="../diagrams/drawing1.xml"/></Relationships>"#
+            ),
+        )
+    });
+    all.insert(
+        "ppt/diagrams/data1.xml".into(),
+        br#"<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dgm:ptLst/><dgm:extLst><a:ext uri="http://schemas.microsoft.com/office/drawing/2008/diagram"><dsp:dataModelExt xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" relId="rIdDr" minVer="http://schemas.openxmlformats.org/drawingml/2006/diagram"/></a:ext></dgm:extLst></dgm:dataModel>"#.to_vec(),
+    );
+    all.insert(
+        "ppt/diagrams/drawing1.xml".into(),
+        br#"<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dsp:spTree><dsp:nvGrpSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvGrpSpPr/></dsp:nvGrpSpPr><dsp:grpSpPr/><dsp:sp modelId="{1}"><dsp:nvSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvSpPr/></dsp:nvSpPr><dsp:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1371600" cy="1371600"/></a:xfrm><a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill></dsp:spPr><dsp:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Smart</a:t></a:r></a:p></dsp:txBody><dsp:txXfrm><a:off x="200000" y="200000"/><a:ext cx="971600" cy="971600"/></dsp:txXfrm></dsp:sp></dsp:spTree></dsp:drawing>"#.to_vec(),
+    );
+    let path = dir.join("frames.pptx");
+    std::fs::write(&path, zip_parts(all)).unwrap();
+    path
+}
+
+fn solid_fills(scene: &slides_scene::SlideScene) -> Vec<([u8; 4], slides_engine::Layer)> {
+    scene
+        .items
+        .iter()
+        .filter_map(|it| match &it.prim {
+            Prim::Fill {
+                paint: slides_scene::Paint::Solid(c),
+                ..
+            } => Some((c.0, it.layer?)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn groups_tables_and_smartart_are_drawn() {
+    use slides_engine::{FrameContent, Layer, ShapeKind};
+    let dir = tempfile::tempdir().unwrap();
+    let path = frames_deck(dir.path());
+    let pres = Presentation::open(&path).unwrap();
+    let shapes = &pres.slide(0).shapes;
+    let at = |name: &str| shapes.iter().position(|s| s.name == name).unwrap();
+    let (group, table, diagram) = (at("Group"), at("Table"), at("Diagram"));
+    // Nothing left that Kantor keeps but can't draw.
+    assert!(
+        pres.unsupported_objects().is_empty(),
+        "{:?}",
+        pres.unsupported_objects()
+    );
+
+    let mut engine = Engine::new();
+    let scene = Builder::new().slide(&mut engine, &pres, 0, &Default::default());
+    let fills = solid_fills(&scene);
+    // The group's children: the grpFill child shows the group's fill, the
+    // nested group's ellipse its own; both belong to the group.
+    assert!(fills.contains(&([255, 0, 255, 255], Layer::Slide(group))));
+    assert!(fills.contains(&([0, 255, 255, 255], Layer::Slide(group))));
+    // The flipped group puts its first child on the right half.
+    let child = scene
+        .items
+        .iter()
+        .find(|it| matches!(&it.prim, Prim::Fill { paint: slides_scene::Paint::Solid(c), .. } if c.0 == [255, 0, 255, 255]))
+        .unwrap();
+    let left = child.transform.apply(slides_scene::p(0.0, 0.0)).x;
+    let right = child.transform.apply(slides_scene::p(96.0, 0.0)).x;
+    assert!((left.min(right) - 192.0).abs() < 0.5, "{left} {right}");
+
+    // Table style (built in: the file only names it): accent 1 header,
+    // banded body rows (40 % tint, then 20 %).
+    let table_fills: Vec<[u8; 4]> = fills
+        .iter()
+        .filter(|f| f.1 == Layer::Slide(table))
+        .map(|f| f.0)
+        .collect();
+    assert_eq!(table_fills.len(), 7, "{table_fills:?}");
+    assert_eq!(table_fills[0], [0x44, 0x72, 0xC4, 255]);
+    assert!(
+        table_fills.contains(&[180, 198, 231, 255]),
+        "{table_fills:?}"
+    );
+    assert!(
+        table_fills.contains(&[217, 226, 243, 255]),
+        "{table_fills:?}"
+    );
+    // Borders: white lines between cells.
+    assert!(scene.items.iter().any(|it| it.layer == Some(Layer::Slide(table))
+        && matches!(&it.prim, Prim::Stroke { stroke, .. } if stroke.color.0 == [255, 255, 255, 255])));
+    // The long cell's row grew: the table is taller than its rows say.
+    let bottom = scene
+        .items
+        .iter()
+        .filter(|it| it.layer == Some(Layer::Slide(table)))
+        .filter_map(|it| match &it.prim {
+            Prim::Fill { path, .. } => {
+                let b = path.transformed(&it.transform).bounds()?;
+                Some(b[1] + b[3])
+            }
+            _ => None,
+        })
+        .fold(0.0f32, f32::max);
+    assert!(bottom > 288.0 + 3.0 * 38.93 + 10.0, "{bottom}");
+    // The merged cells' text is there once each.
+    let texts = |layer| {
+        scene
+            .items
+            .iter()
+            .filter(|it| it.layer == Some(layer))
+            .filter_map(|it| match &it.prim {
+                Prim::Text(t) => Some(
+                    t.runs
+                        .iter()
+                        .map(|r| r.sample().to_owned())
+                        .collect::<String>(),
+                ),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let cells = texts(Layer::Slide(table));
+    assert_eq!(
+        cells.iter().filter(|t| t.contains("Merged")).count(),
+        1,
+        "{cells:?}"
+    );
+    assert_eq!(cells.len(), 7, "{cells:?}");
+
+    // SmartArt: the cached drawing's shape and its text box.
+    let ShapeKind::Other { frame, .. } = &shapes[diagram].kind else {
+        panic!()
+    };
+    let Some(FrameContent::Diagram(d)) = frame.get() else {
+        panic!("{frame:?}")
+    };
+    let drawing = pres.diagram_drawing(0, d).expect("drawing part");
+    assert_eq!(drawing.children.len(), 1);
+    assert!(drawing.text_boxes[0].is_some());
+    assert!(fills.contains(&([0, 255, 0, 255], Layer::Slide(diagram))));
+    assert_eq!(texts(Layer::Slide(diagram)).concat(), "Smart");
+
+    // Text in a star goes in its text rectangle, inside the default insets.
+    let star = at("Star");
+    let list = pres.render_list(0, false);
+    let r = list.iter().find(|r| r.layer == Layer::Slide(star)).unwrap();
+    let ins = r.text.as_ref().unwrap().insets;
+    assert!(
+        ins[0] > 91_440 + 300_000 && ins[1] > 45_720 + 300_000,
+        "{ins:?}"
+    );
+
+    // Saved unchanged, the slide is byte for byte the same.
+    let before = parts(&std::fs::read(&path).unwrap());
+    let after = parts(&pres.to_bytes().unwrap());
+    for k in [
+        "ppt/slides/slide1.xml",
+        "ppt/diagrams/drawing1.xml",
+        "ppt/diagrams/data1.xml",
+    ] {
+        assert_eq!(before[k], after[k], "{k}");
+    }
+}
+
+#[test]
+fn pdf_has_table_group_and_smartart_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let pres = Presentation::open(&frames_deck(dir.path())).unwrap();
+    let mut engine = Engine::new();
+    let (pdf, pages) = slides_pdf::export(&pres, &mut engine).unwrap();
+    assert_eq!(pages, 1);
+    let chars = mapped_chars(&pdf);
+    for c in "HeadMergedTallBodyGroupedSmartStar".chars() {
+        assert!(chars.contains(c), "{c} in {chars:?}");
+    }
+}
