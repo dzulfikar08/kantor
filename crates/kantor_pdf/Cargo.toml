@@ -1,0 +1,15 @@
+[package]
+name = "kantor_pdf"
+description = "PDF page tools for Kantor: merge, split, rotate, watermark, page numbers, images to PDF"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Pure-Rust PDF object model (MIT). Default features (chrono, rayon) are not needed.
+lopdf = { version = "0.47", default-features = false }
+image = { workspace = true, features = ["png", "jpeg"] }
+
+[lints]
+workspace = true

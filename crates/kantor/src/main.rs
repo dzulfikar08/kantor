@@ -5,6 +5,7 @@
 //! kantor FILE               open FILE in the app matching its extension
 //! kantor --sheets [FILE]    start Sheets (likewise --docs, --slides)
 //! kantor mcp                MCP server on stdio for AI agents (see mcp/)
+//! kantor pdf TOOL ...       PDF tools without a window (see cli/pdf.rs)
 //! ```
 
 extern crate gpui_kit as gpui;
@@ -12,6 +13,7 @@ extern crate gpui_kit as gpui;
 mod actions;
 mod agent;
 mod ai;
+mod cli;
 #[cfg(unix)]
 mod ipc;
 #[cfg(unix)]
@@ -32,10 +34,12 @@ struct Args {
 
 const USAGE: &str = "usage: kantor [--docs | --sheets | --slides] [FILE]\n\
     \x20      kantor mcp [--no-launch] [--print-config]\n\
+    \x20      kantor pdf <tool> [options]\n\
     \n\
     Kantor is a native office suite. With no arguments it opens the Home screen.\n\
     Docs opens .docx, Sheets .xlsx/.csv/.ods, Slides .pptx (see plan.md).\n\
-    `kantor mcp` lets AI agents edit the open documents (kantor mcp --help).";
+    `kantor mcp` lets AI agents edit the open documents (kantor mcp --help).\n\
+    `kantor pdf` merges, splits, rotates, watermarks and numbers PDFs (kantor pdf --help).";
 
 fn parse_args() -> Result<Args> {
     let mut app = None;
@@ -62,6 +66,9 @@ fn parse_args() -> Result<Args> {
 }
 
 fn main() {
+    if std::env::args_os().nth(1).is_some_and(|a| a == "pdf") {
+        std::process::exit(cli::pdf::main(std::env::args_os().skip(2).collect()));
+    }
     let raw: Vec<String> = std::env::args().skip(1).collect();
     if raw.first().map(String::as_str) == Some("mcp") {
         // stdout carries the protocol; logs go to stderr.
