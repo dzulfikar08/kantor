@@ -20,6 +20,8 @@
 
 pub mod build;
 
+pub use docs_layout::Engine;
+
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -27,7 +29,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result, anyhow};
 use docs_engine::{Document, ImageFormat, Object};
 use docs_layout::parley::FontData;
-use docs_layout::{Engine, ObjectKind, PagedDocument, PositionedGlyph, Rgba, RunSource};
+use docs_layout::{ObjectKind, PagedDocument, PositionedGlyph, Rgba, RunSource};
 use krilla::color::rgb;
 use krilla::error::KrillaError;
 use krilla::geom::{PathBuilder, Point, Rect, Size, Transform};

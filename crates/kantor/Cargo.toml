@@ -11,6 +11,7 @@ default-run = "kantor"
 anyhow.workspace = true
 async-channel = "2"
 docs_engine.workspace = true
+docs_pdf.workspace = true
 docs_ui.workspace = true
 env_logger.workspace = true
 futures.workspace = true
