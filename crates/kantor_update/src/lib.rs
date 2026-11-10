@@ -121,6 +121,26 @@ pub fn current_build() -> BuildId {
     BuildId::new(env!("CARGO_PKG_VERSION"), build).expect("the crate version is semver")
 }
 
+/// The build updates are compared against: [`current_build`], unless
+/// `KANTOR_UPDATE_CURRENT` (testing only, e.g. `0.1.0`) pretends to be an
+/// older version. It changes nothing else: manifests must still be signed with
+/// Kantor's key and downloads must still pass every check.
+pub fn running_build() -> BuildId {
+    match std::env::var("KANTOR_UPDATE_CURRENT") {
+        Ok(v) if !v.trim().is_empty() => match BuildId::new(v.trim(), 0) {
+            Ok(b) => {
+                log::warn!("update: KANTOR_UPDATE_CURRENT: comparing as version {v}");
+                b
+            }
+            Err(e) => {
+                log::warn!("update: ignoring KANTOR_UPDATE_CURRENT: {e}");
+                current_build()
+            }
+        },
+        _ => current_build(),
+    }
+}
+
 /// `https://kantor.paparanai.id/update/<channel>.json`; `KANTOR_UPDATE_URL`
 /// replaces it (for testing against a local server).
 pub fn manifest_url(channel: Channel) -> String {
@@ -152,7 +172,7 @@ impl Config {
             manifest_url: manifest_url(channel),
             public_key: manifest::decode_public_key(manifest::PUBLIC_KEY)
                 .expect("the embedded update key is valid"),
-            current: current_build(),
+            current: running_build(),
             kind: InstallKind::detect(),
             arch: std::env::consts::ARCH.to_owned(),
         }

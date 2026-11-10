@@ -188,12 +188,16 @@ pub fn stage(
             download_verified(http, asset, &new, progress)?;
             let result = (|| {
                 set_executable(&new)?;
-                probe_version(
-                    verifier,
-                    &new,
-                    &["--appimage-extract-and-run", "--version"],
-                    &manifest.version,
-                )
+                // Through FUSE as usual; without FUSE the runtime fails, so
+                // unpack-and-run instead (slower, writes to $TMPDIR).
+                probe_version(verifier, &new, &["--version"], &manifest.version).or_else(|_| {
+                    probe_version(
+                        verifier,
+                        &new,
+                        &["--appimage-extract-and-run", "--version"],
+                        &manifest.version,
+                    )
+                })
             })();
             if let Err(e) = result {
                 let _ = fs::remove_file(&new);

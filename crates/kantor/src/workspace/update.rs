@@ -111,7 +111,7 @@ impl Workspace {
         let mut state = State::load();
         if let Some(staged) = state.staged.take() {
             if settings.enabled
-                && kantor_update::staged_is_current(&staged, &kantor_update::current_build())
+                && kantor_update::staged_is_current(&staged, &kantor_update::running_build())
             {
                 self.updates.status = UpdateStatus::Ready(staged);
                 return;

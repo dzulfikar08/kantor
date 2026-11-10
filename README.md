@@ -152,7 +152,7 @@ Kantor downloaded from the site, the GitHub releases or the install script keeps
   # channel = "nightly"   # or "stable"; unset follows the build
   ```
 
-For testing, `KANTOR_UPDATE_URL` replaces the manifest URL (its signature is still checked).
+For testing, `KANTOR_UPDATE_URL` replaces the manifest URL and `KANTOR_UPDATE_CURRENT=0.1.0` makes Kantor compare as if it were that version; signatures, checksums and code-signing checks still apply.
 
 ## Building
 
