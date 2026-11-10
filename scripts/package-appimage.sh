@@ -65,7 +65,7 @@ mkdir -p "$app/usr/bin" "$app/usr/share/applications" "$app/usr/share/icons/hico
 install -m755 "$bin" "$app/usr/bin/kantor"
 install -m644 "$root"/packaging/*.desktop "$app/usr/share/applications/"
 install -m644 "$root"/assets/icons/*.svg "$app/usr/share/icons/hicolor/scalable/apps/"
-install -m644 "$root/LICENSE" "$root/README.md" "$app/usr/share/doc/kantor/"
+install -m644 "$root/LICENSE" "$root/NOTICE" "$root/README.md" "$app/usr/share/doc/kantor/"
 # appimagetool wants exactly one .desktop and its icon at the top.
 cp "$root/packaging/kantor.desktop" "$app/kantor.desktop"
 echo "X-AppImage-Version=$version" >> "$app/kantor.desktop"

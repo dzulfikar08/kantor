@@ -1,0 +1,4 @@
+# GridCraft's settings for this crate's `#![deny(clippy::unwrap_used, ...)]`: tests may unwrap.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

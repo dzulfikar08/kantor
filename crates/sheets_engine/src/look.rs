@@ -21,6 +21,8 @@ const BUCKET: u32 = 32;
 pub(crate) struct LookCache {
     /// Resolved styles by IronCalc style index.
     styles: Vec<Option<Arc<CellStyle>>>,
+    /// Compiled number formats by IronCalc style index.
+    formats: Vec<Option<kantor_numfmt::NumberFormat>>,
     font: Option<FontDefaults>,
     /// Per sheet: styles of rows with a custom format (1-based row → style).
     row_styles: HashMap<u32, Arc<HashMap<i32, i32>>>,
@@ -161,6 +163,22 @@ impl Workbook {
             }
             cache.look.styles[ix] = Some(style.clone());
             style
+        })
+    }
+
+    /// The compiled number format of a style index (cached like the style).
+    pub(crate) fn number_format_by_index(&self, index: i32) -> kantor_numfmt::NumberFormat {
+        let ix = index.max(0) as usize;
+        self.cached(|cache| {
+            if let Some(Some(f)) = cache.look.formats.get(ix) {
+                return f.clone();
+            }
+            let f = crate::numfmt::compile(self.model.get_model(), index);
+            if cache.look.formats.len() <= ix {
+                cache.look.formats.resize(ix + 1, None);
+            }
+            cache.look.formats[ix] = Some(f.clone());
+            f
         })
     }
 

@@ -22,6 +22,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   undo step.
 - MCP `sheets_format` also sets fill, text colour, font size, wrap, vertical alignment, borders
   and merging.
+- Number formats show values as Excel does (`crates/kantor_numfmt`, adapted from GridCraft):
+  fractions (`# ?/?`), elapsed time (`[h]:mm:ss`), conditions (`[>=1000]#,##0,"K";0`),
+  colours (`[Red]` draws the value red), text sections (`"Name: "@`), fill (`* ` spreads
+  accounting formats across the cell), spacing (`_)`), engineering notation, built-in format 14
+  as `m/d/yyyy`, and halves rounded away from zero (`0` shows 1234.5 as `1235`).
+- Locale-tagged formats work: `[$Rp-421]#,##0` shows `Rp1.500.000` (Indonesian separators from
+  the tag) and `[$-421]d mmmm yyyy` shows `17 Agustus 2025`. They showed `#VALUE!` before.
 
 #### Updates
 - In-app updates for the DMG, AppImage and install-script installs: a check at most once a day

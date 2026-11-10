@@ -177,6 +177,7 @@ crates/
   kantor_theme   Omarchy palette parser (no GPUI)
   kantor_pdf     PDF page tools behind `kantor pdf` (no GPUI)
   sheets_engine  IronCalc wrapper: open/save xlsx, imports, part preservation (no GPUI)
+  kantor_numfmt  Excel number formats, adapted from GridCraft (MIT OR Apache-2.0; no GPUI)
   sheets_ui      grid, formula bar, sheet tabs
   docs_engine    document model, styles, undo, .docx read/write and preservation (no GPUI)
   docs_layout    parley text layout into pages (no GPUI)
@@ -190,6 +191,14 @@ vendor/
   gpui-pre-wgpu  GPUI's wgpu renderer (Linux) with memory patches for low-memory GPUs
   ironcalc_base  IronCalc with cached lookups for large workbooks
 ```
+
+## Credits
+
+- [IronCalc](https://github.com/ironcalc/IronCalc) (MIT OR Apache-2.0) does the formulas and xlsx import/export.
+- Cell values are formatted by `crates/kantor_numfmt`, adapted from [GridCraft](https://github.com/storytold/gridcraft)'s `gridcraft-numfmt` (MIT OR Apache-2.0, by the ArtCraft Team and the GridCraft contributors); see its [PROVENANCE.md](crates/kantor_numfmt/PROVENANCE.md).
+- [GPUI](https://github.com/zed-industries/zed) (Apache-2.0) draws the UI.
+
+Third-party licence notices are in [NOTICE](NOTICE).
 
 The shell's structure and styling follow [Voltrus Tools](https://github.com/VoltrusID/voltrus-explorers) (see `docs/reference-voltrus-tools.md`).
 
