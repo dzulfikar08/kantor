@@ -1470,8 +1470,18 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
                         .map(|(_, t)| o.measure(t, &fonts[i], None).0)
                         .fold(0.0, f32::max)
                         + lh * 0.4;
+                    // The end labels are centred on the plot's edges.
+                    if a.value.is_some() {
+                        room[2] = room[2].max(lh / 2.0);
+                        room[3] = room[3].max(lh / 2.0);
+                    }
                 } else if a.value.is_some() {
                     need = lh * 1.2;
+                    let half = |t: Option<&(f64, String)>, o: &mut Out| {
+                        t.map_or(0.0, |(_, t)| o.measure(t, &fonts[i], None).0 / 2.0)
+                    };
+                    room[0] = room[0].max(half(ticks.first(), o));
+                    room[1] = room[1].max(half(ticks.last(), o));
                 } else {
                     let (rot, wrap, step, hgt) = cat_fit(o, a, &fonts[i], plot, &ticks);
                     cat_rot[i] = rot;

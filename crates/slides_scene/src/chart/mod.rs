@@ -189,3 +189,6 @@ fn label_item(engine: &mut Engine, l: &Label) -> Option<Item> {
         }),
     })
 }
+
+#[cfg(test)]
+mod tests;
