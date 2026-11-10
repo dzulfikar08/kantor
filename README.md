@@ -4,7 +4,7 @@
 
 A small, fast, native office suite for Linux, written in Rust on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui) (the UI framework behind Zed). Three apps in one binary: **Sheets**, **Docs** and **Slides**. First target: [Omarchy](https://omarchy.org) on Apple Silicon (aarch64 Linux).
 
-> **Status: early.** Sheets can open, edit and save `.xlsx` (formulas via [IronCalc](https://github.com/ironcalc/IronCalc)). Docs and Slides are not started. See [plan.md](plan.md).
+> **Status: early, all three apps work.** Sheets opens, edits and saves `.xlsx` (formulas via [IronCalc](https://github.com/ironcalc/IronCalc)) and imports `.csv`, `.ods`, `.xls` and `.xlsb`. Docs opens, edits and saves `.docx` and exports PDF. Slides opens, edits, presents and saves `.pptx`. Saving keeps what Kantor doesn't show yet, byte for byte. `kantor convert` and `kantor pdf` work from the command line, and AI agents can edit open documents over MCP. Not yet checked against a large set of real-world files; see [plan.md](plan.md).
 
 ## Install (prebuilt, no compiling)
 
@@ -19,7 +19,7 @@ This installs `~/.local/bin/kantor`, a **Kantor** launcher (the suite's Home scr
 
 ## Using Sheets
 
-`kantor` opens the Home screen (Docs · Sheets · Slides); `kantor file.xlsx` or `kantor --sheets` goes straight to Sheets.
+`kantor` opens the Home screen (Docs · Sheets · Slides); `kantor file.xlsx` (or `.docx`, `.pptx`) opens the file, and `kantor --sheets`, `--docs` or `--slides` starts a new document.
 
 | Action | Keys |
 |---|---|
@@ -40,6 +40,32 @@ This installs `~/.local/bin/kantor`, a **Kantor** launcher (the suite's Home scr
 Edits happen in the cell itself (synced live with the formula bar). With an input method such as fcitx5, press `Enter` first, then compose.
 
 By default the UI follows your Omarchy theme (live-reloading on `omarchy theme set`); *Choose Theme…* offers your Omarchy themes plus 900+ Ghostty themes. The UI font is SF Pro when installed (never bundled), else Inter / Adwaita Sans. Open tabs, splits and panel sizes are restored on the next launch. Settings: `~/.config/kantor/settings.toml`; session: `~/.local/state/kantor/workspace.json`.
+
+## Using Docs and Slides
+
+**Docs** edits `.docx`: paragraph and character styles, headings, fonts, alignment, spacing and
+indents, bulleted and numbered lists (9 levels, with Word's Enter/Tab/Backspace behaviour),
+tables, inline pictures, page breaks, hyperlinks, page setup (A4, Letter, Legal, A5, F4; margins
+in cm) with a ruler, Find & Replace and a word count. *Export as PDF…* in the palette writes a PDF
+with the same layout as the screen. Floating images, shapes, fields and other parts Kantor can't
+show yet are kept as placeholders and saved unchanged; files with tracked changes or comments are
+saved under a new name.
+
+**Slides** edits `.pptx`: text boxes and placeholders (with the master's bullets, numbering and
+spacing), shapes and pictures you can move, resize, rotate and flip, fill and outline, a
+thumbnail strip to reorder slides, speaker notes, copy and paste of shapes, Find & Replace, and a
+slide show with notes (`F5`).
+
+## Command line
+
+```sh
+kantor convert report.docx report.pdf          # also .ods/.xls → .xlsx, a sheet → .csv
+kantor convert -o out/ --to pdf a.docx b.docx
+kantor pdf merge a.pdf b.pdf -o both.pdf       # also split, extract, delete, reorder, rotate,
+                                               # info, images, watermark, page-numbers, compress
+```
+
+Neither opens a window.
 
 ## AI agents (MCP)
 
@@ -67,6 +93,7 @@ Slides `slides_list`, `slides_add_slide`, `slides_set_shape_text`, `slides_delet
 `slides_set_notes`, `slides_go_to`. The app listens only on a private Unix socket
 (`$XDG_RUNTIME_DIR/kantor/`, on macOS `~/Library/Application Support/Kantor/run/`), readable by
 you alone.
+
 ## AI features (optional) and privacy
 
 AI is **off** until you turn it on in `Ctrl K` → *AI Settings* and choose a provider: Anthropic, OpenAI, OpenRouter, Groq, DeepSeek, Google Gemini, any OpenAI-compatible server, or **Ollama** running on your own computer (nothing leaves it). Kantor has no AI service of its own: your data goes **only to the provider you chose**, and only when you run an AI command. Each command sends only what it needs:
@@ -93,20 +120,26 @@ Expect `target/` to reach 10–20 GB and the first build to need plenty of RAM.
 
 ```
 crates/
-  kantor         binary: CLI, suite shell (tabs, Home, command palette, status bar), `kantor mcp`
+  kantor         binary: CLI (`convert`, `pdf`, `mcp`), suite shell (tabs, Home, palette, status bar)
   kantor_ui      design system: metrics, colour tokens from Omarchy, cached views
   kantor_core    shared non-GPUI pieces (fuzzy search, find, settings, session)
   kantor_ai      AI providers, streaming HTTP clients, prompts, keychain (no GPUI)
   kantor_theme   Omarchy palette parser (no GPUI)
-  sheets_engine  IronCalc wrapper: open/save xlsx, cells, formulas (no GPUI)
+  kantor_pdf     PDF page tools behind `kantor pdf` (no GPUI)
+  sheets_engine  IronCalc wrapper: open/save xlsx, imports, part preservation (no GPUI)
   sheets_ui      grid, formula bar, sheet tabs
+  docs_engine    document model, styles, undo, .docx read/write and preservation (no GPUI)
+  docs_layout    parley text layout into pages (no GPUI)
+  docs_pdf       .docx → PDF with the same layout as the screen
+  docs_ui        page view, caret, selection, IME, toolbar, ruler
+  slides_engine  slide/shape/text model, undo, .pptx read/write and preservation (no GPUI)
+  slides_ui      slide canvas, thumbnails, notes, slide show
 vendor/
   gpui-pre-wgpu  GPUI's wgpu renderer with memory patches for 8 GB Apple Silicon
+  ironcalc_base  IronCalc with cached lookups for large workbooks
 ```
 
 The shell's structure and styling follow [Voltrus Tools](https://github.com/VoltrusID/voltrus-explorers) (see `docs/reference-voltrus-tools.md`).
-
-More crates (`docs_*`, `slides_*`, `kantor_ooxml`, `kantor_pdf`, …) arrive with their milestones.
 
 ## License
 
