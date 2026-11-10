@@ -401,3 +401,173 @@ fn equality_is_about_cells_not_about_chunks() {
     b.set_cell(1, 2, number(1.0));
     assert_ne!(a, b);
 }
+
+// ── KANTOR PATCH: rows of packed cells ──────────────────────────────────────
+
+fn is_packed(data: &SheetData, row: i32) -> bool {
+    matches!(data.row(row), Some(Row::Packed(_)))
+}
+
+fn formula(f: i32, v: crate::types::FormulaValue) -> Cell {
+    Cell::CellFormula { f, s: 3, v }
+}
+
+/// One cell of every kind that packs.
+fn every_packed_kind() -> Vec<(i32, Cell)> {
+    use crate::expressions::token::Error;
+    use crate::types::FormulaValue;
+    vec![
+        (1, Cell::EmptyCell { s: 2 }),
+        (2, Cell::BooleanCell { v: true, s: 1 }),
+        (3, Cell::NumberCell { v: -1.5, s: 4 }),
+        (
+            4,
+            Cell::ErrorCell {
+                ei: Error::DIV,
+                s: 0,
+            },
+        ),
+        (5, text(7)),
+        (6, formula(0, FormulaValue::Unevaluated)),
+        (7, formula(1, FormulaValue::Boolean(false))),
+        (8, formula(2, FormulaValue::Number(42.0))),
+        (
+            9,
+            formula(3, FormulaValue::Text("PT Pelanggan 00012".to_string())),
+        ),
+        (
+            11,
+            formula(
+                4,
+                FormulaValue::new_error(Error::NA, "Sheet1!A1".to_string(), "no".to_string()),
+            ),
+        ),
+    ]
+}
+
+#[test]
+fn a_packed_cell_is_small() {
+    assert!(std::mem::size_of::<super::packed::Packed>() <= 32);
+}
+
+#[test]
+fn a_row_of_plain_cells_is_packed_and_reads_as_its_cells() {
+    let mut data = SheetData::new();
+    let cells = every_packed_kind();
+    data.set_row(1, cells.clone());
+    assert!(is_packed(&data, 1));
+    let read: Vec<(i32, Cell)> = data
+        .cells_in_row(1)
+        .into_iter()
+        .map(|(column, cell)| (column, cell.into_owned()))
+        .collect();
+    assert_eq!(read, cells);
+    for (column, cell) in &cells {
+        assert_eq!(data.cell(1, *column).as_deref(), Some(cell));
+    }
+    assert_eq!(data.cell(1, 10), None);
+    assert_eq!(data.cell(1, 12), None);
+    let from_8: Vec<i32> = data
+        .cells_in_row_between(1, 8, 10)
+        .map(|(column, _)| column)
+        .collect();
+    assert_eq!(from_8, vec![8, 9]);
+    assert_eq!(data.numbers_in_row_between(1, 3, 3), None);
+    let mut formulas = Vec::new();
+    data.for_each_formula(|row, column| formulas.push((row, column)));
+    assert_eq!(formulas, vec![(1, 6), (1, 7), (1, 8), (1, 9), (1, 11)]);
+    assert_eq!(data.array_cells().count(), 0);
+}
+
+#[test]
+fn a_packed_row_stays_packed_while_it_can() {
+    use crate::types::{ArrayKind, FormulaValue};
+    let mut data = SheetData::new();
+    data.set_row(1, every_packed_kind());
+    // a formula's new value, a cell in a gap, one at the end, a style
+    let text = formula(3, FormulaValue::Text("other".to_string()));
+    assert_eq!(
+        data.set_cell(1, 8, text.clone()),
+        Some(formula(2, FormulaValue::Number(42.0)))
+    );
+    assert_eq!(data.set_cell(1, 10, number(10.0)), None);
+    assert_eq!(
+        data.set_cell(1, 20, Cell::BooleanCell { v: false, s: 0 }),
+        None
+    );
+    assert!(data.set_cell_style(1, 9, 8));
+    assert!(!data.set_cell_style(1, 12, 8));
+    assert_eq!(data.remove_cell(1, 1), Some(Cell::EmptyCell { s: 2 }));
+    assert!(is_packed(&data, 1));
+    assert_eq!(data.cell(1, 8).as_deref(), Some(&text));
+    assert_eq!(data.cell(1, 9).unwrap().get_style(), 8);
+    assert_eq!(
+        data.columns_in_row(1),
+        vec![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 20]
+    );
+    // an array formula does not pack: the row becomes a row of cells
+    let array = Cell::ArrayFormula {
+        f: 5,
+        s: 0,
+        r: (1, 1),
+        kind: ArrayKind::Dynamic,
+        v: FormulaValue::Number(1.0),
+    };
+    let before: Vec<(i32, Cell)> = data
+        .cells_in_row(1)
+        .into_iter()
+        .map(|(column, cell)| (column, cell.into_owned()))
+        .collect();
+    data.set_cell(1, 30, array.clone());
+    assert!(!is_packed(&data, 1));
+    assert_eq!(data.cell(1, 8).as_deref(), Some(&text));
+    assert_eq!(data.cells_in_row(1).len(), before.len() + 1);
+    let arrays: Vec<(i32, i32)> = data.array_cells().map(|(r, c, _)| (r, c)).collect();
+    assert_eq!(arrays, vec![(1, 30)]);
+    // and `set_row` packs it again once the array is gone
+    data.set_row(1, before.clone());
+    assert!(is_packed(&data, 1));
+    // `cell_mut` hands out a cell: the row becomes a row of cells
+    *data.cell_mut(1, 3).unwrap() = number(3.0);
+    assert!(!is_packed(&data, 1));
+    assert_eq!(data.cell(1, 3).as_deref(), Some(&number(3.0)));
+}
+
+#[test]
+fn a_row_of_numbers_takes_other_cells_as_packed_cells() {
+    let mut data = SheetData::new();
+    data.set_row(1, (1..=4).map(|column| (column, number(column as f64))));
+    assert!(is_numbers(&data, 1));
+    assert_eq!(data.set_cell(1, 2, text(3)), Some(number(2.0)));
+    assert!(is_packed(&data, 1));
+    let read: Vec<(i32, Cell)> = data
+        .cells_in_row(1)
+        .into_iter()
+        .map(|(column, cell)| (column, cell.into_owned()))
+        .collect();
+    assert_eq!(
+        read,
+        vec![
+            (1, number(1.0)),
+            (2, text(3)),
+            (3, number(3.0)),
+            (4, number(4.0))
+        ]
+    );
+}
+
+#[test]
+fn a_packed_row_is_saved_as_its_cells() {
+    let mut packed = SheetData::new();
+    packed.set_row(4, every_packed_kind());
+    assert!(is_packed(&packed, 4));
+    let mut cells = packed.clone();
+    *cells.cell_mut(4, 2).unwrap() = Cell::BooleanCell { v: true, s: 1 };
+    assert!(!is_packed(&cells, 4));
+    assert_eq!(packed, cells);
+    let saved = bitcode::encode(&packed);
+    assert_eq!(saved, bitcode::encode(&cells));
+    let read: SheetData = bitcode::decode(&saved).unwrap();
+    assert_eq!(read, packed);
+    assert!(is_packed(&read, 4));
+}

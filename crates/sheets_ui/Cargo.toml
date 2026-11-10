@@ -11,6 +11,7 @@ anyhow.workspace = true
 gpui-kit.workspace = true
 log.workspace = true
 kantor_core.workspace = true
+kantor_mem.workspace = true
 kantor_ui.workspace = true
 sheets_engine.workspace = true
 

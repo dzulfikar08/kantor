@@ -1104,14 +1104,20 @@ impl<'a> Model<'a> {
                             "Array result in scalar context".to_string(),
                         )
                     };
-                    *self.workbook.worksheets[sheet as usize]
-                        .cell_mut(row, column)
-                        .ok_or("expected a cell")? = Cell::CellFormula {
-                        f: formula,
-                        s,
-                        v: coerced,
-                    };
-                    return Ok(());
+                    // KANTOR PATCH: `update_cell` keeps a packed row packed.
+                    let worksheet = &mut self.workbook.worksheets[sheet as usize];
+                    if worksheet.cell(row, column).is_none() {
+                        return Err("expected a cell".to_string());
+                    }
+                    return worksheet.update_cell(
+                        row,
+                        column,
+                        Cell::CellFormula {
+                            f: formula,
+                            s,
+                            v: coerced,
+                        },
+                    );
                 }
             }
         }
@@ -1192,10 +1198,23 @@ impl<'a> Model<'a> {
             }
         }
 
+        let worksheet = &mut self.workbook.worksheets[sheet as usize];
+        // KANTOR PATCH: a plain formula's value goes in with `update_cell`,
+        // which keeps a row of packed cells packed (`cell_mut` unpacks it).
+        if original_range.is_none() {
+            return worksheet.update_cell(
+                row,
+                column,
+                Cell::CellFormula {
+                    f: formula,
+                    s,
+                    v: formula_value,
+                },
+            );
+        }
         // The formula cell is on the sheet already and only its value changes:
         // write into it rather than build a cell to replace it. This runs once
         // for every formula of every evaluation.
-        let worksheet = &mut self.workbook.worksheets[sheet as usize];
         match (worksheet.cell_mut(row, column), original_range) {
             (Some(Cell::CellFormula { f, s: style, v }), None) => {
                 *f = formula;

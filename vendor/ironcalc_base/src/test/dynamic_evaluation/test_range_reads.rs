@@ -115,15 +115,15 @@ fn a_whole_column_read_records_one_rectangle() {
     model._set("D1", "1");
     model._set("D2", "2");
     model._set("D3", "");
+    // KANTOR PATCH: reads are recorded only with a dynamic anchor around, and
+    // the records are freed after the evaluation (see `last_records`).
+    model._set("F1", "=SEQUENCE(1,2)");
     model.evaluate();
     assert_eq!(model._get_text("A1"), "3");
-    assert!(
-        model.evaluation.seen.len() <= 4,
-        "{:?}",
-        model.evaluation.seen
-    );
-    assert_eq!(model.evaluation.seen_ranges.len(), 1);
-    let range = model.evaluation.seen_ranges[0];
+    let (seen, ranges) = &model.evaluation.last_records;
+    assert!(*seen <= 4, "{seen}");
+    assert_eq!(ranges.len(), 1);
+    let range = ranges[0];
     assert_eq!((range.column1, range.column2), (4, 4));
     assert!(range.row1 <= 4);
     assert_eq!(range.row2, crate::constants::LAST_ROW);
@@ -146,4 +146,23 @@ fn an_xlookup_over_a_whole_column_sees_a_spill_beyond_the_used_area() {
     model.evaluate();
     assert_eq!(model._get_text("A1"), "5");
     assert_eq!(restarts(&model), 0);
+}
+
+// KANTOR PATCH: without a dynamic anchor no spill can contradict a read, so
+// nothing is recorded; with or without, the records are freed afterwards.
+#[test]
+fn reads_are_recorded_only_with_dynamic_anchors_and_freed_after() {
+    let mut model = new_empty_model();
+    model._set("A1", "=SUM(D:D)");
+    model._set("D1", "1");
+    model.evaluate();
+    assert_eq!(model._get_text("A1"), "1");
+    assert_eq!(model.evaluation.last_records, (0, Vec::new()));
+    assert!(model.evaluation.seen.capacity() == 0);
+
+    model._set("F1", "=SEQUENCE(2)");
+    model.evaluate();
+    assert!(model.evaluation.last_records.0 > 0);
+    assert!(model.evaluation.seen.capacity() == 0);
+    assert!(model.evaluation.seen_ranges.capacity() == 0);
 }

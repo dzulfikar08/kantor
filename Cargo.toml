@@ -40,6 +40,7 @@ base64 = "0.22"
 
 kantor_ai = { path = "crates/kantor_ai" }
 kantor_core = { path = "crates/kantor_core" }
+kantor_mem = { path = "crates/kantor_mem" }
 kantor_pdf = { path = "crates/kantor_pdf" }
 kantor_theme = { path = "crates/kantor_theme" }
 kantor_ui = { path = "crates/kantor_ui" }

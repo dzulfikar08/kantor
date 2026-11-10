@@ -3,6 +3,7 @@
 
 use std::borrow::Cow;
 
+use super::packed::Packed;
 use crate::types::Cell;
 
 /// Rows this short are searched from the left; longer ones by bisection.
@@ -25,6 +26,8 @@ pub(super) enum Row {
         /// numbers for it.
         other_styles: Box<[(u32, i32)]>,
     },
+    /// KANTOR PATCH: cells that pack (see `packed.rs`), sorted by column.
+    Packed(Vec<Packed>),
 }
 
 /// The style of the number at `offset` in a row of numbers.
@@ -60,9 +63,26 @@ fn position(cells: &[(i32, Cell)], column: i32) -> Result<usize, usize> {
     }
 }
 
+/// Where the column is among packed cells, or where it would go.
+#[inline]
+fn packed_position(cells: &[Packed], column: i32) -> Result<usize, usize> {
+    if cells.len() <= LINEAR_SEARCH_LIMIT {
+        for (index, cell) in cells.iter().enumerate() {
+            let c = cell.column();
+            if c >= column {
+                return if c == column { Ok(index) } else { Err(index) };
+            }
+        }
+        Err(cells.len())
+    } else {
+        cells.binary_search_by_key(&column, Packed::column)
+    }
+}
+
 /// The cells of a row from some column on, in ascending order of column.
 pub(super) enum RowIter<'a> {
     Cells(std::slice::Iter<'a, (i32, Cell)>),
+    Packed(std::slice::Iter<'a, Packed>),
     Numbers {
         /// The column of the next value, and where it is in the row.
         column: i32,
@@ -83,6 +103,9 @@ impl<'a> Iterator for RowIter<'a> {
             RowIter::Cells(cells) => cells
                 .next()
                 .map(|(column, cell)| (*column, Cow::Borrowed(cell))),
+            RowIter::Packed(cells) => cells
+                .next()
+                .map(|cell| (cell.column(), Cow::Owned(cell.cell()))),
             RowIter::Numbers {
                 column,
                 offset,
@@ -113,7 +136,7 @@ impl Row {
     pub(super) fn from_cells(cells: Vec<(i32, Cell)>) -> Row {
         let first_column = match cells.first() {
             Some((column, Cell::NumberCell { .. })) => *column,
-            _ => return Row::Cells(cells),
+            _ => return Row::packed_or_cells(cells),
         };
         // The style most of them have, if most of them have one: the one
         // left standing when each is set against one that differs.
@@ -131,7 +154,7 @@ impl Row {
                     }
                     lead += if *s == style { 1 } else { -1 };
                 }
-                _ => return Row::Cells(cells),
+                _ => return Row::packed_or_cells(cells),
             }
         }
         let other_styles = cells
@@ -150,6 +173,22 @@ impl Row {
         }
     }
 
+    /// KANTOR PATCH: the cells packed if they all pack, as they are if not.
+    fn packed_or_cells(cells: Vec<(i32, Cell)>) -> Row {
+        if !cells.iter().all(|(_, cell)| Packed::packs(cell)) {
+            return Row::Cells(cells);
+        }
+        let mut packed = Vec::with_capacity(cells.len());
+        for (column, cell) in cells {
+            match Packed::pack(column, cell) {
+                Ok(cell) => packed.push(cell),
+                // Every one packs
+                Err(_) => unreachable!(),
+            }
+        }
+        Row::Packed(packed)
+    }
+
     /// The cells of the row with their column, each one made if need be.
     pub(super) fn to_cells(&self) -> Vec<(i32, Cell)> {
         self.iter()
@@ -160,13 +199,77 @@ impl Row {
     /// The cells of the row, to be changed: a row of numbers becomes a row of
     /// cells first.
     fn cells_mut(&mut self) -> &mut Vec<(i32, Cell)> {
-        if let Row::Numbers { .. } = self {
-            *self = Row::Cells(self.to_cells());
+        match self {
+            Row::Numbers { .. } => *self = Row::Cells(self.to_cells()),
+            Row::Packed(cells) => {
+                let cells = std::mem::take(cells);
+                *self = Row::Cells(
+                    cells
+                        .into_iter()
+                        .map(|cell| (cell.column(), cell.into_cell()))
+                        .collect(),
+                );
+            }
+            Row::Cells(_) => {}
         }
         match self {
             Row::Cells(cells) => cells,
             // It has just been made into cells
-            Row::Numbers { .. } => unreachable!(),
+            Row::Numbers { .. } | Row::Packed(_) => unreachable!(),
+        }
+    }
+
+    /// KANTOR PATCH: the columns of the formula cells (`CellFormula` and
+    /// `ArrayFormula`), in ascending order, without making packed cells
+    /// into cells.
+    pub(super) fn formula_columns(&self, mut found: impl FnMut(i32)) {
+        match self {
+            Row::Cells(cells) => cells
+                .iter()
+                .filter(|(_, cell)| {
+                    matches!(cell, Cell::CellFormula { .. } | Cell::ArrayFormula { .. })
+                })
+                .for_each(|(column, _)| found(*column)),
+            Row::Packed(cells) => cells
+                .iter()
+                .filter(|cell| cell.is_formula())
+                .for_each(|cell| found(cell.column())),
+            Row::Numbers { .. } => {}
+        }
+    }
+
+    /// KANTOR PATCH: the array formulas and spill cells with their column, in
+    /// ascending order. Only a row of cells can hold them.
+    pub(super) fn array_cells(&self) -> impl Iterator<Item = (i32, &Cell)> {
+        let cells = match self {
+            Row::Cells(cells) => &cells[..],
+            Row::Numbers { .. } | Row::Packed(_) => &[],
+        };
+        cells
+            .iter()
+            .filter(|(_, cell)| matches!(cell, Cell::ArrayFormula { .. } | Cell::SpillCell { .. }))
+            .map(|(column, cell)| (*column, cell))
+    }
+
+    /// KANTOR PATCH: sets the style of the cell at a column, if there is one,
+    /// without turning a row of packed cells into a row of cells. Returns
+    /// whether there was a cell.
+    pub(super) fn set_style(&mut self, column: i32, style: i32) -> bool {
+        if let Row::Packed(cells) = self {
+            return match packed_position(cells, column) {
+                Ok(index) => {
+                    cells[index].set_style(style);
+                    true
+                }
+                Err(_) => false,
+            };
+        }
+        match self.get_mut(column) {
+            Some(cell) => {
+                cell.set_style(style);
+                true
+            }
+            None => false,
         }
     }
 
@@ -184,6 +287,7 @@ impl Row {
         match self {
             Row::Cells(cells) => cells.is_empty(),
             Row::Numbers { values, .. } => values.is_empty(),
+            Row::Packed(cells) => cells.is_empty(),
         }
     }
 
@@ -204,6 +308,10 @@ impl Row {
             Row::Cells(cells) => {
                 let index = position(cells, column).ok()?;
                 Some(Cow::Borrowed(&cells[index].1))
+            }
+            Row::Packed(cells) => {
+                let index = packed_position(cells, column).ok()?;
+                Some(Cow::Owned(cells[index].cell()))
             }
             Row::Numbers {
                 first_column,
@@ -231,6 +339,10 @@ impl Row {
             Row::Cells(cells) => {
                 let (Ok(start) | Err(start)) = position(cells, first_column);
                 RowIter::Cells(cells[start..].iter())
+            }
+            Row::Packed(cells) => {
+                let (Ok(start) | Err(start)) = packed_position(cells, first_column);
+                RowIter::Packed(cells[start..].iter())
             }
             Row::Numbers {
                 first_column: row_first_column,
@@ -277,6 +389,23 @@ impl Row {
                         return None;
                     }
                 }
+                // KANTOR PATCH: anything else that packs turns the numbers
+                // into packed cells rather than cells.
+                if Packed::packs(&cell) {
+                    let mut cells: Vec<Packed> = self
+                        .iter()
+                        .filter_map(|(c, number)| Packed::pack(c, number.into_owned()).ok())
+                        .collect();
+                    let old = Row::insert_packed(&mut cells, column, cell);
+                    *self = Row::Packed(cells);
+                    return old;
+                }
+            }
+            Row::Packed(cells) => {
+                // KANTOR PATCH: a cell that packs goes in packed.
+                if Packed::packs(&cell) {
+                    return Row::insert_packed(cells, column, cell);
+                }
             }
             Row::Cells(cells) => {
                 if let (true, Cell::NumberCell { v, s }) = (cells.is_empty(), &cell) {
@@ -305,7 +434,26 @@ impl Row {
         }
     }
 
+    /// Puts a cell that packs among packed cells, returning the one that
+    /// was there.
+    fn insert_packed(cells: &mut Vec<Packed>, column: i32, cell: Cell) -> Option<Cell> {
+        let Ok(packed) = Packed::pack(column, cell) else {
+            unreachable!("the cell packs");
+        };
+        match packed_position(cells, column) {
+            Ok(index) => Some(std::mem::replace(&mut cells[index], packed).into_cell()),
+            Err(index) => {
+                cells.insert(index, packed);
+                None
+            }
+        }
+    }
+
     pub(super) fn remove(&mut self, column: i32) -> Option<Cell> {
+        if let Row::Packed(cells) = self {
+            let index = packed_position(cells, column).ok()?;
+            return Some(cells.remove(index).into_cell());
+        }
         if let Row::Numbers {
             first_column,
             style,

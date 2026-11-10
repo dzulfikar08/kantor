@@ -97,6 +97,16 @@ fn manual_note(book: &Workbook) -> Option<String> {
     })
 }
 
+/// A workbook that goes away (its pane closed, or a stand-in replaced) frees
+/// its memory, which the allocator would otherwise keep: a closed 180k-row
+/// workbook left 180 MB resident. Give it back shortly after, off the UI
+/// thread.
+impl Drop for SheetGrid {
+    fn drop(&mut self) {
+        kantor_mem::release_free_memory_soon(Duration::from_millis(500));
+    }
+}
+
 impl SheetsView {
     /// Whether the workbook is being opened or recalculated (no edits).
     pub fn is_busy(&self) -> bool {
@@ -117,7 +127,12 @@ impl SheetsView {
         );
         let parse = cx.background_spawn({
             let path = path.clone();
-            async move { Workbook::open(&path) }
+            async move {
+                let book = Workbook::open(&path);
+                // Parsing freed what it read the file with.
+                kantor_mem::release_free_memory();
+                book
+            }
         });
         let task = cx.spawn_in(window, async move |this, cx| {
             let result = parse.await;
@@ -265,6 +280,8 @@ impl SheetsView {
         let had_focus = self.grid_focused(window, cx);
         let run = cx.background_spawn(async move {
             let result = work(&mut book);
+            // A recalculation frees its bookkeeping when it ends.
+            kantor_mem::release_free_memory();
             (book, result)
         });
         let task = cx.spawn_in(window, async move |this, cx| {
