@@ -139,9 +139,9 @@ struct Origin {
 }
 
 /// Files up to this size are kept in memory for part preservation; larger
-/// ones are read again at save time. (A 28 MB file holding 2 million cells
-/// parses to ~300 MB; keeping its bytes too adds 10% for nothing until Save.)
-const KEEP_IN_MEMORY: u64 = 16 * 1024 * 1024;
+/// ones are read again at save time. (A 16 MB file of 1.5 million cells
+/// parses to ~95 MB; keeping its bytes too added 17% for nothing until Save.)
+const KEEP_IN_MEMORY: u64 = 4 * 1024 * 1024;
 
 /// Where the original package for part preservation comes from.
 enum XlsxSource {

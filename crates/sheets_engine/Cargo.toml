@@ -17,6 +17,9 @@ roxmltree.workspace = true
 zip.workspace = true
 
 [dev-dependencies]
+# Heap profiling in the open_memory example.
+dhat = "0.3"
+kantor_mem.workspace = true
 tempfile.workspace = true
 
 [lints]
