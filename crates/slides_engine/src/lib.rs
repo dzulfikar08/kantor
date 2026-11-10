@@ -7,11 +7,13 @@
 //! - Editing ([`edit`]): move/resize/rotate, text, lists, fill/outline,
 //!   shapes, slides, speaker notes; each undoable. [`clip`]: copy/paste of
 //!   shapes within and between presentations.
-//! - [`render`]: what to draw, with layout/master/theme inheritance.
+//! - [`render`]: what to draw, with layout/master/theme inheritance;
+//!   [`fill`]: gradients, picture fills and line formatting for display.
 
 pub mod agent;
 pub mod clip;
 pub mod edit;
+pub mod fill;
 pub mod find;
 mod history;
 pub mod model;
@@ -26,6 +28,10 @@ mod xml;
 pub use clip::ShapeClip;
 pub use docs_engine::{LINE_BREAK, Position, Rgb, Selection, Toggle};
 pub use edit::{ShapeRef, image_ext, image_size, set_toggle};
+pub use fill::{
+    Arrow, ArrowKind, ArrowSize, BlipFill, Dash, Fill, GradPath, GradStop, Gradient, LineCap,
+    LineJoin, LineStyle, PictureLook,
+};
 pub use find::TextMatch;
 pub use history::Focus;
 pub use model::*;

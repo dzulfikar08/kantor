@@ -172,8 +172,28 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
             Some(f) => cx.colors.fill(f),
             None => style_color("fillRef"),
         };
+        let resolve = |id: &str| {
+            cx.rels
+                .iter()
+                .find(|r| r.id == id)
+                .and_then(|r| r.part(cx.part))
+        };
+        let style_ref = |name: &str| {
+            let r = style.and_then(|s| child(s, NS_A, name))?;
+            Some((attr_i64(r, "idx").unwrap_or(0), cx.colors.first_color(r)))
+        };
+        look.fill_as_read = match fill {
+            Some(f) => cx.colors.full_fill(f, &resolve),
+            None => style_ref("fillRef").and_then(|(idx, ph)| cx.colors.style_fill(idx, ph)),
+        };
         let ln = child(sp, NS_A, "ln");
-        let width = ln.and_then(|l| attr_i64(l, "w")).unwrap_or(12700);
+        let themed = style_ref("lnRef")
+            .filter(|(idx, _)| *idx > 0)
+            .and_then(|(idx, ph)| cx.colors.style_line(idx, ph));
+        let width = ln
+            .and_then(crate::fill::line_width)
+            .or(themed.as_ref().and_then(|t| t.0))
+            .unwrap_or(12700);
         let ln_fill = ln.and_then(|l| {
             l.children().find(|c| {
                 c.is_element() && matches!(c.tag_name().name(), "noFill" | "solidFill" | "gradFill")
@@ -184,12 +204,18 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
             None => style_color("lnRef"),
         };
         look.line = ln_color.map(|c| (c, width));
+        let base = themed.map(|t| t.2).unwrap_or_default();
+        look.line_style = match ln {
+            Some(l) => cx.colors.line_style(l, &base),
+            None => base,
+        };
     }
 
     let mut text = None;
     let mut paras_at = None;
     let kind = match (in_p, local) {
-        (true, "sp") => {
+        // Connectors are drawn like shapes (lines with arrowheads).
+        (true, "sp" | "cxnSp") => {
             let geom = sp_pr
                 .and_then(|s| child(s, NS_A, "prstGeom"))
                 .and_then(|g| g.attribute("prst"))
@@ -223,6 +249,7 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
                 .iter()
                 .find(|r| r.id == rel)
                 .and_then(|r| r.part(cx.part));
+            look.picture = crate::fill::picture_look(child(n, NS_P, "blipFill"));
             ShapeKind::Picture { rel, part }
         }
         _ => {
@@ -1117,6 +1144,7 @@ mod tests {
                 fill: Some(Rgb([1, 2, 3])),
                 line: Some((Rgb([4, 5, 6]), 12700)),
                 text_color: Some(Rgb([255, 255, 255])),
+                ..Look::default()
             },
             text: Some(TextBody::new(vec![TextPara::new("A <b>")])),
             paint: PaintEdit::default(),
@@ -1128,7 +1156,14 @@ mod tests {
             let b = &shapes[0];
             assert_eq!(b.kind, s.kind);
             assert_eq!(b.xfrm, s.xfrm);
-            assert_eq!(b.look, s.look);
+            assert_eq!(
+                (b.look.fill, b.look.line, b.look.text_color),
+                (s.look.fill, s.look.line, s.look.text_color)
+            );
+            assert_eq!(
+                b.look.fill_as_read,
+                Some(crate::fill::Fill::Solid(Rgb([1, 2, 3]), 255))
+            );
             assert_eq!(b.text.as_ref().unwrap().paras[0].text, "A <b>");
         });
     }

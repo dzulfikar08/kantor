@@ -7,6 +7,7 @@ use std::ops::Range;
 
 use docs_engine::Rgb;
 
+use crate::fill::Fill;
 use crate::model::*;
 use crate::presentation::{Layout, Master, Presentation, Slide};
 use crate::theme::{LevelStyle, ListStyle};
@@ -344,6 +345,33 @@ impl Presentation {
         s.bg.or(self.layout_of(slide).bg)
             .or(self.master_of(slide).bg)
             .unwrap_or(Rgb([255, 255, 255]))
+    }
+
+    /// The slide's background fill: its own, its layout's or its master's
+    /// (white when none has one).
+    pub fn background_fill(&self, slide: usize) -> Fill {
+        let s = &self.slides[slide];
+        s.background
+            .clone()
+            .or_else(|| self.layout_of(slide).background.clone())
+            .or_else(|| self.master_of(slide).background.clone())
+            .unwrap_or(Fill::Solid(Rgb([255, 255, 255]), 255))
+    }
+
+    /// Kinds of objects on the shown slides that are kept but not drawn
+    /// (tables, charts, groups...), each once.
+    pub fn unsupported_objects(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for i in (0..self.len()).filter(|&i| !self.slides[i].hidden) {
+            for r in self.render_list(i, false) {
+                if let ShapeKind::Other { what } = &r.shape.kind
+                    && !out.contains(what)
+                {
+                    out.push(what.clone());
+                }
+            }
+        }
+        out
     }
 
     /// The layout and master placeholders a slide shape inherits from.

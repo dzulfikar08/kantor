@@ -15,6 +15,11 @@ pub struct Theme {
     colors: HashMap<String, Rgb>,
     pub major_font: Option<String>,
     pub minor_font: Option<String>,
+    /// The format scheme's fill, line and background fill styles (raw XML
+    /// of each entry; `phClr` is resolved when a shape style refers to one).
+    fill_styles: Vec<String>,
+    line_styles: Vec<String>,
+    bg_fill_styles: Vec<String>,
 }
 
 impl Theme {
@@ -37,6 +42,20 @@ impl Theme {
                     if let Some(c) = c {
                         t.colors.insert(name, c);
                     }
+                }
+            } else if is(n, NS_A, "fillStyleLst")
+                || is(n, NS_A, "lnStyleLst")
+                || is(n, NS_A, "bgFillStyleLst")
+            {
+                let entries = n
+                    .children()
+                    .filter(|c| c.is_element())
+                    .map(|c| xml[c.range()].to_owned())
+                    .collect();
+                match n.tag_name().name() {
+                    "fillStyleLst" => t.fill_styles = entries,
+                    "lnStyleLst" => t.line_styles = entries,
+                    _ => t.bg_fill_styles = entries,
                 }
             } else if is(n, NS_A, "majorFont") {
                 t.major_font = path(n, &[(NS_A, "latin")])
@@ -117,8 +136,14 @@ impl ColorCtx<'_> {
     }
 
     /// A colour element (`a:srgbClr`, `a:schemeClr`, ...) with `lumMod` /
-    /// `lumOff` / `tint` / `shade` applied (approximately).
+    /// `lumOff` / `tint` / `shade` / `satMod` applied (approximately).
     pub fn color(&self, n: Node) -> Option<Rgb> {
+        self.color_alpha(n).map(|c| c.0)
+    }
+
+    /// A colour element and its opacity (`a:alpha`, `alphaMod`,
+    /// `alphaOff`; 255 = opaque).
+    pub fn color_alpha(&self, n: Node) -> Option<(Rgb, u8)> {
         let base = match n.tag_name().name() {
             "srgbClr" => n.attribute("val").and_then(Rgb::parse),
             "sysClr" => n.attribute("lastClr").and_then(Rgb::parse),
@@ -142,9 +167,30 @@ impl ColorCtx<'_> {
         let mut hsl = to_hsl(base);
         let mut rgb = base;
         let mut touched_hsl = false;
+        let mut alpha = 1.0f32;
         for m in n.children().filter(|c| c.is_element()) {
             let v = attr_i64(m, "val").unwrap_or(100_000) as f32 / 100_000.0;
             match m.tag_name().name() {
+                "alpha" => alpha = v,
+                "alphaMod" => alpha *= v,
+                "alphaOff" => alpha += v,
+                "satMod" => {
+                    hsl.1 *= v;
+                    touched_hsl = true;
+                }
+                "satOff" => {
+                    hsl.1 += v;
+                    touched_hsl = true;
+                }
+                "hueOff" => {
+                    // 60 000ths of a degree.
+                    hsl.0 = (hsl.0 + v * 100_000.0 / 21_600_000.0).rem_euclid(1.0);
+                    touched_hsl = true;
+                }
+                "hueMod" => {
+                    hsl.0 = (hsl.0 * v).rem_euclid(1.0);
+                    touched_hsl = true;
+                }
                 "lumMod" => {
                     hsl.2 *= v;
                     touched_hsl = true;
@@ -170,7 +216,58 @@ impl ColorCtx<'_> {
                 _ => {}
             }
         }
-        Some(if touched_hsl { from_hsl(hsl) } else { rgb })
+        let c = if touched_hsl { from_hsl(hsl) } else { rgb };
+        Some((c, (alpha.clamp(0.0, 1.0) * 255.0).round() as u8))
+    }
+
+    /// The same colours with `phClr` = `ph`.
+    pub(crate) fn with_ph(&self, ph: Option<Rgb>) -> Self {
+        Self { ph, ..*self }
+    }
+
+    /// Fill style `idx` of the theme (`a:fillRef` / `a:bgRef`: 1–999 fill
+    /// styles, 1001+ background fill styles; 0 = no fill) with `phClr` =
+    /// `ph`. Pictures in theme styles aren't resolved.
+    pub fn style_fill(&self, idx: i64, ph: Option<Rgb>) -> Option<crate::fill::Fill> {
+        let list = match idx {
+            0 => return Some(crate::fill::Fill::None),
+            1..=999 => &self.theme.fill_styles,
+            1001.. => &self.theme.bg_fill_styles,
+            _ => return None,
+        };
+        let i = (idx % 1000) as usize;
+        let raw = list.get(i.checked_sub(1)?)?;
+        let wrapped = wrap_a(raw);
+        let doc = roxmltree::Document::parse(&wrapped).ok()?;
+        let el = doc.root_element().first_element_child()?;
+        self.with_ph(ph).full_fill(el, &|_| None)
+    }
+
+    /// Line style `idx` of the theme (`a:lnRef`) with `phClr` = `ph`:
+    /// width (EMU), colour fill and formatting.
+    pub fn style_line(
+        &self,
+        idx: i64,
+        ph: Option<Rgb>,
+    ) -> Option<(
+        Option<i64>,
+        Option<crate::fill::Fill>,
+        crate::fill::LineStyle,
+    )> {
+        let raw = self.theme.line_styles.get((idx as usize).checked_sub(1)?)?;
+        let wrapped = wrap_a(raw);
+        let doc = roxmltree::Document::parse(&wrapped).ok()?;
+        let ln = doc.root_element().first_element_child()?;
+        let cx = self.with_ph(ph);
+        let fill = ln
+            .children()
+            .filter(|c| c.is_element())
+            .find_map(|c| cx.full_fill(c, &|_| None));
+        Some((
+            crate::fill::line_width(ln),
+            fill,
+            cx.line_style(ln, &crate::fill::LineStyle::default()),
+        ))
     }
 
     /// The colour of a fill-like parent (`a:solidFill`, a `fillRef`, ...):
@@ -194,6 +291,11 @@ impl ColorCtx<'_> {
             _ => None,
         }
     }
+}
+
+/// A raw `a:` fragment wrapped so it parses on its own.
+fn wrap_a(fragment: &str) -> String {
+    format!("<w xmlns:a=\"{NS_A}\" xmlns:r=\"{NS_R}\">{fragment}</w>")
 }
 
 fn to_hsl(c: Rgb) -> (f32, f32, f32) {

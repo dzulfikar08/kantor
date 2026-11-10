@@ -661,13 +661,21 @@ impl PaintEdit {
 /// How a shape looks, resolved for display when read (fills from the
 /// theme and `p:style`). Not written back: unmodelled formatting stays in
 /// the source XML; new shapes are generated from it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Look {
+    /// The fill's main colour (the fill/outline popover, new shapes).
     pub fill: Option<Rgb>,
     /// Outline colour and width (EMU).
     pub line: Option<(Rgb, Emu)>,
     /// Default text colour from the shape style (`fontRef`).
     pub text_color: Option<Rgb>,
+    /// The whole fill as read (gradient, picture, transparency); `None` =
+    /// just `fill`. Ignored once the fill is edited in Kantor.
+    pub fill_as_read: Option<crate::fill::Fill>,
+    /// Dash, caps, joins, arrowheads and opacity of the outline.
+    pub line_style: crate::fill::LineStyle,
+    /// Cropping and opacity of a picture.
+    pub picture: crate::fill::PictureLook,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

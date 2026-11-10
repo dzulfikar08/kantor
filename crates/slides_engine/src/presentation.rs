@@ -35,6 +35,7 @@ use anyhow::{Context as _, bail};
 use docs_engine::Rgb;
 use roxmltree::Node;
 
+use crate::fill::Fill;
 use crate::history::History;
 use crate::model::*;
 use crate::shape::{ParseCtx, parse_shape, parse_tree, write_shape};
@@ -48,6 +49,8 @@ pub struct Master {
     pub part: String,
     pub shapes: Vec<Shape>,
     pub bg: Option<Rgb>,
+    /// The background fill as read (`p:bg`).
+    pub background: Option<Fill>,
     pub(crate) theme: Arc<Theme>,
     pub(crate) theme_part: Option<String>,
     pub(crate) clr_map: ClrMap,
@@ -66,6 +69,8 @@ pub struct Layout {
     pub master: usize,
     pub shapes: Vec<Shape>,
     pub bg: Option<Rgb>,
+    /// The background fill as read (`p:bg`).
+    pub background: Option<Fill>,
     pub show_master_sp: bool,
 }
 
@@ -175,7 +180,11 @@ pub struct Slide {
     pub layout: usize,
     pub shapes: Vec<Shape>,
     pub bg: Option<Rgb>,
+    /// The background fill as read (`p:bg`).
+    pub background: Option<Fill>,
     pub show_master_sp: bool,
+    /// Hidden in the slide show (`show="0"`); read only, kept in the XML.
+    pub hidden: bool,
     /// Why the slide can't be edited (its XML is kept as is), if so.
     pub locked: Option<String>,
     pub(crate) rels: Arc<Vec<Rel>>,
@@ -307,6 +316,24 @@ fn background(csld: Node, colors: &ColorCtx) -> Option<Rgb> {
             .find_map(|c| colors.fill(c));
     }
     child(bg, NS_P, "bgRef").and_then(|r| colors.first_color(r))
+}
+
+/// The background fill of a `p:cSld` (`p:bgPr` or a theme `p:bgRef`);
+/// pictures resolve against `rels` of `part`.
+fn background_fill(csld: Node, colors: &ColorCtx, part: &str, rels: &[Rel]) -> Option<Fill> {
+    let bg = child(csld, NS_P, "bg")?;
+    if let Some(pr) = child(bg, NS_P, "bgPr") {
+        let resolve = |id: &str| rels.iter().find(|r| r.id == id).and_then(|r| r.part(part));
+        return pr
+            .children()
+            .filter(|c| c.is_element())
+            .find_map(|c| colors.full_fill(c, &resolve));
+    }
+    let r = child(bg, NS_P, "bgRef")?;
+    let ph = colors.first_color(r);
+    colors
+        .style_fill(attr_i64(r, "idx").unwrap_or(0), ph)
+        .or_else(|| ph.map(|c| Fill::Solid(c, 255)))
 }
 
 /// Whether the root declares the usual `p:`, `a:` and `r:` prefixes (the
@@ -1030,6 +1057,7 @@ fn read_master(rd: &mut Reader, part: &str) -> anyhow::Result<(Master, Vec<Strin
         .map(|t| parse_tree(t, &cx).0)
         .unwrap_or_default();
     let bg = csld.and_then(|c| background(c, &colors));
+    let background = csld.and_then(|c| background_fill(c, &colors, part, &rels));
     let layout_parts = child(root, NS_P, "sldLayoutIdLst")
         .map(|l| {
             children(l, NS_P, "sldLayoutId")
@@ -1046,6 +1074,7 @@ fn read_master(rd: &mut Reader, part: &str) -> anyhow::Result<(Master, Vec<Strin
             part: part.to_owned(),
             shapes,
             bg,
+            background,
             theme: theme.clone(),
             theme_part,
             clr_map: clr_map.clone(),
@@ -1096,6 +1125,7 @@ fn read_layout(
             .map(|t| parse_tree(t, &cx).0)
             .unwrap_or_default(),
         bg: csld.and_then(|c| background(c, &colors)),
+        background: csld.and_then(|c| background_fill(c, &colors, part, &rels)),
         show_master_sp: attr_bool(root, "showMasterSp").unwrap_or(true),
     }))
 }
@@ -1116,7 +1146,9 @@ pub(crate) fn read_slide(
         layout,
         shapes: Vec::new(),
         bg: None,
+        background: None,
         show_master_sp: true,
+        hidden: false,
         locked: Some(why.to_owned()),
         rels: Arc::new(rels0.clone()),
         src: Arc::new(SlideSrc {
@@ -1163,7 +1195,9 @@ pub(crate) fn read_slide(
         part: part.to_owned(),
         layout,
         bg: background(csld, &colors),
+        background: background_fill(csld, &colors, part, &rels),
         show_master_sp: attr_bool(root, "showMasterSp").unwrap_or(true),
+        hidden: attr_bool(root, "show") == Some(false),
         locked: None,
         rels: Arc::new(rels.clone()),
         src: Arc::new(SlideSrc {
@@ -1180,6 +1214,8 @@ pub(crate) fn read_slide(
         let mut l = locked_slide(&why);
         l.shapes = slide.shapes;
         l.bg = slide.bg;
+        l.background = slide.background;
+        l.hidden = slide.hidden;
         l.show_master_sp = slide.show_master_sp;
         return l;
     }
