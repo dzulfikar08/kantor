@@ -20,6 +20,7 @@ use gpui_kit::*;
 use slides_engine::render::LineSpacing;
 use slides_engine::{
     Anchor, EMU_PER_PT, EMU_PER_PX, Geom, Layer, Presentation, RenderText, Rgb, ShapeKind, Xfrm,
+    geom,
 };
 
 /// A text body laid out in slide pixels (EMU / 9525), origin at the top
@@ -43,6 +44,10 @@ pub(crate) enum Look {
         geom: Geom,
         fill: Option<Rgb>,
         line: Option<(Rgb, i64)>,
+        /// The real outline (EMU, shape-local) of shapes the basic
+        /// painting below doesn't cover: other presets, adjusted round
+        /// rectangles, custom geometry.
+        outline: Option<geom::Outline>,
     },
     Picture(Option<Arc<RenderImage>>),
     /// Something Kantor keeps but can't draw (table, chart, group...).
@@ -392,6 +397,12 @@ impl Painter {
                         geom: geom.clone(),
                         fill: r.shape.look.fill,
                         line: r.shape.look.line,
+                        outline: r
+                            .shape
+                            .kind
+                            .geometry()
+                            .filter(|g| !g.is_basic())
+                            .map(|g| geom::outline(&g, xfrm.cx as f64, xfrm.cy as f64)),
                     },
                     ShapeKind::Picture { part, .. } => {
                         Look::Picture(part.as_deref().and_then(|p| {
@@ -582,6 +593,60 @@ fn paint_outline(
     }
 }
 
+/// Paint a shape's evaluated outline (shape-local EMU) into its box `b`,
+/// flipped and turned with the shape. Paths fill in their own shade of
+/// `fill` (lighten / darken faces) and stroke with `line` where asked.
+#[allow(clippy::too_many_arguments)]
+fn paint_paths(
+    window: &mut Window,
+    o: &geom::Outline,
+    x: &Xfrm,
+    b: Bounds<Pixels>,
+    view: View,
+    turn: Option<Turn>,
+    fill: Option<Rgb>,
+    line: Option<(Rgb, i64)>,
+    width: Option<Pixels>,
+) {
+    let at = |(lx, ly): geom::Pt| {
+        let lx = if x.flip_h { x.cx as f64 - lx } else { lx };
+        let ly = if x.flip_v { x.cy as f64 - ly } else { ly };
+        turned(
+            turn,
+            point(
+                b.left() + px(lx as f32 * view.scale),
+                b.top() + px(ly as f32 * view.scale),
+            ),
+        )
+    };
+    let build = |mut p: PathBuilder, sub: &geom::SubPath| {
+        for c in &sub.cmds {
+            match *c {
+                geom::PathCmd::MoveTo(q) => p.move_to(at(q)),
+                geom::PathCmd::LineTo(q) => p.line_to(at(q)),
+                geom::PathCmd::QuadTo(c1, q) => p.curve_to(at(q), at(c1)),
+                geom::PathCmd::CubicTo(c1, c2, q) => p.cubic_bezier_to(at(q), at(c1), at(c2)),
+                geom::PathCmd::Close => p.close(),
+            }
+        }
+        p.build()
+    };
+    // In order, each path filled then outlined (later faces cover earlier
+    // outlines, as in PowerPoint).
+    for sub in &o.paths {
+        if let Some(c) = fill.filter(|_| sub.fill.is_filled())
+            && let Ok(path) = build(PathBuilder::fill(), sub)
+        {
+            window.paint_path(path, hsla(sub.fill.shade(c)));
+        }
+        if let (Some((c, _)), Some(w), true) = (line, width, sub.stroke)
+            && let Ok(path) = build(PathBuilder::stroke(w), sub)
+        {
+            window.paint_path(path, hsla(c));
+        }
+    }
+}
+
 /// How `paint_slide` draws: `other` is the colour for objects Kantor
 /// can't draw yet (a chrome token); `editor` adds the editor-only dashed
 /// outline around empty placeholders (not in thumbnails or presenting).
@@ -627,9 +692,19 @@ pub(crate) fn paint_slide(
                 let turn = Turn::of(&item.xfrm, view);
                 match &item.look {
                     Look::Geometry {
+                        fill: f,
+                        line,
+                        outline: Some(o),
+                        ..
+                    } => {
+                        let w = line.map(|(_, w)| px((w as f32 * view.scale).max(1.0)));
+                        paint_paths(window, o, &item.xfrm, b, view, turn, *f, *line, w);
+                    }
+                    Look::Geometry {
                         geom,
                         fill: f,
                         line,
+                        outline: None,
                     } => {
                         let ellipse = *geom == Geom::Ellipse;
                         let outline = || -> Vec<Point<Pixels>> {

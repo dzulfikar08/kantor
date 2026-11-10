@@ -186,6 +186,7 @@ impl Presentation {
                 kind: ShapeKind::Shape {
                     geom: Geom::Rect,
                     text_box: true,
+                    geometry: None,
                 },
                 xfrm: Some(xfrm),
                 ph: None,
@@ -220,6 +221,7 @@ impl Presentation {
                 kind: ShapeKind::Shape {
                     geom,
                     text_box: false,
+                    geometry: None,
                 },
                 xfrm: Some(xfrm),
                 ph: None,
@@ -799,6 +801,7 @@ impl Presentation {
                 kind: ShapeKind::Shape {
                     geom: Geom::Rect,
                     text_box: false,
+                    geometry: None,
                 },
                 xfrm: None,
                 ph: Some(ph.clone()),

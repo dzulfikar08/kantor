@@ -8,11 +8,13 @@
 //!   shapes, slides, speaker notes; each undoable. [`clip`]: copy/paste of
 //!   shapes within and between presentations.
 //! - [`render`]: what to draw, with layout/master/theme inheritance.
+//! - [`geom`]: shape outlines (preset and custom DrawingML geometry).
 
 pub mod agent;
 pub mod clip;
 pub mod edit;
 pub mod find;
+pub mod geom;
 mod history;
 pub mod model;
 pub mod presentation;
