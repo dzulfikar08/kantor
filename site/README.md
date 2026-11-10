@@ -67,14 +67,25 @@ They are real Kantor windows on Linux, captured with `grim` from Hyprland:
 KANTOR_BIN=$PWD/target/release/kantor PY=/path/to/venv/bin/python site/tools/shots.sh
 ```
 
-`shots.sh` generates three sample files (`make_samples.py`: a budget sheet, a short letter, a
-three-slide deck, all generic content), opens each in its own Kantor with throwaway config,
-state and socket directories (your settings and session are never touched), on a private
-workspace `ksite`, in the Catppuccin (dark) and Catppuccin Latte (light) Omarchy themes. A
-selection (Sheets) and the slide to show (Slides) are set through Kantor's own MCP server
-(`mcp_call.py`). The window is shown for about a second so GPUI paints the change, captured with
+`shots.sh` generates three sample files (`make_samples.py`, made-up content: a formatted sales
+workbook in rupiah, a short report with a list, a picture and a table, and a four-slide deck with
+gradients, chevrons, a table and a chart) and opens each in its own Kantor with throwaway config,
+state and socket directories (your settings and session are never touched; update checks are
+off), in the Catppuccin (dark) and Catppuccin Latte (light) Omarchy themes. Kantor runs on a
+private headless Hyprland output (`KSITE`, 1600×1000 at 125 %, removed afterwards), so nothing
+appears on your screen and focus never moves. A selection (Sheets) and the slide to show
+(Slides) are set through Kantor's own MCP server (`mcp_call.py`), and the window is captured with
 `grim -T` (just that window, no notifications or cursor), then closed. `images.sh` converts the
-captures in `tools/shots/` to the site's formats and `og.sh` renders the 1200×630 card.
+captures in `tools/shots/` to the site's formats and `og.sh` renders the 1200×630 card. The
+repository README uses the same WebP files.
+
+`formula_shot.sh` (run after `shots.sh`) takes the README's extra Sheets picture of a formula
+being typed, with its references coloured: Kantor runs in a private Xwayland server on its own
+headless output and `xdotool` types into it, so your keyboard and focus are never used. Output:
+`docs/images/sheets-formula-{dark,light}.webp`.
+
+Column widths in the sample workbook are multiples of 4 characters (36 px) so that column edges
+fall on whole pixels at 125 %; otherwise merged cells show a 1 px seam.
 
 The site shows the dark captures to visitors whose system is dark and the light ones otherwise
 (`<picture>` with `prefers-color-scheme`).

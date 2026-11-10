@@ -2,9 +2,29 @@
 
 # Kantor
 
-A small, fast, native office suite for Linux and macOS, written in Rust on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui) (the UI framework behind Zed). Three apps in one binary: **Sheets**, **Docs** and **Slides**. Builds: Linux on x86_64 and aarch64 (made with [Omarchy](https://omarchy.org) in mind), and macOS on Apple Silicon.
+A small, fast, native office suite for Linux and macOS, written in Rust on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui) (the UI framework behind Zed). Three apps in one binary: **Sheets**, **Docs** and **Slides**, for `.xlsx`, `.docx` and `.pptx` files. Builds: Linux on x86_64 and aarch64 (made with [Omarchy](https://omarchy.org) in mind), and macOS on Apple Silicon and Intel.
 
-> **Status: early, all three apps work.** Sheets opens, edits and saves `.xlsx` (formulas via [IronCalc](https://github.com/ironcalc/IronCalc)) and imports `.csv`, `.ods`, `.xls` and `.xlsb`. Docs opens, edits and saves `.docx` and exports PDF. Slides opens, edits, presents and saves `.pptx` and exports PDF. Saving keeps what Kantor doesn't show yet, byte for byte. `kantor convert` and `kantor pdf` work from the command line, and AI agents can edit open documents over MCP. Not yet checked against a large set of real-world files; see [plan.md](plan.md).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/src/img/sheets-dark-1550.webp">
+  <img src="site/src/img/sheets-light-1550.webp" width="100%" alt="Kantor Sheets showing a quarterly sales workbook: a merged title row on a dark blue fill, column headers on a light blue fill with borders, amounts in Rupiah such as Rp412.500.000, a vs-target column in green and red percentages, and a yellow note block. A range of cells is selected and the status bar shows its sum, average and count.">
+</picture>
+
+<table>
+  <tr>
+    <td width="33%"><picture><source media="(prefers-color-scheme: dark)" srcset="site/src/img/sheets-dark-800.webp"><img src="site/src/img/sheets-light-800.webp" alt="Sheets: a formatted sales workbook with fills, borders, merged cells and Rupiah and percent number formats."></picture></td>
+    <td width="33%"><picture><source media="(prefers-color-scheme: dark)" srcset="site/src/img/docs-dark-800.webp"><img src="site/src/img/docs-light-800.webp" alt="Docs: a one-page report on an A4 page with a title, headings, a bulleted list, a bar chart picture and a table, below the toolbar and ruler."></picture></td>
+    <td width="33%"><picture><source media="(prefers-color-scheme: dark)" srcset="site/src/img/slides-dark-800.webp"><img src="site/src/img/slides-light-800.webp" alt="Slides: a slide with a gradient title band, a table of regions and a clustered column chart, with slide thumbnails on the left and the speaker notes below."></picture></td>
+  </tr>
+  <tr>
+    <td align="center">Sheets</td>
+    <td align="center">Docs</td>
+    <td align="center">Slides</td>
+  </tr>
+</table>
+
+Real screenshots of the current build on Linux, in the light or dark theme to match your GitHub setting. The sample files come from [site/tools/make_samples.py](site/tools/make_samples.py).
+
+> **Status: early, all three apps work.** Sheets opens, edits and saves `.xlsx` (formulas via [IronCalc](https://github.com/ironcalc/IronCalc)) and imports `.csv`, `.ods`, `.xls` and `.xlsb`. Docs opens, edits and saves `.docx` and exports PDF. Slides opens, edits, presents and saves `.pptx` and exports PDF. Saving keeps what Kantor doesn't show yet, byte for byte. Not yet checked against a large set of real-world files; see [Known gaps](#known-gaps) and [plan.md](plan.md).
 
 ## Install
 
@@ -41,9 +61,37 @@ Settings (`~/.config/kantor`) and the saved session (`~/.local/state/kantor`) ar
 
 Arch Linux: a PKGBUILD for a future `kantor-bin` AUR package lives in [packaging/aur/](packaging/aur/); it is not published yet.
 
-## Using Sheets
+## What works
 
-`kantor` opens the Home screen (Docs · Sheets · Slides); `kantor file.xlsx` (or `.docx`, `.pptx`) opens the file, and `kantor --sheets`, `--docs` or `--slides` starts a new document.
+`kantor` opens the Home screen (Docs · Sheets · Slides); `kantor file.xlsx` (or `.docx`, `.pptx`) opens the file, and `kantor --sheets`, `--docs` or `--slides` starts a new document. Documents open in tabs that you can split side by side; Find & Replace (`Ctrl F` / `Ctrl H`) and undo work the same in all three apps.
+
+### Sheets
+
+- **Formatted workbooks look as they do in Excel:** cell fills (theme and indexed colours), text colour, font size and family, bold/italic/underline, horizontal and vertical alignment, wrapped text, borders (thin to thick, double, dotted, dashed), merged cells and gridlines off per sheet. The toolbar and palette set fill and text colour, font size, borders, wrap, merge & center and alignment, each as one undo step.
+- **Number formats as Excel shows them** (`crates/kantor_numfmt`): thousands separators, decimals, percentages, currency, dates and times, fractions, elapsed time (`[h]:mm:ss`), conditions, colours (`[Red]`), text sections and accounting fill. Locale tags work: `[$Rp-421]#,##0` shows `Rp1.500.000` with Indonesian separators, and `[$-421]d mmmm yyyy` shows `17 Agustus 2025`.
+- **Formulas** through IronCalc. While you type one, clicking or arrowing to cells inserts their references, which are coloured in the editor and outlined in the same colour on the grid; `F4` cycles `$` anchors, and typing a function name lists matching functions.
+
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/sheets-formula-dark.webp">
+    <img src="docs/images/sheets-formula-light.webp" width="720" alt="A SUMIF formula being typed in cell F16 of the sales workbook. Its references H5:H10, F5:F10 and F11 are coloured in the cell and in the formula bar, and the same ranges are outlined in those colours on the grid.">
+  </picture>
+
+- **Grid work:** select rows, columns or everything, `Ctrl`+arrows to the edge of the data, fill handle and `Ctrl D` / `Ctrl R` (series continue), autofit columns, insert/delete rows and columns, freeze panes, copy and paste ranges as tab-separated text. The status bar shows Sum, Average and Count of the selection.
+- **Big workbooks:** files open in the background with a Cancel button and show the values Excel saved instead of recalculating on open. A 180,000-row, 32 MB `.xlsx` uses about 323 MB with the app open (377 MB after a full recalculation), and closing it gives the memory back. A real workbook with 767,000 formulas recalculates in about 3 seconds (patched IronCalc with cached lookups). Workbooks with more than 50,000 formulas switch to **manual calculation**: `F9` recalculates everything (`Shift F9` the sheet), and the palette switches between automatic and manual.
+- **Saving keeps what Kantor doesn't edit:** Excel tables, chart sheets, charts, pictures, sparklines, data validation and comments are carried over, and their references follow inserted or deleted rows and columns.
+- Imports `.csv`/`.tsv`, `.ods`, `.xls` and `.xlsb` (saving those goes to a new `.xlsx`).
+
+### Docs
+
+`.docx` editing: paragraph and character styles, headings, fonts, colour, alignment, spacing and indents, bulleted and numbered lists (9 levels, with Word's Enter/Tab/Backspace behaviour), tables with merged cells and borders, inline pictures, page breaks, hyperlinks, page setup (A4, Letter, Legal, A5, F4; margins in cm) with a ruler, and a word count. *Export as PDF…* in the palette writes a PDF with the same layout as the screen (fonts embedded, text selectable). Floating images, shapes, fields and other parts Kantor can't show yet are kept as placeholders and saved unchanged.
+
+### Slides
+
+`.pptx` editing: text boxes and placeholders (with the master's bullets, numbering and spacing), shapes and pictures you can move, resize, rotate and flip, fill and outline, a thumbnail strip to reorder slides, speaker notes, copy and paste of shapes, and a slide show with notes (`F5`). Slides are drawn as in PowerPoint: all 187 preset shapes (arrows, chevrons, callouts, flowchart symbols…) and freeform shapes, gradient and picture fills, transparency, dashed lines and arrowheads, groups, tables with PowerPoint's table styles, SmartArt, and charts (column, bar, line, area, pie, doughnut, scatter and combinations) from the values saved in the file. *Export as PDF…* writes one page per slide, hidden slides left out. Tables, charts and SmartArt are shown but can't be edited yet; their XML is saved unchanged.
+
+## Keyboard
+
+On macOS, use `⌘` where this table says `Ctrl` (`Ctrl Tab` stays).
 
 | Action | Keys |
 |---|---|
@@ -51,34 +99,23 @@ Arch Linux: a PKGBUILD for a future `kantor-bin` AUR package lives in [packaging
 | Edit a cell | just type (replaces), or `Enter`/`F2`/double-click (keeps content) |
 | Commit / cancel | `Enter` (moves down) / `Esc`; clicking another cell also commits |
 | Clear a cell | `Delete` |
-| Open / Save / Save as | `Ctrl`/`Super` + `O` / `S` / `Shift+S` |
+| Anchor a reference / recalculate | `F4` while editing a formula / `F9` |
+| Undo / redo | `Ctrl Z` / `Ctrl Shift Z` |
+| Find / replace | `Ctrl F` / `Ctrl H` |
+| Open / Save / Save as | `Ctrl O` / `Ctrl S` / `Ctrl Shift S` |
 | Command palette | `Ctrl K` (or `Ctrl Shift P`) |
-| New spreadsheet / Open | `Ctrl N` / `Ctrl O` |
+| New spreadsheet / document / presentation | `Ctrl N` / `Ctrl Shift N` / `Ctrl Alt N` |
+| Slide show | `F5` (`Shift F5` from the current slide) |
 | Close pane / close tab | `Ctrl W` / `Ctrl Shift W` |
 | Split right / down | `Ctrl \` / `Ctrl Alt \` (drag the divider to resize) |
 | Sidebar / inspector | `Ctrl Shift E` / `Ctrl Shift I` (drag the edge to resize) |
 | Theme / UI font | `Ctrl K` → *Choose Theme…* / *Choose UI Font…* |
 | Next / previous tab | `Ctrl Tab` / `Ctrl Shift Tab` |
-| Quit | `Ctrl`/`Super` + `Q` |
+| Quit | `Ctrl Q` |
 
 Edits happen in the cell itself (synced live with the formula bar). With an input method such as fcitx5, press `Enter` first, then compose.
 
 By default the UI follows your Omarchy theme (live-reloading on `omarchy theme set`); *Choose Theme…* offers your Omarchy themes plus 900+ Ghostty themes. The UI font is SF Pro when installed (never bundled), else Inter / Adwaita Sans. Open tabs, splits and panel sizes are restored on the next launch. Settings: `~/.config/kantor/settings.toml`; session: `~/.local/state/kantor/workspace.json`.
-
-## Using Docs and Slides
-
-**Docs** edits `.docx`: paragraph and character styles, headings, fonts, alignment, spacing and
-indents, bulleted and numbered lists (9 levels, with Word's Enter/Tab/Backspace behaviour),
-tables, inline pictures, page breaks, hyperlinks, page setup (A4, Letter, Legal, A5, F4; margins
-in cm) with a ruler, Find & Replace and a word count. *Export as PDF…* in the palette writes a PDF
-with the same layout as the screen. Floating images, shapes, fields and other parts Kantor can't
-show yet are kept as placeholders and saved unchanged; files with tracked changes or comments are
-saved under a new name.
-
-**Slides** edits `.pptx`: text boxes and placeholders (with the master's bullets, numbering and
-spacing), shapes and pictures you can move, resize, rotate and flip, fill and outline, a
-thumbnail strip to reorder slides, speaker notes, copy and paste of shapes, Find & Replace, and a
-slide show with notes (`F5`).
 
 ## Command line
 
@@ -154,6 +191,14 @@ Kantor downloaded from the site, the GitHub releases or the install script keeps
 
 For testing, `KANTOR_UPDATE_URL` replaces the manifest URL and `KANTOR_UPDATE_CURRENT=0.1.0` makes Kantor compare as if it were that version; signatures, checksums and code-signing checks still apply.
 
+## Known gaps
+
+- Not yet checked against a large set of real-world files; expect layout differences from Excel, Word and PowerPoint.
+- Sheets: no sort, filter, conditional formatting display, charts on the grid, printing or autosave; every row is drawn at the same height (heights from the file are kept). Macros and pivot tables are not carried over on save (Kantor says so). IronCalc can't evaluate 3-D references (`SUM(Jan:Mar!B2)`) or structured table references (`Sales[Units]`). `.ods`, `.xls` and `.xlsb` are import-only, and `kantor convert` can't turn a spreadsheet into PDF.
+- Docs: headers and footers, footnotes, fields and floating objects are kept in the file but shown only as placeholders and left out of the PDF; table rows don't split across pages; no spell check. Files with tracked changes, comments or a table of contents are saved under a new name.
+- Slides: the content of tables, charts, groups and SmartArt can't be edited; chart types other than those above show a placeholder; on screen, rotated text stays upright (the PDF turns it).
+- The Linux builds need glibc 2.39 or newer.
+
 ## Building
 
 All builds run on **GitHub Actions** (`ubuntu-24.04-arm`, `ubuntu-24.04` and `macos-15`); contributors don't need a powerful machine. If you do want to build locally:
@@ -175,6 +220,8 @@ crates/
   kantor_core    shared non-GPUI pieces (fuzzy search, find, settings, session)
   kantor_ai      AI providers, streaming HTTP clients, prompts, keychain (no GPUI)
   kantor_theme   Omarchy palette parser (no GPUI)
+  kantor_update  in-app updates: signed manifests, download, verify, swap the install (no GPUI)
+  kantor_mem     gives freed heap memory back to the system after big documents close (no GPUI)
   kantor_pdf     PDF page tools behind `kantor pdf` (no GPUI)
   sheets_engine  IronCalc wrapper: open/save xlsx, imports, part preservation (no GPUI)
   kantor_numfmt  Excel number formats, adapted from GridCraft (MIT OR Apache-2.0; no GPUI)
@@ -189,16 +236,19 @@ crates/
   slides_ui      slide canvas, thumbnails, notes, slide show
 vendor/
   gpui-pre-wgpu  GPUI's wgpu renderer (Linux) with memory patches for low-memory GPUs
-  ironcalc_base  IronCalc with cached lookups for large workbooks
+  ironcalc_base  IronCalc's engine with cached lookups for large workbooks (KANTOR_PATCHES.md)
+  ironcalc       IronCalc's xlsx reader and writer, patched to match (KANTOR_PATCHES.md)
+site/            the download site (kantor.paparanai.id); site/tools/ takes the screenshots
 ```
 
 ## Credits
 
-- [IronCalc](https://github.com/ironcalc/IronCalc) (MIT OR Apache-2.0) does the formulas and xlsx import/export.
+- [IronCalc](https://github.com/ironcalc/IronCalc) (MIT OR Apache-2.0) does the formulas and xlsx import/export; Kantor carries patched copies in `vendor/`.
+- [GPUI](https://github.com/zed-industries/zed) (Apache-2.0) draws the UI, through [GPUI Kit](https://github.com/longbridge/gpui-kit) (Apache-2.0).
 - Cell values are formatted by `crates/kantor_numfmt`, adapted from [GridCraft](https://github.com/storytold/gridcraft)'s `gridcraft-numfmt` (MIT OR Apache-2.0, by the ArtCraft Team and the GridCraft contributors); see its [PROVENANCE.md](crates/kantor_numfmt/PROVENANCE.md).
-- [GPUI](https://github.com/zed-industries/zed) (Apache-2.0) draws the UI.
+- [parley](https://github.com/linebender/parley) lays out text and [krilla](https://github.com/LaurenzV/krilla) writes the PDFs.
 
-Third-party licence notices are in [NOTICE](NOTICE).
+Third-party notices are in [NOTICE](NOTICE). Every download also ships `THIRD_PARTY_LICENSES.txt` with the licence texts of all linked crates (generated by `scripts/third-party-licenses.py`).
 
 The shell's structure and styling follow [Voltrus Tools](https://github.com/VoltrusID/voltrus-explorers) (see `docs/reference-voltrus-tools.md`).
 
