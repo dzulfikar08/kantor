@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Developer ID build (scripts/build-dmg.sh): hardened runtime, no App Sandbox,
+  so Kantor needs no entitlements. It is plain Rust: GPUI draws with Metal
+  (gpui-kit enables runtime_shaders: the Metal framework compiles the shader
+  source for the GPU, which is not CPU JIT and needs no allow-jit), there is no
+  JIT, no unsigned executable memory and no third-party dylibs (so no
+  library-validation exception). The AI
+  API keys go to the login keychain through the legacy SecKeychain API, which
+  needs no keychain-access-groups entitlement outside the sandbox. Network
+  access needs no entitlement outside the sandbox either.
+-->
+<plist version="1.0">
+<dict>
+</dict>
+</plist>
