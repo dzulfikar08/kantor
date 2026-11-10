@@ -20,7 +20,19 @@
 //!    * sheet level: relationships the sheet markup doesn't point to (comments,
 //!      threaded comments), and a fixed set of sheet elements IronCalc doesn't
 //!      write ([`CARRIED_ELEMENTS`]: data validation, print setup, drawings,
-//!      `legacyDrawing` for comment boxes, ...) with the parts they point to.
+//!      `legacyDrawing` for comment boxes, `tableParts`, `extLst`...) with the
+//!      parts they point to. Tables are checked against the saved cells: an
+//!      edited header renames its column, an empty or duplicate one drops the
+//!      table. Of `extLst`, the extensions IronCalc doesn't write itself are
+//!      added (sparklines, Excel 2010 data validations...), with the namespace
+//!      declarations they inherited;
+//!    * chart sheets (IronCalc has none): the part with its drawing and chart,
+//!      put back into the sheet list after the sheet that preceded it, with
+//!      `localSheetId` and `activeTab` renumbered; a chart sheet gets a new
+//!      `sheetId` if a sheet added in Kantor took its id;
+//!    * defined names: attributes IronCalc drops (`hidden` on
+//!      `_xlnm._FilterDatabase`, comments...), and built-in or hidden names it
+//!      didn't write.
 //!
 //!    Original sheets are matched to saved ones by `sheetId` (IronCalc keeps it;
 //!    renames and reorders keep the match). Parts of a sheet that is gone are
@@ -28,9 +40,17 @@
 //!    deleting the *last-numbered* sheet and then adding one reuses its id and
 //!    the new sheet would inherit the old one's extras; an add-sheet API in
 //!    `sheets_engine` must pick ids above every id the original had.
-//!    Cell-anchored content (comments, validations, drawings) is copied as is:
-//!    if rows or columns were inserted or deleted (not possible in the UI yet),
-//!    it drifts.
+//! 3. **Inserted and deleted rows and columns** (`crate::shift`): what is
+//!    carried follows them, as Excel would move it: `sqref`/`ref` ranges of
+//!    validations, filters, protected ranges and ignored errors, page breaks,
+//!    validation formulas, table ranges, sparkline locations and data,
+//!    comment cells and their boxes, drawing anchors, and chart series on any
+//!    sheet. Something whose cells were all deleted goes (a note says so); a
+//!    table with columns inserted or deleted inside it, or without its header
+//!    row, is dropped rather than left for Excel to repair. A part that can't
+//!    be read to move it (e.g. VML that isn't XML) is kept as it was, with a
+//!    note. Not followed: sheet renames inside carried formulas (Kantor can't
+//!    rename sheets yet), pivot caches and external links (never carried).
 //!
 //! Everything is conservative: anything ambiguous (unknown markup around a
 //! reference, name collisions, broken links in the original) is skipped and
@@ -41,8 +61,11 @@
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{Cursor, Read, Write};
+use std::rc::Rc;
 
 use roxmltree::{Document, Node};
+
+use crate::shift::{Moves, parse_range};
 
 const NS_MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const NS_R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -103,12 +126,13 @@ const SHEET_ORDER: [&str; 39] = [
 /// All are self-contained apart from `r:id`s, which are carried with their
 /// targets. `sheetPr` is carried without its `tabColor`: the tab colour is
 /// written from the model ([`write_tab_colors`]). `sheetFormatPr` holds sheet
-/// defaults (row height, column width) Kantor can't change. Left out on
-/// purpose: what IronCalc models (views, columns, merges, conditional
-/// formats, hyperlinks), `tableParts`
-/// (Excel repairs a table whose header cells no longer match its column names),
-/// and `oleObjects`/`controls` (built on `mc:AlternateContent`).
-pub(crate) const CARRIED_ELEMENTS: [&str; 17] = [
+/// defaults (row height, column width) Kantor can't change. `tableParts` is
+/// carried table by table ([`carry_tables`]: header cells must still match
+/// the column names, or Excel repairs the file), `extLst` extension by
+/// extension ([`carry_extensions`]). Left out on purpose: what IronCalc
+/// models (views, columns, merges, conditional formats, hyperlinks) and
+/// `oleObjects`/`controls` (built on `mc:AlternateContent`).
+pub(crate) const CARRIED_ELEMENTS: [&str; 19] = [
     "sheetPr",
     "sheetFormatPr",
     "sheetProtection",
@@ -126,7 +150,13 @@ pub(crate) const CARRIED_ELEMENTS: [&str; 17] = [
     "legacyDrawing",
     "legacyDrawingHF",
     "picture",
+    "tableParts",
+    "extLst",
 ];
+
+/// `extLst` extensions never carried: IronCalc writes Excel 2010 conditional
+/// formats itself (the x14 rules are tied to its own `cfRule`s).
+const OWNED_EXTENSIONS: [&str; 1] = ["{78C0D931-6437-407d-A8EE-F0AAD7539E65}"];
 
 /// Relationship types never carried, whatever level they're on: stale caches,
 /// or parts that only work with markup IronCalc rewrites.
@@ -155,19 +185,24 @@ pub(crate) struct Finished {
 /// `<tabColor>` (e.g. `rgb="FF4472C4"`), `None` for no colour.
 pub(crate) type TabColors = HashMap<u32, Option<String>>;
 
+/// What the workbook being saved tells the post-processing.
+pub(crate) struct Context<'a> {
+    pub tabs: &'a TabColors,
+    /// Ask Excel to recalculate when it opens the file (`fullCalcOnLoad`),
+    /// for workbooks saved with values that may be stale.
+    pub full_calc: bool,
+    /// Rows and columns inserted or deleted since `original` was read.
+    pub moves: &'a Moves,
+    /// The text a cell shows, by `(sheetId, row, column)` (0-based).
+    pub cell_text: &'a dyn Fn(u32, u32, u32) -> String,
+}
+
 /// Post-process IronCalc's xlsx: carry over what the `original` package had
 /// and IronCalc dropped, write tab colours, fix error values. Never fails: on
 /// any problem the result falls back to IronCalc's own output (with tab
 /// colours and error values fixed when possible).
-///
-/// `full_calc` asks Excel to recalculate when it opens the file
-/// (`fullCalcOnLoad`), for workbooks saved with values that may be stale.
-pub(crate) fn finish(
-    ironcalc: Vec<u8>,
-    original: Option<&[u8]>,
-    tabs: &TabColors,
-    full_calc: bool,
-) -> Finished {
+pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) -> Finished {
+    let (tabs, full_calc) = (ctx.tabs, ctx.full_calc);
     let mut notes = Vec::new();
     let new = match Package::read(&ironcalc) {
         Ok(p) => p,
@@ -179,61 +214,107 @@ pub(crate) fn finish(
             };
         }
     };
-    let mut base = new.clone();
-    let baseline = match polish(&mut base, tabs, full_calc, &mut notes).and_then(|()| base.write())
-    {
-        Ok(b) => b,
-        Err(e) => {
-            notes.push(format!("could not post-process the saved package: {e}"));
-            ironcalc
+    // The baseline: IronCalc's package with the fixes every save gets. Made
+    // only if it is what gets saved (from IronCalc's bytes again, so a big
+    // workbook's sheets are not held twice).
+    let baseline = |notes: &mut Vec<String>| -> Vec<u8> {
+        let polished = Package::read(&ironcalc).and_then(|mut b| {
+            polish(&mut b, tabs, full_calc, notes)?;
+            b.write()
+        });
+        match polished {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                notes.push(format!("could not post-process the saved package: {e}"));
+                ironcalc.clone()
+            }
         }
     };
     let Some(original) = original else {
-        return Finished {
-            bytes: baseline,
-            notes,
-        };
+        drop(new);
+        let bytes = baseline(&mut notes);
+        return Finished { bytes, notes };
     };
 
+    // Polishing doesn't change the package structure.
+    let before: HashSet<String> = problems_of(&new).into_iter().collect();
     let mut merged = new;
     let mut merge_notes = Vec::new();
-    let bytes = match merge(&mut merged, original, &mut merge_notes) {
+    let mut polish_notes = Vec::new();
+    let polished = match merge(&mut merged, original, ctx, &mut merge_notes) {
         Ok(false) => {
+            drop(merged);
             notes.extend(merge_notes);
-            return Finished {
-                bytes: baseline,
-                notes,
-            };
+            let bytes = baseline(&mut notes);
+            return Finished { bytes, notes };
         }
-        Ok(true) => {
-            polish(&mut merged, tabs, full_calc, &mut Vec::new()).and_then(|()| merged.write())
-        }
+        Ok(true) => polish(&mut merged, tabs, full_calc, &mut polish_notes),
         Err(e) => Err(e),
     };
     notes.extend(merge_notes);
-    let checked = bytes.and_then(|bytes| {
-        let before: HashSet<String> = package_problems(&baseline).into_iter().collect();
-        let added: Vec<String> = package_problems(&bytes)
+    let checked = polished.and_then(|()| {
+        let added: Vec<String> = problems_of(&merged)
             .into_iter()
             .filter(|p| !before.contains(p))
             .collect();
         if !added.is_empty() {
             return Err(format!("the result would be invalid: {}", added.join("; ")));
         }
-        ironcalc::import::load_from_xlsx_bytes(&bytes, "check", "en", "UTC")
-            .map_err(|e| format!("IronCalc can't read the result: {e}"))?;
-        Ok(bytes)
+        read_back(&merged, READ_BACK_FULL)
     });
+    drop(merged);
     match checked {
-        Ok(bytes) => Finished { bytes, notes },
+        Ok(bytes) => {
+            notes.extend(polish_notes);
+            Finished { bytes, notes }
+        }
         Err(e) => {
             notes.push(format!("not keeping the original's extra parts: {e}"));
-            Finished {
-                bytes: baseline,
-                notes,
-            }
+            let bytes = baseline(&mut notes);
+            Finished { bytes, notes }
         }
     }
+}
+
+/// Worksheet XML (uncompressed) above which [`read_back`] checks the
+/// package without its cells.
+const READ_BACK_FULL: usize = 16 * 1024 * 1024;
+
+/// The bytes of `pkg`, once IronCalc has read them back. A big package is
+/// read without the inside of `<sheetData>` (its cells are IronCalc's own
+/// output, untouched by the merge apart from error values): reading 200 MB of
+/// cells again costs seconds and hundreds of MB for nothing.
+fn read_back(pkg: &Package, full_limit: usize) -> Result<Vec<u8>, String> {
+    let is_sheet = |n: &str| {
+        let n = n.to_lowercase();
+        n.starts_with("xl/worksheets/") && n.ends_with(".xml")
+    };
+    let sheet_bytes: usize = pkg
+        .entries
+        .iter()
+        .filter(|(n, _)| is_sheet(n))
+        .map(|(_, d)| d.len())
+        .sum();
+    let bytes = pkg.write()?;
+    let check = if sheet_bytes <= full_limit {
+        ironcalc::import::load_from_xlsx_bytes(&bytes, "check", "en", "UTC").map(|_| ())
+    } else {
+        let mut light = pkg.clone();
+        let names: Vec<String> = pkg
+            .entries
+            .iter()
+            .map(|(n, _)| n.clone())
+            .filter(|n| is_sheet(n))
+            .collect();
+        for name in names {
+            let xml = light.text(&name)?.unwrap_or_default();
+            let skeleton = Skeleton::new(xml).xml;
+            light.set(&name, skeleton.into_bytes());
+        }
+        ironcalc::import::load_from_xlsx_bytes(&light.write()?, "check", "en", "UTC").map(|_| ())
+    };
+    check.map_err(|e| format!("IronCalc can't read the result: {e}"))?;
+    Ok(bytes)
 }
 
 /// The fixes every save gets: tab colours and valid error values (and the
@@ -290,7 +371,8 @@ pub(crate) fn asks_full_calc(reader: impl Read + std::io::Seek) -> bool {
 #[derive(Clone, Default)]
 struct Package {
     /// `(name, data)`; directory entries have names ending in `/` and no data.
-    entries: Vec<(String, Vec<u8>)>,
+    /// Shared, so a copy of the package costs little until parts change.
+    entries: Vec<(String, Rc<Vec<u8>>)>,
     /// Lower-cased name -> index (part names are case-insensitive).
     index: HashMap<String, usize>,
 }
@@ -350,12 +432,28 @@ impl Package {
         self.index.contains_key(&name.to_lowercase())
     }
 
+    /// A part's text, taken out of the package (empty until set again):
+    /// no copy when nothing else shares it.
+    fn take_text(&mut self, name: &str) -> Result<Option<String>, String> {
+        let Some(&i) = self.index.get(&name.to_lowercase()) else {
+            return Ok(None);
+        };
+        let data = std::mem::take(&mut self.entries[i].1);
+        let mut data = Rc::try_unwrap(data).unwrap_or_else(|shared| shared.as_ref().clone());
+        if data.starts_with(b"\xEF\xBB\xBF") {
+            data.drain(..3);
+        }
+        String::from_utf8(data)
+            .map(Some)
+            .map_err(|_| format!("{name} is not UTF-8"))
+    }
+
     fn set(&mut self, name: &str, data: Vec<u8>) {
         match self.index.get(&name.to_lowercase()) {
-            Some(&i) => self.entries[i].1 = data,
+            Some(&i) => self.entries[i].1 = Rc::new(data),
             None => {
                 self.index.insert(name.to_lowercase(), self.entries.len());
-                self.entries.push((name.to_owned(), data));
+                self.entries.push((name.to_owned(), Rc::new(data)));
             }
         }
     }
@@ -422,6 +520,93 @@ impl<'a> Original<'a> {
             })
             .transpose()
     }
+
+    /// A worksheet's [`Skeleton`], read without holding its cells in memory.
+    fn skeleton(&self, name: &str) -> Result<Option<Skeleton>, String> {
+        let Some(stored) = self.names.get(&name.to_lowercase()) else {
+            return Ok(None);
+        };
+        let mut zip = self.zip.borrow_mut();
+        let entry = zip.by_name(stored).map_err(|e| format!("{name}: {e}"))?;
+        let mut reader = entry.take(MAX_PART);
+        let mut out: Vec<u8> = Vec::new();
+        let mut buf = vec![0u8; 1 << 20];
+        const OPEN: &[u8] = b"<sheetData";
+        const CLOSE: &[u8] = b"</sheetData>";
+        // 0: before the cells, 1: skipping them, 2: after them.
+        let mut state = 0;
+        let mut cut_at = 0;
+        let mut skipped = 0;
+        let mut tail: Vec<u8> = Vec::new(); // the last bytes skipped
+        let mut scan_from = 0;
+        loop {
+            let n = reader.read(&mut buf).map_err(|e| format!("{name}: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            let mut chunk = &buf[..n];
+            if state == 0 {
+                out.extend_from_slice(chunk);
+                chunk = &[];
+                let found = find_bytes(&out[scan_from..], OPEN).map(|i| i + scan_from);
+                // Search again from here next time (a tag can span chunks).
+                scan_from = found.unwrap_or(out.len().saturating_sub(OPEN.len()));
+                // The end of `<sheetData ...>`, once all of it is in.
+                if let Some(open) = found
+                    && out.len() > open + OPEN.len()
+                    && let Some(gt) = out[open..].iter().position(|&b| b == b'>')
+                {
+                    let gt = open + gt;
+                    let boundary = out.get(open + OPEN.len()).copied().unwrap_or(b'>');
+                    if !(boundary == b'>' || boundary == b'/' || boundary.is_ascii_whitespace()) {
+                        scan_from = open + 1; // `<sheetDataX`: look further
+                    } else if out[gt - 1] == b'/' {
+                        state = 2; // empty: keep everything
+                    } else {
+                        cut_at = gt + 1;
+                        let rest = out.split_off(cut_at);
+                        state = 1;
+                        tail = rest;
+                    }
+                }
+            } else if state == 2 {
+                out.extend_from_slice(chunk);
+                chunk = &[];
+            }
+            if state == 1 {
+                tail.extend_from_slice(chunk);
+                match find_bytes(&tail, CLOSE) {
+                    Some(i) => {
+                        skipped += i;
+                        out.extend_from_slice(&tail[i..]);
+                        tail = Vec::new();
+                        state = 2;
+                    }
+                    None => {
+                        let keep = CLOSE.len().min(tail.len());
+                        skipped += tail.len() - keep;
+                        tail.drain(..tail.len() - keep);
+                    }
+                }
+            }
+        }
+        if state == 1 {
+            return Err(format!("{name}: <sheetData> is not closed"));
+        }
+        let bom = out.starts_with(b"\xEF\xBB\xBF");
+        let xml = String::from_utf8(out).map_err(|_| format!("{name} is not UTF-8"))?;
+        let (xml, shift) = if bom {
+            (xml[3..].to_owned(), 3)
+        } else {
+            (xml, 0)
+        };
+        let cut = (skipped > 0).then(|| (cut_at - shift, skipped));
+        Ok(Some(Skeleton { xml, cut }))
+    }
+}
+
+fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
 }
 
 fn strip_bom(b: &[u8]) -> &[u8] {
@@ -652,10 +837,14 @@ fn extension(part: &str) -> Option<String> {
 /// duplicate relationship ids. An empty list means the package structure is
 /// sound (it says nothing about the XML inside the parts).
 pub fn package_problems(bytes: &[u8]) -> Vec<String> {
-    let pkg = match Package::read(bytes) {
-        Ok(p) => p,
-        Err(e) => return vec![format!("not a readable zip: {e}")],
-    };
+    match Package::read(bytes) {
+        Ok(pkg) => problems_of(&pkg),
+        Err(e) => vec![format!("not a readable zip: {e}")],
+    }
+}
+
+/// [`package_problems`] of a package in memory.
+fn problems_of(pkg: &Package) -> Vec<String> {
     let mut out = Vec::new();
     let ct = match pkg.text(CONTENT_TYPES).and_then(|t| {
         t.ok_or_else(|| "missing [Content_Types].xml".to_owned())
@@ -832,14 +1021,17 @@ fn is_main(n: Node, name: &str) -> bool {
 /// tab colours but never writes them).
 fn write_tab_colors(pkg: &mut Package, tabs: &TabColors) -> Result<(), String> {
     if tabs.values().all(Option::is_none)
-        && !pkg.entries.iter().any(|(_, d)| contains(d, b"tabColor"))
+        && !pkg
+            .entries
+            .iter()
+            .any(|(n, d)| n.starts_with("xl/worksheets/") && memmem(d, b"tabColor"))
     {
         return Ok(());
     }
     let root_rels = parse_rels(pkg.text("_rels/.rels")?.ok_or("no _rels/.rels")?)?;
     let read = |p: &str| Ok(pkg.text(p)?.map(str::to_owned));
     let (_, _, _, sheets) = workbook_sheets(&root_rels, &read)?;
-    for sheet in sheets {
+    for sheet in sheets.into_iter().filter(|s| s.kind == SheetKind::Work) {
         let Some(color) = tabs.get(&sheet.sheet_id) else {
             continue;
         };
@@ -905,48 +1097,159 @@ fn set_tab_color(xml: &str, color: Option<&str>) -> Result<Option<String>, Strin
 /// (`xr:uid` and friends) are dropped; elements in other namespaces are an
 /// error, so the caller skips the whole element rather than half of it.
 fn write_node(node: Node, out: &mut String, ids: &HashMap<String, String>) -> Result<(), String> {
-    write_node_without(node, out, ids, None)
+    write_node_without(node, out, ids, None, None).map(|_| ())
 }
 
-/// [`write_node`], leaving out the children of `node` named `skip`.
+/// How carried sheet markup follows rows and columns that moved: ranges in
+/// `sqref` and `ref` attributes, page breaks, and validation formulas.
+struct Rewrite<'a> {
+    moves: &'a Moves,
+    /// The sheet the markup is on (`sheetId`).
+    home: u32,
+    /// Sheet names (lower case) -> `sheetId`, for formulas.
+    sheets: &'a HashMap<String, u32>,
+}
+
+/// [`write_node`], leaving out the children of `node` named `skip` and
+/// moving references with `rw`. Returns `false` if the element was left out
+/// because everything it applies to was deleted.
 fn write_node_without(
     node: Node,
     out: &mut String,
     ids: &HashMap<String, String>,
     skip: Option<&str>,
-) -> Result<(), String> {
+    rw: Option<&Rewrite>,
+) -> Result<bool, String> {
     if node.is_text() {
-        out.push_str(&esc_text(node.text().unwrap_or_default()));
-        return Ok(());
+        let text = node.text().unwrap_or_default();
+        let parent = node
+            .parent()
+            .map(|p| p.tag_name().name())
+            .unwrap_or_default();
+        match rw {
+            Some(rw) if matches!(parent, "formula" | "formula1" | "formula2") => {
+                out.push_str(&esc_text(&rw.moves.formula(text, Some(rw.home), rw.sheets)));
+            }
+            _ => out.push_str(&esc_text(text)),
+        }
+        return Ok(true);
     }
     if !node.is_element() {
-        return Ok(());
+        return Ok(true);
     }
     let name = node.tag_name();
     if name.namespace() != Some(NS_MAIN) {
         return Err(format!("unsupported element <{}>", name.name()));
     }
+    // Attributes that follow moved rows and columns.
+    let mut moved: HashMap<&str, String> = HashMap::new();
+    if let Some(rw) = rw.filter(|rw| rw.moves.touches(rw.home)) {
+        let parent = node
+            .parent()
+            .map(|p| p.tag_name().name())
+            .unwrap_or_default();
+        for a in node.attributes().filter(|a| a.namespace().is_none()) {
+            let range_attr = a.name() == "sqref"
+                || (a.name() == "ref"
+                    && matches!(name.name(), "autoFilter" | "sortState" | "sortCondition"));
+            if range_attr {
+                match rw.moves.sqref(rw.home, a.value()) {
+                    Some(v) => moved.insert(a.name(), v),
+                    None => return Ok(false),
+                };
+            } else if a.name() == "id" && name.name() == "brk" {
+                let Ok(at) = a.value().parse::<u32>() else {
+                    continue;
+                };
+                let line = if parent == "colBreaks" {
+                    rw.moves.cell(rw.home, 0, at).map(|c| c.1)
+                } else {
+                    rw.moves.cell(rw.home, at, 0).map(|c| c.0)
+                };
+                match line {
+                    Some(v) => moved.insert("id", v.to_string()),
+                    None => return Ok(false),
+                };
+            }
+        }
+    }
+    let mut inner = String::new();
+    let mut elements = 0;
+    let mut dropped = 0;
+    for child in node
+        .children()
+        .filter(|c| skip.is_none_or(|name| !is_main(*c, name)))
+    {
+        if write_node_without(child, &mut inner, ids, None, rw)? {
+            elements += usize::from(child.is_element());
+        } else {
+            dropped += 1;
+        }
+    }
+    let list = matches!(
+        name.name(),
+        "dataValidations" | "rowBreaks" | "colBreaks" | "protectedRanges" | "ignoredErrors"
+    );
+    if dropped > 0 && elements == 0 && list {
+        // A list whose every entry was deleted (e.g. all validations).
+        return Ok(false);
+    }
+    if dropped > 0 && node.attribute("count").is_some() {
+        moved.insert("count", elements.to_string());
+    }
     out.push('<');
     out.push_str(name.name());
     for a in node.attributes() {
-        write_attr(out, a, ids)?;
+        match moved.get(a.name()).filter(|_| a.namespace().is_none()) {
+            Some(v) => out.push_str(&format!(" {}=\"{}\"", a.name(), esc_attr(v))),
+            None => write_attr(out, a, ids)?,
+        }
     }
-    let children: Vec<Node> = node
-        .children()
-        .filter(|c| skip.is_none_or(|name| !is_main(*c, name)))
-        .collect();
-    if children.is_empty() {
+    if inner.is_empty() {
         out.push_str("/>");
-        return Ok(());
+        return Ok(true);
     }
     out.push('>');
-    for child in children {
-        write_node(child, out, ids)?;
-    }
+    out.push_str(&inner);
     out.push_str("</");
     out.push_str(name.name());
     out.push('>');
-    Ok(())
+    Ok(true)
+}
+
+/// The markup of `node` as written in `src`, with the namespace declarations
+/// it inherits added to its start tag, so it can be moved into another
+/// document whose default namespace is SpreadsheetML.
+fn verbatim(node: Node, src: &str) -> Result<String, String> {
+    let range = node.range();
+    let text = &src[range.clone()];
+    let parent = node.parent();
+    let inherited = |ns: &roxmltree::Namespace| {
+        parent.is_some_and(|p| {
+            p.namespaces()
+                .any(|q| q.name() == ns.name() && q.uri() == ns.uri())
+        })
+    };
+    let name_end = text
+        .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+        .ok_or("broken start tag")?;
+    let start_tag = &text[..text.find('>').ok_or("broken start tag")?];
+    let mut decls = String::new();
+    for ns in node.namespaces().filter(|ns| inherited(ns)) {
+        match ns.name() {
+            None if ns.uri() == NS_MAIN => {}
+            None => return Err("other default namespace".into()),
+            Some("xml") => {}
+            // Declared here already, or not used inside.
+            Some(prefix)
+                if start_tag.contains(&format!("xmlns:{prefix}="))
+                    || !text.contains(&format!("{prefix}:")) => {}
+            Some(prefix) => {
+                decls.push_str(&format!(" xmlns:{prefix}=\"{}\"", esc_attr(ns.uri())));
+            }
+        }
+    }
+    Ok(format!("{}{decls}{}", &text[..name_end], &text[name_end..]))
 }
 
 fn write_attr(
@@ -985,14 +1288,29 @@ fn esc_attr(s: &str) -> String {
 
 // ------------------------------------------------------------------ merging
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SheetKind {
+    Work,
+    Chart,
+}
+
 struct SheetEntry {
     name: String,
     sheet_id: u32,
     part: String,
+    kind: SheetKind,
+    /// Position among the workbook's `<sheet>` elements (what `localSheetId`
+    /// counts).
+    pos: usize,
+    /// The `<sheet>` element's `state`, if any.
+    state: Option<String>,
+    /// The relationship type of the sheet part.
+    rel_kind: String,
 }
 
-/// The workbook part (from `_rels/.rels`) and its worksheets in tab order.
-/// Chart sheets and sheets whose part can't be resolved are left out.
+/// The workbook part (from `_rels/.rels`) and its worksheets and chart sheets
+/// in tab order. Sheets whose part can't be resolved (and dialog sheets) are
+/// left out.
 fn workbook_sheets(
     root_rels: &[Rel],
     read: &dyn Fn(&str) -> Result<Option<String>, String>,
@@ -1009,14 +1327,20 @@ fn workbook_sheets(
     };
     let doc = Document::parse(&wb_xml).map_err(|e| format!("{wb}: {e}"))?;
     let mut sheets = Vec::new();
-    for s in doc.descendants().filter(|n| is_main(*n, "sheet")) {
-        let rid = s
-            .attributes()
-            .find(|a| matches!(a.namespace(), Some(NS_R) | Some(NS_R_STRICT)) && a.name() == "id")
-            .map(|a| a.value());
+    for (pos, s) in doc
+        .descendants()
+        .filter(|n| is_main(*n, "sheet"))
+        .enumerate()
+    {
+        let rid = sheet_rid(s);
         let rel = rid.and_then(|id| wb_rels.iter().find(|r| r.id == id));
-        let Some(rel) = rel.filter(|r| r.short_kind() == "worksheet" && !r.external) else {
+        let Some(rel) = rel.filter(|r| !r.external) else {
             continue;
+        };
+        let kind = match rel.short_kind() {
+            "worksheet" => SheetKind::Work,
+            "chartsheet" => SheetKind::Chart,
+            _ => continue,
         };
         let (Some(name), Some(id), Some(part)) = (
             s.attribute("name"),
@@ -1029,9 +1353,65 @@ fn workbook_sheets(
             name: name.to_owned(),
             sheet_id: id,
             part,
+            kind,
+            pos,
+            state: s.attribute("state").map(str::to_owned),
+            rel_kind: rel.kind.clone(),
         });
     }
     Ok((wb, wb_rels, wb_xml, sheets))
+}
+
+fn sheet_rid<'a>(s: Node<'a, '_>) -> Option<&'a str> {
+    s.attributes()
+        .find(|a| matches!(a.namespace(), Some(NS_R) | Some(NS_R_STRICT)) && a.name() == "id")
+        .map(|a| a.value())
+}
+
+/// A worksheet's XML with the inside of `<sheetData>` left out: all the merge
+/// looks at, and cheap to parse however many cells the sheet has.
+struct Skeleton {
+    xml: String,
+    /// `(offset, length)` of the cells left out, in the full XML.
+    cut: Option<(usize, usize)>,
+}
+
+impl Skeleton {
+    fn new(full: &str) -> Skeleton {
+        let cut = (|| {
+            let open = full
+                .match_indices("<sheetData")
+                .map(|(i, _)| i)
+                .find(|&i| {
+                    full[i + "<sheetData".len()..]
+                        .starts_with(|c: char| c == '>' || c == '/' || c.is_whitespace())
+                })?;
+            let gt = open + full[open..].find('>')?;
+            if full.as_bytes()[gt - 1] == b'/' {
+                return None;
+            }
+            let close = full.rfind("</sheetData>")?;
+            (close > gt).then_some((gt + 1, close - gt - 1))
+        })();
+        match cut {
+            Some((at, len)) => Skeleton {
+                xml: format!("{}{}", &full[..at], &full[at + len..]),
+                cut,
+            },
+            None => Skeleton {
+                xml: full.to_owned(),
+                cut: None,
+            },
+        }
+    }
+
+    /// An offset in [`Skeleton::xml`] as an offset in the full XML.
+    fn full_offset(&self, at: usize) -> usize {
+        match self.cut {
+            Some((cut, len)) if at > cut => at + len,
+            _ => at,
+        }
+    }
 }
 
 /// What gets added to the new package.
@@ -1043,14 +1423,32 @@ struct Merge<'o, 'a> {
     copy: BTreeSet<String>,
     /// Lower-cased names of parts IronCalc wrote.
     written: HashSet<String>,
+    /// Parts copied with changes (tables with renamed columns or moved).
+    replaced: HashMap<String, Vec<u8>>,
+    /// The sheet (`sheetId`) a carried part belongs to, for parts whose
+    /// references are relative to it (comments, drawings, tables).
+    home: HashMap<String, u32>,
+    /// Sheet names of the original (lower case) -> `sheetId`.
+    sheets: HashMap<String, u32>,
+    moves: &'o Moves,
 }
 
 impl Merge<'_, '_> {
     /// Plan copying `part` and everything it links to. Nothing is planned if
     /// any of it can't be carried.
     fn carry(&mut self, part: &str) -> Result<(), String> {
+        self.carry_for(part, None)
+    }
+
+    /// [`Merge::carry`], noting that the new parts belong to sheet `home`.
+    fn carry_for(&mut self, part: &str, home: Option<u32>) -> Result<(), String> {
         let mut plan = self.copy.clone();
         self.carry_into(part, &mut plan)?;
+        if let Some(home) = home {
+            for p in plan.difference(&self.copy) {
+                self.home.entry(p.clone()).or_insert(home);
+            }
+        }
         self.copy = plan;
         Ok(())
     }
@@ -1100,19 +1498,37 @@ impl Merge<'_, '_> {
         Ok(())
     }
 
-    /// Copy the planned parts and register their content types.
-    fn apply(&self, new: &mut Package) -> Result<(), String> {
+    /// Copy the planned parts and register their content types. Parts with
+    /// cell references follow the rows and columns that moved.
+    fn apply(&self, new: &mut Package, notes: &mut Vec<String>) -> Result<(), String> {
         let mut ct_entries = String::new();
         let mut added_defaults: HashSet<String> = HashSet::new();
         for part in &self.copy {
-            let data = self
-                .orig
-                .get(part)?
-                .ok_or_else(|| format!("{part} vanished"))?;
+            let data = match self.replaced.get(part) {
+                Some(d) => d.clone(),
+                None => self
+                    .orig
+                    .get(part)?
+                    .ok_or_else(|| format!("{part} vanished"))?,
+            };
             let kind = self
                 .orig_ct
                 .of(part)
                 .ok_or_else(|| format!("{part} has no content type"))?;
+            let data = if self.moves.is_empty() || self.replaced.contains_key(part) {
+                data
+            } else {
+                match move_part(part, kind, &data, self.home.get(part).copied(), self) {
+                    Ok(Some(moved)) => moved,
+                    Ok(None) => data,
+                    Err(e) => {
+                        notes.push(format!(
+                            "{part}: could not follow the inserted or deleted rows and columns ({e}); kept as it was"
+                        ));
+                        data
+                    }
+                }
+            };
             new.set(part, data);
             if self.new_ct.of(part) == Some(kind) {
                 continue;
@@ -1155,7 +1571,16 @@ impl Merge<'_, '_> {
 }
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
-    hay.windows(needle.len()).any(|w| w == needle)
+    memmem(hay, needle)
+}
+
+/// Whether `needle` occurs in `hay` (as text when both are UTF-8: the
+/// standard library's substring search is much faster than a byte window).
+fn memmem(hay: &[u8], needle: &[u8]) -> bool {
+    match (std::str::from_utf8(hay), std::str::from_utf8(needle)) {
+        (Ok(h), Ok(n)) => h.contains(n),
+        _ => hay.windows(needle.len()).any(|w| w == needle),
+    }
 }
 
 /// Relationships to add to one rels part of the new package.
@@ -1166,7 +1591,12 @@ struct RelAdds {
 
 /// Carry what IronCalc dropped from `original` into `new`. Returns whether
 /// anything was added.
-fn merge(new: &mut Package, original: &[u8], notes: &mut Vec<String>) -> Result<bool, String> {
+fn merge(
+    new: &mut Package,
+    original: &[u8],
+    ctx: &Context,
+    notes: &mut Vec<String>,
+) -> Result<bool, String> {
     let orig = Original::new(original)?;
     let orig_ct = ContentTypes::parse(
         &orig
@@ -1175,15 +1605,6 @@ fn merge(new: &mut Package, original: &[u8], notes: &mut Vec<String>) -> Result<
     )?;
     let new_ct = ContentTypes::parse(new.text(CONTENT_TYPES)?.ok_or("no content types")?)?;
     let written: HashSet<String> = new.parts().map(str::to_lowercase).collect();
-    let mut m = Merge {
-        orig: &orig,
-        orig_ct,
-        new_ct,
-        copy: BTreeSet::new(),
-        written,
-    };
-    let mut adds: Vec<RelAdds> = Vec::new();
-    let mut sheet_edits: Vec<(String, Vec<Insert>)> = Vec::new();
 
     // Package level.
     let orig_root = parse_rels(
@@ -1192,6 +1613,29 @@ fn merge(new: &mut Package, original: &[u8], notes: &mut Vec<String>) -> Result<
             .ok_or("original has no _rels/.rels")?,
     )?;
     let new_root = parse_rels(new.text("_rels/.rels")?.ok_or("no _rels/.rels")?)?;
+    let orig_read = |p: &str| orig.text(p);
+    let (orig_wb, orig_wb_rels, orig_wb_xml, orig_sheets) =
+        workbook_sheets(&orig_root, &orig_read)?;
+    let new_read = |p: &str| Ok(new.text(p)?.map(str::to_owned));
+    let (new_wb, new_wb_rels, new_wb_xml, new_sheets) = workbook_sheets(&new_root, &new_read)?;
+
+    let mut m = Merge {
+        orig: &orig,
+        orig_ct,
+        new_ct,
+        copy: BTreeSet::new(),
+        written,
+        replaced: HashMap::new(),
+        home: HashMap::new(),
+        sheets: orig_sheets
+            .iter()
+            .map(|s| (s.name.to_lowercase(), s.sheet_id))
+            .collect(),
+        moves: ctx.moves,
+    };
+    let mut adds: Vec<RelAdds> = Vec::new();
+    let mut sheet_edits: Vec<(String, Vec<Insert>)> = Vec::new();
+
     let none = BTreeSet::new();
     adds.push(carry_implicit(
         &mut m,
@@ -1207,16 +1651,35 @@ fn merge(new: &mut Package, original: &[u8], notes: &mut Vec<String>) -> Result<
         notes,
     ));
 
+    // Chart sheets (IronCalc has no chart sheets): their parts, and where
+    // they go in the new workbook's sheet list.
+    let mut wb_ids = IdAlloc::new(&new_wb_rels);
+    let charts = carry_chart_sheets(
+        &mut m,
+        &orig_sheets,
+        &new_sheets,
+        &new_wb,
+        &mut wb_ids,
+        notes,
+    );
+    let chart_rids: BTreeSet<String> = orig_sheets
+        .iter()
+        .filter(|s| s.kind == SheetKind::Chart)
+        .filter_map(|s| {
+            orig_wb_rels
+                .iter()
+                .find(|r| resolve(&orig_wb, &r.target).as_deref() == Some(s.part.as_str()))
+                .map(|r| r.id.clone())
+        })
+        .collect();
+
     // Workbook level.
-    let orig_read = |p: &str| orig.text(p);
-    let (orig_wb, orig_wb_rels, orig_wb_xml, orig_sheets) =
-        workbook_sheets(&orig_root, &orig_read)?;
-    let new_read = |p: &str| Ok(new.text(p)?.map(str::to_owned));
-    let (new_wb, new_wb_rels, _, new_sheets) = workbook_sheets(&new_root, &new_read)?;
     let wb_refs = Document::parse(&orig_wb_xml)
         .map(|d| rel_refs(d.root()))
         .map_err(|e| format!("{orig_wb}: {e}"))?;
-    adds.push(carry_implicit(
+    // Chart sheets not kept were reported by `carry_chart_sheets`.
+    let quiet = chart_rids;
+    let mut wb_adds = carry_implicit(
         &mut m,
         Level {
             label: "workbook",
@@ -1225,15 +1688,25 @@ fn merge(new: &mut Package, original: &[u8], notes: &mut Vec<String>) -> Result<
             orig_rels: &orig_wb_rels,
             new_rels: &new_wb_rels,
             explicit: &wb_refs,
-            quiet: &none,
+            quiet: &quiet,
         },
         notes,
-    ));
+    );
+    // The chart sheets' ids were taken first; keep the implicit ones unique.
+    let mut taken: HashSet<String> = charts.iter().map(|c| c.rel.id.clone()).collect();
+    for r in &mut wb_adds.rels {
+        while taken.contains(&r.id) {
+            r.id = wb_ids.next();
+        }
+        taken.insert(r.id.clone());
+    }
+    wb_adds.rels.extend(charts.iter().map(|c| c.rel.clone()));
+    adds.push(wb_adds);
 
     // Sheet level, matched by sheetId.
     let mut ids_seen = HashSet::new();
     let unique_ids = orig_sheets.iter().all(|s| ids_seen.insert(s.sheet_id));
-    for os in &orig_sheets {
+    for os in orig_sheets.iter().filter(|s| s.kind == SheetKind::Work) {
         let Some(ns) = new_sheets.iter().find(|n| n.sheet_id == os.sheet_id) else {
             if orig.has(&rels_part(&os.part)) {
                 notes.push(format!(
@@ -1250,7 +1723,7 @@ fn merge(new: &mut Package, original: &[u8], notes: &mut Vec<String>) -> Result<
             ));
             continue;
         }
-        if let Some((add, edit)) = carry_sheet(&mut m, new, os, ns, notes)? {
+        if let Some((add, edit)) = carry_sheet(&mut m, new, os, ns, ctx, notes)? {
             adds.push(add);
             if !edit.is_empty() {
                 sheet_edits.push((ns.part.clone(), edit));
@@ -1258,10 +1731,27 @@ fn merge(new: &mut Package, original: &[u8], notes: &mut Vec<String>) -> Result<
         }
     }
 
-    if m.copy.is_empty() && adds.iter().all(|a| a.rels.is_empty()) && sheet_edits.is_empty() {
+    // The workbook part: chart sheets in the sheet list, sheet positions,
+    // and what defined names had that IronCalc doesn't keep.
+    let wb_edit = edit_workbook(
+        &new_wb_xml,
+        &orig_wb_xml,
+        &orig_sheets,
+        &new_sheets,
+        &charts,
+        ctx.moves,
+        &m.sheets,
+        notes,
+    )?;
+
+    if m.copy.is_empty()
+        && adds.iter().all(|a| a.rels.is_empty())
+        && sheet_edits.is_empty()
+        && wb_edit.is_none()
+    {
         return Ok(false);
     }
-    m.apply(new)?;
+    m.apply(new, notes)?;
     for add in adds.into_iter().filter(|a| !a.rels.is_empty()) {
         let rp = rels_part(&add.source);
         let mut rels = match new.text(&rp)? {
@@ -1272,18 +1762,19 @@ fn merge(new: &mut Package, original: &[u8], notes: &mut Vec<String>) -> Result<
         new.set(&rp, write_rels(&rels).into_bytes());
     }
     for (part, edits) in sheet_edits {
-        let xml = new.text(&part)?.ok_or("sheet vanished")?;
-        let mut out = String::with_capacity(xml.len() + 1024);
-        let mut last = 0;
+        // In place: a big sheet is not copied (the inserts are small and
+        // mostly near its end).
+        let mut xml = new.take_text(&part)?.ok_or("sheet vanished")?;
         let mut edits = edits;
-        edits.sort_by_key(|(at, order, _)| (*at, *order));
+        edits.sort_by_key(|(at, order, _)| std::cmp::Reverse((*at, *order)));
+        xml.reserve_exact(edits.iter().map(|(_, _, t)| t.len()).sum());
         for (at, _, text) in edits {
-            out.push_str(&xml[last..at]);
-            out.push_str(&text);
-            last = at;
+            xml.insert_str(at, &text);
         }
-        out.push_str(&xml[last..]);
-        new.set(&part, out.into_bytes());
+        new.set(&part, xml.into_bytes());
+    }
+    if let Some(xml) = wb_edit {
+        new.set(&new_wb, xml.into_bytes());
     }
     Ok(true)
 }
@@ -1305,6 +1796,15 @@ struct Level<'r> {
 /// Carry relationships of `orig_source` that its markup doesn't reference
 /// (listed in `explicit`), whose type the new package doesn't already have.
 fn carry_implicit(m: &mut Merge, level: Level, notes: &mut Vec<String>) -> RelAdds {
+    carry_implicit_for(m, level, None, notes)
+}
+
+fn carry_implicit_for(
+    m: &mut Merge,
+    level: Level,
+    home: Option<u32>,
+    notes: &mut Vec<String>,
+) -> RelAdds {
     let Level {
         label,
         orig_source,
@@ -1344,7 +1844,7 @@ fn carry_implicit(m: &mut Merge, level: Level, notes: &mut Vec<String>) -> RelAd
             notes.push(format!("{label}: comments at {target} are not kept"));
             continue;
         }
-        match m.carry(&target) {
+        match m.carry_for(&target, home) {
             Ok(()) => out.push(Rel {
                 id: ids.next(),
                 kind: r.kind.clone(),
@@ -1366,26 +1866,80 @@ type Insert = (usize, usize, String);
 /// Relationships to add, and insertions into the sheet XML.
 type SheetCarry = (RelAdds, Vec<Insert>);
 
+/// Plan the relationships an element of the original sheet uses (`refs`):
+/// their targets are carried, and new ids allocated. Returns the id map and
+/// the relationships to add; on failure nothing stays planned.
+fn plan_rels(
+    m: &mut Merge,
+    refs: BTreeSet<String>,
+    orig_rels: &[Rel],
+    os: &SheetEntry,
+    ns: &SheetEntry,
+    ids: &mut IdAlloc,
+) -> Result<(HashMap<String, String>, Vec<Rel>), String> {
+    let saved_copy = m.copy.clone();
+    let saved_home = m.home.clone();
+    let result = (|| {
+        let mut map = HashMap::new();
+        let mut rels = Vec::new();
+        for id in refs {
+            let r = orig_rels
+                .iter()
+                .find(|r| r.id == id)
+                .ok_or_else(|| format!("relationship {id} is missing"))?;
+            if NEVER_CARRY.contains(&r.short_kind()) || r.short_kind() == "hyperlink" {
+                return Err(format!("uses a {}", r.short_kind()));
+            }
+            let new_id = ids.next();
+            if r.external {
+                rels.push(Rel {
+                    id: new_id.clone(),
+                    ..r.clone()
+                });
+            } else {
+                let target = resolve(&os.part, &r.target)
+                    .ok_or_else(|| format!("can't follow target {}", r.target))?;
+                m.carry_for(&target, Some(os.sheet_id))?;
+                rels.push(Rel {
+                    id: new_id.clone(),
+                    kind: r.kind.clone(),
+                    target: relative(&ns.part, &target),
+                    external: false,
+                });
+            }
+            map.insert(id, new_id);
+        }
+        Ok((map, rels))
+    })();
+    if result.is_err() {
+        m.copy = saved_copy;
+        m.home = saved_home;
+    }
+    result
+}
+
 /// Carry one sheet's relationships and elements.
 fn carry_sheet(
     m: &mut Merge,
     new: &Package,
     os: &SheetEntry,
     ns: &SheetEntry,
+    ctx: &Context,
     notes: &mut Vec<String>,
 ) -> Result<Option<SheetCarry>, String> {
     let orig_rels = match m.orig.text(&rels_part(&os.part))? {
         Some(x) => parse_rels(&x).map_err(|e| format!("{}: {e}", os.part))?,
         None => Vec::new(),
     };
-    let Some(orig_xml) = m.orig.text(&os.part)? else {
+    let Some(orig_sk) = m.orig.skeleton(&os.part)? else {
         return Ok(None);
     };
-    let might_carry = CARRIED_ELEMENTS.iter().any(|e| orig_xml.contains(e));
+    let might_carry = CARRIED_ELEMENTS.iter().any(|e| orig_sk.xml.contains(e));
     if orig_rels.is_empty() && !might_carry {
         return Ok(None);
     }
-    let orig_doc = Document::parse(&orig_xml).map_err(|e| format!("sheet {:?}: {e}", os.name))?;
+    let orig_doc =
+        Document::parse(&orig_sk.xml).map_err(|e| format!("sheet {:?}: {e}", os.name))?;
     let orig_root = orig_doc.root_element();
     let new_rels = match new.text(&rels_part(&ns.part))? {
         Some(x) => parse_rels(x)?,
@@ -1405,7 +1959,7 @@ fn carry_sheet(
         })
         .flat_map(rel_refs)
         .collect();
-    let mut adds = carry_implicit(
+    let mut adds = carry_implicit_for(
         m,
         Level {
             label: &label,
@@ -1416,12 +1970,13 @@ fn carry_sheet(
             explicit: &explicit,
             quiet: &element_refs,
         },
+        Some(os.sheet_id),
         notes,
     );
 
     // Elements IronCalc doesn't write, with the relationships they use.
-    let new_xml = new.text(&ns.part)?.ok_or("saved sheet is missing")?;
-    let new_doc = Document::parse(new_xml).map_err(|e| format!("saved {label}: {e}"))?;
+    let new_sk = Skeleton::new(new.text(&ns.part)?.ok_or("saved sheet is missing")?);
+    let new_doc = Document::parse(&new_sk.xml).map_err(|e| format!("saved {label}: {e}"))?;
     let new_root = new_doc.root_element();
     let mut present: Vec<(usize, usize)> = Vec::new(); // (schema index, start offset)
     for child in new_root.children().filter(|n| n.is_element()) {
@@ -1434,7 +1989,7 @@ fn carry_sheet(
         };
         present.push((i, child.range().start));
     }
-    let close = new_xml[..new_root.range().end]
+    let close = new_sk.xml[..new_root.range().end]
         .rfind("</")
         .filter(|&i| i > new_root.range().start)
         .ok_or("saved sheet is not closed")?;
@@ -1442,6 +1997,12 @@ fn carry_sheet(
     let mut ids = IdAlloc::new(&[new_rels.as_slice(), adds.rels.as_slice()].concat());
     let bindings_ok = new_root.lookup_namespace_uri(None) == Some(NS_MAIN)
         && new_root.lookup_namespace_uri(Some("r")) == Some(NS_R);
+    let sheet_ids = m.sheets.clone();
+    let rw = Rewrite {
+        moves: ctx.moves,
+        home: os.sheet_id,
+        sheets: &sheet_ids,
+    };
     let mut inserts: Vec<Insert> = Vec::new();
     for child in orig_root.children().filter(|n| n.is_element()) {
         let local = child.tag_name().name();
@@ -1452,76 +2013,919 @@ fn carry_sheet(
             .iter()
             .position(|e| *e == local)
             .expect("carried elements are in the schema order");
-        if present.iter().any(|(i, _)| *i == order) {
-            continue;
-        }
-        // Plan the relationships this element uses.
-        let mut map = HashMap::new();
-        let mut rels = Vec::new();
-        let saved_copy = m.copy.clone();
-        let mut failed = None;
-        for id in rel_refs(child) {
-            let Some(r) = orig_rels.iter().find(|r| r.id == id) else {
-                failed = Some(format!("relationship {id} is missing"));
-                break;
-            };
-            if NEVER_CARRY.contains(&r.short_kind()) || r.short_kind() == "hyperlink" {
-                failed = Some(format!("uses a {}", r.short_kind()));
-                break;
-            }
-            let new_id = ids.next();
-            if r.external {
-                rels.push(Rel {
-                    id: new_id.clone(),
-                    ..r.clone()
-                });
-            } else {
-                let target = match resolve(&os.part, &r.target) {
-                    Some(t) => t,
-                    None => {
-                        failed = Some(format!("can't follow target {}", r.target));
-                        break;
-                    }
-                };
-                if let Err(e) = m.carry(&target) {
-                    failed = Some(e);
-                    break;
+        let existing = present.iter().find(|(i, _)| *i == order).map(|(_, at)| *at);
+        if local == "extLst" {
+            let at_end = existing.map(|_| {
+                let n = new_root
+                    .children()
+                    .find(|c| is_main(*c, "extLst"))
+                    .expect("present");
+                n.range().end - "</extLst>".len()
+            });
+            let exts = match carry_extensions(child, new_root, &orig_sk.xml, &rw) {
+                Ok(e) => e,
+                Err(e) => {
+                    notes.push(format!("{label}: <extLst> not kept: {e}"));
+                    continue;
                 }
-                rels.push(Rel {
-                    id: new_id.clone(),
-                    kind: r.kind.clone(),
-                    target: relative(&ns.part, &target),
-                    external: false,
-                });
+            };
+            for skipped in &exts.skipped {
+                notes.push(format!("{label}: extension {skipped} not kept"));
             }
-            map.insert(id, new_id);
-        }
-        let mut text = String::new();
-        if failed.is_none() && !bindings_ok {
-            failed = Some("saved sheet uses other namespace prefixes".into());
-        }
-        let skip = (local == "sheetPr").then_some("tabColor");
-        if failed.is_none()
-            && let Err(e) = write_node_without(child, &mut text, &map, skip)
-        {
-            failed = Some(e);
-        }
-        if let Some(why) = failed {
-            m.copy = saved_copy;
-            notes.push(format!("{label}: <{local}> not kept: {why}"));
+            if exts.text.is_empty() {
+                continue;
+            }
+            match at_end {
+                // Into IronCalc's own extLst, before it closes.
+                Some(at) if new_sk.xml[at..].starts_with("</extLst>") => {
+                    inserts.push((new_sk.full_offset(at), order, exts.text));
+                }
+                Some(_) => notes.push(format!("{label}: <extLst> not kept: unexpected markup")),
+                None => {
+                    let at = insert_point(&present, order, close);
+                    inserts.push((
+                        new_sk.full_offset(at),
+                        order,
+                        format!("<extLst>{}</extLst>", exts.text),
+                    ));
+                    present.push((order, at));
+                }
+            }
             continue;
         }
-        let at = present
-            .iter()
-            .filter(|(i, _)| *i > order)
-            .map(|(_, at)| *at)
-            .min()
-            .unwrap_or(close);
-        inserts.push((at, order, text));
+        if existing.is_some() {
+            continue;
+        }
+        if !bindings_ok {
+            notes.push(format!(
+                "{label}: <{local}> not kept: saved sheet uses other namespace prefixes"
+            ));
+            continue;
+        }
+        let text = if local == "tableParts" {
+            match carry_tables(m, child, &orig_rels, os, ns, &mut ids, ctx, notes) {
+                Some((text, rels)) => {
+                    adds.rels.extend(rels);
+                    text
+                }
+                None => continue,
+            }
+        } else {
+            // Plan the relationships this element uses.
+            let (saved_copy, saved_home) = (m.copy.clone(), m.home.clone());
+            let (map, rels) = match plan_rels(m, rel_refs(child), &orig_rels, os, ns, &mut ids) {
+                Ok(planned) => planned,
+                Err(why) => {
+                    notes.push(format!("{label}: <{local}> not kept: {why}"));
+                    continue;
+                }
+            };
+            let mut text = String::new();
+            let skip = (local == "sheetPr").then_some("tabColor");
+            match write_node_without(child, &mut text, &map, skip, Some(&rw)) {
+                Ok(true) => {}
+                Ok(false) => {
+                    (m.copy, m.home) = (saved_copy, saved_home);
+                    notes.push(format!(
+                        "{label}: <{local}> dropped: the cells it applied to were deleted"
+                    ));
+                    continue;
+                }
+                Err(e) => {
+                    (m.copy, m.home) = (saved_copy, saved_home);
+                    notes.push(format!("{label}: <{local}> not kept: {e}"));
+                    continue;
+                }
+            }
+            adds.rels.extend(rels);
+            text
+        };
+        let at = insert_point(&present, order, close);
+        inserts.push((new_sk.full_offset(at), order, text));
         present.push((order, at));
-        adds.rels.extend(rels);
     }
     Ok(Some((adds, inserts)))
+}
+
+/// Where an element of schema index `order` goes: before the first present
+/// element that comes after it, else before the root closes.
+fn insert_point(present: &[(usize, usize)], order: usize, close: usize) -> usize {
+    present
+        .iter()
+        .filter(|(i, _)| *i > order)
+        .map(|(_, at)| *at)
+        .min()
+        .unwrap_or(close)
+}
+
+// ------------------------------------------------------------------ tables
+
+/// Carry the tables of `<tableParts>` that still fit their sheet: the
+/// element to insert and the relationships it uses, or `None` if no table is
+/// kept. Tables follow moved rows and columns; a table whose columns were
+/// split, or whose header row or every cell was deleted, is dropped. Header
+/// cells that were edited rename their column (as Excel does); an empty or
+/// duplicate header drops the table (Excel would repair the file).
+#[allow(clippy::too_many_arguments)]
+fn carry_tables(
+    m: &mut Merge,
+    parts: Node,
+    orig_rels: &[Rel],
+    os: &SheetEntry,
+    ns: &SheetEntry,
+    ids: &mut IdAlloc,
+    ctx: &Context,
+    notes: &mut Vec<String>,
+) -> Option<(String, Vec<Rel>)> {
+    let label = format!("sheet {:?}", os.name);
+    let mut text = String::new();
+    let mut rels = Vec::new();
+    let mut kept = 0;
+    for tp in parts.children().filter(|c| is_main(*c, "tablePart")) {
+        let refs = rel_refs(tp);
+        let target = refs.iter().next().and_then(|id| {
+            orig_rels
+                .iter()
+                .find(|r| &r.id == id && !r.external)
+                .and_then(|r| resolve(&os.part, &r.target))
+        });
+        let Some(target) = target else {
+            notes.push(format!("{label}: a table not kept: broken relationship"));
+            continue;
+        };
+        let fitted = m
+            .orig
+            .text(&target)
+            .and_then(|xml| xml.ok_or_else(|| "missing".to_owned()))
+            .and_then(|xml| fit_table(&xml, os.sheet_id, ctx));
+        let table = match fitted {
+            Ok(t) => t,
+            Err(e) => {
+                notes.push(format!("{label}: table {target} not kept: {e}"));
+                continue;
+            }
+        };
+        if let Some(bytes) = table {
+            m.replaced.insert(target.clone(), bytes);
+        }
+        match plan_rels(m, refs, orig_rels, os, ns, ids) {
+            Ok((map, r)) => {
+                let mut one = String::new();
+                if let Err(e) = write_node(tp, &mut one, &map) {
+                    notes.push(format!("{label}: table {target} not kept: {e}"));
+                    m.replaced.remove(&target);
+                    continue;
+                }
+                text.push_str(&one);
+                rels.extend(r);
+                kept += 1;
+            }
+            Err(e) => {
+                m.replaced.remove(&target);
+                notes.push(format!("{label}: table {target} not kept: {e}"));
+            }
+        }
+    }
+    (kept > 0).then(|| {
+        (
+            format!("<tableParts count=\"{kept}\">{text}</tableParts>"),
+            rels,
+        )
+    })
+}
+
+/// A table part fitted to the saved sheet: `Ok(None)` if it can be copied as
+/// is, `Ok(Some(xml))` if it changed, `Err` if it can't be kept.
+fn fit_table(xml: &str, sheet: u32, ctx: &Context) -> Result<Option<Vec<u8>>, String> {
+    let doc = Document::parse(xml).map_err(|e| e.to_string())?;
+    let table = doc.root_element();
+    if !is_main(table, "table") {
+        return Err("not a table".into());
+    }
+    let reference = table.attribute("ref").ok_or("no ref")?;
+    let area = parse_range(reference).ok_or("unreadable ref")?.area();
+    let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+    let moves = ctx.moves;
+    let new_area = if moves.touches(sheet) {
+        if moves.splits_columns(sheet, area) {
+            return Err("columns were inserted or deleted inside it".into());
+        }
+        let header_rows: u32 = table
+            .attribute("headerRowCount")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+        if header_rows > 0 && moves.cell(sheet, area.top, area.left).is_none() {
+            return Err("its header row was deleted".into());
+        }
+        let moved = moves.area(sheet, area).ok_or("its cells were deleted")?;
+        // The table itself, and the ranges of its filter and sort.
+        for n in table.descendants().filter(|n| n.is_element()) {
+            for a in n.attributes().filter(|a| a.namespace().is_none()) {
+                let is_range = a.name() == "ref"
+                    && matches!(
+                        n.tag_name().name(),
+                        "table" | "autoFilter" | "sortState" | "sortCondition"
+                    );
+                if is_range {
+                    let v = moves
+                        .sqref(sheet, a.value())
+                        .ok_or("its cells were deleted")?;
+                    if v != a.value() {
+                        edits.push((a.range_value(), esc_attr(&v)));
+                    }
+                }
+            }
+        }
+        moved
+    } else {
+        area
+    };
+    // Header cells must match the column names.
+    let header_rows: u32 = table
+        .attribute("headerRowCount")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    let columns: Vec<Node> = table
+        .children()
+        .find(|c| is_main(*c, "tableColumns"))
+        .map(|c| {
+            c.children()
+                .filter(|n| is_main(*n, "tableColumn"))
+                .collect()
+        })
+        .unwrap_or_default();
+    if columns.len() as u32 != new_area.right - new_area.left + 1 {
+        return Err("its columns don't match its range".into());
+    }
+    if header_rows > 0 {
+        let mut renames: Vec<(String, String)> = Vec::new();
+        let mut seen = HashSet::new();
+        for (i, col) in columns.iter().enumerate() {
+            let name = col.attribute("name").unwrap_or_default();
+            let cell = (ctx.cell_text)(sheet, new_area.top, new_area.left + i as u32);
+            if !seen.insert(cell.to_lowercase()) {
+                return Err(format!("two columns are called {cell:?}"));
+            }
+            if cell == name {
+                continue;
+            }
+            if cell.trim().is_empty() {
+                return Err(format!("the header of column {name:?} is empty"));
+            }
+            if cell.contains(['[', ']', '\'', '#', '@']) {
+                return Err(format!("the new header {cell:?} needs escaping"));
+            }
+            let attr = col
+                .attributes()
+                .find(|a| a.name() == "name" && a.namespace().is_none())
+                .ok_or("column without name")?;
+            edits.push((attr.range_value(), esc_attr(&cell)));
+            renames.push((name.to_owned(), cell));
+        }
+        if !renames.is_empty() {
+            for f in table.descendants().filter(|n| {
+                is_main(*n, "calculatedColumnFormula") || is_main(*n, "totalsRowFormula")
+            }) {
+                let Some(t) = f.first_child().filter(|t| t.is_text()) else {
+                    continue;
+                };
+                let mut text = t.text().unwrap_or_default().to_owned();
+                for (old, new) in &renames {
+                    // `[Units]`, `[@Units]`, `[[#This Row],Units]`.
+                    text = text
+                        .replace(&format!("[{old}]"), &format!("[{new}]"))
+                        .replace(&format!("[@{old}]"), &format!("[@{new}]"))
+                        .replace(&format!(",{old}]"), &format!(",{new}]"));
+                }
+                edits.push((t.range(), esc_text(&text)));
+            }
+        }
+    }
+    if edits.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(apply_edits(xml, edits).into_bytes()))
+}
+
+// ------------------------------------------------------------------ extensions
+
+struct Extensions {
+    /// `<ext>` elements to add.
+    text: String,
+    /// URIs not carried.
+    skipped: Vec<String>,
+}
+
+/// The `<ext>` children of the original `extLst` to carry: those IronCalc
+/// didn't write itself (by URI), without relationship ids, with references
+/// moved; sparklines, Excel 2010 data validations and other extensions.
+fn carry_extensions(
+    orig: Node,
+    new_root: Node,
+    src: &str,
+    rw: &Rewrite,
+) -> Result<Extensions, String> {
+    let written: HashSet<&str> = new_root
+        .children()
+        .filter(|c| is_main(*c, "extLst"))
+        .flat_map(|l| l.children())
+        .filter(|e| is_main(*e, "ext"))
+        .filter_map(|e| e.attribute("uri"))
+        .collect();
+    let mut out = Extensions {
+        text: String::new(),
+        skipped: Vec::new(),
+    };
+    for ext in orig.children().filter(|e| is_main(*e, "ext")) {
+        let uri = ext.attribute("uri").unwrap_or_default();
+        if written.contains(uri) || OWNED_EXTENSIONS.contains(&uri) {
+            continue;
+        }
+        if !rel_refs(ext).is_empty() {
+            out.skipped.push(format!("{uri} (it links to other parts)"));
+            continue;
+        }
+        let text = verbatim(ext, src)?;
+        let text = if rw.moves.is_empty() {
+            text
+        } else {
+            match move_extension(&text, rw) {
+                Ok(t) => t,
+                Err(e) => {
+                    out.skipped.push(format!("{uri} ({e})"));
+                    continue;
+                }
+            }
+        };
+        out.text.push_str(&text);
+    }
+    Ok(out)
+}
+
+/// An `<ext>` (as written by [`verbatim`]) with its `sqref`s and formulas
+/// moved: the item whose cells were all deleted (a sparkline, a validation)
+/// is left out.
+fn move_extension(xml: &str, rw: &Rewrite) -> Result<String, String> {
+    let doc = Document::parse(xml).map_err(|e| e.to_string())?;
+    let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+    let mut removed: Vec<std::ops::Range<usize>> = Vec::new();
+    for n in doc.descendants().filter(|n| n.is_element()) {
+        let Some(t) = n.first_child().filter(|t| t.is_text()) else {
+            continue;
+        };
+        if removed
+            .iter()
+            .any(|r| r.start <= n.range().start && n.range().end <= r.end)
+        {
+            continue;
+        }
+        let text = t.text().unwrap_or_default();
+        match n.tag_name().name() {
+            "sqref" => match rw.moves.sqref(rw.home, text) {
+                Some(v) if v != text => edits.push((t.range(), esc_text(&v))),
+                Some(_) => {}
+                None => {
+                    // The item this location belongs to goes.
+                    let item = n.parent().ok_or("sqref at the top")?;
+                    removed.push(item.range());
+                }
+            },
+            "f" => {
+                let v = rw.moves.formula(text, Some(rw.home), rw.sheets);
+                if v != text {
+                    edits.push((t.range(), esc_text(&v)));
+                }
+            }
+            _ => {}
+        }
+    }
+    edits.retain(|(r, _)| !removed.iter().any(|x| x.start <= r.start && r.end <= x.end));
+    edits.extend(removed.into_iter().map(|r| (r, String::new())));
+    Ok(apply_edits(xml, edits))
+}
+
+// ------------------------------------------------------------------ chart sheets
+
+/// A chart sheet carried into the new workbook.
+struct ChartSheet {
+    name: String,
+    sheet_id: u32,
+    state: Option<String>,
+    /// The workbook relationship to add.
+    rel: Rel,
+    /// Position in the original's sheet list.
+    orig_index: usize,
+}
+
+/// Plan the original's chart sheets (with their drawings and charts) and
+/// pick their sheet ids and relationship ids in the new workbook.
+fn carry_chart_sheets(
+    m: &mut Merge,
+    orig_sheets: &[SheetEntry],
+    new_sheets: &[SheetEntry],
+    new_wb: &str,
+    ids: &mut IdAlloc,
+    notes: &mut Vec<String>,
+) -> Vec<ChartSheet> {
+    let mut used_ids: HashSet<u32> = new_sheets.iter().map(|s| s.sheet_id).collect();
+    let mut max_id = orig_sheets
+        .iter()
+        .chain(new_sheets)
+        .map(|s| s.sheet_id)
+        .max()
+        .unwrap_or(0);
+    let names: HashSet<String> = new_sheets.iter().map(|s| s.name.to_lowercase()).collect();
+    let mut out = Vec::new();
+    for (i, cs) in orig_sheets.iter().enumerate() {
+        if cs.kind != SheetKind::Chart {
+            continue;
+        }
+        if names.contains(&cs.name.to_lowercase()) {
+            notes.push(format!(
+                "chart sheet {:?} not kept: a sheet has its name",
+                cs.name
+            ));
+            continue;
+        }
+        if let Err(e) = m.carry(&cs.part) {
+            notes.push(format!("chart sheet {:?} not kept: {e}", cs.name));
+            continue;
+        }
+        let sheet_id = if used_ids.contains(&cs.sheet_id) {
+            max_id += 1;
+            max_id
+        } else {
+            cs.sheet_id
+        };
+        used_ids.insert(sheet_id);
+        out.push(ChartSheet {
+            name: cs.name.clone(),
+            sheet_id,
+            state: cs.state.clone(),
+            rel: Rel {
+                id: ids.next(),
+                kind: cs.rel_kind.clone(),
+                target: relative(new_wb, &cs.part),
+                external: false,
+            },
+            orig_index: i,
+        });
+    }
+    out
+}
+
+/// A sheet of the saved workbook's list.
+enum Slot<'a> {
+    /// IronCalc's sheet, by its index.
+    New(usize),
+    Chart(&'a ChartSheet),
+}
+
+/// The new workbook's sheets with the chart sheets put back where they were:
+/// after the nearest sheet before them that still exists.
+fn sheet_slots<'a>(
+    orig_sheets: &[SheetEntry],
+    new_sheets: &[SheetEntry],
+    charts: &'a [ChartSheet],
+) -> Vec<Slot<'a>> {
+    let mut slots: Vec<Slot> = (0..new_sheets.len()).map(Slot::New).collect();
+    for cs in charts {
+        let before = orig_sheets[..cs.orig_index]
+            .iter()
+            .rev()
+            .filter(|s| s.kind == SheetKind::Work)
+            .find_map(|s| new_sheets.iter().position(|n| n.sheet_id == s.sheet_id));
+        let mut at = match before {
+            Some(n) => {
+                slots
+                    .iter()
+                    .position(|s| matches!(s, Slot::New(i) if *i == n))
+                    .expect("present")
+                    + 1
+            }
+            None => 0,
+        };
+        // After chart sheets put there before (they came first).
+        while matches!(slots.get(at), Some(Slot::Chart(c)) if c.orig_index < cs.orig_index) {
+            at += 1;
+        }
+        slots.insert(at, Slot::Chart(cs));
+    }
+    slots
+}
+
+// ------------------------------------------------------------------ workbook part
+
+/// Defined-name attributes IronCalc doesn't keep, copied from the original.
+const NAME_ATTRIBUTES: [&str; 13] = [
+    "hidden",
+    "comment",
+    "customMenu",
+    "description",
+    "help",
+    "statusBar",
+    "function",
+    "vbProcedure",
+    "xlm",
+    "functionGroupId",
+    "shortcutKey",
+    "publishToServer",
+    "workbookParameter",
+];
+
+/// The new workbook part with chart sheets in its sheet list (and every
+/// sheet index that counts them: `localSheetId`, `activeTab`), defined-name
+/// attributes IronCalc drops (`hidden` on `_xlnm._FilterDatabase`...), and
+/// built-in or hidden names it dropped. `None` if nothing changes.
+#[allow(clippy::too_many_arguments)]
+fn edit_workbook(
+    new_xml: &str,
+    orig_xml: &str,
+    orig_sheets: &[SheetEntry],
+    new_sheets: &[SheetEntry],
+    charts: &[ChartSheet],
+    moves: &Moves,
+    sheet_ids: &HashMap<String, u32>,
+    notes: &mut Vec<String>,
+) -> Result<Option<String>, String> {
+    let doc = Document::parse(new_xml).map_err(|e| format!("saved workbook: {e}"))?;
+    let root = doc.root_element();
+    let orig_doc = Document::parse(orig_xml).map_err(|e| format!("workbook: {e}"))?;
+    let slots = sheet_slots(orig_sheets, new_sheets, charts);
+    // IronCalc's index -> index in the saved list.
+    let new_index: Vec<usize> = (0..new_sheets.len())
+        .map(|i| {
+            slots
+                .iter()
+                .position(|s| matches!(s, Slot::New(n) if *n == i))
+                .expect("present")
+        })
+        .collect();
+    let index_of_id = |id: u32| -> Option<usize> {
+        new_sheets
+            .iter()
+            .position(|s| s.sheet_id == id)
+            .map(|i| new_index[i])
+    };
+    let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+
+    // The sheet list.
+    if !charts.is_empty() {
+        let sheets = root
+            .children()
+            .find(|c| is_main(*c, "sheets"))
+            .ok_or("saved workbook has no <sheets>")?;
+        let list: Vec<Node> = sheets.children().filter(|c| is_main(*c, "sheet")).collect();
+        if list.len() != new_sheets.len() {
+            return Err("saved workbook lists other sheets".into());
+        }
+        let mut text = String::from("<sheets>");
+        for slot in &slots {
+            match slot {
+                Slot::New(i) => text.push_str(&new_xml[list[*i].range()]),
+                Slot::Chart(c) => {
+                    let state = c
+                        .state
+                        .as_deref()
+                        .map(|s| format!(" state=\"{}\"", esc_attr(s)))
+                        .unwrap_or_default();
+                    text.push_str(&format!(
+                        "<sheet name=\"{}\" sheetId=\"{}\"{state} r:id=\"{}\"/>",
+                        esc_attr(&c.name),
+                        c.sheet_id,
+                        esc_attr(&c.rel.id)
+                    ));
+                }
+            }
+        }
+        text.push_str("</sheets>");
+        edits.push((sheets.range(), text));
+        // The selected tab (and the first one shown).
+        for view in root.descendants().filter(|n| is_main(*n, "workbookView")) {
+            for a in view.attributes().filter(|a| a.namespace().is_none()) {
+                if matches!(a.name(), "activeTab" | "firstSheet")
+                    && let Some(&i) = a
+                        .value()
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|i| new_index.get(i))
+                {
+                    edits.push((a.range_value(), i.to_string()));
+                }
+            }
+        }
+    }
+
+    // Defined names.
+    let orig_ids: Vec<Option<u32>> = {
+        let all: Vec<Node> = orig_doc
+            .descendants()
+            .filter(|n| is_main(*n, "sheet"))
+            .collect();
+        (0..all.len())
+            .map(|pos| {
+                orig_sheets
+                    .iter()
+                    .find(|s| s.pos == pos)
+                    .map(|s| s.sheet_id)
+            })
+            .collect()
+    };
+    let scope = |n: Node, ids: &dyn Fn(usize) -> Option<u32>| -> Result<Option<u32>, ()> {
+        match n.attribute("localSheetId") {
+            None => Ok(None),
+            Some(v) => v.parse::<usize>().ok().and_then(ids).map(Some).ok_or(()),
+        }
+    };
+    let orig_names: Vec<Node> = orig_doc
+        .descendants()
+        .filter(|n| is_main(*n, "definedName"))
+        .collect();
+    let new_list = root.children().find(|c| is_main(*c, "definedNames"));
+    let new_names: Vec<Node> = new_list
+        .map(|l| {
+            l.children()
+                .filter(|n| is_main(*n, "definedName"))
+                .collect()
+        })
+        .unwrap_or_default();
+    let new_ids = |i: usize| new_sheets.get(i).map(|s| s.sheet_id);
+    let orig_id = |i: usize| orig_ids.get(i).copied().flatten();
+    let key = |n: Node, sheet: Option<u32>| {
+        (
+            n.attribute("name").unwrap_or_default().to_lowercase(),
+            sheet,
+        )
+    };
+    let mut matched = HashSet::new();
+    let mut names_changed = false;
+    let mut names_text = String::new();
+    for n in &new_names {
+        let Ok(sheet) = scope(*n, &new_ids) else {
+            names_text.push_str(&new_xml[n.range()]);
+            continue;
+        };
+        let k = key(*n, sheet);
+        let orig = orig_names
+            .iter()
+            .find(|o| scope(**o, &orig_id).ok() == Some(sheet) && key(**o, sheet) == k);
+        let mut extra = String::new();
+        if let Some(o) = orig {
+            matched.insert(o.range().start);
+            for a in o.attributes().filter(|a| a.namespace().is_none()) {
+                if NAME_ATTRIBUTES.contains(&a.name()) && n.attribute(a.name()).is_none() {
+                    extra.push_str(&format!(" {}=\"{}\"", a.name(), esc_attr(a.value())));
+                }
+            }
+        }
+        let local = sheet.and_then(index_of_id);
+        let local_changed =
+            local.is_some_and(|l| n.attribute("localSheetId") != Some(&l.to_string()));
+        if extra.is_empty() && !local_changed {
+            names_text.push_str(&new_xml[n.range()]);
+            continue;
+        }
+        names_changed = true;
+        names_text.push_str(&rewrite_name(*n, new_xml, local, &extra));
+    }
+    for o in &orig_names {
+        if matched.contains(&o.range().start) {
+            continue;
+        }
+        let name = o.attribute("name").unwrap_or_default();
+        let builtin = name.starts_with("_xlnm.") || o.attribute("hidden") == Some("1");
+        let Ok(sheet) = scope(*o, &orig_id) else {
+            continue;
+        };
+        if !builtin {
+            notes.push(format!("defined name {name:?} is not kept"));
+            continue;
+        }
+        let local = match sheet {
+            Some(id) => match index_of_id(id) {
+                Some(i) => Some(i),
+                None => continue, // its sheet is gone
+            },
+            None => None,
+        };
+        let formula = o.text().unwrap_or_default();
+        let formula = moves.formula(formula, sheet, sheet_ids);
+        if formula.contains("#REF!") {
+            notes.push(format!(
+                "defined name {name:?} dropped: its cells were deleted"
+            ));
+            continue;
+        }
+        let mut text = String::from("<definedName");
+        for a in o.attributes().filter(|a| a.namespace().is_none()) {
+            if a.name() == "localSheetId" {
+                continue;
+            }
+            text.push_str(&format!(" {}=\"{}\"", a.name(), esc_attr(a.value())));
+        }
+        if let Some(l) = local {
+            text.push_str(&format!(" localSheetId=\"{l}\""));
+        }
+        text.push_str(&format!(">{}</definedName>", esc_text(&formula)));
+        names_text.push_str(&text);
+        names_changed = true;
+    }
+    if names_changed {
+        match new_list {
+            Some(list) => edits.push((
+                list.range(),
+                format!("<definedNames>{names_text}</definedNames>"),
+            )),
+            None => {
+                // Defined names go after the sheet list.
+                let sheets = root
+                    .children()
+                    .find(|c| is_main(*c, "sheets"))
+                    .ok_or("saved workbook has no <sheets>")?;
+                let at = sheets.range().end;
+                edits.push((at..at, format!("<definedNames>{names_text}</definedNames>")));
+            }
+        }
+    }
+    if edits.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(apply_edits(new_xml, edits)))
+}
+
+/// A `<definedName>` of the saved workbook with its `localSheetId` set to
+/// `local` and `extra` attributes added.
+fn rewrite_name(n: Node, xml: &str, local: Option<usize>, extra: &str) -> String {
+    let mut text = String::from("<definedName");
+    for a in n.attributes() {
+        if a.namespace().is_none() && a.name() == "localSheetId" {
+            continue;
+        }
+        let _ = write_attr(&mut text, a, &HashMap::new());
+    }
+    if let Some(l) = local {
+        text.push_str(&format!(" localSheetId=\"{l}\""));
+    }
+    text.push_str(extra);
+    text.push('>');
+    for c in n.children() {
+        text.push_str(&xml[c.range()]);
+    }
+    text.push_str("</definedName>");
+    text
+}
+
+// ------------------------------------------------------------------ moving parts
+
+/// The text node of `parent`'s child called `name` (any namespace), and the
+/// number it holds.
+fn child_number<'a, 'i>(parent: Node<'a, 'i>, name: &str) -> Option<(Node<'a, 'i>, u32)> {
+    let t = text_of(parent.children().find(|c| c.tag_name().name() == name)?)?;
+    Some((t, t.text()?.trim().parse().ok()?))
+}
+
+/// The text node of an element with only text in it.
+fn text_of<'a, 'i>(n: Node<'a, 'i>) -> Option<Node<'a, 'i>> {
+    n.first_child().filter(|t| t.is_text())
+}
+
+/// A carried part with its cell references moved, or `None` if nothing in
+/// it changes. `home` is the sheet the part belongs to.
+fn move_part(
+    part: &str,
+    kind: &str,
+    data: &[u8],
+    home: Option<u32>,
+    m: &Merge,
+) -> Result<Option<Vec<u8>>, String> {
+    let moves = m.moves;
+    let what = kind.rsplit('.').next().unwrap_or_default();
+    let is = |suffix: &str| kind.ends_with(suffix);
+    let home_moved = home.is_some_and(|h| moves.touches(h));
+    let kind_of = if is("spreadsheetml.comments+xml") {
+        "comments"
+    } else if what == "threadedcomments+xml" {
+        "threaded"
+    } else if is("officedocument.vmlDrawing") || part.to_lowercase().ends_with(".vml") {
+        "vml"
+    } else if is("officedocument.drawing+xml") {
+        "drawing"
+    } else if is("drawingml.chart+xml") {
+        "chart"
+    } else {
+        return Ok(None);
+    };
+    if kind_of != "chart" && !home_moved {
+        return Ok(None);
+    }
+    let xml = std::str::from_utf8(strip_bom(data)).map_err(|_| "not UTF-8".to_owned())?;
+    let doc = Document::parse(xml).map_err(|e| e.to_string())?;
+    let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+    let home = home.unwrap_or(u32::MAX);
+    match kind_of {
+        "comments" | "threaded" => {
+            let tag = if kind_of == "comments" {
+                "comment"
+            } else {
+                "threadedComment"
+            };
+            for c in doc
+                .descendants()
+                .filter(|n| n.is_element() && n.tag_name().name() == tag)
+            {
+                let Some(a) = c.attributes().find(|a| a.name() == "ref") else {
+                    continue;
+                };
+                match moves.sqref(home, a.value()) {
+                    Some(v) if v != a.value() => edits.push((a.range_value(), esc_attr(&v))),
+                    Some(_) => {}
+                    None => edits.push((c.range(), String::new())),
+                }
+            }
+        }
+        "vml" => {
+            for data in doc
+                .descendants()
+                .filter(|n| n.is_element() && n.tag_name().name() == "ClientData")
+            {
+                if let (Some((rt, row)), Some((ct, col))) =
+                    (child_number(data, "Row"), child_number(data, "Column"))
+                {
+                    match moves.cell(home, row, col) {
+                        Some((r, c)) => {
+                            if r != row {
+                                edits.push((rt.range(), r.to_string()));
+                            }
+                            if c != col {
+                                edits.push((ct.range(), c.to_string()));
+                            }
+                        }
+                        None => {
+                            // The comment's cell is gone: so is its box.
+                            let shape = data.parent().ok_or("ClientData at the top")?;
+                            edits.push((shape.range(), String::new()));
+                            continue;
+                        }
+                    }
+                }
+                let anchor = data.children().find(|c| c.tag_name().name() == "Anchor");
+                if let Some(t) = anchor.and_then(text_of) {
+                    let v: Vec<u32> = t
+                        .text()
+                        .unwrap_or_default()
+                        .split(',')
+                        .filter_map(|x| x.trim().parse().ok())
+                        .collect();
+                    if v.len() == 8 {
+                        let (r1, c1) = moves.point(home, v[2], v[0]);
+                        let (r2, c2) = moves.point(home, v[6], v[4]);
+                        let anchor = format!(
+                            "{c1}, {}, {r1}, {}, {c2}, {}, {r2}, {}",
+                            v[1], v[3], v[5], v[7]
+                        );
+                        edits.push((t.range(), anchor));
+                    }
+                }
+            }
+        }
+        "drawing" => {
+            for corner in doc
+                .descendants()
+                .filter(|n| n.is_element() && matches!(n.tag_name().name(), "from" | "to"))
+            {
+                let (Some((rt, row)), Some((ct, col))) =
+                    (child_number(corner, "row"), child_number(corner, "col"))
+                else {
+                    continue;
+                };
+                let (r, c) = moves.point(home, row, col);
+                if r != row {
+                    edits.push((rt.range(), r.to_string()));
+                }
+                if c != col {
+                    edits.push((ct.range(), c.to_string()));
+                }
+            }
+        }
+        _ => {
+            // Charts: series and category references.
+            for f in doc
+                .descendants()
+                .filter(|n| n.is_element() && n.tag_name().name() == "f")
+            {
+                let Some(t) = text_of(f) else { continue };
+                let text = t.text().unwrap_or_default();
+                let v = moves.formula(text, None, &m.sheets);
+                if v != text {
+                    edits.push((t.range(), esc_text(&v)));
+                }
+            }
+        }
+    }
+    if edits.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(apply_edits(xml, edits).into_bytes()))
 }
 
 /// The parts of a package by name (for tests).
@@ -1531,6 +2935,7 @@ pub(crate) fn parts_of(bytes: &[u8]) -> std::collections::BTreeMap<String, Vec<u
     pkg.entries
         .into_iter()
         .filter(|(n, _)| !n.ends_with('/'))
+        .map(|(n, d)| (n, d.as_ref().clone()))
         .collect()
 }
 
@@ -1661,7 +3066,13 @@ mod tests {
             .iter()
             .map(|ws| (ws.sheet_id, None))
             .collect();
-        let done = finish(out, original, &tabs, false);
+        let ctx = Context {
+            tabs: &tabs,
+            full_calc: false,
+            moves: &Moves::default(),
+            cell_text: &|_, _, _| String::new(),
+        };
+        let done = finish(out, original, &ctx);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());
         done
     }
@@ -1851,6 +3262,107 @@ mod tests {
         assert!(!parts.contains_key("xl/drawings/drawing1.xml"));
         assert!(parts.contains_key("xl/comments1.xml"));
         assert!(done.notes.iter().any(|n| n.contains("<drawing> not kept")));
+    }
+
+    fn corpus_file(name: &str) -> Vec<u8> {
+        std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/corpus/xlsx")
+                .join(name),
+        )
+        .unwrap()
+    }
+
+    /// `(name, sheetId)` of the `<sheet>`s of a saved workbook part.
+    fn sheet_list(parts: &std::collections::BTreeMap<String, Vec<u8>>) -> Vec<(String, u32)> {
+        let wb = text(parts, "xl/workbook.xml");
+        let doc = Document::parse(&wb).unwrap();
+        doc.descendants()
+            .filter(|n| n.has_tag_name((NS_MAIN, "sheet")))
+            .map(|n| {
+                (
+                    n.attribute("name").unwrap().to_owned(),
+                    n.attribute("sheetId").unwrap().parse().unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn chart_sheets_keep_their_place_and_a_free_id() {
+        let original = corpus_file("14_charts_images.xlsx");
+        let m = model(&original);
+        let parts = parts_of(&save(&m, Some(&original)).bytes);
+        assert_eq!(
+            sheet_list(&parts),
+            [("Data".into(), 1), ("Trend".into(), 2), ("After".into(), 3)]
+        );
+        // "After" deleted and a sheet added: IronCalc gives it id 2, the
+        // chart sheet's.
+        let mut m = model(&original);
+        m.delete_sheet(1).unwrap();
+        m.new_sheet();
+        let done = save(&m, Some(&original));
+        let parts = parts_of(&done.bytes);
+        let list = sheet_list(&parts);
+        assert_eq!(list.len(), 3, "{list:?}");
+        assert_eq!(list[1].0, "Trend");
+        let mut ids: Vec<u32> = list.iter().map(|s| s.1).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 3, "sheet ids are unique: {list:?}");
+        assert!(parts.contains_key("xl/chartsheets/sheet1.xml"));
+        load_from_xlsx_bytes(&done.bytes, "t", "en", "UTC").unwrap();
+    }
+
+    #[test]
+    fn skeletons_leave_out_the_cells() {
+        let body: String = (1..=60000)
+            .map(|r| format!("<row r=\"{r}\"><c r=\"A{r}\"><v>{r}</v></c></row>"))
+            .collect();
+        let xml = format!(
+            "<worksheet xmlns=\"{NS_MAIN}\"><sheetPr/><sheetData>{body}</sheetData><pageMargins left=\"1\"/></worksheet>"
+        );
+        let empty = format!("<worksheet xmlns=\"{NS_MAIN}\"><sheetData/><drawing/></worksheet>");
+        let mut pkg = Package::default();
+        pkg.set("big.xml", xml.clone().into_bytes());
+        pkg.set("empty.xml", empty.clone().into_bytes());
+        let bytes = pkg.write().unwrap();
+        let orig = Original::new(&bytes).unwrap();
+        for (name, full) in [("big.xml", &xml), ("empty.xml", &empty)] {
+            let streamed = orig.skeleton(name).unwrap().unwrap();
+            let direct = Skeleton::new(full);
+            assert_eq!(streamed.xml, direct.xml, "{name}");
+            assert_eq!(streamed.cut, direct.cut, "{name}");
+        }
+        let sk = Skeleton::new(&xml);
+        assert_eq!(
+            sk.xml,
+            format!(
+                "<worksheet xmlns=\"{NS_MAIN}\"><sheetPr/><sheetData></sheetData><pageMargins left=\"1\"/></worksheet>"
+            )
+        );
+        // Offsets after the cells map back into the full XML.
+        let at = sk.xml.find("<pageMargins").unwrap();
+        assert_eq!(&xml[sk.full_offset(at)..][..12], "<pageMargins");
+    }
+
+    #[test]
+    fn light_read_back_checks_all_but_the_cells() {
+        let original = rich_fixture("");
+        let pkg = Package::read(&original).unwrap();
+        // Without the cells IronCalc still reads it, and the bytes are whole.
+        let bytes = read_back(&pkg, 0).unwrap();
+        assert_eq!(bytes.len(), pkg.write().unwrap().len());
+        // Broken markup outside the cells is still caught.
+        let mut broken = pkg.clone();
+        let xml = broken
+            .text("xl/workbook.xml")
+            .unwrap()
+            .unwrap()
+            .replace("</sheets>", "");
+        broken.set("xl/workbook.xml", xml.into_bytes());
+        assert!(read_back(&broken, 0).is_err());
     }
 
     #[test]

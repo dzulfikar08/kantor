@@ -483,7 +483,12 @@ impl Workbook {
         self.model
             .insert_rows(sheet, row as i32 + 1, count as i32)
             .map_err(|e| anyhow!("{e}"))?;
-        self.history.edited();
+        let sheet_id = self.sheet_id(sheet);
+        self.history.moved(crate::shift::Op::InsertRows {
+            sheet: sheet_id,
+            at: row,
+            count,
+        });
         Ok(())
     }
 
@@ -495,7 +500,12 @@ impl Workbook {
         self.model
             .delete_rows(sheet, first as i32 + 1, (last - first + 1) as i32)
             .map_err(|e| anyhow!("{e}"))?;
-        self.history.edited();
+        let sheet_id = self.sheet_id(sheet);
+        self.history.moved(crate::shift::Op::DeleteRows {
+            sheet: sheet_id,
+            at: first,
+            count: last - first + 1,
+        });
         Ok(())
     }
 
@@ -507,7 +517,12 @@ impl Workbook {
         self.model
             .insert_columns(sheet, col as i32 + 1, count as i32)
             .map_err(|e| anyhow!("{e}"))?;
-        self.history.edited();
+        let sheet_id = self.sheet_id(sheet);
+        self.history.moved(crate::shift::Op::InsertColumns {
+            sheet: sheet_id,
+            at: col,
+            count,
+        });
         Ok(())
     }
 
@@ -519,7 +534,12 @@ impl Workbook {
         self.model
             .delete_columns(sheet, first as i32 + 1, (last - first + 1) as i32)
             .map_err(|e| anyhow!("{e}"))?;
-        self.history.edited();
+        let sheet_id = self.sheet_id(sheet);
+        self.history.moved(crate::shift::Op::DeleteColumns {
+            sheet: sheet_id,
+            at: first,
+            count: last - first + 1,
+        });
         Ok(())
     }
 

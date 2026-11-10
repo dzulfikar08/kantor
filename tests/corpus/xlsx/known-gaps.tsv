@@ -15,12 +15,6 @@
 09_unicode.xlsx	import-formula	Emoji 🎉!B1	quotes around a non-ASCII sheet name are dropped in the formula text ('数据'!B2 -> 数据!B2)
 09_unicode.xlsx	import-value	Teks!C10	LEN counts Unicode scalar values, Excel counts UTF-16 code units (ZWJ emoji family: 5 vs 8)
 09_unicode.xlsx	import-value	Teks!C9	LEN counts Unicode scalar values, Excel counts UTF-16 code units (emoji + flag: 12 vs 17)
-13_tables.xlsx	dropped-element	Lookup <tableParts>	not carried on save yet
-13_tables.xlsx	dropped-element	Sales <tableParts>	not carried on save yet
-13_tables.xlsx	dropped-part	xl/tables/table1.xml	not carried on save yet
-13_tables.xlsx	dropped-part	xl/tables/table2.xml	not carried on save yet
-13_tables.xlsx	dropped-part	xl/worksheets/_rels/sheet1.xml.rels	not carried on save yet
-13_tables.xlsx	dropped-part	xl/worksheets/_rels/sheet2.xml.rels	not carried on save yet
 13_tables.xlsx	export-formula	Sales!F1	IronCalc turns structured references (Sales[Units]) into A1 ranges on import
 13_tables.xlsx	export-formula	Sales!F2	IronCalc turns structured references (Sales[Units]) into A1 ranges on import
 13_tables.xlsx	export-value	Sales!B8	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
@@ -32,14 +26,6 @@
 13_tables.xlsx	export-value	Sales!D7	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
 13_tables.xlsx	export-value	Sales!D8	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
 13_tables.xlsx	export-value	Sales!F2	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
-13_tables.xlsx	feature	hidden _FilterDatabase name	not kept on save yet
-13_tables.xlsx	feature	table autofilter	not kept on save yet
-13_tables.xlsx	feature	table calculated column	not kept on save yet
-13_tables.xlsx	feature	table part	not kept on save yet
-13_tables.xlsx	feature	table style	not kept on save yet
-13_tables.xlsx	feature	table totals row	not kept on save yet
-13_tables.xlsx	feature	table without filter	not kept on save yet
-13_tables.xlsx	feature	tableParts	not kept on save yet
 13_tables.xlsx	import-formula	Sales!F1	IronCalc turns structured references (Sales[Units]) into A1 ranges on import
 13_tables.xlsx	import-formula	Sales!F2	IronCalc turns structured references (Sales[Units]) into A1 ranges on import
 13_tables.xlsx	import-value	Sales!B8	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
@@ -51,19 +37,4 @@
 13_tables.xlsx	import-value	Sales!D7	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
 13_tables.xlsx	import-value	Sales!D8	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
 13_tables.xlsx	import-value	Sales!F2	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
-14_charts_images.xlsx	dropped-element	Trend <drawing>	not carried on save yet
-14_charts_images.xlsx	dropped-element	Trend <pageMargins>	not carried on save yet
-14_charts_images.xlsx	dropped-element	Trend <sheetPr>	not carried on save yet
-14_charts_images.xlsx	dropped-element	Trend <sheetViews>	not carried on save yet
-14_charts_images.xlsx	dropped-part	xl/charts/chart2.xml	not carried on save yet
-14_charts_images.xlsx	dropped-part	xl/chartsheets/_rels/sheet1.xml.rels	not carried on save yet
-14_charts_images.xlsx	dropped-part	xl/chartsheets/sheet1.xml	not carried on save yet
-14_charts_images.xlsx	dropped-part	xl/drawings/_rels/drawing2.xml.rels	not carried on save yet
-14_charts_images.xlsx	dropped-part	xl/drawings/drawing2.xml	not carried on save yet
-14_charts_images.xlsx	feature	chart sheet chart	not kept on save yet
-14_charts_images.xlsx	feature	chart sheet in workbook	not kept on save yet
-14_charts_images.xlsx	feature	chart sheet part	not kept on save yet
-15_sparklines_cf_dv.xlsx	feature	sparkline data range	not kept on save yet
-15_sparklines_cf_dv.xlsx	feature	sparkline group settings	not kept on save yet
-15_sparklines_cf_dv.xlsx	feature	sparklines	not kept on save yet
 16_print_protect_outline.xlsx	export-links	Print	the display attribute of the internal link is not written (IronCalc's Link has no display text; Excel shows the cell value)

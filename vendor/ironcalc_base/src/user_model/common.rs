@@ -1168,10 +1168,12 @@ impl<'a> UserModel<'a> {
         })?;
 
         let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
+        let old_names = self.model.get_defined_name_list(); // KANTOR PATCH (fidelity)
         self.model.delete_rows(sheet, row, row_count)?;
 
         let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
         diff_list.extend(link_diffs);
+        diff_list.extend(self.defined_names_snapshot_diffs(old_names)); // KANTOR PATCH
         diff_list.push(Diff::DeleteRows {
             sheet,
             row,
@@ -1250,10 +1252,12 @@ impl<'a> UserModel<'a> {
         })?;
 
         let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
+        let old_names = self.model.get_defined_name_list(); // KANTOR PATCH (fidelity)
         self.model.delete_columns(sheet, column, column_count)?;
 
         let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
         diff_list.extend(link_diffs);
+        diff_list.extend(self.defined_names_snapshot_diffs(old_names)); // KANTOR PATCH
         diff_list.push(Diff::DeleteColumns {
             sheet,
             column,
@@ -2285,6 +2289,30 @@ impl<'a> UserModel<'a> {
         } else {
             Ok(vec![])
         }
+    }
+
+    // KANTOR PATCH (fidelity): deleting rows or columns can turn defined
+    // names into #REF! (`Model::displace_defined_names`), which re-inserting
+    // them doesn't undo. Like `merged_cells_snapshot_diffs`, these diffs come
+    // before the delete: undo restores the old formula after the rows are
+    // back, redo sets it again before the delete moves it.
+    pub(super) fn defined_names_snapshot_diffs(
+        &self,
+        old_names: Vec<(String, Option<u32>, String)>,
+    ) -> Vec<Diff> {
+        let now = self.model.get_defined_name_list();
+        old_names
+            .into_iter()
+            .filter(|old| !now.contains(old))
+            .map(|(name, scope, formula)| Diff::UpdateDefinedName {
+                name: name.clone(),
+                scope,
+                old_formula: formula.clone(),
+                new_name: name,
+                new_scope: scope,
+                new_formula: formula,
+            })
+            .collect()
     }
 
     pub(crate) fn push_diff_list(&mut self, diff_list: DiffList) {

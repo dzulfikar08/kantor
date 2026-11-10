@@ -196,7 +196,8 @@ pub(crate) fn get_worksheet_xml(
     dimension: &str,
     is_sheet_selected: bool,
 ) -> String {
-    let mut sheet_data_str: Vec<String> = vec![];
+    // KANTOR PATCH (memory): the rows go straight into one string.
+    let mut sheet_data = String::new();
     let mut cols_str: Vec<String> = vec![];
     let mut merged_cells_str: Vec<String> = vec![];
 
@@ -589,12 +590,15 @@ pub(crate) fn get_worksheet_xml(
             }
             None => "".to_string(),
         };
-        sheet_data_str.push(format!(
+        sheet_data.push_str(&format!(
             "<row r=\"{row_index}\"{row_style_str}>{}</row>",
             row_data_str.join("")
         ))
     }
-    let sheet_data = sheet_data_str.join("");
+    // KANTOR PATCH (memory): one copy of the cells at a time. The rest of
+    // the sheet is put around the rows below, instead of `join` and
+    // `format!` copying all of it twice (a 100 MB sheet peaked at three
+    // copies).
 
     for merged_cell in &worksheet.merged_cells {
         let first_column = number_to_column(merged_cell.column).unwrap_or("A".to_string());
@@ -685,7 +689,7 @@ pub(crate) fn get_worksheet_xml(
 
     let hyperlinks_section = get_hyperlinks_section(worksheet);
 
-    format!(
+    let head = format!(
         "{XML_DECLARATION}\
 <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
   <dimension ref=\"{dimension}\"/>\
@@ -695,13 +699,19 @@ pub(crate) fn get_worksheet_xml(
     </sheetView>\
   </sheetViews>\
   {cols}\
-  <sheetData>\
-  {sheet_data}\
-  </sheetData>\
+  <sheetData>"
+    );
+    let tail = format!(
+        "</sheetData>\
   {merge_cells_section}\
   {cf_sections}\
   {hyperlinks_section}\
   {cf_ext_lst}\
 </worksheet>"
-    )
+    );
+    // KANTOR PATCH (memory): see above.
+    sheet_data.reserve_exact(head.len() + tail.len());
+    sheet_data.insert_str(0, &head);
+    sheet_data.push_str(&tail);
+    sheet_data
 }

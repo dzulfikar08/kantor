@@ -36,6 +36,8 @@ Also in `xlsx/`:
 
 `crates/sheets_engine/tests/corpus.rs` (part of `cargo test --workspace`) opens every file with `sheets_engine::Workbook`, saves and reopens it, and compares inputs and displayed values of every used cell. It also reads the original and the saved file independently with calamine (values, formulas, styles, merges, names, links) and checks layout, comments and zip parts, so it catches both IronCalc import losses and export losses. Each difference is a finding; findings not in `known-gaps.tsv` fail the test, and so do listed gaps that no longer happen.
 
+`crates/sheets_engine/tests/structure.rs` opens files `13`–`16`, inserts or deletes rows and columns, saves, and checks that carried parts moved with them (validations, sparklines, charts, drawing anchors, notes and their boxes, page breaks, tables, the filter range).
+
 ```sh
 cargo test -p sheets_engine --test corpus -- --nocapture       # report on stdout
 KANTOR_CORPUS_OUT=/tmp/fid cargo test -p sheets_engine --test corpus   # + round-tripped files and report.md

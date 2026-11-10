@@ -162,6 +162,24 @@ What (`src/types.rs`, `KANTOR PATCH (fidelity)`):
 
 Struct literals in the tests got `..Default::default()` or the new fields.
 
+## 8. Defined names follow inserted and deleted rows and columns
+
+Why: inserting or deleting rows or columns moved cells, formulas, merges,
+links and conditional formats, but left defined names pointing at the old
+cells: a print area, a filter range (`_xlnm._FilterDatabase`) or a named range
+used by formulas then covered the wrong cells, in the model and in the saved
+file.
+
+What: `Model::displace_defined_names` (`src/actions.rs`) runs next to
+`displace_cf_ranges` for every displacement (insert/delete/move of rows and
+columns) and re-writes each name's formula with `to_string_displaced`, like a
+conditional format's (references into deleted cells become `#REF!`). Deleting
+can't be undone by re-inserting, so `UserModel::delete_rows`/`delete_columns`
+put `Diff::UpdateDefinedName` snapshots before the delete
+(`defined_names_snapshot_diffs` in `src/user_model/common.rs`, like the merged
+cells snapshot): undo restores the old formulas once the rows are back.
+Tests: `src/test/user_model/test_kantor_defined_names_move.rs`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the
@@ -179,7 +197,8 @@ call-site edits in `evaluation.rs`, `model.rs`, `functions/mod.rs`,
 and 6 the new file `sheet_data/packed.rs` and edits in `sheet_data/{mod,row,chunks,
 saved,test}.rs`, `worksheet.rs`, `test/dynamic_evaluation/test_range_reads.rs`; for
 section 7 `types.rs`, `styles.rs`, `builtin_styles.rs`, `worksheet.rs`,
-`user_model/common.rs` and test literals)
+`user_model/common.rs` and test literals; for section 8 `actions.rs`,
+`user_model/common.rs`, `test/user_model/{mod,test_kantor_defined_names_move}.rs`)
 and run the crate's
 tests in it (`cargo test`, also with `IRONCALC_MAX_DEPTH=1`). The crate's
 `Cargo.lock` is upstream's and only used when testing in this directory.

@@ -47,11 +47,24 @@ text; Excel shows the cell's value anyway), fill patterns other than solid,
 underline styles other than single, superscript/subscript: the model has no
 place for them.
 
+## 2. One copy of a sheet's cells while writing (memory)
+
+Why: `get_worksheet_xml` collected every row as a `String`, joined them
+(second copy) and `format!`ed the sheet around the result (third copy). For
+the generated 90k-row workbook (a 108 MB `sheet1.xml`) saving peaked at 391 MB
+in the writer alone, with the model taking 96 MB.
+
+What (`export/worksheets.rs`): rows are written straight into one string, and
+the start and end of the sheet are put around it in place
+(`insert_str`/`push_str` after one `reserve_exact`). The XML is byte for byte
+the same. Writer peak for that workbook: 391 → 216 MB.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the
 `ironcalc` line under `[patch.crates-io]` and `vendor/ironcalc`) once upstream
-reads and writes all border styles, alignment, protection and outlines. To
+reads and writes all border styles, alignment, protection and outlines, and
+writes sheets without copying them (§2). To
 move to a newer upstream: copy the new crate over this directory, reapply the
 `KANTOR PATCH` hunks and `tests/test_kantor_fidelity.rs`, and run the crate's
 tests here (`cargo test --no-fail-fast`). Known upstream failures with 0.9.1,
