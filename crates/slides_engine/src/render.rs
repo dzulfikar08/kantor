@@ -392,9 +392,18 @@ impl Presentation {
             for r in self.render_list(i, false) {
                 if let ShapeKind::Other { what, frame } = &r.shape.kind
                     && !self.drawable(i, frame)
-                    && !out.contains(what)
                 {
-                    out.push(what.clone());
+                    // Name what's missing as precisely as the frame allows.
+                    let what = match frame.get() {
+                        Some(FrameContent::Chart(_)) => "chart".to_owned(),
+                        Some(FrameContent::Diagram(_)) => {
+                            "SmartArt without a saved drawing".to_owned()
+                        }
+                        _ => what.clone(),
+                    };
+                    if !out.contains(&what) {
+                        out.push(what);
+                    }
                 }
             }
         }
