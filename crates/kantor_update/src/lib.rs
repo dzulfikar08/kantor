@@ -124,8 +124,13 @@ pub fn current_build() -> BuildId {
 /// The build updates are compared against: [`current_build`], unless
 /// `KANTOR_UPDATE_CURRENT` (testing only, e.g. `0.1.0`) pretends to be an
 /// older version. It changes nothing else: manifests must still be signed with
-/// Kantor's key and downloads must still pass every check.
+/// Kantor's key and downloads must still pass every check. Honoured only in
+/// nightly and debug builds: in a release it would let a replayed, older
+/// signed manifest downgrade the app.
 pub fn running_build() -> BuildId {
+    if !cfg!(debug_assertions) && Channel::of_build() == Channel::Stable {
+        return current_build();
+    }
     match std::env::var("KANTOR_UPDATE_CURRENT") {
         Ok(v) if !v.trim().is_empty() => match BuildId::new(v.trim(), 0) {
             Ok(b) => {
