@@ -31,7 +31,11 @@ pub struct Options {
 pub struct Builder {
     pub texts: TextCache,
     bytes: RefCell<HashMap<String, Option<Arc<Vec<u8>>>>>,
+    /// Chart items by chart part, master and frame size.
+    charts: RefCell<HashMap<ChartKey, Option<Arc<Vec<Item>>>>>,
 }
+
+type ChartKey = (String, String, u32, u32);
 
 fn px(emu: i64) -> f32 {
     emu as f32 / EMU_PER_PX
@@ -84,6 +88,37 @@ impl Builder {
     /// Forget cached picture bytes (the presentation was replaced).
     pub fn clear_pictures(&self) {
         self.bytes.borrow_mut().clear();
+        self.charts.borrow_mut().clear();
+    }
+
+    /// A chart part's items in a `w` × `h` frame (cached).
+    fn chart(
+        &self,
+        engine: &mut Engine,
+        pres: &Presentation,
+        slide: usize,
+        part: &str,
+        w: f32,
+        h: f32,
+    ) -> Option<Arc<Vec<Item>>> {
+        let key = (
+            part.to_owned(),
+            pres.master_of(slide).part.clone(),
+            w.to_bits(),
+            h.to_bits(),
+        );
+        if let Some(c) = self.charts.borrow().get(&key) {
+            return c.clone();
+        }
+        let items = self.bytes(pres, part).and_then(|xml| {
+            crate::chart::chart_items(engine, &xml, &pres.color_ctx(slide), w, h).map(Arc::new)
+        });
+        let mut cache = self.charts.borrow_mut();
+        if cache.len() > 128 {
+            cache.clear();
+        }
+        cache.insert(key, items.clone());
+        items
     }
 
     /// Everything drawn on slide `slide`.
@@ -116,7 +151,7 @@ impl Builder {
                 (Layer::Slide(i), Some((j, x))) if i == j => x,
                 _ => r.xfrm,
             };
-            self.shape(engine, pres, r, &xfrm, opts.prompts, &mut items);
+            self.shape(engine, pres, slide, r, &xfrm, opts.prompts, &mut items);
         }
         SlideScene {
             width: w,
@@ -184,10 +219,12 @@ impl Builder {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn shape(
         &self,
         engine: &mut Engine,
         pres: &Presentation,
+        slide: usize,
         r: &RenderShape,
         xfrm: &Xfrm,
         editor: bool,
@@ -293,7 +330,19 @@ impl Builder {
                     strokes(rect, *color, *width, style, &mut |prim| push(out, prim));
                 }
             }
-            ShapeKind::Other { .. } => push(out, Prim::Unsupported { w, h }),
+            ShapeKind::Other { .. } => {
+                let chart = shape
+                    .chart_part()
+                    .and_then(|part| self.chart(engine, pres, slide, part, w, h));
+                match chart {
+                    Some(items) => out.extend(items.iter().map(|i| Item {
+                        layer,
+                        transform: i.transform.then(t),
+                        prim: i.prim.clone(),
+                    })),
+                    None => push(out, Prim::Unsupported { w, h }),
+                }
+            }
         }
         let tt = text_transform(xfrm);
         if editor && r.is_empty_placeholder() {

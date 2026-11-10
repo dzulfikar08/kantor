@@ -339,6 +339,17 @@ impl Presentation {
         &self.masters[self.layout_of(slide).master]
     }
 
+    /// What colours on `slide` resolve against (its master's theme and
+    /// colour map), for parts drawn with the slide's theme (charts).
+    pub fn color_ctx(&self, slide: usize) -> crate::theme::ColorCtx<'_> {
+        let m = self.master_of(slide);
+        crate::theme::ColorCtx {
+            theme: &m.theme,
+            map: &m.clr_map,
+            ph: None,
+        }
+    }
+
     /// The slide's background colour (white when it has none we can show).
     pub fn background(&self, slide: usize) -> Rgb {
         let s = &self.slides[slide];
@@ -364,7 +375,9 @@ impl Presentation {
         let mut out: Vec<String> = Vec::new();
         for i in (0..self.len()).filter(|&i| !self.slides[i].hidden) {
             for r in self.render_list(i, false) {
+                // Charts are drawn (only uncommon chart types aren't).
                 if let ShapeKind::Other { what } = &r.shape.kind
+                    && r.shape.chart_part().is_none()
                     && !out.contains(what)
                 {
                     out.push(what.clone());

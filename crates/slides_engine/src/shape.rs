@@ -213,6 +213,7 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
 
     let mut text = None;
     let mut paras_at = None;
+    let mut chart = None;
     let kind = match (in_p, local) {
         // Connectors are drawn like shapes (lines with arrowheads).
         (true, "sp" | "cxnSp") => {
@@ -262,6 +263,7 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
                 .descendants()
                 .find(|d| d.is_element() && d.tag_name().name() == "xfrm")
                 .and_then(xfrm_of);
+            chart = chart_part(n, cx);
             ShapeKind::Other {
                 what: describe_element(local),
             }
@@ -283,6 +285,7 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
             sppr
         },
         max_id,
+        chart,
     };
     Shape {
         id,
@@ -295,6 +298,19 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
         paint: PaintEdit::default(),
         src: Some(Arc::new(src_rec)),
     }
+}
+
+/// The chart part a `p:graphicFrame` shows (`c:chart/@r:id` in its
+/// `a:graphicData`), resolved through the slide's relationships.
+fn chart_part(n: Node, cx: &ParseCtx) -> Option<String> {
+    if !is(n, NS_P, "graphicFrame") {
+        return None;
+    }
+    let id = n
+        .descendants()
+        .find(|d| d.is_element() && d.tag_name().name() == "chart" && r_attr(*d, "id").is_some())
+        .and_then(|d| r_attr(d, "id"))?;
+    cx.rels.iter().find(|r| r.id == id)?.part(cx.part)
 }
 
 /// Whether `n` is an element in `ns` named one of `names`.
