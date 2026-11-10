@@ -5,6 +5,11 @@
 #  - workflow_dispatch on another branch -> the same builds as workflow artifacts only;
 #    the nightly release is published from main only
 # Versioned releases (tags v*) are built by release.yml.
+# Nightly binaries are built with KANTOR_CHANNEL=nightly and KANTOR_BUILD=<UTC commit time>, so
+# the in-app updater follows the nightly channel and orders nightlies of one version. The publish
+# job writes update-nightly.json(.sig), signed with the `release` environment's
+# UPDATE_SIGNING_KEY (Linux AppImages and tarballs only: the nightly macOS build is ad-hoc
+# signed, and the updater installs only Developer ID builds on macOS).
 name: Build
 
 on:
@@ -52,6 +57,10 @@ jobs:
         with:
           key: release
           cache-on-failure: true
+      - name: Nightly channel and build stamp
+        run: |
+          echo "KANTOR_CHANNEL=nightly" >> "$GITHUB_ENV"
+          echo "KANTOR_BUILD=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
       - if: ${{ !(runner.os == 'macOS' && inputs.universal) }}
         run: cargo build --release -p kantor
       - name: Package
@@ -101,12 +110,42 @@ jobs:
     # Only from main: a manual run on a branch must not replace main's nightly.
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
+    # UPDATE_SIGNING_KEY for the nightly update manifest; only main and v* tags may use it.
+    environment: release
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      - name: Update manifest (signed)
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$UPDATE_SIGNING_KEY" ]; then
+            echo "::warning::UPDATE_SIGNING_KEY is not set: no update-nightly.json this time"
+            exit 0
+          fi
+          version="$(awk '/^\[workspace.package\]/{s=1;next} /^\[/{s=0} s && /^version *=/{gsub(/.*= *"|".*/,""); print; exit}' Cargo.toml)"
+          # The same stamp the build jobs compiled in (KANTOR_BUILD).
+          stamp="$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S)"
+          assets=()
+          for arch in x86_64 aarch64; do
+            f="dist/Kantor-nightly-${arch}.AppImage"
+            [ -f "$f" ] && assets+=("linux-${arch}-appimage=$f")
+            f="dist/kantor-nightly-${arch}-linux.tar.gz"
+            [ -f "$f" ] && assets+=("linux-${arch}-tarball=$f")
+          done
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "::warning::no Linux builds: no update-nightly.json this time"
+            exit 0
+          fi
+          mkdir -p manifest
+          ./scripts/update-manifest.sh nightly "$version" "$stamp" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/tag/nightly" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/nightly" \
+            manifest/update-nightly.json "${assets[@]}"
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -122,3 +161,7 @@ jobs:
           gh release edit nightly --prerelease --target "$GITHUB_SHA" \
             --notes "Rolling build of main at ${GITHUB_SHA::7} ($(date -u +%F)). Install: curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh"
           gh release upload nightly dist/* --clobber
+          # The manifest last, once the assets it points at are in place.
+          if [ -f manifest/update-nightly.json ]; then
+            gh release upload nightly manifest/update-nightly.json manifest/update-nightly.json.sig --clobber
+          fi

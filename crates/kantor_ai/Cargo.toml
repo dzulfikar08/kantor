@@ -14,7 +14,7 @@ serde_json.workspace = true
 toml.workspace = true
 # Blocking HTTP on a worker thread: no async runtime, one small TLS stack
 # (rustls + ring, Mozilla roots). GPUI has no native HTTP client of its own.
-ureq = { version = "3", default-features = false, features = ["rustls"] }
+ureq.workspace = true
 keyring-core = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]

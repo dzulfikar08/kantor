@@ -23,6 +23,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - MCP `sheets_format` also sets fill, text colour, font size, wrap, vertical alignment, borders
   and merging.
 
+#### Updates
+- In-app updates for the DMG, AppImage and install-script installs: a check at most once a day
+  (and *Check for Updates…* in the palette) fetches a signed manifest, sending only Kantor's
+  version and OS. The new version downloads in the background, is verified (Ed25519 manifest
+  signature, SHA-256, and on macOS codesign / Gatekeeper) and installs on *Restart to update* or
+  at quit, all or nothing. Package and source installs only get a notice. Turn it off with
+  `[update] enabled = false` in `settings.toml` (README "Updates").
+- `kantor --version` names the nightly build (`kantor 0.2.0 (nightly 2026-11-10 14:30)`).
+
 ### Changed
 - Linux: the automatic UI font skips variable fonts (such as a single-file Inter or Adwaita Sans)
   when a family with static bold faces is installed, since GPUI draws only a variable font's

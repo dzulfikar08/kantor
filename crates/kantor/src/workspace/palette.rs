@@ -1111,6 +1111,22 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.open_palette(PaletteMode::fonts(cx), window, cx),
     },
     Command {
+        title: "Check for Updates…",
+        detail: concat!(
+            "Kantor ",
+            env!("CARGO_PKG_VERSION"),
+            " · sends only its version and OS"
+        ),
+        keys: "",
+        run: |ws, _, cx| ws.check_for_updates(true, cx),
+    },
+    Command {
+        title: "Restart to Update",
+        detail: "Install the downloaded update and reopen your documents",
+        keys: "",
+        run: |ws, window, cx| ws.restart_to_update(window, cx),
+    },
+    Command {
         title: "Quit Kantor",
         detail: "",
         keys: "Ctrl Q",
@@ -1600,7 +1616,12 @@ impl Workspace {
                     .text_size(FONT_CAPTION)
                     .text_color(t.fg_muted)
                     .children(hints)
-                    .child(div().flex_1())
+                    .child(div().flex_1().min_w_0().truncate().text_right().child(
+                        match palette.mode {
+                            PaletteMode::Commands => self.updates.about_line(),
+                            _ => String::new(),
+                        },
+                    ))
                     .child(format!("{count} {}", palette.mode.noun())),
             );
 

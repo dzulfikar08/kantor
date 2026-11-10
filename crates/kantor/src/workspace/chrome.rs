@@ -291,6 +291,18 @@ impl Workspace {
             .when_some(calc, |d, calc| {
                 d.child(div().flex_none().text_color(t.warning).child(calc))
             })
+            .when_some(self.updates.status_text(), |d, text| {
+                d.child(
+                    div()
+                        .id("update-notice")
+                        .flex_none()
+                        .text_color(t.accent)
+                        .cursor_pointer()
+                        .hover(|s| s.underline())
+                        .on_click(cx.listener(|ws, _, window, cx| ws.update_clicked(window, cx)))
+                        .child(text),
+                )
+            })
             .child(div().child(theme))
             .child(
                 div()
