@@ -57,6 +57,8 @@ pub struct Master {
     pub(crate) title_style: ListStyle,
     pub(crate) body_style: ListStyle,
     pub(crate) other_style: ListStyle,
+    /// Table styles with this master's theme colours.
+    pub table_styles: Arc<crate::frame::TableStyles>,
 }
 
 /// A slide layout (read-only).
@@ -456,9 +458,17 @@ impl Presentation {
                     .collect()
             })
             .unwrap_or_default();
+        let table_styles = match pres_rels
+            .iter()
+            .find(|r| r.kind() == "tableStyles")
+            .and_then(|r| r.part(&pres_part))
+        {
+            Some(p) => rd.text(&p)?,
+            None => None,
+        };
         for mpart in master_parts {
             let mi = masters.len();
-            let (master, layout_parts) = read_master(&mut rd, &mpart)?;
+            let (master, layout_parts) = read_master(&mut rd, &mpart, table_styles.as_deref())?;
             masters.push(master);
             for lpart in layout_parts {
                 if layout_index.contains_key(&lpart) {
@@ -1013,7 +1023,11 @@ impl Default for Presentation {
     }
 }
 
-fn read_master(rd: &mut Reader, part: &str) -> anyhow::Result<(Master, Vec<String>)> {
+fn read_master(
+    rd: &mut Reader,
+    part: &str,
+    table_styles: Option<&str>,
+) -> anyhow::Result<(Master, Vec<String>)> {
     let xml = rd.text(part)?.with_context(|| format!("missing {part}"))?;
     let rels = rd.rels(part)?;
     let theme_part = rels
@@ -1069,6 +1083,7 @@ fn read_master(rd: &mut Reader, part: &str) -> anyhow::Result<(Master, Vec<Strin
         .unwrap_or_default();
     let (title_style, body_style, other_style) =
         (style("titleStyle"), style("bodyStyle"), style("otherStyle"));
+    let table_styles = Arc::new(crate::frame::TableStyles::parse(table_styles, &colors));
     Ok((
         Master {
             part: part.to_owned(),
@@ -1081,6 +1096,7 @@ fn read_master(rd: &mut Reader, part: &str) -> anyhow::Result<(Master, Vec<Strin
             title_style,
             body_style,
             other_style,
+            table_styles,
         },
         layout_parts,
     ))

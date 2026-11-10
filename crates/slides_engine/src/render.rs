@@ -8,9 +8,11 @@ use std::ops::Range;
 use docs_engine::Rgb;
 
 use crate::fill::Fill;
+use crate::frame::{Cell, DiagramRef, FrameContent, Group, Vert};
 use crate::model::*;
 use crate::presentation::{Layout, Master, Presentation, Slide};
 use crate::theme::{LevelStyle, ListStyle};
+use crate::xml::{is, parse_rels, rels_name};
 
 /// Paragraph numbering through a text body: one counter per outline
 /// level; a shallower paragraph restarts the deeper ones, a paragraph at
@@ -273,6 +275,8 @@ pub struct RenderText {
     pub wrap: bool,
     /// Placeholder prompt ("Click to add title"), not real text.
     pub prompt: bool,
+    /// Turned a quarter (`bodyPr/@vert`).
+    pub vert: Vert,
 }
 
 #[derive(Clone, Debug)]
@@ -292,6 +296,28 @@ impl RenderShape<'_> {
             && self.shape.ph.as_ref().is_some_and(|p| !p.is_footer())
             && self.shape.text.as_ref().is_some_and(|t| t.is_empty())
     }
+}
+
+/// Text goes in the geometry's text rectangle (`a:rect`: the inside of a
+/// star, a callout's balloon...); the insets apply inside it.
+fn apply_text_rect(t: &mut RenderText, shape: &Shape, xfrm: &Xfrm) {
+    let Some(g) = shape.kind.geometry() else {
+        return;
+    };
+    if g.preset_name() == Some("rect") || xfrm.cx <= 0 || xfrm.cy <= 0 {
+        return;
+    }
+    let (w, h) = (xfrm.cx as f64, xfrm.cy as f64);
+    let r = crate::geom::outline(&g, w, h).text_rect;
+    let ok = |v: f64| v.is_finite();
+    if !(ok(r.l) && ok(r.t) && ok(r.r) && ok(r.b)) || r.r <= r.l || r.b <= r.t {
+        return;
+    }
+    let edge = |v: f64, max: f64| v.clamp(0.0, max).round() as Emu;
+    t.insets[0] += edge(r.l, w);
+    t.insets[1] += edge(r.t, h);
+    t.insets[2] += edge(w - r.r, w);
+    t.insets[3] += edge(h - r.b, h);
 }
 
 /// The placeholder in `shapes` that `ph` inherits from.
@@ -364,7 +390,8 @@ impl Presentation {
         let mut out: Vec<String> = Vec::new();
         for i in (0..self.len()).filter(|&i| !self.slides[i].hidden) {
             for r in self.render_list(i, false) {
-                if let ShapeKind::Other { what } = &r.shape.kind
+                if let ShapeKind::Other { what, frame } = &r.shape.kind
+                    && !self.drawable(i, frame)
                     && !out.contains(what)
                 {
                     out.push(what.clone());
@@ -539,47 +566,7 @@ impl Presentation {
                 apply_para_style(&mut para, &st, shown, true, scale, bp.line_reduction);
                 vec![para]
             }
-            None => {
-                let mut numbers = Numbering::default();
-                body.paras
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p)| {
-                        let level = &ls.0[p.props.level.min(8) as usize];
-                        let mut st = level.para.clone();
-                        st.overlay(&p.props.style);
-                        let runs: Vec<RenderRun> = p
-                            .run_ranges()
-                            .filter(|(r, _)| !r.is_empty())
-                            .map(|(range, run)| RenderRun {
-                                range,
-                                ..self.resolve(slide, level, &run.props, scale)
-                            })
-                            .collect();
-                        // The bullet takes the first character's formatting.
-                        let first = p.runs.iter().find(|r| r.len > 0).unwrap_or(&p.runs[0]);
-                        let has_text = !p.text.is_empty();
-                        let shown = numbers.next(p.props.level, st.bullet.as_ref(), has_text);
-                        let mut para = RenderPara {
-                            text: p.text.clone(),
-                            align: p.props.align.or(level.align).unwrap_or_default(),
-                            level: p.props.level,
-                            base: self.resolve(slide, level, &first.props, scale),
-                            runs,
-                            marker: None,
-                            indent_pt: 0.0,
-                            first_line_pt: 0.0,
-                            space_before_pt: 0.0,
-                            space_after_pt: 0.0,
-                            line: None,
-                        };
-                        // Empty paragraphs show their bullet only while editing.
-                        let shown = shown.filter(|_| has_text || prompts);
-                        apply_para_style(&mut para, &st, shown, i == 0, scale, bp.line_reduction);
-                        para
-                    })
-                    .collect()
-            }
+            None => self.render_paras(slide, body, &ls, scale, bp.line_reduction, prompts),
         };
         let d = [91_440, 45_720, 91_440, 45_720];
         Some(RenderText {
@@ -588,7 +575,166 @@ impl Presentation {
             anchor: bp.anchor.unwrap_or_default(),
             wrap: bp.no_wrap != Some(true),
             prompt,
+            vert: bp.vert.unwrap_or_default(),
         })
+    }
+
+    /// The paragraphs of a text body with list style `ls`.
+    fn render_paras(
+        &self,
+        slide: usize,
+        body: &TextBody,
+        ls: &ListStyle,
+        scale: f32,
+        line_reduction: Option<u32>,
+        prompts: bool,
+    ) -> Vec<RenderPara> {
+        let mut numbers = Numbering::default();
+        body.paras
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let level = &ls.0[p.props.level.min(8) as usize];
+                let mut st = level.para.clone();
+                st.overlay(&p.props.style);
+                let runs: Vec<RenderRun> = p
+                    .run_ranges()
+                    .filter(|(r, _)| !r.is_empty())
+                    .map(|(range, run)| RenderRun {
+                        range,
+                        ..self.resolve(slide, level, &run.props, scale)
+                    })
+                    .collect();
+                // The bullet takes the first character's formatting.
+                let first = p.runs.iter().find(|r| r.len > 0).unwrap_or(&p.runs[0]);
+                let has_text = !p.text.is_empty();
+                let shown = numbers.next(p.props.level, st.bullet.as_ref(), has_text);
+                let mut para = RenderPara {
+                    text: p.text.clone(),
+                    align: p.props.align.or(level.align).unwrap_or_default(),
+                    level: p.props.level,
+                    base: self.resolve(slide, level, &first.props, scale),
+                    runs,
+                    marker: None,
+                    indent_pt: 0.0,
+                    first_line_pt: 0.0,
+                    space_before_pt: 0.0,
+                    space_after_pt: 0.0,
+                    line: None,
+                };
+                // Empty paragraphs show their bullet only while editing.
+                let shown = shown.filter(|_| has_text || prompts);
+                apply_para_style(&mut para, &st, shown, i == 0, scale, line_reduction);
+                para
+            })
+            .collect()
+    }
+
+    /// The text of a shape inside a group or SmartArt drawing, drawn in
+    /// `xfrm` (no prompts; the geometry's text rectangle applies unless
+    /// `text_box` gives the text its own box).
+    pub fn shape_text(
+        &self,
+        slide: usize,
+        shape: &Shape,
+        xfrm: &Xfrm,
+        text_box: bool,
+    ) -> Option<RenderText> {
+        shape.text.as_ref().filter(|t| !t.is_empty())?;
+        let mut t = self.render_text(slide, shape, false)?;
+        if !text_box {
+            apply_text_rect(&mut t, shape, xfrm);
+        }
+        Some(t)
+    }
+
+    /// The text of a table cell: the slide's default text, the table
+    /// style's cell text (`look`), then the body's own formatting; the
+    /// cell's margins and anchoring.
+    pub fn cell_text(
+        &self,
+        slide: usize,
+        cell: &Cell,
+        look: &crate::theme::LevelStyle,
+    ) -> Option<RenderText> {
+        let body = cell.text.as_ref()?;
+        let master = self.master_of(slide);
+        let mut ls = master.other_style.clone();
+        ls.overlay(&self.default_style);
+        for lvl in &mut ls.0 {
+            lvl.overlay(look);
+        }
+        ls.overlay(&body.list);
+        let bp = &body.body;
+        let scale = bp.font_scale.map_or(1.0, |s| s as f32 / 100_000.0);
+        let paras = self.render_paras(slide, body, &ls, scale, bp.line_reduction, false);
+        let [l, r, t, b] = cell.margins;
+        Some(RenderText {
+            paras,
+            insets: [l, t, r, b],
+            anchor: cell.anchor,
+            wrap: true,
+            prompt: false,
+            vert: cell.vert,
+        })
+    }
+
+    /// Table styles for slide `slide` (its master's theme colours).
+    pub fn table_styles(&self, slide: usize) -> &crate::frame::TableStyles {
+        &self.master_of(slide).table_styles
+    }
+
+    /// Whether a group or frame on slide `slide` has something to draw.
+    pub fn drawable(&self, slide: usize, frame: &crate::frame::Frame) -> bool {
+        match frame.get() {
+            Some(FrameContent::Group(_) | FrameContent::Table(_)) => true,
+            Some(FrameContent::Diagram(d)) => self.diagram_drawing(slide, d).is_some(),
+            Some(FrameContent::Chart(_)) | None => false,
+        }
+    }
+
+    /// PowerPoint's pre-drawn shapes of a SmartArt frame on slide `slide`
+    /// (`ppt/diagrams/drawingN.xml`), in the frame's own space (origin at
+    /// its top left). `None` if the file has no drawing for it.
+    pub fn diagram_drawing(&self, slide: usize, d: &DiagramRef) -> Option<Group> {
+        let s = self.slides.get(slide)?;
+        let data = d.data.as_deref()?;
+        let bytes = self.part_bytes(data)?;
+        let xml = std::str::from_utf8(&bytes).ok()?;
+        let doc = roxmltree::Document::parse(xml).ok()?;
+        let rel = doc
+            .descendants()
+            .find(|n| is(*n, crate::frame::NS_DSP, "dataModelExt"))
+            .and_then(|n| n.attribute("relId"))?;
+        let drawing = s
+            .rels
+            .iter()
+            .find(|r| r.id == rel && r.ty.ends_with("/diagramDrawing"))
+            .and_then(|r| r.part(&s.part))?;
+        let dbytes = self.part_bytes(&drawing)?;
+        let dxml = std::str::from_utf8(&dbytes).ok()?;
+        let ddoc = roxmltree::Document::parse(dxml).ok()?;
+        let tree = ddoc
+            .root_element()
+            .children()
+            .find(|n| is(*n, crate::frame::NS_DSP, "spTree"))?;
+        let rels = self
+            .part_bytes(&rels_name(&drawing))
+            .and_then(|b| String::from_utf8(b.to_vec()).ok())
+            .map(|x| parse_rels(&x))
+            .unwrap_or_default();
+        let master = self.master_of(slide);
+        let cx = crate::shape::ParseCtx {
+            src: dxml,
+            part: &drawing,
+            rels: &rels,
+            colors: crate::theme::ColorCtx {
+                theme: &master.theme,
+                map: &master.clr_map,
+                ph: None,
+            },
+        };
+        Some(crate::shape::parse_group(tree, &cx, None, None, None))
     }
 
     /// Everything drawn on slide `slide`, bottom to top: master and layout
@@ -633,6 +779,11 @@ impl Presentation {
                 xfrm,
                 text: self.render_text(slide, sh, prompts),
             });
+        }
+        for r in &mut out {
+            if let Some(t) = &mut r.text {
+                apply_text_rect(t, r.shape, &r.xfrm);
+            }
         }
         out
     }

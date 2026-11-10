@@ -1311,7 +1311,7 @@ impl SlidesView {
                     Geom::Other(o) => format!("Shape ({o})"),
                 },
                 ShapeKind::Picture { .. } => "Picture".into(),
-                ShapeKind::Other { what } => what.clone(),
+                ShapeKind::Other { what, .. } => what.clone(),
             };
             Some((s.name.clone(), kind, self.shape_xfrm(i)?))
         });

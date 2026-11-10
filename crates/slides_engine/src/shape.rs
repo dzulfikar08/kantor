@@ -9,6 +9,8 @@ use std::sync::Arc;
 use docs_engine::{LINE_BREAK, Rgb};
 use roxmltree::Node;
 
+use crate::fill::Fill;
+use crate::frame::{Frame, FrameContent, Group, NS_DSP};
 use crate::model::*;
 use crate::theme::{ColorCtx, ListStyle, bullet_of, is_bullet_el, para_style};
 use crate::xml::*;
@@ -64,34 +66,45 @@ fn xfrm_of(x: Node) -> Option<Xfrm> {
 }
 
 pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
+    parse_shape_in(n, cx, None)
+}
+
+/// A shape inside a group whose fill is `grp_fill` (for `a:grpFill`).
+/// SmartArt drawings (`dsp:`) use the same elements in their own namespace.
+pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) -> Shape {
     let src = cx.src;
     let base = n.range().start;
     let local = n.tag_name().name();
-    let in_p = n.tag_name().namespace() == Some(NS_P);
+    let ns: &'static str = if n.tag_name().namespace() == Some(NS_DSP) {
+        NS_DSP
+    } else {
+        NS_P
+    };
+    let in_p = n.tag_name().namespace() == Some(ns);
     let nv = n
         .children()
         .find(|c| c.is_element() && c.tag_name().name().starts_with("nv"));
-    let cnv = nv.and_then(|nv| child(nv, NS_P, "cNvPr"));
+    let cnv = nv.and_then(|nv| child(nv, ns, "cNvPr"));
     let id = cnv.and_then(|c| attr_i64(c, "id")).unwrap_or(0).max(0) as u32;
     let name = cnv
         .and_then(|c| c.attribute("name"))
         .unwrap_or_default()
         .to_owned();
     let ph = nv
-        .and_then(|nv| path(nv, &[(NS_P, "nvPr"), (NS_P, "ph")]))
+        .and_then(|nv| path(nv, &[(ns, "nvPr"), (ns, "ph")]))
         .map(|p| Placeholder {
             kind: p.attribute("type").map(str::to_owned),
             idx: attr_i64(p, "idx").map(|i| i.max(0) as u32),
         });
     let max_id = n
         .descendants()
-        .filter(|d| is(*d, NS_P, "cNvPr"))
+        .filter(|d| is(*d, ns, "cNvPr"))
         .filter_map(|d| attr_i64(d, "id"))
         .max()
         .unwrap_or(0)
         .max(0) as u32;
 
-    let sp_pr = child(n, NS_P, "spPr");
+    let sp_pr = child(n, ns, "spPr").or_else(|| child(n, ns, "grpSpPr"));
     let xfrm_el = sp_pr.and_then(|s| child(s, NS_A, "xfrm"));
     let mut xfrm = xfrm_el.and_then(xfrm_of);
     let xfrm_at = sp_pr.map(|sp| match xfrm_el {
@@ -149,7 +162,7 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
         }
     });
 
-    let style = child(n, NS_P, "style");
+    let style = child(n, ns, "style");
     let style_color = |name: &str| {
         style
             .and_then(|s| child(s, NS_A, name))
@@ -183,6 +196,10 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
             Some((attr_i64(r, "idx").unwrap_or(0), cx.colors.first_color(r)))
         };
         look.fill_as_read = match fill {
+            Some(f) if f.tag_name().name() == "grpFill" => {
+                look.fill = grp_fill.and_then(Fill::main_color);
+                grp_fill.cloned()
+            }
             Some(f) => cx.colors.full_fill(f, &resolve),
             None => style_ref("fillRef").and_then(|(idx, ph)| cx.colors.style_fill(idx, ph)),
         };
@@ -229,10 +246,10 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
             // Plain presets the display kind already says aren't stored.
             let geometry = geometry.filter(|g| *g != geom.geometry());
             let text_box = nv
-                .and_then(|nv| child(nv, NS_P, "cNvSpPr"))
+                .and_then(|nv| child(nv, ns, "cNvSpPr"))
                 .and_then(|c| attr_bool(c, "txBox"))
                 .unwrap_or(false);
-            if let Some(tb) = child(n, NS_P, "txBody") {
+            if let Some(tb) = child(n, ns, "txBody") {
                 let (body, at) = parse_text_body(tb, cx);
                 text = Some(body);
                 paras_at = Some(at.start - base..at.end - base);
@@ -244,7 +261,7 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
             }
         }
         (true, "pic") => {
-            let rel = child(n, NS_P, "blipFill")
+            let rel = child(n, ns, "blipFill")
                 .and_then(|b| child(b, NS_A, "blip"))
                 .and_then(|b| r_attr(b, "embed"))
                 .unwrap_or_default()
@@ -254,16 +271,41 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
                 .iter()
                 .find(|r| r.id == rel)
                 .and_then(|r| r.part(cx.part));
-            look.picture = crate::fill::picture_look(child(n, NS_P, "blipFill"));
+            look.picture = crate::fill::picture_look(child(n, ns, "blipFill"));
             ShapeKind::Picture { rel, part }
         }
         _ => {
-            xfrm = n
+            let xfrm_el = n
                 .descendants()
-                .find(|d| d.is_element() && d.tag_name().name() == "xfrm")
-                .and_then(xfrm_of);
+                .find(|d| d.is_element() && d.tag_name().name() == "xfrm");
+            xfrm = xfrm_el.and_then(xfrm_of);
+            let frame = match (in_p, local) {
+                (true, "grpSp") => {
+                    // The group's own fill is what `a:grpFill` children show.
+                    // (A group's own `a:grpFill` was resolved above.)
+                    let own = look
+                        .fill_as_read
+                        .clone()
+                        .or_else(|| look.fill.map(|c| Fill::Solid(c, 255)));
+                    Frame::new(FrameContent::Group(parse_group(
+                        n,
+                        cx,
+                        xfrm_el,
+                        xfrm,
+                        own.as_ref(),
+                    )))
+                }
+                (true, "graphicFrame") => {
+                    let text = |tb: Node| parse_text_body(tb, cx).0;
+                    crate::frame::parse_graphic_frame(n, &cx.colors, cx.rels, cx.part, &text)
+                        .map(Frame::new)
+                        .unwrap_or_default()
+                }
+                _ => Frame::default(),
+            };
             ShapeKind::Other {
                 what: describe_element(local),
+                frame,
             }
         }
     };
@@ -297,6 +339,35 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
     }
 }
 
+/// The children of a group (or SmartArt drawing tree) `n`.
+pub(crate) fn parse_group(
+    n: Node,
+    cx: &ParseCtx,
+    xfrm_el: Option<Node>,
+    xfrm: Option<Xfrm>,
+    fill: Option<&Fill>,
+) -> Group {
+    let mut g = Group {
+        child_box: crate::frame::child_box(xfrm_el, xfrm),
+        ..Group::default()
+    };
+    for c in n.children().filter(|c| {
+        c.is_element()
+            && matches!(
+                c.tag_name().name(),
+                "sp" | "cxnSp" | "pic" | "grpSp" | "graphicFrame"
+            )
+    }) {
+        g.children.push(parse_shape_in(c, cx, fill));
+        let tx = c
+            .children()
+            .find(|k| is(*k, NS_DSP, "txXfrm"))
+            .and_then(xfrm_of);
+        g.text_boxes.push(tx);
+    }
+    g
+}
+
 /// Whether `n` is an element in `ns` named one of `names`.
 fn is_in(n: Node, ns: &str, names: &[&str]) -> bool {
     n.is_element() && n.tag_name().namespace() == Some(ns) && names.contains(&n.tag_name().name())
@@ -314,6 +385,7 @@ pub(crate) fn body_props(n: Node) -> BodyProps {
         _ => Anchor::Top,
     });
     b.no_wrap = n.attribute("wrap").map(|w| w == "none");
+    b.vert = crate::frame::Vert::parse(n.attribute("vert"));
     let fit = child(n, NS_A, "normAutofit");
     b.font_scale = fit
         .and_then(|a| attr_i64(a, "fontScale"))

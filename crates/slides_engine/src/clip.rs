@@ -113,7 +113,7 @@ impl Presentation {
         idx.dedup();
         for i in idx {
             let shape = s.shapes.get(i).context("no such shape")?;
-            if let ShapeKind::Other { what } = &shape.kind {
+            if let ShapeKind::Other { what, .. } = &shape.kind {
                 bail!("Copying a {what} isn't supported yet");
             }
             let mut copy = shape.clone();

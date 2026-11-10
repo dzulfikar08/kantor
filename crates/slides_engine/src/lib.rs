@@ -16,6 +16,7 @@ pub mod clip;
 pub mod edit;
 pub mod fill;
 pub mod find;
+pub mod frame;
 pub mod geom;
 mod history;
 pub mod model;
@@ -35,6 +36,7 @@ pub use fill::{
     LineJoin, LineStyle, PictureLook,
 };
 pub use find::TextMatch;
+pub use frame::{Frame, FrameContent};
 pub use history::Focus;
 pub use model::*;
 pub use presentation::{Layout, Master, Presentation, Slide, package_problems};

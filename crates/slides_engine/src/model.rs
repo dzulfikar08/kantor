@@ -526,6 +526,8 @@ pub struct BodyProps {
     pub font_scale: Option<u32>,
     /// `normAutofit/@lnSpcReduction` in 1/1000 %.
     pub line_reduction: Option<u32>,
+    /// `vert`: text turned a quarter (display only).
+    pub vert: Option<crate::frame::Vert>,
 }
 
 impl BodyProps {
@@ -546,6 +548,9 @@ impl BodyProps {
         }
         if o.line_reduction.is_some() {
             self.line_reduction = o.line_reduction;
+        }
+        if o.vert.is_some() {
+            self.vert = o.vert;
         }
     }
 }
@@ -705,9 +710,13 @@ pub enum ShapeKind {
     },
     /// `p:pic`: `rel` in the slide's relationships, `part` the media part.
     Picture { rel: String, part: Option<String> },
-    /// Groups, tables, charts, connectors, SmartArt...: kept verbatim and
-    /// drawn as a labelled box.
-    Other { what: String },
+    /// Groups, tables, charts, SmartArt...: kept verbatim. `frame` is what
+    /// they hold, for display ([`crate::frame`]); without it they're drawn
+    /// as a labelled box.
+    Other {
+        what: String,
+        frame: crate::frame::Frame,
+    },
 }
 
 impl ShapeKind {
