@@ -20,6 +20,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Toolbar and command palette: fill and text colour, larger / smaller font, all / outside / no
   borders, wrap text, merge & center / unmerge, and vertical alignment (palette). Each is one
   undo step.
+- MCP `sheets_format` also sets fill, text colour, font size, wrap, vertical alignment, borders
+  and merging.
 
 ### Changed
 - Linux: the automatic UI font skips variable fonts (such as a single-file Inter or Adwaita Sans)
