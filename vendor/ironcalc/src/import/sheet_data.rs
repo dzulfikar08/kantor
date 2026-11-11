@@ -416,6 +416,18 @@ impl SheetDataReader<'_, '_> {
         // type, the default type being "n" for number
         // If the cell does not have a value is an empty cell
         let cell_type = match cell.cell_type.as_deref() {
+            // KANTOR PATCH (empty typed cells): openpyxl and others write
+            // styled empty cells as `<c r="B3" s="5" t="n"/>`. Without a
+            // `<v>` or a formula there is no value, and Excel shows the cell
+            // blank; reading it as a number made it 0.
+            Some(t)
+                if cell.value.is_none()
+                    && cell.formula.is_none()
+                    && cell.rich_text.is_none()
+                    && t != "inlineStr" =>
+            {
+                "empty"
+            }
             Some(t) => t,
             None => {
                 if cell.value.is_none() {

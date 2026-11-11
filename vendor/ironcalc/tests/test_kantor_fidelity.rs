@@ -140,3 +140,74 @@ fn outline_levels_survive_a_round_trip() {
     assert_eq!(b.cols[0].outline_level, 1);
     assert!(b.cols[0].collapsed);
 }
+
+/// Replaces `from` with `to` in `xl/worksheets/sheet1.xml` of an xlsx.
+fn patch_sheet_xml(bytes: &[u8], from: &str, to: &str) -> Vec<u8> {
+    use std::io::{Read, Write};
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let name = file.name().unwrap().to_string();
+        let mut data = Vec::new();
+        file.read_to_end(&mut data).unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            let xml = String::from_utf8(data).unwrap();
+            assert!(xml.contains(from), "{from} not in {xml}");
+            data = xml.replace(from, to).into_bytes();
+        }
+        out.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        out.write_all(&data).unwrap();
+    }
+    out.finish().unwrap().into_inner()
+}
+
+#[test]
+fn styled_empty_cells_with_a_type_stay_empty() {
+    use ironcalc_base::types::Cell;
+    let mut model = Model::new_empty("t", "en", "UTC", "en").unwrap();
+    let mut s = model.get_style_for_cell(0, 3, 2).unwrap();
+    s.fill.color = Color::Rgb("#FFEE00".to_string());
+    model.set_cell_style(0, 3, 2, &s).unwrap();
+    model.set_user_input(0, 1, 1, "x".to_string()).unwrap();
+    let bytes = save_xlsx_to_writer(&model, Cursor::new(Vec::new()))
+        .unwrap()
+        .into_inner();
+    let style = match &*model.workbook.worksheets[0].cell(3, 2).unwrap() {
+        Cell::EmptyCell { s } => *s,
+        other => panic!("unexpected {other:?}"),
+    };
+    // What openpyxl writes for a styled cell without a value.
+    let bytes = patch_sheet_xml(
+        &bytes,
+        &format!("<c r=\"B3\" s=\"{style}\"/>"),
+        &format!("<c r=\"B3\" s=\"{style}\" t=\"n\"/><c r=\"C3\" s=\"{style}\" t=\"s\"/>"),
+    );
+    let workbook = load_from_xlsx_bytes(&bytes, "t", "en", "UTC").unwrap();
+    let loaded = Model::from_workbook(workbook, "en").unwrap();
+    for column in [2, 3] {
+        let cell = loaded.workbook.worksheets[0].cell(3, column).unwrap();
+        assert!(
+            matches!(&*cell, Cell::EmptyCell { .. }),
+            "column {column}: {cell:?}"
+        );
+        assert_eq!(
+            loaded.get_formatted_cell_value(0, 3, column).unwrap(),
+            ""
+        );
+        assert_eq!(
+            loaded.get_style_for_cell(0, 3, column).unwrap().fill.color,
+            Color::Rgb("#FFEE00".to_string())
+        );
+    }
+    // Saved back as a style without a value.
+    let again = save_xlsx_to_writer(&loaded, Cursor::new(Vec::new()))
+        .unwrap()
+        .into_inner();
+    let reloaded = Model::from_workbook(load_from_xlsx_bytes(&again, "t", "en", "UTC").unwrap(), "en").unwrap();
+    assert!(matches!(
+        reloaded.workbook.worksheets[0].cell(3, 2).as_deref(),
+        Some(Cell::EmptyCell { .. })
+    ));
+}
