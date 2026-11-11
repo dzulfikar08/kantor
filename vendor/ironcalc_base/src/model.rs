@@ -231,10 +231,6 @@ pub struct Model<'a> {
     /// (`parse_formulas`), extended when a formula is added. See
     /// `shared_formula_index`.
     pub(crate) shared_formula_lookup: Vec<SharedFormulaLookup>,
-    /// KANTOR PATCH (tables): per sheet, the areas `(top, left, bottom,
-    /// right)` under an AutoFilter (a table's or the sheet's). A hidden row
-    /// inside one counts as filtered out for SUBTOTAL and AGGREGATE.
-    pub kantor_filter_areas: HashMap<u32, Vec<(i32, i32, i32, i32)>>,
 }
 
 /// Formula text to index in `Worksheet::shared_formulas`, for one sheet.
@@ -1923,7 +1919,6 @@ impl<'a> Model<'a> {
             workbook,
             parsed_formulas,
             shared_formula_lookup: Vec::new(),
-            kantor_filter_areas: HashMap::new(),
             shared_strings,
             parsed_defined_names: HashMap::new(),
             parser,

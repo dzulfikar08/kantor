@@ -129,6 +129,12 @@ pub(crate) enum Diff {
         old_value: Option<Box<Table>>,
         new_value: Option<Box<Table>>,
     },
+    // KANTOR PATCH (tables): a sheet's `<autoFilter>` element.
+    KantorSetSheetFilter {
+        sheet: u32,
+        old_value: Option<String>,
+        new_value: Option<String>,
+    },
     // KANTOR PATCH (tables): sorted rows. Destination row `top + i` got the
     // cells (columns `left..=right`) of row `order[i]`.
     KantorPermuteRows {

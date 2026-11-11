@@ -29,6 +29,7 @@ fn table(name: &str, reference: &str, columns: &[&str], totals: u32) -> Table {
             .collect(),
         style_info: TableStyleInfo::default(),
         has_filters: true,
+        kantor_auto_filter: None,
     }
 }
 
@@ -197,13 +198,60 @@ fn filtered_rows_are_skipped_by_subtotal() {
     assert_eq!(text(&m, (7, 1)), "35");
     assert_eq!(text(&m, (8, 1)), "15");
     // Under an AutoFilter it is filtered out for both.
-    m.kantor_set_filter_areas(0, vec![(1, 1, 4, 3)]);
+    m.kantor_set_sheet_filter(
+        0,
+        Some(r#"<autoFilter ref="A1:C4"><filterColumn colId="0"/></autoFilter>"#.to_string()),
+    )
+    .unwrap();
     assert_eq!(text(&m, (7, 1)), "15");
     assert_eq!(text(&m, (8, 1)), "15");
     assert_eq!(text(&m, (9, 1)), "15");
     assert_eq!(text(&m, (10, 1)), "35");
     // Undo shows the row again, as it was.
     m.undo().unwrap();
+    m.undo().unwrap();
     assert!(!m.get_model().workbook.worksheets[0].rows.iter().any(|r| r.hidden));
     assert!(!m.kantor_set_rows_hidden(0, &[(3, false)]).unwrap());
+}
+
+#[test]
+fn the_sheet_filter_follows_rows_and_undoes() {
+    let mut m = UserModel::new_empty("t", "en", "UTC", "en").unwrap();
+    let xml = r#"<autoFilter ref="A1:C10"><filterColumn colId="1"><filters><filter val="x"/></filters></filterColumn></autoFilter>"#;
+    m.kantor_set_sheet_filter(0, Some(xml.to_string())).unwrap();
+    let filter = |m: &UserModel| m.get_model().workbook.worksheets[0].kantor_auto_filter.clone();
+    m.insert_rows(0, 5, 2).unwrap();
+    assert!(filter(&m).unwrap().starts_with(r#"<autoFilter ref="A1:C12">"#));
+    m.delete_rows(0, 11, 2).unwrap();
+    assert!(filter(&m).unwrap().starts_with(r#"<autoFilter ref="A1:C10">"#));
+    m.undo().unwrap();
+    assert!(filter(&m).unwrap().starts_with(r#"<autoFilter ref="A1:C12">"#));
+    m.undo().unwrap();
+    m.undo().unwrap();
+    assert_eq!(filter(&m), None);
+}
+
+#[test]
+fn unqualified_references_inside_a_table() {
+    // As XlsxWriter writes them: `[[#This Row],Units]`, `[Units]`.
+    let mut m = sales();
+    let mut t = m.get_model().workbook.tables["Sales"].clone();
+    t.reference = "A1:D5".to_string();
+    t.columns.push(TableColumn {
+        id: 4,
+        name: "Amount".to_string(),
+        ..Default::default()
+    });
+    m.kantor_set_table("Sales", Some(t)).unwrap();
+    m.set_user_input(0, 2, 4, "=[@Units]+[[#This Row],Unit Price]").unwrap();
+    m.set_user_input(0, 5, 4, "=SUBTOTAL(109,[Units])").unwrap();
+    assert_eq!(text(&m, (2, 4)), "12");
+    assert_eq!(text(&m, (5, 4)), "35");
+    assert_eq!(
+        m.get_cell_content(0, 2, 4).unwrap(),
+        "=Sales[@Units]+Sales[@[Unit Price]]"
+    );
+    // Outside a table it is no reference.
+    assert!(m.set_user_input(0, 9, 9, "=[@Units]").is_ok());
+    assert_eq!(text(&m, (9, 9)), "#ERROR!");
 }

@@ -47,6 +47,7 @@ fn create_test_table(
             },
             totals_row_dxf_id: None,
             has_filters: false,
+            kantor_auto_filter: None,
         },
     );
     table

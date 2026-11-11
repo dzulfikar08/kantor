@@ -158,6 +158,12 @@ impl<'a> UserModel<'a> {
                 Diff::KantorRowEntries {
                     sheet, old_value, ..
                 } => self.model.kantor_set_row_entries(*sheet, old_value)?,
+                Diff::KantorSetSheetFilter {
+                    sheet, old_value, ..
+                } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.kantor_auto_filter =
+                        old_value.clone()
+                }
                 Diff::KantorSetTable {
                     name, old_value, ..
                 } => self
@@ -753,6 +759,12 @@ impl<'a> UserModel<'a> {
                 Diff::KantorRowEntries {
                     sheet, new_value, ..
                 } => self.model.kantor_set_row_entries(*sheet, new_value)?,
+                Diff::KantorSetSheetFilter {
+                    sheet, new_value, ..
+                } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.kantor_auto_filter =
+                        new_value.clone()
+                }
                 Diff::KantorSetTable {
                     name, new_value, ..
                 } => self

@@ -55,7 +55,7 @@ impl<'a> Model<'a> {
 
     /// KANTOR PATCH (tables): like `cell_hidden_status`, with the sheet's
     /// hidden rows given; a hidden row is filtered out if it lies under an
-    /// AutoFilter Kantor knows of (`kantor_filter_areas`) or, as upstream, in
+    /// sheet's AutoFilter with a filter on or, as upstream, in
     /// a table with filter buttons.
     fn kantor_hidden_status(
         &self,

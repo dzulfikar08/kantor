@@ -701,8 +701,11 @@ pub(crate) fn get_worksheet_xml(
   {cols}\
   <sheetData>"
     );
+    // KANTOR PATCH (tables): the sheet's AutoFilter, kept by Kantor.
+    let auto_filter = worksheet.kantor_auto_filter.as_deref().unwrap_or("");
     let tail = format!(
         "</sheetData>\
+  {auto_filter}\
   {merge_cells_section}\
   {cf_sections}\
   {hyperlinks_section}\

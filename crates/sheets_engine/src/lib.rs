@@ -548,11 +548,28 @@ impl Workbook {
                         })
                         .unwrap_or_default()
                 };
+                let table_now = |name: &str| {
+                    let t = ironcalc_base::kantor_tables::find_table_pub(&model.workbook.tables, name)?;
+                    let sheet_id = model
+                        .workbook
+                        .worksheets
+                        .iter()
+                        .find(|w| w.name == t.sheet_name)?
+                        .sheet_id;
+                    Some(preserve::TableNow {
+                        sheet_id,
+                        reference: t.reference.clone(),
+                        auto_filter: t.kantor_auto_filter.clone(),
+                        totals_rows: t.totals_row_count,
+                        columns: t.columns.iter().map(|c| (c.id, c.name.clone())).collect(),
+                    })
+                };
                 let ctx = preserve::Context {
                     tabs: &self.tab_colors(),
                     full_calc: stale,
                     moves: &moves,
                     cell_text: &cell_text,
+                    tables: &table_now,
                 };
                 let finished = preserve::finish(written, original.as_deref(), &ctx);
                 drop(original);

@@ -199,6 +199,8 @@ pub(crate) fn load_table<R: Read + std::io::Seek>(
         columns,
         style_info,
         has_filters,
+        // KANTOR PATCH (tables)
+        kantor_auto_filter: auto_filter.first().map(|f| f.to_xml()),
         sheet_name: sheet_name.to_string(),
     })
 }

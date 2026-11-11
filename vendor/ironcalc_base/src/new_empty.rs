@@ -58,6 +58,7 @@ impl<'a> Model<'a> {
             links: HashMap::new(),
             // KANTOR PATCH (row heights)
             default_row_height: None,
+            kantor_auto_filter: None,
         }
     }
 
@@ -658,7 +659,6 @@ impl<'a> Model<'a> {
             shared_strings: HashMap::new(),
             parsed_formulas,
             shared_formula_lookup: Vec::new(),
-            kantor_filter_areas: HashMap::new(),
             parsed_defined_names: HashMap::new(),
             parser,
             locale,

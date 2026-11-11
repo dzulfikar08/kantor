@@ -241,6 +241,9 @@ pub struct Worksheet {
     // points, when the file gave one. Read only: the writer doesn't emit
     // `sheetFormatPr` (Kantor carries the original element on save).
     pub default_row_height: Option<f64>,
+    /// KANTOR PATCH (tables): the sheet's `<autoFilter>` element as the file
+    /// had it (Kantor reads and writes its filter state).
+    pub kantor_auto_filter: Option<String>,
 }
 
 /// Internal representation of Excel's sheet_data
@@ -430,6 +433,9 @@ pub struct Table {
     pub columns: Vec<TableColumn>,
     pub style_info: TableStyleInfo,
     pub has_filters: bool,
+    /// KANTOR PATCH (tables): the table's `<autoFilter>` element (filter
+    /// buttons and the filter state), `None` without filter buttons.
+    pub kantor_auto_filter: Option<String>,
 }
 
 // totals_row_label vs totals_row_function might be mutually exclusive. Use an enum?

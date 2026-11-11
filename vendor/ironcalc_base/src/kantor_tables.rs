@@ -113,6 +113,11 @@ pub(crate) fn find_table<'t>(
     })
 }
 
+/// The table called `name` (any case).
+pub fn find_table_pub<'t>(tables: &'t HashMap<String, Table>, name: &str) -> Option<&'t Table> {
+    find_table(tables, name)
+}
+
 /// A table's area: `(top, left, bottom, right)`, 1-based.
 pub fn table_area(table: &Table) -> Option<(i32, i32, i32, i32)> {
     let (c1, r1, c2, r2) = parse_range(&table.reference).ok()?;
@@ -382,6 +387,21 @@ impl Model<'_> {
         if changed {
             self.parser.kantor_set_tables(self.workbook.tables.clone());
         }
+        // The sheet's AutoFilter range, like a table without header rules.
+        let Ok(ws) = self.workbook.worksheet_mut(sheet) else {
+            return;
+        };
+        if let Some(xml) = ws.kantor_auto_filter.clone() {
+            if let Some((c1, r1, c2, r2)) = auto_filter_ref(&xml).and_then(|r| parse_range(r).ok()) {
+                let moved = if rows {
+                    displace_span(r1, r2, at, delta).map(|(a, b)| (a, c1, b, c2))
+                } else {
+                    displace_span(c1, c2, at, delta).map(|(a, b)| (r1, a, r2, b))
+                };
+                ws.kantor_auto_filter = moved
+                    .map(|(t, l, b, r)| with_auto_filter_ref(&xml, &area_text(t, l, b, r)));
+            }
+        }
     }
 
     /// Replace the entries of several rows (`None` removes one), looking the
@@ -498,32 +518,64 @@ impl Model<'_> {
         Ok(())
     }
 
-    /// Whether row `row` of `sheet` is hidden by a filter (see
-    /// `kantor_filter_areas`).
+    /// Whether a hidden row `row` (at `column`) of `sheet` is filtered out:
+    /// it lies under the sheet's AutoFilter and the filter is on (tables say
+    /// so with `has_filters`, as upstream).
     pub(crate) fn kantor_row_filtered(&self, sheet: u32, row: i32, column: i32) -> bool {
-        self.kantor_filter_areas.get(&sheet).is_some_and(|areas| {
-            areas
-                .iter()
-                .any(|&(t, l, b, r)| (t..=b).contains(&row) && (l..=r).contains(&column))
-        })
+        let Ok(ws) = self.workbook.worksheet(sheet) else {
+            return false;
+        };
+        let Some(xml) = ws.kantor_auto_filter.as_deref() else {
+            return false;
+        };
+        if !xml.contains("<filterColumn") {
+            return false;
+        }
+        match auto_filter_ref(xml).and_then(|r| parse_range(r).ok()) {
+            Some((c1, r1, c2, r2)) => (r1..=r2).contains(&row) && (c1..=c2).contains(&column),
+            None => false,
+        }
+    }
+}
+
+/// The `ref` of an `<autoFilter>` element.
+pub fn auto_filter_ref(xml: &str) -> Option<&str> {
+    let head = &xml[..xml.find('>')?];
+    let at = head.find(" ref=\"")? + 6;
+    let len = head[at..].find('"')?;
+    Some(&head[at..at + len])
+}
+
+/// The `<autoFilter>` element with another `ref`.
+pub fn with_auto_filter_ref(xml: &str, reference: &str) -> String {
+    match auto_filter_ref(xml) {
+        Some(old) => {
+            let at = old.as_ptr() as usize - xml.as_ptr() as usize;
+            format!("{}{reference}{}", &xml[..at], &xml[at + old.len()..])
+        }
+        None => xml.to_string(),
     }
 }
 
 impl UserModel<'_> {
-    /// The areas under an AutoFilter on `sheet` (see
-    /// `Model::kantor_filter_areas`); recalculates if they changed. Not an
-    /// undo step: Kantor sets them from its own filter state.
-    pub fn kantor_set_filter_areas(&mut self, sheet: u32, areas: Vec<(i32, i32, i32, i32)>) {
-        let old = self.model.kantor_filter_areas.get(&sheet).cloned().unwrap_or_default();
-        if old == areas {
-            return;
+    /// Set (or remove) the sheet's `<autoFilter>` element as one undo step.
+    pub fn kantor_set_sheet_filter(
+        &mut self,
+        sheet: u32,
+        filter: Option<String>,
+    ) -> Result<(), String> {
+        let old = self.model.workbook.worksheet(sheet)?.kantor_auto_filter.clone();
+        if old == filter {
+            return Ok(());
         }
-        if areas.is_empty() {
-            self.model.kantor_filter_areas.remove(&sheet);
-        } else {
-            self.model.kantor_filter_areas.insert(sheet, areas);
-        }
+        self.model.workbook.worksheet_mut(sheet)?.kantor_auto_filter = filter.clone();
+        self.push_diff_list(vec![Diff::KantorSetSheetFilter {
+            sheet,
+            old_value: old,
+            new_value: filter,
+        }]);
         self.evaluate_if_not_paused();
+        Ok(())
     }
 
     /// Create, change (same `name`) or remove (`None`) a table, as one undo
@@ -673,6 +725,15 @@ impl UserModel<'_> {
     /// Snapshots of the tables a row/column insert or delete changed, put
     /// before it in its diff list: undo restores the old table after the
     /// cells are back (a delete can't be undone by re-inserting).
+    pub(crate) fn sheet_filter_snapshot_diff(&self, sheet: u32, old: Option<String>) -> Option<Diff> {
+        let now = self.model.workbook.worksheet(sheet).ok()?.kantor_auto_filter.clone();
+        (now != old).then(|| Diff::KantorSetSheetFilter {
+            sheet,
+            old_value: old.clone(),
+            new_value: old,
+        })
+    }
+
     pub(crate) fn tables_snapshot_diffs(&self, old: &HashMap<String, Table>) -> Vec<Diff> {
         old.iter()
             .filter(|(name, t)| self.model.workbook.tables.get(*name) != Some(*t))

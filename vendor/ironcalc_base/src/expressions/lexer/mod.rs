@@ -221,7 +221,19 @@ impl<'a> Lexer<'a> {
                     '=' => TokenType::Compare(OpCompare::Equal),
                     '{' => TokenType::LeftBrace,
                     '}' => TokenType::RightBrace,
-                    '[' => TokenType::LeftBracket,
+                    // KANTOR PATCH (tables): `[@Units]`, `[[#This Row],Units]`
+                    // inside a table (the table is the formula's own).
+                    '[' => {
+                        let start = self.position;
+                        self.position -= 1;
+                        match self.consume_structured_reference("") {
+                            Ok(token) if !matches!(token, TokenType::Ident(_)) => token,
+                            _ => {
+                                self.position = start;
+                                TokenType::LeftBracket
+                            }
+                        }
+                    }
                     ']' => TokenType::RightBracket,
                     ':' => TokenType::Colon,
                     ';' => TokenType::Semicolon,

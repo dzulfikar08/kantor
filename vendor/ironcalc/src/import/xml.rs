@@ -122,6 +122,33 @@ impl XmlNode {
         Descendants { stack: vec![self] }
     }
 
+    /// KANTOR PATCH (tables): the element as XML in the main namespace, with
+    /// its unprefixed attributes (prefixed ones, such as `xr:uid`, are left
+    /// out), for elements Kantor reads itself (`autoFilter`).
+    pub(crate) fn to_xml(&self) -> String {
+        fn esc(s: &str) -> String {
+            s.replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('"', "&quot;")
+        }
+        let mut out = format!("<{}", self.name);
+        for a in self.attributes.iter().filter(|a| a.namespace.is_none()) {
+            out.push_str(&format!(" {}=\"{}\"", a.name, esc(&a.value)));
+        }
+        if self.children.is_empty() && !self.has_text {
+            out.push_str("/>");
+            return out;
+        }
+        out.push('>');
+        out.push_str(&esc(&self.text));
+        for c in &self.children {
+            out.push_str(&c.to_xml());
+        }
+        out.push_str(&format!("</{}>", self.name));
+        out
+    }
+
     /// The first child element with the local name `name`.
     #[cfg(test)]
     pub(crate) fn child(&self, name: &str) -> Option<&XmlNode> {

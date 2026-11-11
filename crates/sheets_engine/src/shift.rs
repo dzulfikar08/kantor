@@ -164,31 +164,6 @@ impl Moves {
         self.0.iter().any(|op| op.sheet() == sheet)
     }
 
-    /// Columns inserted or deleted on the sheet inside columns
-    /// `left..=right` (not at their left edge): what a table can't follow.
-    pub fn splits_columns(&self, sheet: u32, area: Area) -> bool {
-        let mut area = Some(area);
-        for op in &self.0 {
-            let Some(a) = area else { return false };
-            let splits = match *op {
-                Op::InsertColumns { sheet: s, at, .. } => {
-                    s == sheet && at > a.left && at <= a.right
-                }
-                Op::DeleteColumns {
-                    sheet: s,
-                    at,
-                    count,
-                } => s == sheet && at <= a.right && at + count > a.left,
-                _ => false,
-            };
-            if splits {
-                return true;
-            }
-            area = apply_area(*op, sheet, a);
-        }
-        false
-    }
-
     /// Where a cell of `sheet` is now; `None` if it was deleted.
     pub fn cell(&self, sheet: u32, row: u32, col: u32) -> Option<(u32, u32)> {
         let a = self.area(
@@ -828,25 +803,5 @@ mod tests {
         let back = b.moves_to(&root);
         let cell = there.cell(1, 10, 0).unwrap();
         assert_eq!(back.cell(1, cell.0, cell.1), Some((10, 0)));
-    }
-
-    #[test]
-    fn table_columns_split() {
-        let area = Area {
-            top: 0,
-            left: 1,
-            bottom: 5,
-            right: 3,
-        };
-        let ins = |at| {
-            Moves::new(vec![Op::InsertColumns {
-                sheet: 1,
-                at,
-                count: 1,
-            }])
-        };
-        assert!(!ins(1).splits_columns(1, area), "at the left edge: moves");
-        assert!(ins(2).splits_columns(1, area));
-        assert!(!ins(4).splits_columns(1, area), "after it");
     }
 }

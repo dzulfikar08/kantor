@@ -989,6 +989,11 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
     let links = load_hyperlinks(ws, &settings.hyperlink_rels)?;
 
     let conditional_formatting = load_conditional_formatting(ws, theme, dxfs)?;
+    // KANTOR PATCH (tables)
+    let kantor_auto_filter = ws
+        .children()
+        .find(|n| n.has_tag_name("autoFilter"))
+        .map(|n| n.to_xml());
     // pageSetup
     // <pageSetup orientation="portrait" r:id="rId1"/>
 
@@ -1011,6 +1016,8 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
         links,
         // KANTOR PATCH (row heights)
         default_row_height: get_default_row_height(ws),
+        // KANTOR PATCH (tables)
+        kantor_auto_filter,
     })
 }
 

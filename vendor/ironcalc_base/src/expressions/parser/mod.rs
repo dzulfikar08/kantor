@@ -1163,11 +1163,22 @@ impl<'a> Parser<'a> {
                 // grows and is saved as written (upstream turned it into a
                 // fixed range here).
                 let lower = table_name.to_lowercase();
-                let table = match self
-                    .tables
-                    .values()
-                    .find(|t| t.name.to_lowercase() == lower)
-                {
+                let context = &self.context;
+                let found = if table_name.is_empty() {
+                    // KANTOR PATCH (tables): the table the formula is in.
+                    self.tables.values().find(|t| {
+                        t.sheet_name == context.sheet
+                            && parse_range(&t.reference).is_ok_and(|(c1, r1, c2, r2)| {
+                                (r1..=r2).contains(&context.row)
+                                    && (c1..=c2).contains(&context.column)
+                            })
+                    })
+                } else {
+                    self.tables
+                        .values()
+                        .find(|t| t.name.to_lowercase() == lower)
+                };
+                let table = match found {
                     Some(t) => t,
                     None => {
                         return Node::ParseErrorKind {

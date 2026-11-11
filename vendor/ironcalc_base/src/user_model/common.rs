@@ -1170,12 +1170,14 @@ impl<'a> UserModel<'a> {
         let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
         let old_names = self.model.get_defined_name_list(); // KANTOR PATCH (fidelity)
         let old_tables = self.model.workbook.tables.clone(); // KANTOR PATCH (tables)
+        let old_filter = self.model.workbook.worksheet(sheet)?.kantor_auto_filter.clone();
         self.model.delete_rows(sheet, row, row_count)?;
 
         let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
         diff_list.extend(link_diffs);
         diff_list.extend(self.defined_names_snapshot_diffs(old_names)); // KANTOR PATCH
         diff_list.extend(self.tables_snapshot_diffs(&old_tables)); // KANTOR PATCH (tables)
+        diff_list.extend(self.sheet_filter_snapshot_diff(sheet, old_filter));
         diff_list.push(Diff::DeleteRows {
             sheet,
             row,
@@ -1256,12 +1258,14 @@ impl<'a> UserModel<'a> {
         let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
         let old_names = self.model.get_defined_name_list(); // KANTOR PATCH (fidelity)
         let old_tables = self.model.workbook.tables.clone(); // KANTOR PATCH (tables)
+        let old_filter = self.model.workbook.worksheet(sheet)?.kantor_auto_filter.clone();
         self.model.delete_columns(sheet, column, column_count)?;
 
         let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
         diff_list.extend(link_diffs);
         diff_list.extend(self.defined_names_snapshot_diffs(old_names)); // KANTOR PATCH
         diff_list.extend(self.tables_snapshot_diffs(&old_tables)); // KANTOR PATCH (tables)
+        diff_list.extend(self.sheet_filter_snapshot_diff(sheet, old_filter));
         diff_list.push(Diff::DeleteColumns {
             sheet,
             column,
