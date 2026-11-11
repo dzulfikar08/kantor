@@ -32,6 +32,9 @@
 //! undo step; see [`toolbar`]. Column widths come from the workbook and a
 //! resize (or a double-click autofit on the header border) is saved back.
 //!
+//! Data validation (drop-down lists, input messages, error alerts for typed
+//! values, circling invalid data) is in [`data_validation`].
+//!
 //! Header selection, Ctrl+arrows, the fill handle, inserting/deleting rows and
 //! columns, frozen panes and the status-bar sums are in [`grid_ops`].
 
@@ -43,10 +46,12 @@ mod bench;
 mod calc;
 mod cell_editor;
 mod cond_paint;
+mod data_validation;
 mod find;
 mod grid_ops;
 mod look;
 mod point;
+mod popup_list;
 mod row_heights;
 mod row_layout;
 // Upstream code, kept close to GPUI Kit's so it can be compared.
@@ -224,6 +229,7 @@ pub fn init(cx: &mut App) {
     find::bind_keys(KEY_CONTEXT, cx);
     grid_ops::bind_keys(cx);
     calc::bind_keys(cx);
+    data_validation::bind_keys(cx);
 }
 
 /// Feeds one sheet of a [`Workbook`] to the table.
@@ -257,6 +263,8 @@ pub struct SheetGrid {
     scale: f32,
     /// Where each row sits ([`row_layout`]).
     layout: row_layout::RowLayout,
+    /// Drop-down list and circles ([`data_validation`]).
+    validation: data_validation::GridValidation,
 }
 
 /// What [`SheetGrid::selection`] depends on.
@@ -289,6 +297,7 @@ impl SheetGrid {
             selection_memo: Cell::new(None),
             scale: 1.0,
             layout: row_layout::RowLayout::default(),
+            validation: Default::default(),
         };
         grid.resize();
         grid
@@ -595,6 +604,7 @@ impl TableDelegate for SheetGrid {
             }
             None => content.apply(cell),
         };
+        let validation = self.validation_layers(row, col, row_height, cx);
         let down_view = self.view.clone();
         let move_view = self.view.clone();
         // References of the formula being edited: coloured border and fill.
@@ -707,6 +717,7 @@ impl TableDelegate for SheetGrid {
                     let _ = move_view.update(cx, |view, cx| view.cell_drag(row, col, window, cx));
                 }
             })
+            .children(validation)
             .when_some(
                 self.editor
                     .as_ref()
@@ -788,6 +799,10 @@ pub struct SheetsView {
     row_resize: Option<row_layout::RowResize>,
     /// The "Row Height…" prompt.
     row_height_prompt: Option<(Entity<InputState>, Subscription)>,
+    /// A data validation error alert waiting for an answer.
+    alert: Option<data_validation::Alert>,
+    /// Closes the validation drop-down when it loses focus.
+    validation_list_sub: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -842,6 +857,8 @@ impl SheetsView {
             bench: bench::ScrollBench::from_env(),
             row_resize: None,
             row_height_prompt: None,
+            alert: None,
+            validation_list_sub: None,
             _subscriptions: subscriptions,
         };
         this.select_cell(0, 0, cx);
@@ -899,6 +916,7 @@ impl SheetsView {
                     return;
                 }
                 self.selected = cell;
+                self.close_validation_list(window, cx);
                 // A new active cell starts a new range (unless a header
                 // click asked for one).
                 let (end, span) = self.pending_selection.take().unwrap_or((cell, Span::Cells));
@@ -1073,6 +1091,7 @@ impl SheetsView {
         if changed {
             let result = self.set_cell(sheet, row, col, &value, cx);
             let manual = self.table.read(cx).delegate().book.calc_mode() == CalcMode::Manual;
+            let stored = result.is_ok();
             self.status = match result {
                 Ok(()) if manual => format!(
                     "{} updated — manual calculation, press F9 to recalculate",
@@ -1082,7 +1101,26 @@ impl SheetsView {
                 Ok(()) => format!("{} updated", cell_name(row, col)).into(),
                 Err(err) => format!("{err:#}").into(),
             };
+            // A value its data validation rejects waits for the alert.
+            if stored && self.check_typed_value(sheet, (row, col), &value, step, window, cx) {
+                self.update_title(window, cx);
+                return;
+            }
         }
+        self.finish_commit(sheet, (row, col), step, window, cx);
+    }
+
+    /// The end of a commit of (`row`, `col`): move by `step` and return to
+    /// the grid, or (no step: focus went elsewhere) show the newly selected
+    /// cell's content.
+    fn finish_commit(
+        &mut self,
+        sheet: u32,
+        (row, col): (u32, u32),
+        step: Option<(i64, i64)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(step) = step {
             // Pointing may have left another sheet on screen.
             if self.grid_sheet(cx) != sheet {
@@ -1982,7 +2020,7 @@ impl Render for SheetsView {
             )
             // Grid
             .child(
-                self.grid_actions(div(), cx)
+                self.validation_actions(self.grid_actions(div(), cx), cx)
                     .flex_1()
                     .min_h_0()
                     .key_context(GRID_CONTEXT)
@@ -2028,6 +2066,7 @@ impl Render for SheetsView {
             .children(completion)
             .children(self.render_find_bar(cx))
             .children(self.render_row_height_prompt(cx))
+            .children(self.render_alert(cx))
             .into_any_element()
     }
 }

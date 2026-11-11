@@ -27,6 +27,20 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   with no seams at 125 %. Arrow keys skip hidden rows, and Page Up / Page Down move by the
   visible height.
 - **Ctrl+Home** goes to A1 and **Ctrl+End** to the last cell of the used range.
+- Data validation from Excel files: list rules show a drop-down button beside the active cell
+  (none when the file hides it); the button or **Alt+Down** opens the list, with arrows, Enter,
+  Escape and type-to-filter, and picking an item is an ordinary undoable edit. Lists can be
+  inline (`"a,b,c"`), a range, a range on another sheet (Excel 2010 form), a defined name or a
+  formula such as `INDIRECT` or `OFFSET`, and are evaluated when opened, so they follow the cells
+  they read. Input messages show under the selected cell. A typed value that breaks its rule
+  (whole number, decimal, date, time, text length, list or custom formula, with every operator
+  and *Ignore blank*) brings up the rule's error alert: Stop (Retry / Cancel), Warning
+  (Yes / No / Cancel) or Information (OK / Cancel), with the file's title and text or Excel's
+  default message; Retry and Cancel take the value back without leaving a redo. Pasting and
+  filling aren't checked, as in Excel. **Circle Invalid Data** / **Clear Validation Circles** in
+  the command palette ring cells that break their rule. Rules follow inserted and deleted rows
+  and columns on screen as they do on save, and an unedited sheet's `<dataValidations>` is
+  saved byte for byte.
 - Conditional formatting is shown as Excel shows it: cell-value rules (every operator, operands
   with relative references), formula rules (relative to the top-left of the range), text rules,
   time periods, duplicate / unique values, top / bottom N and N %, above / below average, blanks

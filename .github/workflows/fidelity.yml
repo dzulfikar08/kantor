@@ -53,6 +53,9 @@ jobs:
       - name: Corpus matches its generator
         run: python3 scripts/corpus/gen_xlsx.py --check
 
+      - name: Data validation fixture matches its generator
+        run: python3 scripts/corpus/gen_validation_xlsx.py --check
+
       - uses: astral-sh/setup-uv@v6
 
       - name: Feature corpus matches its generator
