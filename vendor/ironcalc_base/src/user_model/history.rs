@@ -5,7 +5,8 @@ use bitcode::{Decode, Encode};
 use crate::{
     cf_types::CfRule,
     types::{
-        Cell, Col, Color, Link, MergedCell, Row, SheetState, Style, StyleIncludes, Theme, Worksheet,
+        Cell, Col, Color, Link, MergedCell, Row, SheetState, Style, StyleIncludes, Table, Theme,
+        Worksheet,
     },
 };
 
@@ -113,6 +114,29 @@ pub(crate) enum Diff {
         row: i32,
         new_value: Option<Box<Row>>,
         old_value: Option<Box<Row>>,
+    },
+    // KANTOR PATCH (tables): many rows' entries at once (filters hide and
+    // show thousands of rows; one `SetRowEntry` each would look every row up
+    // in the sheet's list).
+    KantorRowEntries {
+        sheet: u32,
+        old_value: Vec<(i32, Option<Row>)>,
+        new_value: Vec<(i32, Option<Row>)>,
+    },
+    // KANTOR PATCH (tables): a table created, changed or removed.
+    KantorSetTable {
+        name: String,
+        old_value: Option<Box<Table>>,
+        new_value: Option<Box<Table>>,
+    },
+    // KANTOR PATCH (tables): sorted rows. Destination row `top + i` got the
+    // cells (columns `left..=right`) of row `order[i]`.
+    KantorPermuteRows {
+        sheet: u32,
+        top: i32,
+        left: i32,
+        right: i32,
+        order: Vec<i32>,
     },
     SetColumnStyle {
         sheet: u32,

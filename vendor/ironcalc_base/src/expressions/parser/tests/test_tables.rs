@@ -73,7 +73,7 @@ fn simple_table() {
     let t = parser.parse(formula, &cell_reference);
     assert_eq!(
         to_english_localized_string(&t, &cell_reference),
-        "SUM($A$2:$E$2)"
+        "SUM(tblIncome[@[Jan]:[Dec]])"
     );
 
     // Cell A3
@@ -86,7 +86,7 @@ fn simple_table() {
     let t = parser.parse(formula, &cell_reference);
     assert_eq!(
         to_english_localized_string(&t, &cell_reference),
-        "SUBTOTAL(109,$A$2:$A$3)"
+        "SUBTOTAL(109,tblIncome[Jan])"
     );
 
     // Cell A3 in 'Second Sheet'
@@ -99,6 +99,6 @@ fn simple_table() {
     let t = parser.parse(formula, &cell_reference);
     assert_eq!(
         to_english_localized_string(&t, &cell_reference),
-        "SUBTOTAL(109,'Sheet One'!$A$2:$A$3)"
+        "SUBTOTAL(109,tblIncome[Jan])"
     );
 }

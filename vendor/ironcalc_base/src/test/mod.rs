@@ -60,6 +60,7 @@ mod test_inverted_ranges;
 mod test_issue_623;
 mod test_kantor_functions; // KANTOR PATCH (functions)
 mod test_kantor_lookup_cache;
+mod test_kantor_tables; // KANTOR PATCH (tables)
 mod test_math;
 mod test_merged_cells;
 mod test_metadata;

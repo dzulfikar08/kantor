@@ -470,6 +470,22 @@ impl<'a> Lexer<'a> {
                                         }
                                         self.position = pos;
 
+                                        // KANTOR PATCH (tables): structured
+                                        // references in R1C1 mode (formulas
+                                        // are kept in R1C1 internally).
+                                        if self.peek_char() == Some('[')
+                                            && !matches!(name_upper.as_str(), "R" | "C" | "RC")
+                                            && utils::is_valid_a1_identifier(&name)
+                                        {
+                                            if let Ok(r) = self.consume_structured_reference(&name)
+                                            {
+                                                return r;
+                                            }
+                                            return TokenType::Illegal(self.set_error(
+                                                "Invalid structured reference",
+                                                self.position,
+                                            ));
+                                        }
                                         if is_valid_r1c1_identifier(&name, self.peek_char()) {
                                             return TokenType::Ident(name);
                                         } else {

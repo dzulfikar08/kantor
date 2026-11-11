@@ -207,6 +207,10 @@ pub enum TableSpecifier {
     Headers,
     ThisRow,
     Totals,
+    // KANTOR PATCH (tables): the two combinations Excel allows,
+    // `[[#Headers],[#Data]]` and `[[#Data],[#Totals]]`.
+    HeadersData,
+    DataTotals,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
