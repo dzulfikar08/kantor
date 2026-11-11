@@ -21,6 +21,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   `scripts/third-party-licenses.py`. On macOS it is inside `Kantor.app/Contents/Resources`.
 
 #### Sheets
+- Printing and PDF export (and `kantor convert book.xlsx book.pdf`) draw the charts and pictures
+  on worksheets where they sit over the printed cells. An object across a page break is split,
+  each page showing its part; print areas clip objects, fit to page and scale shrink them, hidden
+  rows and columns shrink objects anchored over them, and objects in repeated title rows aren't
+  repeated (as in Excel). Without a print area, objects beside the data widen the printed range,
+  as Excel's does. Charts use their live cell values and keep vector, searchable text; pictures are
+  embedded at their own resolution (JPEGs as they are). Hidden objects and those set not to print
+  (`fPrintsWithSheet="0"`) are left out; shapes and text boxes aren't printed yet.
 - Charts and pictures on worksheets are shown over the grid, as in Excel: column, bar, line,
   area, pie, doughnut, scatter and combination charts (the Slides chart renderer, with the
   workbook theme's colours and fonts), and pictures with their cropping. They sit where their

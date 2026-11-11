@@ -32,8 +32,8 @@ use krilla::paint::{
 use krilla::surface::Surface;
 use slides_engine::{LineCap, LineJoin, Presentation};
 use slides_scene::{
-    Affine, Builder, Engine, FillRule, Options, Paint, Path, Picture, Prim, Rgba, Seg, SlideScene,
-    Stop, Stroke, Text,
+    Affine, Builder, Engine, FillRule, Item, Options, Paint, Path, Picture, Prim, Rgba, Seg,
+    SlideScene, Stop, Stroke, Text,
 };
 
 pub use docs_pdf::write_file;
@@ -103,33 +103,39 @@ fn encode(deck: &Deck, images: &mut Images) -> Result<Vec<u8>, KrillaError> {
     for scene in &deck.slides {
         let mut page = pdf.start_page_with(size());
         let mut surface = page.surface();
-        // The slide in px; text is drawn by docs_pdf, which works in pt.
-        for item in &scene.items {
-            let to_page = item.transform.then(Affine::scale(TO_PT, TO_PT));
-            match &item.prim {
-                Prim::Fill { path, paint, rule } => {
-                    surface.push_transform(&transform(&to_page));
-                    fill_path(&mut surface, path, paint, *rule);
-                    surface.pop();
-                }
-                Prim::Stroke { path, stroke } => {
-                    surface.push_transform(&transform(&to_page));
-                    stroke_path(&mut surface, path, stroke);
-                    surface.pop();
-                }
-                Prim::Picture(pic) => {
-                    surface.push_transform(&transform(&to_page));
-                    draw_picture(&mut surface, pic, images);
-                    surface.pop();
-                }
-                Prim::Text(text) => draw_text(&mut surface, text, &item.transform, &mut fonts),
-                Prim::Unsupported { .. } | Prim::PlaceholderOutline { .. } => {}
-            }
-        }
+        draw_items(&mut surface, &scene.items, images, &mut fonts);
         surface.finish();
         page.finish();
     }
     pdf.finish()
+}
+
+/// Draw scene items (in px) on a surface whose user space is in points:
+/// the items land at px × 0.75 from its origin. Shared with Sheets, which
+/// prints worksheet charts and pictures this way.
+pub fn draw_items(surface: &mut Surface, items: &[Item], images: &mut Images, fonts: &mut Fonts) {
+    for item in items {
+        let to_page = item.transform.then(Affine::scale(TO_PT, TO_PT));
+        match &item.prim {
+            Prim::Fill { path, paint, rule } => {
+                surface.push_transform(&transform(&to_page));
+                fill_path(surface, path, paint, *rule);
+                surface.pop();
+            }
+            Prim::Stroke { path, stroke } => {
+                surface.push_transform(&transform(&to_page));
+                stroke_path(surface, path, stroke);
+                surface.pop();
+            }
+            Prim::Picture(pic) => {
+                surface.push_transform(&transform(&to_page));
+                draw_picture(surface, pic, images);
+                surface.pop();
+            }
+            Prim::Text(text) => draw_text(surface, text, &item.transform, fonts),
+            Prim::Unsupported { .. } | Prim::PlaceholderOutline { .. } => {}
+        }
+    }
 }
 
 fn transform(a: &Affine) -> Transform {

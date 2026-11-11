@@ -65,6 +65,11 @@ impl ChartTheme {
         Self::new(book.theme_xml().as_deref())
     }
 
+    /// What the theme gives charts (for [`chart_items`]).
+    pub fn defaults(&self) -> &Defaults {
+        &self.defaults
+    }
+
     fn cx(&self) -> ColorCtx<'_> {
         ColorCtx {
             theme: &self.theme,
@@ -233,6 +238,12 @@ pub fn picture_items(
     }]
 }
 
+/// The items of a chart (with its live data, see [`live_chart`]) drawn
+/// into `w` × `h` px; a placeholder box when it can't be laid out.
+pub fn chart_items(engine: &mut Engine, chart: &Chart, d: &Defaults, w: f32, h: f32) -> Vec<Item> {
+    chart::items(engine, chart, d, w, h).unwrap_or_else(|| placeholder(w, h))
+}
+
 /// Size key: quarter pixels.
 fn q(v: f32) -> u32 {
     (v.max(0.0) * 4.0).round() as u32
@@ -342,10 +353,7 @@ impl DrawingScenes {
             return items.clone();
         }
         let theme = self.theme(book);
-        let items = Arc::new(
-            chart::items(engine, &chart, &theme.defaults, w, h)
-                .unwrap_or_else(|| placeholder(w, h)),
-        );
+        let items = Arc::new(chart_items(engine, &chart, &theme.defaults, w, h));
         self.builds += 1;
         if self.built.len() >= MAX_BUILT {
             self.built.clear();

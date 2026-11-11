@@ -307,8 +307,14 @@ fn push_span(b: &mut parley::RangedBuilder<'_, Rgba>, span: &Span, r: Range<usiz
 
 impl Engine {
     pub fn new() -> Self {
+        Self::with_fonts(FontContext::new())
+    }
+
+    /// An engine on fonts already found (a clone of another context skips
+    /// scanning the system's fonts again).
+    pub fn with_fonts(fonts: FontContext) -> Self {
         Self {
-            fonts: FontContext::new(),
+            fonts,
             layout_cx: LayoutContext::new(),
         }
     }

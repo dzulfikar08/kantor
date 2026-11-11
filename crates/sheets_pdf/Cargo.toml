@@ -16,6 +16,11 @@ docs_layout.workspace = true
 kantor_core.workspace = true
 log.workspace = true
 sheets_engine.workspace = true
+# Worksheet charts (live data) and pictures as display lists, written the
+# way Slides writes them.
+sheets_scene.workspace = true
+slides_pdf.workspace = true
+slides_scene.workspace = true
 krilla = { version = "0.8", default-features = false, features = ["raster-images"] }
 
 [dev-dependencies]

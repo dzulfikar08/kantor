@@ -82,6 +82,11 @@ impl Default for Shaper {
 }
 
 impl Shaper {
+    /// The fonts found (for laying out charts with the same fonts).
+    pub(crate) fn font_context(&self) -> &FontContext {
+        &self.fonts
+    }
+
     pub fn new() -> Self {
         Self {
             fonts: FontContext::new(),
