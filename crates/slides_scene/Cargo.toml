@@ -12,6 +12,8 @@ docs_engine.workspace = true
 # Text bodies are laid out with the Docs engine (parley), as on screen.
 docs_layout.workspace = true
 log.workspace = true
+# Number formats on axes and labels, shared with Sheets.
+kantor_numfmt.workspace = true
 # Chart parts (ChartML).
 roxmltree.workspace = true
 slides_engine.workspace = true

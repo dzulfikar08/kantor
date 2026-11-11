@@ -40,7 +40,7 @@ impl Display {
 /// The format code a style shows numbers with. A built-in `numFmtId` the workbook does not
 /// define shows as Excel's en-US built-in (14 is `m/d/yyyy`, which IronCalc's table has as
 /// `mm-dd-yy`); otherwise the style's code.
-fn style_code(model: &Model<'_>, style_index: i32) -> String {
+pub(crate) fn style_code(model: &Model<'_>, style_index: i32) -> String {
     let styles = &model.workbook.styles;
     let Some(xf) = styles.cell_xfs.get(style_index.max(0) as usize) else {
         return "general".to_owned();

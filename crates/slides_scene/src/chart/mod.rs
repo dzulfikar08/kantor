@@ -16,13 +16,17 @@
 //! axes. Anything else (radar, bubble, stock, surface, 3-D...) keeps the
 //! placeholder box.
 //!
-//! The model and layout know nothing of slides beyond [`Defaults`]; they
-//! can move to their own crate when Sheets draws charts.
+//! The model and layout know nothing of slides beyond [`Defaults`]. Sheets
+//! draws charts embedded in worksheets with the same code: it parses the
+//! part ([`Chart::parse`]), puts the cells each series refers to
+//! ([`SeriesRefs`]) in place of the caches, and lays it out with [`items`].
 
 pub mod format;
 pub mod layout;
 pub mod model;
 pub mod scale;
+
+use std::collections::HashMap;
 
 use docs_layout::parley::LineHeight;
 use docs_layout::{Engine, PageSetup};
@@ -30,7 +34,7 @@ use slides_engine::Rgb;
 use slides_engine::theme::ColorCtx;
 
 pub use layout::{Defaults, HAlign, Label, Mark, Measure, TextFont};
-pub use model::Chart;
+pub use model::{Chart, SeriesRefs};
 
 use crate::geom::{Affine, p};
 use crate::text::{TextLayout, glyph_runs};
@@ -110,13 +114,45 @@ fn lay(engine: &mut Engine, text: &str, font: &TextFont, align: HAlign, width: f
     }
 }
 
-/// Measures with the Docs engine.
+type MeasureKey = (String, u32, bool, bool, String, Option<u32>);
+
+/// Measures with the Docs engine, remembering what it measured (a layout
+/// asks for the same labels several times while fitting them).
 pub struct EngineMeasure<'e> {
     pub engine: &'e mut Engine,
+    seen: HashMap<MeasureKey, (f32, f32)>,
+}
+
+impl<'e> EngineMeasure<'e> {
+    pub fn new(engine: &'e mut Engine) -> Self {
+        Self {
+            engine,
+            seen: HashMap::new(),
+        }
+    }
 }
 
 impl Measure for EngineMeasure<'_> {
     fn measure(&mut self, text: &str, font: &TextFont, wrap: Option<f32>) -> (f32, f32) {
+        let key = (
+            text.to_owned(),
+            font.size_pt.to_bits(),
+            font.bold,
+            font.italic,
+            font.face.clone(),
+            wrap.map(f32::to_bits),
+        );
+        if let Some(m) = self.seen.get(&key) {
+            return *m;
+        }
+        let m = self.measure_new(text, font, wrap);
+        self.seen.insert(key, m);
+        m
+    }
+}
+
+impl EngineMeasure<'_> {
+    fn measure_new(&mut self, text: &str, font: &TextFont, wrap: Option<f32>) -> (f32, f32) {
         let l = lay(
             self.engine,
             text,
@@ -143,11 +179,23 @@ pub fn chart_items(
 ) -> Option<Vec<Item>> {
     let xml = std::str::from_utf8(xml).ok()?;
     let chart = Chart::parse(xml, cx)?;
+    items(engine, &chart, &defaults(cx), w, h)
+}
+
+/// A parsed chart's items in a `w` × `h` frame, as [`chart_items`]: for
+/// callers that change the chart first (Sheets puts live cell values in
+/// its series). `None` when Kantor can't draw it.
+pub fn items(
+    engine: &mut Engine,
+    chart: &Chart,
+    d: &Defaults,
+    w: f32,
+    h: f32,
+) -> Option<Vec<Item>> {
     if !chart.drawable() || w < 2.0 || h < 2.0 {
         return None;
     }
-    let d = defaults(cx);
-    let marks = layout::layout(&chart, w, h, &d, &mut EngineMeasure { engine });
+    let marks = layout::layout(chart, w, h, d, &mut EngineMeasure::new(engine));
     Some(
         marks
             .into_iter()

@@ -206,6 +206,8 @@ pub(crate) struct Context<'a> {
     /// The tables of the saved workbook, by name (any case): where a table
     /// carried from the original is now, and its filter.
     pub tables: &'a dyn Fn(&str) -> Option<TableNow>,
+    /// Drawing objects moved, resized or deleted, by `sheetId`.
+    pub drawings: &'a HashMap<u32, Vec<crate::drawing::SaveEdit>>,
 }
 
 /// A table as the model has it at save time.
@@ -1405,6 +1407,93 @@ pub(crate) fn worksheet_skeletons(bytes: &[u8]) -> Result<Vec<(u32, String)>, St
         .collect())
 }
 
+/// A worksheet's drawing part as the original package has it, with the
+/// parts it links to (charts and pictures) read, for showing them.
+pub(crate) struct DrawingSource {
+    pub sheet_id: u32,
+    pub xml: String,
+    /// The drawing's relationships: id -> (short type, part).
+    pub targets: HashMap<String, (String, String)>,
+    /// Chart and picture parts the drawing links to, by name.
+    pub parts: HashMap<String, Vec<u8>>,
+}
+
+/// What [`drawing_sources`] reads from a package.
+#[derive(Default)]
+pub(crate) struct DrawingSources {
+    pub drawings: Vec<DrawingSource>,
+    /// `xl/theme/theme1.xml` (charts take their colours and fonts from it).
+    pub theme: Option<String>,
+    /// Every sheet's name and `sheetId` (references in charts name sheets).
+    pub sheets: Vec<(String, u32)>,
+}
+
+/// The drawings of the worksheets of `bytes`. Parts that can't be read are
+/// skipped (they are still carried on save).
+pub(crate) fn drawing_sources(bytes: &[u8]) -> Result<DrawingSources, String> {
+    let orig = Original::new(bytes)?;
+    let mut out = DrawingSources::default();
+    let Some(root) = orig.text("_rels/.rels")? else {
+        return Ok(out);
+    };
+    let root_rels = parse_rels(&root)?;
+    let (wb, wb_rels, _, sheets) = workbook_sheets(&root_rels, &|name| orig.text(name))?;
+    out.sheets = sheets
+        .iter()
+        .map(|s| (s.name.clone(), s.sheet_id))
+        .collect();
+    out.theme = wb_rels
+        .iter()
+        .find(|r| r.short_kind() == "theme" && !r.external)
+        .and_then(|r| resolve(&wb, &r.target))
+        .and_then(|t| orig.text(&t).ok().flatten());
+    for s in sheets.iter().filter(|s| s.kind == SheetKind::Work) {
+        let Some(sheet_rels) = orig.text(&rels_part(&s.part)).ok().flatten() else {
+            continue;
+        };
+        let Ok(sheet_rels) = parse_rels(&sheet_rels) else {
+            continue;
+        };
+        // A worksheet has at most one drawing (`<drawing r:id>`): its
+        // relationship says which, without reading the sheet's cells.
+        let Some(part) = sheet_rels
+            .iter()
+            .find(|r| r.short_kind() == "drawing" && !r.external)
+            .and_then(|r| resolve(&s.part, &r.target))
+        else {
+            continue;
+        };
+        let Some(xml) = orig.text(&part).ok().flatten() else {
+            continue;
+        };
+        let rels = match orig.text(&rels_part(&part)).ok().flatten() {
+            Some(x) => parse_rels(&x).unwrap_or_default(),
+            None => Vec::new(),
+        };
+        let mut targets = HashMap::new();
+        let mut parts = HashMap::new();
+        for r in rels.iter().filter(|r| !r.external) {
+            let Some(t) = resolve(&part, &r.target) else {
+                continue;
+            };
+            if matches!(r.short_kind(), "chart" | "image")
+                && !parts.contains_key(&t)
+                && let Ok(Some(data)) = orig.get(&t)
+            {
+                parts.insert(t.clone(), data);
+            }
+            targets.insert(r.id.clone(), (r.short_kind().to_owned(), t));
+        }
+        out.drawings.push(DrawingSource {
+            sheet_id: s.sheet_id,
+            xml,
+            targets,
+            parts,
+        });
+    }
+    Ok(out)
+}
+
 /// Whether `node` and everything in it is plain SpreadsheetML: no element or
 /// attribute in another namespace (which [`write_node`] drops, e.g. `xr:uid`,
 /// as IronCalc's sheets don't declare them ignorable).
@@ -1483,6 +1572,8 @@ struct Merge<'o, 'a> {
     /// Sheet names of the original (lower case) -> `sheetId`.
     sheets: HashMap<String, u32>,
     moves: &'o Moves,
+    /// Drawing objects edited, by `sheetId`.
+    drawings: &'o HashMap<u32, Vec<crate::drawing::SaveEdit>>,
     /// Ranges of the saved sheets (full XML) to cut: IronCalc's conditional
     /// formats where the original's are carried.
     removals: HashMap<String, Vec<std::ops::Range<usize>>>,
@@ -1574,7 +1665,11 @@ impl Merge<'_, '_> {
                 .orig_ct
                 .of(part)
                 .ok_or_else(|| format!("{part} has no content type"))?;
-            let data = if self.moves.is_empty() || self.replaced.contains_key(part) {
+            let edited = self
+                .home
+                .get(part)
+                .is_some_and(|h| self.drawings.contains_key(h));
+            let data = if (self.moves.is_empty() && !edited) || self.replaced.contains_key(part) {
                 data
             } else {
                 match move_part(part, kind, &data, self.home.get(part).copied(), self) {
@@ -1691,6 +1786,7 @@ fn merge(
             .map(|s| (s.name.to_lowercase(), s.sheet_id))
             .collect(),
         moves: ctx.moves,
+        drawings: ctx.drawings,
         removals: HashMap::new(),
         cf_carried: false,
         cf_failed: false,
@@ -3227,6 +3323,7 @@ fn move_part(
     let what = kind.rsplit('.').next().unwrap_or_default();
     let is = |suffix: &str| kind.ends_with(suffix);
     let home_moved = home.is_some_and(|h| moves.touches(h));
+    let edited = home.and_then(|h| m.drawings.get(&h));
     let kind_of = if is("spreadsheetml.comments+xml") {
         "comments"
     } else if what == "threadedcomments+xml" {
@@ -3240,7 +3337,7 @@ fn move_part(
     } else {
         return Ok(None);
     };
-    if kind_of != "chart" && !home_moved {
+    if kind_of != "chart" && !home_moved && !(kind_of == "drawing" && edited.is_some()) {
         return Ok(None);
     }
     let xml = std::str::from_utf8(strip_bom(data)).map_err(|_| "not UTF-8".to_owned())?;
@@ -3314,22 +3411,55 @@ fn move_part(
             }
         }
         "drawing" => {
-            for corner in doc
-                .descendants()
-                .filter(|n| n.is_element() && matches!(n.tag_name().name(), "from" | "to"))
-            {
-                let (Some((rt, row)), Some((ct, col))) =
-                    (child_number(corner, "row"), child_number(corner, "col"))
-                else {
+            let edited = edited.map(Vec::as_slice).unwrap_or_default();
+            let root = doc.root_element();
+            let mut seen = HashSet::new();
+            for anchor in root.children().filter(|n| crate::drawing::is_anchor(*n)) {
+                let id = crate::drawing::c_nv_pr(anchor)
+                    .and_then(|n| n.attribute("id")?.parse::<u32>().ok());
+                if let Some(e) = id.and_then(|id| edited.iter().find(|e| e.id == id)) {
+                    seen.insert(e.id);
+                    let text = match e.anchor {
+                        Some(a) => placed_anchor(anchor, &a, xml),
+                        None => String::new(),
+                    };
+                    edits.push((anchor.range(), text));
                     continue;
-                };
-                let (r, c) = moves.point(home, row, col);
-                if r != row {
-                    edits.push((rt.range(), r.to_string()));
                 }
-                if c != col {
-                    edits.push((ct.range(), c.to_string()));
+                for corner in anchor
+                    .children()
+                    .filter(|n| n.is_element() && matches!(n.tag_name().name(), "from" | "to"))
+                {
+                    let (Some((rt, row)), Some((ct, col))) =
+                        (child_number(corner, "row"), child_number(corner, "col"))
+                    else {
+                        continue;
+                    };
+                    let (r, c) = moves.point(home, row, col);
+                    if r != row {
+                        edits.push((rt.range(), r.to_string()));
+                    }
+                    if c != col {
+                        edits.push((ct.range(), c.to_string()));
+                    }
                 }
+            }
+            // Objects a save dropped and an undo brought back.
+            let missing: String = edited
+                .iter()
+                .filter(|e| !seen.contains(&e.id))
+                .filter_map(|e| {
+                    let a = e.anchor?;
+                    let wrapped = format!("<r {}>{}</r>", e.namespaces, e.xml);
+                    let doc = Document::parse(&wrapped).ok()?;
+                    let el = doc.root_element().first_element_child()?;
+                    Some(placed_anchor(el, &a, &wrapped))
+                })
+                .collect();
+            if !missing.is_empty() {
+                let end = root.range().end;
+                let close = xml[..end].rfind("</").ok_or("drawing root not closed")?;
+                edits.push((close..close, missing));
             }
         }
         _ => {
@@ -3351,6 +3481,47 @@ fn move_part(
         return Ok(None);
     }
     Ok(Some(apply_edits(xml, edits).into_bytes()))
+}
+
+/// An anchor element (`src[a.range()]`) with its position elements
+/// replaced by `anchor`'s, as the same kind of anchor.
+fn placed_anchor(a: Node, anchor: &crate::drawing::Anchor, src: &str) -> String {
+    let text = &src[a.range()];
+    let tag = text[1..]
+        .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+        .next()
+        .unwrap_or_default();
+    let prefix = tag.strip_suffix(a.tag_name().name()).unwrap_or_default();
+    // The open tag as written (unless the kind of anchor changed), and the
+    // children that aren't its position.
+    let open_end = a
+        .first_child()
+        .map_or(text.len(), |c| c.range().start - a.range().start);
+    let kind = match anchor {
+        crate::drawing::Anchor::TwoCell { .. } => "twoCellAnchor",
+        crate::drawing::Anchor::OneCell { .. } => "oneCellAnchor",
+        crate::drawing::Anchor::Absolute { .. } => "absoluteAnchor",
+    };
+    let same = kind == a.tag_name().name();
+    let tag = if same {
+        tag.to_owned()
+    } else {
+        format!("{prefix}{kind}")
+    };
+    let mut out = if same {
+        text[..open_end].to_owned()
+    } else {
+        format!("<{tag}>")
+    };
+    out.push_str(&anchor.position_xml(prefix));
+    for c in a.children() {
+        if c.is_element() && matches!(c.tag_name().name(), "from" | "to" | "ext" | "pos") {
+            continue;
+        }
+        out.push_str(&src[c.range()]);
+    }
+    out.push_str(&format!("</{tag}>"));
+    out
 }
 
 /// The parts of a package by name (for tests).
@@ -3497,6 +3668,7 @@ mod tests {
             moves: &Moves::default(),
             cell_text: &|_, _, _| String::new(),
             tables: &|_| None,
+            drawings: &HashMap::new(),
         };
         let done = finish(out, original, &ctx);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());

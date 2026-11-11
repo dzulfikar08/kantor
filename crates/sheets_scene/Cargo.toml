@@ -1,0 +1,22 @@
+[package]
+name = "sheets_scene"
+description = "Kantor Sheets drawings as display lists (no GPUI): charts with live cell data and pictures, for the grid and for PDF"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Chart labels are laid out with the Docs engine (parley), as in Slides.
+docs_layout.workspace = true
+sheets_engine.workspace = true
+# Theme colours (ColorCtx) for chart parts.
+slides_engine.workspace = true
+# The chart model and renderer shared with Slides, and the display list.
+slides_scene.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

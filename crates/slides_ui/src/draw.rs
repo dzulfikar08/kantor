@@ -155,9 +155,10 @@ pub(crate) enum GPrim {
     Placeholder([P; 4], Option<[f32; 4]>),
 }
 
-/// A slide ready to paint.
-pub(crate) struct Painted {
-    pub prims: Vec<GPrim>,
+/// A slide (or any list of scene items, e.g. a chart on a worksheet)
+/// ready to paint.
+pub struct Painted {
+    pub(crate) prims: Vec<GPrim>,
     pub background: Rgb,
 }
 
@@ -166,8 +167,10 @@ type SceneKey = (usize, bool, Option<usize>);
 /// A cached slide: the revision it was built from, and the result.
 type SceneEntry = (Arc<Slide>, Rc<Painted>);
 
-/// Caches shared by every surface of one view.
-pub(crate) struct Painter {
+/// Caches shared by every surface of one view. Sheets uses one too, to
+/// paint its charts and pictures ([`Painter::prepare_items`],
+/// [`paint_items`]).
+pub struct Painter {
     pub engine: Rc<RefCell<docs_layout::Engine>>,
     pub bridge: Rc<RefCell<FontBridge>>,
     builder: Builder,
@@ -316,8 +319,19 @@ impl Painter {
 
     /// A scene as GPUI primitives.
     fn prepare(&self, scene: &SlideScene, cx: &App) -> Painted {
-        let mut prims = Vec::with_capacity(scene.items.len());
-        for item in &scene.items {
+        self.prepare_items(&scene.items, scene.background, cx)
+    }
+
+    /// Scene items as GPUI primitives (`background` is what placeholder
+    /// outlines must contrast with).
+    pub fn prepare_items(
+        &self,
+        items: &[slides_scene::Item],
+        background: Rgb,
+        cx: &App,
+    ) -> Painted {
+        let mut prims = Vec::with_capacity(items.len());
+        for item in items {
             let t = &item.transform;
             match &item.prim {
                 Prim::Fill { path, paint, rule } => {
@@ -410,10 +424,7 @@ impl Painter {
                 }
             }
         }
-        Painted {
-            prims,
-            background: scene.background,
-        }
+        Painted { prims, background }
     }
 }
 
@@ -605,12 +616,20 @@ fn gradient_bands(segs: &[Seg], paint: &Paint, t: &Affine, even_odd: bool, out: 
 /// Slide → screen mapping: `origin` is the slide's top left on screen,
 /// `scale` screen px per EMU.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct View {
+pub struct View {
     pub origin: Point<Pixels>,
     pub scale: f32,
 }
 
 impl View {
+    /// Items in px drawn from `origin`, `k` screen px per item px.
+    pub fn px(origin: Point<Pixels>, k: f32) -> Self {
+        View {
+            origin,
+            scale: k / EMU_PER_PX,
+        }
+    }
+
     pub fn point(self, x: f32, y: f32) -> Point<Pixels> {
         point(
             self.origin.x + px(x * self.scale),
@@ -766,98 +785,122 @@ pub(crate) fn paint_slide(
     bridge: &RefCell<FontBridge>,
     window: &mut Window,
 ) {
-    let other = surface.other;
-    let k = view.px_scale();
     window.paint_quad(fill(slide_bounds, hsla(painted.background)));
-    let screen = |c: &[P; 4]| c.iter().map(|&q| view.slide_px(q)).collect::<Vec<_>>();
     window.with_content_mask(
         Some(ContentMask {
             bounds: slide_bounds,
         }),
-        |window| {
-            for prim in &painted.prims {
-                match prim {
-                    GPrim::Fill { segs, even_odd, bg } => {
-                        let opts = if *even_odd {
-                            FillOptions::even_odd()
-                        } else {
-                            FillOptions::non_zero()
-                        };
-                        let mut pb = PathBuilder::fill().with_style(PathStyle::Fill(opts));
-                        build_segs(&mut pb, segs, view);
-                        if let Ok(path) = pb.build() {
-                            window.paint_path(path, *bg);
-                        }
-                    }
-                    GPrim::Stroke {
-                        segs,
-                        width,
-                        color,
-                        dash,
-                        cap,
-                        join,
-                    } => {
-                        let w = (width * k).max(1.0);
-                        let lcap = match cap {
-                            LineCap::Flat => LCap::Butt,
-                            LineCap::Round => LCap::Round,
-                            LineCap::Square => LCap::Square,
-                        };
-                        let opts = StrokeOptions::default()
-                            .with_line_width(w)
-                            .with_line_cap(lcap)
-                            .with_line_join(match join {
-                                LineJoin::Round => LJoin::Round,
-                                LineJoin::Bevel => LJoin::Bevel,
-                                LineJoin::Miter => LJoin::MiterClip,
-                            });
-                        let mut pb = PathBuilder::stroke(px(w)).with_style(PathStyle::Stroke(opts));
-                        if let Some(d) = dash {
-                            let d: Vec<Pixels> = d.iter().map(|x| px((x * k).max(0.5))).collect();
-                            pb = pb.dash_array(&d);
-                        }
-                        build_segs(&mut pb, segs, view);
-                        if let Ok(path) = pb.build() {
-                            window.paint_path(path, *color);
-                        }
-                    }
-                    GPrim::Image { bounds, image, img } => {
-                        let _ = window.paint_image(
-                            view.slide_rect(*bounds),
-                            view.slide_rect(*image),
-                            Corners::default(),
-                            img.clone(),
-                            0,
-                            false,
-                        );
-                    }
-                    GPrim::Text(runs) => paint_runs(runs, view, bridge, window),
-                    GPrim::Other(c) => {
-                        let pts = screen(c);
-                        fill_polygon(window, &pts, other.opacity(0.12));
-                        stroke_polygon(window, &pts, other.opacity(0.6), px(1.));
-                    }
-                    GPrim::Placeholder(c, upright) => {
-                        if !surface.editor {
-                            continue;
-                        }
-                        let color = placeholder_outline(painted.background);
-                        match upright {
-                            Some(b) => window.paint_quad(quad(
-                                view.slide_rect(*b),
-                                Corners::default(),
-                                transparent_black(),
-                                Edges::all(px(1.)),
-                                color,
-                                BorderStyle::Dashed,
-                            )),
-                            None => stroke_polygon(window, &screen(c), color, px(1.)),
-                        }
-                    }
+        |window| paint_prims(painted, view, surface, bridge, window),
+    );
+}
+
+/// Paint prepared items with `view` (no background, no clip): charts and
+/// pictures on a worksheet. `other` colours objects Kantor can't draw.
+pub fn paint_items(
+    painted: &Painted,
+    view: View,
+    other: Hsla,
+    bridge: &RefCell<FontBridge>,
+    window: &mut Window,
+) {
+    let surface = Surface {
+        other,
+        editor: false,
+    };
+    paint_prims(painted, view, surface, bridge, window);
+}
+
+fn paint_prims(
+    painted: &Painted,
+    view: View,
+    surface: Surface,
+    bridge: &RefCell<FontBridge>,
+    window: &mut Window,
+) {
+    let other = surface.other;
+    let k = view.px_scale();
+    let screen = |c: &[P; 4]| c.iter().map(|&q| view.slide_px(q)).collect::<Vec<_>>();
+    for prim in &painted.prims {
+        match prim {
+            GPrim::Fill { segs, even_odd, bg } => {
+                let opts = if *even_odd {
+                    FillOptions::even_odd()
+                } else {
+                    FillOptions::non_zero()
+                };
+                let mut pb = PathBuilder::fill().with_style(PathStyle::Fill(opts));
+                build_segs(&mut pb, segs, view);
+                if let Ok(path) = pb.build() {
+                    window.paint_path(path, *bg);
                 }
             }
-        },
-    );
+            GPrim::Stroke {
+                segs,
+                width,
+                color,
+                dash,
+                cap,
+                join,
+            } => {
+                let w = (width * k).max(1.0);
+                let lcap = match cap {
+                    LineCap::Flat => LCap::Butt,
+                    LineCap::Round => LCap::Round,
+                    LineCap::Square => LCap::Square,
+                };
+                let opts = StrokeOptions::default()
+                    .with_line_width(w)
+                    .with_line_cap(lcap)
+                    .with_line_join(match join {
+                        LineJoin::Round => LJoin::Round,
+                        LineJoin::Bevel => LJoin::Bevel,
+                        LineJoin::Miter => LJoin::MiterClip,
+                    });
+                let mut pb = PathBuilder::stroke(px(w)).with_style(PathStyle::Stroke(opts));
+                if let Some(d) = dash {
+                    let d: Vec<Pixels> = d.iter().map(|x| px((x * k).max(0.5))).collect();
+                    pb = pb.dash_array(&d);
+                }
+                build_segs(&mut pb, segs, view);
+                if let Ok(path) = pb.build() {
+                    window.paint_path(path, *color);
+                }
+            }
+            GPrim::Image { bounds, image, img } => {
+                let _ = window.paint_image(
+                    view.slide_rect(*bounds),
+                    view.slide_rect(*image),
+                    Corners::default(),
+                    img.clone(),
+                    0,
+                    false,
+                );
+            }
+            GPrim::Text(runs) => paint_runs(runs, view, bridge, window),
+            GPrim::Other(c) => {
+                let pts = screen(c);
+                fill_polygon(window, &pts, other.opacity(0.12));
+                stroke_polygon(window, &pts, other.opacity(0.6), px(1.));
+            }
+            GPrim::Placeholder(c, upright) => {
+                if !surface.editor {
+                    continue;
+                }
+                let color = placeholder_outline(painted.background);
+                match upright {
+                    Some(b) => window.paint_quad(quad(
+                        view.slide_rect(*b),
+                        Corners::default(),
+                        transparent_black(),
+                        Edges::all(px(1.)),
+                        color,
+                        BorderStyle::Dashed,
+                    )),
+                    None => stroke_polygon(window, &screen(c), color, px(1.)),
+                }
+            }
+        }
+    }
 }
 
 pub(crate) fn text_origin(t: &LaidText, xfrm: &Xfrm, view: View) -> Point<Pixels> {
