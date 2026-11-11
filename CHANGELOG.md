@@ -9,6 +9,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-11
+
+Pivot tables can now be made in Kantor: Insert PivotTable…, a PivotTable Fields panel (also for
+pivots that came in a file) and Delete PivotTable. Pivots made in Kantor have not yet been opened
+in Excel; they are saved with `refreshOnLoad` so Excel rebuilds them from their source.
+
 ### Added
 
 #### Sheets
@@ -517,7 +523,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/dzulfikar08/kantor/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/dzulfikar08/kantor/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/dzulfikar08/kantor/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dzulfikar08/kantor/releases/tag/v0.1.0
