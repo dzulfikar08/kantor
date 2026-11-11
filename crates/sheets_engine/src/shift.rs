@@ -588,10 +588,10 @@ fn scan_range(b: &[u8], i: usize) -> Option<(usize, RangeRef)> {
     None
 }
 
-struct Token {
+pub(crate) struct Token {
     /// The sheet name, unquoted.
-    sheet: Option<String>,
-    range: RangeRef,
+    pub(crate) sheet: Option<String>,
+    pub(crate) range: RangeRef,
     /// Where the reference (without the sheet) is in the formula.
     range_span: std::ops::Range<usize>,
 }
@@ -602,7 +602,7 @@ fn is_name_byte(c: u8) -> bool {
 
 /// The references in a formula, skipping strings, functions, names and
 /// structured references.
-fn references(formula: &str) -> Vec<Token> {
+pub(crate) fn references(formula: &str) -> Vec<Token> {
     let b = formula.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;

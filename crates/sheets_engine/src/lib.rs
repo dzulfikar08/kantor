@@ -11,6 +11,7 @@
 mod batch;
 mod cond_format;
 mod csv;
+pub mod drawing;
 mod filter;
 mod import;
 mod look;
@@ -18,9 +19,9 @@ mod numfmt;
 mod preserve;
 mod rows;
 mod shift;
-mod validation;
 mod sort;
 mod table;
+mod validation;
 
 pub use import::SourceFormat;
 pub use preserve::package_problems;
@@ -60,11 +61,11 @@ pub use grid::{Fill, FillDirection, RangeStats, Step};
 pub use look::CellLook;
 pub use numfmt::Display;
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
+pub use sort::SortKey;
+pub use table::{TableCellLook, TableInfo};
 pub use validation::{
     ErrorStyle, ListItem, Message, Validation, ValidationOperator, ValidationType,
 };
-pub use sort::SortKey;
-pub use table::{TableCellLook, TableInfo};
 
 const LOCALE: &str = "en";
 const TIMEZONE: &str = "UTC";
@@ -97,6 +98,8 @@ pub struct Workbook {
     validation: validation::Validations,
     /// The workbook's own table styles (`<tableStyles>` in `styles.xml`).
     table_styles: table::CustomStyles,
+    /// Charts and pictures of the opened file (`drawing`).
+    drawings: drawing::Drawings,
 }
 
 /// See [`Workbook::cached`].
@@ -239,6 +242,8 @@ struct Revisions {
     redo: Vec<(u64, u32)>,
     /// Rows and columns inserted or deleted to reach each state.
     layouts: shift::Layouts,
+    /// Drawing edits (moves, resizes, deletes) leading to each state.
+    drawing_edits: HashMap<u64, std::sync::Arc<drawing::Edits>>,
 }
 
 impl Revisions {
@@ -248,11 +253,36 @@ impl Revisions {
 
     fn edited_steps(&mut self, steps: u32) {
         let layout = self.layout();
+        let prev = self.current;
         self.next += 1;
         self.undo.push((self.current, steps));
         self.current = self.next;
         self.redo.clear();
         self.layouts.set(self.current, layout);
+        if let Some(edits) = self.drawing_edits.get(&prev).cloned() {
+            self.drawing_edits.insert(self.current, edits);
+        }
+    }
+
+    /// The drawing edits leading to the current state.
+    fn drawing_edits(&self) -> std::sync::Arc<drawing::Edits> {
+        self.drawing_edits
+            .get(&self.current)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn set_drawing_edits(&mut self, edits: std::sync::Arc<drawing::Edits>) {
+        self.drawing_edits.insert(self.current, edits);
+    }
+
+    /// Whether the next undo / redo is a drawing edit (no IronCalc step).
+    fn undo_is_own(&self) -> bool {
+        self.undo.last().is_some_and(|e| e.1 == 0)
+    }
+
+    fn redo_is_own(&self) -> bool {
+        self.redo.last().is_some_and(|e| e.1 == 0)
     }
 
     /// An edit that inserted or deleted rows or columns.
@@ -325,6 +355,7 @@ impl Workbook {
             cond: Default::default(),
             validation: Default::default(),
             table_styles,
+            drawings: Default::default(),
         })
     }
 
@@ -387,8 +418,11 @@ impl Workbook {
         if calc.mode == CalcMode::Manual {
             model.pause_evaluation();
         }
-        let validation = match xlsx.as_ref().map(XlsxSource::bytes) {
-            Some(Ok(bytes)) => validation::Validations::read(&bytes),
+        let (validation, drawings) = match xlsx.as_ref().map(XlsxSource::bytes) {
+            Some(Ok(bytes)) => (
+                validation::Validations::read(&bytes),
+                drawing::Drawings::read(&bytes),
+            ),
             _ => Default::default(),
         };
         Ok(Self {
@@ -408,6 +442,7 @@ impl Workbook {
             cond: Default::default(),
             validation,
             table_styles,
+            drawings,
         })
     }
 
@@ -472,16 +507,18 @@ impl Workbook {
     }
 
     pub fn can_undo(&self) -> bool {
-        self.model.can_undo()
+        self.history.undo_is_own() || self.model.can_undo()
     }
 
+    /// Whether there is something to redo. A drawing edit after an undo
+    /// clears the redo list, but not IronCalc's: only our list counts.
     pub fn can_redo(&self) -> bool {
-        self.model.can_redo()
+        !self.history.redo.is_empty() && (self.history.redo_is_own() || self.model.can_redo())
     }
 
     /// Undo the last edit (recalculates). Returns `false` if there was none.
     pub fn undo(&mut self) -> Result<bool> {
-        if !self.model.can_undo() {
+        if !self.can_undo() {
             return Ok(false);
         }
         for _ in 0..self.history.undo_steps() {
@@ -496,7 +533,7 @@ impl Workbook {
 
     /// Redo the last undone edit (recalculates). Returns `false` if there was none.
     pub fn redo(&mut self) -> Result<bool> {
-        if !self.model.can_redo() {
+        if !self.can_redo() {
             return Ok(false);
         }
         for _ in 0..self.history.redo_steps() {
@@ -602,12 +639,16 @@ impl Workbook {
                         columns: t.columns.iter().map(|c| (c.id, c.name.clone())).collect(),
                     })
                 };
+                let drawings = self
+                    .drawings
+                    .save_edits(&self.history.drawing_edits(), &layout);
                 let ctx = preserve::Context {
                     tabs: &self.tab_colors(),
                     full_calc: stale,
                     moves: &moves,
                     cell_text: &cell_text,
                     tables: &table_now,
+                    drawings: &drawings,
                 };
                 let finished = preserve::finish(written, original.as_deref(), &ctx);
                 drop(original);
