@@ -56,6 +56,8 @@ impl<'a> Model<'a> {
             show_grid_lines: true,
             conditional_formatting: vec![],
             links: HashMap::new(),
+            // KANTOR PATCH (row heights)
+            default_row_height: None,
         }
     }
 

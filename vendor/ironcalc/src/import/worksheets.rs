@@ -278,6 +278,18 @@ fn get_default_column_width(ws: &XmlNode) -> f64 {
         .unwrap_or(EXCEL_DEFAULT_COLUMN_WIDTH)
 }
 
+// KANTOR PATCH (row heights): the sheet's default row height in points, from
+// `<sheetFormatPr defaultRowHeight="..."/>` (ECMA-376 Part 1, 18.3.1.81), if
+// it is there and positive.
+fn get_default_row_height(ws: &XmlNode) -> Option<f64> {
+    ws.children()
+        .find(|n| n.has_tag_name("sheetFormatPr"))?
+        .attribute("defaultRowHeight")?
+        .parse::<f64>()
+        .ok()
+        .filter(|h| h.is_finite() && *h > 0.0)
+}
+
 fn load_merge_cells(ws: &XmlNode) -> Result<Vec<MergedCell>, XlsxError> {
     // 18.3.1.55 Merge Cells
     // <mergeCells count="1">
@@ -997,6 +1009,8 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
         show_grid_lines: sheet_view.show_grid_lines,
         conditional_formatting,
         links,
+        // KANTOR PATCH (row heights)
+        default_row_height: get_default_row_height(ws),
     })
 }
 

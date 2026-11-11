@@ -104,6 +104,16 @@ pub(crate) enum Diff {
         new_value: bool,
         old_value: bool,
     },
+    // KANTOR PATCH (row heights): a row's whole entry (height, custom flag,
+    // hidden, style...), `None` when the sheet has none for it. Undo puts the
+    // old entry back exactly, which `SetRowHeight` doesn't (it leaves
+    // `custom_height` set and loses a hidden row's height).
+    SetRowEntry {
+        sheet: u32,
+        row: i32,
+        new_value: Option<Box<Row>>,
+        old_value: Option<Box<Row>>,
+    },
     SetColumnStyle {
         sheet: u32,
         column: i32,

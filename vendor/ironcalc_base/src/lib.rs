@@ -57,6 +57,8 @@ mod functions;
 mod implicit_intersection;
 // KANTOR PATCH (conditional formatting): lazy rule evaluation API.
 mod kantor_cf;
+// KANTOR PATCH (row heights)
+pub mod kantor_rows;
 pub mod links;
 mod merged_cells;
 mod model;
