@@ -1013,7 +1013,11 @@ impl<'a> Parser<'a> {
                     }
                 }
                 // xlpm: Excel Lambda Parameter
-                let name = name.trim_start_matches("_xlpm.").to_string();
+                // KANTOR PATCH (functions): `_xleta.SUM` is SUM passed as a LAMBDA.
+                let name = name
+                    .trim_start_matches("_xlpm.")
+                    .trim_start_matches("_xleta.")
+                    .to_string();
                 Node::NamedVariableKind { name, id: None }
             }
             TokenType::Error(kind) => Node::ErrorKind(kind),

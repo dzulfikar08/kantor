@@ -1683,6 +1683,23 @@ fn get_function_args_signature(kind: &Function, arg_count: usize) -> Vec<Signatu
         Function::Skew => vec![Signature::Vector; arg_count],
         Function::SkewP => vec![Signature::Vector; arg_count],
         Function::Small => vec![Signature::Vector, Signature::Scalar],
+        // KANTOR PATCH (functions)
+        Function::Aggregate => {
+            if arg_count < 3 {
+                return vec![Signature::Error; arg_count];
+            }
+            let mut result = vec![Signature::Vector; arg_count];
+            result[0] = Signature::Scalar;
+            result[1] = Signature::Scalar;
+            result
+        }
+        Function::Groupby | Function::Pivotby | Function::Phonetic => {
+            vec![Signature::Vector; arg_count]
+        }
+        Function::Bahttext | Function::Dbcs | Function::Jis => {
+            args_signature_scalars(arg_count, 1, 0)
+        }
+        Function::Usdollar => args_signature_scalars(arg_count, 1, 1),
     }
 }
 
@@ -2203,5 +2220,11 @@ fn static_analysis_on_function(kind: &Function, args: &[Node]) -> StaticResult {
         Function::Skew => StaticResult::Scalar,
         Function::SkewP => StaticResult::Scalar,
         Function::Small => StaticResult::Scalar,
+        // KANTOR PATCH (functions)
+        Function::Aggregate | Function::Phonetic => StaticResult::Scalar,
+        Function::Groupby | Function::Pivotby => StaticResult::Unknown,
+        Function::Bahttext | Function::Usdollar | Function::Dbcs | Function::Jis => {
+            not_implemented(args)
+        }
     }
 }

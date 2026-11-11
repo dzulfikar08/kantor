@@ -78,28 +78,10 @@ impl<'a> Model<'a> {
         }
     }
 
-    // FIXME(TD): This is too much
+    // KANTOR PATCH (functions): a cell is a nested subtotal if SUBTOTAL or
+    // AGGREGATE appears anywhere in its formula (upstream: only at the top).
     fn cell_is_subtotal(&self, sheet_index: u32, row: i32, column: i32) -> bool {
-        let cell = match self.workbook.worksheets[sheet_index as usize].cell(row, column) {
-            Some(c) => c,
-            None => {
-                return false;
-            }
-        };
-
-        match cell.get_formula() {
-            Some(f) => {
-                let node: &Node = &self.parsed_formulas[sheet_index as usize][f as usize].0;
-                matches!(
-                    node,
-                    Node::FunctionKind {
-                        kind: Function::Subtotal,
-                        args: _
-                    }
-                )
-            }
-            None => false,
-        }
+        self.cell_has_subtotal(sheet_index, row, column)
     }
 
     fn subtotal_get_values(
@@ -112,7 +94,7 @@ impl<'a> Model<'a> {
         for arg in args {
             match arg {
                 Node::FunctionKind {
-                    kind: Function::Subtotal,
+                    kind: Function::Subtotal | Function::Aggregate, // KANTOR PATCH (functions)
                     args: _,
                 } => {
                     // skip
@@ -218,8 +200,9 @@ impl<'a> Model<'a> {
             107 => self.subtotal_stdevs(&args[1..], cell, SubTotalMode::SkipHidden),
             108 => self.subtotal_stdevp(&args[1..], cell, SubTotalMode::SkipHidden),
             109 => self.subtotal_sum(&args[1..], cell, SubTotalMode::SkipHidden),
-            110 => self.subtotal_vars(&args[1..], cell, SubTotalMode::Full),
-            111 => self.subtotal_varp(&args[1..], cell, SubTotalMode::Full),
+            // KANTOR PATCH (functions): upstream counted hidden rows for 110/111.
+            110 => self.subtotal_vars(&args[1..], cell, SubTotalMode::SkipHidden),
+            111 => self.subtotal_varp(&args[1..], cell, SubTotalMode::SkipHidden),
             _ => CalcResult::new_error(
                 Error::VALUE,
                 cell,
@@ -364,7 +347,7 @@ impl<'a> Model<'a> {
         for arg in args {
             match arg {
                 Node::FunctionKind {
-                    kind: Function::Subtotal,
+                    kind: Function::Subtotal | Function::Aggregate, // KANTOR PATCH (functions)
                     args: _,
                 } => {
                     // skip
@@ -450,7 +433,7 @@ impl<'a> Model<'a> {
         for arg in args {
             match arg {
                 Node::FunctionKind {
-                    kind: Function::Subtotal,
+                    kind: Function::Subtotal | Function::Aggregate, // KANTOR PATCH (functions)
                     args: _,
                 } => {
                     // skip

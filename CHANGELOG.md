@@ -46,6 +46,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   as `m/d/yyyy`, and halves rounded away from zero (`0` shows 1234.5 as `1235`).
 - Locale-tagged formats work: `[$Rp-421]#,##0` shows `Rp1.500.000` (Indonesian separators from
   the tag) and `[$-421]d mmmm yyyy` shows `17 Agustus 2025`. They showed `#VALUE!` before.
+- New functions: `AGGREGATE` (all 19 functions and options 0–7: skipping hidden or filtered rows,
+  error values, and nested `SUBTOTAL`/`AGGREGATE` cells), `GROUPBY` and `PIVOTBY` (spilled
+  summaries with headers, subtotals, grand totals, sorting by keys or values, a filter, and
+  `relative_to` for `PERCENTOF`), `BAHTTEXT`, `USDOLLAR`, `DBCS`/`JIS` and `PHONETIC`. They
+  showed `#NAME?` before, and they keep Excel's names in saved files (`_xlfn.GROUPBY`).
+- A function can be passed by name where a LAMBDA is expected, as in Excel:
+  `GROUPBY(A2:A99,B2:B99,SUM)`, `BYROW(A1:C9,MAX)`, `MAP(A1:A9,ABS)` (saved as `_xleta.SUM`).
+- Formula autocomplete lists every function the engine has (it missed some before).
 
 #### Updates
 - In-app updates for the DMG, AppImage and install-script installs: a check at most once a day
@@ -65,6 +73,9 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   default weight there and bold text looked regular. macOS is unchanged.
 
 ### Fixed
+- Sheets: `COUNT` counts the numbers in an array (`COUNT(FILTER(...))` was always 0);
+  `SUBTOTAL(110/111, ...)` skip hidden rows like the other 100-codes; `SUBTOTAL` skips any cell
+  whose formula contains `SUBTOTAL` or `AGGREGATE`, not only those that start with it.
 - Sheets: styled empty cells stored as `<c s=".." t="n"/>` (openpyxl and others) open blank
   with their style, as in Excel, instead of showing 0.
 - Sheets: no more 1-pixel seams inside merged and filled cells at fractional scaling (125 %);

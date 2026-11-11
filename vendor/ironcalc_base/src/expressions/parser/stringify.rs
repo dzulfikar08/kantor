@@ -138,6 +138,16 @@ fn prefix_bound_variables(node: &mut Node, bound: &mut Vec<String>) {
         Node::NamedVariableKind { name, .. } => {
             if bound.iter().any(|n| n == name) {
                 *name = format!("_xlpm.{name}");
+            } else if let Some(eta) = crate::functions::kantor_names::eta_function(name) {
+                // KANTOR PATCH (functions): a function passed by name, as in
+                // `GROUPBY(A2:A9,B2:B9,SUM)`, is an "eta reduced" LAMBDA that
+                // Excel writes as `_xleta.SUM`.
+                *name = format!(
+                    "_xleta.{}",
+                    eta.to_xlsx_string()
+                        .trim_start_matches("_xlfn.")
+                        .trim_start_matches("_xlws.")
+                );
             }
         }
         // A bound lambda used as a function: `LET(f,LAMBDA(a,a*a),f(2))`
