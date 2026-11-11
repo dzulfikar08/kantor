@@ -9,6 +9,38 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+#### Sheets
+- **Insert PivotTable…** (toolbar PivotTable menu, command palette): the source is the Excel table
+  the active cell is in, else the selection, else the data around the active cell, shown as an
+  editable reference (`Sheet1!$A$1:$D$13` or a table name) and checked as you type (a name in every
+  header cell, each one different, rows under it). The pivot goes on a new sheet (`Sheet2`…, at
+  `A3`, as in Excel) or at a cell you type. It works in any workbook: one with no pivots yet, a
+  new one, or a `.csv`/`.ods`/`.xls` import.
+- **PivotTable Fields** panel beside the grid, for new pivots and those from files: check a field
+  (text goes to Rows, numbers to Values as Sum, as in Excel), drag fields from the list or between
+  Filters / Columns / Rows / Values (each chip also has a menu to move it up, down or to another
+  area), Value Field Settings (Sum, Count, Average, Max, Min, Product, Count Numbers, StdDev,
+  StdDevp, Var, Varp; a custom name; the source's or another number format), an item picker for
+  report filters and row/column fields, Compact / Outline / Tabular layout, subtotals off / at the
+  top / at the bottom, and grand total row and column. Every change lays the pivot out again from
+  its source and is one undo step. Open it from the menu, the palette or the status bar's
+  PivotTable chip; it follows the active cell into another pivot.
+- **Delete PivotTable** removes the pivot at the active cell (one undo step); its parts, and its
+  cache once no pivot uses it, are left out of the next save.
+- New pivots are saved with their own parts (definition, cache with `refreshOnLoad`, records,
+  relationships, the workbook's `<pivotCaches>`, content types; `PivotStyleLight16` and Excel's
+  captions), so Kantor reads them back as it wrote them and they refresh, move with inserted rows
+  and columns and answer GETPIVOTDATA like pivots from Excel.
+
+### Fixed
+
+#### Sheets
+- Pivot tables: the grand total row and column were swapped when only one of them was on
+  (`colGrandTotals` is the row at the bottom), and an item above a nested Σ Values field showed the
+  first value field's total on its own row.
+
 ## [0.3.0] - 2026-11-11
 
 Sheets catches up with how Excel files really look and work: conditional formatting, per-row

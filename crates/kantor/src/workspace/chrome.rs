@@ -283,8 +283,17 @@ impl Workspace {
             .when(!detail.is_empty(), |d| d.child(div().child(detail)))
             // The active cell is in a pivot table.
             .when_some(pivot, |d, pivot| {
+                let ws = cx.entity().downgrade();
                 d.child(
                     div()
+                        .id("status-pivot")
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.accent.opacity(0.24)))
+                        .on_click(move |_, window, cx| {
+                            let _ = ws.update(cx, |ws, cx| {
+                                ws.with_sheets(window, cx, |v, w, cx| v.pivot_fields_doc(w, cx))
+                            });
+                        })
                         .flex_none()
                         .px(SPACE_3)
                         .rounded(RADIUS_SM)

@@ -690,6 +690,24 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "Insert PivotTable…",
+        detail: "Sheets · summarise the table, selection or data around the active cell",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.insert_pivot_doc(w, cx)),
+    },
+    Command {
+        title: "PivotTable Fields",
+        detail: "Sheets · show or hide the field list of the PivotTable at the active cell",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.pivot_fields_doc(w, cx)),
+    },
+    Command {
+        title: "Delete PivotTable",
+        detail: "Sheets · remove the PivotTable at the active cell",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.delete_pivot_doc(w, cx)),
+    },
+    Command {
         title: "Refresh PivotTable",
         detail: "Sheets · recompute the PivotTable at the active cell from its data",
         keys: "Alt F5",

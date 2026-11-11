@@ -226,6 +226,7 @@ const MAX_PART: u64 = 512 * 1024 * 1024;
 pub(crate) struct Finished {
     pub bytes: Vec<u8>,
     pub notes: Vec<String>,
+    pub pivots: PivotsSaved,
 }
 
 /// A sheet's tab colour as the model has it, by `sheetId`: the attributes of
@@ -247,10 +248,57 @@ pub(crate) struct Context<'a> {
     pub tables: &'a dyn Fn(&str) -> Option<TableNow>,
     /// Drawing objects moved, resized or deleted, by `sheetId`.
     pub drawings: &'a HashMap<u32, Vec<crate::drawing::SaveEdit>>,
-    /// Pivot parts rewritten by a refresh (table definitions, cache
-    /// definitions and records), by part name: saved instead of the
-    /// original's, as they are (already placed where their cells are now).
-    pub pivot_parts: &'a HashMap<String, Vec<u8>>,
+    /// Pivot parts rewritten by an edit, pivot tables deleted and pivot
+    /// tables made in Kantor.
+    pub pivots: &'a PivotSave,
+}
+
+/// The pivot parts of the workbook being saved, once pivot tables were
+/// refreshed, made, rearranged or deleted.
+#[derive(Default)]
+pub(crate) struct PivotSave {
+    /// Table definitions, cache definitions and records rewritten, by part
+    /// name: saved instead of the original's, as they are (already placed
+    /// where their cells are now).
+    pub replaced: HashMap<String, Vec<u8>>,
+    /// Pivot table parts of the original not to carry (deleted), lower case.
+    pub dropped: HashSet<String>,
+    /// Pivot tables whose parts the original doesn't have.
+    pub added: Vec<NewPivot>,
+}
+
+/// A pivot table to add to the package with its cache (see
+/// [`add_pivots`]). Part names are proposals: a name the package already
+/// has gets the next free number.
+pub(crate) struct NewPivot {
+    pub sheet_id: u32,
+    pub table_part: String,
+    /// Its `cacheId` is set to the cache's.
+    pub table_xml: String,
+    /// Several new pivot tables may share a cache (same part).
+    pub cache_part: String,
+    /// Its root's `r:id` names the records.
+    pub cache_xml: String,
+    pub records_part: Option<String>,
+    pub records_xml: Option<String>,
+}
+
+/// What a save did with pivot tables.
+#[derive(Default, Debug)]
+pub(crate) struct PivotsSaved {
+    /// New pivot tables, with the names their parts got.
+    pub added: Vec<AddedPivot>,
+    /// Pivot table parts of the saved package, lower case.
+    pub tables: HashSet<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AddedPivot {
+    pub proposed_table: String,
+    pub table: String,
+    pub proposed_cache: String,
+    pub cache: String,
+    pub records: Option<String>,
 }
 
 /// A table as the model has it at save time.
@@ -279,29 +327,65 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
             return Finished {
                 bytes: ironcalc,
                 notes,
+                pivots: PivotsSaved::default(),
             };
         }
     };
-    // The baseline: IronCalc's package with the fixes every save gets. Made
-    // only if it is what gets saved (from IronCalc's bytes again, so a big
-    // workbook's sheets are not held twice).
-    let baseline = |notes: &mut Vec<String>| -> Vec<u8> {
+    let new_pivots = &ctx.pivots.added;
+    // The baseline: IronCalc's package with the fixes every save gets (and
+    // the pivot tables made in Kantor). Made only if it is what gets saved
+    // (from IronCalc's bytes again, so a big workbook's sheets are not held
+    // twice).
+    let baseline = |notes: &mut Vec<String>| -> (Vec<u8>, Vec<AddedPivot>) {
+        let mut added = Vec::new();
         let polished = Package::read(&ironcalc).and_then(|mut b| {
             polish(&mut b, tabs, full_calc, notes)?;
+            if !new_pivots.is_empty() {
+                let before = b.clone();
+                match add_pivots(&mut b, new_pivots).and_then(|a| {
+                    let problems = problems_of(&b);
+                    if problems.is_empty() {
+                        Ok(a)
+                    } else {
+                        Err(problems.join("; "))
+                    }
+                }) {
+                    Ok(a) => added = a,
+                    Err(e) => {
+                        notes.push(format!("the new PivotTables are not saved: {e}"));
+                        b = before;
+                    }
+                }
+            }
             b.write()
         });
         match polished {
-            Ok(bytes) => bytes,
+            Ok(bytes) => (bytes, added),
             Err(e) => {
                 notes.push(format!("could not post-process the saved package: {e}"));
-                ironcalc.clone()
+                (ironcalc.clone(), Vec::new())
             }
+        }
+    };
+    let done = |bytes: Vec<u8>, notes: Vec<String>, added: Vec<AddedPivot>| {
+        let tables = Package::read(&bytes)
+            .map(|p| {
+                p.parts()
+                    .map(str::to_lowercase)
+                    .filter(|n| n.starts_with("xl/pivottables/") && !n.contains("/_rels/"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Finished {
+            bytes,
+            notes,
+            pivots: PivotsSaved { added, tables },
         }
     };
     let Some(original) = original else {
         drop(new);
-        let bytes = baseline(&mut notes);
-        return Finished { bytes, notes };
+        let (bytes, added) = baseline(&mut notes);
+        return done(bytes, notes, added);
     };
 
     // Polishing doesn't change the package structure.
@@ -309,14 +393,18 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
     let mut merged = new;
     let mut merge_notes = Vec::new();
     let mut polish_notes = Vec::new();
+    let mut added = Vec::new();
     let polished = match merge(&mut merged, original, ctx, &mut merge_notes) {
         Ok(false) => {
             drop(merged);
             notes.extend(merge_notes);
-            let bytes = baseline(&mut notes);
-            return Finished { bytes, notes };
+            let (bytes, added) = baseline(&mut notes);
+            return done(bytes, notes, added);
         }
-        Ok(true) => polish(&mut merged, tabs, full_calc, &mut polish_notes),
+        Ok(true) => polish(&mut merged, tabs, full_calc, &mut polish_notes).and_then(|()| {
+            added = add_pivots(&mut merged, new_pivots)?;
+            Ok(())
+        }),
         Err(e) => Err(e),
     };
     notes.extend(merge_notes);
@@ -334,14 +422,257 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
     match checked {
         Ok(bytes) => {
             notes.extend(polish_notes);
-            Finished { bytes, notes }
+            done(bytes, notes, added)
         }
         Err(e) => {
             notes.push(format!("not keeping the original's extra parts: {e}"));
-            let bytes = baseline(&mut notes);
-            Finished { bytes, notes }
+            let (bytes, added) = baseline(&mut notes);
+            done(bytes, notes, added)
         }
     }
+}
+
+const PIVOT_TABLE_CT: &str =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml";
+const PIVOT_CACHE_CT: &str =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml";
+const PIVOT_RECORDS_CT: &str =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheRecords+xml";
+const REL_BASE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+
+/// `wanted` if the package has no such part, else the next free name with
+/// the same stem (`xl/pivotTables/pivotTable` + number + `.xml`).
+fn free_part(pkg: &Package, wanted: &str, stem: &str) -> String {
+    if !wanted.starts_with(crate::pivot::NEW_PREFIX) && !pkg.has(wanted) {
+        return wanted.to_owned();
+    }
+    (1..)
+        .map(|n| format!("{stem}{n}.xml"))
+        .find(|n| !pkg.has(n))
+        .expect("a free name")
+}
+
+/// `xml` with attribute `name` (no namespace) of its root element set to
+/// `value`.
+fn set_root_attr(xml: &str, name: &str, value: &str) -> Result<String, String> {
+    let doc = Document::parse(xml).map_err(|e| e.to_string())?;
+    let root = doc.root_element();
+    if let Some(a) = root
+        .attributes()
+        .find(|a| a.namespace().is_none() && a.name() == name)
+    {
+        return Ok(apply_edits(xml, vec![(a.range_value(), esc_attr(value))]));
+    }
+    let start = root.range().start;
+    let at = start
+        + 1
+        + xml[start + 1..]
+            .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .ok_or("root element not closed")?;
+    Ok(apply_edits(
+        xml,
+        vec![(at..at, format!(" {name}=\"{}\"", esc_attr(value)))],
+    ))
+}
+
+/// Add pivot tables made in Kantor with their caches: the parts, their
+/// relationships (sheet → table → cache → records, workbook → cache), the
+/// workbook's `<pivotCaches>` and the content types. Returns the names the
+/// parts got.
+fn add_pivots(pkg: &mut Package, adds: &[NewPivot]) -> Result<Vec<AddedPivot>, String> {
+    if adds.is_empty() {
+        return Ok(Vec::new());
+    }
+    let root_rels = parse_rels(pkg.text("_rels/.rels")?.ok_or("no _rels/.rels")?)?;
+    let read = |p: &str| Ok(pkg.text(p)?.map(str::to_owned));
+    let (wb, mut wb_rels, wb_xml, sheets) = workbook_sheets(&root_rels, &read)?;
+    let mut wb_ids = IdAlloc::new(&wb_rels);
+    let wb_doc = Document::parse(&wb_xml).map_err(|e| format!("{wb}: {e}"))?;
+    let wb_root = wb_doc.root_element();
+    if wb_root.lookup_namespace_uri(Some("r")) != Some(NS_R) {
+        return Err("the workbook part has no r: prefix".into());
+    }
+    let list = wb_root.children().find(|c| is_main(*c, "pivotCaches"));
+    let mut next_id = list
+        .map(|l| {
+            l.children()
+                .filter(|c| is_main(*c, "pivotCache"))
+                .filter_map(|c| c.attribute("cacheId")?.parse::<u32>().ok())
+                .max()
+                .map_or(0, |m| m + 1)
+        })
+        .unwrap_or(0);
+    let mut ct = String::new();
+    let mut caches_text = String::new();
+    // Proposed cache part -> (cacheId, part, records part).
+    let mut caches: HashMap<String, (u32, String, Option<String>)> = HashMap::new();
+    let mut sheet_rels: HashMap<String, Vec<Rel>> = HashMap::new();
+    let mut out = Vec::new();
+    for a in adds {
+        let sheet = sheets
+            .iter()
+            .find(|s| s.sheet_id == a.sheet_id && s.kind == SheetKind::Work)
+            .ok_or_else(|| format!("PivotTable sheet {} is missing", a.sheet_id))?;
+        let (cache_id, cache_part, records_part) = match caches.get(&a.cache_part) {
+            Some(c) => c.clone(),
+            None => {
+                let cache_part =
+                    free_part(pkg, &a.cache_part, "xl/pivotCache/pivotCacheDefinition");
+                let mut cache_xml = a.cache_xml.clone();
+                let mut records_part = None;
+                if let Some(records) = &a.records_xml {
+                    let doc = Document::parse(&cache_xml).map_err(|e| e.to_string())?;
+                    let rid = doc
+                        .root_element()
+                        .attribute((NS_R, "id"))
+                        .ok_or("the cache names no records")?
+                        .to_owned();
+                    drop(doc);
+                    pkg.set(&cache_part, Vec::new());
+                    let rp = free_part(
+                        pkg,
+                        a.records_part
+                            .as_deref()
+                            .unwrap_or(crate::pivot::NEW_PREFIX),
+                        "xl/pivotCache/pivotCacheRecords",
+                    );
+                    pkg.set(&rp, records.clone().into_bytes());
+                    pkg.set(
+                        &rels_part(&cache_part),
+                        write_rels(&[Rel {
+                            id: rid,
+                            kind: format!("{REL_BASE}pivotCacheRecords"),
+                            target: relative(&cache_part, &rp),
+                            external: false,
+                        }])
+                        .into_bytes(),
+                    );
+                    ct.push_str(&format!(
+                        "<Override PartName=\"/{}\" ContentType=\"{PIVOT_RECORDS_CT}\"/>",
+                        esc_attr(&rp)
+                    ));
+                    records_part = Some(rp);
+                } else {
+                    // No records: the cache must not point at any.
+                    let doc = Document::parse(&cache_xml).map_err(|e| e.to_string())?;
+                    if doc.root_element().attribute((NS_R, "id")).is_some() {
+                        return Err("the cache's records are missing".into());
+                    }
+                }
+                cache_xml = cache_xml.trim_start_matches('\u{feff}').to_owned();
+                pkg.set(&cache_part, cache_xml.into_bytes());
+                ct.push_str(&format!(
+                    "<Override PartName=\"/{}\" ContentType=\"{PIVOT_CACHE_CT}\"/>",
+                    esc_attr(&cache_part)
+                ));
+                let rid = wb_ids.next();
+                wb_rels.push(Rel {
+                    id: rid.clone(),
+                    kind: format!("{REL_BASE}pivotCacheDefinition"),
+                    target: relative(&wb, &cache_part),
+                    external: false,
+                });
+                caches_text.push_str(&format!(
+                    "<pivotCache cacheId=\"{next_id}\" r:id=\"{}\"/>",
+                    esc_attr(&rid)
+                ));
+                let entry = (next_id, cache_part, records_part);
+                next_id += 1;
+                caches.insert(a.cache_part.clone(), entry.clone());
+                entry
+            }
+        };
+        let table = free_part(pkg, &a.table_part, "xl/pivotTables/pivotTable");
+        let xml = set_root_attr(&a.table_xml, "cacheId", &cache_id.to_string())?;
+        pkg.set(&table, xml.into_bytes());
+        pkg.set(
+            &rels_part(&table),
+            write_rels(&[Rel {
+                id: "rId1".into(),
+                kind: format!("{REL_BASE}pivotCacheDefinition"),
+                target: relative(&table, &cache_part),
+                external: false,
+            }])
+            .into_bytes(),
+        );
+        ct.push_str(&format!(
+            "<Override PartName=\"/{}\" ContentType=\"{PIVOT_TABLE_CT}\"/>",
+            esc_attr(&table)
+        ));
+        let rels = match sheet_rels.get_mut(&sheet.part) {
+            Some(r) => r,
+            None => {
+                let existing = match pkg.text(&rels_part(&sheet.part))? {
+                    Some(x) => parse_rels(x)?,
+                    None => Vec::new(),
+                };
+                sheet_rels.entry(sheet.part.clone()).or_insert(existing)
+            }
+        };
+        let id = IdAlloc::new(rels).next();
+        rels.push(Rel {
+            id,
+            kind: format!("{REL_BASE}pivotTable"),
+            target: relative(&sheet.part, &table),
+            external: false,
+        });
+        out.push(AddedPivot {
+            proposed_table: a.table_part.clone(),
+            table,
+            proposed_cache: a.cache_part.clone(),
+            cache: cache_part,
+            records: records_part,
+        });
+    }
+    for (part, rels) in sheet_rels {
+        pkg.set(&rels_part(&part), write_rels(&rels).into_bytes());
+    }
+    pkg.set(&rels_part(&wb), write_rels(&wb_rels).into_bytes());
+    // The workbook's cache list (CT_Workbook: after sheets, functionGroups,
+    // externalReferences, definedNames, calcPr, oleSize,
+    // customWorkbookViews).
+    let edit = match list {
+        Some(l) => {
+            let at = l.range().end - "</pivotCaches>".len();
+            if !wb_xml[..l.range().end].ends_with("</pivotCaches>") {
+                return Err("the workbook's <pivotCaches> is not closed as expected".into());
+            }
+            (at..at, caches_text)
+        }
+        None => {
+            let before = [
+                "sheets",
+                "functionGroups",
+                "externalReferences",
+                "definedNames",
+                "calcPr",
+                "oleSize",
+                "customWorkbookViews",
+            ];
+            let last = wb_root
+                .children()
+                .rfind(|c| before.iter().any(|n| is_main(*c, n)))
+                .ok_or("the workbook has no <sheets>")?
+                .range()
+                .end;
+            (
+                last..last,
+                format!("<pivotCaches>{caches_text}</pivotCaches>"),
+            )
+        }
+    };
+    let new_wb = apply_edits(&wb_xml, vec![edit]);
+    drop(wb_doc);
+    pkg.set(&wb, new_wb.into_bytes());
+    let types = pkg
+        .text(CONTENT_TYPES)?
+        .ok_or("no content types")?
+        .to_owned();
+    let at = types.rfind("</Types>").ok_or("content types not closed")?;
+    let mut types = types;
+    types.insert_str(at, &ct);
+    pkg.set(CONTENT_TYPES, types.into_bytes());
+    Ok(out)
 }
 
 /// Worksheet XML (uncompressed) above which [`read_back`] checks the
@@ -1700,6 +2031,8 @@ struct Merge<'o, 'a> {
     /// some sheet's could not be (IronCalc's stay, with IronCalc's dxfs).
     cf_carried: bool,
     cf_failed: bool,
+    /// Parts not to carry (deleted pivot tables), lower case.
+    dropped: HashSet<String>,
 }
 
 impl Merge<'_, '_> {
@@ -1896,9 +2229,12 @@ fn merge(
         removals: HashMap::new(),
         cf_carried: false,
         cf_failed: false,
+        dropped: HashSet::new(),
     };
+    m.dropped = ctx.pivots.dropped.clone();
     m.replaced.extend(
-        ctx.pivot_parts
+        ctx.pivots
+            .replaced
             .iter()
             .filter(|(part, _)| orig.has(part))
             .map(|(part, data)| (part.clone(), data.clone())),
@@ -2403,6 +2739,9 @@ fn carry_implicit_for(
             notes.push(format!("{label}: can't follow {kind} target {}", r.target));
             continue;
         };
+        if m.dropped.contains(&target.to_lowercase()) {
+            continue;
+        }
         let new_target = relative(new_source, &target);
         if kind == "comments" && !new_target.starts_with("../") {
             // IronCalc's reader assumes comments live in `xl/`.
@@ -4097,7 +4436,7 @@ mod tests {
             cell_text: &|_, _, _| String::new(),
             tables: &|_| None,
             drawings: &HashMap::new(),
-            pivot_parts: &HashMap::new(),
+            pivots: &PivotSave::default(),
         };
         let done = finish(out, original, &ctx);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());

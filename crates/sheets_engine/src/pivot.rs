@@ -76,7 +76,7 @@ impl Val {
 
     /// The key two values are the same item by (strings ignore case, as in
     /// Excel).
-    fn key(&self) -> String {
+    pub(crate) fn key(&self) -> String {
         match self {
             Val::Str(s) => format!("s{}", s.to_lowercase()),
             Val::Num(n) => format!("n{n}"),
@@ -87,7 +87,7 @@ impl Val {
         }
     }
 
-    fn number(&self) -> Option<f64> {
+    pub(crate) fn number(&self) -> Option<f64> {
         match self {
             Val::Num(n) | Val::Date(n) => Some(*n),
             _ => None,
@@ -95,7 +95,7 @@ impl Val {
     }
 
     /// What a label cell shows (`(blank)` for a missing value).
-    fn label(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         match self {
             Val::Str(s) => s.clone(),
             Val::Num(n) => format_number(*n),
@@ -118,7 +118,7 @@ impl Val {
 
     /// The order items sort in (Excel: numbers, then text, then booleans,
     /// then errors, blanks last).
-    fn sort_key(&self) -> (u8, f64, String) {
+    pub(crate) fn sort_key(&self) -> (u8, f64, String) {
         match self {
             Val::Num(n) | Val::Date(n) => (0, *n, String::new()),
             Val::Str(s) => (1, 0.0, s.to_lowercase()),
@@ -254,6 +254,8 @@ pub(crate) struct Cache {
     pub at: Layout,
     /// Why it can't be refreshed.
     pub unsupported: Option<String>,
+    /// Made in Kantor (for a new pivot table).
+    pub added: bool,
 }
 
 /// An entry of a pivot field's item list.
@@ -335,7 +337,7 @@ impl Func {
     }
 
     /// What Excel calls it in a data field's default name.
-    fn caption(self) -> &'static str {
+    pub(crate) fn caption(self) -> &'static str {
         match self {
             Func::Sum => "Sum",
             Func::Count => "Count",
@@ -454,6 +456,14 @@ pub(crate) struct Def {
     pub reindexed: bool,
     pub at: Layout,
     pub unsupported: Option<String>,
+    /// Made in Kantor: it exists only in the history states that list it
+    /// (see [`State::defs`]).
+    pub added: bool,
+    /// Its parts are in the package the next save starts from (the file
+    /// opened or last saved): saved by carrying them, else written anew.
+    pub in_origin: bool,
+    /// Root attributes a layout change sets (`compact`, `outline`...).
+    pub root_sets: Vec<(&'static str, String)>,
 }
 
 fn attr_bool(n: Node, name: &str, default: bool) -> bool {
@@ -553,6 +563,7 @@ fn parse_cache(part: &str, records_part: Option<String>, xml: &str) -> Result<Ca
         records: None,
         at: Layout::default(),
         unsupported,
+        added: false,
     })
 }
 
@@ -727,6 +738,9 @@ fn parse_def(part: &str, sheet_id: u32, cache: usize, xml: &str) -> Result<Def, 
         reindexed: false,
         at: Layout::default(),
         unsupported,
+        added: false,
+        in_origin: true,
+        root_sets: Vec::new(),
     })
 }
 
@@ -782,6 +796,8 @@ impl Pivots {
 pub(crate) struct State {
     pub defs: HashMap<usize, Arc<LaidXml>>,
     pub caches: HashMap<usize, Arc<Cache>>,
+    /// Pivot tables deleted.
+    pub gone: std::collections::HashSet<usize>,
 }
 
 // ------------------------------------------------------------------ geometry
@@ -892,6 +908,10 @@ impl Placed {
     fn look(&self, row: u32, col: u32) -> Option<TableCellLook> {
         let s = self.style.as_ref()?;
         let d = &self.def;
+        if d.row_fields.is_empty() && d.col_fields.is_empty() && d.data_fields.is_empty() {
+            // Excel's placeholder for a pivot with no fields: plain.
+            return None;
+        }
         let a = self.area;
         let mut look = TableCellLook::default();
         if let Some(p) = self.page
@@ -1297,7 +1317,11 @@ fn walk(
             });
         } else {
             let tabular = !field.outline;
-            let top = field.subtotal_top && field.default_subtotal;
+            // With the Σ Values field further down, a total across value
+            // fields means nothing: no values on the item's own row and no
+            // subtotal (as Excel shows it).
+            let mixed = d.is_none() && lv[level + 1..].contains(&Level::Values);
+            let top = field.subtotal_top && field.default_subtotal && !mixed;
             if !tabular {
                 out.push(Entry {
                     kind: Kind::Data,
@@ -1308,7 +1332,7 @@ fn walk(
                 });
             }
             walk(def, lv, pos, &sub, level + 1, path, d, out);
-            if field.default_subtotal && (tabular || !field.subtotal_top) {
+            if field.default_subtotal && !mixed && (tabular || !field.subtotal_top) {
                 out.push(Entry {
                     kind: Kind::Sub,
                     path: path.clone(),
@@ -1399,7 +1423,7 @@ pub(crate) struct Laid {
 }
 
 impl Def {
-    fn field_caption(&self, cache: &Cache, f: usize) -> String {
+    pub(crate) fn field_caption(&self, cache: &Cache, f: usize) -> String {
         self.fields
             .get(f)
             .and_then(|x| x.name.clone())
@@ -1407,7 +1431,7 @@ impl Def {
             .unwrap_or_default()
     }
 
-    fn data_caption_of(&self, cache: &Cache, d: usize) -> String {
+    pub(crate) fn data_caption_of(&self, cache: &Cache, d: usize) -> String {
         let df = &self.data_fields[d];
         df.name.clone().unwrap_or_else(|| {
             format!(
@@ -1418,7 +1442,7 @@ impl Def {
         })
     }
 
-    fn item_label(&self, cache: &Cache, f: usize, k: usize) -> Val {
+    pub(crate) fn item_label(&self, cache: &Cache, f: usize, k: usize) -> Val {
         let it = &self.fields[f].items[k];
         if let Some(n) = &it.n {
             return Val::Str(n.clone());
@@ -1483,8 +1507,10 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
             })
         })
         .collect();
-    let rows = entries(def, &row_lv, &pos, &recs, def.row_grand);
-    let cols = entries(def, &col_lv, &pos, &recs, def.col_grand);
+    // `colGrandTotals` totals each column (a row at the bottom),
+    // `rowGrandTotals` each row (a column at the right).
+    let rows = entries(def, &row_lv, &pos, &recs, def.col_grand);
+    let cols = entries(def, &col_lv, &pos, &recs, def.row_grand);
 
     // Columns of the row labels: a compact field shares its parent's.
     let mut label_col = Vec::with_capacity(row_lv.len());
@@ -2057,20 +2083,34 @@ fn with_attr(xml: &str, element: &str, attr: &str, value: &str) -> Option<String
 const XML_HEAD: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n";
 
 /// A `<pivotField>` element for `f`, keeping what the original said
-/// besides its axis, data flag and items.
+/// besides what the model has (axis, data flag, layout flags and items).
 fn field_xml(f: &Field) -> String {
+    /// Attributes written from the model, with their defaults.
+    const MODELLED: [&str; 8] = [
+        "axis",
+        "dataField",
+        "compact",
+        "outline",
+        "subtotalTop",
+        "defaultSubtotal",
+        "showAll",
+        "multipleItemSelectionAllowed",
+    ];
     let mut attrs = String::new();
     let mut rest = String::new();
+    let mut had: Vec<&str> = Vec::new();
     let original = f.xml.as_deref().and_then(|x| {
         let wrapped = format!("<w xmlns=\"{NS_MAIN}\" xmlns:r=\"{NS_R}\">{x}</w>");
         let doc = Document::parse(&wrapped).ok()?;
         let el = doc.root_element().first_element_child()?;
         let mut a = String::new();
+        let mut seen = Vec::new();
         for at in el.attributes() {
             if at.namespace().is_some() {
                 continue;
             }
-            if matches!(at.name(), "axis" | "dataField") {
+            if let Some(m) = MODELLED.iter().find(|m| **m == at.name()) {
+                seen.push(*m);
                 continue;
             }
             a.push_str(&format!(" {}=\"{}\"", at.name(), esc(at.value())));
@@ -2082,14 +2122,12 @@ fn field_xml(f: &Field) -> String {
             }
             r.push_str(&wrapped[c.range()]);
         }
-        Some((a, r))
+        Some((a, r, seen))
     });
-    match original {
-        Some((a, r)) => {
-            attrs = a;
-            rest = r;
-        }
-        None => attrs.push_str(" showAll=\"0\""),
+    if let Some((a, r, seen)) = original {
+        attrs = a;
+        rest = r;
+        had = seen;
     }
     let mut out = String::from("<pivotField");
     if let Some(axis) = &f.axis {
@@ -2097,6 +2135,20 @@ fn field_xml(f: &Field) -> String {
     }
     if f.data {
         out.push_str(" dataField=\"1\"");
+    }
+    let multi = had.contains(&"multipleItemSelectionAllowed")
+        || (f.axis.as_deref() == Some("axisPage") && f.items.iter().any(|i| i.hidden));
+    for (name, value, default) in [
+        ("compact", f.compact, true),
+        ("outline", f.outline, true),
+        ("subtotalTop", f.subtotal_top, true),
+        ("showAll", f.show_all, true),
+        ("defaultSubtotal", f.default_subtotal, true),
+        ("multipleItemSelectionAllowed", multi, false),
+    ] {
+        if value != default || had.contains(&name) {
+            out.push_str(&format!(" {name}=\"{}\"", u8::from(value)));
+        }
     }
     out.push_str(&attrs);
     if f.items.is_empty() && rest.is_empty() {
@@ -2139,7 +2191,9 @@ pub(crate) fn def_xml(laid: &LaidXml, location: Area) -> Option<String> {
     let xml = def.xml.as_str();
     let doc = Document::parse(xml).ok()?;
     let root = doc.root_element();
-    let start = root_start_with(xml, &[("updatedVersion", "6".into())])?;
+    let mut sets: Vec<(&str, String)> = vec![("updatedVersion", "6".into())];
+    sets.extend(def.root_sets.iter().map(|(k, v)| (*k, v.clone())));
+    let start = root_start_with(xml, &sets)?;
     let name = root_name(xml)?;
     let mut out = String::from(XML_HEAD);
     out.push_str(&start);
@@ -2449,19 +2503,25 @@ fn range_of(a: Area) -> CellRange {
 }
 
 impl Workbook {
-    fn pivot_state(&self) -> Arc<State> {
+    pub(crate) fn pivot_state(&self) -> Arc<State> {
         self.history.pivot_state()
     }
 
     /// The definition of pivot `i` now.
-    fn pivot_def(&self, state: &State, i: usize) -> Arc<Def> {
+    pub(crate) fn pivot_def(&self, state: &State, i: usize) -> Arc<Def> {
         match state.defs.get(&i) {
             Some(l) => Arc::new(l.def.clone()),
             None => self.pivots.defs[i].clone(),
         }
     }
 
-    fn pivot_cache(&self, state: &State, i: usize) -> Arc<Cache> {
+    /// Whether pivot `i` is in the workbook in `state` (not deleted; made
+    /// in Kantor and not undone).
+    pub(crate) fn pivot_present(&self, state: &State, i: usize) -> bool {
+        !state.gone.contains(&i) && (!self.pivots.defs[i].added || state.defs.contains_key(&i))
+    }
+
+    pub(crate) fn pivot_cache(&self, state: &State, i: usize) -> Arc<Cache> {
         state
             .caches
             .get(&i)
@@ -2470,7 +2530,7 @@ impl Workbook {
     }
 
     /// Where `area` (in the coordinates of `at`) is now on sheet `sheet_id`.
-    fn now(&self, at: &Layout, sheet_id: u32, area: Area) -> Option<Area> {
+    pub(crate) fn now(&self, at: &Layout, sheet_id: u32, area: Area) -> Option<Area> {
         at.moves_to(&self.history.layout()).area(sheet_id, area)
     }
 
@@ -2487,6 +2547,9 @@ impl Workbook {
         let theme = &self.model.get_model().workbook.theme;
         let mut out = Vec::new();
         for i in 0..self.pivots.defs.len() {
+            if !self.pivot_present(&state, i) {
+                continue;
+            }
             let def = self.pivot_def(&state, i);
             if def.sheet_id != sheet_id {
                 continue;
@@ -2709,7 +2772,7 @@ impl Workbook {
 
     /// The records of a cache's source now: `(sheet, area, data)`, the area
     /// including the header row.
-    fn read_source(&self, cache: &Cache) -> Result<(u32, Area, SourceData)> {
+    pub(crate) fn read_source(&self, cache: &Cache) -> Result<(u32, Area, SourceData)> {
         let model = self.model.get_model();
         let sheet_index = |name: &str| -> Result<u32> {
             model
@@ -2828,42 +2891,111 @@ impl Workbook {
     }
 
     fn refresh_caches(&mut self, caches: &[usize]) -> Result<usize> {
+        self.rebuild_pivots(caches, Rebuild::default())
+            .map(|n| n.len())
+    }
+
+    /// Keep the records parts of the opened file's caches: a save after a
+    /// pivot edit writes every pivot part for the current state, and those
+    /// not refreshed need their records as the file had them.
+    pub(crate) fn keep_pivot_records(&mut self) -> Result<()> {
+        if self.pivots.refreshed {
+            return Ok(());
+        }
+        let needed: Vec<String> = self
+            .pivots
+            .caches
+            .iter()
+            .filter(|c| !c.added)
+            .filter_map(|c| c.records_part.clone())
+            .collect();
+        let mut kept = HashMap::new();
+        if !needed.is_empty() {
+            let bytes = self
+                .origin
+                .xlsx
+                .as_ref()
+                .ok_or_else(|| anyhow!("the opened file is not at hand"))?
+                .bytes()
+                .map_err(|e| anyhow!("{e}"))?;
+            for rp in needed {
+                let data = crate::preserve::read_part(&bytes, &rp).map_err(|e| anyhow!("{e}"))?;
+                kept.insert(rp, Arc::new(data));
+            }
+        }
+        self.pivots.records = kept;
+        self.pivots.refreshed = true;
+        Ok(())
+    }
+
+    /// Rebuild `caches` from their sources and lay out again the pivot
+    /// tables on them, with `change` applied, as one undo step. Returns the
+    /// pivot indexes laid out.
+    pub(crate) fn rebuild_pivots(
+        &mut self,
+        caches: &[usize],
+        change: Rebuild,
+    ) -> Result<Vec<usize>> {
         let state = self.pivot_state();
         let layout = self.history.layout();
+        let def_of = |i: usize| -> Arc<Def> {
+            match change.defs.get(&i) {
+                Some(d) => Arc::new(d.clone()),
+                None => self.pivot_def(&state, i),
+            }
+        };
+        let sheet_of = |sheet_id: u32| -> Option<u32> {
+            let model = self.model.get_model();
+            match model
+                .workbook
+                .worksheets
+                .iter()
+                .position(|w| w.sheet_id == sheet_id)
+            {
+                Some(s) => Some(s as u32),
+                None if change.new_sheet == Some(sheet_id) => {
+                    Some(model.workbook.worksheets.len() as u32)
+                }
+                None => None,
+            }
+        };
         // Work everything out first: nothing changes if any of it fails.
         struct Plan {
             index: usize,
             sheet: u32,
-            old: Area,
+            old: Option<Area>,
             laid: Laid,
         }
         let mut plans: Vec<Plan> = Vec::new();
         let mut new_caches: Vec<(usize, Arc<Cache>)> = Vec::new();
         for &ci in caches {
             let users: Vec<usize> = (0..self.pivots.defs.len())
-                .filter(|&i| self.pivot_def(&state, i).cache == ci)
+                .filter(|&i| {
+                    (self.pivot_present(&state, i) || change.defs.contains_key(&i))
+                        && def_of(i).cache == ci
+                })
                 .collect();
             if users.is_empty() {
                 continue;
             }
             let old = self.pivot_cache(&state, ci);
-            let first = self.pivot_def(&state, users[0]);
+            let first = def_of(users[0]);
             if let Some(why) = &old.unsupported {
                 bail!("can't refresh the PivotTable {}: {why}", first.name);
             }
             for &i in &users {
-                let d = self.pivot_def(&state, i);
+                let d = def_of(i);
                 if let Some(why) = &d.unsupported {
                     bail!("can't refresh the PivotTable {}: {why}", d.name);
                 }
             }
-            let (src_sheet, src_area, data) = self
+            let (_, src_area, data) = self
                 .read_source(&old)
                 .map_err(|e| anyhow!("can't refresh the PivotTable {}: {e}", first.name))?;
             let axis: Vec<String> = users
                 .iter()
                 .flat_map(|&i| {
-                    let d = self.pivot_def(&state, i);
+                    let d = def_of(i);
                     d.fields
                         .iter()
                         .enumerate()
@@ -2871,6 +3003,7 @@ impl Workbook {
                         .filter_map(|(k, _)| old.fields.get(k).map(|c| c.name.clone()))
                         .collect::<Vec<_>>()
                 })
+                .chain(change.axis.iter().cloned())
                 .collect();
             let mut cache = rebuild_cache(&old, data, &axis);
             cache.at = layout.clone();
@@ -2880,59 +3013,41 @@ impl Workbook {
                     area: src_area,
                 });
             }
-            let _ = src_sheet;
             let records = cache.records.clone().unwrap_or_default();
             for &i in &users {
-                let d = self.pivot_def(&state, i);
-                let sheet = self
-                    .model
-                    .get_model()
-                    .workbook
-                    .worksheets
-                    .iter()
-                    .position(|w| w.sheet_id == d.sheet_id)
-                    .ok_or_else(|| anyhow!("the PivotTable {}'s sheet is gone", d.name))?
-                    as u32;
+                let d = def_of(i);
+                let sheet = sheet_of(d.sheet_id)
+                    .ok_or_else(|| anyhow!("the PivotTable {}'s sheet is gone", d.name))?;
                 let placed = self.placed_pivots(sheet);
-                let p = placed
-                    .iter()
-                    .find(|p| p.index == i)
-                    .ok_or_else(|| anyhow!("the PivotTable {}'s cells were deleted", d.name))?;
-                let matched = rematch(&d, &old, &cache);
-                let mut laid = lay_out(&matched, &cache, &records, p.area.top, p.area.left);
+                let found = placed.iter().find(|p| p.index == i);
+                let (old_bounds, top, left) = match found {
+                    Some(p) => (Some(p.bounds()), p.area.top, p.area.left),
+                    None if change.defs.contains_key(&i) => (None, d.location.top, d.location.left),
+                    None => bail!("the PivotTable {}'s cells were deleted", d.name),
+                };
+                let mut matched = rematch(&d, &old, &cache);
+                if let Some(adjust) = &change.adjust {
+                    adjust(&mut matched, &cache);
+                }
+                // Room above for the report filters.
+                let pages = matched.page_fields.len() as u32;
+                let top = if pages > 0 { top.max(pages + 1) } else { top };
+                let mut laid = lay_out_any(&matched, &cache, &records, top, left);
                 laid.def.at = layout.clone();
                 plans.push(Plan {
                     index: i,
                     sheet,
-                    old: p.bounds(),
+                    old: old_bounds,
                     laid,
                 });
             }
             new_caches.push((ci, Arc::new(cache)));
         }
         if plans.is_empty() {
-            return Ok(0);
+            return Ok(Vec::new());
         }
-        if !self.pivots.refreshed {
-            let bytes = self
-                .origin
-                .xlsx
-                .as_ref()
-                .ok_or_else(|| anyhow!("can't refresh: the opened file is not at hand"))?
-                .bytes()
-                .map_err(|e| anyhow!("can't refresh: {e}"))?;
-            let mut kept = HashMap::new();
-            for c in &self.pivots.caches {
-                if let Some(rp) = &c.records_part {
-                    let data = crate::preserve::read_part(&bytes, rp)
-                        .map_err(|e| anyhow!("can't refresh: {e}"))?;
-                    kept.insert(rp.clone(), Arc::new(data));
-                }
-            }
-            drop(bytes);
-            self.pivots.records = kept;
-            self.pivots.refreshed = true;
-        }
+        self.keep_pivot_records()
+            .map_err(|e| anyhow!("can't change the PivotTables: {e}"))?;
         // Room for the new cells: nothing else in the way.
         for plan in &plans {
             let new = plan.laid.def.location;
@@ -2948,16 +3063,20 @@ impl Workbook {
                     plan.laid.def.name
                 );
             }
-            for other in self.placed_pivots(plan.sheet).iter() {
-                if other.index == plan.index {
-                    continue;
-                }
-                let o = other.bounds();
-                if o.top <= bounds.bottom
+            if change.new_sheet == Some(plan.laid.def.sheet_id) {
+                continue;
+            }
+            let overlaps = |o: &Area| {
+                o.top <= bounds.bottom
                     && bounds.top <= o.bottom
                     && o.left <= bounds.right
                     && bounds.left <= o.right
-                {
+            };
+            for other in self.placed_pivots(plan.sheet).iter() {
+                if other.index == plan.index || plans.iter().any(|p| p.index == other.index) {
+                    continue;
+                }
+                if overlaps(&other.bounds()) {
                     bail!(
                         "the PivotTable {} would overlap the PivotTable {}",
                         plan.laid.def.name,
@@ -2965,10 +3084,25 @@ impl Workbook {
                     );
                 }
             }
+            for t in self.tables(plan.sheet) {
+                let a = Area {
+                    top: t.area.top,
+                    left: t.area.left,
+                    bottom: t.area.bottom,
+                    right: t.area.right,
+                };
+                if overlaps(&a) {
+                    bail!(
+                        "the PivotTable {} would overlap the table {}",
+                        plan.laid.def.name,
+                        t.name
+                    );
+                }
+            }
             let old = plan.old;
             for &(r, c) in &self.filled_cells(plan.sheet) {
                 let inside = |a: &Area| r >= a.top && r <= a.bottom && c >= a.left && c <= a.right;
-                if inside(&bounds) && !inside(&old) {
+                if inside(&bounds) && !old.as_ref().is_some_and(inside) {
                     bail!(
                         "the PivotTable {} needs {} and there's already data in {}: move it first",
                         plan.laid.def.name,
@@ -2982,14 +3116,38 @@ impl Workbook {
         self.model.pause_evaluation();
         let mut steps = 0u32;
         let mut result = Ok(());
+        if let Some(id) = change.new_sheet {
+            match self.model.new_sheet() {
+                Ok(()) => {
+                    steps += 1;
+                    let model = self.model.get_model();
+                    let made = model.workbook.worksheets.last().map(|w| w.sheet_id);
+                    if made != Some(id) {
+                        // Not the id planned: follow the sheet.
+                        if let Some(made) = made {
+                            for plan in &mut plans {
+                                if plan.laid.def.sheet_id == id {
+                                    plan.laid.def.sheet_id = made;
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => result = Err(anyhow!("{e}")),
+            }
+        }
         let num_fmts = self.model.get_model().workbook.styles.num_fmts.clone();
         'plans: for plan in &plans {
-            let old = range_of(plan.old);
-            if let Err(e) = self.model.range_clear_all(&old.area(plan.sheet)) {
-                result = Err(anyhow!("{e}"));
+            if result.is_err() {
                 break;
             }
-            steps += 1;
+            if let Some(old) = plan.old {
+                if let Err(e) = self.model.range_clear_all(&range_of(old).area(plan.sheet)) {
+                    result = Err(anyhow!("{e}"));
+                    break;
+                }
+                steps += 1;
+            }
             for (r, c, v) in &plan.laid.cells {
                 if let Err(e) =
                     self.model
@@ -3018,16 +3176,22 @@ impl Workbook {
             self.model.resume_evaluation();
             self.model.evaluate();
         }
-        if steps == 0 {
-            return result.map(|()| 0);
+        if steps == 0 && change.defs.is_empty() {
+            return result.map(|()| Vec::new());
         }
-        self.history.edited_steps(steps);
+        if steps == 0 {
+            // Nothing to write (an empty new pivot): a step of our own.
+            self.history.edited_steps(0);
+        } else {
+            self.history.edited_steps(steps);
+        }
         if result.is_ok() {
             let mut next = (*state).clone();
             for (ci, c) in new_caches {
                 next.caches.insert(ci, c);
             }
             for plan in &plans {
+                next.gone.remove(&plan.index);
                 next.defs.insert(
                     plan.index,
                     Arc::new(LaidXml {
@@ -3040,33 +3204,20 @@ impl Workbook {
             self.history.set_pivot_state(Arc::new(next));
         }
         self.sync_pivot_grids(true);
-        result.map(|()| plans.len())
+        result.map(|()| plans.iter().map(|p| p.index).collect())
     }
 
-    /// The pivot parts refreshes rewrote, placed where they are now, for
-    /// the next save (see `preserve::Context::pivot_parts`).
-    pub(crate) fn pivot_parts(&self) -> HashMap<String, Vec<u8>> {
-        let mut out = HashMap::new();
+    /// The pivot parts to save for the current state (see
+    /// `preserve::Context::pivots`).
+    pub(crate) fn pivot_save(&self) -> crate::preserve::PivotSave {
+        let mut out = crate::preserve::PivotSave::default();
         if !self.pivots.refreshed {
             return out;
         }
         let state = self.pivot_state();
-        for (i, d) in self.pivots.defs.iter().enumerate() {
-            let xml = match state.defs.get(&i) {
-                Some(laid) => {
-                    let d = &laid.def;
-                    self.now(&d.at, d.sheet_id, d.location)
-                        .and_then(|loc| def_xml(laid, loc))
-                }
-                None => self
-                    .now(&d.at, d.sheet_id, d.location)
-                    .and_then(|loc| with_attr(&d.xml, "location", "ref", &range_of(loc).name())),
-            };
-            if let Some(xml) = xml {
-                out.insert(d.part.clone(), xml.into_bytes());
-            }
-        }
-        for (i, orig) in self.pivots.caches.iter().enumerate() {
+        // The definition and records of cache `i`, placed where they are now.
+        let cache_parts = |i: usize| -> Option<(String, Option<String>)> {
+            let orig = &self.pivots.caches[i];
             let cache = state.caches.get(&i).unwrap_or(orig);
             let source = match &cache.source {
                 Some(Source::Range { sheet, area }) => {
@@ -3081,29 +3232,148 @@ impl Workbook {
                 _ => None,
             };
             if state.caches.contains_key(&i) {
-                if let Some((def, rec)) = cache_xml(cache, source) {
-                    out.insert(cache.part.clone(), def.into_bytes());
-                    if let Some(rp) = &cache.records_part {
-                        out.insert(rp.clone(), rec.into_bytes());
-                    }
+                let (def, rec) = cache_xml(cache, source)?;
+                return Some((def, Some(rec)));
+            }
+            let def = match source {
+                Some(a) => with_attr(&cache.xml, "worksheetSource", "ref", &range_of(a).name())?,
+                None => cache.xml.to_string(),
+            };
+            let rec = orig
+                .records_part
+                .as_ref()
+                .and_then(|rp| self.pivots.records.get(rp))
+                .map(|r| String::from_utf8_lossy(r).into_owned());
+            Some((def, rec))
+        };
+        for (i, base) in self.pivots.defs.iter().enumerate() {
+            if !self.pivot_present(&state, i) {
+                if base.in_origin {
+                    out.dropped.insert(base.part.to_lowercase());
                 }
                 continue;
             }
-            let def = match source {
-                Some(a) => with_attr(&cache.xml, "worksheetSource", "ref", &range_of(a).name()),
-                None => Some(cache.xml.to_string()),
+            let xml = match state.defs.get(&i) {
+                Some(laid) => {
+                    let d = &laid.def;
+                    self.now(&d.at, d.sheet_id, d.location)
+                        .and_then(|loc| def_xml(laid, loc))
+                }
+                None => self
+                    .now(&base.at, base.sheet_id, base.location)
+                    .and_then(|loc| with_attr(&base.xml, "location", "ref", &range_of(loc).name())),
             };
-            if let Some(def) = def {
-                out.insert(cache.part.clone(), def.into_bytes());
+            let Some(xml) = xml else { continue };
+            if base.in_origin {
+                out.replaced.insert(base.part.clone(), xml.into_bytes());
+                continue;
             }
-            if let Some(rp) = &cache.records_part
-                && let Some(rec) = self.pivots.records.get(rp)
-            {
-                out.insert(rp.clone(), rec.to_vec());
+            let def = self.pivot_def(&state, i);
+            let Some((cache_xml, records_xml)) = cache_parts(def.cache) else {
+                continue;
+            };
+            let cache = &self.pivots.caches[def.cache];
+            out.added.push(crate::preserve::NewPivot {
+                sheet_id: def.sheet_id,
+                table_part: base.part.clone(),
+                table_xml: xml,
+                cache_part: cache.part.clone(),
+                cache_xml,
+                records_part: cache.records_part.clone(),
+                records_xml,
+            });
+        }
+        for (i, orig) in self.pivots.caches.iter().enumerate() {
+            if orig.added {
+                continue;
+            }
+            let Some((def, rec)) = cache_parts(i) else {
+                continue;
+            };
+            out.replaced.insert(orig.part.clone(), def.into_bytes());
+            if let (Some(rp), Some(rec)) = (&orig.records_part, rec) {
+                out.replaced.insert(rp.clone(), rec.into_bytes());
             }
         }
         out
     }
+
+    /// After a save: new pivot parts got their names, and each pivot table
+    /// is in the saved package or not.
+    pub(crate) fn pivots_saved(&mut self, saved: &crate::preserve::PivotsSaved) {
+        for d in self.pivots.defs.iter_mut() {
+            let d = Arc::make_mut(d);
+            if let Some(a) = saved.added.iter().find(|a| a.proposed_table == d.part) {
+                d.part = a.table.clone();
+            }
+            d.in_origin = saved.tables.contains(&d.part.to_lowercase());
+        }
+        for c in self.pivots.caches.iter_mut() {
+            if !c.part.starts_with(NEW_PREFIX) {
+                continue;
+            }
+            if let Some(a) = saved.added.iter().find(|a| a.proposed_cache == c.part) {
+                let c = Arc::make_mut(c);
+                c.part = a.cache.clone();
+                c.records_part = a.records.clone();
+            }
+        }
+    }
+}
+
+/// Part names of pivot parts made in Kantor until a save gives them their
+/// names in the package.
+pub(crate) const NEW_PREFIX: &str = "kantor-new/";
+
+/// What [`Workbook::rebuild_pivots`] changes besides refreshing.
+#[derive(Default)]
+pub(crate) struct Rebuild {
+    /// Definitions to use instead of the current ones (new ones too, at
+    /// their `location`'s top-left), for the cache they had.
+    pub defs: HashMap<usize, Def>,
+    /// Field names to give shared items (put on an axis).
+    pub axis: Vec<String>,
+    /// Applied to each definition once matched to the rebuilt cache.
+    #[allow(clippy::type_complexity)]
+    pub adjust: Option<Box<dyn Fn(&mut Def, &Cache)>>,
+    /// A sheet to add first, with this `sheetId` (a new pivot goes there).
+    pub new_sheet: Option<u32>,
+}
+
+/// [`lay_out`], with Excel's placeholder for a pivot with no fields yet:
+/// an empty 3 × 18 area.
+pub(crate) fn lay_out_any(
+    def: &Def,
+    cache: &Cache,
+    records: &[Vec<Val>],
+    top: u32,
+    left: u32,
+) -> Laid {
+    let mut laid = lay_out(def, cache, records, top, left);
+    if def.row_fields.is_empty() && def.col_fields.is_empty() && def.data_fields.is_empty() {
+        laid.cells.retain(|(r, _, _)| *r < top);
+        laid.num_fmts.clear();
+        laid.def.location = Area {
+            top,
+            left,
+            bottom: top + 17,
+            right: left + 2,
+        };
+        laid.def.first_header_row = 1;
+        laid.def.first_data_row = 1;
+        laid.def.first_data_col = 0;
+        let item = AxisItem {
+            t: "data".into(),
+            r: 0,
+            i: 0,
+            x: Vec::new(),
+        };
+        laid.def.row_items = vec![item.clone()];
+        laid.def.col_items = vec![item];
+        laid.row_items_xml = "<i/>".into();
+        laid.col_items_xml = "<i/>".into();
+    }
+    laid
 }
 
 #[cfg(test)]
