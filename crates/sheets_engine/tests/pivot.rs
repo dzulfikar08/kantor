@@ -156,12 +156,12 @@ fn pivot_problems(p: &BTreeMap<String, String>) -> Vec<String> {
             if f.attribute("name").is_none() {
                 out.push(format!("{part}: cacheField without name"));
             }
-            if let Some(items) = el(f, "sharedItems") {
-                if let Some(c) = items.attribute("count") {
-                    let have = items.children().filter(|c| c.is_element()).count();
-                    if c.parse::<usize>().ok() != Some(have) {
-                        out.push(format!("{part}: sharedItems count={c}, has {have}"));
-                    }
+            if let Some(items) = el(f, "sharedItems")
+                && let Some(c) = items.attribute("count")
+            {
+                let have = items.children().filter(|c| c.is_element()).count();
+                if c.parse::<usize>().ok() != Some(have) {
+                    out.push(format!("{part}: sharedItems count={c}, has {have}"));
                 }
             }
         }
@@ -338,7 +338,7 @@ fn pivot_tables_survive_a_save() {
     // Saved again from the saved file: still there, once.
     let mut wb = Workbook::open(dir.path().join("a.xlsx")).unwrap();
     let p2 = save(&mut wb, dir.path(), "b.xlsx");
-    assert_eq!(p2["xl/workbook.xml"].matches("<pivotCache ").count(), 2);
+    assert_eq!(p2["xl/workbook.xml"].matches("<pivotCache ").count(), 3);
     assert_eq!(
         p2["xl/pivotTables/pivotTable3.xml"],
         orig["xl/pivotTables/pivotTable3.xml"]
@@ -387,4 +387,207 @@ fn pivots_follow_inserted_and_deleted_rows_and_columns() {
             .as_deref(),
         Some("A1:E13")
     );
+}
+
+/// The cells of `range` (`top, left, bottom, right`, 0-based) as shown.
+fn grid(wb: &Workbook, sheet: u32, (t, l, b, r): (u32, u32, u32, u32)) -> Vec<Vec<String>> {
+    (t..=b)
+        .map(|row| (l..=r).map(|c| wb.display_value(sheet, row, c)).collect())
+        .collect()
+}
+
+#[test]
+fn pivots_are_found_and_styled() {
+    let wb = Workbook::open(fixture()).unwrap();
+    let s = sheet_index(&wb, "Pivot");
+    let p = wb.pivot_at(s, 4, 1).unwrap();
+    assert_eq!(p.name, "PivotTable1");
+    assert_eq!(p.area.name(), "A3:E8");
+    assert_eq!(p.refresh_problem, None);
+    // PivotTable2's report filter is part of it.
+    assert_eq!(wb.pivot_at(s, 0, 8).unwrap().name, "PivotTable2");
+    assert_eq!(wb.pivot_at(s, 0, 8).unwrap().bounds.name(), "H1:J6");
+    assert!(wb.pivot_at(s, 10, 0).is_none());
+    assert_eq!(wb.pivot_tables(sheet_index(&wb, "Tabular")).len(), 2);
+
+    // PivotStyleLight16: tinted, bold header and grand total rows.
+    let header = wb.table_cell_look(s, 3, 0).unwrap();
+    assert!(header.bold && header.fill.is_some());
+    let body = wb.table_cell_look(s, 4, 1).unwrap();
+    assert!(!body.bold && body.fill.is_none());
+    let grand = wb.table_cell_look(s, 7, 2).unwrap();
+    assert!(grand.bold && grand.fill == header.fill && grand.top.is_some());
+    // Grand total column: bold.
+    assert!(wb.table_cell_look(s, 5, 4).unwrap().bold);
+    // Tabular (Medium 9): subtotal rows are bold and tinted.
+    let t = sheet_index(&wb, "Tabular");
+    let sub = wb.table_cell_look(t, 4, 2).unwrap(); // "East Total"
+    assert!(sub.bold && sub.fill.is_some());
+    assert!(!wb.table_cell_look(t, 1, 2).unwrap().bold);
+}
+
+#[test]
+fn refreshing_unchanged_data_gives_the_same_cells() {
+    // The generator laid the pivots out the way Excel does; refreshing from
+    // the same data must give the same cells, definitions and caches.
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = Workbook::open(fixture()).unwrap();
+    let s = sheet_index(&wb, "Pivot");
+    let t = sheet_index(&wb, "Tabular");
+    let before_p = grid(&wb, s, (0, 0, 9, 10));
+    let before_t = grid(&wb, t, (0, 0, 15, 8));
+    assert_eq!(
+        wb.refresh_pivot(s, 4, 1).unwrap(),
+        2,
+        "both pivots of the cache"
+    );
+    assert_eq!(grid(&wb, s, (0, 0, 9, 10)), before_p);
+    assert_eq!(wb.refresh_all_pivots().unwrap(), 4);
+    assert_eq!(grid(&wb, t, (0, 0, 15, 8)), before_t);
+    assert_eq!(grid(&wb, s, (0, 0, 9, 10)), before_p);
+
+    let orig = parts(&fixture());
+    let p = save(&mut wb, dir.path(), "a.xlsx");
+    let items = |xml: &str, list: &str| {
+        let doc = Document::parse(xml).unwrap();
+        el(doc.root_element(), list).map(|n| xml[n.range()].to_owned())
+    };
+    for k in 1..=4 {
+        let part = format!("xl/pivotTables/pivotTable{k}.xml");
+        for list in [
+            "location",
+            "pivotFields",
+            "rowItems",
+            "colItems",
+            "dataFields",
+            "pageFields",
+        ] {
+            let (a, b) = (items(&orig[&part], list), items(&p[&part], list));
+            assert_eq!(norm(a), norm(b), "{part} {list}");
+        }
+    }
+    for k in 1..=3 {
+        let part = format!("xl/pivotCache/pivotCacheRecords{k}.xml");
+        let doc = Document::parse(&p[&part]).unwrap();
+        assert_eq!(els(doc.root_element(), "r").count(), 12);
+    }
+}
+
+/// Element text with the attribute order and self-closing forms Excel and
+/// Kantor may write differently made alike.
+fn norm(x: Option<String>) -> Option<String> {
+    let x = x?;
+    let doc = Document::parse(&x).ok()?;
+    let mut out = String::new();
+    for n in doc.descendants().filter(|n| n.is_element()) {
+        let mut attrs: Vec<String> = n
+            .attributes()
+            .map(|a| format!("{}={}", a.name(), a.value()))
+            .collect();
+        attrs.sort();
+        out.push_str(&format!("<{} {}>", n.tag_name().name(), attrs.join(" ")));
+    }
+    Some(out)
+}
+
+#[test]
+fn refresh_picks_up_edited_and_new_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = Workbook::open(fixture()).unwrap();
+    let d = sheet_index(&wb, "Data");
+    let s = sheet_index(&wb, "Pivot");
+    let t = sheet_index(&wb, "Tabular");
+    // East / Apples revenue 120 -> 220.
+    wb.set_input(d, 1, 4, "220").unwrap();
+    assert_eq!(wb.display_value(s, 4, 2), "228", "not refreshed yet");
+    wb.refresh_pivot(s, 3, 0).unwrap();
+    // Columns: Plums, Apples, Pears (the definition's order).
+    assert_eq!(
+        grid(&wb, s, (4, 0, 4, 4)),
+        [["East", "144", "328", "45", "517"]]
+    );
+    assert_eq!(wb.display_value(s, 7, 4), "1168");
+    // PivotTable2: West stays hidden; East's average revenue is now 129.25.
+    assert_eq!(
+        grid(&wb, s, (3, 7, 5, 9)),
+        [
+            ["East", "30", "129.25"],
+            ["North", "29", "99"],
+            ["Grand Total", "59", "114.125"],
+        ]
+    );
+
+    // A new region typed under the table: the table grows, and so does the
+    // tabular pivot over it.
+    for (c, v) in ["South", "Figs", "2026-05-01", "4", "48"]
+        .iter()
+        .enumerate()
+    {
+        wb.set_input(d, 13, c as u32, v).unwrap();
+    }
+    assert_eq!(wb.refresh_pivot(t, 0, 0).unwrap(), 1);
+    let tab = grid(&wb, t, (0, 0, 19, 2));
+    assert_eq!(tab[0], ["Region", "Product", "Sum of Units"]);
+    // New items come after the known ones in a field without a sort order,
+    // as in Excel.
+    assert_eq!(tab[9], ["West", "Apples", "12"]);
+    assert_eq!(tab[12], ["West Total", "", "19"]);
+    assert_eq!(tab[13], ["South", "Figs", "4"]);
+    assert_eq!(tab[14], ["South Total", "", "4"]);
+    assert_eq!(tab[15], ["Grand Total", "", "82"]);
+    assert_eq!(tab[16], ["", "", ""]);
+    let p = save(&mut wb, dir.path(), "a.xlsx");
+    assert_eq!(location(&p, "xl/pivotTables/pivotTable3.xml"), "A1:C16");
+    let cache = Document::parse(&p["xl/pivotCache/pivotCacheDefinition2.xml"]).unwrap();
+    assert_eq!(cache.root_element().attribute("recordCount"), Some("13"));
+    assert!(p["xl/pivotCache/pivotCacheDefinition2.xml"].contains("<s v=\"South\"/>"));
+    // The range source didn't grow (row 14 is outside A1:E13).
+    assert_eq!(wb.display_value(s, 7, 4), "1168");
+
+    // Undo: the tabular pivot shrinks back, and so does what a save writes.
+    wb.undo().unwrap();
+    assert_eq!(wb.display_value(t, 13, 0), "Grand Total");
+    let p = save(&mut wb, dir.path(), "b.xlsx");
+    assert_eq!(location(&p, "xl/pivotTables/pivotTable3.xml"), "A1:C14");
+    let mut wb = Workbook::open(dir.path().join("a.xlsx")).unwrap();
+    // The refreshed file refreshes to itself (PivotTable4 beside it wasn't
+    // refreshed before that save: it picks up the new revenue now).
+    let before = grid(&wb, t, (0, 0, 19, 2));
+    assert_eq!(wb.display_value(t, 1, 7), "144");
+    wb.refresh_all_pivots().unwrap();
+    assert_eq!(grid(&wb, t, (0, 0, 19, 2)), before);
+    assert_eq!(wb.display_value(t, 1, 7), "220");
+}
+
+#[test]
+fn rows_and_columns_through_a_pivot_are_refused() {
+    let mut wb = Workbook::open(fixture()).unwrap();
+    let s = sheet_index(&wb, "Pivot");
+    assert!(wb.insert_rows(s, 5, 1).is_err(), "inside PivotTable1");
+    assert!(wb.delete_rows(s, 1, 1).is_err(), "PivotTable2's filter row");
+    assert!(wb.delete_columns(s, 4, 4).is_err());
+    assert!(wb.insert_columns(s, 6, 1).is_ok(), "between the two");
+    assert!(
+        wb.insert_rows(s, 2, 1).is_err(),
+        "PivotTable2's filter is above"
+    );
+    assert!(wb.insert_rows(s, 0, 1).is_ok(), "above both");
+    assert_eq!(wb.pivot_at(s, 4, 0).unwrap().area.name(), "A4:E9");
+    // A refresh after the moves writes where the pivot is now.
+    wb.refresh_all_pivots().unwrap();
+    assert_eq!(wb.display_value(s, 8, 4), "1068");
+}
+
+#[test]
+fn a_new_value_overlapping_other_data_is_refused() {
+    let mut wb = Workbook::open(fixture()).unwrap();
+    let d = sheet_index(&wb, "Data");
+    let s = sheet_index(&wb, "Pivot");
+    // A fourth product makes PivotTable1 a column wider, into H... no: into F,
+    // which is empty; but a note typed in F5 is in the way.
+    wb.set_input(d, 1, 1, "Kiwis").unwrap();
+    wb.set_input(s, 4, 5, "note").unwrap();
+    let e = wb.refresh_pivot(s, 3, 0).unwrap_err().to_string();
+    assert!(e.contains("already data in F5"), "{e}");
+    assert_eq!(wb.display_value(s, 4, 2), "228", "nothing changed");
 }

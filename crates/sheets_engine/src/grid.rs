@@ -205,7 +205,7 @@ impl Fill {
 
 /// Whether a number format code shows a date (has day or year parts
 /// outside quoted text and `[...]` sections).
-fn is_date_code(code: &str) -> bool {
+pub(crate) fn is_date_code(code: &str) -> bool {
     let mut quoted = false;
     let mut bracket = false;
     for ch in code.chars() {
@@ -480,6 +480,7 @@ impl Workbook {
         if count == 0 || row >= MAX_ROWS {
             bail!("row out of range");
         }
+        self.check_pivots(sheet, true, true, row, count)?;
         self.model
             .insert_rows(sheet, row as i32 + 1, count as i32)
             .map_err(|e| anyhow!("{e}"))?;
@@ -497,6 +498,7 @@ impl Workbook {
         if first > last || last >= MAX_ROWS {
             bail!("row out of range");
         }
+        self.check_pivots(sheet, true, false, first, last - first + 1)?;
         self.model
             .delete_rows(sheet, first as i32 + 1, (last - first + 1) as i32)
             .map_err(|e| anyhow!("{e}"))?;
@@ -514,6 +516,7 @@ impl Workbook {
         if count == 0 || col >= MAX_COLS {
             bail!("column out of range");
         }
+        self.check_pivots(sheet, false, true, col, count)?;
         self.model
             .insert_columns(sheet, col as i32 + 1, count as i32)
             .map_err(|e| anyhow!("{e}"))?;
@@ -554,6 +557,7 @@ impl Workbook {
         if first > last || last >= MAX_COLS {
             bail!("column out of range");
         }
+        self.check_pivots(sheet, false, false, first, last - first + 1)?;
         self.model
             .delete_columns(sheet, first as i32 + 1, (last - first + 1) as i32)
             .map_err(|e| anyhow!("{e}"))?;

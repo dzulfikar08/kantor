@@ -208,6 +208,10 @@ pub(crate) struct Context<'a> {
     pub tables: &'a dyn Fn(&str) -> Option<TableNow>,
     /// Drawing objects moved, resized or deleted, by `sheetId`.
     pub drawings: &'a HashMap<u32, Vec<crate::drawing::SaveEdit>>,
+    /// Pivot parts rewritten by a refresh (table definitions, cache
+    /// definitions and records), by part name: saved instead of the
+    /// original's, as they are (already placed where their cells are now).
+    pub pivot_parts: &'a HashMap<String, Vec<u8>>,
 }
 
 /// A table as the model has it at save time.
@@ -1494,6 +1498,82 @@ pub(crate) fn drawing_sources(bytes: &[u8]) -> Result<DrawingSources, String> {
     Ok(out)
 }
 
+/// The bytes of part `name` of package `bytes`.
+pub(crate) fn read_part(bytes: &[u8], name: &str) -> Result<Vec<u8>, String> {
+    Original::new(bytes)?
+        .get(name)?
+        .ok_or_else(|| format!("{name} is missing"))
+}
+
+/// A pivot table of a package, with its cache.
+pub(crate) struct PivotSource {
+    pub sheet_id: u32,
+    /// `xl/pivotTables/pivotTable1.xml` and its XML.
+    pub part: String,
+    pub xml: String,
+    /// The cache definition part and its XML.
+    pub cache_part: String,
+    pub cache_xml: String,
+    /// The cache records part, if the cache has one.
+    pub records_part: Option<String>,
+}
+
+/// The pivot tables of the worksheets of `bytes`. Parts that can't be read
+/// are skipped (they are still carried on save).
+pub(crate) fn pivot_sources(bytes: &[u8]) -> Result<Vec<PivotSource>, String> {
+    let orig = Original::new(bytes)?;
+    let mut out = Vec::new();
+    if !orig.names.keys().any(|n| n.starts_with("xl/pivottables/")) {
+        return Ok(out);
+    }
+    let Some(root) = orig.text("_rels/.rels")? else {
+        return Ok(out);
+    };
+    let root_rels = parse_rels(&root)?;
+    let (_, _, _, sheets) = workbook_sheets(&root_rels, &|name| orig.text(name))?;
+    let target_of = |source: &str, kind: &str| -> Option<String> {
+        let rels = parse_rels(&orig.text(&rels_part(source)).ok()??).ok()?;
+        rels.iter()
+            .find(|r| r.short_kind() == kind && !r.external)
+            .and_then(|r| resolve(source, &r.target))
+    };
+    for s in sheets.iter().filter(|s| s.kind == SheetKind::Work) {
+        let Some(sheet_rels) = orig.text(&rels_part(&s.part)).ok().flatten() else {
+            continue;
+        };
+        let Ok(sheet_rels) = parse_rels(&sheet_rels) else {
+            continue;
+        };
+        for r in sheet_rels
+            .iter()
+            .filter(|r| r.short_kind() == "pivotTable" && !r.external)
+        {
+            let Some(part) = resolve(&s.part, &r.target) else {
+                continue;
+            };
+            let Some(xml) = orig.text(&part).ok().flatten() else {
+                continue;
+            };
+            let Some(cache_part) = target_of(&part, "pivotCacheDefinition") else {
+                continue;
+            };
+            let Some(cache_xml) = orig.text(&cache_part).ok().flatten() else {
+                continue;
+            };
+            let records_part = target_of(&cache_part, "pivotCacheRecords");
+            out.push(PivotSource {
+                sheet_id: s.sheet_id,
+                part,
+                xml,
+                cache_part,
+                cache_xml,
+                records_part,
+            });
+        }
+    }
+    Ok(out)
+}
+
 /// Whether `node` and everything in it is plain SpreadsheetML: no element or
 /// attribute in another namespace (which [`write_node`] drops, e.g. `xr:uid`,
 /// as IronCalc's sheets don't declare them ignorable).
@@ -1791,6 +1871,12 @@ fn merge(
         cf_carried: false,
         cf_failed: false,
     };
+    m.replaced.extend(
+        ctx.pivot_parts
+            .iter()
+            .filter(|(part, _)| orig.has(part))
+            .map(|(part, data)| (part.clone(), data.clone())),
+    );
     let mut adds: Vec<RelAdds> = Vec::new();
     let mut sheet_edits: Vec<(String, Vec<Insert>)> = Vec::new();
 
@@ -2005,6 +2091,7 @@ fn merge(
 /// relationships to add and the `<pivotCaches>` element listing them (by
 /// their original `cacheId`, which the pivot tables refer to). A cache no
 /// carried pivot table uses is dropped.
+#[allow(clippy::too_many_arguments)]
 fn carry_pivot_caches(
     m: &Merge,
     orig_wb: &str,
@@ -3384,8 +3471,7 @@ fn edit_workbook(
         ];
         let last = root
             .children()
-            .filter(|c| before.iter().any(|n| is_main(*c, n)))
-            .last()
+            .rfind(|c| before.iter().any(|n| is_main(*c, n)))
             .map_or(sheets_end, |c| c.range().end);
         if last == sheets_end {
             after_sheets.push_str(caches);
@@ -3841,6 +3927,7 @@ mod tests {
             cell_text: &|_, _, _| String::new(),
             tables: &|_| None,
             drawings: &HashMap::new(),
+            pivot_parts: &HashMap::new(),
         };
         let done = finish(out, original, &ctx);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());

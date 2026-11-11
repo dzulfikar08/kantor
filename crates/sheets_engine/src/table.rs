@@ -109,16 +109,16 @@ pub struct TableCellLook {
 /// differential format.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Elem {
-    fill: Option<Rgb>,
-    font: Option<Rgb>,
-    bold: Option<bool>,
-    left: Option<BorderLine>,
-    right: Option<BorderLine>,
-    top: Option<BorderLine>,
-    bottom: Option<BorderLine>,
+    pub(crate) fill: Option<Rgb>,
+    pub(crate) font: Option<Rgb>,
+    pub(crate) bold: Option<bool>,
+    pub(crate) left: Option<BorderLine>,
+    pub(crate) right: Option<BorderLine>,
+    pub(crate) top: Option<BorderLine>,
+    pub(crate) bottom: Option<BorderLine>,
     /// Lines between rows / columns inside the element.
-    horizontal: Option<BorderLine>,
-    vertical: Option<BorderLine>,
+    pub(crate) horizontal: Option<BorderLine>,
+    pub(crate) vertical: Option<BorderLine>,
 }
 
 /// A table style: its elements, from the lowest priority up.
@@ -151,14 +151,14 @@ pub(crate) struct CustomStyles {
     pub styles: HashMap<String, TableStyleDef>,
 }
 
-fn thin(color: Rgb) -> BorderLine {
+pub(crate) fn thin(color: Rgb) -> BorderLine {
     BorderLine {
         style: LineStyle::Thin,
         color: Some(color),
     }
 }
 
-fn line(style: LineStyle, color: Rgb) -> BorderLine {
+pub(crate) fn line(style: LineStyle, color: Rgb) -> BorderLine {
     BorderLine {
         style,
         color: Some(color),
@@ -166,7 +166,7 @@ fn line(style: LineStyle, color: Rgb) -> BorderLine {
 }
 
 /// A theme colour (`slot` as in OOXML: 0 lt1, 1 dk1, 4-9 accents) with a tint.
-fn theme(theme_: &Theme, slot: i32, tint: f64) -> Rgb {
+pub(crate) fn theme(theme_: &Theme, slot: i32, tint: f64) -> Rgb {
     parse_rgb(&Color::Theme(slot, tint).to_rgb(theme_)).unwrap_or(0)
 }
 
@@ -546,7 +546,7 @@ fn parse_dxf(dxf: Node, theme_: &Theme) -> Elem {
 // ---------------------------------------------------------------- per-cell look
 
 impl TableCellLook {
-    fn apply(&mut self, e: &Elem, edges: Edges) {
+    pub(crate) fn apply(&mut self, e: &Elem, edges: Edges) {
         if e.fill.is_some() {
             self.fill = e.fill;
         }
@@ -576,11 +576,11 @@ impl TableCellLook {
 
 /// Whether a cell is on the outer edges of the element it is styled by.
 #[derive(Clone, Copy)]
-struct Edges {
-    top: bool,
-    bottom: bool,
-    left: bool,
-    right: bool,
+pub(crate) struct Edges {
+    pub(crate) top: bool,
+    pub(crate) bottom: bool,
+    pub(crate) left: bool,
+    pub(crate) right: bool,
 }
 
 impl TableStyleDef {
@@ -723,13 +723,17 @@ impl Workbook {
 
     /// The look the table style gives cell `(row, col)`, if it is in a table
     /// with a style.
+    /// The same for a pivot table's cells and its pivot table style.
     pub fn table_cell_look(&self, sheet: u32, row: u32, col: u32) -> Option<TableCellLook> {
         let tables = self.sheet_tables(sheet);
-        let (t, style) = tables
+        match tables
             .tables
             .iter()
-            .find(|(t, _)| t.area.contains(row, col))?;
-        Some(style.as_ref()?.look(t, row, col, &tables.hidden))
+            .find(|(t, _)| t.area.contains(row, col))
+        {
+            Some((t, style)) => Some(style.as_ref()?.look(t, row, col, &tables.hidden)),
+            None => self.pivot_cell_look(sheet, row, col),
+        }
     }
 
     /// A table style by name: the workbook's own, else a built-in one.

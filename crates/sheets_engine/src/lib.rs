@@ -17,6 +17,7 @@ mod icons;
 mod import;
 mod look;
 mod numfmt;
+mod pivot;
 mod preserve;
 mod print;
 mod rows;
@@ -63,6 +64,7 @@ pub use grid::{Fill, FillDirection, RangeStats, Step};
 pub use icons::IconPath;
 pub use look::CellLook;
 pub use numfmt::Display;
+pub use pivot::PivotInfo;
 pub use print::{HeaderFooter, Margins, PageSetup, Paper, PrintColumns, PrintOptions, SheetPrint};
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 pub use sort::SortKey;
@@ -106,6 +108,8 @@ pub struct Workbook {
     drawings: drawing::Drawings,
     /// Print settings of the opened file.
     prints: print::Prints,
+    /// Pivot tables of the opened file (refreshes are kept in `history`).
+    pivots: pivot::Pivots,
 }
 
 /// See [`Workbook::cached`].
@@ -118,6 +122,8 @@ struct Cache {
     look: look::LookCache,
     /// Each sheet's tables with their styles (`table`).
     tables: HashMap<u32, std::sync::Arc<table::SheetTables>>,
+    /// Each sheet's pivot tables where they are now (`pivot`).
+    pivots: HashMap<u32, std::sync::Arc<Vec<pivot::Placed>>>,
 }
 
 /// When formulas are recalculated, like Excel's calculation options.
@@ -250,6 +256,8 @@ struct Revisions {
     layouts: shift::Layouts,
     /// Drawing edits (moves, resizes, deletes) leading to each state.
     drawing_edits: HashMap<u64, std::sync::Arc<drawing::Edits>>,
+    /// Pivot tables refreshed, in each state.
+    pivot_states: HashMap<u64, std::sync::Arc<pivot::State>>,
 }
 
 impl Revisions {
@@ -268,6 +276,21 @@ impl Revisions {
         if let Some(edits) = self.drawing_edits.get(&prev).cloned() {
             self.drawing_edits.insert(self.current, edits);
         }
+        if let Some(state) = self.pivot_states.get(&prev).cloned() {
+            self.pivot_states.insert(self.current, state);
+        }
+    }
+
+    /// The pivot refreshes of the current state.
+    fn pivot_state(&self) -> std::sync::Arc<pivot::State> {
+        self.pivot_states
+            .get(&self.current)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn set_pivot_state(&mut self, state: std::sync::Arc<pivot::State>) {
+        self.pivot_states.insert(self.current, state);
     }
 
     /// The drawing edits leading to the current state.
@@ -363,6 +386,7 @@ impl Workbook {
             table_styles,
             drawings: Default::default(),
             prints: Default::default(),
+            pivots: Default::default(),
         })
     }
 
@@ -425,11 +449,12 @@ impl Workbook {
         if calc.mode == CalcMode::Manual {
             model.pause_evaluation();
         }
-        let (validation, drawings, prints) = match xlsx.as_ref().map(XlsxSource::bytes) {
+        let (validation, drawings, prints, pivots) = match xlsx.as_ref().map(XlsxSource::bytes) {
             Some(Ok(bytes)) => (
                 validation::Validations::read(&bytes),
                 drawing::Drawings::read(&bytes),
                 print::Prints::read(&bytes),
+                pivot::Pivots::read(&bytes),
             ),
             _ => Default::default(),
         };
@@ -452,6 +477,7 @@ impl Workbook {
             table_styles,
             drawings,
             prints,
+            pivots,
         })
     }
 
@@ -651,7 +677,9 @@ impl Workbook {
                 let drawings = self
                     .drawings
                     .save_edits(&self.history.drawing_edits(), &layout);
+                let pivot_parts = self.pivot_parts();
                 let ctx = preserve::Context {
+                    pivot_parts: &pivot_parts,
                     tabs: &self.tab_colors(),
                     full_calc: stale,
                     moves: &moves,

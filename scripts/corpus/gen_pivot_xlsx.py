@@ -12,7 +12,9 @@ records, and three pivot tables:
 * `Pivot!H3`: compact, a report filter (Product) above it, rows Region with
   West hidden, two data fields (Sum of Units, Average of Revenue) in columns;
 * `Tabular!A1`: tabular, over the table `Sales`, rows Region then Product
-  with Region subtotals at the bottom, Sum of Units, PivotStyleMedium9.
+  with Region subtotals at the bottom, Sum of Units, PivotStyleMedium9;
+* `Tabular!F1`: compact, over the defined name `SalesData`, rows Product,
+  Count of Units and Max of Revenue, PivotStyleDark2.
 
 The cells under each pivot are worked out here the way Excel lays them out,
 so tests can compare Kantor's refresh with them.
@@ -444,6 +446,7 @@ def rels(items: list[tuple[str, str, str]]) -> str:
 def build() -> dict[str, str]:
     cache1 = Cache(1, 5, {"ref": "A1:E13", "sheet": "Data"}, 1)
     cache2 = Cache(2, 6, {"name": "Sales"}, 2)
+    cache3 = Cache(3, 8, {"name": "SalesData"}, 3)
     pivots = [
         Pivot("PivotTable1", "Pivot", 3, 1, cache1, rows=[0], cols=[1], data=[(4, "sum")],
               order={1: ["Plums", "Apples", "Pears"]}),
@@ -451,6 +454,8 @@ def build() -> dict[str, str]:
               data=[(3, "sum"), (4, "average")], hidden={0: {"West"}}),
         Pivot("PivotTable3", "Tabular", 1, 1, cache2, rows=[0, 1], cols=[], data=[(3, "sum")],
               tabular=True, style="PivotStyleMedium9"),
+        Pivot("PivotTable4", "Tabular", 1, 6, cache3, rows=[1], cols=[], data=[(3, "count"), (4, "max")],
+              style="PivotStyleDark2"),
     ]
     sst: dict[str, int] = {}
     parts: dict[str, str] = {}
@@ -494,7 +499,7 @@ def build() -> dict[str, str]:
         widths = {1: 14, 2: 16, 3: 16, 4: 10, 5: 12, 8: 14, 9: 14, 10: 20}
         parts[f"xl/worksheets/sheet{n}.xml"] = sheet_xml(cells, sst, widths=widths)
         parts[f"xl/worksheets/_rels/sheet{n}.xml.rels"] = rels(prels)
-    for c in (cache1, cache2):
+    for c in (cache1, cache2, cache3):
         d, r = cache_xml(c)
         parts[f"xl/pivotCache/pivotCacheDefinition{c.part}.xml"] = d
         parts[f"xl/pivotCache/pivotCacheRecords{c.part}.xml"] = r
@@ -530,12 +535,13 @@ def build() -> dict[str, str]:
         '<definedNames><definedName name="SalesData">Data!$A$1:$E$13</definedName></definedNames>'
         '<calcPr calcId="191029"/>'
         f'<pivotCaches><pivotCache cacheId="{cache1.cache_id}" r:id="rId{cache1.rid}"/>'
-        f'<pivotCache cacheId="{cache2.cache_id}" r:id="rId{cache2.rid}"/></pivotCaches>'
+        f'<pivotCache cacheId="{cache2.cache_id}" r:id="rId{cache2.rid}"/>'
+        f'<pivotCache cacheId="{cache3.cache_id}" r:id="rId{cache3.rid}"/></pivotCaches>'
         "</workbook>"
     )
     wb_rels = [(f"rId{i}", "worksheet", f"worksheets/sheet{i}.xml") for i in (1, 2, 3)]
     wb_rels += [("rId4", "styles", "styles.xml")]
-    wb_rels += [(f"rId{c.rid}", "pivotCacheDefinition", f"pivotCache/pivotCacheDefinition{c.part}.xml") for c in (cache1, cache2)]
+    wb_rels += [(f"rId{c.rid}", "pivotCacheDefinition", f"pivotCache/pivotCacheDefinition{c.part}.xml") for c in (cache1, cache2, cache3)]
     wb_rels += [("rId7", "sharedStrings", "sharedStrings.xml")]
     parts["xl/_rels/workbook.xml.rels"] = rels(wb_rels)
     parts["_rels/.rels"] = rels([("rId1", "officeDocument", "xl/workbook.xml")])
@@ -544,8 +550,8 @@ def build() -> dict[str, str]:
     over += [(f"/xl/worksheets/sheet{i}.xml", f"{CT}.worksheet+xml") for i in (1, 2, 3)]
     over += [("/xl/styles.xml", f"{CT}.styles+xml"), ("/xl/sharedStrings.xml", f"{CT}.sharedStrings+xml")]
     over += [("/xl/tables/table1.xml", f"{CT}.table+xml")]
-    over += [(f"/xl/pivotTables/pivotTable{k}.xml", f"{CT}.pivotTable+xml") for k in (1, 2, 3)]
-    for c in (cache1, cache2):
+    over += [(f"/xl/pivotTables/pivotTable{k}.xml", f"{CT}.pivotTable+xml") for k in (1, 2, 3, 4)]
+    for c in (cache1, cache2, cache3):
         over += [
             (f"/xl/pivotCache/pivotCacheDefinition{c.part}.xml", f"{CT}.pivotCacheDefinition+xml"),
             (f"/xl/pivotCache/pivotCacheRecords{c.part}.xml", f"{CT}.pivotCacheRecords+xml"),
