@@ -497,6 +497,26 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "Row Height…",
+        detail: "Sheets · set the selected rows' height in points",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::RowHeight, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Autofit Row Height",
+        detail: "Sheets · fit the selected rows to their content",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::AutofitRows, w, cx)
+            })
+        },
+    },
+    Command {
         title: "Standard Column Width",
         detail: "Sheets · reset the selected columns",
         keys: "",

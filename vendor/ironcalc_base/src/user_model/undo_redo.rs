@@ -145,6 +145,15 @@ impl<'a> UserModel<'a> {
                     new_value: _,
                     old_value,
                 } => self.model.set_row_height(*sheet, *row, *old_value)?,
+                // KANTOR PATCH (row heights)
+                Diff::SetRowEntry {
+                    sheet,
+                    row,
+                    new_value: _,
+                    old_value,
+                } => self
+                    .model
+                    .kantor_set_row_entry(*sheet, *row, old_value.as_deref().cloned())?,
                 Diff::RangeClearContents {
                     sheet,
                     row,
@@ -711,6 +720,15 @@ impl<'a> UserModel<'a> {
                 } => {
                     self.model.set_row_height(*sheet, *row, *new_value)?;
                 }
+                // KANTOR PATCH (row heights)
+                Diff::SetRowEntry {
+                    sheet,
+                    row,
+                    new_value,
+                    old_value: _,
+                } => self
+                    .model
+                    .kantor_set_row_entry(*sheet, *row, new_value.as_deref().cloned())?,
                 Diff::RangeClearContents {
                     sheet,
                     row,

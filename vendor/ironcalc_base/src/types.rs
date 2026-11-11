@@ -237,6 +237,10 @@ pub struct Worksheet {
     pub conditional_formatting: Vec<ConditionalFormatting>,
     /// Hyperlinks in the worksheet, keyed by (row, column) of the cell they are attached to
     pub links: HashMap<(i32, i32), Link>,
+    // KANTOR PATCH (row heights): `<sheetFormatPr defaultRowHeight>` in
+    // points, when the file gave one. Read only: the writer doesn't emit
+    // `sheetFormatPr` (Kantor carries the original element on save).
+    pub default_row_height: Option<f64>,
 }
 
 /// Internal representation of Excel's sheet_data

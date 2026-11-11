@@ -256,6 +256,30 @@ errors, eta LAMBDAs), `src/expressions/parser/tests/test_kantor_functions_export
 (xlsx names and `_xleta.`), `crates/sheets_engine/tests/functions.rs` (save and
 reopen an xlsx).
 
+## 11. Row heights in points, undone exactly
+
+Why: Kantor's grid draws per-row heights and lets the user set them.
+Upstream's `UserModel::set_rows_height` takes IronCalc pixels, always sets
+`custom_height`, leaves a hidden row hidden, can't make a row automatic again,
+and its undo restores only the height (the row stays custom, and a hidden row
+comes back 0 high because `get_row_height` reports hidden rows as 0). It also
+looks every row up by scanning the sheet's row entries.
+
+What (`KANTOR PATCH (row heights)`):
+
+* `Worksheet::default_row_height: Option<f64>` (`src/types.rs`, `None` in
+  `new_empty.rs`): the file's default row height in points, filled by the
+  vendored reader (`vendor/ironcalc` §5).
+* `src/kantor_rows.rs`: `UserModel::kantor_set_rows_height(sheet, first,
+  last, Some(points) | None, auto_points)`, one undo step. A custom height
+  shows a hidden row (as in Excel); `None` makes rows automatic again (an
+  entry kept only for its height is removed). Rows are indexed once per call.
+* `Diff::SetRowEntry { old_value, new_value }` (`src/user_model/history.rs`)
+  holds the row's whole entry (or `None`); undo/redo put it back as it was
+  (`src/user_model/undo_redo.rs`).
+
+Tests: `crates/sheets_engine/src/rows.rs` and `crates/sheets_engine/tests/rows.rs`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

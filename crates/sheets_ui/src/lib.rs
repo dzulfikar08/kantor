@@ -1,7 +1,8 @@
 //! Kantor Sheets UI.
 //!
-//! The grid is GPUI Kit's virtualised `DataTable`; column 0 is a fixed row-number
-//! gutter, so table column `n` maps to sheet column `n - 1`.
+//! The grid is a fork of GPUI Kit's virtualised `DataTable` ([`table`]) whose
+//! rows have their own heights ([`row_layout`]); column 0 is a fixed
+//! row-number gutter, so table column `n` maps to sheet column `n - 1`.
 //!
 //! Editing is spreadsheet-style: with a cell selected, typing starts an edit,
 //! Enter/F2 edits the existing content, Delete clears, Escape cancels and Enter
@@ -23,9 +24,9 @@
 //!
 //! Formatting is drawn as in the file: fills, text colour, size and font,
 //! vertical alignment, wrapping, borders (shared edges resolved like Excel),
-//! merged cells and per-sheet gridlines; see [`look`]. The table has one
-//! height for every row, so row heights are kept in the file but not drawn
-//! (larger text is capped to fit, wrapped text shows the lines that fit).
+//! merged cells and per-sheet gridlines; see [`look`]. Rows are drawn at the
+//! file's heights and grow to fit wrapped text and larger fonts; dragging a
+//! row number's bottom edge resizes it (see [`row_layout`]).
 //! Formatting commands (font flags, alignment, number formats, fill and text
 //! colour, font size, borders, wrap, merge) apply to the whole range as one
 //! undo step; see [`toolbar`]. Column widths come from the workbook and a
@@ -46,8 +47,13 @@ mod find;
 mod grid_ops;
 mod look;
 mod point;
+mod row_heights;
+mod row_layout;
+// Upstream code, kept close to GPUI Kit's so it can be compared.
+#[allow(dead_code, clippy::all)]
+mod table;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -55,7 +61,6 @@ use std::rc::Rc;
 use gpui_kit::component::{
     Sizable as _, h_flex,
     input::{Input, InputEvent, InputState},
-    table::{Column, DataTable, TableDelegate, TableEvent, TableState},
     v_flex,
 };
 use gpui_kit::prelude::*;
@@ -64,6 +69,7 @@ use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{
     CellRange, CellStyle, SourceFormat, StyleChange, Workbook, cell_name, column_name,
 };
+use table::{Column, DataTable, TableDelegate, TableEvent, TableState};
 
 mod toolbar;
 
@@ -249,6 +255,8 @@ pub struct SheetGrid {
     /// The window's scale factor: column widths and merged-cell offsets are
     /// snapped to its device pixels ([`look::snap`]).
     scale: f32,
+    /// Where each row sits ([`row_layout`]).
+    layout: row_layout::RowLayout,
 }
 
 /// What [`SheetGrid::selection`] depends on.
@@ -280,6 +288,7 @@ impl SheetGrid {
             fonts: look::FontCache::default(),
             selection_memo: Cell::new(None),
             scale: 1.0,
+            layout: row_layout::RowLayout::default(),
         };
         grid.resize();
         grid
@@ -342,6 +351,25 @@ impl TableDelegate for SheetGrid {
 
     fn rows_count(&self, _: &App) -> usize {
         self.rows as usize
+    }
+
+    fn row_heights(&self) -> Rc<RefCell<row_heights::RowHeights>> {
+        self.layout.heights.clone()
+    }
+
+    fn sync_rows(&mut self, _: &mut Window, _: &mut Context<TableState<Self>>) {
+        self.layout
+            .sync(&self.book, self.sheet, self.rows, self.scale);
+    }
+
+    fn fit_rows(
+        &mut self,
+        rows: &[usize],
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> bool {
+        self.layout
+            .fit(rows, &self.book, self.sheet, &mut self.fonts, window, cx)
     }
 
     fn column(&self, col_ix: usize, _: &App) -> Column {
@@ -492,7 +520,9 @@ impl TableDelegate for SheetGrid {
                         .bottom_0()
                         .h(GRID_LINE)
                         .bg(t.grid_line),
-                );
+                )
+                // Drag the bottom edge to resize, double-click to fit.
+                .children(row_layout::resize_handles(row, &self.view));
             return grid_ops::header_element(gutter, Header::Row(row), &self.view);
         }
         let (row, col) = (row_ix as u32, col_ix as u32 - 1);
@@ -522,9 +552,13 @@ impl TableDelegate for SheetGrid {
             .and_then(|c| c.style.as_deref())
             .unwrap_or(&look.style);
         let align = self.book.display_align_of(style, sheet, vr, vc);
+        let heights = self.layout.heights.clone();
+        let heights = heights.borrow();
         let geometry = look
             .merge
-            .map(|m| look::merge_geometry(&self.book, sheet, m, row, col, self.scale));
+            .map(|m| look::merge_geometry(&self.book, sheet, m, row, col, self.scale, &heights));
+        let row_height = px(heights.height(row as usize) as f32);
+        drop(heights);
         let content = look::Content {
             text: SharedString::from(text),
             style,
@@ -541,7 +575,7 @@ impl TableDelegate for SheetGrid {
             base_size: FONT_BODY,
             default_font_size: self.book.default_font_size(),
             family: self.fonts.for_style(style, cx),
-            height: geometry.map_or(look::row_height(), |g| g.3),
+            height: geometry.map_or(row_height, |g| g.3),
             fill: shown.fill,
         };
         let cell = div()
@@ -750,6 +784,10 @@ pub struct SheetsView {
     busy_focus: FocusHandle,
     /// `KANTOR_PERF_SCROLL` benchmark in progress (see [`bench`]).
     bench: Option<bench::ScrollBench>,
+    /// A drag on a row number's edge (see [`row_layout`]).
+    row_resize: Option<row_layout::RowResize>,
+    /// The "Row Height…" prompt.
+    row_height_prompt: Option<(Entity<InputState>, Subscription)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -802,6 +840,8 @@ impl SheetsView {
             opening: None,
             busy_focus: cx.focus_handle(),
             bench: bench::ScrollBench::from_env(),
+            row_resize: None,
+            row_height_prompt: None,
             _subscriptions: subscriptions,
         };
         this.select_cell(0, 0, cx);
@@ -1969,6 +2009,7 @@ impl Render for SheetsView {
                         this.dragging = false;
                         this.point_dragging = false;
                         this.end_grid_drag(window, cx);
+                        this.row_resize_end(window, cx);
                     }))
                     .on_key_down(cx.listener(Self::on_grid_key))
                     .child(DataTable::new(&self.table).bordered(false).small()),
@@ -1986,6 +2027,7 @@ impl Render for SheetsView {
             )
             .children(completion)
             .children(self.render_find_bar(cx))
+            .children(self.render_row_height_prompt(cx))
             .into_any_element()
     }
 }

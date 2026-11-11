@@ -15,6 +15,7 @@ mod import;
 mod look;
 mod numfmt;
 mod preserve;
+mod rows;
 mod shift;
 
 pub use import::SourceFormat;
@@ -50,6 +51,7 @@ pub use format::{
 pub use grid::{Fill, FillDirection, RangeStats, Step};
 pub use look::CellLook;
 pub use numfmt::Display;
+pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 
 const LOCALE: &str = "en";
 const TIMEZONE: &str = "UTC";

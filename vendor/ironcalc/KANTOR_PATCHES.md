@@ -84,6 +84,16 @@ reads the `val` of `b`, `i`, `u` and `strike`. Kantor doesn't use the writer's
 conditional formatting for workbooks opened from `.xlsx`: the original markup
 and `<dxfs>` are carried instead (`crates/sheets_engine/src/preserve.rs`).
 
+## 5. Default row height
+
+Why: Kantor draws rows at their heights from the file, relative to the
+sheet's default row height, which upstream doesn't read.
+
+What: `import/worksheets.rs` reads `<sheetFormatPr defaultRowHeight>` into
+`Worksheet::default_row_height` (points; `vendor/ironcalc_base` §11). The
+writer doesn't write `sheetFormatPr`; Kantor carries the original element on
+save (`crates/sheets_engine/src/preserve.rs`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the
