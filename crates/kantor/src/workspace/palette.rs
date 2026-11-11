@@ -690,6 +690,22 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "Refresh PivotTable",
+        detail: "Sheets · recompute the PivotTable at the active cell from its data",
+        keys: "Alt F5",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.refresh_pivots_doc(false, w, cx))
+        },
+    },
+    Command {
+        title: "Refresh All PivotTables",
+        detail: "Sheets · recompute every PivotTable in the workbook",
+        keys: "Ctrl Alt F5",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.refresh_pivots_doc(true, w, cx))
+        },
+    },
+    Command {
         title: "Pick From Validation List",
         detail: "Sheets · open the active cell's data validation drop-down",
         keys: "Alt Down",

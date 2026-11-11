@@ -52,6 +52,7 @@ mod filter_menu;
 mod find;
 mod grid_ops;
 mod look;
+mod pivot;
 mod point;
 mod popup_list;
 mod print;
@@ -232,6 +233,7 @@ pub fn init(cx: &mut App) {
     find::bind_keys(KEY_CONTEXT, cx);
     grid_ops::bind_keys(cx);
     calc::bind_keys(cx);
+    pivot::bind_keys(cx);
     data_validation::bind_keys(cx);
 }
 
@@ -2073,6 +2075,7 @@ impl Render for SheetsView {
         let root = self.editor_actions(v_flex(), cx);
         let root = self.point_actions(root, cx);
         let root = self.calc_actions(root, cx);
+        let root = self.pivot_actions(root, cx);
         use kantor_ui::find_bar as fb;
         root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))

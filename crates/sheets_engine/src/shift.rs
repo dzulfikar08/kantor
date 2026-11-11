@@ -55,6 +55,12 @@ impl Op {
 #[derive(Clone, Default)]
 pub(crate) struct Layout(Option<Arc<Link>>);
 
+impl std::fmt::Debug for Layout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Layout({} moves)", self.depth())
+    }
+}
+
 pub(crate) struct Link {
     op: Op,
     prev: Layout,
@@ -453,7 +459,7 @@ impl RangeRef {
         }
     }
 
-    fn with(&self, area: Area) -> RangeRef {
+    pub(crate) fn with(&self, area: Area) -> RangeRef {
         RangeRef {
             kind: self.kind,
             a: (area.top, area.left, self.a.2, self.a.3),

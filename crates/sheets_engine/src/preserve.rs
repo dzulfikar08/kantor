@@ -18,7 +18,9 @@
 //!    * workbook level: parts the workbook markup doesn't point to (custom XML,
 //!      threaded-comment persons, connections); `calcChain` is always dropped;
 //!    * sheet level: relationships the sheet markup doesn't point to (comments,
-//!      threaded comments), and a fixed set of sheet elements IronCalc doesn't
+//!      threaded comments, pivot tables with their caches and records; the
+//!      caches a kept pivot table uses are listed again in the workbook's
+//!      `<pivotCaches>`, see [`carry_pivot_caches`]), and a fixed set of sheet elements IronCalc doesn't
 //!      write ([`CARRIED_ELEMENTS`]: data validation, print setup, drawings,
 //!      `legacyDrawing` for comment boxes, `tableParts`, `extLst`...) with the
 //!      parts they point to. Tables are checked against the saved cells: an
@@ -50,13 +52,13 @@
 //!    validations, filters, protected ranges and ignored errors, page breaks,
 //!    validation formulas, conditional format ranges and formulas, table
 //!    ranges, sparkline locations and data,
-//!    comment cells and their boxes, drawing anchors, and chart series on any
-//!    sheet. Something whose cells were all deleted goes (a note says so); a
+//!    comment cells and their boxes, drawing anchors, chart series on any
+//!    sheet, pivot table locations and pivot cache source ranges. Something whose cells were all deleted goes (a note says so); a
 //!    table with columns inserted or deleted inside it, or without its header
 //!    row, is dropped rather than left for Excel to repair. A part that can't
 //!    be read to move it (e.g. VML that isn't XML) is kept as it was, with a
 //!    note. Not followed: sheet renames inside carried formulas (Kantor can't
-//!    rename sheets yet), pivot caches and external links (never carried).
+//!    rename sheets yet), external links (never carried).
 //!
 //! Everything is conservative: anything ambiguous (unknown markup around a
 //! reference, name collisions, broken links in the original) is skipped and
@@ -168,14 +170,12 @@ const CF_EXTENSION: &str = "{78C0D931-6437-407d-A8EE-F0AAD7539E65}";
 
 /// Relationship types never carried, whatever level they're on: stale caches,
 /// or parts that only work with markup IronCalc rewrites.
-const NEVER_CARRY: [&str; 9] = [
+const NEVER_CARRY: [&str; 7] = [
     "calcChain",
     "worksheet",
     "chartsheet",
     "dialogsheet",
     "externalLink",
-    "pivotCacheDefinition",
-    "pivotTable",
     "revisionHeaders",
     "vbaProject",
 ];
@@ -208,6 +208,10 @@ pub(crate) struct Context<'a> {
     pub tables: &'a dyn Fn(&str) -> Option<TableNow>,
     /// Drawing objects moved, resized or deleted, by `sheetId`.
     pub drawings: &'a HashMap<u32, Vec<crate::drawing::SaveEdit>>,
+    /// Pivot parts rewritten by a refresh (table definitions, cache
+    /// definitions and records), by part name: saved instead of the
+    /// original's, as they are (already placed where their cells are now).
+    pub pivot_parts: &'a HashMap<String, Vec<u8>>,
 }
 
 /// A table as the model has it at save time.
@@ -1494,6 +1498,82 @@ pub(crate) fn drawing_sources(bytes: &[u8]) -> Result<DrawingSources, String> {
     Ok(out)
 }
 
+/// The bytes of part `name` of package `bytes`.
+pub(crate) fn read_part(bytes: &[u8], name: &str) -> Result<Vec<u8>, String> {
+    Original::new(bytes)?
+        .get(name)?
+        .ok_or_else(|| format!("{name} is missing"))
+}
+
+/// A pivot table of a package, with its cache.
+pub(crate) struct PivotSource {
+    pub sheet_id: u32,
+    /// `xl/pivotTables/pivotTable1.xml` and its XML.
+    pub part: String,
+    pub xml: String,
+    /// The cache definition part and its XML.
+    pub cache_part: String,
+    pub cache_xml: String,
+    /// The cache records part, if the cache has one.
+    pub records_part: Option<String>,
+}
+
+/// The pivot tables of the worksheets of `bytes`. Parts that can't be read
+/// are skipped (they are still carried on save).
+pub(crate) fn pivot_sources(bytes: &[u8]) -> Result<Vec<PivotSource>, String> {
+    let orig = Original::new(bytes)?;
+    let mut out = Vec::new();
+    if !orig.names.keys().any(|n| n.starts_with("xl/pivottables/")) {
+        return Ok(out);
+    }
+    let Some(root) = orig.text("_rels/.rels")? else {
+        return Ok(out);
+    };
+    let root_rels = parse_rels(&root)?;
+    let (_, _, _, sheets) = workbook_sheets(&root_rels, &|name| orig.text(name))?;
+    let target_of = |source: &str, kind: &str| -> Option<String> {
+        let rels = parse_rels(&orig.text(&rels_part(source)).ok()??).ok()?;
+        rels.iter()
+            .find(|r| r.short_kind() == kind && !r.external)
+            .and_then(|r| resolve(source, &r.target))
+    };
+    for s in sheets.iter().filter(|s| s.kind == SheetKind::Work) {
+        let Some(sheet_rels) = orig.text(&rels_part(&s.part)).ok().flatten() else {
+            continue;
+        };
+        let Ok(sheet_rels) = parse_rels(&sheet_rels) else {
+            continue;
+        };
+        for r in sheet_rels
+            .iter()
+            .filter(|r| r.short_kind() == "pivotTable" && !r.external)
+        {
+            let Some(part) = resolve(&s.part, &r.target) else {
+                continue;
+            };
+            let Some(xml) = orig.text(&part).ok().flatten() else {
+                continue;
+            };
+            let Some(cache_part) = target_of(&part, "pivotCacheDefinition") else {
+                continue;
+            };
+            let Some(cache_xml) = orig.text(&cache_part).ok().flatten() else {
+                continue;
+            };
+            let records_part = target_of(&cache_part, "pivotCacheRecords");
+            out.push(PivotSource {
+                sheet_id: s.sheet_id,
+                part,
+                xml,
+                cache_part,
+                cache_xml,
+                records_part,
+            });
+        }
+    }
+    Ok(out)
+}
+
 /// Whether `node` and everything in it is plain SpreadsheetML: no element or
 /// attribute in another namespace (which [`write_node`] drops, e.g. `xr:uid`,
 /// as IronCalc's sheets don't declare them ignorable).
@@ -1791,6 +1871,12 @@ fn merge(
         cf_carried: false,
         cf_failed: false,
     };
+    m.replaced.extend(
+        ctx.pivot_parts
+            .iter()
+            .filter(|(part, _)| orig.has(part))
+            .map(|(part, data)| (part.clone(), data.clone())),
+    );
     let mut adds: Vec<RelAdds> = Vec::new();
     let mut sheet_edits: Vec<(String, Vec<Insert>)> = Vec::new();
 
@@ -1835,8 +1921,16 @@ fn merge(
     let wb_refs = Document::parse(&orig_wb_xml)
         .map(|d| rel_refs(d.root()))
         .map_err(|e| format!("{orig_wb}: {e}"))?;
-    // Chart sheets not kept were reported by `carry_chart_sheets`.
-    let quiet = chart_rids;
+    // Chart sheets not kept were reported by `carry_chart_sheets`; pivot
+    // caches are carried with the pivot tables that use them
+    // ([`carry_pivot_caches`]).
+    let mut quiet = chart_rids;
+    quiet.extend(
+        orig_wb_rels
+            .iter()
+            .filter(|r| r.short_kind() == "pivotCacheDefinition")
+            .map(|r| r.id.clone()),
+    );
     let mut wb_adds = carry_implicit(
         &mut m,
         Level {
@@ -1889,8 +1983,27 @@ fn merge(
         }
     }
 
+    // Pivot caches the carried pivot tables use: workbook relationships and
+    // the `<pivotCaches>` list.
+    let (cache_rels, pivot_caches) = carry_pivot_caches(
+        &m,
+        &orig_wb,
+        &orig_wb_xml,
+        &orig_wb_rels,
+        &new_wb,
+        &mut wb_ids,
+        &taken,
+        notes,
+    )?;
+    if !cache_rels.is_empty() {
+        adds.push(RelAdds {
+            source: new_wb.clone(),
+            rels: cache_rels,
+        });
+    }
+
     // The workbook part: chart sheets in the sheet list, sheet positions,
-    // and what defined names had that IronCalc doesn't keep.
+    // what defined names had that IronCalc doesn't keep, pivot caches.
     let wb_edit = edit_workbook(
         &new_wb_xml,
         &orig_wb_xml,
@@ -1899,6 +2012,7 @@ fn merge(
         &charts,
         ctx.moves,
         &m.sheets,
+        pivot_caches.as_deref(),
         notes,
     )?;
 
@@ -1971,6 +2085,75 @@ fn merge(
         new.set(&new_wb, xml.into_bytes());
     }
     Ok(true)
+}
+
+/// The original's pivot caches that carried pivot tables use: the workbook
+/// relationships to add and the `<pivotCaches>` element listing them (by
+/// their original `cacheId`, which the pivot tables refer to). A cache no
+/// carried pivot table uses is dropped.
+#[allow(clippy::too_many_arguments)]
+fn carry_pivot_caches(
+    m: &Merge,
+    orig_wb: &str,
+    orig_wb_xml: &str,
+    orig_wb_rels: &[Rel],
+    new_wb: &str,
+    ids: &mut IdAlloc,
+    taken: &HashSet<String>,
+    notes: &mut Vec<String>,
+) -> Result<(Vec<Rel>, Option<String>), String> {
+    if !orig_wb_xml.contains("pivotCache") {
+        return Ok((Vec::new(), None));
+    }
+    let doc = Document::parse(orig_wb_xml).map_err(|e| format!("{orig_wb}: {e}"))?;
+    let Some(list) = doc
+        .root_element()
+        .children()
+        .find(|c| is_main(*c, "pivotCaches"))
+    else {
+        return Ok((Vec::new(), None));
+    };
+    let copied: HashSet<String> = m.copy.iter().map(|p| p.to_lowercase()).collect();
+    let mut rels = Vec::new();
+    let mut text = String::new();
+    for c in list.children().filter(|c| is_main(*c, "pivotCache")) {
+        let id = c.attribute("cacheId").unwrap_or_default();
+        let rid = c
+            .attributes()
+            .find(|a| matches!(a.namespace(), Some(NS_R) | Some(NS_R_STRICT)) && a.name() == "id")
+            .map(|a| a.value());
+        let rel = rid.and_then(|rid| orig_wb_rels.iter().find(|r| r.id == rid && !r.external));
+        let target = rel.and_then(|r| Some((r, resolve(orig_wb, &r.target)?)));
+        let Some((rel, target)) = target else {
+            notes.push(format!("pivot cache {id}: broken relationship, not kept"));
+            continue;
+        };
+        if !copied.contains(&target.to_lowercase()) {
+            notes.push(format!(
+                "pivot cache {id} ({target}) is not kept: no pivot table kept uses it"
+            ));
+            continue;
+        }
+        let mut new_id = ids.next();
+        while taken.contains(&new_id) {
+            new_id = ids.next();
+        }
+        text.push_str(&format!(
+            "<pivotCache cacheId=\"{}\" r:id=\"{}\"/>",
+            esc_attr(id),
+            esc_attr(&new_id)
+        ));
+        rels.push(Rel {
+            id: new_id,
+            kind: rel.kind.clone(),
+            target: relative(new_wb, &target),
+            external: false,
+        });
+    }
+    if rels.is_empty() {
+        return Ok((Vec::new(), None));
+    }
+    Ok((rels, Some(format!("<pivotCaches>{text}</pivotCaches>"))))
 }
 
 /// The saved styles part with the original's `<dxfs>` in place of
@@ -3067,6 +3250,7 @@ fn edit_workbook(
     charts: &[ChartSheet],
     moves: &Moves,
     sheet_ids: &HashMap<String, u32>,
+    pivot_caches: Option<&str>,
     notes: &mut Vec<String>,
 ) -> Result<Option<String>, String> {
     let doc = Document::parse(new_xml).map_err(|e| format!("saved workbook: {e}"))?;
@@ -3251,6 +3435,15 @@ fn edit_workbook(
         names_text.push_str(&text);
         names_changed = true;
     }
+    // Text inserted after the sheet list (defined names when IronCalc wrote
+    // none, then pivot caches when nothing else goes between).
+    let sheets_end = root
+        .children()
+        .find(|c| is_main(*c, "sheets"))
+        .ok_or("saved workbook has no <sheets>")?
+        .range()
+        .end;
+    let mut after_sheets = String::new();
     if names_changed {
         match new_list {
             Some(list) => edits.push((
@@ -3258,15 +3451,36 @@ fn edit_workbook(
                 format!("<definedNames>{names_text}</definedNames>"),
             )),
             None => {
-                // Defined names go after the sheet list.
-                let sheets = root
-                    .children()
-                    .find(|c| is_main(*c, "sheets"))
-                    .ok_or("saved workbook has no <sheets>")?;
-                let at = sheets.range().end;
-                edits.push((at..at, format!("<definedNames>{names_text}</definedNames>")));
+                after_sheets.push_str(&format!("<definedNames>{names_text}</definedNames>"));
             }
         }
+    }
+    if let Some(caches) = pivot_caches {
+        if root.children().any(|c| is_main(c, "pivotCaches")) {
+            return Err("saved workbook already lists pivot caches".into());
+        }
+        // CT_Workbook: after these, before smartTagPr, webPublishing...
+        let before = [
+            "sheets",
+            "functionGroups",
+            "externalReferences",
+            "definedNames",
+            "calcPr",
+            "oleSize",
+            "customWorkbookViews",
+        ];
+        let last = root
+            .children()
+            .rfind(|c| before.iter().any(|n| is_main(*c, n)))
+            .map_or(sheets_end, |c| c.range().end);
+        if last == sheets_end {
+            after_sheets.push_str(caches);
+        } else {
+            edits.push((last..last, caches.to_owned()));
+        }
+    }
+    if !after_sheets.is_empty() {
+        edits.push((sheets_end..sheets_end, after_sheets));
     }
     if edits.is_empty() {
         return Ok(None);
@@ -3334,10 +3548,17 @@ fn move_part(
         "drawing"
     } else if is("drawingml.chart+xml") {
         "chart"
+    } else if is("spreadsheetml.pivotTable+xml") {
+        "pivot"
+    } else if is("spreadsheetml.pivotCacheDefinition+xml") {
+        "pivotCache"
     } else {
         return Ok(None);
     };
-    if kind_of != "chart" && !home_moved && !(kind_of == "drawing" && edited.is_some()) {
+    if !matches!(kind_of, "chart" | "pivotCache")
+        && !home_moved
+        && !(kind_of == "drawing" && edited.is_some())
+    {
         return Ok(None);
     }
     let xml = std::str::from_utf8(strip_bom(data)).map_err(|_| "not UTF-8".to_owned())?;
@@ -3460,6 +3681,43 @@ fn move_part(
                 let end = root.range().end;
                 let close = xml[..end].rfind("</").ok_or("drawing root not closed")?;
                 edits.push((close..close, missing));
+            }
+        }
+        "pivot" => {
+            // Where the pivot table is (its page fields are above it).
+            if let Some(a) = doc
+                .root_element()
+                .children()
+                .find(|c| c.is_element() && c.tag_name().name() == "location")
+                .and_then(|l| l.attributes().find(|a| a.name() == "ref"))
+            {
+                match moves.sqref(home, a.value()) {
+                    Some(v) if v != a.value() => edits.push((a.range_value(), esc_attr(&v))),
+                    Some(_) => {}
+                    None => return Err("its cells were deleted".into()),
+                }
+            }
+        }
+        "pivotCache" => {
+            // A source range on a sheet (a source by name follows the name).
+            for src in doc
+                .descendants()
+                .filter(|n| n.is_element() && n.tag_name().name() == "worksheetSource")
+            {
+                let (Some(r), Some(sheet)) = (
+                    src.attributes().find(|a| a.name() == "ref"),
+                    src.attribute("sheet"),
+                ) else {
+                    continue;
+                };
+                let Some(&id) = m.sheets.get(&sheet.to_lowercase()) else {
+                    continue;
+                };
+                match moves.sqref(id, r.value()) {
+                    Some(v) if v != r.value() => edits.push((r.range_value(), esc_attr(&v))),
+                    Some(_) => {}
+                    None => return Err("its source cells were deleted".into()),
+                }
             }
         }
         _ => {
@@ -3669,6 +3927,7 @@ mod tests {
             cell_text: &|_, _, _| String::new(),
             tables: &|_| None,
             drawings: &HashMap::new(),
+            pivot_parts: &HashMap::new(),
         };
         let done = finish(out, original, &ctx);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());
