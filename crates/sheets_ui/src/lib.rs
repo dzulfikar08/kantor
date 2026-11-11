@@ -245,6 +245,9 @@ pub struct SheetGrid {
     fonts: look::FontCache,
     /// [`Self::selection`] for its inputs, as it is asked for every cell.
     selection_memo: Cell<Option<(SelectionKey, Selection)>>,
+    /// The window's scale factor: column widths and merged-cell offsets are
+    /// snapped to its device pixels ([`look::snap`]).
+    scale: f32,
 }
 
 /// What [`SheetGrid::selection`] depends on.
@@ -275,6 +278,7 @@ impl SheetGrid {
             ref_spans: Vec::new(),
             fonts: look::FontCache::default(),
             selection_memo: Cell::new(None),
+            scale: 1.0,
         };
         grid.resize();
         grid
@@ -351,10 +355,10 @@ impl TableDelegate for SheetGrid {
         } else {
             let col = col_ix as u32 - 1;
             let name = column_name(col);
-            let width = self.book.column_width(self.sheet, col);
+            let width = look::column_width(&self.book, self.sheet, col, self.scale);
             let frozen = col < self.book.frozen(self.sheet).1;
             Column::new(SharedString::from(name.clone()), name)
-                .width(px(width as f32))
+                .width(width)
                 .min_width(px(24.))
                 .resizable(true)
                 // Frozen columns stay put while the rest scrolls.
@@ -506,7 +510,7 @@ impl TableDelegate for SheetGrid {
         let align = self.book.display_align_of(style, sheet, vr, vc);
         let geometry = look
             .merge
-            .map(|m| look::merge_geometry(&self.book, sheet, m, row, col));
+            .map(|m| look::merge_geometry(&self.book, sheet, m, row, col, self.scale));
         let content = look::Content {
             text: SharedString::from(text),
             style,
@@ -1382,12 +1386,21 @@ impl SheetsView {
         let result = self.table.update(cx, |table, _| {
             let grid = table.delegate_mut();
             let sheet = grid.sheet;
-            // Table column 0 is the row-number gutter.
+            // Table column 0 is the row-number gutter. Columns the table
+            // still has at their snapped width keep the workbook's exact one.
             let widths: Vec<(u32, f64)> = widths
                 .iter()
                 .enumerate()
                 .skip(1)
-                .map(|(ix, w)| (ix as u32 - 1, f64::from(f32::from(*w))))
+                .map(|(ix, w)| {
+                    let col = ix as u32 - 1;
+                    let snapped = look::column_width(&grid.book, sheet, col, grid.scale);
+                    if (*w - snapped).abs() < px(0.01) {
+                        (col, grid.book.column_width(sheet, col))
+                    } else {
+                        (col, f64::from(f32::from(*w)))
+                    }
+                })
                 .collect();
             grid.book.set_column_widths(sheet, &widths)
         });
@@ -1766,6 +1779,14 @@ impl Render for SheetsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = kantor_ui::perf::span("sheets view");
         let t = tokens(cx);
+        // Column widths are snapped to device pixels: new ones on a new scale.
+        let scale = window.scale_factor();
+        if self.table.read(cx).delegate().scale != scale {
+            self.table.update(cx, |table, cx| {
+                table.delegate_mut().scale = scale;
+                table.refresh(cx);
+            });
+        }
         let completion = self.render_completion(window, cx);
         // The bar colours references only while it holds the edit.
         let bar_refs = if self.editing.is_some() {
@@ -1888,8 +1909,12 @@ impl Render for SheetsView {
                             .flex_1()
                             .relative()
                             .key_context(cell_editor::FORMULA_BAR_CONTEXT)
-                            .child(Input::new(&self.formula).small())
-                            .child(point::colored_refs(self.formula.clone(), bar_refs)),
+                            .child(
+                                Input::new(&self.formula)
+                                    .small()
+                                    .text_color(point::refs_text_color(&bar_refs, t.fg)),
+                            )
+                            .child(point::colored_refs(self.formula.clone(), bar_refs, t.fg)),
                     ),
             )
             // Grid
