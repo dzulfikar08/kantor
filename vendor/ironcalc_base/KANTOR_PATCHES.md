@@ -280,6 +280,25 @@ What (`KANTOR PATCH (row heights)`):
 
 Tests: `crates/sheets_engine/src/rows.rs` and `crates/sheets_engine/tests/rows.rs`.
 
+## 12. Data validation helpers
+
+Why: Kantor applies Excel data validation itself (`crates/sheets_engine/src/validation.rs`;
+IronCalc doesn't model it). A list's source is a range (`$A$1:$A$5`, `Lists!A:A`, a defined
+name, `INDIRECT`/`OFFSET`), which `cf_evaluate` reduces to `CfValue::Other`; a value the
+validation rejects must be taken back without leaving a redo.
+
+What (`src/kantor_validation.rs`, `KANTOR PATCH (data validation)`):
+
+* `Model::cf_evaluate_ref` / `UserModel::cf_evaluate_ref`: like `cf_evaluate` (stored values
+  only), but a range result comes back as `CfRef::Range { sheet, top, left, bottom, right }`
+  and an array as `CfRef::Array`. `CfFormula::node` (crate-private) gives it the parsed node.
+* `Model::kantor_input_value`: the value `set_user_input` would store for a typed string
+  (number formats, booleans, error names, quote prefix), without storing it; `None` for a
+  formula.
+* `UserModel::kantor_forget_redo` (`src/user_model/common.rs`): clears the redo stack.
+
+Tests: `crates/sheets_engine/tests/validation.rs`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

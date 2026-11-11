@@ -623,6 +623,30 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "Pick From Validation List",
+        detail: "Sheets · open the active cell's data validation drop-down",
+        keys: "Alt Down",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.open_validation_list_doc(w, cx))
+        },
+    },
+    Command {
+        title: "Circle Invalid Data",
+        detail: "Sheets · ring cells whose values break their data validation",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.circle_invalid_doc(true, w, cx))
+        },
+    },
+    Command {
+        title: "Clear Validation Circles",
+        detail: "Sheets · data validation",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.circle_invalid_doc(false, w, cx))
+        },
+    },
+    Command {
         title: "Toggle Sidebar",
         detail: "Open documents, recent files",
         keys: "Ctrl Shift E",

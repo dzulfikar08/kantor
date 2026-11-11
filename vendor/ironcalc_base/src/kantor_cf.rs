@@ -37,6 +37,12 @@ pub(crate) fn eager_conditional_formatting() -> bool {
 #[derive(Clone)]
 pub struct CfFormula(Node);
 
+impl CfFormula {
+    pub(crate) fn node(&self) -> &Node {
+        &self.0
+    }
+}
+
 /// The value of a [`CfFormula`] at one cell.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CfValue {

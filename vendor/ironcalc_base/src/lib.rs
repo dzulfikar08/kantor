@@ -57,6 +57,7 @@ mod functions;
 mod implicit_intersection;
 // KANTOR PATCH (conditional formatting): lazy rule evaluation API.
 mod kantor_cf;
+mod kantor_validation;
 // KANTOR PATCH (row heights)
 pub mod kantor_rows;
 pub mod links;
@@ -83,6 +84,7 @@ pub use model::get_milliseconds_since_epoch;
 pub use model::FmtSettings;
 pub use model::Model;
 pub use kantor_cf::{set_eager_conditional_formatting, CfFormula, CfValue};
+pub use kantor_validation::CfRef;
 pub use user_model::BorderArea;
 pub use user_model::ClipboardData;
 pub use user_model::UserModel;

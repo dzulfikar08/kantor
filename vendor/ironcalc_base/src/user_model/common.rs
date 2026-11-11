@@ -367,6 +367,13 @@ impl<'a> UserModel<'a> {
         !self.history.redo_stack.is_empty()
     }
 
+    /// KANTOR PATCH (data validation): drop what redo would bring back, for
+    /// an edit taken back with `undo` that must not be redone (a value data
+    /// validation rejected).
+    pub fn kantor_forget_redo(&mut self) {
+        self.history.redo_stack.clear();
+    }
+
     /// Pauses automatic evaluation.
     ///
     /// See also:

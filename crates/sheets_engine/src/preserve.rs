@@ -1369,6 +1369,35 @@ fn workbook_sheets(
     Ok((wb, wb_rels, wb_xml, sheets))
 }
 
+/// The worksheets of a package as `(sheetId, xml)`, each with the inside of
+/// `<sheetData>` left out ([`Skeleton`]): for readers of markup IronCalc
+/// doesn't model (data validation). Sheets that can't be read are skipped.
+pub(crate) fn worksheet_skeletons(bytes: &[u8]) -> Result<Vec<(u32, String)>, String> {
+    let orig = Original::new(bytes)?;
+    let Some(root) = orig.text("_rels/.rels")? else {
+        return Ok(Vec::new());
+    };
+    let root_rels = parse_rels(&root)?;
+    let (_, _, _, sheets) = workbook_sheets(&root_rels, &|name| orig.text(name))?;
+    Ok(sheets
+        .into_iter()
+        .filter(|s| s.kind == SheetKind::Work)
+        .filter_map(|s| match orig.skeleton(&s.part) {
+            Ok(Some(sk)) => Some((s.sheet_id, sk.xml)),
+            _ => None,
+        })
+        .collect())
+}
+
+/// Whether `node` and everything in it is plain SpreadsheetML: no element or
+/// attribute in another namespace (which [`write_node`] drops, e.g. `xr:uid`,
+/// as IronCalc's sheets don't declare them ignorable).
+fn only_main(node: Node) -> bool {
+    node.descendants().filter(|n| n.is_element()).all(|n| {
+        n.tag_name().namespace() == Some(NS_MAIN) && n.attributes().all(|a| a.namespace().is_none())
+    })
+}
+
 fn sheet_rid<'a>(s: Node<'a, '_>) -> Option<&'a str> {
     s.attributes()
         .find(|a| matches!(a.namespace(), Some(NS_R) | Some(NS_R_STRICT)) && a.name() == "id")
@@ -2200,6 +2229,16 @@ fn carry_sheet(
                     text
                 }
                 None => continue,
+            }
+        } else if local == "dataValidations" && !ctx.moves.touches(os.sheet_id) && only_main(child)
+        {
+            // Nothing moved: exactly as the file had it.
+            match verbatim(child, &orig_sk.xml) {
+                Ok(text) => text,
+                Err(e) => {
+                    notes.push(format!("{label}: <{local}> not kept: {e}"));
+                    continue;
+                }
             }
         } else {
             // Plan the relationships this element uses.
