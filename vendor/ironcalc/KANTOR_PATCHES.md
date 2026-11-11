@@ -123,4 +123,9 @@ tests here (`cargo test --no-fail-fast`). Known upstream failures with 0.9.1,
 with and without any patch (they depend on today's date):
 `test_calc_DATE_AND_TIME_NOW_TODAY` and `test_templates_{event_calendar,
 gantt_project_tracker, invoice, weekly_timesheet, yearly_calendar}` in
-`generated_tests`.
+`generated_tests`. Expected with §5: `test_dynamic_arrays` (`tests/test.rs`) saves
+with this crate's writer alone and reloads; the writer doesn't write
+`<sheetFormatPr>`, so `default_row_height` comes back `None`. Kantor's save
+carries the original `sheetFormatPr` (`crates/sheets_engine/src/preserve.rs`,
+which keeps the default column width too), and
+`crates/sheets_engine/tests/rows.rs` checks the height survives a save.
