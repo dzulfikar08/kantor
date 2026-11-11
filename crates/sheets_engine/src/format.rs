@@ -150,6 +150,30 @@ pub struct CellStyle {
     /// draws in the UI font).
     pub font_name: Option<Arc<str>>,
     pub borders: Borders,
+    /// Indent in steps (Excel's: about three spaces each).
+    pub indent: u32,
+    /// OOXML text rotation: 0-90 counter-clockwise, 91-180 clockwise by
+    /// `value - 90`, 255 stacked letters.
+    pub rotation: u32,
+    /// Shrink the text to fit the cell's width.
+    pub shrink: bool,
+    /// The finer horizontal alignments [`HAlign`] draws like its closest
+    /// kin (centre across selection, fill, justify, distributed).
+    pub align_detail: AlignDetail,
+}
+
+/// Horizontal alignments beyond [`HAlign`]'s, for printing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AlignDetail {
+    #[default]
+    None,
+    /// Centre across selection: centred over this cell and the empty cells
+    /// to its right that have the same alignment.
+    CenterAcross,
+    /// Repeat the text to fill the cell.
+    Fill,
+    Justify,
+    Distributed,
 }
 
 impl CellStyle {
@@ -186,6 +210,16 @@ impl CellStyle {
                 right: line(&s.border.right),
                 top: line(&s.border.top),
                 bottom: line(&s.border.bottom),
+            },
+            indent: alignment.map_or(0, |a| a.indent),
+            rotation: alignment.map_or(0, |a| a.text_rotation),
+            shrink: alignment.is_some_and(|a| a.shrink_to_fit),
+            align_detail: match alignment.map(|a| &a.horizontal) {
+                Some(HorizontalAlignment::CenterContinuous) => AlignDetail::CenterAcross,
+                Some(HorizontalAlignment::Fill) => AlignDetail::Fill,
+                Some(HorizontalAlignment::Justify) => AlignDetail::Justify,
+                Some(HorizontalAlignment::Distributed) => AlignDetail::Distributed,
+                _ => AlignDetail::None,
             },
         }
     }
@@ -251,8 +285,7 @@ impl VAlign {
     }
 }
 
-/// How a border edge is drawn. Hair lines are drawn thin; thin dashed,
-/// dash-dot and dash-dot-dot lines dotted (files keep their real style).
+/// How a border edge is drawn: Excel's thirteen line styles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineStyle {
     Thin,
@@ -260,44 +293,73 @@ pub enum LineStyle {
     Thick,
     Double,
     Dotted,
-    /// Medium dashed, dash-dot and dash-dot-dot.
     MediumDashed,
+    Hair,
+    Dashed,
+    DashDot,
+    DashDotDot,
+    MediumDashDot,
+    MediumDashDotDot,
+    SlantDashDot,
 }
 
 impl LineStyle {
     fn from_ironcalc(s: &BorderStyle) -> Self {
         match s {
-            BorderStyle::Thin | BorderStyle::Hair => Self::Thin,
+            BorderStyle::Thin => Self::Thin,
+            BorderStyle::Hair => Self::Hair,
             BorderStyle::Medium => Self::Medium,
             BorderStyle::Thick => Self::Thick,
             BorderStyle::Double => Self::Double,
-            BorderStyle::Dotted
-            | BorderStyle::Dashed
-            | BorderStyle::DashDot
-            | BorderStyle::DashDotDot => Self::Dotted,
-            BorderStyle::SlantDashDot
-            | BorderStyle::MediumDashed
-            | BorderStyle::MediumDashDot
-            | BorderStyle::MediumDashDotDot => Self::MediumDashed,
+            BorderStyle::Dotted => Self::Dotted,
+            BorderStyle::Dashed => Self::Dashed,
+            BorderStyle::DashDot => Self::DashDot,
+            BorderStyle::DashDotDot => Self::DashDotDot,
+            BorderStyle::SlantDashDot => Self::SlantDashDot,
+            BorderStyle::MediumDashed => Self::MediumDashed,
+            BorderStyle::MediumDashDot => Self::MediumDashDot,
+            BorderStyle::MediumDashDotDot => Self::MediumDashDotDot,
         }
     }
 
     /// Line width in pixels on screen.
     pub fn width(self) -> f32 {
         match self {
-            Self::Thin | Self::Dotted => 1.0,
-            Self::Medium | Self::MediumDashed => 2.0,
+            Self::Thin
+            | Self::Hair
+            | Self::Dotted
+            | Self::Dashed
+            | Self::DashDot
+            | Self::DashDotDot => 1.0,
+            Self::Medium
+            | Self::MediumDashed
+            | Self::MediumDashDot
+            | Self::MediumDashDotDot
+            | Self::SlantDashDot => 2.0,
             Self::Thick | Self::Double => 3.0,
         }
+    }
+
+    /// Whether the line is broken (dots or dashes); the grid draws all of
+    /// these dashed.
+    pub fn is_broken(self) -> bool {
+        !matches!(
+            self,
+            Self::Thin | Self::Hair | Self::Medium | Self::Thick | Self::Double
+        )
     }
 
     /// Which line wins where two cells' borders meet, as in Excel: the
     /// heavier one.
     fn weight(self) -> u8 {
         match self {
-            Self::Dotted => 1,
+            Self::Hair => 0,
+            Self::Dotted | Self::DashDotDot | Self::DashDot | Self::Dashed => 1,
             Self::Thin => 2,
-            Self::MediumDashed => 3,
+            Self::MediumDashDotDot
+            | Self::SlantDashDot
+            | Self::MediumDashDot
+            | Self::MediumDashed => 3,
             Self::Medium => 4,
             Self::Double => 5,
             Self::Thick => 6,

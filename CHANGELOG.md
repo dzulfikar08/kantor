@@ -30,6 +30,28 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   move it, drag a handle to resize it, Delete removes it; each is one undo step and is saved
   into the drawing's anchor (untouched drawings are saved byte for byte). Shapes, text boxes and
   unsupported chart types show as a placeholder box.
+- **Export as PDF…** and **Print…** (toolbar printer menu, palette) and `kantor convert book.xlsx
+  book.pdf` print a workbook the way Excel does (new crate `sheets_pdf`): each sheet's paper (A4,
+  Letter, Legal, F4/Folio and Excel's other `paperSize` codes or a custom size), orientation,
+  scale and *fit to pages wide/tall*, margins, horizontal/vertical centring, print area (several
+  areas print on their own pages), print titles repeated after their page, manual row and column
+  breaks, page order, printed gridlines and headings, headers and footers with `&P` `&N` `&D` `&T`
+  `&F` `&Z` `&A`, sections, fonts, sizes and colours, first-page and odd/even variants. Without a
+  print area the used range prints (cells with a value, fill or border). Hidden rows, columns and
+  sheets are left out; rows without a stored height grow to fit wrapped or turned text. Cells keep
+  number formats, fonts, fills, all 13 border styles, indent, rotation and stacked text, shrink to
+  fit, centre across selection, justify, fill alignment, merged cells, overflow into empty
+  neighbours, `####` for numbers too wide, conditional formats with data bars and icons, and table
+  styles. Fonts are embedded subset with ToUnicode (text can be searched and copied). *Print…*
+  writes a temporary PDF and opens it in the system's PDF viewer. Pages are read between frames
+  and written by a background thread as they come: the 90,000-order sample (6,183 pages) exports
+  in about 10–17 s after opening, peak memory 215 MB.
+- `kantor convert` turns `.xlsx`, `.xlsm`, `.xls`, `.xlsb`, `.ods` and `.csv` into PDF: all visible
+  sheets or `--sheet NAME`, with `--fit-width`, `--fit-page`, `--scale N`, `--landscape`,
+  `--portrait`, `--paper a4|letter|legal|f4|…|WxHmm` and `--no-print-area` overriding the file.
+- The engine reads the print settings IronCalc doesn't model (`Workbook::print_settings`), prints
+  column widths as Excel does (`print_columns`) and keeps all 13 border styles apart (the grid
+  draws the broken ones dashed, as before). Icon-set shapes are shared by the grid and the PDF.
 - Excel tables are shown with their table style: header and total rows, banded rows and columns,
   first / last column, from the built-in Light, Medium and Dark styles (coloured from the
   workbook's theme, as Excel does) and the workbook's own table styles. Typing under a table

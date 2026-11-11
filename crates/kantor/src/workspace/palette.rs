@@ -65,12 +65,19 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: "Export as PDF…",
-        detail: "Docs pages as laid out · Slides, one page per slide",
+        detail: "Docs pages as laid out · Slides, one page per slide · Sheets as Excel prints",
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| v.export_pdf_doc(w, cx));
             ws.with_slides(window, cx, |v, w, cx| v.export_pdf_doc(w, cx));
+            ws.with_sheets(window, cx, |v, w, cx| v.export_pdf_doc(w, cx));
         },
+    },
+    Command {
+        title: "Print…",
+        detail: "Sheets: opens the pages as a PDF in the system viewer to print",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.print_doc(w, cx)),
     },
     Command {
         title: "Undo",

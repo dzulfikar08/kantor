@@ -13,10 +13,12 @@ mod cond_format;
 mod csv;
 pub mod drawing;
 mod filter;
+mod icons;
 mod import;
 mod look;
 mod numfmt;
 mod preserve;
+mod print;
 mod rows;
 mod shift;
 mod sort;
@@ -54,12 +56,14 @@ pub use filter::{
     FilterValue, checked_values, date_serial, ymd,
 };
 pub use format::{
-    BorderLine, BorderPreset, Borders, CellStyle, HAlign, LineStyle, NumberFormat, Rgb,
-    StyleChange, VAlign, ValueKind,
+    AlignDetail, BorderLine, BorderPreset, Borders, CellStyle, HAlign, LineStyle, NumberFormat,
+    Rgb, StyleChange, VAlign, ValueKind,
 };
 pub use grid::{Fill, FillDirection, RangeStats, Step};
+pub use icons::IconPath;
 pub use look::CellLook;
 pub use numfmt::Display;
+pub use print::{HeaderFooter, Margins, PageSetup, Paper, PrintColumns, PrintOptions, SheetPrint};
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 pub use sort::SortKey;
 pub use table::{TableCellLook, TableInfo};
@@ -100,6 +104,8 @@ pub struct Workbook {
     table_styles: table::CustomStyles,
     /// Charts and pictures of the opened file (`drawing`).
     drawings: drawing::Drawings,
+    /// Print settings of the opened file.
+    prints: print::Prints,
 }
 
 /// See [`Workbook::cached`].
@@ -356,6 +362,7 @@ impl Workbook {
             validation: Default::default(),
             table_styles,
             drawings: Default::default(),
+            prints: Default::default(),
         })
     }
 
@@ -418,10 +425,11 @@ impl Workbook {
         if calc.mode == CalcMode::Manual {
             model.pause_evaluation();
         }
-        let (validation, drawings) = match xlsx.as_ref().map(XlsxSource::bytes) {
+        let (validation, drawings, prints) = match xlsx.as_ref().map(XlsxSource::bytes) {
             Some(Ok(bytes)) => (
                 validation::Validations::read(&bytes),
                 drawing::Drawings::read(&bytes),
+                print::Prints::read(&bytes),
             ),
             _ => Default::default(),
         };
@@ -443,6 +451,7 @@ impl Workbook {
             validation,
             table_styles,
             drawings,
+            prints,
         })
     }
 

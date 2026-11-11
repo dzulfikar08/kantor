@@ -50,6 +50,7 @@ kantor_ui = { path = "crates/kantor_ui" }
 kantor_update = { path = "crates/kantor_update" }
 sheets_engine = { path = "crates/sheets_engine" }
 sheets_scene = { path = "crates/sheets_scene" }
+sheets_pdf = { path = "crates/sheets_pdf" }
 sheets_ui = { path = "crates/sheets_ui" }
 docs_engine = { path = "crates/docs_engine" }
 docs_layout = { path = "crates/docs_layout" }
