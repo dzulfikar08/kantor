@@ -47,6 +47,7 @@ mod calc;
 mod cell_editor;
 mod cond_paint;
 mod data_validation;
+mod drawings;
 mod filter_menu;
 mod find;
 mod grid_ops;
@@ -360,9 +361,22 @@ impl SheetGrid {
         sel
     }
 
-    /// Recompute grid extents: the used range plus headroom, never below the minimum.
+    /// Recompute grid extents: the used range (and the cells charts and
+    /// pictures cover) plus headroom, never below the minimum.
     fn resize(&mut self) {
-        let (r, c) = self.book.used_size(self.sheet);
+        let (mut r, mut c) = self.book.used_size(self.sheet);
+        if self.book.has_drawings() {
+            for d in self.book.drawings(self.sheet) {
+                use sheets_engine::drawing::Anchor;
+                let (row, col) = match d.anchor {
+                    Anchor::TwoCell { to, .. } => (to.row + 1, to.col + 1),
+                    Anchor::OneCell { from, .. } => (from.row + 20, from.col + 8),
+                    Anchor::Absolute { .. } => (0, 0),
+                };
+                r = r.max(row);
+                c = c.max(col);
+            }
+        }
         self.rows = (r + 200).max(MIN_ROWS);
         self.cols = (c + 10).max(MIN_COLS);
     }
@@ -919,6 +933,8 @@ pub struct SheetsView {
     filter_menu: Option<filter_menu::FilterMenu>,
     /// The Custom Sort panel.
     sort_panel: Option<filter_menu::SortPanel>,
+    /// Charts and pictures over the grid (see [`drawings`]).
+    drawings: Rc<RefCell<drawings::DrawLayer>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -977,6 +993,7 @@ impl SheetsView {
             validation_list_sub: None,
             filter_menu: None,
             sort_panel: None,
+            drawings: Rc::default(),
             _subscriptions: subscriptions,
         };
         this.select_cell(0, 0, cx);
@@ -1111,6 +1128,11 @@ impl SheetsView {
             return;
         }
         let ks = &event.keystroke;
+        let plain = !(ks.modifiers.control || ks.modifiers.platform || ks.modifiers.alt);
+        if plain && self.drawing_key(ks.key.as_str(), window, cx) {
+            cx.stop_propagation();
+            return;
+        }
         let m = &ks.modifiers;
         if m.control || m.platform || m.alt {
             return; // leave shortcuts alone
@@ -2168,7 +2190,9 @@ impl Render for SheetsView {
                         this.row_resize_end(window, cx);
                     }))
                     .on_key_down(cx.listener(Self::on_grid_key))
-                    .child(DataTable::new(&self.table).bordered(false).small()),
+                    .relative()
+                    .child(DataTable::new(&self.table).bordered(false).small())
+                    .child(self.render_drawings(cx)),
             )
             // Sheet tabs
             .child(

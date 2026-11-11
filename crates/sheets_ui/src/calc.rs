@@ -288,6 +288,7 @@ impl SheetsView {
             let (book, result) = run.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 let took = this.busy.take().map(|b| b.started.elapsed());
+                this.drawings.borrow_mut().clear();
                 this.table.update(cx, |table, cx| {
                     let grid = table.delegate_mut();
                     grid.book = book;

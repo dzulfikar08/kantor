@@ -28,6 +28,8 @@ use docs_layout::Engine;
 use sheets_engine::Workbook;
 use sheets_engine::drawing::{Drawing, DrawingKey, DrawingKind, RefData, RefValue};
 use slides_engine::theme::{ClrMap, ColorCtx, Theme};
+use slides_engine::{Fill, Rgb};
+use slides_scene::chart::model::Line;
 use slides_scene::chart::{self, Chart, Defaults};
 use slides_scene::{Affine, Item, Picture, Prim};
 
@@ -71,9 +73,32 @@ impl ChartTheme {
         }
     }
 
-    /// A chart part, parsed with these colours.
+    /// A chart part, parsed with these colours, with Excel's defaults for
+    /// what it leaves out ([`excel_defaults`]).
     pub fn parse(&self, xml: &str) -> Option<Chart> {
-        Chart::parse(xml, &self.cx())
+        let mut chart = Chart::parse(xml, &self.cx())?;
+        excel_defaults(&mut chart, &self.defaults);
+        Some(chart)
+    }
+}
+
+/// What Excel uses where a chart part says nothing (the renderer's own
+/// defaults are PowerPoint's): 10 pt text with a 14 pt title, and a chart
+/// area filled with the background colour inside a light grey border.
+pub fn excel_defaults(chart: &mut Chart, d: &Defaults) {
+    chart.font.size_pt.get_or_insert(10.0);
+    if let Some(t) = chart.title.as_mut() {
+        t.font.size_pt.get_or_insert(14.0);
+    }
+    if chart.space_look.fill.is_none() {
+        chart.space_look.fill = Some(Fill::Solid(d.background, 255));
+    }
+    if chart.space_look.line.is_none() {
+        chart.space_look.line = Some(Line {
+            fill: Some(Fill::Solid(Rgb([0xD9, 0xD9, 0xD9]), 255)),
+            width: Some(1.0),
+            style: Default::default(),
+        });
     }
 }
 

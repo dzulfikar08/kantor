@@ -20,6 +20,8 @@ extern crate gpui_kit as gpui;
 
 mod agent;
 mod draw;
+// The scene painter, shared with Sheets (charts and pictures on worksheets).
+pub use draw::{Painted, Painter, View as SceneView, paint_items};
 mod find;
 mod fit;
 mod input;
@@ -45,8 +47,8 @@ use slides_engine::{
 };
 
 use draw::{
-    Painted, Painter, Surface, Turn, View, fill_polygon, paint_slide, stroke_polygon, text_origin,
-    turned, turned_rect,
+    Surface, Turn, View, fill_polygon, paint_slide, stroke_polygon, text_origin, turned,
+    turned_rect,
 };
 use fit::{
     canvas_margin, place_slide, pointer_degrees, resize_box, scroll_keeping, turned_handle_cursor,

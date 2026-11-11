@@ -14,6 +14,13 @@ kantor_core.workspace = true
 kantor_mem.workspace = true
 kantor_ui.workspace = true
 sheets_engine.workspace = true
+# Charts and pictures over the grid: built by sheets_scene (the Slides chart
+# renderer), painted by Slides' scene painter with Docs' font bridge.
+docs_ui.workspace = true
+sheets_scene.workspace = true
+slides_engine.workspace = true
+slides_scene.workspace = true
+slides_ui.workspace = true
 
 [lints]
 workspace = true
