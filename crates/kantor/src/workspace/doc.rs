@@ -146,6 +146,14 @@ impl DocView {
         }
     }
 
+    /// The pivot table the active cell of a spreadsheet is in.
+    pub fn pivot_status(&self, cx: &App) -> Option<String> {
+        match self {
+            Self::Sheets(e) => e.read(cx).pivot_status(cx),
+            _ => None,
+        }
+    }
+
     /// A spreadsheet's calculation state, when worth showing (manual mode,
     /// calculating).
     pub fn calc_status(&self, cx: &App) -> Option<String> {

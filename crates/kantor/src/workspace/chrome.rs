@@ -231,7 +231,7 @@ impl Workspace {
 
     pub(super) fn render_status_bar(&mut self, cx: &mut Context<Self>) -> Div {
         let t = tokens(cx);
-        let (app, color, detail, status, summary, calc) = match self.focused_view() {
+        let (app, color, detail, status, summary, calc, pivot) = match self.focused_view() {
             Some(view) => {
                 let kind = view.kind();
                 (
@@ -241,6 +241,7 @@ impl Workspace {
                     view.status(cx),
                     view.selection_summary(cx),
                     view.calc_status(cx),
+                    view.pivot_status(cx),
                 )
             }
             None => (
@@ -248,6 +249,7 @@ impl Workspace {
                 t.accent,
                 String::new(),
                 self.message.clone(),
+                None,
                 None,
                 None,
             ),
@@ -279,6 +281,18 @@ impl Workspace {
                     .child(div().text_color(t.fg).child(app)),
             )
             .when(!detail.is_empty(), |d| d.child(div().child(detail)))
+            // The active cell is in a pivot table.
+            .when_some(pivot, |d, pivot| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .px(SPACE_3)
+                        .rounded(RADIUS_SM)
+                        .bg(t.accent.opacity(0.14))
+                        .text_color(t.accent)
+                        .child(pivot),
+                )
+            })
             .when(panes > 1, |d| {
                 d.child(div().child(format!("{panes} panes")))
             })

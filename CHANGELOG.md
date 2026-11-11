@@ -21,6 +21,20 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   `scripts/third-party-licenses.py`. On macOS it is inside `Kantor.app/Contents/Resources`.
 
 #### Sheets
+- **Pivot tables** are kept when a workbook is saved (they used to be dropped): the pivot table
+  definitions, their caches and records, the workbook's `<pivotCaches>` list, relationships and
+  content types are carried, and a pivot's location and its cache's source range follow inserted
+  and deleted rows and columns. Pivot tables are drawn with their style (the built-in
+  `PivotStyleLight/Medium/Dark 1–28`, coloured by the workbook theme: header, row subheadings,
+  subtotals, grand totals, report filters), and the status bar shows **PivotTable · name** when
+  the active cell is in one. **Refresh PivotTable** (Alt+F5) and **Refresh All PivotTables**
+  (Ctrl+Alt+F5) recompute them from their source (a range, a table or a defined name): row and
+  column fields in compact, outline or tabular form, the definition's item order with new items
+  after, hidden and collapsed items, report filters, subtotals at the top or bottom, grand totals,
+  several data fields with sum, count, average, max, min, product, count numbers, StdDev(p) and
+  Var(p), and the data fields' number formats. A refresh is one undo step and rewrites the pivot's
+  definition, cache and records for the next save. Inserting or deleting rows or columns through
+  a pivot table is refused, as in Excel, and so is a refresh that would overwrite other cells.
 - Charts and pictures on worksheets are shown over the grid, as in Excel: column, bar, line,
   area, pie, doughnut, scatter and combination charts (the Slides chart renderer, with the
   workbook theme's colours and fonts), and pictures with their cropping. They sit where their

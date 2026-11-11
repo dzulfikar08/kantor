@@ -85,7 +85,7 @@ Nobody has built a serious office suite on GPUI. The building blocks now exist i
 - Macros, VBA or scripting
 - Real-time collaboration (keep the model CRDT-friendly, but don't build sync)
 - Full track changes and comments UI (preserve them in files, read-only display at most)
-- Mail merge, pivot tables, advanced charts, embedded OLE objects, SmartArt editing
+- Mail merge, creating pivot tables (existing ones are kept, styled and refreshed since 2026-11-11), advanced charts, embedded OLE objects, SmartArt editing
 - Legacy binary formats (`.doc`, `.xls`, `.ppt`) beyond, at most, read-only
 - Windows builds (GPUI supports Windows, so this stays possible later). macOS builds were added on 2026-11-08
 
