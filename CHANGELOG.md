@@ -9,9 +9,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
-### Changed
-- Chart number formats (Slides and Sheets) go through the same formatter as Sheets cells
-  (`kantor_numfmt`): locale tags such as `[$Rp-421]` use that locale's separators.
+## [0.3.0] - 2026-11-11
+
+Sheets catches up with how Excel files really look and work: conditional formatting, per-row
+heights, Excel tables with sort and AutoFilter, data validation drop-downs, charts and pictures on
+sheets, pivot tables that survive saving and refresh, AGGREGATE/GROUPBY/PIVOTBY/GETPIVOTDATA, and
+printing / PDF export (also `kantor convert book.xlsx book.pdf`). Kantor can now update itself:
+this is the first release the in-app updater offers.
 
 ### Added
 
@@ -174,6 +178,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - `kantor --version` names the nightly build (`kantor 0.2.0 (nightly 2026-11-10 14:30)`).
 
 ### Changed
+- Chart number formats (Slides and Sheets) go through the same formatter as Sheets cells
+  (`kantor_numfmt`): locale tags such as `[$Rp-421]` use that locale's separators.
 - Sheets: big workbooks use about a third less memory (a 180k-row, 32 MB `.xlsx`: 410 → 323 MB
   with the app open, 467 → 377 MB after F9), and closing one gives its memory back to the system
   (it stayed allocated before).
@@ -479,6 +485,7 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/dzulfikar08/kantor/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/dzulfikar08/kantor/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dzulfikar08/kantor/releases/tag/v0.1.0
