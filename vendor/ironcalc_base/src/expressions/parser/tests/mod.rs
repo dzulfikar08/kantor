@@ -7,6 +7,7 @@ mod test_implicit_intersection;
 mod test_implicit_intersection_export;
 mod test_issue_155;
 mod test_issue_483;
+mod test_kantor_functions_export; // KANTOR PATCH (functions)
 mod test_lambda;
 mod test_languages;
 mod test_let;

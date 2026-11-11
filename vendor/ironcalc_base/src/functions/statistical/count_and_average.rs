@@ -363,6 +363,14 @@ impl<'a> Model<'a> {
                         }
                     }
                 }
+                // KANTOR PATCH (functions): upstream counted no numbers in arrays.
+                CalcResult::Array(array) => {
+                    for node in array.iter().flatten() {
+                        if matches!(node, crate::expressions::parser::ArrayNode::Number(_)) {
+                            result += 1.0;
+                        }
+                    }
+                }
                 _ => {
                     // Ignore everything else
                 }

@@ -203,6 +203,59 @@ What (`src/kantor_cf.rs`, `KANTOR PATCH (conditional formatting)`):
   spill cell read gives its stored value instead of being evaluated, so
   painting never recalculates (or changes) the workbook.
 
+## 10. Functions upstream lacks, and two fixes
+
+Why: workbooks using these showed `#NAME?`. Against Excel's function list (and
+GridCraft's, which has the same ones), upstream 0.9.1 lacks only AGGREGATE,
+GROUPBY, PIVOTBY, BAHTTEXT, USDOLLAR, DBCS, JIS, PHONETIC, EUROCONVERT,
+FILTERXML, WEBSERVICE, the CUBE* functions and the server/online ones
+(GETPIVOTDATA, RTD, STOCKHISTORY, IMAGE, TRANSLATE, ...). The first eight are
+added; the rest need data Kantor doesn't have (OLAP cubes, pivot caches, the
+network). Marked `KANTOR PATCH (functions)`.
+
+What:
+
+* Names: upstream keeps every name in `language/language.bin` (bitcode, built
+  outside the crate). Kantor's are in `functions/kantor_names.rs` instead, English
+  in every language: `Functions::lookup` falls back to it, `to_localized_name`
+  uses it, `to_xlsx_string` writes `_xlfn.AGGREGATE`, `_xlfn.GROUPBY`,
+  `_xlfn.PIVOTBY`, `_xlfn.DBCS`. New `Function` variants are at the end of the
+  enum and of `into_iter()`; `static_analysis.rs` has their signatures.
+  `all_function_names()` (public) lists every name, for Kantor's autocomplete.
+* `functions/kantor_aggregate.rs`: AGGREGATE, 19 functions, options 0–7. Hidden
+  rows (by hand or a filter) are skipped for options 1/3/5/7; nested cells are
+  those whose formula contains SUBTOTAL or AGGREGATE anywhere (`has_subtotal`);
+  ranges are read down to the sheet's used area (the rest put on record for
+  dynamic arrays). Functions 1–13 give #VALUE! for a computed array, as Excel.
+* `functions/kantor_groupby.rs`: GROUPBY and PIVOTBY (spilled arrays): automatic
+  header detection (shown with several group levels), totals and subtotals at
+  either end, sort by key columns (vector allowed) or a value column, within the
+  hierarchy; filter array; `field_relationship` 1; `relative_to` 0–4 for a
+  two-argument function (PERCENTOF or `LAMBDA(part,all,...)`). Text keys group
+  regardless of case; blanks in the result are written as empty text, since a
+  spilled blank shows as 0. A vector of functions is not supported (#VALUE!). A
+  whole-column reference is read to the last used row plus one blank row.
+* Eta LAMBDAs (a function passed by name, `GROUPBY(...,SUM)`): the parser drops
+  `_xleta.` (the result is an unbound `NamedVariableKind`, as a bare `SUM` was
+  already); `Model::lambda_arg` turns such a name into a LAMBDA of the arity the
+  caller passes. Used by GROUPBY/PIVOTBY and BYROW, BYCOL, MAKEARRAY, MAP,
+  REDUCE, SCAN (`functions/logical/*`). On export `prefix_bound_variables`
+  (`stringify.rs`) writes an unbound function name as `_xleta.NAME`. Elsewhere
+  the bare name is still #NAME?.
+* `functions/kantor_text.rs`: BAHTTEXT (LibreOffice's Excel-compatible algorithm),
+  USDOLLAR (= DOLLAR), DBCS/JIS (ASCII and space to full width, the reverse of
+  ASC), PHONETIC (the cell's text: no phonetic guides are kept).
+* Fixes: `SUBTOTAL(110|111, ...)` skipped hidden rows only for the other codes;
+  SUBTOTAL skipped only cells whose formula *starts* with SUBTOTAL (now any
+  SUBTOTAL/AGGREGATE inside, `subtotal.rs`); COUNT counted no numbers in an array
+  (`count_and_average.rs`).
+
+Tests: `src/test/test_kantor_functions.rs` (Microsoft's AGGREGATE example, every
+AGGREGATE function and option kind, BAHTTEXT, GROUPBY/PIVOTBY layouts and
+errors, eta LAMBDAs), `src/expressions/parser/tests/test_kantor_functions_export.rs`
+(xlsx names and `_xleta.`), `crates/sheets_engine/tests/functions.rs` (save and
+reopen an xlsx).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the
@@ -221,7 +274,11 @@ and 6 the new file `sheet_data/packed.rs` and edits in `sheet_data/{mod,row,chun
 saved,test}.rs`, `worksheet.rs`, `test/dynamic_evaluation/test_range_reads.rs`; for
 section 7 `types.rs`, `styles.rs`, `builtin_styles.rs`, `worksheet.rs`,
 `user_model/common.rs` and test literals; for section 8 `actions.rs`,
-`user_model/common.rs`, `test/user_model/{mod,test_kantor_defined_names_move}.rs`)
+`user_model/common.rs`, `test/user_model/{mod,test_kantor_defined_names_move}.rs`;
+for section 10 the new files `functions/kantor_*.rs` and the two test files, plus
+`functions/{mod,subtotal}.rs`, `functions/logical/{bycol_byrow,map_reduce,scan}.rs`,
+`functions/statistical/count_and_average.rs`, `expressions/parser/{mod,stringify,static_analysis}.rs`,
+`lib.rs`, `test/mod.rs`, `expressions/parser/tests/mod.rs`)
 and run the crate's
 tests in it (`cargo test`, also with `IRONCALC_MAX_DEPTH=1`). The crate's
 `Cargo.lock` is upstream's and only used when testing in this directory.

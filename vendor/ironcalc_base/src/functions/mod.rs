@@ -25,6 +25,11 @@ mod subtotal;
 mod text;
 pub(crate) mod util;
 mod xlookup;
+// KANTOR PATCH (functions): functions upstream lacks, see KANTOR_PATCHES.md §10.
+mod kantor_aggregate;
+mod kantor_groupby;
+pub(crate) mod kantor_names;
+mod kantor_text;
 
 /// List of all implemented functions
 #[derive(PartialEq, Clone, Debug)]
@@ -562,6 +567,17 @@ pub enum Function {
     Intercept,
     Slope,
     Steyx,
+
+    // KANTOR PATCH (functions): their names are in `kantor_names`, not in
+    // the language file.
+    Aggregate,
+    Groupby,
+    Pivotby,
+    Bahttext,
+    Usdollar,
+    Dbcs,
+    Jis,
+    Phonetic,
 }
 
 macro_rules! impl_function_lookup {
@@ -574,7 +590,8 @@ macro_rules! impl_function_lookup {
                         return Some(Function::$variant);
                     }
                 )*
-                None
+                // KANTOR PATCH (functions)
+                kantor_names::lookup(&key)
             }
         }
     }
@@ -1593,6 +1610,15 @@ impl Function {
             Function::Intercept => functions.intercept.clone(),
             Function::Slope => functions.slope.clone(),
             Function::Steyx => functions.steyx.clone(),
+            // KANTOR PATCH (functions)
+            Function::Aggregate
+            | Function::Groupby
+            | Function::Pivotby
+            | Function::Bahttext
+            | Function::Usdollar
+            | Function::Dbcs
+            | Function::Jis
+            | Function::Phonetic => kantor_names::name(self).to_string(),
             Function::Forecast => functions.forecast.clone(),
             Function::ForecastLinear => functions.forecastlinear.clone(),
             Function::ForecastEts => functions.forecastets.clone(),
@@ -1619,7 +1645,7 @@ impl Function {
         }
     }
 
-    pub fn into_iter() -> IntoIter<Function, 497> {
+    pub fn into_iter() -> IntoIter<Function, 505> {
         [
             Function::And,
             Function::False,
@@ -2083,6 +2109,15 @@ impl Function {
             Function::Intercept,
             Function::Slope,
             Function::Steyx,
+            // KANTOR PATCH (functions)
+            Function::Aggregate,
+            Function::Groupby,
+            Function::Pivotby,
+            Function::Bahttext,
+            Function::Usdollar,
+            Function::Dbcs,
+            Function::Jis,
+            Function::Phonetic,
             Function::Forecast,
             Function::ForecastLinear,
             Function::ForecastEts,
@@ -2298,6 +2333,11 @@ impl Function {
             Function::ForecastEtsConfint => "_xlfn.FORECAST.ETS.CONFINT".to_string(),
             Function::ForecastEtsSeasonality => "_xlfn.FORECAST.ETS.SEASONALITY".to_string(),
             Function::ForecastEtsStat => "_xlfn.FORECAST.ETS.STAT".to_string(),
+            // KANTOR PATCH (functions)
+            Function::Aggregate => "_xlfn.AGGREGATE".to_string(),
+            Function::Groupby => "_xlfn.GROUPBY".to_string(),
+            Function::Pivotby => "_xlfn.PIVOTBY".to_string(),
+            Function::Dbcs => "_xlfn.DBCS".to_string(),
 
             _ => {
                 let language = get_default_language();
@@ -2781,6 +2821,14 @@ impl<'a> Model<'a> {
             Function::Intercept => self.fn_intercept(args, cell),
             Function::Slope => self.fn_slope(args, cell),
             Function::Steyx => self.fn_steyx(args, cell),
+            // KANTOR PATCH (functions)
+            Function::Aggregate => self.fn_aggregate(args, cell),
+            Function::Groupby => self.fn_groupby(args, cell),
+            Function::Pivotby => self.fn_pivotby(args, cell),
+            Function::Bahttext => self.fn_bahttext(args, cell),
+            Function::Usdollar => self.fn_usdollar(args, cell),
+            Function::Dbcs | Function::Jis => self.fn_dbcs(args, cell),
+            Function::Phonetic => self.fn_phonetic(args, cell),
             Function::Forecast => self.fn_forecast(args, cell),
             Function::ForecastLinear => self.fn_forecast_linear(args, cell),
             Function::ForecastEts => self.fn_forecast_ets(args, cell),

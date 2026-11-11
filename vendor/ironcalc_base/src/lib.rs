@@ -74,6 +74,8 @@ mod test;
 pub mod mock_time;
 
 pub use locale::get_supported_locales;
+// KANTOR PATCH (functions): every function name, for formula autocomplete.
+pub use functions::kantor_names::all_function_names;
 pub use merged_cells::MergeStructure;
 pub use model::get_milliseconds_since_epoch;
 pub use model::FmtSettings;
