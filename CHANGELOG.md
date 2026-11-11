@@ -9,6 +9,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Changed
+- Chart number formats (Slides and Sheets) go through the same formatter as Sheets cells
+  (`kantor_numfmt`): locale tags such as `[$Rp-421]` use that locale's separators.
+
 ### Added
 
 #### Packaging
@@ -17,6 +21,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   `scripts/third-party-licenses.py`. On macOS it is inside `Kantor.app/Contents/Resources`.
 
 #### Sheets
+- Charts and pictures on worksheets are shown over the grid, as in Excel: column, bar, line,
+  area, pie, doughnut, scatter and combination charts (the Slides chart renderer, with the
+  workbook theme's colours and fonts), and pictures with their cropping. They sit where their
+  anchors put them and move with scrolling, frozen columns, row and column resizing and inserted
+  or deleted rows and columns. Charts read their cells live: an edit or a recalculation redraws
+  them, and axis and label number formats come from the cells. Click one to select it, drag to
+  move it, drag a handle to resize it, Delete removes it; each is one undo step and is saved
+  into the drawing's anchor (untouched drawings are saved byte for byte). Shapes, text boxes and
+  unsupported chart types show as a placeholder box.
 - Excel tables are shown with their table style: header and total rows, banded rows and columns,
   first / last column, from the built-in Light, Medium and Dark styles (coloured from the
   workbook's theme, as Excel does) and the workbook's own table styles. Typing under a table

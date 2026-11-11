@@ -64,7 +64,7 @@ export const en = {
     sheets: {
       name: "Sheets",
       formats: [".xlsx", ".csv", ".ods", ".xls"],
-      text: "Spreadsheets with formulas, several sheets, number formats, Excel tables, sort and filter. Opens .csv, .ods and .xls files too, and saves as .xlsx.",
+      text: "Spreadsheets with formulas, several sheets, number formats, Excel tables, charts, sort and filter. Opens .csv, .ods and .xls files too, and saves as .xlsx.",
     },
     docs: {
       name: "Docs",
@@ -152,6 +152,7 @@ export const en = {
     "Word files with tracked changes or comments are saved as a new file, so the original stays as it was.",
     "Excel: conditional formatting is shown but can't be edited, rows can't be hidden or shown again by hand, and new tables can't be created yet.",
     "Excel: macros and pivot tables aren't carried over when you save. Kantor tells you when that happens.",
+    "Excel: charts and pictures on a sheet are shown and can be moved, resized or deleted, but charts can't be created or restyled, and chart sheets, shapes and text boxes aren't shown yet.",
     "Excel: drop-down lists, input messages and error alerts from data validation work, but rules can't be created or changed in Kantor yet.",
     "PowerPoint: tables, charts and SmartArt can't be edited yet, and some SmartArt shows as a plain box.",
   ],
@@ -227,7 +228,7 @@ export const id = {
     sheets: {
       name: "Sheets",
       formats: [".xlsx", ".csv", ".ods", ".xls"],
-      text: "Lembar kerja dengan rumus, beberapa sheet, format angka (termasuk Rupiah), tabel Excel, urutkan, dan filter. Bisa membuka file .csv, .ods, dan .xls, lalu menyimpannya sebagai .xlsx.",
+      text: "Lembar kerja dengan rumus, beberapa sheet, format angka (termasuk Rupiah), tabel Excel, grafik, urutkan, dan filter. Bisa membuka file .csv, .ods, dan .xls, lalu menyimpannya sebagai .xlsx.",
     },
     docs: {
       name: "Docs",
@@ -315,6 +316,7 @@ export const id = {
     "File Word dengan lacak perubahan (track changes) atau komentar disimpan sebagai file baru, jadi file aslinya tetap utuh.",
     "Excel: format bersyarat tampil tetapi belum bisa diubah, baris belum bisa disembunyikan atau ditampilkan lagi secara manual, dan tabel baru belum bisa dibuat.",
     "Excel: makro dan pivot table tidak ikut tersimpan. Kantor memberi tahu Anda saat itu terjadi.",
+    "Excel: grafik dan gambar di sheet sudah tampil dan bisa dipindah, diubah ukurannya, atau dihapus, tetapi grafik belum bisa dibuat atau diubah gayanya, dan chart sheet, bentuk (shape), serta kotak teks belum ditampilkan.",
     "Excel: daftar pilihan (drop-down), pesan input, dan peringatan kesalahan dari validasi data sudah berfungsi, tetapi aturannya belum bisa dibuat atau diubah di Kantor.",
     "PowerPoint: tabel, grafik, dan SmartArt belum bisa diedit, dan sebagian SmartArt tampil sebagai kotak polos.",
   ],

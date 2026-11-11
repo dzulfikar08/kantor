@@ -1454,20 +1454,11 @@ pub(crate) fn drawing_sources(bytes: &[u8]) -> Result<DrawingSources, String> {
         let Ok(sheet_rels) = parse_rels(&sheet_rels) else {
             continue;
         };
-        // The `<drawing r:id>` of the sheet: its markup, without the cells.
-        let Ok(Some(skeleton)) = orig.skeleton(&s.part) else {
-            continue;
-        };
-        let Ok(doc) = Document::parse(&skeleton.xml) else {
-            continue;
-        };
-        let rid = doc
-            .root_element()
-            .children()
-            .find(|n| is_main(*n, "drawing"))
-            .and_then(sheet_rid);
-        let Some(part) = rid
-            .and_then(|id| sheet_rels.iter().find(|r| r.id == id && !r.external))
+        // A worksheet has at most one drawing (`<drawing r:id>`): its
+        // relationship says which, without reading the sheet's cells.
+        let Some(part) = sheet_rels
+            .iter()
+            .find(|r| r.short_kind() == "drawing" && !r.external)
             .and_then(|r| resolve(&s.part, &r.target))
         else {
             continue;

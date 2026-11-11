@@ -26,6 +26,8 @@ pub mod layout;
 pub mod model;
 pub mod scale;
 
+use std::collections::HashMap;
+
 use docs_layout::parley::LineHeight;
 use docs_layout::{Engine, PageSetup};
 use slides_engine::Rgb;
@@ -112,13 +114,45 @@ fn lay(engine: &mut Engine, text: &str, font: &TextFont, align: HAlign, width: f
     }
 }
 
-/// Measures with the Docs engine.
+type MeasureKey = (String, u32, bool, bool, String, Option<u32>);
+
+/// Measures with the Docs engine, remembering what it measured (a layout
+/// asks for the same labels several times while fitting them).
 pub struct EngineMeasure<'e> {
     pub engine: &'e mut Engine,
+    seen: HashMap<MeasureKey, (f32, f32)>,
+}
+
+impl<'e> EngineMeasure<'e> {
+    pub fn new(engine: &'e mut Engine) -> Self {
+        Self {
+            engine,
+            seen: HashMap::new(),
+        }
+    }
 }
 
 impl Measure for EngineMeasure<'_> {
     fn measure(&mut self, text: &str, font: &TextFont, wrap: Option<f32>) -> (f32, f32) {
+        let key = (
+            text.to_owned(),
+            font.size_pt.to_bits(),
+            font.bold,
+            font.italic,
+            font.face.clone(),
+            wrap.map(f32::to_bits),
+        );
+        if let Some(m) = self.seen.get(&key) {
+            return *m;
+        }
+        let m = self.measure_new(text, font, wrap);
+        self.seen.insert(key, m);
+        m
+    }
+}
+
+impl EngineMeasure<'_> {
+    fn measure_new(&mut self, text: &str, font: &TextFont, wrap: Option<f32>) -> (f32, f32) {
         let l = lay(
             self.engine,
             text,
@@ -161,7 +195,7 @@ pub fn items(
     if !chart.drawable() || w < 2.0 || h < 2.0 {
         return None;
     }
-    let marks = layout::layout(chart, w, h, d, &mut EngineMeasure { engine });
+    let marks = layout::layout(chart, w, h, d, &mut EngineMeasure::new(engine));
     Some(
         marks
             .into_iter()

@@ -248,6 +248,9 @@ impl Drag {
     }
 }
 
+/// `(workbook revision, sheet)`.
+type ListKey = ((u64, u64), u32);
+
 /// Built drawings and what the user is doing with them.
 #[derive(Default)]
 pub(crate) struct DrawLayer {
@@ -257,7 +260,7 @@ pub(crate) struct DrawLayer {
     /// kept so the address stays its own).
     prepared: HashMap<usize, (Arc<Vec<Item>>, Rc<Painted>)>,
     /// The sheet's objects for `(revision, sheet)`.
-    list: Option<(((u64, u64), u32), Rc<Vec<Drawing>>)>,
+    list: Option<(ListKey, Rc<Vec<Drawing>>)>,
     pub(crate) selected: Option<DrawingKey>,
     drag: Option<Drag>,
 }
@@ -606,6 +609,7 @@ fn paint(
         };
         let grid = table.read(cx).delegate();
         let mut engine = painter.engine.borrow_mut();
+        let started = std::time::Instant::now();
         let built: Vec<Arc<Vec<Item>>> = frame
             .placed
             .iter()
@@ -622,7 +626,10 @@ fn paint(
         drop(engine);
         let builds = layer_mut.scenes.take_builds();
         if builds > 0 {
-            log::debug!("sheets: built {builds} chart(s)");
+            log::debug!(
+                "sheets: built {builds} chart(s) in {:.1} ms",
+                started.elapsed().as_secs_f64() * 1000.0
+            );
         }
         built
             .into_iter()
