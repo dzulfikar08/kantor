@@ -39,7 +39,8 @@ actions!(
         JumpExtendLeft,
         JumpExtendRight,
         GoToStart,
-        GoToEnd
+        GoToEnd,
+        ToggleFilter
     ]
 );
 
@@ -73,6 +74,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
             both!("shift-right", JumpExtendRight),
             both!("home", GoToStart),
             both!("end", GoToEnd),
+            both!("shift-l", ToggleFilter),
         ]
         .into_iter()
         .flatten(),
@@ -143,6 +145,18 @@ pub enum GridCommand {
     SelectAll,
     FillDown,
     FillRight,
+    /// Sort by the active cell's column (a table, the selection, or the
+    /// data region around the active cell).
+    SortAscending,
+    SortDescending,
+    /// Sort by several columns.
+    CustomSort,
+    /// Filter buttons on or off (Ctrl+Shift+L).
+    ToggleFilter,
+    /// Clear every filter on the sheet (the buttons stay).
+    ClearFilters,
+    /// Re-apply the sheet's filters after edits.
+    ReapplyFilters,
 }
 
 /// Most cells measured for an autofit (keeps a huge column responsive).
@@ -199,6 +213,7 @@ impl SheetsView {
             .on_action(cx.listener(|v, _: &JumpExtendRight, _, cx| v.jump(Step::Right, true, cx)))
             .on_action(cx.listener(|v, _: &GoToStart, _, cx| v.go_to_corner(false, cx)))
             .on_action(cx.listener(|v, _: &GoToEnd, _, cx| v.go_to_corner(true, cx)))
+            .on_action(cx.listener(|v, _: &ToggleFilter, w, cx| v.toggle_filter_doc(w, cx)))
     }
 
     /// Make `anchor` the active cell and extend the selection to `end`
@@ -544,6 +559,22 @@ impl SheetsView {
                 self.row_height_doc(window, cx);
                 return;
             }
+            GridCommand::SortAscending | GridCommand::SortDescending => {
+                self.sort_doc(command == GridCommand::SortDescending, window, cx);
+                return;
+            }
+            GridCommand::CustomSort => {
+                self.open_sort_panel(cx);
+                return;
+            }
+            GridCommand::ToggleFilter => {
+                self.toggle_filter_doc(window, cx);
+                return;
+            }
+            GridCommand::ClearFilters | GridCommand::ReapplyFilters => {
+                self.clear_filters_doc(command == GridCommand::ReapplyFilters, window, cx);
+                return;
+            }
             GridCommand::InsertRowsAbove => Box::new(move |b, s| {
                 b.insert_rows(s, rows.0, n_rows)?;
                 Ok(format!("Inserted {}", count(n_rows, "row")))
@@ -688,6 +719,11 @@ fn header_menu(menu: PopupMenu, header: Header, view: &WeakEntity<SheetsView>) -
             .separator()
             .item(item("Autofit Column Width", GridCommand::AutofitColumns))
             .item(item("Standard Column Width", GridCommand::ResetColumnWidth))
+            .separator()
+            .item(item("Sort A to Z", GridCommand::SortAscending))
+            .item(item("Sort Z to A", GridCommand::SortDescending))
+            .item(item("Custom Sort…", GridCommand::CustomSort))
+            .item(item("Filter", GridCommand::ToggleFilter))
             .separator()
             .item(item("Freeze First Column", GridCommand::FreezeFirstColumn))
             .item(item("Unfreeze Panes", GridCommand::Unfreeze)),

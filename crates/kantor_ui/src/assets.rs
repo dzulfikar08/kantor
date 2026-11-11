@@ -59,6 +59,7 @@ icon_assets!(
         SquareDashed,
         TextWrap,
         TableCellsMerge,
+        Funnel,
         // AI
         Sparkles,
         X

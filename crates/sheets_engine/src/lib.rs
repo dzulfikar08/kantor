@@ -11,6 +11,7 @@
 mod batch;
 mod cond_format;
 mod csv;
+mod filter;
 mod import;
 mod look;
 mod numfmt;
@@ -19,7 +20,6 @@ mod rows;
 mod shift;
 mod sort;
 mod table;
-mod filter;
 
 pub use import::SourceFormat;
 pub use preserve::package_problems;
@@ -47,6 +47,10 @@ pub mod grid;
 pub mod tsv;
 
 pub use cond_format::{CfIcon, Conditional, DataBar, IconShape};
+pub use filter::{
+    ColumnFilter, ColumnKind, Condition, DateGroup, FilterInfo, FilterKind, FilterOp, FilterScope,
+    FilterValue, checked_values, date_serial, ymd,
+};
 pub use format::{
     BorderLine, BorderPreset, Borders, CellStyle, HAlign, LineStyle, NumberFormat, Rgb,
     StyleChange, VAlign, ValueKind,
@@ -54,13 +58,9 @@ pub use format::{
 pub use grid::{Fill, FillDirection, RangeStats, Step};
 pub use look::CellLook;
 pub use numfmt::Display;
-pub use filter::{
-    ColumnFilter, Condition, DateGroup, FilterInfo, FilterKind, FilterOp, FilterScope, FilterValue,
-    checked_values,
-};
+pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 pub use sort::SortKey;
 pub use table::{TableCellLook, TableInfo};
-pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 
 const LOCALE: &str = "en";
 const TIMEZONE: &str = "UTC";
@@ -101,6 +101,8 @@ struct Cache {
     used: HashMap<u32, (u32, u32)>,
     stats: Option<(u32, CellRange, RangeStats)>,
     look: look::LookCache,
+    /// Each sheet's tables with their styles (`table`).
+    tables: HashMap<u32, std::sync::Arc<table::SheetTables>>,
 }
 
 /// When formulas are recalculated, like Excel's calculation options.
@@ -572,7 +574,8 @@ impl Workbook {
                         .unwrap_or_default()
                 };
                 let table_now = |name: &str| {
-                    let t = ironcalc_base::kantor_tables::find_table_pub(&model.workbook.tables, name)?;
+                    let t =
+                        ironcalc_base::kantor_tables::find_table_pub(&model.workbook.tables, name)?;
                     let sheet_id = model
                         .workbook
                         .worksheets

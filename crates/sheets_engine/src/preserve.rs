@@ -2518,9 +2518,7 @@ fn fit_table(xml: &str, sheet: u32, ctx: &Context) -> Result<Option<Vec<u8>>, St
     let now = (ctx.tables)(name)
         .filter(|t| t.sheet_id == sheet)
         .ok_or("it was removed")?;
-    let new_area = parse_range(&now.reference)
-        .ok_or("unreadable ref")?
-        .area();
+    let new_area = parse_range(&now.reference).ok_or("unreadable ref")?.area();
     let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
     if reference != now.reference {
         let attr = table
@@ -2531,7 +2529,10 @@ fn fit_table(xml: &str, sheet: u32, ctx: &Context) -> Result<Option<Vec<u8>>, St
     }
     // The filter: the model's, over the table without its total row.
     let filter_ref = {
-        let bottom = new_area.bottom.saturating_sub(now.totals_rows).max(new_area.top);
+        let bottom = new_area
+            .bottom
+            .saturating_sub(now.totals_rows)
+            .max(new_area.top);
         format!(
             "{}:{}",
             crate::cell_name(new_area.top, new_area.left),
@@ -2545,7 +2546,7 @@ fn fit_table(xml: &str, sheet: u32, ctx: &Context) -> Result<Option<Vec<u8>>, St
     let old_filter = table.children().find(|c| is_main(*c, "autoFilter"));
     match (old_filter, new_filter) {
         (Some(n), Some(x)) => {
-            if &xml[n.range()] != x {
+            if xml[n.range()] != x {
                 edits.push((n.range(), x));
             }
         }
@@ -2562,10 +2563,10 @@ fn fit_table(xml: &str, sheet: u32, ctx: &Context) -> Result<Option<Vec<u8>>, St
         (None, None) => {}
     }
     // A remembered sort no longer describes a moved or resized table.
-    if reference != now.reference {
-        if let Some(n) = table.children().find(|c| is_main(*c, "sortState")) {
-            edits.push((n.range(), String::new()));
-        }
+    if reference != now.reference
+        && let Some(n) = table.children().find(|c| is_main(*c, "sortState"))
+    {
+        edits.push((n.range(), String::new()));
     }
     // Columns: inserted or deleted ones change the list.
     let cols_node = table

@@ -134,7 +134,10 @@ impl Workbook {
         let mut range = range
             .clip(rows.max(1), cols.max(1))
             .ok_or_else(|| anyhow!("nothing to sort"))?;
-        if keys.iter().any(|k| k.col < range.left || k.col > range.right) {
+        if keys
+            .iter()
+            .any(|k| k.col < range.left || k.col > range.right)
+        {
             bail!("the sort column is outside the range");
         }
         if header {
@@ -224,7 +227,8 @@ impl Workbook {
         for c in range.left..=range.right.min(range.left + 50) {
             let a = cell_value(model, sheet, range.top, c);
             let b = cell_value(model, sheet, range.top + 1, c);
-            if matches!(a, CellValue::Text(_)) && !matches!(b, CellValue::Text(_) | CellValue::Blank)
+            if matches!(a, CellValue::Text(_))
+                && !matches!(b, CellValue::Text(_) | CellValue::Blank)
             {
                 text_over_other = true;
             }

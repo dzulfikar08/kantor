@@ -172,7 +172,10 @@ fn tables_follow_rows_and_renamed_headers() {
     let t = &p["xl/tables/table1.xml"];
     assert!(t.contains(r#"ref="A1:E9""#), "{t}");
     assert!(t.contains(r#"<tableColumns count="5">"#), "{t}");
-    assert!(t.contains(r#"name="Column1""#) && t.contains(r#"name="Qty""#), "{t}");
+    assert!(
+        t.contains(r#"name="Column1""#) && t.contains(r#"name="Qty""#),
+        "{t}"
+    );
     assert!(t.contains("[[#This Row],Qty]*[[#This Row],Price]"), "{t}");
     assert!(p.contains_key("xl/tables/table2.xml"));
     assert!(

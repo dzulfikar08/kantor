@@ -119,11 +119,7 @@ pub struct FilterInfo {
 impl FilterInfo {
     /// Whether column `col` (absolute) is filtered.
     pub fn is_filtered(&self, col: u32) -> bool {
-        col >= self.area.left
-            && self
-                .columns
-                .iter()
-                .any(|c| c.col == col - self.area.left)
+        col >= self.area.left && self.columns.iter().any(|c| c.col == col - self.area.left)
     }
 
     /// The filter of column `col` (absolute).
@@ -134,6 +130,44 @@ impl FilterInfo {
             .find(|c| c.col == offset)
             .map(|c| &c.kind)
     }
+}
+
+/// What a column mostly holds: which conditions its filter menu offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnKind {
+    Number,
+    Date,
+    Text,
+}
+
+/// The date serial of `text` (`2025-03-01`, `2025/3/1`, `1/3/2025` as day
+/// first), for date conditions; a number is taken as a serial.
+pub fn date_serial(text: &str) -> Option<f64> {
+    let t = text.trim();
+    if let Ok(n) = t.parse::<f64>() {
+        return Some(n);
+    }
+    let parts: Vec<i64> = t
+        .split(['-', '/', '.'])
+        .map(|p| p.trim().parse().ok())
+        .collect::<Option<_>>()?;
+    let (y, m, d) = match parts.as_slice() {
+        [y, m, d] if *y > 31 => (*y, *m, *d),
+        [d, m, y] if *y > 31 => (*y, *m, *d),
+        _ => return None,
+    };
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    // Howard Hinnant's days_from_civil, then Excel's offset.
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some((days + 25569) as f64)
 }
 
 /// A value of a column's list (the filter menu's checkboxes).
@@ -204,7 +238,9 @@ fn parse_kind(n: Node, xml: &str) -> FilterKind {
             }
             FilterKind::Values {
                 values,
-                blanks: f.attribute("blank").is_some_and(|b| b == "1" || b == "true"),
+                blanks: f
+                    .attribute("blank")
+                    .is_some_and(|b| b == "1" || b == "true"),
                 dates,
             }
         }
@@ -310,7 +346,7 @@ pub(crate) fn wildcard_match(pattern: &str, text: &str) -> bool {
 }
 
 /// `(year, month, day)` of an Excel date serial (1900 date system).
-pub(crate) fn ymd(serial: f64) -> (i32, u32, u32) {
+pub fn ymd(serial: f64) -> (i32, u32, u32) {
     // Days from 1970-01-01; Excel's day 25569 is 1970-01-01 (serials above
     // 60 count the phantom 1900-02-29).
     let days = serial.floor() as i64 - 25569;
@@ -394,7 +430,9 @@ pub(crate) fn passes(kind: &FilterKind, p: &Probe, visible: bool) -> bool {
             if let (true, CellValue::Number(n)) = (p.is_date, &p.value) {
                 let (y, m, d) = ymd(*n);
                 if dates.iter().any(|g| {
-                    g.year == y && g.month.is_none_or(|gm| gm == m) && g.day.is_none_or(|gd| gd == d)
+                    g.year == y
+                        && g.month.is_none_or(|gm| gm == m)
+                        && g.day.is_none_or(|gd| gd == d)
                 }) {
                     return true;
                 }
@@ -493,9 +531,9 @@ impl Workbook {
 
     /// The filter whose header row has a button at `(row, col)`.
     pub fn filter_button_at(&self, sheet: u32, row: u32, col: u32) -> Option<FilterInfo> {
-        self.filters(sheet).into_iter().find(|f| {
-            f.area.top == row && (f.area.left..=f.area.right).contains(&col)
-        })
+        self.filters(sheet)
+            .into_iter()
+            .find(|f| f.area.top == row && (f.area.left..=f.area.right).contains(&col))
     }
 
     /// The values of column `col` (absolute) for its filter menu: each
@@ -545,6 +583,34 @@ impl Workbook {
             });
         }
         out
+    }
+
+    /// What column `col` of `scope`'s data mostly holds (its first 200
+    /// filled cells): dates, numbers or text.
+    pub fn filter_value_kind(&self, sheet: u32, scope: &FilterScope, col: u32) -> ColumnKind {
+        let Some(f) = self.filter(sheet, scope) else {
+            return ColumnKind::Text;
+        };
+        let (mut numbers, mut dates, mut texts) = (0, 0, 0);
+        for row in f.area.top + 1..=f.area.bottom {
+            let p = self.probe(sheet, row, col);
+            match p.value {
+                CellValue::Blank => continue,
+                CellValue::Number(_) if p.is_date => dates += 1,
+                CellValue::Number(_) => numbers += 1,
+                _ => texts += 1,
+            }
+            if numbers + dates + texts >= 200 {
+                break;
+            }
+        }
+        if dates > numbers && dates >= texts {
+            ColumnKind::Date
+        } else if numbers >= texts && numbers > 0 {
+            ColumnKind::Number
+        } else {
+            ColumnKind::Text
+        }
     }
 
     /// Filter column `col` (absolute) of `scope` by `kind` (`None` clears
@@ -923,6 +989,9 @@ mod tests {
         assert!(wildcard_match("a~*", "a*"));
         assert_eq!(ymd(45658.0), (2025, 1, 1));
         assert_eq!(ymd(61.0), (1900, 3, 1));
+        assert_eq!(date_serial("2025-01-01"), Some(45658.0));
+        assert_eq!(date_serial("1/3/2025"), date_serial("2025-03-01"));
+        assert_eq!(date_serial("nope"), None);
     }
 
     #[test]

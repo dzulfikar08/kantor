@@ -137,6 +137,9 @@ pub(crate) struct TableStyleDef {
     total: Elem,
 }
 
+/// A sheet's tables and their styles.
+pub(crate) type SheetTables = Vec<(TableInfo, Option<TableStyleDef>)>;
+
 /// Custom table styles of a workbook (`<tableStyles>`), by name, with the
 /// default style for new tables.
 #[derive(Debug, Clone, Default)]
@@ -169,10 +172,9 @@ pub(crate) fn builtin(name: &str, t: &Theme) -> Option<TableStyleDef> {
         ("light", n)
     } else if let Some(n) = name.strip_prefix("TableStyleMedium") {
         ("medium", n)
-    } else if let Some(n) = name.strip_prefix("TableStyleDark") {
-        ("dark", n)
     } else {
-        return None;
+        let n = name.strip_prefix("TableStyleDark")?;
+        ("dark", n)
     };
     let n: u32 = n.parse().ok()?;
     let white = theme(t, 0, 0.0);
@@ -183,7 +185,15 @@ pub(crate) fn builtin(name: &str, t: &Theme) -> Option<TableStyleDef> {
     let accent = |tint: f64| {
         if k == 0 {
             // Excel's "black" variants use greys: dark 1 lightened.
-            theme(t, 1, if tint == 0.0 { 0.0 } else { tint.max(0.0) * 0.9 + 0.05 })
+            theme(
+                t,
+                1,
+                if tint == 0.0 {
+                    0.0
+                } else {
+                    tint.max(0.0) * 0.9 + 0.05
+                },
+            )
         } else {
             theme(t, 3 + k as i32, tint)
         }
@@ -229,12 +239,12 @@ pub(crate) fn builtin(name: &str, t: &Theme) -> Option<TableStyleDef> {
         // Light 15-21: a grid of thin lines, tinted bands.
         ("light", _) => {
             let b = Some(thin(base));
-            s.whole.left = b.clone();
-            s.whole.right = b.clone();
-            s.whole.top = b.clone();
-            s.whole.bottom = b.clone();
-            s.whole.horizontal = b.clone();
-            s.whole.vertical = b.clone();
+            s.whole.left = b;
+            s.whole.right = b;
+            s.whole.top = b;
+            s.whole.bottom = b;
+            s.whole.horizontal = b;
+            s.whole.vertical = b;
             s.header.bottom = Some(line(LineStyle::Medium, base));
             s.total.top = Some(line(LineStyle::Double, base));
             s.row_stripe1.fill = Some(accent(0.8));
@@ -244,10 +254,10 @@ pub(crate) fn builtin(name: &str, t: &Theme) -> Option<TableStyleDef> {
         // (Medium 2 is Excel's default).
         ("medium", 0) => {
             let l = Some(thin(accent(0.4)));
-            s.whole.left = l.clone();
-            s.whole.right = l.clone();
-            s.whole.top = l.clone();
-            s.whole.bottom = l.clone();
+            s.whole.left = l;
+            s.whole.right = l;
+            s.whole.top = l;
+            s.whole.bottom = l;
             s.whole.horizontal = l;
             s.header.fill = Some(base);
             s.header.font = Some(white);
@@ -276,8 +286,8 @@ pub(crate) fn builtin(name: &str, t: &Theme) -> Option<TableStyleDef> {
         // Medium 15-21: dark lines, filled header, grey bands.
         ("medium", 2) => {
             let d = Some(thin(black));
-            s.whole.top = d.clone();
-            s.whole.bottom = d.clone();
+            s.whole.top = d;
+            s.whole.bottom = d;
             s.whole.horizontal = Some(thin(theme(t, 1, 0.65)));
             s.header.fill = Some(base);
             s.header.font = Some(white);
@@ -290,11 +300,11 @@ pub(crate) fn builtin(name: &str, t: &Theme) -> Option<TableStyleDef> {
         ("medium", _) => {
             let l = Some(thin(accent(0.4)));
             s.whole.fill = Some(accent(0.8));
-            s.whole.left = l.clone();
-            s.whole.right = l.clone();
-            s.whole.top = l.clone();
-            s.whole.bottom = l.clone();
-            s.whole.horizontal = l.clone();
+            s.whole.left = l;
+            s.whole.right = l;
+            s.whole.top = l;
+            s.whole.bottom = l;
+            s.whole.horizontal = l;
             s.whole.vertical = l;
             s.total.top = Some(line(LineStyle::Double, base));
             s.row_stripe1.fill = Some(accent(0.6));
@@ -335,7 +345,8 @@ pub(crate) fn builtin(name: &str, t: &Theme) -> Option<TableStyleDef> {
                 10 => Some(6),
                 _ => Some(8),
             };
-            let tinted = |tint: f64| slot.map_or_else(|| theme(t, 0, -tint * 0.3), |s| theme(t, s, tint));
+            let tinted =
+                |tint: f64| slot.map_or_else(|| theme(t, 0, -tint * 0.3), |s| theme(t, s, tint));
             s.whole.fill = Some(tinted(0.8));
             s.header.fill = Some(black);
             s.header.font = Some(white);
@@ -383,8 +394,14 @@ pub(crate) fn parse_custom_styles(xml: &str, theme_: &Theme) -> CustomStyles {
         })
         .unwrap_or_default();
     let mut styles = HashMap::new();
-    if let Some(ts) = root.children().find(|n| n.tag_name().name() == "tableStyles") {
-        for style in ts.children().filter(|n| n.tag_name().name() == "tableStyle") {
+    if let Some(ts) = root
+        .children()
+        .find(|n| n.tag_name().name() == "tableStyles")
+    {
+        for style in ts
+            .children()
+            .filter(|n| n.tag_name().name() == "tableStyle")
+        {
             if style.attribute("table") == Some("0") {
                 continue; // pivot-only
             }
@@ -407,7 +424,10 @@ pub(crate) fn parse_custom_styles(xml: &str, theme_: &Theme) -> CustomStyles {
                 else {
                     continue;
                 };
-                let size = el.attribute("size").and_then(|s| s.parse().ok()).unwrap_or(1);
+                let size = el
+                    .attribute("size")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(1);
                 match el.attribute("type").unwrap_or_default() {
                     "wholeTable" => def.whole = dxf.clone(),
                     "headerRow" => def.header = dxf.clone(),
@@ -439,7 +459,10 @@ fn color_of(n: Node, theme_: &Theme) -> Option<Rgb> {
         return u32::from_str_radix(hex, 16).ok();
     }
     if let Some(slot) = n.attribute("theme").and_then(|s| s.parse::<i32>().ok()) {
-        let tint = n.attribute("tint").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        let tint = n
+            .attribute("tint")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0);
         return Some(theme(theme_, slot, tint));
     }
     if let Some(i) = n.attribute("indexed").and_then(|s| s.parse::<i32>().ok()) {
@@ -459,14 +482,20 @@ fn parse_dxf(dxf: Node, theme_: &Theme) -> Elem {
             "font" => {
                 for f in part.children().filter(|n| n.is_element()) {
                     match f.tag_name().name() {
-                        "b" => e.bold = Some(f.attribute("val").is_none_or(|v| v != "0" && v != "false")),
+                        "b" => {
+                            e.bold =
+                                Some(f.attribute("val").is_none_or(|v| v != "0" && v != "false"))
+                        }
                         "color" => e.font = color_of(f, theme_),
                         _ => {}
                     }
                 }
             }
             "fill" => {
-                if let Some(p) = part.children().find(|n| n.tag_name().name() == "patternFill") {
+                if let Some(p) = part
+                    .children()
+                    .find(|n| n.tag_name().name() == "patternFill")
+                {
                     // A dxf's solid fill colour is its bgColor.
                     let bg = p.children().find(|n| n.tag_name().name() == "bgColor");
                     let fg = p.children().find(|n| n.tag_name().name() == "fgColor");
@@ -524,7 +553,7 @@ impl TableCellLook {
             self.bold = b;
         }
         let pick = |outer: &Option<BorderLine>, inner: &Option<BorderLine>, at_edge: bool| {
-            if at_edge { outer.clone() } else { inner.clone() }
+            if at_edge { *outer } else { *inner }
         };
         if let Some(l) = pick(&e.top, &e.horizontal, edges.top) {
             self.top = Some(l);
@@ -571,7 +600,11 @@ impl TableStyleDef {
         if t.column_stripes && is_data {
             let size = self.col_stripe_size.max(1);
             let i = (col - a.left) / size;
-            let e = if i % 2 == 0 { &self.col_stripe1 } else { &self.col_stripe2 };
+            let e = if i.is_multiple_of(2) {
+                &self.col_stripe1
+            } else {
+                &self.col_stripe2
+            };
             let first = a.left + i * size;
             look.apply(
                 e,
@@ -586,7 +619,11 @@ impl TableStyleDef {
         if t.row_stripes && is_data {
             let size = self.row_stripe_size.max(1);
             let i = (row - dt) / size;
-            let e = if i % 2 == 0 { &self.row_stripe1 } else { &self.row_stripe2 };
+            let e = if i.is_multiple_of(2) {
+                &self.row_stripe1
+            } else {
+                &self.row_stripe2
+            };
             let first = dt + i * size;
             look.apply(
                 e,
@@ -627,37 +664,54 @@ impl TableStyleDef {
 }
 
 impl Workbook {
+    /// The tables of `sheet`, with their styles, for the current state.
+    fn sheet_tables(&self, sheet: u32) -> std::sync::Arc<SheetTables> {
+        if let Some(t) = self.cached(|c| c.tables.get(&sheet).cloned()) {
+            return t;
+        }
+        let model = self.model.get_model();
+        let mut v: Vec<(TableInfo, Option<TableStyleDef>)> = match model.workbook.worksheet(sheet) {
+            Ok(ws) => model
+                .workbook
+                .tables
+                .values()
+                .filter(|t| t.sheet_name == ws.name)
+                .filter_map(TableInfo::from_ironcalc)
+                .map(|t| {
+                    let style = t.style.as_deref().and_then(|n| self.table_style(n));
+                    (t, style)
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        v.sort_by_key(|(t, _)| (t.area.top, t.area.left));
+        let rc = std::sync::Arc::new(v);
+        self.cached(|c| c.tables.insert(sheet, rc.clone()));
+        rc
+    }
+
     /// The tables of `sheet`.
     pub fn tables(&self, sheet: u32) -> Vec<TableInfo> {
-        let model = self.model.get_model();
-        let Ok(ws) = model.workbook.worksheet(sheet) else {
-            return Vec::new();
-        };
-        let mut v: Vec<TableInfo> = model
-            .workbook
-            .tables
-            .values()
-            .filter(|t| t.sheet_name == ws.name)
-            .filter_map(TableInfo::from_ironcalc)
-            .collect();
-        v.sort_by_key(|t| (t.area.top, t.area.left));
-        v
+        self.sheet_tables(sheet)
+            .iter()
+            .map(|(t, _)| t.clone())
+            .collect()
     }
 
     /// The table `(row, col)` of `sheet` is in.
     pub fn table_at(&self, sheet: u32, row: u32, col: u32) -> Option<TableInfo> {
-        self.tables(sheet)
-            .into_iter()
-            .find(|t| t.area.contains(row, col))
+        self.sheet_tables(sheet)
+            .iter()
+            .find(|(t, _)| t.area.contains(row, col))
+            .map(|(t, _)| t.clone())
     }
 
     /// The look the table style gives cell `(row, col)`, if it is in a table
     /// with a style.
     pub fn table_cell_look(&self, sheet: u32, row: u32, col: u32) -> Option<TableCellLook> {
-        let t = self.table_at(sheet, row, col)?;
-        let name = t.style.clone()?;
-        let def = self.table_style(&name)?;
-        Some(def.look(&t, row, col))
+        let tables = self.sheet_tables(sheet);
+        let (t, style) = tables.iter().find(|(t, _)| t.area.contains(row, col))?;
+        Some(style.as_ref()?.look(t, row, col))
     }
 
     /// A table style by name: the workbook's own, else a built-in one.
@@ -681,7 +735,13 @@ impl Workbook {
 
     /// The table that typing `value` into the empty cell `(row, col)` would
     /// extend: one without a total row whose last row is just above.
-    pub(crate) fn table_growth(&self, sheet: u32, row: u32, col: u32, value: &str) -> Option<TableInfo> {
+    pub(crate) fn table_growth(
+        &self,
+        sheet: u32,
+        row: u32,
+        col: u32,
+        value: &str,
+    ) -> Option<TableInfo> {
         if value.is_empty() || row == 0 || self.is_filled(sheet, row, col) {
             return None;
         }
@@ -722,7 +782,11 @@ impl Workbook {
             name = format!("{base}{n}");
             n += 1;
         }
-        let shown = if wanted == name { value.to_string() } else { name.clone() };
+        let shown = if wanted == name {
+            value.to_string()
+        } else {
+            name.clone()
+        };
         self.model.pause_evaluation();
         let mut steps = 0;
         let r = (|| -> anyhow::Result<()> {

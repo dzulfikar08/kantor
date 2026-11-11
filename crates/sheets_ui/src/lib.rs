@@ -43,6 +43,7 @@ mod bench;
 mod calc;
 mod cell_editor;
 mod cond_paint;
+mod filter_menu;
 mod find;
 mod grid_ops;
 mod look;
@@ -257,7 +258,13 @@ pub struct SheetGrid {
     scale: f32,
     /// Where each row sits ([`row_layout`]).
     layout: row_layout::RowLayout,
+    /// The sheet's filters, for the state they were read in (the header
+    /// cells ask for every frame).
+    filters_memo: RefCell<Option<FiltersMemo>>,
 }
+
+/// A sheet's filters for `((revision), sheet)`.
+type FiltersMemo = (((u64, u64), u32), Rc<Vec<sheets_engine::FilterInfo>>);
 
 /// What [`SheetGrid::selection`] depends on.
 type SelectionKey = ((u32, u32), (u32, u32), Span, u32, (u64, u64));
@@ -289,9 +296,25 @@ impl SheetGrid {
             selection_memo: Cell::new(None),
             scale: 1.0,
             layout: row_layout::RowLayout::default(),
+            filters_memo: RefCell::new(None),
         };
         grid.resize();
         grid
+    }
+
+    /// The filter whose button sits in `(row, col)`, and whether that column
+    /// is filtered.
+    fn filter_button(&self, row: u32, col: u32) -> Option<(sheets_engine::FilterScope, bool)> {
+        let key = (self.book.revision(), self.sheet);
+        let mut memo = self.filters_memo.borrow_mut();
+        if memo.as_ref().is_none_or(|(k, _)| *k != key) {
+            *memo = Some((key, Rc::new(self.book.filters(self.sheet))));
+        }
+        let filters = &memo.as_ref().expect("set").1;
+        filters
+            .iter()
+            .find(|f| f.area.top == row && (f.area.left..=f.area.right).contains(&col))
+            .map(|f| (f.scope.clone(), f.is_filtered(col)))
     }
 
     /// The selected range; a range of cells includes every merged cell it
@@ -527,7 +550,7 @@ impl TableDelegate for SheetGrid {
         }
         let (row, col) = (row_ix as u32, col_ix as u32 - 1);
         let sheet = self.sheet;
-        let look = self.book.cell_look(sheet, row, col);
+        let mut look = self.book.cell_look(sheet, row, col);
         // A merged cell shows its anchor's value.
         let (vr, vc) = look.merge.map_or((row, col), |m| (m.top, m.left));
         let shown = self.book.display(sheet, vr, vc);
@@ -551,6 +574,29 @@ impl TableDelegate for SheetGrid {
             .as_ref()
             .and_then(|c| c.style.as_deref())
             .unwrap_or(&look.style);
+        // The table style, under the cell's own formatting.
+        let table_look = self.book.table_cell_look(sheet, vr, vc);
+        let table_styled;
+        let style = match &table_look {
+            Some(tl) => {
+                table_styled = table_style(style, tl);
+                &table_styled
+            }
+            None => style,
+        };
+        if let Some(tl) = &table_look {
+            look.right = look.right.or(tl.right);
+            look.bottom = look.bottom.or(tl.bottom);
+            look.top = look.top.or(tl.top);
+            look.left = look.left.or(tl.left);
+            if style.fill.is_some() {
+                look.grid_right = false;
+                look.grid_bottom = false;
+            }
+            look.grid_right &= look.right.is_none();
+            look.grid_bottom &= look.bottom.is_none();
+        }
+        let filter_button = self.filter_button(row, col);
         let align = self.book.display_align_of(style, sheet, vr, vc);
         let heights = self.layout.heights.clone();
         let heights = heights.borrow();
@@ -582,6 +628,12 @@ impl TableDelegate for SheetGrid {
             .size_full()
             .relative()
             .when_some(style.fill, |d, fill| d.bg(look::hsla(fill)));
+        let cell = match filter_button {
+            Some((scope, filtered)) => cell.child(filter_button_element(
+                scope, col, filtered, row_height, &self.view, &t,
+            )),
+            None => cell,
+        };
         let cell = look::gridlines(cell, &look, &t);
         // Data bars and icons (not drawn across merged cells).
         let cell = match cond.as_ref().filter(|_| look.merge.is_none()) {
@@ -725,6 +777,66 @@ impl TableDelegate for SheetGrid {
     }
 }
 
+/// A cell's style with a table style's look under it: the cell's own fill,
+/// text colour and borders win, bold adds up.
+fn table_style(style: &CellStyle, tl: &sheets_engine::TableCellLook) -> CellStyle {
+    let mut s = style.clone();
+    if s.fill.is_none() {
+        s.fill = tl.fill;
+    }
+    if s.font_color.is_none() {
+        s.font_color = tl.font_color;
+    }
+    s.bold |= tl.bold;
+    s
+}
+
+/// The filter button in a filter's header cell: a chevron, or a funnel when
+/// the column is filtered.
+fn filter_button_element(
+    scope: sheets_engine::FilterScope,
+    col: u32,
+    filtered: bool,
+    row_height: Pixels,
+    view: &WeakEntity<SheetsView>,
+    t: &kantor_ui::Tokens,
+) -> AnyElement {
+    let view = view.clone();
+    let size = (row_height - px(4.)).clamp(px(12.), px(18.));
+    div()
+        .id(("filter-button", col as usize))
+        .absolute()
+        .right(px(2.))
+        .top((row_height - size) / 2.)
+        .size(size)
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(RADIUS_SM)
+        .border_1()
+        .border_color(if filtered { t.accent } else { t.border_strong })
+        .bg(if filtered { t.accent_soft } else { t.surface })
+        .text_color(if filtered { t.accent } else { t.fg_muted })
+        .cursor_pointer()
+        .hover(|s| s.border_color(t.accent))
+        .child(
+            gpui_kit::component::Icon::new(if filtered {
+                gpui_kit::assets::IconName::Funnel
+            } else {
+                gpui_kit::assets::IconName::ChevronDown
+            })
+            .size(size - px(5.)),
+        )
+        .on_mouse_down(MouseButton::Left, move |e, window, cx| {
+            // Not a click on the cell.
+            cx.stop_propagation();
+            let at = e.position;
+            let scope = scope.clone();
+            let _ = view.update(cx, |v, cx| v.open_filter_menu(scope, col, at, window, cx));
+        })
+        .into_any_element()
+}
+
 /// A gridline down the right edge of a cell (absolute, so it costs no width
 /// and the active cell's outline paints over it).
 fn grid_line_right(color: Hsla) -> Div {
@@ -788,6 +900,10 @@ pub struct SheetsView {
     row_resize: Option<row_layout::RowResize>,
     /// The "Row Height…" prompt.
     row_height_prompt: Option<(Entity<InputState>, Subscription)>,
+    /// A column's filter menu (see [`filter_menu`]).
+    filter_menu: Option<filter_menu::FilterMenu>,
+    /// The Custom Sort panel.
+    sort_panel: Option<filter_menu::SortPanel>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -842,6 +958,8 @@ impl SheetsView {
             bench: bench::ScrollBench::from_env(),
             row_resize: None,
             row_height_prompt: None,
+            filter_menu: None,
+            sort_panel: None,
             _subscriptions: subscriptions,
         };
         this.select_cell(0, 0, cx);
@@ -2028,6 +2146,8 @@ impl Render for SheetsView {
             .children(completion)
             .children(self.render_find_bar(cx))
             .children(self.render_row_height_prompt(cx))
+            .children(self.render_sort_panel(cx))
+            .children(self.render_filter_menu(cx))
             .into_any_element()
     }
 }

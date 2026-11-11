@@ -65,7 +65,10 @@ fn structured_references_evaluate() {
     assert_eq!(col(&wb, SALES, 4, 1..=5), ["25", "60", "20", "12", "24"]);
     assert_eq!(wb.display_value(SALES, 6, 2), "55");
     assert_eq!(wb.display_value(SALES, 6, 4), "141");
-    assert_eq!(col(&wb, SALES, 6, 0..=5), ["55", "55", "7", "5", "68", "55"]);
+    assert_eq!(
+        col(&wb, SALES, 6, 0..=5),
+        ["55", "55", "7", "5", "68", "55"]
+    );
     assert_eq!(wb.input(SALES, 1, 4), "=Sales[@Units]*Sales[@[Unit Price]]");
 }
 
@@ -80,7 +83,10 @@ fn structured_references_are_saved_as_written() {
     assert!(xml.contains("SUM(Sales[Units])"));
     assert!(xml.contains("Sales[[#Totals],[Units]]"));
     assert!(xml.contains("ROWS(Sales[#All])"));
-    assert!(!xml.contains("$C$2"), "no structured reference became a range");
+    assert!(
+        !xml.contains("$C$2"),
+        "no structured reference became a range"
+    );
     let wb = Workbook::open(&path).unwrap();
     assert_eq!(wb.display_value(SALES, 1, 4), "27.5");
     assert_eq!(wb.tables(SALES).len(), 2);
@@ -113,12 +119,20 @@ fn typing_under_a_table_extends_it() {
     // Rates (I1:K4) has none: a value typed in I5 extends it, and its
     // calculated column follows.
     wb.set_input(SALES, 4, 9, "5").unwrap();
-    let rates = wb.tables(SALES).into_iter().find(|t| t.name == "Rates").unwrap();
+    let rates = wb
+        .tables(SALES)
+        .into_iter()
+        .find(|t| t.name == "Rates")
+        .unwrap();
     assert_eq!(rates.area.bottom, 4);
     assert_eq!(wb.display_value(SALES, 4, 10), "10");
     assert_eq!(wb.input(SALES, 4, 10), "=Rates[@Rate]*2");
     wb.undo().unwrap();
-    let rates = wb.tables(SALES).into_iter().find(|t| t.name == "Rates").unwrap();
+    let rates = wb
+        .tables(SALES)
+        .into_iter()
+        .find(|t| t.name == "Rates")
+        .unwrap();
     assert_eq!(rates.area.bottom, 3);
     assert_eq!(wb.display_value(SALES, 4, 9), "");
     assert_eq!(wb.display_value(SALES, 4, 10), "");
@@ -130,23 +144,44 @@ fn sort_orders_like_excel_and_is_stable() {
     let range = CellRange::from_corners((0, 0), (10, 3));
     assert!(wb.guess_header(SORT, range));
     let n = wb
-        .sort_range(SORT, range, &[SortKey { col: 0, descending: false }], true)
+        .sort_range(
+            SORT,
+            range,
+            &[SortKey {
+                col: 0,
+                descending: false,
+            }],
+            true,
+        )
         .unwrap();
     assert_eq!(n, 10);
     // Numbers, text (any case, stable: "Apple" before "apple"), FALSE,
     // TRUE, blank last.
     assert_eq!(
         col(&wb, SORT, 0, 1..=10),
-        ["1", "2.5", "3", "Apple", "apple", "banana", "cherry", "FALSE", "TRUE", ""]
+        [
+            "1", "2.5", "3", "Apple", "apple", "banana", "cherry", "FALSE", "TRUE", ""
+        ]
     );
-    assert_eq!(col(&wb, SORT, 1, 1..=10), ["7", "10", "2", "4", "8", "1", "6", "9", "5", "3"]);
+    assert_eq!(
+        col(&wb, SORT, 1, 1..=10),
+        ["7", "10", "2", "4", "8", "1", "6", "9", "5", "3"]
+    );
     // Formulas moved with their rows: B*2 of the same row, and $F$1 stays.
     assert_eq!(wb.input(SORT, 1, 2), "=B2*2");
     assert_eq!(col(&wb, SORT, 2, 1..=3), ["14", "20", "4"]);
     assert_eq!(col(&wb, SORT, 3, 1..=3), ["70", "100", "20"]);
     // Descending keeps blanks last.
-    wb.sort_range(SORT, range, &[SortKey { col: 0, descending: true }], true)
-        .unwrap();
+    wb.sort_range(
+        SORT,
+        range,
+        &[SortKey {
+            col: 0,
+            descending: true,
+        }],
+        true,
+    )
+    .unwrap();
     assert_eq!(wb.display_value(SORT, 1, 0), "TRUE");
     assert_eq!(wb.display_value(SORT, 10, 0), "");
     // One undo step each.
@@ -163,13 +198,22 @@ fn sort_by_two_keys_and_a_table_column() {
         SALES,
         range,
         &[
-            SortKey { col: 0, descending: false },
-            SortKey { col: 2, descending: true },
+            SortKey {
+                col: 0,
+                descending: false,
+            },
+            SortKey {
+                col: 2,
+                descending: true,
+            },
         ],
         false,
     )
     .unwrap();
-    assert_eq!(col(&wb, SALES, 0, 1..=5), ["East", "North", "North", "South", "West"]);
+    assert_eq!(
+        col(&wb, SALES, 0, 1..=5),
+        ["East", "North", "North", "South", "West"]
+    );
     assert_eq!(col(&wb, SALES, 2, 1..=5), ["5", "12", "10", "20", "8"]);
     // The calculated column still multiplies its own row.
     assert_eq!(col(&wb, SALES, 4, 1..=5), ["20", "24", "25", "60", "12"]);
@@ -208,11 +252,19 @@ fn filters_by_values_and_conditions_and_round_trip() {
     let between = FilterKind::Custom {
         and: true,
         conditions: vec![
-            Condition { op: FilterOp::GreaterThanOrEqual, value: "300".into() },
-            Condition { op: FilterOp::LessThanOrEqual, value: "600".into() },
+            Condition {
+                op: FilterOp::GreaterThanOrEqual,
+                value: "300".into(),
+            },
+            Condition {
+                op: FilterOp::LessThanOrEqual,
+                value: "600".into(),
+            },
         ],
     };
-    let (shown, total) = wb.set_column_filter(PLAIN, &sheet, 1, Some(between)).unwrap();
+    let (shown, total) = wb
+        .set_column_filter(PLAIN, &sheet, 1, Some(between))
+        .unwrap();
     assert_eq!((shown, total), (2, 8));
     let hidden: Vec<bool> = (1..=8).map(|r| wb.row_hidden(PLAIN, r)).collect();
     assert_eq!(hidden, [true, true, false, true, false, true, true, true]);
@@ -222,17 +274,38 @@ fn filters_by_values_and_conditions_and_round_trip() {
     wb.set_column_filter(PLAIN, &sheet, 1, None).unwrap();
     let before = FilterKind::Custom {
         and: false,
-        conditions: vec![Condition { op: FilterOp::LessThan, value: "45717".into() }],
+        conditions: vec![Condition {
+            op: FilterOp::LessThan,
+            value: "45717".into(),
+        }],
     };
-    assert_eq!(wb.set_column_filter(PLAIN, &sheet, 2, Some(before)).unwrap().0, 4);
+    assert_eq!(
+        wb.set_column_filter(PLAIN, &sheet, 2, Some(before))
+            .unwrap()
+            .0,
+        4
+    );
     // Values, with "west" matching "West".
-    let values = FilterKind::Values { values: vec!["West".into()], blanks: false, dates: vec![] };
+    let values = FilterKind::Values {
+        values: vec!["West".into()],
+        blanks: false,
+        dates: vec![],
+    };
     wb.set_column_filter(PLAIN, &sheet, 2, None).unwrap();
-    assert_eq!(wb.set_column_filter(PLAIN, &sheet, 0, Some(values)).unwrap().0, 2);
+    assert_eq!(
+        wb.set_column_filter(PLAIN, &sheet, 0, Some(values))
+            .unwrap()
+            .0,
+        2
+    );
     wb.save().unwrap();
     let xml = part(&path, "xl/worksheets/sheet2.xml");
     assert!(xml.contains(r#"<autoFilter ref="A1:C9"><filterColumn colId="0"><filters><filter val="West"/></filters></filterColumn></autoFilter>"#), "{xml}");
-    assert!(xml.contains(r#"<row r="2" hidden="1""#) || xml.contains(r#"r="2" hidden="1""#) || xml.contains("hidden=\"1\""));
+    assert!(
+        xml.contains(r#"<row r="2" hidden="1""#)
+            || xml.contains(r#"r="2" hidden="1""#)
+            || xml.contains("hidden=\"1\"")
+    );
     let wb = Workbook::open(&path).unwrap();
     let f = wb.filter(PLAIN, &FilterScope::Sheet).unwrap();
     assert!(f.is_filtered(0));
@@ -249,9 +322,16 @@ fn clearing_and_undoing_a_filter() {
     assert_eq!(wb.display_value(PLAIN, 0, 4), "3600");
     wb.undo().unwrap();
     assert!(wb.row_hidden(PLAIN, 2));
-    assert!(wb.filter(PLAIN, &FilterScope::Sheet).unwrap().is_filtered(0));
+    assert!(
+        wb.filter(PLAIN, &FilterScope::Sheet)
+            .unwrap()
+            .is_filtered(0)
+    );
     // Turning the sheet's filter off shows every row and saves no filter.
-    assert!(!wb.toggle_filter(PLAIN, CellRange::from_corners((0, 0), (0, 0))).unwrap());
+    assert!(
+        !wb.toggle_filter(PLAIN, CellRange::from_corners((0, 0), (0, 0)))
+            .unwrap()
+    );
     assert!(wb.filter(PLAIN, &FilterScope::Sheet).is_none());
     assert!((1..=8).all(|r| !wb.row_hidden(PLAIN, r)));
 }
@@ -261,8 +341,15 @@ fn a_table_filter_saves_into_the_table_part() {
     let (_dir, path) = copy();
     let mut wb = Workbook::open(&path).unwrap();
     let scope = FilterScope::Table("Sales".into());
-    let north = FilterKind::Values { values: vec!["North".into()], blanks: false, dates: vec![] };
-    assert_eq!(wb.set_column_filter(SALES, &scope, 0, Some(north)).unwrap(), (2, 5));
+    let north = FilterKind::Values {
+        values: vec!["North".into()],
+        blanks: false,
+        dates: vec![],
+    };
+    assert_eq!(
+        wb.set_column_filter(SALES, &scope, 0, Some(north)).unwrap(),
+        (2, 5)
+    );
     // The total row's SUBTOTAL(109) sees the filtered table.
     assert_eq!(wb.display_value(SALES, 6, 2), "22");
     // SUBTOTAL(9) skips filtered rows too.
