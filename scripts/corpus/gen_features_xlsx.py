@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the feature-rich part of the .xlsx corpus (tests/corpus/xlsx/13_*..17_*).
+"""Generate the feature-rich part of the .xlsx corpus (tests/corpus/xlsx/13_*..18_*).
 
 These files hold what Excel users put in workbooks beyond cells: tables, charts
 and chart sheets, sparklines, x14 conditional formats, data validation,
@@ -364,12 +364,138 @@ def f17_cell_styles(path: str) -> None:
     feature(f, "wrap with indent", "styles", "xf/alignment[@vertical=top][@wrapText=1][@indent=2]")
 
 
+
+# ---------------------------------------------------------------- 18 conditional formatting
+
+def f18_conditional(path: str) -> None:
+    """One column per rule type, rows 2-11; expected results (what Excel shows) are in
+    crates/sheets_engine/tests/conditional.rs."""
+    f = "18_conditional_formatting.xlsx"
+    wb = new_book(path)
+    ws = wb.add_worksheet("Rules")
+    green = wb.add_format({"font_color": "#006100", "bg_color": "#C6EFCE"})
+    red = wb.add_format({"font_color": "#9C0006", "bg_color": "#FFC7CE"})
+    yellow = wb.add_format({"font_color": "#9C5700", "bg_color": "#FFEB9C"})
+    bold = wb.add_format({"bold": True})
+    blue_font = wb.add_format({"font_color": "#0000FF"})
+    yellow_fill = wb.add_format({"bg_color": "#FFFF00"})
+    two_dp = wb.add_format({"num_format": "0.00"})
+    rows = range(1, 11)
+    fruit = ["apple", "Banana", "cherry", "date", "apple pie", "grape", "", "Apple", "kiwi", "melon"]
+    cols = {
+        "A": list(range(1, 11)),
+        "B": fruit, "C": fruit, "D": fruit, "E": fruit,
+        "F": [1, 2, 2, 3, 4, 4, 4, 5, 6, 7], "G": [1, 2, 2, 3, 4, 4, 4, 5, 6, 7],
+        "H": [v * 10 for v in range(1, 11)], "I": [v * 10 for v in range(1, 11)],
+        "J": list(range(1, 11)), "K": list(range(1, 11)),
+        "L": [1, None, 3, None, 5, " ", 7, None, 9, 10],
+        "N": list(range(1, 11)), "O": list(range(1, 11)),
+        "P": list(range(0, 100, 10)), "Q": list(range(0, 100, 10)), "R": list(range(0, 100, 10)),
+        "S": list(range(-5, 5)), "T": list(range(1, 11)),
+        "U": list(range(1, 11)), "V": list(range(1, 11)), "W": list(range(1, 11)),
+        "X": list(range(1, 11)), "Y": list(range(1, 11)), "Z": list(range(1, 11)),
+        "AA": list(range(1, 11)), "AB": list(range(1, 11)), "AC": list(range(1, 11)),
+    }
+    for col, values in cols.items():
+        ws.write(f"{col}1", col)
+        for r, v in zip(rows, values):
+            if v is None:
+                continue
+            ws.write(f"{col}{r + 1}", v)
+    ws.write("M1", "M")
+    errors = [("=1/0", "#DIV/0!"), ("=1", 1), ("=NA()", "#N/A"), ("=2", 2), ('="a"', "a"),
+              ("=SQRT(-1)", "#NUM!"), ("=3", 3), ("=4", 4), ("=#REF!", "#REF!"), ("=5", 5)]
+    for r, (formula, value) in zip(rows, errors):
+        ws.write_formula(f"M{r + 1}", formula, None, value)
+    # Dates for the time period rules are typed in by the test (relative to today).
+    ws.write("AD1", "AD")
+    cf = ws.conditional_format
+    cf("A2:A11", {"type": "cell", "criteria": "greater than", "value": 8, "format": red, "stop_if_true": True})
+    cf("A2:A11", {"type": "cell", "criteria": "between", "minimum": 3, "maximum": 5, "format": green})
+    cf("A2:A11", {"type": "cell", "criteria": "equal to", "value": 7, "format": bold})
+    cf("A2:A11", {"type": "cell", "criteria": "not between", "minimum": 2, "maximum": 9, "format": yellow})
+    cf("B2:B11", {"type": "text", "criteria": "containing", "value": "apple", "format": green})
+    cf("C2:C11", {"type": "text", "criteria": "not containing", "value": "a", "format": green})
+    cf("D2:D11", {"type": "text", "criteria": "begins with", "value": "ch", "format": green})
+    cf("E2:E11", {"type": "text", "criteria": "ends with", "value": "on", "format": green})
+    cf("F2:F11", {"type": "duplicate", "format": red})
+    cf("G2:G11", {"type": "unique", "format": green})
+    cf("H2:H11", {"type": "top", "value": 3, "format": green})
+    cf("I2:I11", {"type": "bottom", "value": 20, "criteria": "%", "format": red})
+    cf("J2:J11", {"type": "average", "criteria": "above", "format": green})
+    cf("K2:K11", {"type": "average", "criteria": "below", "format": red})
+    cf("L2:L11", {"type": "blanks", "format": yellow})
+    cf("M2:M11", {"type": "errors", "format": red})
+    cf("N2:N11", {"type": "formula", "criteria": "=MOD(N2,2)=0", "format": green})
+    cf("O2:O11", {"type": "formula", "criteria": "=$A2>N2*0+5", "format": green})
+    cf("P2:P11", {"type": "2_color_scale", "min_color": "#FFFFFF", "max_color": "#FF0000"})
+    cf("Q2:Q11", {"type": "3_color_scale", "min_color": "#F8696B", "mid_type": "percentile",
+                  "mid_value": 50, "mid_color": "#FFEB84", "max_color": "#63BE7B"})
+    cf("R2:R11", {"type": "2_color_scale", "min_type": "num", "min_value": 20, "min_color": "#000000",
+                  "max_type": "num", "max_value": 60, "max_color": "#FFFFFF"})
+    cf("S2:S11", {"type": "data_bar", "bar_color": "#638EC6", "bar_solid": True, "data_bar_2010": True,
+                  "bar_negative_color": "#FF0000"})
+    cf("T2:T11", {"type": "data_bar", "bar_color": "#63C384"})
+    cf("U2:U11", {"type": "icon_set", "icon_style": "3_arrows"})
+    cf("V2:V11", {"type": "icon_set", "icon_style": "3_traffic_lights"})
+    cf("W2:W11", {"type": "icon_set", "icon_style": "5_arrows"})
+    cf("X2:X11", {"type": "icon_set", "icon_style": "5_quarters"})
+    cf("Y2:Y11", {"type": "icon_set", "icon_style": "3_flags", "reverse_icons": True})
+    cf("Z2:Z11", {"type": "icon_set", "icon_style": "3_symbols", "icons_only": True,
+                  "icons": [{"criteria": ">=", "type": "number", "value": 8},
+                            {"criteria": ">", "type": "number", "value": 4}]})
+    cf("AA2:AA11", {"type": "cell", "criteria": ">", "value": 5, "format": red, "stop_if_true": True})
+    cf("AA2:AA11", {"type": "cell", "criteria": ">", "value": 0, "format": bold})
+    cf("AA2:AA11", {"type": "cell", "criteria": ">", "value": 0, "format": yellow_fill})
+    cf("AB2:AB11", {"type": "cell", "criteria": ">", "value": 3, "format": blue_font})
+    cf("AB2:AB11", {"type": "cell", "criteria": ">", "value": 0, "format": yellow_fill})
+    cf("AC2:AC11", {"type": "cell", "criteria": ">", "value": 5, "format": two_dp})
+    cf("AD2:AD11", {"type": "time_period", "criteria": "yesterday", "format": red})
+    cf("AD2:AD11", {"type": "time_period", "criteria": "last 7 days", "format": green})
+
+    whole = wb.add_worksheet("Columns")
+    for r in range(0, 20):
+        whole.write_number(r, 0, r * 10)
+        whole.write_string(r, 1, "x" if r % 3 == 0 else "y")
+    whole.conditional_format("A1:A1048576", {"type": "cell", "criteria": ">", "value": 150, "format": red})
+    whole.conditional_format("A1:B20", {"type": "formula", "criteria": '=$B1="x"', "format": yellow})
+    wb.close()
+
+    x14_cf = "{78C0D931-6437-407d-A8EE-F0AAD7539E65}"
+    feature(f, "cf cellIs between", "sheet:Rules",
+            "conditionalFormatting[@sqref=A2:A11]/cfRule[@type=cellIs][@operator=between]")
+    feature(f, "cf stopIfTrue", "sheet:Rules", "cfRule[@type=cellIs][@stopIfTrue=1]")
+    feature(f, "cf containsText", "sheet:Rules", "cfRule[@type=containsText][@text=apple]/formula")
+    feature(f, "cf notContainsText", "sheet:Rules", "cfRule[@type=notContainsText][@operator=notContains]")
+    feature(f, "cf beginsWith", "sheet:Rules", "cfRule[@type=beginsWith][@text=ch]")
+    feature(f, "cf endsWith", "sheet:Rules", "cfRule[@type=endsWith][@text=on]")
+    feature(f, "cf duplicates", "sheet:Rules", "conditionalFormatting[@sqref=F2:F11]/cfRule[@type=duplicateValues]")
+    feature(f, "cf unique", "sheet:Rules", "cfRule[@type=uniqueValues]")
+    feature(f, "cf bottom percent", "sheet:Rules", "cfRule[@type=top10][@bottom=1][@percent=1][@rank=20]")
+    feature(f, "cf below average", "sheet:Rules", "cfRule[@type=aboveAverage][@aboveAverage=0]")
+    feature(f, "cf blanks", "sheet:Rules", "cfRule[@type=containsBlanks]/formula")
+    feature(f, "cf errors", "sheet:Rules", "cfRule[@type=containsErrors]")
+    feature(f, "cf expression", "sheet:Rules", "cfRule[@type=expression]/formula[text()=MOD(N2,2)=0]")
+    feature(f, "cf 3-colour percentile", "sheet:Rules", "colorScale/cfvo[@type=percentile][@val=50]")
+    feature(f, "cf colour scale numbers", "sheet:Rules", "colorScale/cfvo[@type=num][@val=20]")
+    feature(f, "cf x14 data bar negative", "sheet:Rules",
+            f"extLst/ext[@uri={x14_cf}]//dataBar/negativeFillColor[@rgb=FFFF0000]")
+    feature(f, "cf icons 5 quarters", "sheet:Rules", "cfRule/iconSet[@iconSet=5Quarters]")
+    feature(f, "cf icons reversed", "sheet:Rules", "cfRule/iconSet[@iconSet=3Flags][@reverse=1]")
+    feature(f, "cf icons only", "sheet:Rules", "cfRule/iconSet[@iconSet=3Symbols2][@showValue=0]")
+    feature(f, "cf time period", "sheet:Rules", "cfRule[@type=timePeriod][@timePeriod=last7Days]")
+    feature(f, "cf whole column", "sheet:Columns", "conditionalFormatting[@sqref=A1:A1048576]/cfRule[@type=cellIs]")
+    feature(f, "cf dxf fill", "styles", "dxfs/dxf/fill/patternFill/bgColor[@rgb=FFC6EFCE]")
+    feature(f, "cf dxf number format", "styles", "dxfs/dxf/numFmt[@formatCode=0.00]")
+
+
 FILES = [
     ("13_tables.xlsx", f13_tables),
     ("14_charts_images.xlsx", f14_charts),
     ("15_sparklines_cf_dv.xlsx", f15_sparklines),
     ("16_print_protect_outline.xlsx", f16_print),
     ("17_cell_styles.xlsx", f17_cell_styles),
+    ("18_conditional_formatting.xlsx", f18_conditional),
 ]
 FEATURES_FILE = "features.tsv"
 

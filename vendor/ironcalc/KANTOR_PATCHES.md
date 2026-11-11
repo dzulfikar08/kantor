@@ -72,6 +72,18 @@ is written back as `<c r="B3" s="5"/>`).
 Test: `styled_empty_cells_with_a_type_stay_empty` in
 `tests/test_kantor_fidelity.rs`.
 
+## 4. Conditional formatting details
+
+Why: icon sets with "Reverse Icon Order" were read in the normal order, and a
+differential format's `<b val="0"/>` (also `i`, `u`, `strike`) turned the
+property on.
+
+What: `import/conditional_formatting.rs` reverses the icons of an `iconSet`
+with `reverse="1"` (main and x14 rules); `import/styles.rs` (`parse_dxf`)
+reads the `val` of `b`, `i`, `u` and `strike`. Kantor doesn't use the writer's
+conditional formatting for workbooks opened from `.xlsx`: the original markup
+and `<dxfs>` are carried instead (`crates/sheets_engine/src/preserve.rs`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

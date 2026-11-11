@@ -487,17 +487,33 @@ pub(super) fn parse_dxf(
                         "color" => {
                             f.color = get_color_indexed(feat, theme, indexed)?;
                         }
+                        // KANTOR PATCH (conditional formatting): `<b val="0"/>` turns it off.
                         "b" => {
-                            f.b = Some(true);
+                            f.b = Some(!matches!(
+                                feat.attribute("val"),
+                                Some("0" | "false" | "none")
+                            ));
                         }
+                        // KANTOR PATCH (conditional formatting): `<i val="0"/>` turns it off.
                         "i" => {
-                            f.i = Some(true);
+                            f.i = Some(!matches!(
+                                feat.attribute("val"),
+                                Some("0" | "false" | "none")
+                            ));
                         }
+                        // KANTOR PATCH (conditional formatting): `<u val="0"/>` turns it off.
                         "u" => {
-                            f.u = Some(true);
+                            f.u = Some(!matches!(
+                                feat.attribute("val"),
+                                Some("0" | "false" | "none")
+                            ));
                         }
+                        // KANTOR PATCH (conditional formatting): `<strike val="0"/>` turns it off.
                         "strike" => {
-                            f.strike = Some(true);
+                            f.strike = Some(!matches!(
+                                feat.attribute("val"),
+                                Some("0" | "false" | "none")
+                            ));
                         }
                         "sz" => {
                             f.sz = Some(

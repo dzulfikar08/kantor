@@ -138,6 +138,10 @@ impl<'a> Model<'a> {
     /// `cf_cache` and consumed by `get_extended_style_for_cell`.
     pub fn evaluate_conditional_formatting(&mut self) {
         self.cf_cache.clear();
+        // KANTOR PATCH (conditional formatting): Kantor evaluates lazily.
+        if !crate::kantor_cf::eager_conditional_formatting() {
+            return;
+        }
         let sheet_count = self.workbook.worksheets.len();
         for sheet_idx in 0..sheet_count {
             let mut cfs = self.workbook.worksheets[sheet_idx]

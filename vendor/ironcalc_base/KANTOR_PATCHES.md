@@ -180,6 +180,29 @@ put `Diff::UpdateDefinedName` snapshots before the delete
 cells snapshot): undo restores the old formulas once the rows are back.
 Tests: `src/test/user_model/test_kantor_defined_names_move.rs`.
 
+## 9. Conditional formatting evaluated by the caller
+
+Why: upstream evaluates every conditional formatting rule over every cell of
+its range on load, after each `evaluate()` and on theme changes
+(`Model::evaluate_conditional_formatting`), keeping a result per cell. On a
+90k-row sheet with a few rules that is a walk over every rule's range (an
+expression rule runs its formula per cell) after every edit, and a hash map
+entry per formatted cell. Kantor evaluates rules lazily for the cells on
+screen (`crates/sheets_engine/src/cond_format.rs`). Upstream's evaluator also
+evaluates `cellIs` operands once at A1 (no relative references, numbers only)
+and lets a lower-priority `stopIfTrue` rule replace a higher one's result.
+
+What (`src/kantor_cf.rs`, `KANTOR PATCH (conditional formatting)`):
+
+* `set_eager_conditional_formatting(false)` turns the eager pass into a no-op
+  (process-wide; on by default, so upstream's tests are unchanged).
+* `Model::cf_parse` / `UserModel::cf_parse` parse a rule formula (English) as
+  written in a given cell; `cf_evaluate` evaluates it for another cell
+  (relative references shift) and returns a public `CfValue`.
+* `Evaluation::stored_only` (`src/evaluation.rs`): while set, a formula or
+  spill cell read gives its stored value instead of being evaluated, so
+  painting never recalculates (or changes) the workbook.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

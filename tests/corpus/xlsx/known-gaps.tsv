@@ -34,3 +34,4 @@
 13_tables.xlsx	import-value	Sales!D8	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
 13_tables.xlsx	import-value	Sales!F2	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
 16_print_protect_outline.xlsx	export-links	Print	the display attribute of the internal link is not written (IronCalc's Link has no display text; Excel shows the cell value)
+18_conditional_formatting.xlsx	export-value	Rules!L7	shared strings are written without xml:space="preserve": strict readers (calamine) trim a lone space to nothing; IronCalc and openpyxl keep it

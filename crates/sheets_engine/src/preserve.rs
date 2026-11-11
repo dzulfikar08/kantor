@@ -26,6 +26,11 @@
 //!      table. Of `extLst`, the extensions IronCalc doesn't write itself are
 //!      added (sparklines, Excel 2010 data validations...), with the namespace
 //!      declarations they inherited;
+//!    * conditional formats: the original's `<conditionalFormatting>`
+//!      elements, its Excel 2010 conditional formatting extension and the
+//!      `<dxfs>` of its styles replace what IronCalc writes from its model
+//!      (which drops attributes such as icon order and "icon only", and
+//!      rewrites text rules); see [`carry_conditional_formats`];
 //!    * chart sheets (IronCalc has none): the part with its drawing and chart,
 //!      put back into the sheet list after the sheet that preceded it, with
 //!      `localSheetId` and `activeTab` renumbered; a chart sheet gets a new
@@ -43,7 +48,8 @@
 //! 3. **Inserted and deleted rows and columns** (`crate::shift`): what is
 //!    carried follows them, as Excel would move it: `sqref`/`ref` ranges of
 //!    validations, filters, protected ranges and ignored errors, page breaks,
-//!    validation formulas, table ranges, sparkline locations and data,
+//!    validation formulas, conditional format ranges and formulas, table
+//!    ranges, sparkline locations and data,
 //!    comment cells and their boxes, drawing anchors, and chart series on any
 //!    sheet. Something whose cells were all deleted goes (a note says so); a
 //!    table with columns inserted or deleted inside it, or without its header
@@ -129,8 +135,9 @@ const SHEET_ORDER: [&str; 39] = [
 /// defaults (row height, column width) Kantor can't change. `tableParts` is
 /// carried table by table ([`carry_tables`]: header cells must still match
 /// the column names, or Excel repairs the file), `extLst` extension by
-/// extension ([`carry_extensions`]). Left out on purpose: what IronCalc
-/// models (views, columns, merges, conditional formats, hyperlinks) and
+/// extension ([`carry_extensions`]). Conditional formats replace IronCalc's
+/// own ([`carry_conditional_formats`]). Left out on purpose: what IronCalc
+/// models (views, columns, merges, hyperlinks) and
 /// `oleObjects`/`controls` (built on `mc:AlternateContent`).
 pub(crate) const CARRIED_ELEMENTS: [&str; 19] = [
     "sheetPr",
@@ -154,9 +161,9 @@ pub(crate) const CARRIED_ELEMENTS: [&str; 19] = [
     "extLst",
 ];
 
-/// `extLst` extensions never carried: IronCalc writes Excel 2010 conditional
-/// formats itself (the x14 rules are tied to its own `cfRule`s).
-const OWNED_EXTENSIONS: [&str; 1] = ["{78C0D931-6437-407d-A8EE-F0AAD7539E65}"];
+/// The `extLst` extension of Excel 2010 conditional formats (x14 data bars,
+/// icon sets, rules with formulas on other sheets).
+const CF_EXTENSION: &str = "{78C0D931-6437-407d-A8EE-F0AAD7539E65}";
 
 /// Relationship types never carried, whatever level they're on: stale caches,
 /// or parts that only work with markup IronCalc rewrites.
@@ -1431,6 +1438,13 @@ struct Merge<'o, 'a> {
     /// Sheet names of the original (lower case) -> `sheetId`.
     sheets: HashMap<String, u32>,
     moves: &'o Moves,
+    /// Ranges of the saved sheets (full XML) to cut: IronCalc's conditional
+    /// formats where the original's are carried.
+    removals: HashMap<String, Vec<std::ops::Range<usize>>>,
+    /// Conditional formats: some sheet's were carried from the original /
+    /// some sheet's could not be (IronCalc's stay, with IronCalc's dxfs).
+    cf_carried: bool,
+    cf_failed: bool,
 }
 
 impl Merge<'_, '_> {
@@ -1632,6 +1646,9 @@ fn merge(
             .map(|s| (s.name.to_lowercase(), s.sheet_id))
             .collect(),
         moves: ctx.moves,
+        removals: HashMap::new(),
+        cf_carried: false,
+        cf_failed: false,
     };
     let mut adds: Vec<RelAdds> = Vec::new();
     let mut sheet_edits: Vec<(String, Vec<Insert>)> = Vec::new();
@@ -1744,10 +1761,26 @@ fn merge(
         notes,
     )?;
 
+    // The original's dxfs, which the carried conditional formats (and
+    // tables) point into, unless IronCalc's own rules stay somewhere.
+    let styles_edit = if m.cf_carried && !m.cf_failed {
+        match carry_dxfs(&orig, &orig_wb, &orig_wb_rels, new, &new_wb, &new_wb_rels) {
+            Ok(edit) => edit,
+            Err(e) => {
+                notes.push(format!("conditional formats written by Kantor: {e}"));
+                return Ok(false);
+            }
+        }
+    } else {
+        None
+    };
+
     if m.copy.is_empty()
         && adds.iter().all(|a| a.rels.is_empty())
         && sheet_edits.is_empty()
+        && m.removals.is_empty()
         && wb_edit.is_none()
+        && styles_edit.is_none()
     {
         return Ok(false);
     }
@@ -1761,22 +1794,101 @@ fn merge(
         rels.extend(add.rels);
         new.set(&rp, write_rels(&rels).into_bytes());
     }
-    for (part, edits) in sheet_edits {
-        // In place: a big sheet is not copied (the inserts are small and
+    let mut removals = std::mem::take(&mut m.removals);
+    for (part, _) in &sheet_edits {
+        removals.entry(part.clone()).or_default();
+    }
+    let mut sheet_edits: HashMap<String, Vec<Insert>> = sheet_edits.into_iter().collect();
+    for (part, cuts) in removals {
+        // In place: a big sheet is not copied (the edits are small and
         // mostly near its end).
         let mut xml = new.take_text(&part)?.ok_or("sheet vanished")?;
-        let mut edits = edits;
-        edits.sort_by_key(|(at, order, _)| std::cmp::Reverse((*at, *order)));
-        xml.reserve_exact(edits.iter().map(|(_, _, t)| t.len()).sum());
-        for (at, _, text) in edits {
-            xml.insert_str(at, &text);
+        let edits = sheet_edits.remove(&part).unwrap_or_default();
+        // Back to front; at the same offset a cut goes before an insert.
+        let mut all: Vec<(usize, usize, usize, Option<String>)> = edits
+            .into_iter()
+            .map(|(at, order, text)| (at, 1, order, Some(text)))
+            .chain(cuts.into_iter().map(|r| (r.start, 0, r.end, None)))
+            .collect();
+        all.sort_by_key(|(at, kind, order, _)| {
+            std::cmp::Reverse((*at, std::cmp::Reverse(*kind), *order))
+        });
+        for (at, _, end, text) in all {
+            match text {
+                Some(text) => xml.insert_str(at, &text),
+                None => {
+                    xml.replace_range(at..end, "");
+                }
+            }
         }
+        new.set(&part, xml.into_bytes());
+    }
+    if let Some((part, xml)) = styles_edit {
         new.set(&part, xml.into_bytes());
     }
     if let Some(xml) = wb_edit {
         new.set(&new_wb, xml.into_bytes());
     }
     Ok(true)
+}
+
+/// The saved styles part with the original's `<dxfs>` in place of
+/// IronCalc's: `(part, xml)`, or `None` if the original has none.
+fn carry_dxfs(
+    orig: &Original,
+    orig_wb: &str,
+    orig_wb_rels: &[Rel],
+    new: &Package,
+    new_wb: &str,
+    new_wb_rels: &[Rel],
+) -> Result<Option<(String, String)>, String> {
+    let styles = |wb: &str, rels: &[Rel]| {
+        rels.iter()
+            .find(|r| r.short_kind() == "styles" && !r.external)
+            .and_then(|r| resolve(wb, &r.target))
+    };
+    let Some(orig_part) = styles(orig_wb, orig_wb_rels) else {
+        return Ok(None);
+    };
+    let Some(orig_xml) = orig.text(&orig_part)? else {
+        return Ok(None);
+    };
+    let orig_doc = Document::parse(&orig_xml).map_err(|e| format!("{orig_part}: {e}"))?;
+    let Some(dxfs) = orig_doc
+        .root_element()
+        .children()
+        .find(|c| is_main(*c, "dxfs"))
+    else {
+        return Ok(None);
+    };
+    let text = verbatim(dxfs, &orig_xml)?;
+    let new_part = styles(new_wb, new_wb_rels).ok_or("saved workbook has no styles")?;
+    let new_xml = new.text(&new_part)?.ok_or("saved styles are missing")?;
+    let new_doc = Document::parse(new_xml).map_err(|e| format!("saved styles: {e}"))?;
+    let root = new_doc.root_element();
+    if root.lookup_namespace_uri(None) != Some(NS_MAIN) {
+        return Err("saved styles use another namespace".into());
+    }
+    let range = match root.children().find(|c| is_main(*c, "dxfs")) {
+        Some(d) => d.range(),
+        None => {
+            // Before what follows dxfs in CT_Stylesheet, else at the end.
+            let at = root
+                .children()
+                .find(|c| {
+                    ["tableStyles", "colors", "extLst"]
+                        .iter()
+                        .any(|n| is_main(*c, n))
+                })
+                .map(|c| c.range().start)
+                .or_else(|| new_xml[..root.range().end].rfind("</"))
+                .ok_or("saved styles are not closed")?;
+            at..at
+        }
+    };
+    let mut xml = new_xml.to_owned();
+    xml.replace_range(range, &text);
+    Ok(Some((new_part, xml)))
 }
 
 /// One source part's relationships, original and saved.
@@ -1934,7 +2046,8 @@ fn carry_sheet(
     let Some(orig_sk) = m.orig.skeleton(&os.part)? else {
         return Ok(None);
     };
-    let might_carry = CARRIED_ELEMENTS.iter().any(|e| orig_sk.xml.contains(e));
+    let might_carry = CARRIED_ELEMENTS.iter().any(|e| orig_sk.xml.contains(e))
+        || orig_sk.xml.contains("conditionalFormatting");
     if orig_rels.is_empty() && !might_carry {
         return Ok(None);
     }
@@ -2004,6 +2117,23 @@ fn carry_sheet(
         sheets: &sheet_ids,
     };
     let mut inserts: Vec<Insert> = Vec::new();
+    // Conditional formats: the original's markup replaces what IronCalc
+    // wrote from its model (which drops attributes such as `reverse` and
+    // `showValue`, and rewrites text rules), with the original's dxfs.
+    let own_cf = carry_conditional_formats(
+        m,
+        orig_root,
+        new_root,
+        &new_sk,
+        &ns.part,
+        &orig_sk.xml,
+        (&present, close, bindings_ok),
+        &rw,
+        &mut inserts,
+        &label,
+        notes,
+    );
+    let mut into_ext = false;
     for child in orig_root.children().filter(|n| n.is_element()) {
         let local = child.tag_name().name();
         if child.tag_name().namespace() != Some(NS_MAIN) || !CARRIED_ELEMENTS.contains(&local) {
@@ -2022,7 +2152,7 @@ fn carry_sheet(
                     .expect("present");
                 n.range().end - "</extLst>".len()
             });
-            let exts = match carry_extensions(child, new_root, &orig_sk.xml, &rw) {
+            let exts = match carry_extensions(child, new_root, &orig_sk.xml, &rw, own_cf) {
                 Ok(e) => e,
                 Err(e) => {
                     notes.push(format!("{label}: <extLst> not kept: {e}"));
@@ -2038,6 +2168,7 @@ fn carry_sheet(
             match at_end {
                 // Into IronCalc's own extLst, before it closes.
                 Some(at) if new_sk.xml[at..].starts_with("</extLst>") => {
+                    into_ext = true;
                     inserts.push((new_sk.full_offset(at), order, exts.text));
                 }
                 Some(_) => notes.push(format!("{label}: <extLst> not kept: unexpected markup")),
@@ -2104,7 +2235,166 @@ fn carry_sheet(
         inserts.push((new_sk.full_offset(at), order, text));
         present.push((order, at));
     }
+    if own_cf {
+        cut_cf_extension(m, new_root, &new_sk, &ns.part, into_ext);
+    }
     Ok(Some((adds, inserts)))
+}
+
+/// Carry the original sheet's `<conditionalFormatting>` elements in place of
+/// IronCalc's (which are cut, see [`Merge::removals`]), with their ranges and
+/// formulas following moved rows and columns. Returns whether the original's
+/// conditional formats replace IronCalc's (then its x14 extension is carried
+/// too, and IronCalc's cut by [`cut_cf_extension`]).
+#[allow(clippy::too_many_arguments)]
+fn carry_conditional_formats(
+    m: &mut Merge,
+    orig_root: Node,
+    new_root: Node,
+    new_sk: &Skeleton,
+    new_part: &str,
+    src: &str,
+    (present, close, bindings_ok): (&[(usize, usize)], usize, bool),
+    rw: &Rewrite,
+    inserts: &mut Vec<Insert>,
+    label: &str,
+    notes: &mut Vec<String>,
+) -> bool {
+    let orig_cf: Vec<Node> = orig_root
+        .children()
+        .filter(|c| is_main(*c, "conditionalFormatting"))
+        .collect();
+    let orig_ext = orig_root
+        .children()
+        .filter(|c| is_main(*c, "extLst"))
+        .flat_map(|l| l.children())
+        .any(|e| is_main(e, "ext") && e.attribute("uri") == Some(CF_EXTENSION));
+    if orig_cf.is_empty() && !orig_ext {
+        return false;
+    }
+    if !bindings_ok {
+        notes.push(format!(
+            "{label}: conditional formats written by Kantor: saved sheet uses other namespace prefixes"
+        ));
+        m.cf_failed = true;
+        return false;
+    }
+    let mut text = String::new();
+    for cf in &orig_cf {
+        match verbatim(*cf, src).and_then(|t| move_cf(&t, rw)) {
+            Ok(Some(one)) => text.push_str(&one),
+            Ok(None) => notes.push(format!(
+                "{label}: a conditional format dropped: the cells it applied to were deleted"
+            )),
+            Err(e) => {
+                notes.push(format!(
+                    "{label}: conditional formats written by Kantor: {e}"
+                ));
+                m.cf_failed = true;
+                return false;
+            }
+        }
+    }
+    let order = SHEET_ORDER
+        .iter()
+        .position(|e| *e == "conditionalFormatting")
+        .expect("in the schema order");
+    let cut: Vec<std::ops::Range<usize>> = new_root
+        .children()
+        .filter(|c| is_main(*c, "conditionalFormatting"))
+        .map(|c| new_sk.full_offset(c.range().start)..new_sk.full_offset(c.range().end))
+        .collect();
+    m.removals
+        .entry(new_part.to_owned())
+        .or_default()
+        .extend(cut);
+    if !text.is_empty() {
+        let at = insert_point(present, order, close);
+        inserts.push((new_sk.full_offset(at), order, text));
+    }
+    m.cf_carried = true;
+    true
+}
+
+/// A `<conditionalFormatting>` (as written by [`verbatim`]) following moved
+/// rows and columns: its `sqref`, and its rules' formulas, relative to the
+/// top-left of the range ([`Moves::cf_formula`]). `None` if all its cells
+/// were deleted.
+fn move_cf(xml: &str, rw: &Rewrite) -> Result<Option<String>, String> {
+    if !rw.moves.touches(rw.home) {
+        return Ok(Some(xml.to_owned()));
+    }
+    let doc = Document::parse(xml).map_err(|e| e.to_string())?;
+    let root = doc.root_element();
+    let sqref = root
+        .attributes()
+        .find(|a| a.name() == "sqref" && a.namespace().is_none())
+        .ok_or("conditional format without sqref")?;
+    let Some(moved) = rw.moves.sqref(rw.home, sqref.value()) else {
+        return Ok(None);
+    };
+    let mut area: Option<crate::shift::Area> = None;
+    for part in sqref.value().split_whitespace() {
+        if let Some(r) = parse_range(part) {
+            let a = r.area();
+            area = Some(match area {
+                None => a,
+                Some(b) => crate::shift::Area {
+                    top: a.top.min(b.top),
+                    left: a.left.min(b.left),
+                    bottom: a.bottom.max(b.bottom),
+                    right: a.right.max(b.right),
+                },
+            });
+        }
+    }
+    let area = area.ok_or("conditional format with an unreadable sqref")?;
+    let mut edits = vec![(sqref.range_value(), esc_attr(&moved))];
+    for n in doc
+        .descendants()
+        .filter(|n| n.is_element() && n.tag_name().name() == "formula")
+    {
+        let Some(t) = n.first_child().filter(|t| t.is_text()) else {
+            continue;
+        };
+        let text = t.text().unwrap_or_default();
+        let v = rw.moves.cf_formula(text, rw.home, rw.sheets, area);
+        if v != text {
+            edits.push((t.range(), esc_text(&v)));
+        }
+    }
+    Ok(Some(apply_edits(xml, edits)))
+}
+
+/// Cut IronCalc's x14 conditional formats from the saved sheet: the
+/// extension, or its whole `extLst` if nothing else is (or goes) in it.
+fn cut_cf_extension(
+    m: &mut Merge,
+    new_root: Node,
+    new_sk: &Skeleton,
+    new_part: &str,
+    into_ext: bool,
+) {
+    let Some(list) = new_root.children().find(|c| is_main(*c, "extLst")) else {
+        return;
+    };
+    let exts: Vec<Node> = list.children().filter(|e| e.is_element()).collect();
+    let Some(cf) = exts
+        .iter()
+        .find(|e| is_main(**e, "ext") && e.attribute("uri") == Some(CF_EXTENSION))
+    else {
+        return;
+    };
+    let node = if exts.len() == 1 && !into_ext {
+        list
+    } else {
+        *cf
+    };
+    let range = new_sk.full_offset(node.range().start)..new_sk.full_offset(node.range().end);
+    m.removals
+        .entry(new_part.to_owned())
+        .or_default()
+        .push(range);
 }
 
 /// Where an element of schema index `order` goes: before the first present
@@ -2324,6 +2614,7 @@ fn carry_extensions(
     new_root: Node,
     src: &str,
     rw: &Rewrite,
+    own_cf: bool,
 ) -> Result<Extensions, String> {
     let written: HashSet<&str> = new_root
         .children()
@@ -2338,7 +2629,13 @@ fn carry_extensions(
     };
     for ext in orig.children().filter(|e| is_main(*e, "ext")) {
         let uri = ext.attribute("uri").unwrap_or_default();
-        if written.contains(uri) || OWNED_EXTENSIONS.contains(&uri) {
+        // IronCalc writes x14 conditional formats from its model; they are
+        // the original's when its `cfRule`s are carried (`own_cf`).
+        if uri == CF_EXTENSION {
+            if !own_cf {
+                continue;
+            }
+        } else if written.contains(uri) {
             continue;
         }
         if !rel_refs(ext).is_empty() {
