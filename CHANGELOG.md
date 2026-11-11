@@ -17,6 +17,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   `scripts/third-party-licenses.py`. On macOS it is inside `Kantor.app/Contents/Resources`.
 
 #### Sheets
+- Rows have their own heights, as in Excel: custom heights from the file (relative to the sheet's
+  default row height), hidden rows, and rows that grow to fit wrapped text and larger fonts
+  (measured for the rows on screen, so big workbooks open and scroll as fast as before). Drag a
+  row number's bottom edge to resize (all selected whole rows together), double-click it to fit,
+  or use **Row Height…** / **Autofit Row Height** from the row header menu or the command
+  palette. Each is one undo step and is saved to `.xlsx` as a custom height. Merged cells,
+  selection, the cell editor, formula references and conditional formatting follow the heights,
+  with no seams at 125 %. Arrow keys skip hidden rows, and Page Up / Page Down move by the
+  visible height.
+- **Ctrl+Home** goes to A1 and **Ctrl+End** to the last cell of the used range.
 - Conditional formatting is shown as Excel shows it: cell-value rules (every operator, operands
   with relative references), formula rules (relative to the top-left of the range), text rules,
   time periods, duplicate / unique values, top / bottom N and N %, above / below average, blanks
