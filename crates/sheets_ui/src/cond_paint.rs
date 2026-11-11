@@ -8,7 +8,9 @@ use std::f32::consts::PI;
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use sheets_engine::{CfIcon, Conditional, DataBar, IconShape};
+use std::borrow::Cow;
+
+use sheets_engine::{CellStyle, CfIcon, Conditional, DataBar, IconShape};
 
 use crate::look::hsla;
 
@@ -38,6 +40,28 @@ pub(crate) fn layers(c: &Conditional) -> Vec<AnyElement> {
         );
     }
     out
+}
+
+/// The style the value's colour is chosen against: a data bar that reaches
+/// under the (right-aligned) value of an unfilled cell counts as a pale
+/// fill, so the value reads dark on it, as in Excel, whatever the theme.
+pub(crate) fn text_backdrop<'a>(
+    style: &'a CellStyle,
+    c: Option<&Conditional>,
+) -> Cow<'a, CellStyle> {
+    match c.and_then(|c| c.bar) {
+        Some(bar) if style.fill.is_none() && bar.to >= 0.6 => {
+            let mix = |s: u32| {
+                let v = f32::from(((bar.color >> s) & 0xff) as u8);
+                ((v + (255.0 - v) * 0.85).round() as u32) << s
+            };
+            Cow::Owned(CellStyle {
+                fill: Some(mix(16) | mix(8) | mix(0)),
+                ..style.clone()
+            })
+        }
+        _ => Cow::Borrowed(style),
+    }
 }
 
 fn bar_layers(bar: DataBar) -> Vec<AnyElement> {

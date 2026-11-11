@@ -27,7 +27,7 @@ use ironcalc_base::cf_types::{
     CfRule, Cfvo, ColorScaleThreshold, Icon as IcIcon, IconThreshold, PeriodType, TextOperator,
     ValueOperator,
 };
-use ironcalc_base::types::{CellType, Dxf};
+use ironcalc_base::types::{Cell, CellType, Dxf, FormulaValue, SpillValue};
 use ironcalc_base::{CfFormula, CfValue, Model};
 
 use crate::format::{CellStyle, Rgb, parse_rgb};
@@ -187,6 +187,8 @@ struct Aggregate {
     sum: f64,
     /// How often each value occurs (text lower-cased), for duplicates.
     counts: HashMap<Key, u32>,
+    /// Lower-cased texts of the range, numbered.
+    texts: HashMap<String, u32>,
     /// Resolved thresholds of a colour scale, data bar or icon set.
     stops: Vec<f64>,
     /// Top/bottom N: the value a cell must reach.
@@ -196,8 +198,16 @@ struct Aggregate {
 #[derive(Hash, PartialEq, Eq)]
 enum Key {
     Number(u64),
-    Text(String),
+    /// Text, by its lower-cased form's number in [`Aggregate::texts`].
+    Text(u32),
     Bool(bool),
+}
+
+impl Aggregate {
+    fn text_id(&mut self, lower: String) -> u32 {
+        let next = self.texts.len() as u32;
+        *self.texts.entry(lower).or_insert(next)
+    }
 }
 
 /// A cell's stored value.
@@ -713,7 +723,12 @@ impl Workbook {
                                 gte,
                                 icon: CfIcon {
                                     shape,
-                                    color: base.color,
+                                    // Excel's quarters are dark grey.
+                                    color: if matches!(shape, IconShape::Pie { .. }) {
+                                        0x40_40_40
+                                    } else {
+                                        base.color
+                                    },
                                 },
                             }
                         })
@@ -749,22 +764,67 @@ impl Workbook {
                 continue;
             }
             let (bottom, right) = (area.bottom.min(rows - 1), area.right.min(cols - 1));
+            let Ok(ws) = model.workbook.worksheet(sheet) else {
+                continue;
+            };
+            // Shared strings seen, by index: their text's number.
+            let mut shared: HashMap<i32, u32> = HashMap::new();
             for r in area.top..=bottom {
                 for c in area.left..=right {
-                    let v = cell_value(model, sheet, r as i32 + 1, c as i32 + 1);
-                    if let Value::Number(n) = v {
+                    let Some(cell) = ws.cell(r as i32 + 1, c as i32 + 1) else {
+                        continue;
+                    };
+                    // Numbers are read without making a value of the cell
+                    // (which copies text).
+                    let number = match &*cell {
+                        Cell::NumberCell { v, .. } => Some(*v),
+                        Cell::CellFormula {
+                            v: FormulaValue::Number(n),
+                            ..
+                        }
+                        | Cell::ArrayFormula {
+                            v: FormulaValue::Number(n),
+                            ..
+                        }
+                        | Cell::SpillCell {
+                            v: SpillValue::Number(n),
+                            ..
+                        } => Some(*n),
+                        _ => None,
+                    };
+                    if let Some(n) = number {
                         agg.sorted.push(n);
                         agg.sum += n;
                     }
-                    if needs_counts {
-                        let key = match v {
-                            Value::Number(n) => Key::Number(n.to_bits()),
-                            Value::Text(s) => Key::Text(s.to_lowercase()),
-                            Value::Bool(b) => Key::Bool(b),
-                            Value::Empty | Value::Error => continue,
-                        };
-                        *agg.counts.entry(key).or_insert(0) += 1;
+                    if !needs_counts {
+                        continue;
                     }
+                    let key = match (&*cell, number) {
+                        (_, Some(n)) => Key::Number(n.to_bits()),
+                        (Cell::SharedString { si, .. }, _) => {
+                            let id = match shared.get(si) {
+                                Some(id) => *id,
+                                None => {
+                                    let text = model
+                                        .workbook
+                                        .shared_strings
+                                        .get(*si as usize)
+                                        .map(|t| t.to_lowercase())
+                                        .unwrap_or_default();
+                                    let id = agg.text_id(text);
+                                    shared.insert(*si, id);
+                                    id
+                                }
+                            };
+                            Key::Text(id)
+                        }
+                        _ => match cell_value(model, sheet, r as i32 + 1, c as i32 + 1) {
+                            Value::Text(t) => Key::Text(agg.text_id(t.to_lowercase())),
+                            Value::Bool(b) => Key::Bool(b),
+                            _ => continue,
+                        },
+                    };
+                    *agg.counts.entry(key).or_insert(0) += 1;
                 }
             }
         }
@@ -1008,13 +1068,22 @@ impl Workbook {
                 Kind::Duplicate(dup) => {
                     let key = match &v {
                         Value::Number(n) => Some(Key::Number(n.to_bits())),
-                        Value::Text(s) => Some(Key::Text(s.to_lowercase())),
+                        Value::Text(s) => (!s.is_empty()).then_some(Key::Text(u32::MAX)),
                         Value::Bool(b) => Some(Key::Bool(*b)),
                         _ => None,
                     };
                     match key {
                         Some(k) => {
                             let agg = self.aggregate(sheet, index, rule);
+                            let k = match (&k, &v) {
+                                (Key::Text(_), Value::Text(t)) => {
+                                    match agg.texts.get(&t.to_lowercase()) {
+                                        Some(id) => Key::Text(*id),
+                                        None => k,
+                                    }
+                                }
+                                _ => k,
+                            };
                             let n = agg.counts.get(&k).copied().unwrap_or(0);
                             if *dup { n > 1 } else { n == 1 }
                         }

@@ -528,7 +528,11 @@ impl TableDelegate for SheetGrid {
             color: if pending {
                 t.fg_dim
             } else {
-                look::value_color(style, shown.color, &t)
+                look::value_color(
+                    &cond_paint::text_backdrop(style, cond.as_deref()),
+                    shown.color,
+                    &t,
+                )
             },
             base_size: FONT_BODY,
             default_font_size: self.book.default_font_size(),
