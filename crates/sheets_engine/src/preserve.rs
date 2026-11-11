@@ -26,6 +26,11 @@
 //!      table. Of `extLst`, the extensions IronCalc doesn't write itself are
 //!      added (sparklines, Excel 2010 data validations...), with the namespace
 //!      declarations they inherited;
+//!    * conditional formats: the original's `<conditionalFormatting>`
+//!      elements, its Excel 2010 conditional formatting extension and the
+//!      `<dxfs>` of its styles replace what IronCalc writes from its model
+//!      (which drops attributes such as icon order and "icon only", and
+//!      rewrites text rules); see [`carry_conditional_formats`];
 //!    * chart sheets (IronCalc has none): the part with its drawing and chart,
 //!      put back into the sheet list after the sheet that preceded it, with
 //!      `localSheetId` and `activeTab` renumbered; a chart sheet gets a new
@@ -43,7 +48,8 @@
 //! 3. **Inserted and deleted rows and columns** (`crate::shift`): what is
 //!    carried follows them, as Excel would move it: `sqref`/`ref` ranges of
 //!    validations, filters, protected ranges and ignored errors, page breaks,
-//!    validation formulas, table ranges, sparkline locations and data,
+//!    validation formulas, conditional format ranges and formulas, table
+//!    ranges, sparkline locations and data,
 //!    comment cells and their boxes, drawing anchors, and chart series on any
 //!    sheet. Something whose cells were all deleted goes (a note says so); a
 //!    table with columns inserted or deleted inside it, or without its header
@@ -129,8 +135,9 @@ const SHEET_ORDER: [&str; 39] = [
 /// defaults (row height, column width) Kantor can't change. `tableParts` is
 /// carried table by table ([`carry_tables`]: header cells must still match
 /// the column names, or Excel repairs the file), `extLst` extension by
-/// extension ([`carry_extensions`]). Left out on purpose: what IronCalc
-/// models (views, columns, merges, conditional formats, hyperlinks) and
+/// extension ([`carry_extensions`]). Conditional formats replace IronCalc's
+/// own ([`carry_conditional_formats`]). Left out on purpose: what IronCalc
+/// models (views, columns, merges, hyperlinks) and
 /// `oleObjects`/`controls` (built on `mc:AlternateContent`).
 pub(crate) const CARRIED_ELEMENTS: [&str; 19] = [
     "sheetPr",

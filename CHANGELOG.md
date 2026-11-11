@@ -17,6 +17,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   `scripts/third-party-licenses.py`. On macOS it is inside `Kantor.app/Contents/Resources`.
 
 #### Sheets
+- Conditional formatting is shown as Excel shows it: cell-value rules (every operator, operands
+  with relative references), formula rules (relative to the top-left of the range), text rules,
+  time periods, duplicate / unique values, top / bottom N and N %, above / below average, blanks
+  and errors, 2- and 3-colour scales (min, max, number, percent, percentile, formula), data bars
+  (gradient or solid, negative values around an axis) and icon sets drawn as vector shapes
+  (arrows, traffic lights, flags, symbols, stars, quarters, ratings; reversed order and "icon
+  only"). Priority and *Stop If True* are respected; formats of several true rules combine (fill,
+  text colour, bold, italic, underline, strikethrough, number format). Only the cells on screen
+  are evaluated, and what a rule needs from its whole range (min/max, percentiles, average,
+  top N, duplicates) is worked out once per workbook state, so edits and recalculation update it.
+  Saving writes the file's rules, Excel 2010 extensions and differential formats unchanged; their
+  ranges and formulas follow inserted and deleted rows and columns.
 - Formatted workbooks look as they do in Excel: cell fills (theme colours with tints and indexed
   colours resolved), text colour, font size and family (Calibri → Carlito, Arial → Liberation
   Sans when the original isn't installed), vertical alignment, wrapped text, borders (thin, medium,

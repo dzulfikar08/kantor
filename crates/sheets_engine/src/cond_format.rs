@@ -398,15 +398,16 @@ impl Overlay {
             self.underline = self.underline.or(f.u);
             self.strike = self.strike.or(f.strike);
         }
-        if let Some(fill) = &dxf.fill {
-            if self.fill.is_none() {
-                self.fill = rgb(model, &fill.color);
-            }
+        if let Some(fill) = &dxf.fill
+            && self.fill.is_none()
+        {
+            self.fill = rgb(model, &fill.color);
         }
-        if let Some(n) = &dxf.num_fmt {
-            if self.num_fmt.is_none() && !n.format_code.is_empty() {
-                self.num_fmt = Some(n.format_code.clone());
-            }
+        if let Some(n) = &dxf.num_fmt
+            && self.num_fmt.is_none()
+            && !n.format_code.is_empty()
+        {
+            self.num_fmt = Some(n.format_code.clone());
         }
     }
 

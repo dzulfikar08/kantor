@@ -41,6 +41,7 @@ mod ai;
 mod bench;
 mod calc;
 mod cell_editor;
+mod cond_paint;
 mod find;
 mod grid_ops;
 mod look;
@@ -496,13 +497,26 @@ impl TableDelegate for SheetGrid {
         // A merged cell shows its anchor's value.
         let (vr, vc) = look.merge.map_or((row, col), |m| (m.top, m.left));
         let shown = self.book.display(sheet, vr, vc);
-        let mut text = shown.text;
+        // Conditional formatting (a merged cell's comes from its anchor).
+        let cond = self.book.conditional(sheet, vr, vc);
+        let shown = cond
+            .as_ref()
+            .and_then(|c| c.display.clone())
+            .unwrap_or(shown);
+        let mut text = if cond.as_ref().is_some_and(|c| !c.show_value) {
+            String::new()
+        } else {
+            shown.text
+        };
         // A formula typed in manual calculation has no value until F9.
         let pending = text.is_empty() && self.book.is_pending(sheet, vr, vc);
         if pending {
             text.push('…');
         }
-        let style = &look.style;
+        let style = cond
+            .as_ref()
+            .and_then(|c| c.style.as_deref())
+            .unwrap_or(&look.style);
         let align = self.book.display_align_of(style, sheet, vr, vc);
         let geometry = look
             .merge
@@ -527,6 +541,11 @@ impl TableDelegate for SheetGrid {
             .relative()
             .when_some(style.fill, |d, fill| d.bg(look::hsla(fill)));
         let cell = look::gridlines(cell, &look, &t);
+        // Data bars and icons (not drawn across merged cells).
+        let cell = match cond.as_ref().filter(|_| look.merge.is_none()) {
+            Some(c) => cell.children(cond_paint::layers(c)),
+            None => cell,
+        };
         let cell = match geometry {
             // The whole merged block, shifted so this cell shows its slice.
             Some((x, y, w, h)) => {

@@ -59,6 +59,18 @@ the start and end of the sheet are put around it in place
 (`insert_str`/`push_str` after one `reserve_exact`). The XML is byte for byte
 the same. Writer peak for that workbook: 391 → 216 MB.
 
+## 3. Conditional formatting details
+
+Why: icon sets with "Reverse Icon Order" were read in the normal order, and a
+differential format's `<b val="0"/>` (also `i`, `u`, `strike`) turned the
+property on.
+
+What: `import/conditional_formatting.rs` reverses the icons of an `iconSet`
+with `reverse="1"` (main and x14 rules); `import/styles.rs` (`parse_dxf`)
+reads the `val` of `b`, `i`, `u` and `strike`. Kantor doesn't use the writer's
+conditional formatting for workbooks opened from `.xlsx`: the original markup
+and `<dxfs>` are carried instead (`crates/sheets_engine/src/preserve.rs`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

@@ -7,11 +7,16 @@ SUMIFS over the orders. Every formula carries its correct cached value, as
 Excel would save it, so a viewer that trusts cached values shows the right
 numbers without recalculating.
 
-    uv run --with xlsxwriter scripts/corpus/gen_big_xlsx.py [OUT.xlsx] [--rows N]
+    uv run --with xlsxwriter scripts/corpus/gen_big_xlsx.py [OUT.xlsx] [--rows N] [--cf]
 
 Defaults: 90 000 orders x 9 formulas = 810 000 formula cells, about 30 MB.
 Deterministic (fixed seed), streamed to disk (xlsxwriter constant_memory), so
 it needs little RAM and takes well under a minute.
+
+`--cf` adds conditional formatting over the whole order list, for measuring
+it: a 3-colour scale on Amount, a data bar on Qty, an icon set on Margin %,
+top 10 on Margin, duplicate customer ids, and an expression rule that tints
+every row with a low margin (`=$N2="Low"` on A:S).
 """
 
 import argparse
@@ -33,6 +38,7 @@ def main() -> None:
     ap.add_argument("--rows", type=int, default=90_000)
     ap.add_argument("--customers", type=int, default=5_000)
     ap.add_argument("--materials", type=int, default=3_000)
+    ap.add_argument("--cf", action="store_true", help="add conditional formatting rules")
     args = ap.parse_args()
     rnd = random.Random(20261110)
 
@@ -109,6 +115,18 @@ def main() -> None:
         ws.write_string(r, 17, f"P{rnd.randint(1, 12):03d}")
         if rnd.random() < 0.08:
             ws.write_string(r, 18, "Urgent, call before delivery")
+
+    if args.cf:
+        last = args.rows + 1
+        low = wb.add_format({"bg_color": "#FCE4D6"})
+        top = wb.add_format({"bold": True, "font_color": "#006100", "bg_color": "#C6EFCE"})
+        dup = wb.add_format({"font_color": "#9C0006"})
+        ws.conditional_format(f"A2:S{last}", {"type": "formula", "criteria": '=$N2="Low"', "format": low})
+        ws.conditional_format(f"G2:G{last}", {"type": "3_color_scale"})
+        ws.conditional_format(f"E2:E{last}", {"type": "data_bar", "bar_color": "#638EC6", "data_bar_2010": True})
+        ws.conditional_format(f"M2:M{last}", {"type": "icon_set", "icon_style": "3_arrows"})
+        ws.conditional_format(f"L2:L{last}", {"type": "top", "value": 10, "format": top})
+        ws.conditional_format(f"C2:C{last}", {"type": "duplicate", "format": dup})
 
     wc = wb.add_worksheet("Customers")
     wc.write_row(0, 0, ["Customer", "Name", "Region", "Segment"], bold)
