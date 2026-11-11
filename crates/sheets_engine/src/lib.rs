@@ -18,6 +18,7 @@ mod import;
 mod look;
 mod numfmt;
 mod pivot;
+mod pivot_edit;
 mod preserve;
 mod print;
 mod rows;
@@ -65,6 +66,10 @@ pub use icons::IconPath;
 pub use look::CellLook;
 pub use numfmt::Display;
 pub use pivot::PivotInfo;
+pub use pivot_edit::{
+    AreaEntry, AxisEntry, PivotDestination, PivotFunc, PivotItem, PivotLayout, PivotSourceCheck,
+    PivotSourceField, PivotValueField, ReportLayout, SubtotalPlace,
+};
 pub use print::{HeaderFooter, Margins, PageSetup, Paper, PrintColumns, PrintOptions, SheetPrint};
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 pub use sort::SortKey;
@@ -682,9 +687,9 @@ impl Workbook {
                 let drawings = self
                     .drawings
                     .save_edits(&self.history.drawing_edits(), &layout);
-                let pivot_parts = self.pivot_parts();
+                let pivots = self.pivot_save();
                 let ctx = preserve::Context {
-                    pivot_parts: &pivot_parts,
+                    pivots: &pivots,
                     tabs: &self.tab_colors(),
                     full_calc: stale,
                     moves: &moves,
@@ -695,6 +700,7 @@ impl Workbook {
                 let finished = preserve::finish(written, original.as_deref(), &ctx);
                 drop(original);
                 notes.extend(finished.notes);
+                let pivots_saved = finished.pivots;
                 for note in &notes {
                     log::warn!("saving {}: {note}", path.display());
                 }
@@ -704,6 +710,7 @@ impl Workbook {
                     return Err(e);
                 }
                 self.save_notes = notes;
+                self.pivots_saved(&pivots_saved);
                 xlsx = Some(if bytes.len() as u64 <= KEEP_IN_MEMORY {
                     XlsxSource::Bytes(bytes)
                 } else {
