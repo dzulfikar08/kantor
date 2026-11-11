@@ -930,13 +930,19 @@ FILES = [
 ]
 
 
-# Written by scripts/corpus/gen_features_xlsx.py (XlsxWriter), which checks them itself.
+# Written by the other generators, which check them themselves (fidelity.yml runs each --check):
+# gen_features_xlsx.py (13–18), gen_validation_xlsx.py (19), gen_charts_xlsx.py (20),
+# gen_pivot_xlsx.py (21).
 FEATURE_FILES = [
     "13_tables.xlsx",
     "14_charts_images.xlsx",
     "15_sparklines_cf_dv.xlsx",
     "16_print_protect_outline.xlsx",
     "17_cell_styles.xlsx",
+    "18_conditional_formatting.xlsx",
+    "19_data_validation.xlsx",
+    "20_charts.xlsx",
+    "21_pivot_tables.xlsx",
 ]
 
 
