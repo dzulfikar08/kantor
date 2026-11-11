@@ -129,6 +129,12 @@ pub(crate) enum Diff {
         old_value: Option<Box<Table>>,
         new_value: Option<Box<Table>>,
     },
+    // KANTOR PATCH (tables): a table column renamed, with the references.
+    KantorRenameTableColumn {
+        table: String,
+        old_name: String,
+        new_name: String,
+    },
     // KANTOR PATCH (tables): a sheet's `<autoFilter>` element.
     KantorSetSheetFilter {
         sheet: u32,

@@ -158,6 +158,13 @@ impl<'a> UserModel<'a> {
                 Diff::KantorRowEntries {
                     sheet, old_value, ..
                 } => self.model.kantor_set_row_entries(*sheet, old_value)?,
+                Diff::KantorRenameTableColumn {
+                    table,
+                    old_name,
+                    new_name,
+                } => self
+                    .model
+                    .kantor_rename_table_column(table, new_name, old_name)?,
                 Diff::KantorSetSheetFilter {
                     sheet, old_value, ..
                 } => {
@@ -759,6 +766,13 @@ impl<'a> UserModel<'a> {
                 Diff::KantorRowEntries {
                     sheet, new_value, ..
                 } => self.model.kantor_set_row_entries(*sheet, new_value)?,
+                Diff::KantorRenameTableColumn {
+                    table,
+                    old_name,
+                    new_name,
+                } => self
+                    .model
+                    .kantor_rename_table_column(table, old_name, new_name)?,
                 Diff::KantorSetSheetFilter {
                     sheet, new_value, ..
                 } => {

@@ -157,25 +157,26 @@ fn tables_follow_rows_and_renamed_headers() {
     assert!(t.contains(r#"<autoFilter ref="A1:D8""#), "{t}");
     assert!(t.contains(r#"name="Qty""#), "{t}");
     assert!(t.contains("[[#This Row],Qty]*[[#This Row],Price]"), "{t}");
-    // (IronCalc can't compute this-row references: #ERROR! values are noted.)
     assert!(
         !wb.save_notes().iter().any(|n| n.contains("table")),
         "{:?}",
         wb.save_notes()
     );
 
-    // A column inserted inside the table: Excel would have to rebuild it.
+    // The model renamed the column too: formulas use the new name.
+    assert_eq!(wb.input(s, 0, 1), "Qty");
+    // A column inserted inside the table joins it, named in its header.
     wb.insert_columns(s, 2, 1).unwrap();
+    assert_eq!(wb.display_value(s, 0, 2), "Column1");
     let p = save(&mut wb, dir.path(), "b.xlsx");
-    assert!(!p.contains_key("xl/tables/table1.xml"));
+    let t = &p["xl/tables/table1.xml"];
+    assert!(t.contains(r#"ref="A1:E9""#), "{t}");
+    assert!(t.contains(r#"<tableColumns count="5">"#), "{t}");
+    assert!(t.contains(r#"name="Column1""#) && t.contains(r#"name="Qty""#), "{t}");
+    assert!(t.contains("[[#This Row],Qty]*[[#This Row],Price]"), "{t}");
+    assert!(p.contains_key("xl/tables/table2.xml"));
     assert!(
-        p.contains_key("xl/tables/table2.xml"),
-        "the other sheet's table stays"
-    );
-    assert!(
-        wb.save_notes()
-            .iter()
-            .any(|n| n.contains("columns were inserted or deleted inside it")),
+        !wb.save_notes().iter().any(|n| n.contains("table")),
         "{:?}",
         wb.save_notes()
     );

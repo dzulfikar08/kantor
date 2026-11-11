@@ -2584,12 +2584,24 @@ fn fit_table(xml: &str, sheet: u32, ctx: &Context) -> Result<Option<Vec<u8>>, St
     let columns_changed = orig_ids != model_ids;
     if columns_changed {
         let mut text = format!("<tableColumns count=\"{}\">", now.columns.len());
+        let mut renamed: Vec<(String, String)> = Vec::new();
         for (id, cname) in &now.columns {
             match orig_cols
                 .iter()
                 .find(|c| c.attribute("id").and_then(|v| v.parse::<u32>().ok()) == Some(*id))
             {
-                Some(c) => text.push_str(&xml[c.range()]),
+                Some(c) => {
+                    let orig_name = c.attribute("name").unwrap_or_default();
+                    let mut one = xml[c.range()].to_owned();
+                    if orig_name != cname {
+                        one = one.replace(
+                            &format!("name=\"{}\"", esc_attr(orig_name)),
+                            &format!("name=\"{}\"", esc_attr(cname)),
+                        );
+                        renamed.push((orig_name.to_owned(), cname.clone()));
+                    }
+                    text.push_str(&one);
+                }
                 None => text.push_str(&format!(
                     "<tableColumn id=\"{id}\" name=\"{}\"/>",
                     esc_attr(cname)
@@ -2597,6 +2609,13 @@ fn fit_table(xml: &str, sheet: u32, ctx: &Context) -> Result<Option<Vec<u8>>, St
             }
         }
         text.push_str("</tableColumns>");
+        // References to renamed columns in the columns' formulas.
+        for (old, new) in &renamed {
+            text = text
+                .replace(&format!("[{old}]"), &format!("[{new}]"))
+                .replace(&format!("[@{old}]"), &format!("[@{new}]"))
+                .replace(&format!(",{old}]"), &format!(",{new}]"));
+        }
         edits.push((cols_node.range(), text));
     }
     // Header cells must match the column names.

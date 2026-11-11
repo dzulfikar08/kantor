@@ -745,3 +745,130 @@ impl UserModel<'_> {
             .collect()
     }
 }
+
+/// Call `f` on every structured reference in `node`.
+pub(crate) fn for_each_table_ref(node: &mut Node, f: &mut dyn FnMut(&mut TableRef)) {
+    match node {
+        Node::TableRefKind(t) => f(t),
+        Node::OpRangeKind { left, right }
+        | Node::OpConcatenateKind { left, right }
+        | Node::OpSumKind { left, right, .. }
+        | Node::OpProductKind { left, right, .. }
+        | Node::OpPowerKind { left, right }
+        | Node::CompareKind { left, right, .. } => {
+            for_each_table_ref(left, f);
+            for_each_table_ref(right, f);
+        }
+        Node::FunctionKind { args, .. } | Node::NamedFunctionKind { args, .. } => {
+            for a in args {
+                for_each_table_ref(a, f);
+            }
+        }
+        Node::LambdaDefKind { body, .. } => for_each_table_ref(body, f),
+        Node::LambdaCallKind { lambda, args } => {
+            for_each_table_ref(lambda, f);
+            for a in args {
+                for_each_table_ref(a, f);
+            }
+        }
+        Node::ImplicitIntersection { child, .. } | Node::SpillRangeOperator { child } => {
+            for_each_table_ref(child, f)
+        }
+        Node::UnaryKind { right, .. } => for_each_table_ref(right, f),
+        _ => {}
+    }
+}
+
+impl Model<'_> {
+    /// Rename column `old` of table `table` to `new` and every structured
+    /// reference to it, as Excel does when a header cell is edited.
+    pub(crate) fn kantor_rename_table_column(
+        &mut self,
+        table: &str,
+        old: &str,
+        new: &str,
+    ) -> Result<(), String> {
+        use crate::expressions::{lexer::LexerMode, parser::stringify::to_rc_format, types::CellReferenceRC};
+        let mut t = find_table(&self.workbook.tables, table)
+            .cloned()
+            .ok_or_else(|| format!("No table {table}"))?;
+        let lower = old.to_lowercase();
+        let column = t
+            .columns
+            .iter_mut()
+            .find(|c| c.name.to_lowercase() == lower)
+            .ok_or_else(|| format!("No column {old} in {table}"))?;
+        column.name = new.to_string();
+        let table_name = t.name.clone();
+        // Parsed with the old names, written with the new.
+        self.parser.set_lexer_mode(LexerMode::R1C1);
+        let mut changed = false;
+        for worksheet in self.workbook.worksheets.iter_mut() {
+            if !worksheet.shared_formulas.iter().any(|f| f.contains('[')) {
+                continue;
+            }
+            let context = CellReferenceRC {
+                sheet: worksheet.get_name(),
+                row: 1,
+                column: 1,
+            };
+            let mut formulas = Vec::with_capacity(worksheet.shared_formulas.len());
+            for formula in &worksheet.shared_formulas {
+                if !formula.contains('[') {
+                    formulas.push(formula.clone());
+                    continue;
+                }
+                let mut node = self.parser.parse(formula, &context);
+                let mut hit = false;
+                for_each_table_ref(&mut node, &mut |r| {
+                    if r.table != table_name {
+                        return;
+                    }
+                    if let Some((a, b)) = &mut r.columns {
+                        for c in [a, b] {
+                            if c.to_lowercase() == lower {
+                                *c = new.to_string();
+                                hit = true;
+                            }
+                        }
+                    }
+                });
+                if hit {
+                    changed = true;
+                    formulas.push(to_rc_format(&node));
+                } else {
+                    formulas.push(formula.clone());
+                }
+            }
+            worksheet.shared_formulas = formulas;
+        }
+        self.parser.set_lexer_mode(LexerMode::A1);
+        self.kantor_put_table(&table_name, Some(t));
+        if changed {
+            self.reset_parsed_structures();
+        }
+        Ok(())
+    }
+}
+
+impl UserModel<'_> {
+    /// Rename a table's column (and the references to it) as one undo step.
+    pub fn kantor_rename_table_column(
+        &mut self,
+        table: &str,
+        old: &str,
+        new: &str,
+    ) -> Result<(), String> {
+        if new.trim().is_empty() {
+            return Err("A column needs a name".to_string());
+        }
+        self.model.kantor_rename_table_column(table, old, new)?;
+        self.push_diff_list(vec![Diff::KantorRenameTableColumn {
+            table: table.to_string(),
+            old_name: old.to_string(),
+            new_name: new.to_string(),
+        }]);
+        self.evaluate_if_not_paused();
+        Ok(())
+    }
+}

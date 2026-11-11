@@ -517,12 +517,35 @@ impl Workbook {
         self.model
             .insert_columns(sheet, col as i32 + 1, count as i32)
             .map_err(|e| anyhow!("{e}"))?;
+        // Columns inserted inside a table got names (`Column1`...): their
+        // header cells show them, as in Excel.
+        let mut steps = 1;
+        for t in self.tables(sheet) {
+            let Some(header) = t.header_row() else {
+                continue;
+            };
+            for c in col..col + count {
+                if c > t.area.left && c <= t.area.right && !self.is_filled(sheet, header, c) {
+                    let name = t.columns[(c - t.area.left) as usize].clone();
+                    if self
+                        .model
+                        .set_user_input(sheet, header as i32 + 1, c as i32 + 1, &name)
+                        .is_ok()
+                    {
+                        steps += 1;
+                    }
+                }
+            }
+        }
         let sheet_id = self.sheet_id(sheet);
-        self.history.moved(crate::shift::Op::InsertColumns {
-            sheet: sheet_id,
-            at: col,
-            count,
-        });
+        self.history.moved_steps(
+            crate::shift::Op::InsertColumns {
+                sheet: sheet_id,
+                at: col,
+                count,
+            },
+            steps,
+        );
         Ok(())
     }
 

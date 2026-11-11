@@ -17,6 +17,9 @@ mod numfmt;
 mod preserve;
 mod rows;
 mod shift;
+mod sort;
+mod table;
+mod filter;
 
 pub use import::SourceFormat;
 pub use preserve::package_problems;
@@ -51,6 +54,12 @@ pub use format::{
 pub use grid::{Fill, FillDirection, RangeStats, Step};
 pub use look::CellLook;
 pub use numfmt::Display;
+pub use filter::{
+    ColumnFilter, Condition, DateGroup, FilterInfo, FilterKind, FilterOp, FilterScope, FilterValue,
+    checked_values,
+};
+pub use sort::SortKey;
+pub use table::{TableCellLook, TableInfo};
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 
 const LOCALE: &str = "en";
@@ -80,6 +89,8 @@ pub struct Workbook {
     cache: RefCell<Cache>,
     /// Conditional formatting evaluated for the current state.
     cond: cond_format::CondState,
+    /// The workbook's own table styles (`<tableStyles>` in `styles.xml`).
+    table_styles: table::CustomStyles,
 }
 
 /// See [`Workbook::cached`].
@@ -238,7 +249,12 @@ impl Revisions {
 
     /// An edit that inserted or deleted rows or columns.
     fn moved(&mut self, op: shift::Op) {
-        self.edited();
+        self.moved_steps(op, 1);
+    }
+
+    /// [`Self::moved`] spanning `steps` IronCalc steps.
+    fn moved_steps(&mut self, op: shift::Op, steps: u32) {
+        self.edited_steps(steps);
         let layout = self.layout().with(op);
         self.layouts.set(self.current, layout);
     }
@@ -289,6 +305,7 @@ impl Workbook {
         lazy_conditional_formatting();
         let model = UserModel::new_empty("Untitled", LOCALE, TIMEZONE, LANGUAGE)
             .map_err(|e| anyhow!("creating workbook: {e}"))?;
+        let table_styles = table::CustomStyles::default();
         Ok(Self {
             model,
             path: None,
@@ -298,6 +315,7 @@ impl Workbook {
             calc: Calc::new(0),
             cache: RefCell::default(),
             cond: Default::default(),
+            table_styles,
         })
     }
 
@@ -352,6 +370,10 @@ impl Workbook {
             // Excel to recalculate again.
             calc.fresh = u64::MAX;
         }
+        let table_styles = match format {
+            SourceFormat::Xlsx => table::read_custom_styles(path, &model.workbook.theme),
+            _ => table::CustomStyles::default(),
+        };
         let mut model = UserModel::from_model(model);
         if calc.mode == CalcMode::Manual {
             model.pause_evaluation();
@@ -371,6 +393,7 @@ impl Workbook {
             save_notes: Vec::new(),
             cache: RefCell::default(),
             cond: Default::default(),
+            table_styles,
         })
     }
 
@@ -749,6 +772,18 @@ impl Workbook {
     pub fn set_input(&mut self, sheet: u32, row: u32, col: u32, value: &str) -> Result<()> {
         if row >= MAX_ROWS || col >= MAX_COLS {
             bail!("cell out of range");
+        }
+        // A value typed just under a table extends it (Excel's AutoCorrect
+        // "include new rows"), with its calculated columns.
+        if let Some(t) = self.table_growth(sheet, row, col, value) {
+            return self.grow_table(sheet, t, row, col, value);
+        }
+        // A table's header cell names its column: renaming it renames the
+        // column and the references to it.
+        if let Some(t) = self.table_at(sheet, row, col)
+            && t.header_row() == Some(row)
+        {
+            return self.edit_table_header(sheet, &t, row, col, value);
         }
         self.model
             .set_user_input(sheet, row as i32 + 1, col as i32 + 1, value)
