@@ -17,6 +17,7 @@ mod numfmt;
 mod preserve;
 mod rows;
 mod shift;
+mod validation;
 
 pub use import::SourceFormat;
 pub use preserve::package_problems;
@@ -52,6 +53,9 @@ pub use grid::{Fill, FillDirection, RangeStats, Step};
 pub use look::CellLook;
 pub use numfmt::Display;
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
+pub use validation::{
+    ErrorStyle, ListItem, Message, Validation, ValidationOperator, ValidationType,
+};
 
 const LOCALE: &str = "en";
 const TIMEZONE: &str = "UTC";
@@ -80,6 +84,8 @@ pub struct Workbook {
     cache: RefCell<Cache>,
     /// Conditional formatting evaluated for the current state.
     cond: cond_format::CondState,
+    /// Data validation of the opened file.
+    validation: validation::Validations,
 }
 
 /// See [`Workbook::cached`].
@@ -298,6 +304,7 @@ impl Workbook {
             calc: Calc::new(0),
             cache: RefCell::default(),
             cond: Default::default(),
+            validation: Default::default(),
         })
     }
 
@@ -356,6 +363,10 @@ impl Workbook {
         if calc.mode == CalcMode::Manual {
             model.pause_evaluation();
         }
+        let validation = match xlsx.as_ref().map(XlsxSource::bytes) {
+            Some(Ok(bytes)) => validation::Validations::read(&bytes),
+            _ => Default::default(),
+        };
         Ok(Self {
             calc,
             model,
@@ -371,6 +382,7 @@ impl Workbook {
             save_notes: Vec::new(),
             cache: RefCell::default(),
             cond: Default::default(),
+            validation,
         })
     }
 

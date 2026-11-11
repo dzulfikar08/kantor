@@ -212,7 +212,7 @@ impl Aggregate {
 
 /// A cell's stored value.
 #[derive(Debug, Clone, PartialEq)]
-enum Value {
+pub(crate) enum Value {
     Empty,
     Number(f64),
     Text(String),
@@ -220,7 +220,7 @@ enum Value {
     Error,
 }
 
-fn cell_value(model: &Model, sheet: u32, row: i32, col: i32) -> Value {
+pub(crate) fn cell_value(model: &Model, sheet: u32, row: i32, col: i32) -> Value {
     let Ok(ws) = model.workbook.worksheet(sheet) else {
         return Value::Empty;
     };
@@ -251,7 +251,7 @@ impl From<CfValue> for Value {
 }
 
 /// `A1:B3 D4`, whole columns (`A:A`) and rows (`3:5`) included.
-fn parse_sqref(sqref: &str) -> Vec<CellRange> {
+pub(crate) fn parse_sqref(sqref: &str) -> Vec<CellRange> {
     sqref
         .split_whitespace()
         .filter_map(|part| {
@@ -276,7 +276,7 @@ fn rgb(model: &Model, c: &ironcalc_base::types::Color) -> Option<Rgb> {
 
 /// Excel's comparison of two values: numbers < text < booleans, text
 /// without regard to case. `None` when an error is involved.
-fn compare(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
+pub(crate) fn compare(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
     use std::cmp::Ordering;
     let rank = |v: &Value| match v {
         Value::Number(_) | Value::Empty => 0,
@@ -320,7 +320,7 @@ fn as_text(v: &Value) -> Option<String> {
     }
 }
 
-fn general_number(n: f64) -> String {
+pub(crate) fn general_number(n: f64) -> String {
     if n.fract() == 0.0 && n.abs() < 1e15 {
         format!("{}", n as i64)
     } else {
@@ -329,7 +329,7 @@ fn general_number(n: f64) -> String {
     }
 }
 
-fn truthy(v: &Value) -> bool {
+pub(crate) fn truthy(v: &Value) -> bool {
     match v {
         Value::Number(n) => *n != 0.0,
         Value::Bool(b) => *b,
