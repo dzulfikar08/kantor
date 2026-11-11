@@ -1,0 +1,26 @@
+[package]
+name = "sheets_pdf"
+description = "Kantor Sheets → PDF with krilla: workbooks printed the way Excel prints them (no GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+# Local date and time for &D / &T in headers and footers.
+chrono = { workspace = true, features = ["clock"] }
+# Glyph runs, font embedding (subset + ToUnicode).
+docs_pdf.workspace = true
+docs_layout.workspace = true
+kantor_core.workspace = true
+log.workspace = true
+sheets_engine.workspace = true
+krilla = { version = "0.8", default-features = false, features = ["raster-images"] }
+
+[dev-dependencies]
+lopdf = { version = "0.47", default-features = false }
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -181,7 +181,7 @@ fn border_edge(edge: Edge, line: &BorderLine, color: Hsla) -> Div {
                 d.border_t_1().border_b_1()
             }
         }
-        LineStyle::Dotted | LineStyle::MediumDashed => {
+        style if style.is_broken() => {
             let d = d.border_dashed().border_color(color);
             match edge {
                 Edge::Top => d.border_t(w),

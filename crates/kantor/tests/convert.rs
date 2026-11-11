@@ -103,10 +103,10 @@ fn spreadsheets_convert_between_csv_tsv_and_xlsx() {
 #[test]
 fn usage_errors_exit_2_with_the_supported_list() {
     let dir = tempfile::tempdir().unwrap();
-    let out = kantor(dir.path(), &["book.xlsx", "book.pdf"]);
+    let out = kantor(dir.path(), &["book.pdf", "book.png"]);
     assert_eq!(out.status.code(), Some(2));
     let err = stderr(&out);
-    assert!(err.contains(".xlsx to .pdf is not supported yet"), "{err}");
+    assert!(err.contains(".pdf to .png is not supported yet"), "{err}");
     assert!(err.contains("Supported conversions"), "{err}");
 
     let out = kantor(dir.path(), &["--help"]);
@@ -118,6 +118,44 @@ fn usage_errors_exit_2_with_the_supported_list() {
         .output()
         .unwrap();
     assert!(String::from_utf8_lossy(&top.stdout).contains("kantor convert"));
+}
+
+#[test]
+fn xlsx_to_pdf_as_excel_prints() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/corpus/print/print.xlsx"
+        ),
+        d.join("print.xlsx"),
+    )
+    .unwrap();
+    // Every visible sheet (the hidden one is left out).
+    let out = kantor(d, &["print.xlsx", "all.pdf"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("pages"));
+    let pdf = std::fs::read(d.join("all.pdf")).unwrap();
+    assert!(pdf.starts_with(b"%PDF-"));
+    // One sheet, fitted on one landscape F4 page.
+    let out = kantor(
+        d,
+        &[
+            "--sheet",
+            "Report",
+            "--fit-page",
+            "--landscape",
+            "--paper",
+            "f4",
+            "print.xlsx",
+            "one.pdf",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("(1 page,"));
+    let out = kantor(d, &["--sheet", "Nope", "print.xlsx", "x.pdf"]);
+    assert_eq!(out.status.code(), Some(1));
 }
 
 #[test]

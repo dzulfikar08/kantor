@@ -3,6 +3,7 @@
 //! ```text
 //! kantor convert report.docx report.pdf
 //! kantor convert deck.pptx deck.pdf
+//! kantor convert --fit-width --landscape book.xlsx book.pdf
 //! kantor convert budget.ods budget.xlsx
 //! kantor convert --sheet Summary book.xlsx summary.csv
 //! kantor convert -o out/ --to pdf a.docx b.docx
@@ -24,12 +25,23 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \x20 .pptx                                      -> .pdf (one page per slide,\n\
     \x20                                               hidden slides left out)\n\
     \x20 .xlsx .xlsm .xls .xlsb .ods .csv .tsv      -> .xlsx .csv .tsv\n\
+    \x20 .xlsx .xlsm .xls .xlsb .ods .csv .tsv      -> .pdf (printed as Excel prints:\n\
+    \x20                                               every visible sheet, or --sheet)\n\
     \n\
     Options:\n\
     \x20 -o, --output-dir DIR   write each INPUT to DIR/NAME.FORMAT\n\
     \x20 -t, --to FORMAT        output format with -o: pdf, xlsx, csv or tsv\n\
-    \x20     --sheet N|NAME     sheet to write to .csv/.tsv (1-based number or\n\
-    \x20                        name; default: the workbook's active sheet)\n\
+    \x20     --sheet N|NAME     sheet to write to .csv/.tsv or .pdf (1-based number\n\
+    \x20                        or name; default: the active sheet for .csv/.tsv,\n\
+    \x20                        every visible sheet for .pdf)\n\
+    \x20 Spreadsheet to PDF (each overrides the sheets' own page setup):\n\
+    \x20     --fit-width        fit each sheet to one page wide\n\
+    \x20     --fit-page         fit each sheet on one page\n\
+    \x20     --scale PERCENT    print at this scale (10-400)\n\
+    \x20     --landscape        landscape orientation\n\
+    \x20     --portrait         portrait orientation\n\
+    \x20     --paper SIZE       a4, letter, legal, f4 (folio), a3, a5, or WxHmm / WxHin\n\
+    \x20     --no-print-area    print each sheet's used range, not its print area\n\
     \x20 -f, --force            overwrite existing output files\n\
     \x20 -h, --help             show this help\n\
     \n\
@@ -42,6 +54,24 @@ struct Options {
     jobs: Vec<(PathBuf, PathBuf)>,
     sheet: Option<String>,
     force: bool,
+    /// Spreadsheet → PDF overrides.
+    print: Print,
+}
+
+/// Page setup given on the command line for spreadsheet → PDF.
+#[derive(Debug, Default, PartialEq)]
+struct Print {
+    fit: Option<(u32, u32)>,
+    scale: Option<u32>,
+    landscape: Option<bool>,
+    paper: Option<sheets_engine::Paper>,
+    no_print_area: bool,
+}
+
+impl Print {
+    fn given(&self) -> bool {
+        *self != Print::default()
+    }
 }
 
 /// A usage error (exit status 2).
@@ -69,6 +99,7 @@ const SHEET_OUTPUTS: &[&str] = &["xlsx", "csv", "tsv"];
 enum Kind {
     DocxToPdf,
     PptxToPdf,
+    SheetsToPdf,
     Sheets,
 }
 
@@ -91,8 +122,10 @@ fn kind(input: &Path, output: &Path) -> Result<Kind, Usage> {
     if SHEET_INPUTS.contains(&i.as_str()) && SHEET_OUTPUTS.contains(&o.as_str()) {
         return Ok(Kind::Sheets);
     }
-    let later = SHEET_INPUTS.contains(&i.as_str()) && o == "pdf"
-        || i == "pdf" && matches!(o.as_str(), "png" | "jpg" | "jpeg");
+    if SHEET_INPUTS.contains(&i.as_str()) && o == "pdf" {
+        return Ok(Kind::SheetsToPdf);
+    }
+    let later = i == "pdf" && matches!(o.as_str(), "png" | "jpg" | "jpeg");
     let why = if later {
         "is not supported yet"
     } else {
@@ -138,6 +171,29 @@ fn parse(args: &[OsString]) -> Result<Option<Options>, Usage> {
             "-o" | "--output-dir" => dir = Some(PathBuf::from(value(flag)?)),
             "-t" | "--to" => to = Some(value(flag)?.trim_start_matches('.').to_lowercase()),
             "--sheet" => opts.sheet = Some(value(flag)?),
+            "--fit-width" => opts.print.fit = Some((1, 0)),
+            "--fit-page" => opts.print.fit = Some((1, 1)),
+            "--landscape" => opts.print.landscape = Some(true),
+            "--portrait" => opts.print.landscape = Some(false),
+            "--no-print-area" => opts.print.no_print_area = true,
+            "--scale" => {
+                let v = value(flag)?;
+                match v.trim_end_matches('%').parse::<u32>() {
+                    Ok(n) if (10..=400).contains(&n) => opts.print.scale = Some(n),
+                    _ => return usage(format!("--scale {v}: give a percentage from 10 to 400")),
+                }
+            }
+            "--paper" => {
+                let v = value(flag)?;
+                match sheets_engine::Paper::from_name(&v) {
+                    Some(p) => opts.print.paper = Some(p),
+                    None => {
+                        return usage(format!(
+                            "--paper {v}: use a4, letter, legal, f4, a3, a5, or WxHmm / WxHin"
+                        ));
+                    }
+                }
+            }
             "--" => only_files = true,
             _ => return usage(format!("unknown option {s}")),
         }
@@ -172,13 +228,25 @@ fn parse(args: &[OsString]) -> Result<Option<Options>, Usage> {
     for (input, output) in &opts.jobs {
         kind(input, output)?;
     }
+    let to_pdf = |opts: &Options| {
+        opts.jobs
+            .iter()
+            .any(|(i, o)| kind(i, o).ok() == Some(Kind::SheetsToPdf))
+    };
     if opts.sheet.is_some()
+        && !to_pdf(&opts)
         && !opts
             .jobs
             .iter()
             .any(|(_, o)| matches!(ext(o).as_str(), "csv" | "tsv"))
     {
-        return usage("--sheet only applies to .csv/.tsv output");
+        return usage("--sheet only applies to .csv/.tsv output or spreadsheets to .pdf");
+    }
+    if opts.print.given() && !to_pdf(&opts) {
+        return usage("page setup options only apply to spreadsheets converted to .pdf");
+    }
+    if opts.print.fit.is_some() && opts.print.scale.is_some() {
+        return usage("--scale and --fit-width / --fit-page don't go together");
     }
     Ok(Some(opts))
 }
@@ -240,6 +308,7 @@ fn convert(
         Kind::DocxToPdf => docx_to_pdf(input, output, engine),
         Kind::PptxToPdf => pptx_to_pdf(input, output, engine),
         Kind::Sheets => sheets(input, output, opts.sheet.as_deref()),
+        Kind::SheetsToPdf => sheets_to_pdf(input, output, opts),
     }
 }
 
@@ -314,27 +383,7 @@ fn sheets(input: &Path, output: &Path, sheet: Option<&str>) -> Result<String> {
     }
     let names = book.sheet_names();
     if let Some(want) = sheet {
-        let index = names
-            .iter()
-            .position(|n| n == want)
-            .or_else(|| {
-                want.parse::<usize>()
-                    .ok()
-                    .filter(|n| (1..=names.len()).contains(n))
-                    .map(|n| n - 1)
-            })
-            .ok_or_else(|| {
-                anyhow!(
-                    "no sheet {want:?}; the sheets are {}",
-                    names
-                        .iter()
-                        .enumerate()
-                        .map(|(i, n)| format!("{} {n:?}", i + 1))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            })?;
-        book.set_active_sheet(index as u32)?;
+        book.set_active_sheet(sheet_index(&names, want)?)?;
     }
     let delimited = matches!(ext(output).as_str(), "csv" | "tsv");
     book.save_as(output)?;
@@ -360,6 +409,62 @@ fn sheets(input: &Path, output: &Path, sheet: Option<&str>) -> Result<String> {
             size(written)
         ))
     }
+}
+
+/// A sheet by name or 1-based number.
+fn sheet_index(names: &[String], want: &str) -> Result<u32> {
+    names
+        .iter()
+        .position(|n| n == want)
+        .or_else(|| {
+            want.parse::<usize>()
+                .ok()
+                .filter(|n| (1..=names.len()).contains(n))
+                .map(|n| n - 1)
+        })
+        .map(|i| i as u32)
+        .ok_or_else(|| {
+            anyhow!(
+                "no sheet {want:?}; the sheets are {}",
+                names
+                    .iter()
+                    .enumerate()
+                    .map(|(i, n)| format!("{} {n:?}", i + 1))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+}
+
+fn sheets_to_pdf(input: &Path, output: &Path, opts: &Options) -> Result<String> {
+    let mut book = sheets_engine::Workbook::open(input).context("can't open the workbook")?;
+    for note in book.import_notes() {
+        eprintln!("kantor convert: note: {}: {note}", input.display());
+    }
+    let names = book.sheet_names();
+    let sheets = match opts.sheet.as_deref() {
+        Some(want) => Some(vec![sheet_index(&names, want)?]),
+        None => None,
+    };
+    let p = &opts.print;
+    let print = sheets_pdf::Options {
+        sheets,
+        paper: p.paper,
+        landscape: p.landscape,
+        fit: p.fit,
+        scale: p.scale,
+        ignore_print_area: p.no_print_area,
+        ..sheets_pdf::Options::default()
+    }
+    .now()
+    .with_path(input.canonicalize().ok().as_deref());
+    let (bytes, pages) = sheets_pdf::export(&mut book, &print)?;
+    docs_pdf::write_file(output, &bytes)?;
+    Ok(format!(
+        "{pages} page{}, {}",
+        if pages == 1 { "" } else { "s" },
+        size(bytes.len())
+    ))
 }
 
 fn size(bytes: usize) -> String {
@@ -412,6 +517,21 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(o.sheet.as_deref(), Some("2"));
+        let o = parse(&args(&[
+            "--sheet",
+            "Sales",
+            "--fit-width",
+            "--landscape",
+            "--paper",
+            "F4",
+            "a.xlsx",
+            "b.pdf",
+        ]))
+        .unwrap()
+        .unwrap();
+        assert_eq!(o.print.fit, Some((1, 0)));
+        assert_eq!(o.print.landscape, Some(true));
+        assert_eq!(o.print.paper, Some(sheets_engine::Paper::FOLIO));
     }
 
     #[std::prelude::v1::test]
@@ -422,12 +542,19 @@ mod tests {
         assert!(err(&["--bogus", "a", "b"]).contains("unknown option --bogus"));
         assert!(err(&["--sheet"]).contains("needs a value"));
         assert!(err(&["--sheet", "1", "a.docx", "b.pdf"]).contains("only applies to .csv"));
+        assert!(err(&["--fit-width", "a.xlsx", "b.csv"]).contains("only apply to spreadsheets"));
+        assert!(err(&["--paper", "b9", "a.xlsx", "b.pdf"]).contains("--paper b9"));
+        assert!(err(&["--scale", "5", "a.xlsx", "b.pdf"]).contains("10 to 400"));
+        assert!(err(&["--scale", "50", "--fit-page", "a.xlsx", "b.pdf"]).contains("don't go"));
         assert!(err(&["-o", "d", "-t", "odt", "a.docx"]).contains("pdf, xlsx, csv or tsv"));
     }
 
     #[std::prelude::v1::test]
     fn unsupported_pairs_are_named() {
-        assert!(err(&["a.xlsx", "a.pdf"]).contains(".xlsx to .pdf is not supported yet"));
+        assert_eq!(
+            kind(Path::new("a.xlsx"), Path::new("a.pdf")).unwrap(),
+            Kind::SheetsToPdf
+        );
         assert_eq!(
             kind(Path::new("deck.PPTX"), Path::new("deck.pdf")).unwrap(),
             Kind::PptxToPdf

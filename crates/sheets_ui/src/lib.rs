@@ -53,6 +53,7 @@ mod grid_ops;
 mod look;
 mod point;
 mod popup_list;
+mod print;
 mod row_heights;
 mod row_layout;
 // Upstream code, kept close to GPUI Kit's so it can be compared.

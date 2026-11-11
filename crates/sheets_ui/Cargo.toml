@@ -14,6 +14,7 @@ kantor_core.workspace = true
 kantor_mem.workspace = true
 kantor_ui.workspace = true
 sheets_engine.workspace = true
+sheets_pdf.workspace = true
 
 [lints]
 workspace = true

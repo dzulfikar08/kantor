@@ -413,6 +413,32 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
                     .dropdown_menu(move |menu, _, _| number_items(menu, current, &view)),
             );
     }
+    // Export as PDF and Print.
+    let print_view = cx.entity().downgrade();
+    row = row.child(separator(cx)).child(
+        Button::new("file-print")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::Printer)
+            .dropdown_caret(true)
+            .tooltip("Print and export")
+            .dropdown_menu(move |menu, _, _| {
+                let export = print_view.clone();
+                let print = print_view.clone();
+                menu.item(
+                    PopupMenuItem::new("Export as PDF…")
+                        .icon(Lucide::FileDown)
+                        .on_click(move |_, window, cx| {
+                            let _ = export.update(cx, |v, cx| v.export_pdf_doc(window, cx));
+                        }),
+                )
+                .item(PopupMenuItem::new("Print…").icon(Lucide::Printer).on_click(
+                    move |_, window, cx| {
+                        let _ = print.update(cx, |v, cx| v.print_doc(window, cx));
+                    },
+                ))
+            }),
+    );
     if kantor_ui::ai::ai_enabled(cx) {
         row = row.child(div().flex_1()).child(kantor_ui::ai::ai_button(
             "ai-formula",

@@ -60,6 +60,8 @@ icon_assets!(
         TextWrap,
         TableCellsMerge,
         Funnel,
+        Printer,
+        FileDown,
         // AI
         Sparkles,
         X

@@ -193,6 +193,30 @@ impl Workbook {
         })
     }
 
+    /// The workbook's default font family (Excel's "Normal" style), e.g.
+    /// `Calibri`; empty when the file names none.
+    pub fn default_font_name(&self) -> String {
+        self.cached(|cache| {
+            cache
+                .look
+                .font
+                .get_or_insert_with(|| font_defaults(self.model.get_model()))
+                .name
+                .clone()
+        })
+    }
+
+    /// The default font's colour (`None`: automatic).
+    pub fn default_font_color(&self) -> Option<crate::Rgb> {
+        self.cached(|cache| {
+            cache
+                .look
+                .font
+                .get_or_insert_with(|| font_defaults(self.model.get_model()))
+                .color
+        })
+    }
+
     fn merge_index(&self, sheet: u32) -> Arc<MergeIndex> {
         self.cached(|cache| {
             cache

@@ -81,7 +81,7 @@ export const en = {
   keepText:
     "If a file holds something Kantor doesn't understand yet, such as a Word header or an Excel comment, Kantor leaves it as it was and writes it back when you save. When it can't do that safely, it saves to a new file or tells you what will be left out.",
   more: [
-    ["Export to PDF", "Docs and Slides save a PDF that looks like what you see on screen."],
+    ["Export to PDF", "Docs and Slides save a PDF that looks like what you see on screen. Sheets prints pages the way Excel does: paper size including F4, fit to width, print titles, headers and footers."],
     ["Offline, no account", "Your files stay on your computer. There is nothing to sign up for."],
     [
       "Updates",
@@ -145,7 +145,7 @@ export const en = {
   limitsIntro:
     "Kantor is early software and hasn't been tried on a large set of real-world files yet. Keep a copy of anything important, and expect these gaps:",
   limits: [
-    "No printing yet. Export to PDF and print the PDF instead.",
+    "Docs and Slides can't print yet: export to PDF and print the PDF. Sheets prints through your PDF viewer, without charts or pictures yet.",
     "No spell check yet.",
     "Word: headers, footers, floating pictures, shapes and equations aren't shown properly yet. Kantor keeps them and saves them unchanged.",
     "Word: table rows don't break across pages, and tab stops show as a single space.",
@@ -244,7 +244,7 @@ export const id = {
   keepText:
     "Kalau file berisi sesuatu yang belum dipahami Kantor, misalnya header di Word atau komentar di Excel, Kantor membiarkannya apa adanya dan menuliskannya kembali saat Anda menyimpan. Kalau itu tidak bisa dilakukan dengan aman, Kantor menyimpan ke file baru atau memberi tahu bagian mana yang tidak ikut tersimpan.",
   more: [
-    ["Ekspor ke PDF", "Docs dan Slides menyimpan PDF yang sama dengan tampilan di layar."],
+    ["Ekspor ke PDF", "Docs dan Slides menyimpan PDF yang sama dengan tampilan di layar. Sheets mencetak halaman seperti Excel: ukuran kertas termasuk F4, muat selebar halaman, judul cetak, header, dan footer."],
     ["Tanpa internet, tanpa akun", "File Anda tetap di komputer Anda. Tidak perlu mendaftar apa pun."],
     [
       "Pembaruan",
@@ -308,7 +308,7 @@ export const id = {
   limitsIntro:
     "Kantor masih baru dan belum dicoba dengan banyak file dari dunia nyata. Simpan salinan file penting, dan perhatikan kekurangan berikut:",
   limits: [
-    "Belum bisa mencetak. Ekspor ke PDF dulu, lalu cetak PDF-nya.",
+    "Docs dan Slides belum bisa mencetak: ekspor ke PDF dulu, lalu cetak PDF-nya. Sheets mencetak lewat penampil PDF, tapi grafik dan gambar belum ikut.",
     "Belum ada pemeriksa ejaan.",
     "Word: header, footer, gambar mengambang, bentuk, dan persamaan belum tampil dengan benar. Kantor menyimpannya tanpa diubah.",
     "Word: baris tabel tidak terpotong ke halaman berikutnya, dan tab tampil sebagai satu spasi.",

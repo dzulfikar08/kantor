@@ -12,15 +12,17 @@ mod batch;
 mod cond_format;
 mod csv;
 mod filter;
+mod icons;
 mod import;
 mod look;
 mod numfmt;
 mod preserve;
+mod print;
 mod rows;
 mod shift;
-mod validation;
 mod sort;
 mod table;
+mod validation;
 
 pub use import::SourceFormat;
 pub use preserve::package_problems;
@@ -53,18 +55,20 @@ pub use filter::{
     FilterValue, checked_values, date_serial, ymd,
 };
 pub use format::{
-    BorderLine, BorderPreset, Borders, CellStyle, HAlign, LineStyle, NumberFormat, Rgb,
-    StyleChange, VAlign, ValueKind,
+    AlignDetail, BorderLine, BorderPreset, Borders, CellStyle, HAlign, LineStyle, NumberFormat,
+    Rgb, StyleChange, VAlign, ValueKind,
 };
 pub use grid::{Fill, FillDirection, RangeStats, Step};
+pub use icons::IconPath;
 pub use look::CellLook;
 pub use numfmt::Display;
+pub use print::{HeaderFooter, Margins, PageSetup, Paper, PrintColumns, PrintOptions, SheetPrint};
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
+pub use sort::SortKey;
+pub use table::{TableCellLook, TableInfo};
 pub use validation::{
     ErrorStyle, ListItem, Message, Validation, ValidationOperator, ValidationType,
 };
-pub use sort::SortKey;
-pub use table::{TableCellLook, TableInfo};
 
 const LOCALE: &str = "en";
 const TIMEZONE: &str = "UTC";
@@ -97,6 +101,8 @@ pub struct Workbook {
     validation: validation::Validations,
     /// The workbook's own table styles (`<tableStyles>` in `styles.xml`).
     table_styles: table::CustomStyles,
+    /// Print settings of the opened file.
+    prints: print::Prints,
 }
 
 /// See [`Workbook::cached`].
@@ -325,6 +331,7 @@ impl Workbook {
             cond: Default::default(),
             validation: Default::default(),
             table_styles,
+            prints: Default::default(),
         })
     }
 
@@ -387,8 +394,11 @@ impl Workbook {
         if calc.mode == CalcMode::Manual {
             model.pause_evaluation();
         }
-        let validation = match xlsx.as_ref().map(XlsxSource::bytes) {
-            Some(Ok(bytes)) => validation::Validations::read(&bytes),
+        let (validation, prints) = match xlsx.as_ref().map(XlsxSource::bytes) {
+            Some(Ok(bytes)) => (
+                validation::Validations::read(&bytes),
+                print::Prints::read(&bytes),
+            ),
             _ => Default::default(),
         };
         Ok(Self {
@@ -408,6 +418,7 @@ impl Workbook {
             cond: Default::default(),
             validation,
             table_styles,
+            prints,
         })
     }
 
