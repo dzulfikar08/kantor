@@ -674,3 +674,68 @@ fn getpivotdata_reads_the_pivots() {
     let wb = Workbook::open(dir.path().join("a.xlsx")).unwrap();
     assert_eq!(values(&wb), expected);
 }
+
+#[test]
+fn slicers_survive_a_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let orig = parts(&fixture());
+    let check = |p: &BTreeMap<String, String>| {
+        for part in [
+            "xl/slicerCaches/slicerCache1.xml",
+            "xl/slicers/slicer1.xml",
+            "xl/drawings/drawing1.xml",
+        ] {
+            assert_eq!(p.get(part), orig.get(part), "{part}");
+            assert!(
+                p["[Content_Types].xml"].contains(&format!("PartName=\"/{part}\"")),
+                "{part}"
+            );
+        }
+        // The workbook lists the slicer cache, through a relationship that
+        // leads to it.
+        let wb = Document::parse(&p["xl/workbook.xml"]).unwrap();
+        let cache = wb
+            .descendants()
+            .find(|n| n.tag_name().name() == "slicerCache")
+            .expect("workbook slicerCaches");
+        let rid = cache.attribute((REL, "id")).unwrap();
+        assert_eq!(
+            targets(p, "xl/workbook.xml")[rid],
+            (
+                "slicerCache".to_owned(),
+                "xl/slicerCaches/slicerCache1.xml".to_owned()
+            )
+        );
+        assert!(
+            p["xl/workbook.xml"]
+                .contains(r#"<definedName name="Slicer_Region">#N/A</definedName>"#)
+        );
+        // The sheet lists the slicer and keeps its drawing.
+        let sheet = Document::parse(&p["xl/worksheets/sheet2.xml"]).unwrap();
+        let slicer = sheet
+            .descendants()
+            .find(|n| n.tag_name().name() == "slicer")
+            .expect("sheet slicerList");
+        let rels = targets(p, "xl/worksheets/sheet2.xml");
+        assert_eq!(
+            rels[slicer.attribute((REL, "id")).unwrap()].1,
+            "xl/slicers/slicer1.xml"
+        );
+        assert!(
+            rels.values()
+                .any(|(k, t)| k == "drawing" && t == "xl/drawings/drawing1.xml")
+        );
+        // The cache keeps the id the slicer cache points at.
+        assert!(p["xl/pivotCache/pivotCacheDefinition1.xml"].contains(r#"pivotCacheId="1""#));
+    };
+    let mut wb = Workbook::open(fixture()).unwrap();
+    let p = save(&mut wb, dir.path(), "a.xlsx");
+    assert_eq!(wb.save_notes(), &[] as &[String]);
+    check(&p);
+    let mut wb = Workbook::open(dir.path().join("a.xlsx")).unwrap();
+    let s = sheet_index(&wb, "Pivot");
+    wb.refresh_pivot(s, 3, 0).unwrap();
+    let p = save(&mut wb, dir.path(), "b.xlsx");
+    assert_eq!(wb.save_notes(), &[] as &[String]);
+    check(&p);
+}

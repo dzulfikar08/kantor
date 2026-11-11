@@ -20,7 +20,9 @@
 //!    * sheet level: relationships the sheet markup doesn't point to (comments,
 //!      threaded comments, pivot tables with their caches and records; the
 //!      caches a kept pivot table uses are listed again in the workbook's
-//!      `<pivotCaches>`, see [`carry_pivot_caches`]), and a fixed set of sheet elements IronCalc doesn't
+//!      `<pivotCaches>`, see [`carry_pivot_caches`]; slicers and timelines:
+//!      their sheet and workbook extensions with the parts they link to, see
+//!      [`LINKED_EXTENSIONS`] and [`carry_workbook_extensions`]), and a fixed set of sheet elements IronCalc doesn't
 //!      write ([`CARRIED_ELEMENTS`]: data validation, print setup, drawings,
 //!      `legacyDrawing` for comment boxes, `tableParts`, `extLst`...) with the
 //!      parts they point to. Tables are checked against the saved cells: an
@@ -179,6 +181,43 @@ const NEVER_CARRY: [&str; 7] = [
     "revisionHeaders",
     "vbaProject",
 ];
+
+/// Sheet extensions that link to parts and are carried with them: slicer
+/// lists (pivot table slicers, Excel 2010; table slicers, Excel 2013) and
+/// timelines (Excel 2013). The caches they use are workbook extensions
+/// ([`WORKBOOK_EXTENSIONS`]); the slicers' drawing anchors are carried with
+/// the sheet's drawing.
+const LINKED_EXTENSIONS: [&str; 3] = [
+    "{A8765BA9-456A-4dab-B4F3-ACF838C121DE}",
+    "{3A4CF648-6AED-40f4-86FF-DC5316D8AED3}",
+    "{7E03D99C-DC04-49d9-9315-930204A7B6E9}",
+];
+
+/// Workbook extensions carried with the parts they link to: slicer caches
+/// (Excel 2010 pivot slicers, Excel 2013 table slicers) and timeline caches.
+/// IronCalc writes no workbook `<extLst>`.
+const WORKBOOK_EXTENSIONS: [&str; 3] = [
+    "{BBE1A952-AA13-448e-AADC-164F8A28A991}",
+    "{46BE6895-7355-4a93-B00E-2C351335B9C9}",
+    "{D0CA8CA8-9F24-4464-BF8E-62219DCF47F9}",
+];
+
+/// `xml` (one element) with its relationship ids (`r:id`...) renamed by `map`.
+fn rename_rel_ids(xml: &str, map: &HashMap<String, String>) -> Result<String, String> {
+    let doc = Document::parse(xml).map_err(|e| e.to_string())?;
+    let mut edits = Vec::new();
+    for n in doc.descendants().filter(|n| n.is_element()) {
+        for a in n.attributes() {
+            if matches!(a.namespace(), Some(NS_R) | Some(NS_R_STRICT)) {
+                let new = map
+                    .get(a.value())
+                    .ok_or_else(|| format!("relationship {} is not planned", a.value()))?;
+                edits.push((a.range_value(), esc_attr(new)));
+            }
+        }
+    }
+    Ok(apply_edits(xml, edits))
+}
 
 /// Largest part read from the original (guards against zip bombs).
 const MAX_PART: u64 = 512 * 1024 * 1024;
@@ -1714,15 +1753,6 @@ impl Merge<'_, '_> {
             }
             let target = resolve(part, &rel.target)
                 .ok_or_else(|| format!("{rp}: can't follow target {}", rel.target))?;
-            if target.starts_with("xl/drawings/") {
-                // Slicers are anchored in drawings but defined through markup
-                // IronCalc rewrites.
-                if let Some(bytes) = self.orig.get(&target)?
-                    && contains(&bytes, b"slicer")
-                {
-                    return Err(format!("{target} holds a slicer"));
-                }
-            }
             self.carry_into(&target, plan)?;
         }
         Ok(())
@@ -1802,10 +1832,6 @@ impl Merge<'_, '_> {
         }
         Ok(())
     }
-}
-
-fn contains(hay: &[u8], needle: &[u8]) -> bool {
-    memmem(hay, needle)
 }
 
 /// Whether `needle` occurs in `hay` (as text when both are UTF-8: the
@@ -1928,7 +1954,12 @@ fn merge(
     quiet.extend(
         orig_wb_rels
             .iter()
-            .filter(|r| r.short_kind() == "pivotCacheDefinition")
+            .filter(|r| {
+                matches!(
+                    r.short_kind(),
+                    "pivotCacheDefinition" | "slicerCache" | "timelineCache"
+                )
+            })
             .map(|r| r.id.clone()),
     );
     let mut wb_adds = carry_implicit(
@@ -2001,6 +2032,30 @@ fn merge(
             rels: cache_rels,
         });
     }
+    // Slicer and timeline caches (workbook extensions), with their parts.
+    for r in adds
+        .iter()
+        .filter(|a| a.source == new_wb)
+        .flat_map(|a| &a.rels)
+    {
+        taken.insert(r.id.clone());
+    }
+    let (ext_rels, wb_exts) = carry_workbook_extensions(
+        &mut m,
+        &orig_wb,
+        &orig_wb_xml,
+        &orig_wb_rels,
+        &new_wb,
+        &mut wb_ids,
+        &taken,
+        notes,
+    )?;
+    if !ext_rels.is_empty() {
+        adds.push(RelAdds {
+            source: new_wb.clone(),
+            rels: ext_rels,
+        });
+    }
 
     // The workbook part: chart sheets in the sheet list, sheet positions,
     // what defined names had that IronCalc doesn't keep, pivot caches.
@@ -2013,6 +2068,7 @@ fn merge(
         ctx.moves,
         &m.sheets,
         pivot_caches.as_deref(),
+        wb_exts.as_deref(),
         notes,
     )?;
 
@@ -2154,6 +2210,79 @@ fn carry_pivot_caches(
         return Ok((Vec::new(), None));
     }
     Ok((rels, Some(format!("<pivotCaches>{text}</pivotCaches>"))))
+}
+
+/// The original workbook's slicer and timeline cache extensions
+/// ([`WORKBOOK_EXTENSIONS`]), with the parts they link to planned for
+/// copying: the relationships to add and the `<ext>` elements (ids renamed).
+#[allow(clippy::too_many_arguments)]
+fn carry_workbook_extensions(
+    m: &mut Merge,
+    orig_wb: &str,
+    orig_wb_xml: &str,
+    orig_wb_rels: &[Rel],
+    new_wb: &str,
+    ids: &mut IdAlloc,
+    taken: &HashSet<String>,
+    notes: &mut Vec<String>,
+) -> Result<(Vec<Rel>, Option<String>), String> {
+    if !orig_wb_xml.contains("extLst") {
+        return Ok((Vec::new(), None));
+    }
+    let doc = Document::parse(orig_wb_xml).map_err(|e| format!("{orig_wb}: {e}"))?;
+    let Some(list) = doc
+        .root_element()
+        .children()
+        .find(|c| is_main(*c, "extLst"))
+    else {
+        return Ok((Vec::new(), None));
+    };
+    let mut rels = Vec::new();
+    let mut text = String::new();
+    for ext in list.children().filter(|e| is_main(*e, "ext")) {
+        let uri = ext.attribute("uri").unwrap_or_default();
+        if !WORKBOOK_EXTENSIONS.contains(&uri) {
+            continue;
+        }
+        let (saved_copy, saved_home) = (m.copy.clone(), m.home.clone());
+        let planned = (|| {
+            let mut map = HashMap::new();
+            let mut added = Vec::new();
+            for id in rel_refs(ext) {
+                let r = orig_wb_rels
+                    .iter()
+                    .find(|r| r.id == id && !r.external)
+                    .ok_or_else(|| format!("relationship {id} is missing"))?;
+                let target = resolve(orig_wb, &r.target)
+                    .ok_or_else(|| format!("can't follow target {}", r.target))?;
+                m.carry(&target)?;
+                let mut new_id = ids.next();
+                while taken.contains(&new_id) {
+                    new_id = ids.next();
+                }
+                added.push(Rel {
+                    id: new_id.clone(),
+                    kind: r.kind.clone(),
+                    target: relative(new_wb, &target),
+                    external: false,
+                });
+                map.insert(id, new_id);
+            }
+            let t = rename_rel_ids(&verbatim(ext, orig_wb_xml)?, &map)?;
+            Ok::<_, String>((t, added))
+        })();
+        match planned {
+            Ok((t, added)) => {
+                text.push_str(&t);
+                rels.extend(added);
+            }
+            Err(e) => {
+                (m.copy, m.home) = (saved_copy, saved_home);
+                notes.push(format!("workbook: extension {uri} not kept: {e}"));
+            }
+        }
+    }
+    Ok((rels, (!text.is_empty()).then_some(text)))
 }
 
 /// The saved styles part with the original's `<dxfs>` in place of
@@ -2476,13 +2605,23 @@ fn carry_sheet(
                     .expect("present");
                 n.range().end - "</extLst>".len()
             });
-            let exts = match carry_extensions(child, new_root, &orig_sk.xml, &rw, own_cf) {
+            let mut ext_rels: Vec<Rel> = Vec::new();
+            let exts = {
+                let mut plan = |refs: BTreeSet<String>| {
+                    let (map, rels) = plan_rels(m, refs, &orig_rels, os, ns, &mut ids)?;
+                    ext_rels.extend(rels);
+                    Ok(map)
+                };
+                carry_extensions(child, new_root, &orig_sk.xml, &rw, own_cf, &mut plan)
+            };
+            let exts = match exts {
                 Ok(e) => e,
                 Err(e) => {
                     notes.push(format!("{label}: <extLst> not kept: {e}"));
                     continue;
                 }
             };
+            adds.rels.extend(ext_rels);
             for skipped in &exts.skipped {
                 notes.push(format!("{label}: extension {skipped} not kept"));
             }
@@ -3022,6 +3161,7 @@ fn carry_extensions(
     src: &str,
     rw: &Rewrite,
     own_cf: bool,
+    plan: &mut dyn FnMut(BTreeSet<String>) -> Result<HashMap<String, String>, String>,
 ) -> Result<Extensions, String> {
     let written: HashSet<&str> = new_root
         .children()
@@ -3045,11 +3185,23 @@ fn carry_extensions(
         } else if written.contains(uri) {
             continue;
         }
-        if !rel_refs(ext).is_empty() {
+        let refs = rel_refs(ext);
+        let text = verbatim(ext, src)?;
+        let text = if refs.is_empty() {
+            text
+        } else if LINKED_EXTENSIONS.contains(&uri) {
+            // Slicers and timelines: their parts are carried with new ids.
+            match plan(refs).and_then(|map| rename_rel_ids(&text, &map)) {
+                Ok(t) => t,
+                Err(e) => {
+                    out.skipped.push(format!("{uri} ({e})"));
+                    continue;
+                }
+            }
+        } else {
             out.skipped.push(format!("{uri} (it links to other parts)"));
             continue;
-        }
-        let text = verbatim(ext, src)?;
+        };
         let text = if rw.moves.is_empty() {
             text
         } else {
@@ -3251,6 +3403,7 @@ fn edit_workbook(
     moves: &Moves,
     sheet_ids: &HashMap<String, u32>,
     pivot_caches: Option<&str>,
+    extensions: Option<&str>,
     notes: &mut Vec<String>,
 ) -> Result<Option<String>, String> {
     let doc = Document::parse(new_xml).map_err(|e| format!("saved workbook: {e}"))?;
@@ -3481,6 +3634,23 @@ fn edit_workbook(
     }
     if !after_sheets.is_empty() {
         edits.push((sheets_end..sheets_end, after_sheets));
+    }
+    if let Some(exts) = extensions {
+        match root.children().find(|c| is_main(*c, "extLst")) {
+            Some(list) => {
+                let at = list.range().end - "</extLst>".len();
+                if !new_xml[at..].starts_with("</extLst>") {
+                    return Err("saved workbook's <extLst> is not closed as expected".into());
+                }
+                edits.push((at..at, exts.to_owned()));
+            }
+            None => {
+                let at = new_xml[..root.range().end]
+                    .rfind("</")
+                    .ok_or("saved workbook is not closed")?;
+                edits.push((at..at, format!("<extLst>{exts}</extLst>")));
+            }
+        }
     }
     if edits.is_empty() {
         return Ok(None);

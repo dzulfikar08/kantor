@@ -14,7 +14,10 @@ records, and three pivot tables:
 * `Tabular!A1`: tabular, over the table `Sales`, rows Region then Product
   with Region subtotals at the bottom, Sum of Units, PivotStyleMedium9;
 * `Tabular!F1`: compact, over the defined name `SalesData`, rows Product,
-  Count of Units and Max of Revenue, PivotStyleDark2.
+  Count of Units and Max of Revenue, PivotStyleDark2;
+* a slicer on PivotTable1's Region field (`Pivot!A10`): its cache (workbook
+  `extLst`, `Slicer_Region` name), the slicer part (sheet `extLst`) and its
+  drawing anchor (`mc:AlternateContent` with Excel's fallback shape).
 
 The cells under each pivot are worked out here the way Excel lays them out,
 so tests can compare Kantor's refresh with them.
@@ -42,6 +45,11 @@ NS = f'xmlns="{MAIN}" xmlns:r="{REL}"'
 PKG_RELS = 'xmlns="http://schemas.openxmlformats.org/package/2006/relationships"'
 CT = "application/vnd.openxmlformats-officedocument.spreadsheetml"
 HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+X14 = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
+MS_REL = "http://schemas.microsoft.com/office/2007/relationships"
+MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+XDR = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+DML = "http://schemas.openxmlformats.org/drawingml/2006/main"
 
 HEADERS = ["Region", "Product", "Date", "Units", "Revenue"]
 ROWS = [
@@ -394,7 +402,14 @@ def cache_xml(c: Cache) -> tuple[str, str]:
         'refreshedDate="46023.5" createdVersion="6" refreshedVersion="6" '
         f'minRefreshableVersion="3" recordCount="{len(ROWS)}">'
         f'<cacheSource type="worksheet"><worksheetSource {src}/></cacheSource>'
-        f'<cacheFields count="{len(HEADERS)}">{fields}</cacheFields></pivotCacheDefinition>'
+        f'<cacheFields count="{len(HEADERS)}">{fields}</cacheFields>'
+        + (
+            f'<extLst><ext uri="{{725AE2AE-9491-48be-B2B4-4EB974FC3084}}" xmlns:x14="{X14}">'
+            f'<x14:pivotCacheDefinition pivotCacheId="{c.cache_id}"/></ext></extLst>'
+            if c.part == 1
+            else ""
+        )
+        + "</pivotCacheDefinition>"
     )
     recs = ""
     for r in ROWS:
@@ -438,9 +453,58 @@ def sheet_xml(cells: dict, sst: dict, extra: str = "", widths: dict | None = Non
 
 def rels(items: list[tuple[str, str, str]]) -> str:
     body = "".join(
-        f'<Relationship Id="{i}" Type="{REL}/{t}" Target="{target}"/>' for i, t, target in items
+        f'<Relationship Id="{i}" Type="{t if t.startswith("http") else f"{REL}/{t}"}" Target="{target}"/>'
+        for i, t, target in items
     )
     return f"{HEAD}<Relationships {PKG_RELS}>{body}</Relationships>"
+
+
+def slicer_parts() -> dict[str, str]:
+    """A slicer for PivotTable1's Region field (cache 1), as Excel 2010+ writes one."""
+    ign = f'xmlns:mc="{MC}" mc:Ignorable="x" xmlns:x="{MAIN}"'
+    items = "".join(f'<i x="{shared(0).index(v)}" s="1"/>' for v in sorted(shared(0)))
+    cache = (
+        f'{HEAD}<slicerCacheDefinition xmlns="{X14}" {ign} name="Slicer_Region" sourceName="Region">'
+        '<pivotTables><pivotTable tabId="2" name="PivotTable1"/></pivotTables>'
+        f'<data><tabular pivotCacheId="1"><items count="{len(shared(0))}">{items}</items></tabular></data>'
+        "</slicerCacheDefinition>"
+    )
+    slicer = (
+        f'{HEAD}<slicers xmlns="{X14}" {ign}>'
+        '<slicer name="Region" cache="Slicer_Region" caption="Region" rowHeight="241300"/></slicers>'
+    )
+    frame = (
+        '<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Region"/>'
+        "<xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>"
+        '<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>'
+        '<a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/drawing/2010/slicer">'
+        '<sle:slicer xmlns:sle="http://schemas.microsoft.com/office/drawing/2010/slicer" name="Region"/>'
+        "</a:graphicData></a:graphic></xdr:graphicFrame>"
+    )
+    fallback = (
+        '<xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="0" name=""/>'
+        '<xdr:cNvSpPr><a:spLocks noTextEdit="1"/></xdr:cNvSpPr></xdr:nvSpPr>'
+        '<xdr:spPr><a:xfrm><a:off x="7000000" y="3000000"/><a:ext cx="1828800" cy="1524000"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr>'
+        '<xdr:txBody><a:bodyPr vertOverflow="clip" horzOverflow="clip"/><a:lstStyle/>'
+        '<a:p><a:r><a:rPr lang="en-US" sz="1100"/><a:t>This shape represents a slicer. '
+        "Slicers are supported in Excel 2010 or later.</a:t></a:r></a:p></xdr:txBody></xdr:sp>"
+    )
+    drawing = (
+        f'{HEAD}<xdr:wsDr xmlns:xdr="{XDR}" xmlns:a="{DML}">'
+        '<xdr:twoCellAnchor editAs="oneCell">'
+        "<xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>9</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>"
+        "<xdr:to><xdr:col>2</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>17</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>"
+        f'<mc:AlternateContent xmlns:mc="{MC}">'
+        f'<mc:Choice xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" Requires="a14">{frame}</mc:Choice>'
+        f'<mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent>'
+        "<xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>"
+    )
+    return {
+        "xl/slicerCaches/slicerCache1.xml": cache,
+        "xl/slicers/slicer1.xml": slicer,
+        "xl/drawings/drawing1.xml": drawing,
+    }
 
 
 def build() -> dict[str, str]:
@@ -497,7 +561,19 @@ def build() -> dict[str, str]:
             )
             prels.append((f"rId{len(prels) + 1}", "pivotTable", f"../pivotTables/pivotTable{k}.xml"))
         widths = {1: 14, 2: 16, 3: 16, 4: 10, 5: 12, 8: 14, 9: 14, 10: 20}
-        parts[f"xl/worksheets/sheet{n}.xml"] = sheet_xml(cells, sst, widths=widths)
+        extra = ""
+        if name == "Pivot":
+            # A slicer on PivotTable1's Region field.
+            k = len(prels)
+            prels.append((f"rId{k + 1}", f"{MS_REL}/slicer", "../slicers/slicer1.xml"))
+            prels.append((f"rId{k + 2}", "drawing", "../drawings/drawing1.xml"))
+            extra = (
+                f'<drawing r:id="rId{k + 2}"/>'
+                f'<extLst><ext uri="{{A8765BA9-456A-4dab-B4F3-ACF838C121DE}}" xmlns:x14="{X14}">'
+                f'<x14:slicerList><x14:slicer r:id="rId{k + 1}"/></x14:slicerList></ext></extLst>'
+            )
+            parts.update(slicer_parts())
+        parts[f"xl/worksheets/sheet{n}.xml"] = sheet_xml(cells, sst, extra, widths=widths)
         parts[f"xl/worksheets/_rels/sheet{n}.xml.rels"] = rels(prels)
     for c in (cache1, cache2, cache3):
         d, r = cache_xml(c)
@@ -532,17 +608,21 @@ def build() -> dict[str, str]:
         f"{HEAD}<workbook {NS}><workbookPr defaultThemeVersion=\"166925\"/>"
         '<bookViews><workbookView activeTab="1"/></bookViews>'
         f"<sheets>{sheet_list}</sheets>"
-        '<definedNames><definedName name="SalesData">Data!$A$1:$E$13</definedName></definedNames>'
+        '<definedNames><definedName name="SalesData">Data!$A$1:$E$13</definedName>'
+        '<definedName name="Slicer_Region">#N/A</definedName></definedNames>'
         '<calcPr calcId="191029"/>'
         f'<pivotCaches><pivotCache cacheId="{cache1.cache_id}" r:id="rId{cache1.rid}"/>'
         f'<pivotCache cacheId="{cache2.cache_id}" r:id="rId{cache2.rid}"/>'
         f'<pivotCache cacheId="{cache3.cache_id}" r:id="rId{cache3.rid}"/></pivotCaches>'
+        f'<extLst><ext uri="{{BBE1A952-AA13-448e-AADC-164F8A28A991}}" xmlns:x14="{X14}">'
+        '<x14:slicerCaches><x14:slicerCache r:id="rId9"/></x14:slicerCaches></ext></extLst>'
         "</workbook>"
     )
     wb_rels = [(f"rId{i}", "worksheet", f"worksheets/sheet{i}.xml") for i in (1, 2, 3)]
     wb_rels += [("rId4", "styles", "styles.xml")]
     wb_rels += [(f"rId{c.rid}", "pivotCacheDefinition", f"pivotCache/pivotCacheDefinition{c.part}.xml") for c in (cache1, cache2, cache3)]
     wb_rels += [("rId7", "sharedStrings", "sharedStrings.xml")]
+    wb_rels += [("rId9", f"{MS_REL}/slicerCache", "slicerCaches/slicerCache1.xml")]
     parts["xl/_rels/workbook.xml.rels"] = rels(wb_rels)
     parts["_rels/.rels"] = rels([("rId1", "officeDocument", "xl/workbook.xml")])
 
@@ -550,6 +630,11 @@ def build() -> dict[str, str]:
     over += [(f"/xl/worksheets/sheet{i}.xml", f"{CT}.worksheet+xml") for i in (1, 2, 3)]
     over += [("/xl/styles.xml", f"{CT}.styles+xml"), ("/xl/sharedStrings.xml", f"{CT}.sharedStrings+xml")]
     over += [("/xl/tables/table1.xml", f"{CT}.table+xml")]
+    over += [
+        ("/xl/slicers/slicer1.xml", "application/vnd.ms-excel.slicer+xml"),
+        ("/xl/slicerCaches/slicerCache1.xml", "application/vnd.ms-excel.slicerCache+xml"),
+        ("/xl/drawings/drawing1.xml", "application/vnd.openxmlformats-officedocument.drawing+xml"),
+    ]
     over += [(f"/xl/pivotTables/pivotTable{k}.xml", f"{CT}.pivotTable+xml") for k in (1, 2, 3, 4)]
     for c in (cache1, cache2, cache3):
         over += [
