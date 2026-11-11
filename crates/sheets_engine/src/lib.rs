@@ -458,7 +458,7 @@ impl Workbook {
             ),
             _ => Default::default(),
         };
-        Ok(Self {
+        let mut book = Self {
             calc,
             model,
             path: (!format.is_imported()).then(|| path.to_path_buf()),
@@ -478,7 +478,10 @@ impl Workbook {
             drawings,
             prints,
             pivots,
-        })
+        };
+        // The file's cached values are right: no recalculation.
+        book.sync_pivot_grids(false);
+        Ok(book)
     }
 
     /// Where Save writes. `None` for new workbooks and for imports
@@ -563,6 +566,7 @@ impl Workbook {
             self.model.undo().map_err(|e| anyhow!("undo: {e}"))?;
         }
         self.history.undone();
+        self.sync_pivot_grids(true);
         Ok(true)
     }
 
@@ -578,6 +582,7 @@ impl Workbook {
             self.model.redo().map_err(|e| anyhow!("redo: {e}"))?;
         }
         self.history.redone();
+        self.sync_pivot_grids(true);
         Ok(true)
     }
 

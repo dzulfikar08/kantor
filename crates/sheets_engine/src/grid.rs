@@ -490,6 +490,7 @@ impl Workbook {
             at: row,
             count,
         });
+        self.sync_pivot_grids(true);
         Ok(())
     }
 
@@ -508,6 +509,7 @@ impl Workbook {
             at: first,
             count: last - first + 1,
         });
+        self.sync_pivot_grids(true);
         Ok(())
     }
 
@@ -549,6 +551,7 @@ impl Workbook {
             },
             steps,
         );
+        self.sync_pivot_grids(true);
         Ok(())
     }
 
@@ -567,6 +570,7 @@ impl Workbook {
             at: first,
             count: last - first + 1,
         });
+        self.sync_pivot_grids(true);
         Ok(())
     }
 

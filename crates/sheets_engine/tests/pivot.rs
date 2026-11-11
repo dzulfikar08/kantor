@@ -591,3 +591,151 @@ fn a_new_value_overlapping_other_data_is_refused() {
     assert!(e.contains("already data in F5"), "{e}");
     assert_eq!(wb.display_value(s, 4, 2), "228", "nothing changed");
 }
+
+#[test]
+fn getpivotdata_reads_the_pivots() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = Workbook::open(fixture()).unwrap();
+    let d = sheet_index(&wb, "Data");
+    let s = sheet_index(&wb, "Pivot");
+    let t = sheet_index(&wb, "Tabular");
+    let formulas = [
+        (
+            r#"=GETPIVOTDATA("Sum of Revenue",Pivot!$A$3,"Region","East","Product","Apples")"#,
+            "228",
+        ),
+        (
+            r#"=GETPIVOTDATA("Revenue",Pivot!$C$6,"product","PEARS","Region","West")"#,
+            "75",
+        ),
+        (
+            r#"=GETPIVOTDATA("Sum of Revenue",Pivot!$A$3,"Region","North")"#,
+            "396",
+        ),
+        (r#"=GETPIVOTDATA("Sum of Revenue",Pivot!$A$3)"#, "1068"),
+        (
+            r#"=GETPIVOTDATA("Average of Revenue",Pivot!$H$3,"Region","East")"#,
+            "104.25",
+        ),
+        (r#"=GETPIVOTDATA("Sum of Units",Pivot!$H$1)"#, "59"),
+        (
+            r#"=GETPIVOTDATA("Sum of Units",Pivot!$H$3,"Region","West")"#,
+            "#REF!",
+        ),
+        (
+            r#"=GETPIVOTDATA("Sum of Units",Tabular!$A$1,"Region","North")"#,
+            "29",
+        ),
+        (
+            r#"=GETPIVOTDATA("Sum of Units",Tabular!$A$1,"Region","North","Product","Plums")"#,
+            "5",
+        ),
+        (
+            r#"=GETPIVOTDATA("Max of Revenue",Tabular!$F$1,"Product","Apples")"#,
+            "144",
+        ),
+        (r#"=GETPIVOTDATA("Sum of Revenue",Data!$A$1)"#, "#REF!"),
+    ];
+    for (i, (f, _)) in formulas.iter().enumerate() {
+        wb.set_input(t, 20 + i as u32, 0, f).unwrap();
+    }
+    let values = |wb: &Workbook| -> Vec<String> {
+        (0..formulas.len())
+            .map(|i| wb.display_value(t, 20 + i as u32, 0))
+            .collect()
+    };
+    let expected: Vec<String> = formulas.iter().map(|(_, v)| v.to_string()).collect();
+    assert_eq!(values(&wb), expected);
+
+    // A refresh with new data: the values follow.
+    wb.set_input(d, 1, 4, "220").unwrap();
+    wb.refresh_all_pivots().unwrap();
+    assert_eq!(wb.display_value(t, 20, 0), "328");
+    assert_eq!(wb.display_value(t, 23, 0), "1168");
+    // The pivots move down: still found.
+    wb.insert_rows(s, 0, 2).unwrap();
+    assert_eq!(wb.display_value(t, 20, 0), "328");
+    // Undone: the rows, then the refresh.
+    wb.undo().unwrap();
+    assert_eq!(
+        wb.display_value(t, 20, 0),
+        "328",
+        "the refresh is still done"
+    );
+    wb.undo().unwrap();
+    assert_eq!(wb.display_value(t, 20, 0), "228");
+    wb.undo().unwrap(); // the edited revenue
+
+    // Saved as GETPIVOTDATA (no _xlfn. prefix) and read back.
+    let p = save(&mut wb, dir.path(), "a.xlsx");
+    let x = &p["xl/worksheets/sheet3.xml"];
+    assert!(x.contains("GETPIVOTDATA(&quot;Sum of Revenue&quot;,Pivot!$A$3"));
+    assert!(!x.contains("_xlfn.GETPIVOTDATA"));
+    let wb = Workbook::open(dir.path().join("a.xlsx")).unwrap();
+    assert_eq!(values(&wb), expected);
+}
+
+#[test]
+fn slicers_survive_a_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let orig = parts(&fixture());
+    let check = |p: &BTreeMap<String, String>| {
+        for part in [
+            "xl/slicerCaches/slicerCache1.xml",
+            "xl/slicers/slicer1.xml",
+            "xl/drawings/drawing1.xml",
+        ] {
+            assert_eq!(p.get(part), orig.get(part), "{part}");
+            assert!(
+                p["[Content_Types].xml"].contains(&format!("PartName=\"/{part}\"")),
+                "{part}"
+            );
+        }
+        // The workbook lists the slicer cache, through a relationship that
+        // leads to it.
+        let wb = Document::parse(&p["xl/workbook.xml"]).unwrap();
+        let cache = wb
+            .descendants()
+            .find(|n| n.tag_name().name() == "slicerCache")
+            .expect("workbook slicerCaches");
+        let rid = cache.attribute((REL, "id")).unwrap();
+        assert_eq!(
+            targets(p, "xl/workbook.xml")[rid],
+            (
+                "slicerCache".to_owned(),
+                "xl/slicerCaches/slicerCache1.xml".to_owned()
+            )
+        );
+        assert!(
+            p["xl/workbook.xml"]
+                .contains(r#"<definedName name="Slicer_Region">#N/A</definedName>"#)
+        );
+        // The sheet lists the slicer and keeps its drawing.
+        let sheet = Document::parse(&p["xl/worksheets/sheet2.xml"]).unwrap();
+        let slicer = sheet
+            .descendants()
+            .find(|n| n.tag_name().name() == "slicer")
+            .expect("sheet slicerList");
+        let rels = targets(p, "xl/worksheets/sheet2.xml");
+        assert_eq!(
+            rels[slicer.attribute((REL, "id")).unwrap()].1,
+            "xl/slicers/slicer1.xml"
+        );
+        assert!(
+            rels.values()
+                .any(|(k, t)| k == "drawing" && t == "xl/drawings/drawing1.xml")
+        );
+        // The cache keeps the id the slicer cache points at.
+        assert!(p["xl/pivotCache/pivotCacheDefinition1.xml"].contains(r#"pivotCacheId="1""#));
+    };
+    let mut wb = Workbook::open(fixture()).unwrap();
+    let p = save(&mut wb, dir.path(), "a.xlsx");
+    assert_eq!(wb.save_notes(), &[] as &[String]);
+    check(&p);
+    let mut wb = Workbook::open(dir.path().join("a.xlsx")).unwrap();
+    let s = sheet_index(&wb, "Pivot");
+    wb.refresh_pivot(s, 3, 0).unwrap();
+    let p = save(&mut wb, dir.path(), "b.xlsx");
+    assert_eq!(wb.save_notes(), &[] as &[String]);
+    check(&p);
+}

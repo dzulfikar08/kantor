@@ -659,6 +659,7 @@ impl<'a> Model<'a> {
             shared_strings: HashMap::new(),
             parsed_formulas,
             shared_formula_lookup: Vec::new(),
+            kantor_pivots: Vec::new(),
             parsed_defined_names: HashMap::new(),
             parser,
             locale,

@@ -367,6 +367,12 @@ impl<'a> UserModel<'a> {
         !self.history.redo_stack.is_empty()
     }
 
+    /// KANTOR PATCH (pivot): the pivot tables GETPIVOTDATA reads (see
+    /// `functions::kantor_pivot`). Not an edit: nothing goes on the undo stack.
+    pub fn kantor_set_pivots(&mut self, pivots: Vec<crate::functions::kantor_pivot::PivotGrid>) {
+        self.model.kantor_pivots = pivots;
+    }
+
     /// KANTOR PATCH (data validation): drop what redo would bring back, for
     /// an edit taken back with `undo` that must not be redone (a value data
     /// validation rejected).

@@ -1709,6 +1709,13 @@ fn get_function_args_signature(kind: &Function, arg_count: usize) -> Vec<Signatu
         Function::Groupby | Function::Pivotby | Function::Phonetic => {
             vec![Signature::Vector; arg_count]
         }
+        Function::Getpivotdata => {
+            let mut result = vec![Signature::Scalar; arg_count];
+            if arg_count > 1 {
+                result[1] = Signature::Vector;
+            }
+            result
+        }
         Function::Bahttext | Function::Dbcs | Function::Jis => {
             args_signature_scalars(arg_count, 1, 0)
         }
@@ -2234,7 +2241,7 @@ fn static_analysis_on_function(kind: &Function, args: &[Node]) -> StaticResult {
         Function::SkewP => StaticResult::Scalar,
         Function::Small => StaticResult::Scalar,
         // KANTOR PATCH (functions)
-        Function::Aggregate | Function::Phonetic => StaticResult::Scalar,
+        Function::Aggregate | Function::Phonetic | Function::Getpivotdata => StaticResult::Scalar,
         Function::Groupby | Function::Pivotby => StaticResult::Unknown,
         Function::Bahttext | Function::Usdollar | Function::Dbcs | Function::Jis => {
             not_implemented(args)

@@ -208,8 +208,8 @@ What (`src/kantor_cf.rs`, `KANTOR PATCH (conditional formatting)`):
 Why: workbooks using these showed `#NAME?`. Against Excel's function list (and
 GridCraft's, which has the same ones), upstream 0.9.1 lacks only AGGREGATE,
 GROUPBY, PIVOTBY, BAHTTEXT, USDOLLAR, DBCS, JIS, PHONETIC, EUROCONVERT,
-FILTERXML, WEBSERVICE, the CUBE* functions and the server/online ones
-(GETPIVOTDATA, RTD, STOCKHISTORY, IMAGE, TRANSLATE, ...). The first eight are
+FILTERXML, WEBSERVICE, the CUBE* functions, GETPIVOTDATA (added later, section
+14) and the server/online ones (RTD, STOCKHISTORY, IMAGE, TRANSLATE, ...). The first eight are
 added; the rest need data Kantor doesn't have (OLAP cubes, pivot caches, the
 network). Marked `KANTOR PATCH (functions)`.
 
@@ -361,6 +361,30 @@ permutation and undo, filtered SUBTOTAL/AGGREGATE, the sheet filter moving),
 `expressions/parser/tests/test_tables.rs` (now expects structured text), and
 upstream's `tests/calc_test_no_export/tables.xlsx` in `vendor/ironcalc`
 (matches Excel's values). Kantor's: `crates/sheets_engine/tests/tables.rs`.
+
+## 14. GETPIVOTDATA
+
+Why: reports built on pivot tables read them with GETPIVOTDATA, which showed
+`#NAME?`. The model has no pivot tables (their cells are ordinary cells), so the
+caller describes them.
+
+What (`src/functions/kantor_pivot.rs`, `KANTOR PATCH (pivot)`):
+
+* `Model::kantor_pivots: Vec<PivotGrid>` (public, not saved or serialized, empty
+  in every constructor) and `UserModel::kantor_set_pivots`: each pivot table's
+  area (body and report filters) and its value cells, each with the names of its
+  data field (caption and source field, lower case) and its `(field, item)`
+  pairs. Kantor (`sheets_engine::pivot`) sets it when a workbook opens and when
+  pivot tables are refreshed or move (inserted/deleted rows and columns, undo,
+  redo), and recalculates then.
+* `GETPIVOTDATA(data_field, pivot_table, [field, item]...)`: the pivot table the
+  reference's top-left cell is in, then the value cell whose data field and pairs
+  are exactly those given (any order, case-insensitive); its value, `#REF!` if
+  none. Named in `kantor_names.rs`, written without a prefix.
+* `Function::into_iter` returns 506 functions.
+
+Tests: `src/test/test_kantor_pivot.rs`; `crates/sheets_engine/tests/pivot.rs`
+against the corpus file 21.
 
 ## Updating or dropping
 

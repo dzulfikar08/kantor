@@ -231,6 +231,9 @@ pub struct Model<'a> {
     /// (`parse_formulas`), extended when a formula is added. See
     /// `shared_formula_index`.
     pub(crate) shared_formula_lookup: Vec<SharedFormulaLookup>,
+    /// KANTOR PATCH (pivot): the value cells of the workbook's pivot tables,
+    /// set by the caller, for GETPIVOTDATA.
+    pub kantor_pivots: Vec<crate::functions::kantor_pivot::PivotGrid>,
 }
 
 /// Formula text to index in `Worksheet::shared_formulas`, for one sheet.
@@ -1919,6 +1922,7 @@ impl<'a> Model<'a> {
             workbook,
             parsed_formulas,
             shared_formula_lookup: Vec::new(),
+            kantor_pivots: Vec::new(),
             shared_strings,
             parsed_defined_names: HashMap::new(),
             parser,
