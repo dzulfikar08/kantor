@@ -16,8 +16,10 @@
 //! axes. Anything else (radar, bubble, stock, surface, 3-D...) keeps the
 //! placeholder box.
 //!
-//! The model and layout know nothing of slides beyond [`Defaults`]; they
-//! can move to their own crate when Sheets draws charts.
+//! The model and layout know nothing of slides beyond [`Defaults`]. Sheets
+//! draws charts embedded in worksheets with the same code: it parses the
+//! part ([`Chart::parse`]), puts the cells each series refers to
+//! ([`SeriesRefs`]) in place of the caches, and lays it out with [`items`].
 
 pub mod format;
 pub mod layout;
@@ -30,7 +32,7 @@ use slides_engine::Rgb;
 use slides_engine::theme::ColorCtx;
 
 pub use layout::{Defaults, HAlign, Label, Mark, Measure, TextFont};
-pub use model::Chart;
+pub use model::{Chart, SeriesRefs};
 
 use crate::geom::{Affine, p};
 use crate::text::{TextLayout, glyph_runs};
@@ -143,11 +145,23 @@ pub fn chart_items(
 ) -> Option<Vec<Item>> {
     let xml = std::str::from_utf8(xml).ok()?;
     let chart = Chart::parse(xml, cx)?;
+    items(engine, &chart, &defaults(cx), w, h)
+}
+
+/// A parsed chart's items in a `w` × `h` frame, as [`chart_items`]: for
+/// callers that change the chart first (Sheets puts live cell values in
+/// its series). `None` when Kantor can't draw it.
+pub fn items(
+    engine: &mut Engine,
+    chart: &Chart,
+    d: &Defaults,
+    w: f32,
+    h: f32,
+) -> Option<Vec<Item>> {
     if !chart.drawable() || w < 2.0 || h < 2.0 {
         return None;
     }
-    let d = defaults(cx);
-    let marks = layout::layout(&chart, w, h, &d, &mut EngineMeasure { engine });
+    let marks = layout::layout(chart, w, h, d, &mut EngineMeasure { engine });
     Some(
         marks
             .into_iter()

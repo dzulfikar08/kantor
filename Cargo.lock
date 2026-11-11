@@ -6706,6 +6706,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sheets_scene"
+version = "0.2.0"
+dependencies = [
+ "docs_layout",
+ "sheets_engine",
+ "slides_engine",
+ "slides_scene",
+ "tempfile",
+]
+
+[[package]]
 name = "sheets_ui"
 version = "0.2.0"
 dependencies = [
@@ -6858,6 +6869,7 @@ version = "0.2.0"
 dependencies = [
  "docs_engine",
  "docs_layout",
+ "kantor_numfmt",
  "log",
  "roxmltree 0.21.2",
  "slides_engine",

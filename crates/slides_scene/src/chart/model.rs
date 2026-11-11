@@ -426,6 +426,17 @@ pub struct Point {
     pub marker: Option<Marker>,
 }
 
+/// The cell references a series' data comes from (`c:f`), as written: a
+/// spreadsheet showing the chart reads them live; slides use the caches.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SeriesRefs {
+    pub name: Option<String>,
+    /// Categories (`c:cat`) or scatter x values (`c:xVal`).
+    pub cat: Option<String>,
+    /// Values (`c:val`) or scatter y values (`c:yVal`).
+    pub val: Option<String>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Series {
     pub idx: usize,
@@ -448,6 +459,7 @@ pub struct Series {
     pub smooth: bool,
     pub explosion: f32,
     pub invert_if_negative: bool,
+    pub refs: SeriesRefs,
 }
 
 impl Series {
@@ -726,6 +738,19 @@ fn series(s: Node, cx: &ColorCtx) -> Series {
         .and_then(|v| v.children().find(|c| c.is_element()))
         .map(num_cache)
         .unwrap_or_default();
+    // `c:numRef/c:f`, `c:strRef/c:f`...
+    let formula = |n: Option<Node>| {
+        n.and_then(|n| n.children().find(|c| c.is_element()))
+            .and_then(|src| kid(src, "f"))
+            .and_then(|f| f.text())
+            .map(|f| f.trim().to_owned())
+            .filter(|f| !f.is_empty())
+    };
+    let refs = SeriesRefs {
+        name: formula(kid(s, "tx")),
+        cat: formula(kid(s, "cat").or(scatter_x)),
+        val: formula(vals_node),
+    };
     let xs = scatter_x.map(|_| {
         if cat_nums.is_empty() {
             // Text x values: points are numbered 1, 2, 3...
@@ -758,6 +783,7 @@ fn series(s: Node, cx: &ColorCtx) -> Series {
         smooth: flag(s, "smooth").unwrap_or(false),
         explosion: val_f(s, "explosion").unwrap_or(0.0) as f32,
         invert_if_negative: flag(s, "invertIfNegative").unwrap_or(false),
+        refs,
     }
 }
 
