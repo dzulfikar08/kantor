@@ -53,6 +53,29 @@ impl<'a> Model<'a> {
         false
     }
 
+    /// KANTOR PATCH (tables): like `cell_hidden_status`, with the sheet's
+    /// hidden rows given; a hidden row is filtered out if it lies under an
+    /// sheet's AutoFilter with a filter on or, as upstream, in
+    /// a table with filter buttons.
+    fn kantor_hidden_status(
+        &self,
+        hidden_rows: &std::collections::HashSet<i32>,
+        sheet_index: u32,
+        row: i32,
+        column: i32,
+    ) -> CellTableStatus {
+        if !hidden_rows.contains(&row) {
+            CellTableStatus::Normal
+        } else if self.kantor_row_filtered(sheet_index, row, column)
+            || self.get_table_for_cell(sheet_index, row, column)
+        {
+            CellTableStatus::Filtered
+        } else {
+            CellTableStatus::Hidden
+        }
+    }
+
+    #[allow(dead_code)]
     fn cell_hidden_status(
         &self,
         sheet_index: u32,
@@ -122,12 +145,11 @@ impl<'a> Model<'a> {
                             let column1 = left.column;
                             let column2 = right.column;
 
+                            // KANTOR PATCH (tables): hidden rows looked up once per range.
+                            let hidden_rows = self.hidden_rows(left.sheet);
                             for row in row1..=row2 {
-                                let cell_status = self
-                                    .cell_hidden_status(left.sheet, row, column1)
-                                    .map_err(|message| {
-                                        CalcResult::new_error(Error::ERROR, cell, message)
-                                    })?;
+                                let cell_status =
+                                    self.kantor_hidden_status(&hidden_rows, left.sheet, row, column1);
                                 if cell_status == CellTableStatus::Filtered {
                                     continue;
                                 }

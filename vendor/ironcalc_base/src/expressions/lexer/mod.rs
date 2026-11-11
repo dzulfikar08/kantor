@@ -110,6 +110,9 @@ pub struct Lexer<'a> {
     mode: LexerMode,
     locale: &'a Locale,
     language: &'a Language,
+    /// KANTOR PATCH (tables): the formula is in a table, so `[Name]` is a
+    /// column of it (elsewhere `[b]` is a LAMBDA's optional parameter).
+    pub(crate) kantor_in_table: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -130,6 +133,7 @@ impl<'a> Lexer<'a> {
             mode,
             locale,
             language,
+            kantor_in_table: false,
         }
     }
 
@@ -221,6 +225,21 @@ impl<'a> Lexer<'a> {
                     '=' => TokenType::Compare(OpCompare::Equal),
                     '{' => TokenType::LeftBrace,
                     '}' => TokenType::RightBrace,
+                    // KANTOR PATCH (tables): `[@Units]`, `[[#This Row],Units]`
+                    // inside a table (the table is the formula's own).
+                    '[' if self.kantor_in_table
+                        || matches!(self.peek_char(), Some('@' | '#' | '[')) =>
+                    {
+                        let start = self.position;
+                        self.position -= 1;
+                        match self.consume_structured_reference("") {
+                            Ok(token) if !matches!(token, TokenType::Ident(_)) => token,
+                            _ => {
+                                self.position = start;
+                                TokenType::LeftBracket
+                            }
+                        }
+                    }
                     '[' => TokenType::LeftBracket,
                     ']' => TokenType::RightBracket,
                     ':' => TokenType::Colon,
@@ -470,6 +489,22 @@ impl<'a> Lexer<'a> {
                                         }
                                         self.position = pos;
 
+                                        // KANTOR PATCH (tables): structured
+                                        // references in R1C1 mode (formulas
+                                        // are kept in R1C1 internally).
+                                        if self.peek_char() == Some('[')
+                                            && !matches!(name_upper.as_str(), "R" | "C" | "RC")
+                                            && utils::is_valid_a1_identifier(&name)
+                                        {
+                                            if let Ok(r) = self.consume_structured_reference(&name)
+                                            {
+                                                return r;
+                                            }
+                                            return TokenType::Illegal(self.set_error(
+                                                "Invalid structured reference",
+                                                self.position,
+                                            ));
+                                        }
                                         if is_valid_r1c1_identifier(&name, self.peek_char()) {
                                             return TokenType::Ident(name);
                                         } else {

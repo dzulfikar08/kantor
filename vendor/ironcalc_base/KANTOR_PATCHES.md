@@ -299,6 +299,69 @@ What (`src/kantor_validation.rs`, `KANTOR PATCH (data validation)`):
 
 Tests: `crates/sheets_engine/tests/validation.rs`.
 
+## 13. Excel tables: structured references, geometry, sort and filter state
+
+Why: upstream turned a structured reference into a fixed range when the
+formula was parsed: `Sales[Units]` was saved as `$C$2:$C$9`, `[#This Row]`
+became an absolute row (one shared formula per row), `@` and several
+specifiers (`[[#Headers],[#Data]]`) didn't parse, references inside a table
+without its name (`[@Units]`, as XlsxWriter writes them) didn't either, and
+nothing followed a table that grew. Kantor also needs to sort rows, hide rows
+for a filter (thousands at a time) and keep the filter state, all undoable.
+
+What (`src/kantor_tables.rs`, `KANTOR PATCH (tables)`):
+
+* Lexer (`expressions/lexer/structured_references.rs`, `lexer/mod.rs`): the
+  whole bracket after a table name is read (also in R1C1 mode, in which
+  formulas are stored, and with no table name inside a table): `T[Col]`,
+  `T[[Col Name]]`, `T[[A]:[B]]`, `T[#All]`..., `T[[#Totals],[Col]]`,
+  `T[@Col]`, `T[@[Col Name]]`, `T[@]`; specifiers in any case; `'` escapes.
+  Without a table name, `[@…]`, `[#…]` and `[[…]]` are always structured;
+  a plain `[Name]` only when the formula's cell is inside a table
+  (`Lexer::kantor_in_table`, set by `Parser::parse`): elsewhere `[b]` is a
+  LAMBDA's optional parameter.
+  `TableSpecifier` gains `HeadersData` and `DataTotals`.
+* Parser: `Node::TableRefKind(Box<TableRef>)` (table and column names in their
+  own spelling, specifier); the table and columns must exist (any case).
+  Stringified as `Sales[[#This Row],[Units]]` for files and `Sales[@Units]`
+  otherwise (`table_ref_text`), so the R1C1 text is the same in every row.
+  `static_analysis`: one cell for `@` with one column, else like a range.
+* Evaluation (`model.rs`): `resolve_table_ref` turns it into a reference or
+  range against the table's current `reference` (#VALUE! for `@` outside the
+  data rows, #REF! for a missing header/total row); function arguments are
+  resolved first (`resolve_table_args`, for ROW, SUBTOTAL... which look at
+  nodes). A bare table name evaluates to its data.
+* Geometry: `displace_tables` (called next to `displace_defined_names`):
+  rows/columns inserted inside a table grow it (new columns `ColumnN`), a
+  delete shrinks it, deleting the header row removes it; the sheet's
+  AutoFilter range moves the same way. `UserModel::delete_rows/columns`
+  snapshot tables and the sheet filter before (`tables_snapshot_diffs`), as
+  for defined names.
+* `Table::kantor_auto_filter` and `Worksheet::kantor_auto_filter`: the
+  `<autoFilter>` element (filled by the vendored reader, written by its
+  writer for the sheet; Kantor writes tables' into their parts).
+  `UserModel::kantor_set_table` (create/change/remove),
+  `kantor_set_sheet_filter`, `kantor_rename_table_column` (renames the column
+  in every structured reference: shared formulas are re-parsed),
+  `kantor_set_rows_hidden` (many rows, one step, rows looked up once) and
+  `kantor_permute_rows` (sort: cells of a block of rows move as they are, so
+  relative references follow their row as in Excel; hyperlinks move too;
+  refused over merged cells and array formulas). New `Diff`s:
+  `KantorRowEntries`, `KantorSetTable`, `KantorRenameTableColumn`,
+  `KantorSetSheetFilter`, `KantorPermuteRows`.
+* SUBTOTAL (`functions/subtotal.rs`): a hidden row is "filtered" if it lies
+  under the sheet's AutoFilter with a filter on (or, as upstream, in a table
+  with an active filter); hidden rows are looked up once per range (upstream
+  scanned the sheet's rows for every cell).
+* `evaluate_if_not_paused` is `pub(crate)`.
+
+Tests: `src/test/test_kantor_tables.rs` (every specifier, `@`, escapes,
+unqualified references, shared formulas, export text, growth and undo,
+permutation and undo, filtered SUBTOTAL/AGGREGATE, the sheet filter moving),
+`expressions/parser/tests/test_tables.rs` (now expects structured text), and
+upstream's `tests/calc_test_no_export/tables.xlsx` in `vendor/ironcalc`
+(matches Excel's values). Kantor's: `crates/sheets_engine/tests/tables.rs`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the
@@ -318,7 +381,7 @@ saved,test}.rs`, `worksheet.rs`, `test/dynamic_evaluation/test_range_reads.rs`; 
 section 7 `types.rs`, `styles.rs`, `builtin_styles.rs`, `worksheet.rs`,
 `user_model/common.rs` and test literals; for section 8 `actions.rs`,
 `user_model/common.rs`, `test/user_model/{mod,test_kantor_defined_names_move}.rs`;
-for section 10 the new files `functions/kantor_*.rs` and the two test files, plus
+for section 12 the new files `kantor_tables.rs`, `test/test_kantor_tables.rs` and hunks in `expressions/{token,lexer/mod,lexer/structured_references,parser/mod,parser/stringify,parser/move_formula,parser/static_analysis}.rs`, `model.rs`, `units.rs`, `actions.rs`, `types.rs`, `new_empty.rs`, `functions/subtotal.rs`, `user_model/{history,undo_redo,common}.rs`; for section 10 the new files `functions/kantor_*.rs` and the two test files, plus
 `functions/{mod,subtotal}.rs`, `functions/logical/{bycol_byrow,map_reduce,scan}.rs`,
 `functions/statistical/count_and_average.rs`, `expressions/parser/{mod,stringify,static_analysis}.rs`,
 `lib.rs`, `test/mod.rs`, `expressions/parser/tests/mod.rs`)

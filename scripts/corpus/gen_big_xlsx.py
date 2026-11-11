@@ -7,7 +7,7 @@ SUMIFS over the orders. Every formula carries its correct cached value, as
 Excel would save it, so a viewer that trusts cached values shows the right
 numbers without recalculating.
 
-    uv run --with xlsxwriter scripts/corpus/gen_big_xlsx.py [OUT.xlsx] [--rows N] [--cf]
+    uv run --with xlsxwriter scripts/corpus/gen_big_xlsx.py [OUT.xlsx] [--rows N] [--cf] [--table]
 
 Defaults: 90 000 orders x 9 formulas = 810 000 formula cells, about 30 MB.
 Deterministic (fixed seed), streamed to disk (xlsxwriter constant_memory), so
@@ -17,6 +17,11 @@ it needs little RAM and takes well under a minute.
 it: a 3-colour scale on Amount, a data bar on Qty, an icon set on Margin %,
 top 10 on Margin, duplicate customer ids, and an expression rule that tints
 every row with a low margin (`=$N2="Low"` on A:S).
+
+`--table` makes the order list an Excel table `Orders` (TableStyleMedium2,
+banded rows, filter buttons), for measuring sorting and filtering; it is
+written without constant_memory (xlsxwriter can't stream tables) and needs
+a few GB of RAM.
 """
 
 import argparse
@@ -39,10 +44,12 @@ def main() -> None:
     ap.add_argument("--customers", type=int, default=5_000)
     ap.add_argument("--materials", type=int, default=3_000)
     ap.add_argument("--cf", action="store_true", help="add conditional formatting rules")
+    ap.add_argument("--table", action="store_true", help="make the orders an Excel table")
     args = ap.parse_args()
     rnd = random.Random(20261110)
 
-    wb = xlsxwriter.Workbook(args.out, {"constant_memory": True, "strings_to_numbers": False})
+    # Tables need the whole sheet in memory (xlsxwriter has no streamed tables).
+    wb = xlsxwriter.Workbook(args.out, {"constant_memory": not args.table, "strings_to_numbers": False})
     bold = wb.add_format({"bold": True, "bg_color": "#DDEBF7", "border": 1})
     money = wb.add_format({"num_format": "#,##0"})
     pct = wb.add_format({"num_format": "0.0%"})
@@ -69,6 +76,13 @@ def main() -> None:
             "Customer name", "Region", "Description", "Std cost", "Margin", "Margin %",
             "Margin class", "Month", "Status", "Sales rep", "Plant", "Note"]
     ws.write_row(0, 0, head, bold)
+    if args.table:
+        ws.add_table(0, 0, args.rows, len(head) - 1, {
+            "name": "Orders",
+            "style": "Table Style Medium 2",
+            "autofilter": True,
+            "columns": [{"header": h, "header_format": bold} for h in head],
+        })
     ws.set_column(0, 0, 11)
     ws.set_column(1, 1, 11, date)
     ws.set_column(5, 6, 14, money)

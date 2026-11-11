@@ -11,27 +11,35 @@
 09_unicode.xlsx	import-formula	Emoji 🎉!B1	quotes around a non-ASCII sheet name are dropped in the formula text ('数据'!B2 -> 数据!B2)
 09_unicode.xlsx	import-value	Teks!C10	LEN counts Unicode scalar values, Excel counts UTF-16 code units (ZWJ emoji family: 5 vs 8)
 09_unicode.xlsx	import-value	Teks!C9	LEN counts Unicode scalar values, Excel counts UTF-16 code units (emoji + flag: 12 vs 17)
-13_tables.xlsx	export-formula	Sales!F1	IronCalc turns structured references (Sales[Units]) into A1 ranges on import
-13_tables.xlsx	export-formula	Sales!F2	IronCalc turns structured references (Sales[Units]) into A1 ranges on import
-13_tables.xlsx	export-value	Sales!B8	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
-13_tables.xlsx	export-value	Sales!D2	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
-13_tables.xlsx	export-value	Sales!D3	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
-13_tables.xlsx	export-value	Sales!D4	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
-13_tables.xlsx	export-value	Sales!D5	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
-13_tables.xlsx	export-value	Sales!D6	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
-13_tables.xlsx	export-value	Sales!D7	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
-13_tables.xlsx	export-value	Sales!D8	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
-13_tables.xlsx	export-value	Sales!F2	the #ERROR! IronCalc computed is not an OOXML error, so the cached value is left out
-13_tables.xlsx	import-formula	Sales!F1	IronCalc turns structured references (Sales[Units]) into A1 ranges on import
-13_tables.xlsx	import-formula	Sales!F2	IronCalc turns structured references (Sales[Units]) into A1 ranges on import
-13_tables.xlsx	import-value	Sales!B8	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
-13_tables.xlsx	import-value	Sales!D2	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
-13_tables.xlsx	import-value	Sales!D3	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
-13_tables.xlsx	import-value	Sales!D4	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
-13_tables.xlsx	import-value	Sales!D5	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
-13_tables.xlsx	import-value	Sales!D6	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
-13_tables.xlsx	import-value	Sales!D7	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
-13_tables.xlsx	import-value	Sales!D8	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
-13_tables.xlsx	import-value	Sales!F2	IronCalc can't evaluate this-row references ([@Units]) or SUBTOTAL over a table column: #ERROR!
+13_tables.xlsx	export-formula	Sales!B8	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	export-formula	Sales!D2	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	export-formula	Sales!D3	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	export-formula	Sales!D4	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	export-formula	Sales!D5	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	export-formula	Sales!D6	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	export-formula	Sales!D7	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	export-formula	Sales!D8	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	import-formula	Sales!B8	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	import-formula	Sales!D2	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	import-formula	Sales!D3	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	import-formula	Sales!D4	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	import-formula	Sales!D5	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	import-formula	Sales!D6	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	import-formula	Sales!D7	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	import-formula	Sales!D8	XlsxWriter leaves out the table name inside the table ([Units]); Kantor writes it (Sales[Units]), same meaning
+13_tables.xlsx	export-value	Sales!B8	XlsxWriter caches 0 for formulas; Kantor computes the value
+13_tables.xlsx	export-value	Sales!D2	XlsxWriter caches 0 for formulas; Kantor computes the value
+13_tables.xlsx	export-value	Sales!D3	XlsxWriter caches 0 for formulas; Kantor computes the value
+13_tables.xlsx	export-value	Sales!D4	XlsxWriter caches 0 for formulas; Kantor computes the value
+13_tables.xlsx	export-value	Sales!D5	XlsxWriter caches 0 for formulas; Kantor computes the value
+13_tables.xlsx	export-value	Sales!D6	XlsxWriter caches 0 for formulas; Kantor computes the value
+13_tables.xlsx	export-value	Sales!D7	XlsxWriter caches 0 for formulas; Kantor computes the value
+13_tables.xlsx	import-value	Sales!B8	XlsxWriter caches 0 for formulas; Kantor computes the value
+13_tables.xlsx	import-value	Sales!D2	XlsxWriter caches 0 for formulas; Kantor computes the value
+13_tables.xlsx	import-value	Sales!D3	XlsxWriter caches 0 for formulas; Kantor computes the value
+13_tables.xlsx	import-value	Sales!D4	XlsxWriter caches 0 for formulas; Kantor computes the value
+13_tables.xlsx	import-value	Sales!D5	XlsxWriter caches 0 for formulas; Kantor computes the value
+13_tables.xlsx	import-value	Sales!D6	XlsxWriter caches 0 for formulas; Kantor computes the value
+13_tables.xlsx	import-value	Sales!D7	XlsxWriter caches 0 for formulas; Kantor computes the value
 16_print_protect_outline.xlsx	export-links	Print	the display attribute of the internal link is not written (IronCalc's Link has no display text; Excel shows the cell value)
 18_conditional_formatting.xlsx	export-value	Rules!L7	shared strings are written without xml:space="preserve": strict readers (calamine) trim a lone space to nothing; IronCalc and openpyxl keep it

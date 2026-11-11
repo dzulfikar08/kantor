@@ -17,6 +17,30 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   `scripts/third-party-licenses.py`. On macOS it is inside `Kantor.app/Contents/Resources`.
 
 #### Sheets
+- Excel tables are shown with their table style: header and total rows, banded rows and columns,
+  first / last column, from the built-in Light, Medium and Dark styles (coloured from the
+  workbook's theme, as Excel does) and the workbook's own table styles. Typing under a table
+  without a total row extends it (calculated columns follow); rows and columns inserted inside
+  one grow it (new columns get a `ColumnN` header); editing a header renames the column and the
+  formulas that use it. All undoable, and saved into the table's part.
+- Structured references work: `Sales[Units]`, `Sales[@Units]`, `Sales[[#Totals],[Units]]`,
+  `Sales[#All]`, `Sales[[#Headers],[#Data]]`, column ranges and `[@Units]` inside a table. They
+  follow the table as it grows and are saved as written (`[#This Row]` in the file, `@` on
+  screen); before, they turned into fixed ranges on save.
+- Sort: **Sort A to Z / Z to A** by the active cell's column (a table's rows, the selection, or
+  the data around the active cell, with a header row guessed as Excel does) and **Custom Sort…**
+  by several columns. Excel's order: numbers and dates, text (any case), FALSE/TRUE, errors,
+  blanks last; stable; formulas move with their rows (relative references follow the row,
+  absolute ones stay). Rows hidden by a filter stay put. One undo step. In the column header menu,
+  the palette and each filter button.
+- AutoFilter: **Filter** (`Ctrl Shift L`) puts filter buttons on a table or a data range; a button
+  opens a menu to sort, filter by a text, number or date condition (equals, contains, begins
+  with, greater than, between, before…) or by ticking values in a searchable list, or clear the
+  column's filter. A filtered column's button shows a funnel. **Clear Filters** and **Reapply
+  Filters** are in the palette. Filtered rows are hidden rows; SUBTOTAL and AGGREGATE skip them,
+  and the filter is saved as Excel writes it (`<autoFilter>`, hidden rows) and read back from
+  Excel's files, including filters Kantor keeps but can't edit (top 10, colours, dynamic dates).
+  A 90 000-row table sorts in about 0.4 s and filters in under 0.1 s (release build).
 - Rows have their own heights, as in Excel: custom heights from the file (relative to the sheet's
   default row height), hidden rows, and rows that grow to fit wrapped text and larger fonts
   (measured for the rows on screen, so big workbooks open and scroll as fast as before). Drag a

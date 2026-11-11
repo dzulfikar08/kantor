@@ -719,6 +719,7 @@ impl<'a> Model<'a> {
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
         self.displace_defined_names(&disp); // KANTOR PATCH (fidelity)
+        self.displace_tables(&disp); // KANTOR PATCH (tables)
 
         // In the list of columns:
         // * Keep all the columns to the left
@@ -849,6 +850,7 @@ impl<'a> Model<'a> {
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
         self.displace_defined_names(&disp); // KANTOR PATCH (fidelity)
+        self.displace_tables(&disp); // KANTOR PATCH (tables)
         let worksheet = &mut self.workbook.worksheet_mut(sheet)?;
 
         // deletes all the column styles
@@ -1126,6 +1128,7 @@ impl<'a> Model<'a> {
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
         self.displace_defined_names(&disp); // KANTOR PATCH (fidelity)
+        self.displace_tables(&disp); // KANTOR PATCH (tables)
 
         Ok(())
     }
@@ -1236,6 +1239,7 @@ impl<'a> Model<'a> {
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
         self.displace_defined_names(&disp); // KANTOR PATCH (fidelity)
+        self.displace_tables(&disp); // KANTOR PATCH (tables)
         Ok(())
     }
 
@@ -1394,6 +1398,7 @@ impl<'a> Model<'a> {
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
         self.displace_defined_names(&disp); // KANTOR PATCH (fidelity)
+        self.displace_tables(&disp); // KANTOR PATCH (tables)
         Ok(())
     }
 
@@ -1542,6 +1547,7 @@ impl<'a> Model<'a> {
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
         self.displace_defined_names(&disp); // KANTOR PATCH (fidelity)
+        self.displace_tables(&disp); // KANTOR PATCH (tables)
         Ok(())
     }
 

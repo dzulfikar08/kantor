@@ -135,16 +135,17 @@ const SHEET_ORDER: [&str; 39] = [
 /// defaults (row height, column width) Kantor can't change. `tableParts` is
 /// carried table by table ([`carry_tables`]: header cells must still match
 /// the column names, or Excel repairs the file), `extLst` extension by
-/// extension ([`carry_extensions`]). Conditional formats replace IronCalc's
+/// extension ([`carry_extensions`]). `autoFilter` is not carried: IronCalc
+/// writes the filter state Kantor keeps in the model (`crate::filter`).
+/// Conditional formats replace IronCalc's
 /// own ([`carry_conditional_formats`]). Left out on purpose: what IronCalc
 /// models (views, columns, merges, hyperlinks) and
 /// `oleObjects`/`controls` (built on `mc:AlternateContent`).
-pub(crate) const CARRIED_ELEMENTS: [&str; 19] = [
+pub(crate) const CARRIED_ELEMENTS: [&str; 18] = [
     "sheetPr",
     "sheetFormatPr",
     "sheetProtection",
     "protectedRanges",
-    "autoFilter",
     "dataValidations",
     "printOptions",
     "pageMargins",
@@ -202,6 +203,21 @@ pub(crate) struct Context<'a> {
     pub moves: &'a Moves,
     /// The text a cell shows, by `(sheetId, row, column)` (0-based).
     pub cell_text: &'a dyn Fn(u32, u32, u32) -> String,
+    /// The tables of the saved workbook, by name (any case): where a table
+    /// carried from the original is now, and its filter.
+    pub tables: &'a dyn Fn(&str) -> Option<TableNow>,
+}
+
+/// A table as the model has it at save time.
+pub(crate) struct TableNow {
+    pub sheet_id: u32,
+    /// `A1:D10`.
+    pub reference: String,
+    /// The `<autoFilter>` element, its `ref` still to be set.
+    pub auto_filter: Option<String>,
+    pub totals_rows: u32,
+    /// Column ids and names, in order.
+    pub columns: Vec<(u32, String)>,
 }
 
 /// Post-process IronCalc's xlsx: carry over what the `original` package had
@@ -2524,69 +2540,142 @@ fn carry_tables(
 }
 
 /// A table part fitted to the saved sheet: `Ok(None)` if it can be copied as
-/// is, `Ok(Some(xml))` if it changed, `Err` if it can't be kept.
+/// is, `Ok(Some(xml))` if it changed, `Err` if it can't be kept. Its range,
+/// columns and filter are the model's (tables grow, shrink and get columns
+/// with the rows and columns inserted and deleted, `crate::table`).
 fn fit_table(xml: &str, sheet: u32, ctx: &Context) -> Result<Option<Vec<u8>>, String> {
     let doc = Document::parse(xml).map_err(|e| e.to_string())?;
     let table = doc.root_element();
-    if !is_main(table, "table") {
+    if !is_main(table, "table") || table.lookup_namespace_uri(None) != Some(NS_MAIN) {
         return Err("not a table".into());
     }
     let reference = table.attribute("ref").ok_or("no ref")?;
-    let area = parse_range(reference).ok_or("unreadable ref")?.area();
+    let name = table
+        .attribute("name")
+        .or_else(|| table.attribute("displayName"))
+        .ok_or("no name")?;
+    let now = (ctx.tables)(name)
+        .filter(|t| t.sheet_id == sheet)
+        .ok_or("it was removed")?;
+    let new_area = parse_range(&now.reference).ok_or("unreadable ref")?.area();
     let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
-    let moves = ctx.moves;
-    let new_area = if moves.touches(sheet) {
-        if moves.splits_columns(sheet, area) {
-            return Err("columns were inserted or deleted inside it".into());
-        }
-        let header_rows: u32 = table
-            .attribute("headerRowCount")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1);
-        if header_rows > 0 && moves.cell(sheet, area.top, area.left).is_none() {
-            return Err("its header row was deleted".into());
-        }
-        let moved = moves.area(sheet, area).ok_or("its cells were deleted")?;
-        // The table itself, and the ranges of its filter and sort.
-        for n in table.descendants().filter(|n| n.is_element()) {
-            for a in n.attributes().filter(|a| a.namespace().is_none()) {
-                let is_range = a.name() == "ref"
-                    && matches!(
-                        n.tag_name().name(),
-                        "table" | "autoFilter" | "sortState" | "sortCondition"
-                    );
-                if is_range {
-                    let v = moves
-                        .sqref(sheet, a.value())
-                        .ok_or("its cells were deleted")?;
-                    if v != a.value() {
-                        edits.push((a.range_value(), esc_attr(&v)));
-                    }
-                }
+    if reference != now.reference {
+        let attr = table
+            .attributes()
+            .find(|a| a.name() == "ref" && a.namespace().is_none())
+            .ok_or("no ref")?;
+        edits.push((attr.range_value(), esc_attr(&now.reference)));
+    }
+    // The filter: the model's, over the table without its total row.
+    let filter_ref = {
+        let bottom = new_area
+            .bottom
+            .saturating_sub(now.totals_rows)
+            .max(new_area.top);
+        format!(
+            "{}:{}",
+            crate::cell_name(new_area.top, new_area.left),
+            crate::cell_name(bottom, new_area.right)
+        )
+    };
+    let new_filter = now
+        .auto_filter
+        .as_deref()
+        .map(|x| ironcalc_base::kantor_tables::with_auto_filter_ref(x, &filter_ref));
+    let old_filter = table.children().find(|c| is_main(*c, "autoFilter"));
+    match (old_filter, new_filter) {
+        (Some(n), Some(x)) => {
+            if xml[n.range()] != x {
+                edits.push((n.range(), x));
             }
         }
-        moved
-    } else {
-        area
-    };
+        (Some(n), None) => edits.push((n.range(), String::new())),
+        (None, Some(x)) => {
+            let at = table
+                .children()
+                .find(|c| is_main(*c, "sortState") || is_main(*c, "tableColumns"))
+                .ok_or("no columns")?
+                .range()
+                .start;
+            edits.push((at..at, x));
+        }
+        (None, None) => {}
+    }
+    // A remembered sort no longer describes a moved or resized table.
+    if reference != now.reference
+        && let Some(n) = table.children().find(|c| is_main(*c, "sortState"))
+    {
+        edits.push((n.range(), String::new()));
+    }
+    // Columns: inserted or deleted ones change the list.
+    let cols_node = table
+        .children()
+        .find(|c| is_main(*c, "tableColumns"))
+        .ok_or("no columns")?;
+    let orig_cols: Vec<Node> = cols_node
+        .children()
+        .filter(|n| is_main(*n, "tableColumn"))
+        .collect();
+    let orig_ids: Vec<u32> = orig_cols
+        .iter()
+        .filter_map(|c| c.attribute("id").and_then(|v| v.parse().ok()))
+        .collect();
+    let model_ids: Vec<u32> = now.columns.iter().map(|c| c.0).collect();
+    let columns_changed = orig_ids != model_ids;
+    if columns_changed {
+        let mut text = format!("<tableColumns count=\"{}\">", now.columns.len());
+        let mut renamed: Vec<(String, String)> = Vec::new();
+        for (id, cname) in &now.columns {
+            match orig_cols
+                .iter()
+                .find(|c| c.attribute("id").and_then(|v| v.parse::<u32>().ok()) == Some(*id))
+            {
+                Some(c) => {
+                    let orig_name = c.attribute("name").unwrap_or_default();
+                    let mut one = xml[c.range()].to_owned();
+                    if orig_name != cname {
+                        one = one.replace(
+                            &format!("name=\"{}\"", esc_attr(orig_name)),
+                            &format!("name=\"{}\"", esc_attr(cname)),
+                        );
+                        renamed.push((orig_name.to_owned(), cname.clone()));
+                    }
+                    text.push_str(&one);
+                }
+                None => text.push_str(&format!(
+                    "<tableColumn id=\"{id}\" name=\"{}\"/>",
+                    esc_attr(cname)
+                )),
+            }
+        }
+        text.push_str("</tableColumns>");
+        // References to renamed columns in the columns' formulas.
+        for (old, new) in &renamed {
+            text = text
+                .replace(&format!("[{old}]"), &format!("[{new}]"))
+                .replace(&format!("[@{old}]"), &format!("[@{new}]"))
+                .replace(&format!(",{old}]"), &format!(",{new}]"));
+        }
+        edits.push((cols_node.range(), text));
+    }
     // Header cells must match the column names.
     let header_rows: u32 = table
         .attribute("headerRowCount")
         .and_then(|v| v.parse().ok())
         .unwrap_or(1);
-    let columns: Vec<Node> = table
-        .children()
-        .find(|c| is_main(*c, "tableColumns"))
-        .map(|c| {
-            c.children()
-                .filter(|n| is_main(*n, "tableColumn"))
-                .collect()
-        })
-        .unwrap_or_default();
-    if columns.len() as u32 != new_area.right - new_area.left + 1 {
+    let columns = orig_cols;
+    if now.columns.len() as u32 != new_area.right - new_area.left + 1 {
         return Err("its columns don't match its range".into());
     }
-    if header_rows > 0 {
+    if header_rows > 0 && columns_changed {
+        // Header cells of new columns hold their names (see `Workbook::insert_columns`).
+        for (i, (_, cname)) in now.columns.iter().enumerate() {
+            let cell = (ctx.cell_text)(sheet, new_area.top, new_area.left + i as u32);
+            if cell.trim().is_empty() || cell.to_lowercase() != cname.to_lowercase() {
+                return Err(format!("the header of column {cname:?} doesn't match"));
+            }
+        }
+    } else if header_rows > 0 {
         let mut renames: Vec<(String, String)> = Vec::new();
         let mut seen = HashSet::new();
         for (i, col) in columns.iter().enumerate() {
@@ -3407,6 +3496,7 @@ mod tests {
             full_calc: false,
             moves: &Moves::default(),
             cell_text: &|_, _, _| String::new(),
+            tables: &|_| None,
         };
         let done = finish(out, original, &ctx);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());

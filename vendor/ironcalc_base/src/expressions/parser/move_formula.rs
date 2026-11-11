@@ -476,6 +476,8 @@ fn to_string_moved(
         }
         DefinedNameKind((name, ..)) => name.to_string(),
         TableNameKind(name) => name.to_string(),
+        // KANTOR PATCH (tables)
+        TableRefKind(t) => crate::kantor_tables::table_ref_text(t, false),
         NamedVariableKind { name, id: _ } => name.to_string(),
         CompareKind { kind, left, right } => format!(
             "{}{}{}",

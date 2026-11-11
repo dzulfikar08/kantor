@@ -154,6 +154,39 @@ impl<'a> UserModel<'a> {
                 } => self
                     .model
                     .kantor_set_row_entry(*sheet, *row, old_value.as_deref().cloned())?,
+                // KANTOR PATCH (tables)
+                Diff::KantorRowEntries {
+                    sheet, old_value, ..
+                } => self.model.kantor_set_row_entries(*sheet, old_value)?,
+                Diff::KantorRenameTableColumn {
+                    table,
+                    old_name,
+                    new_name,
+                } => self
+                    .model
+                    .kantor_rename_table_column(table, new_name, old_name)?,
+                Diff::KantorSetSheetFilter {
+                    sheet, old_value, ..
+                } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.kantor_auto_filter =
+                        old_value.clone()
+                }
+                Diff::KantorSetTable {
+                    name, old_value, ..
+                } => self
+                    .model
+                    .kantor_put_table(name, old_value.as_deref().cloned()),
+                Diff::KantorPermuteRows {
+                    sheet,
+                    top,
+                    left,
+                    right,
+                    order,
+                } => {
+                    let inverse = crate::kantor_tables::inverse_order(*top, order);
+                    self.model
+                        .kantor_permute_rows(*sheet, *top, *left, *right, &inverse)?
+                }
                 Diff::RangeClearContents {
                     sheet,
                     row,
@@ -729,6 +762,37 @@ impl<'a> UserModel<'a> {
                 } => self
                     .model
                     .kantor_set_row_entry(*sheet, *row, new_value.as_deref().cloned())?,
+                // KANTOR PATCH (tables)
+                Diff::KantorRowEntries {
+                    sheet, new_value, ..
+                } => self.model.kantor_set_row_entries(*sheet, new_value)?,
+                Diff::KantorRenameTableColumn {
+                    table,
+                    old_name,
+                    new_name,
+                } => self
+                    .model
+                    .kantor_rename_table_column(table, old_name, new_name)?,
+                Diff::KantorSetSheetFilter {
+                    sheet, new_value, ..
+                } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.kantor_auto_filter =
+                        new_value.clone()
+                }
+                Diff::KantorSetTable {
+                    name, new_value, ..
+                } => self
+                    .model
+                    .kantor_put_table(name, new_value.as_deref().cloned()),
+                Diff::KantorPermuteRows {
+                    sheet,
+                    top,
+                    left,
+                    right,
+                    order,
+                } => self
+                    .model
+                    .kantor_permute_rows(*sheet, *top, *left, *right, order)?,
                 Diff::RangeClearContents {
                     sheet,
                     row,

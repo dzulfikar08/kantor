@@ -219,6 +219,7 @@ fn prefix_bound_variables(node: &mut Node, bound: &mut Vec<String>) {
         | Node::ArrayKind(_)
         | Node::DefinedNameKind(_)
         | Node::TableNameKind(_)
+        | Node::TableRefKind(_)
         | Node::ErrorKind(_)
         | Node::ParseErrorKind { .. }
         | Node::EmptyArgKind => {}
@@ -841,6 +842,7 @@ fn stringify(
                 | WrongReferenceKind { .. }
                 | DefinedNameKind(_)
                 | TableNameKind(_)
+                | TableRefKind(_)
                 | NamedVariableKind { .. }
                 | WrongRangeKind { .. } => stringify(
                     left,
@@ -886,6 +888,7 @@ fn stringify(
                 | WrongReferenceKind { .. }
                 | DefinedNameKind(_)
                 | TableNameKind(_)
+                | TableRefKind(_)
                 | NamedVariableKind { .. }
                 | WrongRangeKind { .. } => stringify(
                     right,
@@ -981,6 +984,8 @@ fn stringify(
             format!("{{{matrix_string}}}")
         }
         TableNameKind(value) => value.to_string(),
+        // KANTOR PATCH (tables)
+        TableRefKind(t) => crate::kantor_tables::table_ref_text(t, export_to_excel),
         DefinedNameKind((name, ..)) => name.to_string(),
         NamedVariableKind { name, id: _ } => name.to_string(),
         UnaryKind { kind, right } => match kind {
@@ -1002,6 +1007,7 @@ fn stringify(
                     | ArrayKind(_)
                     | DefinedNameKind(_)
                     | TableNameKind(_)
+                | TableRefKind(_)
                     | NamedVariableKind { .. }
                     | ImplicitIntersection { .. }
                     | SpillRangeOperator { .. }
@@ -1296,6 +1302,7 @@ pub(crate) fn rename_sheet_in_node(node: &mut Node, sheet_index: u32, new_name: 
         Node::ArrayKind(_) => {}
         Node::DefinedNameKind(_) => {}
         Node::TableNameKind(_) => {}
+        Node::TableRefKind(_) => {}
         Node::NamedVariableKind { .. } => {}
         Node::EmptyArgKind => {}
         Node::LambdaDefKind {
@@ -1402,6 +1409,7 @@ pub(crate) fn rename_defined_name_in_node(
         Node::WrongReferenceKind { .. } => {}
         Node::WrongRangeKind { .. } => {}
         Node::TableNameKind(_) => {}
+        Node::TableRefKind(_) => {}
         Node::NamedVariableKind { .. } => {}
         Node::LambdaDefKind {
             parameters: _,

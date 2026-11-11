@@ -64,7 +64,7 @@ export const en = {
     sheets: {
       name: "Sheets",
       formats: [".xlsx", ".csv", ".ods", ".xls"],
-      text: "Spreadsheets with formulas, several sheets and number formats. Opens .csv, .ods and .xls files too, and saves as .xlsx.",
+      text: "Spreadsheets with formulas, several sheets, number formats, Excel tables, sort and filter. Opens .csv, .ods and .xls files too, and saves as .xlsx.",
     },
     docs: {
       name: "Docs",
@@ -150,7 +150,7 @@ export const en = {
     "Word: headers, footers, floating pictures, shapes and equations aren't shown properly yet. Kantor keeps them and saves them unchanged.",
     "Word: table rows don't break across pages, and tab stops show as a single space.",
     "Word files with tracked changes or comments are saved as a new file, so the original stays as it was.",
-    "Excel: conditional formatting is shown but can't be edited, rows can't be hidden or shown again, and there's no sort or filter yet.",
+    "Excel: conditional formatting is shown but can't be edited, rows can't be hidden or shown again by hand, and new tables can't be created yet.",
     "Excel: macros and pivot tables aren't carried over when you save. Kantor tells you when that happens.",
     "Excel: drop-down lists, input messages and error alerts from data validation work, but rules can't be created or changed in Kantor yet.",
     "PowerPoint: tables, charts and SmartArt can't be edited yet, and some SmartArt shows as a plain box.",
@@ -227,7 +227,7 @@ export const id = {
     sheets: {
       name: "Sheets",
       formats: [".xlsx", ".csv", ".ods", ".xls"],
-      text: "Lembar kerja dengan rumus, beberapa sheet, dan format angka (termasuk Rupiah). Bisa membuka file .csv, .ods, dan .xls, lalu menyimpannya sebagai .xlsx.",
+      text: "Lembar kerja dengan rumus, beberapa sheet, format angka (termasuk Rupiah), tabel Excel, urutkan, dan filter. Bisa membuka file .csv, .ods, dan .xls, lalu menyimpannya sebagai .xlsx.",
     },
     docs: {
       name: "Docs",
@@ -313,7 +313,7 @@ export const id = {
     "Word: header, footer, gambar mengambang, bentuk, dan persamaan belum tampil dengan benar. Kantor menyimpannya tanpa diubah.",
     "Word: baris tabel tidak terpotong ke halaman berikutnya, dan tab tampil sebagai satu spasi.",
     "File Word dengan lacak perubahan (track changes) atau komentar disimpan sebagai file baru, jadi file aslinya tetap utuh.",
-    "Excel: format bersyarat tampil tetapi belum bisa diubah, baris belum bisa disembunyikan atau ditampilkan lagi, dan belum ada urutkan atau filter.",
+    "Excel: format bersyarat tampil tetapi belum bisa diubah, baris belum bisa disembunyikan atau ditampilkan lagi secara manual, dan tabel baru belum bisa dibuat.",
     "Excel: makro dan pivot table tidak ikut tersimpan. Kantor memberi tahu Anda saat itu terjadi.",
     "Excel: daftar pilihan (drop-down), pesan input, dan peringatan kesalahan dari validasi data sudah berfungsi, tetapi aturannya belum bisa dibuat atau diubah di Kantor.",
     "PowerPoint: tabel, grafik, dan SmartArt belum bisa diedit, dan sebagian SmartArt tampil sebagai kotak polos.",

@@ -427,6 +427,66 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "Sort A to Z",
+        detail: "Sheets · by the active cell's column (smallest to largest, oldest to newest)",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::SortAscending, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Sort Z to A",
+        detail: "Sheets · by the active cell's column, descending",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::SortDescending, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Custom Sort…",
+        detail: "Sheets · sort by several columns",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::CustomSort, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Filter",
+        detail: "Sheets · filter buttons on or off for the data or table",
+        keys: "Ctrl Shift L",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::ToggleFilter, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Clear Filters",
+        detail: "Sheets · show every row the sheet's filters hide",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::ClearFilters, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Reapply Filters",
+        detail: "Sheets · filter again after edits",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::ReapplyFilters, w, cx)
+            })
+        },
+    },
+    Command {
         title: "Insert Row Above",
         detail: "Sheets · rows of the selection",
         keys: "",

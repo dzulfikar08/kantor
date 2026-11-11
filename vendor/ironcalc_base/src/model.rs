@@ -409,6 +409,22 @@ impl<'a> Model<'a> {
                 }
                 self.evaluate_node_in_context(node, cell)
             }
+            // KANTOR PATCH (tables)
+            Node::TableRefKind(t) => {
+                let node = self.resolve_table_ref(t, cell);
+                self.evaluate_node_with_reference(&node, cell)
+            }
+            Node::TableNameKind(name) => {
+                let node = self.resolve_table_ref(
+                    &crate::expressions::parser::TableRef {
+                        table: name.clone(),
+                        specifier: None,
+                        columns: None,
+                    },
+                    cell,
+                );
+                self.evaluate_node_with_reference(&node, cell)
+            }
             _ => self.evaluate_node_in_context(node, cell),
         }
     }
@@ -759,7 +775,11 @@ impl<'a> Model<'a> {
                 }),
             },
             OpPowerKind { left, right } => self.handle_arithmetic(left, right, cell, &power),
-            FunctionKind { kind, args } => self.evaluate_function(kind, args, cell),
+            FunctionKind { kind, args } => match self.resolve_table_args(args, cell) {
+                // KANTOR PATCH (tables)
+                Some(args) => self.evaluate_function(kind, &args, cell),
+                None => self.evaluate_function(kind, args, cell),
+            },
             NamedFunctionKind { name, args, id } => {
                 let lambda_result = if let Some(var_id) = id {
                     // Bound by LET — look up the variable, which should be a Lambda.
@@ -830,11 +850,22 @@ impl<'a> Model<'a> {
                     )
                 }
             }
-            TableNameKind(s) => CalcResult::new_error(
-                Error::NAME,
-                cell,
-                format!("table name \"{s}\" not supported."),
-            ),
+            // KANTOR PATCH (tables): a table's name is its data.
+            TableNameKind(s) => {
+                let node = self.resolve_table_ref(
+                    &crate::expressions::parser::TableRef {
+                        table: s.clone(),
+                        specifier: None,
+                        columns: None,
+                    },
+                    cell,
+                );
+                self.evaluate_node_in_context(&node, cell)
+            }
+            TableRefKind(t) => {
+                let node = self.resolve_table_ref(t, cell);
+                self.evaluate_node_in_context(&node, cell)
+            }
             // A variable bound to a single cell is that cell's value here,
             // where a value is wanted; it is the reference itself where a
             // reference is wanted (see `evaluate_node_with_reference`).

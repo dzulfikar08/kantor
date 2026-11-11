@@ -11,6 +11,7 @@
 mod batch;
 mod cond_format;
 mod csv;
+mod filter;
 mod import;
 mod look;
 mod numfmt;
@@ -18,6 +19,8 @@ mod preserve;
 mod rows;
 mod shift;
 mod validation;
+mod sort;
+mod table;
 
 pub use import::SourceFormat;
 pub use preserve::package_problems;
@@ -45,6 +48,10 @@ pub mod grid;
 pub mod tsv;
 
 pub use cond_format::{CfIcon, Conditional, DataBar, IconShape};
+pub use filter::{
+    ColumnFilter, ColumnKind, Condition, DateGroup, FilterInfo, FilterKind, FilterOp, FilterScope,
+    FilterValue, checked_values, date_serial, ymd,
+};
 pub use format::{
     BorderLine, BorderPreset, Borders, CellStyle, HAlign, LineStyle, NumberFormat, Rgb,
     StyleChange, VAlign, ValueKind,
@@ -56,6 +63,8 @@ pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight,
 pub use validation::{
     ErrorStyle, ListItem, Message, Validation, ValidationOperator, ValidationType,
 };
+pub use sort::SortKey;
+pub use table::{TableCellLook, TableInfo};
 
 const LOCALE: &str = "en";
 const TIMEZONE: &str = "UTC";
@@ -86,6 +95,8 @@ pub struct Workbook {
     cond: cond_format::CondState,
     /// Data validation of the opened file.
     validation: validation::Validations,
+    /// The workbook's own table styles (`<tableStyles>` in `styles.xml`).
+    table_styles: table::CustomStyles,
 }
 
 /// See [`Workbook::cached`].
@@ -96,6 +107,8 @@ struct Cache {
     used: HashMap<u32, (u32, u32)>,
     stats: Option<(u32, CellRange, RangeStats)>,
     look: look::LookCache,
+    /// Each sheet's tables with their styles (`table`).
+    tables: HashMap<u32, std::sync::Arc<table::SheetTables>>,
 }
 
 /// When formulas are recalculated, like Excel's calculation options.
@@ -244,7 +257,12 @@ impl Revisions {
 
     /// An edit that inserted or deleted rows or columns.
     fn moved(&mut self, op: shift::Op) {
-        self.edited();
+        self.moved_steps(op, 1);
+    }
+
+    /// [`Self::moved`] spanning `steps` IronCalc steps.
+    fn moved_steps(&mut self, op: shift::Op, steps: u32) {
+        self.edited_steps(steps);
         let layout = self.layout().with(op);
         self.layouts.set(self.current, layout);
     }
@@ -295,6 +313,7 @@ impl Workbook {
         lazy_conditional_formatting();
         let model = UserModel::new_empty("Untitled", LOCALE, TIMEZONE, LANGUAGE)
             .map_err(|e| anyhow!("creating workbook: {e}"))?;
+        let table_styles = table::CustomStyles::default();
         Ok(Self {
             model,
             path: None,
@@ -305,6 +324,7 @@ impl Workbook {
             cache: RefCell::default(),
             cond: Default::default(),
             validation: Default::default(),
+            table_styles,
         })
     }
 
@@ -359,6 +379,10 @@ impl Workbook {
             // Excel to recalculate again.
             calc.fresh = u64::MAX;
         }
+        let table_styles = match format {
+            SourceFormat::Xlsx => table::read_custom_styles(path, &model.workbook.theme),
+            _ => table::CustomStyles::default(),
+        };
         let mut model = UserModel::from_model(model);
         if calc.mode == CalcMode::Manual {
             model.pause_evaluation();
@@ -383,6 +407,7 @@ impl Workbook {
             cache: RefCell::default(),
             cond: Default::default(),
             validation,
+            table_styles,
         })
     }
 
@@ -560,11 +585,29 @@ impl Workbook {
                         })
                         .unwrap_or_default()
                 };
+                let table_now = |name: &str| {
+                    let t =
+                        ironcalc_base::kantor_tables::find_table_pub(&model.workbook.tables, name)?;
+                    let sheet_id = model
+                        .workbook
+                        .worksheets
+                        .iter()
+                        .find(|w| w.name == t.sheet_name)?
+                        .sheet_id;
+                    Some(preserve::TableNow {
+                        sheet_id,
+                        reference: t.reference.clone(),
+                        auto_filter: t.kantor_auto_filter.clone(),
+                        totals_rows: t.totals_row_count,
+                        columns: t.columns.iter().map(|c| (c.id, c.name.clone())).collect(),
+                    })
+                };
                 let ctx = preserve::Context {
                     tabs: &self.tab_colors(),
                     full_calc: stale,
                     moves: &moves,
                     cell_text: &cell_text,
+                    tables: &table_now,
                 };
                 let finished = preserve::finish(written, original.as_deref(), &ctx);
                 drop(original);
@@ -744,6 +787,18 @@ impl Workbook {
     pub fn set_input(&mut self, sheet: u32, row: u32, col: u32, value: &str) -> Result<()> {
         if row >= MAX_ROWS || col >= MAX_COLS {
             bail!("cell out of range");
+        }
+        // A value typed just under a table extends it (Excel's AutoCorrect
+        // "include new rows"), with its calculated columns.
+        if let Some(t) = self.table_growth(sheet, row, col, value) {
+            return self.grow_table(sheet, t, row, col, value);
+        }
+        // A table's header cell names its column: renaming it renames the
+        // column and the references to it.
+        if let Some(t) = self.table_at(sheet, row, col)
+            && t.header_row() == Some(row)
+        {
+            return self.edit_table_header(sheet, &t, row, col, value);
         }
         self.model
             .set_user_input(sheet, row as i32 + 1, col as i32 + 1, value)

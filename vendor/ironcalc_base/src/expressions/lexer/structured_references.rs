@@ -17,167 +17,113 @@ use super::Result;
 use super::{Lexer, LexerError};
 
 impl<'a> Lexer<'a> {
-    fn consume_table_specifier(&mut self) -> Result<Option<TableSpecifier>> {
-        if self.peek_char() == Some('#') {
-            // It's a specifier
-            // TODO(TD): There are better ways of doing this :)
-            let rest_of_formula: String = self.chars[self.position..self.len].iter().collect();
-            let specifier = if rest_of_formula.starts_with("#This Row]") {
-                self.position += "#This Row]".len();
-                TableSpecifier::ThisRow
-            } else if rest_of_formula.starts_with("#All]") {
-                self.position += "#All]".len();
-                TableSpecifier::All
-            } else if rest_of_formula.starts_with("#Data]") {
-                self.position += "#Data]".len();
-                TableSpecifier::Data
-            } else if rest_of_formula.starts_with("#Headers]") {
-                self.position += "#Headers]".len();
-                TableSpecifier::Headers
-            } else if rest_of_formula.starts_with("#Totals]") {
-                self.position += "#Totals]".len();
-                TableSpecifier::Totals
-            } else {
-                return Err(LexerError {
-                    position: self.position,
-                    message: "Invalid structured reference".to_string(),
-                });
-            };
-            Ok(Some(specifier))
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn consume_column_reference(&mut self) -> Result<String> {
-        self.consume_whitespace();
-        let end_char = if self.peek_char() == Some('[') {
-            self.position += 1;
-            ']'
-        } else {
-            ')'
-        };
-
-        let mut position = self.position;
-        while position < self.len {
-            let next_char = self.chars[position];
-            if next_char != end_char {
-                position += 1;
-                if next_char == '\'' {
-                    if position == self.len {
-                        return Err(LexerError {
-                            position: self.position,
-                            message: "Invalid column name".to_string(),
-                        });
-                    }
-                    // skip next char
-                    position += 1
-                }
-            } else {
-                break;
-            }
-        }
-        let chars: String = self.chars[self.position..position].iter().collect();
-        if end_char == ']' {
-            position += 1;
-        }
-        self.position = position;
-        Ok(chars
-            .replace("'[", "[")
-            .replace("']", "]")
-            .replace("'#", "#")
-            .replace("'@", "@")
-            .replace("''", "'"))
-    }
-
-    /// Possibilities:
-    ///  1. MyTable[#Totals] or MyTable[#This Row]
-    ///  2. MyTable[MyColumn]
-    ///  3. MyTable[[My Column]]
-    ///  4. MyTable[[#This Row], [My Column]]
-    ///  5. MyTable[[#Totals], [MyColumn]]
-    ///  6. MyTable[[#This Row], [Jan]:[Dec]]
-    ///  7. MyTable[]
+    /// KANTOR PATCH (tables): the whole bracketed part after a table name,
+    /// as Excel writes it in files and as users type it:
     ///
-    /// Multiple specifiers are not supported yet:
-    ///  1. MyTable[[#Data], [#Totals], [MyColumn]]
+    ///  * `T[]` (the table), `T[Col]`, `T[[Col Name]]`, `T[[A]:[B]]`
+    ///  * `T[#All]`, `T[#Data]`, `T[#Headers]`, `T[#Totals]`, `T[#This Row]`
+    ///  * `T[[#Totals],[Col]]`, `T[[#Headers],[#Data],[A]:[B]]`
+    ///  * `T[@Col]`, `T[@[Col Name]]`, `T[@[A]:[B]]`, `T[@]`
     ///
-    /// In particular note that names of columns are escaped only when they are in the first argument
-    /// We use '[' and ']'
-    /// When there is only a specifier but not a reference the specifier is not in brackets
-    ///
-    /// Invalid:
-    /// * MyTable[#Totals, [Jan]:[March]] => MyTable[[#Totals], [Jan]:[March]]
-    //
-    // NOTES:
-    // * MyTable[[#Totals]] is translated into MyTable[#Totals]
-    // * Excel shows '@' instead of '#This Row':
-    //     MyTable[[#This Row], [Jan]:[Dec]] => MyTable[@[Jan]:[Dec]]
-    //   But this is only a UI thing that we will ignore for now.
+    /// Specifiers are case-insensitive; `'` escapes `[`, `]`, `#`, `@` and
+    /// `'` in a column name. Upstream read only one specifier, no `@`, and
+    /// gave up on other spellings.
     pub(crate) fn consume_structured_reference(&mut self, table_name: &str) -> Result<TokenType> {
-        self.expect(TokenType::LeftBracket)?;
-        let peek_char = self.peek_char();
-        if peek_char == Some(']') {
-            // This is just a reference to the full table
-            self.expect(TokenType::RightBracket)?;
-            return Ok(TokenType::Ident(table_name.to_string()));
-        }
-        if peek_char == Some('#') {
-            // Expecting MyTable[#Totals]
-            if let Some(specifier) = self.consume_table_specifier()? {
-                return Ok(TokenType::StructuredReference {
-                    table_name: table_name.to_string(),
-                    specifier: Some(specifier),
-                    table_reference: None,
-                });
-            } else {
-                return Err(LexerError {
-                    position: self.position,
-                    message: "Invalid structured reference".to_string(),
-                });
+        let start = self.position;
+        self.expect_char('[')?;
+        // Find the matching `]`.
+        let mut depth = 1;
+        let mut end = self.position;
+        while end < self.len {
+            match self.chars[end] {
+                '\'' => end += 1,
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
             }
-        } else if peek_char != Some('[') {
-            // Expecting MyTable[MyColumn]
-            self.position -= 1;
-            let column_name = self.consume_column_reference()?;
-            return Ok(TokenType::StructuredReference {
-                table_name: table_name.to_string(),
-                specifier: None,
-                table_reference: Some(TableReference::ColumnReference(column_name)),
+            end += 1;
+        }
+        if depth != 0 || end >= self.len {
+            return Err(LexerError {
+                position: start,
+                message: "Invalid structured reference".to_string(),
             });
         }
-        self.expect(TokenType::LeftBracket)?;
-        let specifier = self.consume_table_specifier()?;
-        if specifier.is_some() {
-            let peek_token = self.peek_token();
-            if peek_token == TokenType::Comma {
-                self.advance_token();
-                self.expect(TokenType::LeftBracket)?;
-            } else if peek_token == TokenType::RightBracket {
-                return Ok(TokenType::StructuredReference {
-                    table_name: table_name.to_string(),
-                    specifier,
-                    table_reference: None,
-                });
-            }
+        let inner: Vec<char> = self.chars[self.position..end].to_vec();
+        self.position = end + 1;
+        let error = |message: &str| LexerError {
+            position: start,
+            message: message.to_string(),
+        };
+        let inner_text: String = inner.iter().collect();
+        let trimmed = inner_text.trim();
+        if trimmed.is_empty() {
+            return Ok(TokenType::Ident(table_name.to_string()));
         }
-
-        // Now it's either:
-        // [Column Name]
-        // [Column Name]:[Column Name]
-        self.position -= 1;
-        let column_reference = self.consume_column_reference()?;
-        let table_reference = if self.peek_char() == Some(':') {
-            self.position += 1;
-            let column_reference_right = self.consume_column_reference()?;
-            self.expect(TokenType::RightBracket)?;
-            Some(TableReference::RangeReference((
-                column_reference,
-                column_reference_right,
-            )))
+        let mut specifiers: Vec<TableSpecifier> = Vec::new();
+        let mut columns: Vec<String> = Vec::new();
+        let mut range = false;
+        let chars: Vec<char> = trimmed.chars().collect();
+        if chars[0] == '@' {
+            specifiers.push(TableSpecifier::ThisRow);
+            let rest: String = chars[1..].iter().collect();
+            let rest = rest.trim();
+            if !rest.is_empty() {
+                if rest.starts_with('[') {
+                    let (cols, is_range) = parse_column_items(rest).ok_or_else(|| error("Invalid column"))?;
+                    columns = cols;
+                    range = is_range;
+                } else {
+                    columns.push(unescape(rest));
+                }
+            }
+        } else if chars[0] == '#' {
+            specifiers.push(parse_specifier(trimmed).ok_or_else(|| error("Invalid specifier"))?);
+        } else if chars[0] == '[' {
+            // A list of `[item]`, separated by commas; the last may be a range.
+            let items = split_items(&chars).ok_or_else(|| error("Invalid structured reference"))?;
+            for item in items {
+                let item = item.trim();
+                if item.starts_with("[#") || item.starts_with("#") {
+                    let inner = item.trim_start_matches('[').trim_end_matches(']');
+                    if !columns.is_empty() {
+                        return Err(error("Specifier after a column"));
+                    }
+                    specifiers.push(parse_specifier(inner).ok_or_else(|| error("Invalid specifier"))?);
+                } else {
+                    if !columns.is_empty() {
+                        return Err(error("Too many columns"));
+                    }
+                    let (cols, is_range) = parse_column_items(item).ok_or_else(|| error("Invalid column"))?;
+                    columns = cols;
+                    range = is_range;
+                }
+            }
         } else {
-            self.expect(TokenType::RightBracket)?;
-            Some(TableReference::ColumnReference(column_reference))
+            columns.push(unescape(trimmed));
+        }
+        let specifier = match specifiers.as_slice() {
+            [] => None,
+            [one] => Some(one.clone()),
+            [TableSpecifier::Headers, TableSpecifier::Data]
+            | [TableSpecifier::Data, TableSpecifier::Headers] => Some(TableSpecifier::HeadersData),
+            [TableSpecifier::Data, TableSpecifier::Totals]
+            | [TableSpecifier::Totals, TableSpecifier::Data] => Some(TableSpecifier::DataTotals),
+            _ => return Err(error("Invalid combination of specifiers")),
+        };
+        let table_reference = match (columns.len(), range) {
+            (0, _) => None,
+            (1, _) => Some(TableReference::ColumnReference(columns.remove(0))),
+            (2, true) => {
+                let right = columns.remove(1);
+                Some(TableReference::RangeReference((columns.remove(0), right)))
+            }
+            _ => return Err(error("Invalid columns")),
         };
         Ok(TokenType::StructuredReference {
             table_name: table_name.to_string(),
@@ -185,4 +131,129 @@ impl<'a> Lexer<'a> {
             table_reference,
         })
     }
+}
+
+fn parse_specifier(text: &str) -> Option<TableSpecifier> {
+    let t = text.trim().to_ascii_lowercase();
+    Some(match t.as_str() {
+        "#all" => TableSpecifier::All,
+        "#data" => TableSpecifier::Data,
+        "#headers" => TableSpecifier::Headers,
+        "#totals" => TableSpecifier::Totals,
+        "#this row" => TableSpecifier::ThisRow,
+        _ => return None,
+    })
+}
+
+/// `'x` stands for `x`.
+fn unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\'' {
+            if let Some(n) = chars.next() {
+                out.push(n);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Split `[a],[b],[c]:[d]` at the top-level commas.
+fn split_items(chars: &[char]) -> Option<Vec<String>> {
+    let mut items = Vec::new();
+    let mut depth = 0;
+    let mut current = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\'' => {
+                current.push(c);
+                i += 1;
+                if i < chars.len() {
+                    current.push(chars[i]);
+                }
+            }
+            '[' => {
+                depth += 1;
+                current.push(c);
+            }
+            ']' => {
+                depth -= 1;
+                if depth < 0 {
+                    return None;
+                }
+                current.push(c);
+            }
+            ',' if depth == 0 => items.push(std::mem::take(&mut current)),
+            _ => current.push(c),
+        }
+        i += 1;
+    }
+    if depth != 0 {
+        return None;
+    }
+    items.push(current);
+    Some(items)
+}
+
+/// `[Col]` or `[A]:[B]` (also `A` without brackets): the column names and
+/// whether it is a range.
+fn parse_column_items(text: &str) -> Option<(Vec<String>, bool)> {
+    let text = text.trim();
+    let chars: Vec<char> = text.chars().collect();
+    let mut names = Vec::new();
+    let mut i = 0;
+    loop {
+        while i < chars.len() && chars[i] == ' ' {
+            i += 1;
+        }
+        if i >= chars.len() {
+            return None;
+        }
+        if chars[i] == '[' {
+            let mut j = i + 1;
+            let mut name = String::new();
+            while j < chars.len() && chars[j] != ']' {
+                if chars[j] == '\'' && j + 1 < chars.len() {
+                    j += 1;
+                }
+                name.push(chars[j]);
+                j += 1;
+            }
+            if j >= chars.len() {
+                return None;
+            }
+            names.push(name);
+            i = j + 1;
+        } else {
+            let mut name = String::new();
+            let mut j = i;
+            while j < chars.len() && chars[j] != ':' {
+                if chars[j] == '\'' && j + 1 < chars.len() {
+                    j += 1;
+                }
+                name.push(chars[j]);
+                j += 1;
+            }
+            names.push(name.trim_end().to_string());
+            i = j;
+        }
+        while i < chars.len() && chars[i] == ' ' {
+            i += 1;
+        }
+        if i >= chars.len() {
+            break;
+        }
+        if chars[i] == ':' && names.len() == 1 {
+            i += 1;
+            continue;
+        }
+        return None;
+    }
+    let range = names.len() == 2;
+    Some((names, range))
 }
