@@ -357,6 +357,14 @@ impl<'a> Parser<'a> {
 
     pub fn parse(&mut self, formula: &str, context: &CellReferenceRC) -> Node {
         self.lexer.set_formula(formula);
+        // KANTOR PATCH (tables)
+        self.lexer.kantor_in_table = formula.contains('[')
+            && self.tables.values().any(|t| {
+                t.sheet_name == context.sheet
+                    && parse_range(&t.reference).is_ok_and(|(c1, r1, c2, r2)| {
+                        (r1..=r2).contains(&context.row) && (c1..=c2).contains(&context.column)
+                    })
+            });
         self.context = context.clone();
         // At the top level a formula may start with an expression or a range.
         self.expecting_here = vec![ExpectedTokens::Range, ExpectedTokens::Other];

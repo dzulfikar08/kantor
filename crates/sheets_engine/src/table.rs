@@ -138,7 +138,11 @@ pub(crate) struct TableStyleDef {
 }
 
 /// A sheet's tables and their styles.
-pub(crate) type SheetTables = Vec<(TableInfo, Option<TableStyleDef>)>;
+pub(crate) struct SheetTables {
+    tables: Vec<(TableInfo, Option<TableStyleDef>)>,
+    /// The sheet's hidden rows, sorted: bands count the rows shown.
+    hidden: Vec<u32>,
+}
 
 /// Custom table styles of a workbook (`<tableStyles>`), by name, with the
 /// default style for new tables.
@@ -581,7 +585,7 @@ struct Edges {
 
 impl TableStyleDef {
     /// The look of the cell at `(row, col)` of table `t`.
-    fn look(&self, t: &TableInfo, row: u32, col: u32) -> TableCellLook {
+    fn look(&self, t: &TableInfo, row: u32, col: u32, hidden: &[u32]) -> TableCellLook {
         let a = t.area;
         let mut look = TableCellLook::default();
         let (dt, db) = t.data_rows();
@@ -618,18 +622,22 @@ impl TableStyleDef {
         }
         if t.row_stripes && is_data {
             let size = self.row_stripe_size.max(1);
-            let i = (row - dt) / size;
+            // Bands are counted over the rows shown, as in Excel (a filter
+            // keeps them alternating).
+            let skipped =
+                hidden.partition_point(|&h| h < row) - hidden.partition_point(|&h| h < dt);
+            let shown = row - dt - skipped as u32;
+            let i = shown / size;
             let e = if i.is_multiple_of(2) {
                 &self.row_stripe1
             } else {
                 &self.row_stripe2
             };
-            let first = dt + i * size;
             look.apply(
                 e,
                 Edges {
-                    top: row == first,
-                    bottom: row == (first + size - 1).min(db),
+                    top: shown.is_multiple_of(size),
+                    bottom: shown % size == size - 1 || row == db,
                     left: col == a.left,
                     right: col == a.right,
                 },
@@ -670,6 +678,7 @@ impl Workbook {
             return t;
         }
         let model = self.model.get_model();
+        let mut hidden: Vec<u32> = Vec::new();
         let mut v: Vec<(TableInfo, Option<TableStyleDef>)> = match model.workbook.worksheet(sheet) {
             Ok(ws) => model
                 .workbook
@@ -685,7 +694,11 @@ impl Workbook {
             Err(_) => Vec::new(),
         };
         v.sort_by_key(|(t, _)| (t.area.top, t.area.left));
-        let rc = std::sync::Arc::new(v);
+        if !v.is_empty() {
+            hidden = self.hidden_rows(sheet).into_iter().collect();
+            hidden.sort_unstable();
+        }
+        let rc = std::sync::Arc::new(SheetTables { tables: v, hidden });
         self.cached(|c| c.tables.insert(sheet, rc.clone()));
         rc
     }
@@ -693,6 +706,7 @@ impl Workbook {
     /// The tables of `sheet`.
     pub fn tables(&self, sheet: u32) -> Vec<TableInfo> {
         self.sheet_tables(sheet)
+            .tables
             .iter()
             .map(|(t, _)| t.clone())
             .collect()
@@ -701,6 +715,7 @@ impl Workbook {
     /// The table `(row, col)` of `sheet` is in.
     pub fn table_at(&self, sheet: u32, row: u32, col: u32) -> Option<TableInfo> {
         self.sheet_tables(sheet)
+            .tables
             .iter()
             .find(|(t, _)| t.area.contains(row, col))
             .map(|(t, _)| t.clone())
@@ -710,8 +725,11 @@ impl Workbook {
     /// with a style.
     pub fn table_cell_look(&self, sheet: u32, row: u32, col: u32) -> Option<TableCellLook> {
         let tables = self.sheet_tables(sheet);
-        let (t, style) = tables.iter().find(|(t, _)| t.area.contains(row, col))?;
-        Some(style.as_ref()?.look(t, row, col))
+        let (t, style) = tables
+            .tables
+            .iter()
+            .find(|(t, _)| t.area.contains(row, col))?;
+        Some(style.as_ref()?.look(t, row, col, &tables.hidden))
     }
 
     /// A table style by name: the workbook's own, else a built-in one.
@@ -916,6 +934,41 @@ mod tests {
         assert!(s.row_stripe1.bottom.is_some());
     }
 
+    impl TableStyleDef {
+        fn look_all(&self, t: &TableInfo, row: u32, col: u32) -> TableCellLook {
+            self.look(t, row, col, &[])
+        }
+    }
+
+    #[test]
+    fn bands_skip_hidden_rows() {
+        let t = Theme::default();
+        let s = builtin("TableStyleMedium2", &t).unwrap();
+        let info = TableInfo {
+            name: "T".into(),
+            area: CellRange {
+                top: 0,
+                left: 0,
+                bottom: 5,
+                right: 1,
+            },
+            header_rows: 1,
+            totals_rows: 0,
+            columns: vec!["a".into(), "b".into()],
+            style: Some("TableStyleMedium2".into()),
+            first_column: false,
+            last_column: false,
+            row_stripes: true,
+            column_stripes: false,
+            filter_buttons: true,
+        };
+        let band = Some(theme(&t, 4, 0.8));
+        // Row 2 hidden: rows 1 and 3 are the first two shown.
+        assert_eq!(s.look(&info, 1, 0, &[2]).fill, band);
+        assert_eq!(s.look(&info, 3, 0, &[2]).fill, None);
+        assert_eq!(s.look(&info, 4, 0, &[2]).fill, band);
+    }
+
     #[test]
     fn banding_alternates_and_the_total_row_has_its_line() {
         let t = Theme::default();
@@ -939,12 +992,12 @@ mod tests {
             filter_buttons: true,
         };
         let band = theme(&t, 4, 0.8);
-        assert_eq!(s.look(&info, 0, 1).fill, Some(theme(&t, 4, 0.0)));
-        assert!(s.look(&info, 0, 1).bold);
-        assert_eq!(s.look(&info, 1, 1).fill, Some(band));
-        assert_eq!(s.look(&info, 2, 1).fill, None);
-        assert_eq!(s.look(&info, 3, 1).fill, Some(band));
-        let total = s.look(&info, 5, 1);
+        assert_eq!(s.look_all(&info, 0, 1).fill, Some(theme(&t, 4, 0.0)));
+        assert!(s.look_all(&info, 0, 1).bold);
+        assert_eq!(s.look_all(&info, 1, 1).fill, Some(band));
+        assert_eq!(s.look_all(&info, 2, 1).fill, None);
+        assert_eq!(s.look_all(&info, 3, 1).fill, Some(band));
+        let total = s.look_all(&info, 5, 1);
         assert!(total.bold);
         assert_eq!(total.top.unwrap().style, LineStyle::Double);
     }

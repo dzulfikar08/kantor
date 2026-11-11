@@ -598,12 +598,24 @@ impl SheetsView {
             ColumnKind::Text => ("Sort A to Z", "Sort Z to A"),
         };
         let item = |id: &'static str, label: &'static str, desc: bool| {
-            Button::new(id)
-                .ghost()
-                .small()
-                .w_full()
-                .justify_start()
-                .label(label)
+            h_flex()
+                .id(id)
+                .gap(SPACE_3)
+                .px(SPACE_2)
+                .h(CONTROL_SM)
+                .rounded(RADIUS_SM)
+                .cursor_pointer()
+                .hover(|s| s.bg(t.accent_soft))
+                .child(
+                    gpui_kit::component::Icon::new(if desc {
+                        gpui_kit::assets::IconName::ArrowDown
+                    } else {
+                        gpui_kit::assets::IconName::ArrowUp
+                    })
+                    .size(px(14.))
+                    .text_color(t.fg_muted),
+                )
+                .child(label)
                 .on_click(cx.listener(move |this, _, w, cx| this.sort_from_menu(desc, w, cx)))
         };
         // The condition: a dropdown and one or two values.

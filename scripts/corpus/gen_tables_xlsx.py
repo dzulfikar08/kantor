@@ -13,7 +13,9 @@ crates/sheets_engine/tests/tables.rs.
 * "Sort": rows to sort: mixed types, blanks, duplicates (stability), formulas
   referring to their own row and an absolute reference.
 
-    uv run --with openpyxl scripts/corpus/gen_tables_xlsx.py [OUT.xlsx]
+With --sample OUT, a bigger table for screenshots of the grid.
+
+    uv run --with openpyxl scripts/corpus/gen_tables_xlsx.py [OUT.xlsx] [--sample OUT]
 """
 
 import argparse
@@ -113,6 +115,59 @@ def sort_sheet(wb: Workbook) -> None:
         ws.cell(i, 4, f"=B{i}*$F$1")
 
 
+def sample(path: str) -> None:
+    import random
+
+    rnd = random.Random(11)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Orders"
+    head = ["Order", "Date", "Region", "Product", "Units", "Price", "Amount"]
+    ws.append(head)
+    regions = ["Jawa Timur", "Jawa Barat", "Bali", "DKI Jakarta", "Sumatera Utara"]
+    products = ["Pump", "Valve", "Bearing", "Motor", "Sensor"]
+    n = 28
+    for i in range(n):
+        r = i + 2
+        ws.append([
+            f"SO-{1040 + i}",
+            dt.date(2025, 1, 2) + dt.timedelta(days=rnd.randint(0, 120)),
+            rnd.choice(regions),
+            rnd.choice(products),
+            rnd.randint(1, 40),
+            rnd.choice([125_000, 480_000, 1_250_000, 2_300_000, 89_000]),
+            "=Orders[[#This Row],[Units]]*Orders[[#This Row],[Price]]",
+        ])
+        ws.cell(r, 2).number_format = "yyyy-mm-dd"
+        ws.cell(r, 6).number_format = "#,##0"
+        ws.cell(r, 7).number_format = "#,##0"
+    last = n + 2
+    ws.append(["Total", None, None, None, f"=SUBTOTAL(109,Orders[Units])", None, "=SUBTOTAL(109,Orders[Amount])"])
+    ws.cell(last, 7).number_format = "#,##0"
+    t = Table(displayName="Orders", ref=f"A1:G{last}")
+    t.totalsRowCount = 1
+    t.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
+    cols = [TableColumn(id=i + 1, name=h) for i, h in enumerate(head)]
+    cols[0].totalsRowLabel = "Total"
+    cols[4].totalsRowFunction = "sum"
+    cols[6].totalsRowFunction = "sum"
+    t.tableColumns = cols
+    t.autoFilter = AutoFilter(ref=f"A1:G{last - 1}")
+    ws.add_table(t)
+    for col, w in zip("ABCDEFG", [11, 12, 16, 11, 8, 12, 14]):
+        ws.column_dimensions[col].width = w
+    ws["I1"], ws["J1"] = "Region", "Rate"
+    for i, (reg, rate) in enumerate(zip(regions, [0.11, 0.1, 0.12, 0.11, 0.1]), start=2):
+        ws.cell(i, 9, reg)
+        ws.cell(i, 10, rate).number_format = "0%"
+    r = Table(displayName="Rates", ref="I1:J6")
+    r.tableStyleInfo = TableStyleInfo(name="TableStyleLight9", showRowStripes=True)
+    ws.add_table(r)
+    ws.column_dimensions["I"].width = 16
+    wb.save(path)
+    print(f"wrote {path}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -120,7 +175,11 @@ def main() -> None:
         nargs="?",
         default=str(ROOT / "crates/sheets_engine/tests/fixtures/tables.xlsx"),
     )
+    ap.add_argument("--sample", help="also write a bigger table for screenshots")
     args = ap.parse_args()
+    if args.sample:
+        sample(args.sample)
+        return
     wb = Workbook()
     sales(wb)
     plain(wb)

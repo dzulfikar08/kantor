@@ -110,6 +110,9 @@ pub struct Lexer<'a> {
     mode: LexerMode,
     locale: &'a Locale,
     language: &'a Language,
+    /// KANTOR PATCH (tables): the formula is in a table, so `[Name]` is a
+    /// column of it (elsewhere `[b]` is a LAMBDA's optional parameter).
+    pub(crate) kantor_in_table: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -130,6 +133,7 @@ impl<'a> Lexer<'a> {
             mode,
             locale,
             language,
+            kantor_in_table: false,
         }
     }
 
@@ -223,7 +227,9 @@ impl<'a> Lexer<'a> {
                     '}' => TokenType::RightBrace,
                     // KANTOR PATCH (tables): `[@Units]`, `[[#This Row],Units]`
                     // inside a table (the table is the formula's own).
-                    '[' => {
+                    '[' if self.kantor_in_table
+                        || matches!(self.peek_char(), Some('@' | '#' | '[')) =>
+                    {
                         let start = self.position;
                         self.position -= 1;
                         match self.consume_structured_reference("") {
@@ -234,6 +240,7 @@ impl<'a> Lexer<'a> {
                             }
                         }
                     }
+                    '[' => TokenType::LeftBracket,
                     ']' => TokenType::RightBracket,
                     ':' => TokenType::Colon,
                     ';' => TokenType::Semicolon,

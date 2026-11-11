@@ -94,6 +94,23 @@ What: `import/worksheets.rs` reads `<sheetFormatPr defaultRowHeight>` into
 writer doesn't write `sheetFormatPr`; Kantor carries the original element on
 save (`crates/sheets_engine/src/preserve.rs`).
 
+## 6. Tables and AutoFilters
+
+Why: Kantor filters tables and sheets and keeps the state in the model
+(`vendor/ironcalc_base` §12). Upstream also looked for `<tableInfo>` instead of
+`<tableStyleInfo>`, so every table lost its style name and banding flags.
+
+What: `import/tables.rs` reads `tableStyleInfo` and keeps the table's
+`<autoFilter>` (`Table::kantor_auto_filter`); `import/worksheets.rs` keeps the
+sheet's (`Worksheet::kantor_auto_filter`), serialised by `XmlNode::to_xml`
+(`import/xml.rs`, unprefixed attributes only); `export/worksheets.rs` writes
+the sheet's after `</sheetData>`. Tables are not written by the writer: Kantor
+carries their parts and updates them from the model
+(`crates/sheets_engine/src/preserve.rs`, `fit_table`).
+
+Known: `tests/test.rs` `test_dynamic_arrays` fails since §5 (the file's
+default row height is now read); `test_no_export_tables` passes.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the
