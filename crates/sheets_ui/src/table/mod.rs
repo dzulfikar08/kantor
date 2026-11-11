@@ -12,6 +12,7 @@ mod column;
 mod data_table;
 mod delegate;
 mod loading;
+mod row_list;
 mod state;
 
 pub use column::*;

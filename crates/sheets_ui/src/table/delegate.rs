@@ -1,9 +1,13 @@
+use std::cell::RefCell;
 use std::ops::Range;
+use std::rc::Rc;
 
 use gpui::{
     App, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
     SharedString, Stateful, Styled as _, Window, div,
 };
+
+use crate::row_heights::RowHeights;
 
 use super::{Column, ColumnGroup, ColumnSort, TableState, loading::Loading};
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Size, h_flex, menu::PopupMenu};
@@ -21,6 +25,29 @@ pub trait TableDelegate: Sized + 'static {
     ///
     /// This only call on Table prepare or refresh.
     fn column(&self, col_ix: usize, cx: &App) -> Column;
+
+    // KANTOR PATCH (row heights): rows have their own heights.
+
+    /// Where the rows go: their heights and prefix sums, shared with the
+    /// delegate (cells read it to place merged cells). Read while the table
+    /// lays out; change it only in [`Self::sync_rows`] / [`Self::fit_rows`].
+    fn row_heights(&self) -> Rc<RefCell<RowHeights>>;
+
+    /// Bring [`Self::row_heights`] up to date with the data (called once per
+    /// render, before the visible rows are worked out; keep it cheap when
+    /// nothing changed).
+    fn sync_rows(&mut self, window: &mut Window, cx: &mut Context<TableState<Self>>) {}
+
+    /// Measure `rows` (about to be shown) and change their heights if their
+    /// content needs it. Returns whether any height changed.
+    fn fit_rows(
+        &mut self,
+        rows: &[usize],
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> bool {
+        false
+    }
 
     /// Perform sort on the column at the given index.
     fn perform_sort(

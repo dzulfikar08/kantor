@@ -1,6 +1,13 @@
 use gpui_kit::base::TestSupportExt as _;
 use std::{ops::Range, rc::Rc, time::Duration};
 
+use gpui::{
+    AppContext, Axis, Bounds, ClickEvent, Context, Div, DragMoveEvent, ElementId, EventEmitter,
+    FocusHandle, Focusable, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled, Task, TextAlign, UniformListScrollHandle, Window, div,
+    point, prelude::FluentBuilder, px,
+};
 use gpui_kit::base::actions::{
     Cancel, SelectDown, SelectFirst, SelectLast, SelectNextColumn, SelectPageDown, SelectPageUp,
     SelectPrevColumn, SelectUp,
@@ -12,15 +19,10 @@ use gpui_kit::component::{
     scroll::{ScrollableMask, Scrollbar},
     v_flex,
 };
-use gpui::{
-    AppContext, Axis, Bounds, ClickEvent, Context, Div, DragMoveEvent, ElementId, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement, IntoElement, ListSizingBehavior, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled, Task, TextAlign, UniformListScrollHandle, Window, div,
-    prelude::FluentBuilder, px, uniform_list,
-};
 
+use super::row_list::{row_list, scroll_target};
 use super::*;
+use crate::row_heights::RowHeights;
 
 /// Grab room on each side of a resize handle's hairline, so the divider can be
 /// caught without pixel-hunting. Both halves of the band are this wide, so
@@ -816,11 +818,136 @@ where
         self.header_row_height() * self.header_layout.len().max(1) as f32
     }
 
-    fn page_item_count(&self) -> usize {
-        let row_height = self.options.size.table_row_height();
-        let body_height = (self.bounds.size.height - self.header_band_height()).max(px(0.));
-        let count = (body_height / row_height).floor() as usize;
-        count.max(1)
+    // KANTOR PATCH (row heights): paging moves by the body's height, not
+    // by a count of uniform rows, and arrows step over hidden rows.
+
+    /// Height of the rows' viewport.
+    fn body_height(&self) -> f64 {
+        let list = self
+            .vertical_scroll_handle
+            .0
+            .borrow()
+            .base_handle
+            .bounds()
+            .size
+            .height;
+        let body = if list > px(0.) {
+            list
+        } else {
+            (self.bounds.size.height - self.header_band_height()).max(px(0.))
+        };
+        f64::from(f32::from(body))
+    }
+
+    /// The row a page up (`down == false`) or down from `row` lands on: the
+    /// one a viewport's height away, at least one shown row away.
+    fn page_target(&self, row: usize, down: bool, rows_count: usize) -> usize {
+        let heights = self.delegate.row_heights();
+        let h = heights.borrow();
+        let last = rows_count.min(h.len()).saturating_sub(1);
+        let page = self.body_height().max(1.0);
+        let y = h.top(row.min(last));
+        let target = if down {
+            h.row_at(y + page).unwrap_or(last).min(last)
+        } else {
+            h.row_at((y - page).max(0.0)).unwrap_or(0)
+        };
+        let target = if down {
+            if target > row {
+                target
+            } else {
+                h.next_shown(row + 1).unwrap_or(row)
+            }
+        } else if target < row {
+            target
+        } else {
+            row.checked_sub(1)
+                .and_then(|r| h.prev_shown(r))
+                .unwrap_or(row)
+        };
+        target.min(last)
+    }
+
+    /// The shown row after (`down`) or before `row`, if any.
+    fn step_row(&self, row: usize, down: bool, rows_count: usize) -> Option<usize> {
+        let heights = self.delegate.row_heights();
+        let h = heights.borrow();
+        if down {
+            h.next_shown(row + 1).filter(|r| *r < rows_count)
+        } else {
+            row.checked_sub(1).and_then(|r| h.prev_shown(r))
+        }
+    }
+
+    /// KANTOR PATCH (row heights): before the rows are built, bring their
+    /// heights up to date, carry out a pending scroll with them, and measure
+    /// the rows about to show (which can make them taller). The first
+    /// visible row stays put when rows above it change height.
+    fn sync_row_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let heights = self.delegate.row_heights();
+        let handle = self.vertical_scroll_handle.clone();
+        let (viewport, offset) = {
+            let state = handle.0.borrow();
+            (
+                state.base_handle.bounds().size.height,
+                state.base_handle.offset(),
+            )
+        };
+        let scroll_top = f64::from(-f32::from(offset.y)).max(0.0);
+        let anchor = {
+            let h = heights.borrow();
+            h.row_at(scroll_top)
+                .map(|row| (row, scroll_top - h.top(row)))
+        };
+        self.delegate.sync_rows(window, cx);
+        let count = self.delegate.rows_count(cx);
+        let laid_out = viewport > px(0.);
+        // Before the first layout the list's height is unknown: fit what
+        // the window could show, and let the list carry out a pending
+        // scroll itself.
+        let viewport = if laid_out {
+            f64::from(f32::from(viewport))
+        } else {
+            f64::from(f32::from(window.viewport_size().height))
+        };
+        let deferred = if laid_out {
+            handle.0.borrow_mut().deferred_scroll_to_item.take()
+        } else {
+            None
+        };
+        let place = |h: &RowHeights| {
+            let current = anchor.map_or(scroll_top, |(row, within)| {
+                h.top(row) + within.min(h.height(row))
+            });
+            match deferred {
+                Some(d) => scroll_target(h, count, d, current, viewport),
+                None => current,
+            }
+        };
+        let mut top = place(&heights.borrow());
+        // Measuring can grow rows and push the target; a few passes settle it.
+        for _ in 0..4 {
+            let rows = {
+                let h = heights.borrow();
+                h.shown_in(h.to_dp(top), h.to_dp(top + viewport) + 1)
+            };
+            if rows.is_empty() || !self.delegate.fit_rows(&rows, window, cx) {
+                break;
+            }
+            top = place(&heights.borrow());
+        }
+        if !laid_out {
+            return;
+        }
+        let max_top = (heights.borrow().top(count) - viewport).max(0.0);
+        let top = top.clamp(0.0, max_top);
+        if (top - scroll_top).abs() > 0.001 {
+            handle
+                .0
+                .borrow()
+                .base_handle
+                .set_offset(point(offset.x, px(-(top as f32))));
+        }
     }
 
     fn on_row_right_click(
@@ -961,12 +1088,11 @@ where
         // Cell selection mode: move up within the same column
         if self.selection_mode.is_cell() {
             if let Some((row_ix, col_ix)) = self.selected_cell {
-                let new_row = if row_ix > 0 {
-                    row_ix.saturating_sub(1)
-                } else if self.loop_selection {
-                    rows_count.saturating_sub(1)
-                } else {
-                    row_ix
+                // KANTOR PATCH (row heights): hidden rows are stepped over.
+                let new_row = match self.step_row(row_ix, false, rows_count) {
+                    Some(row) => row,
+                    None if self.loop_selection => rows_count.saturating_sub(1),
+                    None => row_ix,
                 };
                 self.set_selected_cell(new_row, col_ix, cx);
             } else {
@@ -1006,12 +1132,11 @@ where
         // Cell selection mode: move down within the same column
         if self.selection_mode.is_cell() {
             if let Some((row_ix, col_ix)) = self.selected_cell {
-                let new_row = if row_ix < rows_count.saturating_sub(1) {
-                    row_ix + 1
-                } else if self.loop_selection {
-                    0
-                } else {
-                    row_ix
+                // KANTOR PATCH (row heights): hidden rows are stepped over.
+                let new_row = match self.step_row(row_ix, true, rows_count) {
+                    Some(row) => row,
+                    None if self.loop_selection => 0,
+                    None => row_ix,
                 };
                 self.set_selected_cell(new_row, col_ix, cx);
             } else {
@@ -1107,12 +1232,15 @@ where
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let step = self.page_item_count();
+        let rows_count = self.delegate.rows_count(cx);
+        if rows_count == 0 {
+            return;
+        }
 
         // Cell selection mode: move up by page within the same column
         if self.selection_mode.is_cell() {
             if let Some((row_ix, col_ix)) = self.selected_cell {
-                let target = row_ix.saturating_sub(step);
+                let target = self.page_target(row_ix, false, rows_count);
                 self.set_selected_cell(target, col_ix, cx);
             } else {
                 // No cell selected, select first cell
@@ -1126,7 +1254,7 @@ where
             return;
         }
         let current = self.selected_row.unwrap_or(0);
-        let target = current.saturating_sub(step);
+        let target = self.page_target(current, false, rows_count);
         self.set_selected_row(target, cx);
     }
 
@@ -1141,13 +1269,10 @@ where
             return;
         }
 
-        let step = self.page_item_count();
-
         // Cell selection mode: move down by page within the same column
         if self.selection_mode.is_cell() {
             if let Some((row_ix, col_ix)) = self.selected_cell {
-                let max_row = rows_count.saturating_sub(1);
-                let target = (row_ix + step).min(max_row);
+                let target = self.page_target(row_ix, true, rows_count);
                 self.set_selected_cell(target, col_ix, cx);
             } else {
                 // No cell selected, select first cell
@@ -1161,8 +1286,7 @@ where
             return;
         }
         let current = self.selected_row.unwrap_or(0);
-        let max_row = rows_count.saturating_sub(1);
-        let target = (current + step).min(max_row);
+        let target = self.page_target(current, true, rows_count);
         self.set_selected_row(target, cx);
     }
 
@@ -2239,6 +2363,7 @@ where
         col_sizes: Rc<Vec<gpui::Size<Pixels>>>,
         columns_count: usize,
         is_filled: bool,
+        row_height: Pixels,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -2247,7 +2372,6 @@ where
         // column never highlights its row.
         let is_selected = self.selected_row() == Some(row_ix);
         let view = cx.entity().clone();
-        let row_height = self.options.size.table_row_height();
 
         if row_ix < rows_count {
             let is_last_row = row_ix + 1 == rows_count;
@@ -2380,113 +2504,105 @@ where
                         .overflow_hidden()
                         .relative()
                         .child(
-                            gpui_kit::base::h_virtual_list(
-                                view,
-                                row_ix,
-                                col_sizes,
-                                {
-                                    move |table, visible_range: Range<usize>, window, cx| {
-                                        table.update_visible_range_if_need(
-                                            visible_range.clone(),
-                                            columns_count.saturating_sub(left_columns_count),
-                                            Axis::Horizontal,
-                                            window,
-                                            cx,
-                                        );
+                            gpui_kit::base::h_virtual_list(view, row_ix, col_sizes, {
+                                move |table, visible_range: Range<usize>, window, cx| {
+                                    table.update_visible_range_if_need(
+                                        visible_range.clone(),
+                                        columns_count.saturating_sub(left_columns_count),
+                                        Axis::Horizontal,
+                                        window,
+                                        cx,
+                                    );
 
-                                        let mut items = Vec::with_capacity(
-                                            visible_range.end - visible_range.start,
-                                        );
+                                    let mut items =
+                                        Vec::with_capacity(visible_range.end - visible_range.start);
 
-                                        visible_range.for_each(|col_ix| {
-                                            let col_ix = col_ix + left_columns_count;
-                                            let is_cell_selected =
-                                                table.selected_cell() == Some((row_ix, col_ix));
-                                            let is_cell_right_clicked =
-                                                table.right_clicked_cell == Some((row_ix, col_ix));
+                                    visible_range.for_each(|col_ix| {
+                                        let col_ix = col_ix + left_columns_count;
+                                        let is_cell_selected =
+                                            table.selected_cell() == Some((row_ix, col_ix));
+                                        let is_cell_right_clicked =
+                                            table.right_clicked_cell == Some((row_ix, col_ix));
 
-                                            let el = table
-                                                .render_col_wrap(Some(row_ix), col_ix, window, cx)
-                                                .child(
-                                                    table
-                                                        .a11y_cell(
-                                                            table
-                                                                .render_cell(
-                                                                    Some(row_ix),
-                                                                    col_ix,
-                                                                    window,
-                                                                    cx,
-                                                                )
-                                                                .id(format!(
-                                                                    "table-cell-{}:{}",
-                                                                    row_ix, col_ix
-                                                                ))
-                                                                .test_support(),
-                                                            row_ix,
-                                                            col_ix,
-                                                            window,
-                                                            cx,
-                                                        )
-                                                        .relative()
-                                                        .child(table.measure_render_td(
-                                                            row_ix, col_ix, window, cx,
-                                                        ))
-                                                        .when(is_cell_selected, |this| {
-                                                            this.child(
-                                                                div().absolute().inset_0().bg(cx
-                                                                    .theme()
-                                                                    .tokens
-                                                                    .table_active),
+                                        let el = table
+                                            .render_col_wrap(Some(row_ix), col_ix, window, cx)
+                                            .child(
+                                                table
+                                                    .a11y_cell(
+                                                        table
+                                                            .render_cell(
+                                                                Some(row_ix),
+                                                                col_ix,
+                                                                window,
+                                                                cx,
                                                             )
-                                                        })
-                                                        .when(
-                                                            is_cell_right_clicked
-                                                                && !is_cell_selected,
-                                                            |this| {
-                                                                this.child(
-                                                                    div()
-                                                                        .absolute()
-                                                                        .inset_0()
-                                                                        .border_1()
-                                                                        .border_color(
-                                                                            cx.theme()
-                                                                                .table_active_border
-                                                                                .opacity(0.5),
-                                                                        ),
-                                                                )
-                                                            },
+                                                            .id(format!(
+                                                                "table-cell-{}:{}",
+                                                                row_ix, col_ix
+                                                            ))
+                                                            .test_support(),
+                                                        row_ix,
+                                                        col_ix,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                    .relative()
+                                                    .child(table.measure_render_td(
+                                                        row_ix, col_ix, window, cx,
+                                                    ))
+                                                    .when(is_cell_selected, |this| {
+                                                        this.child(
+                                                            div()
+                                                                .absolute()
+                                                                .inset_0()
+                                                                .bg(cx.theme().tokens.table_active),
                                                         )
-                                                        .when(table.cell_selectable, |this| {
-                                                            this.on_click(cx.listener(
+                                                    })
+                                                    .when(
+                                                        is_cell_right_clicked && !is_cell_selected,
+                                                        |this| {
+                                                            this.child(
+                                                                div()
+                                                                    .absolute()
+                                                                    .inset_0()
+                                                                    .border_1()
+                                                                    .border_color(
+                                                                        cx.theme()
+                                                                            .table_active_border
+                                                                            .opacity(0.5),
+                                                                    ),
+                                                            )
+                                                        },
+                                                    )
+                                                    .when(table.cell_selectable, |this| {
+                                                        this.on_click(cx.listener(
+                                                            move |table, e, window, cx| {
+                                                                cx.stop_propagation();
+                                                                table.on_cell_click(
+                                                                    e, row_ix, col_ix, window, cx,
+                                                                );
+                                                            },
+                                                        ))
+                                                        .on_mouse_down(
+                                                            MouseButton::Right,
+                                                            cx.listener(
                                                                 move |table, e, window, cx| {
-                                                                    cx.stop_propagation();
-                                                                    table.on_cell_click(
+                                                                    table.on_cell_right_click(
                                                                         e, row_ix, col_ix, window,
                                                                         cx,
                                                                     );
                                                                 },
-                                                            ))
-                                                            .on_mouse_down(
-                                                                MouseButton::Right,
-                                                                cx.listener(
-                                                                    move |table, e, window, cx| {
-                                                                        table.on_cell_right_click(
-                                                                            e, row_ix, col_ix,
-                                                                            window, cx,
-                                                                        );
-                                                                    },
-                                                                ),
-                                                            )
-                                                        }),
-                                                );
+                                                            ),
+                                                        )
+                                                    }),
+                                            );
 
-                                            items.push(el);
-                                        });
+                                        items.push(el);
+                                    });
 
-                                        items
-                                    }
-                                },
-                            )
+                                    items
+                                }
+                            })
                             .with_scroll_handle(&self.horizontal_scroll_handle),
                         )
                         .child(self.delegate.render_last_empty_col(window, cx)),
@@ -2670,6 +2786,9 @@ where
 {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.measure(window, cx);
+        // KANTOR PATCH (row heights)
+        self.sync_row_layout(window, cx);
+        let heights = self.delegate.row_heights();
 
         let columns_count = self.delegate.columns_count(cx);
         let left_columns_count = self
@@ -2680,7 +2799,6 @@ where
         let rows_count = self.delegate.rows_count(cx);
         let loading = self.delegate.loading(cx);
 
-        let row_height = self.options.size.table_row_height();
         let total_height = self
             .vertical_scroll_handle
             .0
@@ -2689,14 +2807,8 @@ where
             .bounds()
             .size
             .height;
-        let actual_height = row_height * rows_count as f32;
-        let extra_rows_count =
-            self.calculate_extra_rows_needed(total_height, actual_height, row_height);
-        let render_rows_count = if self.options.stripe {
-            rows_count + extra_rows_count
-        } else {
-            rows_count
-        };
+        // KANTOR PATCH (row heights): no stripe filler rows past the end.
+        let actual_height = px(heights.borrow().top(rows_count) as f32);
         let has_right_click = self.right_clicked_row.is_some() || self.right_clicked_cell.is_some();
         let is_filled = total_height > Pixels::ZERO && total_height <= actual_height;
 
@@ -2747,76 +2859,60 @@ where
                 } else {
                     this.child(
                         h_flex().id("table-body").flex_grow_1().size_full().child(
-                            uniform_list(
-                                "table-uniform-list",
-                                render_rows_count,
-                                cx.processor(
-                                    move |table, visible_range: Range<usize>, window, cx| {
-                                        // Use `col.width` (always up-to-date) rather than
-                                        // `col.bounds.size.width`, which is only set after
-                                        // prepaint and is therefore zero on the first frame.
-                                        let col_sizes: Rc<Vec<gpui::Size<Pixels>>> = Rc::new(
-                                            table
-                                                .col_groups
-                                                .iter()
-                                                .skip(left_columns_count)
-                                                .map(|col| gpui::Size {
-                                                    width: col.width,
-                                                    height: px(0.),
-                                                })
-                                                .collect(),
-                                        );
-
-                                        table.load_more_if_need(
-                                            rows_count,
-                                            visible_range.end,
-                                            window,
-                                            cx,
-                                        );
-                                        table.update_visible_range_if_need(
-                                            visible_range.clone(),
-                                            rows_count,
-                                            Axis::Vertical,
-                                            window,
-                                            cx,
-                                        );
-
-                                        if visible_range.end > rows_count {
-                                            table.scroll_to_row(
-                                                std::cmp::min(
-                                                    visible_range.start,
-                                                    rows_count.saturating_sub(1),
-                                                ),
-                                                cx,
-                                            );
-                                        }
-
-                                        let mut items = Vec::with_capacity(
-                                            visible_range.end.saturating_sub(visible_range.start),
-                                        );
-
-                                        // Render fake rows to fill the table
-                                        visible_range.for_each(|row_ix| {
-                                            // Render real rows for available data
-                                            items.push(table.render_table_row(
+                            // KANTOR PATCH (row heights): rows of their own
+                            // heights, in place of `uniform_list`.
+                            row_list(
+                                "table-rows",
+                                heights.clone(),
+                                rows_count,
+                                cx.processor(move |table, rows: Vec<usize>, window, cx| {
+                                    // Use `col.width` (always up-to-date) rather than
+                                    // `col.bounds.size.width`, which is only set after
+                                    // prepaint and is therefore zero on the first frame.
+                                    let col_sizes: Rc<Vec<gpui::Size<Pixels>>> = Rc::new(
+                                        table
+                                            .col_groups
+                                            .iter()
+                                            .skip(left_columns_count)
+                                            .map(|col| gpui::Size {
+                                                width: col.width,
+                                                height: px(0.),
+                                            })
+                                            .collect(),
+                                    );
+                                    let visible = match (rows.first(), rows.last()) {
+                                        (Some(&a), Some(&b)) => a..b + 1,
+                                        _ => 0..0,
+                                    };
+                                    table.load_more_if_need(rows_count, visible.end, window, cx);
+                                    table.update_visible_range_if_need(
+                                        visible,
+                                        rows_count,
+                                        Axis::Vertical,
+                                        window,
+                                        cx,
+                                    );
+                                    let heights = table.delegate.row_heights();
+                                    rows.into_iter()
+                                        .map(|row_ix| {
+                                            let height = px(heights.borrow().height(row_ix) as f32);
+                                            table.render_table_row(
                                                 row_ix,
                                                 rows_count,
                                                 left_columns_count,
                                                 col_sizes.clone(),
                                                 columns_count,
                                                 is_filled,
+                                                height,
                                                 window,
                                                 cx,
-                                            ));
-                                        });
-
-                                        items
-                                    },
-                                ),
+                                            )
+                                        })
+                                        .collect()
+                                }),
                             )
                             .flex_grow_1()
                             .size_full()
-                            .with_sizing_behavior(ListSizingBehavior::Auto)
                             .track_scroll(&self.vertical_scroll_handle)
                             .map(|rows| {
                                 gpui_kit::base::ScrollBounce::new(

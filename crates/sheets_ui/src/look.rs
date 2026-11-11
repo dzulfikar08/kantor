@@ -2,14 +2,14 @@
 //! gridlines and merged cells. The engine works out what a cell looks like
 //! ([`CellLook`]); this turns it into elements.
 //!
-//! The table gives every row the same height and clips each cell, so:
+//! The table clips each cell, so:
 //!
 //! * A merged cell is drawn by *every* cell it covers: each draws the whole
 //!   merged block shifted by its own offset inside the merge, and its clip
 //!   shows its slice. Together they show one cell, with no per-cell seams.
-//! * Larger fonts are capped to what fits the (merged) cell's height, and
-//!   wrapped text shows the lines that fit. Row heights from the file are
-//!   kept (saved) but not drawn.
+//! * Rows have their own heights (`row_layout`): automatic rows grow to fit
+//!   wrapped text and larger fonts; in a row given a smaller height, larger
+//!   fonts are capped to what fits and wrapped text shows the lines that fit.
 //! * Text rotation and indent aren't drawn (IronCalc's model doesn't keep
 //!   them), nor is text overflowing into empty neighbours.
 
@@ -24,7 +24,10 @@ use sheets_engine::{
     BorderLine, CellLook, CellRange, CellStyle, HAlign, LineStyle, VAlign, Workbook,
 };
 
-/// Height of every grid row (the table's `small` size).
+use crate::row_heights::RowHeights;
+
+/// Height of a default grid row (the table's `small` size): a row of the
+/// sheet's default height in Excel.
 pub(crate) fn row_height() -> Pixels {
     Size::Small.table_row_height()
 }
@@ -52,7 +55,7 @@ pub(crate) fn column_width(book: &Workbook, sheet: u32, col: u32, scale: f32) ->
 }
 
 /// Line height of cell text, relative to its size.
-const LINE_HEIGHT: f32 = 1.25;
+pub(crate) const LINE_HEIGHT: f32 = 1.25;
 /// Most room kept above top-aligned text.
 const V_PAD: Pixels = px(3.);
 
@@ -246,8 +249,9 @@ pub(crate) fn merge_step(
 
 /// Where a merged cell's block sits relative to one of its cells, and its
 /// size: `(offset_x, offset_y, width, height)`, at window scale `scale`.
-/// Lengths are the grid's snapped ones ([`snap`]): rows are laid out at the
-/// row height rounded to device pixels, columns at [`column_width`].
+/// Lengths are the grid's snapped ones: columns at [`column_width`], rows
+/// where [`RowHeights`] puts them (whole device pixels), so the slices meet
+/// over rows of different heights.
 pub(crate) fn merge_geometry(
     book: &Workbook,
     sheet: u32,
@@ -255,18 +259,20 @@ pub(crate) fn merge_geometry(
     row: u32,
     col: u32,
     scale: f32,
+    rows: &RowHeights,
 ) -> (Pixels, Pixels, Pixels, Pixels) {
     let width = |from: u32, to: u32| -> Pixels {
         (from..to)
             .map(|c| column_width(book, sheet, c, scale))
             .fold(px(0.), |a, b| a + b)
     };
-    let h = px(snap(f32::from(row_height()), scale));
+    let top = rows.top_dp(merge.top as usize);
+    let y = |r: u32| px(rows.to_px(rows.top_dp(r as usize) - top) as f32);
     (
         width(merge.left, col),
-        h * (row - merge.top) as f32,
+        y(row),
         width(merge.left, merge.right + 1),
-        h * merge.rows_count() as f32,
+        y(merge.bottom + 1),
     )
 }
 
@@ -363,6 +369,8 @@ impl Content<'_> {
             .map(|d| match s.valign {
                 VAlign::Top => d.items_start().pt(V_PAD.min(slack / 2.)),
                 VAlign::Center => d.items_center(),
+                // Wrapped text may fill the box (its row was fitted to it).
+                VAlign::Bottom if s.wrap => d.items_end().pb((slack * 0.4).min(V_PAD)),
                 VAlign::Bottom => d.items_end().pb(slack * 0.4),
             })
             .child(text)
@@ -403,6 +411,12 @@ mod tests {
         );
     }
 
+    /// Rows of the default height at `scale`, as the grid lays them out.
+    fn uniform_rows(scale: f32) -> RowHeights {
+        let dp = crate::row_heights::device_px(f32::from(row_height()), scale);
+        RowHeights::uniform(100, dp, scale)
+    }
+
     #[std::prelude::v1::test]
     fn merge_geometry_offsets() {
         let mut book = Workbook::new_empty().unwrap();
@@ -411,24 +425,15 @@ mod tests {
         let m = CellRange::from_corners((2, 1), (3, 3));
         let w3 = book.column_width(0, 3) as f32;
         let h = row_height();
+        let rows = uniform_rows(1.0);
         assert_eq!(
-            merge_geometry(&book, 0, m, 2, 1, 1.0),
+            merge_geometry(&book, 0, m, 2, 1, 1.0, &rows),
             (px(0.), px(0.), px(150. + w3), h * 2.)
         );
         assert_eq!(
-            merge_geometry(&book, 0, m, 3, 3, 1.0),
+            merge_geometry(&book, 0, m, 3, 3, 1.0, &rows),
             (px(150.), h, px(150. + w3), h * 2.)
         );
-    }
-
-    #[std::prelude::v1::test]
-    fn lengths_snap_to_device_pixels() {
-        // 125 %: 30 px rows are 37.5 device px, laid out as 37.
-        assert_eq!(snap(30., 1.25) * 1.25, 37.);
-        assert_eq!(snap(36., 1.25), 36.);
-        assert_eq!(snap(64.4, 1.25) * 1.25, 80.);
-        assert_eq!(snap(64.4, 1.0), 64.);
-        assert_eq!(snap(0.1, 2.0), 0.5, "never narrower than a device pixel");
     }
 
     #[std::prelude::v1::test]
@@ -439,8 +444,16 @@ mod tests {
         book.set_column_width(0, 2, 2, 69.3).unwrap();
         book.set_column_width(0, 3, 3, 117.9).unwrap();
         let s = 1.25;
+        // Rows of different heights under the merge, none of them whole
+        // device pixels as given: 30, 47.3, 12.2 and 61 px.
+        let dp = |px: f32| crate::row_heights::device_px(px, s);
+        let mut heights = vec![dp(30.); 100];
+        for (r, px) in [(2, 30.), (3, 47.3), (4, 12.2), (5, 61.)] {
+            heights[r] = dp(px);
+        }
+        let rows = RowHeights::from_heights(heights, s);
         let m = CellRange::from_corners((2, 1), (5, 3));
-        let (x, y, w, h) = merge_geometry(&book, 0, m, 4, 3, s);
+        let (x, y, w, h) = merge_geometry(&book, 0, m, 4, 3, s, &rows);
         let cols = |a: u32, b: u32| {
             (a..b)
                 .map(|c| column_width(&book, 0, c, s))
@@ -450,14 +463,20 @@ mod tests {
         // pieces of the block meet exactly.
         assert_eq!(x, cols(1, 3));
         assert_eq!(w, cols(1, 4));
-        let row = px(snap(30., s));
-        assert_eq!((y, h), (row * 2., row * 4.));
+        let at = |r: usize| rows.top(r) - rows.top(2);
+        assert!((f64::from(f32::from(y)) - at(4)).abs() < 1e-4);
+        assert!((f64::from(f32::from(h)) - at(6)).abs() < 1e-4);
         for len in [x, y, w, h] {
             let dp = f32::from(len) * s;
             assert!(
                 (dp - dp.round()).abs() < 1e-3,
                 "{dp} is not whole device pixels"
             );
+        }
+        // The slice of each row starts where that row starts.
+        for r in 2..=5 {
+            let (_, y, _, _) = merge_geometry(&book, 0, m, r, 1, s, &rows);
+            assert!((f64::from(f32::from(y)) - at(r as usize)).abs() < 1e-4);
         }
     }
 

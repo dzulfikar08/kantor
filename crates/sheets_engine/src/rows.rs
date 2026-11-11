@@ -221,7 +221,10 @@ mod tests {
             wb.set_row_heights(0, 0, 0, RowHeight::Points(f64::NAN))
                 .is_err()
         );
-        assert!(wb.set_row_heights(0, 3, 2, RowHeight::Points(20.0)).is_err());
+        assert!(
+            wb.set_row_heights(0, 3, 2, RowHeight::Points(20.0))
+                .is_err()
+        );
         // Taller than Excel allows: capped.
         wb.set_row_heights(0, 0, 0, RowHeight::Points(1000.0))
             .unwrap();

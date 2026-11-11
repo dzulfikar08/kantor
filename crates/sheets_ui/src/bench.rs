@@ -1,8 +1,11 @@
 //! Scroll benchmark for the grid: with `KANTOR_PERF=1 KANTOR_PERF_SCROLL=N`,
 //! once a workbook is shown the grid scrolls down 3 rows every frame for `N`
 //! frames, then prints the frame intervals and the time spent building cell
-//! elements per frame (`render_td`, see `kantor_ui::perf::frame_timer`) and
-//! quits. The window must be visible (a hidden GPUI window doesn't paint).
+//! elements per frame (`render_td`, see `kantor_ui::perf::frame_timer`),
+//! jumps to the last used row (as Ctrl+End does) and prints how long that
+//! frame took, and quits. It also prints the time from creating the view to
+//! the first frame showing the workbook (opening the file). The window must
+//! be visible (a hidden GPUI window doesn't paint).
 
 use std::time::Instant;
 
@@ -15,6 +18,9 @@ pub(crate) struct ScrollBench {
     row: usize,
     last: Option<Instant>,
     intervals: Vec<f64>,
+    created: Instant,
+    /// When the jump to the end was asked for, and the frames since.
+    jumped: Option<(Instant, u32)>,
 }
 
 impl ScrollBench {
@@ -25,6 +31,8 @@ impl ScrollBench {
             row: 0,
             last: None,
             intervals: Vec::new(),
+            created: Instant::now(),
+            jumped: None,
         })
     }
 }
@@ -53,11 +61,31 @@ impl SheetsView {
             return;
         };
         let now = Instant::now();
+        if bench.last.is_none() {
+            eprintln!(
+                "[bench] open: {:.0} ms to the first frame of the workbook",
+                (now - bench.created).as_secs_f64() * 1000.0
+            );
+        }
+        if let Some((jumped, frames)) = bench.jumped.as_mut() {
+            // Frame 1 builds the jumped-to rows; frame 2 starts once it's done.
+            *frames += 1;
+            if *frames < 2 {
+                window.request_animation_frame();
+                return;
+            }
+            eprintln!(
+                "[bench] jump to the last row: {:.2} ms until the frame after it",
+                (now - *jumped).as_secs_f64() * 1000.0
+            );
+            self.bench = None;
+            cx.quit();
+            return;
+        }
         if let Some(last) = bench.last.replace(now) {
             bench.intervals.push((now - last).as_secs_f64() * 1000.0);
         }
         if bench.intervals.len() >= bench.frames {
-            let bench = self.bench.take().unwrap();
             // The first frames load fonts and fill caches.
             let skip = 10.min(bench.intervals.len());
             let cells = kantor_ui::perf::take_frame_totals("sheets cells");
@@ -67,7 +95,13 @@ impl SheetsView {
                 stats(bench.intervals[skip..].to_vec())
             );
             eprintln!("[bench] cell elements:  {}", stats(cells));
-            cx.quit();
+            bench.jumped = Some((Instant::now(), 0));
+            let last = {
+                let grid = self.table.read(cx).delegate();
+                grid.book.used_size(grid.sheet).0.saturating_sub(1)
+            };
+            self.select_cell(last, 0, cx);
+            window.request_animation_frame();
             return;
         }
         bench.row += 3;

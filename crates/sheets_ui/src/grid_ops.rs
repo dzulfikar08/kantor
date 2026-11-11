@@ -37,7 +37,9 @@ actions!(
         JumpExtendUp,
         JumpExtendDown,
         JumpExtendLeft,
-        JumpExtendRight
+        JumpExtendRight,
+        GoToStart,
+        GoToEnd
     ]
 );
 
@@ -69,6 +71,8 @@ pub(crate) fn bind_keys(cx: &mut App) {
             both!("shift-down", JumpExtendDown),
             both!("shift-left", JumpExtendLeft),
             both!("shift-right", JumpExtendRight),
+            both!("home", GoToStart),
+            both!("end", GoToEnd),
         ]
         .into_iter()
         .flatten(),
@@ -127,6 +131,10 @@ pub enum GridCommand {
     DeleteColumns,
     AutofitColumns,
     ResetColumnWidth,
+    /// Fit the selection's rows to their content (no custom height).
+    AutofitRows,
+    /// Ask for a height for the selection's rows.
+    RowHeight,
     FreezeTopRow,
     FreezeFirstColumn,
     /// Freeze the rows above and the columns left of the active cell.
@@ -189,6 +197,8 @@ impl SheetsView {
             .on_action(cx.listener(|v, _: &JumpExtendDown, _, cx| v.jump(Step::Down, true, cx)))
             .on_action(cx.listener(|v, _: &JumpExtendLeft, _, cx| v.jump(Step::Left, true, cx)))
             .on_action(cx.listener(|v, _: &JumpExtendRight, _, cx| v.jump(Step::Right, true, cx)))
+            .on_action(cx.listener(|v, _: &GoToStart, _, cx| v.go_to_corner(false, cx)))
+            .on_action(cx.listener(|v, _: &GoToEnd, _, cx| v.go_to_corner(true, cx)))
     }
 
     /// Make `anchor` the active cell and extend the selection to `end`
@@ -404,6 +414,21 @@ impl SheetsView {
         });
     }
 
+    /// Ctrl+Home: A1. Ctrl+End: the last cell of the used range, as in Excel.
+    fn go_to_corner(&mut self, end: bool, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            return;
+        }
+        let to = if end {
+            let grid = self.table.read(cx).delegate();
+            let (rows, cols) = grid.book.used_size(grid.sheet);
+            (rows.saturating_sub(1), cols.saturating_sub(1))
+        } else {
+            (0, 0)
+        };
+        self.select_range(to, to, Span::Cells, true, cx);
+    }
+
     /// The selection as commands should see it: whole columns and rows cut
     /// down to the used area (`None` if that leaves nothing).
     pub(crate) fn op_range(&self, cx: &App) -> Option<CellRange> {
@@ -511,6 +536,14 @@ impl SheetsView {
                 self.size_columns(cols, command == GridCommand::AutofitColumns, window, cx);
                 return;
             }
+            GridCommand::AutofitRows => {
+                self.autofit_rows_doc(window, cx);
+                return;
+            }
+            GridCommand::RowHeight => {
+                self.row_height_doc(window, cx);
+                return;
+            }
             GridCommand::InsertRowsAbove => Box::new(move |b, s| {
                 b.insert_rows(s, rows.0, n_rows)?;
                 Ok(format!("Inserted {}", count(n_rows, "row")))
@@ -540,10 +573,20 @@ impl SheetsView {
             GridCommand::FreezePanes => freeze(active.0, active.1),
             GridCommand::Unfreeze => freeze(0, 0),
         };
+        // Measured row heights move with inserted and deleted rows.
+        let shift = match command {
+            GridCommand::InsertRowsAbove => Some((rows.0, i64::from(n_rows))),
+            GridCommand::InsertRowsBelow => Some((rows.1 + 1, i64::from(n_rows))),
+            GridCommand::DeleteRows => Some((rows.0, -i64::from(n_rows))),
+            _ => None,
+        };
         let result = self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
             let sheet = grid.sheet;
             let res = op(&mut grid.book, sheet);
+            if let (Ok(_), Some((at, count))) = (&res, shift) {
+                grid.layout.shift(at, count);
+            }
             grid.resize();
             table.refresh(cx);
             cx.notify();
@@ -652,6 +695,9 @@ fn header_menu(menu: PopupMenu, header: Header, view: &WeakEntity<SheetsView>) -
             .item(item("Insert Row Above", GridCommand::InsertRowsAbove))
             .item(item("Insert Row Below", GridCommand::InsertRowsBelow))
             .item(item("Delete Rows", GridCommand::DeleteRows))
+            .separator()
+            .item(item("Row Height…", GridCommand::RowHeight))
+            .item(item("Autofit Row Height", GridCommand::AutofitRows))
             .separator()
             .item(item("Freeze Top Row", GridCommand::FreezeTopRow))
             .item(item("Unfreeze Panes", GridCommand::Unfreeze)),

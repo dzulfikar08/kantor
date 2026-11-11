@@ -1,5 +1,5 @@
-use gpui_kit::component::{ActiveTheme, Size, h_flex, skeleton::Skeleton, v_flex};
 use gpui::{IntoElement, ParentElement as _, RenderOnce, Styled, prelude::FluentBuilder as _};
+use gpui_kit::component::{ActiveTheme, Size, h_flex, skeleton::Skeleton, v_flex};
 
 #[derive(IntoElement)]
 pub(super) struct Loading {

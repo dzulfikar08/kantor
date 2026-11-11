@@ -1,17 +1,15 @@
 use super::{TableDelegate, TableState};
-use gpui_kit::base::actions::{
-    Cancel, SelectDown, SelectFirst, SelectLast, SelectNextColumn, SelectPageDown, SelectPageUp,
-    SelectPrevColumn, SelectUp,
-};
-use gpui_kit::component::{
-    ActiveTheme, Sizable, Size, ThemeStyled as _,
-};
 use gpui::{
     App, Edges, Entity, Focusable, InteractiveElement, IntoElement, KeyBinding, ParentElement,
     Pixels, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
     prelude::FluentBuilder,
 };
 use gpui_kit::base::TestSupportExt as _;
+use gpui_kit::base::actions::{
+    Cancel, SelectDown, SelectFirst, SelectLast, SelectNextColumn, SelectPageDown, SelectPageUp,
+    SelectPrevColumn, SelectUp,
+};
+use gpui_kit::component::{ActiveTheme, Sizable, Size, ThemeStyled as _};
 
 const CONTEXT: &'static str = "DataTable";
 pub(super) fn init(cx: &mut App) {

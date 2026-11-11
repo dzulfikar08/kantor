@@ -32,7 +32,7 @@ impl RowHeights {
         // O(n) construction: each node adds itself to its parent.
         for i in 1..=n {
             tree[i] += u64::from(heights[i - 1]);
-            let parent = i + (i & i.wrapping_neg());
+            let parent = i + i.isolate_lowest_one();
             if parent <= n {
                 tree[parent] += tree[i];
             }
@@ -70,7 +70,7 @@ impl RowHeights {
         let mut i = row + 1;
         while i < self.tree.len() {
             self.tree[i] = self.tree[i].wrapping_add_signed(delta);
-            i += i & i.wrapping_neg();
+            i += i.isolate_lowest_one();
         }
         delta
     }
@@ -175,6 +175,7 @@ impl RowHeights {
         self.to_px(u64::from(self.height_dp(row)))
     }
 
+    #[cfg(test)]
     pub(crate) fn total(&self) -> f64 {
         self.to_px(self.total_dp())
     }
@@ -256,9 +257,7 @@ mod tests {
     #[std::prelude::v1::test]
     fn shown_rows_skip_hidden_ones() {
         let mut h = vec![10u32; 20];
-        for hidden in 3..15 {
-            h[hidden] = 0;
-        }
+        h[3..15].fill(0);
         let rows = RowHeights::from_heights(h, 1.0);
         assert_eq!(rows.shown_in(0, 45), vec![0, 1, 2, 15, 16]);
         assert_eq!(rows.next_shown(3), Some(15));
