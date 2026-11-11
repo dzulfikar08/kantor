@@ -46,6 +46,9 @@ mod find;
 mod grid_ops;
 mod look;
 mod point;
+mod row_heights;
+#[allow(dead_code)]
+mod table;
 
 use std::cell::Cell;
 use std::ops::Range;
@@ -55,12 +58,12 @@ use std::rc::Rc;
 use gpui_kit::component::{
     Sizable as _, h_flex,
     input::{Input, InputEvent, InputState},
-    table::{Column, DataTable, TableDelegate, TableEvent, TableState},
     v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::{metrics::*, tokens};
+use table::{Column, DataTable, TableDelegate, TableEvent, TableState};
 use sheets_engine::{
     CellRange, CellStyle, SourceFormat, StyleChange, Workbook, cell_name, column_name,
 };
