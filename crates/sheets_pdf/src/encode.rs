@@ -1,14 +1,16 @@
 //! Writing pages with krilla: fills, data bars and icons, cell text (shaped
-//! here, placed by its alignment), gridlines and borders, then the header
-//! and footer.
+//! here, placed by its alignment), gridlines and borders, charts and
+//! pictures, then the header and footer.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use docs_layout::Rgba;
-use docs_pdf::{Fonts, draw_run, fill, metadata};
+use docs_pdf::{Fonts, Images, draw_run, fill, metadata};
 use krilla::color::rgb;
-use krilla::geom::{PathBuilder, Rect, Size, Transform};
+use krilla::error::KrillaError;
+use krilla::geom::{PathBuilder, Rect, Transform};
 use krilla::num::NormalizedF32;
 use krilla::page::PageSettings;
 use krilla::paint::{FillRule, LineCap, LinearGradient, SpreadMethod, Stop, Stroke, StrokeDash};
@@ -45,12 +47,36 @@ fn fill_rect(surface: &mut Surface, rect: [f32; 4], c: u32) {
     }
 }
 
+/// Built chart items by object, data and size (quarter points).
+type ChartKey = (sheets_engine::drawing::DrawingKey, u64, u32, u32);
+
+/// Most laid-out charts kept (a chart split over pages is reused).
+const MAX_CHARTS: usize = 64;
+
+/// A picture krilla couldn't decode, found when the PDF was finished: the
+/// address of its bytes. Encode again with it in
+/// [`Encoder::skip_pictures`] to leave it out.
+#[derive(Debug, Clone, Copy)]
+pub struct BadPicture(pub usize);
+
+impl std::fmt::Display for BadPicture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("a picture can't be decoded")
+    }
+}
+
+impl std::error::Error for BadPicture {}
+
 /// Writes pages as they come; [`Encoder::finish`] returns the PDF.
 pub struct Encoder {
     pdf: krilla::Document,
     fonts: Fonts,
     shaper: Shaper,
     pages: usize,
+    images: Images,
+    /// Lays out charts (made on the first chart, on the shaper's fonts).
+    engine: Option<docs_layout::Engine>,
+    charts: HashMap<ChartKey, Arc<Vec<slides_scene::Item>>>,
 }
 
 impl Encoder {
@@ -62,7 +88,16 @@ impl Encoder {
             fonts: Fonts::default(),
             shaper,
             pages: 0,
+            images: Images::default(),
+            engine: None,
+            charts: HashMap::new(),
         }
+    }
+
+    /// Leave out pictures that failed before (see [`BadPicture`]).
+    pub fn skip_pictures(mut self, skip: &HashSet<usize>) -> Self {
+        self.images = Images::skipping(skip.iter().map(|&a| a as *const u8).collect());
+        self
     }
 
     pub fn pages(&self) -> usize {
@@ -105,7 +140,8 @@ impl Encoder {
             draw_line(&mut surface, l);
         }
         for o in &page.overlays {
-            draw_overlay(&mut surface, o);
+            let items = overlay_items(o, &mut self.engine, &mut self.charts, pen.shaper);
+            draw_overlay(&mut surface, o, &items, &mut self.images, pen.fonts);
         }
         surface.pop();
         pen.header_footer(&mut surface, &page.header, &page.hf, true, page);
@@ -115,7 +151,8 @@ impl Encoder {
         self.pages += 1;
     }
 
-    /// The PDF (one blank page when nothing was printed).
+    /// The PDF (one blank page when nothing was printed). A picture that
+    /// can't be decoded fails with a [`BadPicture`] error.
     pub fn finish(mut self) -> Result<Vec<u8>> {
         if self.pages == 0 {
             let settings = PageSettings::from_wh(612.0, 792.0).expect("positive page size");
@@ -123,7 +160,17 @@ impl Encoder {
             p.surface().finish();
             p.finish();
         }
-        self.pdf.finish().map_err(|e| anyhow!("writing PDF: {e:?}"))
+        match self.pdf.finish() {
+            Ok(bytes) => Ok(bytes),
+            Err(KrillaError::Image(bad, _, why)) => match self.images.key_of(&bad) {
+                Some(key) => {
+                    log::warn!("PDF export: a picture can't be decoded: {why}");
+                    Err(BadPicture(key as usize).into())
+                }
+                None => Err(anyhow!("writing PDF: picture: {why}")),
+            },
+            Err(e) => Err(anyhow!("writing PDF: {e:?}")),
+        }
     }
 }
 
@@ -297,23 +344,129 @@ fn draw_icon(surface: &mut Surface, i: &crate::Icon) {
     }
 }
 
-/// Where drawings get drawn (see [`crate::Overlay`]).
-fn draw_overlay(surface: &mut Surface, o: &crate::Overlay) {
+/// The display list of a chart or picture, in px of its own box.
+fn overlay_items(
+    o: &crate::Overlay,
+    engine: &mut Option<docs_layout::Engine>,
+    charts: &mut HashMap<ChartKey, Arc<Vec<slides_scene::Item>>>,
+    shaper: &Shaper,
+) -> Arc<Vec<slides_scene::Item>> {
+    // Points to the scene's px.
+    let (w, h) = (o.rect[2] / 0.75, o.rect[3] / 0.75);
     match &o.kind {
-        OverlayKind::Picture(bytes) => {
-            let data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(bytes.clone());
-            let image = match docs_pdf::picture_kind(bytes) {
-                Some("png") => krilla::image::Image::from_png(data.into(), true).ok(),
-                Some("jpeg") => krilla::image::Image::from_jpeg(data.into(), true).ok(),
-                _ => None,
-            };
-            let [x, y, w, h] = o.rect;
-            if let (Some(image), Some(size)) = (image, Size::from_wh(w.max(0.01), h.max(0.01))) {
-                surface.push_transform(&Transform::from_translate(x, y));
-                surface.draw_image(image, size);
-                surface.pop();
+        OverlayKind::Picture { part, data, crop } => {
+            Arc::new(sheets_scene::picture_items(part, data, *crop, w, h))
+        }
+        OverlayKind::Chart {
+            key,
+            hash,
+            chart,
+            defaults,
+        } => {
+            let q = |v: f32| (v.max(0.0) * 4.0).round() as u32;
+            let k = (*key, *hash, q(o.rect[2]), q(o.rect[3]));
+            if let Some(items) = charts.get(&k) {
+                return items.clone();
+            }
+            let engine = engine.get_or_insert_with(|| {
+                docs_layout::Engine::with_fonts(shaper.font_context().clone())
+            });
+            let items = Arc::new(sheets_scene::chart_items(engine, chart, defaults, w, h));
+            if charts.len() >= MAX_CHARTS {
+                charts.clear();
+            }
+            charts.insert(k, items.clone());
+            items
+        }
+    }
+}
+
+/// Bounds of an item in its box's px (conservative: control points and
+/// half the stroke included); `None` for what draws nothing.
+fn item_bounds(item: &slides_scene::Item) -> Option<[f32; 4]> {
+    use slides_scene::{P, Prim, Seg, p};
+    let mut pts: Vec<P> = Vec::new();
+    let mut grow = 0.0f32;
+    let path_points = |path: &slides_scene::Path, pts: &mut Vec<P>| {
+        for s in &path.segs {
+            match *s {
+                Seg::Move(q) | Seg::Line(q) => pts.push(q),
+                Seg::Quad(c, q) => pts.extend([c, q]),
+                Seg::Cubic(a, b, q) => pts.extend([a, b, q]),
+                Seg::Close => {}
             }
         }
+    };
+    match &item.prim {
+        Prim::Fill { path, .. } => path_points(path, &mut pts),
+        Prim::Stroke { path, stroke } => {
+            path_points(path, &mut pts);
+            grow = stroke.width;
+        }
+        Prim::Picture(pic) => {
+            let [x, y, w, h] = pic.rect;
+            pts.extend([p(x, y), p(x + w, y + h), p(x + w, y), p(x, y + h)]);
+        }
+        Prim::Text(t) => {
+            for r in &t.runs {
+                let (x0, x1) = (r.run.origin_x, r.run.origin_x + r.run.advance);
+                let size = r.run.font_size;
+                let (y0, y1) = (r.run.baseline - size * 1.2, r.run.baseline + size * 0.5);
+                for (x, y) in [(x0, y0), (x1, y1), (x1, y0), (x0, y1)] {
+                    pts.push(p(t.origin.x + x, t.origin.y + y));
+                }
+            }
+            grow = 2.0;
+        }
+        Prim::Unsupported { .. } | Prim::PlaceholderOutline { .. } => return None,
+    }
+    let mut b = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+    for q in pts {
+        let q = item.transform.apply(q);
+        b = [b[0].min(q.x), b[1].min(q.y), b[2].max(q.x), b[3].max(q.y)];
+    }
+    (b[0] <= b[2]).then(|| [b[0] - grow, b[1] - grow, b[2] + grow, b[3] + grow])
+}
+
+/// A chart or picture, clipped to the page's cells. When only part of it
+/// is on the page, items wholly outside are left out (a split chart's
+/// title text isn't written, and found, on the page that doesn't show it).
+fn draw_overlay(
+    surface: &mut Surface,
+    o: &crate::Overlay,
+    items: &[slides_scene::Item],
+    images: &mut Images,
+    fonts: &mut Fonts,
+) {
+    let [x, y, w, h] = o.rect;
+    let [cx, cy, cw, ch] = o.clip;
+    let inside =
+        x >= cx - 0.01 && y >= cy - 0.01 && x + w <= cx + cw + 0.01 && y + h <= cy + ch + 0.01;
+    let clip = clip_to(surface, o.clip);
+    surface.push_transform(&Transform::from_translate(x, y));
+    if inside {
+        slides_pdf::draw_items(surface, items, images, fonts);
+    } else {
+        // The page's part, in the box's px.
+        let v = [
+            (cx - x) / 0.75,
+            (cy - y) / 0.75,
+            (cx + cw - x) / 0.75,
+            (cy + ch - y) / 0.75,
+        ];
+        let shown: Vec<slides_scene::Item> = items
+            .iter()
+            .filter(|i| {
+                item_bounds(i)
+                    .is_some_and(|b| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1])
+            })
+            .cloned()
+            .collect();
+        slides_pdf::draw_items(surface, &shown, images, fonts);
+    }
+    surface.pop();
+    if clip {
+        surface.pop();
     }
 }
 

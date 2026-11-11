@@ -6719,6 +6719,9 @@ dependencies = [
  "log",
  "lopdf",
  "sheets_engine",
+ "sheets_scene",
+ "slides_pdf",
+ "slides_scene",
  "tempfile",
 ]
 

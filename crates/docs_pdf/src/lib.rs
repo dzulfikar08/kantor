@@ -222,6 +222,24 @@ pub struct Images {
 }
 
 impl Images {
+    /// No pictures yet; those at the addresses in `skip` are left out (they
+    /// failed on an earlier attempt).
+    pub fn skipping(skip: HashSet<*const u8>) -> Self {
+        Self {
+            skip,
+            made: HashMap::new(),
+        }
+    }
+
+    /// The address of the bytes `image` was made from (to skip it next
+    /// time, see [`Images::skipping`]).
+    pub fn key_of(&self, image: &Image) -> Option<*const u8> {
+        self.made
+            .iter()
+            .find(|(_, i)| i.as_ref() == Some(image))
+            .map(|(k, _)| *k)
+    }
+
     /// The picture in `data` (PNG, JPEG, GIF or WebP, by signature), once
     /// per distinct buffer; `None` for other formats and pictures that
     /// failed before.
@@ -271,18 +289,12 @@ pub fn encode_retrying(
 ) -> Result<Vec<u8>> {
     let mut skip: HashSet<*const u8> = HashSet::new();
     loop {
-        let mut images = Images {
-            skip: skip.clone(),
-            made: HashMap::new(),
-        };
+        let mut images = Images::skipping(skip.clone());
         match encode(&mut images) {
             Ok(bytes) => return Ok(bytes),
             Err(KrillaError::Image(bad, _, why)) => {
                 let key = images
-                    .made
-                    .iter()
-                    .find(|(_, i)| i.as_ref() == Some(&bad))
-                    .map(|(k, _)| *k)
+                    .key_of(&bad)
                     .ok_or_else(|| anyhow!("writing PDF: picture: {why}"))?;
                 log::warn!("PDF export: leaving out a picture krilla can't decode: {why}");
                 skip.insert(key);

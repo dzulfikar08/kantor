@@ -242,6 +242,8 @@ pub(crate) struct Object {
     descr: String,
     anchor: Anchor,
     kind: Arc<DrawingKind>,
+    hidden: bool,
+    prints: bool,
     /// The anchor element as written (to put it back after a delete was
     /// saved and then undone), and the namespaces declared around it.
     xml: String,
@@ -259,6 +261,11 @@ pub struct Drawing {
     pub kind: Arc<DrawingKind>,
     /// Whether it can be moved, resized and deleted.
     pub editable: bool,
+    /// Hidden (`cNvPr hidden="1"`): neither shown nor printed.
+    pub hidden: bool,
+    /// Printed with the sheet (`clientData fPrintsWithSheet`, on unless
+    /// `"0"`).
+    pub prints: bool,
 }
 
 /// Identifies an object: `sheetId` and position in the opened drawing.
@@ -526,6 +533,12 @@ fn read_objects(
                 .to_owned(),
             anchor,
             kind: Arc::new(kind),
+            hidden: nv
+                .and_then(|n| n.attribute("hidden"))
+                .is_some_and(|v| v == "1" || v == "true"),
+            prints: child(a, NS_XDR, "clientData")
+                .and_then(|c| c.attribute("fPrintsWithSheet"))
+                .is_none_or(|v| v != "0" && v != "false"),
             xml: xml[a.range()].to_owned(),
             namespaces: namespaces.clone(),
         });
@@ -651,6 +664,8 @@ impl Workbook {
                     anchor: current_anchor(obj, key, &edits, &now)?,
                     kind: obj.kind.clone(),
                     editable: obj.id.is_some(),
+                    hidden: obj.hidden,
+                    prints: obj.prints,
                 })
             })
             .collect()

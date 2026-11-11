@@ -14,9 +14,7 @@ use sheets_engine::{
 };
 
 use crate::text::{FontKey, Shaper};
-use crate::{
-    Align, Bar, CellText, HfLayout, INCH, Icon, Line, LineKind, PageContent, Plan, SheetPlan, hf,
-};
+use crate::{Align, Bar, CellText, HfLayout, INCH, Icon, Line, LineKind, PageContent, Plan, hf};
 
 /// Space between a cell's edges and its text, points.
 pub(crate) const PAD_X: f32 = 2.0;
@@ -219,17 +217,6 @@ pub(crate) fn fit_rows(
             *h = h.max(need.min(409.0) as f64);
         }
     }
-}
-
-/// Drawings on a page: none yet. This is where charts and pictures anchored
-/// to the sheet would be found and placed (see [`crate::Overlay`]).
-fn overlays(
-    _book: &Workbook,
-    _sp: &SheetPlan,
-    _cols: &[Pos],
-    _rows: &[Pos],
-) -> Vec<crate::Overlay> {
-    Vec::new()
 }
 
 /// The content of page `index` of `plan`.
@@ -628,7 +615,24 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
 
     out.lines = coalesce(grid_lines);
     out.lines.extend(coalesce(borders));
-    out.overlays = overlays(book, sp, &cols, &rows);
+    // Charts and pictures over the page's own cells (not the titles).
+    if !sp.drawings.is_empty() {
+        let (bc, br) = (grid.cols[pr.cols], grid.rows[pr.rows]);
+        let first = |pos: &[Pos], i: u32| {
+            pos.iter()
+                .find(|q| q.seg == 1 && q.index == i)
+                .map(|q| q.start)
+        };
+        if let (Some(cx), Some(ry)) = (first(&cols, bc.0), first(&rows, br.0)) {
+            let clip = [
+                xseg[1].0,
+                yseg[1].0,
+                (xseg[1].1 - xseg[1].0).max(0.0),
+                (yseg[1].1 - yseg[1].0).max(0.0),
+            ];
+            out.overlays = sp.drawings.overlays(book, bc, br, [cx, ry], clip);
+        }
+    }
 
     // Header and footer.
     let fields = hf::Fields {

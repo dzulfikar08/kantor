@@ -145,7 +145,7 @@ export const en = {
   limitsIntro:
     "Kantor is early software and hasn't been tried on a large set of real-world files yet. Keep a copy of anything important, and expect these gaps:",
   limits: [
-    "Docs and Slides can't print yet: export to PDF and print the PDF. Sheets prints through your PDF viewer, without charts or pictures yet.",
+    "Docs and Slides can't print yet: export to PDF and print the PDF. Sheets prints through your PDF viewer, charts and pictures included.",
     "No spell check yet.",
     "Word: headers, footers, floating pictures, shapes and equations aren't shown properly yet. Kantor keeps them and saves them unchanged.",
     "Word: table rows don't break across pages, and tab stops show as a single space.",
@@ -309,7 +309,7 @@ export const id = {
   limitsIntro:
     "Kantor masih baru dan belum dicoba dengan banyak file dari dunia nyata. Simpan salinan file penting, dan perhatikan kekurangan berikut:",
   limits: [
-    "Docs dan Slides belum bisa mencetak: ekspor ke PDF dulu, lalu cetak PDF-nya. Sheets mencetak lewat penampil PDF, tapi grafik dan gambar belum ikut.",
+    "Docs dan Slides belum bisa mencetak: ekspor ke PDF dulu, lalu cetak PDF-nya. Sheets mencetak lewat penampil PDF, termasuk grafik dan gambarnya.",
     "Belum ada pemeriksa ejaan.",
     "Word: header, footer, gambar mengambang, bentuk, dan persamaan belum tampil dengan benar. Kantor menyimpannya tanpa diubah.",
     "Word: baris tabel tidak terpotong ke halaman berikutnya, dan tab tampil sebagai satu spasi.",

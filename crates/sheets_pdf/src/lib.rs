@@ -24,9 +24,16 @@
 //!
 //! [`export`] does all three for headless callers (`kantor convert`).
 //!
-//! Drawings (charts, pictures, shapes) are not printed yet; see
-//! [`Overlay`] for the hook they plug into.
+//! Charts and pictures on a sheet print over its cells where they sit on
+//! the grid ([`drawings`]): an object reaching over a page break is split,
+//! each page showing its part; objects in repeated title rows or columns
+//! aren't repeated (only the cells are, as in Excel). Charts are drawn by
+//! the renderer Slides uses, with live cell data and vector, searchable
+//! text; pictures are embedded at their own resolution. Hidden objects and
+//! those set not to print are left out, and so are shapes and text boxes
+//! (Kantor can't draw them yet).
 
+pub mod drawings;
 mod encode;
 mod extract;
 pub mod hf;
@@ -39,7 +46,7 @@ use anyhow::Result;
 use sheets_engine::{CellRange, Paper, PrintColumns, SheetPrint, Workbook};
 
 pub use docs_pdf::write_file;
-pub use encode::Encoder;
+pub use encode::{BadPicture, Encoder};
 pub use extract::extract;
 pub use text::Shaper;
 
@@ -123,6 +130,8 @@ pub struct SheetPlan {
     pub heading: (f64, f64),
     /// The ranges printed and how each splits.
     pub areas: Vec<(CellRange, paginate::Grid)>,
+    /// Charts and pictures to print, and where cells are on the sheet.
+    pub drawings: drawings::SheetDrawings,
 }
 
 impl SheetPlan {
@@ -235,8 +244,25 @@ fn sheet_plan(
         print.setup.fit = Some(f);
     }
     let columns = book.print_columns(sheet);
+    let spec = book.row_spec(sheet);
+    let found = drawings::printed(book, sheet);
     let areas: Vec<CellRange> = if print.print_area.is_empty() || opts.ignore_print_area {
-        book.print_used_range(sheet).into_iter().collect()
+        // Excel prints the cells in use and the objects over the sheet.
+        let used = book.print_used_range(sheet);
+        let stored: std::collections::HashMap<u32, f64> = spec
+            .rows
+            .iter()
+            .map(|e| (e.row, if e.hidden { 0.0 } else { e.points }))
+            .collect();
+        let row_h = |r: u32| stored.get(&r).copied().unwrap_or(spec.default_points);
+        let drawn = drawings::cell_bounds(&found, &|c| columns.width_pt(c), &row_h);
+        match (used, drawn) {
+            (Some(a), Some(b)) => vec![CellRange::from_corners(
+                (a.top.min(b.top), a.left.min(b.left)),
+                (a.bottom.max(b.bottom), a.right.max(b.right)),
+            )],
+            (a, b) => a.or(b).into_iter().collect(),
+        }
     } else {
         print.print_area.clone()
     };
@@ -246,10 +272,11 @@ fn sheet_plan(
         .map(|a| a.bottom)
         .chain(print.title_rows.map(|t| t.1))
         .max();
-    let spec = book.row_spec(sheet);
     let default_row = spec.default_points;
     let mut rows = Vec::new();
-    if let Some(last) = last_row {
+    // Rows under drawings too, so their sizes follow the rows'.
+    let last_row_drawn = last_row.max(drawings::last_row(&found));
+    if let Some(last) = last_row_drawn {
         rows = vec![default_row; last as usize + 1];
         let mut stored = vec![false; rows.len()];
         for e in spec.rows.iter().filter(|e| e.row <= last) {
@@ -289,6 +316,7 @@ fn sheet_plan(
         page,
         heading,
         areas: Vec::new(),
+        drawings: Default::default(),
     };
     let mut grids = Vec::new();
     for area in areas {
@@ -322,29 +350,40 @@ fn sheet_plan(
         grids.push((area, grid));
     }
     plan.areas = grids;
+    plan.drawings = drawings::SheetDrawings::new(book, found, &plan);
     plan
 }
 
-/// Something drawn over the cells of a page, in the page's content
-/// coordinates (points, before the print scale; the cells' top-left corner
-/// of the page is 0, 0).
-///
-/// This is the hook for drawings: charts (the scene Sheets shares with
-/// Slides), pictures and shapes. [`extract`] collects them for the page
-/// (`extract::overlays`, which finds none yet) and the encoder draws them
-/// after the cells (`encode::draw_overlay`). A chart would add a variant
-/// holding its `slides_scene::SlideScene`, drawn the way `slides_pdf`
-/// draws a slide.
+/// A chart or picture on a page, in the page's content coordinates
+/// (points before the print scale, from the top-left of the printed
+/// block). `rect` is the whole object, which may reach off the page;
+/// `clip` is the part of the page it may show in (the page's own cells,
+/// not the repeated titles).
 #[derive(Debug, Clone)]
 pub struct Overlay {
     pub rect: [f32; 4],
+    pub clip: [f32; 4],
     pub kind: OverlayKind,
 }
 
 #[derive(Debug, Clone)]
 pub enum OverlayKind {
-    /// A PNG or JPEG picture.
-    Picture(Arc<[u8]>),
+    /// A picture's media part, bytes and cropping (left, top, right,
+    /// bottom fractions).
+    Picture {
+        part: Arc<str>,
+        data: Arc<Vec<u8>>,
+        crop: [f32; 4],
+    },
+    /// A chart with the cells' values read when the page was extracted;
+    /// laid out by the encoder. `hash` identifies the data, so a chart split
+    /// over pages is laid out once.
+    Chart {
+        key: sheets_engine::drawing::DrawingKey,
+        hash: u64,
+        chart: Arc<slides_scene::chart::Chart>,
+        defaults: Arc<slides_scene::chart::Defaults>,
+    },
 }
 
 /// One page's content, ready to encode (plain data, `Send`). Content
@@ -467,11 +506,23 @@ pub use text::FontKey;
 pub fn export(book: &mut Workbook, opts: &Options) -> Result<(Vec<u8>, usize)> {
     let mut shaper = Shaper::new();
     let plan = Plan::new(book, opts, &mut shaper);
-    let mut enc = Encoder::new(&plan.title, shaper);
-    for i in 0..plan.pages.len() {
-        let page = extract(book, &plan, i);
-        enc.page(&page);
-    }
     let pages = plan.pages.len().max(1);
-    Ok((enc.finish()?, pages))
+    let mut skip = std::collections::HashSet::new();
+    let mut shaper = Some(shaper);
+    loop {
+        let sh = shaper.take().unwrap_or_default();
+        let mut enc = Encoder::new(&plan.title, sh).skip_pictures(&skip);
+        for i in 0..plan.pages.len() {
+            let page = extract(book, &plan, i);
+            enc.page(&page);
+        }
+        match enc.finish() {
+            Ok(pdf) => return Ok((pdf, pages)),
+            // Leave out a picture krilla can't decode and write it again.
+            Err(e) => match e.downcast_ref::<BadPicture>() {
+                Some(bad) if skip.insert(bad.0) => {}
+                _ => return Err(e),
+            },
+        }
+    }
 }
