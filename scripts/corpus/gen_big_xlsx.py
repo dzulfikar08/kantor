@@ -19,7 +19,9 @@ top 10 on Margin, duplicate customer ids, and an expression rule that tints
 every row with a low margin (`=$N2="Low"` on A:S).
 
 `--table` makes the order list an Excel table `Orders` (TableStyleMedium2,
-banded rows, filter buttons), for measuring sorting and filtering.
+banded rows, filter buttons), for measuring sorting and filtering; it is
+written without constant_memory (xlsxwriter can't stream tables) and needs
+a few GB of RAM.
 """
 
 import argparse
@@ -46,7 +48,8 @@ def main() -> None:
     args = ap.parse_args()
     rnd = random.Random(20261110)
 
-    wb = xlsxwriter.Workbook(args.out, {"constant_memory": True, "strings_to_numbers": False})
+    # Tables need the whole sheet in memory (xlsxwriter has no streamed tables).
+    wb = xlsxwriter.Workbook(args.out, {"constant_memory": not args.table, "strings_to_numbers": False})
     bold = wb.add_format({"bold": True, "bg_color": "#DDEBF7", "border": 1})
     money = wb.add_format({"num_format": "#,##0"})
     pct = wb.add_format({"num_format": "0.0%"})
@@ -74,7 +77,6 @@ def main() -> None:
             "Margin class", "Month", "Status", "Sales rep", "Plant", "Note"]
     ws.write_row(0, 0, head, bold)
     if args.table:
-        # Written before the data rows: constant_memory streams row by row.
         ws.add_table(0, 0, args.rows, len(head) - 1, {
             "name": "Orders",
             "style": "Table Style Medium 2",
