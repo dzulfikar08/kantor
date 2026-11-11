@@ -29,6 +29,7 @@ mod xlookup;
 mod kantor_aggregate;
 mod kantor_groupby;
 pub(crate) mod kantor_names;
+pub mod kantor_pivot;
 mod kantor_text;
 
 /// List of all implemented functions
@@ -578,6 +579,7 @@ pub enum Function {
     Dbcs,
     Jis,
     Phonetic,
+    Getpivotdata,
 }
 
 macro_rules! impl_function_lookup {
@@ -1618,7 +1620,8 @@ impl Function {
             | Function::Usdollar
             | Function::Dbcs
             | Function::Jis
-            | Function::Phonetic => kantor_names::name(self).to_string(),
+            | Function::Phonetic
+            | Function::Getpivotdata => kantor_names::name(self).to_string(),
             Function::Forecast => functions.forecast.clone(),
             Function::ForecastLinear => functions.forecastlinear.clone(),
             Function::ForecastEts => functions.forecastets.clone(),
@@ -1645,7 +1648,7 @@ impl Function {
         }
     }
 
-    pub fn into_iter() -> IntoIter<Function, 505> {
+    pub fn into_iter() -> IntoIter<Function, 506> {
         [
             Function::And,
             Function::False,
@@ -2118,6 +2121,7 @@ impl Function {
             Function::Dbcs,
             Function::Jis,
             Function::Phonetic,
+            Function::Getpivotdata,
             Function::Forecast,
             Function::ForecastLinear,
             Function::ForecastEts,
@@ -2829,6 +2833,7 @@ impl<'a> Model<'a> {
             Function::Usdollar => self.fn_usdollar(args, cell),
             Function::Dbcs | Function::Jis => self.fn_dbcs(args, cell),
             Function::Phonetic => self.fn_phonetic(args, cell),
+            Function::Getpivotdata => self.fn_getpivotdata(args, cell),
             Function::Forecast => self.fn_forecast(args, cell),
             Function::ForecastLinear => self.fn_forecast_linear(args, cell),
             Function::ForecastEts => self.fn_forecast_ets(args, cell),

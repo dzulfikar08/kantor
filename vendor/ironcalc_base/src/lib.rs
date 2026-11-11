@@ -59,6 +59,10 @@ mod implicit_intersection;
 mod kantor_cf;
 mod kantor_validation;
 pub mod kantor_tables;
+/// KANTOR PATCH (pivot): what GETPIVOTDATA reads (`Model::kantor_pivots`).
+pub mod kantor_pivot {
+    pub use crate::functions::kantor_pivot::{PivotGrid, PivotValueCell};
+}
 // KANTOR PATCH (row heights)
 pub mod kantor_rows;
 pub mod links;

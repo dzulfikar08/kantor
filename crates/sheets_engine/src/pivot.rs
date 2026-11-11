@@ -2421,6 +2421,10 @@ fn shared_items_xml<'a>(cf: &CacheField, values: impl Iterator<Item = &'a Val>, 
     out.push_str("</sharedItems>");
 }
 
+/// A row or column of a pivot's body for GETPIVOTDATA: its `(field, item)`
+/// pairs and its data field, if it names one.
+type AxisKey = (Vec<(String, String)>, Option<usize>);
+
 // ------------------------------------------------------------------ the workbook
 
 /// A pivot table, as the grid needs it. Rows and columns are 0-based.
@@ -2540,6 +2544,114 @@ impl Workbook {
             .iter()
             .find(|p| p.contains(row, col))?
             .look(row, col)
+    }
+
+    /// Each pivot table's value cells, for GETPIVOTDATA: the data field and
+    /// the field/item pairs of every cell of the body.
+    fn pivot_grids(&self) -> Vec<ironcalc_base::kantor_pivot::PivotGrid> {
+        use ironcalc_base::kantor_pivot::{PivotGrid, PivotValueCell};
+        let state = self.pivot_state();
+        let sheets = self.model.get_model().workbook.worksheets.len() as u32;
+        let mut out = Vec::new();
+        for sheet in 0..sheets {
+            for p in self.placed_pivots(sheet).iter() {
+                let d = &p.def;
+                let cache = self.pivot_cache(&state, d.cache);
+                let nf = cache.fields.len();
+                if d.fields.len() != nf || d.data_fields.is_empty() {
+                    continue;
+                }
+                // (pairs, data field) of each row or column of the body.
+                let axis = |fields: &[i32], items: &[AxisItem]| {
+                    let lv = levels(fields, nf);
+                    let mut prev: Vec<usize> = Vec::new();
+                    let mut out: Vec<AxisKey> = Vec::new();
+                    for it in items {
+                        let path: Vec<usize> = if it.t == "grand" {
+                            Vec::new()
+                        } else {
+                            prev.iter()
+                                .take(it.r)
+                                .copied()
+                                .chain(it.x.iter().copied())
+                                .collect()
+                        };
+                        if it.t != "grand" {
+                            prev = path.clone();
+                        }
+                        let mut pairs = Vec::new();
+                        let mut data = (it.i > 0).then_some(it.i);
+                        for (l, k) in path.iter().enumerate() {
+                            match lv.get(l) {
+                                Some(Level::Field(f)) if *k < d.fields[*f].items.len() => pairs
+                                    .push((
+                                        cache.fields[*f].name.to_lowercase(),
+                                        d.item_label(&cache, *f, *k).label().to_lowercase(),
+                                    )),
+                                Some(Level::Values) => data = Some(*k),
+                                _ => {}
+                            }
+                        }
+                        out.push((pairs, data));
+                    }
+                    out
+                };
+                let rows = axis(&d.row_fields, &d.row_items);
+                let cols = axis(&d.col_fields, &d.col_items);
+                let names: Vec<Vec<String>> = (0..d.data_fields.len())
+                    .map(|i| {
+                        let mut n = vec![d.data_caption_of(&cache, i).to_lowercase()];
+                        if let Some(c) = cache.fields.get(d.data_fields[i].fld) {
+                            n.push(c.name.to_lowercase());
+                        }
+                        n
+                    })
+                    .collect();
+                let top = p.area.top + d.first_data_row;
+                let left = p.area.left + d.first_data_col;
+                let mut cells = Vec::new();
+                for (i, (rp, rd)) in rows.iter().enumerate() {
+                    for (j, (cp, cd)) in cols.iter().enumerate() {
+                        let k = rd.or(*cd).unwrap_or(0).min(names.len() - 1);
+                        let mut items: Vec<(String, String)> =
+                            rp.iter().chain(cp.iter()).cloned().collect();
+                        items.sort();
+                        cells.push(PivotValueCell {
+                            data: names[k].clone(),
+                            items,
+                            row: (top + i as u32) as i32 + 1,
+                            column: (left + j as u32) as i32 + 1,
+                        });
+                    }
+                }
+                let b = p.bounds();
+                out.push(PivotGrid {
+                    sheet,
+                    top: b.top as i32 + 1,
+                    left: b.left as i32 + 1,
+                    bottom: b.bottom as i32 + 1,
+                    right: b.right as i32 + 1,
+                    cells,
+                });
+            }
+        }
+        out
+    }
+
+    /// Give IronCalc the pivot tables as they are now (for GETPIVOTDATA),
+    /// recalculating if they changed and `recalc` (automatic calculation).
+    pub(crate) fn sync_pivot_grids(&mut self, recalc: bool) {
+        if self.pivots.defs.is_empty() {
+            return;
+        }
+        let grids = self.pivot_grids();
+        if grids == self.model.get_model().kantor_pivots {
+            return;
+        }
+        self.model.kantor_set_pivots(grids);
+        if recalc && self.calc.mode == crate::CalcMode::Automatic {
+            self.model.evaluate();
+        }
     }
 
     /// Refuse inserting (`count` at `at`) or deleting (`at..at + count`) rows
@@ -2927,6 +3039,7 @@ impl Workbook {
             }
             self.history.set_pivot_state(Arc::new(next));
         }
+        self.sync_pivot_grids(true);
         result.map(|()| plans.len())
     }
 

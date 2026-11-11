@@ -35,6 +35,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   Var(p), and the data fields' number formats. A refresh is one undo step and rewrites the pivot's
   definition, cache and records for the next save. Inserting or deleting rows or columns through
   a pivot table is refused, as in Excel, and so is a refresh that would overwrite other cells.
+  `GETPIVOTDATA` works against the pivot tables' cells (data field by caption or source field
+  name, field/item pairs in any order) and follows refreshes and moved pivots.
 - Charts and pictures on worksheets are shown over the grid, as in Excel: column, bar, line,
   area, pie, doughnut, scatter and combination charts (the Slides chart renderer, with the
   workbook theme's colours and fonts), and pictures with their cropping. They sit where their
