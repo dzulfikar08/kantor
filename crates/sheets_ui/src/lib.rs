@@ -52,7 +52,7 @@ mod filter_menu;
 mod find;
 mod grid_ops;
 mod look;
-mod pivot;
+pub mod pivot;
 mod point;
 mod popup_list;
 mod print;
@@ -938,6 +938,10 @@ pub struct SheetsView {
     sort_panel: Option<filter_menu::SortPanel>,
     /// Charts and pictures over the grid (see [`drawings`]).
     drawings: Rc<RefCell<drawings::DrawLayer>>,
+    /// The Insert PivotTable card (see [`pivot`]).
+    pivot_dialog: Option<pivot::InsertDialog>,
+    /// The PivotTable Fields panel beside the grid.
+    pivot_panel: Option<pivot::FieldPanel>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -997,6 +1001,8 @@ impl SheetsView {
             filter_menu: None,
             sort_panel: None,
             drawings: Rc::default(),
+            pivot_dialog: None,
+            pivot_panel: None,
             _subscriptions: subscriptions,
         };
         this.select_cell(0, 0, cx);
@@ -2162,42 +2168,52 @@ impl Render for SheetsView {
                             .child(point::colored_refs(self.formula.clone(), bar_refs, t.fg)),
                     ),
             )
-            // Grid
-            .child(
-                self.validation_actions(self.grid_actions(div(), cx), cx)
+            // Grid, and the PivotTable Fields panel beside it.
+            .child({
+                let panel = self.render_pivot_panel(cx);
+                h_flex()
                     .flex_1()
                     .min_h_0()
-                    .key_context(GRID_CONTEXT)
-                    .on_action(cx.listener(Self::undo))
-                    .on_action(cx.listener(Self::redo))
-                    .on_action(cx.listener(Self::copy))
-                    .on_action(cx.listener(Self::cut))
-                    .on_action(cx.listener(Self::paste))
-                    .on_action(cx.listener(Self::extend_up))
-                    .on_action(cx.listener(Self::extend_down))
-                    .on_action(cx.listener(Self::extend_left))
-                    .on_action(cx.listener(Self::extend_right))
-                    .on_action(cx.listener(Self::toggle_bold))
-                    .on_action(cx.listener(Self::toggle_italic))
-                    .on_action(cx.listener(Self::toggle_underline))
-                    // A drag only extends the range if it started on a cell
-                    // (cells set `dragging` after this capture listener runs).
-                    .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
-                        this.dragging = false;
-                        this.point_dragging = false;
-                        this.reset_grid_drag(cx);
-                    }))
-                    .capture_any_mouse_up(cx.listener(|this, _, window, cx| {
-                        this.dragging = false;
-                        this.point_dragging = false;
-                        this.end_grid_drag(window, cx);
-                        this.row_resize_end(window, cx);
-                    }))
-                    .on_key_down(cx.listener(Self::on_grid_key))
-                    .relative()
-                    .child(DataTable::new(&self.table).bordered(false).small())
-                    .child(self.render_drawings(cx)),
-            )
+                    .w_full()
+                    .items_start()
+                    .child(
+                        self.validation_actions(self.grid_actions(div(), cx), cx)
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .key_context(GRID_CONTEXT)
+                            .on_action(cx.listener(Self::undo))
+                            .on_action(cx.listener(Self::redo))
+                            .on_action(cx.listener(Self::copy))
+                            .on_action(cx.listener(Self::cut))
+                            .on_action(cx.listener(Self::paste))
+                            .on_action(cx.listener(Self::extend_up))
+                            .on_action(cx.listener(Self::extend_down))
+                            .on_action(cx.listener(Self::extend_left))
+                            .on_action(cx.listener(Self::extend_right))
+                            .on_action(cx.listener(Self::toggle_bold))
+                            .on_action(cx.listener(Self::toggle_italic))
+                            .on_action(cx.listener(Self::toggle_underline))
+                            // A drag only extends the range if it started on a cell
+                            // (cells set `dragging` after this capture listener runs).
+                            .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
+                                this.dragging = false;
+                                this.point_dragging = false;
+                                this.reset_grid_drag(cx);
+                            }))
+                            .capture_any_mouse_up(cx.listener(|this, _, window, cx| {
+                                this.dragging = false;
+                                this.point_dragging = false;
+                                this.end_grid_drag(window, cx);
+                                this.row_resize_end(window, cx);
+                            }))
+                            .on_key_down(cx.listener(Self::on_grid_key))
+                            .relative()
+                            .child(DataTable::new(&self.table).bordered(false).small())
+                            .child(self.render_drawings(cx)),
+                    )
+                    .children(panel)
+            })
             // Sheet tabs
             .child(
                 h_flex()
@@ -2215,6 +2231,7 @@ impl Render for SheetsView {
             .children(self.render_alert(cx))
             .children(self.render_sort_panel(cx))
             .children(self.render_filter_menu(cx))
+            .children(self.render_pivot_dialog(cx))
             .into_any_element()
     }
 }

@@ -413,6 +413,17 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
                     .dropdown_menu(move |menu, _, _| number_items(menu, current, &view)),
             );
     }
+    // PivotTables.
+    let pivot_view = cx.entity().downgrade();
+    row = row.child(separator(cx)).child(
+        Button::new("pivot-menu")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::TableProperties)
+            .dropdown_caret(true)
+            .tooltip("PivotTable")
+            .dropdown_menu(move |menu, _, _| pivot_items(menu, &pivot_view)),
+    );
     // Export as PDF and Print.
     let print_view = cx.entity().downgrade();
     row = row.child(separator(cx)).child(
@@ -448,4 +459,41 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
         ));
     }
     row
+}
+
+/// The PivotTable menu: insert, fields, refresh, delete.
+fn pivot_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
+    type Run = fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>);
+    let items: [(&str, &str, Run); 5] = [
+        ("Insert PivotTable…", "", |v, w, cx| {
+            v.insert_pivot_doc(w, cx)
+        }),
+        ("PivotTable Fields", "", |v, w, cx| {
+            v.pivot_fields_doc(w, cx)
+        }),
+        ("Refresh PivotTable", "Alt+F5", |v, w, cx| {
+            v.refresh_pivots_doc(false, w, cx)
+        }),
+        ("Refresh All PivotTables", "Ctrl+Alt+F5", |v, w, cx| {
+            v.refresh_pivots_doc(true, w, cx)
+        }),
+        ("Delete PivotTable", "", |v, w, cx| {
+            v.delete_pivot_doc(w, cx)
+        }),
+    ];
+    for (i, (label, keys, run)) in items.into_iter().enumerate() {
+        if i == 2 || i == 4 {
+            menu = menu.separator();
+        }
+        let view = view.clone();
+        let text = if keys.is_empty() {
+            label.to_owned()
+        } else {
+            format!("{label}  ({keys})")
+        };
+        menu = menu.item(PopupMenuItem::new(text).on_click(move |_, window, cx| {
+            let _ = view.update(cx, |v, cx| run(v, window, cx));
+        }));
+    }
+    menu
 }

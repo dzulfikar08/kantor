@@ -226,6 +226,14 @@ impl PivotLayout {
         self.fix_values_entry();
     }
 
+    /// Take the k-th value field out.
+    pub fn remove_value(&mut self, k: usize) {
+        if k < self.values.len() {
+            self.values.remove(k);
+        }
+        self.fix_values_entry();
+    }
+
     /// Add field `f` to Values: Sum for numbers, Count otherwise.
     pub fn add_value(&mut self, f: usize) {
         let numeric = self.fields[f].numeric;

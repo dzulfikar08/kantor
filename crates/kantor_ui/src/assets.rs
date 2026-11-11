@@ -62,6 +62,12 @@ icon_assets!(
         Funnel,
         Printer,
         FileDown,
+        // PivotTables
+        TableProperties,
+        ListFilter,
+        Columns2,
+        Rows2,
+        Sigma,
         // AI
         Sparkles,
         X
