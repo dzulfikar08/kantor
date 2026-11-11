@@ -38,7 +38,7 @@ use kantor_ui::{metrics::*, tokens};
 use std::ops::Range;
 
 use crate::SheetsView;
-use crate::point::colored_refs;
+use crate::point::{colored_refs, refs_text_color};
 
 actions!(
     sheets,
@@ -145,9 +145,10 @@ impl CellEditor {
                             .small()
                             // Text starts where the cell's own text does.
                             .px(SPACE_3 - CELL_OUTLINE)
-                            .w_full(),
+                            .w_full()
+                            .text_color(refs_text_color(&refs, t.fg)),
                     )
-                    .child(colored_refs(self.input.clone(), refs)),
+                    .child(colored_refs(self.input.clone(), refs, t.fg)),
             );
         Overlay {
             input: self.input.clone(),

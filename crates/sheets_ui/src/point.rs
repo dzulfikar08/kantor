@@ -16,8 +16,9 @@
 //! **Colours.** Each distinct reference gets a colour slot ([`ref_color`]);
 //! the grid draws the referenced cells with that colour's border and a light
 //! fill, and the editors paint the reference text in it. Single-line inputs
-//! have no styled-runs hook, so the coloured text is painted over the input's
-//! own glyphs at the positions the input reports ([`colored_refs`]).
+//! have no styled-runs hook, so while a formula has references the input's
+//! text is transparent and [`colored_refs`] paints the whole line once, in
+//! its colours, where the input laid it out.
 
 use std::ops::Range;
 
@@ -83,18 +84,55 @@ pub(crate) struct Completion {
     span: Range<usize>,
 }
 
-/// Reference colour `slot`, cycling through six theme colours.
+/// Reference colour `slot`, cycling through the theme's six reference
+/// colours (`kantor_theme::refs`).
 pub(crate) fn ref_color(t: &Tokens, slot: usize) -> Hsla {
-    let colors = [t.accent, t.info, t.success, t.warning, t.docs, t.slides];
-    colors[slot % colors.len()]
+    t.refs[slot % t.refs.len()]
 }
 
-/// Paints each `(span, colour)` of `input`'s text in its colour, over the
-/// input's own text. Must be placed over the input (absolute) and after it,
-/// so the input has laid out this frame.
+/// The text runs of a line of `len` bytes: `fg`, with each `(span, colour)`
+/// in its colour. Spans are sorted and don't overlap; ones outside the text
+/// or not on character boundaries are skipped.
+pub(crate) fn colored_runs(
+    text: &str,
+    spans: &[(Range<usize>, Hsla)],
+    fg: Hsla,
+) -> Vec<(Range<usize>, Hsla)> {
+    let mut runs = Vec::with_capacity(spans.len() * 2 + 1);
+    let mut at = 0;
+    for (span, color) in spans {
+        if span.start < at
+            || span.end > text.len()
+            || span.is_empty()
+            || !text.is_char_boundary(span.start)
+            || !text.is_char_boundary(span.end)
+        {
+            continue;
+        }
+        if span.start > at {
+            runs.push((at..span.start, fg));
+        }
+        runs.push((span.clone(), *color));
+        at = span.end;
+    }
+    if at < text.len() {
+        runs.push((at..text.len(), fg));
+    }
+    runs
+}
+
+/// Paints `input`'s whole text, each `(span, colour)` in its colour, at the
+/// position the input laid it out. Must be placed over the input (absolute)
+/// and after it, so the input has laid out this frame, and the input must
+/// draw its own text transparent ([`refs_text_color`]) while there are
+/// spans: painting coloured pieces over the input's glyphs drew every
+/// reference twice, at slightly different subpixel positions at fractional
+/// scales (a ghosted look at 125 %). The input still draws the caret and the
+/// selection.
 pub(crate) fn colored_refs(
     input: Entity<InputState>,
     spans: Vec<(Range<usize>, Hsla)>,
+    fg: Hsla,
 ) -> impl IntoElement {
     let paint = canvas(
         |_, _, _| {},
@@ -102,30 +140,32 @@ pub(crate) fn colored_refs(
             if spans.is_empty() {
                 return;
             }
-            let pieces: Vec<(SharedString, Bounds<Pixels>, Hsla)> = {
+            let (text, at) = {
                 let state = input.read(cx);
                 let text = state.value();
-                spans
-                    .iter()
-                    .filter_map(|(range, color)| {
-                        let piece = text.get(range.clone())?;
-                        let at = state.range_to_bounds(range)?;
-                        Some((SharedString::from(piece.to_owned()), at, *color))
-                    })
-                    .collect()
+                let Some(at) = state.range_to_bounds(&(0..text.len())) else {
+                    return;
+                };
+                (text, at)
             };
+            if text.is_empty() {
+                return;
+            }
             let style = window.text_style();
             let font_size = style.font_size.to_pixels(window.rem_size());
-            window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                for (piece, at, color) in pieces {
-                    let mut run = style.to_run(piece.len());
+            let runs: Vec<TextRun> = colored_runs(&text, &spans, fg)
+                .into_iter()
+                .map(|(range, color)| {
+                    let mut run = style.to_run(range.len());
                     run.color = color;
-                    let line = window
-                        .text_system()
-                        .shape_line(piece, font_size, &[run], None);
-                    let _ =
-                        line.paint(at.origin, at.size.height, TextAlign::Left, None, window, cx);
-                }
+                    run
+                })
+                .collect();
+            let line = window
+                .text_system()
+                .shape_line(text, font_size, &runs, None);
+            window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                let _ = line.paint(at.origin, at.size.height, TextAlign::Left, None, window, cx);
             });
         },
     )
@@ -133,6 +173,16 @@ pub(crate) fn colored_refs(
     // The inputs are `.small()`, which is `text_sm`; a div passes the text
     // style down to the canvas's paint.
     div().absolute().inset_0().text_sm().child(paint)
+}
+
+/// The text colour for an input under [`colored_refs`]: transparent while
+/// the overlay paints the text, else `fg`.
+pub(crate) fn refs_text_color(spans: &[(Range<usize>, Hsla)], fg: Hsla) -> Hsla {
+    if spans.is_empty() {
+        fg
+    } else {
+        Hsla::transparent_black()
+    }
 }
 
 impl SheetsView {
@@ -552,5 +602,28 @@ impl SheetsView {
             .on_action(cx.listener(Self::point_extend_down))
             .on_action(cx.listener(Self::point_extend_left))
             .on_action(cx.listener(Self::point_extend_right))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[std::prelude::v1::test]
+    fn runs_cover_the_text_once() {
+        let fg = Hsla::white();
+        let (a, b) = (Hsla::red(), Hsla::blue());
+        let text = "=A1+SUM(B2:C3)";
+        let runs = colored_runs(text, &[(1..3, a), (8..13, b)], fg);
+        assert_eq!(
+            runs,
+            vec![(0..1, fg), (1..3, a), (3..8, fg), (8..13, b), (13..14, fg)]
+        );
+        // Stale spans (text shorter than they are) are dropped, not painted.
+        assert_eq!(colored_runs("=A", &[(1..3, a)], fg), vec![(0..2, fg)]);
+        assert_eq!(
+            colored_runs("=A1", &[(1..3, a)], fg),
+            vec![(0..1, fg), (1..3, a)]
+        );
     }
 }

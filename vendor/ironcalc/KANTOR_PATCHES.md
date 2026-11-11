@@ -59,6 +59,19 @@ the start and end of the sheet are put around it in place
 (`insert_str`/`push_str` after one `reserve_exact`). The XML is byte for byte
 the same. Writer peak for that workbook: 391 → 216 MB.
 
+## 3. Typed cells without a value are empty
+
+Why: openpyxl (and other writers) store a styled cell that has no value as
+`<c r="B3" s="5" t="n"/>`. The reader parsed the missing `<v>` as the number
+0, so the cell showed "0" where Excel shows nothing.
+
+What (`import/sheet_data.rs`): a `<c>` with a `t` attribute but no `<v>`, no
+`<f>` and no inline string is read as an empty cell that keeps its style (it
+is written back as `<c r="B3" s="5"/>`).
+
+Test: `styled_empty_cells_with_a_type_stay_empty` in
+`tests/test_kantor_fidelity.rs`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

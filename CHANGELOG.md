@@ -52,6 +52,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   when a family with static bold faces is installed, since GPUI draws only a variable font's
   default weight there and bold text looked regular. macOS is unchanged.
 
+### Fixed
+- Sheets: styled empty cells stored as `<c s=".." t="n"/>` (openpyxl and others) open blank
+  with their style, as in Excel, instead of showing 0.
+- Sheets: no more 1-pixel seams inside merged and filled cells at fractional scaling (125 %);
+  merged text no longer looks doubled where it crosses a row or column edge, and a merge across
+  frozen columns shows its part in each pane, lined up.
+- Sheets: formula references get six distinct, readable colours in every theme (in Catppuccin
+  and all Ghostty themes the first two were the same blue), and the coloured formula text is
+  drawn once instead of over the plain text (it looked ghosted at 125 % on X11).
+
 ### Performance
 - Sheets resolves each cell style once per workbook state instead of cloning it for every
   visible cell on every frame.

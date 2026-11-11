@@ -29,6 +29,28 @@ pub(crate) fn row_height() -> Pixels {
     Size::Small.table_row_height()
 }
 
+/// `len` (logical px) rounded to whole device pixels at `scale`, the way
+/// GPUI rounds authored lengths before layout (half toward zero).
+///
+/// The grid's column widths go to the table snapped: the scrolling columns
+/// are placed one after another from their widths as given, while each
+/// cell's own width is rounded, so at 125 % a fractional width left a
+/// 1 device-pixel gap between neighbouring cells (a seam through fills and
+/// merged cells). Merged-cell offsets are summed from the same snapped
+/// lengths, so each slice lines up with its cell.
+pub(crate) fn snap(len: f32, scale: f32) -> f32 {
+    if scale <= 0.0 {
+        return len;
+    }
+    let dp = len * scale;
+    (dp.abs() - 0.5).ceil().copysign(dp).max(1.0) / scale
+}
+
+/// Width of a column as the grid lays it out (see [`snap`]).
+pub(crate) fn column_width(book: &Workbook, sheet: u32, col: u32, scale: f32) -> Pixels {
+    px(snap(book.column_width(sheet, col) as f32, scale))
+}
+
 /// Line height of cell text, relative to its size.
 const LINE_HEIGHT: f32 = 1.25;
 /// Most room kept above top-aligned text.
@@ -223,24 +245,27 @@ pub(crate) fn merge_step(
 }
 
 /// Where a merged cell's block sits relative to one of its cells, and its
-/// size: `(offset_x, offset_y, width, height)`.
+/// size: `(offset_x, offset_y, width, height)`, at window scale `scale`.
+/// Lengths are the grid's snapped ones ([`snap`]): rows are laid out at the
+/// row height rounded to device pixels, columns at [`column_width`].
 pub(crate) fn merge_geometry(
     book: &Workbook,
     sheet: u32,
     merge: CellRange,
     row: u32,
     col: u32,
+    scale: f32,
 ) -> (Pixels, Pixels, Pixels, Pixels) {
-    let width = |from: u32, to: u32| -> f32 {
+    let width = |from: u32, to: u32| -> Pixels {
         (from..to)
-            .map(|c| book.column_width(sheet, c) as f32)
-            .sum::<f32>()
+            .map(|c| column_width(book, sheet, c, scale))
+            .fold(px(0.), |a, b| a + b)
     };
-    let h = row_height();
+    let h = px(snap(f32::from(row_height()), scale));
     (
-        px(width(merge.left, col)),
+        width(merge.left, col),
         h * (row - merge.top) as f32,
-        px(width(merge.left, merge.right + 1)),
+        width(merge.left, merge.right + 1),
         h * merge.rows_count() as f32,
     )
 }
@@ -387,13 +412,53 @@ mod tests {
         let w3 = book.column_width(0, 3) as f32;
         let h = row_height();
         assert_eq!(
-            merge_geometry(&book, 0, m, 2, 1),
+            merge_geometry(&book, 0, m, 2, 1, 1.0),
             (px(0.), px(0.), px(150. + w3), h * 2.)
         );
         assert_eq!(
-            merge_geometry(&book, 0, m, 3, 3),
+            merge_geometry(&book, 0, m, 3, 3, 1.0),
             (px(150.), h, px(150. + w3), h * 2.)
         );
+    }
+
+    #[std::prelude::v1::test]
+    fn lengths_snap_to_device_pixels() {
+        // 125 %: 30 px rows are 37.5 device px, laid out as 37.
+        assert_eq!(snap(30., 1.25) * 1.25, 37.);
+        assert_eq!(snap(36., 1.25), 36.);
+        assert_eq!(snap(64.4, 1.25) * 1.25, 80.);
+        assert_eq!(snap(64.4, 1.0), 64.);
+        assert_eq!(snap(0.1, 2.0), 0.5, "never narrower than a device pixel");
+    }
+
+    #[std::prelude::v1::test]
+    fn merge_slices_line_up_with_snapped_cells_at_125() {
+        let mut book = Workbook::new_empty().unwrap();
+        // Widths that are not whole device pixels at 125 %.
+        book.set_column_width(0, 1, 1, 101.7).unwrap();
+        book.set_column_width(0, 2, 2, 69.3).unwrap();
+        book.set_column_width(0, 3, 3, 117.9).unwrap();
+        let s = 1.25;
+        let m = CellRange::from_corners((2, 1), (5, 3));
+        let (x, y, w, h) = merge_geometry(&book, 0, m, 4, 3, s);
+        let cols = |a: u32, b: u32| {
+            (a..b)
+                .map(|c| column_width(&book, 0, c, s))
+                .fold(px(0.), |a, b| a + b)
+        };
+        // Each slice's offset is where its cell sits in the grid, so the
+        // pieces of the block meet exactly.
+        assert_eq!(x, cols(1, 3));
+        assert_eq!(w, cols(1, 4));
+        let row = px(snap(30., s));
+        assert_eq!((y, h), (row * 2., row * 4.));
+        for len in [x, y, w, h] {
+            let dp = f32::from(len) * s;
+            assert!(
+                (dp - dp.round()).abs() < 1e-3,
+                "{dp} is not whole device pixels"
+            );
+        }
     }
 
     #[std::prelude::v1::test]

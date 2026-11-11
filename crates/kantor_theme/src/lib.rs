@@ -7,6 +7,7 @@
 //! onto the UI theme.
 
 pub mod catalog;
+pub mod refs;
 
 use std::path::{Path, PathBuf};
 
