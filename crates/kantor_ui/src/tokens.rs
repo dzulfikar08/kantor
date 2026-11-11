@@ -54,6 +54,9 @@ pub struct Tokens {
     pub grid_line: Hsla,
     pub grid_header: Hsla,
     pub grid_header_active: Hsla,
+    /// Colours of a formula's references while it is typed (cell outlines and
+    /// formula text), distinct and readable on `bg` in every theme.
+    pub refs: [Hsla; kantor_theme::refs::REF_COLORS],
 }
 
 impl Global for Tokens {}
@@ -155,6 +158,7 @@ impl Tokens {
             grid_line: if p.dark { on_bg(0.12) } else { on_bg(0.14) },
             grid_header: c(header),
             grid_header_active: c(mix(header, p.accent, if p.dark { 0.22 } else { 0.18 })),
+            refs: kantor_theme::refs::reference_colors(p).map(c),
         }
     }
 
