@@ -328,6 +328,7 @@ pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) ->
         },
         max_id,
         chart,
+        chart_edit: None,
     };
     Shape {
         id,

@@ -12,6 +12,7 @@
 //! - [`geom`]: shape outlines (preset and custom DrawingML geometry).
 
 pub mod agent;
+pub mod chart_edit;
 pub mod clip;
 pub mod edit;
 pub mod fill;
@@ -23,11 +24,13 @@ pub mod model;
 pub mod presentation;
 pub mod render;
 mod shape;
+pub mod table_edit;
 mod template;
 pub mod text_ops;
 pub mod theme;
 mod xml;
 
+pub use chart_edit::{ChartData, ChartSeries};
 pub use clip::ShapeClip;
 pub use docs_engine::{LINE_BREAK, Position, Rgb, Selection, Toggle};
 pub use edit::{ShapeRef, image_ext, image_size, set_toggle};
@@ -41,3 +44,4 @@ pub use history::Focus;
 pub use model::*;
 pub use presentation::{Layout, Master, Presentation, Slide, package_problems};
 pub use render::{Layer, RenderPara, RenderRun, RenderShape, RenderText};
+pub use table_edit::TableOp;

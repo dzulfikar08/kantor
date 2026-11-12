@@ -117,6 +117,16 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
             |v, w, cx| v.insert_image_doc(w, cx),
             cx,
         ))
+        .when(view.object_target().is_some(), |d| {
+            d.child(tool(
+                "slides-edit-object",
+                Lucide::SquarePen,
+                "Edit table or chart data",
+                false,
+                |v, w, cx| v.edit_object_doc(w, cx),
+                cx,
+            ))
+        })
         .child(crate::paint_menu::paint_button(view, PaintKind::Fill, cx))
         .child(crate::paint_menu::paint_button(view, PaintKind::Line, cx))
         .child(separator(cx))

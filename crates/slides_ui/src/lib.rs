@@ -26,6 +26,7 @@ mod find;
 mod fit;
 mod input;
 mod notes;
+mod object_editor;
 mod paint_menu;
 mod toolbar;
 
@@ -312,6 +313,8 @@ pub struct SlidesView {
     notes: notes::NotesPane,
     paint_menu: Option<paint_menu::PaintMenu>,
     paint_menu_closed: Option<std::time::Instant>,
+    /// The table / chart data editor.
+    object_editor: Option<object_editor::ObjectEditor>,
     /// Speaker notes under the slide while presenting.
     present_notes: bool,
     /// The print layout chosen last (Ctrl+P repeats it).
@@ -382,6 +385,7 @@ impl SlidesView {
             notes,
             paint_menu: None,
             paint_menu_closed: None,
+            object_editor: None,
             present_notes: true,
             print_layout: slides_pdf::PrintLayout::Slides,
         }
@@ -1665,6 +1669,12 @@ impl SlidesView {
             Some(i) => {
                 let was_selected = self.selected == Some(i);
                 self.select(Some(i), cx);
+                if ev.click_count >= 2
+                    && let Some((_, target)) = self.object_target()
+                {
+                    self.open_object_editor(i, target, window, cx);
+                    return;
+                }
                 if ev.click_count >= 2 {
                     let pos = self.text_hit(i, p);
                     self.begin_editing(i, pos, cx);
@@ -2240,6 +2250,7 @@ impl Render for SlidesView {
         root.child(toolbar::render(self, cx))
             .children(self.render_banner(&t))
             .children(self.render_paint_menu(cx))
+            .children(self.render_object_editor(cx))
             .child(
                 h_flex().flex_1().min_h_0().child(strip).child(
                     v_flex()

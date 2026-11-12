@@ -733,7 +733,7 @@ impl ShapeKind {
 
 /// Where a shape's `a:xfrm` sits in its source element (byte offsets
 /// into the raw XML).
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum XfrmAt {
     /// An existing `a:xfrm`, with its raw attributes (rotation, flips).
     Replace(Range<usize>, String),
@@ -744,7 +744,7 @@ pub(crate) enum XfrmAt {
 }
 
 /// Where `a:ln` sits in a shape's `p:spPr` (offsets into the raw XML).
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LnAt {
     pub range: Range<usize>,
     /// Raw attributes of its start tag.
@@ -756,7 +756,7 @@ pub(crate) struct LnAt {
 }
 
 /// Where a shape's `p:spPr` and its fill and outline are.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SpPrAt {
     pub range: Range<usize>,
     /// Raw attributes of `p:spPr`.
@@ -770,7 +770,7 @@ pub(crate) struct SpPrAt {
 }
 
 /// Where a shape came from in the file, for verbatim / spliced writing.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ShapeSrc {
     /// The whole element as read.
     pub raw: String,
@@ -787,6 +787,18 @@ pub(crate) struct ShapeSrc {
     pub max_id: u32,
     /// The chart part of a chart frame (`ppt/charts/chartN.xml`).
     pub chart: Option<String>,
+    /// The chart's data as edited in Kantor (written over the chart part
+    /// and its workbook on save).
+    pub chart_edit: Option<Arc<crate::chart_edit::ChartEdit>>,
+}
+
+impl ShapeSrc {
+    pub(crate) fn with_chart_edit(&self, e: Arc<crate::chart_edit::ChartEdit>) -> Self {
+        Self {
+            chart_edit: Some(e),
+            ..self.clone()
+        }
+    }
 }
 
 /// A shape on a slide (or a layout / master, read-only).

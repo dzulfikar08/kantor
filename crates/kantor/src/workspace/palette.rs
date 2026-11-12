@@ -100,6 +100,12 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "Edit Table or Chart Data…",
+        detail: "Slides · the selected table's cells, rows and columns, or a chart's values",
+        keys: "",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.edit_object_doc(w, cx)),
+    },
+    Command {
         title: "Undo",
         detail: "Last edit",
         keys: "Ctrl Z",

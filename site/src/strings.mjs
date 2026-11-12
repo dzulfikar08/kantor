@@ -74,7 +74,7 @@ export const en = {
     slides: {
       name: "Slides",
       formats: [".pptx"],
-      text: "Presentations with text, shapes and pictures you can move and resize, speaker notes, and a full-screen slide show.",
+      text: "Presentations with text, shapes and pictures you can move and resize, tables and chart data you can edit, speaker notes, and a full-screen slide show.",
     },
   },
   keepH3: "Saving doesn't throw away what Kantor can't show yet",
@@ -180,7 +180,7 @@ export const en = {
     "Excel: macros aren't carried over when you save, and Kantor tells you when that happens. Pivot tables can be created, rearranged, refreshed and deleted, but not grouped by date or number, and calculated fields aren't supported yet.",
     "Excel: charts and pictures on a sheet are shown and can be moved, resized or deleted, but charts can't be created or restyled, and chart sheets, shapes and text boxes aren't shown yet.",
     "Excel: drop-down lists, input messages and error alerts from data validation work, but rules can't be created or changed in Kantor yet.",
-    "PowerPoint: tables, charts and SmartArt can't be edited yet, and some SmartArt shows as a plain box.",
+    "PowerPoint: table cells and chart data are edited in a panel, chart series can't be added yet, and SmartArt can't be edited (some shows as a plain box).",
   ],
   reportH3: "Found a file that Kantor gets wrong?",
   reportText:
@@ -264,7 +264,7 @@ export const id = {
     slides: {
       name: "Slides",
       formats: [".pptx"],
-      text: "Presentasi dengan teks, bentuk, dan gambar yang bisa dipindah dan diubah ukurannya, catatan pembicara, dan tayangan layar penuh.",
+      text: "Presentasi dengan teks, bentuk, dan gambar yang bisa dipindah dan diubah ukurannya, tabel dan data grafik yang bisa diedit, catatan pembicara, dan tayangan layar penuh.",
     },
   },
   keepH3: "Menyimpan tidak membuang yang belum bisa ditampilkan Kantor",
@@ -369,7 +369,7 @@ export const id = {
     "Excel: makro tidak ikut tersimpan, dan Kantor memberi tahu Anda saat itu terjadi. Pivot table bisa dibuat, disusun ulang, di-refresh, dan dihapus, tetapi belum bisa dikelompokkan per tanggal atau angka, dan calculated field belum didukung.",
     "Excel: grafik dan gambar di sheet sudah tampil dan bisa dipindah, diubah ukurannya, atau dihapus, tetapi grafik belum bisa dibuat atau diubah gayanya, dan chart sheet, bentuk (shape), serta kotak teks belum ditampilkan.",
     "Excel: daftar pilihan (drop-down), pesan input, dan peringatan kesalahan dari validasi data sudah berfungsi, tetapi aturannya belum bisa dibuat atau diubah di Kantor.",
-    "PowerPoint: tabel, grafik, dan SmartArt belum bisa diedit, dan sebagian SmartArt tampil sebagai kotak polos.",
+    "PowerPoint: isi tabel dan data grafik diedit lewat panel, seri grafik belum bisa ditambah, dan SmartArt belum bisa diedit (sebagian tampil sebagai kotak polos).",
   ],
   reportH3: "Menemukan file yang salah tampil di Kantor?",
   reportText:

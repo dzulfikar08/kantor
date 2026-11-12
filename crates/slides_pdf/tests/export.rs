@@ -615,3 +615,49 @@ fn notes_pages_and_handouts_print_on_a4() {
     let (pdf, pages) = print::write_job(&job).unwrap();
     assert_eq!((pages, page_count(&pdf)), (5, 5));
 }
+
+#[test]
+fn edited_chart_data_and_table_text_are_drawn() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/pptx/deck.pptx");
+    let mut pres = Presentation::open(&path).unwrap();
+    let find = |p: &Presentation, chart: bool| {
+        (0..p.len())
+            .find_map(|i| {
+                (0..p.slide(i).shapes.len())
+                    .find(|&k| {
+                        if chart {
+                            p.chart_data(i, k).is_some()
+                        } else {
+                            p.table(i, k).is_some()
+                        }
+                    })
+                    .map(|k| (i, k))
+            })
+            .unwrap()
+    };
+    let (s, k) = find(&pres, true);
+    let mut d = pres.chart_data(s, k).unwrap();
+    d.categories.push("Zq".into());
+    for ser in &mut d.series {
+        ser.values.push(Some(30.0));
+    }
+    pres.set_chart_data(s, k, &d).unwrap();
+    let (ts, tk) = find(&pres, false);
+    pres.edit_table(
+        ts,
+        tk,
+        &[slides_engine::TableOp::Text {
+            row: 1,
+            col: 0,
+            text: "Kalimantan".into(),
+        }],
+    )
+    .unwrap();
+    let mut engine = Engine::new();
+    let (pdf, _) = slides_pdf::export(&pres, &mut engine).unwrap();
+    let chars = mapped_chars(&pdf);
+    for c in "ZqKlimntn".chars() {
+        assert!(chars.contains(c), "{c} in {chars:?}");
+    }
+}

@@ -88,6 +88,17 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   out. *Insert Section Break (Next Page)* starts a new section at the caret, and Page setup (and
   the ruler's margins) change the caret's section. The PDF has each page at its own size.
 
+#### Slides
+- **Edit tables:** double-click a table (or the toolbar's edit button, *Ctrl K → Edit Table or
+  Chart Data…*) for a panel with its cells: type into them, add rows above or below and columns
+  left or right of the current cell, delete them, and fill a cell with a theme colour or none.
+  New rows and columns copy their neighbour's formatting, the frame grows or shrinks with them,
+  and the rest of the table's XML is kept byte for byte. One undo step per Apply.
+- **Edit chart data:** the same panel for charts: category labels, series names and values, and a
+  category added at the end or the last one removed. The chart redraws at once (and in the PDF);
+  the chart part's cached values and ranges and the embedded workbook's cells are updated, other
+  parts and cells untouched. Series can't be added or removed yet.
+
 #### Sheets
 - **Frozen rows stay put** while the sheet scrolls, like frozen columns already did: the frozen rows
   (and the top-left corner when rows and columns are both frozen) are pinned under the column
@@ -114,6 +125,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   Excel; they still mark the workbook as changed.
 
 ### Fixed
+
+#### Slides
+- Saving a presentation with an edited slide no longer rewrites `[Content_Types].xml` with its
+  entries reordered.
 
 #### Sheets
 - Hidden columns from a file were drawn 24 px wide; they now take no room, and arrow keys step
