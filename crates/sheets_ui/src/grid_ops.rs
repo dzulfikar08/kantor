@@ -462,7 +462,7 @@ impl SheetsView {
         });
     }
 
-    /// Ctrl+Home: A1. Ctrl+End: the last cell of the used range, as in Excel.
+    /// Ctrl+Home: A1 (the first unfrozen cell with frozen panes). Ctrl+End: the last cell of the used range, as in Excel.
     fn go_to_corner(&mut self, end: bool, cx: &mut Context<Self>) {
         if self.editing.is_some() {
             return;
@@ -472,9 +472,29 @@ impl SheetsView {
             let (rows, cols) = grid.book.used_size(grid.sheet);
             (rows.saturating_sub(1), cols.saturating_sub(1))
         } else {
-            (0, 0)
+            // With frozen panes Excel's Ctrl+Home goes to the first cell
+            // below and right of them, which scrolls the panes back.
+            let grid = self.table.read(cx).delegate();
+            grid.book.frozen(grid.sheet)
         };
         self.select_range(to, to, Span::Cells, true, cx);
+        if !end {
+            // Back to the top-left even when that cell is inside a merged
+            // cell starting in the frozen panes.
+            self.table.update(cx, |table, cx| {
+                table
+                    .vertical_scroll_handle
+                    .0
+                    .borrow()
+                    .base_handle
+                    .set_offset(point(px(0.), px(0.)));
+                let x = table.horizontal_scroll_handle.offset();
+                table
+                    .horizontal_scroll_handle
+                    .set_offset(point(px(0.), x.y));
+                cx.notify();
+            });
+        }
     }
 
     /// The selection as commands should see it: whole columns and rows cut
