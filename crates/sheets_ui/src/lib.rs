@@ -50,6 +50,7 @@ mod cond_paint;
 mod data_validation;
 mod dialog;
 mod drawings;
+mod dv_ui;
 mod filter_menu;
 mod find;
 mod grid_ops;
@@ -1026,6 +1027,8 @@ pub struct SheetsView {
     /// [`cf_ui`]).
     cf_dialog: Option<cf_ui::CfDialog>,
     cf_manager: Option<cf_ui::CfManager>,
+    /// The Data Validation card (see [`dv_ui`]).
+    dv_dialog: Option<dv_ui::DvDialog>,
     /// The Page Setup card (see [`page_setup`]).
     page_setup: Option<page_setup::PageSetupDialog>,
     /// A restored recovery copy's original: Save asks before overwriting it
@@ -1098,6 +1101,7 @@ impl SheetsView {
             page_setup: None,
             table_dialog: None,
             cf_dialog: None,
+            dv_dialog: None,
             cf_manager: None,
             table_panel: None,
             disk_guard: None,
@@ -2216,6 +2220,7 @@ impl Render for SheetsView {
         let root = self.page_setup_actions(root, cx);
         let root = self.table_actions(root, cx);
         let root = self.cf_actions(root, cx);
+        let root = self.dv_actions(root, cx);
         use kantor_ui::find_bar as fb;
         root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
@@ -2372,6 +2377,7 @@ impl Render for SheetsView {
             .children(self.render_table_dialog(cx))
             .children(self.render_cf_manager(cx))
             .children(self.render_cf_dialog(cx))
+            .children(self.render_dv_dialog(cx))
             .into_any_element()
     }
 }

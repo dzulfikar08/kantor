@@ -29,6 +29,9 @@ pub(crate) struct Edits {
     /// Sheets (`sheetId`) whose conditional formatting rules were changed
     /// in Kantor: saved from the model.
     pub cf_sheets: HashSet<u32>,
+    /// Data validation edited in Kantor: a sheet's whole list, with the
+    /// layout it was made in.
+    pub validations: HashMap<u32, (Vec<crate::Validation>, Layout)>,
 }
 
 impl Workbook {

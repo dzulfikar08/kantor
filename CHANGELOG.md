@@ -67,6 +67,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   the `_xlnm.Print_Area` / `_xlnm.Print_Titles` names; the print area and titles follow inserted
   and deleted rows and columns. Export as PDF and Print use the new settings. Sheets you didn't
   change keep the file's own markup byte for byte.
+- **Data Validation…** (toolbar, palette) for the selection, with Excel's three tabs: Settings
+  (allow any value, whole number, decimal, list, date, time, text length or a custom formula;
+  between, greater than… with minimum/maximum as values, dates such as 2026-01-31 or 31/01/2026,
+  times such as 9:30, or `=formulas`; a list from typed items or `=cells`, also on another sheet;
+  ignore blank; in-cell dropdown; the cells it applies to), Input Message and Error Alert (Stop,
+  Warning, Information with title and message). OK puts the rule on those cells, taking them out
+  of any rule they had, as Excel does; **Clear All** removes validation from them. One undo step
+  each; rules follow inserted and deleted rows and columns. A sheet whose validation you changed
+  is saved with its rules as `<dataValidations>` (lists on other sheets included, the file's
+  Excel 2010 copy of them dropped); other sheets keep the file's markup byte for byte.
 - **Conditional Formatting** menu in the toolbar (and the palette): Highlight Cells Rules
   (greater than, less than, between, equal to, text that contains, a date occurring, duplicate
   values), Top/Bottom Rules (top/bottom N items or %, above/below average), Data Bars (gradient or

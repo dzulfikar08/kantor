@@ -299,6 +299,8 @@ pub(crate) struct SheetPatch {
     /// `<pageSetup>`: the attributes Kantor models
     /// (`crate::print::PAGE_SETUP_ATTRS`) are set to these; others kept.
     pub page_setup: Option<Vec<(&'static str, String)>>,
+    /// `extLst` extensions (by `uri`) to remove.
+    pub remove_exts: Vec<&'static str>,
 }
 
 impl Patches {
@@ -4417,6 +4419,28 @@ fn patch_sheet(full: &str, patch: &SheetPatch) -> Result<String, String> {
             _ => {}
         }
     }
+    if !patch.remove_exts.is_empty()
+        && let Some(list) = root.children().find(|c| is_main(*c, "extLst"))
+    {
+        let exts: Vec<Node> = list.children().filter(|e| e.is_element()).collect();
+        let gone: Vec<Node> = exts
+            .iter()
+            .copied()
+            .filter(|e| {
+                is_main(*e, "ext")
+                    && e.attribute("uri").is_some_and(|u| {
+                        patch.remove_exts.iter().any(|r| r.eq_ignore_ascii_case(u))
+                    })
+            })
+            .collect();
+        if !gone.is_empty() && gone.len() == exts.len() {
+            edits.push((list.range(), String::new()));
+        } else {
+            for e in gone {
+                edits.push((e.range(), String::new()));
+            }
+        }
+    }
     for (at, mut list) in inserts {
         list.sort_by_key(|(o, _)| *o);
         edits.push((at..at, list.into_iter().map(|(_, t)| t).collect()));
@@ -5316,6 +5340,7 @@ mod tests {
             ],
             fit_to_page: Some(true),
             page_setup: Some(vec![("paperSize", "9".into()), ("orientation", "landscape".into())]),
+            remove_exts: Vec::new(),
         };
         let out = patch_sheet(xml, &patch).unwrap();
         assert_eq!(

@@ -31,6 +31,7 @@ mod sort;
 mod table;
 mod table_edit;
 mod validation;
+mod validation_edit;
 
 pub use cf_edit::{
     COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,
@@ -40,6 +41,9 @@ pub use import::SourceFormat;
 pub use preserve::package_problems;
 pub use recovery::{XlsxOutput, XlsxSnapshot, write_file_atomic};
 pub use table_edit::{TableOptions, TotalFunc, table_style_names, valid_table_name};
+pub use validation_edit::{
+    list_source, list_source_text, validation_operand, validation_operand_text,
+};
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -1223,6 +1227,7 @@ impl Workbook {
                 self.print_patches(&mut p);
                 self.table_patches(&mut p);
                 self.cf_patches(&mut p);
+                self.validation_patches(&mut p);
                 p
             },
         }

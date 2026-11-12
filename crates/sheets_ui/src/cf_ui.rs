@@ -568,38 +568,35 @@ impl SheetsView {
     }
 
     fn render_cf_kind(&self, d: &CfDialog, view: &WeakEntity<Self>, cx: &mut Context<Self>) -> Div {
-        let menu_button =
-            |id: &'static str,
-             label: String,
-             items: Vec<MenuChoice>| {
-                let v = view.clone();
-                let items = std::rc::Rc::new(items);
-                Button::new(id)
-                    .outline()
-                    .small()
-                    .label(label)
-                    .dropdown_caret(true)
-                    .dropdown_menu(move |mut m, _, _| {
-                        for (i, (label, checked, _)) in items.iter().enumerate() {
-                            let v = v.clone();
-                            let items = items.clone();
-                            m = m.item(
-                                PopupMenuItem::new(label.clone())
-                                    .checked(*checked)
-                                    .on_click(move |_, _, cx| {
-                                        let items = items.clone();
-                                        let _ = v.update(cx, |this, cx| {
-                                            if let Some(d) = this.cf_dialog.as_mut() {
-                                                (items[i].2)(d);
-                                            }
-                                            cx.notify();
-                                        });
-                                    }),
-                            );
-                        }
-                        m
-                    })
-            };
+        let menu_button = |id: &'static str, label: String, items: Vec<MenuChoice>| {
+            let v = view.clone();
+            let items = std::rc::Rc::new(items);
+            Button::new(id)
+                .outline()
+                .small()
+                .label(label)
+                .dropdown_caret(true)
+                .dropdown_menu(move |mut m, _, _| {
+                    for (i, (label, checked, _)) in items.iter().enumerate() {
+                        let v = v.clone();
+                        let items = items.clone();
+                        m = m.item(
+                            PopupMenuItem::new(label.clone())
+                                .checked(*checked)
+                                .on_click(move |_, _, cx| {
+                                    let items = items.clone();
+                                    let _ = v.update(cx, |this, cx| {
+                                        if let Some(d) = this.cf_dialog.as_mut() {
+                                            (items[i].2)(d);
+                                        }
+                                        cx.notify();
+                                    });
+                                }),
+                        );
+                    }
+                    m
+                })
+        };
         let mut out = v_flex().gap(SPACE_4);
         match d.kind {
             Kind::CellValue => {

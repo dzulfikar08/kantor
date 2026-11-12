@@ -437,6 +437,34 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
                 crate::cf_ui::cf_menu(menu, &cf_view, window, cx)
             }),
     );
+    // Data validation.
+    let dv_view = cx.entity().downgrade();
+    row = row.child(
+        Button::new("dv-menu")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::ListChecks)
+            .dropdown_caret(true)
+            .tooltip("Data Validation")
+            .dropdown_menu(move |menu, _, _| {
+                let (a, b, c) = (dv_view.clone(), dv_view.clone(), dv_view.clone());
+                menu.item(
+                    PopupMenuItem::new("Data Validation…").on_click(move |_, w, cx| {
+                        let _ = a.update(cx, |v, cx| v.data_validation_doc(w, cx));
+                    }),
+                )
+                .item(
+                    PopupMenuItem::new("Circle Invalid Data").on_click(move |_, w, cx| {
+                        let _ = b.update(cx, |v, cx| v.circle_invalid_doc(true, w, cx));
+                    }),
+                )
+                .item(
+                    PopupMenuItem::new("Clear Validation Circles").on_click(move |_, w, cx| {
+                        let _ = c.update(cx, |v, cx| v.circle_invalid_doc(false, w, cx));
+                    }),
+                )
+            }),
+    );
     // Tables.
     let table_view = cx.entity().downgrade();
     row = row.child(separator(cx)).child(

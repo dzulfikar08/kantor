@@ -836,6 +836,12 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "Data Validation…",
+        detail: "Sheets · allow only a list, numbers, dates, times, text length or a formula; input message and error alert",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.data_validation_doc(w, cx)),
+    },
+    Command {
         title: "Circle Invalid Data",
         detail: "Sheets · ring cells whose values break their data validation",
         keys: "",
