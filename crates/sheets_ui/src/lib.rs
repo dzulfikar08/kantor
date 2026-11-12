@@ -407,6 +407,10 @@ impl TableDelegate for SheetGrid {
         self.layout.heights.clone()
     }
 
+    fn frozen_rows(&self, _: &App) -> usize {
+        self.book.frozen(self.sheet).0 as usize
+    }
+
     fn sync_rows(&mut self, _: &mut Window, _: &mut Context<TableState<Self>>) {
         self.layout
             .sync(&self.book, self.sheet, self.rows, self.scale);
@@ -436,9 +440,11 @@ impl TableDelegate for SheetGrid {
             let name = column_name(col);
             let width = look::column_width(&self.book, self.sheet, col, self.scale);
             let frozen = col < self.book.frozen(self.sheet).1;
+            // A hidden column has no width (and may have none).
+            let min_width = if width > px(0.) { px(24.) } else { px(0.) };
             Column::new(SharedString::from(name.clone()), name)
                 .width(width)
-                .min_width(px(24.))
+                .min_width(min_width)
                 .resizable(true)
                 // Frozen columns stay put while the rest scrolls.
                 .when(frozen, |c| c.fixed_left())
@@ -455,6 +461,15 @@ impl TableDelegate for SheetGrid {
         _: &mut Context<TableState<Self>>,
     ) -> Option<Pixels> {
         let col = (col_ix as u32).checked_sub(1)?;
+        // Double-clicking a hidden column's edge shows it again, as wide as
+        // it was (the width the table then reports is the workbook's, so
+        // that adds no second undo step).
+        if self.book.is_column_hidden(self.sheet, col) {
+            self.book
+                .set_columns_hidden(self.sheet, col, col, false)
+                .ok()?;
+            return Some(look::column_width(&self.book, self.sheet, col, self.scale));
+        }
         grid_ops::fit_width(&self.book, self.sheet, col, window)
     }
 
@@ -484,6 +499,10 @@ impl TableDelegate for SheetGrid {
         let range = self.range();
         let active = (range.left..=range.right).contains(&col);
         let whole = active && range.is_whole_columns();
+        // Excel's double line where columns are hidden: on the edge of the
+        // shown column next to them.
+        let hidden_left = col > 0 && self.book.is_column_hidden(self.sheet, col - 1);
+        let hidden_right = self.book.is_column_hidden(self.sheet, col + 1);
         let cell = cell
             .id(("col-head", col_ix))
             .flex()
@@ -491,6 +510,8 @@ impl TableDelegate for SheetGrid {
             .justify_center()
             .child(SharedString::from(column_name(col)))
             .child(grid_line_right(t.grid_line))
+            .when(hidden_left, |d| d.child(hidden_marker(false, false, &t)))
+            .when(hidden_right, |d| d.child(hidden_marker(false, true, &t)))
             .when(active, |d| {
                 d.bg(t.grid_header_active)
                     .text_color(t.fg)
@@ -535,6 +556,20 @@ impl TableDelegate for SheetGrid {
             let row = row_ix as u32;
             let active = (range.top..=range.bottom).contains(&row);
             let whole = active && range.is_whole_rows();
+            // Excel's double line where rows are hidden: under the shown row
+            // above them (or over the first shown row, for hidden rows at
+            // the top).
+            let (hidden_below, hidden_above) = {
+                let h = self.layout.heights.borrow();
+                (
+                    row_ix + 1 < h.len() && h.height_dp(row_ix + 1) == 0,
+                    row_ix > 0 && h.prev_shown(row_ix - 1).is_none(),
+                )
+            };
+            let frozen_edge = {
+                let fr = self.book.frozen(self.sheet).0;
+                fr > 0 && row + 1 == fr
+            };
             let gutter = div()
                 .id(("row-head", row_ix))
                 .size_full()
@@ -569,8 +604,14 @@ impl TableDelegate for SheetGrid {
                         .right_0()
                         .bottom_0()
                         .h(GRID_LINE)
-                        .bg(t.grid_line),
+                        .bg(if frozen_edge {
+                            t.border_strong
+                        } else {
+                            t.grid_line
+                        }),
                 )
+                .when(hidden_below, |d| d.child(hidden_marker(true, true, &t)))
+                .when(hidden_above, |d| d.child(hidden_marker(true, false, &t)))
                 // Drag the bottom edge to resize, double-click to fit.
                 .children(row_layout::resize_handles(row, &self.view));
             return grid_ops::header_element(gutter, Header::Row(row), &self.view);
@@ -744,8 +785,8 @@ impl TableDelegate for SheetGrid {
                     )
                 },
             )
-            // Frozen rows: a stronger line under the last one. (The table
-            // can't pin rows yet; frozen columns are pinned.)
+            // Frozen rows (pinned by the table): a stronger line under the
+            // last one.
             .when(frozen_rows > 0 && row + 1 == frozen_rows, |d| {
                 d.child(
                     div()
@@ -792,7 +833,10 @@ impl TableDelegate for SheetGrid {
                 self.editor
                     .as_ref()
                     .filter(|e| e.cell == (row, col) && e.sheet == self.sheet),
-                |d, editor| d.child(editor.render(self.ref_span_colors(&t), cx)),
+                |d, editor| {
+                    let (fr, fc) = self.book.frozen(self.sheet);
+                    d.child(editor.render(self.ref_span_colors(&t), (row < fr, col < fc), cx))
+                },
             )
             .into_any_element()
     }
@@ -864,6 +908,32 @@ fn filter_button_element(
             let _ = view.update(cx, |v, cx| v.open_filter_menu(scope, col, at, window, cx));
         })
         .into_any_element()
+}
+
+/// Excel's mark for hidden rows or columns in a header: two lines across
+/// the header's edge (`rows`: the bottom (`end`) or top edge of a row
+/// number; else the right (`end`) or left edge of a column letter). Mouse
+/// input passes through to the resize handles under it.
+fn hidden_marker(rows: bool, end: bool, t: &kantor_ui::Tokens) -> Div {
+    let d = div()
+        .absolute()
+        .border_color(t.border_strong)
+        .bg(t.grid_header);
+    if rows {
+        d.left_0()
+            .right_0()
+            .h(px(3.))
+            .border_t_1()
+            .border_b_1()
+            .map(|d| if end { d.bottom_0() } else { d.top_0() })
+    } else {
+        d.top_0()
+            .bottom_0()
+            .w(px(3.))
+            .border_l_1()
+            .border_r_1()
+            .map(|d| if end { d.right_0() } else { d.left_0() })
+    }
 }
 
 /// A gridline down the right edge of a cell (absolute, so it costs no width
@@ -1346,8 +1416,27 @@ impl SheetsView {
                     (at as i64 + d).clamp(0, len as i64 - 1) as u32
                 }
             };
-            let row = step(grid.end.0, d_row, grid.rows);
-            let col = step(grid.end.1, d_col, grid.cols);
+            let mut row = step(grid.end.0, d_row, grid.rows);
+            let mut col = step(grid.end.1, d_col, grid.cols);
+            // Hidden rows and columns are stepped over, as in Excel.
+            if d_row != 0 {
+                let h = grid.layout.heights.borrow();
+                let shown = if d_row > 0 {
+                    h.next_shown(row as usize)
+                } else {
+                    h.prev_shown(row as usize)
+                };
+                row = shown.map_or(grid.end.0, |r| r as u32);
+            }
+            while d_col != 0
+                && grid.book.is_column_hidden(grid.sheet, col)
+                && ((d_col > 0 && col + 1 < grid.cols) || (d_col < 0 && col > 0))
+            {
+                col = if d_col > 0 { col + 1 } else { col - 1 };
+            }
+            if grid.book.is_column_hidden(grid.sheet, col) {
+                col = grid.end.1;
+            }
             grid.end = (row, col);
             if grid.span == Span::All {
                 grid.span = Span::Cells;

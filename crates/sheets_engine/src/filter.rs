@@ -770,6 +770,24 @@ impl Workbook {
         bottom
     }
 
+    /// The data rows (first, last; 0-based) of every filter of `sheet` that
+    /// filters something: a hidden row there is filtered out, not hidden by
+    /// hand (see `hide.rs`).
+    pub(crate) fn filtered_row_spans(&self, sheet: u32) -> Vec<(u32, u32)> {
+        self.filters(sheet)
+            .into_iter()
+            .filter(|f| !f.columns.is_empty())
+            .map(|f| {
+                let bottom = match f.scope {
+                    FilterScope::Sheet => self.region_bottom(sheet, f.area),
+                    FilterScope::Table(_) => f.area.bottom,
+                };
+                (f.area.top + 1, bottom.max(f.area.bottom))
+            })
+            .filter(|(top, bottom)| top <= bottom)
+            .collect()
+    }
+
     /// Rows of `sheet` that are hidden (0-based).
     pub(crate) fn hidden_rows(&self, sheet: u32) -> HashSet<u32> {
         self.model

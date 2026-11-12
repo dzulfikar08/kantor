@@ -413,6 +413,17 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
                     .dropdown_menu(move |menu, _, _| number_items(menu, current, &view)),
             );
     }
+    // View: frozen panes, hidden rows and columns.
+    let view_view = cx.entity().downgrade();
+    row = row.child(separator(cx)).child(
+        Button::new("view-menu")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::Snowflake)
+            .dropdown_caret(true)
+            .tooltip("Freeze panes, hide rows and columns")
+            .dropdown_menu(move |menu, _, _| view_items(menu, &view_view)),
+    );
     // PivotTables.
     let pivot_view = cx.entity().downgrade();
     row = row.child(separator(cx)).child(
@@ -459,6 +470,36 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
         ));
     }
     row
+}
+
+/// The View menu: Excel's Freeze Panes choices, then Hide / Unhide.
+fn view_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
+    use crate::GridCommand as G;
+    let items: [(&str, &str, G); 8] = [
+        ("Freeze Panes", "", G::FreezePanes),
+        ("Freeze Top Row", "", G::FreezeTopRow),
+        ("Freeze First Column", "", G::FreezeFirstColumn),
+        ("Unfreeze Panes", "", G::Unfreeze),
+        ("Hide Rows", "Ctrl+9", G::HideRows),
+        ("Unhide Rows", "Ctrl+Shift+9", G::UnhideRows),
+        ("Hide Columns", "Ctrl+0", G::HideColumns),
+        ("Unhide Columns", "Ctrl+Shift+0", G::UnhideColumns),
+    ];
+    for (i, (label, keys, command)) in items.into_iter().enumerate() {
+        if i == 4 {
+            menu = menu.separator();
+        }
+        let view = view.clone();
+        let text = if keys.is_empty() {
+            label.to_owned()
+        } else {
+            format!("{label}  ({keys})")
+        };
+        menu = menu.item(PopupMenuItem::new(text).on_click(move |_, window, cx| {
+            let _ = view.update(cx, |v, cx| v.grid_command(command, window, cx));
+        }));
+    }
+    menu
 }
 
 /// The PivotTable menu: insert, fields, refresh, delete.

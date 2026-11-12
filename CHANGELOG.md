@@ -54,9 +54,36 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   with content Kantor can't keep, and files changed on disk by someone else are never autosaved;
   they still get recovery copies.
 
+#### Sheets
+- **Frozen rows stay put** while the sheet scrolls, like frozen columns already did: the frozen rows
+  (and the top-left corner when rows and columns are both frozen) are pinned under the column
+  letters. Everything drawn on the grid follows: the selection and fill handle, the in-cell editor
+  (clipped to its pane), formula reference outlines, merged cells crossing the split (each pane shows
+  its part), data bars and icons, filter buttons, drop-down lists, and charts and pictures, which
+  are drawn in up to four panes and clipped to each. Arrow keys, Ctrl+arrows, Page Up/Down and
+  Find scroll the cell into view below the frozen rows; the wheel scrolls the rest even over the
+  frozen rows.
+- **Hide Rows / Unhide Rows / Hide Columns / Unhide Columns** in the row and column header menus,
+  a new View (snowflake) menu in the toolbar with Excel's freeze choices, and the palette;
+  Ctrl+9 / Ctrl+Shift+9 / Ctrl+0 / Ctrl+Shift+0 as in Excel. One undo step each, saved as hidden
+  rows and columns; unhidden rows and columns come back at their old height and width. Headers
+  show Excel's double line where rows or columns are hidden; double-click it (or drag it) to show
+  them again. As in Excel, Unhide Rows leaves rows that a filter hides alone (it says how many);
+  clear or change the filter to show them.
+
 ### Changed
 - Sheets' `.xlsx` writer is shared by Save, autosave and recovery copies (no change to the files
   written).
+
+#### Sheets
+- Freeze Panes, Freeze Top Row, Freeze First Column and Unfreeze are no longer undo steps, as in
+  Excel; they still mark the workbook as changed.
+
+### Fixed
+
+#### Sheets
+- Hidden columns from a file were drawn 24 px wide; they now take no room, and arrow keys step
+  over hidden rows and columns.
 
 ## [0.3.1] - 2026-11-11
 

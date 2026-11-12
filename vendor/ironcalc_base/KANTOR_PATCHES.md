@@ -386,6 +386,18 @@ What (`src/functions/kantor_pivot.rs`, `KANTOR PATCH (pivot)`):
 Tests: `src/test/test_kantor_pivot.rs`; `crates/sheets_engine/tests/pivot.rs`
 against the corpus file 21.
 
+## 15. Hiding columns as one undo step
+
+`UserModel::kantor_set_columns_hidden(sheet, &[(column, hidden)])`
+(`src/kantor_tables.rs`) hides or shows columns as one diff list of upstream's
+`Diff::SetColumnHidden` (which upstream undoes and redoes but never records).
+Widths are kept, so an unhidden column comes back as wide as it was. Rows use
+`kantor_set_rows_hidden` (§13). Tests: `crates/sheets_engine/src/hide.rs`.
+
+`UserModel::kantor_set_frozen(sheet, rows, cols)` sets the frozen panes without
+an undo step: Excel's Freeze Panes isn't undone by Ctrl+Z (Kantor marks the
+workbook unsaved instead, `sheets_engine::grid::set_frozen`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

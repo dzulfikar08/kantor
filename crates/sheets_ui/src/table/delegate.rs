@@ -33,6 +33,12 @@ pub trait TableDelegate: Sized + 'static {
     /// lays out; change it only in [`Self::sync_rows`] / [`Self::fit_rows`].
     fn row_heights(&self) -> Rc<RefCell<RowHeights>>;
 
+    /// KANTOR PATCH (frozen rows): how many rows from the top stay pinned
+    /// under the header while the rest scroll.
+    fn frozen_rows(&self, cx: &App) -> usize {
+        0
+    }
+
     /// Bring [`Self::row_heights`] up to date with the data (called once per
     /// render, before the visible rows are worked out; keep it cheap when
     /// nothing changed).

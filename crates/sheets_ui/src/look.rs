@@ -49,9 +49,14 @@ pub(crate) fn snap(len: f32, scale: f32) -> f32 {
     (dp.abs() - 0.5).ceil().copysign(dp).max(1.0) / scale
 }
 
-/// Width of a column as the grid lays it out (see [`snap`]).
+/// Width of a column as the grid lays it out (see [`snap`]); a hidden
+/// column has none.
 pub(crate) fn column_width(book: &Workbook, sheet: u32, col: u32, scale: f32) -> Pixels {
-    px(snap(book.column_width(sheet, col) as f32, scale))
+    let width = book.column_width(sheet, col) as f32;
+    if width <= 0.0 {
+        return px(0.);
+    }
+    px(snap(width, scale))
 }
 
 /// Line height of cell text, relative to its size.

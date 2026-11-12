@@ -40,7 +40,11 @@ actions!(
         JumpExtendRight,
         GoToStart,
         GoToEnd,
-        ToggleFilter
+        ToggleFilter,
+        HideRows,
+        UnhideRows,
+        HideColumns,
+        UnhideColumns
     ]
 );
 
@@ -75,6 +79,14 @@ pub(crate) fn bind_keys(cx: &mut App) {
             both!("home", GoToStart),
             both!("end", GoToEnd),
             both!("shift-l", ToggleFilter),
+            // Excel: Ctrl+9 / Ctrl+Shift+9 hide / unhide rows, Ctrl+0 /
+            // Ctrl+Shift+0 columns (both spellings of the shifted key).
+            both!("9", HideRows),
+            both!("shift-9", UnhideRows),
+            both!("(", UnhideRows),
+            both!("0", HideColumns),
+            both!("shift-0", UnhideColumns),
+            both!(")", UnhideColumns),
         ]
         .into_iter()
         .flatten(),
@@ -157,6 +169,15 @@ pub enum GridCommand {
     ClearFilters,
     /// Re-apply the sheet's filters after edits.
     ReapplyFilters,
+    /// Hide the selection's rows (Ctrl+9).
+    HideRows,
+    /// Show the hidden rows in the selection, except filtered-out ones
+    /// (Ctrl+Shift+9).
+    UnhideRows,
+    /// Hide the selection's columns (Ctrl+0).
+    HideColumns,
+    /// Show the hidden columns in the selection (Ctrl+Shift+0).
+    UnhideColumns,
 }
 
 /// Most cells measured for an autofit (keeps a huge column responsive).
@@ -214,6 +235,18 @@ impl SheetsView {
             .on_action(cx.listener(|v, _: &GoToStart, _, cx| v.go_to_corner(false, cx)))
             .on_action(cx.listener(|v, _: &GoToEnd, _, cx| v.go_to_corner(true, cx)))
             .on_action(cx.listener(|v, _: &ToggleFilter, w, cx| v.toggle_filter_doc(w, cx)))
+            .on_action(
+                cx.listener(|v, _: &HideRows, w, cx| v.grid_command(GridCommand::HideRows, w, cx)),
+            )
+            .on_action(cx.listener(|v, _: &UnhideRows, w, cx| {
+                v.grid_command(GridCommand::UnhideRows, w, cx)
+            }))
+            .on_action(cx.listener(|v, _: &HideColumns, w, cx| {
+                v.grid_command(GridCommand::HideColumns, w, cx)
+            }))
+            .on_action(cx.listener(|v, _: &UnhideColumns, w, cx| {
+                v.grid_command(GridCommand::UnhideColumns, w, cx)
+            }))
     }
 
     /// Make `anchor` the active cell and extend the selection to `end`
@@ -429,7 +462,7 @@ impl SheetsView {
         });
     }
 
-    /// Ctrl+Home: A1. Ctrl+End: the last cell of the used range, as in Excel.
+    /// Ctrl+Home: A1 (the first unfrozen cell with frozen panes). Ctrl+End: the last cell of the used range, as in Excel.
     fn go_to_corner(&mut self, end: bool, cx: &mut Context<Self>) {
         if self.editing.is_some() {
             return;
@@ -439,9 +472,29 @@ impl SheetsView {
             let (rows, cols) = grid.book.used_size(grid.sheet);
             (rows.saturating_sub(1), cols.saturating_sub(1))
         } else {
-            (0, 0)
+            // With frozen panes Excel's Ctrl+Home goes to the first cell
+            // below and right of them, which scrolls the panes back.
+            let grid = self.table.read(cx).delegate();
+            grid.book.frozen(grid.sheet)
         };
         self.select_range(to, to, Span::Cells, true, cx);
+        if !end {
+            // Back to the top-left even when that cell is inside a merged
+            // cell starting in the frozen panes.
+            self.table.update(cx, |table, cx| {
+                table
+                    .vertical_scroll_handle
+                    .0
+                    .borrow()
+                    .base_handle
+                    .set_offset(point(px(0.), px(0.)));
+                let x = table.horizontal_scroll_handle.offset();
+                table
+                    .horizontal_scroll_handle
+                    .set_offset(point(px(0.), x.y));
+                cx.notify();
+            });
+        }
     }
 
     /// The selection as commands should see it: whole columns and rows cut
@@ -575,6 +628,13 @@ impl SheetsView {
                 self.clear_filters_doc(command == GridCommand::ReapplyFilters, window, cx);
                 return;
             }
+            GridCommand::HideRows
+            | GridCommand::UnhideRows
+            | GridCommand::HideColumns
+            | GridCommand::UnhideColumns => {
+                self.hide_command(command, range, window, cx);
+                return;
+            }
             GridCommand::InsertRowsAbove => Box::new(move |b, s| {
                 b.insert_rows(s, rows.0, n_rows)?;
                 Ok(format!("Inserted {}", count(n_rows, "row")))
@@ -618,6 +678,62 @@ impl SheetsView {
             if let (Ok(_), Some((at, count))) = (&res, shift) {
                 grid.layout.shift(at, count);
             }
+            grid.resize();
+            table.refresh(cx);
+            cx.notify();
+            res
+        });
+        self.status = match result {
+            Ok(msg) => msg.into(),
+            Err(err) => format!("{err:#}").into(),
+        };
+        self.load_selected_into_formula(window, cx);
+        self.update_title(window, cx);
+        cx.notify();
+    }
+
+    /// Hide or unhide the rows or columns of `range` (the selection), as one
+    /// undo step. Unhide leaves rows a filter hides alone, as Excel does
+    /// (`sheets_engine::hide`).
+    fn hide_command(
+        &mut self,
+        command: GridCommand,
+        range: CellRange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let result = self.table.update(cx, |table, cx| {
+            let grid = table.delegate_mut();
+            let sheet = grid.sheet;
+            let book = &mut grid.book;
+            let res = match command {
+                GridCommand::HideRows => book
+                    .hide_rows(sheet, range.top, range.bottom)
+                    .map(|n| hide_status(n, "row", "Hid", "already hidden")),
+                GridCommand::UnhideRows => {
+                    book.unhide_rows(sheet, range.top, range.bottom)
+                        .map(|done| match (done.shown, done.filtered) {
+                            (0, 0) => "No hidden rows in the selection".to_owned(),
+                            (0, f) => format!(
+                                "{} hidden by a filter; clear the filter to show {}",
+                                count(f, "row"),
+                                if f == 1 { "it" } else { "them" }
+                            ),
+                            (n, 0) => format!("Unhid {}", count(n, "row")),
+                            (n, f) => format!(
+                                "Unhid {}; {} hidden by a filter stay hidden",
+                                count(n, "row"),
+                                count(f, "row")
+                            ),
+                        })
+                }
+                GridCommand::HideColumns => book
+                    .set_columns_hidden(sheet, range.left, range.right, true)
+                    .map(|n| hide_status(n, "column", "Hid", "already hidden")),
+                _ => book
+                    .set_columns_hidden(sheet, range.left, range.right, false)
+                    .map(|n| hide_status(n, "column", "Unhid", "hidden in the selection")),
+            };
             grid.resize();
             table.refresh(cx);
             cx.notify();
@@ -690,6 +806,18 @@ fn count(n: u32, what: &str) -> String {
     }
 }
 
+/// `Hid 3 rows`, or `No rows already hidden`-style news when nothing changed.
+fn hide_status(n: u32, what: &str, verb: &str, none: &str) -> String {
+    if n == 0 {
+        match none {
+            "already hidden" => format!("The selected {what}s are already hidden"),
+            _ => format!("No hidden {what}s in the selection"),
+        }
+    } else {
+        format!("{verb} {}", count(n, what))
+    }
+}
+
 /// An op setting the frozen rows and columns.
 fn freeze(rows: u32, cols: u32) -> Op {
     Box::new(move |book, sheet| {
@@ -719,12 +847,15 @@ fn header_menu(menu: PopupMenu, header: Header, view: &WeakEntity<SheetsView>) -
             .separator()
             .item(item("Autofit Column Width", GridCommand::AutofitColumns))
             .item(item("Standard Column Width", GridCommand::ResetColumnWidth))
+            .item(item("Hide Columns", GridCommand::HideColumns))
+            .item(item("Unhide Columns", GridCommand::UnhideColumns))
             .separator()
             .item(item("Sort A to Z", GridCommand::SortAscending))
             .item(item("Sort Z to A", GridCommand::SortDescending))
             .item(item("Custom Sort…", GridCommand::CustomSort))
             .item(item("Filter", GridCommand::ToggleFilter))
             .separator()
+            .item(item("Freeze Panes", GridCommand::FreezePanes))
             .item(item("Freeze First Column", GridCommand::FreezeFirstColumn))
             .item(item("Unfreeze Panes", GridCommand::Unfreeze)),
         Header::Row(_) => menu
@@ -734,7 +865,10 @@ fn header_menu(menu: PopupMenu, header: Header, view: &WeakEntity<SheetsView>) -
             .separator()
             .item(item("Row Height…", GridCommand::RowHeight))
             .item(item("Autofit Row Height", GridCommand::AutofitRows))
+            .item(item("Hide Rows", GridCommand::HideRows))
+            .item(item("Unhide Rows", GridCommand::UnhideRows))
             .separator()
+            .item(item("Freeze Panes", GridCommand::FreezePanes))
             .item(item("Freeze Top Row", GridCommand::FreezeTopRow))
             .item(item("Unfreeze Panes", GridCommand::Unfreeze)),
     }
