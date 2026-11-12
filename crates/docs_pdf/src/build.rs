@@ -77,6 +77,23 @@ pub fn layout_paragraph(
         // minimum and a single line.
         ResolvedLine::AtLeast(pt) => LineHeight::Absolute(pt.max(first.size_pt * 1.22) * PT),
     });
+    lp.default_tab = tw(doc.default_tab());
+    // Stops are measured from the column edge in Word; the layout's
+    // positions are too.
+    lp.tabs = doc
+        .tab_stops(p)
+        .into_iter()
+        .filter(|(pos, _)| *pos > 0)
+        .map(|(pos, kind)| docs_layout::TabStop {
+            pos: tw(pos as u32),
+            align: match kind {
+                docs_engine::TabKind::Left => docs_layout::TabAlign::Left,
+                docs_engine::TabKind::Center => docs_layout::TabAlign::Center,
+                docs_engine::TabKind::Right => docs_layout::TabAlign::Right,
+                docs_engine::TabKind::Decimal => docs_layout::TabAlign::Decimal,
+            },
+        })
+        .collect();
     lp.space_before_pt = rp.space_before_pt;
     lp.space_after_pt = rp.space_after_pt;
     lp.indent_left_pt = rp.indent_left_pt;

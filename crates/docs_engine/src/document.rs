@@ -211,6 +211,8 @@ pub struct Document {
     /// Comments (`comments.xml`) and whether Kantor changed them.
     pub(crate) comments: Vec<crate::review::Comment>,
     pub(crate) comments_modified: bool,
+    /// `w:defaultTabStop` (twips).
+    pub(crate) default_tab: u32,
     history: History,
 }
 
@@ -240,6 +242,7 @@ impl Document {
             even_odd: false,
             comments: Vec::new(),
             comments_modified: false,
+            default_tab: 720,
             history: History::default(),
         }
     }
@@ -286,6 +289,7 @@ impl Document {
             even_odd: read.even_odd,
             comments: read.comments,
             comments_modified: false,
+            default_tab: read.default_tab,
             history: History::default(),
         }
     }

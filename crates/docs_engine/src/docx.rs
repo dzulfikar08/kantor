@@ -157,6 +157,8 @@ pub struct Read {
     /// Different odd and even page headers.
     pub even_odd: bool,
     pub comments: Vec<crate::review::Comment>,
+    /// `w:defaultTabStop` (twips).
+    pub default_tab: u32,
 }
 
 fn zip_bytes(
@@ -1856,6 +1858,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
     let mut preserved = body.preserved;
     let mut settings = None;
     let mut even_odd = false;
+    let mut default_tab = 720;
     if let Some(name) = part("/settings")
         && let Some(src) = zip_text(&mut zip, &name)?
     {
@@ -1864,6 +1867,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
                 .insert("track changes switched on (Kantor's own edits aren't tracked)".into());
         }
         even_odd = settings_even_odd(&src);
+        default_tab = crate::section::settings_default_tab(&src).unwrap_or(720);
         settings = Some((name, src));
     }
     let mut comments = Vec::new();
@@ -1944,6 +1948,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         stories,
         even_odd,
         comments,
+        default_tab,
     })
 }
 

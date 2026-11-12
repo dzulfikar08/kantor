@@ -88,6 +88,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   out. *Insert Section Break (Next Page)* starts a new section at the caret, and Page setup (and
   the ruler's margins) change the caret's section. The PDF has each page at its own size.
 
+- **Tab stops:** tabs line text up at the paragraph's (and its style's) left, centre, right and
+  decimal stops, and at the document's default stops after them, on screen and in the PDF; they
+  used to show as one space. Leaders aren't drawn yet.
+
 #### Slides
 - **Edit tables:** double-click a table (or the toolbar's edit button, *Ctrl K → Edit Table or
   Chart Data…*) for a panel with its cells: type into them, add rows above or below and columns

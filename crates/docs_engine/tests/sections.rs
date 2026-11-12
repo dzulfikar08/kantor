@@ -446,3 +446,29 @@ fn add_edit_and_delete_comments() {
     again.undo();
     assert_eq!(again.comments().len(), 1);
 }
+
+#[test]
+fn tab_stops_from_paragraph_and_settings() {
+    let mut doc = Document::new();
+    assert_eq!(doc.default_tab(), 720);
+    let mut p = docs_engine::Paragraph::new("Total\tRp 18.000.000");
+    p.props.extras.push(
+        r#"<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9026"/><w:tab w:val="left" w:pos="1440"/></w:tabs>"#,
+    );
+    let stops = doc.tab_stops(&p);
+    assert_eq!(
+        stops,
+        [
+            (1440, docs_engine::TabKind::Left),
+            (9026, docs_engine::TabKind::Right)
+        ]
+    );
+    // Through a save and a reopen (the element is kept verbatim).
+    doc = Document::from_paragraphs(vec![p]);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("tabs.docx");
+    doc.save_as(&out).unwrap();
+    let again = Document::open(&out).unwrap();
+    assert_eq!(again.tab_stops(again.paragraph(0)).len(), 2);
+    assert!(again.default_tab() > 0);
+}

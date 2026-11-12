@@ -209,6 +209,28 @@ pub struct Paragraph {
     /// Byte ranges drawn struck through (tracked deletions): see
     /// [`PagedDocument::strike_rules`].
     pub strikes: Vec<Range<usize>>,
+    /// Custom tab stops, measured from the column's left edge (px).
+    pub tabs: Vec<TabStop>,
+    /// Default tab stops every this many px after the custom ones (Word:
+    /// `w:defaultTabStop`, 1.27 cm).
+    pub default_tab: f32,
+}
+
+/// How text lines up at a tab stop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabAlign {
+    Left,
+    Center,
+    Right,
+    /// On the decimal point (laid out as Right up to the number's end).
+    Decimal,
+}
+
+/// A tab stop: position from the column's left edge (px) and alignment.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TabStop {
+    pub pos: f32,
+    pub align: TabAlign,
 }
 
 impl Paragraph {
@@ -231,6 +253,8 @@ impl Paragraph {
             page_break_before: false,
             locale: None,
             strikes: Vec::new(),
+            tabs: Vec::new(),
+            default_tab: 12.7 * MM,
         }
     }
 
@@ -240,6 +264,8 @@ impl Paragraph {
         self.text
             .chars()
             .map(|c| match c {
+                // Tabs are inline boxes sized to reach their stop; the
+                // space standing in for the tab is shrunk to nothing.
                 '\t' => " ".to_owned(),
                 PAGE_BREAK => "\n".to_owned(),
                 OBJECT => "\u{200B}".to_owned(),
@@ -354,8 +380,27 @@ impl Engine {
     }
 
     /// Shapes one paragraph and breaks it into lines in a column `width` px
-    /// wide (indents are taken off that width).
+    /// wide (indents are taken off that width). Tabs go to the next tab
+    /// stop: laid out once with empty tabs to find where each one starts,
+    /// then again with each tab as wide as it needs to be.
     pub fn layout_paragraph(&mut self, para: &Paragraph, width: f32) -> ParaLayout {
+        let tabs: Vec<usize> = para
+            .text
+            .char_indices()
+            .filter(|(_, c)| *c == '\t')
+            .map(|(i, _)| i)
+            .collect();
+        if tabs.is_empty() {
+            return self.layout_with_tabs(para, width, &[]);
+        }
+        let first = self.layout_with_tabs(para, width, &vec![0.01; tabs.len()]);
+        let widths = tab_widths(para, &first, &tabs, width);
+        self.layout_with_tabs(para, width, &widths)
+    }
+
+    /// [`Self::layout_paragraph`] with the tabs (in text order) `tab_widths`
+    /// px wide.
+    fn layout_with_tabs(&mut self, para: &Paragraph, width: f32, tab_widths: &[f32]) -> ParaLayout {
         let left = para.indent_left_pt * PT;
         let right = para.indent_right_pt * PT;
         let first = para.first_line_pt * PT;
@@ -421,6 +466,20 @@ impl Engine {
             }
         }
 
+        // Tabs: boxes after the objects' ids (they aren't objects).
+        let tab_at = para.text.char_indices().filter(|(_, c)| *c == '\t');
+        for (k, (at, _)) in tab_at.enumerate() {
+            boxes.push(InlineBox {
+                id: (TAB_BOX + k) as u64,
+                kind: InlineBoxKind::InFlow,
+                index: at,
+                width: tab_widths.get(k).copied().unwrap_or(0.0).max(0.0),
+                height: 0.0,
+                baseline: None,
+                vertical_align: VerticalAlign::BASELINE,
+            });
+        }
+
         let text = para.shaped_text();
         let mut b = self
             .layout_cx
@@ -439,6 +498,9 @@ impl Engine {
         }
         for span in &para.spans {
             push_span(&mut b, span, span.range.clone());
+        }
+        for (at, _) in para.text.char_indices().filter(|(_, c)| *c == '\t') {
+            b.push(StyleProperty::FontSize(0.01), at..at + 1);
         }
         for ib in boxes {
             b.push_inline_box(ib);
@@ -716,6 +778,80 @@ pub struct PagedDocument {
     /// For each paragraph and each of its lines: the page, the y that maps
     /// the layout's coordinates to the page, and the x of the layout origin.
     line_pages: Vec<Vec<(usize, f32, f32)>>,
+}
+
+/// Inline box ids of tabs start here (object boxes use their index).
+const TAB_BOX: usize = 1 << 20;
+
+/// How wide each tab must be to reach its stop, from a layout with empty
+/// tabs (`tabs` are their byte offsets).
+fn tab_widths(para: &Paragraph, laid: &ParaLayout, tabs: &[usize], width: f32) -> Vec<f32> {
+    let mut out = vec![0.0f32; tabs.len()];
+    let left = para.indent_left_pt * PT;
+    let default = if para.default_tab > 1.0 {
+        para.default_tab
+    } else {
+        12.7 * MM
+    };
+    let mut stops = para.tabs.clone();
+    stops.sort_by(|a, b| a.pos.total_cmp(&b.pos));
+    for line in laid.layout.lines() {
+        let end = line.text_range().end;
+        // Tab boxes on this line, in order, with their x (column coords).
+        let mut on_line: Vec<(usize, f32)> = Vec::new();
+        let mut line_end_x = 0.0f32;
+        for item in line.items() {
+            match item {
+                PositionedLayoutItem::InlineBox(b) if b.id as usize >= TAB_BOX => {
+                    on_line.push((b.id as usize - TAB_BOX, laid.dx + b.x));
+                }
+                PositionedLayoutItem::InlineBox(b) => {
+                    line_end_x = line_end_x.max(laid.dx + b.x + b.width);
+                }
+                PositionedLayoutItem::GlyphRun(g) => {
+                    line_end_x = line_end_x.max(laid.dx + g.offset() + g.advance());
+                }
+            }
+        }
+        let _ = end;
+        // Each tab moves what follows it; positions after an earlier tab
+        // shift by that tab's width.
+        let mut shift = 0.0f32;
+        for (j, &(k, x0)) in on_line.iter().enumerate() {
+            let x = x0 + shift;
+            // The text after this tab up to the next tab or the line's end.
+            let seg_end = on_line.get(j + 1).map_or(line_end_x, |n| n.1);
+            let seg = (seg_end - x0).max(0.0);
+            let custom = stops.iter().find(|t| t.pos > x + 0.5);
+            // A hanging indent counts as a stop (Word's list tab).
+            let implicit = (left > x + 0.5).then_some(TabStop {
+                pos: left,
+                align: TabAlign::Left,
+            });
+            let stop = match (custom, implicit) {
+                (Some(c), Some(i)) if i.pos < c.pos => i,
+                (Some(c), _) => *c,
+                (None, Some(i)) => i,
+                (None, None) => TabStop {
+                    pos: ((x / default).floor() + 1.0) * default,
+                    align: TabAlign::Left,
+                },
+            };
+            let w = match stop.align {
+                TabAlign::Left => stop.pos - x,
+                TabAlign::Center => stop.pos - x - seg / 2.0,
+                TabAlign::Right | TabAlign::Decimal => stop.pos - x - seg,
+            };
+            // Past the stop already: at least a space's worth.
+            let w = w.clamp(para.size_pt * PT * 0.25, width.max(1.0));
+            if let Some(slot) = out.get_mut(k) {
+                *slot = w;
+            }
+            shift += w;
+        }
+    }
+    let _ = tabs;
+    out
 }
 
 /// Lines a paragraph keeps together at a page break (Word's widow/orphan control).
@@ -2071,5 +2207,50 @@ mod tests {
         }
         let after = doc.caret(paras.len() - 1, 0).unwrap();
         assert!(after.top > doc.caret(paras.len() - 2, 0).unwrap().top);
+    }
+}
+
+#[cfg(test)]
+mod tab_tests {
+    use super::*;
+
+    fn x_of(doc: &PagedDocument, i: usize) -> f32 {
+        doc.caret(0, i).unwrap().x
+    }
+
+    #[test]
+    fn tabs_reach_default_and_custom_stops() {
+        let mut engine = Engine::new();
+        let setup = PageSetup::a4();
+        // Default stops every 1.27 cm from the column edge.
+        let p = Paragraph::new("a\tb");
+        let doc = engine.layout_document(std::slice::from_ref(&p), setup);
+        let col = setup.margin_left;
+        assert!(
+            (x_of(&doc, 2) - col - 12.7 * MM).abs() < 0.6,
+            "{}",
+            x_of(&doc, 2) - col
+        );
+        // A left stop at 5 cm, then a right stop at 15 cm.
+        let mut p = Paragraph::new("Total\tQty\t1.000.000");
+        p.tabs = vec![
+            TabStop {
+                pos: 50.0 * MM,
+                align: TabAlign::Left,
+            },
+            TabStop {
+                pos: 150.0 * MM,
+                align: TabAlign::Right,
+            },
+        ];
+        let doc = engine.layout_document(std::slice::from_ref(&p), setup);
+        let qty = "Total\t".len();
+        assert!((x_of(&doc, qty) - col - 50.0 * MM).abs() < 0.6);
+        let end = p.text.len();
+        assert!(
+            (x_of(&doc, end) - col - 150.0 * MM).abs() < 1.0,
+            "right tab ends at the stop"
+        );
+        assert_eq!(doc.pages[0].lines.len(), 1);
     }
 }

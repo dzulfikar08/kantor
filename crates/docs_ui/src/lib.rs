@@ -497,7 +497,8 @@ fn layout_key(p: &docs_layout::Paragraph, width: f32) -> u64 {
     for v in [p.indent_left_pt, p.indent_right_pt, p.first_line_pt] {
         v.to_bits().hash(&mut h);
     }
-    format!("{:?}{:?}", p.marker, p.objects).hash(&mut h);
+    format!("{:?}{:?}{:?}", p.marker, p.objects, p.tabs).hash(&mut h);
+    p.default_tab.to_bits().hash(&mut h);
     for s in &p.spans {
         s.range.hash(&mut h);
         (s.bold, s.italic, s.underline).hash(&mut h);

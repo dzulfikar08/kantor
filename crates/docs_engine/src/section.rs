@@ -1010,6 +1010,77 @@ const SETTINGS_AFTER_EVEN_ODD: &[&str] = &[
     "listSeparator",
 ];
 
+/// `w:defaultTabStop` from settings.xml (twips).
+pub(crate) fn settings_default_tab(settings: &str) -> Option<u32> {
+    xml::parse(settings)?
+        .child("defaultTabStop")?
+        .num::<u32>("val")
+        .filter(|v| *v > 0)
+}
+
+/// How text lines up at a tab stop (`w:tab/@w:val`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabKind {
+    Left,
+    Center,
+    Right,
+    Decimal,
+}
+
+impl Document {
+    /// A paragraph's tab stops (twips from the column's left edge): its
+    /// style's (through `basedOn`), then its own (`clear` removes one).
+    pub fn tab_stops(&self, p: &Paragraph) -> Vec<(i32, TabKind)> {
+        let mut chain = Vec::new();
+        let mut id = p.props.style.clone().or_else(|| {
+            self.styles
+                .styles
+                .iter()
+                .find(|s| s.is_default && s.kind == crate::style::StyleKind::Paragraph)
+                .map(|s| s.id.clone())
+        });
+        while let Some(i) = id {
+            if chain.len() > 16 || chain.iter().any(|c: &&crate::style::Style| c.id == i) {
+                break;
+            }
+            let Some(st) = self.styles.get(&i) else { break };
+            chain.push(st);
+            id = st.based_on.clone();
+        }
+        let mut stops: Vec<(i32, TabKind)> = Vec::new();
+        let mut apply = |extras: &crate::model::Extras| {
+            for x in extras.iter().filter(|x| element_name(x) == "tabs") {
+                let Some(el) = xml::parse(x) else { continue };
+                for t in el.children.iter().filter(|c| c.name == "tab") {
+                    let Some(pos) = t.num::<i32>("pos") else {
+                        continue;
+                    };
+                    stops.retain(|s| s.0 != pos);
+                    let kind = match t.attr("val") {
+                        Some("clear") | Some("bar") => continue,
+                        Some("center") => TabKind::Center,
+                        Some("right") | Some("end") => TabKind::Right,
+                        Some("decimal") => TabKind::Decimal,
+                        _ => TabKind::Left,
+                    };
+                    stops.push((pos, kind));
+                }
+            }
+        };
+        for st in chain.iter().rev() {
+            apply(&st.para.extras);
+        }
+        apply(&p.props.extras);
+        stops.sort_by_key(|s| s.0);
+        stops
+    }
+
+    /// Default tab stop distance (twips, `w:defaultTabStop`; 720 = 1.27 cm).
+    pub fn default_tab(&self) -> u32 {
+        self.default_tab
+    }
+}
+
 /// Whether settings.xml turns on different odd and even headers.
 pub(crate) fn settings_even_odd(settings: &str) -> bool {
     let Some(el) = xml::parse(settings) else {
