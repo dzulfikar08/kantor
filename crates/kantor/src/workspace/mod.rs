@@ -129,6 +129,9 @@ pub struct Workspace {
     /// edits, "copied"); see `Workspace::notice`.
     notice: Option<SharedString>,
     notice_id: u64,
+    /// Counts "Saving…" waits before a close; Cancel moves it on so the
+    /// running wait doesn't close (see `closing`).
+    save_wait: u64,
     logo: Arc<Image>,
     focus: FocusHandle,
     chrome: Option<Chrome>,
@@ -162,6 +165,7 @@ impl Workspace {
             message: SharedString::default(),
             notice: None,
             notice_id: 0,
+            save_wait: 0,
             logo: Arc::new(Image::from_bytes(ImageFormat::Svg, LOGO_SVG.to_vec())),
             focus: cx.focus_handle(),
             chrome: None,
@@ -253,6 +257,7 @@ impl Workspace {
                 // Opening cancelled: the pane goes away.
                 cx.subscribe_in(e, window, move |ws, _, event, window, cx| match event {
                     sheets_ui::SheetsEvent::Close => ws.remove_doc(id, window, cx),
+                    sheets_ui::SheetsEvent::Notice(text) => ws.notice(text.clone(), cx),
                 }),
             ],
             DocView::Docs(e) => vec![cx.observe(e, |_, _, cx| cx.notify())],

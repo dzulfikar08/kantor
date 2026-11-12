@@ -183,11 +183,42 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Sheets' `.xlsx` writer is shared by Save, autosave and recovery copies (no change to the files
   written).
 
+#### Sheets: no more pauses on big workbooks
+Measured on the generated 90 000-row workbook (`scripts/corpus/gen_big_xlsx.py`), release builds,
+same machine, 3 runs each, load average 1.4–2.4 unless noted:
+- **Save and Save As write in the background.** The window was frozen for the whole save
+  (5.3 s here; ~12 s under load); now it pauses ~55 ms to copy the workbook, and the file is
+  built and written in the background while you keep working. The status bar shows
+  "Saving…"; edits made meanwhile keep the workbook unsaved; Save pressed again during a save
+  saves the latest state when it's done. A failed save (disk full, no permission, read-only
+  file, folder gone) replaces nothing, keeps your changes and says so in a notice. The file
+  is written to a temporary file and renamed over the old one, keeping its permissions.
+  Recovery copies are removed only once the save is on disk. Closing or quitting while a
+  save is being written waits for it ("Saving “…”…", then closes), and "Don't Save" also
+  waits rather than cut a write short.
+- **Conditional formatting is kept across edits.** Each edit made every rule work out its
+  range again (min/max, sorted values, duplicates: ~105 ms per edit on the `--cf` sample).
+  Now an edit outside a rule's range costs ~0.5 ms, one inside a rule's range ~15 ms (only
+  that rule is redone); undo and redo likewise. Rules over formula results are redone after
+  a recalculation.
+- **Typing in a cell** of the big workbook: what an edit asks of the engine went from ~42 ms
+  to ~4.4 ms (the used range was found by visiting every cell; now one step per row).
+- **Opening** the 90 000-row file got ~1 s slower in 0.3.x (7.98 s → 9.03 s): data validation
+  and print settings each read the whole 200 MB sheet XML again. They now share one read, on a
+  second thread while the cells load: 8.28 s.
+
 #### Sheets
 - Freeze Panes, Freeze Top Row, Freeze First Column and Unfreeze are no longer undo steps, as in
   Excel; they still mark the workbook as changed.
 
 ### Fixed
+
+#### All apps
+- Saving a Docs or Slides file made it readable by its owner only (0600); it now keeps the
+  permissions it had.
+- Vendored IronCalc kept a second copy of every edit's undo data for the whole session (a
+  queue meant for syncing a remote copy, never sent); it is now emptied as edits are
+  processed.
 
 #### Slides
 - Saving a presentation with an edited slide no longer rewrites `[Content_Types].xml` with its

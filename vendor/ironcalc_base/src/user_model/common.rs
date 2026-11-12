@@ -373,6 +373,15 @@ impl<'a> UserModel<'a> {
         self.model.kantor_pivots = pivots;
     }
 
+    /// KANTOR PATCH (changes): what changed since the last call (edits,
+    /// undos, redos), emptying the queue of changes upstream keeps for
+    /// syncing a remote copy (Kantor never sends it). See `kantor_changes`.
+    pub fn kantor_take_changes(&mut self) -> crate::kantor_changes::KantorChanges {
+        let mut changes = crate::kantor_changes::KantorChanges::default();
+        changes.add(&std::mem::take(&mut self.send_queue));
+        changes
+    }
+
     /// KANTOR PATCH (data validation): drop what redo would bring back, for
     /// an edit taken back with `undo` that must not be redone (a value data
     /// validation rejected).

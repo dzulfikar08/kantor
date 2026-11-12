@@ -8,16 +8,17 @@
 //! else, and [`Workbook::open_recovered`] reads it back as the original
 //! document with unsaved changes.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use ironcalc_base::Model;
 
 use crate::{
     CalcMode, LANGUAGE, Origin, SourceFormat, Workbook, XlsxParts, XlsxSource, any_unevaluated,
-    build_xlsx, preserve, shift, write_atomic,
+    build_xlsx, import, preserve, shift, write_atomic,
 };
 
 /// A workbook's state for writing an `.xlsx` off the UI thread (`Send`).
@@ -28,6 +29,8 @@ pub struct XlsxSnapshot {
     /// Manual calculation: formulas without a value ask Excel to recalculate.
     manual: bool,
     revision: u64,
+    /// [`Revisions::view_changes`](crate::Revisions) when the snapshot was taken.
+    view_changes: u64,
     layout: shift::Layout,
 }
 
@@ -36,7 +39,10 @@ pub struct XlsxOutput {
     pub bytes: Vec<u8>,
     notes: Vec<String>,
     pivots: preserve::PivotsSaved,
+    /// Where the charts made in Kantor went (the next save updates them there).
+    charts: HashMap<u32, preserve::SavedChart>,
     revision: u64,
+    view_changes: u64,
     layout: shift::Layout,
 }
 
@@ -72,9 +78,103 @@ impl XlsxSnapshot {
             bytes: finished.bytes,
             notes,
             pivots: finished.pivots,
+            charts: parts.patches.written.take().into_iter().collect(),
             revision: self.revision,
+            view_changes: self.view_changes,
             layout: self.layout,
         })
+    }
+}
+
+/// A save prepared by [`Workbook::prepare_save`] (`Send`).
+pub struct SaveJob {
+    path: PathBuf,
+    kind: SaveKind,
+}
+
+enum SaveKind {
+    Xlsx(Box<XlsxSnapshot>),
+    Csv {
+        workbook: Box<ironcalc_base::types::Workbook>,
+        sheet: u32,
+        delimiter: u8,
+        revision: u64,
+        view_changes: u64,
+    },
+}
+
+/// A finished save, for [`Workbook::finish_save`].
+pub struct Saved {
+    path: PathBuf,
+    kind: SavedKind,
+}
+
+enum SavedKind {
+    Xlsx {
+        out: Box<XlsxOutput>,
+        /// The written file as the next save's original.
+        xlsx: XlsxSource,
+    },
+    Csv {
+        delimiter: u8,
+        revision: u64,
+        view_changes: u64,
+    },
+}
+
+impl SaveJob {
+    /// Where the save goes.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Build the file and write it atomically (slow for big workbooks: run
+    /// it in the background). On error nothing was replaced.
+    pub fn run(self) -> Result<Saved> {
+        let path = self.path;
+        let kind = match self.kind {
+            SaveKind::Xlsx(snapshot) => {
+                let mut out = snapshot.render()?;
+                write_file_atomic(&path, &out.bytes)?;
+                let bytes = std::mem::take(&mut out.bytes);
+                let xlsx = XlsxSource::kept(&path, bytes);
+                SavedKind::Xlsx {
+                    out: Box::new(out),
+                    xlsx,
+                }
+            }
+            SaveKind::Csv {
+                workbook,
+                sheet,
+                delimiter,
+                revision,
+                view_changes,
+            } => {
+                let model = Model::from_workbook(*workbook, LANGUAGE)
+                    .map_err(|e| anyhow!("copying workbook: {e}"))?;
+                import::write_csv(&model, sheet, &path, delimiter)?;
+                SavedKind::Csv {
+                    delimiter,
+                    revision,
+                    view_changes,
+                }
+            }
+        };
+        Ok(Saved { path, kind })
+    }
+}
+
+impl Saved {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// What the save couldn't carry over from the original.
+    pub fn notes(&self) -> &[String] {
+        match &self.kind {
+            SavedKind::Xlsx { out, .. } => out.notes(),
+            SavedKind::Csv { .. } => &[],
+        }
     }
 }
 
@@ -92,6 +192,7 @@ impl Workbook {
             parts: self.xlsx_parts(false),
             manual: self.calc.mode == CalcMode::Manual,
             revision: self.history.current,
+            view_changes: self.history.view_changes,
             layout: self.history.layout(),
         }
     }
@@ -115,17 +216,104 @@ impl Workbook {
     /// workbook's file): record it as saved. Edits made since the snapshot
     /// stay unsaved.
     pub fn commit_autosave(&mut self, path: &Path, out: XlsxOutput) {
-        self.save_notes = out.notes;
-        self.pivots_saved(&out.pivots);
+        let xlsx = XlsxSource::kept(path, out.bytes);
+        self.commit_xlsx(path, xlsx, out.notes, out.pivots, out.charts, out.layout);
+        self.saved_at(out.revision, out.view_changes);
+    }
+
+    /// The `.xlsx` written to `path` is the original of the next save.
+    fn commit_xlsx(
+        &mut self,
+        path: &Path,
+        xlsx: XlsxSource,
+        notes: Vec<String>,
+        pivots: preserve::PivotsSaved,
+        charts: HashMap<u32, preserve::SavedChart>,
+        layout: shift::Layout,
+    ) {
+        self.save_notes = notes;
+        self.pivots_saved(&pivots);
+        self.saved_charts = charts;
         self.path = Some(path.to_path_buf());
         self.origin = Origin {
             format: SourceFormat::Xlsx,
             path: Some(path.to_path_buf()),
             notes: Vec::new(),
-            xlsx: Some(XlsxSource::kept(path, out.bytes)),
-            xlsx_layout: out.layout,
+            xlsx: Some(xlsx),
+            xlsx_layout: layout,
         };
-        self.history.saved = out.revision;
+    }
+
+    /// The state `revision` is what the file now holds. A view change
+    /// (frozen panes) made after the snapshot keeps the workbook unsaved.
+    fn saved_at(&mut self, revision: u64, view_changes: u64) {
+        self.history.saved = revision;
+        if self.history.view_changes == view_changes {
+            self.history.view_changed = false;
+        }
+    }
+
+    /// Prepare saving to `path` (see [`Workbook::save_as`] for formats): a
+    /// copy of what the save needs, taken quickly here. [`SaveJob::run`]
+    /// writes it on any thread, [`Workbook::finish_save`] records it.
+    pub fn prepare_save(&self, path: impl AsRef<Path>) -> Result<SaveJob> {
+        let path = path.as_ref();
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default();
+        let kind = match SourceFormat::from_extension(ext) {
+            Some(SourceFormat::Xlsx) => SaveKind::Xlsx(Box::new(self.xlsx_snapshot())),
+            Some(SourceFormat::Csv { delimiter }) => {
+                let delimiter = match self.origin.format {
+                    SourceFormat::Csv { delimiter: d } if delimiter != b'\t' && d != b'\t' => d,
+                    _ => delimiter,
+                };
+                SaveKind::Csv {
+                    workbook: Box::new(self.model.get_model().workbook.clone()),
+                    sheet: self.active_sheet(),
+                    delimiter,
+                    revision: self.history.current,
+                    view_changes: self.history.view_changes,
+                }
+            }
+            _ => bail!("Kantor saves .xlsx or .csv, not .{ext}"),
+        };
+        Ok(SaveJob {
+            path: path.to_path_buf(),
+            kind,
+        })
+    }
+
+    /// Record a save [`SaveJob::run`] finished: the file is the workbook's
+    /// (and the original of the next save). Edits made since
+    /// [`Workbook::prepare_save`] stay unsaved.
+    pub fn finish_save(&mut self, saved: Saved) {
+        let path = saved.path;
+        match saved.kind {
+            SavedKind::Xlsx { out, xlsx } => {
+                let out = *out;
+                for note in &out.notes {
+                    log::warn!("saving {}: {note}", path.display());
+                }
+                self.commit_xlsx(&path, xlsx, out.notes, out.pivots, out.charts, out.layout);
+                self.saved_at(out.revision, out.view_changes);
+            }
+            SavedKind::Csv {
+                delimiter,
+                revision,
+                view_changes,
+            } => {
+                self.save_notes = Vec::new();
+                self.path = Some(path.clone());
+                // A CSV save keeps the xlsx source: a later .xlsx save still
+                // carries its parts, since the model still has every sheet.
+                self.origin.format = SourceFormat::Csv { delimiter };
+                self.origin.path = Some(path);
+                self.origin.notes = Vec::new();
+                self.saved_at(revision, view_changes);
+            }
+        }
     }
 
     /// Open a recovery copy as the document it was made from: `original`

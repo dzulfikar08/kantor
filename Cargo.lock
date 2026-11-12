@@ -6752,6 +6752,7 @@ version = "0.3.1"
 dependencies = [
  "anyhow",
  "docs_ui",
+ "futures",
  "gpui-kit",
  "kantor_core",
  "kantor_mem",

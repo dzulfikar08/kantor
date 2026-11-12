@@ -398,6 +398,32 @@ Widths are kept, so an unhidden column comes back as wide as it was. Rows use
 an undo step: Excel's Freeze Panes isn't undone by Ctrl+Z (Kantor marks the
 workbook unsaved instead, `sheets_engine::grid::set_frozen`).
 
+## 16. What changed, for caches kept across edits; a cheaper `dimension()`
+
+Why: on a 90k-row sheet with conditional formatting every edit cost ~105 ms
+recomputing each rule's range-wide numbers (min/max, sorted values, counts),
+even for an edit nowhere near a rule. And `UserModel` put every diff list on
+its `send_queue` (upstream: to sync a remote copy), which Kantor never sent:
+a second copy of every edit's diffs, old values included, for the session.
+
+* `UserModel::kantor_take_changes()` (`src/kantor_changes.rs`) empties the
+  queue into a `KantorChanges`: rectangles whose values may have changed
+  (cell values, array formulas, cleared ranges, sorted rows), sheets where
+  anything may have moved (rows/columns inserted, deleted or moved, merges,
+  conditional formatting rules, sheet filters), `all` for workbook-wide
+  changes (sheets, names, tables, locale, theme, named styles), `restyled`
+  for changes that keep values (styles, sizes, hidden rows, frozen panes).
+  Undo and redo report the cells of the diff list they apply.
+* `Model::kantor_evaluations()` counts `evaluate()` passes (formula results
+  change without a diff); `Model::kantor_has_dynamic_arrays()` says whether
+  the last pass had dynamic arrays (whose spills can land anywhere).
+* `Worksheet::dimension()` takes each row's first and last column
+  (`SheetData::kantor_extent`, `Row::column_span`: cells are sorted) instead
+  of visiting every cell: ~35 ms less per call on 1.8M cells, same result.
+
+Used by `crates/sheets_engine/src/cond_format.rs` (`cond_sync`). Tests:
+`kantor_changes::tests`, `sheets_engine` `cond_format::invalidation`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

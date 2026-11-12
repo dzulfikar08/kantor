@@ -288,14 +288,15 @@ pub(crate) struct Prints {
 }
 
 impl Prints {
-    pub(crate) fn read(bytes: &[u8]) -> Self {
+    /// `skeletons`: the package's [`crate::preserve::worksheet_skeletons`].
+    pub(crate) fn read(bytes: &[u8], skeletons: &Result<Vec<(u32, String)>, String>) -> Self {
         let mut sheets = HashMap::new();
-        match crate::preserve::worksheet_skeletons(bytes) {
+        match skeletons {
             Ok(list) => {
                 for (sheet_id, xml) in list {
-                    match Document::parse(&xml) {
+                    match Document::parse(xml) {
                         Ok(doc) => {
-                            sheets.insert(sheet_id, parse_sheet(doc.root_element()));
+                            sheets.insert(*sheet_id, parse_sheet(doc.root_element()));
                         }
                         Err(e) => log::warn!("print settings of sheet {sheet_id} not read: {e}"),
                     }

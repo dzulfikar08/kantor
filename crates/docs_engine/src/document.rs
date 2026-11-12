@@ -1193,6 +1193,10 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
     tmp.write_all(bytes)?;
     tmp.as_file().sync_all()?;
+    // The temp file is private (0600): keep the permissions the file had.
+    if let Ok(meta) = std::fs::metadata(path) {
+        std::fs::set_permissions(tmp.path(), meta.permissions())?;
+    }
     tmp.persist(path)
         .map_err(|e| anyhow::anyhow!("Can't write {}: {}", path.display(), e.error))?;
     Ok(())
@@ -1201,6 +1205,20 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_keeps_the_file_permissions() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.docx");
+        let mut d = doc(&["one"]);
+        d.save_as(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        d.save().unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644);
+    }
 
     fn doc(paras: &[&str]) -> Document {
         Document::from_paragraphs(paras.iter().map(|t| Paragraph::new(*t)).collect())

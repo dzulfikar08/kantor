@@ -660,6 +660,7 @@ impl<'a> Model<'a> {
             parsed_formulas,
             shared_formula_lookup: Vec::new(),
             kantor_pivots: Vec::new(),
+            kantor_evaluations: 0,
             parsed_defined_names: HashMap::new(),
             parser,
             locale,

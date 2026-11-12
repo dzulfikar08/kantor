@@ -711,43 +711,23 @@ impl Worksheet {
             };
         }
 
-        let mut row_range: Option<(i32, i32)> = None;
-        let mut column_range: Option<(i32, i32)> = None;
-
-        for (row_index, column_index, _) in self.sheet_data.cells() {
-            row_range = if let Some((current_min, current_max)) = row_range {
-                Some((current_min.min(row_index), current_max.max(row_index)))
-            } else {
-                Some((row_index, row_index))
-            };
-            column_range = if let Some((current_min, current_max)) = column_range {
-                Some((current_min.min(column_index), current_max.max(column_index)))
-            } else {
-                Some((column_index, column_index))
-            };
+        // KANTOR PATCH: from each row's first and last column (rows keep
+        // their cells sorted), not by visiting every cell: an edit on a big
+        // sheet asked for this several times, ~35 ms each for 1.8M cells.
+        match self.sheet_data.kantor_extent() {
+            Some((min_row, max_row, min_column, max_column)) => WorksheetDimension {
+                min_row,
+                max_row,
+                min_column,
+                max_column,
+            },
+            None => WorksheetDimension {
+                min_row: 1,
+                max_row: 1,
+                min_column: 1,
+                max_column: 1,
+            },
         }
-
-        let dimension = if let Some((min_row, max_row)) = row_range {
-            if let Some((min_column, max_column)) = column_range {
-                Some(WorksheetDimension {
-                    min_row,
-                    min_column,
-                    max_row,
-                    max_column,
-                })
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        dimension.unwrap_or(WorksheetDimension {
-            min_row: 1,
-            max_row: 1,
-            min_column: 1,
-            max_column: 1,
-        })
     }
 
     /// Returns true if cell is completely empty.

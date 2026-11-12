@@ -77,6 +77,9 @@ impl SheetsView {
         cx: &mut Context<Self>,
     ) -> anyhow::Result<String> {
         self.refuse_while_editing()?;
+        if self.saving.is_some() {
+            bail!("a save of this workbook is still being written; try again in a moment");
+        }
         let result = self.table.update(cx, |table, _| {
             let book = &mut table.delegate_mut().book;
             match path {
@@ -87,13 +90,19 @@ impl SheetsView {
                 None => book.save(),
             }
         });
-        let ok = result.is_ok();
-        self.after_save(result, window, cx);
-        if ok {
-            Ok(self.status.to_string())
-        } else {
+        self.status = match result {
+            Ok(()) => {
+                self.disk_guard = None;
+                self.saved_status(false, cx).into()
+            }
+            Err(err) => format!("Save failed: {err:#}").into(),
+        };
+        self.update_title(window, cx);
+        cx.notify();
+        if self.status.starts_with("Save failed") {
             bail!("{}", self.status)
         }
+        Ok(self.status.to_string())
     }
 
     /// Err while the workbook can't be read or edited: it's still opening

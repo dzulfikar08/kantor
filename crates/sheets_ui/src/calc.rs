@@ -70,10 +70,13 @@ impl Job {
 }
 
 /// What the view asks of the workspace.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SheetsEvent {
     /// Close this pane (opening was cancelled).
     Close,
+    /// Something the user should see even if the status bar is elsewhere
+    /// (a save failed).
+    Notice(String),
 }
 
 impl EventEmitter<SheetsEvent> for SheetsView {}
@@ -289,12 +292,12 @@ impl SheetsView {
             let _ = this.update_in(cx, |this, window, cx| {
                 let took = this.busy.take().map(|b| b.started.elapsed());
                 this.drawings.borrow_mut().clear();
-                let autosaved = this.pending_autosave.take();
+                let saved = this.pending_save.take();
                 this.table.update(cx, |table, cx| {
                     let grid = table.delegate_mut();
                     grid.book = book;
-                    if let Some((path, out)) = autosaved {
-                        grid.book.commit_autosave(&path, out);
+                    if let Some(saved) = saved {
+                        grid.book.finish_save(saved);
                     }
                     grid.resize();
                     table.refresh(cx);
@@ -352,7 +355,17 @@ impl SheetsView {
 
     /// The calculation mode, when it is worth showing in the status bar:
     /// manual, or being recalculated.
+    /// A save being written shows here too, so the status message (which
+    /// the next edit replaces) isn't its only sign.
     pub fn calc_status(&self, cx: &App) -> Option<String> {
+        let calc = self.calc_mode_status(cx);
+        match (self.saving_status(), calc) {
+            (Some(saving), Some(calc)) => Some(format!("{saving} · {calc}")),
+            (saving, calc) => saving.or(calc),
+        }
+    }
+
+    fn calc_mode_status(&self, cx: &App) -> Option<String> {
         match self.busy.as_ref().map(|b| &b.what) {
             Some(Job::Opening { .. }) => return None,
             Some(_) => return Some("Calculating…".into()),

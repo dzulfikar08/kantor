@@ -108,6 +108,7 @@ fn main() {
         .run(move |cx| {
             gpui_kit::init(cx);
             theme::init(cx);
+            kantor_ui::perf::watch_main_thread(cx);
             kantor_ui::find_bar::init(cx);
             sheets_ui::init(cx);
             docs_ui::init(cx);

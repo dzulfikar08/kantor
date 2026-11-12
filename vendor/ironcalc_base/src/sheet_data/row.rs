@@ -283,6 +283,21 @@ impl Row {
         Some(&mut cells[index].1)
     }
 
+    /// KANTOR PATCH: the first and last column holding a cell (cells are
+    /// sorted by column), `None` for a row without cells.
+    pub(super) fn column_span(&self) -> Option<(i32, i32)> {
+        match self {
+            Row::Cells(cells) => Some((cells.first()?.0, cells.last()?.0)),
+            Row::Numbers {
+                first_column,
+                values,
+                ..
+            } => (!values.is_empty())
+                .then(|| (*first_column, *first_column + values.len() as i32 - 1)),
+            Row::Packed(cells) => Some((cells.first()?.column(), cells.last()?.column())),
+        }
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         match self {
             Row::Cells(cells) => cells.is_empty(),
