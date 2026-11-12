@@ -140,6 +140,28 @@ export const en = {
     name: "Windows",
     text: "Not available yet. Kantor runs on Mac and Linux for now.",
   },
+  // Shown once build.mjs has WINDOWS_RELEASED (the first release with Windows downloads).
+  win: {
+    title: "Kantor: Sheets, Docs and Slides for Windows, Mac and Linux",
+    lede: "Kantor is a small, fast office app for Windows, Mac and Linux. Open a Word document, an Excel sheet or a PowerPoint deck, edit it, and save it back in the same format. It works offline and needs no account.",
+    fact: "Windows, Mac and Linux",
+    cta: "Download for Windows",
+    ctaMeta: "Kantor-Setup-x64.exe, for Windows 10 and 11",
+    ctaMetaArm: "Kantor-Setup-arm64.exe, for Windows on Arm",
+    ctaMobileNote: "Kantor is a desktop app for Windows, Mac and Linux. Open this page on your computer to download it.",
+    req: "Windows 10 or 11. No administrator rights needed.",
+    buttonX64: "Download for most PCs",
+    buttonX64Meta: "x64, Intel or AMD",
+    buttonArm: "Download for Arm",
+    buttonArmMeta: "arm64, Snapdragon",
+    steps: [
+      "Open <strong>Kantor-Setup-x64.exe</strong> from your Downloads folder.",
+      "If Windows says <strong>Windows protected your PC</strong>, choose <strong>More info</strong> and then <strong>Run anyway</strong>. This appears because Kantor isn't code-signed yet.",
+      "Choose <strong>Install</strong>. Kantor is in the Start menu, and Word, Excel and PowerPoint files now list Kantor under <strong>Open with</strong>. Your default apps stay as they are.",
+    ],
+    portable:
+      'No installer? Get the portable zip for <a href="{dl}/Kantor-x64.zip">x64</a> or <a href="{dl}/Kantor-arm64.zip">Arm</a>, unzip it anywhere and open <strong>kantor.exe</strong>.',
+  },
 
   limitsH2: "What's missing in this preview",
   limitsIntro:
@@ -303,6 +325,27 @@ export const id = {
   windows: {
     name: "Windows",
     text: "Belum tersedia. Untuk saat ini Kantor hanya untuk Mac dan Linux.",
+  },
+  win: {
+    title: "Kantor: Sheets, Docs, dan Slides untuk Windows, Mac, dan Linux",
+    lede: "Kantor adalah aplikasi perkantoran yang ringan dan cepat untuk Windows, Mac, dan Linux. Buka dokumen Word, lembar Excel, atau presentasi PowerPoint, edit, lalu simpan lagi dalam format yang sama. Bisa dipakai tanpa internet dan tanpa akun.",
+    fact: "Windows, Mac, dan Linux",
+    cta: "Unduh untuk Windows",
+    ctaMeta: "Kantor-Setup-x64.exe, untuk Windows 10 dan 11",
+    ctaMetaArm: "Kantor-Setup-arm64.exe, untuk Windows di prosesor Arm",
+    ctaMobileNote: "Kantor adalah aplikasi desktop untuk Windows, Mac, dan Linux. Buka halaman ini di komputer untuk mengunduhnya.",
+    req: "Windows 10 atau 11. Tidak perlu hak administrator.",
+    buttonX64: "Unduh untuk kebanyakan PC",
+    buttonX64Meta: "x64, Intel atau AMD",
+    buttonArm: "Unduh untuk Arm",
+    buttonArmMeta: "arm64, Snapdragon",
+    steps: [
+      "Buka <strong>Kantor-Setup-x64.exe</strong> dari folder Downloads.",
+      "Kalau Windows menampilkan <strong>Windows protected your PC</strong>, pilih <strong>More info</strong> lalu <strong>Run anyway</strong>. Pesan ini muncul karena Kantor belum ditandatangani secara digital.",
+      "Pilih <strong>Install</strong>. Kantor ada di menu Start, dan file Word, Excel, serta PowerPoint kini bisa dibuka lewat <strong>Open with</strong> &gt; Kantor. Aplikasi bawaan Anda tidak berubah.",
+    ],
+    portable:
+      'Tidak mau pakai installer? Unduh zip portabel untuk <a href="{dl}/Kantor-x64.zip">x64</a> atau <a href="{dl}/Kantor-arm64.zip">Arm</a>, ekstrak di mana saja, lalu buka <strong>kantor.exe</strong>.',
   },
 
   limitsH2: "Yang belum ada di versi awal ini",

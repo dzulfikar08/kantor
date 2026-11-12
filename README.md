@@ -2,7 +2,7 @@
 
 # Kantor
 
-A small, fast, native office suite for Linux and macOS, written in Rust on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui) (the UI framework behind Zed). Three apps in one binary: **Sheets**, **Docs** and **Slides**, for `.xlsx`, `.docx` and `.pptx` files. Builds: Linux on x86_64 and aarch64 (made with [Omarchy](https://omarchy.org) in mind), and macOS on Apple Silicon and Intel.
+A small, fast, native office suite for Linux, macOS and Windows, written in Rust on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui) (the UI framework behind Zed). Three apps in one binary: **Sheets**, **Docs** and **Slides**, for `.xlsx`, `.docx` and `.pptx` files. Builds: Linux on x86_64 and aarch64 (made with [Omarchy](https://omarchy.org) in mind), macOS on Apple Silicon and Intel, and Windows 10/11 on x64 and Arm (new, see below).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="site/src/img/sheets-dark-1550.webp">
@@ -58,6 +58,24 @@ curl -fsSL https://raw.githubusercontent.com/dzulfikar08/kantor/main/scripts/ins
 ```
 
 Settings (`~/.config/kantor`) and the saved session (`~/.local/state/kantor`) are kept; delete them by hand if you want them gone.
+
+**Windows 10 and 11** (x64 or Arm), from the first release with Windows downloads on. Until
+then, try the nightly builds `Kantor-Setup-nightly-x64.exe` / `Kantor-nightly-x64.zip` from the
+[nightly release](https://github.com/dzulfikar08/kantor/releases/tag/nightly).
+
+- **Installer:** run `Kantor-Setup-x64.exe` (or `Kantor-Setup-arm64.exe`). It installs for you
+  alone in `%LOCALAPPDATA%\Programs\Kantor`, with no administrator prompt, and adds a Start menu
+  entry, an uninstall entry (Settings → Apps) and **Open with → Kantor** for `.xlsx`, `.xlsm`,
+  `.xls`, `.ods`, `.csv`, `.docx` and `.pptx`. Your default apps stay as they are. An optional
+  task adds Kantor to your `PATH`.
+- **Portable:** unzip `Kantor-x64.zip` anywhere and run `kantor.exe`.
+- The builds aren't code-signed yet, so SmartScreen says *Windows protected your PC* the first
+  time: choose **More info → Run anyway** (see [docs/windows-signing.md](docs/windows-signing.md)).
+- In a terminal, `kantor` runs `kantor.com`, the console front that comes with both. `kantor.exe`
+  is a windowed program and prints nothing to a console. Silent install for IT:
+  `Kantor-Setup-x64.exe /VERYSILENT /SUPPRESSMSGBOXES`.
+- Settings are in `%APPDATA%\Kantor\settings.toml`, the session and update state in
+  `%LOCALAPPDATA%\Kantor`. Uninstalling keeps both.
 
 Arch Linux: a PKGBUILD for a future `kantor-bin` AUR package lives in [packaging/aur/](packaging/aur/); it is not published yet.
 
@@ -135,7 +153,8 @@ kantor pdf merge a.pdf b.pdf -o both.pdf       # also split, extract, delete, re
                                                # info, images, watermark, page-numbers, compress
 ```
 
-Neither opens a window.
+Neither opens a window. On Windows these run through `kantor.com` (what a bare `kantor` finds
+in `cmd` and PowerShell); `kantor.exe` itself is a windowed program with no console.
 
 ## AI agents (MCP)
 
@@ -162,7 +181,10 @@ instead). Tools: `list_documents`, `open_document`, `new_document`, `save_docume
 Slides `slides_list`, `slides_add_slide`, `slides_set_shape_text`, `slides_delete_slide`,
 `slides_set_notes`, `slides_go_to`. The app listens only on a private Unix socket
 (`$XDG_RUNTIME_DIR/kantor/`, on macOS `~/Library/Application Support/Kantor/run/`), readable by
-you alone.
+you alone. On Windows it listens on `127.0.0.1` with a random port, and `kantor mcp` must first
+send a random token that only your user can read (`%LOCALAPPDATA%\Kantor\run\kantor-<pid>.port`).
+Use the full path in MCP configs, e.g. `"command": "C:\\Users\\you\\AppData\\Local\\Programs\\Kantor\\kantor.exe"`
+(`kantor mcp --print-config` prints it).
 
 ## AI features (optional) and privacy
 
@@ -172,7 +194,7 @@ AI is **off** until you turn it on in `Ctrl K` → *AI Settings* and choose a pr
 - *Explain This Formula* (Sheets): the formula and the column headers;
 - *Rewrite / Translate Selection…* (Docs): the selected paragraphs' text.
 
-API keys are stored in the system keychain (Secret Service on Linux, Keychain on macOS); if none is available Kantor says so and keeps the key in `~/.config/kantor/ai-keys.toml`, readable only by you. Keys are never written to `settings.toml` or logs. What the provider does with your requests is governed by its own terms.
+API keys are stored in the system keychain (Secret Service on Linux, Keychain on macOS, Credential Manager on Windows); if none is available Kantor says so and keeps the key in `~/.config/kantor/ai-keys.toml`, readable only by you. Keys are never written to `settings.toml` or logs. What the provider does with your requests is governed by its own terms.
 
 ## Updates
 
@@ -185,6 +207,11 @@ Kantor downloaded from the site, the GitHub releases or the install script keeps
   - **macOS app** (`Kantor.dmg` or the install script): the new notarised `Kantor.app` replaces the old one where it is. If Kantor can't write there (an Applications folder you don't own), it offers the download page instead.
   - **AppImage:** the new AppImage replaces the file you run, under the same name.
   - **Install script on Linux** (`~/.local/bin/kantor`): the binary, launchers and icons are replaced.
+  - **Windows installer** (`Kantor-Setup-*.exe`): the new installer is downloaded and checked
+    against the signed manifest's SHA-256. When Kantor quits, it runs silently: it waits for
+    Kantor to exit, updates the files and, after *Restart to update*, starts Kantor again.
+  - **Windows portable zip:** the files in the folder are replaced (the running `kantor.exe` is
+    renamed aside and removed on the next start).
   - **Packages and source builds** (AUR, `cargo build`, …) are never changed: Kantor only tells you a new version exists. Update those the usual way.
 
   Each replacement is all-or-nothing: if any step fails, the old version stays as it was.

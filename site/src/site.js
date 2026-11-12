@@ -16,7 +16,16 @@
     const mobile = (data && data.mobile) || /Android|iPhone|iPad|iPod|Mobile/.test(ua) || touchMac;
     if (mobile) return { os: "mobile" };
     if (/mac/i.test(platform) || /Macintosh|Mac OS X/.test(ua)) return { os: "mac" };
-    if (/win/i.test(platform) || /Windows/.test(ua)) return { os: "windows" };
+    if (/win/i.test(platform) || /Windows/.test(ua)) {
+      let arm = /ARM64|aarch64/i.test(ua);
+      if (data && data.getHighEntropyValues) {
+        try {
+          const v = await data.getHighEntropyValues(["architecture"]);
+          if (v.architecture) arm = v.architecture === "arm";
+        } catch (_) { /* keep the guess from the user agent */ }
+      }
+      return { os: "windows", arm };
+    }
     if (/CrOS/.test(ua) || /chrome os/i.test(platform)) return { os: "other" };
     if (/linux/i.test(platform) || /Linux|X11/.test(ua)) {
       let arm = /aarch64|arm64|armv8/i.test(ua);
@@ -49,6 +58,13 @@
       label.textContent = t.ctaLinux;
       meta.textContent = info.arm ? t.ctaLinuxMetaArm : t.ctaLinuxMetaX64;
       other.hidden = false;
+    } else if (info.os === "windows" && t.windows) {
+      const file = info.arm ? "Kantor-Setup-arm64.exe" : "Kantor-Setup-x64.exe";
+      main.href = `${t.dl}/${file}`;
+      main.dataset.asset = file;
+      label.textContent = t.ctaWin;
+      meta.textContent = info.arm ? t.ctaWinMetaArm : t.ctaWinMeta;
+      other.hidden = false;
     } else if (info.os === "windows") {
       label.textContent = t.ctaWindows;
       meta.textContent = t.ctaWindowsNote;
@@ -70,6 +86,13 @@
       // ARM Linux: make the aarch64 file the primary button.
       const x64 = $("#linux-x64");
       const arm = $("#linux-arm");
+      x64.classList.replace("btn-primary", "btn-secondary");
+      arm.classList.replace("btn-secondary", "btn-primary");
+      arm.parentElement.prepend(arm);
+    }
+    if (info.os === "windows" && info.arm && $("#win-arm")) {
+      const x64 = $("#win-x64");
+      const arm = $("#win-arm");
       x64.classList.replace("btn-primary", "btn-secondary");
       arm.classList.replace("btn-secondary", "btn-primary");
       arm.parentElement.prepend(arm);
