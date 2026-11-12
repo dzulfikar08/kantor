@@ -424,6 +424,19 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .tooltip("Freeze panes, hide rows and columns")
             .dropdown_menu(move |menu, _, _| view_items(menu, &view_view)),
     );
+    // Conditional formatting.
+    let cf_view = cx.entity().downgrade();
+    row = row.child(separator(cx)).child(
+        Button::new("cf-menu")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::Highlighter)
+            .dropdown_caret(true)
+            .tooltip("Conditional Formatting")
+            .dropdown_menu(move |menu, window, cx| {
+                crate::cf_ui::cf_menu(menu, &cf_view, window, cx)
+            }),
+    );
     // Tables.
     let table_view = cx.entity().downgrade();
     row = row.child(separator(cx)).child(

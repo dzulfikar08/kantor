@@ -67,6 +67,17 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   the `_xlnm.Print_Area` / `_xlnm.Print_Titles` names; the print area and titles follow inserted
   and deleted rows and columns. Export as PDF and Print use the new settings. Sheets you didn't
   change keep the file's own markup byte for byte.
+- **Conditional Formatting** menu in the toolbar (and the palette): Highlight Cells Rules
+  (greater than, less than, between, equal to, text that contains, a date occurring, duplicate
+  values), Top/Bottom Rules (top/bottom N items or %, above/below average), Data Bars (gradient or
+  solid, six colours), Color Scales (Excel's twelve) and Icon Sets (arrows, triangles, traffic
+  lights, signs, symbols, flags, ratings) for the selection; **New Rule…** with every rule type
+  including "use a formula", a format from Excel's presets or a custom fill, font colour, bold,
+  italic, underline and strikethrough, and stop if true; **Manage Rules…** lists the rules of the
+  selection or the sheet in priority order to edit, delete, move up/down and set stop if true;
+  **Clear Rules** from the selection or the sheet. One undo step each. A sheet whose rules you
+  changed is saved with its rules written from the model and the new formats appended to the
+  file's `<dxfs>`; other sheets keep the file's markup byte for byte.
 - **Format as Table** (Ctrl+T or Ctrl+L, Table menu in the toolbar, palette): the selection or
   the data around the active cell, "My table has headers" (without, a header row with Column1,
   Column2… goes in the empty row above, else a new row), and a gallery of the built-in Light,

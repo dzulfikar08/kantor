@@ -45,6 +45,7 @@ mod ai;
 mod bench;
 mod calc;
 mod cell_editor;
+mod cf_ui;
 mod cond_paint;
 mod data_validation;
 mod dialog;
@@ -1021,6 +1022,10 @@ pub struct SheetsView {
     /// [`table_ui`]).
     table_dialog: Option<table_ui::TableDialog>,
     table_panel: Option<table_ui::TablePanel>,
+    /// The conditional formatting rule card and Manage Rules (see
+    /// [`cf_ui`]).
+    cf_dialog: Option<cf_ui::CfDialog>,
+    cf_manager: Option<cf_ui::CfManager>,
     /// The Page Setup card (see [`page_setup`]).
     page_setup: Option<page_setup::PageSetupDialog>,
     /// A restored recovery copy's original: Save asks before overwriting it
@@ -1092,6 +1097,8 @@ impl SheetsView {
             pivot_panel: None,
             page_setup: None,
             table_dialog: None,
+            cf_dialog: None,
+            cf_manager: None,
             table_panel: None,
             disk_guard: None,
             pending_autosave: None,
@@ -2208,6 +2215,7 @@ impl Render for SheetsView {
         let root = self.pivot_actions(root, cx);
         let root = self.page_setup_actions(root, cx);
         let root = self.table_actions(root, cx);
+        let root = self.cf_actions(root, cx);
         use kantor_ui::find_bar as fb;
         root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
@@ -2362,6 +2370,8 @@ impl Render for SheetsView {
             .children(self.render_pivot_dialog(cx))
             .children(self.render_page_setup(cx))
             .children(self.render_table_dialog(cx))
+            .children(self.render_cf_manager(cx))
+            .children(self.render_cf_dialog(cx))
             .into_any_element()
     }
 }

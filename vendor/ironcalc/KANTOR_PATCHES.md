@@ -82,7 +82,11 @@ What: `import/conditional_formatting.rs` reverses the icons of an `iconSet`
 with `reverse="1"` (main and x14 rules); `import/styles.rs` (`parse_dxf`)
 reads the `val` of `b`, `i`, `u` and `strike`. Kantor doesn't use the writer's
 conditional formatting for workbooks opened from `.xlsx`: the original markup
-and `<dxfs>` are carried instead (`crates/sheets_engine/src/preserve.rs`).
+and `<dxfs>` are carried instead (`crates/sheets_engine/src/preserve.rs`),
+except on sheets whose rules were changed in Kantor (2026-11-12,
+`crates/sheets_engine/src/cf_edit.rs`), which are written by this writer;
+`export/conditional_formatting.rs` now also writes the `operator` of text rules
+(`containsText`, `notContains`, `beginsWith`, `endsWith`) as Excel does.
 
 ## 5. Default row height
 

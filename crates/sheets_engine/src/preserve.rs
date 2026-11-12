@@ -274,6 +274,10 @@ pub(crate) struct Patches {
     /// Lower-case names of tables changed in Kantor: carried as they are and
     /// rewritten afterwards, without the checks of [`fit_table`].
     pub touched_tables: HashSet<String>,
+    /// Sheets (`sheetId`) whose conditional formats were changed in Kantor:
+    /// IronCalc's markup from the model is kept for them (and the dxfs it
+    /// added are appended to the original's).
+    pub cf_sheets: HashSet<u32>,
 }
 
 /// A table to write from the model.
@@ -2733,6 +2737,26 @@ fn carry_dxfs(
             at..at
         }
     };
+    // Dxfs the model added (rules made in Kantor) come after the
+    // original's: append IronCalc's.
+    let orig_count = dxfs.children().filter(|c| is_main(*c, "dxf")).count();
+    let extra: Vec<Node> = root
+        .children()
+        .find(|c| is_main(*c, "dxfs"))
+        .map(|d| d.children().filter(|c| is_main(*c, "dxf")).collect())
+        .unwrap_or_default();
+    let text = if extra.len() > orig_count {
+        let mut inner = String::new();
+        for c in dxfs.children().filter(|c| c.is_element()) {
+            inner.push_str(&verbatim(c, &orig_xml)?);
+        }
+        for c in &extra[orig_count..] {
+            inner.push_str(&verbatim(*c, new_xml)?);
+        }
+        format!("<dxfs count=\"{}\">{inner}</dxfs>", extra.len())
+    } else {
+        text
+    };
     let mut xml = new_xml.to_owned();
     xml.replace_range(range, &text);
     Ok(Some((new_part, xml)))
@@ -2970,19 +2994,20 @@ fn carry_sheet(
     // Conditional formats: the original's markup replaces what IronCalc
     // wrote from its model (which drops attributes such as `reverse` and
     // `showValue`, and rewrites text rules), with the original's dxfs.
-    let own_cf = carry_conditional_formats(
-        m,
-        orig_root,
-        new_root,
-        &new_sk,
-        &ns.part,
-        &orig_sk.xml,
-        (&present, close, bindings_ok),
-        &rw,
-        &mut inserts,
-        &label,
-        notes,
-    );
+    let own_cf = !ctx.patches.cf_sheets.contains(&os.sheet_id)
+        && carry_conditional_formats(
+            m,
+            orig_root,
+            new_root,
+            &new_sk,
+            &ns.part,
+            &orig_sk.xml,
+            (&present, close, bindings_ok),
+            &rw,
+            &mut inserts,
+            &label,
+            notes,
+        );
     let mut into_ext = false;
     for child in orig_root.children().filter(|n| n.is_element()) {
         let local = child.tag_name().name();

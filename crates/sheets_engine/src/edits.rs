@@ -26,6 +26,9 @@ pub(crate) struct Edits {
     /// Tables removed in Kantor (Convert to Range), lower case: a save
     /// doesn't carry their parts.
     pub removed_tables: HashSet<String>,
+    /// Sheets (`sheetId`) whose conditional formatting rules were changed
+    /// in Kantor: saved from the model.
+    pub cf_sheets: HashSet<u32>,
 }
 
 impl Workbook {

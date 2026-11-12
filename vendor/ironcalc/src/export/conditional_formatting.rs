@@ -352,8 +352,16 @@ fn build_cf_rule_xml(
                 )
             } else {
                 let type_str = text_operator_to_type(operator);
+                // KANTOR PATCH (conditional formatting): Excel writes the
+                // operator of text rules too.
+                let op_str = match operator {
+                    TextOperator::Contains => "containsText",
+                    TextOperator::DoesNotContain => "notContains",
+                    TextOperator::BeginsWith => "beginsWith",
+                    _ => "endsWith",
+                };
                 format!(
-                    r#"<conditionalFormatting sqref="{range}"><cfRule type="{type_str}" dxfId="{dxf_id}" priority="{excel_priority}"{sif} text="{}"><formula>{}</formula></cfRule></conditionalFormatting>"#,
+                    r#"<conditionalFormatting sqref="{range}"><cfRule type="{type_str}" dxfId="{dxf_id}" priority="{excel_priority}"{sif} operator="{op_str}" text="{}"><formula>{}</formula></cfRule></conditionalFormatting>"#,
                     escape_xml(value),
                     escape_xml(&formula),
                 )

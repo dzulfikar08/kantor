@@ -730,6 +730,30 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "New Conditional Formatting Rule…",
+        detail: "Sheets · highlight cells, top/bottom, data bars, colour scales, icon sets or a formula",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.new_cf_rule_doc(w, cx)),
+    },
+    Command {
+        title: "Manage Conditional Formatting Rules…",
+        detail: "Sheets · edit, delete and reorder the rules of the selection or the sheet",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.manage_cf_doc(w, cx)),
+    },
+    Command {
+        title: "Clear Conditional Formatting from Selected Cells",
+        detail: "Sheets · remove the rules that touch the selection",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.clear_cf_doc(false, w, cx)),
+    },
+    Command {
+        title: "Clear Conditional Formatting from Entire Sheet",
+        detail: "Sheets · remove every rule of the active sheet",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.clear_cf_doc(true, w, cx)),
+    },
+    Command {
         title: "Format as Table…",
         detail: "Sheets · make the selection or the data around the active cell a table with a style",
         keys: "Ctrl T",

@@ -9,6 +9,7 @@
 //! as `.xlsx`. See [`SourceFormat`] and the `import` module docs.
 
 mod batch;
+mod cf_edit;
 mod cond_format;
 mod csv;
 pub mod drawing;
@@ -31,6 +32,10 @@ mod table;
 mod table_edit;
 mod validation;
 
+pub use cf_edit::{
+    COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,
+    DATA_BAR_COLORS, ICON_SETS, sqref_of,
+};
 pub use import::SourceFormat;
 pub use preserve::package_problems;
 pub use recovery::{XlsxOutput, XlsxSnapshot, write_file_atomic};
@@ -1217,6 +1222,7 @@ impl Workbook {
                 let mut p = preserve::Patches::default();
                 self.print_patches(&mut p);
                 self.table_patches(&mut p);
+                self.cf_patches(&mut p);
                 p
             },
         }

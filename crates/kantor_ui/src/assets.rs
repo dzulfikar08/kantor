@@ -69,6 +69,10 @@ icon_assets!(
         Columns2,
         Rows2,
         Sigma,
+        // Sheets: conditional formatting, data validation, charts
+        Highlighter,
+        ListChecks,
+        ChartColumn,
         // AI
         Sparkles,
         X
