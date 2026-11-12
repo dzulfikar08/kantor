@@ -76,3 +76,21 @@ fn platform_data_dir() -> Option<PathBuf> {
     let base = env_dir("XDG_DATA_HOME").or_else(|| Some(home_dir()?.join(".local/share")))?;
     Some(base.join("kantor"))
 }
+
+/// Where Print puts the PDF it hands to the system's PDF viewer:
+/// `<temp>/kantor-print-<pid>/<stem>.pdf` (the folder is created). The
+/// viewer may still be reading it after Kantor quits, so it isn't deleted.
+pub fn print_pdf_path(stem: &str) -> std::io::Result<PathBuf> {
+    let dir = std::env::temp_dir().join(format!("kantor-print-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let stem: String = stem
+        .chars()
+        .map(|c| if std::path::is_separator(c) { '_' } else { c })
+        .collect();
+    let stem = if stem.trim().is_empty() {
+        "Kantor"
+    } else {
+        stem.as_str()
+    };
+    Ok(dir.join(format!("{stem}.pdf")))
+}

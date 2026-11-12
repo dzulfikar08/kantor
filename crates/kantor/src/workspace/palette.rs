@@ -75,9 +75,29 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: "Print…",
-        detail: "Sheets: opens the pages as a PDF in the system viewer to print",
+        detail: "Opens the pages as a PDF in the system viewer to print",
+        keys: "Ctrl P",
+        run: |ws, window, cx| ws.print(&crate::actions::Print, window, cx),
+    },
+    Command {
+        title: "Print Notes Pages…",
+        detail: "Slides: each slide above its speaker notes",
         keys: "",
-        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.print_doc(w, cx)),
+        run: |ws, window, cx| {
+            ws.with_slides(window, cx, |v, w, cx| {
+                v.print_layout_doc(slides_pdf::PrintLayout::Notes, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Print Handouts…",
+        detail: "Slides: 3 slides per page with lines for notes (the Print menu has 1–9)",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_slides(window, cx, |v, w, cx| {
+                v.print_layout_doc(slides_pdf::PrintLayout::Handouts(3), w, cx)
+            })
+        },
     },
     Command {
         title: "Undo",

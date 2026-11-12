@@ -53,6 +53,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   workbooks are written in the background. Imported files (`.csv`, `.ods`, `.xls`, `.xlsb`), files
   with content Kantor can't keep, and files changed on disk by someone else are never autosaved;
   they still get recovery copies.
+- **Print… in Docs and Slides** (`Ctrl P` in every app, the toolbar's printer menu, *Ctrl K →
+  Print…*): the pages go to a temporary PDF that opens in your PDF viewer to print, as Sheets
+  already did. Slides prints full-page slides, **notes pages** (the slide above its speaker notes)
+  or **handouts** with 1, 2, 3 (with lines for writing), 4, 6 or 9 slides per A4 page; `Ctrl P`
+  repeats the layout chosen last. `kantor convert --notes deck.pptx notes.pdf` and
+  `--handouts N` do the same without a window.
 
 #### Sheets
 - **Frozen rows stay put** while the sheet scrolls, like frozen columns already did: the frozen rows

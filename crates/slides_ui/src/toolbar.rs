@@ -4,12 +4,18 @@
 
 use docs_engine::Toggle;
 use gpui_kit::assets::IconName as Lucide;
-use gpui_kit::component::{button::Button, h_flex};
+use gpui_kit::component::{
+    Sizable as _,
+    button::{Button, ButtonVariants as _},
+    h_flex,
+    menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
+};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::components::icon_button;
 use kantor_ui::{metrics::*, tokens};
 use slides_engine::Geom;
+use slides_pdf::PrintLayout;
 
 use crate::SlidesView;
 use crate::paint_menu::PaintKind;
@@ -164,6 +170,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
             |v, w, cx| v.toggle_notes_doc(w, cx),
             cx,
         ))
+        .child(print_button(cx))
         .child(tool(
             "slides-present",
             Lucide::Presentation,
@@ -172,4 +179,50 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
             |v, w, cx| v.present_doc(true, w, cx),
             cx,
         ))
+}
+
+/// Export as PDF and the print layouts (slides, notes pages, handouts).
+fn print_button(cx: &mut Context<SlidesView>) -> impl IntoElement {
+    let view = cx.entity().downgrade();
+    Button::new("slides-print")
+        .ghost()
+        .xsmall()
+        .icon(Lucide::Printer)
+        .dropdown_caret(true)
+        .tooltip("Print and export")
+        .dropdown_menu(move |menu, _, _| print_items(menu, &view))
+}
+
+fn print_items(menu: PopupMenu, view: &WeakEntity<SlidesView>) -> PopupMenu {
+    let export = view.clone();
+    let mut menu = menu
+        .item(
+            PopupMenuItem::new("Export as PDF…")
+                .icon(Lucide::FileDown)
+                .on_click(move |_, window, cx| {
+                    let _ = export.update(cx, |v, cx| v.export_pdf_doc(window, cx));
+                }),
+        )
+        .separator();
+    let layouts = [PrintLayout::Slides, PrintLayout::Notes]
+        .into_iter()
+        .chain(PrintLayout::HANDOUTS.map(PrintLayout::Handouts));
+    for layout in layouts {
+        let v = view.clone();
+        let label = match layout {
+            PrintLayout::Slides => "Print slides…".to_owned(),
+            PrintLayout::Notes => "Print notes pages…".to_owned(),
+            PrintLayout::Handouts(1) => "Print handouts: 1 slide per page…".to_owned(),
+            PrintLayout::Handouts(n) => format!("Print handouts: {n} slides per page…"),
+        };
+        let item = PopupMenuItem::new(label).on_click(move |_, window, cx| {
+            let _ = v.update(cx, |v, cx| v.print_layout_doc(layout, window, cx));
+        });
+        menu = menu.item(if layout == PrintLayout::Slides {
+            item.icon(Lucide::Printer)
+        } else {
+            item
+        });
+    }
+    menu
 }

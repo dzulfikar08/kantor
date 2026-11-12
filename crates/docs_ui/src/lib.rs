@@ -1181,30 +1181,57 @@ impl DocsView {
             if path.extension().is_none() {
                 path.set_extension("pdf");
             }
-            let Ok((pages, task)) = this.update(cx, |this, cx| {
-                let scene = docs_pdf::scene(&this.doc, &this.laid.paged);
-                let file = path.clone();
-                let pages = scene.pages.len().max(1);
-                this.status = format!("Exporting {}…", display_name(&path)).into();
+            let _ = this.update(cx, |this, cx| this.write_pdf(path, false, cx));
+        })
+        .detach();
+    }
+
+    /// Print: write the pages to a temporary PDF and open it in the
+    /// system's PDF viewer, which prints it (Ctrl+P, toolbar, palette).
+    pub fn print_doc(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let stem = std::path::Path::new(&self.name())
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match kantor_core::dirs::print_pdf_path(&stem) {
+            Ok(path) => self.write_pdf(path, true, cx),
+            Err(e) => {
+                self.status = format!("Print failed: {e}").into();
                 cx.notify();
-                let task = cx.background_spawn(async move {
-                    let bytes = docs_pdf::write(&scene)?;
-                    docs_pdf::write_file(&file, &bytes)
-                });
-                (pages, task)
-            }) else {
-                return;
-            };
+            }
+        }
+    }
+
+    /// Write the laid-out pages to `path` in the background; `open` hands
+    /// the file to the system's PDF viewer afterwards (Print).
+    fn write_pdf(&mut self, path: PathBuf, open: bool, cx: &mut Context<Self>) {
+        let scene = docs_pdf::scene(&self.doc, &self.laid.paged);
+        let pages = scene.pages.len().max(1);
+        let verb = if open {
+            "Preparing to print"
+        } else {
+            "Exporting"
+        };
+        self.status = format!("{verb} {}…", display_name(&path)).into();
+        cx.notify();
+        let file = path.clone();
+        let task = cx.background_spawn(async move {
+            let bytes = docs_pdf::write(&scene)?;
+            docs_pdf::write_file(&file, &bytes)
+        });
+        cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 let name = display_name(&path);
-                this.status = match result {
-                    Ok(()) => format!(
-                        "Exported {name} ({pages} page{})",
-                        if pages == 1 { "" } else { "s" }
-                    )
-                    .into(),
-                    Err(err) => format!("Export to PDF failed: {err:#}").into(),
+                let plural = if pages == 1 { "" } else { "s" };
+                this.status = match (result, open) {
+                    (Ok(()), false) => format!("Exported {name} ({pages} page{plural})").into(),
+                    (Ok(()), true) => {
+                        cx.open_with_system(&path);
+                        format!("Opened {pages} page{plural} in the PDF viewer to print").into()
+                    }
+                    (Err(err), false) => format!("Export to PDF failed: {err:#}").into(),
+                    (Err(err), true) => format!("Print failed: {err:#}").into(),
                 };
                 cx.notify();
             });

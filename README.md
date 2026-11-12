@@ -105,11 +105,11 @@ Arch Linux: a PKGBUILD for a future `kantor-bin` AUR package lives in [packaging
 
 ### Docs
 
-`.docx` editing: paragraph and character styles, headings, fonts, colour, alignment, spacing and indents, bulleted and numbered lists (9 levels, with Word's Enter/Tab/Backspace behaviour), tables with merged cells and borders, inline pictures, page breaks, hyperlinks, page setup (A4, Letter, Legal, A5, F4; margins in cm) with a ruler, and a word count. *Export as PDF…* in the palette writes a PDF with the same layout as the screen (fonts embedded, text selectable). Floating images, shapes, fields and other parts Kantor can't show yet are kept as placeholders and saved unchanged.
+`.docx` editing: paragraph and character styles, headings, fonts, colour, alignment, spacing and indents, bulleted and numbered lists (9 levels, with Word's Enter/Tab/Backspace behaviour), tables with merged cells and borders, inline pictures, page breaks, hyperlinks, page setup (A4, Letter, Legal, A5, F4; margins in cm) with a ruler, and a word count. *Export as PDF…* and *Print…* (`Ctrl P`, the toolbar's printer menu) write a PDF with the same layout as the screen (fonts embedded, text selectable); Print opens it in your PDF viewer. Floating images, shapes, fields and other parts Kantor can't show yet are kept as placeholders and saved unchanged.
 
 ### Slides
 
-`.pptx` editing: text boxes and placeholders (with the master's bullets, numbering and spacing), shapes and pictures you can move, resize, rotate and flip, fill and outline, a thumbnail strip to reorder slides, speaker notes, copy and paste of shapes, and a slide show with notes (`F5`). Slides are drawn as in PowerPoint: all 187 preset shapes (arrows, chevrons, callouts, flowchart symbols…) and freeform shapes, gradient and picture fills, transparency, dashed lines and arrowheads, groups, tables with PowerPoint's table styles, SmartArt, and charts (column, bar, line, area, pie, doughnut, scatter and combinations) from the values saved in the file. *Export as PDF…* writes one page per slide, hidden slides left out. Tables, charts and SmartArt are shown but can't be edited yet; their XML is saved unchanged.
+`.pptx` editing: text boxes and placeholders (with the master's bullets, numbering and spacing), shapes and pictures you can move, resize, rotate and flip, fill and outline, a thumbnail strip to reorder slides, speaker notes, copy and paste of shapes, and a slide show with notes (`F5`). Slides are drawn as in PowerPoint: all 187 preset shapes (arrows, chevrons, callouts, flowchart symbols…) and freeform shapes, gradient and picture fills, transparency, dashed lines and arrowheads, groups, tables with PowerPoint's table styles, SmartArt, and charts (column, bar, line, area, pie, doughnut, scatter and combinations) from the values saved in the file. *Export as PDF…* writes one page per slide, hidden slides left out. *Print…* (`Ctrl P`, the toolbar's printer menu) prints slides, notes pages or handouts (1, 2, 3, 4, 6 or 9 slides per page) through your PDF viewer. Tables, charts and SmartArt are shown but can't be edited yet; their XML is saved unchanged.
 
 ## Keyboard
 
@@ -125,6 +125,7 @@ On macOS, use `⌘` where this table says `Ctrl` (`Ctrl Tab` stays).
 | Undo / redo | `Ctrl Z` / `Ctrl Shift Z` |
 | Find / replace | `Ctrl F` / `Ctrl H` |
 | Open / Save / Save as | `Ctrl O` / `Ctrl S` / `Ctrl Shift S` |
+| Print | `Ctrl P` (a PDF opens in your PDF viewer) |
 | Command palette | `Ctrl K` (or `Ctrl Shift P`) |
 | New spreadsheet / document / presentation | `Ctrl N` / `Ctrl Shift N` / `Ctrl Alt N` |
 | Slide show | `F5` (`Shift F5` from the current slide) |
@@ -144,6 +145,7 @@ By default the UI follows your Omarchy theme (live-reloading on `omarchy theme s
 ```sh
 kantor convert report.docx report.pdf          # also .ods/.xls → .xlsx, a sheet → .csv
 kantor convert deck.pptx deck.pdf              # one page per slide, hidden slides left out
+kantor convert --handouts 6 deck.pptx h.pdf    # 1, 2, 3, 4, 6 or 9 slides per A4 page; --notes
 kantor convert book.xlsx book.pdf              # every visible sheet, as Excel prints them
 kantor convert --sheet Sales --fit-width --landscape --paper f4 book.xlsx sales.pdf
                                                # also --fit-page, --scale N, --portrait,

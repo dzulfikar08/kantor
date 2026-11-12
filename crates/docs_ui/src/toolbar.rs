@@ -8,6 +8,7 @@ use gpui_kit::component::{
     Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
+    menu::{DropdownMenu as _, PopupMenuItem},
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -295,4 +296,32 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         ))
         .child(separator(cx))
         .child(crate::page_menu::page_button(view, cx))
+        .child(print_button(cx))
+}
+
+/// Export as PDF and Print, as in Sheets' toolbar.
+fn print_button(cx: &mut Context<DocsView>) -> impl IntoElement {
+    let view = cx.entity().downgrade();
+    Button::new("docs-print")
+        .ghost()
+        .xsmall()
+        .icon(Lucide::Printer)
+        .dropdown_caret(true)
+        .tooltip("Print and export")
+        .dropdown_menu(move |menu, _, _| {
+            let export = view.clone();
+            let print = view.clone();
+            menu.item(
+                PopupMenuItem::new("Export as PDF…")
+                    .icon(Lucide::FileDown)
+                    .on_click(move |_, window, cx| {
+                        let _ = export.update(cx, |v, cx| v.export_pdf_doc(window, cx));
+                    }),
+            )
+            .item(PopupMenuItem::new("Print…").icon(Lucide::Printer).on_click(
+                move |_, window, cx| {
+                    let _ = print.update(cx, |v, cx| v.print_doc(window, cx));
+                },
+            ))
+        })
 }
