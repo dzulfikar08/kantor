@@ -31,6 +31,14 @@ slides_engine.workspace = true
 slides_pdf.workspace = true
 slides_ui.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# The MCP endpoint's token (ipc.rs); already linked through rustls.
+ring.workspace = true
+
+[build-dependencies]
+# kantor.exe's icon (build.rs; Windows only, already in GPUI's tree there).
+embed-resource = "3"
+
 [dev-dependencies]
 tempfile.workspace = true
 

@@ -15,7 +15,8 @@ use std::time::Duration;
 
 /// Hands freed heap pages back to the operating system where the platform's
 /// allocator supports it (glibc's `malloc_trim`, macOS's
-/// `malloc_zone_pressure_relief`); does nothing elsewhere.
+/// `malloc_zone_pressure_relief`, Windows' `HeapCompact` on the process heap);
+/// does nothing elsewhere.
 pub fn release_free_memory() {
     platform::release();
 }
@@ -76,7 +77,36 @@ mod platform {
     }
 }
 
-#[cfg(not(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos")))]
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod platform {
+    use std::ffi::c_void;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetProcessHeap() -> *mut c_void;
+        /// Coalesces free blocks and decommits large free ranges of `heap`
+        /// (what the CRT's `_heapmin` does). Returns the largest free block.
+        fn HeapCompact(heap: *mut c_void, flags: u32) -> usize;
+    }
+
+    pub(super) fn release() {
+        // SAFETY: the process heap handle is valid for the life of the
+        // process, and HeapCompact serialises on the heap's own lock (flags 0).
+        unsafe {
+            let heap = GetProcessHeap();
+            if !heap.is_null() {
+                HeapCompact(heap, 0);
+            }
+        }
+    }
+}
+
+#[cfg(not(any(
+    all(target_os = "linux", target_env = "gnu"),
+    target_os = "macos",
+    windows
+)))]
 mod platform {
     pub(super) fn release() {}
 }

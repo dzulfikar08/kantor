@@ -19,6 +19,8 @@ use std::sync::OnceLock;
 pub const UI_FONTS: &[&str] = &[
     "SF Pro Text",
     "SF Pro",
+    // Windows 10 and 11 (DirectWrite draws its weights; ships with Windows).
+    "Segoe UI",
     "Inter",
     "Inter Variable",
     "Adwaita Sans",
@@ -33,6 +35,9 @@ pub const MONO_FONTS: &[&str] = &[
     "JetBrains Mono",
     "Adwaita Mono",
     "Noto Sans Mono",
+    // Windows: Cascadia ships with Windows 11 and Terminal, Consolas with every version.
+    "Cascadia Mono",
+    "Consolas",
 ];
 
 /// Installed font families, sorted. Read once per run: listing the system's

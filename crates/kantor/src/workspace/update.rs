@@ -109,6 +109,10 @@ impl Workspace {
         let settings = Settings::load().update;
         self.updates.remember(&settings);
         let mut state = State::load();
+        kantor_update::clean_leftovers(
+            &kantor_update::InstallKind::detect(),
+            state.staged.as_ref(),
+        );
         if let Some(staged) = state.staged.take() {
             if settings.enabled
                 && kantor_update::staged_is_current(&staged, &kantor_update::running_build())
@@ -315,13 +319,8 @@ impl Workspace {
         let UpdateStatus::Ready(staged) = std::mem::take(&mut self.updates.status) else {
             return false;
         };
-        match apply_staged(&staged) {
-            Ok(()) => {
-                if let Err(e) = kantor_update::relaunch(&staged.kind) {
-                    log::error!("update: installed, but relaunching failed: {e}");
-                }
-                true
-            }
+        match apply_staged(&staged, true) {
+            Ok(()) => true,
             Err(e) => {
                 self.notice(format!("Update failed, nothing changed: {e}"), cx);
                 self.updates.status = UpdateStatus::Available {
@@ -337,17 +336,22 @@ impl Workspace {
     /// Kantor is quitting: put a downloaded update in place for next time.
     pub fn apply_update_on_quit(&mut self) {
         if let UpdateStatus::Ready(staged) = std::mem::take(&mut self.updates.status)
-            && let Err(e) = apply_staged(&staged)
+            && let Err(e) = apply_staged(&staged, false)
         {
             log::error!("update on quit failed (old build kept): {e}");
         }
     }
 }
 
-/// Swap in and forget the staged update; a failed swap is rolled back and
-/// its files dropped, so the next check starts clean.
-fn apply_staged(staged: &Staged) -> Result<(), Error> {
-    let result = kantor_update::apply(staged);
+/// Swap in (and with `relaunch` start) and forget the staged update; a
+/// failed swap is rolled back and its files dropped, so the next check starts
+/// clean. Windows installer installs start the installer here instead.
+fn apply_staged(staged: &Staged, relaunch: bool) -> Result<(), Error> {
+    let result = if relaunch {
+        kantor_update::apply_and_relaunch(staged)
+    } else {
+        kantor_update::apply(staged)
+    };
     match &result {
         Ok(()) => log::info!("update: installed Kantor {}", staged.version),
         Err(e) => {

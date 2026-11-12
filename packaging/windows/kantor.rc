@@ -1,0 +1,4 @@
+// Kantor's Windows resources (compiled by crates/kantor/build.rs).
+// GPUI embeds the application manifest (DPI awareness, common controls) itself
+// and loads the window icon from resource 1.
+1 ICON "kantor.ico"

@@ -1,14 +1,20 @@
-//! The local endpoint `kantor mcp` talks to: one Unix domain socket per
-//! running Kantor, in a private directory.
+//! The local endpoint `kantor mcp` talks to: one per running Kantor, in a
+//! private directory.
 //!
 //! ```text
-//! Linux   $XDG_RUNTIME_DIR/kantor/kantor-<pid>.sock   (else ~/.local/state/kantor/run/)
-//! macOS   ~/Library/Application Support/Kantor/run/kantor-<pid>.sock
+//! Linux    $XDG_RUNTIME_DIR/kantor/kantor-<pid>.sock   (else ~/.local/state/kantor/run/)
+//! macOS    ~/Library/Application Support/Kantor/run/kantor-<pid>.sock
+//! Windows  %LOCALAPPDATA%\Kantor\run\kantor-<pid>.port
 //! ```
 //!
-//! (`KANTOR_SOCKET_DIR` overrides the directory, for tests.) The directory is
-//! `0700` and the socket `0600`, so only the user can connect. Messages are
-//! one JSON object per line:
+//! (`KANTOR_SOCKET_DIR` overrides the directory, for tests.) On Linux and
+//! macOS the endpoint is a Unix domain socket; the directory is `0700` and the
+//! socket `0600`, so only the user can connect. On Windows it is a TCP socket
+//! on 127.0.0.1 with an ephemeral port: the `.port` file holds the address and
+//! a random token, and a client must send that token as its first line before
+//! anything else (other local users can reach the port, but can't read the
+//! file in the user's profile). After that, messages are one JSON object per
+//! line on every platform:
 //!
 //! ```text
 //! → {"id": 1, "tool": "list_documents", "args": {}}
@@ -21,8 +27,6 @@
 
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -40,12 +44,17 @@ pub const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_CLIENTS: usize = 8;
 
 const PREFIX: &str = "kantor-";
-const SUFFIX: &str = ".sock";
+const SUFFIX: &str = endpoint::SUFFIX;
 
-/// Where running instances put their sockets.
+pub use endpoint::Stream;
+
+/// Where running instances put their endpoints.
 pub fn socket_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("KANTOR_SOCKET_DIR").filter(|d| !d.is_empty()) {
         return Some(PathBuf::from(dir));
+    }
+    if cfg!(windows) {
+        return kantor_core::session::state_dir().map(|d| d.join("run"));
     }
     let home = std::env::var_os("HOME").map(PathBuf::from);
     if cfg!(target_os = "macos") {
@@ -83,8 +92,8 @@ pub fn sockets_in(dir: &Path) -> Vec<PathBuf> {
 
 /// Connect to `path`; a socket nobody listens on any more (a crashed
 /// instance) is removed.
-pub fn connect(path: &Path) -> io::Result<UnixStream> {
-    match UnixStream::connect(path) {
+pub fn connect(path: &Path) -> io::Result<Stream> {
+    match endpoint::connect(path) {
         Ok(s) => Ok(s),
         Err(e) => {
             if e.kind() == io::ErrorKind::ConnectionRefused {
@@ -152,23 +161,12 @@ impl Drop for Server {
     }
 }
 
-/// Create the private directory for sockets.
-fn make_private_dir(dir: &Path) -> io::Result<()> {
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)?;
-    // An existing directory may have been made with looser permissions.
-    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
-}
-
 /// Start listening in `dir`. Requests arrive on the returned channel.
 pub fn serve(dir: &Path) -> io::Result<(Server, UnboundedReceiver<Request>)> {
-    make_private_dir(dir)?;
+    endpoint::make_private_dir(dir)?;
     let path = dir.join(format!("{PREFIX}{}{SUFFIX}", std::process::id()));
     let _ = fs::remove_file(&path);
-    let listener = UnixListener::bind(&path)?;
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    let listener = endpoint::Listener::bind(&path)?;
     let (tx, rx) = unbounded();
     let own = path.clone();
     let dir = dir.to_path_buf();
@@ -184,10 +182,10 @@ pub fn serve(dir: &Path) -> io::Result<(Server, UnboundedReceiver<Request>)> {
     Ok((Server { path }, rx))
 }
 
-fn accept_loop(listener: UnixListener, tx: UnboundedSender<Request>) {
+fn accept_loop(listener: endpoint::Listener, tx: UnboundedSender<Request>) {
     let clients = Arc::new(AtomicUsize::new(0));
-    for stream in listener.incoming() {
-        let Ok(mut stream) = stream else {
+    loop {
+        let Ok(mut stream) = listener.accept() else {
             continue;
         };
         if clients.load(Ordering::SeqCst) >= MAX_CLIENTS {
@@ -200,10 +198,11 @@ fn accept_loop(listener: UnixListener, tx: UnboundedSender<Request>) {
         }
         clients.fetch_add(1, Ordering::SeqCst);
         let (client_tx, count) = (tx.clone(), clients.clone());
+        let auth = listener.token().to_owned();
         let spawned = std::thread::Builder::new()
             .name("kantor-ipc-client".into())
             .spawn(move || {
-                if let Err(e) = serve_client(stream, &client_tx) {
+                if let Err(e) = serve_client(stream, &client_tx, &auth) {
                     log::debug!("MCP client: {e}");
                 }
                 count.fetch_sub(1, Ordering::SeqCst);
@@ -219,9 +218,24 @@ fn accept_loop(listener: UnixListener, tx: UnboundedSender<Request>) {
 }
 
 /// Answer one client's requests until it disconnects.
-fn serve_client(stream: UnixStream, tx: &UnboundedSender<Request>) -> io::Result<()> {
+fn serve_client(stream: Stream, tx: &UnboundedSender<Request>, token: &str) -> io::Result<()> {
     let mut writer = stream.try_clone()?;
     let mut reader = BufReader::new(stream);
+    if !token.is_empty() {
+        // Windows: the token from the endpoint file comes first, within a few
+        // seconds, or the connection is dropped without a word.
+        reader
+            .get_ref()
+            .set_read_timeout(Some(Duration::from_secs(5)))?;
+        let line = read_line(&mut reader, 256)?.unwrap_or_default();
+        if !endpoint::same_token(line.trim(), token) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "wrong token",
+            ));
+        }
+        reader.get_ref().set_read_timeout(None)?;
+    }
     loop {
         let line = match read_line(&mut reader, MAX_MESSAGE) {
             Ok(Some(line)) => line,
@@ -274,6 +288,145 @@ fn answer(line: &str, tx: &UnboundedSender<Request>) -> Value {
     }
 }
 
+/// Unix domain sockets.
+#[cfg(unix)]
+mod endpoint {
+    use std::fs;
+    use std::io;
+    use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::path::Path;
+
+    pub const SUFFIX: &str = ".sock";
+    pub type Stream = UnixStream;
+
+    /// Create the private directory for sockets.
+    pub fn make_private_dir(dir: &Path) -> io::Result<()> {
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
+        // An existing directory may have been made with looser permissions.
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+    }
+
+    pub struct Listener(UnixListener);
+
+    impl Listener {
+        pub fn bind(path: &Path) -> io::Result<Self> {
+            let listener = UnixListener::bind(path)?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+            Ok(Self(listener))
+        }
+
+        pub fn accept(&self) -> io::Result<Stream> {
+            self.0.accept().map(|(s, _)| s)
+        }
+
+        /// No token: the socket's permissions keep other users out.
+        pub fn token(&self) -> &str {
+            ""
+        }
+    }
+
+    pub fn connect(path: &Path) -> io::Result<Stream> {
+        UnixStream::connect(path)
+    }
+
+    pub fn same_token(_: &str, _: &str) -> bool {
+        true
+    }
+}
+
+/// TCP on 127.0.0.1 plus a token in a file only the user can read (std has
+/// no named pipes or Unix sockets on Windows, and Kantor forbids `unsafe`).
+#[cfg(windows)]
+mod endpoint {
+    use std::fs;
+    use std::io::{self, Write as _};
+    use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+    use std::path::Path;
+    use std::time::Duration;
+
+    pub const SUFFIX: &str = ".port";
+    pub type Stream = TcpStream;
+
+    /// `%LOCALAPPDATA%` is private to the user already (profile ACLs).
+    pub fn make_private_dir(dir: &Path) -> io::Result<()> {
+        fs::create_dir_all(dir)
+    }
+
+    pub struct Listener {
+        listener: TcpListener,
+        token: String,
+    }
+
+    fn random_token() -> io::Result<String> {
+        use ring::rand::SecureRandom as _;
+        let mut bytes = [0u8; 32];
+        ring::rand::SystemRandom::new()
+            .fill(&mut bytes)
+            .map_err(|_| io::Error::other("no random numbers"))?;
+        Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+    }
+
+    impl Listener {
+        /// Listen on an ephemeral loopback port and write `ADDR TOKEN` to
+        /// `path` (through a temporary file, so a client never reads half).
+        pub fn bind(path: &Path) -> io::Result<Self> {
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+            let token = random_token()?;
+            let tmp = path.with_extension("tmp");
+            {
+                let mut f = fs::File::create(&tmp)?;
+                writeln!(f, "{} {token}", listener.local_addr()?)?;
+                f.sync_all()?;
+            }
+            fs::rename(&tmp, path)?;
+            Ok(Self { listener, token })
+        }
+
+        pub fn accept(&self) -> io::Result<Stream> {
+            let (stream, peer) = self.listener.accept()?;
+            if !peer.ip().is_loopback() {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "not local"));
+            }
+            Ok(stream)
+        }
+
+        pub fn token(&self) -> &str {
+            &self.token
+        }
+    }
+
+    pub fn connect(path: &Path) -> io::Result<Stream> {
+        let text = fs::read_to_string(path)?;
+        let mut parts = text.split_whitespace();
+        let addr: SocketAddr = parts
+            .next()
+            .and_then(|a| a.parse().ok())
+            .filter(|a: &SocketAddr| a.ip().is_loopback())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad endpoint file"))?;
+        let token = parts
+            .next()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad endpoint file"))?;
+        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2))?;
+        stream.set_nodelay(true)?;
+        writeln!(stream, "{token}")?;
+        Ok(stream)
+    }
+
+    /// Compare without stopping at the first difference.
+    pub fn same_token(got: &str, want: &str) -> bool {
+        got.len() == want.len()
+            && got
+                .bytes()
+                .zip(want.bytes())
+                .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+                == 0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,10 +448,14 @@ mod tests {
     fn serves_requests_over_the_socket() {
         let dir = tempfile::tempdir().unwrap();
         let (server, mut rx) = serve(dir.path()).unwrap();
-        let mode = fs::metadata(&server.path).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
-        let mode = fs::metadata(dir.path()).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o700);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = fs::metadata(&server.path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+            let mode = fs::metadata(dir.path()).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
         std::thread::spawn(move || {
             futures::executor::block_on(async {
                 while let Some(req) = rx.next().await {
@@ -328,5 +485,27 @@ mod tests {
         let path = server.path.clone();
         drop(server);
         assert!(!path.exists());
+    }
+
+    /// Windows: a client without the endpoint file's token gets nothing.
+    #[cfg(windows)]
+    #[std::prelude::v1::test]
+    fn refuses_clients_without_the_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let (server, _rx) = serve(dir.path()).unwrap();
+        let text = fs::read_to_string(&server.path).unwrap();
+        let addr = text.split_whitespace().next().unwrap();
+        let mut stream = std::net::TcpStream::connect(addr).unwrap();
+        writeln!(stream, "not-the-token").unwrap();
+        writeln!(stream, r#"{{"id":1,"tool":"echo"}}"#).unwrap();
+        let mut reader = BufReader::new(stream);
+        // Closed without an answer.
+        assert!(matches!(
+            read_line(&mut reader, MAX_MESSAGE),
+            Ok(None) | Err(_)
+        ));
+        assert!(endpoint::same_token("abc", "abc"));
+        assert!(!endpoint::same_token("abd", "abc"));
+        assert!(!endpoint::same_token("ab", "abc"));
     }
 }

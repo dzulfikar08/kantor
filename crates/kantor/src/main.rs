@@ -8,6 +8,13 @@
 //! kantor pdf TOOL ...       PDF tools without a window (see cli/pdf.rs)
 //! kantor convert IN OUT     convert without a window (see cli/convert.rs)
 //! ```
+//!
+//! On Windows a release kantor.exe is a GUI program (no console window pops up
+//! when it starts), so in a terminal its output goes nowhere unless redirected.
+//! Terminals run `kantor.com` instead (crates/kantor_console), which `cmd` and
+//! PowerShell pick before kantor.exe for a bare `kantor`.
+
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 extern crate gpui_kit as gpui;
 
@@ -15,9 +22,7 @@ mod actions;
 mod agent;
 mod ai;
 mod cli;
-#[cfg(unix)]
 mod ipc;
-#[cfg(unix)]
 mod mcp;
 mod theme;
 mod workspace;
@@ -78,13 +83,7 @@ fn main() {
     if raw.first().map(String::as_str) == Some("mcp") {
         // stdout carries the protocol; logs go to stderr.
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
-        #[cfg(unix)]
         std::process::exit(mcp::main(&raw[1..]));
-        #[cfg(not(unix))]
-        {
-            eprintln!("kantor mcp: not supported on this platform");
-            std::process::exit(2);
-        }
     }
     if raw.first().map(String::as_str) == Some("convert") {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
@@ -143,7 +142,6 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            #[cfg(unix)]
             start_agent_endpoint(window, workspace.clone(), cx);
             // A downloaded update goes in place when Kantor quits.
             let updating = workspace.clone();
@@ -166,7 +164,6 @@ fn main() {
 
 /// Listen for `kantor mcp` (see [`ipc`]) and run its tool calls on the main
 /// thread against `workspace`. The socket is removed when Kantor quits.
-#[cfg(unix)]
 fn start_agent_endpoint(window: AnyWindowHandle, workspace: Entity<Workspace>, cx: &mut App) {
     use futures::StreamExt as _;
 

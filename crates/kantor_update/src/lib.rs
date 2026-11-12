@@ -6,7 +6,9 @@
 //! stage   download beside the install → size + SHA-256 → unpack → codesign,
 //!         spctl (macOS) → run the new binary's --version
 //! apply   rename the new build over the old one (all or nothing), at quit
-//!         or on "Restart to update"; then relaunch
+//!         or on "Restart to update"; then relaunch. Windows installs from
+//!         Kantor-Setup-*.exe instead run the downloaded installer silently
+//!         once Kantor has exited
 //! ```
 //!
 //! A check sends nothing but the User-Agent (`Kantor/<version> (<os>; <arch>)`).
@@ -24,7 +26,7 @@ pub mod version;
 use std::fmt;
 use std::path::PathBuf;
 
-pub use install::{Staged, apply, discard, relaunch};
+pub use install::{Staged, apply, apply_and_relaunch, clean_leftovers, discard, relaunch};
 pub use manifest::{Asset, Manifest};
 pub use platform::InstallKind;
 pub use state::State;
@@ -258,7 +260,9 @@ pub fn staged_is_current(staged: &Staged, current: &BuildId) -> bool {
         && staged
             .swaps
             .iter()
-            .all(|(new, _)| std::fs::symlink_metadata(new).is_ok())
+            .map(|(new, _)| new)
+            .chain(&staged.installer)
+            .all(|new| std::fs::symlink_metadata(new).is_ok())
 }
 
 #[cfg(test)]

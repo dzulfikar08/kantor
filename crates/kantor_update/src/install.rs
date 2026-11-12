@@ -5,6 +5,13 @@
 //! the new binary. The swap itself is renames on one filesystem, done as a
 //! transaction: every replaced file or bundle is kept until all swaps have
 //! succeeded, and put back if any fails.
+//!
+//! Windows installs made by Kantor-Setup-*.exe don't swap files: the staged
+//! update is the new installer (its SHA-256 checked against the signed
+//! manifest), run silently once Kantor has quit (it waits for this process to
+//! exit), optionally starting Kantor again. A running .exe can't be replaced on
+//! Windows but can be renamed, so file swaps there move the old file aside
+//! first; the leftover is removed on the next start ([`clean_leftovers`]).
 
 use std::fs;
 use std::io::{self, Write};
@@ -31,6 +38,10 @@ pub struct Staged {
     pub swaps: Vec<(PathBuf, PathBuf)>,
     /// Scratch space removed after the swap (or when the update is dropped).
     pub work_dir: Option<PathBuf>,
+    /// Windows installer installs: the downloaded Kantor-Setup-*.exe, run
+    /// silently instead of swapping files.
+    #[serde(default)]
+    pub installer: Option<PathBuf>,
 }
 
 /// Download `asset` to `dest`, checking its size and SHA-256. `dest` is
@@ -177,6 +188,7 @@ pub fn stage(
         kind: kind.clone(),
         swaps,
         work_dir,
+        installer: None,
     };
     match kind {
         InstallKind::Unmanaged => Err(Error::Unmanaged),
@@ -257,6 +269,73 @@ pub fn stage(
                 }
             }
         }
+        InstallKind::WindowsInstaller { dir } => {
+            let work = dir.join(WORK_DIR);
+            let result = (|| {
+                check_writable(dir)?;
+                create_dir(&work)?;
+                let setup = work.join("Kantor-Setup.exe");
+                download_verified(http, asset, &setup, progress)?;
+                Ok(setup)
+            })();
+            match result {
+                Ok(setup) => Ok(Staged {
+                    installer: Some(setup),
+                    ..staged(Vec::new(), Some(work))
+                }),
+                Err(e) => {
+                    let _ = fs::remove_dir_all(&work);
+                    Err(e)
+                }
+            }
+        }
+        InstallKind::WindowsPortable { dir } => {
+            let work = dir.join(WORK_DIR);
+            let result = (|| {
+                create_dir(&work)?;
+                let archive = work.join("download.zip");
+                download_verified(http, asset, &archive, progress)?;
+                let root = unzip(&archive, &work.join("x"), |d| {
+                    d.join("kantor.exe").is_file()
+                })?;
+                let _ = fs::remove_file(&archive);
+                probe_version(
+                    verifier,
+                    &root.join("kantor.exe"),
+                    &["--version"],
+                    &manifest.version,
+                )?;
+                // Every file at the top of the zip (kantor.exe, kantor.com,
+                // the marker, licences); the zip has no subfolders.
+                let swaps: Vec<(PathBuf, PathBuf)> = fs::read_dir(&root)
+                    .map_err(|e| io_err(&root, e))?
+                    .filter_map(Result::ok)
+                    .map(|e| e.path())
+                    .filter(|p| p.is_file())
+                    .map(|p| {
+                        let target = dir.join(p.file_name().unwrap_or_default());
+                        (p, target)
+                    })
+                    .collect();
+                check_writable(dir)?;
+                Ok(swaps)
+            })();
+            match result {
+                Ok(mut swaps) => {
+                    // kantor.exe last: everything else is in place by the
+                    // time the new build could start.
+                    swaps.sort_by_key(|(_, t)| {
+                        t.file_name()
+                            .is_some_and(|n| n.eq_ignore_ascii_case("kantor.exe"))
+                    });
+                    Ok(staged(swaps, Some(work)))
+                }
+                Err(e) => {
+                    let _ = fs::remove_dir_all(&work);
+                    Err(e)
+                }
+            }
+        }
         InstallKind::MacApp { bundle } => {
             let parent = bundle.parent().ok_or(Error::Unmanaged)?;
             let work = parent.join(".Kantor-update");
@@ -288,6 +367,46 @@ pub fn stage(
             }
         }
     }
+}
+
+/// Scratch folder for Windows updates, inside the install folder.
+const WORK_DIR: &str = ".kantor-update";
+
+/// Unpack a .zip into `into` (no tools needed; entries that would land outside
+/// `into` are refused) and return the folder `is_root` accepts: `into` itself
+/// or a top-level folder in it.
+fn unzip(archive: &Path, into: &Path, is_root: impl Fn(&Path) -> bool) -> Result<PathBuf, Error> {
+    let file = fs::File::open(archive).map_err(|e| io_err(archive, e))?;
+    let mut zip = zip::ZipArchive::new(io::BufReader::new(file))
+        .map_err(|e| Error::Io(format!("the update archive is not a zip: {e}")))?;
+    for i in 0..zip.len() {
+        let mut entry = zip
+            .by_index(i)
+            .map_err(|e| Error::Io(format!("reading the update archive: {e}")))?;
+        let rel = entry.enclosed_name().ok_or_else(|| {
+            Error::Io(format!("unsafe path in the update: {:?}", entry.name_raw()))
+        })?;
+        let out = into.join(rel);
+        if entry.is_dir() {
+            fs::create_dir_all(&out).map_err(|e| io_err(&out, e))?;
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
+        }
+        let mut f = create(&out)?;
+        io::copy(&mut entry, &mut f).map_err(|e| io_err(&out, e))?;
+        f.sync_all().map_err(|e| io_err(&out, e))?;
+    }
+    if is_root(into) {
+        return Ok(into.to_path_buf());
+    }
+    fs::read_dir(into)
+        .map_err(|e| io_err(into, e))?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|p| p.is_dir() && is_root(p))
+        .ok_or_else(|| Error::Io("the update archive doesn't hold Kantor".into()))
 }
 
 #[cfg(unix)]
@@ -391,6 +510,19 @@ fn swap_one(new: &Path, target: &Path) -> io::Result<Done> {
                 backup: Some(backup),
             })
         }
+        Ok(_) if cfg!(windows) => {
+            // A running .exe can be renamed but not replaced or deleted:
+            // move the old file aside, then the new one in.
+            fs::rename(target, &backup)?;
+            if let Err(e) = fs::rename(new, target) {
+                fs::rename(&backup, target)?;
+                return Err(e);
+            }
+            Ok(Done {
+                target: target.to_path_buf(),
+                backup: Some(backup),
+            })
+        }
         Ok(_) => {
             // A file: keep a link to the old one, then replace it in one
             // rename, so the path never goes missing.
@@ -450,22 +582,113 @@ pub fn swap_all(swaps: &[(PathBuf, PathBuf)]) -> Result<(), Error> {
         if let Some(b) = d.backup
             && let Err(e) = remove_any(&b)
         {
-            log::warn!("update: couldn't remove {}: {e}", b.display());
+            // Windows: the running kantor.exe; gone on the next start.
+            log::info!("update: couldn't remove {} yet: {e}", b.display());
         }
     }
     Ok(())
 }
 
-/// Swap the staged build in, then drop the scratch space.
+/// At start-up: remove what an applied update left in the install folder
+/// (Windows: the old kantor.exe, which was still running, and the installer
+/// that ran). `staged` is the update still waiting, whose files stay.
+pub fn clean_leftovers(kind: &InstallKind, staged: Option<&Staged>) {
+    let dir = match kind {
+        InstallKind::WindowsInstaller { dir } | InstallKind::WindowsPortable { dir } => dir,
+        _ => return,
+    };
+    let work = dir.join(WORK_DIR);
+    let keep = staged.is_some_and(|s| s.work_dir.as_deref() == Some(work.as_path()));
+    if !keep && work.exists() {
+        let _ = fs::remove_dir_all(&work);
+    }
+    for path in fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+    {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if name.starts_with('.') && name.ends_with(".kantor-old") {
+            let _ = remove_any(&path);
+        }
+    }
+}
+
+/// The silent run of a downloaded Kantor-Setup-*.exe (Inno Setup; see
+/// packaging/windows/kantor.iss): no wizard, no prompts, waits for process
+/// `pid` (this Kantor) to exit before touching files, and with `relaunch`
+/// starts Kantor when done.
+pub fn installer_command(setup: &Path, pid: u32, relaunch: bool) -> Command {
+    let mut c = Command::new(setup);
+    c.args([
+        "/VERYSILENT",
+        "/SUPPRESSMSGBOXES",
+        "/NORESTART",
+        "/NOCANCEL",
+        "/SP-",
+    ])
+    .arg(format!("/WAITPID={pid}"));
+    if relaunch {
+        c.arg("/RELAUNCH=1");
+    }
+    c
+}
+
+fn run_installer(setup: &Path, relaunch: bool) -> Result<(), Error> {
+    let mut cmd = installer_command(setup, std::process::id(), relaunch);
+    detach(&mut cmd);
+    cmd.spawn()
+        .map(drop)
+        .map_err(|e| Error::Io(format!("can't start the installer: {e}")))
+}
+
+/// Started on its own: no inherited stdio, not in this process's group (and
+/// on Windows no console), so it outlives Kantor quitting.
+fn detach(cmd: &mut Command) {
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        cmd.creation_flags(0x0000_0008 | 0x0000_0200);
+    }
+}
+
+/// Swap the staged build in, then drop the scratch space. A Windows
+/// installer update starts the installer, which finishes once Kantor exits.
 pub fn apply(staged: &Staged) -> Result<(), Error> {
+    if let Some(setup) = &staged.installer {
+        // Its folder goes on the next start: the installer runs from it.
+        return run_installer(setup, false);
+    }
     swap_all(&staged.swaps)?;
     discard(staged);
     Ok(())
 }
 
+/// [`apply`], then start the new build ("Restart to update").
+pub fn apply_and_relaunch(staged: &Staged) -> Result<(), Error> {
+    if let Some(setup) = &staged.installer {
+        return run_installer(setup, true);
+    }
+    apply(staged)?;
+    if let Err(e) = relaunch(&staged.kind) {
+        log::error!("update: installed, but relaunching failed: {e}");
+    }
+    Ok(())
+}
+
 /// Remove whatever is left of a staged update.
 pub fn discard(staged: &Staged) {
-    for (new, _) in &staged.swaps {
+    for new in staged.swaps.iter().map(|(n, _)| n).chain(&staged.installer) {
         let _ = remove_any(new);
     }
     if let Some(work) = &staged.work_dir {
@@ -490,18 +713,14 @@ pub fn relaunch(kind: &InstallKind) -> io::Result<()> {
             c.arg("-n").arg(bundle);
             c
         }
+        InstallKind::WindowsInstaller { dir } | InstallKind::WindowsPortable { dir } => {
+            Command::new(dir.join("kantor.exe"))
+        }
         InstallKind::Unmanaged => {
             return Err(io::Error::other("not an updatable install"));
         }
     };
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt as _;
-        cmd.process_group(0);
-    }
+    detach(&mut cmd);
     cmd.spawn().map(drop)
 }
 
@@ -516,6 +735,75 @@ mod tests {
 
     fn read(path: &Path) -> String {
         fs::read_to_string(path).unwrap()
+    }
+
+    #[test]
+    fn silent_installer_arguments() {
+        let c = installer_command(Path::new(r"C:\K\.kantor-update\Kantor-Setup.exe"), 42, true);
+        let args: Vec<_> = c
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "/VERYSILENT",
+                "/SUPPRESSMSGBOXES",
+                "/NORESTART",
+                "/NOCANCEL",
+                "/SP-",
+                "/WAITPID=42",
+                "/RELAUNCH=1"
+            ]
+        );
+        let c = installer_command(Path::new("setup.exe"), 7, false);
+        assert!(!c.get_args().any(|a| a == "/RELAUNCH=1"));
+    }
+
+    #[test]
+    fn unzip_refuses_paths_outside() {
+        let d = tempfile::tempdir().unwrap();
+        let archive = d.path().join("evil.zip");
+        {
+            let mut z = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+            let opts = zip::write::SimpleFileOptions::default();
+            z.start_file("../escaped.txt", opts).unwrap();
+            z.write_all(b"x").unwrap();
+            z.finish().unwrap();
+        }
+        let into = d.path().join("x");
+        assert!(unzip(&archive, &into, |_| true).is_err());
+        assert!(!d.path().join("escaped.txt").exists());
+    }
+
+    #[test]
+    fn leftovers_are_cleaned() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path();
+        write(&p.join("kantor.exe"), "new");
+        write(&p.join(".kantor.exe.kantor-old"), "old");
+        write(&p.join(".kantor-update/Kantor-Setup.exe"), "setup");
+        write(&p.join("notes.txt"), "mine");
+        let kind = InstallKind::WindowsInstaller {
+            dir: p.to_path_buf(),
+        };
+        clean_leftovers(&kind, None);
+        assert!(!p.join(".kantor.exe.kantor-old").exists());
+        assert!(!p.join(".kantor-update").exists());
+        assert_eq!(read(&p.join("notes.txt")), "mine");
+        // A staged update's folder stays.
+        write(&p.join(".kantor-update/Kantor-Setup.exe"), "setup");
+        let staged = Staged {
+            version: "9.9.9".into(),
+            build: 0,
+            notes_url: String::new(),
+            kind: kind.clone(),
+            swaps: Vec::new(),
+            work_dir: Some(p.join(".kantor-update")),
+            installer: Some(p.join(".kantor-update/Kantor-Setup.exe")),
+        };
+        clean_leftovers(&kind, Some(&staged));
+        assert!(p.join(".kantor-update/Kantor-Setup.exe").exists());
     }
 
     #[test]

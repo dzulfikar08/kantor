@@ -1,5 +1,5 @@
-//! API keys: in the OS keychain (macOS Keychain, Secret Service on Linux),
-//! never in `settings.toml`, never logged.
+//! API keys: in the OS keychain (macOS Keychain, Secret Service on Linux,
+//! Windows Credential Manager), never in `settings.toml`, never logged.
 //!
 //! When no keychain is available (no Secret Service running, e.g. a bare
 //! window manager without gnome-keyring/KWallet), keys fall back to
@@ -98,7 +98,14 @@ fn platform_store() -> Result<std::sync::Arc<keyring_core::CredentialStore>, Str
         .map_err(|e| e.to_string())
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(windows)]
+fn platform_store() -> Result<std::sync::Arc<keyring_core::CredentialStore>, String> {
+    windows_native_keyring_store::Store::new()
+        .map(|s| s as std::sync::Arc<keyring_core::CredentialStore>)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn platform_store() -> Result<std::sync::Arc<keyring_core::CredentialStore>, String> {
     Err("no keychain support on this platform".into())
 }

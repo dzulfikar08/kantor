@@ -68,8 +68,11 @@ pub struct Session {
 pub const MAX_RECENT: usize = 12;
 
 /// `$XDG_STATE_HOME/kantor` (default `~/.local/state/kantor`): the session,
-/// the update checker's state.
+/// the update checker's state. On Windows `%LOCALAPPDATA%\Kantor` (see [`crate::dirs`]).
 pub fn state_dir() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return crate::dirs::windows_state_dir();
+    }
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
