@@ -21,6 +21,7 @@ mod pivot;
 mod pivot_edit;
 mod preserve;
 mod print;
+mod recovery;
 mod rows;
 mod shift;
 mod sort;
@@ -29,6 +30,7 @@ mod validation;
 
 pub use import::SourceFormat;
 pub use preserve::package_problems;
+pub use recovery::{XlsxOutput, XlsxSnapshot, write_file_atomic};
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -201,6 +203,7 @@ struct Origin {
 const KEEP_IN_MEMORY: u64 = 4 * 1024 * 1024;
 
 /// Where the original package for part preservation comes from.
+#[derive(Clone)]
 enum XlsxSource {
     Bytes(Vec<u8>),
     /// A large file, read again at save. `len` and `modified` are checked so a
@@ -213,6 +216,18 @@ enum XlsxSource {
 }
 
 impl XlsxSource {
+    /// The source after writing `bytes` to `path`: the bytes themselves, or
+    /// for a large file the file.
+    fn kept(path: &Path, bytes: Vec<u8>) -> Self {
+        if bytes.len() as u64 <= KEEP_IN_MEMORY {
+            return XlsxSource::Bytes(bytes);
+        }
+        match fs::metadata(path) {
+            Ok(meta) => XlsxSource::file(path, &meta),
+            Err(_) => XlsxSource::Bytes(bytes),
+        }
+    }
+
     fn file(path: &Path, meta: &fs::Metadata) -> Self {
         XlsxSource::File {
             path: path.to_path_buf(),
@@ -632,15 +647,7 @@ impl Workbook {
         let mut xlsx = self.origin.xlsx.take();
         let format = match SourceFormat::from_extension(ext) {
             Some(SourceFormat::Xlsx) => {
-                let written = save_xlsx_to_writer(self.model.get_model(), Cursor::new(Vec::new()))
-                    .map_err(|e| anyhow!("writing xlsx: {e}"));
-                let written = match written {
-                    Ok(w) => w.into_inner(),
-                    Err(e) => {
-                        self.origin.xlsx = xlsx;
-                        return Err(e);
-                    }
-                };
+                let parts = self.xlsx_parts(self.has_pending());
                 let mut notes = Vec::new();
                 let original = xlsx.as_ref().and_then(|s| match s.bytes() {
                     Ok(b) => Some(b),
@@ -649,56 +656,15 @@ impl Workbook {
                         None
                     }
                 });
-                // Values left stale by manual calculation: Excel recalculates.
-                let stale = self.needs_recalc() || self.has_pending();
-                let layout = self.history.layout();
-                let moves = self.origin.xlsx_layout.moves_to(&layout);
-                let model = self.model.get_model();
-                let cell_text = |sheet_id: u32, row: u32, col: u32| {
-                    model
-                        .workbook
-                        .worksheets
-                        .iter()
-                        .position(|w| w.sheet_id == sheet_id)
-                        .and_then(|i| {
-                            model
-                                .get_formatted_cell_value(i as u32, row as i32 + 1, col as i32 + 1)
-                                .ok()
-                        })
-                        .unwrap_or_default()
-                };
-                let table_now = |name: &str| {
-                    let t =
-                        ironcalc_base::kantor_tables::find_table_pub(&model.workbook.tables, name)?;
-                    let sheet_id = model
-                        .workbook
-                        .worksheets
-                        .iter()
-                        .find(|w| w.name == t.sheet_name)?
-                        .sheet_id;
-                    Some(preserve::TableNow {
-                        sheet_id,
-                        reference: t.reference.clone(),
-                        auto_filter: t.kantor_auto_filter.clone(),
-                        totals_rows: t.totals_row_count,
-                        columns: t.columns.iter().map(|c| (c.id, c.name.clone())).collect(),
-                    })
-                };
-                let drawings = self
-                    .drawings
-                    .save_edits(&self.history.drawing_edits(), &layout);
-                let pivots = self.pivot_save();
-                let ctx = preserve::Context {
-                    pivots: &pivots,
-                    tabs: &self.tab_colors(),
-                    full_calc: stale,
-                    moves: &moves,
-                    cell_text: &cell_text,
-                    tables: &table_now,
-                    drawings: &drawings,
-                };
-                let finished = preserve::finish(written, original.as_deref(), &ctx);
+                let finished = build_xlsx(self.model.get_model(), original.as_deref(), &parts);
                 drop(original);
+                let finished = match finished {
+                    Ok(f) => f,
+                    Err(e) => {
+                        self.origin.xlsx = xlsx;
+                        return Err(e);
+                    }
+                };
                 notes.extend(finished.notes);
                 let pivots_saved = finished.pivots;
                 for note in &notes {
@@ -711,14 +677,7 @@ impl Workbook {
                 }
                 self.save_notes = notes;
                 self.pivots_saved(&pivots_saved);
-                xlsx = Some(if bytes.len() as u64 <= KEEP_IN_MEMORY {
-                    XlsxSource::Bytes(bytes)
-                } else {
-                    match fs::metadata(path) {
-                        Ok(meta) => XlsxSource::file(path, &meta),
-                        Err(_) => XlsxSource::Bytes(bytes),
-                    }
-                });
+                xlsx = Some(XlsxSource::kept(path, bytes));
                 SourceFormat::Xlsx
             }
             Some(SourceFormat::Csv { delimiter }) => {
@@ -1204,22 +1163,102 @@ impl Workbook {
 
     /// Whether any formula has no value yet (see [`Workbook::is_pending`]).
     fn has_pending(&self) -> bool {
-        self.calc.mode == CalcMode::Manual
-            && self.model.get_model().workbook.worksheets.iter().any(|ws| {
-                ws.sheet_data.cells().any(|(_, _, cell)| {
-                    matches!(
-                        *cell,
-                        Cell::CellFormula {
-                            v: FormulaValue::Unevaluated,
-                            ..
-                        } | Cell::ArrayFormula {
-                            v: FormulaValue::Unevaluated,
-                            ..
-                        }
-                    )
-                })
-            })
+        self.calc.mode == CalcMode::Manual && any_unevaluated(&self.model.get_model().workbook)
     }
+
+    /// What an `.xlsx` save reads from the workbook besides its cells.
+    /// `pending`: formulas without a value (manual calculation).
+    fn xlsx_parts(&self, pending: bool) -> XlsxParts {
+        let layout = self.history.layout();
+        XlsxParts {
+            pivots: self.pivot_save(),
+            tabs: self.tab_colors(),
+            // Values left stale by manual calculation: Excel recalculates.
+            full_calc: self.needs_recalc() || pending,
+            moves: self.origin.xlsx_layout.moves_to(&layout),
+            drawings: self
+                .drawings
+                .save_edits(&self.history.drawing_edits(), &layout),
+        }
+    }
+}
+
+/// Whether any formula cell has no value yet.
+fn any_unevaluated(workbook: &ironcalc_base::types::Workbook) -> bool {
+    workbook.worksheets.iter().any(|ws| {
+        ws.sheet_data.cells().any(|(_, _, cell)| {
+            matches!(
+                *cell,
+                Cell::CellFormula {
+                    v: FormulaValue::Unevaluated,
+                    ..
+                } | Cell::ArrayFormula {
+                    v: FormulaValue::Unevaluated,
+                    ..
+                }
+            )
+        })
+    })
+}
+
+/// See [`Workbook::xlsx_parts`].
+struct XlsxParts {
+    pivots: preserve::PivotSave,
+    tabs: preserve::TabColors,
+    full_calc: bool,
+    moves: shift::Moves,
+    drawings: HashMap<u32, Vec<drawing::SaveEdit>>,
+}
+
+/// IronCalc's `.xlsx` of `model`, with the parts of `original` it doesn't
+/// write carried over (see the `preserve` module).
+fn build_xlsx(
+    model: &Model,
+    original: Option<&[u8]>,
+    parts: &XlsxParts,
+) -> Result<preserve::Finished> {
+    let written = save_xlsx_to_writer(model, Cursor::new(Vec::new()))
+        .map_err(|e| anyhow!("writing xlsx: {e}"))?
+        .into_inner();
+    let cell_text = |sheet_id: u32, row: u32, col: u32| {
+        model
+            .workbook
+            .worksheets
+            .iter()
+            .position(|w| w.sheet_id == sheet_id)
+            .and_then(|i| {
+                model
+                    .get_formatted_cell_value(i as u32, row as i32 + 1, col as i32 + 1)
+                    .ok()
+            })
+            .unwrap_or_default()
+    };
+    let table_now = |name: &str| {
+        let t = ironcalc_base::kantor_tables::find_table_pub(&model.workbook.tables, name)?;
+        let sheet_id = model
+            .workbook
+            .worksheets
+            .iter()
+            .find(|w| w.name == t.sheet_name)?
+            .sheet_id;
+        Some(preserve::TableNow {
+            sheet_id,
+            reference: t.reference.clone(),
+            auto_filter: t.kantor_auto_filter.clone(),
+            totals_rows: t.totals_row_count,
+            columns: t.columns.iter().map(|c| (c.id, c.name.clone())).collect(),
+        })
+    };
+    let ctx = preserve::Context {
+        pivots: &parts.pivots,
+        tabs: &parts.tabs,
+        full_calc: parts.full_calc,
+        moves: &parts.moves,
+        cell_text: &cell_text,
+        tables: &table_now,
+        drawings: &parts.drawings,
+    };
+    Ok(preserve::finish(written, original, &ctx))
 }
 
 /// Formula cells in all sheets (one pass over the cells, no evaluation).

@@ -93,6 +93,8 @@ pub(crate) struct History {
     next_id: u64,
     saved: Option<u64>,
     sealed: bool,
+    /// Counts edits, undos and redos (see `Presentation::revision`).
+    changes: u64,
 }
 
 impl History {
@@ -102,6 +104,15 @@ impl History {
 
     pub fn is_dirty(&self) -> bool {
         self.top() != self.saved
+    }
+
+    pub fn changes(&self) -> u64 {
+        self.changes
+    }
+
+    /// Unsaved whatever the undo stack says (a restored recovery copy).
+    pub fn mark_modified(&mut self) {
+        self.saved = Some(u64::MAX);
     }
 
     pub fn mark_saved(&mut self) {
@@ -115,6 +126,7 @@ impl History {
     }
 
     pub fn push(&mut self, mut cmd: Command, word_boundary: bool) {
+        self.changes += 1;
         self.redo.clear();
         let sealed = std::mem::take(&mut self.sealed);
         if let Some(last) = self.undo.last_mut()
@@ -140,6 +152,7 @@ impl History {
 
     pub fn undo(&mut self) -> Option<&Command> {
         let cmd = self.undo.pop()?;
+        self.changes += 1;
         self.sealed = true;
         self.redo.push(cmd);
         self.redo.last()
@@ -147,6 +160,7 @@ impl History {
 
     pub fn redo(&mut self) -> Option<&Command> {
         let cmd = self.redo.pop()?;
+        self.changes += 1;
         self.sealed = true;
         self.undo.push(cmd);
         self.undo.last()
@@ -159,6 +173,7 @@ impl History {
 
     /// Drop the steps recorded after `depth` (an aborted transaction).
     pub fn truncate(&mut self, depth: usize) {
+        self.changes += 1;
         self.undo.truncate(depth);
     }
 

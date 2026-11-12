@@ -67,6 +67,32 @@ impl SourceFormat {
     pub fn is_imported(self) -> bool {
         matches!(self, Self::Ods | Self::Xls | Self::Xlsb)
     }
+
+    /// A short name for storing (recovery manifests): `xlsx`, `csv:59`, `ods`.
+    pub fn tag(self) -> String {
+        match self {
+            Self::New => "new".into(),
+            Self::Xlsx => "xlsx".into(),
+            Self::Csv { delimiter } => format!("csv:{delimiter}"),
+            Self::Ods => "ods".into(),
+            Self::Xls => "xls".into(),
+            Self::Xlsb => "xlsb".into(),
+        }
+    }
+
+    /// The format [`Self::tag`] names.
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        Some(match tag {
+            "new" => Self::New,
+            "xlsx" => Self::Xlsx,
+            "ods" => Self::Ods,
+            "xls" => Self::Xls,
+            "xlsb" => Self::Xlsb,
+            _ => Self::Csv {
+                delimiter: tag.strip_prefix("csv:")?.parse().ok()?,
+            },
+        })
+    }
 }
 
 fn empty_model(name: &'static str) -> Result<Model<'static>> {
