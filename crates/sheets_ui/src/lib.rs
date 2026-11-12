@@ -56,6 +56,7 @@ pub mod pivot;
 mod point;
 mod popup_list;
 mod print;
+mod recovery;
 mod row_heights;
 mod row_layout;
 // Upstream code, kept close to GPUI Kit's so it can be compared.
@@ -942,6 +943,12 @@ pub struct SheetsView {
     pivot_dialog: Option<pivot::InsertDialog>,
     /// The PivotTable Fields panel beside the grid.
     pivot_panel: Option<pivot::FieldPanel>,
+    /// A restored recovery copy's original: Save asks before overwriting it
+    /// if it changed on disk (see [`recovery`]).
+    disk_guard: Option<kantor_ui::disk_guard::DiskGuard>,
+    /// An autosave written while the workbook was in the background, to
+    /// record when it's back.
+    pending_autosave: Option<(PathBuf, sheets_engine::XlsxOutput)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1003,6 +1010,8 @@ impl SheetsView {
             drawings: Rc::default(),
             pivot_dialog: None,
             pivot_panel: None,
+            disk_guard: None,
+            pending_autosave: None,
             _subscriptions: subscriptions,
         };
         this.select_cell(0, 0, cx);
@@ -1892,8 +1901,18 @@ impl SheetsView {
         if self.blocked(cx) {
             return;
         }
-        if self.table.read(cx).delegate().book.path().is_none() {
+        let Some(target) = self
+            .table
+            .read(cx)
+            .delegate()
+            .book
+            .path()
+            .map(|p| p.to_path_buf())
+        else {
             self.save_as(&SaveAs, window, cx);
+            return;
+        };
+        if self.ask_before_overwrite(&target, window, cx) {
             return;
         }
         let result = self
@@ -1964,6 +1983,9 @@ impl SheetsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if result.is_ok() {
+            self.disk_guard = None;
+        }
         self.status = match result {
             Ok(()) => {
                 let book = &self.table.read(cx).delegate().book;

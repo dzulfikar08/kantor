@@ -277,6 +277,9 @@ const ROTATE_GAP: Pixels = SPACE_8;
 /// A Slides document view.
 pub struct SlidesView {
     pres: Presentation,
+    /// A restored recovery copy's original: Save asks before overwriting it
+    /// if it changed on disk.
+    disk_guard: Option<kantor_ui::disk_guard::DiskGuard>,
     /// Name shown while the presentation has no file (`Untitled 2.pptx`), given
     /// by the shell so new documents are numbered across the session.
     untitled_name: Option<String>,
@@ -333,11 +336,28 @@ impl SlidesView {
             }
             None => (Presentation::new(), String::new()),
         };
+        Self::with_presentation(pres, status, window, cx)
+    }
+
+    /// A pane showing a presentation restored from a recovery copy (see
+    /// `kantor_core::recovery`), unsaved.
+    pub fn new_recovered(pres: Presentation, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let status = format!("Restored unsaved changes to {}", pres.title());
+        Self::with_presentation(pres, status, window, cx)
+    }
+
+    fn with_presentation(
+        pres: Presentation,
+        status: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let (engine, bridge) = docs_ui::shared_text(cx);
         let find = find::SlidesFind::new(window, cx);
         let notes = notes::NotesPane::new(window, cx);
         Self {
             pres,
+            disk_guard: None,
             untitled_name: None,
             current: 0,
             selected: None,
@@ -1276,6 +1296,32 @@ impl SlidesView {
         self.pres.is_dirty()
     }
 
+    /// Changes with every edit, undo and redo.
+    pub fn revision(&self, _: &App) -> Option<u64> {
+        Some(self.pres.revision())
+    }
+
+    /// The presentation as Save would write it (for a recovery copy), and
+    /// what the original has that Kantor can't keep.
+    pub fn recovery_bytes(&self, _: &App) -> (anyhow::Result<Vec<u8>>, Vec<String>) {
+        (self.pres.to_bytes(), self.pres.unsupported_content())
+    }
+
+    /// Whether autosave may save it: it has a file it can be saved to
+    /// as is, unchanged on disk by others.
+    pub fn can_autosave(&self, _: &App) -> bool {
+        !self.pres.needs_save_as()
+            && !self
+                .pres
+                .path()
+                .is_some_and(|p| self.disk_guard.as_ref().is_some_and(|g| g.changed(p)))
+    }
+
+    /// Ask before Save overwrites `guard`'s file if it changed on disk.
+    pub fn set_disk_guard(&mut self, guard: Option<kantor_ui::disk_guard::DiskGuard>) {
+        self.disk_guard = guard;
+    }
+
     pub fn title(&self, _: &App) -> String {
         let dirty = if self.pres.is_dirty() { "• " } else { "" };
         format!("{dirty}{} — Kantor Slides", self.name())
@@ -1343,6 +1389,26 @@ impl SlidesView {
     pub fn save_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pres.needs_save_as() {
             self.save_as_task(window, cx).detach();
+            return;
+        }
+        if let Some(target) = self.pres.path().map(|p| p.to_path_buf())
+            && self.disk_guard.as_ref().is_some_and(|g| g.changed(&target))
+        {
+            let view = cx.entity().downgrade();
+            kantor_ui::disk_guard::confirm_overwrite(
+                &self.name(),
+                window,
+                cx,
+                move |choice, window, cx| {
+                    let _ = view.update(cx, |this, cx| match choice {
+                        kantor_ui::disk_guard::Overwrite::Replace => {
+                            this.disk_guard = None;
+                            this.save_doc(window, cx);
+                        }
+                        kantor_ui::disk_guard::Overwrite::SaveAs => this.save_doc_as(window, cx),
+                    });
+                },
+            );
             return;
         }
         let result = self.pres.save();
@@ -1470,6 +1536,9 @@ impl SlidesView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if result.is_ok() {
+            self.disk_guard = None;
+        }
         self.status = match result {
             Ok(()) => format!("Saved {}", self.pres.title()).into(),
             Err(err) => format!("Save failed: {err:#}").into(),

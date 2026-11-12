@@ -8,6 +8,7 @@ pub mod ai;
 pub mod assets;
 pub mod cached;
 pub mod components;
+pub mod disk_guard;
 pub mod find_bar;
 pub mod fonts;
 pub mod keys;

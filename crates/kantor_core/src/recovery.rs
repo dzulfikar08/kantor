@@ -240,7 +240,7 @@ impl Store {
             }
         }
         scan.found
-            .sort_by(|a, b| b.manifest.saved_at.cmp(&a.manifest.saved_at));
+            .sort_by_key(|f| std::cmp::Reverse(f.manifest.saved_at));
         scan
     }
 
@@ -289,7 +289,7 @@ pub struct Ticket(u64);
 pub struct Slot {
     id: String,
     dir: PathBuf,
-    lock: Option<File>,
+    lock: Mutex<Option<File>>,
     next: AtomicU64,
     cleared_below: AtomicU64,
     current: Mutex<Option<Current>>,
@@ -306,7 +306,7 @@ impl Slot {
         Self {
             id,
             dir,
-            lock: Some(lock),
+            lock: Mutex::new(Some(lock)),
             // Ticket 0 is the copy the slot was claimed with.
             next: AtomicU64::new(1),
             cleared_below: AtomicU64::new(0),
@@ -408,7 +408,7 @@ impl Slot {
     }
 
     /// Delete the slot and its copy.
-    pub fn remove(mut self) -> io::Result<()> {
+    pub fn remove(&self) -> io::Result<()> {
         self.mark_cleared();
         {
             let _current = self.current();
@@ -419,7 +419,7 @@ impl Slot {
             }
         }
         // Windows can't delete a file that is open.
-        drop(self.lock.take());
+        drop(self.lock.lock().unwrap_or_else(|e| e.into_inner()).take());
         match fs::remove_dir_all(&self.dir) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
             _ => Ok(()),

@@ -10,6 +10,32 @@ use slides_ui::SlidesView;
 
 use super::AppKind;
 
+/// A document's state for a recovery copy, taken on the UI thread; turned
+/// into bytes with [`Snapshot::render`] on any thread.
+pub(super) enum Snapshot {
+    /// A workbook copy, written as `.xlsx` in the background (slow for big
+    /// workbooks).
+    Sheets(Box<sheets_engine::XlsxSnapshot>),
+    /// A document or presentation, already serialised (quick).
+    Bytes(anyhow::Result<Vec<u8>>),
+}
+
+impl Snapshot {
+    pub fn render(self) -> anyhow::Result<Vec<u8>> {
+        match self {
+            Self::Sheets(s) => Ok(s.render()?.bytes),
+            Self::Bytes(b) => b,
+        }
+    }
+}
+
+/// What a recovery copy records about the document besides its bytes.
+pub(super) struct SnapshotInfo {
+    pub original: Option<PathBuf>,
+    pub source_format: Option<String>,
+    pub unsupported: Vec<String>,
+}
+
 /// A document view: Sheets, Docs or Slides.
 #[derive(Clone)]
 pub(super) enum DocView {
@@ -81,6 +107,129 @@ impl DocView {
             AppKind::Docs => Self::Docs(cx.new(|cx| DocsView::new(file, window, cx))),
             AppKind::Slides => Self::Slides(cx.new(|cx| SlidesView::new(file, window, cx))),
         })
+    }
+
+    /// A view of a recovery copy found after a crash (see
+    /// `kantor_core::recovery`): the original document, unsaved. Docs and
+    /// Slides read it here; Sheets in the background (errors show in the pane).
+    pub fn new_recovered(
+        found: &kantor_core::recovery::Found,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> anyhow::Result<Self> {
+        use kantor_core::recovery::App as RApp;
+        let doc = &found.manifest.doc;
+        Ok(match doc.app {
+            RApp::Sheets => {
+                let (copy, original, format, name) = (
+                    found.copy.clone(),
+                    doc.original.clone(),
+                    doc.source_format.clone(),
+                    doc.name.clone(),
+                );
+                Self::Sheets(
+                    cx.new(|cx| {
+                        SheetsView::new_recovered(copy, original, format, name, window, cx)
+                    }),
+                )
+            }
+            RApp::Docs => {
+                let bytes = std::fs::read(&found.copy)?;
+                let d = docs_engine::Document::open_recovered(
+                    bytes,
+                    doc.original.clone(),
+                    doc.unsupported.clone(),
+                )?;
+                Self::Docs(cx.new(|cx| DocsView::new_recovered(d, window, cx)))
+            }
+            RApp::Slides => {
+                let bytes = std::fs::read(&found.copy)?;
+                let p = slides_engine::Presentation::open_recovered(
+                    bytes,
+                    doc.original.clone(),
+                    doc.unsupported.clone(),
+                )?;
+                Self::Slides(cx.new(|cx| SlidesView::new_recovered(p, window, cx)))
+            }
+        })
+    }
+
+    /// Identifies the document's state; `None` while it can't be read
+    /// (a workbook opening or recalculating in the background).
+    pub fn revision(&self, cx: &App) -> Option<u64> {
+        both!(self, cx, |v| v.revision(cx))
+    }
+
+    /// The document's state for a recovery copy (`None` while busy).
+    pub fn recovery_snapshot(&self, cx: &App) -> Option<(Snapshot, SnapshotInfo)> {
+        match self {
+            Self::Sheets(e) => {
+                let (snap, original, format) = e.read(cx).recovery_snapshot(cx)?;
+                Some((
+                    Snapshot::Sheets(Box::new(snap)),
+                    SnapshotInfo {
+                        original,
+                        source_format: Some(format),
+                        unsupported: Vec::new(),
+                    },
+                ))
+            }
+            Self::Docs(e) => {
+                let (bytes, unsupported) = e.read(cx).recovery_bytes(cx);
+                Some((
+                    Snapshot::Bytes(bytes),
+                    SnapshotInfo {
+                        original: self.path(cx),
+                        source_format: None,
+                        unsupported,
+                    },
+                ))
+            }
+            Self::Slides(e) => {
+                let (bytes, unsupported) = e.read(cx).recovery_bytes(cx);
+                Some((
+                    Snapshot::Bytes(bytes),
+                    SnapshotInfo {
+                        original: self.path(cx),
+                        source_format: None,
+                        unsupported,
+                    },
+                ))
+            }
+        }
+    }
+
+    /// Whether autosave may write the document to its own file now.
+    pub fn can_autosave(&self, cx: &App) -> bool {
+        both!(self, cx, |v| v.can_autosave(cx))
+    }
+
+    /// Save to the document's own file (see [`Self::can_autosave`]). Sheets
+    /// writes in the background; Docs and Slides are quick and save here.
+    pub fn autosave(&self, window: &mut Window, cx: &mut App) -> Task<anyhow::Result<()>> {
+        if !self.can_autosave(cx) {
+            return Task::ready(Err(anyhow::anyhow!("not autosaved")));
+        }
+        match self {
+            Self::Sheets(e) => e.update(cx, |v, cx| v.autosave(window, cx)),
+            _ => {
+                self.save(window, cx);
+                Task::ready(if self.is_dirty(cx) {
+                    Err(anyhow::anyhow!("{}", self.status(cx)))
+                } else {
+                    Ok(())
+                })
+            }
+        }
+    }
+
+    /// Ask before Save overwrites the guarded file if it changed on disk.
+    pub fn set_disk_guard(&self, guard: Option<kantor_ui::disk_guard::DiskGuard>, cx: &mut App) {
+        match self {
+            Self::Sheets(e) => e.update(cx, |v, _| v.set_disk_guard(guard)),
+            Self::Docs(e) => e.update(cx, |v, _| v.set_disk_guard(guard)),
+            Self::Slides(e) => e.update(cx, |v, _| v.set_disk_guard(guard)),
+        }
     }
 
     pub fn kind(&self) -> AppKind {

@@ -1256,6 +1256,18 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.open_palette(PaletteMode::fonts(cx), window, cx),
     },
     Command {
+        title: "Turn Autosave On or Off",
+        detail: "Saves .xlsx/.docx/.pptx files with a name after you stop typing",
+        keys: "",
+        run: |ws, _, cx| ws.toggle_autosave(cx),
+    },
+    Command {
+        title: "Recover Unsaved Work…",
+        detail: "Documents left unsaved when Kantor closed unexpectedly",
+        keys: "",
+        run: |ws, window, cx| ws.reoffer_recovery(window, cx),
+    },
+    Command {
         title: "Check for Updates…",
         detail: concat!(
             "Kantor ",

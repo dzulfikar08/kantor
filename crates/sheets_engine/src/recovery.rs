@@ -337,6 +337,18 @@ mod tests {
                 out.bytes.len() / 1_000_000
             );
         }
+        let snap = book.xlsx_snapshot();
+        let t = Instant::now();
+        let model = Model::from_workbook(snap.workbook, LANGUAGE).unwrap();
+        eprintln!("  of which re-parsing formulas {:.2?}", t.elapsed());
+        let t = Instant::now();
+        let original = snap.original.as_ref().map(|s| s.bytes().unwrap());
+        build_xlsx(&model, original.as_deref(), &snap.parts).unwrap();
+        eprintln!("  of which writing the xlsx {:.2?}", t.elapsed());
+        let t = Instant::now();
+        book.save_as(std::env::temp_dir().join("kantor-save.xlsx"))
+            .unwrap();
+        eprintln!("a normal Save takes {:.2?} (UI thread)", t.elapsed());
         let t = Instant::now();
         let copy = std::env::temp_dir().join("kantor-snap.xlsx");
         let back = Workbook::open_recovered(&copy, Some(Path::new(&path)), Some("xlsx")).unwrap();

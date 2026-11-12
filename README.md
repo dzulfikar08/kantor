@@ -199,10 +199,50 @@ Kantor downloaded from the site, the GitHub releases or the install script keeps
 
 For testing, `KANTOR_UPDATE_URL` replaces the manifest URL and `KANTOR_UPDATE_CURRENT=0.1.0` makes Kantor compare as if it were that version; signatures, checksums and code-signing checks still apply.
 
+## Your work is safe
+
+- **Recovery copies, always on.** While a document has unsaved changes, Kantor keeps a copy of it
+  in your data folder: `~/.local/share/kantor/recovery` (Linux), `~/Library/Application
+  Support/Kantor/recovery` (macOS), `%LOCALAPPDATA%\Kantor\recovery` (Windows). A copy is made two
+  minutes after the first unsaved change, at a pause in typing, and whenever you switch to another
+  window. Copies are written in the background in the document's own format (`.xlsx`, `.docx`,
+  `.pptx`), never over your file, and are deleted when you save, choose *Don't Save*, or quit.
+- **After a crash or a power cut** Kantor shows *Recover unsaved work* when it starts: each
+  document with the time of its copy. *Restore* opens it with your changes, still unsaved and still
+  named after the original file; *Save* writes the original, and asks first if that file was
+  changed by someone else in the meantime. *Discard* deletes the copy. *Not Now* keeps the copies
+  for later (`Ctrl K` → *Recover Unsaved Work…*).
+- **Autosave (off by default).** Turn it on with the *Autosave* switch in the status bar, `Ctrl K` →
+  *Turn Autosave On or Off*, or in `~/.config/kantor/settings.toml`:
+
+  ```toml
+  [autosave]
+  enabled = true
+  idle_seconds = 30   # save this long after your last change (at least 5)
+  ```
+
+  It is off by default, as in Office and LibreOffice for files on your computer: saving over your
+  file without asking would also keep changes you meant to throw away with *Don't Save*, and the
+  recovery copies already cover crashes. Autosave only saves `.xlsx`, `.docx` and `.pptx` files
+  that already have a name. Files opened from `.csv`, `.ods`, `.xls` or `.xlsb`, files with content
+  Kantor can't keep, and files someone else changed since Kantor opened them are never autosaved;
+  they get recovery copies only.
+- **Several windows:** each Kantor process locks its own copies, so two windows never offer or
+  delete each other's work; only copies whose Kantor is no longer running are offered.
+- **Damaged copies** (a disk that filled up, a copy cut short) are never deleted: they are moved to
+  `recovery/damaged/` and Kantor tells you how many it skipped.
+- **Known gaps:** up to two minutes of typing can be lost if the power goes before the next copy
+  (a copy is also made whenever the window loses focus). A big workbook's copy takes as long to
+  write as a Save (≈13 s for 90,000 rows with 810,000 formulas, in the background), so a crash in
+  that time leaves the previous copy. Undo history, the selection and scroll position aren't kept
+  in a copy, and a restored workbook comes back with Excel's last calculated values for formulas
+  in manual calculation. With autosave on, Docs and Slides save on the window's thread (quick for
+  normal files).
+
 ## Known gaps
 
 - Not yet checked against a large set of real-world files; expect layout differences from Excel, Word and PowerPoint.
-- Sheets: no autosave; chart sheets (a whole sheet that is one chart) aren't shown, shapes and text boxes show as a box, and charts can't be created or restyled; rows can't be hidden or unhidden by hand yet, and frozen rows aren't pinned while scrolling (charts on them scroll too). Macros are not carried over on save (Kantor says so). Pivot tables are kept, drawn with their style, refreshed, made (Insert PivotTable…), rearranged in the PivotTable Fields panel and deleted; there is no grouping of dates or numbers, calculated fields, value filters, "show values as", per-field subtotal functions or PivotTable style picker in Kantor yet, a new pivot always gets its own cache, and Kantor-made pivots haven't been opened in Excel itself yet (the file is written to Excel's schema and asks Excel to refresh on load). Refresh and the Fields panel say so and change nothing for pivots with calculated fields or items, grouped dates or numbers, value filters, "show values as" or an external or OLAP source, and inner items of a compact pivot aren't indented. Slicers and timelines are kept on save but not shown or usable in Kantor. IronCalc can't evaluate 3-D references (`SUM(Jan:Mar!B2)`). Tables can't be created (Format as Table) or restyled in Kantor yet, a table's total row functions can't be changed, and new tables' header cell formatting isn't applied from the style's dxfs on cells with their own style. Filters by colour, icon, top 10 and dynamic dates are kept but can't be edited; sorting doesn't move cell comments or remember the sort (`sortState`). `.ods`, `.xls` and `.xlsb` are import-only. Printing: no Page Setup dialog yet (the file's settings are used; `kantor convert` can override them), shapes and text boxes are left out of the PDF (charts and pictures print), comments aren't printed, fill patterns print solid, `&G` header pictures and theme colours in headers are skipped, and a print title made of both rows and columns loses its columns when Kantor saves the file (IronCalc keeps one part). Conditional formatting can't be created or edited in Kantor yet, its borders aren't drawn, data bars ignore minimum/maximum lengths, and "between" date periods don't highlight. Data validation works from the file (drop-down lists, input messages, error alerts, Circle Invalid Data) but rules can't be created or edited in Kantor yet; a typed time such as `9:30` is stored as text (IronCalc), so time rules see text unless the value is a formula like `=TIME(9,30,0)`.
+- Sheets: chart sheets (a whole sheet that is one chart) aren't shown, shapes and text boxes show as a box, and charts can't be created or restyled; rows can't be hidden or unhidden by hand yet, and frozen rows aren't pinned while scrolling (charts on them scroll too). Macros are not carried over on save (Kantor says so). Pivot tables are kept, drawn with their style, refreshed, made (Insert PivotTable…), rearranged in the PivotTable Fields panel and deleted; there is no grouping of dates or numbers, calculated fields, value filters, "show values as", per-field subtotal functions or PivotTable style picker in Kantor yet, a new pivot always gets its own cache, and Kantor-made pivots haven't been opened in Excel itself yet (the file is written to Excel's schema and asks Excel to refresh on load). Refresh and the Fields panel say so and change nothing for pivots with calculated fields or items, grouped dates or numbers, value filters, "show values as" or an external or OLAP source, and inner items of a compact pivot aren't indented. Slicers and timelines are kept on save but not shown or usable in Kantor. IronCalc can't evaluate 3-D references (`SUM(Jan:Mar!B2)`). Tables can't be created (Format as Table) or restyled in Kantor yet, a table's total row functions can't be changed, and new tables' header cell formatting isn't applied from the style's dxfs on cells with their own style. Filters by colour, icon, top 10 and dynamic dates are kept but can't be edited; sorting doesn't move cell comments or remember the sort (`sortState`). `.ods`, `.xls` and `.xlsb` are import-only. Printing: no Page Setup dialog yet (the file's settings are used; `kantor convert` can override them), shapes and text boxes are left out of the PDF (charts and pictures print), comments aren't printed, fill patterns print solid, `&G` header pictures and theme colours in headers are skipped, and a print title made of both rows and columns loses its columns when Kantor saves the file (IronCalc keeps one part). Conditional formatting can't be created or edited in Kantor yet, its borders aren't drawn, data bars ignore minimum/maximum lengths, and "between" date periods don't highlight. Data validation works from the file (drop-down lists, input messages, error alerts, Circle Invalid Data) but rules can't be created or edited in Kantor yet; a typed time such as `9:30` is stored as text (IronCalc), so time rules see text unless the value is a formula like `=TIME(9,30,0)`.
 - Sheets functions not available (`#NAME?`): the `CUBE*` family, `WEBSERVICE`, `FILTERXML`, `RTD`, `STOCKHISTORY`, `IMAGE`, `EUROCONVERT` and Excel's online functions (`TRANSLATE`, `DETECTLANGUAGE`, `COPILOT`, `PY`). `FORECAST.ETS` and its variants give `#N/IMPL`. `GROUPBY`/`PIVOTBY` don't take a vector of functions (`HSTACK(SUM,AVERAGE)`).
 - Docs: headers and footers, footnotes, fields and floating objects are kept in the file but shown only as placeholders and left out of the PDF; table rows don't split across pages; no spell check. Files with tracked changes, comments or a table of contents are saved under a new name.
 - Slides: the content of tables, charts, groups and SmartArt can't be edited; chart types other than those above show a placeholder; on screen, rotated text stays upright (the PDF turns it).

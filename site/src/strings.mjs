@@ -84,6 +84,10 @@ export const en = {
     ["Export to PDF", "Docs and Slides save a PDF that looks like what you see on screen. Sheets prints pages the way Excel does: paper size including F4, fit to width, print titles, headers and footers."],
     ["Offline, no account", "Your files stay on your computer. There is nothing to sign up for."],
     [
+      "Your work is safe",
+      'While a document has unsaved changes, Kantor keeps a copy of it on your computer. After a crash or a power cut it offers to restore your changes, and nothing is written over your file until you save. Autosave can be <a href="' + GH + '#your-work-is-safe">turned on</a> too.',
+    ],
+    [
       "Updates",
       'Kantor checks for updates at most once a day, sending only its version and operating system, and installs a new version when you restart it. You can <a href="' + GH + '#updates">turn this off</a>.',
     ],
@@ -247,6 +251,10 @@ export const id = {
   more: [
     ["Ekspor ke PDF", "Docs dan Slides menyimpan PDF yang sama dengan tampilan di layar. Sheets mencetak halaman seperti Excel: ukuran kertas termasuk F4, muat selebar halaman, judul cetak, header, dan footer."],
     ["Tanpa internet, tanpa akun", "File Anda tetap di komputer Anda. Tidak perlu mendaftar apa pun."],
+    [
+      "Pekerjaan Anda aman",
+      'Selama dokumen punya perubahan yang belum disimpan, Kantor menyimpan salinannya di komputer Anda. Setelah aplikasi tertutup mendadak atau listrik padam, Kantor menawarkan untuk memulihkan perubahan Anda, dan file Anda tidak ditimpa sampai Anda menyimpannya. Simpan otomatis juga <a href="' + GH + '#your-work-is-safe">bisa dinyalakan</a> (bahasa Inggris).',
+    ],
     [
       "Pembaruan",
       'Kantor memeriksa pembaruan paling sering sekali sehari, hanya dengan mengirim versi dan sistem operasinya, lalu memasang versi baru saat Anda membukanya ulang. Fitur ini <a href="' + GH + '#updates">bisa dimatikan</a> (bahasa Inggris).',
