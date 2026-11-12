@@ -15,7 +15,7 @@ const DL = `${GH}/releases/latest/download`;
 // Kantor-{x64,arm64}.zip (release.yml), then rebuild and redeploy. Until then the Windows card
 // says "not available yet" and Windows visitors are pointed at the other downloads.
 // KANTOR_SITE_WINDOWS=1 node site/build.mjs previews the Windows downloads.
-const WINDOWS_RELEASED = process.env.KANTOR_SITE_WINDOWS === "1" || false;
+const WINDOWS_RELEASED = true; // v0.4.0 (2026-11-13) is the first release with Windows downloads
 const SHOT_W = 1550;
 const SHOT_H = 975;
 
