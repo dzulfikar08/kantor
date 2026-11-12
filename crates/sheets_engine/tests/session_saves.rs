@@ -216,6 +216,7 @@ fn a_failed_save_replaces_nothing_and_keeps_the_changes() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("fail.xlsx");
     wb.save_as(&path).unwrap();
+    #[cfg(unix)]
     let before = std::fs::read(&path).unwrap();
     wb.set_input(0, 1, 1, "changed").unwrap();
     // A directory that doesn't exist (as when a disk is unplugged).
@@ -238,6 +239,8 @@ fn a_failed_save_replaces_nothing_and_keeps_the_changes() {
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o640, "the saved file keeps its permissions");
     }
+    #[cfg(not(unix))]
+    wb.save().unwrap();
     assert!(!wb.is_dirty());
     assert_eq!(
         Workbook::open(&path).unwrap().display_value(0, 1, 1),
