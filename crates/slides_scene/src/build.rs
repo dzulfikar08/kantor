@@ -106,8 +106,11 @@ impl Builder {
         w: f32,
         h: f32,
     ) -> Option<Arc<Vec<Item>>> {
+        // Data edited in Kantor changes the version (and isn't cached by
+        // part name).
+        let version = pres.chart_version(part);
         let key = (
-            part.to_owned(),
+            format!("{part}#{version}"),
             pres.master_of(slide).part.clone(),
             w.to_bits(),
             h.to_bits(),
@@ -115,7 +118,12 @@ impl Builder {
         if let Some(c) = self.charts.borrow().get(&key) {
             return c.clone();
         }
-        let items = self.bytes(pres, part).and_then(|xml| {
+        let bytes = if version == 0 {
+            self.bytes(pres, part)
+        } else {
+            pres.part_bytes(part)
+        };
+        let items = bytes.and_then(|xml| {
             crate::chart::chart_items(engine, &xml, &pres.color_ctx(slide), w, h).map(Arc::new)
         });
         let mut cache = self.charts.borrow_mut();

@@ -424,6 +424,14 @@ impl Workspace {
         }
     }
 
+    /// Print the focused document: a PDF opened in the system's viewer
+    /// (Slides: the layout chosen last, slides by default).
+    pub(crate) fn print(&mut self, _: &Print, window: &mut Window, cx: &mut Context<Self>) {
+        self.with_docs(window, cx, |v, w, cx| v.print_doc(w, cx));
+        self.with_slides(window, cx, |v, w, cx| v.print_doc(w, cx));
+        self.with_sheets(window, cx, |v, w, cx| v.print_doc(w, cx));
+    }
+
     fn open_file(&mut self, _: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -761,6 +769,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::new_document))
             .on_action(cx.listener(Self::new_presentation))
             .on_action(cx.listener(Self::open_file))
+            .on_action(cx.listener(Self::print))
             .on_action(cx.listener(Self::close_pane))
             .on_action(cx.listener(Self::close_active_tab))
             .on_action(cx.listener(Self::next_tab))

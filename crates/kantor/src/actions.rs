@@ -22,6 +22,7 @@ actions!(
         NewDocument,
         NewPresentation,
         OpenFile,
+        Print,
         CloseTab,
         ClosePane,
         ToggleSidebar,
@@ -67,6 +68,11 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(
             kantor_ui::keys::primary("ctrl-o"),
             OpenFile,
+            Some(WORKSPACE_KEYS),
+        ),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-p"),
+            Print,
             Some(WORKSPACE_KEYS),
         ),
         KeyBinding::new(

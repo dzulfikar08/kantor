@@ -26,6 +26,7 @@ mod find;
 mod fit;
 mod input;
 mod notes;
+mod object_editor;
 mod paint_menu;
 mod toolbar;
 
@@ -312,8 +313,12 @@ pub struct SlidesView {
     notes: notes::NotesPane,
     paint_menu: Option<paint_menu::PaintMenu>,
     paint_menu_closed: Option<std::time::Instant>,
+    /// The table / chart data editor.
+    object_editor: Option<object_editor::ObjectEditor>,
     /// Speaker notes under the slide while presenting.
     present_notes: bool,
+    /// The print layout chosen last (Ctrl+P repeats it).
+    print_layout: slides_pdf::PrintLayout,
 }
 
 fn cm(emu: i64) -> String {
@@ -380,7 +385,9 @@ impl SlidesView {
             notes,
             paint_menu: None,
             paint_menu_closed: None,
+            object_editor: None,
             present_notes: true,
+            print_layout: slides_pdf::PrintLayout::Slides,
         }
     }
 
@@ -1442,39 +1449,82 @@ impl SlidesView {
             if path.extension().is_none() {
                 path.set_extension("pdf");
             }
-            let Ok((pages, task)) = this.update(cx, |this, cx| {
-                let slides = (0..this.pres.len())
-                    .filter(|&i| !this.pres.slide(i).hidden)
-                    .map(|i| this.painter.scene(&this.pres, i, &Default::default()))
-                    .collect();
-                let deck = slides_pdf::Deck {
-                    title: this.pres.title(),
-                    width: this.pres.size.cx as f32 / slides_engine::EMU_PER_PX,
-                    height: this.pres.size.cy as f32 / slides_engine::EMU_PER_PX,
-                    slides,
-                };
-                let pages = deck.slides.len().max(1);
-                this.status = format!("Exporting {}…", display_name(&path)).into();
+            let _ = this.update(cx, |this, cx| {
+                this.write_pdf(path, slides_pdf::PrintLayout::Slides, false, cx)
+            });
+        })
+        .detach();
+    }
+
+    /// Print with the layout used last (full-page slides at first).
+    pub fn print_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.print_layout_doc(self.print_layout, window, cx);
+    }
+
+    /// Print slides, notes pages or handouts: a temporary PDF opened in the
+    /// system's PDF viewer, which prints it.
+    pub fn print_layout_doc(
+        &mut self,
+        layout: slides_pdf::PrintLayout,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.print_layout = layout;
+        let stem = std::path::Path::new(&self.name())
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match kantor_core::dirs::print_pdf_path(&stem) {
+            Ok(path) => self.write_pdf(path, layout, true, cx),
+            Err(e) => {
+                self.status = format!("Print failed: {e}").into();
                 cx.notify();
-                let file = path.clone();
-                let task = cx.background_spawn(async move {
-                    let bytes = slides_pdf::write(&deck)?;
-                    slides_pdf::write_file(&file, &bytes)
-                });
-                (pages, task)
-            }) else {
-                return;
-            };
+            }
+        }
+    }
+
+    fn write_pdf(
+        &mut self,
+        path: PathBuf,
+        layout: slides_pdf::PrintLayout,
+        open: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let job = self.painter.print_job(&self.pres, layout);
+        let slides = job.deck.slides.len();
+        let verb = if open {
+            "Preparing to print"
+        } else {
+            "Exporting"
+        };
+        self.status = format!("{verb} {}…", display_name(&path)).into();
+        cx.notify();
+        let file = path.clone();
+        let task = cx.background_spawn(async move {
+            let (bytes, pages) = slides_pdf::print::write_job(&job)?;
+            slides_pdf::write_file(&file, &bytes)?;
+            anyhow::Ok(pages)
+        });
+        cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 let name = display_name(&path);
-                this.status = match result {
-                    Ok(()) => format!(
-                        "Exported {name} ({pages} slide{})",
-                        if pages == 1 { "" } else { "s" }
-                    )
-                    .into(),
-                    Err(err) => format!("Export to PDF failed: {err:#}").into(),
+                let s = |n: usize| if n == 1 { "" } else { "s" };
+                this.status = match (result, open) {
+                    (Ok(_), false) => {
+                        format!("Exported {name} ({slides} slide{})", s(slides)).into()
+                    }
+                    (Ok(pages), true) => {
+                        cx.open_with_system(&path);
+                        format!(
+                            "Opened {} ({pages} page{}) in the PDF viewer to print",
+                            layout.label().to_lowercase(),
+                            s(pages)
+                        )
+                        .into()
+                    }
+                    (Err(err), false) => format!("Export to PDF failed: {err:#}").into(),
+                    (Err(err), true) => format!("Print failed: {err:#}").into(),
                 };
                 cx.notify();
             });
@@ -1619,6 +1669,12 @@ impl SlidesView {
             Some(i) => {
                 let was_selected = self.selected == Some(i);
                 self.select(Some(i), cx);
+                if ev.click_count >= 2
+                    && let Some((_, target)) = self.object_target()
+                {
+                    self.open_object_editor(i, target, window, cx);
+                    return;
+                }
                 if ev.click_count >= 2 {
                     let pos = self.text_hit(i, p);
                     self.begin_editing(i, pos, cx);
@@ -2194,6 +2250,7 @@ impl Render for SlidesView {
         root.child(toolbar::render(self, cx))
             .children(self.render_banner(&t))
             .children(self.render_paint_menu(cx))
+            .children(self.render_object_editor(cx))
             .child(
                 h_flex().flex_1().min_h_0().child(strip).child(
                     v_flex()

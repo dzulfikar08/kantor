@@ -42,6 +42,9 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \x20     --portrait         portrait orientation\n\
     \x20     --paper SIZE       a4, letter, legal, f4 (folio), a3, a5, or WxHmm / WxHin\n\
     \x20     --no-print-area    print each sheet's used range, not its print area\n\
+    \x20 Presentation to PDF:\n\
+    \x20     --notes            notes pages: each slide above its speaker notes (A4)\n\
+    \x20     --handouts N       N slides per A4 page: 1, 2, 3 (with lines), 4, 6 or 9\n\
     \x20 -f, --force            overwrite existing output files\n\
     \x20 -h, --help             show this help\n\
     \n\
@@ -56,6 +59,8 @@ struct Options {
     force: bool,
     /// Spreadsheet → PDF overrides.
     print: Print,
+    /// Presentation → PDF layout (notes pages, handouts).
+    slides: Option<slides_pdf::PrintLayout>,
 }
 
 /// Page setup given on the command line for spreadsheet → PDF.
@@ -176,6 +181,16 @@ fn parse(args: &[OsString]) -> Result<Option<Options>, Usage> {
             "--landscape" => opts.print.landscape = Some(true),
             "--portrait" => opts.print.landscape = Some(false),
             "--no-print-area" => opts.print.no_print_area = true,
+            "--notes" => opts.slides = Some(slides_pdf::PrintLayout::Notes),
+            "--handouts" => {
+                let v = value(flag)?;
+                match v.parse::<u8>() {
+                    Ok(n) if slides_pdf::PrintLayout::HANDOUTS.contains(&n) => {
+                        opts.slides = Some(slides_pdf::PrintLayout::Handouts(n))
+                    }
+                    _ => return usage(format!("--handouts {v}: use 1, 2, 3, 4, 6 or 9")),
+                }
+            }
             "--scale" => {
                 let v = value(flag)?;
                 match v.trim_end_matches('%').parse::<u32>() {
@@ -245,6 +260,14 @@ fn parse(args: &[OsString]) -> Result<Option<Options>, Usage> {
     if opts.print.given() && !to_pdf(&opts) {
         return usage("page setup options only apply to spreadsheets converted to .pdf");
     }
+    if opts.slides.is_some()
+        && !opts
+            .jobs
+            .iter()
+            .all(|(i, o)| kind(i, o).ok() == Some(Kind::PptxToPdf))
+    {
+        return usage("--notes and --handouts only apply to presentations converted to .pdf");
+    }
     if opts.print.fit.is_some() && opts.print.scale.is_some() {
         return usage("--scale and --fit-width / --fit-page don't go together");
     }
@@ -306,7 +329,7 @@ fn convert(
     let kind = kind(input, output).map_err(|Usage(m)| anyhow!(m))?;
     match kind {
         Kind::DocxToPdf => docx_to_pdf(input, output, engine),
-        Kind::PptxToPdf => pptx_to_pdf(input, output, engine),
+        Kind::PptxToPdf => pptx_to_pdf(input, output, engine, opts.slides),
         Kind::Sheets => sheets(input, output, opts.sheet.as_deref()),
         Kind::SheetsToPdf => sheets_to_pdf(input, output, opts),
     }
@@ -327,16 +350,10 @@ fn docx_to_pdf(
     let doc = docs_engine::Document::open(input).context("can't open the document")?;
     // The font scan happens once, for the first document.
     let engine = engine.get_or_insert_with(docs_pdf::Engine::new);
-    let paged = docs_pdf::lay_out(&doc, engine);
-    let bytes = docs_pdf::write(&docs_pdf::scene(&doc, &paged))?;
+    let laid = docs_pdf::lay_out(&doc, engine);
+    let bytes = docs_pdf::write(&docs_pdf::scene(&doc, &laid))?;
     docs_pdf::write_file(output, &bytes)?;
-    if doc.preserved_content().iter().any(|c| c.contains("header")) {
-        eprintln!(
-            "kantor convert: note: {}: headers and footers are not in the PDF yet",
-            input.display()
-        );
-    }
-    let pages = paged.pages.len().max(1);
+    let pages = laid.paged.pages.len().max(1);
     Ok(format!(
         "{pages} page{}, {}",
         if pages == 1 { "" } else { "s" },
@@ -348,10 +365,17 @@ fn pptx_to_pdf(
     input: &Path,
     output: &Path,
     engine: &mut Option<docs_pdf::Engine>,
+    layout: Option<slides_pdf::PrintLayout>,
 ) -> Result<String> {
     let pres = slides_engine::Presentation::open(input).context("can't open the presentation")?;
     let engine = engine.get_or_insert_with(docs_pdf::Engine::new);
-    let (bytes, pages) = slides_pdf::export(&pres, engine)?;
+    let (bytes, pages) = match layout {
+        None => slides_pdf::export(&pres, engine)?,
+        Some(layout) => {
+            let job = slides_pdf::print::job_headless(&pres, engine, layout);
+            slides_pdf::print::write_job(&job)?
+        }
+    };
     docs_pdf::write_file(output, &bytes)?;
     let hidden = (0..pres.len()).filter(|&i| pres.slide(i).hidden).count();
     let what = pres.unsupported_objects();
@@ -532,6 +556,14 @@ mod tests {
         assert_eq!(o.print.fit, Some((1, 0)));
         assert_eq!(o.print.landscape, Some(true));
         assert_eq!(o.print.paper, Some(sheets_engine::Paper::FOLIO));
+        let o = parse(&args(&["--handouts", "6", "a.pptx", "b.pdf"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(o.slides, Some(slides_pdf::PrintLayout::Handouts(6)));
+        let o = parse(&args(&["--notes", "a.pptx", "b.pdf"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(o.slides, Some(slides_pdf::PrintLayout::Notes));
     }
 
     #[std::prelude::v1::test]
@@ -543,6 +575,8 @@ mod tests {
         assert!(err(&["--sheet"]).contains("needs a value"));
         assert!(err(&["--sheet", "1", "a.docx", "b.pdf"]).contains("only applies to .csv"));
         assert!(err(&["--fit-width", "a.xlsx", "b.csv"]).contains("only apply to spreadsheets"));
+        assert!(err(&["--handouts", "5", "a.pptx", "b.pdf"]).contains("use 1, 2, 3, 4, 6 or 9"));
+        assert!(err(&["--notes", "a.docx", "b.pdf"]).contains("only apply to presentations"));
         assert!(err(&["--paper", "b9", "a.xlsx", "b.pdf"]).contains("--paper b9"));
         assert!(err(&["--scale", "5", "a.xlsx", "b.pdf"]).contains("10 to 400"));
         assert!(err(&["--scale", "50", "--fit-page", "a.xlsx", "b.pdf"]).contains("don't go"));

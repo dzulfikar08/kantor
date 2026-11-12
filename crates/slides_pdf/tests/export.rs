@@ -571,3 +571,93 @@ fn pdf_has_table_group_and_smartart_text() {
         assert!(chars.contains(c), "{c} in {chars:?}");
     }
 }
+
+// ── print layouts ───────────────────────────────────────────────────────
+
+fn page_count(pdf: &[u8]) -> usize {
+    let all = all_text(pdf);
+    count(all.as_bytes(), b"/Type/Page") - count(all.as_bytes(), b"/Type/Pages")
+}
+
+#[test]
+fn notes_pages_and_handouts_print_on_a4() {
+    use slides_pdf::{PrintLayout, print};
+    let mut pres = Presentation::new();
+    for _ in 0..4 {
+        pres.new_slide(None).unwrap();
+    }
+    assert_eq!(pres.len(), 5);
+    pres.set_notes_text(0, "Mention Quokka budget").unwrap();
+    let builder = Builder::new();
+    let mut engine = Engine::new();
+
+    let job = print::job(&pres, &builder, &mut engine, PrintLayout::Notes);
+    assert_eq!(job.pages(), 5);
+    assert!(!job.notes[0].is_empty() && job.notes[1].is_empty());
+    let (pdf, pages) = print::write_job(&job).unwrap();
+    assert_eq!((pages, page_count(&pdf)), (5, 5));
+    // A4 is 595.28 × 841.89 pt.
+    let all = all_text(&pdf);
+    assert!(all.contains("/MediaBox[0 0 595.2"), "A4 page");
+    let chars = mapped_chars(&pdf);
+    for c in "MentionQukabdg".chars() {
+        assert!(chars.contains(c), "{c} in {chars:?}");
+    }
+
+    for (n, want) in [(1, 5), (2, 3), (3, 2), (4, 2), (6, 1), (9, 1)] {
+        let job = print::job(&pres, &builder, &mut engine, PrintLayout::Handouts(n));
+        let (pdf, pages) = print::write_job(&job).unwrap();
+        assert_eq!((pages, page_count(&pdf)), (want, want), "{n} per page");
+    }
+
+    // Full-page slides are the plain export.
+    let job = print::job(&pres, &builder, &mut engine, PrintLayout::Slides);
+    let (pdf, pages) = print::write_job(&job).unwrap();
+    assert_eq!((pages, page_count(&pdf)), (5, 5));
+}
+
+#[test]
+fn edited_chart_data_and_table_text_are_drawn() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/pptx/deck.pptx");
+    let mut pres = Presentation::open(&path).unwrap();
+    let find = |p: &Presentation, chart: bool| {
+        (0..p.len())
+            .find_map(|i| {
+                (0..p.slide(i).shapes.len())
+                    .find(|&k| {
+                        if chart {
+                            p.chart_data(i, k).is_some()
+                        } else {
+                            p.table(i, k).is_some()
+                        }
+                    })
+                    .map(|k| (i, k))
+            })
+            .unwrap()
+    };
+    let (s, k) = find(&pres, true);
+    let mut d = pres.chart_data(s, k).unwrap();
+    d.categories.push("Zq".into());
+    for ser in &mut d.series {
+        ser.values.push(Some(30.0));
+    }
+    pres.set_chart_data(s, k, &d).unwrap();
+    let (ts, tk) = find(&pres, false);
+    pres.edit_table(
+        ts,
+        tk,
+        &[slides_engine::TableOp::Text {
+            row: 1,
+            col: 0,
+            text: "Kalimantan".into(),
+        }],
+    )
+    .unwrap();
+    let mut engine = Engine::new();
+    let (pdf, _) = slides_pdf::export(&pres, &mut engine).unwrap();
+    let chars = mapped_chars(&pdf);
+    for c in "ZqKlimntn".chars() {
+        assert!(chars.contains(c), "{c} in {chars:?}");
+    }
+}

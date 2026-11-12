@@ -69,6 +69,16 @@ icon_assets!(
         Columns2,
         Rows2,
         Sigma,
+        // Docs: headers and footers, review
+        PanelTop,
+        Hash,
+        MessageSquare,
+        MessageSquarePlus,
+        FileDiff,
+        CheckCheck,
+        // Slides: table and chart editing
+        SquarePen,
+        ChartColumn,
         // AI
         Sparkles,
         X

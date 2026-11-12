@@ -364,9 +364,13 @@ impl ContentTypes {
         ext.is_some_and(|ext| self.defaults.iter().any(|(e, _)| *e == ext))
     }
 
+    /// Give `part` the content type `ty` (in place when it has one, so an
+    /// edited slide doesn't reorder an untouched `[Content_Types].xml`).
     pub fn set_override(&mut self, part: &str, ty: &str) {
-        self.overrides.retain(|(p, _)| p != part);
-        self.overrides.push((part.to_owned(), ty.to_owned()));
+        match self.overrides.iter_mut().find(|(p, _)| p == part) {
+            Some(o) => o.1 = ty.to_owned(),
+            None => self.overrides.push((part.to_owned(), ty.to_owned())),
+        }
     }
 
     pub fn remove_override(&mut self, part: &str) {

@@ -58,6 +58,12 @@ pub struct PageSetup {
     pub margin_right: f32,
 }
 
+impl Default for PageSetup {
+    fn default() -> Self {
+        Self::a4()
+    }
+}
+
 impl PageSetup {
     /// A4 portrait with Word's default 2.54 cm margins.
     pub fn a4() -> Self {
@@ -200,6 +206,31 @@ pub struct Paragraph {
     pub page_break_before: bool,
     /// BCP 47 language, used for shaping and line breaking.
     pub locale: Option<String>,
+    /// Byte ranges drawn struck through (tracked deletions): see
+    /// [`PagedDocument::strike_rules`].
+    pub strikes: Vec<Range<usize>>,
+    /// Custom tab stops, measured from the column's left edge (px).
+    pub tabs: Vec<TabStop>,
+    /// Default tab stops every this many px after the custom ones (Word:
+    /// `w:defaultTabStop`, 1.27 cm).
+    pub default_tab: f32,
+}
+
+/// How text lines up at a tab stop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabAlign {
+    Left,
+    Center,
+    Right,
+    /// On the decimal point (laid out as Right up to the number's end).
+    Decimal,
+}
+
+/// A tab stop: position from the column's left edge (px) and alignment.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TabStop {
+    pub pos: f32,
+    pub align: TabAlign,
 }
 
 impl Paragraph {
@@ -221,6 +252,9 @@ impl Paragraph {
             objects: Vec::new(),
             page_break_before: false,
             locale: None,
+            strikes: Vec::new(),
+            tabs: Vec::new(),
+            default_tab: 12.7 * MM,
         }
     }
 
@@ -230,6 +264,8 @@ impl Paragraph {
         self.text
             .chars()
             .map(|c| match c {
+                // Tabs are inline boxes sized to reach their stop; the
+                // space standing in for the tab is shrunk to nothing.
                 '\t' => " ".to_owned(),
                 PAGE_BREAK => "\n".to_owned(),
                 OBJECT => "\u{200B}".to_owned(),
@@ -344,8 +380,27 @@ impl Engine {
     }
 
     /// Shapes one paragraph and breaks it into lines in a column `width` px
-    /// wide (indents are taken off that width).
+    /// wide (indents are taken off that width). Tabs go to the next tab
+    /// stop: laid out once with empty tabs to find where each one starts,
+    /// then again with each tab as wide as it needs to be.
     pub fn layout_paragraph(&mut self, para: &Paragraph, width: f32) -> ParaLayout {
+        let tabs: Vec<usize> = para
+            .text
+            .char_indices()
+            .filter(|(_, c)| *c == '\t')
+            .map(|(i, _)| i)
+            .collect();
+        if tabs.is_empty() {
+            return self.layout_with_tabs(para, width, &[]);
+        }
+        let first = self.layout_with_tabs(para, width, &vec![0.01; tabs.len()]);
+        let widths = tab_widths(para, &first, &tabs, width);
+        self.layout_with_tabs(para, width, &widths)
+    }
+
+    /// [`Self::layout_paragraph`] with the tabs (in text order) `tab_widths`
+    /// px wide.
+    fn layout_with_tabs(&mut self, para: &Paragraph, width: f32, tab_widths: &[f32]) -> ParaLayout {
         let left = para.indent_left_pt * PT;
         let right = para.indent_right_pt * PT;
         let first = para.first_line_pt * PT;
@@ -411,6 +466,20 @@ impl Engine {
             }
         }
 
+        // Tabs: boxes after the objects' ids (they aren't objects).
+        let tab_at = para.text.char_indices().filter(|(_, c)| *c == '\t');
+        for (k, (at, _)) in tab_at.enumerate() {
+            boxes.push(InlineBox {
+                id: (TAB_BOX + k) as u64,
+                kind: InlineBoxKind::InFlow,
+                index: at,
+                width: tab_widths.get(k).copied().unwrap_or(0.0).max(0.0),
+                height: 0.0,
+                baseline: None,
+                vertical_align: VerticalAlign::BASELINE,
+            });
+        }
+
         let text = para.shaped_text();
         let mut b = self
             .layout_cx
@@ -429,6 +498,9 @@ impl Engine {
         }
         for span in &para.spans {
             push_span(&mut b, span, span.range.clone());
+        }
+        for (at, _) in para.text.char_indices().filter(|(_, c)| *c == '\t') {
+            b.push(StyleProperty::FontSize(0.01), at..at + 1);
         }
         for ib in boxes {
             b.push_inline_box(ib);
@@ -589,6 +661,40 @@ pub struct Page {
     pub lines: Vec<PlacedLine>,
     /// Table borders.
     pub rules: Vec<RuleRect>,
+    /// This page's size and margins (sections can differ).
+    pub setup: PageSetup,
+    /// The section the page belongs to.
+    pub section: usize,
+    /// Its number within the section's page numbering run: 1-based page
+    /// count from the last restart (see [`SectionFlow::restart`]).
+    pub number: u32,
+}
+
+/// How a section starts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SectionBreak {
+    #[default]
+    NextPage,
+    Continuous,
+    EvenPage,
+    OddPage,
+}
+
+/// A section for [`PagedDocument::paginate_sections`]: where it starts and
+/// its pages' geometry.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SectionFlow {
+    /// Index into `blocks` of the section's first block.
+    pub first_block: usize,
+    pub setup: PageSetup,
+    /// The section's first page, when it differs (a taller first-page
+    /// header pushes the text down).
+    pub first_setup: Option<PageSetup>,
+    /// Even pages, when they differ.
+    pub even_setup: Option<PageSetup>,
+    pub start: SectionBreak,
+    /// Restart page numbering at this number.
+    pub restart: Option<u32>,
 }
 
 /// What a glyph run's text comes from.
@@ -674,17 +780,98 @@ pub struct PagedDocument {
     line_pages: Vec<Vec<(usize, f32, f32)>>,
 }
 
+/// Inline box ids of tabs start here (object boxes use their index).
+const TAB_BOX: usize = 1 << 20;
+
+/// How wide each tab must be to reach its stop, from a layout with empty
+/// tabs (`tabs` are their byte offsets).
+fn tab_widths(para: &Paragraph, laid: &ParaLayout, tabs: &[usize], width: f32) -> Vec<f32> {
+    let mut out = vec![0.0f32; tabs.len()];
+    let left = para.indent_left_pt * PT;
+    let default = if para.default_tab > 1.0 {
+        para.default_tab
+    } else {
+        12.7 * MM
+    };
+    let mut stops = para.tabs.clone();
+    stops.sort_by(|a, b| a.pos.total_cmp(&b.pos));
+    for line in laid.layout.lines() {
+        let end = line.text_range().end;
+        // Tab boxes on this line, in order, with their x (column coords).
+        let mut on_line: Vec<(usize, f32)> = Vec::new();
+        let mut line_end_x = 0.0f32;
+        for item in line.items() {
+            match item {
+                PositionedLayoutItem::InlineBox(b) if b.id as usize >= TAB_BOX => {
+                    on_line.push((b.id as usize - TAB_BOX, laid.dx + b.x));
+                }
+                PositionedLayoutItem::InlineBox(b) => {
+                    line_end_x = line_end_x.max(laid.dx + b.x + b.width);
+                }
+                PositionedLayoutItem::GlyphRun(g) => {
+                    line_end_x = line_end_x.max(laid.dx + g.offset() + g.advance());
+                }
+            }
+        }
+        let _ = end;
+        // Each tab moves what follows it; positions after an earlier tab
+        // shift by that tab's width.
+        let mut shift = 0.0f32;
+        for (j, &(k, x0)) in on_line.iter().enumerate() {
+            let x = x0 + shift;
+            // The text after this tab up to the next tab or the line's end.
+            let seg_end = on_line.get(j + 1).map_or(line_end_x, |n| n.1);
+            let seg = (seg_end - x0).max(0.0);
+            let custom = stops.iter().find(|t| t.pos > x + 0.5);
+            // A hanging indent counts as a stop (Word's list tab).
+            let implicit = (left > x + 0.5).then_some(TabStop {
+                pos: left,
+                align: TabAlign::Left,
+            });
+            let stop = match (custom, implicit) {
+                (Some(c), Some(i)) if i.pos < c.pos => i,
+                (Some(c), _) => *c,
+                (None, Some(i)) => i,
+                (None, None) => TabStop {
+                    pos: ((x / default).floor() + 1.0) * default,
+                    align: TabAlign::Left,
+                },
+            };
+            let w = match stop.align {
+                TabAlign::Left => stop.pos - x,
+                TabAlign::Center => stop.pos - x - seg / 2.0,
+                TabAlign::Right | TabAlign::Decimal => stop.pos - x - seg,
+            };
+            // Past the stop already: at least a space's worth.
+            let w = w.clamp(para.size_pt * PT * 0.25, width.max(1.0));
+            if let Some(slot) = out.get_mut(k) {
+                *slot = w;
+            }
+            shift += w;
+        }
+    }
+    let _ = tabs;
+    out
+}
+
 /// Lines a paragraph keeps together at a page break (Word's widow/orphan control).
 const MIN_LINES: usize = 2;
 
 /// Lays blocks out onto pages.
 struct Flow<'a> {
+    /// The current page's geometry.
     setup: PageSetup,
     paras: &'a [Paragraph],
     layouts: &'a [Arc<ParaLayout>],
     pages: Vec<Page>,
     line_pages: Vec<Vec<(usize, f32, f32)>>,
     y: f32,
+    sections: &'a [SectionFlow],
+    section: usize,
+    /// Pages of the current section so far.
+    section_pages: usize,
+    /// Number of the next page.
+    number: u32,
 }
 
 impl Flow<'_> {
@@ -696,9 +883,69 @@ impl Flow<'_> {
         self.y <= self.setup.margin_top
     }
 
+    /// The geometry of the section's next page.
+    fn next_setup(&self) -> PageSetup {
+        let s = &self.sections[self.section];
+        if self.section_pages == 0
+            && let Some(f) = s.first_setup
+        {
+            return f;
+        }
+        if self.number.is_multiple_of(2)
+            && let Some(e) = s.even_setup
+        {
+            return e;
+        }
+        s.setup
+    }
+
     fn new_page(&mut self) {
-        self.pages.push(Page::default());
+        self.setup = self.next_setup();
+        self.pages.push(Page {
+            setup: self.setup,
+            section: self.section,
+            number: self.number,
+            ..Page::default()
+        });
+        self.number += 1;
+        self.section_pages += 1;
         self.y = self.setup.margin_top;
+    }
+
+    /// Start section `i` (its first block is about to be placed).
+    fn start_section(&mut self, i: usize) {
+        let s = self.sections[i];
+        let continuous = s.start == SectionBreak::Continuous
+            && !self.pages.is_empty()
+            && s.setup.width == self.setup.width
+            && s.setup.height == self.setup.height;
+        self.section = i;
+        if continuous {
+            // Same page: the new section's margins apply from here on.
+            self.section_pages = 1;
+            if let Some(n) = s.restart {
+                self.number = n;
+            }
+            return;
+        }
+        self.section_pages = 0;
+        if let Some(n) = s.restart {
+            self.number = n;
+        }
+        // Even/odd page starts leave a blank page when needed.
+        let parity = match s.start {
+            SectionBreak::EvenPage => Some(0),
+            SectionBreak::OddPage => Some(1),
+            _ => None,
+        };
+        if let Some(want) = parity
+            && !self.pages.is_empty()
+            && self.number % 2 != want
+        {
+            self.new_page();
+            self.section_pages = 0;
+        }
+        self.new_page();
     }
 
     /// Whether line `k` of paragraph `pi` ends with a page break.
@@ -908,15 +1155,58 @@ impl PagedDocument {
         blocks: &[Block],
         setup: PageSetup,
     ) -> Self {
-        let mut flow = Flow {
+        let one = [SectionFlow {
+            first_block: 0,
             setup,
+            first_setup: None,
+            even_setup: None,
+            start: SectionBreak::NextPage,
+            restart: None,
+        }];
+        Self::paginate_sections(paras, layouts, blocks, &one)
+    }
+
+    /// [`Self::paginate_blocks`] with sections, each with its own page
+    /// geometry and break (`sections` in block order, the first starting
+    /// at block 0; at least one).
+    pub fn paginate_sections(
+        paras: &[Paragraph],
+        layouts: Vec<Arc<ParaLayout>>,
+        blocks: &[Block],
+        sections: &[SectionFlow],
+    ) -> Self {
+        let fallback = [SectionFlow {
+            first_block: 0,
+            setup: PageSetup::a4(),
+            first_setup: None,
+            even_setup: None,
+            start: SectionBreak::NextPage,
+            restart: None,
+        }];
+        let sections = if sections.is_empty() {
+            &fallback[..]
+        } else {
+            sections
+        };
+        let mut flow = Flow {
+            setup: sections[0].setup,
             paras,
             layouts: &layouts,
-            pages: vec![Page::default()],
+            pages: Vec::new(),
             line_pages: vec![Vec::new(); layouts.len()],
-            y: setup.margin_top,
+            y: 0.0,
+            sections,
+            section: 0,
+            section_pages: 0,
+            number: sections[0].restart.unwrap_or(1),
         };
-        for block in blocks {
+        flow.new_page();
+        let mut next = 1;
+        for (bi, block) in blocks.iter().enumerate() {
+            while next < sections.len() && sections[next].first_block <= bi {
+                flow.start_section(next);
+                next += 1;
+            }
             match block {
                 Block::Para(pi) => flow.place_para(*pi),
                 Block::Table(t) => {
@@ -924,15 +1214,25 @@ impl PagedDocument {
                 }
             }
         }
+        // Sections with no blocks still get their page.
+        while next < sections.len() {
+            flow.start_section(next);
+            next += 1;
+        }
         let Flow {
             pages, line_pages, ..
         } = flow;
         Self {
-            setup,
+            setup: pages.first().map_or(sections[0].setup, |p| p.setup),
             layouts,
             pages,
             line_pages,
         }
+    }
+
+    /// Size and margins of page `page`.
+    pub fn page_setup(&self, page: usize) -> PageSetup {
+        self.pages.get(page).map_or(self.setup, |p| p.setup)
     }
 
     pub fn line_count(&self) -> usize {
@@ -988,6 +1288,43 @@ impl PagedDocument {
                     let lx = dx + b.x + LABEL_PAD;
                     let ly = dy + b.y + (b.height - lline.metrics().line_height) / 2.0;
                     emit_runs(&mut out, &lline, pl.para, RunSource::Label(index), lx, ly);
+                }
+            }
+        }
+        out
+    }
+
+    /// Strikethrough lines on a page for the paragraphs' `strikes`
+    /// (`paras` are the paragraphs the document was laid out from), in the
+    /// text's colour, ready to fill.
+    pub fn strike_rules(&self, page: usize, paras: &[Paragraph]) -> Vec<RuleRect> {
+        let mut out = Vec::new();
+        if !paras.iter().any(|p| !p.strikes.is_empty()) {
+            return out;
+        }
+        for run in self.glyph_runs(page) {
+            if run.source != RunSource::Text {
+                continue;
+            }
+            let Some(p) = paras.get(run.para) else {
+                continue;
+            };
+            for s in &p.strikes {
+                let mut x0 = f32::MAX;
+                let mut x1 = f32::MIN;
+                for g in &run.glyphs {
+                    if g.cluster.start >= s.start && g.cluster.end <= s.end {
+                        x0 = x0.min(g.x);
+                        x1 = x1.max(g.x + g.advance);
+                    }
+                }
+                if x1 > x0 {
+                    let thick = (run.font_size / 16.0).max(1.0);
+                    let y = run.baseline - run.font_size * 0.28 - thick / 2.0;
+                    out.push(RuleRect {
+                        rect: [x0, y, x1 - x0, thick],
+                        color: run.color,
+                    });
                 }
             }
         }
@@ -1233,7 +1570,7 @@ impl PagedDocument {
     /// Height of every page stacked with `gap` px between them.
     pub fn total_height(&self, gap: f32) -> f32 {
         let n = self.pages.len() as f32;
-        n * self.setup.height + (n - 1.0).max(0.0) * gap
+        self.pages.iter().map(|p| p.setup.height).sum::<f32>() + (n - 1.0).max(0.0) * gap
     }
 }
 
@@ -1407,6 +1744,100 @@ pub mod sample {
 
     pub fn document(sections: usize) -> Vec<Paragraph> {
         (1..=sections).flat_map(section).collect()
+    }
+}
+
+#[cfg(test)]
+mod section_tests {
+    use super::*;
+
+    #[test]
+    fn strikes_become_rules_over_their_glyphs() {
+        let mut engine = Engine::new();
+        let mut p = Paragraph::new("keep gone keep");
+        p.strikes.push(5..9);
+        let doc = engine.layout_document(std::slice::from_ref(&p), PageSetup::a4());
+        let rules = doc.strike_rules(0, std::slice::from_ref(&p));
+        assert_eq!(rules.len(), 1);
+        let caret = |i| doc.caret(0, i).unwrap().x;
+        let [x, _, w, h] = rules[0].rect;
+        assert!((x - caret(5)).abs() < 1.0, "{x} vs {}", caret(5));
+        assert!((x + w - caret(9)).abs() < 1.0);
+        assert!(h >= 1.0);
+        assert!(
+            doc.strike_rules(0, &[Paragraph::new("keep gone keep")])
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn sections_start_new_pages_with_their_own_size() {
+        let mut engine = Engine::new();
+        let paras: Vec<Paragraph> = (0..3).map(|i| Paragraph::new(format!("p{i}"))).collect();
+        let portrait = PageSetup::a4();
+        let landscape = portrait.landscape();
+        let layouts = paras
+            .iter()
+            .map(|p| Arc::new(engine.layout_paragraph(p, 300.0)))
+            .collect();
+        let blocks: Vec<Block> = (0..3).map(Block::Para).collect();
+        let flow = |first_block, setup, start| SectionFlow {
+            first_block,
+            setup,
+            first_setup: None,
+            even_setup: None,
+            start,
+            restart: None,
+        };
+        let sections = [
+            flow(0, portrait, SectionBreak::NextPage),
+            flow(1, landscape, SectionBreak::NextPage),
+            SectionFlow {
+                restart: Some(7),
+                ..flow(2, portrait, SectionBreak::OddPage)
+            },
+        ];
+        let doc = PagedDocument::paginate_sections(&paras, layouts, &blocks, &sections);
+        // p0 | p1 (landscape) | p2 on an odd page: 7 is odd, no blank page.
+        assert_eq!(doc.pages.len(), 3);
+        assert_eq!(doc.page_setup(1), landscape);
+        assert_eq!(doc.pages[1].section, 1);
+        assert_eq!(doc.pages[2].number, 7);
+        assert_eq!(doc.caret(2, 0).unwrap().page, 2);
+        let h = doc.total_height(10.0);
+        assert!((h - (2.0 * portrait.height + landscape.height + 20.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn continuous_sections_share_the_page() {
+        let mut engine = Engine::new();
+        let paras: Vec<Paragraph> = (0..2).map(|i| Paragraph::new(format!("p{i}"))).collect();
+        let layouts = paras
+            .iter()
+            .map(|p| Arc::new(engine.layout_paragraph(p, 300.0)))
+            .collect();
+        let blocks: Vec<Block> = (0..2).map(Block::Para).collect();
+        let s = PageSetup::a4();
+        let sections = [
+            SectionFlow {
+                first_block: 0,
+                setup: s,
+                first_setup: None,
+                even_setup: None,
+                start: SectionBreak::NextPage,
+                restart: None,
+            },
+            SectionFlow {
+                first_block: 1,
+                setup: s,
+                first_setup: None,
+                even_setup: None,
+                start: SectionBreak::Continuous,
+                restart: None,
+            },
+        ];
+        let doc = PagedDocument::paginate_sections(&paras, layouts, &blocks, &sections);
+        assert_eq!(doc.pages.len(), 1);
     }
 }
 
@@ -1776,5 +2207,50 @@ mod tests {
         }
         let after = doc.caret(paras.len() - 1, 0).unwrap();
         assert!(after.top > doc.caret(paras.len() - 2, 0).unwrap().top);
+    }
+}
+
+#[cfg(test)]
+mod tab_tests {
+    use super::*;
+
+    fn x_of(doc: &PagedDocument, i: usize) -> f32 {
+        doc.caret(0, i).unwrap().x
+    }
+
+    #[test]
+    fn tabs_reach_default_and_custom_stops() {
+        let mut engine = Engine::new();
+        let setup = PageSetup::a4();
+        // Default stops every 1.27 cm from the column edge.
+        let p = Paragraph::new("a\tb");
+        let doc = engine.layout_document(std::slice::from_ref(&p), setup);
+        let col = setup.margin_left;
+        assert!(
+            (x_of(&doc, 2) - col - 12.7 * MM).abs() < 0.6,
+            "{}",
+            x_of(&doc, 2) - col
+        );
+        // A left stop at 5 cm, then a right stop at 15 cm.
+        let mut p = Paragraph::new("Total\tQty\t1.000.000");
+        p.tabs = vec![
+            TabStop {
+                pos: 50.0 * MM,
+                align: TabAlign::Left,
+            },
+            TabStop {
+                pos: 150.0 * MM,
+                align: TabAlign::Right,
+            },
+        ];
+        let doc = engine.layout_document(std::slice::from_ref(&p), setup);
+        let qty = "Total\t".len();
+        assert!((x_of(&doc, qty) - col - 50.0 * MM).abs() < 0.6);
+        let end = p.text.len();
+        assert!(
+            (x_of(&doc, end) - col - 150.0 * MM).abs() < 1.0,
+            "right tab ends at the stop"
+        );
+        assert_eq!(doc.pages[0].lines.len(), 1);
     }
 }

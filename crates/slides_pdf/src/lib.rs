@@ -38,6 +38,9 @@ use slides_scene::{
 
 pub use docs_pdf::write_file;
 
+pub mod print;
+pub use print::{PrintJob, PrintLayout};
+
 /// px (96 dpi, the scene's unit) to PDF points.
 const TO_PT: f32 = 72.0 / 96.0;
 
@@ -114,8 +117,21 @@ fn encode(deck: &Deck, images: &mut Images) -> Result<Vec<u8>, KrillaError> {
 /// the items land at px × 0.75 from its origin. Shared with Sheets, which
 /// prints worksheet charts and pictures this way.
 pub fn draw_items(surface: &mut Surface, items: &[Item], images: &mut Images, fonts: &mut Fonts) {
+    draw_items_at(surface, items, Affine::IDENTITY, images, fonts);
+}
+
+/// [`draw_items`], each item first moved by `place` (px to px), e.g. a
+/// slide scaled into a cell of a handout page.
+pub fn draw_items_at(
+    surface: &mut Surface,
+    items: &[Item],
+    place: Affine,
+    images: &mut Images,
+    fonts: &mut Fonts,
+) {
     for item in items {
-        let to_page = item.transform.then(Affine::scale(TO_PT, TO_PT));
+        let item_t = item.transform.then(place);
+        let to_page = item_t.then(Affine::scale(TO_PT, TO_PT));
         match &item.prim {
             Prim::Fill { path, paint, rule } => {
                 surface.push_transform(&transform(&to_page));
@@ -132,7 +148,7 @@ pub fn draw_items(surface: &mut Surface, items: &[Item], images: &mut Images, fo
                 draw_picture(surface, pic, images);
                 surface.pop();
             }
-            Prim::Text(text) => draw_text(surface, text, &item.transform, fonts),
+            Prim::Text(text) => draw_text(surface, text, &item_t, fonts),
             Prim::Unsupported { .. } | Prim::PlaceholderOutline { .. } => {}
         }
     }

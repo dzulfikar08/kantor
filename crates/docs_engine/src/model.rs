@@ -16,6 +16,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 pub use crate::object::{Image, ImageFormat, Level, OBJECT, Object, Opaque};
+pub use crate::review::{RevKind, Revision};
 pub use crate::table::CellRef;
 
 use unicode_segmentation::UnicodeSegmentation as _;
@@ -301,6 +302,9 @@ pub struct Run {
     /// The hyperlink this run is part of: the original `<w:hyperlink …>`
     /// start tag, written back around consecutive runs with the same link.
     pub link: Option<Arc<str>>,
+    /// A tracked insertion or deletion this run is part of (see
+    /// [`crate::review`]).
+    pub rev: Option<Arc<Revision>>,
 }
 
 impl Run {
@@ -310,6 +314,7 @@ impl Run {
             props,
             object: None,
             link: None,
+            rev: None,
         }
     }
 }
@@ -363,12 +368,24 @@ impl Paragraph {
 
     /// Append text inside a hyperlink (`link` is its start tag).
     pub fn push_linked(&mut self, text: &str, props: RunProps, link: Option<Arc<str>>) {
+        self.push_tracked(text, props, link, None);
+    }
+
+    /// Append text inside a hyperlink and/or a tracked change.
+    pub fn push_tracked(
+        &mut self,
+        text: &str,
+        props: RunProps,
+        link: Option<Arc<str>>,
+        rev: Option<Arc<Revision>>,
+    ) {
         if self.text.is_empty() {
             self.runs.clear();
         }
         self.text.push_str(text);
         self.runs.push(Run {
             link,
+            rev,
             ..Run::text(text.len(), props)
         });
         self.normalize();
@@ -376,15 +393,26 @@ impl Paragraph {
 
     /// Append an object (one [`OBJECT`] character).
     pub fn push_object(&mut self, object: Object, props: RunProps, link: Option<Arc<str>>) {
+        self.push_object_tracked(object, props, link, None);
+    }
+
+    /// Append an object inside a tracked change.
+    pub fn push_object_tracked(
+        &mut self,
+        object: Object,
+        props: RunProps,
+        link: Option<Arc<str>>,
+        rev: Option<Arc<Revision>>,
+    ) {
         if self.text.is_empty() {
             self.runs.clear();
         }
         self.text.push(OBJECT);
         self.runs.push(Run {
-            len: OBJECT.len_utf8(),
-            props,
             object: Some(object),
             link,
+            rev,
+            ..Run::text(OBJECT.len_utf8(), props)
         });
         self.normalize();
     }
@@ -399,10 +427,8 @@ impl Paragraph {
         self.runs.insert(
             i,
             Run {
-                len: OBJECT.len_utf8(),
-                props,
                 object: Some(object),
-                link: None,
+                ..Run::text(OBJECT.len_utf8(), props)
             },
         );
         self.normalize();
@@ -467,6 +493,7 @@ impl Paragraph {
                     props: self.runs[i].props.clone(),
                     object: self.runs[i].object.clone(),
                     link: self.runs[i].link.clone(),
+                    rev: self.runs[i].rev.clone(),
                 };
                 self.runs[i].len = offset - start;
                 self.runs.insert(i + 1, right);
@@ -547,10 +574,10 @@ impl Paragraph {
                 self.runs.insert(
                     i,
                     Run {
-                        len: OBJECT.len_utf8(),
-                        props: run.props,
                         object: Some(o),
                         link: run.link,
+                        rev: run.rev,
+                        ..Run::text(OBJECT.len_utf8(), run.props)
                     },
                 );
                 at += OBJECT.len_utf8();
@@ -643,6 +670,7 @@ impl Paragraph {
             self.runs[0].len = 0;
             self.runs[0].object = None;
             self.runs[0].link = None;
+            self.runs[0].rev = None;
             return;
         }
         self.runs.retain(|r| r.len > 0);
@@ -653,7 +681,8 @@ impl Paragraph {
                     if last.object.is_none()
                         && run.object.is_none()
                         && last.props == run.props
-                        && last.link == run.link =>
+                        && last.link == run.link
+                        && last.rev == run.rev =>
                 {
                     last.len += run.len
                 }

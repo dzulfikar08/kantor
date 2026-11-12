@@ -74,7 +74,7 @@ impl ShapeClip {
 }
 
 /// Namespace declarations on the root start tag in `prefix`.
-fn root_ns(prefix: &str) -> Vec<(String, String)> {
+pub(crate) fn root_ns(prefix: &str) -> Vec<(String, String)> {
     let mut rest = prefix;
     while let Some(i) = rest.find('<') {
         let tail = &rest[i..];
@@ -92,7 +92,7 @@ fn root_ns(prefix: &str) -> Vec<(String, String)> {
 }
 
 /// `xml` wrapped in an element declaring `ns`, and the wrapper's length.
-fn wrap(ns: &[(String, String)], xml: &str) -> (String, usize) {
+pub(crate) fn wrap(ns: &[(String, String)], xml: &str) -> (String, usize) {
     let mut open = String::from("<w");
     write_attrs(&mut open, ns);
     open.push('>');

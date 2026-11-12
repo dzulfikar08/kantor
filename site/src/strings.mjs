@@ -69,19 +69,19 @@ export const en = {
     docs: {
       name: "Docs",
       formats: [".docx"],
-      text: "Letters and reports with headings, lists, tables, pictures and page sizes such as A4, Letter and F4. Find and replace, and a word count.",
+      text: "Letters and reports with headings, lists, tables, pictures, headers and footers with page numbers, and page sizes such as A4, Letter and F4, landscape pages too. Find and replace, and a word count.",
     },
     slides: {
       name: "Slides",
       formats: [".pptx"],
-      text: "Presentations with text, shapes and pictures you can move and resize, speaker notes, and a full-screen slide show.",
+      text: "Presentations with text, shapes and pictures you can move and resize, tables and chart data you can edit, speaker notes, and a full-screen slide show.",
     },
   },
   keepH3: "Saving doesn't throw away what Kantor can't show yet",
   keepText:
     "If a file holds something Kantor doesn't understand yet, such as a Word header or an Excel comment, Kantor leaves it as it was and writes it back when you save. When it can't do that safely, it saves to a new file or tells you what will be left out.",
   more: [
-    ["Export to PDF", "Docs and Slides save a PDF that looks like what you see on screen. Sheets prints pages the way Excel does: paper size including F4, fit to width, print titles, headers and footers."],
+    ["Print and export to PDF", "Docs and Slides save a PDF that looks like what you see on screen, and print it through your PDF viewer; Slides also prints notes pages and handouts. Sheets prints pages the way Excel does: paper size including F4, fit to width, print titles, headers and footers."],
     ["Offline, no account", "Your files stay on your computer. There is nothing to sign up for."],
     [
       "Your work is safe",
@@ -171,16 +171,16 @@ export const en = {
   limitsIntro:
     "Kantor is early software and hasn't been tried on a large set of real-world files yet. Keep a copy of anything important, and expect these gaps:",
   limits: [
-    "Docs and Slides can't print yet: export to PDF and print the PDF. Sheets prints through your PDF viewer, charts and pictures included.",
+    "Printing goes through your PDF viewer: Kantor makes the pages and the viewer sends them to the printer.",
     "No spell check yet.",
-    "Word: headers, footers, floating pictures, shapes and equations aren't shown properly yet. Kantor keeps them and saves them unchanged.",
-    "Word: table rows don't break across pages, and tab stops show as a single space.",
-    "Word files with tracked changes or comments are saved as a new file, so the original stays as it was.",
+    "Word: floating pictures, shapes and equations aren't shown properly yet, and headers and footers with pictures or tables can't be edited. Kantor keeps them and saves them unchanged.",
+    "Word: table rows don't break across pages, and dot leaders at tab stops aren't drawn.",
+    "Word: comments and tracked changes are shown, and you can add comments and accept or reject changes, but your own typing isn't tracked yet.",
     "Excel: conditional formatting is shown but can't be edited, and new tables can't be created yet.",
     "Excel: macros aren't carried over when you save, and Kantor tells you when that happens. Pivot tables can be created, rearranged, refreshed and deleted, but not grouped by date or number, and calculated fields aren't supported yet.",
     "Excel: charts and pictures on a sheet are shown and can be moved, resized or deleted, but charts can't be created or restyled, and chart sheets, shapes and text boxes aren't shown yet.",
     "Excel: drop-down lists, input messages and error alerts from data validation work, but rules can't be created or changed in Kantor yet.",
-    "PowerPoint: tables, charts and SmartArt can't be edited yet, and some SmartArt shows as a plain box.",
+    "PowerPoint: table cells and chart data are edited in a panel, chart series can't be added yet, and SmartArt can't be edited (some shows as a plain box).",
   ],
   reportH3: "Found a file that Kantor gets wrong?",
   reportText:
@@ -259,19 +259,19 @@ export const id = {
     docs: {
       name: "Docs",
       formats: [".docx"],
-      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, dan ukuran kertas seperti A4, Letter, dan F4. Ada cari dan ganti, juga penghitung kata.",
+      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, header dan footer dengan nomor halaman, serta ukuran kertas seperti A4, Letter, dan F4, termasuk halaman lanskap. Ada cari dan ganti, juga penghitung kata.",
     },
     slides: {
       name: "Slides",
       formats: [".pptx"],
-      text: "Presentasi dengan teks, bentuk, dan gambar yang bisa dipindah dan diubah ukurannya, catatan pembicara, dan tayangan layar penuh.",
+      text: "Presentasi dengan teks, bentuk, dan gambar yang bisa dipindah dan diubah ukurannya, tabel dan data grafik yang bisa diedit, catatan pembicara, dan tayangan layar penuh.",
     },
   },
   keepH3: "Menyimpan tidak membuang yang belum bisa ditampilkan Kantor",
   keepText:
     "Kalau file berisi sesuatu yang belum dipahami Kantor, misalnya header di Word atau komentar di Excel, Kantor membiarkannya apa adanya dan menuliskannya kembali saat Anda menyimpan. Kalau itu tidak bisa dilakukan dengan aman, Kantor menyimpan ke file baru atau memberi tahu bagian mana yang tidak ikut tersimpan.",
   more: [
-    ["Ekspor ke PDF", "Docs dan Slides menyimpan PDF yang sama dengan tampilan di layar. Sheets mencetak halaman seperti Excel: ukuran kertas termasuk F4, muat selebar halaman, judul cetak, header, dan footer."],
+    ["Cetak dan ekspor ke PDF", "Docs dan Slides menyimpan PDF yang sama dengan tampilan di layar dan mencetaknya lewat penampil PDF; Slides juga bisa mencetak halaman catatan dan handout. Sheets mencetak halaman seperti Excel: ukuran kertas termasuk F4, muat selebar halaman, judul cetak, header, dan footer."],
     ["Tanpa internet, tanpa akun", "File Anda tetap di komputer Anda. Tidak perlu mendaftar apa pun."],
     [
       "Pekerjaan Anda aman",
@@ -360,16 +360,16 @@ export const id = {
   limitsIntro:
     "Kantor masih baru dan belum dicoba dengan banyak file dari dunia nyata. Simpan salinan file penting, dan perhatikan kekurangan berikut:",
   limits: [
-    "Docs dan Slides belum bisa mencetak: ekspor ke PDF dulu, lalu cetak PDF-nya. Sheets mencetak lewat penampil PDF, termasuk grafik dan gambarnya.",
+    "Pencetakan lewat penampil PDF: Kantor menyiapkan halamannya, lalu penampil PDF mengirimnya ke printer.",
     "Belum ada pemeriksa ejaan.",
-    "Word: header, footer, gambar mengambang, bentuk, dan persamaan belum tampil dengan benar. Kantor menyimpannya tanpa diubah.",
-    "Word: baris tabel tidak terpotong ke halaman berikutnya, dan tab tampil sebagai satu spasi.",
-    "File Word dengan lacak perubahan (track changes) atau komentar disimpan sebagai file baru, jadi file aslinya tetap utuh.",
+    "Word: gambar mengambang, bentuk, dan persamaan belum tampil dengan benar, dan header atau footer yang berisi gambar atau tabel belum bisa diedit. Kantor menyimpannya tanpa diubah.",
+    "Word: baris tabel tidak terpotong ke halaman berikutnya, dan garis titik-titik (leader) di tab belum digambar.",
+    "Word: komentar dan lacak perubahan (track changes) sudah tampil, Anda bisa menambah komentar dan menerima atau menolak perubahan, tetapi ketikan Anda sendiri belum dilacak.",
     "Excel: format bersyarat tampil tetapi belum bisa diubah, dan tabel baru belum bisa dibuat.",
     "Excel: makro tidak ikut tersimpan, dan Kantor memberi tahu Anda saat itu terjadi. Pivot table bisa dibuat, disusun ulang, di-refresh, dan dihapus, tetapi belum bisa dikelompokkan per tanggal atau angka, dan calculated field belum didukung.",
     "Excel: grafik dan gambar di sheet sudah tampil dan bisa dipindah, diubah ukurannya, atau dihapus, tetapi grafik belum bisa dibuat atau diubah gayanya, dan chart sheet, bentuk (shape), serta kotak teks belum ditampilkan.",
     "Excel: daftar pilihan (drop-down), pesan input, dan peringatan kesalahan dari validasi data sudah berfungsi, tetapi aturannya belum bisa dibuat atau diubah di Kantor.",
-    "PowerPoint: tabel, grafik, dan SmartArt belum bisa diedit, dan sebagian SmartArt tampil sebagai kotak polos.",
+    "PowerPoint: isi tabel dan data grafik diedit lewat panel, seri grafik belum bisa ditambah, dan SmartArt belum bisa diedit (sebagian tampil sebagai kotak polos).",
   ],
   reportH3: "Menemukan file yang salah tampil di Kantor?",
   reportText:

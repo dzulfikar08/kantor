@@ -76,3 +76,47 @@ fn platform_data_dir() -> Option<PathBuf> {
     let base = env_dir("XDG_DATA_HOME").or_else(|| Some(home_dir()?.join(".local/share")))?;
     Some(base.join("kantor"))
 }
+
+/// Where Print puts the PDF it hands to the system's PDF viewer:
+/// `<temp>/kantor-print-<pid>/<stem>.pdf` (the folder is created). The
+/// viewer may still be reading it after Kantor quits, so it isn't deleted.
+pub fn print_pdf_path(stem: &str) -> std::io::Result<PathBuf> {
+    let dir = std::env::temp_dir().join(format!("kantor-print-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let stem: String = stem
+        .chars()
+        .map(|c| if std::path::is_separator(c) { '_' } else { c })
+        .collect();
+    let stem = if stem.trim().is_empty() {
+        "Kantor"
+    } else {
+        stem.as_str()
+    };
+    Ok(dir.join(format!("{stem}.pdf")))
+}
+
+/// The account's full name (the passwd GECOS field on Unix), else the
+/// login name, else "Kantor".
+pub fn user_full_name() -> String {
+    let login = std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_default();
+    #[cfg(unix)]
+    if !login.is_empty()
+        && let Ok(passwd) = std::fs::read_to_string("/etc/passwd")
+        && let Some(gecos) = passwd
+            .lines()
+            .find(|l| l.split(':').next() == Some(login.as_str()))
+            .and_then(|l| l.split(':').nth(4))
+            .and_then(|g| g.split(',').next())
+            .map(str::trim)
+            .filter(|g| !g.is_empty())
+    {
+        return gecos.to_owned();
+    }
+    if login.is_empty() {
+        "Kantor".to_owned()
+    } else {
+        login
+    }
+}

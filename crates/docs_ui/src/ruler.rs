@@ -184,7 +184,7 @@ pub(crate) fn ticks(page_w: f32, margin_left: f32) -> Vec<(f32, Option<i32>)> {
 
 impl DocsView {
     pub(crate) fn ruler_marks(&self) -> Marks {
-        let s = self.laid.paged.setup;
+        let s = docs_pdf::build::geometry_setup(&self.doc.section_page(self.sel.head.para));
         let indents = (!self.in_table()).then(|| {
             let p = self.doc.paragraph(self.sel.head.para);
             let r = self.doc.resolve_para(p);
@@ -206,7 +206,7 @@ impl DocsView {
     /// Page x (unzoomed) under a window x.
     fn page_x_at(&self, x: Pixels) -> f32 {
         let g = self.geometry();
-        f32::from(x - g.origin.x) / g.zoom + g.scroll.x - g.page_x()
+        f32::from(x - g.origin.x) / g.zoom + g.scroll.x - g.page_x(self.caret_page())
     }
 
     fn ruler_move(&mut self, x: Pixels, cx: &mut Context<Self>) {
@@ -233,12 +233,12 @@ impl DocsView {
         let tw = |px: f32| (px * 15.0).round().max(0.0) as u32;
         match d.handle {
             Handle::MarginLeft => {
-                let mut p = self.doc.page;
+                let mut p = self.page_geometry();
                 p.margin_left = tw(d.x);
                 self.set_page_doc(p, window, cx);
             }
             Handle::MarginRight => {
-                let mut p = self.doc.page;
+                let mut p = self.page_geometry();
                 p.margin_right = tw(marks.page_w - d.x);
                 self.set_page_doc(p, window, cx);
             }
@@ -262,7 +262,8 @@ impl DocsView {
         let z = g.zoom;
         let marks = self.ruler_marks();
         // Ruler-local x of a page x.
-        let sx = |x: f32| px((g.page_x() + x - g.scroll.x) * z);
+        let page_x = g.page_x(self.caret_page());
+        let sx = |x: f32| px((page_x + x - g.scroll.x) * z);
         // Drawn in the chrome palette, not paper white: the ruler is UI,
         // and a white strip glares on dark themes.
         let ink = t.fg;

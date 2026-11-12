@@ -75,9 +75,35 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: "Print…",
-        detail: "Sheets: opens the pages as a PDF in the system viewer to print",
+        detail: "Opens the pages as a PDF in the system viewer to print",
+        keys: "Ctrl P",
+        run: |ws, window, cx| ws.print(&crate::actions::Print, window, cx),
+    },
+    Command {
+        title: "Print Notes Pages…",
+        detail: "Slides: each slide above its speaker notes",
         keys: "",
-        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.print_doc(w, cx)),
+        run: |ws, window, cx| {
+            ws.with_slides(window, cx, |v, w, cx| {
+                v.print_layout_doc(slides_pdf::PrintLayout::Notes, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Print Handouts…",
+        detail: "Slides: 3 slides per page with lines for notes (the Print menu has 1–9)",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_slides(window, cx, |v, w, cx| {
+                v.print_layout_doc(slides_pdf::PrintLayout::Handouts(3), w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Edit Table or Chart Data…",
+        detail: "Slides · the selected table's cells, rows and columns, or a chart's values",
+        keys: "",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.edit_object_doc(w, cx)),
     },
     Command {
         title: "Undo",
@@ -994,6 +1020,84 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Docs · paper size, orientation, margins",
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.toggle_page_menu(None, w, cx)),
+    },
+    Command {
+        title: "Header and Footer…",
+        detail: "Docs · text, page numbers, different first page, odd and even pages",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.open_hf_menu(docs_engine::HfKind::Header, None, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Add Page Numbers",
+        detail: "Docs · \"Page 1 of 9\" centred in the footer",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.add_page_numbers_doc(w, cx)),
+    },
+    Command {
+        title: "Insert Page Number Field",
+        detail: "Docs · the page number at the caret",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.insert_page_number_doc(w, cx)),
+    },
+    Command {
+        title: "Insert Section Break (Next Page)",
+        detail: "Docs · a new section with its own page setup, headers and footers",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| v.insert_section_break_doc(w, cx))
+        },
+    },
+    Command {
+        title: "New Comment",
+        detail: "Docs · on the selection or the word at the caret",
+        keys: "Ctrl Alt M",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.new_comment_doc(w, cx)),
+    },
+    Command {
+        title: "Show or Hide Comments",
+        detail: "Docs · the comment cards beside the pages",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, _, cx| v.toggle_comments_doc(cx)),
+    },
+    Command {
+        title: "Accept Tracked Change",
+        detail: "Docs · the insertion or deletion at the caret, then the next one",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.accept_change_doc(w, cx)),
+    },
+    Command {
+        title: "Reject Tracked Change",
+        detail: "Docs · the insertion or deletion at the caret, then the next one",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.reject_change_doc(w, cx)),
+    },
+    Command {
+        title: "Accept All Tracked Changes",
+        detail: "Docs · insertions, deletions, paragraph marks and formatting",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.resolve_all_doc(true, w, cx)),
+    },
+    Command {
+        title: "Reject All Tracked Changes",
+        detail: "Docs · back to the text before the changes",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.resolve_all_doc(false, w, cx)),
+    },
+    Command {
+        title: "Next Tracked Change",
+        detail: "Docs · select the next insertion or deletion",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, _, cx| v.next_change_doc(true, cx)),
+    },
+    Command {
+        title: "Previous Tracked Change",
+        detail: "Docs · select the previous insertion or deletion",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, _, cx| v.next_change_doc(false, cx)),
     },
     Command {
         title: "Paper Size: A4",

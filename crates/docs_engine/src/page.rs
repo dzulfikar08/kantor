@@ -493,6 +493,120 @@ pub fn update_sect_pr(sect_pr: &str, page: &PageGeometry) -> String {
     out
 }
 
+/// `w:sectPr` children in schema order (header and footer references
+/// share the first slot, in any order among themselves).
+const SECT_ORDER: &[&str] = &[
+    "headerReference",
+    "footnotePr",
+    "endnotePr",
+    "type",
+    "pgSz",
+    "pgMar",
+    "paperSrc",
+    "pgBorders",
+    "lnNumType",
+    "pgNumType",
+    "cols",
+    "formProt",
+    "vAlign",
+    "noEndnote",
+    "titlePg",
+    "textDirection",
+    "bidi",
+    "rtlGutter",
+    "docGrid",
+    "printerSettings",
+    "sectPrChange",
+];
+
+fn sect_rank(name: &str) -> usize {
+    let name = if name == "footerReference" {
+        "headerReference"
+    } else {
+        name
+    };
+    SECT_ORDER
+        .iter()
+        .position(|n| *n == name)
+        .unwrap_or(SECT_ORDER.len())
+}
+
+/// End of the element whose start tag is `t` (its close tag, or the tag
+/// itself when it is self-closing).
+fn element_end(xml: &str, t: &Tag) -> usize {
+    if xml[t.start..t.end].ends_with("/>") {
+        return t.end;
+    }
+    let qname: String = xml[t.start + 1..t.end]
+        .chars()
+        .take_while(|c| !c.is_whitespace() && *c != '/' && *c != '>')
+        .collect();
+    let close = format!("</{qname}>");
+    xml[t.end..]
+        .find(&close)
+        .map_or(t.end, |i| t.end + i + close.len())
+}
+
+/// `sect_pr` with the child elements `matches` picks replaced by `new`
+/// (`None` removes them; written with the sectPr's own prefix as
+/// `<{p}name …/>` by the caller). A new element goes where the schema
+/// wants it. Every other byte is kept.
+pub(crate) fn set_sect_child(
+    sect_pr: &str,
+    name: &str,
+    matches: impl Fn(&str) -> bool,
+    new: Option<String>,
+) -> String {
+    let tags = child_tags(sect_pr);
+    let hits: Vec<&Tag> = tags
+        .iter()
+        .filter(|t| t.name == name && matches(&sect_pr[t.start..t.end]))
+        .collect();
+    let mut out = sect_pr.to_owned();
+    if let Some(first) = hits.first() {
+        let mut edits: Vec<(std::ops::Range<usize>, String)> = hits
+            .iter()
+            .skip(1)
+            .map(|t| (t.start..element_end(sect_pr, t), String::new()))
+            .collect();
+        edits.push((
+            first.start..element_end(sect_pr, first),
+            new.unwrap_or_default(),
+        ));
+        edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+        for (r, v) in edits {
+            out.replace_range(r, &v);
+        }
+        return out;
+    }
+    let Some(new) = new else { return out };
+    let rank = sect_rank(name);
+    let at = tags
+        .iter()
+        .find(|t| sect_rank(&t.name) > rank)
+        .map(|t| t.start)
+        .unwrap_or_else(|| {
+            if sect_pr.trim_end().ends_with("/>") {
+                sect_pr.len()
+            } else {
+                sect_pr.rfind("</").unwrap_or(sect_pr.len())
+            }
+        });
+    if sect_pr.trim_end().ends_with("/>") && !sect_pr.contains("</") {
+        // `<w:sectPr/>`: open it up.
+        let p = root_prefix(sect_pr).to_owned();
+        let open = sect_pr.trim_end().trim_end_matches("/>").to_owned() + ">";
+        return format!("{open}{new}</{p}sectPr>");
+    }
+    out.insert_str(at, &new);
+    out
+}
+
+/// The prefix (`w:`) a sectPr's elements are written with.
+pub(crate) fn sect_prefix(sect_pr: &str) -> &str {
+    root_prefix(sect_pr)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

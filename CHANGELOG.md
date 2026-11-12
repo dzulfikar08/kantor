@@ -53,6 +53,55 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   workbooks are written in the background. Imported files (`.csv`, `.ods`, `.xls`, `.xlsb`), files
   with content Kantor can't keep, and files changed on disk by someone else are never autosaved;
   they still get recovery copies.
+- **Print… in Docs and Slides** (`Ctrl P` in every app, the toolbar's printer menu, *Ctrl K →
+  Print…*): the pages go to a temporary PDF that opens in your PDF viewer to print, as Sheets
+  already did. Slides prints full-page slides, **notes pages** (the slide above its speaker notes)
+  or **handouts** with 1, 2, 3 (with lines for writing), 4, 6 or 9 slides per A4 page; `Ctrl P`
+  repeats the layout chosen last. `kantor convert --notes deck.pptx notes.pdf` and
+  `--handouts N` do the same without a window.
+
+#### Docs
+- **Headers and footers** are shown on every page and printed: the file's own parts, with Word's
+  rules for "different first page", "different odd and even pages" and "Link to Previous"
+  between sections; a header or footer taller than its margin pushes the text in. Pictures in
+  them (letterhead logos) are drawn too. Edit them with the toolbar's header button, *Ctrl K →
+  Header and Footer…* or a double-click in a page's top or bottom margin: the text of each
+  header/footer the section uses, alignment, page number and page count buttons, and the two
+  options. Kantor writes back only the parts you changed (plus `settings.xml` for odd and even
+  pages), so other headers stay byte for byte.
+- **Page numbers:** `PAGE` and `NUMPAGES` fields show each page's number (in the section's
+  format: 1, i, I, a, A, restarting where the file says) on screen and in the PDF. *Add Page
+  Numbers* puts "Page 1 of 9" centred in the footer; *Insert Page Number Field* adds one at the
+  caret.
+- **Comments** from Word show as cards beside the pages, next to the text they're on (which is
+  highlighted); *New comment* (`Ctrl Alt M`, the toolbar's Review menu, the palette) comments on
+  the selection, and each card can be edited or deleted. Untouched comments are saved byte for
+  byte; Kantor creates `comments.xml` for a document's first comment.
+- **Tracked changes** show in the author's colour: insertions underlined, deletions struck through
+  (also in the PDF). Accept or reject the change at the caret (then go to the next), or all of
+  them, from the Review menu or the palette; Accept All / Reject All also resolve paragraph-mark
+  and formatting changes. Files with comments or tracked changes no longer have to be saved
+  under a new name; a file with track changes switched on opens normally, with a note that
+  Kantor's own edits aren't tracked.
+- **Sections:** each section keeps its own paper size, orientation and margins (a landscape
+  appendix in a portrait report); next-page, continuous, odd and even section starts are laid
+  out. *Insert Section Break (Next Page)* starts a new section at the caret, and Page setup (and
+  the ruler's margins) change the caret's section. The PDF has each page at its own size.
+
+- **Tab stops:** tabs line text up at the paragraph's (and its style's) left, centre, right and
+  decimal stops, and at the document's default stops after them, on screen and in the PDF; they
+  used to show as one space. Leaders aren't drawn yet.
+
+#### Slides
+- **Edit tables:** double-click a table (or the toolbar's edit button, *Ctrl K → Edit Table or
+  Chart Data…*) for a panel with its cells: type into them, add rows above or below and columns
+  left or right of the current cell, delete them, and fill a cell with a theme colour or none.
+  New rows and columns copy their neighbour's formatting, the frame grows or shrinks with them,
+  and the rest of the table's XML is kept byte for byte. One undo step per Apply.
+- **Edit chart data:** the same panel for charts: category labels, series names and values, and a
+  category added at the end or the last one removed. The chart redraws at once (and in the PDF);
+  the chart part's cached values and ranges and the embedded workbook's cells are updated, other
+  parts and cells untouched. Series can't be added or removed yet.
 
 #### Sheets
 - **Frozen rows stay put** while the sheet scrolls, like frozen columns already did: the frozen rows
@@ -80,6 +129,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   Excel; they still mark the workbook as changed.
 
 ### Fixed
+
+#### Slides
+- Saving a presentation with an edited slide no longer rewrites `[Content_Types].xml` with its
+  entries reordered.
 
 #### Sheets
 - Hidden columns from a file were drawn 24 px wide; they now take no room, and arrow keys step

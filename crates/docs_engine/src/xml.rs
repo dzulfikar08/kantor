@@ -157,6 +157,11 @@ pub fn escape(s: &str) -> String {
 
 /// `w:rPr` children in schema order.
 pub const RPR_ORDER: &[&str] = &[
+    // A paragraph mark's own revision marks come first (CT_ParaRPr).
+    "ins",
+    "del",
+    "moveFrom",
+    "moveTo",
     "rStyle",
     "rFonts",
     "b",

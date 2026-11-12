@@ -14,11 +14,15 @@
 //!
 //! [`export`] does both for headless callers (`kantor convert`).
 //!
-//! What the PDF leaves out: Kantor's own placeholders for content it can't
-//! draw (charts, shapes, unsupported picture formats: the space stays
-//! empty), and headers/footers, which the model keeps only as XML.
+//! Pages follow their sections' sizes and carry their headers and footers
+//! with the page numbers filled in ([`pages`]). What the PDF leaves out:
+//! Kantor's own placeholders for content it can't draw (charts, shapes,
+//! unsupported picture formats: the space stays empty).
 
 pub mod build;
+pub mod pages;
+
+pub use pages::{Layout, Placed, StoryLayout, lay_out_with};
 
 pub use docs_layout::Engine;
 
@@ -50,6 +54,9 @@ const TO_PT: f32 = 72.0 / 96.0;
 /// One page's content in page coordinates (px), ready to encode.
 #[derive(Clone, Debug, Default)]
 pub struct PageScene {
+    /// Page size, px.
+    pub width: f32,
+    pub height: f32,
     /// Filled rectangles (table borders), `[x, y, w, h]`.
     pub rules: Vec<([f32; 4], Rgba)>,
     pub pictures: Vec<Picture>,
@@ -112,83 +119,141 @@ pub struct Scene {
 }
 
 /// Lay a document out on pages the way the Docs view does (without its
-/// per-paragraph cache).
-pub fn lay_out(doc: &Document, engine: &mut Engine) -> PagedDocument {
-    let setup = build::page_setup(doc);
-    let (paras, widths, blocks) = build::build(doc);
-    let layouts = paras
-        .iter()
-        .zip(&widths)
-        .map(|(p, &w)| Arc::new(engine.layout_paragraph(p, w)))
-        .collect();
-    PagedDocument::paginate_blocks(&paras, layouts, &blocks, setup)
+/// per-paragraph cache): sections, headers and footers.
+pub fn lay_out(doc: &Document, engine: &mut Engine) -> Layout {
+    lay_out_with(doc, &mut |p, w| Arc::new(engine.layout_paragraph(p, w)))
 }
 
-/// Collect what every page draws. `paged` must be `doc` laid out with
-/// [`build`] (as [`lay_out`] or the Docs view does).
-pub fn scene(doc: &Document, paged: &PagedDocument) -> Scene {
-    let texts: Vec<Arc<str>> = doc
-        .paragraphs()
-        .iter()
-        .map(|p| Arc::from(p.text.as_str()))
-        .collect();
+/// Add what `paged`'s page `page` draws to `out`, moved by (`dx`, `dy`).
+/// `paras` are the paragraphs `paged` was laid out from; pictures come
+/// from `doc` (the document or the header's own part).
+#[allow(clippy::too_many_arguments)]
+fn add_page(
+    out: &mut PageScene,
+    doc: &Document,
+    paras: &[docs_engine::Paragraph],
+    paged: &PagedDocument,
+    page: usize,
+    (dx, dy): (f32, f32),
+    pictures: &mut HashMap<(usize, String), Option<PictureData>>,
+    doc_key: usize,
+) {
+    let texts: Vec<Arc<str>> = paras.iter().map(|p| Arc::from(p.text.as_str())).collect();
+    out.rules.extend(paged.pages[page].rules.iter().map(|r| {
+        (
+            [r.rect[0] + dx, r.rect[1] + dy, r.rect[2], r.rect[3]],
+            r.color,
+        )
+    }));
+    for o in paged.objects(page) {
+        if o.kind != ObjectKind::Image {
+            continue;
+        }
+        let Some(Object::Image(img)) = paras.get(o.para).and_then(|p| p.object_at(o.index)) else {
+            continue;
+        };
+        let found = pictures
+            .entry((doc_key, img.rel_id.clone()))
+            .or_insert_with(|| {
+                let bytes = doc.image_bytes(&img.rel_id)?;
+                match ImageFormat::sniff(&bytes) {
+                    ImageFormat::Other => None,
+                    format => Some((format, bytes)),
+                }
+            });
+        if let Some((format, bytes)) = found {
+            let [x, y, w, h] = o.rect;
+            out.pictures.push(Picture {
+                rect: [x + dx, y + dy, w, h],
+                format: *format,
+                bytes: bytes.clone(),
+            });
+        }
+    }
     let mut markers: HashMap<usize, Arc<str>> = HashMap::new();
-    // Picture bytes by relationship id; `None` when not PNG/JPEG.
-    let mut pictures: HashMap<String, Option<PictureData>> = HashMap::new();
+    for run in paged.glyph_runs(page) {
+        let text = match run.source {
+            RunSource::Text => texts.get(run.para).cloned(),
+            RunSource::Marker => Some(
+                markers
+                    .entry(run.para)
+                    .or_insert_with(|| Arc::from(paged.run_text(&run, "")))
+                    .clone(),
+            ),
+            // Kantor's placeholder labels are not document content.
+            RunSource::Label(_) => None,
+        };
+        let Some(text) = text else { continue };
+        // The object character is laid out as a zero-width glyph holding
+        // the picture's place; it isn't text to extract.
+        let mut run = run;
+        run.glyphs
+            .retain(|g| text.get(g.cluster.clone()) != Some(OBJECT_STR));
+        if run.glyphs.is_empty() {
+            continue;
+        }
+        for g in &mut run.glyphs {
+            g.x += dx;
+            g.y += dy;
+        }
+        run.origin_x += dx;
+        run.baseline += dy;
+        out.runs.push(TextRun::from_glyph_run(&run, text));
+    }
+}
+
+/// Collect what every page draws. `laid` must be `doc` laid out (as
+/// [`lay_out`] or the Docs view does).
+pub fn scene(doc: &Document, laid: &Layout) -> Scene {
+    scene_of(doc, &laid.paged, &laid.furniture, &laid.strikes)
+}
+
+/// [`scene`] from a layout's parts.
+pub fn scene_of(
+    doc: &Document,
+    paged: &PagedDocument,
+    furniture: &[Vec<Placed>],
+    strikes: &[docs_layout::Paragraph],
+) -> Scene {
+    let mut pictures = HashMap::new();
     let pages = (0..paged.pages.len())
         .map(|page| {
+            let setup = paged.page_setup(page);
             let mut out = PageScene {
-                rules: paged.pages[page]
-                    .rules
-                    .iter()
-                    .map(|r| (r.rect, r.color))
-                    .collect(),
+                width: setup.width,
+                height: setup.height,
                 ..PageScene::default()
             };
-            for o in paged.objects(page) {
-                if o.kind != ObjectKind::Image {
-                    continue;
-                }
-                let Some(Object::Image(img)) = doc.paragraph(o.para).object_at(o.index) else {
-                    continue;
-                };
-                let found = pictures.entry(img.rel_id.clone()).or_insert_with(|| {
-                    let bytes = doc.image_bytes(&img.rel_id)?;
-                    match ImageFormat::sniff(&bytes) {
-                        ImageFormat::Other => None,
-                        format => Some((format, bytes)),
-                    }
-                });
-                if let Some((format, bytes)) = found {
-                    out.pictures.push(Picture {
-                        rect: o.rect,
-                        format: *format,
-                        bytes: bytes.clone(),
-                    });
-                }
+            for f in furniture.get(page).into_iter().flatten() {
+                let story = &doc.stories()[f.layout.story];
+                add_page(
+                    &mut out,
+                    &story.doc,
+                    &f.layout.paras,
+                    &f.layout.paged,
+                    0,
+                    (f.x, f.y),
+                    &mut pictures,
+                    f.layout.story + 1,
+                );
             }
-            for run in paged.glyph_runs(page) {
-                let text = match run.source {
-                    RunSource::Text => texts.get(run.para).cloned(),
-                    RunSource::Marker => Some(
-                        markers
-                            .entry(run.para)
-                            .or_insert_with(|| Arc::from(paged.run_text(&run, "")))
-                            .clone(),
-                    ),
-                    // Kantor's placeholder labels are not document content.
-                    RunSource::Label(_) => None,
-                };
-                let Some(text) = text else { continue };
-                // The object character is laid out as a zero-width glyph
-                // holding the picture's place; it isn't text to extract.
-                let mut run = run;
-                run.glyphs
-                    .retain(|g| text.get(g.cluster.clone()) != Some(OBJECT_STR));
-                if run.glyphs.is_empty() {
-                    continue;
-                }
-                out.runs.push(TextRun::from_glyph_run(&run, text));
+            add_page(
+                &mut out,
+                doc,
+                doc.paragraphs(),
+                paged,
+                page,
+                (0.0, 0.0),
+                &mut pictures,
+                0,
+            );
+            if !strikes.is_empty() {
+                out.rules.extend(
+                    paged
+                        .strike_rules(page, strikes)
+                        .into_iter()
+                        .map(|r| (r.rect, r.color)),
+                );
             }
             out
         })
@@ -203,8 +268,8 @@ pub fn scene(doc: &Document, paged: &PagedDocument) -> Scene {
 
 /// Lay out and encode `doc` as PDF.
 pub fn export(doc: &Document, engine: &mut Engine) -> Result<Vec<u8>> {
-    let paged = lay_out(doc, engine);
-    write(&scene(doc, &paged))
+    let laid = lay_out(doc, engine);
+    write(&scene(doc, &laid))
 }
 
 /// Encode a scene as PDF. Pictures krilla can't decode are left out (with
@@ -369,12 +434,15 @@ fn encode(scene: &Scene, images: &mut Images) -> Result<Vec<u8>, KrillaError> {
     let mut fonts = Fonts::default();
     let mut pdf = krilla::Document::new();
     pdf.set_metadata(metadata(&scene.title));
-    let settings = || {
-        PageSettings::from_wh(
-            (scene.width * TO_PT).max(1.0),
-            (scene.height * TO_PT).max(1.0),
-        )
-        .expect("positive page size")
+    let settings = |c: &PageScene| {
+        // Pages carry their own size (sections); 0 = the scene's.
+        let (w, h) = if c.width > 0.0 && c.height > 0.0 {
+            (c.width, c.height)
+        } else {
+            (scene.width, scene.height)
+        };
+        PageSettings::from_wh((w * TO_PT).max(1.0), (h * TO_PT).max(1.0))
+            .expect("positive page size")
     };
     let blank = [PageScene::default()];
     let pages = if scene.pages.is_empty() {
@@ -383,7 +451,7 @@ fn encode(scene: &Scene, images: &mut Images) -> Result<Vec<u8>, KrillaError> {
         &scene.pages[..]
     };
     for content in pages {
-        let mut page = pdf.start_page_with(settings());
+        let mut page = pdf.start_page_with(settings(content));
         let mut surface = page.surface();
         for (rect, color) in &content.rules {
             fill_rect(&mut surface, *rect, *color);

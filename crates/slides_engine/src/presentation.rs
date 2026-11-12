@@ -724,6 +724,9 @@ impl Presentation {
         if let Some(b) = self.media.get(part) {
             return Some(b.clone());
         }
+        if let Some(b) = self.edited_part(part) {
+            return Some(b);
+        }
         let mut zip = zip::ZipArchive::new(Cursor::new(self.pkg.bytes.as_slice())).ok()?;
         let mut f = zip.by_name(part).ok()?;
         let mut v = Vec::new();
@@ -895,6 +898,12 @@ impl Presentation {
                     ct.ensure_default(ext, media_type(ext));
                 }
                 out_parts.push((part.clone(), bytes.as_ref().clone()));
+            }
+        }
+        // Charts (and their workbooks) edited in Kantor.
+        for (part, bytes) in self.edited_parts() {
+            if !out_parts.iter().any(|(p, _)| *p == part) {
+                out_parts.push((part, bytes.as_ref().clone()));
             }
         }
         // presentation.xml and its relationships.

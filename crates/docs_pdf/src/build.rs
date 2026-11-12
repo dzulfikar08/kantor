@@ -21,9 +21,32 @@ pub fn rgba(c: docs_engine::Rgb) -> Rgba {
     Rgba([r, g, b, 255])
 }
 
-/// Page size and margins from the document's section properties.
+/// Word-like markup colours, one per author.
+const AUTHOR_COLORS: [[u8; 3]; 6] = [
+    [0xC0, 0x00, 0x00],
+    [0x1F, 0x5F, 0xBF],
+    [0x7B, 0x2F, 0xA8],
+    [0x2E, 0x7D, 0x32],
+    [0xC5, 0x5A, 0x11],
+    [0x00, 0x83, 0x8F],
+];
+
+/// The markup colour of a tracked change's author (stable per name).
+pub fn author_color(author: &str) -> Rgba {
+    let h = author
+        .bytes()
+        .fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32));
+    let [r, g, b] = AUTHOR_COLORS[h as usize % AUTHOR_COLORS.len()];
+    Rgba([r, g, b, 255])
+}
+
+/// Page size and margins from the document's (last section's) properties.
 pub fn page_setup(doc: &Document) -> PageSetup {
-    let g = doc.page;
+    geometry_setup(&doc.page)
+}
+
+/// Page size and margins in px.
+pub fn geometry_setup(g: &docs_engine::PageGeometry) -> PageSetup {
     PageSetup {
         width: tw(g.width),
         height: tw(g.height),
@@ -54,6 +77,23 @@ pub fn layout_paragraph(
         // minimum and a single line.
         ResolvedLine::AtLeast(pt) => LineHeight::Absolute(pt.max(first.size_pt * 1.22) * PT),
     });
+    lp.default_tab = tw(doc.default_tab());
+    // Stops are measured from the column edge in Word; the layout's
+    // positions are too.
+    lp.tabs = doc
+        .tab_stops(p)
+        .into_iter()
+        .filter(|(pos, _)| *pos > 0)
+        .map(|(pos, kind)| docs_layout::TabStop {
+            pos: tw(pos as u32),
+            align: match kind {
+                docs_engine::TabKind::Left => docs_layout::TabAlign::Left,
+                docs_engine::TabKind::Center => docs_layout::TabAlign::Center,
+                docs_engine::TabKind::Right => docs_layout::TabAlign::Right,
+                docs_engine::TabKind::Decimal => docs_layout::TabAlign::Decimal,
+            },
+        })
+        .collect();
     lp.space_before_pt = rp.space_before_pt;
     lp.space_after_pt = rp.space_after_pt;
     lp.indent_left_pt = rp.indent_left_pt;
@@ -71,13 +111,27 @@ pub fn layout_paragraph(
             continue;
         }
         let r = doc.resolve_run(p, &run.props);
+        // Tracked changes: the author's colour, insertions underlined,
+        // deletions struck through (as Word shows "All Markup").
+        let (color, underline) = match &run.rev {
+            Some(rev) => {
+                if rev.kind == docs_engine::RevKind::Delete {
+                    lp.strikes.push(range.clone());
+                }
+                (
+                    author_color(&rev.author),
+                    r.underline || rev.kind == docs_engine::RevKind::Insert,
+                )
+            }
+            None => (rgba(r.color), r.underline),
+        };
         lp.spans.push(Span {
             range,
             bold: r.bold,
             italic: r.italic,
-            underline: r.underline,
+            underline,
             size_pt: Some(r.size_pt),
-            color: Some(rgba(r.color)),
+            color: Some(color),
             family: Some(font_stack(&r.font)),
         });
     }
@@ -142,6 +196,17 @@ pub fn layout_paragraph(
                     height: 0.0,
                     label: op.label.clone(),
                 },
+                // A comment's reference mark: the comment shows in the
+                // margin instead.
+                Level::Run if docs_engine::model::element_name(&op.xml) == "commentReference" => {
+                    InlineObject {
+                        index,
+                        kind: ObjectKind::Hidden,
+                        width: 0.0,
+                        height: 0.0,
+                        label: String::new(),
+                    }
+                }
                 Level::Run | Level::Para => InlineObject {
                     index,
                     kind: ObjectKind::Placeholder,
@@ -168,19 +233,20 @@ fn rule(b: Option<docs_engine::Border>) -> Option<Rule> {
 }
 
 /// The table block for table `id`, whose paragraphs are `range`.
-fn table_block(doc: &Document, id: u32, range: std::ops::Range<usize>) -> Option<TableBlock> {
+fn table_block(
+    doc: &Document,
+    paras: &[docs_engine::Paragraph],
+    id: u32,
+    range: std::ops::Range<usize>,
+    content_tw: u32,
+) -> Option<TableBlock> {
     let t = doc.table(id)?;
     let style = doc.styles.table_style(t.style.as_deref());
     let mut tb = style.borders;
     tb.overlay(&t.borders);
     let m = t.cell_margins.or(style.cell_margins).unwrap_or_default();
-    let columns: Vec<f32> = t
-        .column_widths(doc.content_width())
-        .into_iter()
-        .map(tw)
-        .collect();
+    let columns: Vec<f32> = t.column_widths(content_tw).into_iter().map(tw).collect();
     let ncols = columns.len();
-    let paras = doc.paragraphs();
     let mut rows = Vec::with_capacity(t.rows.len());
     for (ri, row) in t.rows.iter().enumerate() {
         let mut cells = Vec::with_capacity(row.cells.len());
@@ -259,20 +325,45 @@ fn table_block(doc: &Document, id: u32, range: std::ops::Range<usize>) -> Option
 }
 
 /// Everything layout needs: paragraphs, the width each is broken at, and
-/// the block structure.
+/// the block structure. Each paragraph is broken at its section's text
+/// width.
 pub fn build(doc: &Document) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
-    let setup = page_setup(doc);
-    let body_w = setup.content_width();
-    let paras = doc.paragraphs();
+    let sections = doc.sections();
+    let widths: Vec<u32> = sections
+        .iter()
+        .map(|s| {
+            let g = s.props.page;
+            g.width
+                .saturating_sub(g.margin_left + g.margin_right)
+                .max(1440)
+        })
+        .collect();
+    let section_of = |i: usize| {
+        sections
+            .iter()
+            .position(|s| i < s.paras.end)
+            .unwrap_or(sections.len() - 1)
+    };
+    build_with(doc, doc.paragraphs(), &|i| widths[section_of(i)])
+}
+
+/// [`build`] over `paras` (the document's paragraphs, or a header's with
+/// page numbers filled in), `content_tw(i)` giving paragraph `i`'s text
+/// width in twips.
+pub fn build_with(
+    doc: &Document,
+    paras: &[docs_engine::Paragraph],
+    content_tw: &dyn Fn(usize) -> u32,
+) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
     let markers = doc.list_markers();
-    let mut widths = vec![body_w; paras.len()];
+    let mut widths: Vec<f32> = (0..paras.len()).map(|i| tw(content_tw(i))).collect();
     let mut blocks = Vec::new();
     let mut i = 0;
     while i < paras.len() {
         let table = paras[i].cell.map(|c| c.table);
-        match table.map(|id| (id, doc.table_range(id))) {
+        match table.map(|id| (id, table_range(paras, id))) {
             Some((id, range)) if range.start == i && !range.is_empty() => {
-                match table_block(doc, id, range.clone()) {
+                match table_block(doc, paras, id, range.clone(), content_tw(i)) {
                     Some(tb) => {
                         for row in &tb.rows {
                             for cell in &row.cells {
@@ -301,7 +392,10 @@ pub fn build(doc: &Document) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Bloc
     let mut out: Vec<docs_layout::Paragraph> = paras
         .iter()
         .enumerate()
-        .map(|(k, p)| layout_paragraph(doc, p, markers[k].as_deref(), widths[k]))
+        .map(|(k, p)| {
+            let marker = markers.get(k).and_then(|m| m.as_deref());
+            layout_paragraph(doc, p, marker, widths[k])
+        })
         .collect();
     // Contextual spacing: no space between paragraphs of the same style.
     for k in 0..paras.len() {
@@ -321,6 +415,23 @@ pub fn build(doc: &Document) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Bloc
         }
     }
     (out, widths, blocks)
+}
+
+/// Paragraph index range of table `id` in `paras`.
+fn table_range(paras: &[docs_engine::Paragraph], id: u32) -> std::ops::Range<usize> {
+    let start = paras
+        .iter()
+        .position(|p| p.cell.is_some_and(|c| c.table == id));
+    match start {
+        Some(s) => {
+            let len = paras[s..]
+                .iter()
+                .take_while(|p| p.cell.is_some_and(|c| c.table == id))
+                .count();
+            s..s + len
+        }
+        None => 0..0,
+    }
 }
 
 #[cfg(test)]

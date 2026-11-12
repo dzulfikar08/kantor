@@ -216,6 +216,15 @@ impl Painter {
             .slide(&mut self.engine.borrow_mut(), pres, slide, opts)
     }
 
+    /// What Print writes for `layout` (built here, encoded elsewhere).
+    pub fn print_job(
+        &self,
+        pres: &Presentation,
+        layout: slides_pdf::PrintLayout,
+    ) -> slides_pdf::PrintJob {
+        slides_pdf::print::job(pres, &self.builder, &mut self.engine.borrow_mut(), layout)
+    }
+
     /// Slide `slide` ready to paint; cached unless a shape is being dragged.
     pub fn painted(
         &self,
