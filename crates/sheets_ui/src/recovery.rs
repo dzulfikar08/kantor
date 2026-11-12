@@ -36,9 +36,9 @@ impl SheetsView {
     }
 
     /// Whether autosave may save this workbook (an `.xlsx` with a file, not
-    /// changed on disk by someone else, not busy).
+    /// changed on disk by someone else, not busy or saving).
     pub fn can_autosave(&self, cx: &App) -> bool {
-        if self.busy.is_some() || self.pending_autosave.is_some() {
+        if self.busy.is_some() || self.saving.is_some() || self.pending_save.is_some() {
             return false;
         }
         let book = &self.table.read(cx).delegate().book;
@@ -48,60 +48,31 @@ impl SheetsView {
                 .is_some_and(|p| self.disk_guard.as_ref().is_some_and(|g| g.changed(p)))
     }
 
-    /// Save to the workbook's own file without stopping typing: snapshot
-    /// here, write in the background, then record it as saved (edits made
-    /// meanwhile stay unsaved).
+    /// Save to the workbook's own file without stopping typing (see
+    /// [`crate::saving`]).
     pub fn autosave(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<Result<()>> {
         if !self.can_autosave(cx) {
             return Task::ready(Err(anyhow!("not autosaved")));
         }
-        let (snapshot, path) = {
-            let book = &self.table.read(cx).delegate().book;
-            let Some(path) = book.path().map(|p| p.to_path_buf()) else {
-                return Task::ready(Err(anyhow!("no file")));
-            };
-            let t = Instant::now();
-            let snapshot = book.xlsx_snapshot();
-            log::info!(
-                "autosave snapshot of {} took {:.1?}",
-                book.title(),
-                t.elapsed()
-            );
-            (snapshot, path)
+        let Some(path) = self
+            .table
+            .read(cx)
+            .delegate()
+            .book
+            .path()
+            .map(|p| p.to_path_buf())
+        else {
+            return Task::ready(Err(anyhow!("no file")));
         };
-        let write = cx.background_spawn({
-            let path = path.clone();
-            async move {
-                let out = snapshot.render()?;
-                sheets_engine::write_file_atomic(&path, &out.bytes)?;
-                Ok::<_, anyhow::Error>(out)
+        let Some(done) = self.start_save(path, true, window, cx) else {
+            return Task::ready(Err(anyhow!("not autosaved")));
+        };
+        cx.background_spawn(async move {
+            match done.await {
+                Ok(Ok(_)) => Ok(()),
+                Ok(Err(e)) => Err(anyhow!(e)),
+                Err(_) => Err(anyhow!("autosave cancelled")),
             }
-        });
-        cx.spawn_in(window, async move |this, cx| {
-            let out = write.await?;
-            this.update_in(cx, |this, window, cx| {
-                for note in out.notes() {
-                    log::warn!("autosaving {}: {note}", path.display());
-                }
-                if this.busy.is_some() {
-                    // The workbook is in the background; record the save
-                    // when it's back (see `calc`).
-                    this.pending_autosave = Some((path, out));
-                    return;
-                }
-                this.table.update(cx, |table, _| {
-                    table.delegate_mut().book.commit_autosave(&path, out)
-                });
-                this.disk_guard = None;
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                this.status = format!("Autosaved {name}").into();
-                this.update_title(window, cx);
-                cx.notify();
-            })?;
-            Ok(())
         })
     }
 

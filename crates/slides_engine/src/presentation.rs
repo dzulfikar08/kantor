@@ -1308,6 +1308,10 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
     tmp.write_all(bytes)?;
     tmp.as_file().sync_all()?;
+    // The temp file is private (0600): keep the permissions the file had.
+    if let Ok(meta) = std::fs::metadata(path) {
+        std::fs::set_permissions(tmp.path(), meta.permissions())?;
+    }
     tmp.persist(path)
         .map_err(|e| anyhow::anyhow!("Can't write {}: {}", path.display(), e.error))?;
     Ok(())

@@ -106,3 +106,27 @@ impl Drop for FrameTimer {
         }
     }
 }
+
+/// With `KANTOR_PERF` set, report every time the UI thread was busy for
+/// 100 ms or more (a 50 ms timer that resumes late), whatever kept it
+/// busy: actions, saves, layout. Call once at startup.
+pub fn watch_main_thread(cx: &mut gpui_kit::App) {
+    if !enabled() {
+        return;
+    }
+    const TICK: std::time::Duration = std::time::Duration::from_millis(50);
+    cx.spawn(async move |cx| {
+        loop {
+            let t = Instant::now();
+            cx.background_executor().timer(TICK).await;
+            let lag = t.elapsed().saturating_sub(TICK);
+            if lag.as_millis() >= 100 {
+                eprintln!(
+                    "[perf] UI thread busy       {:8.0} ms",
+                    lag.as_secs_f64() * 1000.0
+                );
+            }
+        }
+    })
+    .detach();
+}

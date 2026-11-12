@@ -3,7 +3,9 @@
 //! Every close goes through [`Workspace::request_close`]: if any document it
 //! would drop has unsaved changes, a dialog offers Save / Don't Save / Cancel.
 //! Save stores each document in turn (untitled ones ask for a path) and only
-//! closes once all of them are saved.
+//! closes once all of them are saved. A workbook still being saved in the
+//! background counts as unsaved until the write is done: if that save holds
+//! all its changes, a "Saving…" dialog waits for it, then closes.
 
 use super::Workspace;
 use super::doc::DocView;
@@ -48,13 +50,14 @@ impl Workspace {
         }
     }
 
-    /// Documents a close request would drop that have unsaved changes.
+    /// Documents a close request would drop that have unsaved changes or
+    /// a save still being written.
     fn dirty_views(&self, closing: Closing, cx: &App) -> Vec<DocView> {
         self.closing_panes(closing)
             .into_iter()
             .filter_map(|pane| self.docs.get(&pane))
             .map(|doc| doc.view.clone())
-            .filter(|view| view.is_dirty(cx))
+            .filter(|view| view.is_dirty(cx) || view.is_saving(cx))
             .collect()
     }
 
@@ -68,9 +71,69 @@ impl Workspace {
         let dirty = self.dirty_views(closing, cx);
         if dirty.is_empty() {
             self.finish_close(closing, window, cx);
-        } else if !window.has_active_dialog(cx) {
+        } else if window.has_active_dialog(cx) {
+        } else if dirty.iter().all(|v| v.save_holds_all_changes(cx)) {
+            self.wait_for_saves(closing, dirty, window, cx);
+        } else {
             self.ask_to_save(closing, dirty, window, cx);
         }
+    }
+
+    /// Every document in the way is being saved with all its changes: show
+    /// "Saving…" until the writes finish, then try closing again (a failed
+    /// save then asks as usual).
+    fn wait_for_saves(
+        &mut self,
+        closing: Closing,
+        saving: Vec<DocView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.save_wait += 1;
+        let id = self.save_wait;
+        let names: Vec<String> = saving.iter().map(|v| v.doc_name(cx)).collect();
+        let title = match names.as_slice() {
+            [one] => format!("Saving “{one}”…"),
+            many => format!("Saving {} documents…", many.len()),
+        };
+        let ws = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let ws = ws.clone();
+            dialog
+                .w(px(440.))
+                .overlay_closable(false)
+                .close_button(false)
+                .keyboard(false)
+                .title(title.clone())
+                .child(v_flex().child(
+                    DialogDescription::new().child("Kantor closes when the save has finished."),
+                ))
+                .footer(
+                    DialogFooter::new().child(
+                        Button::new("saving-cancel")
+                            .label("Don't Close")
+                            .ghost()
+                            .on_click(move |_, window, cx| {
+                                let _ = ws.update(cx, |ws, _| ws.save_wait += 1);
+                                window.close_dialog(cx);
+                            }),
+                    ),
+                )
+        });
+        let waits: Vec<Task<()>> = saving.iter().map(|v| v.wait_saved(cx)).collect();
+        cx.spawn_in(window, async move |this, cx| {
+            for wait in waits {
+                wait.await;
+            }
+            let _ = this.update_in(cx, |ws, window, cx| {
+                if ws.save_wait != id {
+                    return;
+                }
+                window.close_dialog(cx);
+                ws.request_close(closing, window, cx);
+            });
+        })
+        .detach();
     }
 
     /// The window manager asked to close the window: allow it only when no
@@ -123,7 +186,17 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let names: Vec<String> = dirty.iter().map(|v| v.doc_name(cx)).collect();
+        let names: Vec<String> = dirty
+            .iter()
+            .map(|v| {
+                let name = v.doc_name(cx);
+                if v.is_saving(cx) {
+                    format!("{name} (saving…)")
+                } else {
+                    name
+                }
+            })
+            .collect();
         let (title, save_label) = match names.as_slice() {
             [one] => (format!("Save changes to “{one}”?"), "Save"),
             many => (
@@ -152,11 +225,13 @@ impl Workspace {
                 }
             };
             let discard = {
-                let ws = ws.clone();
+                let (ws, dirty) = (ws.clone(), dirty.clone());
                 move |window: &mut Window, cx: &mut App| {
-                    let ws = ws.clone();
+                    let (ws, dirty) = (ws.clone(), dirty.clone());
                     window.defer(cx, move |window, cx| {
-                        let _ = ws.update(cx, |ws, cx| ws.finish_close(closing, window, cx));
+                        let _ = ws.update(cx, |ws, cx| {
+                            ws.discard_then_close(closing, dirty, window, cx)
+                        });
                     });
                 }
             };
@@ -200,6 +275,31 @@ impl Workspace {
                         ),
                 )
         });
+    }
+
+    /// "Don't Save": close without saving, once saves already being
+    /// written have finished (a file is never left half replaced).
+    fn discard_then_close(
+        &mut self,
+        closing: Closing,
+        dirty: Vec<DocView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !dirty.iter().any(|v| v.is_saving(cx)) {
+            self.finish_close(closing, window, cx);
+            return;
+        }
+        let waits: Vec<Task<()>> = dirty.iter().map(|v| v.wait_saved(cx)).collect();
+        self.message = "Closing when the save has finished…".into();
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            for wait in waits {
+                wait.await;
+            }
+            let _ = this.update_in(cx, |ws, window, cx| ws.finish_close(closing, window, cx));
+        })
+        .detach();
     }
 
     /// Save each document in turn, then close; stop at the first one that

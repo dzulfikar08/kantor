@@ -597,6 +597,7 @@ impl Workbook {
             .kantor_set_frozen(sheet, rows as i32, cols as i32)
             .map_err(|e| anyhow!("{e}"))?;
         self.history.view_changed = true;
+        self.history.view_changes += 1;
         Ok(true)
     }
 

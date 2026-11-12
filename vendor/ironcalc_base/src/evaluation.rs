@@ -534,6 +534,8 @@ impl<'a> Model<'a> {
     /// `#CIRC!` and keeps no spill cells: its stale cells are dropped when it
     /// is marked, so there is nothing of it to read or to contradict.
     pub fn evaluate(&mut self) {
+        // KANTOR PATCH (changes): formula results may change now.
+        self.kantor_evaluations += 1;
         self.sync_anchor_order();
         // Every pass starts from the same sheet: what an abandoned pass wrote
         // is undone. This is what makes a pass a function of the anchor order.
@@ -694,6 +696,18 @@ impl<'a> Model<'a> {
     /// Brings `anchor_order` in line with the dynamic anchors that exist now:
     /// anchors that are gone are dropped, new ones are appended in natural
     /// order, the rest keep their relative order.
+    /// KANTOR PATCH (changes): how many times the model was evaluated; a
+    /// different count means formula results (and spills) may have changed.
+    pub fn kantor_evaluations(&self) -> u64 {
+        self.kantor_evaluations
+    }
+
+    /// KANTOR PATCH (changes): whether the last evaluation had dynamic array
+    /// formulas (their spills can move into any cell).
+    pub fn kantor_has_dynamic_arrays(&self) -> bool {
+        !self.evaluation.anchor_order.is_empty()
+    }
+
     fn sync_anchor_order(&mut self) {
         let current = self.dynamic_anchors_in_natural_order();
         let current_set: HashSet<CellReferenceIndex> = current.iter().copied().collect();

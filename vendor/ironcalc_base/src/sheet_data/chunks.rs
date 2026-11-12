@@ -174,6 +174,22 @@ impl SheetData {
         })
     }
 
+    /// KANTOR PATCH: `(min_row, max_row, min_column, max_column)` of the
+    /// cells, one step per row rather than per cell. `None` without cells.
+    pub fn kantor_extent(&self) -> Option<(i32, i32, i32, i32)> {
+        let mut out: Option<(i32, i32, i32, i32)> = None;
+        for (row, data) in self.rows_in_order() {
+            let Some((first, last)) = data.column_span() else {
+                continue;
+            };
+            out = Some(match out {
+                None => (row, row, first, last),
+                Some((r0, _, c0, c1)) => (r0, row, c0.min(first), c1.max(last)),
+            });
+        }
+        out
+    }
+
     /// The rows that exist, in ascending order.
     pub fn rows(&self) -> Vec<i32> {
         self.rows_in_order().map(|(row, _)| row).collect()

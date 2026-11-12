@@ -64,6 +64,7 @@ mod print;
 mod recovery;
 mod row_heights;
 mod row_layout;
+mod saving;
 // Upstream code, kept close to GPUI Kit's so it can be compared.
 #[allow(dead_code, clippy::all)]
 mod table;
@@ -82,9 +83,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::{metrics::*, tokens};
-use sheets_engine::{
-    CellRange, CellStyle, SourceFormat, StyleChange, Workbook, cell_name, column_name,
-};
+use sheets_engine::{CellRange, CellStyle, StyleChange, Workbook, cell_name, column_name};
 use table::{Column, DataTable, TableDelegate, TableEvent, TableState};
 
 mod toolbar;
@@ -1039,9 +1038,11 @@ pub struct SheetsView {
     /// A restored recovery copy's original: Save asks before overwriting it
     /// if it changed on disk (see [`recovery`]).
     disk_guard: Option<kantor_ui::disk_guard::DiskGuard>,
-    /// An autosave written while the workbook was in the background, to
-    /// record when it's back.
-    pending_autosave: Option<(PathBuf, sheets_engine::XlsxOutput)>,
+    /// The save being written in the background (see [`saving`]).
+    saving: Option<saving::Saving>,
+    /// A save written while the workbook was in the background, to record
+    /// when it's back.
+    pending_save: Option<sheets_engine::Saved>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1112,7 +1113,8 @@ impl SheetsView {
             cf_manager: None,
             table_panel: None,
             disk_guard: None,
-            pending_autosave: None,
+            saving: None,
+            pending_save: None,
             _subscriptions: subscriptions,
         };
         this.select_cell(0, 0, cx);
@@ -2010,7 +2012,7 @@ impl SheetsView {
     /// Replace the open workbook with the file at `path` (opened in the
     /// background).
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy.is_some() {
+        if self.busy.is_some() || self.saving.is_some() {
             return;
         }
         self.start_open(path, window, cx);
@@ -2035,32 +2037,62 @@ impl SheetsView {
         if self.ask_before_overwrite(&target, window, cx) {
             return;
         }
-        let result = self
-            .table
-            .update(cx, |table, _| table.delegate_mut().book.save());
-        self.after_save(result, window, cx);
+        self.start_save(target, false, window, cx);
     }
 
     fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
         self.save_as_task(window, cx).detach();
     }
 
-    /// Save before the document closes. Resolves to `true` once the workbook
-    /// is saved; `false` if the Save As prompt was cancelled or saving failed.
+    /// Save before the document closes (waiting for a save already
+    /// running). Resolves to `true` once the workbook is saved; `false` if
+    /// the Save As prompt was cancelled or saving failed.
     pub fn save_for_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        let running = self.saved_signal();
+        cx.spawn_in(window, async move |this, cx| {
+            if let Some(running) = running {
+                let _ = running.await;
+            }
+            let Ok(next) =
+                this.update_in(cx, |this, window, cx| this.save_now_for_close(window, cx))
+            else {
+                return false;
+            };
+            next.await
+        })
+    }
+
+    fn save_now_for_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        if !self.is_dirty(cx) && self.busy.is_none() {
+            return Task::ready(true);
+        }
         if self.blocked(cx) {
             return Task::ready(false);
         }
-        if self.table.read(cx).delegate().book.path().is_none() {
+        let Some(target) = self
+            .table
+            .read(cx)
+            .delegate()
+            .book
+            .path()
+            .map(|p| p.to_path_buf())
+        else {
             return self.save_as_task(window, cx);
+        };
+        match self.start_save(target, false, window, cx) {
+            Some(done) => cx.background_spawn(async move { matches!(done.await, Ok(Ok(true))) }),
+            None => Task::ready(false),
         }
-        self.save(&Save, window, cx);
-        Task::ready(!self.is_dirty(cx))
     }
 
     /// Ask for a path and save there; resolves to whether the workbook is saved.
     fn save_as_task(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
         if self.blocked(cx) {
+            return Task::ready(false);
+        }
+        if self.saving.is_some() {
+            self.status = "Please wait until the save finishes".into();
+            cx.notify();
             return Task::ready(false);
         }
         let (dir, name) = {
@@ -2086,46 +2118,13 @@ impl SheetsView {
             if path.extension().is_none() {
                 path.set_extension("xlsx");
             }
-            this.update_in(cx, |this, window, cx| {
-                let result = this
-                    .table
-                    .update(cx, |table, _| table.delegate_mut().book.save_as(&path));
-                this.after_save(result, window, cx);
-                !this.is_dirty(cx)
-            })
-            .unwrap_or(false)
+            let Ok(Some(done)) = this.update_in(cx, |this, window, cx| {
+                this.start_save(path, false, window, cx)
+            }) else {
+                return false;
+            };
+            matches!(done.await, Ok(Ok(true)))
         })
-    }
-
-    fn after_save(
-        &mut self,
-        result: anyhow::Result<()>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if result.is_ok() {
-            self.disk_guard = None;
-        }
-        self.status = match result {
-            Ok(()) => {
-                let book = &self.table.read(cx).delegate().book;
-                let lost = book.sheets_lost_in_csv();
-                if matches!(book.source_format(), SourceFormat::Csv { .. }) && lost > 0 {
-                    let sheet = book.active_sheet() as usize;
-                    let name = book.sheet_names().get(sheet).cloned().unwrap_or_default();
-                    format!(
-                        "Saved {} with values of sheet \"{name}\" only; CSV can't hold the other {lost}",
-                        book.title()
-                    )
-                    .into()
-                } else {
-                    format!("Saved {}", book.title()).into()
-                }
-            }
-            Err(err) => format!("Save failed: {err:#}").into(),
-        };
-        self.update_title(window, cx);
-        cx.notify();
     }
 
     fn render_sheet_tabs(&self, cx: &mut Context<Self>) -> Div {

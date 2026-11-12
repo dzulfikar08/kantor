@@ -41,7 +41,7 @@ pub use cf_edit::{
 pub use chart_edit::{ChartSpec, ChartType, LegendPos, NEW_CHART_BASE};
 pub use import::SourceFormat;
 pub use preserve::package_problems;
-pub use recovery::{XlsxOutput, XlsxSnapshot, write_file_atomic};
+pub use recovery::{SaveJob, Saved, XlsxOutput, XlsxSnapshot, write_file_atomic};
 pub use table_edit::{TableOptions, TotalFunc, table_style_names, valid_table_name};
 pub use validation_edit::{
     list_source, list_source_text, validation_operand, validation_operand_text,
@@ -51,7 +51,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Cursor, Write as _};
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -306,6 +306,9 @@ struct Revisions {
     edits: HashMap<u64, std::sync::Arc<edits::Edits>>,
     /// A change outside the undo history (frozen panes) since the last save.
     view_changed: bool,
+    /// Counts those changes, so a save only clears `view_changed` if none
+    /// came after its snapshot.
+    view_changes: u64,
 }
 
 impl Revisions {
@@ -469,6 +472,19 @@ impl Workbook {
         let mut xlsx = None;
         // The file asked for a recalculation that wasn't done (too big).
         let mut stale = false;
+        // What IronCalc doesn't model is read from the package on another
+        // thread meanwhile: each of these walks every sheet's XML outside
+        // the cells, which took ~0.9 s of a 90k-row file's open.
+        let extras = (format == SourceFormat::Xlsx).then(|| {
+            let path = path.to_path_buf();
+            std::thread::spawn(move || match fs::read(&path) {
+                Ok(bytes) => Extras::read(&bytes),
+                Err(e) => {
+                    log::warn!("{}: {e}", path.display());
+                    Extras::default()
+                }
+            })
+        });
         let (model, format) = match format {
             SourceFormat::Xlsx => {
                 // Excel saved every formula's value; show those rather than
@@ -511,15 +527,14 @@ impl Workbook {
         if calc.mode == CalcMode::Manual {
             model.pause_evaluation();
         }
-        let (validation, drawings, prints, pivots) = match xlsx.as_ref().map(XlsxSource::bytes) {
-            Some(Ok(bytes)) => (
-                validation::Validations::read(&bytes),
-                drawing::Drawings::read(&bytes),
-                print::Prints::read(&bytes),
-                pivot::Pivots::read(&bytes),
-            ),
-            _ => Default::default(),
-        };
+        let Extras {
+            validation,
+            drawings,
+            prints,
+            pivots,
+        } = extras
+            .map(|h| h.join().unwrap_or_default())
+            .unwrap_or_default();
         let mut book = Self {
             calc,
             model,
@@ -683,85 +698,8 @@ impl Workbook {
     /// (comments, custom properties, drawings, print setup...) are carried
     /// over; see [`Workbook::save_notes`] for what could not be.
     pub fn save_as(&mut self, path: impl AsRef<Path>) -> Result<()> {
-        let path = path.as_ref();
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or_default();
-        let mut xlsx = self.origin.xlsx.take();
-        let format = match SourceFormat::from_extension(ext) {
-            Some(SourceFormat::Xlsx) => {
-                let parts = self.xlsx_parts(self.has_pending());
-                let mut notes = Vec::new();
-                let original = xlsx.as_ref().and_then(|s| match s.bytes() {
-                    Ok(b) => Some(b),
-                    Err(e) => {
-                        notes.push(format!("extra parts of the original not kept: {e}"));
-                        None
-                    }
-                });
-                let finished = build_xlsx(self.model.get_model(), original.as_deref(), &parts);
-                drop(original);
-                let finished = match finished {
-                    Ok(f) => f,
-                    Err(e) => {
-                        self.origin.xlsx = xlsx;
-                        return Err(e);
-                    }
-                };
-                notes.extend(finished.notes);
-                let pivots_saved = finished.pivots;
-                let charts_saved: HashMap<u32, preserve::SavedChart> =
-                    parts.patches.written.take().into_iter().collect();
-                for note in &notes {
-                    log::warn!("saving {}: {note}", path.display());
-                }
-                let bytes = finished.bytes;
-                if let Err(e) = write_atomic(path, |file| Ok(file.write_all(&bytes)?)) {
-                    self.origin.xlsx = xlsx;
-                    return Err(e);
-                }
-                self.save_notes = notes;
-                self.pivots_saved(&pivots_saved);
-                self.saved_charts = charts_saved;
-                xlsx = Some(XlsxSource::kept(path, bytes));
-                SourceFormat::Xlsx
-            }
-            Some(SourceFormat::Csv { delimiter }) => {
-                let delimiter = match self.origin.format {
-                    SourceFormat::Csv { delimiter: d } if delimiter != b'\t' && d != b'\t' => d,
-                    _ => delimiter,
-                };
-                let written =
-                    import::write_csv(self.model.get_model(), self.active_sheet(), path, delimiter);
-                if let Err(e) = written {
-                    self.origin.xlsx = xlsx;
-                    return Err(e);
-                }
-                self.save_notes = Vec::new();
-                SourceFormat::Csv { delimiter }
-            }
-            _ => {
-                self.origin.xlsx = xlsx;
-                bail!("Kantor saves .xlsx or .csv, not .{ext}")
-            }
-        };
-        self.path = Some(path.to_path_buf());
-        // A CSV save keeps the xlsx source: a later .xlsx save still carries
-        // its parts, since the model still has every sheet.
-        let xlsx_layout = match format {
-            SourceFormat::Xlsx => self.history.layout(),
-            _ => self.origin.xlsx_layout.clone(),
-        };
-        self.origin = Origin {
-            format,
-            path: Some(path.to_path_buf()),
-            notes: Vec::new(),
-            xlsx,
-            xlsx_layout,
-        };
-        self.history.saved = self.history.current;
-        self.history.view_changed = false;
+        let saved = self.prepare_save(path)?.run()?;
+        self.finish_save(saved);
         Ok(())
     }
 
@@ -1217,11 +1155,6 @@ impl Workbook {
         )
     }
 
-    /// Whether any formula has no value yet (see [`Workbook::is_pending`]).
-    fn has_pending(&self) -> bool {
-        self.calc.mode == CalcMode::Manual && any_unevaluated(&self.model.get_model().workbook)
-    }
-
     /// What an `.xlsx` save reads from the workbook besides its cells.
     /// `pending`: formulas without a value (manual calculation).
     fn xlsx_parts(&self, pending: bool) -> XlsxParts {
@@ -1328,6 +1261,28 @@ fn build_xlsx(
     Ok(preserve::finish(written, original, &ctx))
 }
 
+/// What an `.xlsx` has besides what IronCalc reads, for showing and saving it.
+#[derive(Default)]
+struct Extras {
+    validation: validation::Validations,
+    drawings: drawing::Drawings,
+    prints: print::Prints,
+    pivots: pivot::Pivots,
+}
+
+impl Extras {
+    fn read(bytes: &[u8]) -> Self {
+        // Every sheet's XML without its cells, inflated once for all readers.
+        let skeletons = preserve::worksheet_skeletons(bytes);
+        Extras {
+            validation: validation::Validations::read(&skeletons),
+            drawings: drawing::Drawings::read(bytes),
+            prints: print::Prints::read(bytes, &skeletons),
+            pivots: pivot::Pivots::read(bytes),
+        }
+    }
+}
+
 /// Formula cells in all sheets (one pass over the cells, no evaluation).
 fn count_formulas(model: &Model) -> usize {
     model
@@ -1372,26 +1327,36 @@ fn open_xlsx(path: &Path) -> Result<(Model<'static>, XlsxSource, bool)> {
     }
 }
 
-/// Write a file via a temp file in the same directory and a rename.
+/// Write a file via a temp file in the same directory and a rename. The new
+/// file gets the old one's permissions; a read-only file is refused (the
+/// rename would replace it anyway).
 fn write_atomic(path: &Path, write: impl FnOnce(&mut fs::File) -> Result<()>) -> Result<()> {
     let dir = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     let file_name = path.file_name().context("save path has no file name")?;
+    let old = fs::metadata(path).ok();
+    if old.as_ref().is_some_and(|m| m.permissions().readonly()) {
+        bail!("{} is read-only", path.display());
+    }
     let tmp = dir.join(format!(".{}.kantor-tmp", file_name.to_string_lossy()));
     let result = (|| {
         let mut file =
             fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
-        write(&mut file)?;
-        file.sync_all()?;
-        Ok(())
+        write(&mut file).with_context(|| format!("writing {}", tmp.display()))?;
+        file.sync_all()
+            .with_context(|| format!("writing {}", tmp.display()))?;
+        if let Some(old) = &old {
+            fs::set_permissions(&tmp, old.permissions())
+                .with_context(|| format!("setting permissions of {}", tmp.display()))?;
+        }
+        fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))
     })();
-    if let Err(err) = result {
+    if result.is_err() {
         let _ = fs::remove_file(&tmp);
-        return Err(err);
     }
-    fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))
+    result
 }
 
 /// `0 -> "A"`, `25 -> "Z"`, `26 -> "AA"`.
@@ -1407,6 +1372,7 @@ pub fn cell_name(row: u32, col: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write as _;
 
     #[test]
     fn set_inputs_undoes_as_one_step() {

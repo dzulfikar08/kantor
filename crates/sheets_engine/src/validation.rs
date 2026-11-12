@@ -147,13 +147,14 @@ struct Rule {
 
 impl Validations {
     /// Every validation of the package's worksheets.
-    pub(crate) fn read(bytes: &[u8]) -> Self {
+    /// From the package's [`crate::preserve::worksheet_skeletons`].
+    pub(crate) fn read(skeletons: &Result<Vec<(u32, String)>, String>) -> Self {
         let mut raw = Vec::new();
-        match crate::preserve::worksheet_skeletons(bytes) {
+        match skeletons {
             Ok(sheets) => {
                 for (sheet_id, xml) in sheets {
                     if xml.contains("dataValidation") {
-                        raw.extend(parse_sheet(sheet_id, &xml));
+                        raw.extend(parse_sheet(*sheet_id, xml));
                     }
                 }
             }

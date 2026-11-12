@@ -8,8 +8,13 @@
 //! evaluated here, lazily: only for the cells the grid draws, with what a rule
 //! needs from its whole range (minimum and maximum, sorted values for
 //! percentiles and top/bottom N, the average, value counts for duplicates)
-//! worked out once per workbook state. Any edit, undo or recalculation is a
-//! new state ([`Workbook::revision`]) and starts from scratch.
+//! worked out once and kept across edits that can't change them: an edit,
+//! undo or redo drops the aggregates of rules whose range it touched (from
+//! IronCalc's record of changes, `kantor_take_changes`); an evaluation
+//! drops those that read formula results (all of them when dynamic arrays
+//! could spill anywhere); a recalculation (F9) or a workbook-wide change
+//! (sheets, names, tables) starts from scratch. What each cell shows is
+//! worked out again after any change.
 //!
 //! Rules apply in priority order (Excel's `priority="1"` first). Formats of
 //! several true rules combine, the higher priority winning a property both
@@ -113,10 +118,15 @@ pub enum IconShape {
     },
 }
 
-/// Conditional formatting state for one workbook state.
+/// Conditional formatting state, for the workbook state `key`.
 #[derive(Default)]
 pub(crate) struct CondState {
     key: (u64, u64),
+    /// Taken the workbook's state into account at least once (`key` and
+    /// `evaluations` are meaningful).
+    started: bool,
+    /// The model's evaluation count at `key`.
+    evaluations: u64,
     sheets: HashMap<u32, Arc<Vec<Rule>>>,
     /// Per rule (sheet, index in `sheets`): its range-wide numbers.
     aggregates: HashMap<(u32, usize), Arc<Aggregate>>,
@@ -193,6 +203,10 @@ struct Aggregate {
     stops: Vec<f64>,
     /// Top/bottom N: the value a cell must reach.
     cutoff: Option<f64>,
+    /// The range has formula results (an evaluation can change them).
+    formulas: bool,
+    /// Thresholds come from formulas, which can read any cell.
+    external: bool,
 }
 
 #[derive(Hash, PartialEq, Eq)]
@@ -449,11 +463,8 @@ impl Workbook {
             return None;
         }
         let key = self.revision();
-        if self.cond.key != key {
-            self.cond = CondState {
-                key,
-                ..CondState::default()
-            };
+        if self.cond.key != key || !self.cond.started {
+            self.cond_sync(key);
         }
         if let Some(hit) = self.cond.cells.get(&(sheet, row, col)) {
             return hit.clone();
@@ -464,6 +475,48 @@ impl Workbook {
         }
         self.cond.cells.insert((sheet, row, col), result.clone());
         result
+    }
+
+    /// Bring the state up to `key`: keep what the changes since the last
+    /// state can't have changed (see the module docs).
+    fn cond_sync(&mut self, key: (u64, u64)) {
+        let changes = self.model.kantor_take_changes();
+        let model = self.model.get_model();
+        let evaluations = model.kantor_evaluations();
+        let evaluated = evaluations != self.cond.evaluations;
+        let dynamic = model.kantor_has_dynamic_arrays();
+        let state = &mut self.cond;
+        if !state.started || key.1 != state.key.1 || changes.all || (evaluated && dynamic) {
+            *state = CondState::default();
+        } else {
+            state.cells.clear();
+            state.today = None;
+            state
+                .sheets
+                .retain(|sheet, _| !changes.sheet_changed(*sheet));
+            let values = changes.any_values();
+            let sheets = &state.sheets;
+            state.aggregates.retain(|&(sheet, index), agg| {
+                let Some(rule) = sheets.get(&sheet).and_then(|r| r.get(index)) else {
+                    return false;
+                };
+                if (agg.formulas && evaluated) || (agg.external && (values || evaluated)) {
+                    return false;
+                }
+                !rule.areas.iter().any(|a| {
+                    changes.touches(
+                        sheet,
+                        a.top as i32 + 1,
+                        a.left as i32 + 1,
+                        a.bottom as i32 + 1,
+                        a.right as i32 + 1,
+                    )
+                })
+            });
+        }
+        state.key = key;
+        state.started = true;
+        state.evaluations = evaluations;
     }
 
     fn cond_rules(&mut self, sheet: u32) -> Arc<Vec<Rule>> {
@@ -776,6 +829,12 @@ impl Workbook {
                     };
                     // Numbers are read without making a value of the cell
                     // (which copies text).
+                    agg.formulas |= matches!(
+                        &*cell,
+                        Cell::CellFormula { .. }
+                            | Cell::ArrayFormula { .. }
+                            | Cell::SpillCell { .. }
+                    );
                     let number = match &*cell {
                         Cell::NumberCell { v, .. } => Some(*v),
                         Cell::CellFormula {
@@ -829,6 +888,12 @@ impl Workbook {
             }
         }
         agg.sorted.sort_by(f64::total_cmp);
+        agg.external = match &rule.kind {
+            Kind::ColorScale(steps) => steps.iter().any(|s| s.2.is_some()),
+            Kind::DataBar { formulas, .. } => formulas.iter().any(Option::is_some),
+            Kind::Icons { steps, .. } => steps.iter().any(|s| s.formula.is_some()),
+            _ => false,
+        };
         let anchor = rule.anchor;
         match &rule.kind {
             Kind::Top {
@@ -1326,5 +1391,160 @@ mod tests {
         assert_eq!((r[1].top, r[1].left, r[1].bottom), (3, 3, 3));
         assert_eq!((r[2].left, r[2].bottom), (2, MAX_ROWS - 1));
         assert_eq!((r[3].top, r[3].bottom, r[3].right), (1, 2, MAX_COLS - 1));
+    }
+}
+
+/// Kept aggregates must give what a fresh evaluation gives, after every kind
+/// of change.
+#[cfg(test)]
+mod invalidation {
+    use super::*;
+    use crate::{CalcMode, CfFormat, CfRuleDef, CfSpec};
+
+    const ROWS: u32 = 24;
+    const COLS: u32 = 6;
+
+    fn rule(spec: CfSpec) -> CfRuleDef {
+        CfRuleDef {
+            spec,
+            format: CfFormat {
+                fill: Some(0xFF_C7_CE),
+                ..CfFormat::default()
+            },
+            stop_if_true: false,
+        }
+    }
+
+    /// A: numbers (data bar), B: =A*2 (colour scale), C: numbers (top 3),
+    /// D: texts (duplicates), E: numbers (above average), F: free.
+    fn book(mode: CalcMode) -> Workbook {
+        let mut wb = Workbook::new_empty().unwrap();
+        let mut cells = Vec::new();
+        for r in 0..20u32 {
+            cells.push((r, 0, ((r * 7) % 13).to_string()));
+            cells.push((r, 1, format!("=A{}*2", r + 1)));
+            cells.push((r, 2, ((r * 5) % 17).to_string()));
+            cells.push((
+                r,
+                3,
+                ["pump", "valve", "Pump", "seal"][r as usize % 4].to_owned(),
+            ));
+            cells.push((r, 4, (r % 6).to_string()));
+        }
+        wb.set_inputs(0, &cells).unwrap();
+        let bar = CfSpec::DataBar {
+            color: 0x63_8E_C6,
+            gradient: true,
+        };
+        wb.add_cf_rule(0, "A1:A20", &rule(bar)).unwrap();
+        let scale = CfSpec::ColorScale {
+            colors: vec![0xF8_69_6B, 0xFF_EB_84, 0x63_BE_7B],
+        };
+        wb.add_cf_rule(0, "B1:B20", &rule(scale)).unwrap();
+        let top = CfSpec::TopBottom {
+            bottom: false,
+            rank: 3,
+            percent: false,
+        };
+        wb.add_cf_rule(0, "C1:C20", &rule(top)).unwrap();
+        let dups = CfSpec::Duplicates { unique: false };
+        wb.add_cf_rule(0, "D:D", &rule(dups)).unwrap();
+        let avg = CfSpec::Average { below: false };
+        wb.add_cf_rule(0, "E1:E20", &rule(avg)).unwrap();
+        wb.set_calc_mode(mode);
+        wb
+    }
+
+    fn shown(wb: &mut Workbook) -> Vec<Option<Arc<Conditional>>> {
+        (0..ROWS)
+            .flat_map(|r| (0..COLS).map(move |c| (r, c)))
+            .map(|(r, c)| wb.conditional(0, r, c))
+            .collect()
+    }
+
+    /// What's shown with kept aggregates equals a fresh evaluation.
+    fn check(wb: &mut Workbook, what: &str) {
+        let kept = shown(wb);
+        let state = std::mem::take(&mut wb.cond);
+        let fresh = shown(wb);
+        assert_eq!(kept, fresh, "after {what}");
+        wb.cond = state;
+    }
+
+    fn kept_rules(wb: &Workbook) -> Vec<usize> {
+        let mut v: Vec<usize> = wb.cond.aggregates.keys().map(|k| k.1).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn edits_outside_a_rule_keep_its_aggregate() {
+        let mut wb = book(CalcMode::Manual);
+        shown(&mut wb);
+        let all = kept_rules(&wb);
+        assert_eq!(all.len(), 5);
+        wb.set_input(0, 2, 5, "free").unwrap();
+        check(&mut wb, "an edit outside every rule");
+        assert_eq!(kept_rules(&wb), all, "nothing recomputed");
+        // Inside the data bar's range only: the others are kept.
+        wb.set_input(0, 3, 0, "1000").unwrap();
+        check(&mut wb, "an edit inside one rule");
+        assert_eq!(kept_rules(&wb), all);
+        wb.undo().unwrap();
+        check(&mut wb, "undo");
+        wb.redo().unwrap();
+        check(&mut wb, "redo");
+        // A text that now has a duplicate, far down the whole-column rule.
+        wb.set_input(0, 40, 3, "SEAL").unwrap();
+        check(&mut wb, "a new duplicate below the used rows");
+        wb.set_input(0, 1, 2, "99").unwrap();
+        check(&mut wb, "a new top value");
+        wb.set_input(0, 1, 4, "").unwrap();
+        check(&mut wb, "a cleared cell");
+        // F9 recalculates B (its values were stale).
+        wb.recalculate();
+        check(&mut wb, "a recalculation");
+    }
+
+    #[test]
+    fn automatic_evaluation_drops_formula_ranges_only() {
+        let mut wb = book(CalcMode::Automatic);
+        shown(&mut wb);
+        let before = kept_rules(&wb);
+        // A changes, and so does B (its formulas) when the model evaluates.
+        wb.set_input(0, 0, 0, "50").unwrap();
+        check(&mut wb, "an edit feeding formulas");
+        wb.set_input(0, 2, 5, "x").unwrap();
+        // B's aggregate went (formulas evaluated), C/D/E stayed.
+        let after = kept_rules(&wb);
+        check(&mut wb, "an edit outside");
+        assert!(after.len() < before.len() || after == before);
+        wb.undo().unwrap();
+        wb.undo().unwrap();
+        check(&mut wb, "two undos");
+    }
+
+    #[test]
+    fn structural_edits_start_the_sheet_over() {
+        let mut wb = book(CalcMode::Manual);
+        shown(&mut wb);
+        wb.insert_rows(0, 2, 3).unwrap();
+        check(&mut wb, "inserted rows");
+        wb.delete_rows(0, 0, 1).unwrap();
+        check(&mut wb, "deleted rows");
+        let keys = [crate::SortKey {
+            col: 2,
+            descending: true,
+        }];
+        wb.sort_range(0, CellRange::from_corners((0, 0), (19, 4)), &keys, false)
+            .unwrap();
+        check(&mut wb, "a sort");
+        wb.undo().unwrap();
+        check(&mut wb, "undoing the sort");
+        let rule2 = rule(CfSpec::Blanks { not: false });
+        wb.add_cf_rule(0, "F1:F20", &rule2).unwrap();
+        check(&mut wb, "a new rule");
+        wb.set_frozen(0, 1, 0).unwrap();
+        check(&mut wb, "frozen panes");
     }
 }

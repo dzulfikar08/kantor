@@ -269,6 +269,37 @@ impl DocView {
         both!(self, cx, |v| v.is_dirty(cx))
     }
 
+    /// A save is being written in the background (Sheets; Docs and Slides
+    /// save at once).
+    pub fn is_saving(&self, cx: &App) -> bool {
+        match self {
+            Self::Sheets(e) => e.read(cx).is_saving(),
+            _ => false,
+        }
+    }
+
+    /// A background save is running and holds every change made so far.
+    pub fn save_holds_all_changes(&self, cx: &App) -> bool {
+        match self {
+            Self::Sheets(e) => e.read(cx).save_holds_all_changes(cx),
+            _ => false,
+        }
+    }
+
+    /// Resolves once the document's background save (if any) has finished.
+    pub fn wait_saved(&self, cx: &mut App) -> Task<()> {
+        let signal = match self {
+            Self::Sheets(e) => e.update(cx, |v, _| v.saved_signal()),
+            _ => None,
+        };
+        match signal {
+            Some(rx) => cx.background_spawn(async move {
+                let _ = rx.await;
+            }),
+            None => Task::ready(()),
+        }
+    }
+
     pub fn title(&self, cx: &App) -> String {
         both!(self, cx, |v| v.title(cx))
     }

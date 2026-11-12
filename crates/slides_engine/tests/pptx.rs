@@ -996,3 +996,17 @@ fn recovery_copy_round_trip() {
     assert!(restricted.needs_save_as());
     assert!(restricted.save().is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn saving_keeps_the_file_permissions() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("p.pptx");
+    let mut p = slides_engine::Presentation::new();
+    p.save_as(&path).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    p.save().unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o644);
+}
