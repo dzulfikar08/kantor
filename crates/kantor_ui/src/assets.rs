@@ -60,6 +60,7 @@ icon_assets!(
         TextWrap,
         TableCellsMerge,
         Funnel,
+        Snowflake,
         Printer,
         FileDown,
         // PivotTables

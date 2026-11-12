@@ -114,7 +114,15 @@ pub(crate) struct CellEditor {
 impl CellEditor {
     /// The overlay element, to be added as a child of the edited cell.
     /// `refs` are the formula's references with their colours.
-    pub fn render(&self, refs: Vec<(Range<usize>, Hsla)>, cx: &App) -> impl IntoElement + use<> {
+    /// `frozen` says whether the cell is in the frozen rows and the frozen
+    /// columns: such a cell never scrolls under anything, so the editor is
+    /// clipped from the cell's own edge rather than the scrolling body's.
+    pub fn render(
+        &self,
+        refs: Vec<(Range<usize>, Hsla)>,
+        frozen: (bool, bool),
+        cx: &App,
+    ) -> impl IntoElement + use<> {
         let t = tokens(cx);
         let view = self.view.clone();
         let editor = div()
@@ -154,6 +162,7 @@ impl CellEditor {
             input: self.input.clone(),
             rows: self.rows.clone(),
             cols: self.cols.clone(),
+            frozen,
             child: Some(editor.into_any_element()),
         }
     }
@@ -165,18 +174,29 @@ struct Overlay {
     input: Entity<InputState>,
     rows: UniformListScrollHandle,
     cols: VirtualListScrollHandle,
+    /// Whether the cell is in the frozen rows / frozen columns.
+    frozen: (bool, bool),
     child: Option<AnyElement>,
 }
 
 impl Overlay {
-    /// The visible table body (scrollable columns × visible rows), if laid out.
-    fn body(&self) -> Option<Bounds<Pixels>> {
+    /// The part of the table body the editor of `cell` may cover: the
+    /// scrolling columns × rows (from the cell's own edge when it is frozen),
+    /// if laid out.
+    fn body(&self, cell: Bounds<Pixels>) -> Option<Bounds<Pixels>> {
         let rows = self.rows.0.borrow().base_handle.bounds();
         let cols = self.cols.bounds();
-        let body = Bounds::from_corners(
-            point(cols.left(), rows.top()),
-            point(cols.right(), rows.bottom()),
-        );
+        let left = if self.frozen.1 {
+            cell.left()
+        } else {
+            cols.left()
+        };
+        let top = if self.frozen.0 {
+            cell.top()
+        } else {
+            rows.top()
+        };
+        let body = Bounds::from_corners(point(left, top), point(cols.right(), rows.bottom()));
         (body.size.width > px(0.) && body.size.height > px(0.)).then_some(body)
     }
 }
@@ -236,7 +256,7 @@ impl Element for Overlay {
                 .shape_line(text, font_size, &[run], None)
                 .width
         };
-        let body = self.body();
+        let body = self.body(cell);
         let mut width = cell.size.width.max(text_width + SPACE_3 * 2. + CARET_ROOM);
         if let Some(body) = body {
             // Grow up to the body's right edge, never below the cell itself.

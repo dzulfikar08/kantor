@@ -582,34 +582,22 @@ impl Workbook {
         (rows, cols)
     }
 
-    /// Freeze the first `rows` rows and `cols` columns (0 unfreezes), as one
-    /// undo step. Saved to `.xlsx` as a frozen pane. Returns whether
+    /// Freeze the first `rows` rows and `cols` columns (0 unfreezes). Saved
+    /// to `.xlsx` as a frozen pane. Like Excel's Freeze Panes it is not an
+    /// undo step, but the workbook has unsaved changes. Returns whether
     /// anything changed.
     pub fn set_frozen(&mut self, sheet: u32, rows: u32, cols: u32) -> Result<bool> {
         if rows >= MAX_ROWS || cols >= MAX_COLS {
             bail!("too many frozen rows or columns");
         }
-        let (old_rows, old_cols) = self.frozen(sheet);
-        let mut steps = 0;
-        if rows != old_rows {
-            self.model
-                .set_frozen_rows_count(sheet, rows as i32)
-                .map_err(|e| anyhow!("{e}"))?;
-            steps += 1;
+        if self.frozen(sheet) == (rows, cols) {
+            return Ok(false);
         }
-        if cols != old_cols {
-            if let Err(e) = self.model.set_frozen_columns_count(sheet, cols as i32) {
-                if steps > 0 {
-                    let _ = self.model.undo();
-                }
-                return Err(anyhow!("{e}"));
-            }
-            steps += 1;
-        }
-        if steps > 0 {
-            self.history.edited_steps(steps);
-        }
-        Ok(steps > 0)
+        self.model
+            .kantor_set_frozen(sheet, rows as i32, cols as i32)
+            .map_err(|e| anyhow!("{e}"))?;
+        self.history.view_changed = true;
+        Ok(true)
     }
 
     /// Status-bar numbers for `range`. Small ranges are read cell by cell,
@@ -680,6 +668,21 @@ impl Workbook {
             }
         }
         let mut steps = 0;
+        // A hidden column dragged open is shown, in the same undo step; it
+        // is shown first, so undoing the width restores its real one.
+        let shown: Vec<(i32, bool)> = changed
+            .iter()
+            .filter(|&&(col, w)| w >= 1.0 && self.is_column_hidden(sheet, col))
+            .map(|&(col, _)| (col as i32 + 1, false))
+            .collect();
+        if !shown.is_empty()
+            && self
+                .model
+                .kantor_set_columns_hidden(sheet, &shown)
+                .map_err(|e| anyhow!("{e}"))?
+        {
+            steps += 1;
+        }
         for &(col, w) in &changed {
             let res =
                 self.model
@@ -974,25 +977,27 @@ mod tests {
     }
 
     #[test]
-    fn frozen_panes_undo_as_one_and_save() {
+    fn frozen_panes_are_saved_but_not_undone() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("frozen.xlsx");
-        let mut wb = book(&[(0, 0, "head")]);
+        let mut wb = book(&[(0, 0, "x")]);
+        wb.save_as(&path).unwrap();
+        assert!(!wb.is_dirty());
         assert_eq!(wb.frozen(0), (0, 0));
         assert!(wb.set_frozen(0, 1, 2).unwrap());
-        assert!(!wb.set_frozen(0, 1, 2).unwrap(), "no change, no undo step");
+        assert!(!wb.set_frozen(0, 1, 2).unwrap(), "no change");
         assert_eq!(wb.frozen(0), (1, 2));
+        assert!(wb.is_dirty(), "freezing is a change to save");
+        // As in Excel, Ctrl+Z doesn't unfreeze: it undoes the edit before.
+        wb.undo().unwrap();
+        assert_eq!(wb.frozen(0), (1, 2));
+        assert_eq!(wb.display_value(0, 0, 0), "");
+        wb.redo().unwrap();
         wb.save_as(&path).unwrap();
+        assert!(!wb.is_dirty());
         let reopened = Workbook::open(&path).unwrap();
         assert_eq!(reopened.frozen(0), (1, 2));
-
-        assert!(wb.undo().unwrap());
-        assert_eq!(wb.frozen(0), (0, 0), "both counts undo as one step");
-        assert!(wb.redo().unwrap());
-        assert_eq!(wb.frozen(0), (1, 2));
-        assert!(wb.undo().unwrap());
-        assert!(wb.undo().unwrap());
-        assert_eq!(wb.input(0, 0, 0), "", "and the step before is intact");
+        assert_eq!(reopened.display_value(0, 0, 0), "x");
     }
 
     #[test]

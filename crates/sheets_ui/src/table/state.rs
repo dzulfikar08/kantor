@@ -221,6 +221,9 @@ pub struct TableState<D: TableDelegate> {
     bounds: Bounds<Pixels>,
     /// The bounds of the fixed head cols.
     fixed_head_cols_bounds: Bounds<Pixels>,
+    /// KANTOR PATCH (frozen rows): height of the pinned frozen rows under
+    /// the header (0 without frozen rows), as last rendered.
+    pub pinned_rows_height: Pixels,
 
     col_groups: Vec<ColGroup>,
     header_layout: Vec<Vec<HeaderCell>>,
@@ -330,6 +333,7 @@ where
             col_drag_gap: None,
             bounds: Bounds::default(),
             fixed_head_cols_bounds: Bounds::default(),
+            pinned_rows_height: px(0.),
             visible_range: TableVisibleRange::default(),
             loop_selection: true,
             col_selectable: true,
@@ -868,6 +872,17 @@ where
         target.min(last)
     }
 
+    /// KANTOR PATCH (hidden columns): the next column right (`right`) or
+    /// left of `col` with a width, if any.
+    fn step_col(&self, col: usize, right: bool) -> Option<usize> {
+        let shown = |ix: &usize| self.col_groups.get(*ix).is_some_and(|c| c.width > px(0.));
+        if right {
+            (col + 1..self.col_groups.len()).find(shown)
+        } else {
+            (0..col).rev().find(shown)
+        }
+    }
+
     /// The shown row after (`down`) or before `row`, if any.
     fn step_row(&self, row: usize, down: bool, rows_count: usize) -> Option<usize> {
         let heights = self.delegate.row_heights();
@@ -879,10 +894,19 @@ where
         }
     }
 
+    /// KANTOR PATCH (frozen rows): how many rows sit pinned above the
+    /// scrolling list (the delegate's frozen rows, at most every row).
+    fn pinned_rows(&self, cx: &App) -> usize {
+        self.delegate
+            .frozen_rows(cx)
+            .min(self.delegate.rows_count(cx))
+    }
+
     /// KANTOR PATCH (row heights): before the rows are built, bring their
     /// heights up to date, carry out a pending scroll with them, and measure
     /// the rows about to show (which can make them taller). The first
-    /// visible row stays put when rows above it change height.
+    /// visible row stays put when rows above it change height. Offsets count
+    /// from the top of the first row below the pinned (frozen) ones.
     fn sync_row_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let heights = self.delegate.row_heights();
         let handle = self.vertical_scroll_handle.clone();
@@ -894,13 +918,15 @@ where
             )
         };
         let scroll_top = f64::from(-f32::from(offset.y)).max(0.0);
+        let skip = self.pinned_rows(cx);
         let anchor = {
             let h = heights.borrow();
-            h.row_at(scroll_top)
-                .map(|row| (row, scroll_top - h.top(row)))
+            let y = h.top(skip) + scroll_top;
+            h.row_at(y).map(|row| (row, y - h.top(row)))
         };
         self.delegate.sync_rows(window, cx);
         let count = self.delegate.rows_count(cx);
+        let skip = self.pinned_rows(cx);
         let laid_out = viewport > px(0.);
         // Before the first layout the list's height is unknown: fit what
         // the window could show, and let the list carry out a pending
@@ -916,11 +942,14 @@ where
             None
         };
         let place = |h: &RowHeights| {
-            let current = anchor.map_or(scroll_top, |(row, within)| {
-                h.top(row) + within.min(h.height(row))
-            });
+            let base = h.top(skip);
+            let current = anchor
+                .filter(|(row, _)| *row >= skip)
+                .map_or(scroll_top, |(row, within)| {
+                    h.top(row) + within.min(h.height(row)) - base
+                });
             match deferred {
-                Some(d) => scroll_target(h, count, d, current, viewport),
+                Some(d) => scroll_target(h, skip, count, d, current, viewport),
                 None => current,
             }
         };
@@ -929,7 +958,10 @@ where
         for _ in 0..4 {
             let rows = {
                 let h = heights.borrow();
-                h.shown_in(h.to_dp(top), h.to_dp(top + viewport) + 1)
+                let base = h.top(skip);
+                let mut rows = h.shown_in(0, h.top_dp(skip));
+                rows.extend(h.shown_in(h.to_dp(base + top), h.to_dp(base + top + viewport) + 1));
+                rows
             };
             if rows.is_empty() || !self.delegate.fit_rows(&rows, window, cx) {
                 break;
@@ -939,7 +971,10 @@ where
         if !laid_out {
             return;
         }
-        let max_top = (heights.borrow().top(count) - viewport).max(0.0);
+        let max_top = {
+            let h = heights.borrow();
+            (h.top(count) - h.top(skip) - viewport).max(0.0)
+        };
         let top = top.clamp(0.0, max_top);
         if (top - scroll_top).abs() > 0.001 {
             handle
@@ -1301,8 +1336,11 @@ where
         // Cell selection mode: move left within the same row
         if self.selection_mode.is_cell() {
             if let Some((row_ix, col_ix)) = self.selected_cell {
-                let new_col = if col_ix > 0 {
-                    col_ix.saturating_sub(1)
+                // KANTOR PATCH (hidden columns): step over zero-width ones.
+                let new_col = if let Some(col) = self.step_col(col_ix, false) {
+                    col
+                } else if col_ix > 0 {
+                    col_ix
                 } else if self.loop_selection {
                     columns_count.saturating_sub(1)
                 } else {
@@ -1339,8 +1377,11 @@ where
         // Cell selection mode: move right within the same row
         if self.selection_mode.is_cell() {
             if let Some((row_ix, col_ix)) = self.selected_cell {
-                let new_col = if col_ix < columns_count.saturating_sub(1) {
-                    col_ix + 1
+                // KANTOR PATCH (hidden columns): step over zero-width ones.
+                let new_col = if let Some(col) = self.step_col(col_ix, true) {
+                    col
+                } else if col_ix < columns_count.saturating_sub(1) {
+                    col_ix
                 } else if self.loop_selection {
                     0
                 } else {
@@ -2743,7 +2784,7 @@ where
         Some(
             div()
                 .absolute()
-                .top(self.header_band_height())
+                .top(self.header_band_height() + self.pinned_rows_height)
                 .right_0()
                 .bottom_0()
                 .w(Scrollbar::width())
@@ -2835,12 +2876,70 @@ where
             None
         };
 
+        // KANTOR PATCH (frozen rows): the frozen rows, pinned under the
+        // header; the list below scrolls the rest.
+        let pinned = self.pinned_rows(cx);
+        let (pinned_height, pinned_rows) = {
+            let h = heights.borrow();
+            (h.top(pinned), h.shown_in(0, h.top_dp(pinned)))
+        };
+        let pinned_view = (pinned_height > 0.0).then(|| {
+            let col_sizes: Rc<Vec<gpui::Size<Pixels>>> = Rc::new(
+                self.col_groups
+                    .iter()
+                    .skip(left_columns_count)
+                    .map(|col| gpui::Size {
+                        width: col.width,
+                        height: px(0.),
+                    })
+                    .collect(),
+            );
+            let rows: Vec<gpui::AnyElement> = pinned_rows
+                .into_iter()
+                .map(|row_ix| {
+                    let (top, height) = {
+                        let h = heights.borrow();
+                        (px(h.top(row_ix) as f32), px(h.height(row_ix) as f32))
+                    };
+                    let row = self.render_table_row(
+                        row_ix,
+                        rows_count,
+                        left_columns_count,
+                        col_sizes.clone(),
+                        columns_count,
+                        is_filled,
+                        height,
+                        window,
+                        cx,
+                    );
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .top(top)
+                        .h(height)
+                        .child(row)
+                        .into_any_element()
+                })
+                .collect();
+            div()
+                .id("table-pinned-rows")
+                .relative()
+                .flex_shrink_0()
+                .w_full()
+                .h(px(pinned_height as f32))
+                .overflow_hidden()
+                .children(rows)
+        });
+        self.pinned_rows_height = px(pinned_height as f32);
+
         let inner_table = v_flex()
             .id("table-inner")
             .test_support()
             .size_full()
             .overflow_hidden()
             .child(self.render_table_header(left_columns_count, window, cx))
+            .children(pinned_view)
             .context_menu({
                 let view = cx.entity().clone();
                 move |this, window: &mut Window, cx: &mut Context<PopupMenu>| {
@@ -2864,6 +2963,7 @@ where
                             row_list(
                                 "table-rows",
                                 heights.clone(),
+                                pinned,
                                 rows_count,
                                 cx.processor(move |table, rows: Vec<usize>, window, cx| {
                                     // Use `col.width` (always up-to-date) rather than

@@ -13,6 +13,7 @@ mod cond_format;
 mod csv;
 pub mod drawing;
 mod filter;
+mod hide;
 mod icons;
 mod import;
 mod look;
@@ -62,6 +63,7 @@ pub use format::{
     Rgb, StyleChange, VAlign, ValueKind,
 };
 pub use grid::{Fill, FillDirection, RangeStats, Step};
+pub use hide::Unhidden;
 pub use icons::IconPath;
 pub use look::CellLook;
 pub use numfmt::Display;
@@ -247,8 +249,9 @@ impl XlsxSource {
 /// Ids of the states reachable by undo and redo, mirroring IronCalc's stacks.
 ///
 /// One entry is usually one IronCalc history step; an edit made of several
-/// IronCalc calls (see [`Workbook::set_frozen`]) records how many, so it
-/// undoes as one.
+/// IronCalc calls (see [`Workbook::insert_rows`]) records how many, so it
+/// undoes as one. View changes that Excel doesn't undo (frozen panes) make
+/// the workbook unsaved without a state of their own.
 #[derive(Default)]
 struct Revisions {
     current: u64,
@@ -263,6 +266,8 @@ struct Revisions {
     drawing_edits: HashMap<u64, std::sync::Arc<drawing::Edits>>,
     /// Pivot tables refreshed, in each state.
     pivot_states: HashMap<u64, std::sync::Arc<pivot::State>>,
+    /// A change outside the undo history (frozen panes) since the last save.
+    view_changed: bool,
 }
 
 impl Revisions {
@@ -360,7 +365,7 @@ impl Revisions {
     }
 
     fn is_dirty(&self) -> bool {
-        self.current != self.saved
+        self.current != self.saved || self.view_changed
     }
 }
 
@@ -755,6 +760,7 @@ impl Workbook {
             xlsx_layout,
         };
         self.history.saved = self.history.current;
+        self.history.view_changed = false;
         Ok(())
     }
 

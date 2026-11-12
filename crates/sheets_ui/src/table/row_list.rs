@@ -7,6 +7,11 @@
 //! [`RowHeights`] (prefix sums in device pixels): finding the rows on screen
 //! and where they go is O(visible · log n), whatever the sheet's size.
 //! Hidden rows (height 0) are skipped without being built.
+//!
+//! KANTOR PATCH (frozen rows): the list can leave its first `skip` rows out
+//! (the table pins them above it); the scroll offset then counts from the
+//! top of row `skip`, so the scrollbar, the wheel and paging see only the
+//! rows that scroll.
 
 use std::cell::RefCell;
 use std::ops::Range;
@@ -23,10 +28,11 @@ use crate::row_heights::RowHeights;
 
 type RenderRows = Box<dyn Fn(Vec<usize>, &mut Window, &mut App) -> Vec<AnyElement>>;
 
-/// A vertical list of `count` rows placed by `heights`.
+/// A vertical list of rows `skip..count` placed by `heights`.
 pub(crate) fn row_list(
     id: impl Into<ElementId>,
     heights: Rc<RefCell<RowHeights>>,
+    skip: usize,
     count: usize,
     render: impl Fn(Vec<usize>, &mut Window, &mut App) -> Vec<AnyElement> + 'static,
 ) -> RowList {
@@ -34,6 +40,7 @@ pub(crate) fn row_list(
     RowList {
         id: id.clone(),
         heights,
+        skip,
         count,
         render: Box::new(render),
         base: div().id(id).overflow_y_scroll(),
@@ -44,6 +51,8 @@ pub(crate) fn row_list(
 pub(crate) struct RowList {
     id: ElementId,
     heights: Rc<RefCell<RowHeights>>,
+    /// Rows above the list (pinned by the table), left out of it.
+    skip: usize,
     count: usize,
     render: RenderRows,
     /// Scrolls (the wheel goes to its interactivity) and tracks the handle.
@@ -59,25 +68,31 @@ impl RowList {
     }
 }
 
-/// Where the list's top goes (logical px from the first row) to carry out a
-/// deferred scroll, from `scroll_top` in a viewport `viewport` high; the same
-/// rules as `uniform_list` (`Nearest` and non-strict requests leave a fully
-/// visible row alone).
+/// Where the list's top goes (logical px from the top of row `skip`) to
+/// carry out a deferred scroll, from `scroll_top` in a viewport `viewport`
+/// high; the same rules as `uniform_list` (`Nearest` and non-strict requests
+/// leave a fully visible row alone). A row above the list (`< skip`, pinned)
+/// is always visible, so it leaves the list where it is.
 pub(crate) fn scroll_target(
     heights: &RowHeights,
+    skip: usize,
     count: usize,
     deferred: DeferredScrollToItem,
     scroll_top: f64,
     viewport: f64,
 ) -> f64 {
     let count = count.min(heights.len());
-    if count == 0 {
+    if count <= skip {
         return 0.0;
     }
     let ix = deferred.item_index.min(count - 1);
-    let item_top = heights.top(ix);
+    if ix < skip {
+        return scroll_top;
+    }
+    let base = heights.top(skip);
+    let item_top = heights.top(ix) - base;
     let item_bottom = item_top + heights.height(ix);
-    let max_top = (heights.top(count) - viewport).max(0.0);
+    let max_top = (heights.top(count) - base - viewport).max(0.0);
     let is_above = item_top < scroll_top;
     let is_below = item_bottom > scroll_top + viewport;
     if !(deferred.scroll_strict || is_above || is_below) {
@@ -164,7 +179,9 @@ impl Element for RowList {
         cx: &mut App,
     ) -> Option<Hitbox> {
         let count = self.count.min(self.heights.borrow().len());
-        let total = self.heights.borrow().top(count);
+        let skip = self.skip.min(count);
+        let base = self.heights.borrow().top(skip);
+        let total = self.heights.borrow().top(count) - base;
         let content_size = Size {
             width: bounds.size.width,
             height: px(total as f32),
@@ -189,7 +206,7 @@ impl Element for RowList {
             let offset = handle.offset();
             let mut top = f64::from(-f32::from(offset.y)).clamp(0.0, max_top);
             if let Some(deferred) = deferred {
-                top = scroll_target(&self.heights.borrow(), count, deferred, top, viewport);
+                top = scroll_target(&self.heights.borrow(), skip, count, deferred, top, viewport);
             }
             if f64::from(-f32::from(offset.y)) != top {
                 handle.set_offset(point(offset.x, px(-(top as f32))));
@@ -206,7 +223,7 @@ impl Element for RowList {
             window,
             cx,
             |_style, scroll_offset, hitbox, window, cx| {
-                if count == 0 {
+                if count <= skip {
                     return hitbox;
                 }
                 let top = f64::from(-f32::from(scroll_offset.y)).clamp(0.0, max_top);
@@ -215,12 +232,15 @@ impl Element for RowList {
                 // (with the heights released: cells read them too).
                 let placed: Vec<(usize, f32, f32)> = {
                     let h = heights.borrow();
-                    let first = h.to_dp(top);
-                    let last = h.to_dp(top + viewport) + 1;
+                    let first = h.to_dp(base + top);
+                    let last = h.to_dp(base + top + viewport) + 1;
                     h.shown_in(first, last)
                         .into_iter()
-                        .filter(|&row| row < count)
-                        .map(|row| (row, (h.top(row) - top) as f32, h.height(row) as f32))
+                        .filter(|&row| row >= skip && row < count)
+                        .map(|row| {
+                            let y = h.top(row) - base - top;
+                            (row, y as f32, h.height(row) as f32)
+                        })
                         .collect()
                 };
                 let rows: Vec<usize> = placed.iter().map(|p| p.0).collect();
@@ -300,18 +320,33 @@ mod tests {
         let view = 200.0;
         // Visible: no scroll.
         assert_eq!(
-            scroll_target(&rows, 100, deferred(3, ScrollStrategy::Nearest), 0.0, view),
+            scroll_target(
+                &rows,
+                0,
+                100,
+                deferred(3, ScrollStrategy::Nearest),
+                0.0,
+                view
+            ),
             0.0
         );
         // Below: its bottom at the viewport's bottom.
         assert_eq!(
-            scroll_target(&rows, 100, deferred(51, ScrollStrategy::Nearest), 0.0, view),
+            scroll_target(
+                &rows,
+                0,
+                100,
+                deferred(51, ScrollStrategy::Nearest),
+                0.0,
+                view
+            ),
             30.0 * 50.0 + 300.0 + 30.0 - view
         );
         // Above: its top at the top.
         assert_eq!(
             scroll_target(
                 &rows,
+                0,
                 100,
                 deferred(10, ScrollStrategy::Nearest),
                 2000.0,
@@ -321,7 +356,14 @@ mod tests {
         );
         // Centred on the tall row.
         assert_eq!(
-            scroll_target(&rows, 100, deferred(50, ScrollStrategy::Center), 0.0, view),
+            scroll_target(
+                &rows,
+                0,
+                100,
+                deferred(50, ScrollStrategy::Center),
+                0.0,
+                view
+            ),
             1500.0 + 150.0 - 100.0
         );
         // Never past the end, whatever the index.
@@ -329,6 +371,7 @@ mod tests {
         assert_eq!(
             scroll_target(
                 &rows,
+                0,
                 100,
                 deferred(usize::MAX, ScrollStrategy::Top),
                 0.0,
@@ -336,6 +379,64 @@ mod tests {
             ),
             end
         );
+    }
+
+    #[std::prelude::v1::test]
+    fn frozen_rows_are_left_out_of_the_scrolling_list() {
+        // 2 frozen rows (40 + 25 px) pinned above a list of 30 px rows.
+        let mut h = vec![30u32; 100];
+        h[0] = 40;
+        h[1] = 25;
+        let rows = RowHeights::from_heights(h, 1.0);
+        let view = 200.0;
+        let near = |ix| deferred(ix, ScrollStrategy::Nearest);
+        // A frozen row is always on screen: the list stays where it is.
+        assert_eq!(scroll_target(&rows, 2, 100, near(0), 900.0, view), 900.0);
+        assert_eq!(scroll_target(&rows, 2, 100, near(1), 900.0, view), 900.0);
+        // Row 2 is the list's first row: offset 0 shows it right below the
+        // frozen rows (Ctrl+Home, or arrowing up from below).
+        assert_eq!(scroll_target(&rows, 2, 100, near(2), 900.0, view), 0.0);
+        // Arrowing down past the bottom: its bottom at the list's bottom,
+        // counted from row 2's top, not from row 0's.
+        let row20_bottom = 30.0 * 19.0;
+        assert_eq!(
+            scroll_target(&rows, 2, 100, near(20), 0.0, view),
+            row20_bottom - view
+        );
+        // The end: the list scrolls by the rows below the frozen ones only.
+        let end = 30.0 * 98.0 - view;
+        assert_eq!(
+            scroll_target(&rows, 2, 100, deferred(99, ScrollStrategy::Top), 0.0, view),
+            end
+        );
+        // Everything frozen: nothing scrolls.
+        assert_eq!(scroll_target(&rows, 100, 100, near(50), 30.0, view), 0.0);
+    }
+
+    #[std::prelude::v1::test]
+    fn frozen_rows_scroll_into_view_on_whole_pixels_at_125() {
+        // At 125 % rows are whole device pixels (30 px = 37 dp); the list's
+        // offsets for rows below 3 frozen ones stay on whole device pixels.
+        let scale = 1.25;
+        let h: Vec<u32> = (0..500)
+            .map(|i| crate::row_heights::device_px([30.0, 47.3, 12.2][i % 3], scale))
+            .collect();
+        let rows = RowHeights::from_heights(h, scale);
+        for ix in [3, 4, 77, 250, 499] {
+            let strict = DeferredScrollToItem {
+                scroll_strict: true,
+                ..deferred(ix, ScrollStrategy::Top)
+            };
+            let top = scroll_target(&rows, 3, 500, strict, 0.0, 123.2);
+            let dp = top * f64::from(scale);
+            assert!((dp - dp.round()).abs() < 1e-6, "row {ix} at {dp}");
+            if ix < 400 {
+                assert!(
+                    (top - (rows.top(ix) - rows.top(3))).abs() < 1e-9,
+                    "row {ix} at the list's top"
+                );
+            }
+        }
     }
 
     #[std::prelude::v1::test]

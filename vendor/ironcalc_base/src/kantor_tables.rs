@@ -603,6 +603,57 @@ impl UserModel<'_> {
         Ok(())
     }
 
+    /// KANTOR PATCH (frozen panes): set the frozen rows and columns of
+    /// `sheet` without an undo step, as Excel's Freeze Panes is not undone.
+    pub fn kantor_set_frozen(&mut self, sheet: u32, rows: i32, cols: i32) -> Result<(), String> {
+        let old_rows = self.model.get_frozen_rows_count(sheet)?;
+        self.model.set_frozen_rows(sheet, rows)?;
+        if let Err(e) = self.model.set_frozen_columns(sheet, cols) {
+            let _ = self.model.set_frozen_rows(sheet, old_rows);
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    /// KANTOR PATCH (hide columns): hide (`true`) or show columns
+    /// (1-based) as one undo step. Widths are kept, so a shown column comes
+    /// back as wide as it was. Returns whether anything changed.
+    pub fn kantor_set_columns_hidden(
+        &mut self,
+        sheet: u32,
+        changes: &[(i32, bool)],
+    ) -> Result<bool, String> {
+        let mut diffs = Vec::new();
+        for &(column, hide) in changes {
+            let old = self.model.is_column_hidden(sheet, column)?;
+            if old == hide {
+                continue;
+            }
+            if let Err(e) = self.model.set_column_hidden(sheet, column, hide) {
+                for d in diffs.iter().rev() {
+                    if let Diff::SetColumnHidden {
+                        column, old_value, ..
+                    } = d
+                    {
+                        let _ = self.model.set_column_hidden(sheet, *column, *old_value);
+                    }
+                }
+                return Err(e);
+            }
+            diffs.push(Diff::SetColumnHidden {
+                sheet,
+                column,
+                new_value: hide,
+                old_value: old,
+            });
+        }
+        if diffs.is_empty() {
+            return Ok(false);
+        }
+        self.push_diff_list(diffs);
+        Ok(true)
+    }
+
     /// Hide or show rows (1-based) as one undo step, e.g. for a filter.
     /// Returns whether any row changed.
     pub fn kantor_set_rows_hidden(

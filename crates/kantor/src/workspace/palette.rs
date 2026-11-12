@@ -634,6 +634,46 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "Hide Rows",
+        detail: "Sheets · hide the selected rows",
+        keys: "Ctrl 9",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::HideRows, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Unhide Rows",
+        detail: "Sheets · show hidden rows in the selection (not filtered ones)",
+        keys: "Ctrl Shift 9",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::UnhideRows, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Hide Columns",
+        detail: "Sheets · hide the selected columns",
+        keys: "Ctrl 0",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::HideColumns, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Unhide Columns",
+        detail: "Sheets · show hidden columns in the selection",
+        keys: "Ctrl Shift 0",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.grid_command(GridCommand::UnhideColumns, w, cx)
+            })
+        },
+    },
+    Command {
         title: "Select All Cells",
         detail: "Sheets",
         keys: "Ctrl A",

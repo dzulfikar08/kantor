@@ -314,6 +314,8 @@ impl DrawLayer {
 struct Pane {
     clip: Bounds<Pixels>,
     origin_x: Pixels,
+    /// Where sheet y = 0 would be on screen in this pane.
+    origin_y: Pixels,
 }
 
 /// An object placed on screen this frame.
@@ -334,9 +336,9 @@ pub(crate) struct Frame {
     interactive: bool,
 }
 
-fn screen_rect(pane: &Pane, origin_y: Pixels, [x, y, w, h]: [f64; 4]) -> Bounds<Pixels> {
+fn screen_rect(pane: &Pane, [x, y, w, h]: [f64; 4]) -> Bounds<Pixels> {
     Bounds::new(
-        point(pane.origin_x + px(x as f32), origin_y + px(y as f32)),
+        point(pane.origin_x + px(x as f32), pane.origin_y + px(y as f32)),
         size(px(w as f32), px(h as f32)),
     )
 }
@@ -466,6 +468,63 @@ impl SheetsView {
     }
 }
 
+/// Where the grid's panes are on screen, for [`layout_panes`].
+#[derive(Debug, Clone, Copy)]
+struct PaneInput {
+    /// Left edge of column A (right of the row numbers).
+    sheet_left: Pixels,
+    /// Top of row 1 (under the column letters).
+    body_top: Pixels,
+    /// Top of the scrolling rows (under the frozen ones).
+    rows_top: Pixels,
+    bottom: Pixels,
+    /// Left edge of the scrolling columns.
+    cols_left: Pixels,
+    right: Pixels,
+    /// Scroll offsets (`scroll_x` ≤ 0, as the handle has it; `scroll_y` ≥ 0).
+    scroll_x: Pixels,
+    scroll_y: Pixels,
+    /// Size of the frozen columns and rows in sheet px.
+    frozen_w: Pixels,
+    frozen_h: Pixels,
+}
+
+/// The panes objects are drawn in, each clipped to its part of the grid:
+/// frozen rows and columns stay put, the rest follows the scroll offsets,
+/// as Excel's split panes do. An object crossing the split shows in each
+/// pane it reaches.
+fn layout_panes(p: PaneInput, frozen_cols: bool, frozen_rows: bool) -> Vec<Pane> {
+    let mut cols = Vec::with_capacity(2);
+    if frozen_cols {
+        cols.push((p.sheet_left, p.cols_left.max(p.sheet_left), p.sheet_left));
+    }
+    cols.push((
+        p.cols_left,
+        p.right.max(p.cols_left),
+        p.cols_left + p.scroll_x - p.frozen_w,
+    ));
+    let mut rows = Vec::with_capacity(2);
+    if frozen_rows {
+        rows.push((p.body_top, p.rows_top.max(p.body_top), p.body_top));
+    }
+    rows.push((
+        p.rows_top,
+        p.bottom.max(p.rows_top),
+        p.rows_top - p.scroll_y - p.frozen_h,
+    ));
+    let mut panes = Vec::with_capacity(4);
+    for &(top, bottom, origin_y) in &rows {
+        for &(left, right, origin_x) in &cols {
+            panes.push(Pane {
+                clip: Bounds::from_corners(point(left, top), point(right, bottom)),
+                origin_x,
+                origin_y,
+            });
+        }
+    }
+    panes
+}
+
 /// Lay the objects out on screen and register their hitboxes.
 fn prepaint(
     layer: &Rc<RefCell<DrawLayer>>,
@@ -499,29 +558,31 @@ fn prepaint(
     let heights = grid.layout.heights.clone();
     let rows = heights.borrow();
     let geom = GridGeometry::new(grid, Some(table), &rows, max_col(&drawings));
-    let frozen = grid.book.frozen(grid.sheet).1;
+    let (frozen_rows, frozen) = grid.book.frozen(grid.sheet);
     let frozen_w = px(geom.col_left(frozen) as f32);
+    // The list scrolls the rows below the frozen ones, which the table pins
+    // between the header and the list.
+    let frozen_h = px(geom.row_top(frozen_rows) as f32);
+    let body_top = rows_vp.top() - table.pinned_rows_height;
     let sheet_left = rows_vp.left() + ROW_GUTTER_WIDTH;
-    let mut panes = Vec::with_capacity(2);
-    if frozen > 0 {
-        panes.push(Pane {
-            clip: Bounds::from_corners(
-                point(sheet_left, rows_vp.top()),
-                point(cols_vp.left().max(sheet_left), rows_vp.bottom()),
-            ),
-            origin_x: sheet_left,
-        });
-    }
-    panes.push(Pane {
-        clip: Bounds::from_corners(
-            point(cols_vp.left(), rows_vp.top()),
-            point(cols_vp.right().max(cols_vp.left()), rows_vp.bottom()),
-        ),
-        origin_x: cols_vp.left() + ox - frozen_w,
-    });
-    let origin_y = rows_vp.top() - px(top);
+    let panes = layout_panes(
+        PaneInput {
+            sheet_left,
+            body_top,
+            rows_top: rows_vp.top(),
+            bottom: rows_vp.bottom(),
+            cols_left: cols_vp.left(),
+            right: cols_vp.right(),
+            scroll_x: ox,
+            scroll_y: px(top),
+            frozen_w,
+            frozen_h,
+        },
+        frozen > 0,
+        frozen_rows > 0,
+    );
     let body = Bounds::from_corners(
-        point(sheet_left, rows_vp.top()),
+        point(sheet_left, body_top),
         point(cols_vp.right(), rows_vp.bottom()),
     );
     let drag = layer.borrow().drag;
@@ -537,7 +598,7 @@ fn prepaint(
         }
         let shown: Vec<_> = panes
             .iter()
-            .map(|p| (screen_rect(p, origin_y, rect), p.clip))
+            .map(|p| (screen_rect(p, rect), p.clip))
             .filter(|(r, clip)| r.intersects(clip))
             .collect();
         if shown.is_empty() {
@@ -766,6 +827,91 @@ fn paint(
 
 #[cfg(test)]
 mod tests {
+
+    fn pane_input() -> PaneInput {
+        PaneInput {
+            sheet_left: px(40.),
+            body_top: px(30.),
+            rows_top: px(90.),
+            bottom: px(500.),
+            cols_left: px(140.),
+            right: px(800.),
+            scroll_x: px(-300.),
+            scroll_y: px(1000.),
+            frozen_w: px(100.),
+            frozen_h: px(60.),
+        }
+    }
+
+    #[std::prelude::v1::test]
+    fn panes_pin_frozen_rows_and_columns() {
+        let panes = layout_panes(pane_input(), true, true);
+        assert_eq!(panes.len(), 4);
+        // Top-left: frozen both ways, at the sheet's origin.
+        let tl = &panes[0];
+        assert_eq!((tl.origin_x, tl.origin_y), (px(40.), px(30.)));
+        assert_eq!(
+            tl.clip,
+            Bounds::from_corners(point(px(40.), px(30.)), point(px(140.), px(90.)))
+        );
+        // Top-right: frozen rows, columns scrolled; sheet x 100 (the first
+        // scrolling column) at the scrolling columns' left minus the scroll.
+        let tr = &panes[1];
+        assert_eq!(tr.origin_y, px(30.));
+        assert_eq!(tr.origin_x + px(100.), px(140.) - px(300.));
+        // Bottom-left: frozen columns, rows scrolled; sheet y 60 (row below
+        // the frozen ones) at the list's top minus the scroll.
+        let bl = &panes[2];
+        assert_eq!(bl.origin_x, px(40.));
+        assert_eq!(bl.origin_y + px(60.), px(90.) - px(1000.));
+        assert_eq!(bl.clip.top(), px(90.));
+        // Bottom-right scrolls both ways.
+        let br = &panes[3];
+        assert_eq!((br.origin_x, br.origin_y), (tr.origin_x, bl.origin_y));
+        assert_eq!(
+            br.clip,
+            Bounds::from_corners(point(px(140.), px(90.)), point(px(800.), px(500.)))
+        );
+    }
+
+    #[std::prelude::v1::test]
+    fn an_object_crossing_the_split_shows_in_each_pane() {
+        let panes = layout_panes(pane_input(), true, true);
+        // From sheet (80, 40) to (680, 1300): crosses both splits and is
+        // still on screen past the scrolled-away part.
+        let rect = [80.0, 40.0, 600.0, 1260.0];
+        let shown: Vec<usize> = panes
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| screen_rect(p, rect).intersects(&p.clip))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(shown, vec![0, 1, 2, 3]);
+        // A picture inside the frozen rows (y 0..50) stays in the top panes
+        // whatever the vertical scroll.
+        let top_only = [500.0, 0.0, 200.0, 50.0];
+        let shown: Vec<usize> = panes
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| screen_rect(p, top_only).intersects(&p.clip))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(shown, vec![1]);
+        // No frozen panes: one pane, as before.
+        let one = layout_panes(
+            PaneInput {
+                frozen_w: px(0.),
+                frozen_h: px(0.),
+                rows_top: px(30.),
+                cols_left: px(40.),
+                ..pane_input()
+            },
+            false,
+            false,
+        );
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].origin_y, px(30.) - px(1000.));
+    }
     use super::*;
 
     #[std::prelude::v1::test]

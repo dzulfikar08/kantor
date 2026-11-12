@@ -329,6 +329,47 @@ pub(crate) fn resize_handles(row: u32, view: &WeakEntity<SheetsView>) -> Vec<Any
 }
 
 impl SheetsView {
+    /// When `row` is hidden, the first row of the run of hidden rows ending
+    /// at it.
+    fn hidden_run(&self, row: u32, cx: &App) -> Option<u32> {
+        let grid = self.table.read(cx).delegate();
+        let h = grid.layout.heights.borrow();
+        if h.height_dp(row as usize) > 0 || row as usize >= h.len() {
+            return None;
+        }
+        let shown_above = row.checked_sub(1).and_then(|r| h.prev_shown(r as usize));
+        Some(shown_above.map_or(0, |r| r as u32 + 1))
+    }
+
+    /// Unhide rows `first..=last` (one undo step).
+    fn unhide_rows_doc(
+        &mut self,
+        first: u32,
+        last: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let result = self.table.update(cx, |table, cx| {
+            let grid = table.delegate_mut();
+            let sheet = grid.sheet;
+            let res = grid.book.unhide_rows(sheet, first, last);
+            cx.notify();
+            res
+        });
+        self.status = match result {
+            Ok(done) if done.shown > 0 => format!(
+                "Unhid {} row{}",
+                done.shown,
+                if done.shown == 1 { "" } else { "s" }
+            )
+            .into(),
+            Ok(_) => "Those rows are hidden by a filter; clear the filter to show them".into(),
+            Err(err) => format!("{err:#}").into(),
+        };
+        self.update_title(window, cx);
+        cx.notify();
+    }
+
     /// The rows a height command acts on: the selection's rows, the used
     /// part for whole columns or the whole sheet.
     fn height_rows(&self, cx: &App) -> Option<(u32, u32)> {
@@ -348,6 +389,14 @@ impl SheetsView {
         cx: &mut Context<Self>,
     ) {
         if self.editing.is_some() || self.blocked(cx) {
+            return;
+        }
+        // Double-clicking the edge of hidden rows shows them again, as
+        // Excel does (dragging it opens the row next to it).
+        if clicks >= 2
+            && let Some(first) = self.hidden_run(row, cx)
+        {
+            self.unhide_rows_doc(first, row, window, cx);
             return;
         }
         if clicks >= 2 {
