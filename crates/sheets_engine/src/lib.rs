@@ -12,6 +12,7 @@ mod batch;
 mod cond_format;
 mod csv;
 pub mod drawing;
+mod edits;
 mod filter;
 mod hide;
 mod icons;
@@ -74,7 +75,10 @@ pub use pivot_edit::{
     AreaEntry, AxisEntry, PivotDestination, PivotFunc, PivotItem, PivotLayout, PivotSourceCheck,
     PivotSourceField, PivotValueField, ReportLayout, SubtotalPlace,
 };
-pub use print::{HeaderFooter, Margins, PageSetup, Paper, PrintColumns, PrintOptions, SheetPrint};
+pub use print::{
+    HEADER_FOOTER_PRESETS, HeaderFooter, Margins, PAPERS, PageSetup, Paper, PrintColumns,
+    PrintOptions, SheetPrint, join_sections, split_sections,
+};
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 pub use sort::SortKey;
 pub use table::{TableCellLook, TableInfo};
@@ -281,6 +285,8 @@ struct Revisions {
     drawing_edits: HashMap<u64, std::sync::Arc<drawing::Edits>>,
     /// Pivot tables refreshed, in each state.
     pivot_states: HashMap<u64, std::sync::Arc<pivot::State>>,
+    /// Sheet features edited in Kantor, in each state (`edits`).
+    edits: HashMap<u64, std::sync::Arc<edits::Edits>>,
     /// A change outside the undo history (frozen panes) since the last save.
     view_changed: bool,
 }
@@ -304,6 +310,18 @@ impl Revisions {
         if let Some(state) = self.pivot_states.get(&prev).cloned() {
             self.pivot_states.insert(self.current, state);
         }
+        if let Some(edits) = self.edits.get(&prev).cloned() {
+            self.edits.insert(self.current, edits);
+        }
+    }
+
+    /// The sheet features edited in the current state.
+    fn edits(&self) -> std::sync::Arc<edits::Edits> {
+        self.edits.get(&self.current).cloned().unwrap_or_default()
+    }
+
+    fn set_edits(&mut self, edits: std::sync::Arc<edits::Edits>) {
+        self.edits.insert(self.current, edits);
     }
 
     /// The pivot refreshes of the current state.
@@ -1185,6 +1203,11 @@ impl Workbook {
             drawings: self
                 .drawings
                 .save_edits(&self.history.drawing_edits(), &layout),
+            patches: {
+                let mut p = preserve::Patches::default();
+                self.print_patches(&mut p);
+                p
+            },
         }
     }
 }
@@ -1214,6 +1237,7 @@ struct XlsxParts {
     full_calc: bool,
     moves: shift::Moves,
     drawings: HashMap<u32, Vec<drawing::SaveEdit>>,
+    patches: preserve::Patches,
 }
 
 /// IronCalc's `.xlsx` of `model`, with the parts of `original` it doesn't
@@ -1263,6 +1287,7 @@ fn build_xlsx(
         cell_text: &cell_text,
         tables: &table_now,
         drawings: &parts.drawings,
+        patches: &parts.patches,
     };
     Ok(preserve::finish(written, original, &ctx))
 }

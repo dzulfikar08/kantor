@@ -251,6 +251,38 @@ pub(crate) struct Context<'a> {
     /// Pivot parts rewritten by an edit, pivot tables deleted and pivot
     /// tables made in Kantor.
     pub pivots: &'a PivotSave,
+    /// Sheet features edited in Kantor, written over what the package has.
+    pub patches: &'a Patches,
+}
+
+/// What a save writes over the package for features edited in Kantor (see
+/// [`apply_patches`]). Sheets and names not listed are left as they are.
+#[derive(Default)]
+pub(crate) struct Patches {
+    /// By `sheetId`.
+    pub sheets: HashMap<u32, SheetPatch>,
+    /// Built-in defined names `(sheetId, name, formula)`: written for that
+    /// sheet in place of any the workbook has, or removed (`None`).
+    pub names: Vec<(u32, &'static str, Option<String>)>,
+}
+
+/// Changes to one worksheet part.
+#[derive(Default)]
+pub(crate) struct SheetPatch {
+    /// Elements of `<worksheet>` to write in place of the package's (put in
+    /// schema order when it has none), `None` to remove them.
+    pub elements: Vec<(&'static str, Option<String>)>,
+    /// `<sheetPr><pageSetUpPr fitToPage>`.
+    pub fit_to_page: Option<bool>,
+    /// `<pageSetup>`: the attributes Kantor models
+    /// (`crate::print::PAGE_SETUP_ATTRS`) are set to these; others kept.
+    pub page_setup: Option<Vec<(&'static str, String)>>,
+}
+
+impl Patches {
+    fn is_empty(&self) -> bool {
+        self.sheets.is_empty() && self.names.is_empty()
+    }
 }
 
 /// The pivot parts of the workbook being saved, once pivot tables were
@@ -340,6 +372,13 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
         let mut added = Vec::new();
         let polished = Package::read(&ironcalc).and_then(|mut b| {
             polish(&mut b, tabs, full_calc, notes)?;
+            if let Err(e) = apply_patches(&mut b, ctx.patches) {
+                notes.push(format!(
+                    "Kantor's page setup and other sheet edits are not saved: {e}"
+                ));
+                b = Package::read(&ironcalc)?;
+                polish(&mut b, tabs, full_calc, notes)?;
+            }
             if !new_pivots.is_empty() {
                 let before = b.clone();
                 match add_pivots(&mut b, new_pivots).and_then(|a| {
@@ -402,6 +441,7 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
             return done(bytes, notes, added);
         }
         Ok(true) => polish(&mut merged, tabs, full_calc, &mut polish_notes).and_then(|()| {
+            apply_patches(&mut merged, ctx.patches)?;
             added = add_pivots(&mut merged, new_pivots)?;
             Ok(())
         }),
@@ -4019,6 +4059,249 @@ fn rewrite_name(n: Node, xml: &str, local: Option<usize>, extra: &str) -> String
     text
 }
 
+// ------------------------------------------------------------------ patches
+
+/// Write the sheet features edited in Kantor (`patches`) over the package.
+fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
+    if patches.is_empty() {
+        return Ok(());
+    }
+    let root_rels = parse_rels(pkg.text("_rels/.rels")?.ok_or("no _rels/.rels")?)?;
+    let read = |p: &str| Ok(pkg.text(p)?.map(str::to_owned));
+    let (wb, _, wb_xml, sheets) = workbook_sheets(&root_rels, &read)?;
+    let mut ids: Vec<&u32> = patches.sheets.keys().collect();
+    ids.sort();
+    for id in ids {
+        let patch = &patches.sheets[id];
+        let sheet = sheets
+            .iter()
+            .find(|s| s.sheet_id == *id && s.kind == SheetKind::Work)
+            .ok_or_else(|| format!("sheet {id} is missing"))?;
+        let xml = pkg.take_text(&sheet.part)?.ok_or("sheet part is missing")?;
+        let new = patch_sheet(&xml, patch).map_err(|e| format!("{:?}: {e}", sheet.name))?;
+        pkg.set(&sheet.part, new.into_bytes());
+    }
+    if !patches.names.is_empty() {
+        let new = patch_names(&wb_xml, &sheets, &patches.names)?;
+        pkg.set(&wb, new.into_bytes());
+    }
+    Ok(())
+}
+
+/// A worksheet's XML with `patch` applied. Only the skeleton is parsed.
+fn patch_sheet(full: &str, patch: &SheetPatch) -> Result<String, String> {
+    let sk = Skeleton::new(full);
+    let doc = Document::parse(&sk.xml).map_err(|e| e.to_string())?;
+    let root = doc.root_element();
+    if root.lookup_namespace_uri(None) != Some(NS_MAIN) {
+        return Err("unexpected namespaces".into());
+    }
+    let close = sk.xml[..root.range().end]
+        .rfind("</")
+        .ok_or("worksheet is not closed")?;
+    let order = |name: &str| SHEET_ORDER.iter().position(|n| *n == name);
+    let present: Vec<(usize, usize)> = root
+        .children()
+        .filter(|c| c.is_element())
+        .filter_map(|c| Some((order(c.tag_name().name())?, c.range().start)))
+        .collect();
+    let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+    let mut inserts: HashMap<usize, Vec<(usize, String)>> = HashMap::new();
+    let mut put = |name: &str, text: Option<String>, edits: &mut Vec<_>| -> Result<(), String> {
+        let o = order(name).ok_or_else(|| format!("unknown element {name}"))?;
+        match root.children().find(|c| is_main(*c, name)) {
+            Some(n) => edits.push((n.range(), text.unwrap_or_default())),
+            None => {
+                if let Some(text) = text {
+                    let at = insert_point(&present, o, close);
+                    inserts.entry(at).or_default().push((o, text));
+                }
+            }
+        }
+        Ok(())
+    };
+    for (name, text) in &patch.elements {
+        put(name, text.clone(), &mut edits)?;
+    }
+    if let Some(attrs) = &patch.page_setup {
+        let text = match root.children().find(|c| is_main(*c, "pageSetup")) {
+            Some(n) => {
+                let mut out = String::from("<pageSetup");
+                for (k, v) in attrs {
+                    out.push_str(&format!(" {k}=\"{}\"", esc_attr(v)));
+                }
+                for a in n.attributes() {
+                    let modelled = a.namespace().is_none()
+                        && crate::print::PAGE_SETUP_ATTRS.contains(&a.name());
+                    if !modelled {
+                        write_attr_same(&mut out, a, n)?;
+                    }
+                }
+                out.push_str("/>");
+                out
+            }
+            None => {
+                let mut out = String::from("<pageSetup");
+                for (k, v) in attrs {
+                    out.push_str(&format!(" {k}=\"{}\"", esc_attr(v)));
+                }
+                out.push_str("/>");
+                out
+            }
+        };
+        put("pageSetup", Some(text), &mut edits)?;
+    }
+    if let Some(fit) = patch.fit_to_page {
+        let pr = root.children().find(|c| is_main(*c, "sheetPr"));
+        let setup = pr.and_then(|p| p.children().find(|c| is_main(*c, "pageSetUpPr")));
+        let new_setup = |old: Option<Node>| -> Result<String, String> {
+            let mut out = String::from("<pageSetUpPr");
+            if let Some(o) = old {
+                for a in o.attributes() {
+                    if !(a.namespace().is_none() && a.name() == "fitToPage") {
+                        write_attr_same(&mut out, a, o)?;
+                    }
+                }
+            }
+            if fit {
+                out.push_str(" fitToPage=\"1\"");
+            }
+            out.push_str("/>");
+            Ok(out)
+        };
+        match (pr, setup) {
+            (_, Some(s)) => edits.push((s.range(), new_setup(Some(s))?)),
+            (Some(p), None) if fit => {
+                // CT_SheetPr: tabColor, outlinePr, pageSetUpPr.
+                let at = match p.children().rfind(|c| c.is_element()) {
+                    Some(last) => last.range().end,
+                    None => {
+                        let r = p.range();
+                        if sk.xml[..r.end].ends_with("/>") {
+                            // `<sheetPr .../>`: open it up.
+                            let head = &sk.xml[r.start..r.end - 2];
+                            edits.push((
+                                r.clone(),
+                                format!("{head}>{}</sheetPr>", new_setup(None)?),
+                            ));
+                            usize::MAX
+                        } else {
+                            r.end - "</sheetPr>".len()
+                        }
+                    }
+                };
+                if at != usize::MAX {
+                    edits.push((at..at, new_setup(None)?));
+                }
+            }
+            (None, None) if fit => {
+                let first = root
+                    .children()
+                    .find(|n| n.is_element())
+                    .ok_or("empty worksheet")?
+                    .range()
+                    .start;
+                edits.push((
+                    first..first,
+                    format!("<sheetPr>{}</sheetPr>", new_setup(None)?),
+                ));
+            }
+            _ => {}
+        }
+    }
+    for (at, mut list) in inserts {
+        list.sort_by_key(|(o, _)| *o);
+        edits.push((at..at, list.into_iter().map(|(_, t)| t).collect()));
+    }
+    // Back to the full XML (cells are never edited).
+    let edits = edits
+        .into_iter()
+        .map(|(r, t)| (sk.full_offset(r.start)..sk.full_offset(r.end), t))
+        .collect();
+    Ok(apply_edits(full, edits))
+}
+
+/// Write attribute `a` of `n` with the prefix its document gives it.
+fn write_attr_same(out: &mut String, a: roxmltree::Attribute, n: Node) -> Result<(), String> {
+    let prefix = match a.namespace() {
+        None => String::new(),
+        Some(NS_XML) => "xml:".into(),
+        Some(ns) => match n.lookup_prefix(ns) {
+            Some(p) if !p.is_empty() => format!("{p}:"),
+            _ => return Err(format!("attribute {} has no prefix", a.name())),
+        },
+    };
+    out.push_str(&format!(
+        " {prefix}{}=\"{}\"",
+        a.name(),
+        esc_attr(a.value())
+    ));
+    Ok(())
+}
+
+/// The workbook XML with built-in names set or removed per sheet.
+fn patch_names(
+    xml: &str,
+    sheets: &[SheetEntry],
+    names: &[(u32, &'static str, Option<String>)],
+) -> Result<String, String> {
+    let doc = Document::parse(xml).map_err(|e| format!("workbook: {e}"))?;
+    let root = doc.root_element();
+    let list = root.children().find(|c| is_main(*c, "definedNames"));
+    let local_of = |id: u32| sheets.iter().find(|s| s.sheet_id == id).map(|s| s.pos);
+    let mut text = String::new();
+    // Names kept: those not patched.
+    if let Some(l) = list {
+        for n in l.children().filter(|c| is_main(*c, "definedName")) {
+            let name = n.attribute("name").unwrap_or_default();
+            let local = n
+                .attribute("localSheetId")
+                .and_then(|v| v.parse::<usize>().ok());
+            let patched = names.iter().any(|(id, nm, _)| {
+                nm.eq_ignore_ascii_case(name) && local.is_some() && local_of(*id) == local
+            });
+            if !patched {
+                text.push_str(&xml[n.range()]);
+            }
+        }
+    }
+    for (id, name, formula) in names {
+        let (Some(local), Some(f)) = (local_of(*id), formula) else {
+            continue;
+        };
+        text.push_str(&format!(
+            "<definedName name=\"{name}\" localSheetId=\"{local}\">{}</definedName>",
+            esc_text(f)
+        ));
+    }
+    let new_list = if text.is_empty() {
+        String::new()
+    } else {
+        format!("<definedNames>{text}</definedNames>")
+    };
+    let edit = match list {
+        Some(l) => (l.range(), new_list),
+        None => {
+            if new_list.is_empty() {
+                return Ok(xml.to_owned());
+            }
+            // CT_Workbook: after sheets, functionGroups, externalReferences.
+            let at = root
+                .children()
+                .rfind(|c| {
+                    ["sheets", "functionGroups", "externalReferences"]
+                        .iter()
+                        .any(|n| is_main(*c, n))
+                })
+                .ok_or("the workbook has no <sheets>")?
+                .range()
+                .end;
+            (at..at, new_list)
+        }
+    };
+    Ok(apply_edits(xml, vec![edit]))
+}
+
 // ------------------------------------------------------------------ moving parts
 
 /// The text node of `parent`'s child called `name` (any namespace), and the
@@ -4437,6 +4720,7 @@ mod tests {
             tables: &|_| None,
             drawings: &HashMap::new(),
             pivots: &PivotSave::default(),
+            patches: &Patches::default(),
         };
         let done = finish(out, original, &ctx);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());
@@ -4810,6 +5094,35 @@ mod tests {
         assert_eq!(
             out,
             r#"<dataValidations count="1"><dataValidation type="list" sqref="A1"><formula1>"a,b"</formula1></dataValidation></dataValidations>"#
+        );
+    }
+
+    #[test]
+    fn patches_keep_unmodelled_attributes_and_order() {
+        let xml = r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetPr codeName="S"/><dimension ref="A1"/><sheetData><row r="1"><c r="A1"><v>1</v></c></row></sheetData><pageMargins left="1" right="1" top="1" bottom="1" header="0.5" footer="0.5"/><pageSetup paperSize="1" copies="2" r:id="rId4"/><drawing r:id="rId1"/></worksheet>"#;
+        let patch = SheetPatch {
+            elements: vec![
+                ("printOptions", Some("<printOptions gridLines=\"1\"/>".into())),
+                ("pageMargins", Some("<pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/>".into())),
+                ("headerFooter", Some("<headerFooter><oddFooter>&amp;P</oddFooter></headerFooter>".into())),
+            ],
+            fit_to_page: Some(true),
+            page_setup: Some(vec![("paperSize", "9".into()), ("orientation", "landscape".into())]),
+        };
+        let out = patch_sheet(xml, &patch).unwrap();
+        assert_eq!(
+            out,
+            r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetPr codeName="S"><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1"/><sheetData><row r="1"><c r="A1"><v>1</v></c></row></sheetData><printOptions gridLines="1"/><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="landscape" copies="2" r:id="rId4"/><headerFooter><oddFooter>&amp;P</oddFooter></headerFooter><drawing r:id="rId1"/></worksheet>"#
+        );
+        // Turning fit off leaves the other pageSetUpPr attributes.
+        let off = SheetPatch {
+            fit_to_page: Some(false),
+            ..SheetPatch::default()
+        };
+        let out = patch_sheet(&out, &off).unwrap();
+        assert!(
+            out.contains("<sheetPr codeName=\"S\"><pageSetUpPr/></sheetPr>"),
+            "{out}"
         );
     }
 

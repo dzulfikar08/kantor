@@ -47,11 +47,13 @@ mod calc;
 mod cell_editor;
 mod cond_paint;
 mod data_validation;
+mod dialog;
 mod drawings;
 mod filter_menu;
 mod find;
 mod grid_ops;
 mod look;
+pub mod page_setup;
 pub mod pivot;
 mod point;
 mod popup_list;
@@ -1013,6 +1015,8 @@ pub struct SheetsView {
     pivot_dialog: Option<pivot::InsertDialog>,
     /// The PivotTable Fields panel beside the grid.
     pivot_panel: Option<pivot::FieldPanel>,
+    /// The Page Setup card (see [`page_setup`]).
+    page_setup: Option<page_setup::PageSetupDialog>,
     /// A restored recovery copy's original: Save asks before overwriting it
     /// if it changed on disk (see [`recovery`]).
     disk_guard: Option<kantor_ui::disk_guard::DiskGuard>,
@@ -1080,6 +1084,7 @@ impl SheetsView {
             drawings: Rc::default(),
             pivot_dialog: None,
             pivot_panel: None,
+            page_setup: None,
             disk_guard: None,
             pending_autosave: None,
             _subscriptions: subscriptions,
@@ -2193,6 +2198,7 @@ impl Render for SheetsView {
         let root = self.point_actions(root, cx);
         let root = self.calc_actions(root, cx);
         let root = self.pivot_actions(root, cx);
+        let root = self.page_setup_actions(root, cx);
         use kantor_ui::find_bar as fb;
         root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
@@ -2343,6 +2349,7 @@ impl Render for SheetsView {
             .children(self.render_sort_panel(cx))
             .children(self.render_filter_menu(cx))
             .children(self.render_pivot_dialog(cx))
+            .children(self.render_page_setup(cx))
             .into_any_element()
     }
 }

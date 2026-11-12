@@ -55,6 +55,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   they still get recovery copies.
 
 #### Sheets
+- **Page Setup…** (print menu in the toolbar, palette) for the active sheet, with Excel's four
+  tabs: paper (A4, Letter, Legal, F4/Folio, A3, A5, B5, Executive, Tabloid), orientation, scale or
+  fit to N pages wide × M tall, first page number, page order; margins in centimetres with
+  Normal/Wide/Narrow presets, centre horizontally/vertically; header and footer presets or your
+  own left/centre/right text with Excel's codes (`&P`, `&N`, `&D`, `&T`, `&F`, `&A`); print area
+  (from the selection or typed, several ranges allowed), rows and columns to repeat, gridlines,
+  row and column headings, black and white. **Set Print Area** / **Clear Print Area** work on the
+  selection directly. One undo step each; saved as `pageSetup` (other attributes such as the
+  printer settings link are kept), `pageMargins`, `printOptions`, `headerFooter`, `fitToPage` and
+  the `_xlnm.Print_Area` / `_xlnm.Print_Titles` names; the print area and titles follow inserted
+  and deleted rows and columns. Export as PDF and Print use the new settings. Sheets you didn't
+  change keep the file's own markup byte for byte.
 - **Frozen rows stay put** while the sheet scrolls, like frozen columns already did: the frozen rows
   (and the top-left corner when rows and columns are both frozen) are pinned under the column
   letters. Everything drawn on the grid follows: the selection and fill handle, the in-cell editor
@@ -82,6 +94,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ### Fixed
 
 #### Sheets
+- Print titles made of both rows and columns (`$A:$A,$1:$2`) lost their second part when Kantor
+  saved the file (IronCalc keeps one part of a union); the whole name is written again.
 - Hidden columns from a file were drawn 24 px wide; they now take no room, and arrow keys step
   over hidden rows and columns.
 

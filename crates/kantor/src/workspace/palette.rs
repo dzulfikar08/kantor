@@ -730,6 +730,28 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "Page Setup…",
+        detail: "Sheets · paper, orientation, scaling, margins, header and footer, print area and titles",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.page_setup_doc(w, cx)),
+    },
+    Command {
+        title: "Set Print Area",
+        detail: "Sheets · print only the selected cells of this sheet",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.set_print_area_doc(false, w, cx))
+        },
+    },
+    Command {
+        title: "Clear Print Area",
+        detail: "Sheets · print the whole used range of this sheet again",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.set_print_area_doc(true, w, cx))
+        },
+    },
+    Command {
         title: "Insert PivotTable…",
         detail: "Sheets · summarise the table, selection or data around the active cell",
         keys: "",

@@ -447,18 +447,40 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .dropdown_menu(move |menu, _, _| {
                 let export = print_view.clone();
                 let print = print_view.clone();
-                menu.item(
+                let menu = menu.item(
                     PopupMenuItem::new("Export as PDF…")
                         .icon(Lucide::FileDown)
                         .on_click(move |_, window, cx| {
                             let _ = export.update(cx, |v, cx| v.export_pdf_doc(window, cx));
                         }),
-                )
-                .item(PopupMenuItem::new("Print…").icon(Lucide::Printer).on_click(
-                    move |_, window, cx| {
-                        let _ = print.update(cx, |v, cx| v.print_doc(window, cx));
-                    },
-                ))
+                );
+                let setup = print_view.clone();
+                let area = print_view.clone();
+                let clear = print_view.clone();
+                menu.separator()
+                    .item(
+                        PopupMenuItem::new("Page Setup…").on_click(move |_, window, cx| {
+                            let _ = setup.update(cx, |v, cx| v.page_setup_doc(window, cx));
+                        }),
+                    )
+                    .item(
+                        PopupMenuItem::new("Set Print Area").on_click(move |_, window, cx| {
+                            let _ =
+                                area.update(cx, |v, cx| v.set_print_area_doc(false, window, cx));
+                        }),
+                    )
+                    .item(
+                        PopupMenuItem::new("Clear Print Area").on_click(move |_, window, cx| {
+                            let _ =
+                                clear.update(cx, |v, cx| v.set_print_area_doc(true, window, cx));
+                        }),
+                    )
+                    .separator()
+                    .item(PopupMenuItem::new("Print…").icon(Lucide::Printer).on_click(
+                        move |_, window, cx| {
+                            let _ = print.update(cx, |v, cx| v.print_doc(window, cx));
+                        },
+                    ))
             }),
     );
     if kantor_ui::ai::ai_enabled(cx) {
