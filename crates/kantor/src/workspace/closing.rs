@@ -82,6 +82,7 @@ impl Workspace {
     ) -> bool {
         if self.dirty_views(Closing::Quit, cx).is_empty() {
             self.persist(cx);
+            self.recovery_quit();
             return true;
         }
         self.request_close(Closing::Quit, window, cx);
@@ -102,11 +103,13 @@ impl Workspace {
             }
             Closing::Quit => {
                 self.persist(cx);
+                self.recovery_quit();
                 cx.quit();
             }
             Closing::Restart => {
                 self.persist(cx);
                 if self.apply_update_and_relaunch(cx) {
+                    self.recovery_quit();
                     cx.quit();
                 }
             }

@@ -210,7 +210,7 @@ Time estimates assume **one person, part-time (~10–15 h/week), with AI-assiste
 - [ ] Formatting: number formats, bold/italic/colors, borders, alignment, merge cells
 - [ ] Sort, filter, find and replace
 - [ ] Print / PDF export of a selected range
-- [ ] Autosave plus crash recovery
+- [x] Autosave plus crash recovery (2026-11-12: recovery copies + "Recover unsaved work" for all three apps, opt-in autosave; `kantor_core::recovery`, `crates/kantor/src/workspace/recovery.rs`, README "Your work is safe")
 
 **Exit:** you can do a real budget or invoice sheet start to finish and send the `.xlsx` to an Excel user, and it opens correctly. First tagged release; an AUR `kantor-bin` with an aarch64 binary.
 

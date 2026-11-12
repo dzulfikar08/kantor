@@ -5,5 +5,6 @@ pub mod find;
 pub mod fonts;
 pub mod fuzzy;
 pub mod layout;
+pub mod recovery;
 pub mod session;
 pub mod settings;

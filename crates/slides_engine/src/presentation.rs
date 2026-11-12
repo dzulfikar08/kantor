@@ -657,6 +657,31 @@ impl Presentation {
         self.history.is_dirty()
     }
 
+    /// Changes with every edit, undo and redo, so callers can tell the
+    /// presentation changed.
+    pub fn revision(&self) -> u64 {
+        self.history.changes()
+    }
+
+    /// A recovery copy (see [`Self::to_bytes`]) as the presentation it was
+    /// made from: `original` with unsaved changes. `unsupported` is what the
+    /// original had that Kantor can't keep, so Save still won't overwrite it.
+    pub fn open_recovered(
+        bytes: Vec<u8>,
+        original: Option<PathBuf>,
+        unsupported: Vec<String>,
+    ) -> anyhow::Result<Self> {
+        let mut p = Self::from_bytes(bytes).context("reading the recovery copy")?;
+        p.path = original;
+        for u in unsupported {
+            if !p.unsupported_content().contains(&u) {
+                p.unsupported.push(u);
+            }
+        }
+        p.history.mark_modified();
+        Ok(p)
+    }
+
     fn structure_changed(&self) -> bool {
         self.slides.len() != self.pkg.orig_slides.len()
             || self

@@ -23,6 +23,42 @@ pub struct Settings {
     pub ai: AiSettings,
     /// In-app updates for direct-download installs (see `kantor_update`).
     pub update: UpdateSettings,
+    /// Saving documents by itself (recovery copies are always on).
+    pub autosave: AutosaveSettings,
+}
+
+/// `[autosave]`: off by default. Recovery copies already protect against
+/// crashes; saving over the user's file without being asked would also keep
+/// changes they meant to throw away ("Don't Save"), so it is opt-in, as in
+/// Office and LibreOffice for local files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutosaveSettings {
+    /// Save documents that have a file in their own format (.xlsx, .docx,
+    /// .pptx) after they've been left alone for `idle_seconds`. Imported files
+    /// (.csv, .ods, .xls) and files with content Kantor can't keep are never
+    /// saved this way.
+    pub enabled: bool,
+    /// Seconds without changes before an autosave (at least 5).
+    pub idle_seconds: u64,
+}
+
+impl Default for AutosaveSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            idle_seconds: 30,
+        }
+    }
+}
+
+impl AutosaveSettings {
+    pub const MIN_IDLE_SECONDS: u64 = 5;
+
+    /// The idle time, with the minimum applied.
+    pub fn idle(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.idle_seconds.max(Self::MIN_IDLE_SECONDS))
+    }
 }
 
 /// `[update]`: checks at most daily, sending only Kantor's version and OS.
@@ -76,6 +112,7 @@ impl Default for Settings {
             docs_ruler: true,
             ai: AiSettings::default(),
             update: UpdateSettings::default(),
+            autosave: AutosaveSettings::default(),
         }
     }
 }
@@ -154,6 +191,10 @@ mod tests {
                 enabled: false,
                 channel: Some("nightly".into()),
             },
+            autosave: AutosaveSettings {
+                enabled: true,
+                idle_seconds: 60,
+            },
         };
         s.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), s);
@@ -169,6 +210,19 @@ mod tests {
         assert!(
             Settings::load_from(&path).update.enabled,
             "updates on by default"
+        );
+
+        assert!(
+            !Settings::load_from(&path).autosave.enabled,
+            "autosave off by default"
+        );
+
+        std::fs::write(&path, "[autosave]\nenabled = true\nidle_seconds = 1\n").unwrap();
+        let s = Settings::load_from(&path);
+        assert!(s.autosave.enabled);
+        assert_eq!(
+            s.autosave.idle().as_secs(),
+            AutosaveSettings::MIN_IDLE_SECONDS
         );
 
         std::fs::write(&path, "[update]\nenabled = false\n").unwrap();

@@ -1,0 +1,186 @@
+//! What the workspace's recovery copies and autosave need from a workbook
+//! pane (see `kantor_core::recovery`, `sheets_engine::XlsxSnapshot`): cheap
+//! snapshots on the UI thread, everything slow in the background.
+
+use std::path::PathBuf;
+use std::time::Instant;
+
+use anyhow::{Result, anyhow};
+use gpui_kit::*;
+use kantor_ui::disk_guard::{DiskGuard, Overwrite, confirm_overwrite};
+use sheets_engine::{Workbook, XlsxSnapshot};
+
+use crate::calc::{Busy, Job};
+use crate::{SaveAs, SheetsView};
+
+impl SheetsView {
+    /// Identifies the workbook's state (`None` while it's opening or
+    /// recalculating in the background).
+    pub fn revision(&self, cx: &App) -> Option<u64> {
+        if self.busy.is_some() {
+            return None;
+        }
+        let (state, epoch) = self.table.read(cx).delegate().book.revision();
+        Some(state.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ epoch)
+    }
+
+    /// A copy of the workbook to write as a recovery copy elsewhere, with
+    /// the file it came from and that file's format tag.
+    pub fn recovery_snapshot(&self, cx: &App) -> Option<(XlsxSnapshot, Option<PathBuf>, String)> {
+        if self.busy.is_some() {
+            return None;
+        }
+        let book = &self.table.read(cx).delegate().book;
+        let (original, format) = book.recovery_origin();
+        Some((book.xlsx_snapshot(), original, format))
+    }
+
+    /// Whether autosave may save this workbook (an `.xlsx` with a file, not
+    /// changed on disk by someone else, not busy).
+    pub fn can_autosave(&self, cx: &App) -> bool {
+        if self.busy.is_some() || self.pending_autosave.is_some() {
+            return false;
+        }
+        let book = &self.table.read(cx).delegate().book;
+        book.can_autosave()
+            && !book
+                .path()
+                .is_some_and(|p| self.disk_guard.as_ref().is_some_and(|g| g.changed(p)))
+    }
+
+    /// Save to the workbook's own file without stopping typing: snapshot
+    /// here, write in the background, then record it as saved (edits made
+    /// meanwhile stay unsaved).
+    pub fn autosave(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<Result<()>> {
+        if !self.can_autosave(cx) {
+            return Task::ready(Err(anyhow!("not autosaved")));
+        }
+        let (snapshot, path) = {
+            let book = &self.table.read(cx).delegate().book;
+            let Some(path) = book.path().map(|p| p.to_path_buf()) else {
+                return Task::ready(Err(anyhow!("no file")));
+            };
+            let t = Instant::now();
+            let snapshot = book.xlsx_snapshot();
+            log::info!(
+                "autosave snapshot of {} took {:.1?}",
+                book.title(),
+                t.elapsed()
+            );
+            (snapshot, path)
+        };
+        let write = cx.background_spawn({
+            let path = path.clone();
+            async move {
+                let out = snapshot.render()?;
+                sheets_engine::write_file_atomic(&path, &out.bytes)?;
+                Ok::<_, anyhow::Error>(out)
+            }
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let out = write.await?;
+            this.update_in(cx, |this, window, cx| {
+                for note in out.notes() {
+                    log::warn!("autosaving {}: {note}", path.display());
+                }
+                if this.busy.is_some() {
+                    // The workbook is in the background; record the save
+                    // when it's back (see `calc`).
+                    this.pending_autosave = Some((path, out));
+                    return;
+                }
+                this.table.update(cx, |table, _| {
+                    table.delegate_mut().book.commit_autosave(&path, out)
+                });
+                this.disk_guard = None;
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                this.status = format!("Autosaved {name}").into();
+                this.update_title(window, cx);
+                cx.notify();
+            })?;
+            Ok(())
+        })
+    }
+
+    /// A pane showing the recovery copy `copy` of `original` (opened in the
+    /// background), unsaved. `format`: the original's format tag.
+    pub fn new_recovered(
+        copy: PathBuf,
+        original: Option<PathBuf>,
+        format: Option<String>,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new(None, window, cx);
+        let bytes = std::fs::metadata(&copy).map_or(0, |m| m.len());
+        let parse = cx.background_spawn({
+            let original = original.clone();
+            async move {
+                let book = Workbook::open_recovered(&copy, original.as_deref(), format.as_deref());
+                kantor_mem::release_free_memory();
+                book
+            }
+        });
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let result = parse.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.finish_open(result, window, cx);
+                if this.path(cx).is_some() {
+                    this.status =
+                        format!("Restored unsaved changes to {}", this.doc_name(cx)).into();
+                } else {
+                    this.status = "Restored unsaved changes".into();
+                }
+                cx.notify();
+            });
+        });
+        this.opening = original.clone();
+        this.status = format!("Restoring {name}…").into();
+        this.busy = Some(Busy {
+            what: Job::Opening {
+                name: name.clone(),
+                bytes,
+            },
+            started: Instant::now(),
+            name,
+            path: original,
+            dirty: true,
+            _task: task,
+        });
+        window.focus(&this.busy_focus, cx);
+        this
+    }
+
+    /// Ask before Save overwrites `guard`'s file if it changed on disk.
+    pub fn set_disk_guard(&mut self, guard: Option<DiskGuard>) {
+        self.disk_guard = guard;
+    }
+
+    /// Save is about to write `target`: if it changed on disk since Kantor
+    /// last saw it, ask first (and return `true`: don't save now).
+    pub(crate) fn ask_before_overwrite(
+        &mut self,
+        target: &std::path::Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.disk_guard.as_ref().is_some_and(|g| g.changed(target)) {
+            return false;
+        }
+        let view = cx.entity().downgrade();
+        confirm_overwrite(&self.doc_name(cx), window, cx, move |choice, window, cx| {
+            let _ = view.update(cx, |this, cx| match choice {
+                Overwrite::Replace => {
+                    this.disk_guard = None;
+                    this.save_doc(window, cx);
+                }
+                Overwrite::SaveAs => this.save_as(&SaveAs, window, cx),
+            });
+        });
+        true
+    }
+}

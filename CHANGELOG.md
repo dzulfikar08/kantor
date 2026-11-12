@@ -35,6 +35,29 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   arm64 installers and smoke-tests them on the runner (silent install, `--version`, convert,
   MCP against the running app, silent uninstall).
 
+#### All apps
+- **Recovery copies:** every document with unsaved changes gets a copy in your data folder
+  (`~/.local/share/kantor/recovery` on Linux, `~/Library/Application Support/Kantor/recovery` on
+  macOS, `%LOCALAPPDATA%\Kantor\recovery` on Windows) two minutes after its first unsaved change
+  (at a pause in typing) and whenever the window loses focus. The window only takes a snapshot
+  (≈50–150 ms for a 90,000-row workbook); the copy is built and written in the background,
+  atomically. Copies are removed when you save, close with *Don't Save*, or quit normally.
+- **Recover unsaved work:** after a crash, power cut or killed process, the next Kantor lists the
+  documents it kept, with when they were last copied. *Restore* opens a copy as the original
+  document with its unsaved changes; *Save* writes to the original file, asking first if that file
+  changed on disk since. Nothing is written to the original until you save. *Discard* deletes the
+  copy. *Ctrl K → Recover Unsaved Work…* shows the list again after *Not Now*.
+- **Autosave** (off by default): `Ctrl K → Turn Autosave On or Off`, the *Autosave* switch in the
+  status bar, or `[autosave] enabled = true` in `settings.toml` (`idle_seconds`, default 30). It
+  saves `.xlsx`, `.docx` and `.pptx` files that already have a name, after you stop typing;
+  workbooks are written in the background. Imported files (`.csv`, `.ods`, `.xls`, `.xlsb`), files
+  with content Kantor can't keep, and files changed on disk by someone else are never autosaved;
+  they still get recovery copies.
+
+### Changed
+- Sheets' `.xlsx` writer is shared by Save, autosave and recovery copies (no change to the files
+  written).
+
 ## [0.3.1] - 2026-11-11
 
 Pivot tables can now be made in Kantor: Insert PivotTable…, a PivotTable Fields panel (also for

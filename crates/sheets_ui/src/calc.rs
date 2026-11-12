@@ -39,14 +39,14 @@ pub(crate) fn bind_keys(cx: &mut App) {
 
 /// Something running in the background; the pane waits for it.
 pub(crate) struct Busy {
-    what: Job,
-    started: Instant,
+    pub(crate) what: Job,
+    pub(crate) started: Instant,
     /// The document as it was when the job started (the grid holds a
     /// stand-in meanwhile): its name, file and whether it had unsaved edits.
     pub(crate) name: String,
     pub(crate) path: Option<PathBuf>,
     pub(crate) dirty: bool,
-    _task: Task<()>,
+    pub(crate) _task: Task<()>,
 }
 
 pub(crate) enum Job {
@@ -156,7 +156,7 @@ impl SheetsView {
         cx.notify();
     }
 
-    fn finish_open(
+    pub(crate) fn finish_open(
         &mut self,
         result: anyhow::Result<Workbook>,
         window: &mut Window,
@@ -289,9 +289,13 @@ impl SheetsView {
             let _ = this.update_in(cx, |this, window, cx| {
                 let took = this.busy.take().map(|b| b.started.elapsed());
                 this.drawings.borrow_mut().clear();
+                let autosaved = this.pending_autosave.take();
                 this.table.update(cx, |table, cx| {
                     let grid = table.delegate_mut();
                     grid.book = book;
+                    if let Some((path, out)) = autosaved {
+                        grid.book.commit_autosave(&path, out);
+                    }
                     grid.resize();
                     table.refresh(cx);
                     cx.notify();

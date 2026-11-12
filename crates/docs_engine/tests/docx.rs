@@ -738,3 +738,58 @@ fn ruler_indents_are_one_undo_step() {
     doc.undo();
     assert!(doc.paragraphs().iter().all(|p| p.props.indent.is_empty()));
 }
+
+#[test]
+fn recovery_copy_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = package(WORD_BODY, "");
+    let path = write_temp(dir.path(), "report.docx", &original);
+    let mut doc = Document::open(&path).unwrap();
+    let rev = doc.revision();
+    let end = Position::new(0, doc.paragraph(0).text.len());
+    let c = doc.insert_text(Selection::caret(end), " d", None);
+    let r1 = doc.revision();
+    assert!(r1 > rev);
+    // Typing more of the same word merges into one undo step but is still a change.
+    doc.insert_text(c, "raft", None);
+    assert!(doc.revision() > r1);
+
+    let copy = doc.to_docx_bytes().unwrap();
+    assert!(doc.is_dirty(), "a recovery copy isn't a save");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "original untouched"
+    );
+
+    let back = Document::open_recovered(copy, Some(path.clone()), Vec::new()).unwrap();
+    assert!(back.is_dirty());
+    assert_eq!(back.path(), Some(path.as_path()));
+    assert_eq!(back.paragraph(0).text, "Laporan Q3 & Q4 draft");
+    assert_eq!(&back.paragraphs()[1..], &doc.paragraphs()[1..]);
+    assert!(!back.needs_save_as());
+    // The parts Kantor doesn't model came through the copy.
+    let mut back = back;
+    back.save().unwrap();
+    let saved = std::fs::read(&path).unwrap();
+    assert_eq!(
+        zip_entry(&saved, "customXml/item1.xml"),
+        zip_entry(&original, "customXml/item1.xml")
+    );
+
+    // A document whose original has content Kantor can't keep still never
+    // overwrites it after a restore.
+    let u = vec!["tracked changes".to_owned()];
+    let restored =
+        Document::open_recovered(doc.to_docx_bytes().unwrap(), Some(path.clone()), u).unwrap();
+    assert!(restored.needs_save_as());
+    let mut restored = restored;
+    assert!(restored.save().is_err());
+
+    // An untitled document.
+    let mut new = Document::new();
+    new.insert_text(Selection::default(), "notes", None);
+    let back = Document::open_recovered(new.to_docx_bytes().unwrap(), None, Vec::new()).unwrap();
+    assert!(back.is_dirty() && back.path().is_none());
+    assert_eq!(back.paragraph(0).text, "notes");
+}

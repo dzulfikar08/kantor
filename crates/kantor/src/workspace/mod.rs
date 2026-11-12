@@ -19,6 +19,7 @@ mod home;
 mod naming;
 mod palette;
 mod panels;
+mod recovery;
 mod splits;
 mod update;
 
@@ -139,6 +140,8 @@ pub struct Workspace {
     split_bounds: Rc<RefCell<HashMap<LayoutPath, Bounds<Pixels>>>>,
     /// In-app updates (see `update`).
     updates: update::Updates,
+    /// Recovery copies and autosave (see `recovery`).
+    recovery: recovery::Recovery,
 }
 
 impl Workspace {
@@ -167,6 +170,7 @@ impl Workspace {
             drag: None,
             split_bounds: Rc::default(),
             updates: update::Updates::default(),
+            recovery: recovery::Recovery::default(),
         };
         let ws = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -201,6 +205,7 @@ impl Workspace {
             this.bench_palette(window, cx);
         }
         this.init_updates(cx);
+        this.init_recovery(window, cx);
         this
     }
 
@@ -222,10 +227,17 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<PaneId> {
         let view = DocView::new(kind, file, window, cx)?;
+        Some(self.insert_doc(view, window, cx))
+    }
+
+    /// Add an open document; returns its pane id.
+    fn insert_doc(&mut self, view: DocView, window: &mut Window, cx: &mut Context<Self>) -> PaneId {
+        let kind = view.kind();
         let id = self.alloc_id();
         if let Some(path) = view.path(cx) {
             Session::touch_recent(&mut self.recent, &path);
-        } else {
+        } else if !view.is_dirty(cx) {
+            // (A restored copy is named after the document it came from.)
             let open: Vec<String> = self
                 .docs
                 .values()
@@ -253,7 +265,7 @@ impl Workspace {
                 _changes: changes,
             },
         );
-        Some(id)
+        id
     }
 
     /// Find the tab and pane showing `path`.
@@ -470,11 +482,12 @@ impl Workspace {
         };
         match tab.layout.without(pane) {
             Some(layout) => {
-                self.docs.remove(&pane);
                 if tab.focused == pane {
                     tab.focused = layout.panes()[0];
                 }
                 tab.layout = layout;
+                self.docs.remove(&pane);
+                self.forget_recovery(pane, cx);
                 self.activate(Some(ti), window, cx);
             }
             None => self.remove_tab(ti, window, cx),
@@ -517,6 +530,7 @@ impl Workspace {
         let tab = self.tabs.remove(ix);
         for pane in tab.layout.panes() {
             self.docs.remove(&pane);
+            self.forget_recovery(pane, cx);
         }
         let next = match self.active {
             _ if self.tabs.is_empty() => None,

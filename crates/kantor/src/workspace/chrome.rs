@@ -326,6 +326,22 @@ impl Workspace {
                         .child(text),
                 )
             })
+            // Autosave switch, shown with a document in front.
+            .when(self.focused_view().is_some(), |d| {
+                let on = self.autosave_enabled();
+                d.child(
+                    div()
+                        .id("autosave-toggle")
+                        .flex_none()
+                        .px(SPACE_3)
+                        .rounded(RADIUS_SM)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover))
+                        .when(on, |d| d.text_color(t.fg))
+                        .on_click(cx.listener(|ws, _, _, cx| ws.toggle_autosave(cx)))
+                        .child(if on { "Autosave On" } else { "Autosave Off" }),
+                )
+            })
             .child(div().child(theme))
             .child(
                 div()

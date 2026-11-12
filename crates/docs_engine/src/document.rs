@@ -95,6 +95,8 @@ struct History {
     saved: Option<u64>,
     /// Don't merge the next command into the top one (composition ended).
     sealed: bool,
+    /// Counts edits, undos and redos (see [`Document::revision`]).
+    changes: u64,
 }
 
 impl History {
@@ -105,6 +107,7 @@ impl History {
     /// Record `cmd`; merge it into the previous step when it continues the
     /// same word of typing or deleting.
     fn push(&mut self, mut cmd: Command, word_boundary: bool) {
+        self.changes += 1;
         self.redo.clear();
         let sealed = std::mem::take(&mut self.sealed);
         if let Some(last) = self.undo.last_mut()
@@ -304,6 +307,42 @@ impl Document {
 
     pub fn is_dirty(&self) -> bool {
         self.history.top() != self.history.saved
+    }
+
+    /// Changes with every edit, undo and redo (typing a word is several), so
+    /// callers can tell the document changed.
+    pub fn revision(&self) -> u64 {
+        self.history.changes
+    }
+
+    /// Unsaved, whatever the undo history says (a restored recovery copy).
+    pub fn mark_modified(&mut self) {
+        self.history.saved = Some(u64::MAX);
+    }
+
+    /// The `.docx` Save would write, without saving (recovery copies).
+    pub fn to_docx_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        docx::write(self, self.package.as_ref())
+    }
+
+    /// A recovery copy (see [`Self::to_docx_bytes`]) as the document it was
+    /// made from: `original` with unsaved changes. `unsupported` is what the
+    /// original had that Kantor can't keep, so Save still won't overwrite it.
+    pub fn open_recovered(
+        bytes: Vec<u8>,
+        original: Option<PathBuf>,
+        unsupported: Vec<String>,
+    ) -> anyhow::Result<Self> {
+        let read = docx::read(bytes)
+            .map_err(|e| anyhow::anyhow!("Can't read the recovery copy: {e:#}"))?;
+        let mut doc = Self::from_read(read, original);
+        for u in unsupported {
+            if !doc.unsupported.contains(&u) {
+                doc.unsupported.push(u);
+            }
+        }
+        doc.mark_modified();
+        Ok(doc)
     }
 
     pub fn can_undo(&self) -> bool {
@@ -968,6 +1007,7 @@ impl Document {
     /// Undo the last step; returns the selection to restore.
     pub fn undo(&mut self) -> Option<Selection> {
         let cmd = self.history.undo.pop()?;
+        self.history.changes += 1;
         self.paragraphs.splice(
             cmd.start..cmd.start + cmd.new.len(),
             cmd.old.iter().cloned(),
@@ -985,6 +1025,7 @@ impl Document {
 
     pub fn redo(&mut self) -> Option<Selection> {
         let cmd = self.history.redo.pop()?;
+        self.history.changes += 1;
         self.paragraphs.splice(
             cmd.start..cmd.start + cmd.old.len(),
             cmd.new.iter().cloned(),

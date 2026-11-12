@@ -950,3 +950,49 @@ fn shape_geometry_reads_and_round_trips() {
     let last = p.slide(0).shapes.last().unwrap();
     assert_eq!(last.kind, p.slide(0).shapes[n - 4].kind);
 }
+
+#[test]
+fn recovery_copy_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("deck.pptx");
+    std::fs::write(&path, Presentation::new().to_bytes().unwrap()).unwrap();
+    let original = std::fs::read(&path).unwrap();
+    let mut p = Presentation::open(&path).unwrap();
+    let rev = p.revision();
+    let title = title_ref(&p, 0);
+    let sel = p
+        .insert_text(title, Selection::default(), "Q3", None)
+        .unwrap();
+    let r1 = p.revision();
+    assert!(r1 > rev);
+    p.insert_text(title, sel, "x", None).unwrap();
+    assert!(
+        p.revision() > r1,
+        "merged typing still changes the revision"
+    );
+    p.add_text_box(0).unwrap();
+
+    let copy = p.to_bytes().unwrap();
+    assert!(p.is_dirty(), "a recovery copy isn't a save");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+
+    let mut back =
+        Presentation::open_recovered(copy.clone(), Some(path.clone()), Vec::new()).unwrap();
+    assert!(back.is_dirty());
+    assert_eq!(back.path(), Some(path.as_path()));
+    assert_eq!(back.title(), "deck.pptx");
+    assert_eq!(back.slide(0).shapes.len(), p.slide(0).shapes.len());
+    assert_eq!(back.text_paras(title).unwrap()[0].text, "Q3x");
+    assert!(!back.needs_save_as());
+    back.save().unwrap();
+    assert!(!back.is_dirty());
+    let again = Presentation::open(&path).unwrap();
+    assert_eq!(again.text_paras(title).unwrap()[0].text, "Q3x");
+
+    // Content Kantor can't keep still sends Save to Save As.
+    let mut restricted =
+        Presentation::open_recovered(copy, Some(path.clone()), vec!["custom slide shows".into()])
+            .unwrap();
+    assert!(restricted.needs_save_as());
+    assert!(restricted.save().is_err());
+}
