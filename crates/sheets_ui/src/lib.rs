@@ -64,6 +64,7 @@ mod row_layout;
 // Upstream code, kept close to GPUI Kit's so it can be compared.
 #[allow(dead_code, clippy::all)]
 mod table;
+mod table_ui;
 
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
@@ -237,6 +238,7 @@ pub fn init(cx: &mut App) {
     grid_ops::bind_keys(cx);
     calc::bind_keys(cx);
     pivot::bind_keys(cx);
+    table_ui::bind_keys(cx);
     data_validation::bind_keys(cx);
 }
 
@@ -1015,6 +1017,10 @@ pub struct SheetsView {
     pivot_dialog: Option<pivot::InsertDialog>,
     /// The PivotTable Fields panel beside the grid.
     pivot_panel: Option<pivot::FieldPanel>,
+    /// The Format as Table card and the Table Design panel (see
+    /// [`table_ui`]).
+    table_dialog: Option<table_ui::TableDialog>,
+    table_panel: Option<table_ui::TablePanel>,
     /// The Page Setup card (see [`page_setup`]).
     page_setup: Option<page_setup::PageSetupDialog>,
     /// A restored recovery copy's original: Save asks before overwriting it
@@ -1085,6 +1091,8 @@ impl SheetsView {
             pivot_dialog: None,
             pivot_panel: None,
             page_setup: None,
+            table_dialog: None,
+            table_panel: None,
             disk_guard: None,
             pending_autosave: None,
             _subscriptions: subscriptions,
@@ -2199,6 +2207,7 @@ impl Render for SheetsView {
         let root = self.calc_actions(root, cx);
         let root = self.pivot_actions(root, cx);
         let root = self.page_setup_actions(root, cx);
+        let root = self.table_actions(root, cx);
         use kantor_ui::find_bar as fb;
         root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
@@ -2288,6 +2297,7 @@ impl Render for SheetsView {
             // Grid, and the PivotTable Fields panel beside it.
             .child({
                 let panel = self.render_pivot_panel(cx);
+                let table_panel = self.render_table_panel(cx);
                 h_flex()
                     .flex_1()
                     .min_h_0()
@@ -2330,6 +2340,7 @@ impl Render for SheetsView {
                             .child(self.render_drawings(cx)),
                     )
                     .children(panel)
+                    .children(table_panel)
             })
             // Sheet tabs
             .child(
@@ -2350,6 +2361,7 @@ impl Render for SheetsView {
             .children(self.render_filter_menu(cx))
             .children(self.render_pivot_dialog(cx))
             .children(self.render_page_setup(cx))
+            .children(self.render_table_dialog(cx))
             .into_any_element()
     }
 }

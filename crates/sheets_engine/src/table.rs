@@ -584,6 +584,11 @@ pub(crate) struct Edges {
 }
 
 impl TableStyleDef {
+    /// [`Self::look`] for a table with no hidden rows.
+    pub(crate) fn look_pub(&self, t: &TableInfo, row: u32, col: u32) -> TableCellLook {
+        self.look(t, row, col, &[])
+    }
+
     /// The look of the cell at `(row, col)` of table `t`.
     fn look(&self, t: &TableInfo, row: u32, col: u32, hidden: &[u32]) -> TableCellLook {
         let a = t.area;

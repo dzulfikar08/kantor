@@ -108,6 +108,12 @@ the sheet's after `</sheetData>`. Tables are not written by the writer: Kantor
 carries their parts and updates them from the model
 (`crates/sheets_engine/src/preserve.rs`, `fit_table`).
 
+Also (2026-11-12, for Kantor's total row functions): `tableColumn`'s
+`totalsRowLabel` and `totalsRowFunction` are read (upstream left them `None`),
+and `dataDxfId` is read from `dataDxfId` (upstream read `headerRowDxfId`).
+Tables made or changed in Kantor are written from the model by
+`crates/sheets_engine/src/table_edit.rs` (`table_xml`).
+
 Known: `tests/test.rs` `test_dynamic_arrays` fails since §5 (the file's
 default row height is now read); `test_no_export_tables` passes.
 

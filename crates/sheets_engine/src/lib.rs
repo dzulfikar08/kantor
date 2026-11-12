@@ -28,11 +28,13 @@ mod rows;
 mod shift;
 mod sort;
 mod table;
+mod table_edit;
 mod validation;
 
 pub use import::SourceFormat;
 pub use preserve::package_problems;
 pub use recovery::{XlsxOutput, XlsxSnapshot, write_file_atomic};
+pub use table_edit::{TableOptions, TotalFunc, table_style_names, valid_table_name};
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -1008,6 +1010,14 @@ impl CellRange {
         }
     }
 
+    /// Whether the two ranges share a cell.
+    pub fn intersects(&self, other: &CellRange) -> bool {
+        self.left <= other.right
+            && other.left <= self.right
+            && self.top <= other.bottom
+            && other.top <= self.bottom
+    }
+
     pub fn contains(&self, row: u32, col: u32) -> bool {
         (self.top..=self.bottom).contains(&row) && (self.left..=self.right).contains(&col)
     }
@@ -1206,6 +1216,7 @@ impl Workbook {
             patches: {
                 let mut p = preserve::Patches::default();
                 self.print_patches(&mut p);
+                self.table_patches(&mut p);
                 p
             },
         }

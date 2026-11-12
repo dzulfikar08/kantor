@@ -424,6 +424,17 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .tooltip("Freeze panes, hide rows and columns")
             .dropdown_menu(move |menu, _, _| view_items(menu, &view_view)),
     );
+    // Tables.
+    let table_view = cx.entity().downgrade();
+    row = row.child(separator(cx)).child(
+        Button::new("table-menu")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::Table)
+            .dropdown_caret(true)
+            .tooltip("Table")
+            .dropdown_menu(move |menu, _, _| table_items(menu, &table_view)),
+    );
     // PivotTables.
     let pivot_view = cx.entity().downgrade();
     row = row.child(separator(cx)).child(
@@ -519,6 +530,32 @@ fn view_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
         };
         menu = menu.item(PopupMenuItem::new(text).on_click(move |_, window, cx| {
             let _ = view.update(cx, |v, cx| v.grid_command(command, window, cx));
+        }));
+    }
+    menu
+}
+
+/// The Table menu: Format as Table, Table Design, Convert to Range.
+fn table_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
+    type Run = fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>);
+    let items: [(&str, &str, Run); 3] = [
+        ("Format as Table…", "Ctrl+T", |v, w, cx| {
+            v.format_as_table_doc(w, cx)
+        }),
+        ("Table Design", "", |v, w, cx| v.table_design_doc(w, cx)),
+        ("Convert to Range", "", |v, w, cx| {
+            v.convert_table_doc(w, cx)
+        }),
+    ];
+    for (label, keys, run) in items {
+        let view = view.clone();
+        let text = if keys.is_empty() {
+            label.to_owned()
+        } else {
+            format!("{label}  ({keys})")
+        };
+        menu = menu.item(PopupMenuItem::new(text).on_click(move |_, window, cx| {
+            let _ = view.update(cx, |v, cx| run(v, window, cx));
         }));
     }
     menu

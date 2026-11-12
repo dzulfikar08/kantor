@@ -264,6 +264,24 @@ pub(crate) struct Patches {
     /// Built-in defined names `(sheetId, name, formula)`: written for that
     /// sheet in place of any the workbook has, or removed (`None`).
     pub names: Vec<(u32, &'static str, Option<String>)>,
+    /// Tables made or changed in Kantor: their parts are written from the
+    /// model (an existing part with one of their names is rewritten, else a
+    /// new part is added).
+    pub tables: Vec<TableSave>,
+    /// Lower-case names of tables whose original parts aren't carried
+    /// (converted to a range, or renamed: written again under the new name).
+    pub removed_tables: HashSet<String>,
+    /// Lower-case names of tables changed in Kantor: carried as they are and
+    /// rewritten afterwards, without the checks of [`fit_table`].
+    pub touched_tables: HashSet<String>,
+}
+
+/// A table to write from the model.
+pub(crate) struct TableSave {
+    pub sheet_id: u32,
+    /// Its name, then names it had before.
+    pub names: Vec<String>,
+    pub table: ironcalc_base::types::Table,
 }
 
 /// Changes to one worksheet part.
@@ -281,7 +299,7 @@ pub(crate) struct SheetPatch {
 
 impl Patches {
     fn is_empty(&self) -> bool {
-        self.sheets.is_empty() && self.names.is_empty()
+        self.sheets.is_empty() && self.names.is_empty() && self.tables.is_empty()
     }
 }
 
@@ -3295,11 +3313,27 @@ fn carry_tables(
             notes.push(format!("{label}: a table not kept: broken relationship"));
             continue;
         };
-        let fitted = m
+        let orig_xml = m
             .orig
             .text(&target)
-            .and_then(|xml| xml.ok_or_else(|| "missing".to_owned()))
-            .and_then(|xml| fit_table(&xml, os.sheet_id, ctx));
+            .and_then(|xml| xml.ok_or_else(|| "missing".to_owned()));
+        let name = orig_xml.as_deref().ok().and_then(table_part_name);
+        if name
+            .as_ref()
+            .is_some_and(|n| ctx.patches.removed_tables.contains(n))
+        {
+            continue;
+        }
+        let touched = name
+            .as_ref()
+            .is_some_and(|n| ctx.patches.touched_tables.contains(n));
+        let fitted = orig_xml.and_then(|xml| {
+            if touched {
+                Ok(None)
+            } else {
+                fit_table(&xml, os.sheet_id, ctx)
+            }
+        });
         let table = match fitted {
             Ok(t) => t,
             Err(e) => {
@@ -3334,6 +3368,15 @@ fn carry_tables(
             rels,
         )
     })
+}
+
+/// The lower-case `name` of a table part.
+fn table_part_name(xml: &str) -> Option<String> {
+    let doc = Document::parse(xml).ok()?;
+    let t = doc.root_element();
+    t.attribute("name")
+        .or_else(|| t.attribute("displayName"))
+        .map(str::to_lowercase)
 }
 
 /// A table part fitted to the saved sheet: `Ok(None)` if it can be copied as
@@ -4085,7 +4128,147 @@ fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
         let new = patch_names(&wb_xml, &sheets, &patches.names)?;
         pkg.set(&wb, new.into_bytes());
     }
+    if !patches.tables.is_empty() {
+        write_tables(pkg, &sheets, &patches.tables)?;
+    }
     Ok(())
+}
+
+const TABLE_CT: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";
+
+/// Write tables made or changed in Kantor: rewrite the package's part of a
+/// table with one of its names, or add a part (with its relationship, a
+/// `<tablePart>` and a content type).
+fn write_tables(
+    pkg: &mut Package,
+    sheets: &[SheetEntry],
+    tables: &[TableSave],
+) -> Result<(), String> {
+    // Existing table parts: lower-case name -> (part, id).
+    let mut existing: HashMap<String, (String, u32)> = HashMap::new();
+    let mut max_id = 0;
+    let names: Vec<String> = pkg
+        .parts()
+        .filter(|n| {
+            let l = n.to_lowercase();
+            l.starts_with("xl/tables/") && l.ends_with(".xml") && !l.contains("/_rels/")
+        })
+        .map(str::to_owned)
+        .collect();
+    for part in names {
+        let Some(xml) = pkg.text(&part)? else {
+            continue;
+        };
+        let Ok(doc) = Document::parse(xml) else {
+            continue;
+        };
+        let root = doc.root_element();
+        let id = root
+            .attribute("id")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+        max_id = max_id.max(id);
+        if let Some(n) = root.attribute("name") {
+            existing.insert(n.to_lowercase(), (part.clone(), id));
+        }
+    }
+    let mut ct = String::new();
+    for t in tables {
+        let found = t
+            .names
+            .iter()
+            .find_map(|n| existing.get(&n.to_lowercase()).cloned());
+        if let Some((part, id)) = found {
+            let old = pkg.text(&part)?.map(str::to_owned);
+            let xml = crate::table_edit::table_xml(&t.table, id, old.as_deref());
+            pkg.set(&part, xml.into_bytes());
+            continue;
+        }
+        let sheet = sheets
+            .iter()
+            .find(|s| s.sheet_id == t.sheet_id && s.kind == SheetKind::Work)
+            .ok_or_else(|| format!("table {}: sheet {} is missing", t.table.name, t.sheet_id))?;
+        max_id += 1;
+        let part = (1..)
+            .map(|n| format!("xl/tables/table{n}.xml"))
+            .find(|n| !pkg.has(n))
+            .expect("a free name");
+        pkg.set(
+            &part,
+            crate::table_edit::table_xml(&t.table, max_id, None).into_bytes(),
+        );
+        ct.push_str(&format!(
+            "<Override PartName=\"/{}\" ContentType=\"{TABLE_CT}\"/>",
+            esc_attr(&part)
+        ));
+        let rels_name = rels_part(&sheet.part);
+        let mut rels = match pkg.text(&rels_name)? {
+            Some(x) => parse_rels(x)?,
+            None => Vec::new(),
+        };
+        let rid = IdAlloc::new(&rels).next();
+        rels.push(Rel {
+            id: rid.clone(),
+            kind: format!("{REL_BASE}table"),
+            target: relative(&sheet.part, &part),
+            external: false,
+        });
+        pkg.set(&rels_name, write_rels(&rels).into_bytes());
+        let xml = pkg.take_text(&sheet.part)?.ok_or("sheet part is missing")?;
+        let new = add_table_part(&xml, &rid).map_err(|e| format!("{:?}: {e}", sheet.name))?;
+        pkg.set(&sheet.part, new.into_bytes());
+        existing.insert(t.table.name.to_lowercase(), (part, max_id));
+    }
+    if !ct.is_empty() {
+        let mut types = pkg
+            .text(CONTENT_TYPES)?
+            .ok_or("no content types")?
+            .to_owned();
+        let at = types.rfind("</Types>").ok_or("content types not closed")?;
+        types.insert_str(at, &ct);
+        pkg.set(CONTENT_TYPES, types.into_bytes());
+    }
+    Ok(())
+}
+
+/// A worksheet's XML with `<tablePart r:id="rid"/>` added to its
+/// `<tableParts>` (made if missing).
+fn add_table_part(full: &str, rid: &str) -> Result<String, String> {
+    let sk = Skeleton::new(full);
+    let doc = Document::parse(&sk.xml).map_err(|e| e.to_string())?;
+    let root = doc.root_element();
+    let prefix = match root.lookup_prefix(NS_R) {
+        Some(p) if !p.is_empty() => p.to_owned(),
+        _ => return Err("the worksheet doesn't bind the relationships namespace".into()),
+    };
+    let one = format!("<tablePart {prefix}:id=\"{}\"/>", esc_attr(rid));
+    let edit = match root.children().find(|c| is_main(*c, "tableParts")) {
+        Some(tp) => {
+            let n = tp.children().filter(|c| is_main(*c, "tablePart")).count() + 1;
+            let mut text = format!("<tableParts count=\"{n}\">");
+            for c in tp.children().filter(|c| c.is_element()) {
+                text.push_str(&sk.xml[c.range()]);
+            }
+            text.push_str(&one);
+            text.push_str("</tableParts>");
+            (tp.range(), text)
+        }
+        None => {
+            let close = sk.xml[..root.range().end]
+                .rfind("</")
+                .ok_or("worksheet is not closed")?;
+            let at = match root.children().find(|c| is_main(*c, "extLst")) {
+                Some(e) => e.range().start,
+                None => close,
+            };
+            (
+                at..at,
+                format!("<tableParts count=\"1\">{one}</tableParts>"),
+            )
+        }
+    };
+    let r = sk.full_offset(edit.0.start)..sk.full_offset(edit.0.end);
+    Ok(apply_edits(full, vec![(r, edit.1)]))
 }
 
 /// A worksheet's XML with `patch` applied. Only the skeleton is parsed.

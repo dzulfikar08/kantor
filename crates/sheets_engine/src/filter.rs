@@ -508,7 +508,7 @@ impl Workbook {
         out
     }
 
-    fn sheet_filter(&self, sheet: u32) -> Option<FilterInfo> {
+    pub(crate) fn sheet_filter(&self, sheet: u32) -> Option<FilterInfo> {
         let ws = self.model.get_model().workbook.worksheet(sheet).ok()?;
         let xml = ws.kantor_auto_filter.as_deref()?;
         let area = crate::shift::parse_range(auto_filter_ref(xml)?)?.area();

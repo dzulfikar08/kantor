@@ -756,7 +756,7 @@ impl Workbook {
     }
 
     /// The number a cell holds (formula results included).
-    fn raw_number(&self, sheet: u32, row: u32, col: u32) -> Option<f64> {
+    pub(crate) fn raw_number(&self, sheet: u32, row: u32, col: u32) -> Option<f64> {
         let model = self.model.get_model();
         let ws = model.workbook.worksheet(sheet).ok()?;
         let cell = ws.cell(row as i32 + 1, col as i32 + 1)?;

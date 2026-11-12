@@ -67,6 +67,22 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   the `_xlnm.Print_Area` / `_xlnm.Print_Titles` names; the print area and titles follow inserted
   and deleted rows and columns. Export as PDF and Print use the new settings. Sheets you didn't
   change keep the file's own markup byte for byte.
+- **Format as Table** (Ctrl+T or Ctrl+L, Table menu in the toolbar, palette): the selection or
+  the data around the active cell, "My table has headers" (without, a header row with Column1,
+  Column2… goes in the empty row above, else a new row), and a gallery of the built-in Light,
+  Medium and Dark styles drawn as the grid draws them. Blank or repeated header names are made
+  unique as in Excel; overlapping a table, a PivotTable, merged cells or the sheet's filter is
+  refused. The filter buttons are on.
+- **Table Design** panel beside the grid for the table at the active cell: rename (structured
+  references in formulas follow), style, Header Row, Total Row (uses the empty row below or
+  inserts one; "Total" label and a SUM, or COUNT for text, in the last column), Banded
+  Rows/Columns, First/Last Column, Filter Button, a total row function per column (None, Sum,
+  Average, Count, Count Numbers, Max, Min, StdDev, Var, written as `SUBTOTAL(109,Table1[Col])`
+  etc. as Excel does), and **Convert to Range** (structured references become A1 references).
+  Each change is one undo step. New tables are saved as table parts with their relationship,
+  `<tableParts>` entry and content type; tables changed in Kantor are rewritten from the model,
+  keeping their id and their columns' calculated column formulas; other tables stay byte for
+  byte.
 - **Frozen rows stay put** while the sheet scrolls, like frozen columns already did: the frozen rows
   (and the top-left corner when rows and columns are both frozen) are pinned under the column
   letters. Everything drawn on the grid follows: the selection and fill handle, the in-cell editor
@@ -94,6 +110,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ### Fixed
 
 #### Sheets
+- Total row labels and functions of tables (`totalsRowLabel`, `totalsRowFunction`) were not read
+  from files, and a column's data format id was read from its header's (vendored IronCalc).
 - Print titles made of both rows and columns (`$A:$A,$1:$2`) lost their second part when Kantor
   saved the file (IronCalc keeps one part of a union); the whole name is written again.
 - Hidden columns from a file were drawn 24 px wide; they now take no room, and arrow keys step

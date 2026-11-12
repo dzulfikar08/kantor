@@ -730,6 +730,24 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "Format as Table…",
+        detail: "Sheets · make the selection or the data around the active cell a table with a style",
+        keys: "Ctrl T",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.format_as_table_doc(w, cx)),
+    },
+    Command {
+        title: "Table Design",
+        detail: "Sheets · style, header and total rows, banding, totals and name of the table at the active cell",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.table_design_doc(w, cx)),
+    },
+    Command {
+        title: "Convert Table to Range",
+        detail: "Sheets · keep the cells, remove the table at the active cell",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.convert_table_doc(w, cx)),
+    },
+    Command {
         title: "Page Setup…",
         detail: "Sheets · paper, orientation, scaling, margins, header and footer, print area and titles",
         keys: "",

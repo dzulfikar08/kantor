@@ -7,7 +7,7 @@
 //! package (see `preserve::Patches`); sheets nobody edited keep what the file
 //! had, byte for byte.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::Workbook;
@@ -20,6 +20,12 @@ pub(crate) struct Edits {
     /// Print settings set in Kantor, with the layout (rows and columns
     /// moved) they were set in: their ranges follow later moves.
     pub prints: HashMap<u32, (SheetPrint, Layout)>,
+    /// Tables made or changed in Kantor, by lower-case name, with the names
+    /// they had before (renamed): a save writes their parts from the model.
+    pub tables: HashMap<String, Vec<String>>,
+    /// Tables removed in Kantor (Convert to Range), lower case: a save
+    /// doesn't carry their parts.
+    pub removed_tables: HashSet<String>,
 }
 
 impl Workbook {
