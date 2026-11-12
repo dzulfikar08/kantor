@@ -9,6 +9,17 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-12
+
+Kantor comes to Windows (10 and 11, x64 and Arm; installer and portable zip, unsigned for now), and
+your work survives crashes: recovery copies, a Recover Unsaved Work prompt and opt-in autosave.
+Sheets pins frozen rows, hides and unhides rows and columns, and can now create what it used to
+only show: Page Setup, Format as Table, conditional formatting rules, data validation and charts.
+Docs gets Print, headers and footers, page numbers, sections, comments and tracked changes; Slides
+gets Print with handouts and editing of tables and chart data. Save no longer freezes the window on
+big workbooks. Files made or changed with the new features haven't been opened in Excel, Word or
+PowerPoint yet.
+
 ### Added
 
 #### Windows (new platform, x64 and Arm)
@@ -746,7 +757,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/dzulfikar08/kantor/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/dzulfikar08/kantor/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/dzulfikar08/kantor/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/dzulfikar08/kantor/compare/v0.1.0...v0.2.0
