@@ -32,6 +32,20 @@ pub(crate) struct Edits {
     /// Data validation edited in Kantor: a sheet's whole list, with the
     /// layout it was made in.
     pub validations: HashMap<u32, (Vec<crate::Validation>, Layout)>,
+    /// Charts made in Kantor (Insert Chart).
+    pub charts: Vec<crate::chart_edit::NewChart>,
+}
+
+/// What was edited in Kantor at any point of the session (any history
+/// state): a save writes these from the current state even when the current
+/// state has no edit of its own (an edit saved, then undone, must be undone
+/// in the next file too, whose original is the saved one).
+#[derive(Default)]
+pub(crate) struct Touched {
+    pub prints: HashSet<u32>,
+    pub cf: HashSet<u32>,
+    pub validations: HashSet<u32>,
+    pub tables: HashSet<String>,
 }
 
 impl Workbook {
@@ -46,6 +60,13 @@ impl Workbook {
         let layout = self.history.layout();
         let mut edits = (*self.history.edits()).clone();
         f(&mut edits, &layout);
+        let t = &mut self.touched;
+        t.prints.extend(edits.prints.keys().copied());
+        t.cf.extend(edits.cf_sheets.iter().copied());
+        t.validations.extend(edits.validations.keys().copied());
+        t.tables.extend(edits.tables.keys().cloned());
+        t.tables.extend(edits.tables.values().flatten().cloned());
+        t.tables.extend(edits.removed_tables.iter().cloned());
         self.history.edited_steps(0);
         self.history.set_edits(Arc::new(edits));
     }

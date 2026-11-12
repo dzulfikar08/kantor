@@ -1159,7 +1159,7 @@ impl Workbook {
         for (i, name) in names.iter().enumerate() {
             let sheet = i as u32;
             let id = self.sheet_id(sheet);
-            if edits.prints.contains_key(&id) {
+            if edits.prints.contains_key(&id) || self.touched.prints.contains(&id) {
                 let p = self.print_settings(sheet);
                 let x = print_xml(&p);
                 let patch = out.sheets.entry(id).or_default();

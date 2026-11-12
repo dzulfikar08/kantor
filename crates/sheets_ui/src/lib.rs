@@ -46,6 +46,7 @@ mod bench;
 mod calc;
 mod cell_editor;
 mod cf_ui;
+mod chart_ui;
 mod cond_paint;
 mod data_validation;
 mod dialog;
@@ -1027,6 +1028,10 @@ pub struct SheetsView {
     /// [`cf_ui`]).
     cf_dialog: Option<cf_ui::CfDialog>,
     cf_manager: Option<cf_ui::CfManager>,
+    /// The Chart panel (see [`chart_ui`]) and a "series in rows" choice
+    /// waiting for the window.
+    chart_panel: Option<chart_ui::ChartPanel>,
+    pending_chart_rows: Option<bool>,
     /// The Data Validation card (see [`dv_ui`]).
     dv_dialog: Option<dv_ui::DvDialog>,
     /// The Page Setup card (see [`page_setup`]).
@@ -1102,6 +1107,8 @@ impl SheetsView {
             table_dialog: None,
             cf_dialog: None,
             dv_dialog: None,
+            chart_panel: None,
+            pending_chart_rows: None,
             cf_manager: None,
             table_panel: None,
             disk_guard: None,
@@ -2213,6 +2220,8 @@ impl Render for SheetsView {
         if self.opening.is_none() {
             self.bench_step(window, cx);
         }
+        self.apply_pending_chart(window, cx);
+        self.sync_chart_panel(window, cx);
         let root = self.editor_actions(v_flex(), cx);
         let root = self.point_actions(root, cx);
         let root = self.calc_actions(root, cx);
@@ -2221,6 +2230,7 @@ impl Render for SheetsView {
         let root = self.table_actions(root, cx);
         let root = self.cf_actions(root, cx);
         let root = self.dv_actions(root, cx);
+        let root = self.chart_actions(root, cx);
         use kantor_ui::find_bar as fb;
         root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
@@ -2311,6 +2321,7 @@ impl Render for SheetsView {
             .child({
                 let panel = self.render_pivot_panel(cx);
                 let table_panel = self.render_table_panel(cx);
+                let chart_panel = self.render_chart_panel(cx);
                 h_flex()
                     .flex_1()
                     .min_h_0()
@@ -2354,6 +2365,7 @@ impl Render for SheetsView {
                     )
                     .children(panel)
                     .children(table_panel)
+                    .children(chart_panel)
             })
             // Sheet tabs
             .child(

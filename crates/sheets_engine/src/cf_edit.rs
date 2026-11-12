@@ -992,6 +992,7 @@ impl Workbook {
     /// from the model at save).
     pub(crate) fn cf_patches(&self, out: &mut crate::preserve::Patches) {
         out.cf_sheets.extend(self.edits().cf_sheets.iter().copied());
+        out.cf_sheets.extend(self.touched.cf.iter().copied());
     }
 }
 

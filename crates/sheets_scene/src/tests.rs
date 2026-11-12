@@ -117,7 +117,7 @@ fn live_data_replaces_the_caches() {
     book.set_input(0, 1, 0, "January").unwrap();
     book.set_input(0, 0, 1, "Revenue").unwrap();
     book.set_input(0, 2, 1, "=B2*2").unwrap();
-    let (live, _) = live_chart(&base, &book);
+    let (live, _) = live_chart(&base, &book, false);
     let s = &live.groups[0].series[0];
     assert_eq!(s.name.as_deref(), Some("Revenue"));
     assert_eq!(s.cats[0], "January");

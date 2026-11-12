@@ -278,6 +278,34 @@ pub(crate) struct Patches {
     /// IronCalc's markup from the model is kept for them (and the dxfs it
     /// added are appended to the original's).
     pub cf_sheets: HashSet<u32>,
+    /// Charts made in Kantor, added with their drawing.
+    pub charts: Vec<ChartSave>,
+    /// Charts an earlier save of this session added that are gone since.
+    pub removed_charts: Vec<SavedChart>,
+    /// Filled by the save: where each chart made in Kantor went, by id.
+    pub written: RefCell<Vec<(u32, SavedChart)>>,
+}
+
+/// Where a save put a chart made in Kantor (the next save of the same
+/// session updates or removes it there: the saved file is its original).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SavedChart {
+    pub drawing: String,
+    pub cnvpr: u32,
+    pub part: String,
+    pub rid: String,
+}
+
+/// A chart made in Kantor, to add to its sheet's drawing.
+pub(crate) struct ChartSave {
+    pub id: u32,
+    /// Where the last save put it, if it did.
+    pub saved: Option<SavedChart>,
+    pub sheet_id: u32,
+    pub name: String,
+    pub anchor: crate::drawing::Anchor,
+    /// The `c:chartSpace` part.
+    pub xml: String,
 }
 
 /// A table to write from the model.
@@ -305,7 +333,11 @@ pub(crate) struct SheetPatch {
 
 impl Patches {
     fn is_empty(&self) -> bool {
-        self.sheets.is_empty() && self.names.is_empty() && self.tables.is_empty()
+        self.sheets.is_empty()
+            && self.names.is_empty()
+            && self.tables.is_empty()
+            && self.charts.is_empty()
+            && self.removed_charts.is_empty()
     }
 }
 
@@ -909,6 +941,20 @@ impl Package {
         String::from_utf8(data)
             .map(Some)
             .map_err(|_| format!("{name} is not UTF-8"))
+    }
+
+    fn remove(&mut self, name: &str) {
+        let key = name.to_lowercase();
+        if self.index.remove(&key).is_none() {
+            return;
+        }
+        self.entries.retain(|(n, _)| n.to_lowercase() != key);
+        self.index = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, (n, _))| (n.to_lowercase(), i))
+            .collect();
     }
 
     fn set(&mut self, name: &str, data: Vec<u8>) {
@@ -4158,7 +4204,281 @@ fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
     if !patches.tables.is_empty() {
         write_tables(pkg, &sheets, &patches.tables)?;
     }
+    if !patches.charts.is_empty() || !patches.removed_charts.is_empty() {
+        let written = write_charts(pkg, &sheets, &patches.charts, &patches.removed_charts)?;
+        *patches.written.borrow_mut() = written;
+    }
     Ok(())
+}
+
+const CHART_CT: &str = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+const DRAWING_CT: &str = "application/vnd.openxmlformats-officedocument.drawing+xml";
+const NS_XDR: &str = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
+
+/// Add charts made in Kantor: each chart part (with its content type), an
+/// anchor in the sheet's drawing (a new drawing part, linked from the sheet
+/// with `<drawing>`, when it has none) and the drawing's relationship to it.
+fn write_charts(
+    pkg: &mut Package,
+    sheets: &[SheetEntry],
+    charts: &[ChartSave],
+    removed: &[SavedChart],
+) -> Result<Vec<(u32, SavedChart)>, String> {
+    let mut written = Vec::new();
+    // Charts an earlier save added that are gone now.
+    for r in removed {
+        if !pkg.has(&r.drawing) {
+            continue;
+        }
+        let dxml = pkg.text(&r.drawing)?.unwrap_or_default().to_owned();
+        if let Some(range) = chart_anchor_range(&dxml, r.cnvpr, &r.rid) {
+            let mut dxml = dxml;
+            dxml.replace_range(range, "");
+            pkg.set(&r.drawing, dxml.into_bytes());
+            let rels_name = rels_part(&r.drawing);
+            if let Some(x) = pkg.text(&rels_name)? {
+                let mut rels = parse_rels(x)?;
+                rels.retain(|l| l.id != r.rid);
+                pkg.set(&rels_name, write_rels(&rels).into_bytes());
+            }
+            pkg.remove(&r.part);
+            pkg.remove(&rels_part(&r.part));
+            let types = pkg
+                .text(CONTENT_TYPES)?
+                .ok_or("no content types")?
+                .to_owned();
+            let o = format!(
+                "<Override PartName=\"/{}\" ContentType=\"{CHART_CT}\"/>",
+                esc_attr(&r.part)
+            );
+            pkg.set(CONTENT_TYPES, types.replace(&o, "").into_bytes());
+        }
+    }
+    let mut ct = String::new();
+    let mut by_sheet: Vec<(u32, Vec<&ChartSave>)> = Vec::new();
+    for c in charts {
+        match by_sheet.iter_mut().find(|(id, _)| *id == c.sheet_id) {
+            Some((_, v)) => v.push(c),
+            None => by_sheet.push((c.sheet_id, vec![c])),
+        }
+    }
+    for (sheet_id, list) in by_sheet {
+        let sheet = sheets
+            .iter()
+            .find(|s| s.sheet_id == sheet_id && s.kind == SheetKind::Work)
+            .ok_or_else(|| format!("chart sheet {sheet_id} is missing"))?;
+        let sheet_rels_name = rels_part(&sheet.part);
+        let mut sheet_rels = match pkg.text(&sheet_rels_name)? {
+            Some(x) => parse_rels(x)?,
+            None => Vec::new(),
+        };
+        // The sheet's drawing: the one its <drawing> points at, if any.
+        let xml = pkg
+            .text(&sheet.part)?
+            .ok_or("sheet part is missing")?
+            .to_owned();
+        let sk = Skeleton::new(&xml);
+        let existing = {
+            let doc = Document::parse(&sk.xml).map_err(|e| e.to_string())?;
+            let root = doc.root_element();
+            root.children()
+                .find(|c| is_main(*c, "drawing"))
+                .and_then(|d| d.attribute((NS_R, "id")))
+                .and_then(|rid| sheet_rels.iter().find(|r| r.id == rid && !r.external))
+                .and_then(|r| resolve(&sheet.part, &r.target))
+        };
+        let drawing = match existing {
+            Some(d) if pkg.has(&d) => d,
+            _ => {
+                let d = (1..)
+                    .map(|n| format!("xl/drawings/drawing{n}.xml"))
+                    .find(|n| !pkg.has(n))
+                    .expect("a free name");
+                pkg.set(
+                    &d,
+                    format!(
+                        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<xdr:wsDr xmlns:xdr=\"{NS_XDR}\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"></xdr:wsDr>"
+                    )
+                    .into_bytes(),
+                );
+                ct.push_str(&format!(
+                    "<Override PartName=\"/{}\" ContentType=\"{DRAWING_CT}\"/>",
+                    esc_attr(&d)
+                ));
+                let rid = IdAlloc::new(&sheet_rels).next();
+                sheet_rels.push(Rel {
+                    id: rid.clone(),
+                    kind: format!("{REL_BASE}drawing"),
+                    target: relative(&sheet.part, &d),
+                    external: false,
+                });
+                let new = put_drawing_element(&xml, &rid)?;
+                pkg.set(&sheet.part, new.into_bytes());
+                d
+            }
+        };
+        pkg.set(&sheet_rels_name, write_rels(&sheet_rels).into_bytes());
+        let drawing_rels_name = rels_part(&drawing);
+        let mut drawing_rels = match pkg.text(&drawing_rels_name)? {
+            Some(x) => parse_rels(x)?,
+            None => Vec::new(),
+        };
+        let mut dxml = pkg
+            .text(&drawing)?
+            .ok_or("drawing part is missing")?
+            .to_owned();
+        let (prefix, mut next_id) = {
+            let doc = Document::parse(&dxml).map_err(|e| format!("{drawing}: {e}"))?;
+            let root = doc.root_element();
+            let prefix = match root.lookup_prefix(NS_XDR) {
+                Some("") => String::new(),
+                Some(p) => format!("{p}:"),
+                None => return Err(format!("{drawing} is not a SpreadsheetML drawing")),
+            };
+            let max = doc
+                .descendants()
+                .filter(|n| n.tag_name().name() == "cNvPr")
+                .filter_map(|n| n.attribute("id")?.parse::<u32>().ok())
+                .max()
+                .unwrap_or(1);
+            (prefix, max + 1)
+        };
+        let mut anchors = String::new();
+        for c in list {
+            // Saved before in this drawing: update it there.
+            if let Some(sv) = &c.saved
+                && sv.drawing == drawing
+                && pkg.has(&sv.part)
+                && let Some(range) = chart_anchor_range(&dxml, sv.cnvpr, &sv.rid)
+            {
+                pkg.set(&sv.part, c.xml.clone().into_bytes());
+                dxml.replace_range(range, &chart_anchor(&prefix, c, sv.cnvpr, &sv.rid));
+                written.push((c.id, sv.clone()));
+                continue;
+            }
+            let part = (1..)
+                .map(|n| format!("xl/charts/chart{n}.xml"))
+                .find(|n| !pkg.has(n))
+                .expect("a free name");
+            pkg.set(&part, c.xml.clone().into_bytes());
+            ct.push_str(&format!(
+                "<Override PartName=\"/{}\" ContentType=\"{CHART_CT}\"/>",
+                esc_attr(&part)
+            ));
+            let rid = IdAlloc::new(&drawing_rels).next();
+            drawing_rels.push(Rel {
+                id: rid.clone(),
+                kind: format!("{REL_BASE}chart"),
+                target: relative(&drawing, &part),
+                external: false,
+            });
+            anchors.push_str(&chart_anchor(&prefix, c, next_id, &rid));
+            written.push((
+                c.id,
+                SavedChart {
+                    drawing: drawing.clone(),
+                    cnvpr: next_id,
+                    part: part.clone(),
+                    rid: rid.clone(),
+                },
+            ));
+            next_id += 1;
+        }
+        let close = dxml
+            .rfind("</")
+            .ok_or_else(|| format!("{drawing} is not closed"))?;
+        if dxml[..].trim_end().ends_with("/>") && !dxml.contains("</") {
+            return Err(format!("{drawing} has an empty root"));
+        }
+        dxml.insert_str(close, &anchors);
+        pkg.set(&drawing, dxml.into_bytes());
+        pkg.set(&drawing_rels_name, write_rels(&drawing_rels).into_bytes());
+    }
+    if !ct.is_empty() {
+        let mut types = pkg
+            .text(CONTENT_TYPES)?
+            .ok_or("no content types")?
+            .to_owned();
+        let at = types.rfind("</Types>").ok_or("content types not closed")?;
+        types.insert_str(at, &ct);
+        pkg.set(CONTENT_TYPES, types.into_bytes());
+    }
+    Ok(written)
+}
+
+/// The byte range of the anchor holding chart `rid` with `cNvPr id` `cnvpr`
+/// in drawing XML.
+fn chart_anchor_range(xml: &str, cnvpr: u32, rid: &str) -> Option<std::ops::Range<usize>> {
+    let doc = Document::parse(xml).ok()?;
+    let a = doc.root_element().children().find(|a| {
+        crate::drawing::is_anchor(*a)
+            && crate::drawing::c_nv_pr(*a).and_then(|n| n.attribute("id"))
+                == Some(&cnvpr.to_string())
+            && a.descendants()
+                .any(|d| d.tag_name().name() == "chart" && d.attribute((NS_R, "id")) == Some(rid))
+    })?;
+    Some(a.range())
+}
+
+/// The anchor of a new chart in a drawing whose SpreadsheetDrawing prefix is
+/// `p` (`xdr:` or empty).
+fn chart_anchor(p: &str, c: &ChartSave, id: u32, rid: &str) -> String {
+    let (open, close) = match c.anchor {
+        crate::drawing::Anchor::TwoCell { edit_as, .. } => {
+            let e = match edit_as {
+                crate::drawing::EditAs::TwoCell => "",
+                crate::drawing::EditAs::OneCell => " editAs=\"oneCell\"",
+                crate::drawing::EditAs::Absolute => " editAs=\"absolute\"",
+            };
+            (
+                format!("<{p}twoCellAnchor{e}>"),
+                format!("</{p}twoCellAnchor>"),
+            )
+        }
+        crate::drawing::Anchor::OneCell { .. } => (
+            format!("<{p}oneCellAnchor>"),
+            format!("</{p}oneCellAnchor>"),
+        ),
+        crate::drawing::Anchor::Absolute { .. } => (
+            format!("<{p}absoluteAnchor>"),
+            format!("</{p}absoluteAnchor>"),
+        ),
+    };
+    format!(
+        "{open}{pos}<{p}graphicFrame macro=\"\"><{p}nvGraphicFramePr><{p}cNvPr id=\"{id}\" name=\"{name}\"/><{p}cNvGraphicFramePr/></{p}nvGraphicFramePr><{p}xfrm><a:off x=\"0\" y=\"0\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"/><a:ext cx=\"0\" cy=\"0\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"/></{p}xfrm><a:graphic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"><c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:r=\"{NS_R}\" r:id=\"{rid}\"/></a:graphicData></a:graphic></{p}graphicFrame><{p}clientData/>{close}",
+        pos = c.anchor.position_xml(p),
+        name = esc_attr(&c.name),
+        rid = esc_attr(rid),
+    )
+}
+
+/// A worksheet's XML with `<drawing r:id="rid"/>` in schema order.
+fn put_drawing_element(full: &str, rid: &str) -> Result<String, String> {
+    let sk = Skeleton::new(full);
+    let doc = Document::parse(&sk.xml).map_err(|e| e.to_string())?;
+    let root = doc.root_element();
+    let prefix = match root.lookup_prefix(NS_R) {
+        Some(p) if !p.is_empty() => p.to_owned(),
+        _ => return Err("the worksheet doesn't bind the relationships namespace".into()),
+    };
+    let close = sk.xml[..root.range().end]
+        .rfind("</")
+        .ok_or("worksheet is not closed")?;
+    let order = |name: &str| SHEET_ORDER.iter().position(|n| *n == name);
+    let present: Vec<(usize, usize)> = root
+        .children()
+        .filter(|c| c.is_element())
+        .filter_map(|c| Some((order(c.tag_name().name())?, c.range().start)))
+        .collect();
+    let at = insert_point(&present, order("drawing").expect("known"), close);
+    let at = sk.full_offset(at);
+    Ok(apply_edits(
+        full,
+        vec![(
+            at..at,
+            format!("<drawing {prefix}:id=\"{}\"/>", esc_attr(rid)),
+        )],
+    ))
 }
 
 const TABLE_CT: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";

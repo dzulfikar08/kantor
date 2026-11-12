@@ -476,6 +476,17 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .tooltip("Table")
             .dropdown_menu(move |menu, _, _| table_items(menu, &table_view)),
     );
+    // Charts.
+    let chart_view = cx.entity().downgrade();
+    row = row.child(
+        Button::new("chart-menu")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::ChartColumn)
+            .dropdown_caret(true)
+            .tooltip("Insert Chart")
+            .dropdown_menu(move |menu, _, _| crate::chart_ui::chart_menu(menu, &chart_view)),
+    );
     // PivotTables.
     let pivot_view = cx.entity().downgrade();
     row = row.child(separator(cx)).child(

@@ -10,6 +10,7 @@
 
 mod batch;
 mod cf_edit;
+mod chart_edit;
 mod cond_format;
 mod csv;
 pub mod drawing;
@@ -37,6 +38,7 @@ pub use cf_edit::{
     COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,
     DATA_BAR_COLORS, ICON_SETS, sqref_of,
 };
+pub use chart_edit::{ChartSpec, ChartType, LegendPos, NEW_CHART_BASE};
 pub use import::SourceFormat;
 pub use preserve::package_problems;
 pub use recovery::{XlsxOutput, XlsxSnapshot, write_file_atomic};
@@ -134,6 +136,10 @@ pub struct Workbook {
     prints: print::Prints,
     /// Pivot tables of the opened file (refreshes are kept in `history`).
     pivots: pivot::Pivots,
+    /// Where the last `.xlsx` save put the charts made in Kantor, by id.
+    saved_charts: HashMap<u32, preserve::SavedChart>,
+    /// Sheet features edited in Kantor this session (see `edits::Touched`).
+    touched: edits::Touched,
 }
 
 /// See [`Workbook::cached`].
@@ -441,6 +447,8 @@ impl Workbook {
             drawings: Default::default(),
             prints: Default::default(),
             pivots: Default::default(),
+            saved_charts: HashMap::new(),
+            touched: Default::default(),
         })
     }
 
@@ -532,6 +540,8 @@ impl Workbook {
             drawings,
             prints,
             pivots,
+            saved_charts: HashMap::new(),
+            touched: Default::default(),
         };
         // The file's cached values are right: no recalculation.
         book.sync_pivot_grids(false);
@@ -701,6 +711,8 @@ impl Workbook {
                 };
                 notes.extend(finished.notes);
                 let pivots_saved = finished.pivots;
+                let charts_saved: HashMap<u32, preserve::SavedChart> =
+                    parts.patches.written.take().into_iter().collect();
                 for note in &notes {
                     log::warn!("saving {}: {note}", path.display());
                 }
@@ -711,6 +723,7 @@ impl Workbook {
                 }
                 self.save_notes = notes;
                 self.pivots_saved(&pivots_saved);
+                self.saved_charts = charts_saved;
                 xlsx = Some(XlsxSource::kept(path, bytes));
                 SourceFormat::Xlsx
             }
@@ -1228,6 +1241,7 @@ impl Workbook {
                 self.table_patches(&mut p);
                 self.cf_patches(&mut p);
                 self.validation_patches(&mut p);
+                self.chart_patches(&mut p);
                 p
             },
         }

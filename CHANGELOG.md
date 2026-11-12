@@ -67,6 +67,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   the `_xlnm.Print_Area` / `_xlnm.Print_Titles` names; the print area and titles follow inserted
   and deleted rows and columns. Export as PDF and Print use the new settings. Sheets you didn't
   change keep the file's own markup byte for byte.
+- **Insert Chart** (chart menu in the toolbar, palette): Column, Stacked Column, Bar, Stacked
+  Bar, Line, Stacked Line, Pie, Area, Stacked Area or Scatter from the selection or the data around
+  the active cell (labels in the first row and column become series names and categories; series
+  in columns unless there are more columns than rows), placed beside the data and drawn by the same
+  renderer as a file's charts, following the cells as they change. A **Chart** panel beside the
+  grid changes its type, title, legend position, series from rows or columns and data range; move,
+  resize and delete work as for other charts. One undo step each; the chart and its data follow
+  inserted and deleted rows and columns. Saved as a chart part (`c:chartSpace` with `c:f`
+  references and cached values) in the sheet's drawing, a new drawing part when the sheet had
+  none; a later save in the same session updates or removes it there.
 - **Data Validation…** (toolbar, palette) for the selection, with Excel's three tabs: Settings
   (allow any value, whole number, decimal, list, date, time, text length or a custom formula;
   between, greater than… with minimum/maximum as values, dates such as 2026-01-31 or 31/01/2026,

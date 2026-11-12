@@ -754,6 +754,42 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.clear_cf_doc(true, w, cx)),
     },
     Command {
+        title: "Insert Chart",
+        detail: "Sheets · a column chart of the selection or the data around the active cell (other types in the toolbar's chart menu)",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.insert_chart_doc(sheets_engine::ChartType::Column, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Line Chart",
+        detail: "Sheets · a line chart of the selection",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.insert_chart_doc(sheets_engine::ChartType::Line, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Pie Chart",
+        detail: "Sheets · a pie chart of the selection",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.insert_chart_doc(sheets_engine::ChartType::Pie, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Chart Panel",
+        detail: "Sheets · type, title, legend, series and data of the selected chart",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.chart_options_doc(w, cx)),
+    },
+    Command {
         title: "Format as Table…",
         detail: "Sheets · make the selection or the data around the active cell a table with a style",
         keys: "Ctrl T",

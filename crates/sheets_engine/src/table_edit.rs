@@ -884,6 +884,29 @@ impl Workbook {
             out.removed_tables.extend(aliases.iter().cloned());
         }
         out.touched_tables.extend(edits.tables.keys().cloned());
+        // Tables changed earlier in the session (then undone, or saved):
+        // written from the model, or not carried if the model has none now.
+        for name in &self.touched.tables {
+            if edits.tables.contains_key(name) || out.removed_tables.contains(name) {
+                continue;
+            }
+            match self.model_table(name) {
+                Some(t) => {
+                    if let Some(sheet) = self.sheet_names().iter().position(|n| *n == t.sheet_name)
+                    {
+                        out.touched_tables.insert(name.clone());
+                        out.tables.push(crate::preserve::TableSave {
+                            sheet_id: self.sheet_id(sheet as u32),
+                            names: vec![t.name.clone()],
+                            table: t,
+                        });
+                    }
+                }
+                None => {
+                    out.removed_tables.insert(name.clone());
+                }
+            }
+        }
     }
 }
 

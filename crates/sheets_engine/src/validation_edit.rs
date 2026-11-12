@@ -412,7 +412,10 @@ impl Workbook {
 
     /// Patches a save writes for validations edited in Kantor.
     pub(crate) fn validation_patches(&self, out: &mut crate::preserve::Patches) {
-        let ids: Vec<u32> = self.edits().validations.keys().copied().collect();
+        let mut ids: Vec<u32> = self.edits().validations.keys().copied().collect();
+        ids.extend(self.touched.validations.iter().copied());
+        ids.sort_unstable();
+        ids.dedup();
         for id in ids {
             let Some(sheet) =
                 (0..self.sheet_names().len() as u32).find(|&s| self.sheet_id(s) == id)

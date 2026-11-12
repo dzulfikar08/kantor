@@ -139,11 +139,19 @@ fn hash_ref(r: &Option<RefData>, h: &mut DefaultHasher) {
 /// hash of what was read (equal hashes: the same chart). References that
 /// can't be read (other workbooks, names, deleted ranges) keep the values
 /// cached in the part.
-pub fn live_chart(base: &Chart, book: &Workbook) -> (Chart, u64) {
+/// `current`: the references are in the current rows and columns (a chart
+/// made in Kantor), not the opened file's.
+pub fn live_chart(base: &Chart, book: &Workbook, current: bool) -> (Chart, u64) {
     let mut chart = base.clone();
     let mut h = DefaultHasher::new();
     let read = |f: &Option<String>, h: &mut DefaultHasher| {
-        let r = f.as_deref().and_then(|f| book.chart_reference(f));
+        let r = f.as_deref().and_then(|f| {
+            if current {
+                book.chart_reference_now(f)
+            } else {
+                book.chart_reference(f)
+            }
+        });
         hash_ref(&r, h);
         r
     };
@@ -254,6 +262,9 @@ type BuiltKey = (DrawingKey, u32, u32);
 /// A chart's live data for one workbook state.
 struct Live {
     revision: (u64, u64),
+    /// The chart part it was built from (a chart made in Kantor gets a new
+    /// part name when it changes).
+    part: Arc<str>,
     hash: u64,
     chart: Arc<Chart>,
 }
@@ -294,12 +305,18 @@ impl DrawingScenes {
     /// The chart of `d` with its live data (`None`: not a chart Kantor
     /// can draw), and the data's hash.
     fn live(&mut self, book: &Workbook, d: &Drawing) -> Option<(Arc<Chart>, u64)> {
-        let DrawingKind::Chart { part, xml } = &*d.kind else {
+        let DrawingKind::Chart {
+            part,
+            xml,
+            current_refs,
+        } = &*d.kind
+        else {
             return None;
         };
         let revision = book.revision();
         if let Some(l) = self.live.get(&d.key)
             && l.revision == revision
+            && l.part == *part
         {
             return Some((l.chart.clone(), l.hash));
         }
@@ -309,16 +326,25 @@ impl DrawingScenes {
             .entry(part.clone())
             .or_insert_with(|| theme.parse(xml).filter(Chart::drawable).map(Arc::new))
             .clone()?;
-        let (chart, hash) = live_chart(&base, book);
+        let (chart, hash) = live_chart(&base, book, *current_refs);
+        // A changed chart made in Kantor has a new part: build it again even
+        // with the same data.
+        let hash = {
+            let mut h = DefaultHasher::new();
+            hash.hash(&mut h);
+            part.hash(&mut h);
+            h.finish()
+        };
         // Same data as before: keep the old chart so its builds stay valid.
         let chart = match self.live.get(&d.key) {
-            Some(l) if l.hash == hash => l.chart.clone(),
+            Some(l) if l.hash == hash && l.part == *part => l.chart.clone(),
             _ => Arc::new(chart),
         };
         self.live.insert(
             d.key,
             Live {
                 revision,
+                part: part.clone(),
                 hash,
                 chart: chart.clone(),
             },
