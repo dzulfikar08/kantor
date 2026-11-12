@@ -94,3 +94,29 @@ pub fn print_pdf_path(stem: &str) -> std::io::Result<PathBuf> {
     };
     Ok(dir.join(format!("{stem}.pdf")))
 }
+
+/// The account's full name (the passwd GECOS field on Unix), else the
+/// login name, else "Kantor".
+pub fn user_full_name() -> String {
+    let login = std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_default();
+    #[cfg(unix)]
+    if !login.is_empty()
+        && let Ok(passwd) = std::fs::read_to_string("/etc/passwd")
+        && let Some(gecos) = passwd
+            .lines()
+            .find(|l| l.split(':').next() == Some(login.as_str()))
+            .and_then(|l| l.split(':').nth(4))
+            .and_then(|g| g.split(',').next())
+            .map(str::trim)
+            .filter(|g| !g.is_empty())
+    {
+        return gecos.to_owned();
+    }
+    if login.is_empty() {
+        "Kantor".to_owned()
+    } else {
+        login
+    }
+}

@@ -21,6 +21,25 @@ pub fn rgba(c: docs_engine::Rgb) -> Rgba {
     Rgba([r, g, b, 255])
 }
 
+/// Word-like markup colours, one per author.
+const AUTHOR_COLORS: [[u8; 3]; 6] = [
+    [0xC0, 0x00, 0x00],
+    [0x1F, 0x5F, 0xBF],
+    [0x7B, 0x2F, 0xA8],
+    [0x2E, 0x7D, 0x32],
+    [0xC5, 0x5A, 0x11],
+    [0x00, 0x83, 0x8F],
+];
+
+/// The markup colour of a tracked change's author (stable per name).
+pub fn author_color(author: &str) -> Rgba {
+    let h = author
+        .bytes()
+        .fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32));
+    let [r, g, b] = AUTHOR_COLORS[h as usize % AUTHOR_COLORS.len()];
+    Rgba([r, g, b, 255])
+}
+
 /// Page size and margins from the document's (last section's) properties.
 pub fn page_setup(doc: &Document) -> PageSetup {
     geometry_setup(&doc.page)
@@ -75,13 +94,27 @@ pub fn layout_paragraph(
             continue;
         }
         let r = doc.resolve_run(p, &run.props);
+        // Tracked changes: the author's colour, insertions underlined,
+        // deletions struck through (as Word shows "All Markup").
+        let (color, underline) = match &run.rev {
+            Some(rev) => {
+                if rev.kind == docs_engine::RevKind::Delete {
+                    lp.strikes.push(range.clone());
+                }
+                (
+                    author_color(&rev.author),
+                    r.underline || rev.kind == docs_engine::RevKind::Insert,
+                )
+            }
+            None => (rgba(r.color), r.underline),
+        };
         lp.spans.push(Span {
             range,
             bold: r.bold,
             italic: r.italic,
-            underline: r.underline,
+            underline,
             size_pt: Some(r.size_pt),
-            color: Some(rgba(r.color)),
+            color: Some(color),
             family: Some(font_stack(&r.font)),
         });
     }
@@ -146,6 +179,17 @@ pub fn layout_paragraph(
                     height: 0.0,
                     label: op.label.clone(),
                 },
+                // A comment's reference mark: the comment shows in the
+                // margin instead.
+                Level::Run if docs_engine::model::element_name(&op.xml) == "commentReference" => {
+                    InlineObject {
+                        index,
+                        kind: ObjectKind::Hidden,
+                        width: 0.0,
+                        height: 0.0,
+                        label: String::new(),
+                    }
+                }
                 Level::Run | Level::Para => InlineObject {
                     index,
                     kind: ObjectKind::Placeholder,

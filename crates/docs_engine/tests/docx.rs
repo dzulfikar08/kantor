@@ -220,13 +220,19 @@ fn unsupported_content_never_overwrites_the_original() {
     let path = write_temp(dir.path(), "complex.docx", &original);
     let mut doc = Document::open(&path).unwrap();
     let u = doc.unsupported_content().to_vec();
-    for want in [
-        "fields that depend on document content (contents, cross-references…)",
-        "tracked changes",
-        "track changes switched on",
-    ] {
-        assert!(u.iter().any(|x| x == want), "{want} missing from {u:?}");
-    }
+    assert_eq!(
+        u,
+        ["fields that depend on document content (contents, cross-references…)"],
+        "tracked changes and the track changes switch are kept, not unsupported"
+    );
+    assert!(
+        doc.preserved_content()
+            .iter()
+            .any(|x| x.starts_with("track changes switched on")),
+        "{:?}",
+        doc.preserved_content()
+    );
+    assert_eq!(doc.changes().len(), 1);
     assert!(doc.needs_save_as());
     assert_eq!(doc.suggested_file_name(), "complex (Kantor).docx");
     doc.insert_text(Selection::default(), "x", None);
@@ -253,21 +259,24 @@ fn unsupported_content_never_overwrites_the_original() {
     assert_eq!(doc.path(), Some(copy.as_path()));
     let back = Document::open(&copy).unwrap();
     assert_eq!(back.paragraph(0).text, "xBefore");
-    // Even the copy keeps the tracked insertion and the field as they were.
+    // The copy keeps the tracked insertion (its own tag around the run) and
+    // the field as they were.
     let xml = String::from_utf8(zip_entry(
         &std::fs::read(&copy).unwrap(),
         "word/document.xml",
     ))
     .unwrap();
-    assert!(xml.contains(r#"<w:ins w:id="1" w:author="a"><w:r><w:t>new</w:t></w:r></w:ins>"#));
+    assert!(xml.contains(
+        r#"<w:ins w:id="1" w:author="a"><w:r><w:t xml:space="preserve">new</w:t></w:r></w:ins>"#
+    ));
     assert!(xml.contains(r#"<w:instrText xml:space="preserve"> REF _Ref1 \h </w:instrText>"#));
 }
 
 #[test]
-fn comments_are_unsupported_and_other_content_is_carried() {
+fn comments_are_kept_and_other_content_is_carried() {
     let body = r#"<w:p><w:commentRangeStart w:id="0"/><w:r><w:t>a</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r><w:r><w:drawing/></w:r><w:hyperlink r:id="rId9"><w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr><w:t>link</w:t></w:r></w:hyperlink></w:p><w:p><w:r><w:t>x</w:t><w:br w:type="page"/><w:t>y</w:t></w:r></w:p>"#;
     let read = docs_engine::docx::read(package(body, "")).unwrap();
-    assert_eq!(read.unsupported, vec!["comments".to_owned()]);
+    assert!(read.unsupported.is_empty(), "{:?}", read.unsupported);
     assert!(
         read.preserved.iter().any(|x| x == "drawings"),
         "{:?}",

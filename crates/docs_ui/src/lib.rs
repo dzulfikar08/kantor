@@ -26,6 +26,7 @@ pub mod font_bridge;
 mod hf_menu;
 mod input;
 mod page_menu;
+mod review;
 mod ruler;
 mod toolbar;
 
@@ -127,6 +128,7 @@ actions!(
         Save,
         SaveAs,
         ExportPdf,
+        NewComment,
         ZoomIn,
         ZoomOut,
         ZoomReset,
@@ -223,6 +225,7 @@ pub fn init(cx: &mut App) {
         "shift-z" => Redo,
         "y" => Redo,
         "s" => Save,
+        "alt-m" => NewComment,
         "shift-s" => SaveAs,
         "=" => ZoomIn,
         "+" => ZoomIn,
@@ -290,6 +293,8 @@ struct Laid {
     paged: PagedDocument,
     texts: Vec<String>,
     furniture: Vec<Vec<docs_pdf::Placed>>,
+    /// Layout paragraphs when some text is struck through (else empty).
+    strikes: Arc<Vec<docs_layout::Paragraph>>,
     boxes: Rc<PageBoxes>,
 }
 
@@ -334,6 +339,8 @@ struct Geometry {
     zoom: f32,
     scroll: Point<f32>,
     boxes: Rc<PageBoxes>,
+    /// Width kept free right of the pages for comment cards (document px).
+    markup: f32,
 }
 
 impl Geometry {
@@ -358,7 +365,7 @@ impl Geometry {
     fn page_x(&self, page: usize) -> f32 {
         let w = self.page_size(page).0;
         if self.view_w() >= self.content_w() {
-            (self.view_w() - w) / 2.0
+            (self.view_w() - self.markup - w) / 2.0
         } else {
             PAGE_GAP + (self.boxes.max_w - w) / 2.0
         }
@@ -372,7 +379,7 @@ impl Geometry {
     }
 
     fn content_w(&self) -> f32 {
-        self.boxes.max_w + 2.0 * PAGE_GAP
+        self.boxes.max_w + 2.0 * PAGE_GAP + self.markup
     }
 
     fn content_h(&self) -> f32 {
@@ -452,6 +459,10 @@ pub struct DocsView {
     /// The header/footer popover, as the Page one.
     hf_menu: Option<hf_menu::HfMenu>,
     hf_menu_closed: Option<std::time::Instant>,
+    /// A comment being written or edited in its card.
+    comment_edit: Option<review::CommentEdit>,
+    /// The markup column with comment cards.
+    comments_visible: bool,
     /// A margin or indent being dragged on the ruler.
     ruler_drag: Option<ruler::Drag>,
     engine: Rc<RefCell<Engine>>,
@@ -541,6 +552,7 @@ impl DocsView {
                 paged: PagedDocument::paginate(&[], Vec::new(), PageSetup::a4()),
                 texts: Vec::new(),
                 furniture: Vec::new(),
+                strikes: Arc::default(),
                 boxes: Rc::default(),
             }),
             cache: HashMap::new(),
@@ -550,6 +562,8 @@ impl DocsView {
             page_menu_closed: None,
             hf_menu: None,
             hf_menu_closed: None,
+            comment_edit: None,
+            comments_visible: true,
             ruler_drag: None,
             engine,
             bridge,
@@ -597,6 +611,7 @@ impl DocsView {
             paged: laid.paged,
             texts,
             furniture: laid.furniture,
+            strikes: laid.strikes,
             boxes,
         });
     }
@@ -609,6 +624,11 @@ impl DocsView {
             zoom: self.zoom,
             scroll: self.scroll,
             boxes: self.laid.boxes.clone(),
+            markup: if self.markup_visible() {
+                review::MARKUP_W / self.zoom
+            } else {
+                0.0
+            },
         }
     }
 
@@ -1283,7 +1303,12 @@ impl DocsView {
     /// Write the laid-out pages to `path` in the background; `open` hands
     /// the file to the system's PDF viewer afterwards (Print).
     fn write_pdf(&mut self, path: PathBuf, open: bool, cx: &mut Context<Self>) {
-        let scene = docs_pdf::scene_of(&self.doc, &self.laid.paged, &self.laid.furniture);
+        let scene = docs_pdf::scene_of(
+            &self.doc,
+            &self.laid.paged,
+            &self.laid.furniture,
+            &self.laid.strikes,
+        );
         let pages = scene.pages.len().max(1);
         let verb = if open {
             "Preparing to print"
@@ -1746,6 +1771,12 @@ struct Frame {
     /// Find matches to highlight and the current one.
     found: find::Found,
     found_current: Option<usize>,
+    /// Markup column width (screen px; 0 without comments), comment
+    /// ranges to highlight (and whether each is the active one) and the
+    /// cards' anchor → card lines (window coordinates).
+    markup: f32,
+    comment_ranges: Vec<(Position, Position, bool)>,
+    card_lines: Vec<(Point<Pixels>, Point<Pixels>, bool)>,
     t: Tokens,
     bridge: Rc<RefCell<FontBridge>>,
     focus: FocusHandle,
@@ -1814,6 +1845,7 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
         zoom: f.zoom,
         scroll: f.scroll,
         boxes: f.laid.boxes.clone(),
+        markup: f.markup / f.zoom,
     };
     window.paint_quad(fill(bounds, f.t.desk));
     let (start, end) = f.sel.ordered();
@@ -1863,6 +1895,15 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                 };
                 window.paint_quad(fill(rect(page, *r), color));
             }
+            // Commented text: a soft highlight, stronger for the active one.
+            for (a, b, active) in &f.comment_ranges {
+                for (p, r) in paged.selection_rects((a.para, a.offset), (b.para, b.offset)) {
+                    if p == page {
+                        let c = hsla(0.13, 0.95, 0.55, if *active { 0.45 } else { 0.25 });
+                        window.paint_quad(fill(rect(page, r), c));
+                    }
+                }
+            }
             for (_, r) in selection.iter().filter(|(p, _)| *p == page) {
                 window.paint_quad(fill(rect(page, *r), f.t.paper_selection));
             }
@@ -1873,6 +1914,14 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                 r[2] = r[2].max(1.0 / z);
                 r[3] = r[3].max(1.0 / z);
                 window.paint_quad(fill(rect(page, r), layout_color(rule.color)));
+            }
+            // Tracked deletions: struck through in the author's colour.
+            if !f.laid.strikes.is_empty() {
+                for rule in paged.strike_rules(page, &f.laid.strikes) {
+                    let mut r = rule.rect;
+                    r[3] = r[3].max(1.0 / z);
+                    window.paint_quad(fill(rect(page, r), layout_color(rule.color)));
+                }
             }
             // Pictures and placeholders.
             for o in paged.objects(page) {
@@ -1959,6 +2008,29 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                 window.paint_quad(fill(rect(page, [r[0], r[1] + r[3] - 1.5, r[2], 1.5]), ink));
             }
         }
+        // Lines from commented text to its card.
+        for (a, b, active) in &f.card_lines {
+            let color = if *active {
+                f.t.accent
+            } else {
+                f.t.border_strong
+            };
+            let mid_x = b.x - px(8.);
+            let w = px(1.);
+            window.paint_quad(fill(
+                Bounds::from_corners(point(a.x, a.y), point(mid_x, a.y + w)),
+                color,
+            ));
+            let (y0, y1) = if a.y <= b.y { (a.y, b.y) } else { (b.y, a.y) };
+            window.paint_quad(fill(
+                Bounds::from_corners(point(mid_x, y0), point(mid_x + w, y1 + w)),
+                color,
+            ));
+            window.paint_quad(fill(
+                Bounds::from_corners(point(mid_x, b.y), point(b.x, b.y + w)),
+                color,
+            ));
+        }
         if f.focused
             && start == end
             && let Some(c) = paged.caret(f.sel.head.para, f.sel.head.offset)
@@ -1984,6 +2056,22 @@ impl Render for DocsView {
         }
         let images = self.visible_images(window, cx);
         let hf_images = self.visible_hf_images(window, cx);
+        let cards = self.comment_cards();
+        let (sa, sb) = self.sel.ordered();
+        let comment_ranges = if self.markup_visible() {
+            self.doc
+                .comment_anchors()
+                .into_iter()
+                .map(|(_, a)| (a.start, a.end, a.start <= sb && a.end >= sa))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let card_lines = cards
+            .iter()
+            .map(|c| (c.anchor, point(c.at.x, c.at.y + px(14.)), c.active))
+            .collect();
+        let card_elements = self.render_cards(&cards, cx);
         let frame = Frame {
             laid: self.laid.clone(),
             images,
@@ -1996,6 +2084,13 @@ impl Render for DocsView {
             guide: self.ruler_drag.map(|d| d.x),
             found: self.found.clone(),
             found_current: self.found_current,
+            markup: if self.markup_visible() {
+                review::MARKUP_W
+            } else {
+                0.0
+            },
+            comment_ranges,
+            card_lines,
             t,
             bridge: self.bridge.clone(),
             focus: self.focus.clone(),
@@ -2032,6 +2127,7 @@ impl Render for DocsView {
             )
             .on_scroll(cx.listener(Self::on_scroll))
             .child(page)
+            .children(card_elements)
             .when(self.find.read(cx).is_open(), |el| {
                 el.child(self.find.clone())
             });
@@ -2128,6 +2224,7 @@ impl Render for DocsView {
             AlignRight => |this, w, cx| this.set_align_doc(Align::Right, w, cx),
             AlignJustify => |this, w, cx| this.set_align_doc(Align::Justify, w, cx),
             Undo => |this, w, cx| this.undo_doc(w, cx),
+            NewComment => |this, w, cx| this.new_comment_doc(w, cx),
             Redo => |this, w, cx| this.redo_doc(w, cx),
             ZoomIn => |this, _w, cx| this.zoom_by(ZOOM_STEP, cx),
             ZoomOut => |this, _w, cx| this.zoom_by(1.0 / ZOOM_STEP, cx),
@@ -2253,6 +2350,7 @@ mod tests {
             zoom: 1.5,
             scroll: point(0., 1500.),
             boxes: Rc::new(PageBoxes::new(vec![(793.7, 1122.5); 10])),
+            markup: 0.0,
         };
         let p = g.page_to_screen(1, 120.0, 300.0);
         let (page, x, y) = g.screen_to_page(p, 10);
@@ -2274,6 +2372,7 @@ mod tests {
                 (1122.5, 793.7),
                 (793.7, 1122.5),
             ])),
+            markup: 0.0,
         };
         // Pages are centred: the landscape one starts further left.
         assert!(g.page_x(1) < g.page_x(0));

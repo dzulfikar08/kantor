@@ -242,3 +242,207 @@ fn section_break_and_section_page_setup() {
     assert_eq!(s[0].props.page.orientation(), Orientation::Landscape);
     assert_eq!(s[1].props.page.orientation(), Orientation::Portrait);
 }
+
+// ── review: tracked changes and comments ────────────────────────────────
+
+#[test]
+fn minutes_changes_and_comments_are_read() {
+    let doc = Document::open(&corpus("minutes.docx")).unwrap();
+    assert!(
+        !doc.has_unsupported_content(),
+        "{:?}",
+        doc.unsupported_content()
+    );
+    let ch = doc.changes();
+    assert_eq!(ch.len(), 2, "{ch:?}");
+    assert_eq!(ch[0].kind, docs_engine::RevKind::Insert);
+    assert_eq!(ch[0].text, "signed ");
+    assert_eq!(ch[0].author, "Citra");
+    assert_eq!(ch[1].kind, docs_engine::RevKind::Delete);
+    assert_eq!(ch[1].text, " or Monday");
+    // Deleted text stays in the text until accepted.
+    assert!(
+        doc.paragraph(3)
+            .text
+            .contains("signed draft by Friday or Monday.")
+    );
+    let cs = doc.comments();
+    assert_eq!(cs.len(), 1);
+    assert_eq!(cs[0].author, "Ani");
+    assert_eq!(cs[0].text, "Check the price clause first.");
+    let anchors = doc.comment_anchors();
+    assert_eq!(anchors.len(), 1);
+    assert_eq!(anchors[0].1.start.para, 2);
+}
+
+#[test]
+fn untouched_review_content_saves_byte_for_byte() {
+    let path = corpus("minutes.docx");
+    let orig = parts(&std::fs::read(&path).unwrap());
+    let mut doc = Document::open(&path).unwrap();
+    doc.insert_text(Selection::caret(Position::new(1, 0)), "Present: ", None);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("m.docx");
+    doc.save_as(&out).unwrap();
+    let saved = parts(&std::fs::read(&out).unwrap());
+    assert_eq!(saved["word/comments.xml"], orig["word/comments.xml"]);
+    let body = text(&saved, "word/document.xml");
+    for frag in [
+        r#"<w:ins w:id="901" w:author="Citra" w:date="2026-11-10T09:00:00Z"><w:r><w:t xml:space="preserve">signed </w:t></w:r></w:ins>"#,
+        r#"<w:del w:id="902" w:author="Citra" w:date="2026-11-10T09:01:00Z"><w:r><w:delText xml:space="preserve"> or Monday</w:delText></w:r></w:del>"#,
+        r#"<w:commentRangeStart w:id="0"/>"#,
+        r#"<w:commentReference w:id="0"/>"#,
+    ] {
+        assert!(body.contains(frag), "{frag} missing in {body}");
+    }
+    let again = Document::open(&out).unwrap();
+    assert_eq!(again.changes().len(), 2);
+    assert_eq!(again.comments().len(), 1);
+}
+
+#[test]
+fn accept_and_reject_changes() {
+    let mut doc = Document::open(&corpus("minutes.docx")).unwrap();
+    // Caret inside "signed ": accept that one.
+    let p3 = doc.paragraph(3).text.clone();
+    let at = p3.find("signed").unwrap() + 2;
+    doc.accept_change(Selection::caret(Position::new(3, at)))
+        .unwrap();
+    assert_eq!(doc.changes().len(), 1);
+    assert!(doc.paragraph(3).text.contains("signed draft"));
+    // Reject the deletion: the text stays, unmarked.
+    let at = doc.paragraph(3).text.find("or Monday").unwrap();
+    doc.reject_change(Selection::caret(Position::new(3, at)))
+        .unwrap();
+    assert!(doc.changes().is_empty());
+    assert_eq!(
+        doc.paragraph(3).text,
+        "Action: Budi sends the signed draft by Friday or Monday."
+    );
+    doc.undo();
+    doc.undo();
+    assert_eq!(doc.changes().len(), 2);
+    // Accept all: the deletion goes.
+    doc.resolve_all(true, Selection::default());
+    assert!(doc.changes().is_empty());
+    assert_eq!(
+        doc.paragraph(3).text,
+        "Action: Budi sends the signed draft by Friday."
+    );
+    doc.undo();
+    // Reject all: the insertion goes.
+    doc.resolve_all(false, Selection::default());
+    assert_eq!(
+        doc.paragraph(3).text,
+        "Action: Budi sends the draft by Friday or Monday."
+    );
+    // Saved without any revision marks.
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("r.docx");
+    doc.save_as(&out).unwrap();
+    let body = text(&parts(&std::fs::read(&out).unwrap()), "word/document.xml");
+    assert!(
+        !body.contains("<w:ins ") && !body.contains("<w:del "),
+        "{body}"
+    );
+}
+
+#[test]
+fn formatting_and_paragraph_mark_changes_resolve() {
+    // A run made bold with tracking on, and an inserted paragraph mark.
+    let mut doc = Document::new();
+    doc.insert_text(Selection::default(), "one\ntwo", None);
+    let bold_change = r#"<w:rPrChange w:id="5" w:author="A" w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange>"#;
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.docx");
+        doc.save_as(&path).unwrap();
+        // Patch the saved body: bold + rPrChange on "one", an inserted mark.
+        let mut all = parts(&std::fs::read(&path).unwrap());
+        let body = text(&all, "word/document.xml")
+            .replacen(
+                "<w:p><w:r><w:t xml:space=\"preserve\">one",
+                "<w:p><w:pPr><w:rPr><w:ins w:id=\"6\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\"/></w:rPr></w:pPr><w:r><w:t xml:space=\"preserve\">one",
+                1,
+            )
+            .replacen(
+                "<w:r><w:t xml:space=\"preserve\">one</w:t></w:r>",
+                &format!("<w:r><w:rPr><w:b/>{bold_change}</w:rPr><w:t xml:space=\"preserve\">one</w:t></w:r>"),
+                1,
+            );
+        assert!(body.contains("rPrChange"), "{body}");
+        all.insert("word/document.xml".into(), body.into_bytes());
+        let mut z = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (k, v) in &all {
+            z.start_file(k.as_str(), zip::write::SimpleFileOptions::default())
+                .unwrap();
+            std::io::Write::write_all(&mut z, v).unwrap();
+        }
+        std::fs::write(&path, z.finish().unwrap().into_inner()).unwrap();
+        doc = Document::open(&path).unwrap();
+    }
+    assert!(
+        !doc.has_unsupported_content(),
+        "{:?}",
+        doc.unsupported_content()
+    );
+    assert_eq!(doc.other_changes(), 2);
+    let mut rejected = doc.clone();
+    // Accept: bold stays, the paragraphs stay apart.
+    doc.resolve_all(true, Selection::default());
+    assert_eq!(doc.other_changes(), 0);
+    assert_eq!(doc.len(), 2);
+    assert_eq!(doc.paragraph(0).runs[0].props.bold, Some(true));
+    // Reject: not bold, and the inserted mark joins the paragraphs.
+    rejected.resolve_all(false, Selection::default());
+    assert_eq!(rejected.other_changes(), 0);
+    assert_eq!(rejected.len(), 1);
+    assert_eq!(rejected.paragraph(0).text, "onetwo");
+    assert_ne!(rejected.paragraph(0).runs[0].props.bold, Some(true));
+}
+
+#[test]
+fn add_edit_and_delete_comments() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("c.docx");
+    let mut doc = Document::new();
+    doc.insert_text(Selection::default(), "Budget approved for Q4.", None);
+    let sel = Selection {
+        anchor: Position::new(0, 0),
+        head: Position::new(0, 6),
+    };
+    let id = doc
+        .add_comment(sel, "Which budget?", "Dewi Lestari")
+        .unwrap();
+    assert_eq!(doc.comments().len(), 1);
+    assert_eq!(doc.comments()[0].initials, "DL");
+    let a = doc.comment_anchors();
+    assert_eq!(a[0].0, id);
+    assert_eq!(a[0].1.start, Position::new(0, 0));
+    // The visible text is unchanged (markers are zero-width objects).
+    assert_eq!(
+        doc.paragraph(0).text.replace(docs_engine::OBJECT, ""),
+        "Budget approved for Q4."
+    );
+    doc.undo();
+    assert!(doc.comments().is_empty());
+    assert!(doc.comment_anchors().is_empty());
+    doc.redo();
+    assert_eq!(doc.comments().len(), 1);
+    assert!(doc.set_comment_text(&id, "Which budget line?", Selection::default()));
+    doc.save_as(&out).unwrap();
+    let p = parts(&std::fs::read(&out).unwrap());
+    let c = text(&p, "word/comments.xml");
+    assert!(c.contains("w:author=\"Dewi Lestari\""), "{c}");
+    assert!(c.contains("Which budget line?"));
+    assert!(text(&p, "[Content_Types].xml").contains("comments+xml"));
+    assert!(text(&p, "word/_rels/document.xml.rels").contains("relationships/comments\""));
+    let mut again = Document::open(&out).unwrap();
+    assert_eq!(again.comments()[0].text, "Which budget line?");
+    assert!(again.delete_comment(&id, Selection::default()));
+    assert!(again.comments().is_empty());
+    assert!(again.comment_anchors().is_empty());
+    assert_eq!(again.paragraph(0).text, "Budget approved for Q4.");
+    again.undo();
+    assert_eq!(again.comments().len(), 1);
+}

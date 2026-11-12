@@ -61,6 +61,19 @@ pub struct Layout {
     pub paged: PagedDocument,
     /// Per page: its header and/or footer.
     pub furniture: Vec<Vec<Placed>>,
+    /// The layout paragraphs, kept only when some text is struck through
+    /// (tracked deletions; see [`PagedDocument::strike_rules`]).
+    pub strikes: Arc<Vec<docs_layout::Paragraph>>,
+}
+
+impl Layout {
+    /// Strikethrough lines on a page.
+    pub fn strike_rules(&self, page: usize) -> Vec<docs_layout::RuleRect> {
+        if self.strikes.is_empty() {
+            return Vec::new();
+        }
+        self.paged.strike_rules(page, &self.strikes)
+    }
 }
 
 fn twips(t: u32) -> f32 {
@@ -207,6 +220,11 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         stories.push(st);
     }
     let paged = PagedDocument::paginate_sections(&lps, layouts, &blocks, &flows);
+    let strikes = if lps.iter().any(|p| !p.strikes.is_empty()) {
+        Arc::new(lps)
+    } else {
+        Arc::default()
+    };
 
     // Each page's header and footer, numbers filled in.
     let total = paged.pages.len().to_string();
@@ -247,7 +265,11 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         }
         furniture.push(placed);
     }
-    Layout { paged, furniture }
+    Layout {
+        paged,
+        furniture,
+        strikes,
+    }
 }
 
 /// The first paragraph a block holds.

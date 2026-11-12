@@ -73,6 +73,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   format: 1, i, I, a, A, restarting where the file says) on screen and in the PDF. *Add Page
   Numbers* puts "Page 1 of 9" centred in the footer; *Insert Page Number Field* adds one at the
   caret.
+- **Comments** from Word show as cards beside the pages, next to the text they're on (which is
+  highlighted); *New comment* (`Ctrl Alt M`, the toolbar's Review menu, the palette) comments on
+  the selection, and each card can be edited or deleted. Untouched comments are saved byte for
+  byte; Kantor creates `comments.xml` for a document's first comment.
+- **Tracked changes** show in the author's colour: insertions underlined, deletions struck through
+  (also in the PDF). Accept or reject the change at the caret (then go to the next), or all of
+  them, from the Review menu or the palette; Accept All / Reject All also resolve paragraph-mark
+  and formatting changes. Files with comments or tracked changes no longer have to be saved
+  under a new name; a file with track changes switched on opens normally, with a note that
+  Kantor's own edits aren't tracked.
 - **Sections:** each section keeps its own paper size, orientation and margins (a landscape
   appendix in a portrait report); next-page, continuous, odd and even section starts are laid
   out. *Insert Section Break (Next Page)* starts a new section at the caret, and Page setup (and

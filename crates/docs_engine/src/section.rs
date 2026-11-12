@@ -427,12 +427,15 @@ pub(crate) fn default_sect_pr(page: &PageGeometry) -> String {
 const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
-/// Header/footer state that undo restores as a whole.
+/// State outside the body text that undo restores as a whole: headers,
+/// footers and their settings, comments.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct HfState {
     pub stories: Vec<Story>,
     pub body_sect: Option<String>,
     pub even_odd: bool,
+    pub comments: Vec<crate::review::Comment>,
+    pub comments_modified: bool,
 }
 
 impl Document {
@@ -563,14 +566,22 @@ impl Document {
         self.stories = s.stories;
         self.body_sect = s.body_sect;
         self.even_odd = s.even_odd;
+        self.comments = s.comments;
+        self.comments_modified = s.comments_modified;
     }
 
-    fn hf_state(&self) -> HfState {
+    pub(crate) fn side_state(&self) -> HfState {
         HfState {
             stories: self.stories.clone(),
             body_sect: self.body_sect.clone(),
             even_odd: self.even_odd,
+            comments: self.comments.clone(),
+            comments_modified: self.comments_modified,
         }
+    }
+
+    fn hf_state(&self) -> HfState {
+        self.side_state()
     }
 
     /// Record a header/footer change made since `before` (and the

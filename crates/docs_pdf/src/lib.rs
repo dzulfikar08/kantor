@@ -205,11 +205,16 @@ fn add_page(
 /// Collect what every page draws. `laid` must be `doc` laid out (as
 /// [`lay_out`] or the Docs view does).
 pub fn scene(doc: &Document, laid: &Layout) -> Scene {
-    scene_of(doc, &laid.paged, &laid.furniture)
+    scene_of(doc, &laid.paged, &laid.furniture, &laid.strikes)
 }
 
 /// [`scene`] from a layout's parts.
-pub fn scene_of(doc: &Document, paged: &PagedDocument, furniture: &[Vec<Placed>]) -> Scene {
+pub fn scene_of(
+    doc: &Document,
+    paged: &PagedDocument,
+    furniture: &[Vec<Placed>],
+    strikes: &[docs_layout::Paragraph],
+) -> Scene {
     let mut pictures = HashMap::new();
     let pages = (0..paged.pages.len())
         .map(|page| {
@@ -242,6 +247,14 @@ pub fn scene_of(doc: &Document, paged: &PagedDocument, furniture: &[Vec<Placed>]
                 &mut pictures,
                 0,
             );
+            if !strikes.is_empty() {
+                out.rules.extend(
+                    paged
+                        .strike_rules(page, strikes)
+                        .into_iter()
+                        .map(|r| (r.rect, r.color)),
+                );
+            }
             out
         })
         .collect();

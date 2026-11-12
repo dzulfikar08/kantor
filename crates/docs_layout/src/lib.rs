@@ -206,6 +206,9 @@ pub struct Paragraph {
     pub page_break_before: bool,
     /// BCP 47 language, used for shaping and line breaking.
     pub locale: Option<String>,
+    /// Byte ranges drawn struck through (tracked deletions): see
+    /// [`PagedDocument::strike_rules`].
+    pub strikes: Vec<Range<usize>>,
 }
 
 impl Paragraph {
@@ -227,6 +230,7 @@ impl Paragraph {
             objects: Vec::new(),
             page_break_before: false,
             locale: None,
+            strikes: Vec::new(),
         }
     }
 
@@ -1154,6 +1158,43 @@ impl PagedDocument {
         out
     }
 
+    /// Strikethrough lines on a page for the paragraphs' `strikes`
+    /// (`paras` are the paragraphs the document was laid out from), in the
+    /// text's colour, ready to fill.
+    pub fn strike_rules(&self, page: usize, paras: &[Paragraph]) -> Vec<RuleRect> {
+        let mut out = Vec::new();
+        if !paras.iter().any(|p| !p.strikes.is_empty()) {
+            return out;
+        }
+        for run in self.glyph_runs(page) {
+            if run.source != RunSource::Text {
+                continue;
+            }
+            let Some(p) = paras.get(run.para) else {
+                continue;
+            };
+            for s in &p.strikes {
+                let mut x0 = f32::MAX;
+                let mut x1 = f32::MIN;
+                for g in &run.glyphs {
+                    if g.cluster.start >= s.start && g.cluster.end <= s.end {
+                        x0 = x0.min(g.x);
+                        x1 = x1.max(g.x + g.advance);
+                    }
+                }
+                if x1 > x0 {
+                    let thick = (run.font_size / 16.0).max(1.0);
+                    let y = run.baseline - run.font_size * 0.28 - thick / 2.0;
+                    out.push(RuleRect {
+                        rect: [x0, y, x1 - x0, thick],
+                        color: run.color,
+                    });
+                }
+            }
+        }
+        out
+    }
+
     /// Object boxes on a page.
     pub fn objects(&self, page: usize) -> Vec<PlacedObject> {
         let mut out = Vec::new();
@@ -1573,6 +1614,25 @@ pub mod sample {
 #[cfg(test)]
 mod section_tests {
     use super::*;
+
+    #[test]
+    fn strikes_become_rules_over_their_glyphs() {
+        let mut engine = Engine::new();
+        let mut p = Paragraph::new("keep gone keep");
+        p.strikes.push(5..9);
+        let doc = engine.layout_document(std::slice::from_ref(&p), PageSetup::a4());
+        let rules = doc.strike_rules(0, std::slice::from_ref(&p));
+        assert_eq!(rules.len(), 1);
+        let caret = |i| doc.caret(0, i).unwrap().x;
+        let [x, _, w, h] = rules[0].rect;
+        assert!((x - caret(5)).abs() < 1.0, "{x} vs {}", caret(5));
+        assert!((x + w - caret(9)).abs() < 1.0);
+        assert!(h >= 1.0);
+        assert!(
+            doc.strike_rules(0, &[Paragraph::new("keep gone keep")])
+                .is_empty()
+        );
+    }
 
     #[test]
     fn sections_start_new_pages_with_their_own_size() {

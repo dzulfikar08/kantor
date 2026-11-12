@@ -208,6 +208,9 @@ pub struct Document {
     pub(crate) stories: Vec<Story>,
     /// Different odd and even page headers (settings.xml).
     pub(crate) even_odd: bool,
+    /// Comments (`comments.xml`) and whether Kantor changed them.
+    pub(crate) comments: Vec<crate::review::Comment>,
+    pub(crate) comments_modified: bool,
     history: History,
 }
 
@@ -235,6 +238,8 @@ impl Document {
             body_sect: None,
             stories: Vec::new(),
             even_odd: false,
+            comments: Vec::new(),
+            comments_modified: false,
             history: History::default(),
         }
     }
@@ -279,6 +284,8 @@ impl Document {
             body_sect,
             stories: read.stories,
             even_odd: read.even_odd,
+            comments: read.comments,
+            comments_modified: false,
             history: History::default(),
         }
     }
@@ -663,6 +670,13 @@ impl Document {
             },
             word_boundary,
         );
+    }
+
+    /// Give the step on top of the undo stack side state to restore.
+    pub(crate) fn set_last_side(&mut self, before: HfState, after: HfState) {
+        if let Some(c) = self.history.undo.last_mut() {
+            c.hf = Some(Box::new((before, after)));
+        }
     }
 
     /// Record a step that replaced paragraphs `start..start + old.len()`
@@ -1146,6 +1160,7 @@ impl Document {
         self.new_media.retain(|m| !pkg.has_rel(&m.rel_id));
         self.numbering.added_abstracts.clear();
         self.numbering.added_nums.clear();
+        self.comments_modified = false;
         // Written stories are in the package now.
         for st in &mut self.stories {
             st.modified = false;

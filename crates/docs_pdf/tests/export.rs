@@ -301,3 +301,28 @@ fn new_footer_with_page_numbers_round_trips_into_the_pdf() {
         assert!(text.contains(&format!("Halaman {n} dari {n}")), "{text}");
     }
 }
+
+#[test]
+fn tracked_changes_print_with_markup() {
+    let doc = Document::open(&corpus("minutes.docx")).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    // " or Monday" is struck through: one rule in the author's colour.
+    let strikes = laid.strike_rules(0);
+    assert_eq!(strikes.len(), 1, "{strikes:?}");
+    let colour = docs_pdf::build::author_color("Citra");
+    assert_eq!(strikes[0].color, colour);
+    let scene = docs_pdf::scene(&doc, &laid);
+    assert!(scene.pages[0].rules.iter().any(|(_, c)| *c == colour));
+    // The inserted and deleted text are both in the PDF, in that colour.
+    let pdf = docs_pdf::write(&scene).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    if let Some(text) = pdftotext(&pdf, dir.path()) {
+        assert!(text.contains("signed draft by Friday or Monday."), "{text}");
+    }
+    // After Accept All the PDF has no markup left.
+    let mut doc = doc;
+    doc.resolve_all(true, Selection::default());
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    assert!(laid.strike_rules(0).is_empty());
+}

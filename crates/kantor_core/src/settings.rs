@@ -25,6 +25,19 @@ pub struct Settings {
     pub update: UpdateSettings,
     /// Saving documents by itself (recovery copies are always on).
     pub autosave: AutosaveSettings,
+    /// Name written on comments added in Docs (`author = "…"`); unset uses
+    /// the account's full name, then the user name.
+    pub author: Option<String>,
+}
+
+impl Settings {
+    /// The name for comments: `author`, else the account's name.
+    pub fn author_name(&self) -> String {
+        self.author
+            .clone()
+            .filter(|a| !a.trim().is_empty())
+            .unwrap_or_else(crate::dirs::user_full_name)
+    }
 }
 
 /// `[autosave]`: off by default. Recovery copies already protect against
@@ -113,6 +126,7 @@ impl Default for Settings {
             ai: AiSettings::default(),
             update: UpdateSettings::default(),
             autosave: AutosaveSettings::default(),
+            author: None,
         }
     }
 }
@@ -195,7 +209,9 @@ mod tests {
                 enabled: true,
                 idle_seconds: 60,
             },
+            author: Some("Dewi Lestari".into()),
         };
+        assert_eq!(s.author_name(), "Dewi Lestari");
         s.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), s);
 
