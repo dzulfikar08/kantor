@@ -69,7 +69,7 @@ export const en = {
     docs: {
       name: "Docs",
       formats: [".docx"],
-      text: "Letters and reports with headings, lists, tables, pictures and page sizes such as A4, Letter and F4. Find and replace, and a word count.",
+      text: "Letters and reports with headings, lists, tables, pictures, headers and footers with page numbers, and page sizes such as A4, Letter and F4, landscape pages too. Find and replace, and a word count.",
     },
     slides: {
       name: "Slides",
@@ -173,7 +173,7 @@ export const en = {
   limits: [
     "Printing goes through your PDF viewer: Kantor makes the pages and the viewer sends them to the printer.",
     "No spell check yet.",
-    "Word: headers, footers, floating pictures, shapes and equations aren't shown properly yet. Kantor keeps them and saves them unchanged.",
+    "Word: floating pictures, shapes and equations aren't shown properly yet, and headers and footers with pictures or tables can't be edited. Kantor keeps them and saves them unchanged.",
     "Word: table rows don't break across pages, and tab stops show as a single space.",
     "Word files with tracked changes or comments are saved as a new file, so the original stays as it was.",
     "Excel: conditional formatting is shown but can't be edited, and new tables can't be created yet.",
@@ -259,7 +259,7 @@ export const id = {
     docs: {
       name: "Docs",
       formats: [".docx"],
-      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, dan ukuran kertas seperti A4, Letter, dan F4. Ada cari dan ganti, juga penghitung kata.",
+      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, header dan footer dengan nomor halaman, serta ukuran kertas seperti A4, Letter, dan F4, termasuk halaman lanskap. Ada cari dan ganti, juga penghitung kata.",
     },
     slides: {
       name: "Slides",
@@ -362,7 +362,7 @@ export const id = {
   limits: [
     "Pencetakan lewat penampil PDF: Kantor menyiapkan halamannya, lalu penampil PDF mengirimnya ke printer.",
     "Belum ada pemeriksa ejaan.",
-    "Word: header, footer, gambar mengambang, bentuk, dan persamaan belum tampil dengan benar. Kantor menyimpannya tanpa diubah.",
+    "Word: gambar mengambang, bentuk, dan persamaan belum tampil dengan benar, dan header atau footer yang berisi gambar atau tabel belum bisa diedit. Kantor menyimpannya tanpa diubah.",
     "Word: baris tabel tidak terpotong ke halaman berikutnya, dan tab tampil sebagai satu spasi.",
     "File Word dengan lacak perubahan (track changes) atau komentar disimpan sebagai file baru, jadi file aslinya tetap utuh.",
     "Excel: format bersyarat tampil tetapi belum bisa diubah, dan tabel baru belum bisa dibuat.",

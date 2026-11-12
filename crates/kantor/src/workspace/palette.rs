@@ -1016,6 +1016,36 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.toggle_page_menu(None, w, cx)),
     },
     Command {
+        title: "Header and Footer…",
+        detail: "Docs · text, page numbers, different first page, odd and even pages",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.open_hf_menu(docs_engine::HfKind::Header, None, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Add Page Numbers",
+        detail: "Docs · \"Page 1 of 9\" centred in the footer",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.add_page_numbers_doc(w, cx)),
+    },
+    Command {
+        title: "Insert Page Number Field",
+        detail: "Docs · the page number at the caret",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.insert_page_number_doc(w, cx)),
+    },
+    Command {
+        title: "Insert Section Break (Next Page)",
+        detail: "Docs · a new section with its own page setup, headers and footers",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| v.insert_section_break_doc(w, cx))
+        },
+    },
+    Command {
         title: "Paper Size: A4",
         detail: "Docs · page size, 21 × 29.7 cm",
         keys: "",

@@ -21,9 +21,13 @@ pub fn rgba(c: docs_engine::Rgb) -> Rgba {
     Rgba([r, g, b, 255])
 }
 
-/// Page size and margins from the document's section properties.
+/// Page size and margins from the document's (last section's) properties.
 pub fn page_setup(doc: &Document) -> PageSetup {
-    let g = doc.page;
+    geometry_setup(&doc.page)
+}
+
+/// Page size and margins in px.
+pub fn geometry_setup(g: &docs_engine::PageGeometry) -> PageSetup {
     PageSetup {
         width: tw(g.width),
         height: tw(g.height),
@@ -168,19 +172,20 @@ fn rule(b: Option<docs_engine::Border>) -> Option<Rule> {
 }
 
 /// The table block for table `id`, whose paragraphs are `range`.
-fn table_block(doc: &Document, id: u32, range: std::ops::Range<usize>) -> Option<TableBlock> {
+fn table_block(
+    doc: &Document,
+    paras: &[docs_engine::Paragraph],
+    id: u32,
+    range: std::ops::Range<usize>,
+    content_tw: u32,
+) -> Option<TableBlock> {
     let t = doc.table(id)?;
     let style = doc.styles.table_style(t.style.as_deref());
     let mut tb = style.borders;
     tb.overlay(&t.borders);
     let m = t.cell_margins.or(style.cell_margins).unwrap_or_default();
-    let columns: Vec<f32> = t
-        .column_widths(doc.content_width())
-        .into_iter()
-        .map(tw)
-        .collect();
+    let columns: Vec<f32> = t.column_widths(content_tw).into_iter().map(tw).collect();
     let ncols = columns.len();
-    let paras = doc.paragraphs();
     let mut rows = Vec::with_capacity(t.rows.len());
     for (ri, row) in t.rows.iter().enumerate() {
         let mut cells = Vec::with_capacity(row.cells.len());
@@ -259,20 +264,45 @@ fn table_block(doc: &Document, id: u32, range: std::ops::Range<usize>) -> Option
 }
 
 /// Everything layout needs: paragraphs, the width each is broken at, and
-/// the block structure.
+/// the block structure. Each paragraph is broken at its section's text
+/// width.
 pub fn build(doc: &Document) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
-    let setup = page_setup(doc);
-    let body_w = setup.content_width();
-    let paras = doc.paragraphs();
+    let sections = doc.sections();
+    let widths: Vec<u32> = sections
+        .iter()
+        .map(|s| {
+            let g = s.props.page;
+            g.width
+                .saturating_sub(g.margin_left + g.margin_right)
+                .max(1440)
+        })
+        .collect();
+    let section_of = |i: usize| {
+        sections
+            .iter()
+            .position(|s| i < s.paras.end)
+            .unwrap_or(sections.len() - 1)
+    };
+    build_with(doc, doc.paragraphs(), &|i| widths[section_of(i)])
+}
+
+/// [`build`] over `paras` (the document's paragraphs, or a header's with
+/// page numbers filled in), `content_tw(i)` giving paragraph `i`'s text
+/// width in twips.
+pub fn build_with(
+    doc: &Document,
+    paras: &[docs_engine::Paragraph],
+    content_tw: &dyn Fn(usize) -> u32,
+) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
     let markers = doc.list_markers();
-    let mut widths = vec![body_w; paras.len()];
+    let mut widths: Vec<f32> = (0..paras.len()).map(|i| tw(content_tw(i))).collect();
     let mut blocks = Vec::new();
     let mut i = 0;
     while i < paras.len() {
         let table = paras[i].cell.map(|c| c.table);
-        match table.map(|id| (id, doc.table_range(id))) {
+        match table.map(|id| (id, table_range(paras, id))) {
             Some((id, range)) if range.start == i && !range.is_empty() => {
-                match table_block(doc, id, range.clone()) {
+                match table_block(doc, paras, id, range.clone(), content_tw(i)) {
                     Some(tb) => {
                         for row in &tb.rows {
                             for cell in &row.cells {
@@ -301,7 +331,10 @@ pub fn build(doc: &Document) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Bloc
     let mut out: Vec<docs_layout::Paragraph> = paras
         .iter()
         .enumerate()
-        .map(|(k, p)| layout_paragraph(doc, p, markers[k].as_deref(), widths[k]))
+        .map(|(k, p)| {
+            let marker = markers.get(k).and_then(|m| m.as_deref());
+            layout_paragraph(doc, p, marker, widths[k])
+        })
         .collect();
     // Contextual spacing: no space between paragraphs of the same style.
     for k in 0..paras.len() {
@@ -321,6 +354,23 @@ pub fn build(doc: &Document) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Bloc
         }
     }
     (out, widths, blocks)
+}
+
+/// Paragraph index range of table `id` in `paras`.
+fn table_range(paras: &[docs_engine::Paragraph], id: u32) -> std::ops::Range<usize> {
+    let start = paras
+        .iter()
+        .position(|p| p.cell.is_some_and(|c| c.table == id));
+    match start {
+        Some(s) => {
+            let len = paras[s..]
+                .iter()
+                .take_while(|p| p.cell.is_some_and(|c| c.table == id))
+                .count();
+            s..s + len
+        }
+        None => 0..0,
+    }
 }
 
 #[cfg(test)]

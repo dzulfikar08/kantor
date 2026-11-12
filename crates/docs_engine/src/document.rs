@@ -18,6 +18,7 @@ use std::sync::Arc;
 use crate::docx::{self, Media, Package};
 use crate::model::*;
 use crate::numbering::{LevelDef, Numbering};
+use crate::section::{HfState, Story};
 use crate::style::{ResolvedPara, ResolvedRun, StyleSheet};
 use crate::table::{Table, Tables};
 
@@ -83,9 +84,11 @@ struct Command {
     tables: Option<Box<(Tables, Tables)>>,
     /// Page setup before / after (page setup changes only).
     page: Option<(PageGeometry, PageGeometry)>,
+    /// Headers, footers and their settings before / after.
+    hf: Option<Box<(HfState, HfState)>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct History {
     undo: Vec<Command>,
     redo: Vec<Command>,
@@ -118,6 +121,8 @@ impl History {
             && last.tables.is_none()
             && cmd.page.is_none()
             && last.page.is_none()
+            && cmd.hf.is_none()
+            && last.hf.is_none()
             && Some(last.id) != self.saved
             && last.start == cmd.start
             && last.new.len() == 1
@@ -175,6 +180,7 @@ impl Toggle {
     }
 }
 
+#[derive(Clone)]
 pub struct Document {
     pub(crate) paragraphs: Vec<Paragraph>,
     pub(crate) tables: Tables,
@@ -194,6 +200,14 @@ pub struct Document {
     unsupported: Vec<String>,
     /// Content kept verbatim but only shown as a placeholder.
     preserved: Vec<String>,
+    /// The body's final `w:sectPr` (the last section's settings other than
+    /// size and margins, which are [`Self::page`]); `None` for new
+    /// documents until headers or footers are added.
+    pub(crate) body_sect: Option<String>,
+    /// Header and footer parts.
+    pub(crate) stories: Vec<Story>,
+    /// Different odd and even page headers (settings.xml).
+    pub(crate) even_odd: bool,
     history: History,
 }
 
@@ -218,6 +232,9 @@ impl Document {
             new_media: Vec::new(),
             unsupported: Vec::new(),
             preserved: Vec::new(),
+            body_sect: None,
+            stories: Vec::new(),
+            even_odd: false,
             history: History::default(),
         }
     }
@@ -242,6 +259,7 @@ impl Document {
 
     /// A document from read `.docx` contents.
     pub fn from_read(read: docx::Read, path: Option<PathBuf>) -> Self {
+        let body_sect = read.package.sect_pr.clone();
         Self {
             paragraphs: if read.paragraphs.is_empty() {
                 vec![Paragraph::default()]
@@ -258,6 +276,9 @@ impl Document {
             new_media: Vec::new(),
             unsupported: read.unsupported,
             preserved: read.preserved,
+            body_sect,
+            stories: read.stories,
+            even_odd: read.even_odd,
             history: History::default(),
         }
     }
@@ -638,8 +659,36 @@ impl Document {
                 kind,
                 tables,
                 page: None,
+                hf: None,
             },
             word_boundary,
+        );
+    }
+
+    /// Record a step that replaced paragraphs `start..start + old.len()`
+    /// with `new` (already applied) and changed headers/footers.
+    pub(crate) fn push_command(
+        &mut self,
+        start: usize,
+        old: Vec<Paragraph>,
+        new: Vec<Paragraph>,
+        sel: Selection,
+        hf: Option<Box<(HfState, HfState)>>,
+    ) {
+        self.history.push(
+            Command {
+                id: 0,
+                start,
+                old,
+                new,
+                before: sel,
+                after: sel,
+                kind: Kind::Other,
+                tables: None,
+                page: None,
+                hf,
+            },
+            true,
         );
     }
 
@@ -976,6 +1025,7 @@ impl Document {
                 kind: Kind::Other,
                 tables: None,
                 page: Some((old, page)),
+                hf: None,
             },
             true,
         );
@@ -1018,6 +1068,9 @@ impl Document {
         if let Some((old, _)) = cmd.page {
             self.page = old;
         }
+        if let Some(hf) = &cmd.hf {
+            self.set_hf_state(hf.0.clone());
+        }
         let sel = cmd.before;
         self.history.redo.push(cmd);
         Some(self.clamp_selection(sel))
@@ -1035,6 +1088,9 @@ impl Document {
         }
         if let Some((_, new)) = cmd.page {
             self.page = new;
+        }
+        if let Some(hf) = &cmd.hf {
+            self.set_hf_state(hf.1.clone());
         }
         let sel = cmd.after;
         self.history.undo.push(cmd);
@@ -1090,6 +1146,12 @@ impl Document {
         self.new_media.retain(|m| !pkg.has_rel(&m.rel_id));
         self.numbering.added_abstracts.clear();
         self.numbering.added_nums.clear();
+        // Written stories are in the package now.
+        for st in &mut self.stories {
+            st.modified = false;
+            st.new = false;
+        }
+        self.body_sect = self.package.as_ref().and_then(|p| p.sect_pr.clone());
         self.history.saved = self.history.top();
         Ok(())
     }

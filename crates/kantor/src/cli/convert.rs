@@ -350,16 +350,10 @@ fn docx_to_pdf(
     let doc = docs_engine::Document::open(input).context("can't open the document")?;
     // The font scan happens once, for the first document.
     let engine = engine.get_or_insert_with(docs_pdf::Engine::new);
-    let paged = docs_pdf::lay_out(&doc, engine);
-    let bytes = docs_pdf::write(&docs_pdf::scene(&doc, &paged))?;
+    let laid = docs_pdf::lay_out(&doc, engine);
+    let bytes = docs_pdf::write(&docs_pdf::scene(&doc, &laid))?;
     docs_pdf::write_file(output, &bytes)?;
-    if doc.preserved_content().iter().any(|c| c.contains("header")) {
-        eprintln!(
-            "kantor convert: note: {}: headers and footers are not in the PDF yet",
-            input.display()
-        );
-    }
-    let pages = paged.pages.len().max(1);
+    let pages = laid.paged.pages.len().max(1);
     Ok(format!(
         "{pages} page{}, {}",
         if pages == 1 { "" } else { "s" },

@@ -60,6 +60,24 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   repeats the layout chosen last. `kantor convert --notes deck.pptx notes.pdf` and
   `--handouts N` do the same without a window.
 
+#### Docs
+- **Headers and footers** are shown on every page and printed: the file's own parts, with Word's
+  rules for "different first page", "different odd and even pages" and "Link to Previous"
+  between sections; a header or footer taller than its margin pushes the text in. Pictures in
+  them (letterhead logos) are drawn too. Edit them with the toolbar's header button, *Ctrl K →
+  Header and Footer…* or a double-click in a page's top or bottom margin: the text of each
+  header/footer the section uses, alignment, page number and page count buttons, and the two
+  options. Kantor writes back only the parts you changed (plus `settings.xml` for odd and even
+  pages), so other headers stay byte for byte.
+- **Page numbers:** `PAGE` and `NUMPAGES` fields show each page's number (in the section's
+  format: 1, i, I, a, A, restarting where the file says) on screen and in the PDF. *Add Page
+  Numbers* puts "Page 1 of 9" centred in the footer; *Insert Page Number Field* adds one at the
+  caret.
+- **Sections:** each section keeps its own paper size, orientation and margins (a landscape
+  appendix in a portrait report); next-page, continuous, odd and even section starts are laid
+  out. *Insert Section Break (Next Page)* starts a new section at the caret, and Page setup (and
+  the ruler's margins) change the caret's section. The PDF has each page at its own size.
+
 #### Sheets
 - **Frozen rows stay put** while the sheet scrolls, like frozen columns already did: the frozen rows
   (and the top-left corner when rows and columns are both frozen) are pinned under the column

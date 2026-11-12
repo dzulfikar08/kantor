@@ -89,8 +89,9 @@ fn report_exports_with_text_fonts_rules_and_picture() {
     let dir = tempfile::tempdir().unwrap();
     let doc = report(dir.path(), true, 0);
     let mut engine = Engine::new();
-    let paged = docs_pdf::lay_out(&doc, &mut engine);
-    let scene = docs_pdf::scene(&doc, &paged);
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let paged = &laid.paged;
+    let scene = docs_pdf::scene(&doc, &laid);
     let pdf = docs_pdf::write(&scene).unwrap();
 
     assert!(pdf.starts_with(b"%PDF-"), "PDF header");
@@ -146,7 +147,8 @@ fn page_count_matches_layout_and_page_size_follows_document() {
         Selection::default(),
     );
     let mut engine = Engine::new();
-    let paged = docs_pdf::lay_out(&doc, &mut engine);
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let paged = &laid.paged;
     assert!(paged.pages.len() > 2, "{} pages", paged.pages.len());
     let pdf = docs_pdf::export(&doc, &mut engine).unwrap();
     assert_eq!(page_count(&pdf), paged.pages.len());
@@ -173,10 +175,129 @@ fn a_picture_that_does_not_decode_is_left_out() {
     let c = doc.insert_text(Selection::default(), "Lihat ", None);
     doc.insert_image(c, fake, "rusak.png").unwrap();
     let mut engine = Engine::new();
-    let paged = docs_pdf::lay_out(&doc, &mut engine);
-    let scene = docs_pdf::scene(&doc, &paged);
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let scene = docs_pdf::scene(&doc, &laid);
     assert_eq!(scene.pages[0].pictures.len(), 1);
     let pdf = docs_pdf::write(&scene).unwrap();
     assert_eq!(page_count(&pdf), 1);
     assert_eq!(count(&pdf, b"/Subtype/Image"), 0);
+}
+
+fn corpus(name: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/docx")
+        .join(name)
+}
+
+/// pdftotext's text of a PDF, when poppler is installed.
+fn pdftotext(pdf: &[u8], dir: &std::path::Path) -> Option<String> {
+    let file = dir.join("out.pdf");
+    std::fs::write(&file, pdf).unwrap();
+    let out = std::process::Command::new("pdftotext")
+        .arg("-layout")
+        .arg(&file)
+        .arg("-")
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+#[test]
+fn headers_footers_and_sections_are_in_the_pdf() {
+    let doc = Document::open(&corpus("report.docx")).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let n = laid.paged.pages.len();
+    assert!(n >= 4, "{n} pages");
+    // The landscape section's page is landscape.
+    let sizes: Vec<(f32, f32)> = (0..n)
+        .map(|i| {
+            let s = laid.paged.page_setup(i);
+            (s.width, s.height)
+        })
+        .collect();
+    assert!(sizes.iter().any(|(w, h)| w > h), "{sizes:?}");
+    assert!(sizes[0].0 < sizes[0].1);
+    // First page: the first-page header, no footer (none defined).
+    let kinds = |i: usize| laid.furniture[i].iter().map(|p| p.kind).collect::<Vec<_>>();
+    assert_eq!(kinds(0), [docs_engine::HfKind::Header]);
+    assert_eq!(laid.furniture[0][0].layout.text(0), "CONFIDENTIAL");
+    // Page 2: header and footer with its number.
+    assert_eq!(kinds(1).len(), 2);
+    let footer = &laid.furniture[1][1].layout;
+    assert_eq!(footer.text(0), format!("Page 2 of {n}"));
+    // Body text starts below the header.
+    let top = laid.paged.pages[1].lines[0].top;
+    let header = &laid.furniture[1][0];
+    assert!(top >= header.y + header.layout.height - 0.5);
+
+    let scene = docs_pdf::scene(&doc, &laid);
+    let pdf = docs_pdf::write(&scene).unwrap();
+    assert_eq!(page_count(&pdf), n);
+    // Mixed page sizes: A4 portrait and landscape.
+    assert!(find(&pdf, b"/MediaBox[0 0 595.").is_some());
+    assert!(find(&pdf, b"/MediaBox[0 0 841.").is_some());
+    let dir = tempfile::tempdir().unwrap();
+    if let Some(text) = pdftotext(&pdf, dir.path()) {
+        assert!(text.contains("CONFIDENTIAL"), "{text}");
+        assert!(text.contains("Quarterly Operations Report"), "{text}");
+        assert!(text.contains(&format!("Page 2 of {n}")), "{text}");
+        assert!(text.contains(&format!("Page 3 of {n}")), "{text}");
+    }
+}
+
+#[test]
+fn odd_and_even_footers_alternate() {
+    let doc = Document::open(&corpus("letter.docx")).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    assert!(laid.paged.pages.len() >= 2);
+    let footer = |i: usize| {
+        laid.furniture[i]
+            .iter()
+            .find(|p| p.kind == docs_engine::HfKind::Footer)
+            .map(|p| p.layout.text(0).to_owned())
+    };
+    assert_eq!(footer(0).as_deref(), Some("odd footer"));
+    assert_eq!(footer(1).as_deref(), Some("even footer"));
+    // No even header: page 2 has none.
+    assert!(
+        !laid.furniture[1]
+            .iter()
+            .any(|p| p.kind == docs_engine::HfKind::Header)
+    );
+}
+
+#[test]
+fn new_footer_with_page_numbers_round_trips_into_the_pdf() {
+    let mut doc = Document::new();
+    let mut c = Selection::default();
+    for i in 0..60 {
+        c = doc.insert_text(
+            c,
+            &format!("Paragraph number {i} of the long document.\n"),
+            None,
+        );
+    }
+    assert!(doc.set_hf_text(
+        0,
+        docs_engine::HfKind::Footer,
+        docs_engine::HfType::Default,
+        "Halaman {PAGE} dari {PAGES}",
+        Some(docs_engine::Align::Right),
+        Selection::default(),
+    ));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("n.docx");
+    doc.save_as(&path).unwrap();
+    let doc = Document::open(&path).unwrap();
+    let pdf = docs_pdf::export(&doc, &mut Engine::new()).unwrap();
+    let n = page_count(&pdf);
+    assert!(n >= 2);
+    if let Some(text) = pdftotext(&pdf, dir.path()) {
+        assert!(text.contains(&format!("Halaman 1 dari {n}")), "{text}");
+        assert!(text.contains(&format!("Halaman {n} dari {n}")), "{text}");
+    }
 }

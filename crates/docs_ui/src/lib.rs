@@ -23,6 +23,7 @@ mod agent;
 mod ai;
 mod find;
 pub mod font_bridge;
+mod hf_menu;
 mod input;
 mod page_menu;
 mod ruler;
@@ -42,7 +43,6 @@ use docs_engine::{
 use docs_layout::{
     Engine, ObjectKind, PageSetup, PagedDocument, ParaLayout, PlacedObject, RunSource,
 };
-use docs_pdf::build as blocks;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -285,22 +285,55 @@ pub struct DocInfo {
 }
 
 /// The laid-out document plus the source text of each paragraph (font
-/// bridge samples).
+/// bridge samples), each page's header and footer, and where pages sit.
 struct Laid {
     paged: PagedDocument,
     texts: Vec<String>,
+    furniture: Vec<Vec<docs_pdf::Placed>>,
+    boxes: Rc<PageBoxes>,
 }
 
-/// Where pages sit in the view. Document space is unzoomed page px; page
-/// `i` starts at `PAGE_GAP + i * (height + PAGE_GAP)`.
-#[derive(Clone, Copy, Debug)]
+/// Page sizes and their stacking: page `i`'s top is `tops[i]` in document
+/// space (unzoomed page px); pages are centred on the widest one.
+#[derive(Debug, Default)]
+struct PageBoxes {
+    tops: Vec<f32>,
+    sizes: Vec<(f32, f32)>,
+    max_w: f32,
+}
+
+impl PageBoxes {
+    fn new(sizes: Vec<(f32, f32)>) -> Self {
+        let mut tops = Vec::with_capacity(sizes.len());
+        let mut y = PAGE_GAP;
+        for &(_, h) in &sizes {
+            tops.push(y);
+            y += h + PAGE_GAP;
+        }
+        let max_w = sizes.iter().map(|s| s.0).fold(0.0, f32::max);
+        Self { tops, sizes, max_w }
+    }
+
+    fn of(paged: &PagedDocument) -> Self {
+        Self::new(
+            (0..paged.pages.len())
+                .map(|i| {
+                    let s = paged.page_setup(i);
+                    (s.width, s.height)
+                })
+                .collect(),
+        )
+    }
+}
+
+/// Where pages sit in the view. Document space is unzoomed page px.
+#[derive(Clone, Debug)]
 struct Geometry {
     origin: Point<Pixels>,
     size: Size<Pixels>,
     zoom: f32,
     scroll: Point<f32>,
-    page_w: f32,
-    page_h: f32,
+    boxes: Rc<PageBoxes>,
 }
 
 impl Geometry {
@@ -312,48 +345,80 @@ impl Geometry {
         f32::from(self.size.height) / self.zoom
     }
 
-    /// Left edge of the pages in document space (centred when they fit).
-    fn page_x(&self) -> f32 {
-        ((self.view_w() - self.page_w) / 2.0).max(PAGE_GAP)
+    fn page_size(&self, page: usize) -> (f32, f32) {
+        self.boxes
+            .sizes
+            .get(page)
+            .copied()
+            .unwrap_or((self.boxes.max_w, 0.0))
+    }
+
+    /// Left edge of a page in document space (pages centred when they
+    /// fit, else on the widest page).
+    fn page_x(&self, page: usize) -> f32 {
+        let w = self.page_size(page).0;
+        if self.view_w() >= self.content_w() {
+            (self.view_w() - w) / 2.0
+        } else {
+            PAGE_GAP + (self.boxes.max_w - w) / 2.0
+        }
     }
 
     fn page_top(&self, page: usize) -> f32 {
-        PAGE_GAP + page as f32 * (self.page_h + PAGE_GAP)
+        match self.boxes.tops.get(page) {
+            Some(t) => *t,
+            None => self.content_h(),
+        }
     }
 
     fn content_w(&self) -> f32 {
-        self.page_w + 2.0 * PAGE_GAP
+        self.boxes.max_w + 2.0 * PAGE_GAP
     }
 
-    fn content_h(&self, pages: usize) -> f32 {
-        PAGE_GAP + pages as f32 * (self.page_h + PAGE_GAP)
+    fn content_h(&self) -> f32 {
+        match (self.boxes.tops.last(), self.boxes.sizes.last()) {
+            (Some(t), Some(s)) => t + s.1 + PAGE_GAP,
+            _ => PAGE_GAP,
+        }
     }
 
-    fn page_to_screen(self, page: usize, x: f32, y: f32) -> Point<Pixels> {
+    fn page_to_screen(&self, page: usize, x: f32, y: f32) -> Point<Pixels> {
         point(
-            self.origin.x + px((self.page_x() + x - self.scroll.x) * self.zoom),
+            self.origin.x + px((self.page_x(page) + x - self.scroll.x) * self.zoom),
             self.origin.y + px((self.page_top(page) + y - self.scroll.y) * self.zoom),
         )
     }
 
-    /// A window point to `(page, x, y)` in page coordinates; points in a gap
-    /// go to the nearest page.
-    fn screen_to_page(self, p: Point<Pixels>, pages: usize) -> (usize, f32, f32) {
-        let x = f32::from(p.x - self.origin.x) / self.zoom + self.scroll.x - self.page_x();
+    /// The page at document y (points in a gap go to the nearest page).
+    fn page_at(&self, y: f32) -> usize {
+        let tops = &self.boxes.tops;
+        if tops.is_empty() {
+            return 0;
+        }
+        // The first page whose bottom (plus half the gap) is below y.
+        let i = tops.partition_point(|&t| t - PAGE_GAP / 2.0 <= y);
+        i.saturating_sub(1).min(tops.len() - 1)
+    }
+
+    /// A window point to `(page, x, y)` in page coordinates.
+    fn screen_to_page(&self, p: Point<Pixels>, pages: usize) -> (usize, f32, f32) {
+        let doc_x = f32::from(p.x - self.origin.x) / self.zoom + self.scroll.x;
         let y = f32::from(p.y - self.origin.y) / self.zoom + self.scroll.y;
-        let pitch = self.page_h + PAGE_GAP;
-        let page = (((y - PAGE_GAP + PAGE_GAP / 2.0) / pitch).floor().max(0.0) as usize)
-            .min(pages.saturating_sub(1));
-        let py = (y - self.page_top(page)).clamp(0.0, self.page_h);
+        let page = self.page_at(y).min(pages.saturating_sub(1));
+        let x = doc_x - self.page_x(page);
+        let py = (y - self.page_top(page)).clamp(0.0, self.page_size(page).1);
         (page, x, py)
     }
 
     /// Pages that intersect the view.
     fn visible_pages(&self, pages: usize) -> Range<usize> {
-        let pitch = self.page_h + PAGE_GAP;
-        let first = ((self.scroll.y - PAGE_GAP) / pitch).floor().max(0.0) as usize;
-        let last = ((self.scroll.y + self.view_h()) / pitch).ceil().max(0.0) as usize + 1;
-        first.min(pages)..last.min(pages)
+        let n = pages.min(self.boxes.tops.len());
+        if n == 0 {
+            return 0..0;
+        }
+        let first = self.page_at(self.scroll.y);
+        let last = self.page_at(self.scroll.y + self.view_h()) + 1;
+        first.min(n)..last.min(n)
     }
 }
 
@@ -384,6 +449,9 @@ pub struct DocsView {
     /// (so that click on the toolbar control doesn't reopen it).
     page_menu: Option<page_menu::PageMenu>,
     page_menu_closed: Option<std::time::Instant>,
+    /// The header/footer popover, as the Page one.
+    hf_menu: Option<hf_menu::HfMenu>,
+    hf_menu_closed: Option<std::time::Instant>,
     /// A margin or indent being dragged on the ruler.
     ruler_drag: Option<ruler::Drag>,
     engine: Rc<RefCell<Engine>>,
@@ -472,12 +540,16 @@ impl DocsView {
             laid: Rc::new(Laid {
                 paged: PagedDocument::paginate(&[], Vec::new(), PageSetup::a4()),
                 texts: Vec::new(),
+                furniture: Vec::new(),
+                boxes: Rc::default(),
             }),
             cache: HashMap::new(),
             images: HashMap::new(),
             table_picker: None,
             page_menu: None,
             page_menu_closed: None,
+            hf_menu: None,
+            hf_menu_closed: None,
             ruler_drag: None,
             engine,
             bridge,
@@ -501,50 +573,48 @@ impl DocsView {
 
     /// Lay out the document again, reusing cached paragraph layouts.
     fn relayout(&mut self) {
-        let setup = blocks::page_setup(&self.doc);
-        let (paras, widths, blocks) = blocks::build(&self.doc);
         let mut engine = self.engine.borrow_mut();
-        let mut fresh = HashMap::with_capacity(paras.len());
-        let layouts = paras
-            .iter()
-            .zip(&widths)
-            .map(|(p, &width)| {
-                let key = layout_key(p, width);
-                let layout = match self.cache.get(&key) {
-                    Some(l) => l.clone(),
-                    None => Arc::new(engine.layout_paragraph(p, width)),
-                };
-                fresh.insert(key, layout.clone());
-                layout
-            })
-            .collect();
+        let mut fresh = HashMap::with_capacity(self.doc.len());
+        let cache = &self.cache;
+        let laid = docs_pdf::lay_out_with(&self.doc, &mut |p, width| {
+            let key = layout_key(p, width);
+            let layout = match cache.get(&key).or_else(|| fresh.get(&key)) {
+                Some(l) => l.clone(),
+                None => Arc::new(engine.layout_paragraph(p, width)),
+            };
+            fresh.insert(key, layout.clone());
+            layout
+        });
         self.cache = fresh;
-        let paged = PagedDocument::paginate_blocks(&paras, layouts, &blocks, setup);
         let texts = self
             .doc
             .paragraphs()
             .iter()
             .map(|p| p.text.clone())
             .collect();
-        self.laid = Rc::new(Laid { paged, texts });
+        let boxes = Rc::new(PageBoxes::of(&laid.paged));
+        self.laid = Rc::new(Laid {
+            paged: laid.paged,
+            texts,
+            furniture: laid.furniture,
+            boxes,
+        });
     }
 
     fn geometry(&self) -> Geometry {
         let b = self.viewport.get();
-        let s = self.laid.paged.setup;
         Geometry {
             origin: b.origin,
             size: b.size,
             zoom: self.zoom,
             scroll: self.scroll,
-            page_w: s.width,
-            page_h: s.height,
+            boxes: self.laid.boxes.clone(),
         }
     }
 
     fn clamp_scroll(&mut self) {
         let g = self.geometry();
-        let max_y = (g.content_h(self.laid.paged.pages.len()) - g.view_h()).max(0.0);
+        let max_y = (g.content_h() - g.view_h()).max(0.0);
         let max_x = (g.content_w() - g.view_w()).max(0.0);
         self.scroll.y = self.scroll.y.clamp(0.0, max_y);
         self.scroll.x = self.scroll.x.clamp(0.0, max_x);
@@ -570,7 +640,7 @@ impl DocsView {
         } else if bottom > self.scroll.y + g.view_h() {
             self.scroll.y = bottom - g.view_h();
         }
-        let x = g.page_x() + c.x;
+        let x = g.page_x(c.page) + c.x;
         if x < self.scroll.x + PAGE_GAP {
             self.scroll.x = x - PAGE_GAP;
         } else if x > self.scroll.x + g.view_w() - PAGE_GAP {
@@ -752,6 +822,14 @@ impl DocsView {
     }
 
     /// Whether the caret is in a table.
+    /// The page showing the caret.
+    pub(crate) fn caret_page(&self) -> usize {
+        self.laid
+            .paged
+            .caret(self.sel.head.para, self.sel.head.offset)
+            .map_or(0, |c| c.page)
+    }
+
     pub fn in_table(&self) -> bool {
         self.doc.cell_at(self.sel.head).is_some()
     }
@@ -1205,7 +1283,7 @@ impl DocsView {
     /// Write the laid-out pages to `path` in the background; `open` hands
     /// the file to the system's PDF viewer afterwards (Print).
     fn write_pdf(&mut self, path: PathBuf, open: bool, cx: &mut Context<Self>) {
-        let scene = docs_pdf::scene(&self.doc, &self.laid.paged);
+        let scene = docs_pdf::scene_of(&self.doc, &self.laid.paged, &self.laid.furniture);
         let pages = scene.pages.len().max(1);
         let verb = if open {
             "Preparing to print"
@@ -1266,6 +1344,25 @@ impl DocsView {
         Some(self.doc.clamp(Position::new(para, offset)))
     }
 
+    /// Header or footer area (above the text's top margin, below its
+    /// bottom one) under a window point.
+    fn margin_at(&self, p: Point<Pixels>) -> Option<docs_engine::HfKind> {
+        let g = self.geometry();
+        let paged = &self.laid.paged;
+        let (page, x, y) = g.screen_to_page(p, paged.pages.len());
+        let s = paged.page_setup(page);
+        if x < 0.0 || x > s.width {
+            return None;
+        }
+        if y < s.margin_top {
+            Some(docs_engine::HfKind::Header)
+        } else if y > s.height - s.margin_bottom {
+            Some(docs_engine::HfKind::Footer)
+        } else {
+            None
+        }
+    }
+
     /// The object box under a window point.
     fn object_at(&self, p: Point<Pixels>) -> Option<PlacedObject> {
         let g = self.geometry();
@@ -1280,6 +1377,15 @@ impl DocsView {
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
         self.table_picker = None;
+        // A double click in a page's top or bottom margin edits its header
+        // or footer (as in Word).
+        if ev.click_count == 2
+            && let Some(kind) = self.margin_at(ev.position)
+        {
+            let at = point(ev.position.x + SPACE_7, ev.position.y + SPACE_3);
+            self.open_hf_menu(kind, Some(at), window, cx);
+            return;
+        }
         // A click on a picture or placeholder selects it as one character.
         if !ev.modifiers.shift
             && let Some(o) = self.object_at(ev.position)
@@ -1397,6 +1503,55 @@ impl DocsView {
                 };
                 if let Some(data) = image.use_render_image(window, cx) {
                     out.insert((o.para, o.index), data);
+                }
+            }
+        }
+        out
+    }
+
+    /// Decoded pictures in the visible pages' headers and footers, by
+    /// (story, paragraph, byte index).
+    fn visible_hf_images(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> HashMap<(usize, usize, usize), Arc<RenderImage>> {
+        let mut out = HashMap::new();
+        let laid = self.laid.clone();
+        let g = self.geometry();
+        for page in g.visible_pages(laid.paged.pages.len()) {
+            for placed in laid.furniture.get(page).into_iter().flatten() {
+                let l = &placed.layout;
+                let story = &self.doc.stories()[l.story].doc;
+                for o in l.paged.objects(0) {
+                    if o.kind != ObjectKind::Image {
+                        continue;
+                    }
+                    let Some(Object::Image(img)) =
+                        l.paras.get(o.para).and_then(|p| p.object_at(o.index))
+                    else {
+                        continue;
+                    };
+                    let key = format!("hf{}:{}", l.story, img.rel_id);
+                    let image = match self.images.get(&key) {
+                        Some(i) => i.clone(),
+                        None => {
+                            let Some(bytes) = story.image_bytes(&img.rel_id) else {
+                                continue;
+                            };
+                            let format = match docs_engine::ImageFormat::sniff(&bytes) {
+                                docs_engine::ImageFormat::Png => ImageFormat::Png,
+                                docs_engine::ImageFormat::Jpeg => ImageFormat::Jpeg,
+                                docs_engine::ImageFormat::Other => continue,
+                            };
+                            let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes.to_vec()));
+                            self.images.insert(key, i.clone());
+                            i
+                        }
+                    };
+                    if let Some(data) = image.use_render_image(window, cx) {
+                        out.insert((l.story, o.para, o.index), data);
+                    }
                 }
             }
         }
@@ -1580,6 +1735,7 @@ struct Frame {
     laid: Rc<Laid>,
     /// Decoded pictures on the visible pages, by `(paragraph, byte index)`.
     images: HashMap<(usize, usize), Arc<RenderImage>>,
+    hf_images: HashMap<(usize, usize, usize), Arc<RenderImage>>,
     sel: Selection,
     marked: Option<Range<usize>>,
     zoom: f32,
@@ -1603,6 +1759,53 @@ fn display_name(path: &std::path::Path) -> String {
     )
 }
 
+/// Paint glyph runs of `paged` (laid out at `offset` on the page) with
+/// their underlines; `alpha` fades them (headers and footers).
+#[allow(clippy::too_many_arguments)]
+fn paint_runs<'a>(
+    window: &mut Window,
+    g: &Geometry,
+    page: usize,
+    paged: &'a PagedDocument,
+    runs: &'a [docs_layout::GlyphRun],
+    text_of: &dyn Fn(usize) -> &'a str,
+    (dx, dy): (f32, f32),
+    alpha: f32,
+    (bridge, ts, t): (&mut FontBridge, &Rc<WindowTextSystem>, &Tokens),
+) {
+    let z = g.zoom;
+    for run in runs {
+        let sample = paged
+            .run_text(run, text_of(run.para))
+            .get(run.text_range.clone())
+            .unwrap_or_default();
+        let Some(font_id) = bridge.font_id(&run.font, sample, ts) else {
+            continue;
+        };
+        let color: Hsla = match run.source {
+            // Placeholder labels are Kantor's, not the document's.
+            RunSource::Label(_) => t.paper_ink.opacity(0.6),
+            _ => layout_color(run.color),
+        };
+        let color = color.opacity(color.a * alpha);
+        let size = px(run.font_size * z);
+        for glyph in &run.glyphs {
+            let origin = g.page_to_screen(page, glyph.x + dx, glyph.y + dy);
+            let _ = window.paint_glyph(origin, font_id, GlyphId(glyph.id), size, color);
+        }
+        if let Some((offset, thick)) = run.underline {
+            let y = run.baseline + offset + dy;
+            let a = g.page_to_screen(page, run.origin_x + dx, y);
+            let b = g.page_to_screen(
+                page,
+                run.origin_x + dx + run.advance,
+                y + thick.max(1.0 / z),
+            );
+            window.paint_quad(fill(Bounds::from_corners(a, b), color));
+        }
+    }
+}
+
 fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
     let paged = &f.laid.paged;
     let g = Geometry {
@@ -1610,8 +1813,7 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
         size: bounds.size,
         zoom: f.zoom,
         scroll: f.scroll,
-        page_w: paged.setup.width,
-        page_h: paged.setup.height,
+        boxes: f.laid.boxes.clone(),
     };
     window.paint_quad(fill(bounds, f.t.desk));
     let (start, end) = f.sel.ordered();
@@ -1649,7 +1851,8 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
     };
     window.with_content_mask(Some(ContentMask { bounds }), |window| {
         for page in g.visible_pages(paged.pages.len()) {
-            let pb = rect(page, [0., 0., g.page_w, g.page_h]);
+            let (page_w, page_h) = g.page_size(page);
+            let pb = rect(page, [0., 0., page_w, page_h]);
             window.paint_drop_shadows(pb, Corners::default(), &shadow);
             window.paint_quad(fill(pb, f.t.paper));
             for (_, r, current) in found.iter().filter(|(p, _, _)| *p == page) {
@@ -1700,36 +1903,54 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                 }
             }
             let mut bridge = f.bridge.borrow_mut();
-            for run in paged.glyph_runs(page) {
-                let para_text = f.laid.texts.get(run.para).map_or("", String::as_str);
-                let sample = paged
-                    .run_text(&run, para_text)
-                    .get(run.text_range.clone())
-                    .unwrap_or_default();
-                let Some(font_id) = bridge.font_id(&run.font, sample, &ts) else {
-                    continue;
-                };
-                let color: Hsla = match run.source {
-                    // Placeholder labels are Kantor's, not the document's.
-                    RunSource::Label(_) => f.t.paper_ink.opacity(0.6),
-                    _ => layout_color(run.color),
-                };
-                let size = px(run.font_size * z);
-                for glyph in &run.glyphs {
-                    let origin = g.page_to_screen(page, glyph.x, glyph.y);
-                    let _ = window.paint_glyph(origin, font_id, GlyphId(glyph.id), size, color);
+            // Headers and footers, a little faded as in Word (the body is
+            // what's being edited); the PDF prints them in their colours.
+            for placed in f.laid.furniture.get(page).into_iter().flatten() {
+                let l = &placed.layout;
+                for o in l.paged.objects(0) {
+                    if let Some(data) = f.hf_images.get(&(l.story, o.para, o.index)) {
+                        let [x, y, w, h] = o.rect;
+                        let b = rect(page, [x + placed.x, y + placed.y, w, h]);
+                        let _ =
+                            window.paint_image(b, b, Corners::default(), data.clone(), 0, false);
+                    }
                 }
-                if let Some((offset, thick)) = run.underline {
-                    let y = run.baseline + offset;
-                    window.paint_quad(fill(
-                        rect(page, [run.origin_x, y, run.advance, thick.max(1.0 / z)]),
-                        color,
-                    ));
+                for rule in l.paged.pages.first().map_or(&[][..], |p| &p.rules[..]) {
+                    let mut r = rule.rect;
+                    r[0] += placed.x;
+                    r[1] += placed.y;
+                    r[2] = r[2].max(1.0 / z);
+                    r[3] = r[3].max(1.0 / z);
+                    window.paint_quad(fill(rect(page, r), layout_color(rule.color).opacity(0.7)));
                 }
+                let runs = l.paged.glyph_runs(0);
+                paint_runs(
+                    window,
+                    &g,
+                    page,
+                    &l.paged,
+                    &runs,
+                    &|i| l.text(i),
+                    (placed.x, placed.y),
+                    0.7,
+                    (&mut bridge, &ts, &f.t),
+                );
             }
+            let runs = paged.glyph_runs(page);
+            paint_runs(
+                window,
+                &g,
+                page,
+                paged,
+                &runs,
+                &|i| f.laid.texts.get(i).map_or("", String::as_str),
+                (0.0, 0.0),
+                1.0,
+                (&mut bridge, &ts, &f.t),
+            );
             drop(bridge);
             if let Some(x) = f.guide {
-                let line = [x - 0.5 / z, 0., 1. / z, g.page_h];
+                let line = [x - 0.5 / z, 0., 1. / z, page_h];
                 window.paint_quad(fill(rect(page, line), f.t.accent));
             }
             // IME composition: underline the marked text.
@@ -1762,9 +1983,11 @@ impl Render for DocsView {
             self.scroll_to_caret();
         }
         let images = self.visible_images(window, cx);
+        let hf_images = self.visible_hf_images(window, cx);
         let frame = Frame {
             laid: self.laid.clone(),
             images,
+            hf_images,
             sel: self.sel,
             marked: self.marked.clone(),
             zoom: self.zoom,
@@ -1926,6 +2149,7 @@ impl Render for DocsView {
             .child(area)
             .children(self.render_table_picker(cx))
             .children(self.render_page_menu(cx))
+            .children(self.render_hf_menu(cx))
     }
 }
 
@@ -1933,17 +2157,12 @@ impl Render for DocsView {
 mod tests {
     use super::*;
     use docs_engine::Paragraph;
+    use docs_pdf::build as blocks;
 
     fn laid(doc: &Document) -> (Vec<docs_layout::Paragraph>, PagedDocument) {
         let mut engine = Engine::new();
-        let setup = blocks::page_setup(doc);
-        let (paras, widths, blocks) = blocks::build(doc);
-        let layouts = paras
-            .iter()
-            .zip(&widths)
-            .map(|(p, w)| Arc::new(engine.layout_paragraph(p, *w)))
-            .collect();
-        let paged = PagedDocument::paginate_blocks(&paras, layouts, &blocks, setup);
+        let (paras, _, _) = blocks::build(doc);
+        let paged = docs_pdf::lay_out(doc, &mut engine).paged;
         (paras, paged)
     }
 
@@ -2033,8 +2252,7 @@ mod tests {
             size: size(px(1000.), px(800.)),
             zoom: 1.5,
             scroll: point(0., 1500.),
-            page_w: 793.7,
-            page_h: 1122.5,
+            boxes: Rc::new(PageBoxes::new(vec![(793.7, 1122.5); 10])),
         };
         let p = g.page_to_screen(1, 120.0, 300.0);
         let (page, x, y) = g.screen_to_page(p, 10);
@@ -2042,5 +2260,29 @@ mod tests {
         assert!((x - 120.0).abs() < 0.01 && (y - 300.0).abs() < 0.01);
         let vis = g.visible_pages(10);
         assert!(vis.contains(&1) && !vis.contains(&5), "{vis:?}");
+    }
+
+    #[std::prelude::v1::test]
+    fn geometry_with_a_landscape_page() {
+        let g = Geometry {
+            origin: point(px(0.), px(0.)),
+            size: size(px(2000.), px(800.)),
+            zoom: 1.0,
+            scroll: point(0., 0.),
+            boxes: Rc::new(PageBoxes::new(vec![
+                (793.7, 1122.5),
+                (1122.5, 793.7),
+                (793.7, 1122.5),
+            ])),
+        };
+        // Pages are centred: the landscape one starts further left.
+        assert!(g.page_x(1) < g.page_x(0));
+        let p = g.page_to_screen(2, 10.0, 20.0);
+        assert_eq!(g.screen_to_page(p, 3).0, 2);
+        let below = g.page_to_screen(1, 10.0, 700.0);
+        let (page, _, y) = g.screen_to_page(below, 3);
+        assert_eq!(page, 1);
+        assert!((y - 700.0).abs() < 0.01);
+        assert!((g.content_h() - (PAGE_GAP * 4.0 + 1122.5 * 2.0 + 793.7)).abs() < 0.01);
     }
 }

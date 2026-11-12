@@ -59,8 +59,9 @@ pub(crate) fn page_label(p: &PageGeometry) -> String {
 }
 
 impl DocsView {
+    /// Page setup of the caret's section.
     pub fn page_geometry(&self) -> PageGeometry {
-        self.doc.page
+        self.doc.section_page(self.sel.head.para)
     }
 
     /// Replace the page setup (one undo step) and repaginate.
@@ -70,14 +71,15 @@ impl DocsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.doc.set_page(page, self.sel);
+        self.doc
+            .set_section_page(self.sel.head.para, page, self.sel);
         let sel = self.sel;
         self.edited(sel, window, cx);
         self.fill_page_inputs(window, cx);
     }
 
     pub fn set_paper_doc(&mut self, paper: PaperSize, window: &mut Window, cx: &mut Context<Self>) {
-        let p = self.doc.page.with_paper(paper);
+        let p = self.page_geometry().with_paper(paper);
         self.set_page_doc(p, window, cx);
     }
 
@@ -87,7 +89,7 @@ impl DocsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let p = self.doc.page.with_orientation(o);
+        let p = self.page_geometry().with_orientation(o);
         self.set_page_doc(p, window, cx);
     }
 
@@ -97,7 +99,7 @@ impl DocsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let p = self.doc.page.with_margins(m);
+        let p = self.page_geometry().with_margins(m);
         self.set_page_doc(p, window, cx);
     }
 
@@ -148,7 +150,7 @@ impl DocsView {
         let Some(menu) = &self.page_menu else {
             return;
         };
-        for (input, tw) in menu.inputs.iter().zip(margins(&self.doc.page)) {
+        for (input, tw) in menu.inputs.iter().zip(margins(&self.page_geometry())) {
             input.update(cx, |i, cx| i.set_value(format_cm(tw), window, cx));
         }
     }
@@ -159,7 +161,8 @@ impl DocsView {
         let Some(menu) = &self.page_menu else {
             return;
         };
-        let mut m = margins(&self.doc.page);
+        let page = self.page_geometry();
+        let mut m = margins(&page);
         for (slot, input) in m.iter_mut().zip(&menu.inputs) {
             if let Some(cm) = parse_cm(&input.read(cx).value()) {
                 *slot = cm_to_twips(cm.min(100.0));
@@ -170,7 +173,7 @@ impl DocsView {
             margin_bottom: m[1],
             margin_left: m[2],
             margin_right: m[3],
-            ..self.doc.page
+            ..page
         };
         self.set_page_doc(p, window, cx);
     }
@@ -181,8 +184,15 @@ impl DocsView {
     ) -> Option<impl IntoElement + use<>> {
         let menu = self.page_menu.as_ref()?;
         let t = tokens(cx);
-        let page = self.doc.page;
+        let page = self.page_geometry();
         let paper = PaperSize::of(&page);
+        let sections = self.doc.sections().len();
+        let section_note = (sections > 1).then(|| {
+            format!(
+                "Section {} of {sections}: changes apply to this section",
+                self.doc.section_of(self.sel.head.para) + 1
+            )
+        });
         let margin = MarginPreset::of(&page);
         let orient = page.orientation();
         let view = cx.entity().downgrade();
@@ -312,6 +322,7 @@ impl DocsView {
                 this.page_menu_closed = Some(Instant::now());
                 cx.notify();
             }))
+            .children(section_note.map(|n| div().px(SPACE_4).text_color(t.fg_muted).child(n)))
             .child(heading("Paper size", &t, cx))
             .child(papers)
             .child(heading("Orientation", &t, cx))
@@ -354,7 +365,7 @@ pub(crate) fn page_button(view: &DocsView, cx: &mut Context<DocsView>) -> Statef
                 .hover(|s| s.bg(t.hover).text_color(t.fg))
         })
         .child(Icon::new(Lucide::FileText).with_size(ICON_MD))
-        .child(page_label(&view.doc.page))
+        .child(page_label(&view.page_geometry()))
         .tooltip(|window, cx| {
             Tooltip::new("Page setup: size, orientation, margins").build(window, cx)
         })

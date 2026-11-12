@@ -296,6 +296,7 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
         ))
         .child(separator(cx))
         .child(crate::page_menu::page_button(view, cx))
+        .child(crate::hf_menu::hf_button(view, cx))
         .child(print_button(cx))
 }
 

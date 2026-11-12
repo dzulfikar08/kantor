@@ -58,6 +58,12 @@ pub struct PageSetup {
     pub margin_right: f32,
 }
 
+impl Default for PageSetup {
+    fn default() -> Self {
+        Self::a4()
+    }
+}
+
 impl PageSetup {
     /// A4 portrait with Word's default 2.54 cm margins.
     pub fn a4() -> Self {
@@ -589,6 +595,40 @@ pub struct Page {
     pub lines: Vec<PlacedLine>,
     /// Table borders.
     pub rules: Vec<RuleRect>,
+    /// This page's size and margins (sections can differ).
+    pub setup: PageSetup,
+    /// The section the page belongs to.
+    pub section: usize,
+    /// Its number within the section's page numbering run: 1-based page
+    /// count from the last restart (see [`SectionFlow::restart`]).
+    pub number: u32,
+}
+
+/// How a section starts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SectionBreak {
+    #[default]
+    NextPage,
+    Continuous,
+    EvenPage,
+    OddPage,
+}
+
+/// A section for [`PagedDocument::paginate_sections`]: where it starts and
+/// its pages' geometry.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SectionFlow {
+    /// Index into `blocks` of the section's first block.
+    pub first_block: usize,
+    pub setup: PageSetup,
+    /// The section's first page, when it differs (a taller first-page
+    /// header pushes the text down).
+    pub first_setup: Option<PageSetup>,
+    /// Even pages, when they differ.
+    pub even_setup: Option<PageSetup>,
+    pub start: SectionBreak,
+    /// Restart page numbering at this number.
+    pub restart: Option<u32>,
 }
 
 /// What a glyph run's text comes from.
@@ -679,12 +719,19 @@ const MIN_LINES: usize = 2;
 
 /// Lays blocks out onto pages.
 struct Flow<'a> {
+    /// The current page's geometry.
     setup: PageSetup,
     paras: &'a [Paragraph],
     layouts: &'a [Arc<ParaLayout>],
     pages: Vec<Page>,
     line_pages: Vec<Vec<(usize, f32, f32)>>,
     y: f32,
+    sections: &'a [SectionFlow],
+    section: usize,
+    /// Pages of the current section so far.
+    section_pages: usize,
+    /// Number of the next page.
+    number: u32,
 }
 
 impl Flow<'_> {
@@ -696,9 +743,69 @@ impl Flow<'_> {
         self.y <= self.setup.margin_top
     }
 
+    /// The geometry of the section's next page.
+    fn next_setup(&self) -> PageSetup {
+        let s = &self.sections[self.section];
+        if self.section_pages == 0
+            && let Some(f) = s.first_setup
+        {
+            return f;
+        }
+        if self.number.is_multiple_of(2)
+            && let Some(e) = s.even_setup
+        {
+            return e;
+        }
+        s.setup
+    }
+
     fn new_page(&mut self) {
-        self.pages.push(Page::default());
+        self.setup = self.next_setup();
+        self.pages.push(Page {
+            setup: self.setup,
+            section: self.section,
+            number: self.number,
+            ..Page::default()
+        });
+        self.number += 1;
+        self.section_pages += 1;
         self.y = self.setup.margin_top;
+    }
+
+    /// Start section `i` (its first block is about to be placed).
+    fn start_section(&mut self, i: usize) {
+        let s = self.sections[i];
+        let continuous = s.start == SectionBreak::Continuous
+            && !self.pages.is_empty()
+            && s.setup.width == self.setup.width
+            && s.setup.height == self.setup.height;
+        self.section = i;
+        if continuous {
+            // Same page: the new section's margins apply from here on.
+            self.section_pages = 1;
+            if let Some(n) = s.restart {
+                self.number = n;
+            }
+            return;
+        }
+        self.section_pages = 0;
+        if let Some(n) = s.restart {
+            self.number = n;
+        }
+        // Even/odd page starts leave a blank page when needed.
+        let parity = match s.start {
+            SectionBreak::EvenPage => Some(0),
+            SectionBreak::OddPage => Some(1),
+            _ => None,
+        };
+        if let Some(want) = parity
+            && !self.pages.is_empty()
+            && self.number % 2 != want
+        {
+            self.new_page();
+            self.section_pages = 0;
+        }
+        self.new_page();
     }
 
     /// Whether line `k` of paragraph `pi` ends with a page break.
@@ -908,15 +1015,58 @@ impl PagedDocument {
         blocks: &[Block],
         setup: PageSetup,
     ) -> Self {
-        let mut flow = Flow {
+        let one = [SectionFlow {
+            first_block: 0,
             setup,
+            first_setup: None,
+            even_setup: None,
+            start: SectionBreak::NextPage,
+            restart: None,
+        }];
+        Self::paginate_sections(paras, layouts, blocks, &one)
+    }
+
+    /// [`Self::paginate_blocks`] with sections, each with its own page
+    /// geometry and break (`sections` in block order, the first starting
+    /// at block 0; at least one).
+    pub fn paginate_sections(
+        paras: &[Paragraph],
+        layouts: Vec<Arc<ParaLayout>>,
+        blocks: &[Block],
+        sections: &[SectionFlow],
+    ) -> Self {
+        let fallback = [SectionFlow {
+            first_block: 0,
+            setup: PageSetup::a4(),
+            first_setup: None,
+            even_setup: None,
+            start: SectionBreak::NextPage,
+            restart: None,
+        }];
+        let sections = if sections.is_empty() {
+            &fallback[..]
+        } else {
+            sections
+        };
+        let mut flow = Flow {
+            setup: sections[0].setup,
             paras,
             layouts: &layouts,
-            pages: vec![Page::default()],
+            pages: Vec::new(),
             line_pages: vec![Vec::new(); layouts.len()],
-            y: setup.margin_top,
+            y: 0.0,
+            sections,
+            section: 0,
+            section_pages: 0,
+            number: sections[0].restart.unwrap_or(1),
         };
-        for block in blocks {
+        flow.new_page();
+        let mut next = 1;
+        for (bi, block) in blocks.iter().enumerate() {
+            while next < sections.len() && sections[next].first_block <= bi {
+                flow.start_section(next);
+                next += 1;
+            }
             match block {
                 Block::Para(pi) => flow.place_para(*pi),
                 Block::Table(t) => {
@@ -924,15 +1074,25 @@ impl PagedDocument {
                 }
             }
         }
+        // Sections with no blocks still get their page.
+        while next < sections.len() {
+            flow.start_section(next);
+            next += 1;
+        }
         let Flow {
             pages, line_pages, ..
         } = flow;
         Self {
-            setup,
+            setup: pages.first().map_or(sections[0].setup, |p| p.setup),
             layouts,
             pages,
             line_pages,
         }
+    }
+
+    /// Size and margins of page `page`.
+    pub fn page_setup(&self, page: usize) -> PageSetup {
+        self.pages.get(page).map_or(self.setup, |p| p.setup)
     }
 
     pub fn line_count(&self) -> usize {
@@ -1233,7 +1393,7 @@ impl PagedDocument {
     /// Height of every page stacked with `gap` px between them.
     pub fn total_height(&self, gap: f32) -> f32 {
         let n = self.pages.len() as f32;
-        n * self.setup.height + (n - 1.0).max(0.0) * gap
+        self.pages.iter().map(|p| p.setup.height).sum::<f32>() + (n - 1.0).max(0.0) * gap
     }
 }
 
@@ -1407,6 +1567,81 @@ pub mod sample {
 
     pub fn document(sections: usize) -> Vec<Paragraph> {
         (1..=sections).flat_map(section).collect()
+    }
+}
+
+#[cfg(test)]
+mod section_tests {
+    use super::*;
+
+    #[test]
+    fn sections_start_new_pages_with_their_own_size() {
+        let mut engine = Engine::new();
+        let paras: Vec<Paragraph> = (0..3).map(|i| Paragraph::new(format!("p{i}"))).collect();
+        let portrait = PageSetup::a4();
+        let landscape = portrait.landscape();
+        let layouts = paras
+            .iter()
+            .map(|p| Arc::new(engine.layout_paragraph(p, 300.0)))
+            .collect();
+        let blocks: Vec<Block> = (0..3).map(Block::Para).collect();
+        let flow = |first_block, setup, start| SectionFlow {
+            first_block,
+            setup,
+            first_setup: None,
+            even_setup: None,
+            start,
+            restart: None,
+        };
+        let sections = [
+            flow(0, portrait, SectionBreak::NextPage),
+            flow(1, landscape, SectionBreak::NextPage),
+            SectionFlow {
+                restart: Some(7),
+                ..flow(2, portrait, SectionBreak::OddPage)
+            },
+        ];
+        let doc = PagedDocument::paginate_sections(&paras, layouts, &blocks, &sections);
+        // p0 | p1 (landscape) | p2 on an odd page: 7 is odd, no blank page.
+        assert_eq!(doc.pages.len(), 3);
+        assert_eq!(doc.page_setup(1), landscape);
+        assert_eq!(doc.pages[1].section, 1);
+        assert_eq!(doc.pages[2].number, 7);
+        assert_eq!(doc.caret(2, 0).unwrap().page, 2);
+        let h = doc.total_height(10.0);
+        assert!((h - (2.0 * portrait.height + landscape.height + 20.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn continuous_sections_share_the_page() {
+        let mut engine = Engine::new();
+        let paras: Vec<Paragraph> = (0..2).map(|i| Paragraph::new(format!("p{i}"))).collect();
+        let layouts = paras
+            .iter()
+            .map(|p| Arc::new(engine.layout_paragraph(p, 300.0)))
+            .collect();
+        let blocks: Vec<Block> = (0..2).map(Block::Para).collect();
+        let s = PageSetup::a4();
+        let sections = [
+            SectionFlow {
+                first_block: 0,
+                setup: s,
+                first_setup: None,
+                even_setup: None,
+                start: SectionBreak::NextPage,
+                restart: None,
+            },
+            SectionFlow {
+                first_block: 1,
+                setup: s,
+                first_setup: None,
+                even_setup: None,
+                start: SectionBreak::Continuous,
+                restart: None,
+            },
+        ];
+        let doc = PagedDocument::paginate_sections(&paras, layouts, &blocks, &sections);
+        assert_eq!(doc.pages.len(), 1);
     }
 }
 

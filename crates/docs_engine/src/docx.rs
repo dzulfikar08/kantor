@@ -5,7 +5,10 @@
 //! Saving a document that was opened from a `.docx` **copies every part of
 //! the original package byte for byte** (styles, theme, settings, fonts,
 //! headers, footnotes, media, custom XML…) and regenerates only the main
-//! document part's body. The original `<w:document>` start tag (namespace
+//! document part's body. Headers and footers are read into their own small
+//! documents ([`crate::section`]) and written back only when edited or
+//! added in Kantor; `settings.xml` changes only for "different odd and even
+//! pages". The original `<w:document>` start tag (namespace
 //! declarations) and the final `<w:sectPr>` (page size, margins, header
 //! references) are written back verbatim. Parts change only when the
 //! document needs them to: `numbering.xml` gets Kantor's new list
@@ -67,6 +70,7 @@ use quick_xml::name::{Namespace, ResolveResult};
 use crate::document::{Document, LINE_BREAK, PAGE_BREAK, PageGeometry};
 use crate::model::*;
 use crate::numbering::{Numbering, parse_ind};
+use crate::section::{HfKind, Story, set_settings_even_odd, settings_even_odd};
 use crate::style::{Style, StyleKind, StyleSheet, TableStyle};
 use crate::table::{Border, Borders, Cell, CellMargins, Row, Table, Tables, VMerge};
 use crate::xml::{self, El, PPR_ORDER, RPR_ORDER, escape, ordered};
@@ -78,6 +82,12 @@ const REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/rela
 const REL_IMAGE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const REL_NUMBERING: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering";
+const REL_HEADER: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+const REL_FOOTER: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer";
+const CT_HEADER: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
+const CT_FOOTER: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
 const CT_NUMBERING: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
 
@@ -86,20 +96,28 @@ const CT_NUMBERING: &str =
 pub struct Package {
     bytes: Arc<Vec<u8>>,
     /// Zip entry name of the main document part (usually `word/document.xml`).
-    document_part: String,
+    pub(crate) document_part: String,
     /// The original `<w:document …>` start tag.
-    root_tag: String,
+    pub(crate) root_tag: String,
     /// The original body-level `<w:sectPr>…</w:sectPr>`, if any.
-    sect_pr: Option<String>,
+    pub(crate) sect_pr: Option<String>,
     /// The numbering part's name and text, if the package has one.
     numbering: Option<(String, String)>,
+    /// The settings part's name and text, if the package has one.
+    settings: Option<(String, String)>,
     /// Relationship ids of the main document part.
     rel_ids: HashSet<String>,
+    /// Every zip entry name.
+    parts: HashSet<String>,
 }
 
 impl Package {
     pub fn has_rel(&self, id: &str) -> bool {
         self.rel_ids.contains(id)
+    }
+
+    pub fn has_part(&self, name: &str) -> bool {
+        self.parts.contains(name)
     }
 }
 
@@ -127,6 +145,10 @@ pub struct Read {
     /// Content kept byte for byte but shown only as a placeholder (or not at
     /// all), e.g. "floating images", "headers and footers".
     pub preserved: Vec<String>,
+    /// Header and footer parts.
+    pub stories: Vec<Story>,
+    /// Different odd and even page headers.
+    pub even_odd: bool,
 }
 
 fn zip_bytes(
@@ -1146,9 +1168,6 @@ impl BodyParser<'_> {
                         props.extras.push(xml);
                     }
                 }
-                if element_name(xml) == "sectPr" && xml.contains("headerReference") {
-                    self.preserved.insert("headers and footers".into());
-                }
                 self.para.props = props;
             }
             Cap::RPrChild | Cap::MarkChild => {
@@ -1276,9 +1295,6 @@ impl BodyParser<'_> {
                                 pg.margin_bottom = n("bottom").unwrap_or(pg.margin_bottom);
                                 pg.margin_left = n("left").unwrap_or(pg.margin_left);
                                 pg.margin_right = n("right").unwrap_or(pg.margin_right);
-                            }
-                            "headerReference" | "footerReference" => {
-                                self.preserved.insert("headers and footers".into());
                             }
                             "sectPrChange" => {
                                 self.unsupported.insert("tracked changes".into());
@@ -1439,7 +1455,8 @@ fn parse_body(src: &str, rels: &HashMap<String, Rel>, document_part: &str) -> an
                 let local = String::from_utf8_lossy(local.as_ref()).into_owned();
                 let frame = match stack.last().copied() {
                     None => {
-                        if !(is_w && local == "document") {
+                        let story = is_w && (local == "hdr" || local == "ftr");
+                        if !(is_w && local == "document") && !story {
                             bail!("not a WordprocessingML document");
                         }
                         let tag = &src[before..after];
@@ -1449,7 +1466,8 @@ fn parse_body(src: &str, rels: &HashMap<String, Rel>, document_part: &str) -> an
                                 .insert("unusual XML namespace prefixes".into());
                         }
                         st.root_tag = Some(tag.to_owned());
-                        Frame::Document
+                        // A header's or footer's content sits right in its root.
+                        if story { Frame::Body } else { Frame::Document }
                     }
                     Some(Frame::Skip) => Frame::Skip,
                     Some(Frame::Capture) => Frame::Skip,
@@ -1750,11 +1768,36 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
     let rels: HashMap<String, Rel> = doc_rels.iter().map(|r| (r.id.clone(), r.clone())).collect();
     let body = parse_body(&doc_xml, &rels, &document_part)?;
     let mut unsupported = body.unsupported;
+    let mut settings = None;
+    let mut even_odd = false;
     if let Some(name) = part("/settings")
         && let Some(src) = zip_text(&mut zip, &name)?
-        && track_changes_on(&src)
     {
-        unsupported.insert("track changes switched on".into());
+        if track_changes_on(&src) {
+            unsupported.insert("track changes switched on".into());
+        }
+        even_odd = settings_even_odd(&src);
+        settings = Some((name, src));
+    }
+    let mut stories = Vec::new();
+    for r in &doc_rels {
+        let kind = if r.ty.ends_with("/header") {
+            HfKind::Header
+        } else if r.ty.ends_with("/footer") {
+            HfKind::Footer
+        } else {
+            continue;
+        };
+        if r.external {
+            continue;
+        }
+        let name = resolve(&document_part, &r.target);
+        let Some(src) = zip_text(&mut zip, &name)? else {
+            continue;
+        };
+        stories.push(read_story(
+            &mut zip, kind, &r.id, &name, &src, &styles, &numbering,
+        )?);
     }
     let mut media = HashMap::new();
     for id in &body.image_rels {
@@ -1778,7 +1821,15 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         root_tag: body.root_tag.unwrap_or_default(),
         sect_pr: body.sect_pr,
         numbering: numbering_part,
+        settings,
         rel_ids: rels.keys().cloned().collect(),
+        parts: (0..zip.len())
+            .filter_map(|i| {
+                zip.name_for_index(i)
+                    .and_then(|n| n.ok())
+                    .map(|n| n.into_owned())
+            })
+            .collect(),
     };
     Ok(Read {
         paragraphs: body.paragraphs,
@@ -1790,6 +1841,89 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         media,
         unsupported: unsupported.into_iter().collect(),
         preserved: body.preserved.into_iter().collect(),
+        stories,
+        even_odd,
+    })
+}
+
+/// A header or footer part read into its own small document.
+fn read_story(
+    zip: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    kind: HfKind,
+    rel_id: &str,
+    name: &str,
+    src: &str,
+    styles: &StyleSheet,
+    numbering: &Numbering,
+) -> anyhow::Result<Story> {
+    let rels: HashMap<String, Rel> =
+        parse_rels(&zip_text(zip, &rels_name(name))?.unwrap_or_default())
+            .into_iter()
+            .map(|r| (r.id.clone(), r))
+            .collect();
+    let body = match parse_body(src, &rels, name) {
+        Ok(b) => b,
+        Err(e) => {
+            // Unreadable: keep the part as it is, show nothing.
+            let mut doc = Document::new();
+            doc.styles = styles.clone();
+            return Ok(Story {
+                kind,
+                rel_id: rel_id.to_owned(),
+                part: name.to_owned(),
+                root_tag: String::new(),
+                doc,
+                modified: false,
+                new: false,
+                locked: Some(format!("Kantor can't read this part: {e:#}")),
+            });
+        }
+    };
+    let mut media = HashMap::new();
+    for id in &body.image_rels {
+        let Some(rel) = rels.get(id) else { continue };
+        let part = resolve(name, &rel.target);
+        let data = zip_bytes(zip, &part)?;
+        let drawable = data.as_deref().map(ImageFormat::sniff);
+        media.insert(
+            id.clone(),
+            Media {
+                part,
+                bytes: data
+                    .filter(|_| matches!(drawable, Some(ImageFormat::Png | ImageFormat::Jpeg)))
+                    .map(Into::into),
+            },
+        );
+    }
+    let locked = (!body.unsupported.is_empty()).then(|| {
+        format!(
+            "It has content Kantor can't edit ({}); it is shown and kept as it is",
+            body.unsupported
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    });
+    let mut doc = Document::new();
+    doc.paragraphs = if body.paragraphs.is_empty() {
+        vec![Paragraph::default()]
+    } else {
+        body.paragraphs
+    };
+    doc.tables = body.tables;
+    doc.styles = styles.clone();
+    doc.numbering = numbering.clone();
+    doc.media = media;
+    Ok(Story {
+        kind,
+        rel_id: rel_id.to_owned(),
+        part: name.to_owned(),
+        root_tag: body.root_tag.unwrap_or_default(),
+        doc,
+        modified: false,
+        new: false,
+        locked,
     })
 }
 
@@ -2355,7 +2489,7 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
     xml.push_str(&root);
     xml.push_str("<w:body>");
     xml.push_str(&body_xml(doc));
-    match &pkg.sect_pr {
+    match doc.body_sect.as_ref().or(pkg.sect_pr.as_ref()) {
         // Only pgSz/pgMar attributes that differ change; the rest is verbatim.
         Some(s) => xml.push_str(&crate::page::update_sect_pr(s, &doc.page)),
         None => {
@@ -2406,6 +2540,55 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
                 ));
             }
         }
+    }
+
+    // Headers and footers changed or added in Kantor.
+    for st in doc.stories() {
+        if !st.modified {
+            continue;
+        }
+        let mut root = st.root_tag.clone();
+        if root.ends_with("/>") {
+            root.replace_range(root.len() - 2.., ">");
+        }
+        let close = match st.kind {
+            HfKind::Header => "</w:hdr>",
+            HfKind::Footer => "</w:ftr>",
+        };
+        let part = format!("{XML_DECL}{root}{}{close}", body_xml(&st.doc)).into_bytes();
+        if st.new || !pkg.has_part(&st.part) {
+            add.push((st.part.clone(), part));
+            let (ty, ct) = match st.kind {
+                HfKind::Header => (REL_HEADER, CT_HEADER),
+                HfKind::Footer => (REL_FOOTER, CT_FOOTER),
+            };
+            if !pkg.has_rel(&st.rel_id) {
+                new_rels.push_str(&format!(
+                    "<Relationship Id=\"{}\" Type=\"{ty}\" Target=\"{}\"/>",
+                    escape(&st.rel_id),
+                    escape(&relative_to(&pkg.document_part, &st.part))
+                ));
+            }
+            overrides.push_str(&format!(
+                "<Override PartName=\"/{}\" ContentType=\"{ct}\"/>",
+                escape(&st.part)
+            ));
+        } else {
+            replace.insert(st.part.clone(), part);
+        }
+    }
+    // Different odd and even pages.
+    let even_odd_was = pkg
+        .settings
+        .as_ref()
+        .is_some_and(|(_, s)| settings_even_odd(s));
+    if doc.even_odd_headers() != even_odd_was
+        && let Some((name, src)) = &pkg.settings
+    {
+        replace.insert(
+            name.clone(),
+            set_settings_even_odd(src, doc.even_odd_headers()).into_bytes(),
+        );
     }
 
     // Pictures inserted in Kantor that the body still uses.
