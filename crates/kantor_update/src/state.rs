@@ -105,6 +105,7 @@ mod tests {
                     "/a/Kantor.AppImage".into(),
                 )],
                 work_dir: None,
+                installer: None,
             }),
         };
         s.save_to(&path).unwrap();

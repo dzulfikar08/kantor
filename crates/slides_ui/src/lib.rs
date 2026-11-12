@@ -1362,7 +1362,7 @@ impl SlidesView {
             .path()
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf())
-            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .or_else(kantor_core::dirs::home_dir)
             .unwrap_or_else(|| PathBuf::from("."));
         let name = std::path::Path::new(&self.name())
             .with_extension("pdf")
@@ -1440,7 +1440,7 @@ impl SlidesView {
             .path()
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf())
-            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .or_else(kantor_core::dirs::home_dir)
             .unwrap_or_else(|| PathBuf::from("."));
         let name = if self.pres.path().is_none() {
             self.name()

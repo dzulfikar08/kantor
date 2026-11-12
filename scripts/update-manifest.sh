@@ -10,7 +10,8 @@
 #              binaries were built with, so a nightly never offers itself as an update)
 #   NOTES_URL  release page (also the "Download" link for installs that can't update themselves)
 #   BASE_URL   where the assets are downloaded from; each asset's URL is BASE_URL/<file name>
-#   KEY=FILE   one per asset: macos-universal-app, linux-{x86_64,aarch64}-{appimage,tarball}
+#   KEY=FILE   one per asset: macos-universal-app, linux-{x86_64,aarch64}-{appimage,tarball},
+#              windows-{x86_64,aarch64}-{setup,portable} (Kantor-Setup-*.exe, Kantor-*.zip)
 #
 # The signing key comes from UPDATE_SIGNING_KEY: base64 of the raw 32-byte Ed25519 seed (the
 # GitHub `release` environment secret). Its public key must match UPDATE_PUBLIC_KEY, which
@@ -28,7 +29,7 @@ set +x
 # The key in crates/kantor_update/src/manifest.rs (a test there keeps the two in sync).
 EMBEDDED_PUBLIC_KEY="2sy5SODzbFlquPqJV9yDrc5bYyaZ+UY4X29N2GkB9tE="
 
-[ $# -ge 7 ] || { sed -n '2,24p' "$0" >&2; exit 2; }
+[ $# -ge 7 ] || { sed -n '2,25p' "$0" >&2; exit 2; }
 channel="$1"; version="$2"; build="$3"; notes="$4"; base="${5%/}"; out="$6"; shift 6
 
 case "$channel" in stable|nightly) ;; *) echo "error: channel must be stable or nightly" >&2; exit 2 ;; esac
@@ -49,6 +50,7 @@ for pair in "$@"; do
   key="${pair%%=*}"; file="${pair#*=}"
   case "$key" in
     macos-universal-app|linux-x86_64-appimage|linux-aarch64-appimage|linux-x86_64-tarball|linux-aarch64-tarball) ;;
+    windows-x86_64-setup|windows-aarch64-setup|windows-x86_64-portable|windows-aarch64-portable) ;;
     *) echo "error: unknown asset key '$key'" >&2; exit 2 ;;
   esac
   case "$seen" in *" $key "*) echo "error: asset '$key' given twice" >&2; exit 2 ;; esac

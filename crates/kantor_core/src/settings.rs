@@ -80,8 +80,12 @@ impl Default for Settings {
     }
 }
 
-/// `$XDG_CONFIG_HOME/kantor/settings.toml` (default `~/.config/kantor/settings.toml`).
+/// `$XDG_CONFIG_HOME/kantor/settings.toml` (default `~/.config/kantor/settings.toml`);
+/// on Windows `%APPDATA%\Kantor\settings.toml` (see [`crate::dirs`]).
 pub fn settings_path() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return Some(crate::dirs::windows_config_dir()?.join("settings.toml"));
+    }
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())

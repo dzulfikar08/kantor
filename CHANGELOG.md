@@ -9,6 +9,32 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+#### Windows (new platform, x64 and Arm)
+- Kantor builds and runs on **Windows 10 and 11**. The GUI uses GPUI's DirectX backend, Segoe UI
+  is the default interface font (Cascadia Mono or Consolas for monospace), and keyboard shortcuts
+  use Ctrl as on Linux.
+- **Installer** `Kantor-Setup-x64.exe` / `Kantor-Setup-arm64.exe` (Inno Setup): installs per user
+  without an administrator prompt and adds a Start menu entry, an uninstall entry, **Open with**
+  entries for .xlsx/.xlsm/.xls/.ods/.csv/.docx/.pptx (your default apps stay as they are) and an
+  optional PATH entry. A **portable zip** `Kantor-x64.zip` / `Kantor-arm64.zip` is also built.
+  Both are unsigned for now (SmartScreen asks once); signing turns on when a certificate secret
+  is configured, see docs/windows-signing.md.
+- **Updates on Windows:** the in-app updater downloads the new installer, checks it against the
+  signed manifest and runs it silently once Kantor quits, then reopens Kantor after *Restart to
+  update*. Portable copies replace their own files. The update manifests gain the
+  `windows-{x86_64,aarch64}-{setup,portable}` assets.
+- **Command line on Windows:** `kantor.com`, a console front shipped next to the windowed
+  `kantor.exe`, so `kantor convert`, `kantor pdf`, `kantor mcp` and `kantor --version` print
+  to the terminal.
+- **MCP on Windows:** the app listens on 127.0.0.1 behind a per-run token kept in the user's
+  profile, with the same protocol as the Unix socket. AI keys go to Windows Credential Manager.
+  Settings live in `%APPDATA%\Kantor`, the session and update state in `%LOCALAPPDATA%\Kantor`.
+- CI runs clippy and every test on windows-latest, and the nightly build makes Windows x64 and
+  arm64 installers and smoke-tests them on the runner (silent install, `--version`, convert,
+  MCP against the running app, silent uninstall).
+
 ## [0.3.1] - 2026-11-11
 
 Pivot tables can now be made in Kantor: Insert PivotTable…, a PivotTable Fields panel (also for

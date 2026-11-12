@@ -3,7 +3,6 @@
 //! the first call starts one (unless `--no-launch`) and waits for it.
 
 use std::io::{BufReader, Write as _};
-use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -16,8 +15,8 @@ use crate::ipc;
 const LAUNCH_WAIT: Duration = Duration::from_secs(20);
 
 struct Conn {
-    reader: BufReader<UnixStream>,
-    writer: UnixStream,
+    reader: BufReader<ipc::Stream>,
+    writer: ipc::Stream,
 }
 
 pub struct AppClient {
@@ -75,15 +74,25 @@ impl AppClient {
     /// Start Kantor (detached, its Home screen and last session) and wait
     /// for its socket.
     fn launch() -> Result<Conn, String> {
-        use std::os::unix::process::CommandExt as _;
         let exe = super::exe_path().map_err(|e| format!("can't find the kantor binary: {e}"))?;
         log::info!("starting {}", exe.display());
-        std::process::Command::new(&exe)
-            .stdin(std::process::Stdio::null())
+        let mut cmd = std::process::Command::new(&exe);
+        cmd.stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .process_group(0)
-            .spawn()
+            .stderr(std::process::Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt as _;
+            cmd.process_group(0);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: outlives this
+            // `kantor mcp`, and the agent's Ctrl+C doesn't reach it.
+            cmd.creation_flags(0x0000_0008 | 0x0000_0200);
+        }
+        cmd.spawn()
             .map_err(|e| format!("can't start Kantor ({}): {e}", exe.display()))?;
         let start = Instant::now();
         while start.elapsed() < LAUNCH_WAIT {

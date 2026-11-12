@@ -11,6 +11,11 @@ const dist = join(root, "dist");
 const SITE = "https://kantor.paparanai.id";
 const GH = "https://github.com/dzulfikar08/kantor";
 const DL = `${GH}/releases/latest/download`;
+// Flip to true for the first release that has Kantor-Setup-{x64,arm64}.exe and
+// Kantor-{x64,arm64}.zip (release.yml), then rebuild and redeploy. Until then the Windows card
+// says "not available yet" and Windows visitors are pointed at the other downloads.
+// KANTOR_SITE_WINDOWS=1 node site/build.mjs previews the Windows downloads.
+const WINDOWS_RELEASED = process.env.KANTOR_SITE_WINDOWS === "1" || false;
 const SHOT_W = 1550;
 const SHOT_H = 975;
 
@@ -54,7 +59,42 @@ function picture(app, t, first) {
         </picture>`;
 }
 
+// The page text with Windows downloads switched on.
+function withWindows(t) {
+  return {
+    ...t,
+    title: t.win.title,
+    lede: t.win.lede,
+    facts: [...t.facts.slice(0, -1), t.win.fact],
+    ctaMobileNote: t.win.ctaMobileNote,
+  };
+}
+
+function windowsCard(t) {
+  if (!WINDOWS_RELEASED) {
+    return `<article class="platform platform-off" id="p-windows" data-os="windows" aria-labelledby="win-h">
+            <p class="yours" hidden>${t.yourComputer}</p>
+            <h3 id="win-h">${t.windows.name}</h3>
+            <p>${t.windows.text}</p>
+          </article>`;
+  }
+  const w = t.win;
+  return `<article class="platform" id="p-windows" data-os="windows" aria-labelledby="win-h">
+            <p class="yours" hidden>${t.yourComputer}</p>
+            <h3 id="win-h">${t.windows.name}</h3>
+            <p class="req">${w.req}</p>
+            <div class="btn-row">
+              <a class="btn btn-primary" id="win-x64" href="${DL}/Kantor-Setup-x64.exe" data-asset="Kantor-Setup-x64.exe"><span class="btn-label">${w.buttonX64}</span><span class="btn-meta">${w.buttonX64Meta}</span></a>
+              <a class="btn btn-secondary" id="win-arm" href="${DL}/Kantor-Setup-arm64.exe" data-asset="Kantor-Setup-arm64.exe"><span class="btn-label">${w.buttonArm}</span><span class="btn-meta">${w.buttonArmMeta}</span></a>
+            </div>
+            <p class="asset-note" data-for="Kantor-Setup-x64.exe Kantor-Setup-arm64.exe" hidden></p>
+            <ol class="steps">${w.steps.map((s) => `<li>${s}</li>`).join("")}</ol>
+            <p class="req">${w.portable.replaceAll("{dl}", DL)}</p>
+          </article>`;
+}
+
 function page(t, other) {
+  if (WINDOWS_RELEASED) t = withWindows(t);
   const url = SITE + t.path;
   const ogImage = `${SITE}/img/og.png`;
   // Text the script needs for the states it switches between.
@@ -68,6 +108,10 @@ function page(t, other) {
     ctaLinuxMetaArm: t.ctaLinuxMetaArm,
     ctaWindows: t.ctaWindows,
     ctaWindowsNote: t.ctaWindowsNote,
+    windows: WINDOWS_RELEASED,
+    ctaWin: t.win.cta,
+    ctaWinMeta: t.win.ctaMeta,
+    ctaWinMetaArm: t.win.ctaMetaArm,
     ctaMobile: t.ctaMobile,
     ctaMobileNote: t.ctaMobileNote,
     verLoading: t.verLoading,
@@ -228,11 +272,7 @@ function page(t, other) {
               <p class="copy-status" role="status" aria-live="polite"></p>
             </div>
           </article>
-          <article class="platform platform-off" id="p-windows" data-os="windows" aria-labelledby="win-h">
-            <p class="yours" hidden>${t.yourComputer}</p>
-            <h3 id="win-h">${t.windows.name}</h3>
-            <p>${t.windows.text}</p>
-          </article>
+          ${windowsCard(t)}
         </div>
       </div>
     </section>

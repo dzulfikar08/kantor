@@ -14,6 +14,19 @@ Status: **M0 done; Sheets MVP (M1) feature-complete pending Mac checks; Docs (M2
 
 **Repo:** https://github.com/dzulfikar08/kantor (public, AGPL-3.0-or-later). `main` is always green; every push publishes a **nightly** build for Linux (x86_64, aarch64) and macOS (Apple Silicon).
 
+**Windows (2026-11-12, branch `windows-port`, not merged yet):** builds on windows-latest
+(x64) and windows-11-arm with GPUI's DirectX backend. Platform code: `ipc.rs` (loopback TCP plus
+a token file in place of the Unix socket), `kantor_core::dirs` (%APPDATA%, %LOCALAPPDATA%),
+Credential Manager for AI keys, `kantor_mem` HeapCompact, `crates/kantor/build.rs` (exe icon),
+`crates/kantor_console` (`kantor.com`, the terminal front for the GUI-subsystem `kantor.exe`).
+Packaging: `packaging/windows/kantor.iss` (per-user Inno Setup, Open with entries),
+`scripts/package-windows.sh`, `scripts/windows-smoke.sh`. Updates: `InstallKind::WindowsInstaller`
+(silent installer after quit) and `WindowsPortable` (file swap). Signing is off until a
+certificate is chosen (docs/windows-signing.md). The site's Windows card is behind
+`WINDOWS_RELEASED` in site/build.mjs. ☐ Needs a real Windows desktop: rendering and DPI scaling
+on mixed-DPI monitors, IME (Indonesian/CJK input), file dialogs, the Open with entries in
+Explorer, SmartScreen flow, an update from one real release to the next.
+
 **What works today** (nightly; first verified on the M1 Air under Asahi, since 2026-11-08 on the same Air under macOS):
 - One binary, suite shell modelled on Voltrus Tools (`docs/reference-voltrus-tools.md`): Home screen, document **tabs** (tab strip = titlebar), **split panes** with draggable dividers, resizable **sidebar** (open/recent/create) and **inspector** (cell + workbook details), **status bar**, **Ctrl+K command palette** (fuzzy), **theme picker** (Follow Omarchy / 23 Omarchy / 907 Ghostty themes, live preview), **UI font picker** (SF Pro when installed). Tabs, layouts and panel sizes **persist** across runs.
 - **Sheets**: open/edit/save `.xlsx` via IronCalc (formulas recalc, atomic save), Excel-style typing into cells (type / Enter / F2 / Delete / Esc), name box + formula bar, multiple sheets. Formula help: point mode (click/drag/arrows insert references, other sheets as `'Sheet2'!A1`), coloured references in the editor and on the grid, F4 `$` cycling, function-name autocomplete (`crates/sheets_engine/src/formula.rs`, `crates/sheets_ui/src/point.rs`). ☐ Try in a window: reference text colouring is painted over the input's glyphs (single-line `InputState` has no styled-runs hook), check it lines up; arrow pointing in the cell editor doesn't scroll (scrolling the edited cell away would commit).
@@ -77,7 +90,7 @@ Nobody has built a serious office suite on GPUI. The building blocks now exist i
 | Office files | Open and save `.docx`, `.xlsx`, `.pptx` as **first-class formats**, not "import" |
 | Round-trip safety | Opening and saving a file **never drops content we don't understand** (see §5) |
 | Look and feel | Native GPUI, keyboard-first, follows the Omarchy theme, Mac-style shortcuts |
-| Platform | Linux on x86_64 and aarch64 (Wayland, Omarchy/Hyprland in mind), and macOS on Apple Silicon. Asahi (16K pages) was the first target until 2026-11-08 and should keep working, but isn't tested any more |
+| Platform | Linux on x86_64 and aarch64 (Wayland, Omarchy/Hyprland in mind), macOS on Apple Silicon, and (since 2026-11-12) Windows 10/11 on x64 and arm64. Asahi (16K pages) was the first target until 2026-11-08 and should keep working, but isn't tested any more |
 | Output | Accurate PDF export and printing |
 
 ### Non-goals for 1.0
@@ -87,7 +100,7 @@ Nobody has built a serious office suite on GPUI. The building blocks now exist i
 - Full track changes and comments UI (preserve them in files, read-only display at most)
 - Mail merge, advanced charts, embedded OLE objects, SmartArt editing
 - Legacy binary formats (`.doc`, `.xls`, `.ppt`) beyond, at most, read-only
-- Windows builds (GPUI supports Windows, so this stays possible later). macOS builds were added on 2026-11-08
+- ~~Windows builds~~: added 2026-11-12 (branch `windows-port`), see §0 "Windows". macOS builds were added on 2026-11-08
 
 ## 3. Strategy: Sheets first, then Docs, then Slides
 

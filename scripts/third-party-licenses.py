@@ -23,7 +23,7 @@ NAMES = re.compile(r"^(licen[cs]e|copying|notice|copyright|unlicense|authors)([-
 
 
 def run(*args):
-    return subprocess.run(args, cwd=ROOT, check=True, capture_output=True, text=True).stdout
+    return subprocess.run(args, cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8").stdout
 
 
 def main():

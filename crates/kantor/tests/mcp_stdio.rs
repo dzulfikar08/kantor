@@ -1,10 +1,8 @@
 //! `kantor mcp` end to end: the real binary on stdio, talking to a
-//! stand-in for the running app on a socket in a temporary directory.
-
-#![cfg(unix)]
+//! stand-in for the running app on a socket in a temporary directory (a Unix
+//! socket, or on Windows a loopback port and token in a `.port` file).
 
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixListener;
 use std::process::{Command, Stdio};
 
 use serde_json::{Value, json};
@@ -49,12 +47,11 @@ fn text(reply: &Value) -> &str {
 #[test]
 fn forwards_tool_calls_to_the_app() {
     let dir = tempfile::tempdir().unwrap();
-    let listener = UnixListener::bind(dir.path().join("kantor-1.sock")).unwrap();
+    let accept = stand_in_endpoint(dir.path());
     // The stand-in app: answers list_documents, fails anything else.
     std::thread::spawn(move || {
-        let (stream, _) = listener.accept().unwrap();
-        let mut writer = stream.try_clone().unwrap();
-        for line in BufReader::new(stream).lines() {
+        let (mut writer, lines) = accept();
+        for line in lines {
             let req: Value = serde_json::from_str(&line.unwrap()).unwrap();
             let reply = match req["tool"].as_str() {
                 Some("list_documents") => {
@@ -85,6 +82,42 @@ fn forwards_tool_calls_to_the_app() {
     assert_eq!(docs["documents"][0]["id"], 7);
     assert_eq!(replies[3]["result"]["isError"], true);
     assert_eq!(text(&replies[3]), "no \"sheets_read_range\"");
+}
+
+type Accept = Box<
+    dyn FnOnce() -> (
+            Box<dyn Write>,
+            Box<dyn Iterator<Item = std::io::Result<String>>>,
+        ) + Send,
+>;
+
+/// Listen where `kantor mcp` looks; the closure waits for its connection.
+#[cfg(unix)]
+fn stand_in_endpoint(dir: &std::path::Path) -> Accept {
+    let listener = std::os::unix::net::UnixListener::bind(dir.join("kantor-1.sock")).unwrap();
+    Box::new(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let writer = stream.try_clone().unwrap();
+        (Box::new(writer), Box::new(BufReader::new(stream).lines()))
+    })
+}
+
+#[cfg(windows)]
+fn stand_in_endpoint(dir: &std::path::Path) -> Accept {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::fs::write(dir.join("kantor-1.port"), format!("{addr} sesame\n")).unwrap();
+    Box::new(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let writer = stream.try_clone().unwrap();
+        let mut lines = BufReader::new(stream).lines();
+        assert_eq!(
+            lines.next().unwrap().unwrap(),
+            "sesame",
+            "the token comes first"
+        );
+        (Box::new(writer), Box::new(lines))
+    })
 }
 
 #[test]

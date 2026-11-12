@@ -36,7 +36,23 @@ fn exe() -> String {
         .unwrap_or_else(|| "kantor".to_owned())
 }
 
+/// `path` quoted for the shell the user pastes the command into: POSIX
+/// shells, or on Windows PowerShell and cmd (double quotes; a path can't hold
+/// one).
+#[cfg(windows)]
+fn shell_quote(path: &str) -> String {
+    let plain = path
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "\\/._-+:".contains(c));
+    if plain && !path.is_empty() {
+        path.to_owned()
+    } else {
+        format!("\"{path}\"")
+    }
+}
+
 /// `path` quoted for a POSIX shell when it needs it.
+#[cfg(not(windows))]
 fn shell_quote(path: &str) -> String {
     let plain = path
         .chars()
@@ -104,6 +120,21 @@ pub fn main(args: &[String]) -> i32 {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[std::prelude::v1::test]
+    fn quotes_paths_for_windows_shells() {
+        assert_eq!(
+            shell_quote(r"C:\Kantor\kantor.exe"),
+            r"C:\Kantor\kantor.exe"
+        );
+        assert_eq!(
+            shell_quote(r"C:\Program Files\Kantor\kantor.exe"),
+            r#""C:\Program Files\Kantor\kantor.exe""#
+        );
+        assert!(claude_code_command().starts_with("claude mcp add kantor -- "));
+    }
+
+    #[cfg(not(windows))]
     #[std::prelude::v1::test]
     fn quotes_paths_for_the_shell() {
         assert_eq!(shell_quote("/usr/bin/kantor"), "/usr/bin/kantor");

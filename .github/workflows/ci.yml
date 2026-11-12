@@ -51,6 +51,22 @@ jobs:
           cache-on-failure: true
       - run: cargo test --workspace
 
+  # Windows 10/11 x64: clippy (the cfg(windows) code) and every test. The installer and the
+  # silent install / uninstall smoke test run in build.yml and release.yml.
+  windows:
+    name: windows (x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --no-fail-fast
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-24.04

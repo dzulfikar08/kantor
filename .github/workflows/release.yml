@@ -5,6 +5,10 @@
 #   Kantor.dmg, Kantor-X.Y.Z.dmg                    macOS universal, Developer ID, notarised
 #   Kantor-{x86_64,aarch64}.AppImage, Kantor-X.Y.Z-{x86_64,aarch64}.AppImage    Linux
 #   kantor-X.Y.Z-{x86_64,aarch64}-linux.tar.gz, kantor-X.Y.Z-universal-macos.tar.gz  (install.sh)
+#   Kantor-Setup-{x64,arm64}.exe, Kantor-Setup-X.Y.Z-{x64,arm64}.exe   Windows per-user installer
+#   Kantor-{x64,arm64}.zip, Kantor-X.Y.Z-{x64,arm64}.zip                Windows portable
+#     (Authenticode-signed only when the `release` environment has WINDOWS_CERT_PFX_BASE64 and
+#     WINDOWS_CERT_PASSWORD; unsigned otherwise, see docs/windows-signing.md)
 #   SHA256SUMS
 #   update-stable.json, update-stable.json.sig   in-app update manifest, Ed25519-signed with the
 #     `release` environment secret UPDATE_SIGNING_KEY (scripts/update-manifest.sh); the app
@@ -196,8 +200,52 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  windows:
+    name: windows (${{ matrix.winarch }})
+    needs: check
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { winarch: x64, os: windows-latest }
+          - { winarch: arm64, os: windows-11-arm }
+    runs-on: ${{ matrix.os }}
+    # Optional Authenticode certificate (WINDOWS_CERT_PFX_BASE64 / WINDOWS_CERT_PASSWORD).
+    environment: release
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+          cache-on-failure: true
+      - run: cargo build --release --locked -p kantor -p kantor_console
+      - name: Installer, portable zip, smoke test (silent install, CLI, convert, MCP, uninstall)
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./scripts/package-windows.sh target/release/kantor.exe target/release/kantor-console.exe \
+            "$VERSION" "${{ matrix.winarch }}" dist
+          ./scripts/windows-smoke.sh "dist/Kantor-Setup-${VERSION}-${{ matrix.winarch }}.exe" \
+            "dist/Kantor-${VERSION}-${{ matrix.winarch }}.zip" "$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-${{ matrix.winarch }}
+          path: |
+            dist/Kantor-Setup-${{ env.VERSION }}-${{ matrix.winarch }}.exe
+            dist/Kantor-${{ env.VERSION }}-${{ matrix.winarch }}.zip
+          if-no-files-found: error
+          retention-days: 30
+
   publish:
-    needs: [check, linux, macos]
+    needs: [check, linux, macos, windows]
     if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     # UPDATE_SIGNING_KEY for the update manifest; only main and v* tags may use it.
@@ -219,9 +267,13 @@ jobs:
           cd dist
           cp "Kantor-${VERSION}.dmg" Kantor.dmg
           for arch in x86_64 aarch64; do cp "Kantor-${VERSION}-${arch}.AppImage" "Kantor-${arch}.AppImage"; done
-          sha256sum kantor-*.tar.gz Kantor*.dmg Kantor*.AppImage > SHA256SUMS
+          for w in x64 arm64; do
+            cp "Kantor-Setup-${VERSION}-${w}.exe" "Kantor-Setup-${w}.exe"
+            cp "Kantor-${VERSION}-${w}.zip" "Kantor-${w}.zip"
+          done
+          sha256sum kantor-*.tar.gz Kantor*.dmg Kantor*.AppImage Kantor-Setup-*.exe Kantor-*.zip > SHA256SUMS
           cat SHA256SUMS
-          test "$(wc -l < SHA256SUMS)" -eq 9
+          test "$(wc -l < SHA256SUMS)" -eq 17
       - name: Update manifest (signed)
         env:
           UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
@@ -236,7 +288,11 @@ jobs:
             "linux-x86_64-appimage=dist/Kantor-${VERSION}-x86_64.AppImage" \
             "linux-aarch64-appimage=dist/Kantor-${VERSION}-aarch64.AppImage" \
             "linux-x86_64-tarball=dist/kantor-${VERSION}-x86_64-linux.tar.gz" \
-            "linux-aarch64-tarball=dist/kantor-${VERSION}-aarch64-linux.tar.gz"
+            "linux-aarch64-tarball=dist/kantor-${VERSION}-aarch64-linux.tar.gz" \
+            "windows-x86_64-setup=dist/Kantor-Setup-${VERSION}-x64.exe" \
+            "windows-aarch64-setup=dist/Kantor-Setup-${VERSION}-arm64.exe" \
+            "windows-x86_64-portable=dist/Kantor-${VERSION}-x64.zip" \
+            "windows-aarch64-portable=dist/Kantor-${VERSION}-arm64.zip"
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -249,6 +305,7 @@ jobs:
           ## Download
 
           - macOS (Apple Silicon and Intel): [Kantor.dmg](https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Kantor-${VERSION}.dmg). Open it and drag Kantor to Applications.
+          - Windows 10 and 11: [Kantor-Setup-x64.exe](https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Kantor-Setup-${VERSION}-x64.exe) (Arm: [Kantor-Setup-arm64.exe](https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Kantor-Setup-${VERSION}-arm64.exe)). Double-click it; no administrator rights needed. If Windows SmartScreen says it protected your PC, choose **More info** and **Run anyway**. Portable zips: [x64](https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Kantor-${VERSION}-x64.zip), [arm64](https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Kantor-${VERSION}-arm64.zip).
           - Linux: [x86_64 AppImage](https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Kantor-${VERSION}-x86_64.AppImage) or [aarch64 AppImage](https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Kantor-${VERSION}-aarch64.AppImage). Make it executable (\`chmod +x Kantor-*.AppImage\`) and run it.
           - Terminal (Linux or macOS):
 
@@ -258,6 +315,7 @@ jobs:
 
           Verify downloads with \`sha256sum -c SHA256SUMS --ignore-missing\`. The Linux builds need glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40 or later).
           EOF
-          gh release create "$tag" dist/kantor-*.tar.gz dist/Kantor*.dmg dist/Kantor*.AppImage dist/SHA256SUMS \
+          gh release create "$tag" dist/kantor-*.tar.gz dist/Kantor*.dmg dist/Kantor*.AppImage \
+            dist/Kantor-Setup-*.exe dist/Kantor-*.zip dist/SHA256SUMS \
             dist/update-stable.json dist/update-stable.json.sig \
             --verify-tag --latest --title "Kantor ${VERSION}" --notes-file notes.md

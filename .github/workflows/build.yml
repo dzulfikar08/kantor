@@ -1,15 +1,17 @@
 # Nightly binaries. The M1 Air never builds: it downloads these.
 #  - push to main  -> rolling "nightly" pre-release: kantor-nightly-ARCH-{linux,macos}.tar.gz
-#    (install.sh), Kantor-nightly-{x86_64,aarch64}.AppImage and Kantor-nightly-aarch64.dmg
-#    (ad-hoc signed, not notarised: notarisation runs only in release.yml)
+#    (install.sh), Kantor-nightly-{x86_64,aarch64}.AppImage, Kantor-nightly-aarch64.dmg
+#    (ad-hoc signed, not notarised: notarisation runs only in release.yml), and
+#    Kantor-Setup-nightly-{x64,arm64}.exe + Kantor-nightly-{x64,arm64}.zip (Windows; signed only
+#    when WINDOWS_CERT_PFX_BASE64 is set, see docs/windows-signing.md)
 #  - workflow_dispatch on another branch -> the same builds as workflow artifacts only;
 #    the nightly release is published from main only
 # Versioned releases (tags v*) are built by release.yml.
 # Nightly binaries are built with KANTOR_CHANNEL=nightly and KANTOR_BUILD=<UTC commit time>, so
 # the in-app updater follows the nightly channel and orders nightlies of one version. The publish
 # job writes update-nightly.json(.sig), signed with the `release` environment's
-# UPDATE_SIGNING_KEY (Linux AppImages and tarballs only: the nightly macOS build is ad-hoc
-# signed, and the updater installs only Developer ID builds on macOS).
+# UPDATE_SIGNING_KEY (Linux AppImages and tarballs and the Windows installers and zips: the
+# nightly macOS build is ad-hoc signed, and the updater installs only Developer ID builds on macOS).
 name: Build
 
 on:
@@ -43,7 +45,12 @@ jobs:
           - { arch: aarch64, os: ubuntu-24.04-arm }
           - { arch: x86_64, os: ubuntu-24.04 }
           - { arch: aarch64, os: macos-15, platform: macos }
+          - { arch: x86_64, os: windows-latest, platform: windows, winarch: x64 }
+          - { arch: aarch64, os: windows-11-arm, platform: windows, winarch: arm64 }
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -63,13 +70,25 @@ jobs:
           echo "KANTOR_BUILD=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
       - if: ${{ !(runner.os == 'macOS' && inputs.universal) }}
         run: cargo build --release -p kantor
+      - if: runner.os == 'Windows'
+        run: cargo build --release -p kantor_console
       - name: Package
         id: pkg
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
           tag=nightly
           platform="${{ matrix.platform || 'linux' }}"
           name="kantor-${tag}-${{ matrix.arch }}-${platform}"
-          if [ "$platform" = macos ]; then
+          if [ "$platform" = windows ]; then
+            version="$(awk '/^\[workspace.package\]/{s=1;next} /^\[/{s=0} s && /^version *=/{gsub(/.*= *"|".*/,""); print; exit}' Cargo.toml)"
+            ./scripts/package-windows.sh target/release/kantor.exe target/release/kantor-console.exe \
+              "$version" "${{ matrix.winarch }}" dist "$tag"
+            ./scripts/windows-smoke.sh "dist/Kantor-Setup-${tag}-${{ matrix.winarch }}.exe" \
+              "dist/Kantor-${tag}-${{ matrix.winarch }}.zip" "$version" \
+              "dist/screenshot-windows-${{ matrix.winarch }}.png"
+          elif [ "$platform" = macos ]; then
             # Unsigned (ad-hoc) DMG of this runner's arch; release.yml makes the universal,
             # notarised one.
             if [ "${{ inputs.universal }}" = true ]; then
@@ -102,6 +121,14 @@ jobs:
             dist/${{ steps.pkg.outputs.name }}.tar.gz*
             dist/Kantor-*
           if-no-files-found: error
+          retention-days: 14
+      # What the app looked like on the runner's desktop (Windows), for a human to glance at.
+      - if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshot-windows-${{ matrix.winarch }}
+          path: dist/screenshot-windows-*.png
+          if-no-files-found: ignore
           retention-days: 14
 
   publish:
@@ -137,8 +164,15 @@ jobs:
             f="dist/kantor-nightly-${arch}-linux.tar.gz"
             [ -f "$f" ] && assets+=("linux-${arch}-tarball=$f")
           done
+          for pair in x86_64:x64 aarch64:arm64; do
+            arch="${pair%%:*}"; w="${pair#*:}"
+            f="dist/Kantor-Setup-nightly-${w}.exe"
+            [ -f "$f" ] && assets+=("windows-${arch}-setup=$f")
+            f="dist/Kantor-nightly-${w}.zip"
+            [ -f "$f" ] && assets+=("windows-${arch}-portable=$f")
+          done
           if [ ${#assets[@]} -eq 0 ]; then
-            echo "::warning::no Linux builds: no update-nightly.json this time"
+            echo "::warning::no Linux or Windows builds: no update-nightly.json this time"
             exit 0
           fi
           mkdir -p manifest
@@ -151,6 +185,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          rm -f dist/screenshot-*.png
           ls -l dist
           # Rolling nightly: move the tag to this commit and replace the assets.
           git tag -f nightly && git push -f origin nightly

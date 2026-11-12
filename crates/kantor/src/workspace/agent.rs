@@ -33,9 +33,9 @@ fn kind_name(kind: AppKind) -> &'static str {
 fn path_arg(text: &str) -> Result<PathBuf> {
     let text = text.trim();
     let path = match text.strip_prefix("~/") {
-        Some(rest) => {
-            PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?).join(rest)
-        }
+        Some(rest) => kantor_core::dirs::home_dir()
+            .context("HOME is not set")?
+            .join(rest),
         None => PathBuf::from(text),
     };
     if !path.is_absolute() {
@@ -133,14 +133,14 @@ impl Workspace {
 
     /// Palette: put the `claude mcp add …` command on the clipboard.
     pub(super) fn copy_mcp_setup(&mut self, cx: &mut Context<Self>) {
-        #[cfg(unix)]
-        {
-            let command = crate::mcp::claude_code_command();
-            cx.write_to_clipboard(ClipboardItem::new_string(command.clone()));
-            self.notice(format!("Copied: {command}  (run it in a terminal; `kantor mcp --print-config` has more)"), cx);
-        }
-        #[cfg(not(unix))]
-        self.notice("The MCP server needs Linux or macOS".into(), cx);
+        let command = crate::mcp::claude_code_command();
+        cx.write_to_clipboard(ClipboardItem::new_string(command.clone()));
+        self.notice(
+            format!(
+                "Copied: {command}  (run it in a terminal; `kantor mcp --print-config` has more)"
+            ),
+            cx,
+        );
     }
 
     // ── documents ──────────────────────────────────────────────────────────

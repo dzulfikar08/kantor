@@ -21,8 +21,22 @@ pub enum InstallKind {
     Tarball {
         prefix: PathBuf,
     },
+    /// Kantor-Setup-*.exe (Inno Setup, per user): `<dir>\kantor.exe` with
+    /// the installer's `unins000.exe` beside it. Updated by running the new
+    /// installer silently.
+    WindowsInstaller {
+        dir: PathBuf,
+    },
+    /// The portable Kantor-*.zip, unpacked anywhere: `<dir>\kantor.exe` with
+    /// the zip's `kantor-portable.txt` beside it. Updated by swapping files.
+    WindowsPortable {
+        dir: PathBuf,
+    },
     Unmanaged,
 }
+
+/// The file in the portable zip that marks its folder as Kantor's to update.
+pub const PORTABLE_MARKER: &str = "kantor-portable.txt";
 
 impl InstallKind {
     /// Detect from the running process.
@@ -30,7 +44,13 @@ impl InstallKind {
         let Ok(exe) = std::env::current_exe() else {
             return Self::Unmanaged;
         };
-        let exe = exe.canonicalize().unwrap_or(exe);
+        // Windows: current_exe is already absolute, and canonicalize would
+        // turn it into a `\\?\` path that installers and shells dislike.
+        let exe = if cfg!(windows) {
+            exe
+        } else {
+            exe.canonicalize().unwrap_or(exe)
+        };
         let env = |k: &str| {
             std::env::var_os(k)
                 .filter(|v| !v.is_empty())
@@ -49,6 +69,8 @@ impl InstallKind {
             Self::MacApp { .. } => Some("macos-universal-app".to_owned()),
             Self::AppImage { .. } => Some(format!("linux-{arch}-appimage")),
             Self::Tarball { .. } => Some(format!("linux-{arch}-tarball")),
+            Self::WindowsInstaller { .. } => Some(format!("windows-{arch}-setup")),
+            Self::WindowsPortable { .. } => Some(format!("windows-{arch}-portable")),
             Self::Unmanaged => None,
         }
     }
@@ -58,6 +80,8 @@ impl InstallKind {
             Self::MacApp { .. } => "macOS app",
             Self::AppImage { .. } => "AppImage",
             Self::Tarball { .. } => "install.sh",
+            Self::WindowsInstaller { .. } => "Windows installer",
+            Self::WindowsPortable { .. } => "Windows portable",
             Self::Unmanaged => "unmanaged",
         }
     }
@@ -87,6 +111,27 @@ pub fn detect_from(
             return InstallKind::MacApp {
                 bundle: bundle.to_path_buf(),
             };
+        }
+        return InstallKind::Unmanaged;
+    }
+    if os == "windows" {
+        let is_kantor = exe
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.eq_ignore_ascii_case("kantor.exe"));
+        if let Some(dir) = exe.parent()
+            && is_kantor
+        {
+            if dir.join("unins000.exe").is_file() {
+                return InstallKind::WindowsInstaller {
+                    dir: dir.to_path_buf(),
+                };
+            }
+            if dir.join(PORTABLE_MARKER).is_file() {
+                return InstallKind::WindowsPortable {
+                    dir: dir.to_path_buf(),
+                };
+            }
         }
         return InstallKind::Unmanaged;
     }
@@ -238,6 +283,39 @@ mod tests {
         assert_eq!(InstallKind::Unmanaged.asset_key("x86_64"), None);
         assert_eq!(
             detect_from(&exe, None, None, "windows"),
+            InstallKind::Unmanaged
+        );
+    }
+
+    #[test]
+    fn windows_installs() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("Programs/Kantor");
+        std::fs::create_dir_all(&app).unwrap();
+        let exe = app.join("kantor.exe");
+        std::fs::write(&exe, b"").unwrap();
+        // cargo build output, or a copy with nothing beside it.
+        assert_eq!(
+            detect_from(&exe, None, None, "windows"),
+            InstallKind::Unmanaged
+        );
+        std::fs::write(app.join(PORTABLE_MARKER), b"").unwrap();
+        let k = detect_from(&exe, None, None, "windows");
+        assert_eq!(k, InstallKind::WindowsPortable { dir: app.clone() });
+        assert_eq!(
+            k.asset_key("x86_64").as_deref(),
+            Some("windows-x86_64-portable")
+        );
+        // The installer's uninstaller wins over a stray marker.
+        std::fs::write(app.join("unins000.exe"), b"").unwrap();
+        let k = detect_from(&app.join("Kantor.EXE"), None, None, "windows");
+        assert_eq!(k, InstallKind::WindowsInstaller { dir: app.clone() });
+        assert_eq!(
+            k.asset_key("aarch64").as_deref(),
+            Some("windows-aarch64-setup")
+        );
+        assert_eq!(
+            detect_from(&app.join("other.exe"), None, None, "windows"),
             InstallKind::Unmanaged
         );
     }

@@ -1,0 +1,16 @@
+[package]
+name = "kantor_console"
+description = "kantor.com: Kantor's command line on Windows (a console front for the GUI kantor.exe)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "kantor-console"
+path = "src/main.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -19,6 +19,13 @@ CLOUDFLARE_ACCOUNT_ID=b7e6f8457bd39fa37a7eea5249799754 wrangler pages deploy sit
 
 `site/dist` is not committed; always build before deploying.
 
+**Windows downloads** are behind `WINDOWS_RELEASED` at the top of `build.mjs`. Until the first
+release with `Kantor-Setup-{x64,arm64}.exe` and `Kantor-{x64,arm64}.zip` is published, the Windows
+card says "not available yet". After that release, set it to `true`, rebuild and redeploy: the
+card gets the installer buttons and steps (EN and ID), Windows visitors get the installer as the
+main button (the Arm one on Arm PCs), and the title, lede and facts say "Windows, Mac and Linux".
+Preview without changing the file: `KANTOR_SITE_WINDOWS=1 node site/build.mjs`.
+
 ## Layout
 
 ```
