@@ -104,6 +104,65 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   parts and cells untouched. Series can't be added or removed yet.
 
 #### Sheets
+- **Page Setup…** (print menu in the toolbar, palette) for the active sheet, with Excel's four
+  tabs: paper (A4, Letter, Legal, F4/Folio, A3, A5, B5, Executive, Tabloid), orientation, scale or
+  fit to N pages wide × M tall, first page number, page order; margins in centimetres with
+  Normal/Wide/Narrow presets, centre horizontally/vertically; header and footer presets or your
+  own left/centre/right text with Excel's codes (`&P`, `&N`, `&D`, `&T`, `&F`, `&A`); print area
+  (from the selection or typed, several ranges allowed), rows and columns to repeat, gridlines,
+  row and column headings, black and white. **Set Print Area** / **Clear Print Area** work on the
+  selection directly. One undo step each; saved as `pageSetup` (other attributes such as the
+  printer settings link are kept), `pageMargins`, `printOptions`, `headerFooter`, `fitToPage` and
+  the `_xlnm.Print_Area` / `_xlnm.Print_Titles` names; the print area and titles follow inserted
+  and deleted rows and columns. Export as PDF and Print use the new settings. Sheets you didn't
+  change keep the file's own markup byte for byte.
+- **Insert Chart** (chart menu in the toolbar, palette): Column, Stacked Column, Bar, Stacked
+  Bar, Line, Stacked Line, Pie, Area, Stacked Area or Scatter from the selection or the data around
+  the active cell (labels in the first row and column become series names and categories; series
+  in columns unless there are more columns than rows), placed beside the data and drawn by the same
+  renderer as a file's charts, following the cells as they change. A **Chart** panel beside the
+  grid changes its type, title, legend position, series from rows or columns and data range; move,
+  resize and delete work as for other charts. One undo step each; the chart and its data follow
+  inserted and deleted rows and columns. Saved as a chart part (`c:chartSpace` with `c:f`
+  references and cached values) in the sheet's drawing, a new drawing part when the sheet had
+  none; a later save in the same session updates or removes it there.
+- **Data Validation…** (toolbar, palette) for the selection, with Excel's three tabs: Settings
+  (allow any value, whole number, decimal, list, date, time, text length or a custom formula;
+  between, greater than… with minimum/maximum as values, dates such as 2026-01-31 or 31/01/2026,
+  times such as 9:30, or `=formulas`; a list from typed items or `=cells`, also on another sheet;
+  ignore blank; in-cell dropdown; the cells it applies to), Input Message and Error Alert (Stop,
+  Warning, Information with title and message). OK puts the rule on those cells, taking them out
+  of any rule they had, as Excel does; **Clear All** removes validation from them. One undo step
+  each; rules follow inserted and deleted rows and columns. A sheet whose validation you changed
+  is saved with its rules as `<dataValidations>` (lists on other sheets included, the file's
+  Excel 2010 copy of them dropped); other sheets keep the file's markup byte for byte.
+- **Conditional Formatting** menu in the toolbar (and the palette): Highlight Cells Rules
+  (greater than, less than, between, equal to, text that contains, a date occurring, duplicate
+  values), Top/Bottom Rules (top/bottom N items or %, above/below average), Data Bars (gradient or
+  solid, six colours), Color Scales (Excel's twelve) and Icon Sets (arrows, triangles, traffic
+  lights, signs, symbols, flags, ratings) for the selection; **New Rule…** with every rule type
+  including "use a formula", a format from Excel's presets or a custom fill, font colour, bold,
+  italic, underline and strikethrough, and stop if true; **Manage Rules…** lists the rules of the
+  selection or the sheet in priority order to edit, delete, move up/down and set stop if true;
+  **Clear Rules** from the selection or the sheet. One undo step each. A sheet whose rules you
+  changed is saved with its rules written from the model and the new formats appended to the
+  file's `<dxfs>`; other sheets keep the file's markup byte for byte.
+- **Format as Table** (Ctrl+T or Ctrl+L, Table menu in the toolbar, palette): the selection or
+  the data around the active cell, "My table has headers" (without, a header row with Column1,
+  Column2… goes in the empty row above, else a new row), and a gallery of the built-in Light,
+  Medium and Dark styles drawn as the grid draws them. Blank or repeated header names are made
+  unique as in Excel; overlapping a table, a PivotTable, merged cells or the sheet's filter is
+  refused. The filter buttons are on.
+- **Table Design** panel beside the grid for the table at the active cell: rename (structured
+  references in formulas follow), style, Header Row, Total Row (uses the empty row below or
+  inserts one; "Total" label and a SUM, or COUNT for text, in the last column), Banded
+  Rows/Columns, First/Last Column, Filter Button, a total row function per column (None, Sum,
+  Average, Count, Count Numbers, Max, Min, StdDev, Var, written as `SUBTOTAL(109,Table1[Col])`
+  etc. as Excel does), and **Convert to Range** (structured references become A1 references).
+  Each change is one undo step. New tables are saved as table parts with their relationship,
+  `<tableParts>` entry and content type; tables changed in Kantor are rewritten from the model,
+  keeping their id and their columns' calculated column formulas; other tables stay byte for
+  byte.
 - **Frozen rows stay put** while the sheet scrolls, like frozen columns already did: the frozen rows
   (and the top-left corner when rows and columns are both frozen) are pinned under the column
   letters. Everything drawn on the grid follows: the selection and fill handle, the in-cell editor
@@ -135,6 +194,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   entries reordered.
 
 #### Sheets
+- Total row labels and functions of tables (`totalsRowLabel`, `totalsRowFunction`) were not read
+  from files, and a column's data format id was read from its header's (vendored IronCalc).
+- Print titles made of both rows and columns (`$A:$A,$1:$2`) lost their second part when Kantor
+  saved the file (IronCalc keeps one part of a union); the whole name is written again.
 - Hidden columns from a file were drawn 24 px wide; they now take no room, and arrow keys step
   over hidden rows and columns.
 

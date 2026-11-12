@@ -424,6 +424,69 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .tooltip("Freeze panes, hide rows and columns")
             .dropdown_menu(move |menu, _, _| view_items(menu, &view_view)),
     );
+    // Conditional formatting.
+    let cf_view = cx.entity().downgrade();
+    row = row.child(separator(cx)).child(
+        Button::new("cf-menu")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::Highlighter)
+            .dropdown_caret(true)
+            .tooltip("Conditional Formatting")
+            .dropdown_menu(move |menu, window, cx| {
+                crate::cf_ui::cf_menu(menu, &cf_view, window, cx)
+            }),
+    );
+    // Data validation.
+    let dv_view = cx.entity().downgrade();
+    row = row.child(
+        Button::new("dv-menu")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::ListChecks)
+            .dropdown_caret(true)
+            .tooltip("Data Validation")
+            .dropdown_menu(move |menu, _, _| {
+                let (a, b, c) = (dv_view.clone(), dv_view.clone(), dv_view.clone());
+                menu.item(
+                    PopupMenuItem::new("Data Validation…").on_click(move |_, w, cx| {
+                        let _ = a.update(cx, |v, cx| v.data_validation_doc(w, cx));
+                    }),
+                )
+                .item(
+                    PopupMenuItem::new("Circle Invalid Data").on_click(move |_, w, cx| {
+                        let _ = b.update(cx, |v, cx| v.circle_invalid_doc(true, w, cx));
+                    }),
+                )
+                .item(
+                    PopupMenuItem::new("Clear Validation Circles").on_click(move |_, w, cx| {
+                        let _ = c.update(cx, |v, cx| v.circle_invalid_doc(false, w, cx));
+                    }),
+                )
+            }),
+    );
+    // Tables.
+    let table_view = cx.entity().downgrade();
+    row = row.child(separator(cx)).child(
+        Button::new("table-menu")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::Table)
+            .dropdown_caret(true)
+            .tooltip("Table")
+            .dropdown_menu(move |menu, _, _| table_items(menu, &table_view)),
+    );
+    // Charts.
+    let chart_view = cx.entity().downgrade();
+    row = row.child(
+        Button::new("chart-menu")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::ChartColumn)
+            .dropdown_caret(true)
+            .tooltip("Insert Chart")
+            .dropdown_menu(move |menu, _, _| crate::chart_ui::chart_menu(menu, &chart_view)),
+    );
     // PivotTables.
     let pivot_view = cx.entity().downgrade();
     row = row.child(separator(cx)).child(
@@ -447,18 +510,40 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .dropdown_menu(move |menu, _, _| {
                 let export = print_view.clone();
                 let print = print_view.clone();
-                menu.item(
+                let menu = menu.item(
                     PopupMenuItem::new("Export as PDF…")
                         .icon(Lucide::FileDown)
                         .on_click(move |_, window, cx| {
                             let _ = export.update(cx, |v, cx| v.export_pdf_doc(window, cx));
                         }),
-                )
-                .item(PopupMenuItem::new("Print…").icon(Lucide::Printer).on_click(
-                    move |_, window, cx| {
-                        let _ = print.update(cx, |v, cx| v.print_doc(window, cx));
-                    },
-                ))
+                );
+                let setup = print_view.clone();
+                let area = print_view.clone();
+                let clear = print_view.clone();
+                menu.separator()
+                    .item(
+                        PopupMenuItem::new("Page Setup…").on_click(move |_, window, cx| {
+                            let _ = setup.update(cx, |v, cx| v.page_setup_doc(window, cx));
+                        }),
+                    )
+                    .item(
+                        PopupMenuItem::new("Set Print Area").on_click(move |_, window, cx| {
+                            let _ =
+                                area.update(cx, |v, cx| v.set_print_area_doc(false, window, cx));
+                        }),
+                    )
+                    .item(
+                        PopupMenuItem::new("Clear Print Area").on_click(move |_, window, cx| {
+                            let _ =
+                                clear.update(cx, |v, cx| v.set_print_area_doc(true, window, cx));
+                        }),
+                    )
+                    .separator()
+                    .item(PopupMenuItem::new("Print…").icon(Lucide::Printer).on_click(
+                        move |_, window, cx| {
+                            let _ = print.update(cx, |v, cx| v.print_doc(window, cx));
+                        },
+                    ))
             }),
     );
     if kantor_ui::ai::ai_enabled(cx) {
@@ -497,6 +582,32 @@ fn view_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
         };
         menu = menu.item(PopupMenuItem::new(text).on_click(move |_, window, cx| {
             let _ = view.update(cx, |v, cx| v.grid_command(command, window, cx));
+        }));
+    }
+    menu
+}
+
+/// The Table menu: Format as Table, Table Design, Convert to Range.
+fn table_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
+    type Run = fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>);
+    let items: [(&str, &str, Run); 3] = [
+        ("Format as Table…", "Ctrl+T", |v, w, cx| {
+            v.format_as_table_doc(w, cx)
+        }),
+        ("Table Design", "", |v, w, cx| v.table_design_doc(w, cx)),
+        ("Convert to Range", "", |v, w, cx| {
+            v.convert_table_doc(w, cx)
+        }),
+    ];
+    for (label, keys, run) in items {
+        let view = view.clone();
+        let text = if keys.is_empty() {
+            label.to_owned()
+        } else {
+            format!("{label}  ({keys})")
+        };
+        menu = menu.item(PopupMenuItem::new(text).on_click(move |_, window, cx| {
+            let _ = view.update(cx, |v, cx| run(v, window, cx));
         }));
     }
     menu

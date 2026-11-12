@@ -756,6 +756,106 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "New Conditional Formatting Rule…",
+        detail: "Sheets · highlight cells, top/bottom, data bars, colour scales, icon sets or a formula",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.new_cf_rule_doc(w, cx)),
+    },
+    Command {
+        title: "Manage Conditional Formatting Rules…",
+        detail: "Sheets · edit, delete and reorder the rules of the selection or the sheet",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.manage_cf_doc(w, cx)),
+    },
+    Command {
+        title: "Clear Conditional Formatting from Selected Cells",
+        detail: "Sheets · remove the rules that touch the selection",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.clear_cf_doc(false, w, cx)),
+    },
+    Command {
+        title: "Clear Conditional Formatting from Entire Sheet",
+        detail: "Sheets · remove every rule of the active sheet",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.clear_cf_doc(true, w, cx)),
+    },
+    Command {
+        title: "Insert Chart",
+        detail: "Sheets · a column chart of the selection or the data around the active cell (other types in the toolbar's chart menu)",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.insert_chart_doc(sheets_engine::ChartType::Column, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Line Chart",
+        detail: "Sheets · a line chart of the selection",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.insert_chart_doc(sheets_engine::ChartType::Line, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Pie Chart",
+        detail: "Sheets · a pie chart of the selection",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.insert_chart_doc(sheets_engine::ChartType::Pie, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Chart Panel",
+        detail: "Sheets · type, title, legend, series and data of the selected chart",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.chart_options_doc(w, cx)),
+    },
+    Command {
+        title: "Format as Table…",
+        detail: "Sheets · make the selection or the data around the active cell a table with a style",
+        keys: "Ctrl T",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.format_as_table_doc(w, cx)),
+    },
+    Command {
+        title: "Table Design",
+        detail: "Sheets · style, header and total rows, banding, totals and name of the table at the active cell",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.table_design_doc(w, cx)),
+    },
+    Command {
+        title: "Convert Table to Range",
+        detail: "Sheets · keep the cells, remove the table at the active cell",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.convert_table_doc(w, cx)),
+    },
+    Command {
+        title: "Page Setup…",
+        detail: "Sheets · paper, orientation, scaling, margins, header and footer, print area and titles",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.page_setup_doc(w, cx)),
+    },
+    Command {
+        title: "Set Print Area",
+        detail: "Sheets · print only the selected cells of this sheet",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.set_print_area_doc(false, w, cx))
+        },
+    },
+    Command {
+        title: "Clear Print Area",
+        detail: "Sheets · print the whole used range of this sheet again",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.set_print_area_doc(true, w, cx))
+        },
+    },
+    Command {
         title: "Insert PivotTable…",
         detail: "Sheets · summarise the table, selection or data around the active cell",
         keys: "",
@@ -796,6 +896,12 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| v.open_validation_list_doc(w, cx))
         },
+    },
+    Command {
+        title: "Data Validation…",
+        detail: "Sheets · allow only a list, numbers, dates, times, text length or a formula; input message and error alert",
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.data_validation_doc(w, cx)),
     },
     Command {
         title: "Circle Invalid Data",

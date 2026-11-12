@@ -45,13 +45,18 @@ mod ai;
 mod bench;
 mod calc;
 mod cell_editor;
+mod cf_ui;
+mod chart_ui;
 mod cond_paint;
 mod data_validation;
+mod dialog;
 mod drawings;
+mod dv_ui;
 mod filter_menu;
 mod find;
 mod grid_ops;
 mod look;
+pub mod page_setup;
 pub mod pivot;
 mod point;
 mod popup_list;
@@ -62,6 +67,7 @@ mod row_layout;
 // Upstream code, kept close to GPUI Kit's so it can be compared.
 #[allow(dead_code, clippy::all)]
 mod table;
+mod table_ui;
 
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
@@ -235,6 +241,7 @@ pub fn init(cx: &mut App) {
     grid_ops::bind_keys(cx);
     calc::bind_keys(cx);
     pivot::bind_keys(cx);
+    table_ui::bind_keys(cx);
     data_validation::bind_keys(cx);
 }
 
@@ -1013,6 +1020,22 @@ pub struct SheetsView {
     pivot_dialog: Option<pivot::InsertDialog>,
     /// The PivotTable Fields panel beside the grid.
     pivot_panel: Option<pivot::FieldPanel>,
+    /// The Format as Table card and the Table Design panel (see
+    /// [`table_ui`]).
+    table_dialog: Option<table_ui::TableDialog>,
+    table_panel: Option<table_ui::TablePanel>,
+    /// The conditional formatting rule card and Manage Rules (see
+    /// [`cf_ui`]).
+    cf_dialog: Option<cf_ui::CfDialog>,
+    cf_manager: Option<cf_ui::CfManager>,
+    /// The Chart panel (see [`chart_ui`]) and a "series in rows" choice
+    /// waiting for the window.
+    chart_panel: Option<chart_ui::ChartPanel>,
+    pending_chart_rows: Option<bool>,
+    /// The Data Validation card (see [`dv_ui`]).
+    dv_dialog: Option<dv_ui::DvDialog>,
+    /// The Page Setup card (see [`page_setup`]).
+    page_setup: Option<page_setup::PageSetupDialog>,
     /// A restored recovery copy's original: Save asks before overwriting it
     /// if it changed on disk (see [`recovery`]).
     disk_guard: Option<kantor_ui::disk_guard::DiskGuard>,
@@ -1080,6 +1103,14 @@ impl SheetsView {
             drawings: Rc::default(),
             pivot_dialog: None,
             pivot_panel: None,
+            page_setup: None,
+            table_dialog: None,
+            cf_dialog: None,
+            dv_dialog: None,
+            chart_panel: None,
+            pending_chart_rows: None,
+            cf_manager: None,
+            table_panel: None,
             disk_guard: None,
             pending_autosave: None,
             _subscriptions: subscriptions,
@@ -2189,10 +2220,17 @@ impl Render for SheetsView {
         if self.opening.is_none() {
             self.bench_step(window, cx);
         }
+        self.apply_pending_chart(window, cx);
+        self.sync_chart_panel(window, cx);
         let root = self.editor_actions(v_flex(), cx);
         let root = self.point_actions(root, cx);
         let root = self.calc_actions(root, cx);
         let root = self.pivot_actions(root, cx);
+        let root = self.page_setup_actions(root, cx);
+        let root = self.table_actions(root, cx);
+        let root = self.cf_actions(root, cx);
+        let root = self.dv_actions(root, cx);
+        let root = self.chart_actions(root, cx);
         use kantor_ui::find_bar as fb;
         root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
@@ -2282,6 +2320,8 @@ impl Render for SheetsView {
             // Grid, and the PivotTable Fields panel beside it.
             .child({
                 let panel = self.render_pivot_panel(cx);
+                let table_panel = self.render_table_panel(cx);
+                let chart_panel = self.render_chart_panel(cx);
                 h_flex()
                     .flex_1()
                     .min_h_0()
@@ -2324,6 +2364,8 @@ impl Render for SheetsView {
                             .child(self.render_drawings(cx)),
                     )
                     .children(panel)
+                    .children(table_panel)
+                    .children(chart_panel)
             })
             // Sheet tabs
             .child(
@@ -2343,6 +2385,11 @@ impl Render for SheetsView {
             .children(self.render_sort_panel(cx))
             .children(self.render_filter_menu(cx))
             .children(self.render_pivot_dialog(cx))
+            .children(self.render_page_setup(cx))
+            .children(self.render_table_dialog(cx))
+            .children(self.render_cf_manager(cx))
+            .children(self.render_cf_dialog(cx))
+            .children(self.render_dv_dialog(cx))
             .into_any_element()
     }
 }

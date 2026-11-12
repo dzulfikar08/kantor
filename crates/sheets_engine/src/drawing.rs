@@ -219,8 +219,15 @@ impl Anchor {
 /// What an object is.
 #[derive(Clone, Debug)]
 pub enum DrawingKind {
-    /// A chart: its part's name and XML (`c:chartSpace`).
-    Chart { part: Arc<str>, xml: Arc<str> },
+    /// A chart: its part's name and XML (`c:chartSpace`). `current_refs`:
+    /// its references are in the current rows and columns (a chart made in
+    /// Kantor; a file's are in the opened file's, see
+    /// [`Workbook::chart_reference`]).
+    Chart {
+        part: Arc<str>,
+        xml: Arc<str>,
+        current_refs: bool,
+    },
     /// A picture: its media part, bytes and cropping (left, top, right,
     /// bottom as fractions of the picture; negative = padding).
     Picture {
@@ -456,6 +463,7 @@ fn kind(
                 Some(xml) => DrawingKind::Chart {
                     xml: xml.into(),
                     part: part.into(),
+                    current_refs: false,
                 },
                 None => other(),
             }
@@ -647,6 +655,12 @@ impl Workbook {
     /// where they are now, bottom to top.
     pub fn drawings(&self, sheet: u32) -> Vec<Drawing> {
         let sheet_id = self.sheet_id(sheet);
+        let mut out = self.file_drawings(sheet_id);
+        out.extend(self.new_chart_drawings(sheet_id));
+        out
+    }
+
+    fn file_drawings(&self, sheet_id: u32) -> Vec<Drawing> {
         let Some(objects) = self.drawings.sheets.get(&sheet_id) else {
             return Vec::new();
         };
@@ -673,7 +687,7 @@ impl Workbook {
 
     /// Whether any sheet has drawings.
     pub fn has_drawings(&self) -> bool {
-        !self.drawings.is_empty()
+        !self.drawings.is_empty() || !self.edits().charts.is_empty()
     }
 
     /// The workbook theme's XML (`xl/theme/theme1.xml`), for charts.
@@ -702,12 +716,18 @@ impl Workbook {
     /// Move or resize an object (one undo step); `anchor` is in the current
     /// state's rows and columns.
     pub fn place_drawing(&mut self, key: DrawingKey, anchor: Anchor) -> Result<()> {
+        if key.index >= crate::chart_edit::NEW_CHART_BASE {
+            return self.new_chart_edit(key, Some(anchor));
+        }
         let layout = self.history.layout();
         self.drawing_edit(key, Edit::Placed { anchor, layout })
     }
 
     /// Delete an object (one undo step).
     pub fn delete_drawing(&mut self, key: DrawingKey) -> Result<()> {
+        if key.index >= crate::chart_edit::NEW_CHART_BASE {
+            return self.new_chart_edit(key, None);
+        }
         self.drawing_edit(key, Edit::Deleted)
     }
 
@@ -718,10 +738,16 @@ impl Workbook {
     pub fn chart_reference(&self, formula: &str) -> Option<RefData> {
         let moves = Layout::default().moves_to(&self.history.layout());
         let moved = moves.formula(formula, None, &self.drawings.names);
+        self.chart_reference_now(&moved)
+    }
+
+    /// The cells a chart reference points at, taken as it is (in the
+    /// current rows and columns: charts made in Kantor).
+    pub fn chart_reference_now(&self, moved: &str) -> Option<RefData> {
         let model = self.model.get_model();
         let mut out = RefData::default();
         let mut found = false;
-        for token in crate::shift::references(&moved) {
+        for token in crate::shift::references(moved) {
             let name = token.sheet.as_deref()?;
             let sheet = model
                 .workbook
@@ -756,7 +782,7 @@ impl Workbook {
     }
 
     /// The number a cell holds (formula results included).
-    fn raw_number(&self, sheet: u32, row: u32, col: u32) -> Option<f64> {
+    pub(crate) fn raw_number(&self, sheet: u32, row: u32, col: u32) -> Option<f64> {
         let model = self.model.get_model();
         let ws = model.workbook.worksheet(sheet).ok()?;
         let cell = ws.cell(row as i32 + 1, col as i32 + 1)?;

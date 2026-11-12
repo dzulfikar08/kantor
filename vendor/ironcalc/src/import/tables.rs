@@ -134,8 +134,9 @@ pub(crate) fn load_table<R: Read + std::io::Seek>(
             None
         };
 
-        // style index of the header row of the table column
-        let data_dxf_id = if let Some(index_str) = table_column.attribute("headerRowDxfId") {
+        // style index of the data cells of the table column
+        // KANTOR PATCH (tables): upstream read `headerRowDxfId` here.
+        let data_dxf_id = if let Some(index_str) = table_column.attribute("dataDxfId") {
             index_str.parse::<u32>().ok()
         } else {
             None
@@ -155,10 +156,15 @@ pub(crate) fn load_table<R: Read + std::io::Seek>(
         columns.push(TableColumn {
             id,
             name: column_name.to_string(),
-            totals_row_label: None,
+            // KANTOR PATCH (tables): the total row's label and function
+            // (upstream left them out).
+            totals_row_label: table_column.attribute("totalsRowLabel").map(str::to_string),
             header_row_dxf_id,
             data_dxf_id,
-            totals_row_function: None,
+            totals_row_function: table_column
+                .attribute("totalsRowFunction")
+                .filter(|f| *f != "none")
+                .map(str::to_string),
             totals_row_dxf_id,
         });
     }

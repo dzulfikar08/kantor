@@ -29,7 +29,7 @@ use crate::shift::Layout;
 use crate::{CellRange, Workbook};
 
 /// The x14 data validation extension of `extLst`.
-const DV_EXTENSION: &str = "{CCE6A557-97BC-4b89-ADB6-D9C93CAAB3DF}";
+pub(crate) const DV_EXTENSION: &str = "{CCE6A557-97BC-4b89-ADB6-D9C93CAAB3DF}";
 /// List items read at most (a whole-column source on a big sheet).
 const MAX_LIST_ITEMS: usize = 10_000;
 /// Cells whose check is kept at most (see [`Workbook::invalid_cell`]).
@@ -590,7 +590,7 @@ impl Workbook {
 
     /// The rules of `sheet` (an index) in the current state.
     fn validation_rules(&mut self, sheet: u32) -> Arc<Vec<Rule>> {
-        if self.validation.raw.is_empty() {
+        if self.validation.raw.is_empty() && self.edits().validations.is_empty() {
             return Arc::default();
         }
         let key = self.revision();
@@ -608,19 +608,37 @@ impl Workbook {
         rules
     }
 
-    fn compile_validations(&mut self, sheet: u32) -> Vec<Rule> {
+    /// The rules of `sheet` moved to the current state (no formulas
+    /// parsed): Kantor's edits for the sheet if any, else the file's.
+    pub(crate) fn moved_validations(&self, sheet: u32) -> Vec<Validation> {
         let sheet_id = self.sheet_id(sheet);
-        let raws: Vec<Raw> = self
-            .validation
-            .raw
-            .iter()
-            .filter(|r| r.sheet_id == sheet_id)
-            .cloned()
-            .collect();
+        // Rules edited in Kantor replace the file's for the whole sheet.
+        let edits = self.edits();
+        let (raws, base): (Vec<Raw>, Layout) = match edits.validations.get(&sheet_id) {
+            Some((list, layout)) => (
+                list.iter()
+                    .map(|v| Raw {
+                        sheet_id,
+                        sqref: crate::sqref_of(&v.ranges),
+                        rule: v.clone(),
+                    })
+                    .collect(),
+                layout.clone(),
+            ),
+            None => (
+                self.validation
+                    .raw
+                    .iter()
+                    .filter(|r| r.sheet_id == sheet_id)
+                    .cloned()
+                    .collect(),
+                self.validation.base.clone(),
+            ),
+        };
         if raws.is_empty() {
             return Vec::new();
         }
-        let moves = self.validation.base.moves_to(&self.history.layout());
+        let moves = base.moves_to(&self.history.layout());
         let names: HashMap<String, u32> = self
             .model
             .get_model()
@@ -635,15 +653,9 @@ impl Workbook {
                 continue; // every cell deleted
             };
             let ranges = parse_sqref(&sqref);
-            let Some(first) = ranges.first().copied() else {
+            if ranges.is_empty() {
                 continue;
-            };
-            let bounds = ranges.iter().skip(1).fold(first, |b, r| CellRange {
-                top: b.top.min(r.top),
-                left: b.left.min(r.left),
-                bottom: b.bottom.max(r.bottom),
-                right: b.right.max(r.right),
-            });
+            }
             let mut v = raw.rule;
             let moved = |f: &Option<String>| {
                 f.as_ref()
@@ -652,6 +664,21 @@ impl Workbook {
             v.formula1 = moved(&v.formula1);
             v.formula2 = moved(&v.formula2);
             v.ranges = ranges;
+            out.push(v);
+        }
+        out
+    }
+
+    fn compile_validations(&mut self, sheet: u32) -> Vec<Rule> {
+        let mut out = Vec::new();
+        for v in self.moved_validations(sheet) {
+            let first = v.ranges[0];
+            let bounds = v.ranges.iter().skip(1).fold(first, |b, r| CellRange {
+                top: b.top.min(r.top),
+                left: b.left.min(r.left),
+                bottom: b.bottom.max(r.bottom),
+                right: b.right.max(r.right),
+            });
             let anchor = (first.top as i32 + 1, first.left as i32 + 1);
             let inline = (v.kind == ValidationType::List)
                 .then(|| v.formula1.as_deref().and_then(inline_items))

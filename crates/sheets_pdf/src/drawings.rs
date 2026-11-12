@@ -31,8 +31,9 @@ pub enum PrintKind {
         data: Arc<Vec<u8>>,
         crop: [f32; 4],
     },
-    /// A parsed chart, before its live data.
-    Chart(Arc<Chart>),
+    /// A parsed chart, before its live data, and whether its references
+    /// are in the current rows and columns (made in Kantor).
+    Chart(Arc<Chart>, bool),
 }
 
 /// An object to print and where it is on the sheet.
@@ -257,10 +258,12 @@ impl SheetDrawings {
                     data: data.clone(),
                     crop: *crop,
                 },
-                DrawingKind::Chart { xml, .. } => {
+                DrawingKind::Chart {
+                    xml, current_refs, ..
+                } => {
                     let t = theme.get_or_insert_with(|| ChartTheme::of(book));
                     match t.parse(xml).filter(Chart::drawable) {
-                        Some(c) => PrintKind::Chart(Arc::new(c)),
+                        Some(c) => PrintKind::Chart(Arc::new(c), *current_refs),
                         None => continue,
                     }
                 }
@@ -317,11 +320,11 @@ impl SheetDrawings {
                     data: data.clone(),
                     crop: *crop,
                 },
-                PrintKind::Chart(base) => {
+                PrintKind::Chart(base, current) => {
                     let Some(defaults) = &self.defaults else {
                         continue;
                     };
-                    let (chart, hash) = sheets_scene::live_chart(base, book);
+                    let (chart, hash) = sheets_scene::live_chart(base, book, *current);
                     OverlayKind::Chart {
                         key: d.key,
                         hash,

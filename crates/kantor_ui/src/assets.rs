@@ -78,6 +78,9 @@ icon_assets!(
         CheckCheck,
         // Slides: table and chart editing
         SquarePen,
+        // Sheets: conditional formatting, data validation, charts
+        Highlighter,
+        ListChecks,
         ChartColumn,
         // AI
         Sparkles,

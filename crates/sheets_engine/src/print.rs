@@ -559,6 +559,13 @@ impl Workbook {
     /// sheet that says nothing.
     pub fn print_settings(&self, sheet: u32) -> SheetPrint {
         let sheet_id = self.sheet_id(sheet);
+        if let Some((p, layout)) = self.edits().prints.get(&sheet_id) {
+            return moved_print(
+                p.clone(),
+                sheet_id,
+                &layout.moves_to(&self.history.layout()),
+            );
+        }
         let mut p = self
             .prints
             .sheets
@@ -750,6 +757,433 @@ impl Workbook {
             }
         }
         bounds
+    }
+}
+
+/// `p` (set in the state `moves` start from) with its print area, titles
+/// and page breaks following the rows and columns moved since.
+fn moved_print(mut p: SheetPrint, sheet_id: u32, moves: &shift::Moves) -> SheetPrint {
+    if !moves.touches(sheet_id) {
+        return p;
+    }
+    let row = |r: u32| moves.point(sheet_id, r, 0).0;
+    let col = |c: u32| moves.point(sheet_id, 0, c).1;
+    p.row_breaks = p
+        .row_breaks
+        .iter()
+        .map(|&r| row(r))
+        .filter(|&r| r > 0)
+        .collect();
+    p.col_breaks = p
+        .col_breaks
+        .iter()
+        .map(|&c| col(c))
+        .filter(|&c| c > 0)
+        .collect();
+    p.row_breaks.dedup();
+    p.col_breaks.dedup();
+    let moved = |r: CellRange| -> Option<CellRange> {
+        let a = moves.area(
+            sheet_id,
+            shift::Area {
+                top: r.top,
+                left: r.left,
+                bottom: r.bottom,
+                right: r.right,
+            },
+        )?;
+        Some(CellRange::from_corners(
+            (a.top, a.left),
+            (a.bottom, a.right),
+        ))
+    };
+    p.print_area = p.print_area.into_iter().filter_map(moved).collect();
+    p.title_rows = p
+        .title_rows
+        .and_then(|(a, b)| moved(CellRange::rows(a, b)))
+        .map(|r| (r.top, r.bottom));
+    p.title_cols = p
+        .title_cols
+        .and_then(|(a, b)| moved(CellRange::columns(a, b)))
+        .map(|r| (r.left, r.right));
+    p
+}
+
+/// The papers Page Setup offers, by name.
+pub const PAPERS: [(&str, Paper); 9] = [
+    ("A4 (210 × 297 mm)", Paper::A4),
+    ("Letter (8.5 × 11 in)", Paper::LETTER),
+    ("Legal (8.5 × 14 in)", Paper::LEGAL),
+    ("F4 / Folio (8.5 × 13 in)", Paper::FOLIO),
+    ("A3 (297 × 420 mm)", Paper::A3),
+    ("A5 (148 × 210 mm)", Paper::A5),
+    ("B5 (182 × 257 mm)", Paper::mm(182.0, 257.0)),
+    ("Executive (7.25 × 10.5 in)", Paper::inches(7.25, 10.5)),
+    ("Tabloid (11 × 17 in)", Paper::inches(11.0, 17.0)),
+];
+
+impl Paper {
+    /// Excel's `paperSize` code for this paper, if it has one.
+    pub fn code(&self) -> Option<u32> {
+        // The first code of `from_code` that gives this size.
+        [
+            1, 3, 5, 7, 8, 9, 11, 12, 13, 14, 15, 16, 20, 25, 27, 28, 34, 70,
+        ]
+        .into_iter()
+        .find(|&c| Paper::from_code(c).is_some_and(|p| p.same_as(self)))
+    }
+
+    /// Equal within a tenth of a millimetre.
+    pub fn same_as(&self, other: &Paper) -> bool {
+        (self.width_mm - other.width_mm).abs() < 0.1
+            && (self.height_mm - other.height_mm).abs() < 0.1
+    }
+
+    /// Its name in [`PAPERS`], or `W × H mm`.
+    pub fn name(&self) -> String {
+        PAPERS
+            .iter()
+            .find(|(_, p)| p.same_as(self))
+            .map(|(n, _)| (*n).to_owned())
+            .unwrap_or_else(|| format!("{:.0} × {:.0} mm", self.width_mm, self.height_mm))
+    }
+}
+
+impl Margins {
+    /// Excel's "Wide" margins.
+    pub const WIDE: Margins = Margins {
+        left: 1.0,
+        right: 1.0,
+        top: 1.0,
+        bottom: 1.0,
+        header: 0.5,
+        footer: 0.5,
+    };
+    /// Excel's "Narrow" margins.
+    pub const NARROW: Margins = Margins {
+        left: 0.25,
+        right: 0.25,
+        top: 0.75,
+        bottom: 0.75,
+        header: 0.3,
+        footer: 0.3,
+    };
+}
+
+/// Header and footer choices offered by Page Setup, as Excel lists them:
+/// `(label, text with & codes)`.
+pub const HEADER_FOOTER_PRESETS: [(&str, &str); 9] = [
+    ("(none)", ""),
+    ("Page 1", "&CPage &P"),
+    ("Page 1 of ?", "&CPage &P of &N"),
+    ("Sheet name", "&C&A"),
+    ("File name", "&C&F"),
+    ("Date", "&C&D"),
+    ("Sheet name · Page 1", "&L&A&RPage &P"),
+    ("File name · Page 1 of ?", "&L&F&RPage &P of &N"),
+    ("Date and time · Page 1", "&L&D &T&RPage &P"),
+];
+
+/// A header or footer string split into its left, centre and right
+/// sections (`&L`, `&C`, `&R`; text before any is centred).
+pub fn split_sections(text: &str) -> [String; 3] {
+    let mut out: [String; 3] = Default::default();
+    let mut cur = 1;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '&' {
+            match chars.peek() {
+                Some('L' | 'l') => {
+                    cur = 0;
+                    chars.next();
+                    continue;
+                }
+                Some('C' | 'c') => {
+                    cur = 1;
+                    chars.next();
+                    continue;
+                }
+                Some('R' | 'r') => {
+                    cur = 2;
+                    chars.next();
+                    continue;
+                }
+                Some('&') => {
+                    out[cur].push_str("&&");
+                    chars.next();
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        out[cur].push(c);
+    }
+    out
+}
+
+/// Left, centre and right sections joined into one header or footer
+/// string.
+pub fn join_sections(left: &str, center: &str, right: &str) -> String {
+    let mut out = String::new();
+    for (code, text) in [("&L", left), ("&C", center), ("&R", right)] {
+        if !text.is_empty() {
+            out.push_str(code);
+            out.push_str(text);
+        }
+    }
+    out
+}
+
+fn fmt_num(v: f64) -> String {
+    let s = format!("{:.4}", v);
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s.is_empty() || s == "-0" {
+        "0".to_owned()
+    } else {
+        s.to_owned()
+    }
+}
+
+fn esc_xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// What a save writes for print settings edited in Kantor: the sheet
+/// elements (`None`: remove it), `fitToPage` and the attributes of
+/// `<pageSetup>` Kantor sets (the others, such as the printer settings'
+/// `r:id`, are kept).
+pub(crate) struct PrintXml {
+    pub elements: Vec<(&'static str, Option<String>)>,
+    pub fit_to_page: bool,
+    /// `<pageSetup>` attributes: `(name, value)`; those listed in
+    /// [`PAGE_SETUP_ATTRS`] and not here are removed.
+    pub page_setup: Vec<(&'static str, String)>,
+}
+
+/// The `<pageSetup>` attributes Kantor writes (others are kept as they are).
+pub(crate) const PAGE_SETUP_ATTRS: [&str; 12] = [
+    "paperSize",
+    "paperWidth",
+    "paperHeight",
+    "orientation",
+    "scale",
+    "fitToWidth",
+    "fitToHeight",
+    "pageOrder",
+    "firstPageNumber",
+    "useFirstPageNumber",
+    "blackAndWhite",
+    "usePrinterDefaults",
+];
+
+pub(crate) fn print_xml(p: &SheetPrint) -> PrintXml {
+    let o = &p.options;
+    let mut opts = String::new();
+    for (name, on) in [
+        ("horizontalCentered", o.horizontal_centered),
+        ("verticalCentered", o.vertical_centered),
+        ("headings", o.headings),
+        ("gridLines", o.grid_lines),
+    ] {
+        if on {
+            opts.push_str(&format!(" {name}=\"1\""));
+        }
+    }
+    let print_options = (!opts.is_empty()).then(|| format!("<printOptions{opts}/>"));
+    let m = &p.margins;
+    let margins = format!(
+        "<pageMargins left=\"{}\" right=\"{}\" top=\"{}\" bottom=\"{}\" header=\"{}\" footer=\"{}\"/>",
+        fmt_num(m.left),
+        fmt_num(m.right),
+        fmt_num(m.top),
+        fmt_num(m.bottom),
+        fmt_num(m.header),
+        fmt_num(m.footer)
+    );
+    let s = &p.setup;
+    let mut attrs: Vec<(&'static str, String)> = Vec::new();
+    match s.paper.code() {
+        Some(code) => attrs.push(("paperSize", code.to_string())),
+        None => {
+            attrs.push(("paperWidth", format!("{}mm", fmt_num(s.paper.width_mm))));
+            attrs.push(("paperHeight", format!("{}mm", fmt_num(s.paper.height_mm))));
+        }
+    }
+    if s.scale != 100 {
+        attrs.push(("scale", s.scale.clamp(10, 400).to_string()));
+    }
+    if let Some(n) = s.first_page_number {
+        attrs.push(("firstPageNumber", n.to_string()));
+    }
+    if let Some((w, h)) = s.fit {
+        if w != 1 {
+            attrs.push(("fitToWidth", w.to_string()));
+        }
+        if h != 1 {
+            attrs.push(("fitToHeight", h.to_string()));
+        }
+    }
+    if s.over_then_down {
+        attrs.push(("pageOrder", "overThenDown".into()));
+    }
+    attrs.push((
+        "orientation",
+        if s.landscape { "landscape" } else { "portrait" }.into(),
+    ));
+    if s.black_and_white {
+        attrs.push(("blackAndWhite", "1".into()));
+    }
+    if s.first_page_number.is_some() {
+        attrs.push(("useFirstPageNumber", "1".into()));
+    }
+    let hf = &p.header_footer;
+    let header_footer = if hf.is_empty() && !hf.different_first && !hf.different_odd_even {
+        None
+    } else {
+        let mut a = String::new();
+        if hf.different_odd_even {
+            a.push_str(" differentOddEven=\"1\"");
+        }
+        if hf.different_first {
+            a.push_str(" differentFirst=\"1\"");
+        }
+        if !hf.scale_with_doc {
+            a.push_str(" scaleWithDoc=\"0\"");
+        }
+        if !hf.align_with_margins {
+            a.push_str(" alignWithMargins=\"0\"");
+        }
+        let mut body = String::new();
+        for (name, text) in [
+            ("oddHeader", &hf.odd_header),
+            ("oddFooter", &hf.odd_footer),
+            ("evenHeader", &hf.even_header),
+            ("evenFooter", &hf.even_footer),
+            ("firstHeader", &hf.first_header),
+            ("firstFooter", &hf.first_footer),
+        ] {
+            if !text.is_empty() {
+                body.push_str(&format!("<{name}>{}</{name}>", esc_xml(text)));
+            }
+        }
+        Some(format!("<headerFooter{a}>{body}</headerFooter>"))
+    };
+    PrintXml {
+        elements: vec![
+            ("printOptions", print_options),
+            ("pageMargins", Some(margins)),
+            ("headerFooter", header_footer),
+        ],
+        fit_to_page: s.fit.is_some(),
+        page_setup: attrs,
+    }
+}
+
+/// `Sheet1` or `'My Sheet'` for a formula.
+pub(crate) fn quote_sheet(name: &str) -> String {
+    let plain = name.chars().all(|c| c.is_alphanumeric() || c == '_')
+        && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
+        && crate::formula::parse_range(name).is_none();
+    if plain {
+        name.to_owned()
+    } else {
+        format!("'{}'", name.replace('\'', "''"))
+    }
+}
+
+/// The `_xlnm.Print_Area` and `_xlnm.Print_Titles` formulas of `p` on the
+/// sheet called `sheet` (titles: columns first, as Excel writes them).
+pub(crate) fn name_formulas(p: &SheetPrint, sheet: &str) -> (Option<String>, Option<String>) {
+    let q = quote_sheet(sheet);
+    let abs = |r: &CellRange| {
+        let a = format!("${}${}", crate::column_name(r.left), r.top + 1);
+        if r.is_single() {
+            a
+        } else {
+            format!("{a}:${}${}", crate::column_name(r.right), r.bottom + 1)
+        }
+    };
+    let area = (!p.print_area.is_empty()).then(|| {
+        p.print_area
+            .iter()
+            .map(|r| format!("{q}!{}", abs(r)))
+            .collect::<Vec<_>>()
+            .join(",")
+    });
+    let mut titles = Vec::new();
+    if let Some((a, b)) = p.title_cols {
+        titles.push(format!(
+            "{q}!${}:${}",
+            crate::column_name(a),
+            crate::column_name(b)
+        ));
+    }
+    if let Some((a, b)) = p.title_rows {
+        titles.push(format!("{q}!${}:${}", a + 1, b + 1));
+    }
+    (area, (!titles.is_empty()).then(|| titles.join(",")))
+}
+
+/// Whether a defined name's formula has several references (a union, which
+/// IronCalc keeps only the first part of).
+pub(crate) fn is_union(formula: &str) -> bool {
+    references(formula).len() > 1
+}
+
+impl Workbook {
+    /// Set how `sheet` prints (Page Setup): one undo step. Print area and
+    /// titles are in the current rows and columns.
+    pub fn set_print_settings(&mut self, sheet: u32, settings: SheetPrint) -> anyhow::Result<()> {
+        if sheet as usize >= self.sheet_names().len() {
+            anyhow::bail!("no sheet {sheet}");
+        }
+        if settings == self.print_settings(sheet) {
+            return Ok(());
+        }
+        let sheet_id = self.sheet_id(sheet);
+        self.own_edit(|e, layout| {
+            e.prints.insert(sheet_id, (settings, layout.clone()));
+        });
+        Ok(())
+    }
+
+    /// Patches a save writes for print settings: sheets whose settings were
+    /// edited, and sheets whose print names are a union (IronCalc keeps
+    /// only its first part).
+    pub(crate) fn print_patches(&self, out: &mut crate::preserve::Patches) {
+        let edits = self.edits();
+        let names = self.sheet_names();
+        for (i, name) in names.iter().enumerate() {
+            let sheet = i as u32;
+            let id = self.sheet_id(sheet);
+            if edits.prints.contains_key(&id) || self.touched.prints.contains(&id) {
+                let p = self.print_settings(sheet);
+                let x = print_xml(&p);
+                let patch = out.sheets.entry(id).or_default();
+                patch.elements.extend(x.elements);
+                patch.fit_to_page = Some(x.fit_to_page);
+                patch.page_setup = Some(x.page_setup);
+                let (area, titles) = name_formulas(&p, name);
+                out.names.push((id, "_xlnm.Print_Area", area));
+                out.names.push((id, "_xlnm.Print_Titles", titles));
+            } else if let Some((area, titles)) = self.prints.names.get(&id) {
+                let union = area.as_deref().is_some_and(is_union)
+                    || titles.as_deref().is_some_and(is_union);
+                if union {
+                    let p = self.print_settings(sheet);
+                    let (a, t) = name_formulas(&p, name);
+                    if area.is_some() {
+                        out.names.push((id, "_xlnm.Print_Area", a));
+                    }
+                    if titles.is_some() {
+                        out.names.push((id, "_xlnm.Print_Titles", t));
+                    }
+                }
+            }
+        }
     }
 }
 

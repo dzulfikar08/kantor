@@ -82,7 +82,11 @@ What: `import/conditional_formatting.rs` reverses the icons of an `iconSet`
 with `reverse="1"` (main and x14 rules); `import/styles.rs` (`parse_dxf`)
 reads the `val` of `b`, `i`, `u` and `strike`. Kantor doesn't use the writer's
 conditional formatting for workbooks opened from `.xlsx`: the original markup
-and `<dxfs>` are carried instead (`crates/sheets_engine/src/preserve.rs`).
+and `<dxfs>` are carried instead (`crates/sheets_engine/src/preserve.rs`),
+except on sheets whose rules were changed in Kantor (2026-11-12,
+`crates/sheets_engine/src/cf_edit.rs`), which are written by this writer;
+`export/conditional_formatting.rs` now also writes the `operator` of text rules
+(`containsText`, `notContains`, `beginsWith`, `endsWith`) as Excel does.
 
 ## 5. Default row height
 
@@ -107,6 +111,12 @@ sheet's (`Worksheet::kantor_auto_filter`), serialised by `XmlNode::to_xml`
 the sheet's after `</sheetData>`. Tables are not written by the writer: Kantor
 carries their parts and updates them from the model
 (`crates/sheets_engine/src/preserve.rs`, `fit_table`).
+
+Also (2026-11-12, for Kantor's total row functions): `tableColumn`'s
+`totalsRowLabel` and `totalsRowFunction` are read (upstream left them `None`),
+and `dataDxfId` is read from `dataDxfId` (upstream read `headerRowDxfId`).
+Tables made or changed in Kantor are written from the model by
+`crates/sheets_engine/src/table_edit.rs` (`table_xml`).
 
 Known: `tests/test.rs` `test_dynamic_arrays` fails since §5 (the file's
 default row height is now read); `test_no_export_tables` passes.

@@ -9,9 +9,12 @@
 //! as `.xlsx`. See [`SourceFormat`] and the `import` module docs.
 
 mod batch;
+mod cf_edit;
+mod chart_edit;
 mod cond_format;
 mod csv;
 pub mod drawing;
+mod edits;
 mod filter;
 mod hide;
 mod icons;
@@ -27,11 +30,22 @@ mod rows;
 mod shift;
 mod sort;
 mod table;
+mod table_edit;
 mod validation;
+mod validation_edit;
 
+pub use cf_edit::{
+    COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,
+    DATA_BAR_COLORS, ICON_SETS, sqref_of,
+};
+pub use chart_edit::{ChartSpec, ChartType, LegendPos, NEW_CHART_BASE};
 pub use import::SourceFormat;
 pub use preserve::package_problems;
 pub use recovery::{XlsxOutput, XlsxSnapshot, write_file_atomic};
+pub use table_edit::{TableOptions, TotalFunc, table_style_names, valid_table_name};
+pub use validation_edit::{
+    list_source, list_source_text, validation_operand, validation_operand_text,
+};
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -74,7 +88,10 @@ pub use pivot_edit::{
     AreaEntry, AxisEntry, PivotDestination, PivotFunc, PivotItem, PivotLayout, PivotSourceCheck,
     PivotSourceField, PivotValueField, ReportLayout, SubtotalPlace,
 };
-pub use print::{HeaderFooter, Margins, PageSetup, Paper, PrintColumns, PrintOptions, SheetPrint};
+pub use print::{
+    HEADER_FOOTER_PRESETS, HeaderFooter, Margins, PAPERS, PageSetup, Paper, PrintColumns,
+    PrintOptions, SheetPrint, join_sections, split_sections,
+};
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 pub use sort::SortKey;
 pub use table::{TableCellLook, TableInfo};
@@ -119,6 +136,10 @@ pub struct Workbook {
     prints: print::Prints,
     /// Pivot tables of the opened file (refreshes are kept in `history`).
     pivots: pivot::Pivots,
+    /// Where the last `.xlsx` save put the charts made in Kantor, by id.
+    saved_charts: HashMap<u32, preserve::SavedChart>,
+    /// Sheet features edited in Kantor this session (see `edits::Touched`).
+    touched: edits::Touched,
 }
 
 /// See [`Workbook::cached`].
@@ -281,6 +302,8 @@ struct Revisions {
     drawing_edits: HashMap<u64, std::sync::Arc<drawing::Edits>>,
     /// Pivot tables refreshed, in each state.
     pivot_states: HashMap<u64, std::sync::Arc<pivot::State>>,
+    /// Sheet features edited in Kantor, in each state (`edits`).
+    edits: HashMap<u64, std::sync::Arc<edits::Edits>>,
     /// A change outside the undo history (frozen panes) since the last save.
     view_changed: bool,
 }
@@ -304,6 +327,18 @@ impl Revisions {
         if let Some(state) = self.pivot_states.get(&prev).cloned() {
             self.pivot_states.insert(self.current, state);
         }
+        if let Some(edits) = self.edits.get(&prev).cloned() {
+            self.edits.insert(self.current, edits);
+        }
+    }
+
+    /// The sheet features edited in the current state.
+    fn edits(&self) -> std::sync::Arc<edits::Edits> {
+        self.edits.get(&self.current).cloned().unwrap_or_default()
+    }
+
+    fn set_edits(&mut self, edits: std::sync::Arc<edits::Edits>) {
+        self.edits.insert(self.current, edits);
     }
 
     /// The pivot refreshes of the current state.
@@ -412,6 +447,8 @@ impl Workbook {
             drawings: Default::default(),
             prints: Default::default(),
             pivots: Default::default(),
+            saved_charts: HashMap::new(),
+            touched: Default::default(),
         })
     }
 
@@ -503,6 +540,8 @@ impl Workbook {
             drawings,
             prints,
             pivots,
+            saved_charts: HashMap::new(),
+            touched: Default::default(),
         };
         // The file's cached values are right: no recalculation.
         book.sync_pivot_grids(false);
@@ -672,6 +711,8 @@ impl Workbook {
                 };
                 notes.extend(finished.notes);
                 let pivots_saved = finished.pivots;
+                let charts_saved: HashMap<u32, preserve::SavedChart> =
+                    parts.patches.written.take().into_iter().collect();
                 for note in &notes {
                     log::warn!("saving {}: {note}", path.display());
                 }
@@ -682,6 +723,7 @@ impl Workbook {
                 }
                 self.save_notes = notes;
                 self.pivots_saved(&pivots_saved);
+                self.saved_charts = charts_saved;
                 xlsx = Some(XlsxSource::kept(path, bytes));
                 SourceFormat::Xlsx
             }
@@ -990,6 +1032,14 @@ impl CellRange {
         }
     }
 
+    /// Whether the two ranges share a cell.
+    pub fn intersects(&self, other: &CellRange) -> bool {
+        self.left <= other.right
+            && other.left <= self.right
+            && self.top <= other.bottom
+            && other.top <= self.bottom
+    }
+
     pub fn contains(&self, row: u32, col: u32) -> bool {
         (self.top..=self.bottom).contains(&row) && (self.left..=self.right).contains(&col)
     }
@@ -1185,6 +1235,15 @@ impl Workbook {
             drawings: self
                 .drawings
                 .save_edits(&self.history.drawing_edits(), &layout),
+            patches: {
+                let mut p = preserve::Patches::default();
+                self.print_patches(&mut p);
+                self.table_patches(&mut p);
+                self.cf_patches(&mut p);
+                self.validation_patches(&mut p);
+                self.chart_patches(&mut p);
+                p
+            },
         }
     }
 }
@@ -1214,6 +1273,7 @@ struct XlsxParts {
     full_calc: bool,
     moves: shift::Moves,
     drawings: HashMap<u32, Vec<drawing::SaveEdit>>,
+    patches: preserve::Patches,
 }
 
 /// IronCalc's `.xlsx` of `model`, with the parts of `original` it doesn't
@@ -1263,6 +1323,7 @@ fn build_xlsx(
         cell_text: &cell_text,
         tables: &table_now,
         drawings: &parts.drawings,
+        patches: &parts.patches,
     };
     Ok(preserve::finish(written, original, &ctx))
 }
