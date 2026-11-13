@@ -17,6 +17,8 @@ ironcalc = "0.9.1"
 ironcalc_base = "0.9.1"
 # Read-only import of .ods / .xls / .xlsb (Kantor never writes these formats).
 calamine = "~0.38.0"  # pinned: sheets_engine works around an XLS formula bug (import.rs)
+# Compound files: the Workbook stream of .xls files, for the formatting calamine skips (MIT).
+cfb = "0.14"
 encoding_rs = "0.8"
 anyhow = "1"
 log = "0.4"

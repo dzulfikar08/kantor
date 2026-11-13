@@ -267,7 +267,7 @@ impl Workspace {
         let path = path.canonicalize().unwrap_or(path);
         let Some(kind) = AppKind::for_path(&path) else {
             bail!(
-                "Kantor can't open {} (use .xlsx, .csv, .ods, .xls, .docx, .rtf or .pptx)",
+                "Kantor can't open {} (use .xlsx, .csv, .ods, .xls, .xlt, .docx, .rtf or .pptx)",
                 path.display()
             );
         };

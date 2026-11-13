@@ -64,7 +64,7 @@ export const en = {
     sheets: {
       name: "Sheets",
       formats: [".xlsx", ".csv", ".ods", ".xls"],
-      text: "Spreadsheets with formulas, several sheets, number formats, Excel tables, charts, pivot tables, conditional formatting, data validation, sort and filter. Opens .csv, .ods and .xls files too, and saves as .xlsx.",
+      text: "Spreadsheets with formulas, several sheets, number formats, Excel tables, charts, pivot tables, conditional formatting, data validation, sort and filter. Opens .csv, .ods and .xls files too (Excel 97-2003 files keep their formatting), and saves as .xlsx.",
     },
     docs: {
       name: "Docs",
@@ -253,7 +253,7 @@ export const id = {
     sheets: {
       name: "Sheets",
       formats: [".xlsx", ".csv", ".ods", ".xls"],
-      text: "Lembar kerja dengan rumus, beberapa sheet, format angka (termasuk Rupiah), tabel Excel, grafik, pivot table, format bersyarat, validasi data, urutkan, dan filter. Bisa membuka file .csv, .ods, dan .xls, lalu menyimpannya sebagai .xlsx.",
+      text: "Lembar kerja dengan rumus, beberapa sheet, format angka (termasuk Rupiah), tabel Excel, grafik, pivot table, format bersyarat, validasi data, urutkan, dan filter. Bisa membuka file .csv, .ods, dan .xls (file Excel 97-2003 tetap dengan formatnya), lalu menyimpannya sebagai .xlsx.",
     },
     docs: {
       name: "Docs",
