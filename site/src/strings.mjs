@@ -178,9 +178,9 @@ export const en = {
     "Word: comments and tracked changes are shown, and you can add comments and accept or reject changes, but your own typing isn't tracked yet.",
     "Excel: conditional formatting rules, tables (Format as Table), data validation and page setup can be made and changed in Kantor; files changed this way haven't been opened in Excel itself yet.",
     "Excel: macros aren't carried over when you save, and Kantor tells you when that happens. Pivot tables can be created, rearranged, refreshed and deleted, but not grouped by date or number, and calculated fields aren't supported yet.",
-    "Excel: charts can be inserted (column, bar, line, pie, area, scatter) and changed in a Chart panel; charts that came with a file can be moved, resized or deleted but not restyled, and chart sheets, shapes and text boxes aren't shown yet.",
+    "Excel: charts can be inserted (column, bar, line, pie, area, scatter) and changed in a Chart panel, including charts that came with the file (combo and 3-D charts keep their type and data range); chart sheets, shapes and text boxes aren't shown yet.",
     "Excel: Page Setup has no print preview yet; use Export as PDF to see the pages.",
-    "PowerPoint: table cells and chart data are edited in a panel, chart series can't be added yet, and SmartArt can't be edited (some shows as a plain box).",
+    "PowerPoint: table cells and chart data (with series and categories added or removed) are edited in a panel, not on the slide, and SmartArt can't be edited (some shows as a plain box).",
   ],
   reportH3: "Found a file that Kantor gets wrong?",
   reportText:
@@ -367,9 +367,9 @@ export const id = {
     "Word: komentar dan lacak perubahan (track changes) sudah tampil, Anda bisa menambah komentar dan menerima atau menolak perubahan, tetapi ketikan Anda sendiri belum dilacak.",
     "Excel: aturan format bersyarat, tabel (Format as Table), validasi data, dan pengaturan halaman bisa dibuat dan diubah di Kantor; file yang diubah dengan cara ini belum dicoba dibuka di Excel sendiri.",
     "Excel: makro tidak ikut tersimpan, dan Kantor memberi tahu Anda saat itu terjadi. Pivot table bisa dibuat, disusun ulang, di-refresh, dan dihapus, tetapi belum bisa dikelompokkan per tanggal atau angka, dan calculated field belum didukung.",
-    "Excel: grafik bisa disisipkan (kolom, batang, garis, pai, area, sebar) dan diubah lewat panel Grafik; grafik bawaan file bisa dipindah, diubah ukurannya, atau dihapus tetapi belum bisa diubah gayanya, dan chart sheet, bentuk (shape), serta kotak teks belum ditampilkan.",
+    "Excel: grafik bisa disisipkan (kolom, batang, garis, pai, area, sebar) dan diubah lewat panel Grafik, termasuk grafik bawaan file (grafik kombinasi dan 3-D tetap dengan jenis dan rentang datanya); chart sheet, bentuk (shape), serta kotak teks belum ditampilkan.",
     "Excel: Pengaturan Halaman belum punya pratinjau cetak; pakai Ekspor ke PDF untuk melihat halamannya.",
-    "PowerPoint: isi tabel dan data grafik diedit lewat panel, seri grafik belum bisa ditambah, dan SmartArt belum bisa diedit (sebagian tampil sebagai kotak polos).",
+    "PowerPoint: isi tabel dan data grafik (termasuk menambah atau menghapus seri dan kategori) diedit lewat panel, bukan langsung di slide, dan SmartArt belum bisa diedit (sebagian tampil sebagai kotak polos).",
   ],
   reportH3: "Menemukan file yang salah tampil di Kantor?",
   reportText:

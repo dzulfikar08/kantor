@@ -166,8 +166,72 @@ fn edit_chart_data_and_its_workbook() {
         sheet.contains(r#"<c r="A6" t="inlineStr"><is><t xml:space="preserve">Q5</t></is></c>"#)
     );
     assert!(sheet.contains(r#"<t xml:space="preserve">2026 (plan)</t>"#));
-    // Series can't be added yet.
+    // Series are added with add_chart_series, not by passing more.
     let mut more = e.clone();
     more.series.push(more.series[0].clone());
     assert!(p.set_chart_data(s, k, &more).is_err());
+}
+
+#[test]
+fn add_and_remove_chart_series() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let (s, k) = find(&p, "chart");
+    let d = p.chart_data(s, k).unwrap();
+    p.add_chart_series(s, k, "2027").unwrap();
+    let mut e = p.chart_data(s, k).unwrap();
+    assert_eq!(e.series.len(), 3);
+    assert_eq!(e.series[2].name, "2027");
+    assert_eq!(e.series[2].values, vec![None; 4]);
+    e.series[2].values = vec![Some(1.0), Some(2.0), Some(3.0), Some(4.5)];
+    p.set_chart_data(s, k, &e).unwrap();
+    let (_, part) = (0, p.slide(s).shapes[k].chart_part().unwrap().to_owned());
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("series.pptx");
+    p.save_as(&out).unwrap();
+    let saved = parts(&std::fs::read(&out).unwrap());
+    let chart = String::from_utf8(saved[&part].clone()).unwrap();
+    assert!(chart.contains("<c:f>Sheet1!$D$1</c:f>"), "{chart}");
+    assert!(chart.contains("<c:f>Sheet1!$D$2:$D$5</c:f>"));
+    assert_eq!(chart.matches("<c:ser>").count(), 3);
+    assert_eq!(chart.matches("<c:idx val=\"2\"/>").count(), 1);
+    let wb = parts(&saved["ppt/embeddings/Microsoft_Excel_Sheet1.xlsx"]);
+    let sheet = String::from_utf8(wb["xl/worksheets/sheet1.xml"].clone()).unwrap();
+    assert!(
+        sheet.contains(r#"<t xml:space="preserve">2027</t>"#),
+        "{sheet}"
+    );
+    assert!(sheet.contains(r#"<c r="D5"><v>4.5</v></c>"#), "{sheet}");
+    assert!(sheet.contains(r#"<dimension ref="A1:D5"/>"#), "{sheet}");
+    let back = Presentation::open(&out).unwrap();
+    assert_eq!(back.chart_data(s, k).unwrap(), e);
+
+    // Remove the first: the others move into its cells.
+    p.remove_chart_series(s, k, 0).unwrap();
+    let r = p.chart_data(s, k).unwrap();
+    assert_eq!(r.series.len(), 2);
+    assert_eq!(r.series[0], e.series[1]);
+    assert_eq!(r.series[1], e.series[2]);
+    p.save_as(&out).unwrap();
+    let saved = parts(&std::fs::read(&out).unwrap());
+    let chart = String::from_utf8(saved[&part].clone()).unwrap();
+    assert!(chart.contains("<c:f>Sheet1!$B$2:$B$5</c:f>"));
+    assert!(chart.contains("<c:f>Sheet1!$C$2:$C$5</c:f>"));
+    assert!(!chart.contains("$D$"), "{chart}");
+    let wb = parts(&saved["ppt/embeddings/Microsoft_Excel_Sheet1.xlsx"]);
+    let sheet = String::from_utf8(wb["xl/worksheets/sheet1.xml"].clone()).unwrap();
+    assert!(
+        sheet.contains(r#"<c r="C5"><v>4.5</v></c>"#)
+            || sheet.contains(r#"<c r="C5" s="1"><v>4.5</v></c>"#),
+        "{sheet}"
+    );
+    assert!(sheet.contains(r#"<c r="D5"/>"#), "D emptied: {sheet}");
+    assert!(Presentation::open(&out).unwrap().chart_data(s, k).unwrap() == r);
+    // Undo twice: the original data.
+    p.undo();
+    p.undo();
+    p.undo();
+    assert_eq!(p.chart_data(s, k).unwrap(), d);
+    // The last series can't go.
+    p.remove_chart_series(s, k, 0).unwrap();
+    assert!(p.remove_chart_series(s, k, 0).is_err());
 }

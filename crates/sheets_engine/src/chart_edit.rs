@@ -16,6 +16,8 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 
+pub use crate::chart_style::SeriesColor;
+use crate::chart_style::{self, NewSeries};
 use crate::drawing::{Anchor, Drawing, DrawingKey, DrawingKind, EditAs, Marker, RefValue};
 use crate::shift::Layout;
 use crate::{CellRange, MAX_COLS, MAX_ROWS, Workbook};
@@ -39,6 +41,9 @@ pub enum ChartType {
     Area,
     StackedArea,
     Scatter,
+    /// A chart from a file whose type isn't one of these (combo, 3-D,
+    /// doughnut, 100% stacked...): see [`ChartInfo::kind_label`].
+    Other,
 }
 
 impl ChartType {
@@ -67,6 +72,7 @@ impl ChartType {
             ChartType::Area => "Area",
             ChartType::StackedArea => "Stacked Area",
             ChartType::Scatter => "Scatter",
+            ChartType::Other => "Other",
         }
     }
 
@@ -121,7 +127,7 @@ impl LegendPos {
     }
 }
 
-/// What a chart made in Kantor shows.
+/// What a chart shows, as the Chart panel edits it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChartSpec {
     pub kind: ChartType,
@@ -130,9 +136,35 @@ pub struct ChartSpec {
     pub legend: LegendPos,
     /// Series are the data's rows (else its columns).
     pub by_rows: bool,
-    /// The data, on the chart's sheet, in the rows and columns of the state
-    /// the spec was set in.
+    /// The data, in the rows and columns of the state the spec was set in.
     pub data: CellRange,
+    /// The data's sheet (`sheetId`); `None`: the chart's own sheet.
+    pub data_sheet: Option<u32>,
+    /// Titles of the horizontal and vertical axes (empty: none).
+    pub x_title: String,
+    pub y_title: String,
+    /// Each series' colour, in series order (missing: automatic).
+    pub colors: Vec<SeriesColor>,
+}
+
+/// A chart for the Chart panel: its spec and what can't be changed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChartInfo {
+    pub spec: ChartSpec,
+    /// It came with the file (its part is changed in place).
+    pub from_file: bool,
+    /// The type's name (for [`ChartType::Other`]: "Combo", "3-D Column"...).
+    pub kind_label: String,
+    /// Its type and data range can't be changed in Kantor (several plot
+    /// types, 3-D, radar...).
+    pub fixed: bool,
+    /// The data range isn't one block Kantor can read back (series on
+    /// several sheets, literal values...): changing it replaces the series.
+    pub data_unknown: bool,
+    /// It has axes (titles apply).
+    pub has_axes: bool,
+    /// Series names, in order (for the colours).
+    pub series: Vec<String>,
 }
 
 /// A chart made in Kantor.
@@ -164,7 +196,7 @@ fn esc(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn abs_ref(sheet: &str, r: &CellRange) -> String {
+pub(crate) fn abs_ref(sheet: &str, r: &CellRange) -> String {
     let q = crate::print::quote_sheet(sheet);
     let a = format!("${}${}", crate::column_name(r.left), r.top + 1);
     if r.is_single() {
@@ -295,6 +327,10 @@ impl Workbook {
             legend: LegendPos::Right,
             by_rows,
             data,
+            data_sheet: None,
+            x_title: String::new(),
+            y_title: String::new(),
+            colors: Vec::new(),
         };
         // Beside the data: two columns to its right, 8 columns × 15 rows.
         let col = (data.right + 2).min(MAX_COLS - 9);
@@ -342,21 +378,60 @@ impl Workbook {
         Some(self.chart_now(c).0)
     }
 
-    /// Change chart `key` (made in Kantor). One undo step.
-    pub fn set_chart(&mut self, key: DrawingKey, spec: ChartSpec) -> Result<()> {
-        if self.chart_spec(key).as_ref() == Some(&spec) {
-            return Ok(());
+    /// What the Chart panel shows for chart `key`: made in Kantor, or one
+    /// that came with the file (`None`: not a chart Kantor can change).
+    pub fn chart_info(&self, key: DrawingKey) -> Option<ChartInfo> {
+        if key.index < NEW_CHART_BASE {
+            return self.file_chart_info(key);
         }
-        let sheet = (0..self.sheet_names().len() as u32)
-            .find(|&s| self.sheet_id(s) == key.sheet_id)
-            .ok_or_else(|| anyhow!("no sheet"))?;
+        let spec = self.chart_spec(key)?;
+        let sheet = self.sheet_index_of(key.sheet_id)?;
+        let style = chart_style::read(&self.chart_xml(sheet, &spec)).ok()?;
+        Some(ChartInfo {
+            from_file: false,
+            kind_label: spec.kind.label().to_owned(),
+            fixed: false,
+            data_unknown: false,
+            has_axes: spec.kind != ChartType::Pie,
+            series: style.names,
+            spec,
+        })
+    }
+
+    pub(crate) fn sheet_index_of(&self, sheet_id: u32) -> Option<u32> {
+        (0..self.sheet_names().len() as u32).find(|&s| self.sheet_id(s) == sheet_id)
+    }
+
+    /// Whether `spec`'s data has a number to chart.
+    pub(crate) fn check_chart_data(&self, sheet: u32, spec: &ChartSpec) -> Result<()> {
+        let data_sheet = self.data_sheet_index(sheet, spec);
         let d = spec.data;
+        if (d.bottom - d.top + 1) as u64 * (d.right - d.left + 1) as u64 > 50_000 {
+            bail!("That's too many cells for a chart");
+        }
         let has_number = (d.top..=d.bottom)
-            .any(|r| (d.left..=d.right).any(|c| self.raw_number(sheet, r, c).is_some()));
+            .any(|r| (d.left..=d.right).any(|c| self.raw_number(data_sheet, r, c).is_some()));
         if !has_number {
             bail!("The data range has no numbers to chart");
         }
-        let now = self.history.layout();
+        Ok(())
+    }
+
+    /// Change chart `key` (made in Kantor or from the file). One undo step.
+    pub fn set_chart(&mut self, key: DrawingKey, spec: ChartSpec) -> Result<()> {
+        if key.index < NEW_CHART_BASE {
+            return self.set_file_chart(key, spec);
+        }
+        if self.chart_spec(key).as_ref() == Some(&spec) {
+            return Ok(());
+        }
+        if spec.kind == ChartType::Other {
+            bail!("Pick a chart type");
+        }
+        let sheet = self
+            .sheet_index_of(key.sheet_id)
+            .ok_or_else(|| anyhow!("no sheet"))?;
+        self.check_chart_data(sheet, &spec)?;
         let (_, anchor_now) = {
             let edits = self.edits();
             let c = edits
@@ -377,7 +452,6 @@ impl Workbook {
                 c.layout = layout.clone();
             }
         });
-        let _ = now;
         Ok(())
     }
 
@@ -385,10 +459,11 @@ impl Workbook {
     fn chart_now(&self, c: &NewChart) -> (ChartSpec, Anchor) {
         let moves = c.layout.moves_to(&self.history.layout());
         let mut spec = c.spec.clone();
-        if moves.touches(c.sheet_id) {
+        let data_id = spec.data_sheet.unwrap_or(c.sheet_id);
+        if moves.touches(data_id) {
             let d = spec.data;
             if let Some(a) = moves.area(
-                c.sheet_id,
+                data_id,
                 crate::shift::Area {
                     top: d.top,
                     left: d.left,
@@ -480,15 +555,22 @@ impl Workbook {
             .collect()
     }
 
-    /// The `c:chartSpace` part for `spec` on `sheet`, with its references
-    /// and the values they hold now.
-    pub(crate) fn chart_xml(&self, sheet: u32, spec: &ChartSpec) -> String {
+    /// The sheet index of `spec`'s data (`sheet`: the chart's own).
+    pub(crate) fn data_sheet_index(&self, sheet: u32, spec: &ChartSpec) -> u32 {
+        spec.data_sheet
+            .and_then(|id| (0..self.sheet_names().len() as u32).find(|&s| self.sheet_id(s) == id))
+            .unwrap_or(sheet)
+    }
+
+    /// The series of `spec` (data on sheet `data_sheet`) as `c:tx`, `c:cat`
+    /// and `c:val` content: references with the values they hold now.
+    pub(crate) fn series_xml(&self, data_sheet: u32, spec: &ChartSpec) -> Vec<NewSeries> {
         let name = self
             .sheet_names()
-            .get(sheet as usize)
+            .get(data_sheet as usize)
             .cloned()
             .unwrap_or_default();
-        let series = self.chart_series(sheet, spec);
+        let series = self.chart_series(data_sheet, spec);
         let reference = |r: &CellRange| self.chart_reference_now(&abs_ref(&name, r));
         let str_ref = |r: &CellRange| -> String {
             let data = reference(r).unwrap_or_default();
@@ -526,6 +608,28 @@ impl Workbook {
                     && d.values.iter().all(|v| !matches!(v, RefValue::Text(_)))
             })
         };
+        let scatter = spec.kind == ChartType::Scatter;
+        series
+            .iter()
+            .map(|s| NewSeries {
+                tx: s.name.as_ref().map(str_ref),
+                cat: s.cats.as_ref().map(|c| {
+                    if scatter || cats_numeric(c) {
+                        num_ref(c)
+                    } else {
+                        str_ref(c)
+                    }
+                }),
+                val: num_ref(&s.vals),
+            })
+            .collect()
+    }
+
+    /// The `c:chartSpace` part for `spec` on `sheet`, with its references
+    /// and the values they hold now.
+    pub(crate) fn chart_xml(&self, sheet: u32, spec: &ChartSpec) -> String {
+        let data_sheet = self.data_sheet_index(sheet, spec);
+        let series = self.series_xml(data_sheet, spec);
         let kind = spec.kind;
         let mut sers = String::new();
         let take = if kind == ChartType::Pie {
@@ -537,21 +641,18 @@ impl Workbook {
             sers.push_str(&format!(
                 "<c:ser><c:idx val=\"{i}\"/><c:order val=\"{i}\"/>"
             ));
-            if let Some(n) = &s.name {
-                sers.push_str(&format!("<c:tx>{}</c:tx>", str_ref(n)));
+            if let Some(n) = &s.tx {
+                sers.push_str(&format!("<c:tx>{n}</c:tx>"));
             }
             match kind {
                 ChartType::Scatter => {
                     sers.push_str(
                         "<c:spPr><a:ln w=\"19050\" cap=\"rnd\"><a:noFill/><a:round/></a:ln></c:spPr><c:marker><c:symbol val=\"circle\"/><c:size val=\"5\"/></c:marker>",
                     );
-                    if let Some(x) = &s.cats {
-                        sers.push_str(&format!("<c:xVal>{}</c:xVal>", num_ref(x)));
+                    if let Some(x) = &s.cat {
+                        sers.push_str(&format!("<c:xVal>{x}</c:xVal>"));
                     }
-                    sers.push_str(&format!(
-                        "<c:yVal>{}</c:yVal><c:smooth val=\"0\"/>",
-                        num_ref(&s.vals)
-                    ));
+                    sers.push_str(&format!("<c:yVal>{}</c:yVal><c:smooth val=\"0\"/>", s.val));
                 }
                 _ => {
                     match kind {
@@ -566,15 +667,10 @@ impl Workbook {
                         }
                         _ => {}
                     }
-                    if let Some(c) = &s.cats {
-                        let inner = if cats_numeric(c) {
-                            num_ref(c)
-                        } else {
-                            str_ref(c)
-                        };
-                        sers.push_str(&format!("<c:cat>{inner}</c:cat>"));
+                    if let Some(c) = &s.cat {
+                        sers.push_str(&format!("<c:cat>{c}</c:cat>"));
                     }
-                    sers.push_str(&format!("<c:val>{}</c:val>", num_ref(&s.vals)));
+                    sers.push_str(&format!("<c:val>{}</c:val>", s.val));
                     if matches!(kind, ChartType::Line | ChartType::StackedLine) {
                         sers.push_str("<c:smooth val=\"0\"/>");
                     }
@@ -619,6 +715,7 @@ impl Workbook {
             ChartType::Scatter => format!(
                 "<c:scatterChart><c:scatterStyle val=\"lineMarker\"/><c:varyColors val=\"0\"/>{sers}{axes_ids}</c:scatterChart>"
             ),
+            ChartType::Other => unreachable!("Other is never set on a chart made in Kantor"),
         };
         let horizontal = matches!(kind, ChartType::Bar | ChartType::StackedBar);
         let (cat_pos, val_pos) = if horizontal { ("l", "b") } else { ("b", "l") };
@@ -648,11 +745,12 @@ impl Workbook {
             }
             None => String::new(),
         };
-        format!(
+        let xml = format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
 <c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
 <c:roundedCorners val=\"0\"/><c:chart>{title}<c:plotArea><c:layout/>{plot}{axes}</c:plotArea>{legend}<c:plotVisOnly val=\"1\"/><c:dispBlanksAs val=\"gap\"/></c:chart></c:chartSpace>"
-        )
+        );
+        styled(xml, spec)
     }
 
     /// Charts made in Kantor that a save adds (or updates or removes where
@@ -683,7 +781,28 @@ impl Workbook {
     }
 }
 
-fn fxhash(s: &str) -> u64 {
+/// `xml` with `spec`'s axis titles and series colours (a chart made in
+/// Kantor: the generated part has neither).
+fn styled(xml: String, spec: &ChartSpec) -> String {
+    let mut xml = xml;
+    if spec.kind != ChartType::Pie {
+        for (horizontal, text) in [(true, &spec.x_title), (false, &spec.y_title)] {
+            if let Ok(x) = chart_style::set_axis_title(&xml, horizontal, text) {
+                xml = x;
+            }
+        }
+    }
+    for (i, c) in spec.colors.iter().enumerate() {
+        if let SeriesColor::Rgb(_) = c
+            && let Ok(x) = chart_style::set_color(&xml, i, *c)
+        {
+            xml = x;
+        }
+    }
+    xml
+}
+
+pub(crate) fn fxhash(s: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     s.hash(&mut h);

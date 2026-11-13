@@ -5,7 +5,8 @@
 //! - Table: a grid of the cells' text; add or remove rows and columns next
 //!   to the cell last clicked; fill that cell with a theme colour or none.
 //! - Chart: categories down, series across (names in the top row); add a
-//!   category at the end or remove the last one.
+//!   category at the end or remove the last one; add a series after the
+//!   last one or remove the series of the current cell.
 //!
 //! *Apply* writes the typed text as one undo step (`Presentation::
 //! edit_table` / `set_chart_data`); structure buttons apply at once.
@@ -352,6 +353,46 @@ impl SlidesView {
         }
     }
 
+    /// Add a series after the last one, or remove the series of the
+    /// current cell (the last one when the cell is a category label).
+    fn chart_series_op(&mut self, add: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.apply_object_editor(true, window, cx) {
+            return;
+        }
+        let Some(e) = &self.object_editor else { return };
+        let (slide, shape, (_, col)) = (e.slide, e.shape, e.current);
+        let Some(d) = self.pres.chart_data(slide, shape) else {
+            return;
+        };
+        let res = if add {
+            let name = format!("Series {}", d.series.len() + 1);
+            self.pres.add_chart_series(slide, shape, &name)
+        } else {
+            let k = if col >= 1 && col <= d.series.len() {
+                col - 1
+            } else {
+                d.series.len().saturating_sub(1)
+            };
+            self.pres.remove_chart_series(slide, shape, k)
+        };
+        match res {
+            Ok(()) => {
+                self.after_object_edit(window, cx);
+                self.open_object_editor(shape, Target::Chart, window, cx);
+                if let Some(e) = &mut self.object_editor {
+                    let cols = e.cells.first().map_or(1, Vec::len);
+                    e.current = (0, if add { cols - 1 } else { col.min(cols - 1) });
+                }
+            }
+            Err(err) => {
+                if let Some(e) = &mut self.object_editor {
+                    e.error = Some(format!("{err:#}").into());
+                }
+                cx.notify();
+            }
+        }
+    }
+
     pub(crate) fn render_object_editor(
         &self,
         cx: &mut Context<Self>,
@@ -473,6 +514,20 @@ impl SlidesView {
                         "− Last category",
                         "Remove the last category",
                         |v, w, cx| v.chart_rows(false, w, cx),
+                    ))
+                    .child(tool(
+                        "chart-ser-add",
+                        None,
+                        "+ Series",
+                        "Add a series after the last one",
+                        |v, w, cx| v.chart_series_op(true, w, cx),
+                    ))
+                    .child(tool(
+                        "chart-ser-del",
+                        None,
+                        "− Series",
+                        "Remove the series of the current cell",
+                        |v, w, cx| v.chart_series_op(false, w, cx),
                     ));
             }
         }

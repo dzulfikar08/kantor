@@ -181,6 +181,7 @@ fn every_type_and_the_chart_panel() {
             ChartType::Pie => "c:pieChart",
             ChartType::Area | ChartType::StackedArea => "c:areaChart",
             ChartType::Scatter => "c:scatterChart",
+            ChartType::Other => unreachable!(),
         };
         assert!(xml.contains(want), "{kind:?}: {xml}");
         assert!(xml.contains("<a:t>Sales &amp; costs</a:t>"));

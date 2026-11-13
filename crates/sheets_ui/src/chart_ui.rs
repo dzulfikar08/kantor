@@ -4,14 +4,16 @@
 //!   selection (else the data around the active cell), placed beside the
 //!   data and selected; moving, resizing and deleting work as for a file's
 //!   charts ([`crate::drawings`]).
-//! * The Chart panel beside the grid, for the selected chart made in Kantor:
-//!   type, title, legend position, series from rows or columns, data range,
-//!   delete. Each change is one undo step (`sheets_engine::chart_edit`).
-//!   Charts from the file can be moved, resized and deleted, not restyled.
+//! * The Chart panel beside the grid, for the selected chart (made in
+//!   Kantor or from the file): type, title, legend position, axis titles,
+//!   series colours, series from rows or columns, data range, delete. Each
+//!   change is one undo step (`sheets_engine::chart_edit`; a file's chart
+//!   part is changed in place, `sheets_engine::file_chart`). Combo, 3-D and
+//!   other types Kantor can't make keep their type and data range.
 
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::{
-    Sizable as _,
+    Disableable as _, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{self, Input, InputEvent, InputState},
@@ -22,7 +24,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::drawing::DrawingKey;
-use sheets_engine::{ChartSpec, ChartType, LegendPos, NEW_CHART_BASE};
+use sheets_engine::{ChartInfo, ChartSpec, ChartType, LegendPos, SeriesColor};
 
 use crate::SheetsView;
 use crate::dialog::{self, choices, note, row};
@@ -37,6 +39,8 @@ pub(crate) struct ChartPanel {
     loaded: Option<DrawingKey>,
     title: Entity<InputState>,
     range: Entity<InputState>,
+    x_title: Entity<InputState>,
+    y_title: Entity<InputState>,
     error: Option<String>,
     _subs: Vec<Subscription>,
 }
@@ -79,22 +83,31 @@ impl SheetsView {
         }
         let title = cx.new(|cx| InputState::new(window, cx).placeholder("No title"));
         let range = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. A1:C13"));
-        let subs = vec![
-            cx.subscribe_in(&title, window, |this, _, e: &InputEvent, w, cx| {
-                if let InputEvent::PressEnter { .. } | InputEvent::Blur = e {
-                    this.apply_chart_inputs(w, cx);
-                }
-            }),
+        let x_title = cx.new(|cx| InputState::new(window, cx).placeholder("No title"));
+        let y_title = cx.new(|cx| InputState::new(window, cx).placeholder("No title"));
+        let mut subs = Vec::new();
+        for input in [&title, &x_title, &y_title] {
+            subs.push(
+                cx.subscribe_in(input, window, |this, _, e: &InputEvent, w, cx| {
+                    if let InputEvent::PressEnter { .. } | InputEvent::Blur = e {
+                        this.apply_chart_inputs(w, cx);
+                    }
+                }),
+            );
+        }
+        subs.push(
             cx.subscribe_in(&range, window, |this, _, e: &InputEvent, w, cx| {
                 if let InputEvent::PressEnter { .. } = e {
                     this.apply_chart_inputs(w, cx);
                 }
             }),
-        ];
+        );
         self.chart_panel = Some(ChartPanel {
             loaded: None,
             title,
             range,
+            x_title,
+            y_title,
             error: None,
             _subs: subs,
         });
@@ -108,17 +121,36 @@ impl SheetsView {
         cx.notify();
     }
 
-    /// The selected chart made in Kantor and its spec.
-    fn selected_chart(&self, cx: &App) -> Option<(DrawingKey, ChartSpec)> {
+    /// The selected chart and what the panel shows for it.
+    fn selected_chart(&self, cx: &App) -> Option<(DrawingKey, ChartInfo)> {
         // The selected chart, else the one the panel shows (clicking in the
         // panel deselects the chart on the grid).
         let key = match self.drawings.borrow().selected {
-            Some(k) if k.index >= NEW_CHART_BASE => k,
-            Some(_) => return None,
+            Some(k) => k,
             None => self.chart_panel.as_ref()?.loaded?,
         };
-        let spec = self.table.read(cx).delegate().book.chart_spec(key)?;
-        Some((key, spec))
+        let info = self.table.read(cx).delegate().book.chart_info(key)?;
+        Some((key, info))
+    }
+
+    /// `spec`'s data range as typed: with its sheet when it's another one.
+    fn data_text(&self, key: DrawingKey, spec: &ChartSpec, cx: &App) -> String {
+        let book = &self.table.read(cx).delegate().book;
+        match spec.data_sheet.filter(|id| *id != key.sheet_id) {
+            Some(id) => {
+                let names = book.sheet_names();
+                let name = (0..names.len() as u32)
+                    .find(|&s| book.sheet_id(s) == id)
+                    .and_then(|s| names.get(s as usize).cloned())
+                    .unwrap_or_default();
+                format!(
+                    "{}!{}",
+                    sheets_engine::quote_sheet_name(&name),
+                    spec.data.name()
+                )
+            }
+            None => spec.data.name(),
+        }
     }
 
     /// Fill the panel's inputs for the selected chart (from `render`, which
@@ -132,10 +164,19 @@ impl SheetsView {
         if p.loaded == key {
             return;
         }
-        let (title, range) = (p.title.clone(), p.range.clone());
-        if let Some((_, spec)) = sel {
+        let (title, range, xt, yt) = (
+            p.title.clone(),
+            p.range.clone(),
+            p.x_title.clone(),
+            p.y_title.clone(),
+        );
+        if let Some((key, info)) = sel {
+            let spec = &info.spec;
+            let data = self.data_text(key, spec, cx);
             title.update(cx, |i, cx| i.set_value(spec.title.clone(), window, cx));
-            range.update(cx, |i, cx| i.set_value(spec.data.name(), window, cx));
+            range.update(cx, |i, cx| i.set_value(data, window, cx));
+            xt.update(cx, |i, cx| i.set_value(spec.x_title.clone(), window, cx));
+            yt.update(cx, |i, cx| i.set_value(spec.y_title.clone(), window, cx));
         }
         if let Some(p) = self.chart_panel.as_mut() {
             p.loaded = key;
@@ -149,9 +190,10 @@ impl SheetsView {
         cx: &mut Context<Self>,
         f: impl FnOnce(&mut ChartSpec) -> Result<(), String>,
     ) {
-        let Some((key, mut spec)) = self.selected_chart(cx) else {
+        let Some((key, info)) = self.selected_chart(cx) else {
             return;
         };
+        let mut spec = info.spec;
         let res = f(&mut spec).and_then(|()| {
             self.table.update(cx, |table, cx| {
                 let r = table.delegate_mut().book.set_chart(key, spec);
@@ -172,13 +214,66 @@ impl SheetsView {
         };
         let title = p.title.read(cx).value().to_string();
         let range = p.range.read(cx).value().to_string();
+        let x_title = p.x_title.read(cx).value().to_string();
+        let y_title = p.y_title.read(cx).value().to_string();
+        let Some((key, info)) = self.selected_chart(cx) else {
+            return;
+        };
+        // An unchanged range stays as the chart has it (a file's chart whose
+        // series Kantor can't read back as one block keeps them).
+        let range_changed = range.trim() != self.data_text(key, &info.spec, cx);
+        let sheet = if range_changed {
+            match self.chart_data_sheet(key, &range, cx) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    if let Some(p) = self.chart_panel.as_mut() {
+                        p.error = Some(e);
+                    }
+                    cx.notify();
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         self.edit_chart(window, cx, |s| {
             s.title = title;
-            s.data = dialog::parse_cells(&range)
-                .filter(|r| !r.is_single())
-                .ok_or("Data: type the chart's cells, such as A1:C13")?;
+            s.x_title = x_title;
+            s.y_title = y_title;
+            if let Some(sheet) = sheet {
+                s.data_sheet = sheet;
+                s.data = dialog::parse_cells(&range)
+                    .filter(|r| !r.is_single())
+                    .ok_or("Data: type the chart's cells, such as A1:C13")?;
+            }
             Ok(())
         });
+    }
+
+    /// The sheet a typed data range names (`None`: the chart's own sheet).
+    fn chart_data_sheet(
+        &self,
+        key: DrawingKey,
+        text: &str,
+        cx: &App,
+    ) -> Result<Option<u32>, String> {
+        let t = text.trim().trim_start_matches('=');
+        let Some((name, _)) = t.rsplit_once('!') else {
+            return Ok(None);
+        };
+        let name = name.trim();
+        let name = name
+            .strip_prefix('\'')
+            .and_then(|n| n.strip_suffix('\''))
+            .map_or_else(|| name.to_owned(), |n| n.replace("''", "'"));
+        let book = &self.table.read(cx).delegate().book;
+        let i = book
+            .sheet_names()
+            .iter()
+            .position(|n| n.eq_ignore_ascii_case(&name))
+            .ok_or_else(|| format!("Data: there's no sheet called {name}"))?;
+        let id = book.sheet_id(i as u32);
+        Ok((id != key.sheet_id).then_some(id))
     }
 
     pub(crate) fn render_chart_panel(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -209,36 +304,46 @@ impl SheetsView {
                         });
                     }),
             );
-        let file_chart = self
-            .drawings
-            .borrow()
-            .selected
-            .is_some_and(|k| k.index < NEW_CHART_BASE);
+        let a_chart = self.drawings.borrow().selected.is_some();
         let body: AnyElement = match self.selected_chart(cx) {
-            Some((_, spec)) => {
+            Some((_, info)) => {
+                let spec = info.spec.clone();
                 let tv = view.clone();
                 let current = spec.kind;
-                let kind = Button::new("chart-kind")
-                    .outline()
-                    .small()
-                    .label(current.label())
-                    .dropdown_caret(true)
-                    .dropdown_menu(move |mut m, _, _| {
-                        for k in ChartType::ALL {
-                            let v = tv.clone();
-                            m = m.item(PopupMenuItem::new(k.label()).checked(k == current).on_click(
-                                move |_, w, cx| {
-                                    let _ = v.update(cx, |this, cx| {
-                                        this.edit_chart(w, cx, |s| {
-                                            s.kind = k;
-                                            Ok(())
-                                        })
-                                    });
-                                },
-                            ));
-                        }
-                        m
-                    });
+                let kind: AnyElement = if info.fixed {
+                    Button::new("chart-kind")
+                        .outline()
+                        .small()
+                        .label(info.kind_label.clone())
+                        .disabled(true)
+                        .tooltip("Kantor can't change this chart's type")
+                        .into_any_element()
+                } else {
+                    Button::new("chart-kind")
+                        .outline()
+                        .small()
+                        .label(info.kind_label.clone())
+                        .dropdown_caret(true)
+                        .dropdown_menu(move |mut m, _, _| {
+                            for k in ChartType::ALL {
+                                let v = tv.clone();
+                                m = m.item(
+                                    PopupMenuItem::new(k.label())
+                                        .checked(k == current)
+                                        .on_click(move |_, w, cx| {
+                                            let _ = v.update(cx, |this, cx| {
+                                                this.edit_chart(w, cx, |s| {
+                                                    s.kind = k;
+                                                    Ok(())
+                                                })
+                                            });
+                                        }),
+                                );
+                            }
+                            m
+                        })
+                        .into_any_element()
+                };
                 let lv = view.clone();
                 let legend = spec.legend;
                 let legend_button = Button::new("chart-legend")
@@ -249,19 +354,22 @@ impl SheetsView {
                     .dropdown_menu(move |mut m, _, _| {
                         for l in LegendPos::ALL {
                             let v = lv.clone();
-                            m = m.item(PopupMenuItem::new(l.label()).checked(l == legend).on_click(
-                                move |_, w, cx| {
-                                    let _ = v.update(cx, |this, cx| {
-                                        this.edit_chart(w, cx, |s| {
-                                            s.legend = l;
-                                            Ok(())
-                                        })
-                                    });
-                                },
-                            ));
+                            m = m.item(
+                                PopupMenuItem::new(l.label()).checked(l == legend).on_click(
+                                    move |_, w, cx| {
+                                        let _ = v.update(cx, |this, cx| {
+                                            this.edit_chart(w, cx, |s| {
+                                                s.legend = l;
+                                                Ok(())
+                                            })
+                                        });
+                                    },
+                                ),
+                            );
                         }
                         m
                     });
+                let colours = series_colours(&info, &view, cx);
                 let dv = view.clone();
                 let av = view.clone();
                 v_flex()
@@ -269,18 +377,42 @@ impl SheetsView {
                     .child(row("Type", kind, cx))
                     .child(row("Title", Input::new(&p.title).small(), cx))
                     .child(row("Legend", legend_button, cx))
-                    .child(row(
-                        "Series in",
-                        choices(
-                            "chart-series",
-                            &[(false, "Columns"), (true, "Rows")],
-                            spec.by_rows,
-                            &view,
-                            |this, v| this.pending_chart_rows = Some(v),
-                        ),
-                        cx,
-                    ))
-                    .child(row("Data", Input::new(&p.range).small(), cx))
+                    .when(info.has_axes, |d| {
+                        d.child(row("Horizontal axis", Input::new(&p.x_title).small(), cx))
+                            .child(row("Vertical axis", Input::new(&p.y_title).small(), cx))
+                    })
+                    .child(colours)
+                    .when(!info.fixed, |d| {
+                        d.child(row(
+                            "Series in",
+                            choices(
+                                "chart-series",
+                                &[(false, "Columns"), (true, "Rows")],
+                                spec.by_rows,
+                                &view,
+                                |this, v| this.pending_chart_rows = Some(v),
+                            ),
+                            cx,
+                        ))
+                        .child(row("Data", Input::new(&p.range).small(), cx))
+                    })
+                    .when(info.fixed, |d| {
+                        d.child(note(
+                            format!(
+                                "Kantor can't change the type or data of a {} chart; titles, legend and colours can be changed.",
+                                info.kind_label
+                            ),
+                            false,
+                            cx,
+                        ))
+                    })
+                    .when(info.data_unknown && !info.fixed, |d| {
+                        d.child(note(
+                            "This chart's series don't come from one block of cells: a new data range replaces them.",
+                            false,
+                            cx,
+                        ))
+                    })
                     .child(note("Press Enter in a box to apply it.", false, cx))
                     .children(p.error.clone().map(|e| note(e, true, cx)))
                     .child(
@@ -313,10 +445,10 @@ impl SheetsView {
             None => div()
                 .text_size(FONT_SMALL)
                 .text_color(t.fg_muted)
-                .child(if file_chart {
-                    "This chart came with the file: it can be moved, resized and deleted, but Kantor can't change its type or data yet."
+                .child(if a_chart {
+                    "Kantor can't change this object: select a chart."
                 } else {
-                    "Select a chart made with Insert Chart to change it."
+                    "Select a chart to change it."
                 })
                 .into_any_element(),
         };
@@ -361,6 +493,99 @@ impl SheetsView {
         }))
         .on_action(cx.listener(|this, _: &ChartOptions, w, cx| this.chart_options_doc(w, cx)))
     }
+}
+
+/// Excel's standard colours, offered for series.
+const SERIES_SWATCHES: [[u8; 3]; 10] = [
+    [0xC0, 0x00, 0x00],
+    [0xFF, 0x00, 0x00],
+    [0xFF, 0xC0, 0x00],
+    [0xFF, 0xFF, 0x00],
+    [0x92, 0xD0, 0x50],
+    [0x00, 0xB0, 0x50],
+    [0x00, 0xB0, 0xF0],
+    [0x00, 0x70, 0xC0],
+    [0x00, 0x20, 0x60],
+    [0x70, 0x30, 0xA0],
+];
+
+/// Each series' name and a row of swatches (automatic first).
+fn series_colours(info: &ChartInfo, view: &WeakEntity<SheetsView>, cx: &App) -> Div {
+    let t = tokens(cx);
+    let mut list = v_flex()
+        .gap(SPACE_2)
+        .child(kantor_ui::components::section_label("Series colours", cx));
+    for (i, name) in info.series.iter().enumerate().take(24) {
+        let cur = info.spec.colors.get(i).copied().unwrap_or_default();
+        let mut sw = h_flex().gap(SPACE_1).flex_wrap();
+        let options = std::iter::once(SeriesColor::Automatic)
+            .chain(SERIES_SWATCHES.iter().map(|c| SeriesColor::Rgb(*c)));
+        for (k, c) in options.enumerate() {
+            let v = view.clone();
+            let n = info.series.len();
+            sw = sw.child(
+                div()
+                    .id(("chart-colour", i * 16 + k))
+                    .size(px(16.))
+                    .rounded(RADIUS_SM)
+                    .border_2()
+                    .border_color(if cur == c { t.accent } else { t.border })
+                    .bg(match c {
+                        SeriesColor::Rgb([r, g, b]) => crate::look::hsla(
+                            (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
+                        ),
+                        _ => t.surface,
+                    })
+                    .when(c == SeriesColor::Automatic, |d| {
+                        d.child(
+                            div()
+                                .text_size(FONT_CAPTION)
+                                .text_color(t.fg_dim)
+                                .flex()
+                                .justify_center()
+                                .child("A"),
+                        )
+                    })
+                    .tooltip(move |w, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(match c {
+                            SeriesColor::Rgb(_) => "Colour",
+                            _ => "Automatic",
+                        })
+                        .build(w, cx)
+                    })
+                    .cursor_pointer()
+                    .on_click(move |_, w, cx| {
+                        let _ = v.update(cx, |this, cx| {
+                            this.edit_chart(w, cx, |s| {
+                                if s.colors.len() < n {
+                                    s.colors.resize(n, SeriesColor::Automatic);
+                                }
+                                s.colors[i] = c;
+                                Ok(())
+                            })
+                        });
+                    }),
+            );
+        }
+        let label = if name.trim().is_empty() {
+            format!("Series {}", i + 1)
+        } else {
+            name.clone()
+        };
+        list = list.child(
+            v_flex()
+                .gap(SPACE_1)
+                .child(
+                    div()
+                        .text_size(FONT_SMALL)
+                        .text_color(t.fg_muted)
+                        .truncate()
+                        .child(label),
+                )
+                .child(sw),
+        );
+    }
+    list
 }
 
 /// The toolbar's Insert Chart menu.

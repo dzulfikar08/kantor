@@ -591,6 +591,16 @@ impl Drawings {
         self.sheets.is_empty()
     }
 
+    /// A chart of the file: its frame's `cNvPr id` and its part's XML as
+    /// opened (`None`: not a chart, or its id isn't unique).
+    pub(crate) fn chart_source(&self, key: DrawingKey) -> Option<(u32, Arc<str>)> {
+        let obj = self.sheets.get(&key.sheet_id)?.get(key.index)?;
+        let DrawingKind::Chart { xml, .. } = &*obj.kind else {
+            return None;
+        };
+        Some((obj.id?, xml.clone()))
+    }
+
     /// Every edited object's state for a save, by `sheetId`.
     pub(crate) fn save_edits(&self, edits: &Edits, now: &Layout) -> HashMap<u32, Vec<SaveEdit>> {
         let mut out: HashMap<u32, Vec<SaveEdit>> = HashMap::new();
@@ -666,6 +676,7 @@ impl Workbook {
         };
         let edits = self.history.drawing_edits();
         let now = self.history.layout();
+        let restyled = self.edits();
         objects
             .iter()
             .enumerate()
@@ -676,7 +687,21 @@ impl Workbook {
                     name: obj.name.clone(),
                     descr: obj.descr.clone(),
                     anchor: current_anchor(obj, key, &edits, &now)?,
-                    kind: obj.kind.clone(),
+                    kind: match (&*obj.kind, restyled.file_charts.contains_key(&key)) {
+                        (DrawingKind::Chart { part, .. }, true) => {
+                            let (xml, _) = self.file_chart_now(key)?;
+                            Arc::new(DrawingKind::Chart {
+                                part: format!(
+                                    "{part}#kantor/{:x}",
+                                    crate::chart_edit::fxhash(&xml)
+                                )
+                                .into(),
+                                xml: xml.into(),
+                                current_refs: true,
+                            })
+                        }
+                        _ => obj.kind.clone(),
+                    },
                     editable: obj.id.is_some(),
                     hidden: obj.hidden,
                     prints: obj.prints,

@@ -9,6 +9,22 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+- Sheets: the Chart panel now changes charts that came with the file too: chart type, title,
+  legend position, axis titles, series colours and data range. Kantor changes only those parts
+  of the chart; everything else in it (layouts, formatting, Excel's extensions) is saved as it
+  was. Combo, 3-D and other chart types Kantor can't make keep their type and data range.
+- Sheets: the Chart panel has axis titles and a colour for each series, for charts made in
+  Kantor as well.
+- Slides: the chart data panel adds a series after the last one and removes the series of the
+  current cell. The chart's embedded workbook gets the same change (later series move into the
+  removed one's cells), and a table there that covered the chart's data grows or shrinks with
+  it, so PowerPoint's *Edit Data* still matches.
+
+### Fixed
+- Sheets: a quick click on a chart or picture could leave it stuck to the pointer (it moved with
+  the mouse until the next click).
+
 ## [0.4.0] - 2026-11-12
 
 Kantor comes to Windows (10 and 11, x64 and Arm; installer and portable zip, unsigned for now), and

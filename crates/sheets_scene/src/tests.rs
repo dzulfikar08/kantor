@@ -148,3 +148,34 @@ fn pictures_and_placement() {
     let at = moved[0].transform.apply(slides_scene::p(0.0, 0.0));
     assert_eq!((at.x, at.y), (10.0, 20.0));
 }
+
+/// A file's chart restyled into every type is still drawn, with its new
+/// title, and follows its cells.
+#[test]
+fn restyled_file_charts_are_drawn() {
+    let (mut book, _dir) = open();
+    let mut engine = Engine::new();
+    let mut scenes = DrawingScenes::default();
+    let key = charts(&book)[0].key;
+    for kind in sheets_engine::ChartType::ALL {
+        let mut spec = book.chart_info(key).unwrap().spec;
+        spec.kind = kind;
+        spec.title = format!("As {}", kind.label());
+        book.set_chart(key, spec).unwrap();
+        let d = charts(&book).into_iter().find(|d| d.key == key).unwrap();
+        let items = scenes.items(&mut engine, &book, &d, 480.0, 290.0);
+        assert!(
+            !items
+                .iter()
+                .any(|i| matches!(i.prim, Prim::Unsupported { .. })),
+            "{kind:?} not drawn"
+        );
+        assert!(texts(&items) >= 2, "{kind:?}");
+    }
+    // Still live: a changed cell rebuilds it.
+    scenes.take_builds();
+    book.set_input(0, 1, 1, "999").unwrap();
+    let d = charts(&book).into_iter().find(|d| d.key == key).unwrap();
+    scenes.items(&mut engine, &book, &d, 480.0, 290.0);
+    assert_eq!(scenes.take_builds(), 1);
+}
