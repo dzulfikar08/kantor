@@ -7,8 +7,11 @@
 //! model, so it stays visible (struck through) until the change is
 //! accepted. Paragraph-mark changes (`w:ins`/`w:del` in the mark's
 //! `w:rPr`) and formatting changes (`w:rPrChange`, `w:pPrChange`) ride in
-//! the property extras; Accept All and Reject All resolve them too. Text
-//! typed in Kantor isn't tracked.
+//! the property extras; Accept All and Reject All resolve them too.
+//! Paragraph-mark changes that can join two paragraphs are also part of
+//! [`Document::changes`], so they can be accepted or rejected one by one.
+//! Edits made in Kantor are tracked when Track Changes is on (see
+//! `track.rs`).
 //!
 //! **Comments.** `w:commentRangeStart` / `w:commentRangeEnd` are position
 //! markers and `w:commentReference` a run object (all opaque objects); the
@@ -259,6 +262,23 @@ fn mark_revs(p: &Paragraph) -> (bool, bool) {
     (has("ins") || has("moveTo"), has("del") || has("moveFrom"))
 }
 
+/// The kind, author and date of a paragraph mark's revision.
+fn mark_rev(p: &Paragraph) -> Option<(RevKind, String, String)> {
+    crate::track::mark_elements(p).iter().find_map(|x| {
+        let el = xml::parse(x)?;
+        let kind = match el.name.as_str() {
+            "ins" | "moveTo" => RevKind::Insert,
+            "del" | "moveFrom" => RevKind::Delete,
+            _ => return None,
+        };
+        Some((
+            kind,
+            el.attr("author").unwrap_or_default().to_owned(),
+            el.attr("date").unwrap_or_default().to_owned(),
+        ))
+    })
+}
+
 /// Remove the mark's `w:ins`/`w:del` elements.
 fn clear_mark_revs(p: &mut Paragraph) {
     for name in ["ins", "del", "moveTo", "moveFrom"] {
@@ -313,27 +333,54 @@ impl Document {
     /// of one change merged).
     pub fn changes(&self) -> Vec<Change> {
         let mut out: Vec<Change> = Vec::new();
+        let mut add =
+            |start: Position, end: Position, kind, author: &str, date: &str, text: &str| {
+                if let Some(last) = out.last_mut()
+                    && last.end == start
+                    && last.kind == kind
+                    && last.author == author
+                    && last.date == date
+                {
+                    last.end = end;
+                    last.text.push_str(text);
+                    return;
+                }
+                out.push(Change {
+                    start,
+                    end,
+                    kind,
+                    author: author.to_owned(),
+                    date: date.to_owned(),
+                    text: text.to_owned(),
+                });
+            };
+        let n = self.paragraphs.len();
         for (pi, p) in self.paragraphs.iter().enumerate() {
             for (range, run) in p.run_ranges() {
                 let Some(rev) = &run.rev else { continue };
-                if let Some(last) = out.last_mut()
-                    && last.end == Position::new(pi, range.start)
-                    && last.kind == rev.kind
-                    && last.author == rev.author
-                    && last.date == rev.date
-                {
-                    last.end = Position::new(pi, range.end);
-                    last.text.push_str(&p.text[range]);
-                    continue;
-                }
-                out.push(Change {
-                    start: Position::new(pi, range.start),
-                    end: Position::new(pi, range.end),
-                    kind: rev.kind,
-                    author: rev.author.clone(),
-                    date: rev.date.clone(),
-                    text: p.text[range].to_owned(),
-                });
+                add(
+                    Position::new(pi, range.start),
+                    Position::new(pi, range.end),
+                    rev.kind,
+                    &rev.author,
+                    &rev.date,
+                    &p.text[range],
+                );
+            }
+            // An inserted or deleted paragraph mark (not the last one,
+            // which has nothing to join).
+            if pi + 1 < n
+                && self.can_merge(pi, pi + 1)
+                && let Some((kind, author, date)) = mark_rev(p)
+            {
+                add(
+                    Position::new(pi, p.text.len()),
+                    Position::new(pi + 1, 0),
+                    kind,
+                    &author,
+                    &date,
+                    "\n",
+                );
             }
         }
         out
@@ -344,8 +391,14 @@ impl Document {
     pub fn other_changes(&self) -> usize {
         self.paragraphs
             .iter()
-            .map(|p| {
-                let (i, d) = mark_revs(p);
+            .enumerate()
+            .map(|(pi, p)| {
+                // Marks that can join are in [`Self::changes`].
+                let (i, d) = if pi + 1 < self.paragraphs.len() && self.can_merge(pi, pi + 1) {
+                    (false, false)
+                } else {
+                    mark_revs(p)
+                };
                 let fmt = p
                     .props
                     .extras
@@ -425,6 +478,24 @@ impl Document {
                 p.delete(r);
             }
             p.normalize();
+        }
+        // Paragraph marks in the range, back to front: accepting a deleted
+        // mark or rejecting an inserted one joins the paragraphs.
+        for k in (0..new.len().saturating_sub(1)).rev() {
+            let pi = first + k;
+            let mark = Position::new(pi, self.paragraphs[pi].text.len());
+            if mark < start || Position::new(pi + 1, 0) > end || !self.can_merge(pi, pi + 1) {
+                continue;
+            }
+            let (ins, del) = mark_revs(&new[k]);
+            if !ins && !del {
+                continue;
+            }
+            clear_mark_revs(&mut new[k]);
+            if (del && accept) || (ins && !accept) {
+                let right = new.remove(k + 1);
+                new[k].append(right);
+            }
         }
         let count = last - first + 1;
         let after = Selection::caret(self.clamp_pos_in(&new, first, start));

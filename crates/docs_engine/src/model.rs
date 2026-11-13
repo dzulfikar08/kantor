@@ -470,17 +470,19 @@ impl Paragraph {
         let mut last = None;
         for (range, run) in self.run_ranges() {
             if offset > range.start && offset <= range.end {
-                return run.props.clone();
+                return text_props(run.props.clone());
             }
             last.get_or_insert(run);
         }
-        last.or(self.runs.first())
-            .map(|r| r.props.clone())
-            .unwrap_or_default()
+        text_props(
+            last.or(self.runs.first())
+                .map(|r| r.props.clone())
+                .unwrap_or_default(),
+        )
     }
 
     /// Cut runs so that one starts at `offset`; returns that run's index.
-    fn split_run_at(&mut self, offset: usize) -> usize {
+    pub(crate) fn split_run_at(&mut self, offset: usize) -> usize {
         let mut start = 0;
         for i in 0..self.runs.len() {
             let len = self.runs[i].len;
@@ -695,6 +697,17 @@ impl Paragraph {
             self.text.len()
         );
     }
+}
+
+/// Formatting for text: without the revision marks an empty paragraph's
+/// mark properties may carry (they belong to the mark, not to text).
+fn text_props(mut p: RunProps) -> RunProps {
+    if !p.extras.is_empty() {
+        for name in ["ins", "del", "moveFrom", "moveTo"] {
+            p.extras.remove(name);
+        }
+    }
+    p
 }
 
 /// A caret position: paragraph index and byte offset in its text.

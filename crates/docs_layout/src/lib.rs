@@ -164,6 +164,9 @@ pub enum ObjectKind {
     Placeholder,
     /// Zero size (bookmarks).
     Hidden,
+    /// Text drawn small and raised, with no box: a footnote or endnote
+    /// number (the label).
+    Mark,
 }
 
 /// An object in the text: a box in place of the object's character.
@@ -214,6 +217,10 @@ pub struct Paragraph {
     /// Default tab stops every this many px after the custom ones (Word:
     /// `w:defaultTabStop`, 1.27 cm).
     pub default_tab: f32,
+    /// Footnote references: byte index of the reference and the height
+    /// (px) its note takes at the bottom of the page. The note goes on the
+    /// page that shows the line holding the reference.
+    pub notes: Vec<(usize, f32)>,
 }
 
 /// How text lines up at a tab stop.
@@ -255,6 +262,7 @@ impl Paragraph {
             strikes: Vec::new(),
             tabs: Vec::new(),
             default_tab: 12.7 * MM,
+            notes: Vec::new(),
         }
     }
 
@@ -301,6 +309,10 @@ impl ParaLayout {
 
 /// Padding inside a placeholder box, px.
 const LABEL_PAD: f32 = 4.0;
+/// Size of a note mark relative to its paragraph's text.
+const MARK_SCALE: f32 = 0.65;
+/// How far a note mark's baseline sits above the text's, in ems.
+const MARK_RAISE: f32 = 0.08;
 /// Gap between a list marker and the text, px.
 const MARKER_GAP: f32 = 6.0;
 
@@ -443,6 +455,19 @@ impl Engine {
                 if h <= 0.0 {
                     h = lh + LABEL_PAD;
                 }
+                labels.push((o.index, l, o.label.clone()));
+            }
+            if o.kind == ObjectKind::Mark {
+                let l = self.small_layout(
+                    &o.label,
+                    &para.family,
+                    para.size_pt * MARK_SCALE,
+                    None,
+                    Rgba::BLACK,
+                );
+                // Raised: the box's bottom sits on the baseline.
+                w = l.width();
+                h = l.height() + para.size_pt * PT * MARK_RAISE;
                 labels.push((o.index, l, o.label.clone()));
             }
             if o.kind == ObjectKind::Hidden {
@@ -603,6 +628,12 @@ pub struct TableRow {
     /// Minimum (or exact) height in px.
     pub min_height: f32,
     pub exact: bool,
+    /// Repeated at the top of each page the table continues on (only
+    /// rows at the start of the table: Word's "Repeat as header row").
+    pub header: bool,
+    /// Kept on one page (Word's `w:cantSplit`): a row that doesn't fit
+    /// moves to the next page instead of breaking at a line.
+    pub cant_split: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -654,11 +685,24 @@ pub struct PlacedLine {
     /// area): left edge and width, page coordinates.
     pub x: f32,
     pub width: f32,
+    /// The y that maps the layout's coordinates to the page, and the x of
+    /// the layout origin.
+    pub dy: f32,
+    pub dx: f32,
+    /// A repeated table header row: drawn, but the caret and clicks use
+    /// the row where it really is.
+    pub repeat: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Page {
     pub lines: Vec<PlacedLine>,
+    /// Footnote references whose notes sit at the bottom of this page:
+    /// `(paragraph, byte index)` in document order.
+    pub notes: Vec<(usize, usize)>,
+    /// Height reserved for them at the bottom of the text area
+    /// ([`NOTE_SEPARATOR`] included), px.
+    pub notes_height: f32,
     /// Table borders.
     pub rules: Vec<RuleRect>,
     /// This page's size and margins (sections can differ).
@@ -706,6 +750,9 @@ pub enum RunSource {
     Marker,
     /// The label of the placeholder for the object at this byte index.
     Label(usize),
+    /// The number of the note mark at this byte index (document text, in
+    /// the PDF too).
+    Mark(usize),
 }
 
 /// A run of glyphs sharing one font, size and colour, in page coordinates.
@@ -854,6 +901,9 @@ fn tab_widths(para: &Paragraph, laid: &ParaLayout, tabs: &[usize], width: f32) -
     out
 }
 
+/// Space above a page's footnotes, holding the short separator line, px.
+pub const NOTE_SEPARATOR: f32 = 18.0;
+
 /// Lines a paragraph keeps together at a page break (Word's widow/orphan control).
 const MIN_LINES: usize = 2;
 
@@ -874,9 +924,18 @@ struct Flow<'a> {
     number: u32,
 }
 
+/// A cell's lines in its own coordinates: paragraph, line, top, height.
+struct CellLines {
+    lines: Vec<(usize, usize, f32, f32)>,
+    /// Height of the whole content (paragraph spacing included).
+    height: f32,
+}
+
 impl Flow<'_> {
+    /// Bottom of the text area: the margin, less the page's footnotes.
     fn bottom(&self) -> f32 {
-        self.setup.height - self.setup.margin_bottom
+        let notes = self.pages.last().map_or(0.0, |p| p.notes_height);
+        self.setup.height - self.setup.margin_bottom - notes
     }
 
     fn at_top(&self) -> bool {
@@ -957,7 +1016,70 @@ impl Flow<'_> {
         end > 0 && self.paras[pi].text.as_bytes().get(end - 1) == Some(&(PAGE_BREAK as u8))
     }
 
+    /// Height of the footnotes referenced from line `k` of paragraph `pi`.
+    fn line_notes(&self, pi: usize, k: usize) -> f32 {
+        let notes = &self.paras[pi].notes;
+        if notes.is_empty() {
+            return 0.0;
+        }
+        let Some(line) = self.layouts[pi].layout.get(k) else {
+            return 0.0;
+        };
+        let r = line.text_range();
+        let last = k + 1 == self.layouts[pi].layout.len();
+        notes
+            .iter()
+            .filter(|(i, _)| *i >= r.start && (*i < r.end || last))
+            .map(|(_, h)| h)
+            .sum()
+    }
+
+    /// Extra room the footnotes of a line need on the current page (the
+    /// separator comes with the page's first note).
+    fn notes_cost(&self, note: f32) -> f32 {
+        if note <= 0.0 {
+            return 0.0;
+        }
+        let has = self.pages.last().is_some_and(|p| p.notes_height > 0.0);
+        note + if has { 0.0 } else { NOTE_SEPARATOR }
+    }
+
     fn push_line(&mut self, pi: usize, k: usize, top: f32, (x, width): (f32, f32)) {
+        let layout = &self.layouts[pi];
+        let m = *layout.layout.get(k).expect("line exists").metrics();
+        let page = self.pages.len() - 1;
+        let (dy, dx) = (top - m.block_min_coord, x + layout.dx);
+        self.pages[page].lines.push(PlacedLine {
+            para: pi,
+            line: k,
+            top,
+            height: m.line_height,
+            x,
+            width,
+            dy,
+            dx,
+            repeat: false,
+        });
+        self.line_pages[pi].push((page, dy, dx));
+        // Its footnotes go to the bottom of this page.
+        let notes = &self.paras[pi].notes;
+        if !notes.is_empty() {
+            let line = layout.layout.get(k).expect("line exists");
+            let r = line.text_range();
+            let last = k + 1 == layout.layout.len();
+            let cost = self.notes_cost(self.line_notes(pi, k));
+            let p = &mut self.pages[page];
+            for (i, _) in notes {
+                if *i >= r.start && (*i < r.end || last) {
+                    p.notes.push((pi, *i));
+                }
+            }
+            p.notes_height += cost;
+        }
+    }
+
+    /// A line of a repeated header row: drawn only.
+    fn push_repeat(&mut self, pi: usize, k: usize, top: f32, (x, width): (f32, f32)) {
         let layout = &self.layouts[pi];
         let m = *layout.layout.get(k).expect("line exists").metrics();
         let page = self.pages.len() - 1;
@@ -968,8 +1090,10 @@ impl Flow<'_> {
             height: m.line_height,
             x,
             width,
+            dy: top - m.block_min_coord,
+            dx: x + layout.dx,
+            repeat: true,
         });
-        self.line_pages[pi].push((page, top - m.block_min_coord, x + layout.dx));
     }
 
     /// A body paragraph in the full-width column.
@@ -986,22 +1110,30 @@ impl Flow<'_> {
             .map(|l| l.metrics().line_height)
             .collect();
         let n = heights.len();
+        let notes: Vec<f32> = (0..n).map(|k| self.line_notes(pi, k)).collect();
         let forced: Vec<bool> = (0..n).map(|k| self.breaks_after(pi, k)).collect();
         let keep_together = !forced.iter().any(|&f| f);
         // Space before is dropped at the top of a page, as in Word.
         if !self.at_top() {
             self.y += para.space_before_pt * PT;
         }
-        let bottom = self.bottom();
         let mut i = 0;
         while i < n {
-            // How many lines fit on this page from line i on?
+            let bottom = self.bottom();
+            // How many lines fit on this page from line i on (with the
+            // footnotes they bring)?
             let mut fit = 0;
             let mut h = 0.0;
-            while i + fit < n && self.y + h + heights[i + fit] <= bottom {
-                h += heights[i + fit];
+            let mut nh = 0.0;
+            while i + fit < n {
+                let k = i + fit;
+                if self.y + h + heights[k] > bottom - self.notes_cost(nh + notes[k]) {
+                    break;
+                }
+                h += heights[k];
+                nh += notes[k];
                 fit += 1;
-                if forced[i + fit - 1] {
+                if forced[k] {
                     break;
                 }
             }
@@ -1038,104 +1170,257 @@ impl Flow<'_> {
         self.y += para.space_after_pt * PT;
     }
 
-    /// Height of a cell's content (paragraph spacing included).
-    fn cell_height(&self, cell: &TableCell) -> f32 {
-        let mut h = 0.0;
+    /// A cell's lines in cell coordinates.
+    fn cell_lines(&self, cell: &TableCell) -> CellLines {
+        let mut lines = Vec::new();
+        let mut y = 0.0;
         for (k, pi) in cell.paras.clone().enumerate() {
             let p = &self.paras[pi];
             if k > 0 {
-                h += p.space_before_pt * PT;
+                y += p.space_before_pt * PT;
             }
-            h += self.layouts[pi]
-                .layout
-                .lines()
-                .map(|l| l.metrics().line_height)
-                .sum::<f32>();
-            h += p.space_after_pt * PT;
+            for (line, l) in self.layouts[pi].layout.lines().enumerate() {
+                let lh = l.metrics().line_height;
+                lines.push((pi, line, y, lh));
+                y += lh;
+            }
+            y += p.space_after_pt * PT;
         }
-        h
+        CellLines { lines, height: y }
+    }
+
+    /// Draw a cell's borders on the current page.
+    fn cell_borders(&mut self, cell: &TableCell, cx: f32, cw: f32, top: f32, h: f32) {
+        let page = self.pages.len() - 1;
+        let rules = &mut self.pages[page].rules;
+        let [bt, br, bb, bl] = cell.borders;
+        if let Some(r) = bt {
+            rules.push(RuleRect {
+                rect: [
+                    cx - r.width / 2.0,
+                    top - r.width / 2.0,
+                    cw + r.width,
+                    r.width,
+                ],
+                color: r.color,
+            });
+        }
+        if let Some(r) = bb {
+            rules.push(RuleRect {
+                rect: [
+                    cx - r.width / 2.0,
+                    top + h - r.width / 2.0,
+                    cw + r.width,
+                    r.width,
+                ],
+                color: r.color,
+            });
+        }
+        if let Some(r) = bl {
+            rules.push(RuleRect {
+                rect: [cx - r.width / 2.0, top, r.width, h],
+                color: r.color,
+            });
+        }
+        if let Some(r) = br {
+            rules.push(RuleRect {
+                rect: [cx + cw - r.width / 2.0, top, r.width, h],
+                color: r.color,
+            });
+        }
+    }
+
+    /// A row's full height and its cells' lines.
+    fn row_lines(&self, t: &TableBlock, row: &TableRow) -> (f32, Vec<Option<CellLines>>) {
+        let [pad_t, _, pad_b, _] = t.padding;
+        let cells: Vec<Option<CellLines>> = row
+            .cells
+            .iter()
+            .map(|c| (c.merge != Merge::Continue).then(|| self.cell_lines(c)))
+            .collect();
+        let content = cells
+            .iter()
+            .flatten()
+            .map(|c| c.height + pad_t + pad_b)
+            .fold(0.0f32, f32::max);
+        let h = if row.exact {
+            row.min_height
+        } else {
+            content.max(row.min_height)
+        }
+        .max(1.0);
+        (h, cells)
+    }
+
+    /// Place a whole row at `self.y` (`repeat`: a repeated header row).
+    fn place_row_whole(
+        &mut self,
+        t: &TableBlock,
+        row: &TableRow,
+        h: f32,
+        cells: &[Option<CellLines>],
+        repeat: bool,
+    ) {
+        let [pad_t, pad_r, _, pad_l] = t.padding;
+        let x0 = self.setup.margin_left + t.x;
+        let top = self.y;
+        for (cell, lines) in row.cells.iter().zip(cells) {
+            let cx = x0 + t.col_x(cell.col);
+            let cw = t.span_width(cell.col, cell.span);
+            let column = (cx + pad_l, (cw - pad_l - pad_r).max(8.0));
+            for &(pi, line, y, _) in lines.iter().flat_map(|c| c.lines.iter()) {
+                if repeat {
+                    self.push_repeat(pi, line, top + pad_t + y, column);
+                } else {
+                    self.push_line(pi, line, top + pad_t + y, column);
+                }
+            }
+            self.cell_borders(cell, cx, cw, top, h);
+        }
+        self.y = top + h;
+    }
+
+    /// Repeat the table's header rows at the top of a new page.
+    fn repeat_headers(&mut self, t: &TableBlock, headers: usize) {
+        for row in &t.rows[..headers] {
+            let (h, cells) = self.row_lines(t, row);
+            self.place_row_whole(t, row, h, &cells, true);
+        }
+    }
+
+    /// Footnotes of every line in a row.
+    fn row_notes(&self, cells: &[Option<CellLines>]) -> f32 {
+        cells
+            .iter()
+            .flatten()
+            .flat_map(|c| c.lines.iter())
+            .map(|&(pi, k, _, _)| self.line_notes(pi, k))
+            .sum()
     }
 
     fn place_table(&mut self, t: &TableBlock) {
+        // Header rows repeat only when rows other than headers follow.
+        let headers = t.rows.iter().take_while(|r| r.header).count();
+        let headers = if headers < t.rows.len() { headers } else { 0 };
+        let new_page = |f: &mut Self, ri: usize| {
+            f.new_page();
+            if headers > 0 && ri >= headers {
+                f.repeat_headers(t, headers);
+            }
+        };
+        for (ri, row) in t.rows.iter().enumerate() {
+            let (h, cells) = self.row_lines(t, row);
+            let notes = self.notes_cost(self.row_notes(&cells));
+            if self.y + h <= self.bottom() - notes {
+                self.place_row_whole(t, row, h, &cells, false);
+                continue;
+            }
+            // Word breaks a row at a line unless it's marked "can't split"
+            // (or has an exact height); header rows stay whole too.
+            let splits = !row.exact && !row.cant_split && ri >= headers;
+            if !self.at_top() && (!splits || !self.first_line_fits(t, &cells)) {
+                new_page(self, ri);
+                let notes = self.notes_cost(self.row_notes(&cells));
+                if self.y + h <= self.bottom() - notes {
+                    self.place_row_whole(t, row, h, &cells, false);
+                    continue;
+                }
+            }
+            // Taller than a page: a row that can't split breaks anyway
+            // (as in Word), unless its height is exact.
+            if row.exact {
+                self.place_row_whole(t, row, h, &cells, false);
+                continue;
+            }
+            self.place_row_split(t, row, ri, &cells, &new_page);
+        }
+    }
+
+    /// Whether some cell's first line fits on this page.
+    fn first_line_fits(&self, t: &TableBlock, cells: &[Option<CellLines>]) -> bool {
+        let [pad_t, _, pad_b, _] = t.padding;
+        cells.iter().flatten().any(|c| {
+            c.lines.first().is_some_and(|&(pi, k, y, lh)| {
+                self.y + pad_t + y + lh + pad_b
+                    <= self.bottom() - self.notes_cost(self.line_notes(pi, k))
+            })
+        })
+    }
+
+    /// Place a row line by line, breaking it across pages where its cells'
+    /// lines stop fitting.
+    fn place_row_split(
+        &mut self,
+        t: &TableBlock,
+        row: &TableRow,
+        ri: usize,
+        cells: &[Option<CellLines>],
+        new_page: &dyn Fn(&mut Self, usize),
+    ) {
         let [pad_t, pad_r, pad_b, pad_l] = t.padding;
         let x0 = self.setup.margin_left + t.x;
-        for row in &t.rows {
-            let content = row
-                .cells
-                .iter()
-                .filter(|c| c.merge != Merge::Continue)
-                .map(|c| self.cell_height(c) + pad_t + pad_b)
-                .fold(0.0f32, f32::max);
-            let h = if row.exact {
-                row.min_height
-            } else {
-                content.max(row.min_height)
-            }
-            .max(1.0);
-            // Rows don't split across pages.
-            if self.y + h > self.bottom() && !self.at_top() {
-                self.new_page();
-            }
+        let mut next = vec![0usize; cells.len()];
+        let mut used = 0.0f32;
+        loop {
             let top = self.y;
-            let page = self.pages.len() - 1;
-            for cell in &row.cells {
+            // Each cell continues from its first line not placed yet.
+            let starts: Vec<f32> = cells
+                .iter()
+                .zip(&next)
+                .map(|(c, &n)| {
+                    c.as_ref()
+                        .map_or(0.0, |c| c.lines.get(n).map_or(c.height, |&(_, _, y, _)| y))
+                })
+                .collect();
+            let mut extent = 0.0f32;
+            let mut placed = false;
+            for (ci, cell) in row.cells.iter().enumerate() {
+                let Some(lines) = &cells[ci] else { continue };
                 let cx = x0 + t.col_x(cell.col);
                 let cw = t.span_width(cell.col, cell.span);
                 let column = (cx + pad_l, (cw - pad_l - pad_r).max(8.0));
-                let mut y = top + pad_t;
-                for (k, pi) in cell.paras.clone().enumerate() {
-                    let p = &self.paras[pi];
-                    if k > 0 {
-                        y += p.space_before_pt * PT;
+                while let Some(&(pi, k, y, lh)) = lines.lines.get(next[ci]) {
+                    let ly = top + pad_t + y - starts[ci];
+                    let cost = self.notes_cost(self.line_notes(pi, k));
+                    let fits = ly + lh + pad_b <= self.bottom() - cost;
+                    // Nothing fits on an empty page: one line anyway.
+                    if !fits && (placed || !self.at_top()) {
+                        break;
                     }
-                    for line in 0..self.layouts[pi].layout.len() {
-                        let lh = self.layouts[pi]
-                            .layout
-                            .get(line)
-                            .map_or(0.0, |l| l.metrics().line_height);
-                        self.push_line(pi, line, y, column);
-                        y += lh;
-                    }
-                    y += p.space_after_pt * PT;
-                }
-                let rules = &mut self.pages[page].rules;
-                let [bt, br, bb, bl] = cell.borders;
-                if let Some(r) = bt {
-                    rules.push(RuleRect {
-                        rect: [
-                            cx - r.width / 2.0,
-                            top - r.width / 2.0,
-                            cw + r.width,
-                            r.width,
-                        ],
-                        color: r.color,
-                    });
-                }
-                if let Some(r) = bb {
-                    rules.push(RuleRect {
-                        rect: [
-                            cx - r.width / 2.0,
-                            top + h - r.width / 2.0,
-                            cw + r.width,
-                            r.width,
-                        ],
-                        color: r.color,
-                    });
-                }
-                if let Some(r) = bl {
-                    rules.push(RuleRect {
-                        rect: [cx - r.width / 2.0, top, r.width, h],
-                        color: r.color,
-                    });
-                }
-                if let Some(r) = br {
-                    rules.push(RuleRect {
-                        rect: [cx + cw - r.width / 2.0, top, r.width, h],
-                        color: r.color,
-                    });
+                    self.push_line(pi, k, ly, column);
+                    extent = extent.max(ly + lh - top - pad_t);
+                    next[ci] += 1;
+                    placed = true;
                 }
             }
+            let done = cells
+                .iter()
+                .zip(&next)
+                .all(|(c, &n)| c.as_ref().is_none_or(|c| n >= c.lines.len()));
+            let h = if done {
+                // The rest of each cell (its last spacing) and the rest of
+                // the row's minimum height.
+                let rest = cells
+                    .iter()
+                    .zip(&starts)
+                    .filter_map(|(c, s)| c.as_ref().map(|c| c.height - s))
+                    .fold(extent, f32::max);
+                (rest + pad_t + pad_b).max(row.min_height - used)
+            } else {
+                extent + pad_t + pad_b
+            }
+            .max(1.0);
+            for cell in &row.cells {
+                let cx = x0 + t.col_x(cell.col);
+                let cw = t.span_width(cell.col, cell.span);
+                self.cell_borders(cell, cx, cw, top, h);
+            }
             self.y = top + h;
+            used += h;
+            if done {
+                break;
+            }
+            new_page(self, ri);
         }
     }
 }
@@ -1250,7 +1535,7 @@ impl PagedDocument {
         match run.source {
             RunSource::Text => para_text,
             RunSource::Marker => l.marker.as_ref().map_or("", |m| m.2.as_str()),
-            RunSource::Label(i) => l
+            RunSource::Label(i) | RunSource::Mark(i) => l
                 .labels
                 .iter()
                 .find(|x| x.0 == i)
@@ -1263,9 +1548,7 @@ impl PagedDocument {
         let mut out = Vec::new();
         for pl in &self.pages[page].lines {
             let pl_layout = &self.layouts[pl.para];
-            let Some((_, dy, dx)) = self.origin(pl.para, pl.line) else {
-                continue;
-            };
+            let (dy, dx) = (pl.dy, pl.dx);
             let line = pl_layout.layout.get(pl.line).expect("placed line exists");
             emit_runs(&mut out, &line, pl.para, RunSource::Text, dx, dy);
             if pl.line == 0
@@ -1280,14 +1563,21 @@ impl PagedDocument {
             }
             for item in line.items() {
                 if let PositionedLayoutItem::InlineBox(b) = item
-                    && let Some(&(index, ObjectKind::Placeholder)) =
-                        pl_layout.objects.get(b.id as usize)
+                    && let Some(&(index, kind)) = pl_layout.objects.get(b.id as usize)
+                    && matches!(kind, ObjectKind::Placeholder | ObjectKind::Mark)
                     && let Some((_, ll, _)) = pl_layout.labels.iter().find(|x| x.0 == index)
                     && let Some(lline) = ll.get(0)
                 {
-                    let lx = dx + b.x + LABEL_PAD;
-                    let ly = dy + b.y + (b.height - lline.metrics().line_height) / 2.0;
-                    emit_runs(&mut out, &lline, pl.para, RunSource::Label(index), lx, ly);
+                    let (lx, ly, source) = if kind == ObjectKind::Mark {
+                        (dx + b.x, dy + b.y, RunSource::Mark(index))
+                    } else {
+                        (
+                            dx + b.x + LABEL_PAD,
+                            dy + b.y + (b.height - lline.metrics().line_height) / 2.0,
+                            RunSource::Label(index),
+                        )
+                    };
+                    emit_runs(&mut out, &lline, pl.para, source, lx, ly);
                 }
             }
         }
@@ -1339,16 +1629,14 @@ impl PagedDocument {
             if l.objects.is_empty() {
                 continue;
             }
-            let Some((_, dy, dx)) = self.origin(pl.para, pl.line) else {
-                continue;
-            };
+            let (dy, dx) = (pl.dy, pl.dx);
             let Some(line) = l.layout.get(pl.line) else {
                 continue;
             };
             for item in line.items() {
                 if let PositionedLayoutItem::InlineBox(b) = item
                     && let Some(&(index, kind)) = l.objects.get(b.id as usize)
-                    && kind != ObjectKind::Hidden
+                    && !matches!(kind, ObjectKind::Hidden | ObjectKind::Mark)
                 {
                     out.push(PlacedObject {
                         para: pl.para,
@@ -1378,6 +1666,7 @@ impl PagedDocument {
         lines
             .iter()
             .enumerate()
+            .filter(|(_, l)| !l.repeat)
             .min_by(|(_, a), (_, b)| {
                 let ka = (
                     dist(x, a.x, a.x + a.width) > 0.5,
@@ -1404,7 +1693,7 @@ impl PagedDocument {
     /// nearest end of that line).
     fn hit_placed(&self, page: usize, i: usize, x: f32) -> Option<(usize, usize)> {
         let pl = *self.pages.get(page)?.lines.get(i)?;
-        let (_, dy, dx) = self.origin(pl.para, pl.line)?;
+        let (dy, dx) = (pl.dy, pl.dx);
         let layout = &self.layouts[pl.para].layout;
         let m = *layout.get(pl.line)?.metrics();
         let ly = ((m.block_min_coord + m.block_max_coord) / 2.0).max(pl.top - dy);
@@ -1448,7 +1737,7 @@ impl PagedDocument {
         let i = self.pages[page]
             .lines
             .iter()
-            .position(|l| l.para == para && l.line == k)?;
+            .position(|l| l.para == para && l.line == k && !l.repeat)?;
         Some((page, i))
     }
 
@@ -1475,7 +1764,7 @@ impl PagedDocument {
                     Some(y) => l.top + l.height <= y + 0.5,
                     None => true,
                 };
-                if !ok || (l.para == cur.para && l.line == cur.line && from.is_some()) {
+                if !ok || l.repeat || (l.para == cur.para && l.line == cur.line && from.is_some()) {
                     continue;
                 }
                 // Prefer the column under x; else any line.
@@ -1492,10 +1781,9 @@ impl PagedDocument {
             // Only accept an out-of-column line if no in-column one exists on
             // this page; otherwise move pages.
             if in_col(&l)
-                || !self.pages[page]
-                    .lines
-                    .iter()
-                    .any(|m| in_col(m) && (if down { m.top > from } else { m.top < from }))
+                || !self.pages[page].lines.iter().any(|m| {
+                    !m.repeat && in_col(m) && (if down { m.top > from } else { m.top < from })
+                })
             {
                 return self.hit_placed(page, k, x);
             }
@@ -2141,6 +2429,8 @@ mod tests {
                         .collect(),
                     min_height: 0.0,
                     exact: false,
+                    header: false,
+                    cant_split: false,
                 })
                 .collect(),
         };
@@ -2216,6 +2506,158 @@ mod tab_tests {
 
     fn x_of(doc: &PagedDocument, i: usize) -> f32 {
         doc.caret(0, i).unwrap().x
+    }
+
+    /// A one-column table of `rows` rows, each cell one paragraph; returns
+    /// the paginated document. `tall` rows get `lines` lines of text.
+    fn split_table(
+        rows: usize,
+        tall: &[usize],
+        lines: usize,
+        header: bool,
+        cant_split: bool,
+    ) -> (PagedDocument, Vec<Paragraph>) {
+        let mut engine = Engine::new();
+        let setup = PageSetup::a4();
+        let mut paras = Vec::new();
+        for r in 0..rows {
+            let text = if tall.contains(&r) {
+                (0..lines)
+                    .map(|k| format!("r{r} line {k}"))
+                    .collect::<Vec<_>>()
+                    .join("\u{2028}")
+            } else {
+                format!("row {r}")
+            };
+            paras.push(Paragraph::new(text));
+        }
+        let rule = Some(Rule {
+            width: 1.0,
+            color: Rgba::BLACK,
+        });
+        let t = TableBlock {
+            x: 0.0,
+            columns: vec![300.0],
+            padding: [0.0, 7.2, 0.0, 7.2],
+            rows: (0..rows)
+                .map(|r| TableRow {
+                    cells: vec![TableCell {
+                        col: 0,
+                        span: 1,
+                        paras: r..r + 1,
+                        merge: Merge::None,
+                        borders: [rule; 4],
+                    }],
+                    min_height: 0.0,
+                    exact: false,
+                    header: header && r == 0,
+                    cant_split: cant_split && tall.contains(&r),
+                })
+                .collect(),
+        };
+        let w = t.text_width(&t.rows[0].cells[0]);
+        let layouts: Vec<_> = paras
+            .iter()
+            .map(|p| Arc::new(engine.layout_paragraph(p, w)))
+            .collect();
+        let doc = PagedDocument::paginate_blocks(&paras, layouts, &[Block::Table(t)], setup);
+        (doc, paras)
+    }
+
+    #[test]
+    fn tall_rows_break_across_pages_at_lines() {
+        // Row 5 has 80 lines: more than one page holds.
+        let (doc, _) = split_table(8, &[5], 80, false, false);
+        assert!(doc.pages.len() >= 2);
+        let first = doc.caret(5, 0).unwrap();
+        assert_eq!(first.page, 0, "the tall row starts right after row 4");
+        let row4 = doc.caret(4, 0).unwrap();
+        assert!(first.top > row4.top && first.top - row4.top < 40.0);
+        // Its lines continue on the next page, every line placed once.
+        let pages: Vec<usize> = doc
+            .pages
+            .iter()
+            .map(|p| p.lines.iter().filter(|l| l.para == 5).count())
+            .collect();
+        assert!(pages[0] > 0 && pages[1] > 0, "{pages:?}");
+        assert_eq!(pages.iter().sum::<usize>(), 80);
+        let bottom = doc.pages[0].setup.height - doc.pages[0].setup.margin_bottom;
+        for l in &doc.pages[0].lines {
+            assert!(l.top + l.height <= bottom + 0.01);
+        }
+        // Borders close the row on both pages.
+        assert!(!doc.pages[1].rules.is_empty());
+        assert_eq!(doc.caret(6, 0).unwrap().page, doc.pages.len() - 1);
+    }
+
+    #[test]
+    fn cant_split_rows_move_whole() {
+        // Row 30 has 20 lines and doesn't fit what's left of page 1.
+        let (doc, paras) = split_table(40, &[30], 20, false, true);
+        let first = doc.caret(30, 0).unwrap();
+        let last = doc.caret(30, paras[30].text.len()).unwrap();
+        assert_eq!(first.page, last.page, "kept on one page");
+        assert_eq!(first.page, 1);
+        let (split, _) = split_table(40, &[30], 20, false, false);
+        let pages: std::collections::BTreeSet<usize> = split
+            .pages
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.lines.iter().any(|l| l.para == 30))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(pages.len(), 2, "without cantSplit it breaks");
+    }
+
+    #[test]
+    fn header_rows_repeat_on_every_page() {
+        let (doc, paras) = split_table(120, &[], 1, true, false);
+        assert!(doc.pages.len() >= 3);
+        for (i, page) in doc.pages.iter().enumerate() {
+            let first = page.lines.first().unwrap();
+            assert_eq!(first.para, 0, "page {i} starts with the header row");
+            assert_eq!(first.repeat, i > 0, "repeats are drawn copies");
+            // The repeat shows the header's text.
+            let runs = doc.glyph_runs(i);
+            assert!(runs.iter().any(|r| r.para == 0));
+        }
+        // The caret stays on the real header row; clicks skip the copies.
+        assert_eq!(doc.caret(0, 0).unwrap().page, 0);
+        let l = doc.pages[1].lines[0];
+        assert_ne!(
+            doc.hit_test(1, l.x + 2.0, l.top + 2.0).map(|h| h.0),
+            Some(0)
+        );
+        let _ = paras;
+        // A table of header rows only doesn't repeat.
+        let (only, _) = split_table(1, &[], 1, true, false);
+        assert!(only.pages[0].lines.iter().all(|l| !l.repeat));
+    }
+
+    #[test]
+    fn footnotes_take_room_at_the_page_bottom() {
+        let mut engine = Engine::new();
+        let setup = PageSetup::a4();
+        let mut paras: Vec<Paragraph> = (0..60)
+            .map(|i| Paragraph::new(format!("para {i}")))
+            .collect();
+        paras[3].notes = vec![(4, 120.0)];
+        let layouts: Vec<_> = paras
+            .iter()
+            .map(|p| Arc::new(engine.layout_paragraph(p, setup.content_width())))
+            .collect();
+        let with = PagedDocument::paginate(&paras, layouts.clone(), setup);
+        let mut plain = paras.clone();
+        plain[3].notes.clear();
+        let without = PagedDocument::paginate(&plain, layouts, setup);
+        assert_eq!(with.pages[0].notes, vec![(3, 4)]);
+        assert!((with.pages[0].notes_height - (120.0 + NOTE_SEPARATOR)).abs() < 0.01);
+        let bottom = setup.height - setup.margin_bottom - with.pages[0].notes_height;
+        for l in &with.pages[0].lines {
+            assert!(l.top + l.height <= bottom + 0.01);
+        }
+        assert!(with.pages[0].lines.len() < without.pages[0].lines.len());
+        assert!(with.pages[1].notes.is_empty());
     }
 
     #[test]

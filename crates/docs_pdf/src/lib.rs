@@ -180,6 +180,8 @@ fn add_page(
                     .or_insert_with(|| Arc::from(paged.run_text(&run, "")))
                     .clone(),
             ),
+            // A note's number.
+            RunSource::Mark(_) => Some(Arc::from(paged.run_text(&run, ""))),
             // Kantor's placeholder labels are not document content.
             RunSource::Label(_) => None,
         };
@@ -225,16 +227,15 @@ pub fn scene_of(
                 ..PageScene::default()
             };
             for f in furniture.get(page).into_iter().flatten() {
-                let story = &doc.stories()[f.layout.story];
                 add_page(
                     &mut out,
-                    &story.doc,
+                    f.layout.doc(doc),
                     &f.layout.paras,
                     &f.layout.paged,
                     0,
                     (f.x, f.y),
                     &mut pictures,
-                    f.layout.story + 1,
+                    f.layout.key() + 1,
                 );
             }
             add_page(

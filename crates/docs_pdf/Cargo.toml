@@ -19,6 +19,8 @@ krilla = { version = "0.8", default-features = false, features = ["raster-images
 [dev-dependencies]
 # Builds PNG fixtures and inflates PDF streams in the tests.
 flate2 = "1"
+# Builds .docx fixtures.
+zip.workspace = true
 
 [lints]
 workspace = true

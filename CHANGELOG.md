@@ -24,6 +24,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   current cell. The chart's embedded workbook gets the same change (later series move into the
   removed one's cells), and a table there that covered the chart's data grows or shrinks with
   it, so PowerPoint's *Edit Data* still matches.
+- Docs: **Track Changes** (`Ctrl Shift E`, Review menu, palette). While it's on, what you type is
+  recorded as an insertion and what you delete stays, struck through in your colour, as a deletion,
+  both under your name (Settings → author, else your account's name) and the time. Deleting text
+  you inserted yourself just removes it, as in Word. Enter and joining paragraphs are tracked too.
+  Accept or reject each change, or all of them; undo works as usual. The switch is saved in the
+  file, so Word keeps tracking. Formatting changes aren't tracked.
+- Docs: **footnotes and endnotes**. Notes from Word files show with their numbers: footnotes at the
+  bottom of the page that refers to them, under a short line, endnotes after the text; numbering
+  follows the file (format, start, restart per section or per page). *Insert Footnote*
+  (`Ctrl Alt F`) and *Insert Endnote* (`Ctrl Alt D`) add one at the caret; double-click a note
+  (or its number) to edit or delete it. Notes you don't touch are saved byte for byte. The PDF
+  shows them the same way.
 
 ### Changed
 - Sheets: **Freeze Panes** works from what is on screen, as in Excel: on a scrolled sheet the rows
@@ -31,6 +43,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   A1 (or the top-left cell on screen) active the panes split at the middle of the screen. Freeze
   Top Row and Freeze First Column freeze the top row and left column on screen. Saved to `.xlsx`
   as Excel saves it and read back on open.
+- Docs: a table row taller than what's left of the page now breaks across pages at a line, as in
+  Word, unless the row is set to stay on one page; header rows ("Repeat as header row") repeat at
+  the top of every page the table continues on. On screen and in the PDF.
+- Docs: accepting or rejecting a tracked paragraph mark (an inserted or deleted paragraph break) now
+  works on its own, not only with Accept All / Reject All.
 
 ### Fixed
 - Sheets: Ctrl+arrow (and Ctrl+Shift+arrow), Ctrl+Home, Home, Enter and Tab after typing, and the

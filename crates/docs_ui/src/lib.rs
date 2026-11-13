@@ -25,6 +25,7 @@ mod find;
 pub mod font_bridge;
 mod hf_menu;
 mod input;
+mod note_menu;
 mod page_menu;
 mod review;
 mod ruler;
@@ -129,6 +130,9 @@ actions!(
         SaveAs,
         ExportPdf,
         NewComment,
+        ToggleTrackChanges,
+        InsertFootnote,
+        InsertEndnote,
         ZoomIn,
         ZoomOut,
         ZoomReset,
@@ -226,6 +230,9 @@ pub fn init(cx: &mut App) {
         "y" => Redo,
         "s" => Save,
         "alt-m" => NewComment,
+        "shift-e" => ToggleTrackChanges,
+        "alt-f" => InsertFootnote,
+        "alt-d" => InsertEndnote,
         "shift-s" => SaveAs,
         "=" => ZoomIn,
         "+" => ZoomIn,
@@ -461,6 +468,7 @@ pub struct DocsView {
     hf_menu_closed: Option<std::time::Instant>,
     /// A comment being written or edited in its card.
     comment_edit: Option<review::CommentEdit>,
+    note_edit: Option<note_menu::NoteEdit>,
     /// The markup column with comment cards.
     comments_visible: bool,
     /// A margin or indent being dragged on the ruler.
@@ -533,11 +541,12 @@ impl DocsView {
     }
 
     fn with_document(
-        doc: Document,
+        mut doc: Document,
         status: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        doc.set_author(&kantor_core::settings::Settings::load().author_name());
         let (engine, bridge) = shared(cx);
         let focus = cx.focus_handle();
         let (find, find_sub) = find::new_bar(window, cx);
@@ -564,6 +573,7 @@ impl DocsView {
             hf_menu: None,
             hf_menu_closed: None,
             comment_edit: None,
+            note_edit: None,
             comments_visible: true,
             ruler_drag: None,
             engine,
@@ -1403,6 +1413,14 @@ impl DocsView {
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
         self.table_picker = None;
+        // A double click on a footnote or endnote (or its number) edits it.
+        if ev.click_count == 2
+            && let Some((kind, id)) = self.note_at_point(ev.position)
+        {
+            let at = point(ev.position.x + SPACE_3, ev.position.y + SPACE_3);
+            self.open_note(kind, id, Some(at), window, cx);
+            return;
+        }
         // A double click in a page's top or bottom margin edits its header
         // or footer (as in Word).
         if ev.click_count == 2
@@ -1548,7 +1566,7 @@ impl DocsView {
         for page in g.visible_pages(laid.paged.pages.len()) {
             for placed in laid.furniture.get(page).into_iter().flatten() {
                 let l = &placed.layout;
-                let story = &self.doc.stories()[l.story].doc;
+                let story = l.doc(&self.doc);
                 for o in l.paged.objects(0) {
                     if o.kind != ObjectKind::Image {
                         continue;
@@ -1558,7 +1576,7 @@ impl DocsView {
                     else {
                         continue;
                     };
-                    let key = format!("hf{}:{}", l.story, img.rel_id);
+                    let key = format!("hf{}:{}", l.key(), img.rel_id);
                     let image = match self.images.get(&key) {
                         Some(i) => i.clone(),
                         None => {
@@ -1576,7 +1594,7 @@ impl DocsView {
                         }
                     };
                     if let Some(data) = image.use_render_image(window, cx) {
-                        out.insert((l.story, o.para, o.index), data);
+                        out.insert((l.key(), o.para, o.index), data);
                     }
                 }
             }
@@ -1957,8 +1975,10 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             // what's being edited); the PDF prints them in their colours.
             for placed in f.laid.furniture.get(page).into_iter().flatten() {
                 let l = &placed.layout;
+                // Notes are part of the text: full ink.
+                let ink = if placed.note.is_some() { 1.0 } else { 0.7 };
                 for o in l.paged.objects(0) {
-                    if let Some(data) = f.hf_images.get(&(l.story, o.para, o.index)) {
+                    if let Some(data) = f.hf_images.get(&(l.key(), o.para, o.index)) {
                         let [x, y, w, h] = o.rect;
                         let b = rect(page, [x + placed.x, y + placed.y, w, h]);
                         let _ =
@@ -1971,7 +1991,7 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                     r[1] += placed.y;
                     r[2] = r[2].max(1.0 / z);
                     r[3] = r[3].max(1.0 / z);
-                    window.paint_quad(fill(rect(page, r), layout_color(rule.color).opacity(0.7)));
+                    window.paint_quad(fill(rect(page, r), layout_color(rule.color).opacity(ink)));
                 }
                 let runs = l.paged.glyph_runs(0);
                 paint_runs(
@@ -1982,7 +2002,7 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                     &runs,
                     &|i| l.text(i),
                     (placed.x, placed.y),
-                    0.7,
+                    ink,
                     (&mut bridge, &ts, &f.t),
                 );
             }
@@ -2226,6 +2246,9 @@ impl Render for DocsView {
             AlignJustify => |this, w, cx| this.set_align_doc(Align::Justify, w, cx),
             Undo => |this, w, cx| this.undo_doc(w, cx),
             NewComment => |this, w, cx| this.new_comment_doc(w, cx),
+            ToggleTrackChanges => |this, w, cx| this.toggle_track_changes_doc(w, cx),
+            InsertFootnote => |this, w, cx| this.insert_note_doc(docs_engine::NoteKind::Footnote, w, cx),
+            InsertEndnote => |this, w, cx| this.insert_note_doc(docs_engine::NoteKind::Endnote, w, cx),
             Redo => |this, w, cx| this.redo_doc(w, cx),
             ZoomIn => |this, _w, cx| this.zoom_by(ZOOM_STEP, cx),
             ZoomOut => |this, _w, cx| this.zoom_by(1.0 / ZOOM_STEP, cx),
@@ -2248,6 +2271,7 @@ impl Render for DocsView {
             .children(self.render_table_picker(cx))
             .children(self.render_page_menu(cx))
             .children(self.render_hf_menu(cx))
+            .children(self.render_note_menu(cx))
     }
 }
 

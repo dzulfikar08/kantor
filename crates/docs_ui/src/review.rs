@@ -187,6 +187,22 @@ impl DocsView {
 
     // ── tracked changes ────────────────────────────────────────────────────
 
+    /// Review > Track Changes: record the user's own edits as insertions
+    /// and deletions (Word's Ctrl+Shift+E).
+    pub fn toggle_track_changes_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let author = kantor_core::settings::Settings::load().author_name();
+        self.doc.set_author(&author);
+        let on = !self.doc.track_changes();
+        self.doc.set_track_changes(on, self.sel);
+        let sel = self.sel;
+        self.edited(sel, window, cx);
+        self.status = if on {
+            format!("Track Changes on: your edits are marked as {author}'s").into()
+        } else {
+            "Track Changes off".into()
+        };
+    }
+
     pub fn accept_change_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.resolve_change(true, window, cx);
     }
@@ -494,6 +510,7 @@ pub(crate) fn review_button(view: &DocsView, cx: &mut Context<DocsView>) -> impl
     let v = cx.entity().downgrade();
     let changes = view.doc.changes().len() + view.doc.other_changes();
     let comments = view.doc.comments().len();
+    let track = view.doc.track_changes();
     let tip = match (changes, comments) {
         (0, 0) => "Review: comments and tracked changes".to_owned(),
         (c, 0) => format!(
@@ -503,16 +520,25 @@ pub(crate) fn review_button(view: &DocsView, cx: &mut Context<DocsView>) -> impl
         (0, n) => format!("Review: {n} comment{}", if n == 1 { "" } else { "s" }),
         (c, n) => format!("Review: {c} tracked changes, {n} comments"),
     };
+    let tip = if track {
+        format!("{tip} (Track Changes is on)")
+    } else {
+        tip
+    };
     Button::new("docs-review")
         .ghost()
         .xsmall()
-        .icon(Lucide::MessageSquare)
+        .icon(if track {
+            Lucide::FileDiff
+        } else {
+            Lucide::MessageSquare
+        })
         .dropdown_caret(true)
         .tooltip(tip)
-        .dropdown_menu(move |menu, _, _| review_items(menu, &v))
+        .dropdown_menu(move |menu, _, _| review_items(menu, &v, track))
 }
 
-fn review_items(menu: PopupMenu, view: &WeakEntity<DocsView>) -> PopupMenu {
+fn review_items(menu: PopupMenu, view: &WeakEntity<DocsView>, track: bool) -> PopupMenu {
     type Run = fn(&mut DocsView, &mut Window, &mut Context<DocsView>);
     let item = |menu: PopupMenu, label: &'static str, icon: Option<Lucide>, run: Run| {
         let v = view.clone();
@@ -524,6 +550,23 @@ fn review_items(menu: PopupMenu, view: &WeakEntity<DocsView>) -> PopupMenu {
         }
         menu.item(it)
     };
+    let v = view.clone();
+    let menu = menu
+        .item(
+            PopupMenuItem::new("Track Changes  Ctrl+Shift+E")
+                .checked(track)
+                .on_click(move |_, window, cx| {
+                    let _ = v.update(cx, |this, cx| this.toggle_track_changes_doc(window, cx));
+                }),
+        )
+        .separator();
+    let menu = item(menu, "Insert footnote  Ctrl+Alt+F", None, |v, w, cx| {
+        v.insert_note_doc(docs_engine::NoteKind::Footnote, w, cx)
+    });
+    let menu = item(menu, "Insert endnote  Ctrl+Alt+D", None, |v, w, cx| {
+        v.insert_note_doc(docs_engine::NoteKind::Endnote, w, cx)
+    })
+    .separator();
     let menu = item(
         menu,
         "New comment  Ctrl+Alt+M",

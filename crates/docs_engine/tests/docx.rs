@@ -226,11 +226,8 @@ fn unsupported_content_never_overwrites_the_original() {
         "tracked changes and the track changes switch are kept, not unsupported"
     );
     assert!(
-        doc.preserved_content()
-            .iter()
-            .any(|x| x.starts_with("track changes switched on")),
-        "{:?}",
-        doc.preserved_content()
+        doc.track_changes(),
+        "the switch is read: Kantor tracks edits"
     );
     assert_eq!(doc.changes().len(), 1);
     assert!(doc.needs_save_as());

@@ -386,7 +386,11 @@ fn formatting_and_paragraph_mark_changes_resolve() {
         "{:?}",
         doc.unsupported_content()
     );
-    assert_eq!(doc.other_changes(), 2);
+    // The formatting change; the inserted mark is a change in the text
+    // (it can be accepted or rejected on its own).
+    assert_eq!(doc.other_changes(), 1);
+    assert_eq!(doc.changes().len(), 1);
+    assert_eq!(doc.changes()[0].text, "\n");
     let mut rejected = doc.clone();
     // Accept: bold stays, the paragraphs stay apart.
     doc.resolve_all(true, Selection::default());

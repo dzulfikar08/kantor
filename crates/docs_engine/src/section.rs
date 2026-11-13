@@ -101,7 +101,7 @@ pub enum NumFormat {
 }
 
 impl NumFormat {
-    fn parse(s: &str) -> Self {
+    pub(crate) fn parse(s: &str) -> Self {
         match s {
             "lowerRoman" => Self::LowerRoman,
             "upperRoman" => Self::UpperRoman,
@@ -436,6 +436,8 @@ pub(crate) struct HfState {
     pub even_odd: bool,
     pub comments: Vec<crate::review::Comment>,
     pub comments_modified: bool,
+    pub track: bool,
+    pub notes: Vec<crate::notes::Note>,
 }
 
 impl Document {
@@ -568,6 +570,8 @@ impl Document {
         self.even_odd = s.even_odd;
         self.comments = s.comments;
         self.comments_modified = s.comments_modified;
+        self.track = s.track;
+        self.notes = s.notes;
     }
 
     pub(crate) fn side_state(&self) -> HfState {
@@ -577,6 +581,8 @@ impl Document {
             even_odd: self.even_odd,
             comments: self.comments.clone(),
             comments_modified: self.comments_modified,
+            track: self.track,
+            notes: self.notes.clone(),
         }
     }
 
@@ -599,7 +605,7 @@ impl Document {
     }
 
     /// The sectPr of section `si` (creating the body's if missing).
-    fn sect_xml(&self, sections: &[Section], si: usize) -> String {
+    pub(crate) fn sect_xml(&self, sections: &[Section], si: usize) -> String {
         match sections[si].at {
             SectAt::Para(i) => para_sect(&self.paragraphs[i])
                 .unwrap_or_default()
@@ -1119,9 +1125,67 @@ pub(crate) fn set_settings_even_odd(settings: &str, on: bool) -> String {
     s
 }
 
+/// Settings that come after `w:trackRevisions` (CT_Settings order).
+const SETTINGS_AFTER_TRACK: &[&str] = &[
+    "doNotTrackMoves",
+    "doNotTrackFormatting",
+    "documentProtection",
+    "autoFormatOverride",
+    "styleLockTheme",
+    "styleLockQFSet",
+    "defaultTabStop",
+    "autoHyphenation",
+    "consecutiveHyphenLimit",
+    "hyphenationZone",
+    "doNotHyphenateCaps",
+    "showEnvelope",
+    "summaryLength",
+    "clickAndTypeStyle",
+    "defaultTableStyle",
+    "evenAndOddHeaders",
+];
+
+/// settings.xml with `w:trackRevisions` set or removed (everything else
+/// byte for byte).
+pub(crate) fn set_settings_track(settings: &str, on: bool) -> String {
+    let mut s = settings.to_owned();
+    while let Some(i) = s.find(":trackRevisions") {
+        let start = s[..i].rfind('<').unwrap_or(i);
+        let end = s[i..].find("/>").map_or(s.len(), |e| i + e + 2);
+        s.replace_range(start..end, "");
+    }
+    if !on {
+        return s;
+    }
+    let el = "<w:trackRevisions/>";
+    let at = SETTINGS_AFTER_TRACK
+        .iter()
+        .chain(SETTINGS_AFTER_EVEN_ODD)
+        .filter_map(|n| s.find(&format!("<w:{n}")))
+        .min()
+        .or_else(|| s.rfind("</"));
+    match at {
+        Some(at) => s.insert_str(at, el),
+        None => s.push_str(el),
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn track_revisions_setting_toggles_in_place() {
+        let src = r#"<w:settings xmlns:w="w"><w:zoom w:percent="100"/><w:defaultTabStop w:val="720"/><w:compat/></w:settings>"#;
+        let on = set_settings_track(src, true);
+        assert_eq!(
+            on,
+            r#"<w:settings xmlns:w="w"><w:zoom w:percent="100"/><w:trackRevisions/><w:defaultTabStop w:val="720"/><w:compat/></w:settings>"#
+        );
+        assert!(crate::docx::track_changes_on(&on));
+        assert_eq!(set_settings_track(&on, false), src);
+    }
 
     #[test]
     fn number_formats() {

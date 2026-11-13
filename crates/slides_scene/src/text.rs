@@ -239,7 +239,7 @@ pub fn glyph_runs(layout: &TextLayout) -> Vec<TextRun> {
                     .entry(run.para)
                     .or_insert_with(|| Arc::from(paged.run_text(&run, "")))
                     .clone(),
-                RunSource::Label(_) => return None,
+                RunSource::Label(_) | RunSource::Mark(_) => return None,
             };
             (!run.glyphs.is_empty()).then_some(TextRun { run, text })
         })

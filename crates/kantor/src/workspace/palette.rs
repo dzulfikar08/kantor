@@ -1158,6 +1158,40 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "Track Changes",
+        detail: "Docs · turn on or off: your typing and deletions are marked for review",
+        keys: "Ctrl Shift E",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| v.toggle_track_changes_doc(w, cx))
+        },
+    },
+    Command {
+        title: "Insert Footnote",
+        detail: "Docs · a numbered note at the bottom of the page",
+        keys: "Ctrl Alt F",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.insert_note_doc(docs_engine::NoteKind::Footnote, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Insert Endnote",
+        detail: "Docs · a numbered note at the end of the document",
+        keys: "Ctrl Alt D",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.insert_note_doc(docs_engine::NoteKind::Endnote, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Edit Footnote or Endnote",
+        detail: "Docs · the note whose number is at the caret",
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.edit_note_doc(w, cx)),
+    },
+    Command {
         title: "New Comment",
         detail: "Docs · on the selection or the word at the caret",
         keys: "Ctrl Alt M",
