@@ -11,11 +11,12 @@ fn get_dxf_font_xml(font: &DxfFont) -> String {
     if font.i == Some(true) {
         parts.push("<i/>".to_string());
     }
-    if font.u == Some(true) {
-        parts.push("<u/>".to_string());
-    }
+    // KANTOR PATCH (§7): strike before u (CT_Font's order).
     if font.strike == Some(true) {
         parts.push("<strike/>".to_string());
+    }
+    if font.u == Some(true) {
+        parts.push("<u/>".to_string());
     }
     if let Some(sz) = font.sz {
         parts.push(format!("<sz val=\"{sz}\"/>"));
@@ -52,17 +53,19 @@ fn get_dxf_xml(dxf: &Dxf) -> String {
             parts.push(format!("<font>{inner}</font>"));
         }
     }
-    if let Some(fill) = &dxf.fill {
-        parts.push(get_dxf_fill_xml(fill));
-    }
-    if let Some(border) = &dxf.border {
-        parts.push(get_border_xml(border));
-    }
+    // KANTOR PATCH (§7): CT_Dxf's child order (font, numFmt, fill,
+    // alignment, protection, border); Excel repairs a file written otherwise.
     if let Some(num_fmt) = &dxf.num_fmt {
         parts.push(get_dxf_num_fmt_xml(num_fmt));
     }
+    if let Some(fill) = &dxf.fill {
+        parts.push(get_dxf_fill_xml(fill));
+    }
     if let Some(alignment) = &dxf.alignment {
         parts.push(get_alignment(alignment));
+    }
+    if let Some(border) = &dxf.border {
+        parts.push(get_border_xml(border));
     }
     format!("<dxf>{}</dxf>", parts.join(""))
 }

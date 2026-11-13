@@ -9,6 +9,24 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Fixed
+- Files Kantor saves now pass Microsoft's Open XML SDK validator (Microsoft 365 file format), so
+  Excel and Word shouldn't ask to repair them:
+  - **Sheets:** font settings in `styles.xml` (bold, italic, underline, strikethrough) were written
+    in an order Excel doesn't expect, in every saved workbook with formatted text; conditional
+    formatting styles had the same problem with number formats, borders and alignment.
+  - **Sheets:** workbooks with pivot tables and slicers listed the pivot caches after the slicer
+    list in `workbook.xml`.
+  - **Docs:** new documents had their style definitions out of order, the Normal style twice, and
+    the zoom setting in the wrong place in `settings.xml`.
+
+### Added
+- Continuous check of saved files (CI): every test file, and files using tables, charts,
+  conditional formatting, data validation, pivot tables, page setup, comments, tracked changes,
+  headers and footers, slide tables, chart data and notes, is opened, edited and saved through
+  Kantor, then validated with the Open XML SDK and opened in LibreOffice. Errors the original file
+  doesn't have fail the build (`tools/fidelity/office_check.py`).
+
 ## [0.4.0] - 2026-11-12
 
 Kantor comes to Windows (10 and 11, x64 and Arm; installer and portable zip, unsigned for now), and

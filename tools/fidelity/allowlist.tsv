@@ -1,0 +1,4 @@
+# Open XML SDK errors in files Kantor saves that are known false positives of
+# the SDK (Office opens the file without a repair prompt). One per line,
+# tab-separated: scenario glob, part glob, error id (or *), description regex,
+# reason. tools/fidelity/office_check.py reports entries that no longer match.

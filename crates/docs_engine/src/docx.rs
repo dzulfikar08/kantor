@@ -2470,112 +2470,10 @@ fn body_xml(doc: &Document) -> String {
     out
 }
 
-// docx-rs builders for the styles of a new package.
-
-fn docx_rpr(p: &RunProps) -> docx_rs::RunProperty {
-    let mut r = docx_rs::RunProperty::new();
-    if !p.fonts.is_empty() {
-        let f = &p.fonts;
-        let mut rf = docx_rs::RunFonts::new();
-        macro_rules! set {
-            ($($field:ident => $method:ident),*) => {$(
-                if let Some(v) = &f.$field { rf = rf.$method(v.clone()); }
-            )*};
-        }
-        set!(ascii => ascii, h_ansi => hi_ansi, east_asia => east_asia, cs => cs,
-             ascii_theme => ascii_theme, h_ansi_theme => hi_ansi_theme,
-             east_asia_theme => east_asia_theme, cs_theme => cs_theme, hint => hint);
-        r = r.fonts(rf);
-    }
-    match p.bold {
-        Some(true) => r = r.bold(),
-        Some(false) => r = r.disable_bold(),
-        None => {}
-    }
-    match p.italic {
-        Some(true) => r = r.italic(),
-        Some(false) => r = r.disable_italic(),
-        None => {}
-    }
-    match p.underline {
-        Some(true) => r = r.underline("single"),
-        Some(false) => r = r.underline("none"),
-        None => {}
-    }
-    if let Some(sz) = p.size {
-        r = r.size(sz as usize);
-    }
-    if let Some(c) = p.color {
-        r = r.color(c.hex());
-    }
-    r
-}
-
-fn line_spacing(p: &ParaProps) -> Option<docx_rs::LineSpacing> {
-    if p.before.is_none() && p.after.is_none() && p.line.is_none() {
-        return None;
-    }
-    let mut s = docx_rs::LineSpacing::new();
-    if let Some(b) = p.before {
-        s = s.before(b);
-    }
-    if let Some(a) = p.after {
-        s = s.after(a);
-    }
-    if let Some(l) = p.line {
-        s = s.line(l.line).line_rule(match l.rule {
-            LineRule::Auto => docx_rs::LineSpacingType::Auto,
-            LineRule::AtLeast => docx_rs::LineSpacingType::AtLeast,
-            LineRule::Exact => docx_rs::LineSpacingType::Exact,
-        });
-    }
-    Some(s)
-}
-
-fn alignment(a: Align) -> docx_rs::AlignmentType {
-    match a {
-        Align::Left => docx_rs::AlignmentType::Left,
-        Align::Center => docx_rs::AlignmentType::Center,
-        Align::Right => docx_rs::AlignmentType::Right,
-        Align::Justify => docx_rs::AlignmentType::Both,
-    }
-}
-
-fn style(s: &Style) -> docx_rs::Style {
-    let kind = match s.kind {
-        StyleKind::Paragraph => docx_rs::StyleType::Paragraph,
-        StyleKind::Character => docx_rs::StyleType::Character,
-        StyleKind::Table => docx_rs::StyleType::Table,
-        StyleKind::Numbering => docx_rs::StyleType::Numbering,
-    };
-    let mut out = docx_rs::Style::new(&s.id, kind)
-        .name(&s.name)
-        .q_format(true);
-    if let Some(b) = &s.based_on {
-        out = out.based_on(b);
-    }
-    if let Some(n) = &s.next {
-        out = out.next(n);
-    }
-    out.run_property = docx_rpr(&s.run);
-    if let Some(a) = s.para.align {
-        out = out.align(alignment(a));
-    }
-    if let Some(l) = line_spacing(&s.para) {
-        out = out.line_spacing(l);
-    }
-    if s.id.starts_with("Heading")
-        && let Ok(level) = s.id["Heading".len()..].parse::<usize>()
-    {
-        out = out.outline_lvl(level.saturating_sub(1));
-    }
-    out
-}
-
 /// A new empty package (styles, settings, page setup) built by docx-rs.
 fn new_package(doc: &Document) -> anyhow::Result<Vec<u8>> {
     let s = &doc.styles;
-    let mut docx = docx_rs::Docx::new()
+    let docx = docx_rs::Docx::new()
         .page_size(doc.page.width, doc.page.height)
         .page_margin(
             docx_rs::PageMargin::new()
@@ -2583,29 +2481,134 @@ fn new_package(doc: &Document) -> anyhow::Result<Vec<u8>> {
                 .bottom(doc.page.margin_bottom as i32)
                 .left(doc.page.margin_left as i32)
                 .right(doc.page.margin_right as i32),
-        );
-    if let Some(sz) = s.default_run.size {
-        docx = docx.default_size(sz as usize);
-    }
-    if let Some(f) = &s.default_run.fonts.ascii {
-        docx = docx.default_fonts(
-            docx_rs::RunFonts::new()
-                .ascii(f.clone())
-                .hi_ansi(f.clone())
-                .east_asia(f.clone())
-                .cs(f.clone()),
-        );
-    }
-    if let Some(l) = line_spacing(&s.default_para) {
-        docx = docx.default_line_spacing(l);
-    }
-    for st in &s.styles {
-        docx = docx.add_style(style(st));
-    }
-    docx = docx.add_paragraph(docx_rs::Paragraph::new());
+        )
+        .add_paragraph(docx_rs::Paragraph::new());
     let mut buf = Cursor::new(Vec::new());
     docx.build().pack(&mut buf)?;
-    Ok(buf.into_inner())
+    // docx-rs writes style children and settings out of schema order (Word
+    // offers to repair such files) and a second `Normal` style: those two
+    // parts are Kantor's own.
+    let mut src = zip::ZipArchive::new(Cursor::new(buf.into_inner()))?;
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    for i in 0..src.len() {
+        let mut f = src.by_index(i)?;
+        let name = f.name().unwrap_or_default().into_owned();
+        let text = match name.as_str() {
+            "word/styles.xml" => styles_xml(s),
+            "word/settings.xml" => {
+                let mut t = String::new();
+                f.read_to_string(&mut t)?;
+                settings_in_order(&t)
+            }
+            _ => {
+                drop(f);
+                out.raw_copy_file(src.by_index_raw(i)?)?;
+                continue;
+            }
+        };
+        out.start_file(name, opts)?;
+        out.write_all(text.as_bytes())?;
+    }
+    Ok(out.finish()?.into_inner())
+}
+
+/// `styles.xml` of a new document: defaults and styles, every element in
+/// schema order (CT_Style: name, basedOn, next, qFormat, pPr, rPr, tblPr).
+fn styles_xml(s: &StyleSheet) -> String {
+    let mut x = String::with_capacity(4096);
+    x.push_str(XML_DECL);
+    x.push_str(&format!("<w:styles {W_DECL}><w:docDefaults><w:rPrDefault>"));
+    let mut run = s.default_run.clone();
+    if let Some(sz) = run.size
+        && !run.extras.iter().any(|e| element_name(e) == "szCs")
+    {
+        run.extras.push(&format!("<w:szCs w:val=\"{sz}\"/>"));
+    }
+    let rpr = rpr_xml(&run);
+    x.push_str(if rpr.is_empty() { "<w:rPr/>" } else { &rpr });
+    x.push_str("</w:rPrDefault><w:pPrDefault>");
+    let ppr = style_ppr_xml(&s.default_para, None);
+    x.push_str(if ppr.is_empty() { "<w:pPr/>" } else { &ppr });
+    x.push_str("</w:pPrDefault></w:docDefaults>");
+    for st in &s.styles {
+        let kind = match st.kind {
+            StyleKind::Paragraph => "paragraph",
+            StyleKind::Character => "character",
+            StyleKind::Table => "table",
+            StyleKind::Numbering => "numbering",
+        };
+        let default = if st.is_default {
+            " w:default=\"1\""
+        } else {
+            ""
+        };
+        x.push_str(&format!(
+            "<w:style w:type=\"{kind}\"{default} w:styleId=\"{}\"><w:name w:val=\"{}\"/>",
+            escape(&st.id),
+            escape(&st.name)
+        ));
+        if let Some(b) = &st.based_on {
+            x.push_str(&format!("<w:basedOn w:val=\"{}\"/>", escape(b)));
+        }
+        if let Some(n) = &st.next {
+            x.push_str(&format!("<w:next w:val=\"{}\"/>", escape(n)));
+        }
+        x.push_str("<w:qFormat/>");
+        let outline = st
+            .id
+            .strip_prefix("Heading")
+            .and_then(|l| l.parse::<u32>().ok())
+            .filter(|l| (1..=9).contains(l));
+        if matches!(st.kind, StyleKind::Paragraph | StyleKind::Table) {
+            x.push_str(&style_ppr_xml(&st.para, outline));
+        }
+        x.push_str(&rpr_xml(&st.run));
+        x.push_str("</w:style>");
+    }
+    x.push_str("</w:styles>");
+    x
+}
+
+/// A style's `<w:pPr>` (no paragraph style of its own).
+fn style_ppr_xml(props: &ParaProps, outline: Option<u32>) -> String {
+    let mut props = props.clone();
+    props.style = None;
+    if let Some(level) = outline
+        && !props.extras.iter().any(|e| element_name(e) == "outlineLvl")
+    {
+        if !props.extras.iter().any(|e| element_name(e) == "keepNext") {
+            props.extras.push("<w:keepNext/>");
+        }
+        props
+            .extras
+            .push(&format!("<w:outlineLvl w:val=\"{}\"/>", level - 1));
+    }
+    let p = Paragraph {
+        props,
+        ..Paragraph::new(" ")
+    };
+    ppr_xml(&p)
+}
+
+/// docx-rs's settings with `w:zoom` moved before `w:defaultTabStop`
+/// (CT_Settings: writeProtection, view, zoom, ...).
+fn settings_in_order(t: &str) -> String {
+    let (Some(tab), Some(zs)) = (t.find("<w:defaultTabStop"), t.find("<w:zoom")) else {
+        return t.to_owned();
+    };
+    if zs < tab {
+        return t.to_owned();
+    }
+    let Some(len) = t[zs..].find("/>").map(|e| e + 2) else {
+        return t.to_owned();
+    };
+    let zoom = t[zs..zs + len].to_owned();
+    let mut out = t.to_owned();
+    out.replace_range(zs..zs + len, "");
+    out.insert_str(tab, &zoom);
+    out
 }
 
 /// Insert `items` before the closing tag `close` (or append).

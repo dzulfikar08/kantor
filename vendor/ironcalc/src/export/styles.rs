@@ -30,15 +30,18 @@ fn get_fonts_xml(styles: &Styles) -> String {
         let strike = if font.strike { "<strike/>" } else { "" };
         let family = format!("<family val=\"{}\"/>", font.family);
         let scheme = format!("<scheme val=\"{}\"/>", font.scheme);
+        // KANTOR PATCH (§7): CT_Font's child order, as Excel writes it
+        // (b, i, strike, u, sz, color, name, family, scheme); the Open XML
+        // SDK validator rejects any other order.
         fonts_str.push(format!(
             "<font>\
+                {bold}\
+                {italic}\
+                {strike}\
+                {underline}\
                 {size}\
                 {color}\
                 {name}\
-                {bold}\
-                {italic}\
-                {underline}\
-                {strike}\
                 {family}\
                 {scheme}\
              </font>"

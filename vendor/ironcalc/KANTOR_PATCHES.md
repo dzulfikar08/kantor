@@ -121,6 +121,21 @@ Tables made or changed in Kantor are written from the model by
 Known: `tests/test.rs` `test_dynamic_arrays` fails since §5 (the file's
 default row height is now read); `test_no_export_tables` passes.
 
+## 7. Font and differential format element order
+
+Why: CT_Font and CT_Dxf are sequences: Excel and the Open XML SDK validator
+want their children in schema order. Upstream wrote `sz`, `color`, `name`
+before `b`, `i`, `u`, `strike` in every `<font>` of `styles.xml`, `u` before
+`strike` in a `<dxf>`'s font, and a `<dxf>`'s `fill` and `border` before its
+`numFmt` and `alignment`. Found by `tools/fidelity/office_check.py` (Open XML
+SDK, Microsoft 365 format) on every saved workbook with a bold cell.
+
+What: `export/styles.rs` (`get_fonts_xml`) writes `b, i, strike, u, sz,
+color, name, family, scheme`; `export/dxfs_styles.rs` writes a dxf's font as
+`b, i, strike, u, sz, color` and the dxf as `font, numFmt, fill, alignment,
+border`. Tested by `tests/test_kantor_fidelity.rs`
+(`font_and_dxf_children_are_in_schema_order`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

@@ -203,6 +203,41 @@ fn new_document_round_trips() {
     assert_eq!(back.resolved_at(Position::new(1, 1)).size_pt, 11.0);
     assert_eq!(back.paragraphs(), doc.paragraphs());
     assert_eq!(back.page, doc.page);
+    assert_eq!(back.styles.styles, doc.styles.styles);
+    assert_eq!(back.styles.default_run.size, Some(22));
+    assert_eq!(back.styles.default_para.after, Some(160));
+
+    // Styles and settings in schema order, one Normal style (Word repairs
+    // a file otherwise).
+    let bytes = std::fs::read(&path).unwrap();
+    let styles = String::from_utf8(zip_entry(&bytes, "word/styles.xml")).unwrap();
+    assert_eq!(
+        styles.matches("w:styleId=\"Normal\"").count(),
+        1,
+        "{styles}"
+    );
+    for st in styles.split("<w:style ").skip(1) {
+        let st = st.split("</w:style>").next().unwrap();
+        let at = |t: &str| st.find(t);
+        if let (Some(p), Some(r)) = (at("<w:pPr>"), st.rfind("<w:rPr>")) {
+            assert!(p < r, "pPr before rPr: {st}");
+            assert!(
+                !st[p..r].contains("<w:rPr"),
+                "no rPr in a style's pPr: {st}"
+            );
+        }
+        let q = at("<w:qFormat/>").unwrap();
+        assert!(at("<w:pPr>").is_none_or(|p| q < p), "qFormat first: {st}");
+        assert!(
+            at("<w:next ").is_none_or(|n| n < q),
+            "next before qFormat: {st}"
+        );
+    }
+    let settings = String::from_utf8(zip_entry(&bytes, "word/settings.xml")).unwrap();
+    assert!(
+        settings.find("<w:zoom").unwrap() < settings.find("<w:defaultTabStop").unwrap(),
+        "{settings}"
+    );
 
     // A second save goes into the package written by the first.
     let mut back = back;

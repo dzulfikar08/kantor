@@ -1,0 +1,21 @@
+[package]
+name = "office_fidelity"
+description = "Writes Office files through Kantor's engines for the Open XML SDK and LibreOffice checks (tools/fidelity/office_check.py)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "office_scenarios"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+sheets_engine.workspace = true
+docs_engine.workspace = true
+slides_engine.workspace = true
+zip.workspace = true
+
+[lints]
+workspace = true

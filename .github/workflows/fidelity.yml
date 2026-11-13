@@ -4,6 +4,11 @@
 #    finding (or a listed gap that no longer happens) fails the job.
 #  - LibreOffice-headless PDFs of every original and round-tripped file, uploaded
 #    as an artifact for eyeballing. This part never fails the job.
+#  - Office validation (job `office`): every corpus file and files using what
+#    Kantor writes are opened, edited and saved through the three engines,
+#    then checked with Microsoft's Open XML SDK validator and LibreOffice
+#    headless. Errors the originals don't have fail the job
+#    (tools/fidelity/office_check.py).
 name: Fidelity
 
 on:
@@ -11,6 +16,13 @@ on:
     branches: [main]
     paths:
       - "crates/sheets_engine/**"
+      - "crates/docs_engine/**"
+      - "crates/slides_engine/**"
+      - "crates/kantor_core/**"
+      - "crates/kantor_numfmt/**"
+      - "vendor/ironcalc/**"
+      - "vendor/ironcalc_base/**"
+      - "tools/**"
       - "tests/corpus/**"
       - "scripts/corpus/**"
       - "Cargo.toml"
@@ -19,6 +31,13 @@ on:
   pull_request:
     paths:
       - "crates/sheets_engine/**"
+      - "crates/docs_engine/**"
+      - "crates/slides_engine/**"
+      - "crates/kantor_core/**"
+      - "crates/kantor_numfmt/**"
+      - "vendor/ironcalc/**"
+      - "vendor/ironcalc_base/**"
+      - "tools/**"
       - "tests/corpus/**"
       - "scripts/corpus/**"
       - "Cargo.toml"
@@ -99,5 +118,52 @@ jobs:
         with:
           name: fidelity-xlsx
           path: fidelity-out/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  office:
+    name: Office validation (Open XML SDK + LibreOffice)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: office
+          cache-on-failure: true
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install LibreOffice
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            libreoffice-calc libreoffice-writer libreoffice-impress
+
+      - name: Build the scenarios and the validator
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+          DOTNET_NOLOGO: "1"
+        run: |
+          cargo build -p office_fidelity --bin office_scenarios
+          dotnet build tools/ooxml-validate -c Release -o ooxml-validate-bin
+
+      - name: Validate saved files
+        run: |
+          python3 tools/fidelity/office_check.py \
+            --scenarios target/debug/office_scenarios \
+            --validator "dotnet ooxml-validate-bin/OoxmlValidate.dll" \
+            --soffice soffice \
+            --out fidelity-office
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fidelity-office
+          path: |
+            fidelity-office/
+            !fidelity-office/lo-profile/
           if-no-files-found: ignore
           retention-days: 14

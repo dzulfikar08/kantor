@@ -9,3 +9,6 @@
 THIRD_PARTY_LICENSES.txt
 # Upstream IronCalc test workbooks (MIT OR Apache-2.0), see vendor/ironcalc/KANTOR_PATCHES.md
 !vendor/ironcalc/tests/**
+# .NET build output (tools/ooxml-validate)
+tools/ooxml-validate/bin/
+tools/ooxml-validate/obj/
