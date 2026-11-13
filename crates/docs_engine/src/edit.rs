@@ -289,6 +289,7 @@ impl Document {
                     tbl_pr_ex: src.tbl_pr_ex.clone(),
                     height: src.height,
                     header: false,
+                    cant_split: src.cant_split,
                     cells: Vec::new(),
                 };
                 let mut cells = Vec::new();

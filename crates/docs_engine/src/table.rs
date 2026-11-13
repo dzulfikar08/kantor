@@ -132,6 +132,8 @@ pub struct Row {
     pub height: Option<(u32, bool)>,
     /// Repeated on every page (`w:tblHeader`).
     pub header: bool,
+    /// Kept on one page (`w:cantSplit`); other rows break across pages.
+    pub cant_split: bool,
     pub cells: Vec<Cell>,
 }
 

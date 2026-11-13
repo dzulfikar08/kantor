@@ -314,6 +314,8 @@ fn table_block(
             cells,
             min_height,
             exact,
+            header: row.header,
+            cant_split: row.cant_split,
         });
     }
     Some(TableBlock {

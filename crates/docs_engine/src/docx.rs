@@ -1324,6 +1324,7 @@ impl BodyParser<'_> {
                                 row.height = h.num("val").map(|v| (v, exact));
                             }
                             row.header = el.child("tblHeader").is_some_and(El::on);
+                            row.cant_split = el.child("cantSplit").is_some_and(El::on);
                             if el.children.iter().any(|c| is_tracked(&c.name)) {
                                 self.unsupported.insert("tracked changes".into());
                             }
