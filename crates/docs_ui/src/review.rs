@@ -509,7 +509,14 @@ pub(crate) fn review_button(view: &DocsView, cx: &mut Context<DocsView>) -> impl
         .icon(Lucide::MessageSquare)
         .dropdown_caret(true)
         .tooltip(tip)
-        .dropdown_menu(move |menu, _, _| review_items(menu, &v))
+        .dropdown_menu(move |menu, _, cx| {
+            let on = kantor_ui::spelling::enabled(cx);
+            review_items(menu, &v).separator().item(
+                PopupMenuItem::new("Check Spelling as You Type")
+                    .checked(on)
+                    .on_click(|_, _, cx| kantor_ui::spelling::toggle(cx)),
+            )
+        })
 }
 
 fn review_items(menu: PopupMenu, view: &WeakEntity<DocsView>) -> PopupMenu {

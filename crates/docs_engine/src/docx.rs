@@ -1659,16 +1659,20 @@ fn parse_styles(src: &str, sheet: &mut StyleSheet) {
     let mut r = quick_xml::Reader::from_str(src);
     let mut stack: Vec<In> = Vec::new();
     let mut style = Style::default();
-    let apply = |target: u8, xml: &str, sheet: &mut StyleSheet, style: &mut Style| match target {
-        0 => {
-            run_prop(xml, &mut sheet.default_run);
+    // Proofing properties (`w:lang`, `w:noProof`) aren't modelled, but the
+    // spell checker reads them from the extras (see `StyleSheet::proofing`).
+    let run = |xml: &str, p: &mut RunProps| {
+        if matches!(run_prop(xml, p), Prop::Keep) && matches!(element_name(xml), "lang" | "noProof")
+        {
+            p.extras.push(xml);
         }
+    };
+    let apply = |target: u8, xml: &str, sheet: &mut StyleSheet, style: &mut Style| match target {
+        0 => run(xml, &mut sheet.default_run),
         1 => {
             para_prop(xml, &mut sheet.default_para);
         }
-        2 => {
-            run_prop(xml, &mut style.run);
-        }
+        2 => run(xml, &mut style.run),
         3 => {
             para_prop(xml, &mut style.para);
         }
@@ -2889,5 +2893,43 @@ pub fn write(doc: &Document, package: Option<&Package>) -> anyhow::Result<Vec<u8
             let base = read(new_package(doc)?)?.package;
             write_into(doc, &base)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::style::Proofing;
+
+    #[test]
+    fn styles_keep_proofing_properties() {
+        let src = r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/><w:lang w:val="en-US" w:eastAsia="ja-JP" w:bidi="ar-SA"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Isi"><w:name w:val="Isi"/><w:basedOn w:val="Normal"/><w:rPr><w:lang w:val="id-ID"/></w:rPr></w:style><w:style w:type="character" w:styleId="Code"><w:name w:val="Code"/><w:rPr><w:noProof/></w:rPr></w:style></w:styles>"#;
+        let mut sheet = StyleSheet::default();
+        parse_styles(src, &mut sheet);
+        assert_eq!(sheet.default_run.size, Some(22));
+        let plain = Paragraph::new("x");
+        let isi = Paragraph::new("x").with_style("Isi");
+        let none = RunProps::default();
+        let code = RunProps {
+            style: Some("Code".into()),
+            ..RunProps::default()
+        };
+        assert_eq!(
+            sheet.proofing(&plain, &none, None),
+            Proofing::Check(Some("en-US".into()))
+        );
+        assert_eq!(
+            sheet.proofing(&isi, &none, None),
+            Proofing::Check(Some("id-ID".into()))
+        );
+        assert_eq!(sheet.proofing(&isi, &code, None), Proofing::Skip);
+        // Direct formatting wins over styles.
+        let mut direct = code.clone();
+        direct.extras.push(r#"<w:noProof w:val="0"/>"#);
+        direct.extras.push(r#"<w:lang w:val="en-GB"/>"#);
+        assert_eq!(
+            sheet.proofing(&isi, &direct, None),
+            Proofing::Check(Some("en-GB".into()))
+        );
     }
 }

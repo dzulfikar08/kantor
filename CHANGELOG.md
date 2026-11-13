@@ -9,6 +9,17 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Spell check in Docs and Slides, offline, for English and Indonesian: misspelled words get a red
+  wavy underline as you type. Right-click one for up to five suggestions, Ignore All or Add to
+  Dictionary (your words are kept in `dictionary.txt` next to settings.toml). Text marked with a
+  language in a Word file is checked in that language; everything else uses
+  `[spelling] language` (`en_US` or `id_ID`, by default your system's language). Turn it off with
+  "Check Spelling as You Type" in the Review menu or the command palette. URLs, e-mail addresses,
+  words with digits and ALL-CAPS words aren't flagged. The dictionaries add about 1 MB to Kantor.
+- Right-clicking the page in Docs, or the slide in Slides, opens a menu with Cut, Copy and Paste.
+
 ## [0.4.0] - 2026-11-12
 
 Kantor comes to Windows (10 and 11, x64 and Arm; installer and portable zip, unsigned for now), and

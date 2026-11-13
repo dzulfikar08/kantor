@@ -28,6 +28,31 @@ pub struct Settings {
     /// Name written on comments added in Docs (`author = "…"`); unset uses
     /// the account's full name, then the user name.
     pub author: Option<String>,
+    /// Spell checking (`[spelling]`).
+    pub spelling: SpellingSettings,
+}
+
+/// `[spelling]`: offline spell checking in Docs and Slides.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SpellingSettings {
+    /// "Check Spelling as You Type": red wavy underlines under unknown words.
+    pub check_as_you_type: bool,
+    /// Dictionary for text without a language of its own (`en_US` or
+    /// `id_ID`); unset follows the system language (Indonesian → `id_ID`,
+    /// anything else `en_US`). Text marked with a language in the document
+    /// (`w:lang`) uses that language.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+}
+
+impl Default for SpellingSettings {
+    fn default() -> Self {
+        Self {
+            check_as_you_type: true,
+            language: None,
+        }
+    }
 }
 
 impl Settings {
@@ -127,6 +152,7 @@ impl Default for Settings {
             update: UpdateSettings::default(),
             autosave: AutosaveSettings::default(),
             author: None,
+            spelling: SpellingSettings::default(),
         }
     }
 }
@@ -134,14 +160,21 @@ impl Default for Settings {
 /// `$XDG_CONFIG_HOME/kantor/settings.toml` (default `~/.config/kantor/settings.toml`);
 /// on Windows `%APPDATA%\Kantor\settings.toml` (see [`crate::dirs`]).
 pub fn settings_path() -> Option<PathBuf> {
+    Some(config_dir()?.join("settings.toml"))
+}
+
+/// Kantor's per-user config folder: `$XDG_CONFIG_HOME/kantor` (default
+/// `~/.config/kantor`); on Windows `%APPDATA%\Kantor`. Holds settings.toml
+/// and the personal spelling dictionary.
+pub fn config_dir() -> Option<PathBuf> {
     if cfg!(windows) {
-        return Some(crate::dirs::windows_config_dir()?.join("settings.toml"));
+        return crate::dirs::windows_config_dir();
     }
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("kantor/settings.toml"))
+    Some(base.join("kantor"))
 }
 
 impl Settings {
@@ -210,6 +243,10 @@ mod tests {
                 idle_seconds: 60,
             },
             author: Some("Dewi Lestari".into()),
+            spelling: SpellingSettings {
+                check_as_you_type: false,
+                language: Some("id_ID".into()),
+            },
         };
         assert_eq!(s.author_name(), "Dewi Lestari");
         s.save_to(&path).unwrap();
@@ -240,6 +277,15 @@ mod tests {
             s.autosave.idle().as_secs(),
             AutosaveSettings::MIN_IDLE_SECONDS
         );
+
+        assert!(
+            Settings::load_from(&path).spelling.check_as_you_type,
+            "spell check on by default"
+        );
+        std::fs::write(&path, "[spelling]\nlanguage = \"en_US\"\n").unwrap();
+        let s = Settings::load_from(&path);
+        assert!(s.spelling.check_as_you_type);
+        assert_eq!(s.spelling.language.as_deref(), Some("en_US"));
 
         std::fs::write(&path, "[update]\nenabled = false\n").unwrap();
         let s = Settings::load_from(&path);

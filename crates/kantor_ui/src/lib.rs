@@ -14,6 +14,7 @@ pub mod fonts;
 pub mod keys;
 pub mod metrics;
 pub mod perf;
+pub mod spelling;
 pub mod tokens;
 
 pub use assets::KantorAssets;

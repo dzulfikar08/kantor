@@ -1316,6 +1316,12 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "Check Spelling as You Type",
+        detail: "Docs, Slides · underline misspelled words in red",
+        keys: "",
+        run: |_, _, cx| kantor_ui::spelling::toggle(cx),
+    },
+    Command {
         title: "Toggle Ruler",
         detail: "Docs · show or hide the ruler",
         keys: "",

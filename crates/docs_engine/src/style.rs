@@ -358,6 +358,74 @@ impl StyleSheet {
     }
 }
 
+/// Whether and in which language a run's text is spell checked.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Proofing {
+    /// Check it; the language tag from `w:lang` (`en-US`, `id-ID`) if the
+    /// run, its styles or the document defaults set one.
+    Check(Option<String>),
+    /// "Do not check spelling or grammar" (`w:noProof`).
+    Skip,
+}
+
+/// `w:lang`'s Latin language and `w:noProof` among a run's kept elements:
+/// `(lang, no_proof)`, each `None` when not set there.
+fn proofing_of(props: &RunProps) -> (Option<String>, Option<bool>) {
+    let (mut lang, mut skip) = (None, None);
+    for x in props.extras.iter() {
+        match crate::model::element_name(x) {
+            "lang" => {
+                if let Some(v) = crate::xml::parse(x).and_then(|e| e.attr("val").map(str::to_owned))
+                {
+                    lang = Some(v);
+                }
+            }
+            "noProof" => skip = crate::xml::parse(x).map(|e| e.on()),
+            _ => {}
+        }
+    }
+    (lang, skip)
+}
+
+impl StyleSheet {
+    /// Spell checking for `run` in `para` (inside a table with
+    /// `table_style`): the nearest `w:lang` / `w:noProof` from direct
+    /// formatting, the character style, the paragraph style chain, the table
+    /// style and the document defaults.
+    pub fn proofing(
+        &self,
+        para: &Paragraph,
+        run: &RunProps,
+        table_style: Option<&str>,
+    ) -> Proofing {
+        let (mut lang, mut skip) = proofing_of(&self.default_run);
+        let mut take = |p: &RunProps| {
+            let (l, s) = proofing_of(p);
+            if l.is_some() {
+                lang = l;
+            }
+            if s.is_some() {
+                skip = s;
+            }
+        };
+        for s in self.chain_from(table_style.and_then(|t| self.get(t))) {
+            take(&s.run);
+        }
+        for s in self.chain(para.props.style.as_deref()) {
+            take(&s.run);
+        }
+        for s in self.chain_from(run.style.as_deref().and_then(|c| self.get(c))) {
+            take(&s.run);
+        }
+        take(run);
+        if skip == Some(true) {
+            Proofing::Skip
+        } else {
+            Proofing::Check(lang)
+        }
+    }
+}
+
 /// A CSS-style font stack for a document font: the font itself first (used
 /// when installed), then its metric-compatible free substitute (plan §5),
 /// then broad fallbacks for other scripts.

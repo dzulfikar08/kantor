@@ -9,6 +9,8 @@ repository.workspace = true
 [dependencies]
 gpui-kit.workspace = true
 kantor_core.workspace = true
+kantor_spell.workspace = true
+log.workspace = true
 kantor_theme.workspace = true
 
 [dev-dependencies]

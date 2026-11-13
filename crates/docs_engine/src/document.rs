@@ -19,7 +19,7 @@ use crate::docx::{self, Media, Package};
 use crate::model::*;
 use crate::numbering::{LevelDef, Numbering};
 use crate::section::{HfState, Story};
-use crate::style::{ResolvedPara, ResolvedRun, StyleSheet};
+use crate::style::{Proofing, ResolvedPara, ResolvedRun, StyleSheet};
 use crate::table::{Table, Tables};
 
 /// Line break inside a paragraph (`w:br`). U+2028 is a mandatory break for
@@ -443,6 +443,31 @@ impl Document {
     /// Effective character formatting of `run` in `p`.
     pub fn resolve_run(&self, p: &Paragraph, run: &RunProps) -> ResolvedRun {
         self.styles.resolve_run_with(p, run, self.table_style_of(p))
+    }
+
+    /// How paragraph `i`'s text is spell checked: byte ranges with their
+    /// [`Proofing`], neighbours with the same one merged. Pictures and
+    /// tracked deletions are skipped.
+    pub fn proofing_spans(&self, i: usize) -> Vec<(std::ops::Range<usize>, Proofing)> {
+        let p = &self.paragraphs[i];
+        let table = self.table_style_of(p);
+        let mut out: Vec<(std::ops::Range<usize>, Proofing)> = Vec::new();
+        for (range, run) in p.run_ranges() {
+            if range.is_empty() {
+                continue;
+            }
+            let deleted = run.rev.as_ref().is_some_and(|r| r.kind == RevKind::Delete);
+            let proof = if run.object.is_some() || deleted {
+                Proofing::Skip
+            } else {
+                self.styles.proofing(p, &run.props, table)
+            };
+            match out.last_mut() {
+                Some((r, last)) if *last == proof && r.end == range.start => r.end = range.end,
+                _ => out.push((range, proof)),
+            }
+        }
+        out
     }
 
     /// List marker text ("1.", "a)", "•") of every paragraph.
