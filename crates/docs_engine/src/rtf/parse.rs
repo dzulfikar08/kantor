@@ -588,7 +588,9 @@ impl Parser {
     }
 
     fn top(&mut self) -> &mut State {
-        self.stack.last_mut().expect("the root state is never popped")
+        self.stack
+            .last_mut()
+            .expect("the root state is never popped")
     }
 
     fn dest(&self) -> Dest {
@@ -596,7 +598,9 @@ impl Parser {
     }
 
     fn sink(&mut self) -> &mut Sink {
-        self.sinks.last_mut().expect("the body sink is never popped")
+        self.sinks
+            .last_mut()
+            .expect("the body sink is never popped")
     }
 
     fn encoding(&self) -> &'static Encoding {
@@ -798,13 +802,11 @@ impl Parser {
             }
             Dest::Pict => self.end_pict(),
             Dest::Field => self.end_field(),
-            Dest::Hf(footer, kind) => {
-                if self.sinks.len() > 1 {
-                    let mut sink = self.sinks.pop().expect("checked");
-                    let blocks = Self::close_sink(&mut sink, st.p.clone(), &self.row);
-                    self.sect.hf.retain(|(f, k, _)| (*f, *k) != (footer, kind));
-                    self.sect.hf.push((footer, kind, blocks));
-                }
+            Dest::Hf(footer, kind) if self.sinks.len() > 1 => {
+                let mut sink = self.sinks.pop().expect("checked");
+                let blocks = Self::close_sink(&mut sink, st.p.clone(), &self.row);
+                self.sect.hf.retain(|(f, k, _)| (*f, *k) != (footer, kind));
+                self.sect.hf.push((footer, kind, blocks));
             }
             _ => {}
         }
@@ -954,7 +956,8 @@ impl Parser {
             return;
         }
         let idx = self.style_idx;
-        self.styles.retain(|s| !(s.idx == idx && s.kind == self.style_kind));
+        self.styles
+            .retain(|s| !(s.idx == idx && s.kind == self.style_kind));
         let mut c = st.c.clone();
         c.style = None;
         let mut p = st.p.clone();
@@ -1015,7 +1018,10 @@ impl Parser {
         let words = field_words(&instr);
         let Some(first) = words.first() else { return };
         let first = first.to_ascii_uppercase();
-        let here = (self.sinks.len() - 1, self.sinks.last().map_or(0, |s| s.serial));
+        let here = (
+            self.sinks.len() - 1,
+            self.sinks.last().map_or(0, |s| s.serial),
+        );
         let start = f
             .result
             .filter(|&(sink, at, serial)| {
@@ -1330,11 +1336,11 @@ impl Parser {
                 self.notes.insert("text boxes and drawings were left out");
                 return self.start(Dest::Skip);
             }
-            "info" | "pntext" | "listtext" | "nonshppict" | "filetbl" | "revtbl" | "xe"
-            | "tc" | "tcn" | "txe" | "rxe" | "listname" | "levelnumbers" | "lfolevel"
-            | "shprslt" | "upr" | "fontemb" | "fontfile" | "atnid" | "atnauthor" | "pgdsctbl"
-            | "objdata" | "objclass" | "bkmkstart" | "bkmkend" | "datafield" | "ffdata"
-            | "picprop" | "blipuid" | "template" | "userprops" | "docvar" | "comment" => {
+            "info" | "pntext" | "listtext" | "nonshppict" | "filetbl" | "revtbl" | "xe" | "tc"
+            | "tcn" | "txe" | "rxe" | "listname" | "levelnumbers" | "lfolevel" | "shprslt"
+            | "upr" | "fontemb" | "fontfile" | "atnid" | "atnauthor" | "pgdsctbl" | "objdata"
+            | "objclass" | "bkmkstart" | "bkmkend" | "datafield" | "ffdata" | "picprop"
+            | "blipuid" | "template" | "userprops" | "docvar" | "comment" => {
                 return self.start(Dest::Skip);
             }
             _ => {}
@@ -1425,8 +1431,9 @@ impl Parser {
                 match w {
                     "pngblip" => self.pict.kind = 1,
                     "jpegblip" => self.pict.kind = 2,
-                    "emfblip" | "wmetafile" | "macpict" | "dibitmap" | "wbitmap"
-                    | "pmmetafile" => self.pict.kind = 3,
+                    "emfblip" | "wmetafile" | "macpict" | "dibitmap" | "wbitmap" | "pmmetafile" => {
+                        self.pict.kind = 3
+                    }
                     "picw" => self.pict.picw = n,
                     "pich" => self.pict.pich = n,
                     "picwgoal" => self.pict.wgoal = n,

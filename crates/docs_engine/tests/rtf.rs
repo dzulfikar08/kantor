@@ -137,7 +137,13 @@ fn hyperlinks_keep_their_target() {
     let at = p.text.find("external link").unwrap();
     let run = p.run_ranges().find(|(r, _)| r.contains(&at)).unwrap().1;
     let link = run.link.as_deref().expect("a hyperlink");
-    let id = link.split("r:id=\"").nth(1).unwrap().split('"').next().unwrap();
+    let id = link
+        .split("r:id=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap();
     let import = rtf::to_docx(&std::fs::read(corpus("word_sample.rtf")).unwrap()).unwrap();
     let rels = part(&import.docx, "word/_rels/document.xml.rels");
     assert!(
@@ -163,7 +169,10 @@ fn paragraph_formatting() {
     assert_eq!(r.indent_right_pt, 18.0);
     assert_eq!(r.first_line_pt, 18.0);
     let (_, c) = para(&d, "Centred line");
-    assert_eq!(c.text, "Centred line\u{2028}second line in the same paragraph");
+    assert_eq!(
+        c.text,
+        "Centred line\u{2028}second line in the same paragraph"
+    );
     assert_eq!(d.resolve_para(c).align, Align::Center);
     let (_, t) = para(&d, "Right\t");
     assert_eq!(d.resolve_para(t).align, Align::Right);
@@ -283,7 +292,10 @@ fn sections_headers_and_footers() {
                 .collect::<String>()
         })
         .collect();
-    assert!(stories.contains(&"Kantor RTF sample".to_owned()), "{stories:?}");
+    assert!(
+        stories.contains(&"Kantor RTF sample".to_owned()),
+        "{stories:?}"
+    );
     assert!(stories.contains(&"First page header".to_owned()));
     let footer = d
         .stories()
@@ -300,8 +312,14 @@ fn sections_headers_and_footers() {
 #[test]
 fn unicode_text() {
     let d = open("word_sample.rtf");
-    para(&d, "Chinese 中文, Japanese 日本語, Korean 한국어, emoji 😀👍🏽 and a flag 🇮🇩.");
-    para(&d, "Justified, indented, 1.5 lines, 6 pt before and 12 pt after: Selamat datang di Kantor. Dokumen ini berbahasa Indonesia: «ä ö ü» — dan seterusnya.");
+    para(
+        &d,
+        "Chinese 中文, Japanese 日本語, Korean 한국어, emoji 😀👍🏽 and a flag 🇮🇩.",
+    );
+    para(
+        &d,
+        "Justified, indented, 1.5 lines, 6 pt before and 12 pt after: Selamat datang di Kantor. Dokumen ini berbahasa Indonesia: «ä ö ü» — dan seterusnya.",
+    );
     // GBK bytes in a \fcharset134 font.
     para(&d, "中文 (SimSun, GBK bytes)");
 }
@@ -322,7 +340,11 @@ fn save_writes_a_docx_that_reopens_the_same() {
     assert_eq!(again.stories().len(), d.stories().len());
     assert_eq!(again.list_markers(), d.list_markers());
     // The .rtf is untouched.
-    assert!(std::fs::read(corpus("word_sample.rtf")).unwrap().starts_with(b"{\\rtf1"));
+    assert!(
+        std::fs::read(corpus("word_sample.rtf"))
+            .unwrap()
+            .starts_with(b"{\\rtf1")
+    );
 }
 
 #[test]
@@ -371,7 +393,10 @@ fn word_95_pn_lists() {
 #[test]
 fn libreoffice_files() {
     let f = open("lo_features.rtf");
-    para(&f, "Plain, bold, italic, red 14 pt. Indonesian: Rapat dimulai pukul sembilan. 中文 日本語 😀");
+    para(
+        &f,
+        "Plain, bold, italic, red 14 pt. Indonesian: Rapat dimulai pukul sembilan. 中文 日本語 😀",
+    );
     let (_, red) = para(&f, "Plain, bold");
     let r = f.resolve_run(red, run_at(red, "red 14"));
     assert_eq!((r.size_pt, r.color), (14.0, Rgb([0xC0, 0, 0])));
@@ -409,7 +434,10 @@ fn libreoffice_files() {
     assert!(footers > 0, "PAGE / NUMPAGES fields survive");
 
     let l = open("lo_letter.rtf");
-    para(&l, "Kepada Yth.\u{2028}Bapak Direktur\u{2028}PT Mitra Abadi");
+    para(
+        &l,
+        "Kepada Yth.\u{2028}Bapak Direktur\u{2028}PT Mitra Abadi",
+    );
     let inv = open("lo_invoice.rtf");
     para(&inv, "Bill to:\tPT Mitra Abadi\u{2028}Date:\t12/11/2026");
     let (_, total) = para(&inv, "Total:");
@@ -431,7 +459,13 @@ fn unicode_escapes_and_fallbacks() {
     ));
     assert_eq!(
         texts(&d),
-        ["Kopi \u{2615} dan teh", "\u{1F600} senyum", "\u{4F60}\u{597D}", "\u{20AC} x", "\u{F020}"]
+        [
+            "Kopi \u{2615} dan teh",
+            "\u{1F600} senyum",
+            "\u{4F60}\u{597D}",
+            "\u{20AC} x",
+            "\u{F020}"
+        ]
     );
 }
 
@@ -475,7 +509,9 @@ fn footnotes_and_comments_are_noted() {
 
 #[test]
 fn line_spacing_kinds() {
-    let d = doc(r"{\rtf1\pard\sl-360 exact\par\pard\sl300\slmult0 least\par\pard\sl480\slmult1 double\par}");
+    let d = doc(
+        r"{\rtf1\pard\sl-360 exact\par\pard\sl300\slmult0 least\par\pard\sl480\slmult1 double\par}",
+    );
     let line = |i: usize| d.resolve_para(&d.paragraphs()[i]).line;
     assert_eq!(line(0), ResolvedLine::Exact(18.0));
     assert_eq!(line(1), ResolvedLine::AtLeast(15.0));
@@ -485,7 +521,10 @@ fn line_spacing_kinds() {
 #[test]
 fn keep_options_and_page_break_before() {
     let x = xml(r"{\rtf1\pard\keepn\keep\pagebb x\par}");
-    assert!(x.contains("<w:keepNext/><w:keepLines/><w:pageBreakBefore/>"), "{x}");
+    assert!(
+        x.contains("<w:keepNext/><w:keepLines/><w:pageBreakBefore/>"),
+        "{x}"
+    );
     let d = doc(r"{\rtf1\pard\pagebb x\par}");
     assert!(d.resolve_para(&d.paragraphs()[0]).page_break_before);
 }
@@ -525,7 +564,9 @@ fn hyperlink_to_a_bookmark() {
 
 #[test]
 fn other_fields_show_their_result() {
-    let d = doc(r#"{\rtf1 Date: {\field{\*\fldinst DATE \\@ "d MMMM yyyy"}{\fldrslt 13 November 2026}}\par}"#);
+    let d = doc(
+        r#"{\rtf1 Date: {\field{\*\fldinst DATE \\@ "d MMMM yyyy"}{\fldrslt 13 November 2026}}\par}"#,
+    );
     assert_eq!(texts(&d), ["Date: 13 November 2026"]);
 }
 
@@ -534,10 +575,7 @@ fn page_size_margins_and_landscape() {
     let d = doc(r"{\rtf1\paperw16838\paperh11906\landscape\margl720\margr720\margt360\margb360 x}");
     let s = &d.sections()[0].props;
     assert_eq!((s.page.width, s.page.height), (16838, 11906));
-    assert_eq!(
-        (s.page.margin_left, s.page.margin_top),
-        (720, 360)
-    );
+    assert_eq!((s.page.margin_left, s.page.margin_top), (720, 360));
     let x = xml(r"{\rtf1\paperw16838\paperh11906\landscape x}");
     assert!(x.contains("w:orient=\"landscape\""));
 }
@@ -629,6 +667,6 @@ fn hostile_input_never_panics() {
         }
         let d = Document::import_rtf(&c, Path::new("x.rtf"))
             .unwrap_or_else(|e| panic!("case {i}: {e:#}"));
-        assert!(d.len() >= 1);
+        assert!(!d.paragraphs().is_empty());
     }
 }

@@ -668,8 +668,14 @@ impl Document {
     /// Plain text of a range; paragraphs are separated by `\n`.
     pub fn text_in(&self, start: Position, end: Position) -> String {
         let mut out = String::new();
-        for i in start.para..=end.para {
-            let text = &self.paragraphs[i].text;
+        for (i, p) in self
+            .paragraphs
+            .iter()
+            .enumerate()
+            .take(end.para + 1)
+            .skip(start.para)
+        {
+            let text = &p.text;
             let a = if i == start.para { start.offset } else { 0 };
             let b = if i == end.para {
                 end.offset
@@ -1102,8 +1108,14 @@ impl Document {
             return false;
         }
         let mut out = Vec::with_capacity(end.para - start.para + 1);
-        for i in start.para..=end.para {
-            let mut p = self.paragraphs[i].clone();
+        for (i, p) in self
+            .paragraphs
+            .iter()
+            .enumerate()
+            .take(end.para + 1)
+            .skip(start.para)
+        {
+            let mut p = p.clone();
             let a = if i == start.para { start.offset } else { 0 };
             let b = if i == end.para {
                 end.offset

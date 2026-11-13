@@ -68,8 +68,8 @@ export const en = {
     },
     docs: {
       name: "Docs",
-      formats: [".docx"],
-      text: "Letters and reports with headings, lists, tables, pictures, headers and footers with page numbers, and page sizes such as A4, Letter and F4, landscape pages too. Comments and tracked changes, find and replace, and a word count.",
+      formats: [".docx", ".rtf"],
+      text: "Letters and reports with headings, lists, tables, pictures, headers and footers with page numbers, and page sizes such as A4, Letter and F4, landscape pages too. Comments and tracked changes, find and replace, and a word count. Opens .rtf files too, and saves them as .docx.",
     },
     slides: {
       name: "Slides",
@@ -256,8 +256,8 @@ export const id = {
     },
     docs: {
       name: "Docs",
-      formats: [".docx"],
-      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, header dan footer dengan nomor halaman, serta ukuran kertas seperti A4, Letter, dan F4, termasuk halaman lanskap. Ada komentar dan lacak perubahan, cari dan ganti, juga penghitung kata.",
+      formats: [".docx", ".rtf"],
+      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, header dan footer dengan nomor halaman, serta ukuran kertas seperti A4, Letter, dan F4, termasuk halaman lanskap. Ada komentar dan lacak perubahan, cari dan ganti, juga penghitung kata. Bisa membuka file .rtf, lalu menyimpannya sebagai .docx.",
     },
     slides: {
       name: "Slides",

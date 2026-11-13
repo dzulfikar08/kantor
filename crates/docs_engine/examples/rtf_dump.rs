@@ -15,7 +15,13 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     let doc = docs_engine::Document::open(path)?;
-    println!("title {} notes {:?} unsupported {:?} preserved {:?}", doc.title(), doc.import_notes(), doc.unsupported_content(), doc.preserved_content());
+    println!(
+        "title {} notes {:?} unsupported {:?} preserved {:?}",
+        doc.title(),
+        doc.import_notes(),
+        doc.unsupported_content(),
+        doc.preserved_content()
+    );
     println!("page {:?}", doc.page);
     let markers = doc.list_markers();
     for (i, p) in doc.paragraphs().iter().enumerate() {
@@ -31,7 +37,12 @@ fn main() -> anyhow::Result<()> {
         );
     }
     for st in doc.stories() {
-        let text: Vec<&str> = st.doc.paragraphs().iter().map(|p| p.text.as_str()).collect();
+        let text: Vec<&str> = st
+            .doc
+            .paragraphs()
+            .iter()
+            .map(|p| p.text.as_str())
+            .collect();
         println!("story {:?} {:?}", st.kind, text);
     }
     Ok(())

@@ -402,7 +402,10 @@ impl<'a> Writer<'a> {
         macro_rules! over {
             ($($f:ident),*) => {$( if cs.$f != plain.$f { base.$f = cs.$f.clone(); } )*};
         }
-        over!(bold, italic, ul, strike, dstrike, caps, scaps, size, font, color, highlight, bg, valign);
+        over!(
+            bold, italic, ul, strike, dstrike, caps, scaps, size, font, color, highlight, bg,
+            valign
+        );
         base
     }
 
@@ -618,7 +621,11 @@ impl<'a> Writer<'a> {
             let mut left = row.def.left;
             for (i, def) in defs.into_iter().enumerate() {
                 let right = def.right.max(left + 20);
-                let paras: Vec<&Para> = row.cells.get(i).map(|c| c.iter().collect()).unwrap_or_default();
+                let paras: Vec<&Para> = row
+                    .cells
+                    .get(i)
+                    .map(|c| c.iter().collect())
+                    .unwrap_or_default();
                 if def.hmerge == 2
                     && let Some(prev) = cells.last_mut()
                 {
@@ -953,10 +960,10 @@ impl<'a> Writer<'a> {
     }
 
     fn pn_levels(&self, pn: &Pn) -> Vec<LevelOut> {
-        (0..9)
+        (0..9i32)
             .map(|i| {
-                let li = 720 * (i as i32 + 1);
-                if i as i32 != pn.level {
+                let li = 720 * (i + 1);
+                if i != pn.level {
                     return LevelOut {
                         start: 1,
                         fmt: "decimal",

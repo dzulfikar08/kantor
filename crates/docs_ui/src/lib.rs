@@ -1078,13 +1078,15 @@ impl DocsView {
     /// The file name, or the shell-given name while there is no file.
     fn name(&self) -> String {
         match &self.untitled_name {
-            Some(name) if self.doc.path().is_none() => name.clone(),
+            Some(name) if self.doc.source_path().is_none() => name.clone(),
             _ => self.doc.title(),
         }
     }
 
+    /// The file this document shows (an imported `.rtf` too, though Save
+    /// never writes there).
     pub fn path(&self, _: &App) -> Option<PathBuf> {
-        self.doc.path().map(|p| p.to_path_buf())
+        self.doc.source_path().map(|p| p.to_path_buf())
     }
 
     pub fn is_dirty(&self, _: &App) -> bool {
@@ -1165,7 +1167,7 @@ impl DocsView {
         let r = self.doc.resolved_at(self.sel.head);
         DocInfo {
             name: self.name(),
-            path: self.doc.path().map(|p| p.to_path_buf()),
+            path: self.doc.source_path().map(|p| p.to_path_buf()),
             dirty: self.doc.is_dirty(),
             pages: self.laid.paged.pages.len(),
             words: self.doc.word_count(),
@@ -1246,12 +1248,12 @@ impl DocsView {
         }
         let dir = self
             .doc
-            .path()
+            .source_path()
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf())
             .or_else(kantor_core::dirs::home_dir)
             .unwrap_or_else(|| PathBuf::from("."));
-        let name = if self.doc.path().is_none() {
+        let name = if self.doc.source_path().is_none() {
             self.name()
         } else {
             self.doc.suggested_file_name()
@@ -1261,7 +1263,9 @@ impl DocsView {
             let Ok(Ok(Some(mut path))) = path.await else {
                 return false;
             };
-            if path.extension().is_none() {
+            // Kantor writes .docx only (an imported .rtf name would get
+            // .docx contents).
+            if path.extension().is_none() || docs_engine::is_import_path(&path) {
                 path.set_extension("docx");
             }
             this.update_in(cx, |this, window, cx| {
@@ -1283,7 +1287,7 @@ impl DocsView {
     fn export_pdf(&mut self, _: &ExportPdf, window: &mut Window, cx: &mut Context<Self>) {
         let dir = self
             .doc
-            .path()
+            .source_path()
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf())
             .or_else(kantor_core::dirs::home_dir)
@@ -1720,7 +1724,13 @@ impl DocsView {
 
 fn opened_status(doc: &Document) -> String {
     let mut s = format!("Opened {}", doc.title());
-    if doc.has_unsupported_content() {
+    if doc.is_imported() {
+        s.push_str(" (imported; Save creates a .docx copy)");
+        for note in doc.import_notes() {
+            s.push_str("; ");
+            s.push_str(note);
+        }
+    } else if doc.has_unsupported_content() {
         s.push_str(" (has unsupported content; Save creates a copy)");
     } else if !doc.preserved_content().is_empty() {
         s.push_str(&format!(

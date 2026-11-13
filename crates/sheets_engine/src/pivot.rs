@@ -1458,7 +1458,7 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
     let nf = cache.fields.len();
     // Each record's item position in each field.
     let mut key_index: Vec<HashMap<String, usize>> = Vec::with_capacity(nf);
-    for f in 0..nf {
+    for (f, cache_field) in cache.fields.iter().enumerate() {
         let mut by_x: HashMap<usize, usize> = HashMap::new();
         if let Some(field) = def.fields.get(f) {
             for (k, it) in field.items.iter().enumerate() {
@@ -1468,7 +1468,7 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
             }
         }
         key_index.push(
-            cache.fields[f]
+            cache_field
                 .items
                 .iter()
                 .enumerate()

@@ -123,7 +123,8 @@ impl<'a> Iterator for Lexer<'a> {
                 }
                 _ => {
                     let start = self.i;
-                    while self.i < s.len() && !matches!(s[self.i], b'{' | b'}' | b'\\' | b'\r' | b'\n')
+                    while self.i < s.len()
+                        && !matches!(s[self.i], b'{' | b'}' | b'\\' | b'\r' | b'\n')
                     {
                         self.i += 1;
                     }

@@ -28,6 +28,31 @@ fn docx(dir: &Path, name: &str, text: &str) {
 }
 
 #[test]
+fn rtf_to_pdf_and_docx() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    std::fs::write(
+        d.join("memo.rtf"),
+        r"{\rtf1\ansi{\fonttbl{\f0 Arial;}}\f0 Rapat dimulai pukul \b sembilan\b0 .{\footnote x}\par}",
+    )
+    .unwrap();
+    let out = kantor(d, &["memo.rtf", "memo.pdf"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        std::fs::read(d.join("memo.pdf"))
+            .unwrap()
+            .starts_with(b"%PDF-")
+    );
+    assert!(stderr(&out).contains("note: memo.rtf: footnotes were left out"));
+    let out = kantor(d, &["memo.rtf", "memo.docx"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("1 paragraph"));
+    let doc = Document::open(&d.join("memo.docx")).unwrap();
+    assert_eq!(doc.paragraphs()[0].text, "Rapat dimulai pukul sembilan.");
+    assert!(!doc.is_imported());
+}
+
+#[test]
 fn docx_to_pdf_and_refusing_to_overwrite() {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();

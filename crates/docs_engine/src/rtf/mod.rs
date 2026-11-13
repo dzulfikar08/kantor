@@ -49,7 +49,10 @@ pub struct Import {
 /// Whether `bytes` look like an RTF file (`{\rtf`, after any BOM or space).
 pub fn is_rtf(bytes: &[u8]) -> bool {
     let b = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
-    let start = b.iter().position(|c| !c.is_ascii_whitespace()).unwrap_or(b.len());
+    let start = b
+        .iter()
+        .position(|c| !c.is_ascii_whitespace())
+        .unwrap_or(b.len());
     b[start..].starts_with(b"{\\rtf")
 }
 
