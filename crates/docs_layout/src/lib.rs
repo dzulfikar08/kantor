@@ -221,6 +221,10 @@ pub struct Paragraph {
     /// (px) its note takes at the bottom of the page. The note goes on the
     /// page that shows the line holding the reference.
     pub notes: Vec<(usize, f32)>,
+    /// Never break lines at the column width (PowerPoint's `wrap="none"`):
+    /// each line keeps its natural width, and the alignment places the
+    /// lines in the column, overflowing its edges when they're wider.
+    pub no_wrap: bool,
 }
 
 /// How text lines up at a tab stop.
@@ -263,6 +267,7 @@ impl Paragraph {
             tabs: Vec::new(),
             default_tab: 12.7 * MM,
             notes: Vec::new(),
+            no_wrap: false,
         }
     }
 
@@ -556,7 +561,7 @@ impl Engine {
             }
         };
         let avail = (width - dx - right).max(8.0);
-        layout.break_all_lines(Some(avail));
+        layout.break_all_lines((!para.no_wrap).then_some(avail));
         let alignment = match para.align {
             Align::Start => Alignment::Start,
             Align::Center => Alignment::Center,
@@ -564,6 +569,18 @@ impl Engine {
             Align::Justify => Alignment::Justify,
         };
         layout.align(alignment, AlignmentOptions::default());
+        // Unbroken lines are aligned against the widest one; that block
+        // then goes where the alignment puts it in the column.
+        let dx = if para.no_wrap {
+            let share = match para.align {
+                Align::Center => 0.5,
+                Align::End => 1.0,
+                Align::Start | Align::Justify => 0.0,
+            };
+            dx + (avail - layout.width()) * share
+        } else {
+            dx
+        };
         ParaLayout {
             layout,
             dx,
@@ -2324,6 +2341,62 @@ mod tests {
         assert!(doc.layouts[0].len() >= 2);
         let second = doc.layouts[0].layout.get(1).unwrap().text_range().start;
         assert!((doc.caret(0, second).unwrap().x - first.x).abs() < 0.5);
+    }
+
+    #[test]
+    fn unwrapped_lines_align_in_the_column() {
+        let mut engine = Engine::new();
+        let setup = PageSetup {
+            width: 200.0,
+            height: 1000.0,
+            margin_top: 0.0,
+            margin_bottom: 0.0,
+            margin_left: 0.0,
+            margin_right: 0.0,
+        };
+        let para = |text: &str, align| {
+            let mut p = Paragraph::new(text);
+            p.align = align;
+            p.no_wrap = true;
+            p
+        };
+        let long = "A line far wider than the two hundred px column it is laid out in";
+        let doc = engine.layout_document(
+            &[
+                para("Short", Align::Center),
+                para(long, Align::Center),
+                para(long, Align::End),
+                para("Left", Align::Start),
+            ],
+            setup,
+        );
+        let extent = |para: usize| {
+            let runs: Vec<_> = doc
+                .glyph_runs(0)
+                .into_iter()
+                .filter(|r| r.para == para)
+                .collect();
+            let x0 = runs.iter().map(|r| r.origin_x).fold(f32::MAX, f32::min);
+            let x1 = runs
+                .iter()
+                .map(|r| r.origin_x + r.advance)
+                .fold(f32::MIN, f32::max);
+            (x0, x1)
+        };
+        for (i, l) in doc.layouts.iter().enumerate() {
+            assert_eq!(l.len(), 1, "paragraph {i} is one line");
+        }
+        let (a, b) = extent(0);
+        assert!(((a + b) / 2.0 - 100.0).abs() < 0.5, "centred: {a} {b}");
+        let (a, b) = extent(1);
+        assert!(a < 0.0 && b > 200.0, "overflows both sides: {a} {b}");
+        assert!(((a + b) / 2.0 - 100.0).abs() < 0.5, "centred: {a} {b}");
+        let (a, b) = extent(2);
+        assert!(a < 0.0 && (b - 200.0).abs() < 0.5, "right: {a} {b}");
+        assert!(extent(3).0.abs() < 0.5);
+        // Carets follow the shifted lines.
+        let c = doc.caret(2, long.len()).unwrap();
+        assert!((c.x - 200.0).abs() < 0.5, "{c:?}");
     }
 
     #[test]

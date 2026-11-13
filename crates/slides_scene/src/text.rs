@@ -56,6 +56,7 @@ pub fn layout_paragraphs(t: &RenderText) -> Vec<docs_layout::Paragraph> {
                 }
                 None => LineHeight::MetricsRelative(1.0),
             });
+            lp.no_wrap = !t.wrap;
             lp.space_before_pt = p.space_before_pt;
             lp.space_after_pt = p.space_after_pt;
             lp.indent_left_pt = p.indent_pt.max(0.0);
@@ -103,7 +104,7 @@ fn layout_key(paras: &[docs_layout::Paragraph], width: f32) -> u64 {
         p.text.hash(&mut h);
         p.family.hash(&mut h);
         p.size_pt.to_bits().hash(&mut h);
-        (p.align as u8).hash(&mut h);
+        (p.align as u8, p.no_wrap).hash(&mut h);
         for v in [
             p.space_before_pt,
             p.space_after_pt,
@@ -131,11 +132,9 @@ fn layout_key(paras: &[docs_layout::Paragraph], width: f32) -> u64 {
     h.finish()
 }
 
-/// Width of a text body's layout area in slide px.
+/// Width of a text body's layout area in slide px. Unwrapped text
+/// (`wrap="none"`) is aligned in it too, so it's the box's width either way.
 pub fn text_width(t: &RenderText, xfrm: &Xfrm) -> f32 {
-    if !t.wrap {
-        return 100_000.0;
-    }
     ((xfrm.cx - t.insets[0] - t.insets[2]) as f32 / EMU_PER_PX).max(1.0)
 }
 
