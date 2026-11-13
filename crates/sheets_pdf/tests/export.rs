@@ -179,3 +179,50 @@ fn overrides() {
         sheets_engine::CellRange::from_corners((4, 2), (5, 3))
     );
 }
+
+#[test]
+fn unapplied_settings_preview_without_touching_the_workbook() {
+    let book = fixture();
+    let s = sheet(&book, "Report");
+    let before = plan(&book, &only(&book, "Report")).pages.len();
+    let mut print = book.print_settings(s);
+    print.setup.landscape = !print.setup.landscape;
+    print.setup.fit = Some((1, 1));
+    let opts = Options {
+        print: Some((s, print)),
+        ..only(&book, "Report")
+    };
+    let p = plan(&book, &opts);
+    assert_eq!(p.pages.len(), 1, "fit to one page");
+    assert!(before > 1);
+    assert_eq!(plan(&book, &only(&book, "Report")).pages.len(), before);
+}
+
+#[test]
+fn preview_pages_are_the_pdf_pages_rasterized() {
+    let mut book = fixture();
+    let opts = only(&book, "Report");
+    let p = plan(&book, &opts);
+    let page = sheets_pdf::extract(&mut book, &p, 0);
+    let mut r = sheets_pdf::preview::Rasterizer::new();
+    // The one-page PDF is the export's first page: same size, same text.
+    let one = r.one_page_pdf(&page).unwrap();
+    let (full, _) = sheets_pdf::export(&mut book, &opts).unwrap();
+    assert_eq!(page_sizes(&one)[0], page_sizes(&full)[0]);
+    assert_eq!(page_texts(&one)[0], page_texts(&full)[0]);
+    // Rasterized at 1 px per point: the page's size, ink on white.
+    let img = r.render(&page, 1.0).unwrap();
+    let (w, h) = page_sizes(&one)[0];
+    assert!((img.width as f32 - w).abs() <= 1.0 && (img.height as f32 - h).abs() <= 1.0);
+    assert_eq!(img.rgba.len(), (img.width * img.height * 4) as usize);
+    let ink = img
+        .rgba
+        .chunks(4)
+        .filter(|px| px[0] < 128 && px[1] < 128 && px[2] < 128)
+        .count();
+    assert!(ink > 50, "text and lines are drawn ({ink} dark pixels)");
+    assert!(img.rgba.chunks(4).all(|px| px[3] == 255), "opaque");
+    // Twice the zoom: twice the pixels each way.
+    let big = r.render(&page, 2.0).unwrap();
+    assert!((big.width as i64 - 2 * img.width as i64).abs() <= 1);
+}

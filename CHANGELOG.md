@@ -9,6 +9,24 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+- Sheets: **print preview**. Page Setup and Print (`Ctrl P`) show the sheet's pages beside the
+  settings exactly as Export as PDF writes them, with Page n of m, zoom (Fit, 50 to 300 %), and
+  every change to the settings shown as you make it. Only the page on screen is drawn, in the
+  background, so a long sheet opens its preview at once. Print's button prints the pages shown.
+
+### Changed
+- Sheets: **Freeze Panes** works from what is on screen, as in Excel: on a scrolled sheet the rows
+  above and columns left of the top-left cell on screen go out of sight until Unfreeze, and with
+  A1 (or the top-left cell on screen) active the panes split at the middle of the screen. Freeze
+  Top Row and Freeze First Column freeze the top row and left column on screen. Saved to `.xlsx`
+  as Excel saves it and read back on open.
+
+### Fixed
+- Sheets: Ctrl+arrow (and Ctrl+Shift+arrow), Ctrl+Home, Home, Enter and Tab after typing, and the
+  arrow keys while pointing at cells for a formula skip hidden rows and columns and rows a filter
+  hides, as in Excel.
+
 ## [0.4.0] - 2026-11-12
 
 Kantor comes to Windows (10 and 11, x64 and Arm; installer and portable zip, unsigned for now), and

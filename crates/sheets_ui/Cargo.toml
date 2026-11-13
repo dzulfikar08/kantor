@@ -10,6 +10,8 @@ repository.workspace = true
 anyhow.workspace = true
 futures.workspace = true
 gpui-kit.workspace = true
+# Print preview pages as images.
+image.workspace = true
 log.workspace = true
 kantor_core.workspace = true
 kantor_mem.workspace = true

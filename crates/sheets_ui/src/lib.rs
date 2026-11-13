@@ -61,6 +61,7 @@ pub mod pivot;
 mod point;
 mod popup_list;
 mod print;
+mod print_preview;
 mod recovery;
 mod row_heights;
 mod row_layout;
@@ -2177,6 +2178,7 @@ impl SheetsView {
 
 impl Render for SheetsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_print_preview(window, cx);
         let _span = kantor_ui::perf::span("sheets view");
         let t = tokens(cx);
         // Column widths are snapped to device pixels: new ones on a new scale.
