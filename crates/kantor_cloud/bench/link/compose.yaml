@@ -1,0 +1,24 @@
+# The degraded link. Toxiproxy forwards TCP to each server; a sidecar sharing
+# its network namespace puts tc netem on that namespace's eth0. Every byte
+# client->server and server->client leaves toxiproxy through eth0 once, so
+# one egress qdisc shapes both directions (delay = RTT/2 each way).
+# Toxiproxy alone can't drop packets, hence netem (works in rootless docker
+# with NET_ADMIN inside the container's own namespace).
+name: kspike-link
+services:
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.13.0
+    command: ["-host=0.0.0.0", "-config=/toxiproxy.json"]
+    volumes: ["./toxiproxy.json:/toxiproxy.json:ro"]
+    ports:
+      - "127.0.0.1:28080:28080"  # -> Nextcloud web:80
+      - "127.0.0.1:29200:29200"  # -> OpenCloud opencloud:9200
+  netem:
+    image: alpine:3.22
+    network_mode: "service:toxiproxy"
+    cap_add: [NET_ADMIN]
+    command: ["sh", "-c", "apk add --no-cache iproute2-tc >/dev/null && sleep infinity"]
+networks:
+  default:
+    name: kspike
+    external: true
