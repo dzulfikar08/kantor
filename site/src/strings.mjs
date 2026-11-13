@@ -68,8 +68,8 @@ export const en = {
     },
     docs: {
       name: "Docs",
-      formats: [".docx", ".rtf"],
-      text: "Letters and reports with headings, lists, tables, pictures, headers and footers with page numbers, and page sizes such as A4, Letter and F4, landscape pages too. Comments and tracked changes, find and replace, and a word count. Opens .rtf files too, and saves them as .docx.",
+      formats: [".docx", ".doc", ".rtf"],
+      text: "Letters and reports with headings, lists, tables, pictures, headers and footers with page numbers, and page sizes such as A4, Letter and F4, landscape pages too. Comments and tracked changes, find and replace, and a word count. Opens .doc and .rtf files too, and saves them as .docx.",
     },
     slides: {
       name: "Slides",
@@ -176,6 +176,7 @@ export const en = {
     "Word: floating pictures, shapes and equations aren't shown properly yet, and headers and footers with pictures or tables can't be edited. Kantor keeps them and saves them unchanged.",
     "Word: dot leaders at tab stops aren't drawn, and a footnote or endnote too long for its page doesn't continue onto the next one.",
     "Word: you can track your own edits, add comments and accept or reject changes, but formatting changes you make aren't tracked yet.",
+    "Word 97-2003 (.doc): text boxes, floating pictures and shapes, comments and WMF/EMF pictures aren't brought in, and files from Word 6 or Word 95 and password-protected files don't open.",
     "Excel: conditional formatting rules, tables (Format as Table), data validation and page setup can be made and changed in Kantor; files changed this way haven't been opened in Excel itself yet.",
     "Excel: macros aren't carried over when you save, and Kantor tells you when that happens. Pivot tables can be created, rearranged, refreshed and deleted, but not grouped by date or number, and calculated fields aren't supported yet.",
     "Excel: charts can be inserted (column, bar, line, pie, area, scatter) and changed in a Chart panel, including charts that came with the file (combo and 3-D charts keep their type and data range); chart sheets, shapes and text boxes aren't shown yet.",
@@ -257,8 +258,8 @@ export const id = {
     },
     docs: {
       name: "Docs",
-      formats: [".docx", ".rtf"],
-      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, header dan footer dengan nomor halaman, serta ukuran kertas seperti A4, Letter, dan F4, termasuk halaman lanskap. Ada komentar dan lacak perubahan, cari dan ganti, juga penghitung kata. Bisa membuka file .rtf, lalu menyimpannya sebagai .docx.",
+      formats: [".docx", ".doc", ".rtf"],
+      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, header dan footer dengan nomor halaman, serta ukuran kertas seperti A4, Letter, dan F4, termasuk halaman lanskap. Ada komentar dan lacak perubahan, cari dan ganti, juga penghitung kata. Bisa membuka file .doc dan .rtf, lalu menyimpannya sebagai .docx.",
     },
     slides: {
       name: "Slides",
@@ -364,6 +365,7 @@ export const id = {
     "Word: gambar mengambang, bentuk, dan persamaan belum tampil dengan benar, dan header atau footer yang berisi gambar atau tabel belum bisa diedit. Kantor menyimpannya tanpa diubah.",
     "Word: garis titik-titik (leader) di tab belum digambar, dan catatan kaki atau catatan akhir yang terlalu panjang untuk halamannya belum berlanjut ke halaman berikutnya.",
     "Word: Anda bisa melacak suntingan Anda sendiri (track changes), menambah komentar, dan menerima atau menolak perubahan, tetapi perubahan format yang Anda buat belum dilacak.",
+    "Word 97-2003 (.doc): kotak teks, gambar dan bentuk mengambang, komentar, serta gambar WMF/EMF tidak ikut terbuka, dan file dari Word 6 atau Word 95 serta file berkata sandi tidak bisa dibuka.",
     "Excel: aturan format bersyarat, tabel (Format as Table), validasi data, dan pengaturan halaman bisa dibuat dan diubah di Kantor; file yang diubah dengan cara ini belum dicoba dibuka di Excel sendiri.",
     "Excel: makro tidak ikut tersimpan, dan Kantor memberi tahu Anda saat itu terjadi. Pivot table bisa dibuat, disusun ulang, di-refresh, dan dihapus, tetapi belum bisa dikelompokkan per tanggal atau angka, dan calculated field belum didukung.",
     "Excel: grafik bisa disisipkan (kolom, batang, garis, pai, area, sebar) dan diubah lewat panel Grafik, termasuk grafik bawaan file (grafik kombinasi dan 3-D tetap dengan jenis dan rentang datanya); chart sheet, bentuk (shape), serta kotak teks belum ditampilkan.",

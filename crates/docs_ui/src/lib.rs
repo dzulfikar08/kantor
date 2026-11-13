@@ -1083,8 +1083,8 @@ impl DocsView {
         }
     }
 
-    /// The file this document shows (an imported `.rtf` too, though Save
-    /// never writes there).
+    /// The file this document shows (an imported `.rtf` or `.doc` too,
+    /// though Save never writes there).
     pub fn path(&self, _: &App) -> Option<PathBuf> {
         self.doc.source_path().map(|p| p.to_path_buf())
     }
@@ -1263,7 +1263,7 @@ impl DocsView {
             let Ok(Ok(Some(mut path))) = path.await else {
                 return false;
             };
-            // Kantor writes .docx only (an imported .rtf name would get
+            // Kantor writes .docx only (an .rtf or .doc name would get
             // .docx contents).
             if path.extension().is_none() || docs_engine::is_import_path(&path) {
                 path.set_extension("docx");

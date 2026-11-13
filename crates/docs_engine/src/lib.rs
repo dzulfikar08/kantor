@@ -7,6 +7,7 @@
 //! - [`docx`]: reading and writing `.docx`, and the round-trip safety rules
 //!   (what's modelled, kept verbatim, carried as an opaque object, or
 //!   "unsupported content" that sends Save to Save As).
+//! - `msdoc`: importing Word 97-2003 `.doc` / `.dot` files (read only).
 //! - [`numbering`]: lists; [`table`]: tables; [`object`]: inline pictures
 //!   and opaque elements.
 //! - [`rtf`]: importing `.rtf` files (read-only; Save writes `.docx`).
@@ -17,6 +18,7 @@ pub mod docx;
 mod edit;
 pub mod find;
 pub mod model;
+mod msdoc;
 pub mod notes;
 pub mod numbering;
 pub mod object;

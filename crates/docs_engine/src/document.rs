@@ -221,8 +221,8 @@ pub struct Document {
     pub(crate) notes: Vec<crate::notes::Note>,
     /// Note numbering from settings.xml (footnotes, endnotes).
     pub(crate) note_settings: [crate::notes::NoteProps; 2],
-    /// The file this document was imported from (`.rtf`), while it has
-    /// no file of its own.
+    /// The file this document was imported from (`.rtf`, `.doc`, `.dot`),
+    /// while it has no file of its own.
     imported: Option<Imported>,
     history: History,
 }
@@ -235,11 +235,21 @@ struct Imported {
 }
 
 /// Whether Kantor opens `path` as a read-only import (Save writes a new
-/// `.docx`) rather than a `.docx` file.
+/// `.docx`) rather than a `.docx` file: `.rtf`, Word 97-2003 `.doc` and
+/// `.dot`, and any file that is a Word 97-2003 compound file inside.
 pub fn is_import_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("rtf"))
+    let by_name = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        ["rtf", "doc", "dot"]
+            .iter()
+            .any(|x| e.eq_ignore_ascii_case(x))
+    });
+    by_name || {
+        use std::io::Read as _;
+        let mut head = [0u8; 8];
+        std::fs::File::open(path)
+            .and_then(|mut f| f.read_exact(&mut head))
+            .is_ok_and(|()| crate::msdoc::is_compound(&head))
+    }
 }
 
 impl Default for Document {
@@ -287,11 +297,29 @@ impl Document {
         doc
     }
 
-    /// Open a `.docx` file, or import an `.rtf` one (see [`is_import_path`]).
+    /// Open a `.docx` file, or import an `.rtf`, `.doc` or `.dot` one (see
+    /// [`is_import_path`]). Imports are told apart by content: a `.doc`
+    /// that is really RTF opens as RTF.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let bytes = std::fs::read(path)
             .map_err(|e| anyhow::anyhow!("Can't read {}: {e}", path.display()))?;
+        if crate::msdoc::is_compound(&bytes) {
+            return Self::import_doc(&bytes, path)
+                .map_err(|e| anyhow::anyhow!("Can't open {}: {e:#}", path.display()));
+        }
         if is_import_path(path) {
+            // A .docx saved under an old name: open it, but as an import so
+            // Save doesn't write .docx bytes under that name.
+            if bytes.starts_with(b"PK")
+                && let Ok(read) = docx::read(bytes.clone())
+            {
+                let mut doc = Self::from_read(read, None);
+                doc.imported = Some(Imported {
+                    source: path.to_path_buf(),
+                    notes: Vec::new(),
+                });
+                return Ok(doc);
+            }
             return Self::import_rtf(&bytes, path)
                 .map_err(|e| anyhow::anyhow!("Can't open {}: {e:#}", path.display()));
         }
@@ -304,6 +332,19 @@ impl Document {
     /// `source` (for its name and Save As).
     pub fn import_rtf(bytes: &[u8], source: &Path) -> anyhow::Result<Self> {
         let import = crate::rtf::to_docx(bytes)?;
+        let read = docx::read(import.docx)?;
+        let mut doc = Self::from_read(read, None);
+        doc.imported = Some(Imported {
+            source: source.to_path_buf(),
+            notes: import.notes,
+        });
+        Ok(doc)
+    }
+
+    /// A Word 97-2003 document (`.doc` / `.dot`) as a new, unsaved document
+    /// that remembers `source` (for its name and Save As).
+    pub fn import_doc(bytes: &[u8], source: &Path) -> anyhow::Result<Self> {
+        let import = crate::msdoc::import(bytes)?;
         let read = docx::read(import.docx)?;
         let mut doc = Self::from_read(read, None);
         doc.imported = Some(Imported {
@@ -402,6 +443,7 @@ impl Document {
     /// Default name for Save As.
     pub fn suggested_file_name(&self) -> String {
         match self.source_path().and_then(|p| p.file_stem()) {
+            Some(stem) if self.is_imported() => format!("{}.docx", stem.to_string_lossy()),
             Some(stem) if self.has_unsupported_content() => {
                 format!("{} (Kantor).docx", stem.to_string_lossy())
             }
@@ -1275,6 +1317,15 @@ impl Document {
     /// Save to `path` and make it this document's file. Refuses to write over
     /// the original of a document with unsupported content.
     pub fn save_as(&mut self, path: &Path) -> anyhow::Result<()> {
+        if self.is_imported()
+            && let Some(src) = self.source_path()
+            && same_file(src, path)
+        {
+            anyhow::bail!(
+                "Not overwriting {}: Kantor saves documents as .docx. Choose a new name.",
+                self.title()
+            );
+        }
         if self.has_unsupported_content()
             && let Some(orig) = self.path.as_deref()
             && same_file(orig, path)

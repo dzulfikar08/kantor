@@ -10,6 +10,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ## [Unreleased]
 
 ### Added
+- Docs opens Word 97-2003 documents and templates (`.doc`, `.dot`), as Sheets opens `.xls`: the
+  file opens as an imported document and Save asks for a name for a new `.docx`, leaving the
+  original untouched. Text, character and paragraph formatting, styles and headings, lists,
+  tables (merged cells, borders, shading), page size, margins and sections, headers and footers,
+  hyperlinks and inline PNG/JPEG pictures come over; the status bar lists what didn't
+  (text boxes, floating shapes, comments, WMF/EMF pictures). Password-protected files and files
+  from Word 6/95 are refused with a message. `kantor convert` takes `.doc` too (to `.docx` or
+  `.pdf`), and the Windows installer and macOS app offer Kantor for `.doc` and `.dot`.
 - Docs opens `.rtf` files (from WordPad, TextEdit, Word or LibreOffice) as an unsaved copy: text
   in any code page, formatting, styles and headings, lists, tables with merged cells, page setup
   and sections, headers and footers, PNG and JPEG pictures and links come in. Save writes a

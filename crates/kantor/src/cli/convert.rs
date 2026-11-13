@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! kantor convert report.docx report.pdf
-//! kantor convert letter.rtf letter.docx
+//! kantor convert letter.rtf letter.docx   (also .doc / .dot)
 //! kantor convert deck.pptx deck.pdf
 //! kantor convert old.ppt old.pptx
 //! kantor convert --fit-width --landscape book.xlsx book.pdf
@@ -24,7 +24,7 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \n\
     Supported conversions:\n\
     \x20 .docx                                      -> .pdf\n\
-    \x20 .rtf                                       -> .docx .pdf\n\
+    \x20 .rtf .doc .dot (Word 97-2003)              -> .docx .pdf\n\
     \x20 .pptx .ppt .pps .pot                       -> .pdf (one page per slide,\n\
     \x20                                               hidden slides left out)\n\
     \x20 .ppt .pps .pot                             -> .pptx\n\
@@ -108,7 +108,7 @@ const SLIDES_INPUTS: &[&str] = &["pptx", "ppt", "pps", "pot"];
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Kind {
     DocxToPdf,
-    /// An imported document (.rtf) written as .docx.
+    /// An imported document (.rtf, .doc, .dot) written as .docx.
     DocsToDocx,
     PptxToPdf,
     /// PowerPoint 97-2003 to `.pptx`.
@@ -130,7 +130,7 @@ fn kind(input: &Path, output: &Path) -> Result<Kind, Usage> {
     if i == "docx" && o == "pdf" {
         return Ok(Kind::DocxToPdf);
     }
-    if i == "rtf" {
+    if matches!(i.as_str(), "rtf" | "doc" | "dot") {
         match o.as_str() {
             "pdf" => return Ok(Kind::DocxToPdf),
             "docx" => return Ok(Kind::DocsToDocx),
@@ -691,5 +691,14 @@ mod tests {
         );
         assert!(err(&["a.rtf", "a.xlsx"]).contains(".rtf to .xlsx is not supported ("));
         assert!(err(&["a.docx", "b.docx"]).contains(".docx to .docx is not supported ("));
+        assert_eq!(
+            kind(Path::new("old.DOC"), Path::new("b.pdf")).unwrap(),
+            Kind::DocxToPdf
+        );
+        assert_eq!(
+            kind(Path::new("t.dot"), Path::new("t.docx")).unwrap(),
+            Kind::DocsToDocx
+        );
+        assert!(err(&["a.docx", "b.doc"]).contains("not supported ("));
     }
 }
