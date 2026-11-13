@@ -472,22 +472,69 @@ impl SheetsView {
 }
 
 /// The cell one `step` away from `cell`, kept inside a `rows` × `cols` grid.
-pub(crate) fn step_cell(cell: (u32, u32), step: (i64, i64), rows: u32, cols: u32) -> (u32, u32) {
-    let row = (cell.0 as i64 + step.0).clamp(0, rows.saturating_sub(1) as i64);
-    let col = (cell.1 as i64 + step.1).clamp(0, cols.saturating_sub(1) as i64);
-    (row as u32, col as u32)
+/// Rows and columns keyboard moves pass over (`skip_row`, `skip_col`:
+/// hidden, filtered out) are stepped past, as in Excel; with no shown one
+/// that way the cell stays where it is on that axis.
+pub(crate) fn step_cell(
+    cell: (u32, u32),
+    step: (i64, i64),
+    rows: u32,
+    cols: u32,
+    skip_row: impl Fn(u32) -> bool,
+    skip_col: impl Fn(u32) -> bool,
+) -> (u32, u32) {
+    let axis = |at: u32, d: i64, len: u32, skip: &dyn Fn(u32) -> bool| -> u32 {
+        let last = len.saturating_sub(1) as i64;
+        let mut i = (at as i64 + d).clamp(0, last);
+        if d == 0 {
+            return i as u32;
+        }
+        let dir = d.signum();
+        while skip(i as u32) {
+            let next = i + dir;
+            if next < 0 || next > last {
+                return at.min(last as u32);
+            }
+            i = next;
+        }
+        i as u32
+    };
+    (
+        axis(cell.0, step.0, rows, &skip_row),
+        axis(cell.1, step.1, cols, &skip_col),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::step_cell;
 
-    #[test]
+    fn plain(cell: (u32, u32), step: (i64, i64)) -> (u32, u32) {
+        step_cell(cell, step, 10, 10, |_| false, |_| false)
+    }
+
+    #[std::prelude::v1::test]
     fn steps_stay_inside_the_grid() {
-        assert_eq!(step_cell((3, 4), (1, 0), 10, 10), (4, 4));
-        assert_eq!(step_cell((3, 4), (0, -1), 10, 10), (3, 3));
-        assert_eq!(step_cell((0, 0), (-1, 0), 10, 10), (0, 0));
-        assert_eq!(step_cell((0, 0), (0, -1), 10, 10), (0, 0));
-        assert_eq!(step_cell((9, 9), (1, 1), 10, 10), (9, 9));
+        assert_eq!(plain((3, 4), (1, 0)), (4, 4));
+        assert_eq!(plain((3, 4), (0, -1)), (3, 3));
+        assert_eq!(plain((0, 0), (-1, 0)), (0, 0));
+        assert_eq!(plain((0, 0), (0, -1)), (0, 0));
+        assert_eq!(plain((9, 9), (1, 1)), (9, 9));
+    }
+
+    #[std::prelude::v1::test]
+    fn steps_pass_over_hidden_rows_and_columns() {
+        // Rows 4..=6 hidden (or filtered out), column C (2) hidden.
+        let row = |r: u32| (4..=6).contains(&r);
+        let col = |c: u32| c == 2;
+        // Enter from row 4 (3) lands on row 8 (7); Shift+Enter back.
+        assert_eq!(step_cell((3, 0), (1, 0), 10, 10, row, col), (7, 0));
+        assert_eq!(step_cell((7, 0), (-1, 0), 10, 10, row, col), (3, 0));
+        // Tab from B (1) lands on D (3); Shift+Tab back.
+        assert_eq!(step_cell((0, 1), (0, 1), 10, 10, row, col), (0, 3));
+        assert_eq!(step_cell((0, 3), (0, -1), 10, 10, row, col), (0, 1));
+        // Nothing shown below: stay.
+        let below = |r: u32| r >= 5;
+        assert_eq!(step_cell((4, 0), (1, 0), 10, 10, below, col), (4, 0));
     }
 }

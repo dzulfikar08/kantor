@@ -12,7 +12,63 @@ use anyhow::{Result, anyhow, bail};
 use ironcalc_base::cell::CellValue;
 use ironcalc_base::types::Cell;
 
+use std::collections::HashMap;
+
 use crate::{CellRange, MAX_COLS, MAX_ROWS, Workbook};
+
+/// The top-left cells of the frozen panes of each worksheet of a package
+/// (`sheetView@topLeftCell` where the pane is frozen), by `sheetId`, when
+/// not A1. `skeletons`: [`crate::preserve::worksheet_skeletons`].
+pub(crate) fn read_panes(
+    skeletons: &std::result::Result<Vec<(u32, String)>, String>,
+) -> HashMap<u32, (u32, u32)> {
+    let mut out = HashMap::new();
+    let Ok(list) = skeletons else {
+        return out;
+    };
+    for (id, xml) in list {
+        // Cheap test first: most sheets have no frozen panes.
+        if !xml.contains("frozen") {
+            continue;
+        }
+        let Ok(doc) = roxmltree::Document::parse(xml) else {
+            continue;
+        };
+        let Some(view) = el(doc.root_element(), "sheetViews").and_then(|v| el(v, "sheetView"))
+        else {
+            continue;
+        };
+        let frozen = el(view, "pane")
+            .is_some_and(|p| matches!(p.attribute("state"), Some("frozen" | "frozenSplit")));
+        if let (true, Some(cell)) = (frozen, view.attribute("topLeftCell").and_then(parse_a1))
+            && cell != (0, 0)
+        {
+            out.insert(*id, cell);
+        }
+    }
+    out
+}
+
+fn el<'a, 'i>(n: roxmltree::Node<'a, 'i>, name: &str) -> Option<roxmltree::Node<'a, 'i>> {
+    n.children()
+        .find(|c| c.is_element() && c.tag_name().name() == name)
+}
+
+/// `"B10"` -> `(9, 1)` (`$` signs allowed).
+fn parse_a1(s: &str) -> Option<(u32, u32)> {
+    let s = s.replace('$', "");
+    let split = s.find(|c: char| c.is_ascii_digit())?;
+    let (letters, digits) = s.split_at(split);
+    if letters.is_empty() || !letters.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let col = letters.chars().try_fold(0u32, |n, c| {
+        n.checked_mul(26)?
+            .checked_add(c.to_ascii_uppercase() as u32 - 'A' as u32 + 1)
+    })?;
+    let row: u32 = digits.parse().ok()?;
+    (row >= 1 && col >= 1 && row <= MAX_ROWS && col <= MAX_COLS).then(|| (row - 1, col - 1))
+}
 
 /// An arrow-key direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +91,9 @@ impl Step {
 
 /// Where Ctrl+arrow lands along one line of cells (a row or a column), like
 /// Excel: from inside a block of filled cells, its last cell; otherwise the
-/// next filled cell, or the sheet's edge when there is none.
+/// next filled cell, or the sheet's edge when there is none. Lines that
+/// aren't `shown` (hidden rows and columns, rows a filter hides) are passed
+/// over as if they weren't there, as in Excel.
 ///
 /// `from` and the result are indices along the line, `last` is the line's
 /// last index, and no index at or past `data_end` is filled (so scanning
@@ -46,13 +104,25 @@ pub fn data_edge(
     last: u32,
     data_end: u32,
     filled: impl Fn(u32) -> bool,
+    shown: impl Fn(u32) -> bool,
 ) -> u32 {
-    let next = |i: u32| {
-        if forward {
-            (i < last).then(|| i + 1)
+    let next = |mut i: u32| loop {
+        i = if forward {
+            (i < last).then(|| i + 1)?
         } else {
-            i.checked_sub(1)
+            i.checked_sub(1)?
+        };
+        if shown(i) {
+            return Some(i);
         }
+    };
+    // The far edge: the last shown index (or `from` if none past it is).
+    let edge = || {
+        let mut i = last;
+        while i > from && !shown(i) {
+            i -= 1;
+        }
+        i
     };
     let Some(first) = next(from) else {
         return from;
@@ -70,7 +140,7 @@ pub fn data_edge(
     let mut i = first;
     loop {
         if forward && i >= data_end {
-            return last;
+            return edge();
         }
         if filled(i) {
             return i;
@@ -319,14 +389,26 @@ impl Workbook {
     pub fn jump(&self, sheet: u32, (row, col): (u32, u32), step: Step) -> (u32, u32) {
         let (rows, cols) = self.used_size(sheet);
         if step.is_vertical() {
-            let row = data_edge(row, step.forward(), MAX_ROWS - 1, rows, |r| {
-                self.is_filled(sheet, r, col)
-            });
+            let hidden = self.hidden_row_set(sheet);
+            let origin = self.frozen_origin(sheet).0;
+            let row = data_edge(
+                row,
+                step.forward(),
+                MAX_ROWS - 1,
+                rows,
+                |r| self.is_filled(sheet, r, col),
+                |r| r >= origin && !hidden.contains(&r),
+            );
             (row, col)
         } else {
-            let col = data_edge(col, step.forward(), MAX_COLS - 1, cols, |c| {
-                self.is_filled(sheet, row, c)
-            });
+            let col = data_edge(
+                col,
+                step.forward(),
+                MAX_COLS - 1,
+                cols,
+                |c| self.is_filled(sheet, row, c),
+                |c| !self.col_skipped(sheet, c),
+            );
             (row, col)
         }
     }
@@ -587,18 +669,151 @@ impl Workbook {
     /// undo step, but the workbook has unsaved changes. Returns whether
     /// anything changed.
     pub fn set_frozen(&mut self, sheet: u32, rows: u32, cols: u32) -> Result<bool> {
+        self.set_frozen_at(sheet, (0, 0), (rows, cols))
+    }
+
+    /// Excel's Freeze Panes on a scrolled sheet: the panes show rows
+    /// `top..split.0` and columns `left..split.1` (`origin` is `(top,
+    /// left)`, the cell at the panes' top-left); the rows above and columns
+    /// left of `origin` are out of sight until the panes are unfrozen, as in
+    /// Excel. [`Workbook::frozen`] still counts from `A1` (`split`). Saved as
+    /// the sheet view's `topLeftCell` with the pane's `xSplit`/`ySplit`
+    /// counted from it. Not an undo step (see [`Workbook::set_frozen`]).
+    pub fn set_frozen_at(
+        &mut self,
+        sheet: u32,
+        origin: (u32, u32),
+        split: (u32, u32),
+    ) -> Result<bool> {
+        let (rows, cols) = split;
         if rows >= MAX_ROWS || cols >= MAX_COLS {
             bail!("too many frozen rows or columns");
         }
-        if self.frozen(sheet) == (rows, cols) {
+        // An origin only applies to the way that is frozen, inside it.
+        let origin = (
+            if origin.0 < rows { origin.0 } else { 0 },
+            if origin.1 < cols { origin.1 } else { 0 },
+        );
+        if self.frozen(sheet) == split && self.frozen_origin(sheet) == origin {
             return Ok(false);
         }
-        self.model
-            .kantor_set_frozen(sheet, rows as i32, cols as i32)
-            .map_err(|e| anyhow!("{e}"))?;
+        if self.frozen(sheet) != split {
+            self.model
+                .kantor_set_frozen(sheet, rows as i32, cols as i32)
+                .map_err(|e| anyhow!("{e}"))?;
+        }
+        let id = self.sheet_id(sheet);
+        if origin == (0, 0) {
+            self.panes.remove(&id);
+        } else {
+            self.panes.insert(id, origin);
+        }
         self.history.view_changed = true;
         self.history.view_changes += 1;
         Ok(true)
+    }
+
+    /// The top-left cell of `sheet`'s frozen panes: `(0, 0)` unless they
+    /// were frozen on a scrolled sheet ([`Workbook::set_frozen_at`]).
+    pub fn frozen_origin(&self, sheet: u32) -> (u32, u32) {
+        let (rows, cols) = self.frozen(sheet);
+        let (top, left) = self
+            .panes
+            .get(&self.sheet_id(sheet))
+            .copied()
+            .unwrap_or_default();
+        (
+            if top < rows { top } else { 0 },
+            if left < cols { left } else { 0 },
+        )
+    }
+
+    /// Whether keyboard moves pass over row `row`: hidden by hand or by a
+    /// filter, or above frozen panes frozen on a scrolled sheet.
+    pub fn row_skipped(&self, sheet: u32, row: u32) -> bool {
+        row < self.frozen_origin(sheet).0 || self.hidden_row_set(sheet).contains(&row)
+    }
+
+    /// Whether keyboard moves pass over column `col`: hidden, or left of
+    /// frozen panes frozen on a scrolled sheet.
+    pub fn col_skipped(&self, sheet: u32, col: u32) -> bool {
+        col < self.frozen_origin(sheet).1 || self.is_column_hidden(sheet, col)
+    }
+
+    /// The rows of `sheet` that are hidden (by hand or by a filter), for the
+    /// current state.
+    pub fn hidden_row_set(&self, sheet: u32) -> std::sync::Arc<std::collections::HashSet<u32>> {
+        if let Some(set) = self.cached(|c| c.hidden_rows.get(&sheet).cloned()) {
+            return set;
+        }
+        let set: std::collections::HashSet<u32> =
+            match self.model.get_model().workbook.worksheet(sheet) {
+                Ok(ws) => ws
+                    .rows
+                    .iter()
+                    .filter(|r| r.hidden && r.r >= 1)
+                    .map(|r| r.r as u32 - 1)
+                    .collect(),
+                Err(_) => Default::default(),
+            };
+        let set = std::sync::Arc::new(set);
+        self.cached(|c| c.hidden_rows.insert(sheet, set.clone()));
+        set
+    }
+
+    /// The nearest cell to `(row, col)` that keyboard moves can land on:
+    /// itself, or the next shown row below / column right (else above /
+    /// left), as Excel does after a jump to a hidden cell.
+    pub fn nearest_shown(&self, sheet: u32, (row, col): (u32, u32)) -> (u32, u32) {
+        let near = |at: u32, last: u32, skip: &dyn Fn(u32) -> bool| {
+            (at..=last)
+                .find(|&i| !skip(i))
+                .or_else(|| (0..at).rev().find(|&i| !skip(i)))
+                .unwrap_or(at)
+        };
+        let hidden = self.hidden_row_set(sheet);
+        let top = self.frozen_origin(sheet).0;
+        let row = near(row, MAX_ROWS - 1, &|r| r < top || hidden.contains(&r));
+        let col = near(col, MAX_COLS - 1, &|c| self.col_skipped(sheet, c));
+        (row, col)
+    }
+
+    /// Save patches for panes frozen on a scrolled sheet (IronCalc writes
+    /// frozen panes counted from A1).
+    pub(crate) fn pane_patches(&self, out: &mut crate::preserve::Patches) {
+        for sheet in 0..self.sheet_names().len() as u32 {
+            let origin = self.frozen_origin(sheet);
+            if origin != (0, 0) {
+                let id = self.sheet_id(sheet);
+                out.sheets.entry(id).or_default().frozen_view = Some((origin, self.frozen(sheet)));
+            }
+        }
+    }
+
+    /// After opening: panes the file froze on a scrolled sheet. IronCalc
+    /// read their splits counted from the sheet view's `topLeftCell`; make
+    /// them count from A1 and remember the top-left cell.
+    pub(crate) fn apply_read_panes(&mut self, panes: &HashMap<u32, (u32, u32)>) {
+        for sheet in 0..self.sheet_names().len() as u32 {
+            let id = self.sheet_id(sheet);
+            let Some(&(top, left)) = panes.get(&id) else {
+                continue;
+            };
+            let (rows, cols) = self.frozen(sheet);
+            let top = if rows > 0 { top } else { 0 };
+            let left = if cols > 0 { left } else { 0 };
+            let split = (rows + top, cols + left);
+            if (top, left) == (0, 0) || split.0 >= MAX_ROWS || split.1 >= MAX_COLS {
+                continue;
+            }
+            if self
+                .model
+                .kantor_set_frozen(sheet, split.0 as i32, split.1 as i32)
+                .is_ok()
+            {
+                self.panes.insert(id, (top, left));
+            }
+        }
     }
 
     /// Status-bar numbers for `range`. Small ranges are read cell by cell,
@@ -752,24 +967,27 @@ mod tests {
         let last = 9;
         let end = cells.len() as u32;
         // Inside a block: to its end.
-        assert_eq!(data_edge(0, true, last, end, &f), 2);
+        assert_eq!(data_edge(0, true, last, end, &f, |_| true), 2);
         // At a block's end: to the next block's start.
-        assert_eq!(data_edge(2, true, last, end, &f), 5);
+        assert_eq!(data_edge(2, true, last, end, &f, |_| true), 5);
         // From a blank: the next filled cell.
-        assert_eq!(data_edge(3, true, last, end, &f), 5);
+        assert_eq!(data_edge(3, true, last, end, &f, |_| true), 5);
         // Past the data: the edge.
-        assert_eq!(data_edge(6, true, last, end, &f), 9);
-        assert_eq!(data_edge(8, true, last, 7, &f), 9);
+        assert_eq!(data_edge(6, true, last, end, &f, |_| true), 9);
+        assert_eq!(data_edge(8, true, last, 7, &f, |_| true), 9);
         // Backwards.
-        assert_eq!(data_edge(6, false, last, end, &f), 5);
-        assert_eq!(data_edge(5, false, last, end, &f), 2);
-        assert_eq!(data_edge(4, false, last, end, &f), 2);
-        assert_eq!(data_edge(0, false, last, end, &f), 0);
-        assert_eq!(data_edge(9, true, last, end, &f), 9);
+        assert_eq!(data_edge(6, false, last, end, &f, |_| true), 5);
+        assert_eq!(data_edge(5, false, last, end, &f, |_| true), 2);
+        assert_eq!(data_edge(4, false, last, end, &f, |_| true), 2);
+        assert_eq!(data_edge(0, false, last, end, &f, |_| true), 0);
+        assert_eq!(data_edge(9, true, last, end, &f, |_| true), 9);
         // Empty line: straight to either edge.
         let empty = line("");
-        assert_eq!(data_edge(3, true, 1_000_000, 0, &empty), 1_000_000);
-        assert_eq!(data_edge(3, false, 1_000_000, 0, &empty), 0);
+        assert_eq!(
+            data_edge(3, true, 1_000_000, 0, &empty, |_| true),
+            1_000_000
+        );
+        assert_eq!(data_edge(3, false, 1_000_000, 0, &empty, |_| true), 0);
     }
 
     #[test]
@@ -975,6 +1193,129 @@ mod tests {
         assert_eq!(wb.jump(0, (6, 0), Step::Up), (2, 0));
         assert_eq!(wb.jump(0, (0, 0), Step::Right), (0, MAX_COLS - 1));
         assert_eq!(wb.jump(0, (0, 5), Step::Left), (0, 0));
+    }
+
+    #[test]
+    fn data_edge_passes_over_hidden_lines() {
+        //            0123456789
+        let cells = "xx.x..x...";
+        let f = line(cells);
+        let end = cells.len() as u32;
+        // 2 hidden: the block 0..=3 is one block, as Excel sees it.
+        let shown = |i: u32| i != 2;
+        assert_eq!(data_edge(0, true, 9, end, &f, shown), 3);
+        assert_eq!(data_edge(3, false, 9, end, &f, shown), 0);
+        // A hidden filled cell is no stop: 3 hidden, 1 -> 6.
+        let shown = |i: u32| i != 3 && i != 2;
+        assert_eq!(data_edge(1, true, 9, end, &f, shown), 6);
+        // The edge is the last shown index.
+        let shown = |i: u32| i < 8;
+        assert_eq!(data_edge(6, true, 9, end, &f, shown), 7);
+        let shown = |i: u32| i > 0;
+        assert_eq!(data_edge(1, false, 9, end, &f, shown), 1);
+        // Nothing shown that way: stay.
+        assert_eq!(data_edge(1, false, 9, end, &f, |i| i > 0), 1);
+    }
+
+    #[test]
+    fn jumps_skip_hidden_and_filtered_rows_and_hidden_columns() {
+        use crate::FilterScope;
+        let mut wb = book(&[
+            (0, 0, "h"),
+            (1, 0, "a"),
+            (2, 0, "b"),
+            (3, 0, "a"),
+            (4, 0, "b"),
+            (5, 0, "a"),
+            (0, 1, "x"),
+            (0, 2, "y"),
+            (0, 4, "z"),
+        ]);
+        // Hide rows 2..=4 by hand: Ctrl+Down from A2 lands on A6.
+        wb.hide_rows(0, 2, 4).unwrap();
+        assert_eq!(wb.jump(0, (1, 0), Step::Down), (5, 0));
+        assert_eq!(wb.jump(0, (5, 0), Step::Up), (0, 0));
+        assert!(wb.row_skipped(0, 3) && !wb.row_skipped(0, 5));
+        wb.undo().unwrap();
+        // Filtered-out rows too: keep only "a" (rows 1, 3, 5).
+        wb.toggle_filter(0, CellRange::from_corners((0, 0), (5, 0)))
+            .unwrap();
+        wb.set_column_filter(
+            0,
+            &FilterScope::Sheet,
+            0,
+            Some(crate::FilterKind::Values {
+                values: vec!["a".into()],
+                blanks: false,
+                dates: Vec::new(),
+            }),
+        )
+        .unwrap();
+        assert!(wb.row_skipped(0, 2) && wb.row_skipped(0, 4));
+        assert_eq!(wb.jump(0, (1, 0), Step::Down), (5, 0));
+        assert_eq!(wb.nearest_shown(0, (2, 0)), (3, 0));
+        // Hidden blank column D between C and E: C1 and E1 are one block.
+        assert_eq!(
+            wb.jump(0, (0, 2), Step::Right),
+            (0, 4),
+            "D blank: next block"
+        );
+        wb.set_columns_hidden(0, 3, 3, true).unwrap();
+        assert_eq!(wb.jump(0, (0, 0), Step::Right), (0, 4));
+        // With C hidden too, a hidden filled cell is no stop either.
+        wb.set_columns_hidden(0, 2, 2, true).unwrap();
+        assert!(wb.col_skipped(0, 2));
+        assert_eq!(wb.jump(0, (0, 4), Step::Left), (0, 0));
+    }
+
+    #[test]
+    fn panes_frozen_on_a_scrolled_sheet_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scrolled.xlsx");
+        let mut wb = book(&[(0, 0, "x"), (30, 5, "y")]);
+        // Scrolled to C11, freeze at E15: rows 11..14 and columns C..D stay.
+        assert!(wb.set_frozen_at(0, (10, 2), (14, 4)).unwrap());
+        assert!(!wb.set_frozen_at(0, (10, 2), (14, 4)).unwrap(), "no change");
+        assert_eq!(wb.frozen(0), (14, 4));
+        assert_eq!(wb.frozen_origin(0), (10, 2));
+        // Rows above and columns left of the panes are out of reach.
+        assert!(wb.row_skipped(0, 9) && !wb.row_skipped(0, 10));
+        assert!(wb.col_skipped(0, 1) && !wb.col_skipped(0, 2));
+        assert_eq!(wb.jump(0, (12, 3), Step::Up), (10, 3));
+        assert_eq!(wb.nearest_shown(0, (0, 0)), (10, 2));
+        assert!(wb.is_dirty());
+        wb.save_as(&path).unwrap();
+        let xml = String::from_utf8(
+            crate::preserve::read_part(&std::fs::read(&path).unwrap(), "xl/worksheets/sheet1.xml")
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(xml.contains("topLeftCell=\"C11\""), "{xml}");
+        assert!(
+            xml.contains("<pane xSplit=\"2\" ySplit=\"4\" topLeftCell=\"E15\" activePane=\"bottomRight\" state=\"frozen\"/>"),
+            "{xml}"
+        );
+        let mut back = Workbook::open(&path).unwrap();
+        assert_eq!(back.frozen(0), (14, 4));
+        assert_eq!(back.frozen_origin(0), (10, 2));
+        assert!(!back.is_dirty());
+        // Saved twice (the saved file is now the original): still right.
+        back.set_input(0, 1, 1, "z").unwrap();
+        back.save_as(&path).unwrap();
+        let again = Workbook::open(&path).unwrap();
+        assert_eq!(
+            (again.frozen(0), again.frozen_origin(0)),
+            ((14, 4), (10, 2))
+        );
+        // Freeze Top Row then: the origin goes, the file has a plain pane.
+        back.set_frozen(0, 1, 0).unwrap();
+        assert_eq!(back.frozen_origin(0), (0, 0));
+        back.save_as(&path).unwrap();
+        let plain = Workbook::open(&path).unwrap();
+        assert_eq!((plain.frozen(0), plain.frozen_origin(0)), ((1, 0), (0, 0)));
+        // Undo doesn't touch panes, as in Excel.
+        back.undo().unwrap();
+        assert_eq!(back.frozen(0), (1, 0));
     }
 
     #[test]

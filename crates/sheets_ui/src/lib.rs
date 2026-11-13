@@ -565,11 +565,13 @@ impl TableDelegate for SheetGrid {
             // Excel's double line where rows are hidden: under the shown row
             // above them (or over the first shown row, for hidden rows at
             // the top).
+            // Rows above panes frozen on a scrolled sheet get no mark.
+            let above_panes = self.book.frozen_origin(self.sheet).0 as usize;
             let (hidden_below, hidden_above) = {
                 let h = self.layout.heights.borrow();
                 (
                     row_ix + 1 < h.len() && h.height_dp(row_ix + 1) == 0,
-                    row_ix > 0 && h.prev_shown(row_ix - 1).is_none(),
+                    row_ix > above_panes && h.prev_shown(row_ix - 1).is_none(),
                 )
             };
             let frozen_edge = {
@@ -1387,11 +1389,18 @@ impl SheetsView {
             if self.grid_sheet(cx) != sheet {
                 self.show_sheet(sheet, cx);
             }
-            let (rows, cols) = {
+            let (row, col) = {
                 let grid = self.table.read(cx).delegate();
-                (grid.rows, grid.cols)
+                let (book, sheet) = (&grid.book, grid.sheet);
+                cell_editor::step_cell(
+                    (row, col),
+                    step,
+                    grid.rows,
+                    grid.cols,
+                    |r| book.row_skipped(sheet, r),
+                    |c| book.col_skipped(sheet, c),
+                )
             };
-            let (row, col) = cell_editor::step_cell((row, col), step, rows, cols);
             self.select_cell(row, col, cx);
             self.load_selected_into_formula(window, cx);
             self.focus_grid(window, cx);

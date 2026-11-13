@@ -329,6 +329,11 @@ pub(crate) struct SheetPatch {
     pub page_setup: Option<Vec<(&'static str, String)>>,
     /// `extLst` extensions (by `uri`) to remove.
     pub remove_exts: Vec<&'static str>,
+    /// Frozen panes frozen on a scrolled sheet: `(origin, split)`, the
+    /// panes' top-left cell and the first unfrozen row and column, counted
+    /// from A1 (`grid::set_frozen_at`). Written as the sheet view's
+    /// `topLeftCell` and a pane whose splits count from it.
+    pub frozen_view: Option<((u32, u32), (u32, u32))>,
 }
 
 impl Patches {
@@ -4739,6 +4744,25 @@ fn patch_sheet(full: &str, patch: &SheetPatch) -> Result<String, String> {
             _ => {}
         }
     }
+    if let Some((origin, split)) = patch.frozen_view
+        && let Some(view) = root
+            .children()
+            .find(|c| is_main(*c, "sheetViews"))
+            .and_then(|v| v.children().find(|c| is_main(*c, "sheetView")))
+    {
+        let mut out = String::from("<sheetView");
+        for a in view.attributes() {
+            if !(a.namespace().is_none() && a.name() == "topLeftCell") {
+                write_attr_same(&mut out, a, view)?;
+            }
+        }
+        out.push_str(&format!(
+            " topLeftCell=\"{}\">{}</sheetView>",
+            crate::cell_name(origin.0, origin.1),
+            frozen_pane_xml(origin, split)
+        ));
+        edits.push((view.range(), out));
+    }
     if !patch.remove_exts.is_empty()
         && let Some(list) = root.children().find(|c| is_main(*c, "extLst"))
     {
@@ -4774,6 +4798,30 @@ fn patch_sheet(full: &str, patch: &SheetPatch) -> Result<String, String> {
 }
 
 /// Write attribute `a` of `n` with the prefix its document gives it.
+/// `<pane>` and `<selection>`s of frozen panes whose top-left cell is
+/// `origin` and whose first unfrozen cell is `split` (both from A1).
+fn frozen_pane_xml(origin: (u32, u32), split: (u32, u32)) -> String {
+    let rows = split.0.saturating_sub(origin.0);
+    let cols = split.1.saturating_sub(origin.1);
+    let first = crate::cell_name(split.0, split.1);
+    match (rows > 0, cols > 0) {
+        (true, true) => format!(
+            "<pane xSplit=\"{cols}\" ySplit=\"{rows}\" topLeftCell=\"{first}\" activePane=\"bottomRight\" state=\"frozen\"/>\
+             <selection pane=\"topRight\"/><selection pane=\"bottomLeft\"/>\
+             <selection pane=\"bottomRight\" activeCell=\"{first}\" sqref=\"{first}\"/>"
+        ),
+        (true, false) => format!(
+            "<pane ySplit=\"{rows}\" topLeftCell=\"{first}\" activePane=\"bottomLeft\" state=\"frozen\"/>\
+             <selection pane=\"bottomLeft\" activeCell=\"{first}\" sqref=\"{first}\"/>"
+        ),
+        (false, true) => format!(
+            "<pane xSplit=\"{cols}\" topLeftCell=\"{first}\" activePane=\"topRight\" state=\"frozen\"/>\
+             <selection pane=\"topRight\" activeCell=\"{first}\" sqref=\"{first}\"/>"
+        ),
+        (false, false) => String::new(),
+    }
+}
+
 fn write_attr_same(out: &mut String, a: roxmltree::Attribute, n: Node) -> Result<(), String> {
     let prefix = match a.namespace() {
         None => String::new(),
@@ -5661,6 +5709,7 @@ mod tests {
             fit_to_page: Some(true),
             page_setup: Some(vec![("paperSize", "9".into()), ("orientation", "landscape".into())]),
             remove_exts: Vec::new(),
+            frozen_view: None,
         };
         let out = patch_sheet(xml, &patch).unwrap();
         assert_eq!(

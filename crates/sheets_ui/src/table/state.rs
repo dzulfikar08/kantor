@@ -894,6 +894,62 @@ where
         }
     }
 
+    /// KANTOR PATCH (freeze panes): the rows and columns in view in the
+    /// scrolling part of the table (below the pinned rows, right of the
+    /// fixed columns), as `(rows, col_ix)` ranges, at least one of each.
+    pub fn scrolled_view(&self, cx: &App) -> (Range<usize>, Range<usize>) {
+        let heights = self.delegate.row_heights();
+        let h = heights.borrow();
+        let rows_count = self.delegate.rows_count(cx).min(h.len());
+        let skip = self.pinned_rows(cx);
+        let (offset, viewport) = {
+            let state = self.vertical_scroll_handle.0.borrow();
+            (state.base_handle.offset().y, self.body_height())
+        };
+        let y0 = h.top(skip.min(rows_count)) + f64::from(-f32::from(offset)).max(0.0);
+        let first = h.row_at(y0).unwrap_or(skip).max(skip);
+        let last = h
+            .row_at(y0 + (viewport - 1.0).max(0.0))
+            .unwrap_or(rows_count.saturating_sub(1))
+            .max(first);
+        let rows = first..last + 1;
+
+        let fixed = self.fixed_left_cols_count();
+        let x0 = -self.horizontal_scroll_handle.offset().x;
+        let width = self.horizontal_scroll_handle.bounds().size.width;
+        let width = if width > px(0.) {
+            width
+        } else {
+            self.bounds.size.width
+        };
+        let mut left = px(0.);
+        let (mut first_col, mut last_col) = (None, None);
+        for (ix, col) in self.col_groups.iter().enumerate().skip(fixed) {
+            let right = left + col.width;
+            if col.width > px(0.) && right > x0 && left < x0 + width {
+                first_col.get_or_insert(ix);
+                last_col = Some(ix);
+            }
+            left = right;
+        }
+        let first_col = first_col.unwrap_or(fixed);
+        let cols = first_col..last_col.unwrap_or(first_col).max(first_col) + 1;
+        (rows, cols)
+    }
+
+    /// KANTOR PATCH (freeze panes): scroll the unfrozen part back to its
+    /// start (after freezing, it begins where the panes end).
+    pub fn scroll_to_start(&mut self, cx: &mut Context<Self>) {
+        self.vertical_scroll_handle
+            .0
+            .borrow()
+            .base_handle
+            .set_offset(point(px(0.), px(0.)));
+        let y = self.horizontal_scroll_handle.offset().y;
+        self.horizontal_scroll_handle.set_offset(point(px(0.), y));
+        cx.notify();
+    }
+
     /// KANTOR PATCH (frozen rows): how many rows sit pinned above the
     /// scrolling list (the delegate's frozen rows, at most every row).
     fn pinned_rows(&self, cx: &App) -> usize {
@@ -1208,12 +1264,15 @@ where
     ) {
         // Cell selection mode: move to first cell in current row
         if self.selection_mode.is_cell() {
-            if let Some((row_ix, _)) = self.selected_cell {
-                self.set_selected_cell(row_ix, 0, cx);
-            } else {
-                // No cell selected, select first cell of first row
-                self.set_selected_cell(0, 0, cx);
-            }
+            // KANTOR PATCH (hidden columns): the first column that can be
+            // selected and has a width (not a row header, not hidden).
+            let first = self
+                .col_groups
+                .iter()
+                .position(|c| c.column.selectable && c.width > px(0.))
+                .unwrap_or(0);
+            let row_ix = self.selected_cell.map_or(0, |(row_ix, _)| row_ix);
+            self.set_selected_cell(row_ix, first, cx);
             return;
         }
 

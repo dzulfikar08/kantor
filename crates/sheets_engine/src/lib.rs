@@ -140,6 +140,9 @@ pub struct Workbook {
     saved_charts: HashMap<u32, preserve::SavedChart>,
     /// Sheet features edited in Kantor this session (see `edits::Touched`).
     touched: edits::Touched,
+    /// Top-left cells of frozen panes frozen on a scrolled sheet, by
+    /// `sheetId` (`grid::set_frozen_at`).
+    panes: HashMap<u32, (u32, u32)>,
 }
 
 /// See [`Workbook::cached`].
@@ -154,6 +157,8 @@ struct Cache {
     tables: HashMap<u32, std::sync::Arc<table::SheetTables>>,
     /// Each sheet's pivot tables where they are now (`pivot`).
     pivots: HashMap<u32, std::sync::Arc<Vec<pivot::Placed>>>,
+    /// Each sheet's hidden rows (`grid::hidden_rows`).
+    hidden_rows: HashMap<u32, std::sync::Arc<std::collections::HashSet<u32>>>,
 }
 
 /// When formulas are recalculated, like Excel's calculation options.
@@ -452,6 +457,7 @@ impl Workbook {
             pivots: Default::default(),
             saved_charts: HashMap::new(),
             touched: Default::default(),
+            panes: HashMap::new(),
         })
     }
 
@@ -532,6 +538,7 @@ impl Workbook {
             drawings,
             prints,
             pivots,
+            panes,
         } = extras
             .map(|h| h.join().unwrap_or_default())
             .unwrap_or_default();
@@ -557,7 +564,9 @@ impl Workbook {
             pivots,
             saved_charts: HashMap::new(),
             touched: Default::default(),
+            panes: HashMap::new(),
         };
+        book.apply_read_panes(&panes);
         // The file's cached values are right: no recalculation.
         book.sync_pivot_grids(false);
         Ok(book)
@@ -1171,6 +1180,7 @@ impl Workbook {
             patches: {
                 let mut p = preserve::Patches::default();
                 self.print_patches(&mut p);
+                self.pane_patches(&mut p);
                 self.table_patches(&mut p);
                 self.cf_patches(&mut p);
                 self.validation_patches(&mut p);
@@ -1268,6 +1278,8 @@ struct Extras {
     drawings: drawing::Drawings,
     prints: print::Prints,
     pivots: pivot::Pivots,
+    /// Top-left cells of frozen panes (`grid::read_panes`).
+    panes: HashMap<u32, (u32, u32)>,
 }
 
 impl Extras {
@@ -1279,6 +1291,7 @@ impl Extras {
             drawings: drawing::Drawings::read(bytes),
             prints: print::Prints::read(bytes, &skeletons),
             pivots: pivot::Pivots::read(bytes),
+            panes: grid::read_panes(&skeletons),
         }
     }
 }
