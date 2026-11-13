@@ -28,6 +28,7 @@ mod input;
 mod notes;
 mod object_editor;
 mod paint_menu;
+mod spell;
 mod toolbar;
 
 use std::cell::Cell;
@@ -36,6 +37,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use docs_engine::Toggle;
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -122,6 +124,7 @@ actions!(
 /// Register Slides key bindings (Ctrl, and Super as Mac-style Cmd).
 pub fn init(cx: &mut App) {
     kantor_ui::find_bar::bind_app_keys(KEY_CONTEXT, cx);
+    kantor_ui::spelling::init(cx);
     let c = Some(KEY_CONTEXT);
     let p = Some(PRESENTER_CONTEXT);
     let mut keys = vec![
@@ -319,6 +322,8 @@ pub struct SlidesView {
     present_notes: bool,
     /// The print layout chosen last (Ctrl+P repeats it).
     print_layout: slides_pdf::PrintLayout,
+    /// Spell checking in the edited text box.
+    spell: spell::SpellState,
 }
 
 fn cm(emu: i64) -> String {
@@ -388,6 +393,7 @@ impl SlidesView {
             object_editor: None,
             present_notes: true,
             print_layout: slides_pdf::PrintLayout::Slides,
+            spell: spell::SpellState::default(),
         }
     }
 
@@ -563,6 +569,7 @@ impl SlidesView {
 
     fn after_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.status = SharedString::default();
+        self.spell.typing = true;
         self.update_title(window, cx);
         cx.notify();
     }
@@ -751,6 +758,7 @@ impl SlidesView {
             e.typing_props = None;
             e.marked = None;
         }
+        self.spell.typing = false;
         self.pres.seal_history();
         cx.notify();
     }
@@ -1602,6 +1610,7 @@ impl SlidesView {
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
         self.strip_focused = false;
+        self.spell.typing = false;
         if self.pres.is_empty() {
             return;
         }
@@ -2070,6 +2079,8 @@ struct Frame {
         Selection,
         Option<Range<usize>>,
     )>,
+    /// Misspelled words in the edited text: `(paragraph, byte range)`.
+    misspelled: Vec<(usize, Range<usize>)>,
     t: Tokens,
     focused: bool,
     focus: FocusHandle,
@@ -2111,6 +2122,7 @@ impl Render for SlidesView {
             let (x, laid) = self.laid(e.shape)?;
             Some((x, laid, e.sel, e.marked.clone()))
         });
+        let misspelled = self.misspelled_in_edit(cx);
         let viewport = self.viewport.clone();
         let entity = cx.entity().downgrade();
         let frame = Frame {
@@ -2121,6 +2133,7 @@ impl Render for SlidesView {
             painter: self.painter.clone(),
             selected,
             editing,
+            misspelled,
             t,
             focused: self.focus.is_focused(window),
             focus: self.focus.clone(),
@@ -2151,11 +2164,16 @@ impl Render for SlidesView {
             .overflow_hidden()
             .cursor(cursor)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_scroll(cx.listener(Self::on_scroll))
             .child(canvas_el)
-            .children(self.find.bar(cx));
+            .children(self.find.bar(cx))
+            .context_menu({
+                let view = cx.entity().downgrade();
+                move |menu, _, cx| spell::context_menu(menu, &view, cx)
+            });
 
         let strip = div()
             .flex_none()
@@ -2285,7 +2303,8 @@ fn paint_frame(
         f.scroll,
     );
     window.with_content_mask(Some(ContentMask { bounds }), |window| {
-        paint_canvas(f, view, slide_bounds, window)
+        paint_canvas(f, view, slide_bounds, window);
+        paint_misspelled(f, view, window, cx);
     });
     f.painter.drop_evicted(window);
     window.handle_input(
@@ -2431,6 +2450,38 @@ fn paint_canvas(f: &Frame, view: View, slide_bounds: Bounds<Pixels>, window: &mu
                 white()
             };
             paint_rect(window, caret, ink);
+        }
+    }
+}
+
+/// Red wavy underlines under misspelled words in the edited text box
+/// (upright text only: GPUI can't turn an underline).
+fn paint_misspelled(f: &Frame, view: View, window: &mut Window, cx: &App) {
+    let Some((x, laid, _, _)) = &f.editing else {
+        return;
+    };
+    if f.misspelled.is_empty() || Turn::of(x, view).is_some() {
+        return;
+    }
+    let o = text_origin(laid, x, view);
+    let s = view.px_scale();
+    let paged = &laid.layout.paged;
+    let runs = paged.glyph_runs(0);
+    for (para, r) in &f.misspelled {
+        for (_, [rx, ry, rw, rh]) in paged.selection_rects((*para, r.start), (*para, r.end)) {
+            if rw <= 0.0 {
+                continue;
+            }
+            let base = runs
+                .iter()
+                .filter(|run| {
+                    run.para == *para && matches!(run.source, docs_layout::RunSource::Text)
+                })
+                .find(|run| run.baseline >= ry && run.baseline <= ry + rh)
+                .map(|run| run.baseline + (run.font_size * 0.12).max(1.5));
+            let top = base.unwrap_or(ry + rh - 3.0);
+            let origin = point(o.x + px(rx * s), o.y + px(top * s));
+            kantor_ui::spelling::paint_squiggle(window, origin, px(rw * s), s, cx);
         }
     }
 }

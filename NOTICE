@@ -19,6 +19,15 @@ Kantor includes code from these projects, under their own licences:
 * GPUI (https://github.com/zed-industries/zed), Apache-2.0. vendor/gpui-pre-wgpu is a patched
   copy; see that directory.
 
+* Spelling dictionaries, bundled in crates/kantor_spell/dict (details in its README.md):
+  - en_US (American English) from SCOWL (http://wordlist.aspell.net), Copyright 2000-2018 by
+    Kevin Atkinson, with parts from Ispell (Copyright 1993 Geoff Kuenning, BSD-style licence)
+    and WordNet 1.6 (Copyright 1997 Princeton University). Licence and notices:
+    crates/kantor_spell/dict/README_en_US.txt.
+  - id_ID (Indonesian) from hunspell-id (https://github.com/shuLhan/hunspell-id),
+    Copyright the hunspell-id authors and Benitius Brevoort. LGPL-3.0-only:
+    crates/kantor_spell/dict/LICENSE-id_ID.txt.
+
 Other dependencies are linked as crates; their licences are checked by cargo-deny (deny.toml).
 
 ----------------------------------------------------------------------------------------------

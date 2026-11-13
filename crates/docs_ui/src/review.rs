@@ -535,7 +535,14 @@ pub(crate) fn review_button(view: &DocsView, cx: &mut Context<DocsView>) -> impl
         })
         .dropdown_caret(true)
         .tooltip(tip)
-        .dropdown_menu(move |menu, _, _| review_items(menu, &v, track))
+        .dropdown_menu(move |menu, _, cx| {
+            let on = kantor_ui::spelling::enabled(cx);
+            review_items(menu, &v, track).separator().item(
+                PopupMenuItem::new("Check Spelling as You Type")
+                    .checked(on)
+                    .on_click(|_, _, cx| kantor_ui::spelling::toggle(cx)),
+            )
+        })
 }
 
 fn review_items(menu: PopupMenu, view: &WeakEntity<DocsView>, track: bool) -> PopupMenu {

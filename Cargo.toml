@@ -42,6 +42,7 @@ chrono = { version = "0.4", default-features = false }
 
 kantor_ai = { path = "crates/kantor_ai" }
 kantor_core = { path = "crates/kantor_core" }
+kantor_spell = { path = "crates/kantor_spell" }
 kantor_mem = { path = "crates/kantor_mem" }
 kantor_numfmt = { path = "crates/kantor_numfmt" }
 kantor_pdf = { path = "crates/kantor_pdf" }

@@ -834,3 +834,21 @@ fn recovery_copy_round_trip() {
     assert!(back.is_dirty() && back.path().is_none());
     assert_eq!(back.paragraph(0).text, "notes");
 }
+
+#[test]
+fn proofing_spans_follow_run_languages() {
+    use docs_engine::Proofing;
+    let body = r#"<w:p><w:r><w:t xml:space="preserve">Hello </w:t></w:r><w:r><w:rPr><w:lang w:val="id-ID"/></w:rPr><w:t xml:space="preserve">apa kabar </w:t></w:r><w:r><w:rPr><w:lang w:val="id-ID"/><w:b/></w:rPr><w:t xml:space="preserve">teman</w:t></w:r><w:r><w:rPr><w:noProof/></w:rPr><w:t xml:space="preserve"> fn_main</w:t></w:r></w:p>"#;
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_temp(dir.path(), "lang.docx", &package(body, ""));
+    let doc = Document::open(&path).unwrap();
+    assert_eq!(doc.paragraph(0).text, "Hello apa kabar teman fn_main");
+    assert_eq!(
+        doc.proofing_spans(0),
+        [
+            (0..6, Proofing::Check(None)),
+            (6..21, Proofing::Check(Some("id-ID".into()))),
+            (21..29, Proofing::Skip),
+        ]
+    );
+}

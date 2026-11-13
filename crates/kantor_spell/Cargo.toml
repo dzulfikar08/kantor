@@ -1,0 +1,23 @@
+[package]
+name = "kantor_spell"
+description = "Kantor spell checking (no GPUI): bundled en_US and id_ID Hunspell dictionaries, word splitting, personal dictionary"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+# The dictionaries are bundled in the binary (see dict/README.md).
+include = ["src/**", "dict/**", "Cargo.toml"]
+
+[dependencies]
+kantor_core.workspace = true
+log.workspace = true
+# Pure-Rust Hunspell-compatible checker (MPL-2.0), from the Helix editor's authors.
+spellbook = "0.4.2"
+# The system language, for the default dictionary (already in the tree through cosmic-text).
+sys-locale = "0.3"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

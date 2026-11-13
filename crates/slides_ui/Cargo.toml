@@ -14,6 +14,7 @@ docs_layout.workspace = true
 docs_ui.workspace = true
 gpui-kit.workspace = true
 kantor_core.workspace = true
+kantor_spell.workspace = true
 image.workspace = true
 kantor_ui.workspace = true
 log.workspace = true

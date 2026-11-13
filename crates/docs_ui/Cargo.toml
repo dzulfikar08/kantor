@@ -13,6 +13,9 @@ docs_layout.workspace = true
 docs_pdf.workspace = true
 gpui-kit.workspace = true
 kantor_core.workspace = true
+kantor_spell.workspace = true
+# Fast hashing for the spell-check cache keys (already in the tree through spellbook).
+foldhash = "0.2"
 kantor_ui.workspace = true
 log.workspace = true
 # Same version parley uses: reads family/weight/style for the font bridge.

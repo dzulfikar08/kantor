@@ -29,6 +29,7 @@ mod note_menu;
 mod page_menu;
 mod review;
 mod ruler;
+mod spell;
 mod toolbar;
 
 use std::cell::{Cell, RefCell};
@@ -45,6 +46,7 @@ use docs_engine::{
 use docs_layout::{
     Engine, ObjectKind, PageSetup, PagedDocument, ParaLayout, PlacedObject, RunSource,
 };
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -142,6 +144,7 @@ actions!(
 /// Register Docs key bindings. Both Ctrl and Super work (Mac-style Cmd = Super).
 pub fn init(cx: &mut App) {
     ruler::init(cx);
+    kantor_ui::spelling::init(cx);
     kantor_ui::find_bar::bind_app_keys(KEY_CONTEXT, cx);
     let c = Some(KEY_CONTEXT);
     let mut keys = vec![
@@ -491,6 +494,8 @@ pub struct DocsView {
     found: find::Found,
     found_current: Option<usize>,
     _find_sub: Subscription,
+    /// Spell checking as you type.
+    spell: spell::SpellState,
 }
 
 /// Cache key: everything that affects shaping and line breaking.
@@ -589,8 +594,10 @@ impl DocsView {
             found: Rc::default(),
             found_current: None,
             _find_sub: find_sub,
+            spell: spell::SpellState::default(),
         };
         this.relayout();
+        this.refresh_spelling(cx);
         this
     }
 
@@ -689,6 +696,8 @@ impl DocsView {
         self.goal_x = None;
         self.relayout();
         self.refresh_find(cx);
+        self.refresh_spelling(cx);
+        self.spell.typing = true;
         self.reveal_caret.set(true);
         self.status = SharedString::default();
         if self.title(cx) != was_dirty_title {
@@ -707,6 +716,7 @@ impl DocsView {
         }
         self.typing_props = None;
         self.marked = None;
+        self.spell.typing = false;
         self.reveal_caret.set(true);
         cx.notify();
     }
@@ -1413,6 +1423,7 @@ impl DocsView {
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
         self.table_picker = None;
+        self.spell.typing = false;
         // A double click on a footnote or endnote (or its number) edits it.
         if ev.click_count == 2
             && let Some((kind, id)) = self.note_at_point(ev.position)
@@ -1796,6 +1807,8 @@ struct Frame {
     markup: f32,
     comment_ranges: Vec<(Position, Position, bool)>,
     card_lines: Vec<(Point<Pixels>, Point<Pixels>, bool)>,
+    /// Misspelled words on the visible pages: `(paragraph, byte range)`.
+    misspelled: Vec<(usize, Range<usize>)>,
     t: Tokens,
     bridge: Rc<RefCell<FontBridge>>,
     focus: FocusHandle,
@@ -1852,6 +1865,35 @@ fn paint_runs<'a>(
                 y + thick.max(1.0 / z),
             );
             window.paint_quad(fill(Bounds::from_corners(a, b), color));
+        }
+    }
+}
+
+/// Red wavy underlines under the misspelled words on `page`, just below
+/// the baseline of the line they're on.
+fn paint_misspelled(
+    window: &mut Window,
+    g: &Geometry,
+    page: usize,
+    paged: &PagedDocument,
+    runs: &[docs_layout::GlyphRun],
+    words: &[(usize, Range<usize>)],
+    cx: &App,
+) {
+    for (para, r) in words {
+        for (p, [x, y, w, h]) in paged.selection_rects((*para, r.start), (*para, r.end)) {
+            if p != page || w <= 0.0 {
+                continue;
+            }
+            // The baseline of a run of this paragraph on this line.
+            let base = runs
+                .iter()
+                .filter(|run| run.para == *para && matches!(run.source, RunSource::Text))
+                .find(|run| run.baseline >= y && run.baseline <= y + h)
+                .map(|run| run.baseline + (run.font_size * 0.12).max(1.5));
+            let top = base.unwrap_or(y + h - 3.0);
+            let origin = g.page_to_screen(page, x, top);
+            kantor_ui::spelling::paint_squiggle(window, origin, px(w * g.zoom), g.zoom, cx);
         }
     }
 }
@@ -2019,6 +2061,7 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                 (&mut bridge, &ts, &f.t),
             );
             drop(bridge);
+            paint_misspelled(window, &g, page, paged, &runs, &f.misspelled, cx);
             if let Some(x) = f.guide {
                 let line = [x - 0.5 / z, 0., 1. / z, page_h];
                 window.paint_quad(fill(rect(page, line), f.t.accent));
@@ -2093,6 +2136,29 @@ impl Render for DocsView {
             .map(|c| (c.anchor, point(c.at.x, c.at.y + px(14.)), c.active))
             .collect();
         let card_elements = self.render_cards(&cards, cx);
+        if kantor_ui::spelling::enabled(cx) != self.spell.is_on()
+            || (self.spell.is_on() && self.spell.flags.len() != self.doc.len())
+        {
+            self.refresh_spelling(cx);
+        }
+        let misspelled = if self.spell.is_on() {
+            let paged = &self.laid.paged;
+            let visible = self.geometry().visible_pages(paged.pages.len());
+            let mut paras = paged.pages[visible]
+                .iter()
+                .flat_map(|p| p.lines.iter().map(|l| l.para));
+            let first = paras.next();
+            let (lo, hi) = paras.fold((first.unwrap_or(0), first.unwrap_or(0)), |(lo, hi), p| {
+                (lo.min(p), hi.max(p))
+            });
+            if first.is_some() {
+                self.spell_ranges_in(lo..hi + 1)
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
         let frame = Frame {
             laid: self.laid.clone(),
             images,
@@ -2112,6 +2178,7 @@ impl Render for DocsView {
             },
             comment_ranges,
             card_lines,
+            misspelled,
             t,
             bridge: self.bridge.clone(),
             focus: self.focus.clone(),
@@ -2141,6 +2208,7 @@ impl Render for DocsView {
             .overflow_hidden()
             .cursor(CursorStyle::IBeam)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(
                 MouseButton::Left,
@@ -2151,6 +2219,10 @@ impl Render for DocsView {
             .children(card_elements)
             .when(self.find.read(cx).is_open(), |el| {
                 el.child(self.find.clone())
+            })
+            .context_menu({
+                let view = cx.entity().downgrade();
+                move |menu, _, cx| spell::context_menu(menu, &view, cx)
             });
 
         let root = v_flex()

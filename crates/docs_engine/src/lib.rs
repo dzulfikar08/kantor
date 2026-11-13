@@ -43,5 +43,7 @@ pub use section::{
     HfKind, HfType, NumFormat, PageField, Section, SectionProps, SectionStart, Story, TabKind,
     page_field, with_page_numbers,
 };
-pub use style::{HEADING_STYLES, ResolvedLine, ResolvedPara, ResolvedRun, StyleSheet, font_stack};
+pub use style::{
+    HEADING_STYLES, Proofing, ResolvedLine, ResolvedPara, ResolvedRun, StyleSheet, font_stack,
+};
 pub use table::{Border, Borders, Table, VMerge};

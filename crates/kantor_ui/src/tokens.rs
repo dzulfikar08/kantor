@@ -45,6 +45,9 @@ pub struct Tokens {
     pub paper: Hsla,
     pub paper_ink: Hsla,
     pub paper_selection: Hsla,
+    /// Red wavy underline under misspelled words (on paper and slides, so
+    /// the same in every theme, as Word's).
+    pub paper_misspelled: Hsla,
     /// Find matches on the page (Docs) and the current match, stronger.
     pub find_match: Hsla,
     pub find_match_current: Hsla,
@@ -153,6 +156,7 @@ impl Tokens {
             paper: c(0xffffff),
             paper_ink: c(0x111111),
             paper_selection: alpha(p.accent, 0.30),
+            paper_misspelled: c(0xe02020),
             find_match: alpha(p.yellow, 0.35),
             find_match_current: alpha(p.yellow, 0.80),
             grid_line: if p.dark { on_bg(0.12) } else { on_bg(0.14) },

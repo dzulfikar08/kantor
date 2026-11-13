@@ -1652,9 +1652,11 @@ dependencies = [
  "docs_engine",
  "docs_layout",
  "docs_pdf",
+ "foldhash",
  "gpui-kit",
  "gpui-pre-wgpu",
  "kantor_core",
+ "kantor_spell",
  "kantor_ui",
  "log",
  "skrifa 0.44.0",
@@ -4098,6 +4100,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kantor_spell"
+version = "0.4.0"
+dependencies = [
+ "kantor_core",
+ "log",
+ "spellbook",
+ "sys-locale",
+ "tempfile",
+]
+
+[[package]]
 name = "kantor_theme"
 version = "0.4.0"
 dependencies = [
@@ -4114,7 +4127,9 @@ dependencies = [
  "gpui-kit",
  "gpui-pre-wgpu",
  "kantor_core",
+ "kantor_spell",
  "kantor_theme",
+ "log",
  "tempfile",
 ]
 
@@ -7146,6 +7161,7 @@ dependencies = [
  "gpui-kit",
  "image",
  "kantor_core",
+ "kantor_spell",
  "kantor_ui",
  "log",
  "lyon_tessellation",
@@ -7203,6 +7219,16 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "spellbook"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d204abcbdf8e88729306a8d0ca01a79d8a49969fe1f84696909d6dbc4321c1a"
+dependencies = [
+ "foldhash",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]

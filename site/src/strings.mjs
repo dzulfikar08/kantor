@@ -172,7 +172,6 @@ export const en = {
     "Kantor is early software and hasn't been tried on a large set of real-world files yet. Keep a copy of anything important, and expect these gaps:",
   limits: [
     "Printing goes through your PDF viewer: Kantor makes the pages and the viewer sends them to the printer.",
-    "No spell check yet.",
     "Word: floating pictures, shapes and equations aren't shown properly yet, and headers and footers with pictures or tables can't be edited. Kantor keeps them and saves them unchanged.",
     "Word: dot leaders at tab stops aren't drawn, and a footnote or endnote too long for its page doesn't continue onto the next one.",
     "Word: you can track your own edits, add comments and accept or reject changes, but formatting changes you make aren't tracked yet.",
@@ -360,7 +359,6 @@ export const id = {
     "Kantor masih baru dan belum dicoba dengan banyak file dari dunia nyata. Simpan salinan file penting, dan perhatikan kekurangan berikut:",
   limits: [
     "Pencetakan lewat penampil PDF: Kantor menyiapkan halamannya, lalu penampil PDF mengirimnya ke printer.",
-    "Belum ada pemeriksa ejaan.",
     "Word: gambar mengambang, bentuk, dan persamaan belum tampil dengan benar, dan header atau footer yang berisi gambar atau tabel belum bisa diedit. Kantor menyimpannya tanpa diubah.",
     "Word: garis titik-titik (leader) di tab belum digambar, dan catatan kaki atau catatan akhir yang terlalu panjang untuk halamannya belum berlanjut ke halaman berikutnya.",
     "Word: Anda bisa melacak suntingan Anda sendiri (track changes), menambah komentar, dan menerima atau menolak perubahan, tetapi perubahan format yang Anda buat belum dilacak.",
