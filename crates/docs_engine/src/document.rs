@@ -189,6 +189,11 @@ pub struct Document {
     pub numbering: Numbering,
     pub page: PageGeometry,
     path: Option<PathBuf>,
+    /// The `.doc` / `.dot` this document was imported from (Save never
+    /// writes there: [`Self::path`] is `None` until saved as `.docx`).
+    origin: Option<PathBuf>,
+    /// What the import couldn't bring over (e.g. "comments not imported").
+    import_notes: Vec<String>,
     /// The `.docx` package this document was read from: Save copies its
     /// parts and regenerates only the body.
     pub(crate) package: Option<Package>,
@@ -240,6 +245,8 @@ impl Document {
             numbering: Numbering::default(),
             page: PageGeometry::default(),
             path: None,
+            origin: None,
+            import_notes: Vec::new(),
             package: None,
             media: HashMap::new(),
             new_media: Vec::new(),
@@ -268,13 +275,52 @@ impl Document {
         doc
     }
 
-    /// Open a `.docx` file.
+    /// Open a `.docx` file, or import a Word 97-2003 `.doc` / `.dot` (told
+    /// apart by content, not by name). An import has no file to save to:
+    /// Save asks for a new `.docx`, as for a new document.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let bytes = std::fs::read(path)
             .map_err(|e| anyhow::anyhow!("Can't read {}: {e}", path.display()))?;
+        if crate::msdoc::is_compound(&bytes) {
+            return Self::import_doc(&bytes, path);
+        }
         let read = docx::read(bytes)
             .map_err(|e| anyhow::anyhow!("Can't open {}: {e:#}", path.display()))?;
         Ok(Self::from_read(read, Some(path.to_path_buf())))
+    }
+
+    /// Import a Word 97-2003 document read from `path`.
+    pub fn import_doc(bytes: &[u8], path: &Path) -> anyhow::Result<Self> {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let imported =
+            crate::msdoc::import(bytes).map_err(|e| anyhow::anyhow!("Can't open {name}: {e:#}"))?;
+        let read =
+            docx::read(imported.docx).map_err(|e| anyhow::anyhow!("Can't open {name}: {e:#}"))?;
+        let mut doc = Self::from_read(read, None);
+        doc.origin = Some(path.to_path_buf());
+        doc.import_notes = imported.notes;
+        Ok(doc)
+    }
+
+    /// Whether this document was imported from a `.doc` / `.dot` and not
+    /// yet saved as `.docx`.
+    pub fn is_imported(&self) -> bool {
+        self.path.is_none() && self.origin.is_some()
+    }
+
+    /// The file this document was opened from or last saved to, imports
+    /// included (unlike [`Self::path`]). Use it to identify the document.
+    pub fn source_path(&self) -> Option<&Path> {
+        self.path.as_deref().or(self.origin.as_deref())
+    }
+
+    /// What an import couldn't bring over faithfully, e.g. "comments not
+    /// imported". Empty for `.docx`.
+    pub fn import_notes(&self) -> &[String] {
+        &self.import_notes
     }
 
     /// A document from read `.docx` contents.
@@ -291,6 +337,8 @@ impl Document {
             numbering: read.numbering,
             page: read.page,
             path,
+            origin: None,
+            import_notes: Vec::new(),
             package: Some(read.package),
             media: read.media,
             new_media: Vec::new(),
@@ -333,10 +381,9 @@ impl Document {
         self.path.as_deref()
     }
 
-    /// File name for tabs, e.g. `report.docx`.
+    /// File name for tabs, e.g. `report.docx` (`form.doc` for an import).
     pub fn title(&self) -> String {
-        self.path
-            .as_deref()
+        self.source_path()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Untitled.docx".to_owned())
@@ -344,7 +391,8 @@ impl Document {
 
     /// Default name for Save As.
     pub fn suggested_file_name(&self) -> String {
-        match self.path.as_deref().and_then(|p| p.file_stem()) {
+        match self.source_path().and_then(|p| p.file_stem()) {
+            Some(stem) if self.is_imported() => format!("{}.docx", stem.to_string_lossy()),
             Some(stem) if self.has_unsupported_content() => {
                 format!("{} (Kantor).docx", stem.to_string_lossy())
             }
@@ -383,7 +431,15 @@ impl Document {
     ) -> anyhow::Result<Self> {
         let read = docx::read(bytes)
             .map_err(|e| anyhow::anyhow!("Can't read the recovery copy: {e:#}"))?;
-        let mut doc = Self::from_read(read, original);
+        // A copy of an imported .doc: the .doc is never the save target.
+        let imported = original.as_deref().is_some_and(is_legacy_doc);
+        let mut doc = if imported {
+            let mut d = Self::from_read(read, None);
+            d.origin = original;
+            d
+        } else {
+            Self::from_read(read, original)
+        };
         for u in unsupported {
             if !doc.unsupported.contains(&u) {
                 doc.unsupported.push(u);
@@ -599,8 +655,14 @@ impl Document {
     /// Plain text of a range; paragraphs are separated by `\n`.
     pub fn text_in(&self, start: Position, end: Position) -> String {
         let mut out = String::new();
-        for i in start.para..=end.para {
-            let text = &self.paragraphs[i].text;
+        for (i, p) in self
+            .paragraphs
+            .iter()
+            .enumerate()
+            .take(end.para + 1)
+            .skip(start.para)
+        {
+            let text = &p.text;
             let a = if i == start.para { start.offset } else { 0 };
             let b = if i == end.para {
                 end.offset
@@ -1033,8 +1095,14 @@ impl Document {
             return false;
         }
         let mut out = Vec::with_capacity(end.para - start.para + 1);
-        for i in start.para..=end.para {
-            let mut p = self.paragraphs[i].clone();
+        for (i, p) in self
+            .paragraphs
+            .iter()
+            .enumerate()
+            .take(end.para + 1)
+            .skip(start.para)
+        {
+            let mut p = p.clone();
             let a = if i == start.para { start.offset } else { 0 };
             let b = if i == end.para {
                 end.offset
@@ -1194,6 +1262,15 @@ impl Document {
     /// Save to `path` and make it this document's file. Refuses to write over
     /// the original of a document with unsupported content.
     pub fn save_as(&mut self, path: &Path) -> anyhow::Result<()> {
+        if let Some(orig) = self.origin.as_deref()
+            && self.path.is_none()
+            && same_file(orig, path)
+        {
+            anyhow::bail!(
+                "Not overwriting {}: Kantor saves Word documents as .docx. Choose a new name.",
+                self.title()
+            );
+        }
         if self.has_unsupported_content()
             && let Some(orig) = self.path.as_deref()
             && same_file(orig, path)
@@ -1206,6 +1283,8 @@ impl Document {
         }
         self.write(path)?;
         self.path = Some(path.to_path_buf());
+        self.origin = None;
+        self.import_notes.clear();
         // The new file holds exactly what's in memory.
         self.unsupported.clear();
         Ok(())
@@ -1231,6 +1310,19 @@ impl Document {
         self.body_sect = self.package.as_ref().and_then(|p| p.sect_pr.clone());
         self.history.saved = self.history.top();
         Ok(())
+    }
+}
+
+/// Whether `path` is a Word 97-2003 file (by content; by name if it can't
+/// be read).
+pub fn is_legacy_doc(path: &Path) -> bool {
+    use std::io::Read as _;
+    let mut head = [0u8; 8];
+    match std::fs::File::open(path).and_then(|mut f| f.read_exact(&mut head)) {
+        Ok(()) => crate::msdoc::is_compound(&head),
+        Err(_) => path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("doc") || e.eq_ignore_ascii_case("dot")),
     }
 }
 

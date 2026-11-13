@@ -55,6 +55,7 @@ cat > "$app/Contents/Info.plist" <<EOF
 $(doc_type "Spreadsheet" Editor xlsx csv tsv)
 $(doc_type "Spreadsheet (import)" Viewer xls xlsb ods)
 $(doc_type "Document" Editor docx)
+$(doc_type "Document (import)" Viewer doc dot)
 $(doc_type "Presentation" Editor pptx)
   </array>
 </dict>

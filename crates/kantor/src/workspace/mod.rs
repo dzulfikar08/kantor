@@ -60,8 +60,8 @@ impl AppKind {
         let ext = path.extension()?.to_str()?.to_ascii_lowercase();
         match ext.as_str() {
             "xlsx" | "xlsm" | "xls" | "xlsb" | "ods" | "csv" | "tsv" => Some(Self::Sheets),
-            // Docs reads .docx only (.doc / .odt / .rtf aren't supported yet).
-            "docx" => Some(Self::Docs),
+            // .doc / .dot (Word 97-2003) are imported; Save writes .docx.
+            "docx" | "doc" | "dot" => Some(Self::Docs),
             // Slides reads .pptx only (.ppt / .odp aren't supported).
             "pptx" => Some(Self::Slides),
             _ => None,

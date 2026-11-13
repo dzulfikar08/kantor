@@ -7,6 +7,7 @@
 //! - [`docx`]: reading and writing `.docx`, and the round-trip safety rules
 //!   (what's modelled, kept verbatim, carried as an opaque object, or
 //!   "unsupported content" that sends Save to Save As).
+//! - `msdoc`: importing Word 97-2003 `.doc` / `.dot` files (read only).
 //! - [`numbering`]: lists; [`table`]: tables; [`object`]: inline pictures
 //!   and opaque elements.
 
@@ -16,6 +17,7 @@ pub mod docx;
 mod edit;
 pub mod find;
 pub mod model;
+mod msdoc;
 pub mod notes;
 pub mod numbering;
 pub mod object;
@@ -28,7 +30,9 @@ pub mod table;
 mod track;
 mod xml;
 
-pub use document::{Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, Toggle};
+pub use document::{
+    Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, Toggle, is_legacy_doc,
+};
 pub use edit::TableEdit;
 pub use model::{
     Align, CellRef, Fonts, Indent, LineRule, LineSpacing, NumRef, ParaProps, Paragraph, Position,

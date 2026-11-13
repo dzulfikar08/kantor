@@ -54,6 +54,9 @@ impl DocsView {
                         self.doc.unsupported_content().join(", ")
                     )
                 }
+                if self.doc.is_imported() {
+                    bail!("this document was imported from a Word 97-2003 file; give a .docx path")
+                }
                 bail!("this document has no file yet; give a path")
             }
             None => self.doc.save(),
