@@ -3,17 +3,18 @@
 //! range-wide numbers of conditional formatting) and want to keep them
 //! across edits that don't touch them. See KANTOR_PATCHES.md §16.
 //!
-//! [`UserModel`](crate::UserModel) puts every change on its `send_queue`
-//! (upstream: for syncing a remote copy). Kantor never sends it, so the
-//! queue held a second copy of every diff for the whole session;
+//! [`UserModel`](crate::UserModel) sums up every diff list it pushes, undoes
+//! or redoes into a [`KantorChanges`], which
 //! [`UserModel::kantor_take_changes`](crate::UserModel::kantor_take_changes)
-//! empties it into a [`KantorChanges`] summary instead.
+//! hands over and starts again. (Upstream puts every change on its
+//! `send_queue`, for syncing a remote copy; Kantor never sends it and turns
+//! it off with `UserModel::kantor_stop_send_queue`.)
 //!
 //! Formula results change without a diff, when the model is evaluated:
 //! [`Model::kantor_evaluations`](crate::Model::kantor_evaluations) counts
 //! evaluations.
 
-use crate::user_model::history::{Diff, QueueDiffs};
+use crate::user_model::history::Diff;
 
 /// More rectangles than this on one sheet are summed up as the whole sheet.
 const MAX_RECTS_PER_SHEET: usize = 64;
@@ -110,14 +111,6 @@ impl KantorChanges {
     pub(crate) fn add_list(&mut self, list: &[Diff]) {
         for diff in list {
             self.diff(diff);
-        }
-    }
-
-    pub(crate) fn add(&mut self, queue: &[QueueDiffs]) {
-        for q in queue {
-            for diff in &q.list {
-                self.diff(diff);
-            }
         }
     }
 

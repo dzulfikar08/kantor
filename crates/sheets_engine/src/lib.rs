@@ -444,8 +444,9 @@ impl Workbook {
     /// A new, empty workbook with one sheet.
     pub fn new_empty() -> Result<Self> {
         lazy_conditional_formatting();
-        let model = UserModel::new_empty("Untitled", LOCALE, TIMEZONE, LANGUAGE)
+        let mut model = UserModel::new_empty("Untitled", LOCALE, TIMEZONE, LANGUAGE)
             .map_err(|e| anyhow!("creating workbook: {e}"))?;
+        model.kantor_stop_send_queue();
         let table_styles = table::CustomStyles::default();
         Ok(Self {
             model,
@@ -536,6 +537,7 @@ impl Workbook {
             _ => table::CustomStyles::default(),
         };
         let mut model = UserModel::from_model(model);
+        model.kantor_stop_send_queue();
         if calc.mode == CalcMode::Manual {
             model.pause_evaluation();
         }

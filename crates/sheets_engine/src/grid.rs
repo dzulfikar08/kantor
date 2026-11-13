@@ -1165,6 +1165,32 @@ mod tests {
         assert_eq!(wb.input(0, 0, 2), "=B1+1");
     }
 
+    /// A big fill is one undo step that restores exactly, and IronCalc's
+    /// sync queue (a copy of every diff list) is off: on a sheet without
+    /// conditional formatting nothing ever emptied it.
+    #[test]
+    fn big_fill_undoes_in_one_step_and_keeps_no_queue() {
+        let mut wb = book(&[(0, 0, "5"), (0, 1, "=A1*2"), (0, 2, "=SUM($A$1:A1)")]);
+        let before = (wb.input(0, 1999, 1), wb.used_size(0));
+        wb.fill(
+            0,
+            &Fill::down(CellRange::from_corners((0, 0), (1999, 2))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(wb.input(0, 1999, 1), "=A2000*2");
+        assert_eq!(wb.input(0, 1999, 2), "=SUM($A$1:A2000)");
+        assert_eq!(wb.display_value(0, 1999, 2), "10000");
+        let empty = ironcalc_base::UserModel::new_empty("x", "en", "UTC", "en")
+            .unwrap()
+            .flush_send_queue();
+        assert_eq!(wb.model.flush_send_queue(), empty);
+        wb.undo().unwrap();
+        assert_eq!((wb.input(0, 1999, 1), wb.used_size(0)), before);
+        assert_eq!(wb.input(0, 0, 1), "=A1*2");
+        wb.redo().unwrap();
+        assert_eq!(wb.input(0, 1999, 2), "=SUM($A$1:A2000)");
+    }
+
     #[test]
     fn insert_and_delete_shift_formulas() {
         let mut wb = book(&[(0, 0, "1"), (1, 0, "2"), (2, 0, "=A1+A2")]);
