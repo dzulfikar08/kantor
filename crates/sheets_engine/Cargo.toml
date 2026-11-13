@@ -12,6 +12,7 @@ ironcalc.workspace = true
 ironcalc_base.workspace = true
 kantor_numfmt.workspace = true
 calamine.workspace = true
+cfb.workspace = true
 encoding_rs.workspace = true
 log.workspace = true
 roxmltree.workspace = true

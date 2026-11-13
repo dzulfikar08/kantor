@@ -10,6 +10,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ## [Unreleased]
 
 ### Added
+- Sheets: Excel 97-2003 files (`.xls`) open looking as they do in Excel, not just their values:
+  fonts, fill colours, borders, number formats, alignment (wrap, indent, rotation), merged cells,
+  column widths, row heights, frozen panes, gridlines, hidden rows, columns and sheets, tab
+  colours, the sheet that was open, hyperlinks, named ranges and page setup (paper, orientation,
+  margins, fit to page, print area and titles, headers and footers, page breaks). Workbooks in
+  the 1904 date system show the right dates. Excel 97-2003 templates (`.xlt`) open too. Saving
+  still writes a new `.xlsx`. Comments, data validation, conditional formatting, charts and
+  pictures in `.xls` files aren't imported yet.
 - Spell check in Docs and Slides, offline, for English and Indonesian: misspelled words get a red
   wavy underline as you type. Right-click one for up to five suggestions, Ignore All or Add to
   Dictionary (your words are kept in `dictionary.txt` next to settings.toml). Text marked with a

@@ -13,9 +13,18 @@
 //!   ODS ones (`of:=SUM([.A1:.B2])`) are converted (references, `;` → `,`).
 //!   A formula that fails to evaluate in IronCalc while the file's cached value
 //!   was not an error is replaced by that cached value, and counted in
-//!   [`Workbook::import_notes`](crate::Workbook::import_notes). Styles, merged
-//!   cells, column widths, comments and charts are not imported.
+//!   [`Workbook::import_notes`](crate::Workbook::import_notes).
+//! * **XLS / XLT** (Excel 97-2003, BIFF8) also keep their look: [`crate::xls`]
+//!   reads the formatting calamine skips (cell formats, merges, column widths,
+//!   row heights, frozen panes, gridlines, hidden and coloured tabs,
+//!   hyperlinks, page setup, sheet-local and print names, the 1904 date
+//!   system). Comments, data validation, conditional formatting, charts and
+//!   pictures are not imported. Older BIFF5 files (Excel 5/95) get values
+//!   only.
+//! * ODS and XLSB imports bring values and formulas only: no styles, merged
+//!   cells, column widths, comments or charts.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -25,6 +34,8 @@ use ironcalc_base::Model;
 use ironcalc_base::cell::CellValue;
 use ironcalc_base::types::CellType;
 
+use crate::print::SheetPrint;
+use crate::xls::{DAYS_1904, XlsFormat};
 use crate::{LANGUAGE, LOCALE, MAX_COLS, MAX_ROWS, TIMEZONE, csv};
 
 /// The kind of file a [`Workbook`](crate::Workbook) was opened from, which
@@ -57,7 +68,7 @@ impl SourceFormat {
             "csv" => Self::Csv { delimiter: b',' },
             "tsv" | "tab" => Self::Csv { delimiter: b'\t' },
             "ods" => Self::Ods,
-            "xls" | "xla" => Self::Xls,
+            "xls" | "xla" | "xlt" => Self::Xls,
             "xlsb" => Self::Xlsb,
             _ => return None,
         })
@@ -98,6 +109,13 @@ impl SourceFormat {
 fn empty_model(name: &'static str) -> Result<Model<'static>> {
     Model::new_empty(name, LOCALE, TIMEZONE, LANGUAGE)
         .map_err(|e| anyhow!("creating workbook: {e}"))
+}
+
+#[cfg(test)]
+pub(crate) fn empty_model_for_tests() -> Model<'static> {
+    let mut m = empty_model("Untitled").unwrap();
+    m.rename_sheet("Sheet1", "Report").unwrap();
+    m
 }
 
 fn sheet_name_from(path: &Path) -> String {
@@ -183,25 +201,63 @@ pub(crate) fn write_csv(model: &Model<'_>, sheet: u32, path: &Path, delimiter: u
     })
 }
 
-/// Read an `.ods` / `.xls` / `.xlsb` file via calamine. Returns the evaluated
-/// model and notes about what could not be imported faithfully.
+/// What an import brings besides the model.
+#[derive(Default)]
+pub(crate) struct Imported {
+    /// What could not be imported faithfully.
+    pub notes: Vec<String>,
+    /// Each sheet's print settings (`.xls`), by sheet index.
+    pub prints: Vec<SheetPrint>,
+    /// `Print_Area` and `Print_Titles` formulas, by sheet index.
+    pub print_names: HashMap<u32, (Option<String>, Option<String>)>,
+    /// The tab the file opens on.
+    pub active_sheet: Option<u32>,
+}
+
+/// Read an `.ods` / `.xls` / `.xlsb` file via calamine (and `.xls`
+/// formatting via [`crate::xls`]). Returns the evaluated model.
 pub(crate) fn read_calamine(
     path: &Path,
     format: SourceFormat,
-) -> Result<(Model<'static>, Vec<String>)> {
+) -> Result<(Model<'static>, Imported)> {
+    // The formatting pass reads the file again, meanwhile.
+    let reading = (format == SourceFormat::Xls).then(|| {
+        let path = path.to_path_buf();
+        std::thread::spawn(move || XlsFormat::read(&path))
+    });
     let mut book =
         open_workbook_auto(path).map_err(|e| anyhow!("opening {}: {e}", path.display()))?;
     let names = book.sheet_names();
     if names.is_empty() {
         bail!("{} has no sheets", path.display());
     }
+    let mut imported = Imported::default();
+    let read = reading.map(|h| {
+        h.join()
+            .unwrap_or_else(|_| Err(anyhow!("the formatting reader failed")))
+    });
+    let xls = match read {
+        Some(read) => match read {
+            Ok(x) => Some(x),
+            Err(e) => {
+                log::warn!("{}: formatting not read: {e}", path.display());
+                imported
+                    .notes
+                    .push("formatting not imported (not an Excel 97-2003 file)".into());
+                None
+            }
+        },
+        None => None,
+    };
+    let date1904 = xls.as_ref().is_some_and(|x| x.globals.date1904);
+    // With the file's own formats coming, dates need no format of ours.
+    let styled = xls.is_some();
     let mut model = empty_model("Untitled")?;
     // Formula cells and their cached values, for the check below.
     let mut formulas: Vec<(u32, i32, i32, Data, bool)> = Vec::new();
     let mut kept_values = 0;
 
     for (ix, name) in names.iter().enumerate() {
-        let sheet = ix as u32;
         if ix == 0 {
             model
                 .rename_sheet("Sheet1", name)
@@ -211,13 +267,20 @@ pub(crate) fn read_calamine(
                 .add_sheet(name)
                 .map_err(|e| anyhow!("sheet {name:?}: {e}"))?;
         }
+    }
+    // Names before formulas: a formula using an unknown name doesn't parse.
+    if let Some(x) = &xls {
+        add_xls_names(&mut model, &book, x, &names, &mut imported);
+    }
+    for (ix, name) in names.iter().enumerate() {
+        let sheet = ix as u32;
         let values = book
             .worksheet_range(name)
             .map_err(|e| anyhow!("reading sheet {name:?}: {e}"))?;
         if let Some((r0, c0)) = values.start() {
             for (r, c, value) in values.used_cells() {
                 let (row, col) = cell_index(r0 as usize + r, c0 as usize + c)?;
-                set_value(&mut model, sheet, row, col, value).map_err(|e| {
+                set_value(&mut model, sheet, row, col, value, date1904, styled).map_err(|e| {
                     anyhow!(
                         "{name}!{}: {e}",
                         crate::cell_name(row as u32 - 1, col as u32 - 1)
@@ -245,7 +308,7 @@ pub(crate) fn read_calamine(
                 SourceFormat::Xls => repair_xls_ref3d(&f, &names),
                 _ => f,
             });
-            let imported = formula.is_some_and(|f| {
+            let ok = formula.is_some_and(|f| {
                 let volatile = is_volatile(&f);
                 let ok = model.set_user_input(sheet, row, col, f).is_ok();
                 if ok {
@@ -253,8 +316,8 @@ pub(crate) fn read_calamine(
                 }
                 ok
             });
-            if !imported {
-                keep_cached(&mut model, sheet, row, col, &cached)?;
+            if !ok {
+                keep_cached(&mut model, sheet, row, col, &cached, date1904)?;
                 kept_values += 1;
             }
         }
@@ -271,32 +334,139 @@ pub(crate) fn read_calamine(
             Ok(CellType::ErrorValue)
         );
         let differs = errored && !matches!(cached, Data::Error(_))
-            || !volatile && same_result(&model, sheet, row, col, &cached) == Some(false);
+            || !volatile && same_result(&model, sheet, row, col, &cached, date1904) == Some(false);
         if differs {
-            keep_cached(&mut model, sheet, row, col, &cached)?;
+            keep_cached(&mut model, sheet, row, col, &cached, date1904)?;
             kept_values += 1;
             replaced = true;
         }
     }
+    // After the check: clearing the covered cells of merges changes values.
+    if let Some(x) = &xls {
+        let (prints, cleared) = x.apply(&mut model, &names);
+        imported.prints = prints;
+        imported.active_sheet = Some(x.globals.active).filter(|&a| (a as usize) < names.len());
+        replaced |= cleared;
+    }
     if replaced {
         model.evaluate();
     }
-    let mut notes = Vec::new();
     if kept_values > 0 {
-        notes.push(format!(
+        imported.notes.push(format!(
             "{kept_values} formula{} kept as values",
             if kept_values == 1 { "" } else { "s" }
         ));
     }
-    Ok((model, notes))
+    Ok((model, imported))
+}
+
+/// The file's defined names: calamine decodes their formulas, the `LBL`
+/// records (same order) say which are sheet-local or built in. Print areas
+/// and titles go to the print settings; other built-in names are dropped.
+fn add_xls_names<R: std::io::Read + std::io::Seek>(
+    model: &mut Model<'_>,
+    book: &calamine::Sheets<R>,
+    x: &XlsFormat,
+    sheets: &[String],
+    imported: &mut Imported,
+) {
+    let decoded = book.defined_names();
+    for (label, (_, formula)) in x.globals.labels.iter().zip(decoded) {
+        // calamine decodes name formulas without the cell formulas' PtgRef3d
+        // slip (see `repair_xls_ref3d`).
+        let Some(formula) = excel_formula(formula) else {
+            continue;
+        };
+        let formula = formula.trim_start_matches('=').to_owned();
+        // LibreOffice also writes print areas as ordinary `_xlnm.` names.
+        if formula.contains("#REF!")
+            || label.name.is_empty()
+            || label.name.to_ascii_lowercase().starts_with("_xlnm.")
+        {
+            continue;
+        }
+        let sheet = label.sheet.filter(|&s| (s as usize) < sheets.len());
+        match label.builtin {
+            Some(code @ (6 | 7)) => {
+                let Some(sheet) = sheet else { continue };
+                let formula = whole_rows_and_columns(&formula);
+                let entry = imported.print_names.entry(sheet).or_default();
+                if code == 6 {
+                    entry.0 = Some(formula);
+                } else {
+                    entry.1 = Some(formula);
+                }
+            }
+            Some(_) => {}
+            None => {
+                // IronCalc checks the name and parses its formula. Names it
+                // can't take (constants, unions) are left out.
+                if let Err(e) = model.new_defined_name(&label.name, sheet, &formula) {
+                    log::info!("name {} = {formula}: {e}", label.name);
+                }
+            }
+        }
+    }
+}
+
+/// BIFF8 has no whole-row or whole-column references: print titles are
+/// stored as `Sheet!$A$1:$IV$2` (all 256 columns) or `$A$1:$B$65536`. Write
+/// them as `Sheet!$1:$2` and `Sheet!$A:$B`, as `.xlsx` does.
+fn whole_rows_and_columns(formula: &str) -> String {
+    let parts: Vec<String> = split_outside_quotes(formula, ',')
+        .into_iter()
+        .map(|part| {
+            let (prefix, area) = match part.rsplit_once('!') {
+                Some((sheet, area)) => (format!("{sheet}!"), area),
+                None => (String::new(), part),
+            };
+            let cell = |c: &str| -> Option<(String, u32)> {
+                let c = c.trim_start_matches('$');
+                let n = c.bytes().take_while(u8::is_ascii_alphabetic).count();
+                let (col, row) = c.split_at(n);
+                Some((col.to_owned(), row.trim_start_matches('$').parse().ok()?))
+            };
+            let whole = area.split_once(':').and_then(|(a, b)| {
+                let ((c1, r1), (c2, r2)) = (cell(a)?, cell(b)?);
+                if c1 == "A" && c2 == "IV" {
+                    Some(format!("${r1}:${r2}"))
+                } else if r1 == 1 && r2 == 65536 {
+                    Some(format!("${c1}:${c2}"))
+                } else {
+                    None
+                }
+            });
+            match whole {
+                Some(w) => format!("{prefix}{w}"),
+                None => part.to_owned(),
+            }
+        })
+        .collect();
+    parts.join(",")
 }
 
 /// A formula that can't be imported: store the file's cached value instead.
-fn keep_cached(model: &mut Model<'_>, sheet: u32, row: i32, col: i32, cached: &Data) -> Result<()> {
+fn keep_cached(
+    model: &mut Model<'_>,
+    sheet: u32,
+    row: i32,
+    col: i32,
+    cached: &Data,
+    date1904: bool,
+) -> Result<()> {
     model
         .set_user_input(sheet, row, col, String::new())
         .map_err(|e| anyhow!("{e}"))?;
-    set_value(model, sheet, row, col, cached).map_err(|e| anyhow!("{e}"))
+    set_value(model, sheet, row, col, cached, date1904, false).map_err(|e| anyhow!("{e}"))
+}
+
+/// A calamine date as a serial in the 1900 date system (Kantor's).
+fn date_serial(dt: &calamine::ExcelDateTime, date1904: bool) -> f64 {
+    if date1904 && dt.is_datetime() {
+        dt.as_f64() + DAYS_1904
+    } else {
+        dt.as_f64()
+    }
 }
 
 /// Results that legitimately change between recalculations.
@@ -309,7 +479,14 @@ fn is_volatile(formula: &str) -> bool {
 
 /// Whether IronCalc's result equals the file's cached one; `None` if the file
 /// stored no usable result (some writers leave it empty).
-fn same_result(model: &Model<'_>, sheet: u32, row: i32, col: i32, cached: &Data) -> Option<bool> {
+fn same_result(
+    model: &Model<'_>,
+    sheet: u32,
+    row: i32,
+    col: i32,
+    cached: &Data,
+    date1904: bool,
+) -> Option<bool> {
     let value = model.get_cell_value_by_index(sheet, row, col).ok()?;
     let number = |n: f64| match value {
         CellValue::Number(v) => (v - n).abs() <= 1e-9 * v.abs().max(n.abs()).max(1.0),
@@ -322,7 +499,7 @@ fn same_result(model: &Model<'_>, sheet: u32, row: i32, col: i32, cached: &Data)
         Data::Int(n) => number(*n as f64),
         Data::Float(n) => number(*n),
         Data::Bool(b) => matches!(value, CellValue::Boolean(v) if v == *b),
-        Data::DateTime(dt) => number(dt.as_f64()),
+        Data::DateTime(dt) => number(date_serial(dt, date1904)),
         Data::DateTimeIso(iso) => number(iso_datetime_to_serial(iso)?),
         Data::DurationIso(iso) => number(iso_duration_to_days(iso)?),
         Data::Error(_) => matches!(
@@ -405,13 +582,17 @@ fn cell_index(row: usize, col: usize) -> Result<(i32, i32)> {
 }
 
 /// Store a typed calamine value. Text stays text (even if it looks like a
-/// number), dates and times become numbers with a date/time format.
+/// number), dates and times become numbers with a date/time format (unless
+/// `styled`: the file's own formats are applied afterwards). `date1904`:
+/// the file counts days from 1904; Kantor from 1900.
 fn set_value(
     model: &mut Model<'_>,
     sheet: u32,
     row: i32,
     col: i32,
     value: &Data,
+    date1904: bool,
+    styled: bool,
 ) -> Result<(), String> {
     match value {
         Data::Empty => Ok(()),
@@ -420,8 +601,11 @@ fn set_value(
         Data::Float(n) => model.update_cell_with_number(sheet, row, col, *n),
         Data::Bool(b) => model.update_cell_with_bool(sheet, row, col, *b),
         Data::Error(e) => model.set_user_input(sheet, row, col, e.to_string()),
+        Data::DateTime(dt) if styled => {
+            model.update_cell_with_number(sheet, row, col, date_serial(dt, date1904))
+        }
         Data::DateTime(dt) => {
-            let serial = dt.as_f64();
+            let serial = date_serial(dt, date1904);
             let format = if dt.is_duration() {
                 "[h]:mm:ss"
             } else {
@@ -707,6 +891,19 @@ mod tests {
     }
 
     #[test]
+    fn biff_print_titles_become_whole_rows() {
+        assert_eq!(whole_rows_and_columns("Report!$A$1:$IV$2"), "Report!$1:$2");
+        assert_eq!(
+            whole_rows_and_columns("'My Sheet'!$A$1:$B$65536,'My Sheet'!$A$1:$IV$1"),
+            "'My Sheet'!$A:$B,'My Sheet'!$1:$1"
+        );
+        assert_eq!(
+            whole_rows_and_columns("Report!$A$1:$F$16"),
+            "Report!$A$1:$F$16"
+        );
+    }
+
+    #[test]
     fn formula_prefixes() {
         assert_eq!(excel_formula("of:=[.A1]").as_deref(), Some("=A1"));
         assert_eq!(excel_formula("SUM(A1:A3)").as_deref(), Some("=SUM(A1:A3)"));
@@ -733,6 +930,7 @@ mod tests {
             Some(SourceFormat::Csv { delimiter: b'\t' })
         );
         assert!(SourceFormat::Xls.is_imported());
+        assert_eq!(SourceFormat::from_extension("XLT"), Some(SourceFormat::Xls));
         assert!(!SourceFormat::Csv { delimiter: b',' }.is_imported());
         assert_eq!(SourceFormat::from_extension("txt"), None);
     }

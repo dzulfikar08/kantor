@@ -288,6 +288,30 @@ pub(crate) struct Prints {
 }
 
 impl Prints {
+    /// Print settings an import read (`.xls`), by `sheetId`, with its
+    /// print area and titles formulas.
+    pub(crate) fn imported(
+        sheets: impl IntoIterator<Item = (u32, SheetPrint)>,
+        names: HashMap<u32, (Option<String>, Option<String>)>,
+    ) -> Self {
+        Self {
+            sheets: sheets
+                .into_iter()
+                .map(|(id, print)| {
+                    (
+                        id,
+                        Raw {
+                            print,
+                            ..Raw::default()
+                        },
+                    )
+                })
+                .collect(),
+            names,
+            base: Layout::default(),
+        }
+    }
+
     /// `skeletons`: the package's [`crate::preserve::worksheet_skeletons`].
     pub(crate) fn read(bytes: &[u8], skeletons: &Result<Vec<(u32, String)>, String>) -> Self {
         let mut sheets = HashMap::new();

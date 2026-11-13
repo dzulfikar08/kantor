@@ -35,6 +35,7 @@ mod table;
 mod table_edit;
 mod validation;
 mod validation_edit;
+mod xls;
 
 pub use cf_edit::{
     COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,
@@ -476,7 +477,7 @@ impl Workbook {
         let Some(format) = SourceFormat::from_extension(ext) else {
             bail!("unsupported file type: .{ext}");
         };
-        let mut notes = Vec::new();
+        let mut imported = import::Imported::default();
         let mut xlsx = None;
         // The file asked for a recalculation that wasn't done (too big).
         let mut stale = false;
@@ -516,8 +517,8 @@ impl Workbook {
             }
             _ => {
                 // Evaluated by the import, which compares with the file's values.
-                let (model, n) = import::read_calamine(path, format)?;
-                notes = n;
+                let (model, i) = import::read_calamine(path, format)?;
+                imported = i;
                 (model, format)
             }
         };
@@ -538,12 +539,52 @@ impl Workbook {
         let Extras {
             validation,
             drawings,
-            prints,
+            mut prints,
             pivots,
             panes,
         } = extras
             .map(|h| h.join().unwrap_or_default())
             .unwrap_or_default();
+        // An import's page setup: saved like an edit (there is no original
+        // package to carry it from).
+        let mut touched = edits::Touched::default();
+        if !imported.prints.is_empty() || !imported.print_names.is_empty() {
+            let id = |sheet: u32| {
+                model
+                    .get_model()
+                    .workbook
+                    .worksheet(sheet)
+                    .map_or(sheet + 1, |ws| ws.sheet_id)
+            };
+            let default = print::SheetPrint {
+                header_footer: print::HeaderFooter {
+                    scale_with_doc: true,
+                    align_with_margins: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut sheets = Vec::new();
+            for (sheet, p) in imported.prints.iter().enumerate() {
+                let sheet = sheet as u32;
+                if *p != default || imported.print_names.contains_key(&sheet) {
+                    touched.prints.insert(id(sheet));
+                }
+                sheets.push((id(sheet), p.clone()));
+            }
+            let names = imported
+                .print_names
+                .iter()
+                .map(|(&sheet, n)| {
+                    touched.prints.insert(id(sheet));
+                    (id(sheet), n.clone())
+                })
+                .collect();
+            prints = print::Prints::imported(sheets, names);
+        }
+        if let Some(sheet) = imported.active_sheet {
+            let _ = model.set_selected_sheet(sheet);
+        }
         let mut book = Self {
             calc,
             model,
@@ -552,7 +593,7 @@ impl Workbook {
             origin: Origin {
                 format,
                 path: Some(path.to_path_buf()),
-                notes,
+                notes: imported.notes,
                 xlsx,
                 xlsx_layout: shift::Layout::default(),
             },
@@ -565,7 +606,7 @@ impl Workbook {
             prints,
             pivots,
             saved_charts: HashMap::new(),
-            touched: Default::default(),
+            touched,
             panes: HashMap::new(),
         };
         book.apply_read_panes(&panes);

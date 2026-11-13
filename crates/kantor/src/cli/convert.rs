@@ -24,8 +24,8 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \x20 .docx                                      -> .pdf\n\
     \x20 .pptx                                      -> .pdf (one page per slide,\n\
     \x20                                               hidden slides left out)\n\
-    \x20 .xlsx .xlsm .xls .xlsb .ods .csv .tsv      -> .xlsx .csv .tsv\n\
-    \x20 .xlsx .xlsm .xls .xlsb .ods .csv .tsv      -> .pdf (printed as Excel prints:\n\
+    \x20 .xlsx .xlsm .xls .xlt .xlsb .ods .csv .tsv -> .xlsx .csv .tsv\n\
+    \x20 .xlsx .xlsm .xls .xlt .xlsb .ods .csv .tsv -> .pdf (printed as Excel prints:\n\
     \x20                                               every visible sheet, or --sheet)\n\
     \n\
     Options:\n\
@@ -96,7 +96,7 @@ fn ext(p: &Path) -> String {
 }
 
 const SHEET_INPUTS: &[&str] = &[
-    "xlsx", "xlsm", "xls", "xla", "xlsb", "ods", "csv", "tsv", "tab",
+    "xlsx", "xlsm", "xls", "xla", "xlt", "xlsb", "ods", "csv", "tsv", "tab",
 ];
 const SHEET_OUTPUTS: &[&str] = &["xlsx", "csv", "tsv"];
 
