@@ -401,7 +401,15 @@ impl SheetsView {
 
     fn step_in_grid(&self, from: (u32, u32), step: (i64, i64), cx: &App) -> (u32, u32) {
         let grid = self.table.read(cx).delegate();
-        step_cell(from, step, grid.rows, grid.cols)
+        let (book, sheet) = (&grid.book, grid.sheet);
+        step_cell(
+            from,
+            step,
+            grid.rows,
+            grid.cols,
+            |r| book.row_skipped(sheet, r),
+            |c| book.col_skipped(sheet, c),
+        )
     }
 
     /// Scroll a pointed cell into view, but only while typing in the formula

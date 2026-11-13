@@ -38,7 +38,11 @@ pub(crate) enum Tab {
 
 /// The Page Setup card.
 pub(crate) struct PageSetupDialog {
-    sheet: u32,
+    pub(crate) sheet: u32,
+    /// Opened by Print: the button prints (with the settings applied).
+    printing: bool,
+    /// The pages as these settings print them.
+    pub(crate) preview: crate::print_preview::Preview,
     tab: Tab,
     /// The settings when the card opened (what it doesn't show is kept).
     base: SheetPrint,
@@ -81,7 +85,7 @@ fn cm_text(v: f64) -> String {
 
 impl PageSetupDialog {
     /// The settings the card shows, or what is wrong with them.
-    fn collect(&self, cx: &App) -> Result<SheetPrint, String> {
+    pub(crate) fn collect(&self, cx: &App) -> Result<SheetPrint, String> {
         let text = |e: &Entity<InputState>| e.read(cx).value().to_string();
         let mut p = self.base.clone();
         p.setup.paper = self.paper;
@@ -174,8 +178,22 @@ impl PageSetupDialog {
 impl SheetsView {
     /// Open Page Setup for the active sheet.
     pub fn page_setup_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_page_setup(false, window, cx);
+    }
+
+    /// Page Setup with its preview; `printing`: opened by Print, whose
+    /// button prints.
+    pub(crate) fn open_page_setup(
+        &mut self,
+        printing: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.editing.is_some() || self.blocked(cx) {
             return;
+        }
+        if let Some(mut old) = self.page_setup.take() {
+            old.preview.release(window);
         }
         let (sheet, p) = {
             let grid = self.table.read(cx).delegate();
@@ -239,6 +257,8 @@ impl SheetsView {
         scale.update(cx, |i, cx| i.focus(window, cx));
         self.page_setup = Some(PageSetupDialog {
             sheet,
+            printing,
+            preview: Default::default(),
             tab: Tab::Page,
             paper: p.setup.paper,
             landscape: p.setup.landscape,
@@ -287,7 +307,8 @@ impl SheetsView {
     }
 
     fn close_page_setup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.page_setup.take().is_some() {
+        if let Some(mut d) = self.page_setup.take() {
+            d.preview.release(window);
             self.focus_grid(window, cx);
             cx.notify();
         }
@@ -298,17 +319,27 @@ impl SheetsView {
             return;
         };
         let sheet = d.sheet;
+        let printing = d.printing;
         match d.collect(cx) {
             Ok(p) => {
                 let res = self.table.update(cx, |table, _| {
-                    table.delegate_mut().book.set_print_settings(sheet, p)
+                    let book = &mut table.delegate_mut().book;
+                    let changed = book.print_settings(sheet) != p;
+                    book.set_print_settings(sheet, p).map(|()| changed)
                 });
                 match res {
-                    Ok(()) => {
-                        self.page_setup = None;
-                        self.status = "Page setup changed".into();
+                    Ok(changed) => {
+                        if let Some(mut d) = self.page_setup.take() {
+                            d.preview.release(window);
+                        }
+                        if changed {
+                            self.status = "Page setup changed".into();
+                        }
                         self.focus_grid(window, cx);
                         self.update_title(window, cx);
+                        if printing {
+                            self.print_now(window, cx);
+                        }
                         cx.notify();
                     }
                     Err(e) => {
@@ -387,27 +418,41 @@ impl SheetsView {
                 .cloned()
                 .unwrap_or_default()
         };
+        let title = if d.printing { "Print" } else { "Page Setup" };
+        let settings = v_flex()
+            .flex_1()
+            .min_w_0()
+            .gap(SPACE_5)
+            .child(tabs)
+            .child(
+                v_flex()
+                    .id("ps-body")
+                    .flex_1()
+                    .gap(SPACE_4)
+                    .min_h(px(250.))
+                    .overflow_y_scroll()
+                    .child(body),
+            )
+            .children(d.error.clone().map(|e| note(e, true, cx)));
         let card = dialog::card(
             "page-setup",
-            format!("Page Setup · {sheet_name}"),
-            px(500.),
+            format!("{title} · {sheet_name}"),
+            px(500.) + px(crate::print_preview::BOX_W) + SPACE_6,
             cx,
         )
+        .max_h(px(700.))
         .key_context("KantorPageSetup")
         .on_action(cx.listener(|this, _: &input::Escape, w, cx| this.close_page_setup(w, cx)))
-        .child(tabs)
         .child(
-            v_flex()
-                .id("ps-body")
-                .gap(SPACE_4)
-                .min_h(px(250.))
-                .overflow_y_scroll()
-                .child(body),
+            h_flex()
+                .items_start()
+                .gap(SPACE_6)
+                .child(settings)
+                .children(self.render_print_preview(cx)),
         )
-        .children(d.error.clone().map(|e| note(e, true, cx)))
         .child(dialog::buttons(
             "ps-buttons",
-            "OK",
+            if d.printing { "Print" } else { "OK" },
             true,
             &view,
             Self::page_setup_ok,

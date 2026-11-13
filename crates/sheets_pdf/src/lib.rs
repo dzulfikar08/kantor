@@ -38,6 +38,7 @@ mod encode;
 mod extract;
 pub mod hf;
 pub mod paginate;
+pub mod preview;
 mod text;
 
 use std::sync::Arc;
@@ -70,6 +71,9 @@ pub struct Options {
     pub scale: Option<u32>,
     /// Print each sheet's used range even when it has a print area.
     pub ignore_print_area: bool,
+    /// Print settings to use for one sheet instead of its own (Page
+    /// Setup's preview of settings not applied yet).
+    pub print: Option<(u32, SheetPrint)>,
     /// For `&F` / `&Z` in headers and footers.
     pub file_name: String,
     pub folder: String,
@@ -229,7 +233,10 @@ fn sheet_plan(
     opts: &Options,
     shaper: &mut Shaper,
 ) -> SheetPlan {
-    let mut print = book.print_settings(sheet);
+    let mut print = match &opts.print {
+        Some((s, p)) if *s == sheet => p.clone(),
+        _ => book.print_settings(sheet),
+    };
     if let Some(p) = opts.paper {
         print.setup.paper = p;
     }

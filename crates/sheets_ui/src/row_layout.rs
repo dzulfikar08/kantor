@@ -50,6 +50,8 @@ struct Key {
     scale: u32,
     rows: u32,
     preview: Option<(u32, u32)>,
+    /// Rows above panes frozen on a scrolled sheet (out of sight).
+    above_panes: u32,
 }
 
 pub(crate) struct RowLayout {
@@ -98,6 +100,7 @@ impl RowLayout {
             scale: scale.to_bits(),
             rows,
             preview: self.preview.map(|(r, h)| (r, h.to_bits())),
+            above_panes: book.frozen_origin(sheet).0,
         };
         let Some(old) = self.key.replace(key) else {
             self.rebuild(book, key, scale, true);
@@ -147,6 +150,11 @@ impl RowLayout {
             if !fixed[r] && self.fitted[r] > 0 {
                 heights[r] = self.fitted[r];
             }
+        }
+        // Above panes frozen on a scrolled sheet: out of sight, as in Excel.
+        for r in 0..(key.above_panes as usize).min(n) {
+            heights[r] = 0;
+            fixed[r] = true;
         }
         if let Some((row, h)) = self.preview
             && (row as usize) < n

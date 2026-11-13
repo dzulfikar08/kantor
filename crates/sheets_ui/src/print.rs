@@ -4,7 +4,8 @@
 //! so a big workbook neither freezes the window nor holds every page in
 //! memory. Print writes a temporary PDF and opens it in the system's PDF
 //! viewer, which prints it (Docs and Slides have no print path of their
-//! own to share).
+//! own to share). Print opens the print view first (`page_setup` with
+//! `print_preview`), as Excel's File > Print does.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -56,8 +57,14 @@ impl SheetsView {
         .detach();
     }
 
-    /// Print: write a temporary PDF and open it in the system's viewer.
+    /// Print (Ctrl+P): Excel's print view, the pages previewed beside the
+    /// page settings; its Print button prints them.
     pub fn print_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_page_setup(true, window, cx);
+    }
+
+    /// Print now: write a temporary PDF and open it in the system's viewer.
+    pub(crate) fn print_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.blocked(cx) {
             return;
         }

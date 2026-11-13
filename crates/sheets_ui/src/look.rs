@@ -50,8 +50,13 @@ pub(crate) fn snap(len: f32, scale: f32) -> f32 {
 }
 
 /// Width of a column as the grid lays it out (see [`snap`]); a hidden
-/// column has none.
+/// column has none, nor has one left of panes frozen on a scrolled sheet
+/// ([`Workbook::frozen_origin`]).
 pub(crate) fn column_width(book: &Workbook, sheet: u32, col: u32, scale: f32) -> Pixels {
+    // Left of panes frozen on a scrolled sheet: out of sight, as in Excel.
+    if col < book.frozen_origin(sheet).1 {
+        return px(0.);
+    }
     let width = book.column_width(sheet, col) as f32;
     if width <= 0.0 {
         return px(0.);

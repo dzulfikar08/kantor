@@ -475,7 +475,8 @@ impl SheetsView {
             // With frozen panes Excel's Ctrl+Home goes to the first cell
             // below and right of them, which scrolls the panes back.
             let grid = self.table.read(cx).delegate();
-            grid.book.frozen(grid.sheet)
+            let (book, sheet) = (&grid.book, grid.sheet);
+            book.nearest_shown(sheet, book.frozen(sheet))
         };
         self.select_range(to, to, Span::Cells, true, cx);
         if !end {
@@ -659,10 +660,13 @@ impl SheetsView {
                 b.delete_columns(s, cols.0, cols.1)?;
                 Ok(format!("Deleted {}", count(n_cols, "column")))
             }),
-            GridCommand::FreezeTopRow => freeze(1, 0),
-            GridCommand::FreezeFirstColumn => freeze(0, 1),
-            GridCommand::FreezePanes => freeze(active.0, active.1),
-            GridCommand::Unfreeze => freeze(0, 0),
+            GridCommand::FreezeTopRow
+            | GridCommand::FreezeFirstColumn
+            | GridCommand::FreezePanes => {
+                self.freeze_command(command, window, cx);
+                return;
+            }
+            GridCommand::Unfreeze => freeze((0, 0), (0, 0)),
         };
         // Measured row heights move with inserted and deleted rows.
         let shift = match command {
@@ -688,6 +692,47 @@ impl SheetsView {
             Err(err) => format!("{err:#}").into(),
         };
         self.load_selected_into_formula(window, cx);
+        self.update_title(window, cx);
+        cx.notify();
+    }
+
+    /// Freeze Panes, Freeze Top Row, Freeze First Column: as Excel, from
+    /// what is on screen (see [`freeze_split`]). The part that scrolls then
+    /// starts where the panes end.
+    fn freeze_command(
+        &mut self,
+        command: GridCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let active = self.selected;
+        let status = self.table.update(cx, |table, cx| {
+            let (rows, cols) = table.scrolled_view(cx);
+            let grid = table.delegate_mut();
+            let sheet = grid.sheet;
+            // With panes already frozen, they hold the screen's top-left.
+            let (fr, fc) = grid.book.frozen(sheet);
+            let origin = grid.book.frozen_origin(sheet);
+            let first_col = (cols.start as u32).saturating_sub(1);
+            let view = (
+                if fr > 0 { origin.0 } else { rows.start as u32 },
+                if fc > 0 { origin.1 } else { first_col },
+            );
+            let in_view = (
+                rows.len() as u32 + fr.saturating_sub(origin.0),
+                cols.len() as u32 + fc.saturating_sub(origin.1),
+            );
+            let (origin, split) = freeze_split(command, active, view, in_view);
+            let res = freeze(origin, split)(&mut grid.book, sheet);
+            grid.resize();
+            table.refresh(cx);
+            table.scroll_to_start(cx);
+            res
+        });
+        self.status = match status {
+            Ok(msg) => msg.into(),
+            Err(err) => format!("{err:#}").into(),
+        };
         self.update_title(window, cx);
         cx.notify();
     }
@@ -818,17 +863,63 @@ fn hide_status(n: u32, what: &str, verb: &str, none: &str) -> String {
     }
 }
 
-/// An op setting the frozen rows and columns.
-fn freeze(rows: u32, cols: u32) -> Op {
+/// An op freezing the panes: `origin` is their top-left cell, `split`
+/// the first unfrozen row and column (both from A1).
+fn freeze(origin: (u32, u32), split: (u32, u32)) -> Op {
     Box::new(move |book, sheet| {
-        book.set_frozen(sheet, rows, cols)?;
+        book.set_frozen_at(sheet, origin, split)?;
+        let origin = book.frozen_origin(sheet);
+        let rows = split.0 - origin.0;
+        let cols = split.1 - origin.1;
         Ok(match (rows, cols) {
             (0, 0) => "Panes unfrozen".to_owned(),
             (r, 0) => format!("Froze the top {}", count(r, "row")),
             (0, c) => format!("Froze the first {}", count(c, "column")),
-            (r, c) => format!("Froze panes above and left of {}", cell_name(r, c)),
+            _ => format!(
+                "Froze panes above and left of {}",
+                cell_name(split.0, split.1)
+            ),
         })
     })
+}
+
+/// Where Excel's freeze commands put the panes, as `(origin, split)`:
+/// the panes' top-left cell and the first unfrozen row and column.
+///
+/// `view` is the scrolled part's first row and column on screen, `in_view`
+/// how many rows and columns it shows. The panes start at the first row and
+/// column on screen (those scrolled out of sight stay out until Unfreeze).
+/// Freeze Panes splits above and left of the `active` cell; when that is
+/// the top-left cell on screen (A1 on a sheet not scrolled), at the middle
+/// of the screen instead. Freeze Top Row / First Column freeze the top row
+/// / left column on screen.
+pub(crate) fn freeze_split(
+    command: GridCommand,
+    active: (u32, u32),
+    view: (u32, u32),
+    in_view: (u32, u32),
+) -> ((u32, u32), (u32, u32)) {
+    let (top, left) = view;
+    match command {
+        GridCommand::FreezeTopRow => ((top, 0), (top + 1, 0)),
+        GridCommand::FreezeFirstColumn => ((0, left), (0, left + 1)),
+        _ if active == view => {
+            let rows = (in_view.0 / 2).max(1);
+            let cols = (in_view.1 / 2).max(1);
+            (view, (top + rows, left + cols))
+        }
+        _ => {
+            let rows = if active.0 > top { active.0 } else { 0 };
+            let cols = if active.1 > left { active.1 } else { 0 };
+            (
+                (
+                    if rows > 0 { top } else { 0 },
+                    if cols > 0 { left } else { 0 },
+                ),
+                (rows, cols),
+            )
+        }
+    }
 }
 
 /// The right-click menu of a row or column header.
@@ -918,6 +1009,60 @@ pub(crate) fn corner_element(element: Stateful<Div>, view: &WeakEntity<SheetsVie
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[std::prelude::v1::test]
+    fn freeze_panes_like_excel() {
+        use GridCommand::*;
+        let screen = (30, 12); // rows, columns on screen
+        // Not scrolled, active C5: rows 1-4 and columns A-B.
+        assert_eq!(
+            freeze_split(FreezePanes, (4, 2), (0, 0), screen),
+            ((0, 0), (4, 2))
+        );
+        // Active A5: rows only; active C1: columns only.
+        assert_eq!(
+            freeze_split(FreezePanes, (4, 0), (0, 0), screen),
+            ((0, 0), (4, 0))
+        );
+        assert_eq!(
+            freeze_split(FreezePanes, (0, 2), (0, 0), screen),
+            ((0, 0), (0, 2))
+        );
+        // Active A1: the middle of the screen.
+        assert_eq!(
+            freeze_split(FreezePanes, (0, 0), (0, 0), screen),
+            ((0, 0), (15, 6))
+        );
+        // Scrolled to C11, active E15: the panes hold rows 11-14 and
+        // columns C-D; rows above and columns left go out of sight.
+        assert_eq!(
+            freeze_split(FreezePanes, (14, 4), (10, 2), screen),
+            ((10, 2), (14, 4))
+        );
+        // Scrolled, active the top-left cell on screen: the middle again.
+        assert_eq!(
+            freeze_split(FreezePanes, (10, 2), (10, 2), screen),
+            ((10, 2), (25, 8))
+        );
+        // Scrolled, active in the top row on screen: columns only.
+        assert_eq!(
+            freeze_split(FreezePanes, (10, 4), (10, 2), screen),
+            ((0, 2), (0, 4))
+        );
+        // Freeze Top Row / First Column: the top row / left column on screen.
+        assert_eq!(
+            freeze_split(FreezeTopRow, (40, 9), (0, 0), screen),
+            ((0, 0), (1, 0))
+        );
+        assert_eq!(
+            freeze_split(FreezeTopRow, (40, 9), (10, 2), screen),
+            ((10, 0), (11, 0))
+        );
+        assert_eq!(
+            freeze_split(FreezeFirstColumn, (40, 9), (10, 2), screen),
+            ((0, 2), (0, 3))
+        );
+    }
 
     // `gpui_kit::*` exports a `test` attribute macro that shadows the
     // built-in one.

@@ -153,7 +153,18 @@ impl Encoder {
 
     /// The PDF (one blank page when nothing was printed). A picture that
     /// can't be decoded fails with a [`BadPicture`] error.
-    pub fn finish(mut self) -> Result<Vec<u8>> {
+    pub fn finish(self) -> Result<Vec<u8>> {
+        self.finish_keeping_shaper().0
+    }
+
+    /// [`Encoder::finish`], handing back the shaper (and its font
+    /// database) for the next document.
+    pub fn finish_keeping_shaper(mut self) -> (Result<Vec<u8>>, Shaper) {
+        let shaper = std::mem::take(&mut self.shaper);
+        (self.finish_pdf(), shaper)
+    }
+
+    fn finish_pdf(mut self) -> Result<Vec<u8>> {
         if self.pages == 0 {
             let settings = PageSettings::from_wh(612.0, 792.0).expect("positive page size");
             let mut p = self.pdf.start_page_with(settings);
