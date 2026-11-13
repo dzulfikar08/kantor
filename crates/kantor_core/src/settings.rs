@@ -74,7 +74,7 @@ impl Settings {
 pub struct AutosaveSettings {
     /// Save documents that have a file in their own format (.xlsx, .docx,
     /// .pptx) after they've been left alone for `idle_seconds`. Imported files
-    /// (.csv, .ods, .xls) and files with content Kantor can't keep are never
+    /// (.csv, .ods, .xls, .ppt) and files with content Kantor can't keep are never
     /// saved this way.
     pub enabled: bool,
     /// Seconds without changes before an autosave (at least 5).

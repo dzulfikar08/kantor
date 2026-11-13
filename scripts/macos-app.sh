@@ -57,6 +57,7 @@ $(doc_type "Spreadsheet (import)" Viewer xls xlt xlsb ods)
 $(doc_type "Document" Editor docx)
 $(doc_type "Document (import)" Viewer rtf)
 $(doc_type "Presentation" Editor pptx)
+$(doc_type "Presentation (import)" Viewer ppt pps pot)
   </array>
 </dict>
 </plist>

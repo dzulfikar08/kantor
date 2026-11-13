@@ -7129,7 +7129,9 @@ name = "slides_engine"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "cfb",
  "docs_engine",
+ "flate2",
  "roxmltree 0.21.2",
  "tempfile",
  "zip 9.4.1",

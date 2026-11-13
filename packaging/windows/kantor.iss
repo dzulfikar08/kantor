@@ -5,7 +5,7 @@
 ; Installs to %LOCALAPPDATA%\Programs\Kantor: kantor.exe (the app), kantor.com
 ; (the command line, see crates/kantor_console), licences. Adds a Start menu
 ; shortcut, an optional desktop icon, an uninstall entry under Settings > Apps,
-; and "Open with" entries for .xlsx/.xlsm/.xls/.xlt/.ods/.csv, .docx/.rtf and .pptx that
+; and "Open with" entries for .xlsx/.xlsm/.xls/.xlt/.ods/.csv, .docx/.rtf and .pptx/.ppt/.pps/.pot that
 ; don't take over the user's default apps.
 ;
 ; The in-app updater (crates/kantor_update) downloads a newer installer and runs
@@ -127,6 +127,9 @@ Root: HKA; Subkey: "Software\Classes\.csv\OpenWithProgids"; ValueType: string; V
 Root: HKA; Subkey: "Software\Classes\.docx\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Document"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.rtf\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Document"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.pptx\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Presentation"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.ppt\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Presentation"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.pps\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Presentation"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.pot\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Presentation"; ValueData: ""; Flags: uninsdeletevalue
 
 ; "Open with" > "Choose another app" lists kantor.exe for these types.
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "Kantor"; Flags: uninsdeletekey
@@ -140,6 +143,9 @@ Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; Va
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".docx"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".rtf"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".pptx"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".ppt"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".pps"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".pot"; ValueData: ""
 
 ; Settings > Apps > Default apps can offer Kantor for these types.
 Root: HKA; Subkey: "Software\Kantor\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "Kantor"; Flags: uninsdeletekey
@@ -153,6 +159,9 @@ Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: s
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".docx"; ValueData: "Kantor.Document"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".rtf"; ValueData: "Kantor.Document"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pptx"; ValueData: "Kantor.Presentation"
+Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ppt"; ValueData: "Kantor.Presentation"
+Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pps"; ValueData: "Kantor.Presentation"
+Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pot"; ValueData: "Kantor.Presentation"
 Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "Kantor"; ValueData: "Software\Kantor\Capabilities"; Flags: uninsdeletevalue
 
 [Run]
