@@ -190,6 +190,8 @@ Use the full path in MCP configs, e.g. `"command": "C:\\Users\\you\\AppData\\Loc
 
 ## AI features (optional) and privacy
 
+The short version for the whole app is in [PRIVACY.md](PRIVACY.md).
+
 AI is **off** until you turn it on in `Ctrl K` → *AI Settings* and choose a provider: Anthropic, OpenAI, OpenRouter, Groq, DeepSeek, Google Gemini, any OpenAI-compatible server, or **Ollama** running on your own computer (nothing leaves it). Kantor has no AI service of its own: your data goes **only to the provider you chose**, and only when you run an AI command. Each command sends only what it needs:
 
 - *Ask AI for a Formula…* (Sheets): the column headers, up to 20 sample rows near the selection and the active cell's address — never the whole sheet;

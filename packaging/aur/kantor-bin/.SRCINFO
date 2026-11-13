@@ -1,6 +1,6 @@
 pkgbase = kantor-bin
-	pkgdesc = Small, fast, native office suite (Sheets; Docs and Slides to come) built in Rust on GPUI
-	pkgver = 0.1.0
+	pkgdesc = Small, fast office suite (Sheets, Docs, Slides) that opens and saves Excel, Word and PowerPoint files
+	pkgver = 0.4.0
 	pkgrel = 1
 	url = https://github.com/dzulfikar08/kantor
 	arch = x86_64
@@ -21,9 +21,9 @@ pkgbase = kantor-bin
 	conflicts = kantor
 	options = !strip
 	options = !debug
-	source_x86_64 = kantor-0.1.0-x86_64-linux.tar.gz::https://github.com/dzulfikar08/kantor/releases/download/v0.1.0/kantor-0.1.0-x86_64-linux.tar.gz
-	sha256sums_x86_64 = d81cb58cb1be7128b21e7a9ca7752833413218afd1d4c5eafc614359a7fff0ef
-	source_aarch64 = kantor-0.1.0-aarch64-linux.tar.gz::https://github.com/dzulfikar08/kantor/releases/download/v0.1.0/kantor-0.1.0-aarch64-linux.tar.gz
-	sha256sums_aarch64 = 3ab3fe35f9e6015a9c20aa5f2fdc77aa72ab9cd3cb090d9b41874f06157e546d
+	source_x86_64 = kantor-0.4.0-x86_64-linux.tar.gz::https://github.com/dzulfikar08/kantor/releases/download/v0.4.0/kantor-0.4.0-x86_64-linux.tar.gz
+	sha256sums_x86_64 = 407e96ca6ca19fa1693629f0e60d7235113c3a583253b942a27f04c2cdf76098
+	source_aarch64 = kantor-0.4.0-aarch64-linux.tar.gz::https://github.com/dzulfikar08/kantor/releases/download/v0.4.0/kantor-0.4.0-aarch64-linux.tar.gz
+	sha256sums_aarch64 = 00df48d1b75b605dd80f3915caaedea541d9f466ea00b55cd338ea5a7c4f9971
 
 pkgname = kantor-bin

@@ -2,9 +2,9 @@
 # Source of truth: https://github.com/dzulfikar08/kantor/tree/main/packaging/aur/kantor-bin
 # Refresh pkgver, checksums and .SRCINFO with packaging/aur/update.sh <version>.
 pkgname=kantor-bin
-pkgver=0.1.0
+pkgver=0.4.0
 pkgrel=1
-pkgdesc='Small, fast, native office suite (Sheets; Docs and Slides to come) built in Rust on GPUI'
+pkgdesc='Small, fast office suite (Sheets, Docs, Slides) that opens and saves Excel, Word and PowerPoint files'
 arch=('x86_64' 'aarch64')
 url='https://github.com/dzulfikar08/kantor'
 license=('AGPL-3.0-or-later')
@@ -19,14 +19,14 @@ options=('!strip' '!debug')
 _base="${url}/releases/download/v${pkgver}"
 source_x86_64=("kantor-${pkgver}-x86_64-linux.tar.gz::${_base}/kantor-${pkgver}-x86_64-linux.tar.gz")
 source_aarch64=("kantor-${pkgver}-aarch64-linux.tar.gz::${_base}/kantor-${pkgver}-aarch64-linux.tar.gz")
-sha256sums_x86_64=('d81cb58cb1be7128b21e7a9ca7752833413218afd1d4c5eafc614359a7fff0ef')
-sha256sums_aarch64=('3ab3fe35f9e6015a9c20aa5f2fdc77aa72ab9cd3cb090d9b41874f06157e546d')
+sha256sums_x86_64=('407e96ca6ca19fa1693629f0e60d7235113c3a583253b942a27f04c2cdf76098')
+sha256sums_aarch64=('00df48d1b75b605dd80f3915caaedea541d9f466ea00b55cd338ea5a7c4f9971')
 
 package() {
   cd "kantor-${pkgver}-${CARCH}-linux"
   install -Dm755 bin/kantor "${pkgdir}/usr/bin/kantor"
   install -Dm644 -t "${pkgdir}/usr/share/applications" share/applications/*.desktop
   install -Dm644 -t "${pkgdir}/usr/share/icons/hicolor/scalable/apps" share/icons/hicolor/scalable/apps/*.svg
-  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 -t "${pkgdir}/usr/share/licenses/${pkgname}" LICENSE NOTICE THIRD_PARTY_LICENSES.txt
   install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
 }
