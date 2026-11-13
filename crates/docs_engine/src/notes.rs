@@ -226,12 +226,17 @@ pub struct NoteRef {
 /// The id and custom-mark flag of a note reference object.
 pub fn reference_of(o: &Object) -> Option<(NoteKind, String, bool)> {
     let Object::Opaque(o) = o else { return None };
-    let kind = match element_name(&o.xml) {
+    reference_in(&o.xml)
+}
+
+/// [`reference_of`] from the object's XML.
+pub fn reference_in(xml_src: &str) -> Option<(NoteKind, String, bool)> {
+    let kind = match element_name(xml_src) {
         "footnoteReference" => NoteKind::Footnote,
         "endnoteReference" => NoteKind::Endnote,
         _ => return None,
     };
-    let el = xml::parse(&o.xml)?;
+    let el = xml::parse(xml_src)?;
     let custom = el
         .attr("customMarkFollows")
         .is_some_and(|v| v == "1" || v == "true" || v == "on");

@@ -1555,7 +1555,7 @@ impl DocsView {
         for page in g.visible_pages(laid.paged.pages.len()) {
             for placed in laid.furniture.get(page).into_iter().flatten() {
                 let l = &placed.layout;
-                let story = &self.doc.stories()[l.story].doc;
+                let story = l.doc(&self.doc);
                 for o in l.paged.objects(0) {
                     if o.kind != ObjectKind::Image {
                         continue;
@@ -1565,7 +1565,7 @@ impl DocsView {
                     else {
                         continue;
                     };
-                    let key = format!("hf{}:{}", l.story, img.rel_id);
+                    let key = format!("hf{}:{}", l.key(), img.rel_id);
                     let image = match self.images.get(&key) {
                         Some(i) => i.clone(),
                         None => {
@@ -1583,7 +1583,7 @@ impl DocsView {
                         }
                     };
                     if let Some(data) = image.use_render_image(window, cx) {
-                        out.insert((l.story, o.para, o.index), data);
+                        out.insert((l.key(), o.para, o.index), data);
                     }
                 }
             }
@@ -1964,8 +1964,10 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             // what's being edited); the PDF prints them in their colours.
             for placed in f.laid.furniture.get(page).into_iter().flatten() {
                 let l = &placed.layout;
+                // Notes are part of the text: full ink.
+                let ink = if placed.note.is_some() { 1.0 } else { 0.7 };
                 for o in l.paged.objects(0) {
-                    if let Some(data) = f.hf_images.get(&(l.story, o.para, o.index)) {
+                    if let Some(data) = f.hf_images.get(&(l.key(), o.para, o.index)) {
                         let [x, y, w, h] = o.rect;
                         let b = rect(page, [x + placed.x, y + placed.y, w, h]);
                         let _ =
@@ -1978,7 +1980,7 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                     r[1] += placed.y;
                     r[2] = r[2].max(1.0 / z);
                     r[3] = r[3].max(1.0 / z);
-                    window.paint_quad(fill(rect(page, r), layout_color(rule.color).opacity(0.7)));
+                    window.paint_quad(fill(rect(page, r), layout_color(rule.color).opacity(ink)));
                 }
                 let runs = l.paged.glyph_runs(0);
                 paint_runs(
@@ -1989,7 +1991,7 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                     &runs,
                     &|i| l.text(i),
                     (placed.x, placed.y),
-                    0.7,
+                    ink,
                     (&mut bridge, &ts, &f.t),
                 );
             }

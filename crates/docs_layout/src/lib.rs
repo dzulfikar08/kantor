@@ -164,6 +164,9 @@ pub enum ObjectKind {
     Placeholder,
     /// Zero size (bookmarks).
     Hidden,
+    /// Text drawn small and raised, with no box: a footnote or endnote
+    /// number (the label).
+    Mark,
 }
 
 /// An object in the text: a box in place of the object's character.
@@ -306,6 +309,10 @@ impl ParaLayout {
 
 /// Padding inside a placeholder box, px.
 const LABEL_PAD: f32 = 4.0;
+/// Size of a note mark relative to its paragraph's text.
+const MARK_SCALE: f32 = 0.65;
+/// How far a note mark's baseline sits above the text's, in ems.
+const MARK_RAISE: f32 = 0.08;
 /// Gap between a list marker and the text, px.
 const MARKER_GAP: f32 = 6.0;
 
@@ -448,6 +455,19 @@ impl Engine {
                 if h <= 0.0 {
                     h = lh + LABEL_PAD;
                 }
+                labels.push((o.index, l, o.label.clone()));
+            }
+            if o.kind == ObjectKind::Mark {
+                let l = self.small_layout(
+                    &o.label,
+                    &para.family,
+                    para.size_pt * MARK_SCALE,
+                    None,
+                    Rgba::BLACK,
+                );
+                // Raised: the box's bottom sits on the baseline.
+                w = l.width();
+                h = l.height() + para.size_pt * PT * MARK_RAISE;
                 labels.push((o.index, l, o.label.clone()));
             }
             if o.kind == ObjectKind::Hidden {
@@ -1540,13 +1560,19 @@ impl PagedDocument {
             }
             for item in line.items() {
                 if let PositionedLayoutItem::InlineBox(b) = item
-                    && let Some(&(index, ObjectKind::Placeholder)) =
-                        pl_layout.objects.get(b.id as usize)
+                    && let Some(&(index, kind)) = pl_layout.objects.get(b.id as usize)
+                    && matches!(kind, ObjectKind::Placeholder | ObjectKind::Mark)
                     && let Some((_, ll, _)) = pl_layout.labels.iter().find(|x| x.0 == index)
                     && let Some(lline) = ll.get(0)
                 {
-                    let lx = dx + b.x + LABEL_PAD;
-                    let ly = dy + b.y + (b.height - lline.metrics().line_height) / 2.0;
+                    let (lx, ly) = if kind == ObjectKind::Mark {
+                        (dx + b.x, dy + b.y)
+                    } else {
+                        (
+                            dx + b.x + LABEL_PAD,
+                            dy + b.y + (b.height - lline.metrics().line_height) / 2.0,
+                        )
+                    };
                     emit_runs(&mut out, &lline, pl.para, RunSource::Label(index), lx, ly);
                 }
             }
@@ -1606,7 +1632,7 @@ impl PagedDocument {
             for item in line.items() {
                 if let PositionedLayoutItem::InlineBox(b) = item
                     && let Some(&(index, kind)) = l.objects.get(b.id as usize)
-                    && kind != ObjectKind::Hidden
+                    && !matches!(kind, ObjectKind::Hidden | ObjectKind::Mark)
                 {
                     out.push(PlacedObject {
                         para: pl.para,

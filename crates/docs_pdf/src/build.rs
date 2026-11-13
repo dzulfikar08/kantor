@@ -3,7 +3,9 @@
 //! The Docs view and PDF export both lay out from [`build`], so the page on
 //! screen and the page in the PDF are the same layout.
 
-use docs_engine::{Align, Document, Level, Object, ResolvedLine, VMerge, font_stack};
+use std::collections::HashMap;
+
+use docs_engine::{Align, Document, Level, NoteKind, Object, ResolvedLine, VMerge, font_stack};
 use docs_layout::parley::LineHeight;
 use docs_layout::{
     Block, InlineObject, Marker, Merge, ObjectKind, PT, PageSetup, Rgba, Rule, Span, TableBlock,
@@ -57,6 +59,43 @@ pub fn geometry_setup(g: &docs_engine::PageGeometry) -> PageSetup {
     }
 }
 
+/// The numbers footnote and endnote marks show.
+#[derive(Clone, Debug, Default)]
+pub struct Marks {
+    /// By note: the label of its reference in the text.
+    pub refs: HashMap<(NoteKind, String), String>,
+    /// The number of the note being laid out (its own mark at its start).
+    pub own: Option<String>,
+}
+
+impl Marks {
+    /// The numbers of a document's note references (restarts per page
+    /// counted on: see [`crate::pages`]).
+    pub fn of(doc: &Document) -> Self {
+        Self {
+            refs: doc
+                .note_refs()
+                .into_iter()
+                .map(|r| ((r.kind, r.id), r.label))
+                .collect(),
+            own: None,
+        }
+    }
+
+    /// The label of a note mark object, if it is one.
+    fn label(&self, op: &docs_engine::Opaque) -> Option<String> {
+        let name = docs_engine::model::element_name(&op.xml);
+        if name == "footnoteRef" || name == "endnoteRef" {
+            return Some(self.own.clone().unwrap_or_default());
+        }
+        let (kind, id, custom) = docs_engine::notes::reference_in(&op.xml)?;
+        if custom {
+            return Some(String::new());
+        }
+        Some(self.refs.get(&(kind, id)).cloned().unwrap_or_default())
+    }
+}
+
 /// The layout paragraph for a model paragraph: every run resolved, broken
 /// at `width` px (the column it sits in).
 pub fn layout_paragraph(
@@ -64,6 +103,7 @@ pub fn layout_paragraph(
     p: &docs_engine::Paragraph,
     marker: Option<&str>,
     width: f32,
+    marks: &Marks,
 ) -> docs_layout::Paragraph {
     let rp = doc.resolve_para(p);
     let first = doc.resolve_run(p, &p.runs[0].props);
@@ -195,6 +235,18 @@ pub fn layout_paragraph(
                     width: text_width,
                     height: 0.0,
                     label: op.label.clone(),
+                },
+                // A footnote or endnote number.
+                Level::Run if let Some(label) = marks.label(op) => InlineObject {
+                    index,
+                    kind: if label.is_empty() {
+                        ObjectKind::Hidden
+                    } else {
+                        ObjectKind::Mark
+                    },
+                    width: 0.0,
+                    height: 0.0,
+                    label,
                 },
                 // A comment's reference mark: the comment shows in the
                 // margin instead.
@@ -330,6 +382,14 @@ fn table_block(
 /// the block structure. Each paragraph is broken at its section's text
 /// width.
 pub fn build(doc: &Document) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
+    build_marked(doc, &Marks::of(doc))
+}
+
+/// [`build`] with the note numbers `marks`.
+pub fn build_marked(
+    doc: &Document,
+    marks: &Marks,
+) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
     let sections = doc.sections();
     let widths: Vec<u32> = sections
         .iter()
@@ -346,7 +406,7 @@ pub fn build(doc: &Document) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Bloc
             .position(|s| i < s.paras.end)
             .unwrap_or(sections.len() - 1)
     };
-    build_with(doc, doc.paragraphs(), &|i| widths[section_of(i)])
+    build_with(doc, doc.paragraphs(), &|i| widths[section_of(i)], marks)
 }
 
 /// [`build`] over `paras` (the document's paragraphs, or a header's with
@@ -356,6 +416,7 @@ pub fn build_with(
     doc: &Document,
     paras: &[docs_engine::Paragraph],
     content_tw: &dyn Fn(usize) -> u32,
+    marks: &Marks,
 ) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
     let markers = doc.list_markers();
     let mut widths: Vec<f32> = (0..paras.len()).map(|i| tw(content_tw(i))).collect();
@@ -396,7 +457,7 @@ pub fn build_with(
         .enumerate()
         .map(|(k, p)| {
             let marker = markers.get(k).and_then(|m| m.as_deref());
-            layout_paragraph(doc, p, marker, widths[k])
+            layout_paragraph(doc, p, marker, widths[k], marks)
         })
         .collect();
     // Contextual spacing: no space between paragraphs of the same style.
