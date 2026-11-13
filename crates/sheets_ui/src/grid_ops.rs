@@ -519,8 +519,9 @@ impl SheetsView {
         grid.book.range_stats(grid.sheet, range).summary()
     }
 
-    /// Fill, in the background for big workbooks: IronCalc recalculates
-    /// the whole workbook after a fill, even in manual calculation.
+    /// Fill, in the background for big workbooks: a fill recalculates what
+    /// it changed even in manual calculation, and everything when IronCalc
+    /// can't trace that.
     fn apply_fill(&mut self, fill: Fill, window: &mut Window, cx: &mut Context<Self>) {
         if self.blocked(cx) {
             return;

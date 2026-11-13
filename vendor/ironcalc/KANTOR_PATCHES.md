@@ -121,7 +121,9 @@ Tables made or changed in Kantor are written from the model by
 Known: `tests/test.rs` `test_dynamic_arrays` fails since §5 (the file's
 default row height is now read); `test_no_export_tables` passes.
 
-## 7. Each filled-down formula is parsed once (fast open)
+## 8. Each filled-down formula is parsed once (fast open)
+
+(Numbered 8: §7 is the font element order patch on main.)
 
 Why: `from_a1_to_rc` parsed every formula cell and printed it in R1C1; on
 the generated 90k-row workbook (`scripts/corpus/gen_big_xlsx.py`, 810k

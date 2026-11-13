@@ -159,19 +159,22 @@ struct Cache {
 /// When formulas are recalculated, like Excel's calculation options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CalcMode {
-    /// After every edit (IronCalc recalculates the whole workbook).
+    /// After every edit: the edited cells' dependents are recalculated
+    /// (the whole workbook when IronCalc can't tell them, see
+    /// `UserModel::kantor_evaluate_changes`).
     #[default]
     Automatic,
     /// Only on request ([`Workbook::recalculate`]). Edits leave other
     /// formulas' values as they were; a formula typed in is pending
     /// ([`Workbook::is_pending`]) until then. (Auto-fill is the exception:
-    /// IronCalc recalculates after it in any mode.)
+    /// it recalculates what the fill and the edits before it changed, in
+    /// any mode.)
     Manual,
 }
 
 /// Workbooks with more formula cells than this open in [`CalcMode::Manual`]:
-/// IronCalc recalculates everything after each edit, which takes seconds to
-/// minutes at this size.
+/// an edit IronCalc can't trace recalculates everything, which takes seconds
+/// to minutes at this size.
 pub const MANUAL_CALC_FORMULAS: usize = 50_000;
 
 /// Calculation state of a workbook.
@@ -868,7 +871,7 @@ impl Workbook {
         }
         if self.calc.mode == CalcMode::Automatic {
             self.model.resume_evaluation();
-            self.model.evaluate();
+            self.model.kantor_evaluate_changes();
         }
         if done > 0 {
             self.history.edited_steps(done);

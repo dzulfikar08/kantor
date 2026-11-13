@@ -438,13 +438,82 @@ the generated 90k-row workbook (810k formula cells).
   token is its text. Two formulas on one sheet with equal keys parse to the
   same tree. It refuses (returns false) formulas with `[` (structured
   references depend on the table the cell is in) and ones the lexer
-  rejects. The caller (vendor/ironcalc §7) also never shares a result that
+  rejects. The caller (vendor/ironcalc §8) also never shares a result that
   is a parse error, whose text is the formula as written.
 * `Lexer::set_formula` reuses its buffer; `Lexer::kantor_push_text` copies a
   token's text into the key.
 
 Test: `rc_cache_matches_parsing_each_formula` in vendor/ironcalc (20 000
 random formulas, filled-down and not, compared with parsing each alone).
+
+## 18. Sorting moves rows whole (fast sort)
+
+Why: sorting the 90k-row table took ~0.4–0.5 s (and its undo as long):
+`kantor_permute_rows` took every row apart into cells and built it again,
+and checked every cell of the range for array formulas through `Cow<Cell>`.
+
+* `SheetData::kantor_permute_whole_rows` moves the rows as they are held
+  (packed, numbers or cells) when every row of the range has its cells
+  within the sorted columns; otherwise the old cell-by-cell path runs.
+* `SheetData::kantor_has_array_cells` looks only into rows of cells (rows
+  of numbers and packed rows can't hold array formulas or spills).
+
+Tests: the sort tests of `crates/sheets_engine` (tables, ranges, filters,
+undo), and `kantor_tables` tests here.
+
+## 19. Partial recalculation
+
+Why: every edit IronCalc evaluated the whole workbook (and auto-fill did so
+even in manual calculation): filling 1000 rows of formulas in the 90k-row
+workbook took 1–2 s, nearly all of it recalculating 810k formulas whose
+inputs hadn't changed.
+
+What (`src/kantor_recalc.rs`):
+
+* `UserModel` keeps `kantor_unevaluated`, the `KantorChanges` (§16) of every
+  diff list pushed, undone or redone since the last evaluation.
+  `evaluate_if_not_paused`, auto-fill and the new public
+  `UserModel::kantor_evaluate_changes` evaluate only what those changes can
+  reach (`Model::kantor_evaluate_changed`); `UserModel::evaluate` stays a full
+  evaluation (F9) and empties the record.
+* Dependents are worked out from the parsed formulas each time, no graph is
+  kept: formula cells are grouped into runs (consecutive rows of a column with
+  one shared formula), each run's references are translated over the run at
+  once, and the changed rectangles are spread to the rows that read them
+  until nothing new is marked. Formulas still without a value (typed in
+  manual mode) are evaluated too.
+* Only the marked cells run; any other formula read gives its stored value
+  (`Evaluation::kantor_only`, also honoured by the lookup cache's "is this
+  vector ready" check).
+* Always evaluated, with their dependents: volatile functions (RAND,
+  RANDBETWEEN, RANDARRAY, NOW, TODAY), and formulas whose reads can't be
+  told from the formula: OFFSET, INDIRECT, CELL, INFO, SHEETS, SUBTOTAL and
+  AGGREGATE (hidden rows), GETPIVOTDATA, HYPERLINK, defined names, tables
+  and structured references, `:` between function results, spills (`#`),
+  user functions.
+* Falls back to a full evaluation: changes to sheets, rows/columns, merges,
+  rules, names, tables or more than 64 scattered rectangles on a sheet (§16
+  says "sheet" or "all"); dynamic arrays or array formulas anywhere (spills
+  can land on any cell; formulas IronCalc thinks may return an array, such as
+  some INDEX or name formulas typed in, become dynamic arrays); dynamic
+  links; more than 30M run checks; a pass that met a circular reference
+  (which cells of a loop get `#CIRC!` depends on where the evaluation
+  entered it) or a restart.
+* `Model::kantor_last_partial()` says how many formulas the last evaluation
+  ran when it was partial (for tests and timing).
+* Fixes found on the way: `UserModel::set_user_input` evaluated before its
+  diff list was recorded (now after, so the edit is known); criteria
+  functions (`COUNTIF`, `SUMIFS`...) compared text through a lower-case copy
+  of every cell, now without a copy for ASCII text (`functions/util.rs`).
+
+Tests: `kantor_recalc::tests`: random formula graphs on two sheets (own and
+cross-sheet references, mixed absolute ranges, whole columns, lookups,
+criteria functions, OFFSET/INDIRECT, SUBTOTAL) with random edits, fills,
+clears, undo and redo; after each partial evaluation every value is compared
+with a full evaluation, in automatic mode (with and without loops) and in
+manual mode (several edits, then one evaluation; most must be partial). A
+fill down a 2000-row running total runs only the new cells; an edit at the
+top runs the chain and nothing else.
 
 ## Updating or dropping
 
