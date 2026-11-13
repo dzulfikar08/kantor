@@ -52,7 +52,11 @@ fn kantor_copies_unchanged(node: &Node, row: i32, column: i32) -> bool {
     };
     let row_ok = |value: i32, absolute: bool| on_sheet(value, absolute, row, LAST_ROW);
     let column_ok = |value: i32, absolute: bool| on_sheet(value, absolute, column, LAST_COLUMN);
-    let all = |nodes: &[Node]| nodes.iter().all(|n| kantor_copies_unchanged(n, row, column));
+    let all = |nodes: &[Node]| {
+        nodes
+            .iter()
+            .all(|n| kantor_copies_unchanged(n, row, column))
+    };
     match node {
         Node::BooleanKind(_)
         | Node::NumberKind(_)
@@ -877,10 +881,11 @@ impl<'a> UserModel<'a> {
                 })
             }
         };
-        self.model
-            .workbook
-            .worksheet_mut(sheet)?
-            .set_cell_style(row, column, source_data.style_index)?;
+        self.model.workbook.worksheet_mut(sheet)?.set_cell_style(
+            row,
+            column,
+            source_data.style_index,
+        )?;
 
         diff_list.push(Diff::SetCellStyle {
             sheet,

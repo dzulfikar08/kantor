@@ -48,11 +48,7 @@ fn timed(name: &str, runs: usize, mut step: impl FnMut(), mut undo: impl FnMut()
         Some(min) => format!("   cpu {min:.2?}"),
         None => String::new(),
     };
-    println!(
-        "{name:<44} {}   undo {}{cpu}",
-        span(&times),
-        span(&undos)
-    );
+    println!("{name:<44} {}   undo {}{cpu}", span(&times), span(&undos));
 }
 
 fn main() {

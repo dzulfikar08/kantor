@@ -35,7 +35,9 @@ fn setup() -> UserModel<'static> {
     model.new_defined_name("x", None, "Sheet1!$A$1").unwrap();
     for row in 1..=30 {
         model.set_user_input(0, row, 1, &row.to_string()).unwrap();
-        model.set_user_input(1, row, 1, &(row * 10).to_string()).unwrap();
+        model
+            .set_user_input(1, row, 1, &(row * 10).to_string())
+            .unwrap();
     }
     model
 }
@@ -98,9 +100,8 @@ fn fill_down_and_up_match_typing() {
         };
         typed(
             &mut reference,
-            rows.iter().flat_map(|&row| {
-                (0..width).map(move |i| ((10, 2 + i), (row, 2 + i)))
-            }),
+            rows.iter()
+                .flat_map(|&row| (0..width).map(move |i| ((10, 2 + i), (row, 2 + i)))),
         );
         filled.evaluate();
         reference.evaluate();
@@ -151,9 +152,9 @@ fn fill_right_and_left_match_typing() {
         };
         typed(
             &mut reference,
-            columns.iter().flat_map(|&column| {
-                (0..height).map(move |i| ((2 + i, 10), (2 + i, column)))
-            }),
+            columns
+                .iter()
+                .flat_map(|&column| (0..height).map(move |i| ((2 + i, 10), (2 + i, column)))),
         );
         filled.evaluate();
         reference.evaluate();

@@ -272,8 +272,7 @@ pub(crate) fn result_matches_regex(calc_result: &CalcResult, reg: &regex::Regex)
 fn lowercase_equals(s: &str, target: &str) -> bool {
     if s.is_ascii() {
         s.len() == target.len()
-            && s
-                .bytes()
+            && s.bytes()
                 .zip(target.bytes())
                 .all(|(a, b)| a.to_ascii_lowercase() == b)
     } else {
