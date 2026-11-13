@@ -424,6 +424,28 @@ a second copy of every edit's diffs, old values included, for the session.
 Used by `crates/sheets_engine/src/cond_format.rs` (`cond_sync`). Tests:
 `kantor_changes::tests`, `sheets_engine` `cond_format::invalidation`.
 
+## 17. Keying formulas by what they parse to (fast open)
+
+Why: the xlsx reader parses every formula cell's A1 text to turn it into the
+R1C1 form the model keeps. A filled-down column is one R1C1 formula written
+90 000 times (`E2*F2`, `E3*F3`, ...), and parsing them was ~80% of opening
+the generated 90k-row workbook (810k formula cells).
+
+* `Parser::kantor_rc_key(formula, context, key)` lexes the formula and
+  writes a key in which every reference is what `parse` makes of it
+  (absolute parts as they are, relative parts as offsets from `context`,
+  range ends put in order first, as `parse_primary` does) and every other
+  token is its text. Two formulas on one sheet with equal keys parse to the
+  same tree. It refuses (returns false) formulas with `[` (structured
+  references depend on the table the cell is in) and ones the lexer
+  rejects. The caller (vendor/ironcalc §7) also never shares a result that
+  is a parse error, whose text is the formula as written.
+* `Lexer::set_formula` reuses its buffer; `Lexer::kantor_push_text` copies a
+  token's text into the key.
+
+Test: `rc_cache_matches_parsing_each_formula` in vendor/ironcalc (20 000
+random formulas, filled-down and not, compared with parsing each alone).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

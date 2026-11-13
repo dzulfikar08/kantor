@@ -121,6 +121,20 @@ Tables made or changed in Kantor are written from the model by
 Known: `tests/test.rs` `test_dynamic_arrays` fails since §5 (the file's
 default row height is now read); `test_no_export_tables` passes.
 
+## 7. Each filled-down formula is parsed once (fast open)
+
+Why: `from_a1_to_rc` parsed every formula cell and printed it in R1C1; on
+the generated 90k-row workbook (`scripts/corpus/gen_big_xlsx.py`, 810k
+formula cells, 36 distinct R1C1 formulas) that was ~80% of the open.
+
+What (`import/worksheets.rs` `RcCache`, used by `import/sheet_data.rs`):
+each sheet keeps a map from `Parser::kantor_rc_key` (vendor/ironcalc_base
+§17) to the R1C1 text; a formula whose key is known is only lexed. Results
+that contain the formula's own text (parse errors keep it as written) are
+not shared; formulas the key refuses take the old path.
+
+Test: `import::worksheets::tests::rc_cache_matches_parsing_each_formula`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

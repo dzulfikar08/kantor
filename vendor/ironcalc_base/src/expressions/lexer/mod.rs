@@ -172,9 +172,17 @@ impl<'a> Lexer<'a> {
         self.position as i32
     }
 
+    /// KANTOR PATCH (fast open): appends the formula's text from `start` to
+    /// `end` (char offsets) to `out`.
+    pub(crate) fn kantor_push_text(&self, start: usize, end: usize, out: &mut String) {
+        out.extend(&self.chars[start.min(self.len)..end.min(self.len)]);
+    }
+
     /// Resets the formula
     pub fn set_formula(&mut self, content: &str) {
-        self.chars = content.chars().collect();
+        // KANTOR PATCH (fast open): reuse the buffer.
+        self.chars.clear();
+        self.chars.extend(content.chars());
         self.len = self.chars.len();
         self.position = 0;
         self.next_token_position = None;

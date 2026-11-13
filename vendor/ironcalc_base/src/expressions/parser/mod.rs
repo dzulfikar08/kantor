@@ -355,6 +355,116 @@ impl<'a> Parser<'a> {
         self.tables = tables;
     }
 
+    /// KANTOR PATCH (fast open): writes into `key` a description of `formula`
+    /// at `context` such that two formulas (on the same sheet, with this
+    /// parser) with equal keys parse to the same tree. The key is the token
+    /// stream with every reference turned into what `parse` makes of it
+    /// (relative parts as offsets from `context`, ranges put in order). A
+    /// reader that converts many filled-down formulas can then parse each
+    /// distinct one once. Returns false, leaving no usable key, when the
+    /// formula can't be keyed safely: it has structured references (they
+    /// depend on the table the cell is in) or the lexer rejects it (parse
+    /// errors keep the formula's text).
+    pub fn kantor_rc_key(
+        &mut self,
+        formula: &str,
+        context: &CellReferenceRC,
+        key: &mut String,
+    ) -> bool {
+        key.clear();
+        if formula.contains('[') || !self.lexer.is_a1_mode() {
+            return false;
+        }
+        self.lexer.set_formula(formula);
+        self.lexer.kantor_in_table = false;
+        fn push_int(key: &mut String, value: i32) {
+            let mut digits = [0u8; 11];
+            let mut n = value.unsigned_abs();
+            let mut i = digits.len();
+            loop {
+                i -= 1;
+                digits[i] = b'0' + (n % 10) as u8;
+                n /= 10;
+                if n == 0 {
+                    break;
+                }
+            }
+            if value < 0 {
+                key.push('-');
+            }
+            for &d in &digits[i..] {
+                key.push(d as char);
+            }
+        }
+        // One part of a reference: absolute values as they are, relative
+        // ones as offsets from the cell.
+        let part = |key: &mut String, absolute: bool, value: i32, origin: i32| {
+            if absolute {
+                key.push('$');
+                push_int(key, value);
+            } else {
+                key.push('~');
+                push_int(key, value - origin);
+            }
+        };
+        let sheet_of = |key: &mut String, sheet: &Option<String>| {
+            if let Some(sheet) = sheet {
+                key.push('!');
+                push_int(key, sheet.len() as i32);
+                key.push('!');
+                key.push_str(sheet);
+            }
+        };
+        loop {
+            let start = self.lexer.get_position() as usize;
+            match self.lexer.next_token() {
+                TokenType::EOF => return true,
+                TokenType::Illegal(_) => return false,
+                TokenType::Reference {
+                    sheet,
+                    row,
+                    column,
+                    absolute_column,
+                    absolute_row,
+                } => {
+                    key.push('\u{1}');
+                    sheet_of(key, &sheet);
+                    part(key, absolute_row, row, context.row);
+                    part(key, absolute_column, column, context.column);
+                }
+                TokenType::Range { sheet, left, right } => {
+                    // As `parse_primary` does: order, then make relative.
+                    let (mut r1, mut a_r1, mut r2, mut a_r2) =
+                        (left.row, left.absolute_row, right.row, right.absolute_row);
+                    let (mut c1, mut a_c1, mut c2, mut a_c2) = (
+                        left.column,
+                        left.absolute_column,
+                        right.column,
+                        right.absolute_column,
+                    );
+                    if r1 > r2 {
+                        (r1, r2, a_r1, a_r2) = (r2, r1, a_r2, a_r1);
+                    }
+                    if c1 > c2 {
+                        (c1, c2, a_c1, a_c2) = (c2, c1, a_c2, a_c1);
+                    }
+                    key.push('\u{2}');
+                    sheet_of(key, &sheet);
+                    part(key, a_r1, r1, context.row);
+                    part(key, a_c1, c1, context.column);
+                    part(key, a_r2, r2, context.row);
+                    part(key, a_c2, c2, context.column);
+                }
+                // Anything else means the same wherever it is: its text.
+                _ => {
+                    key.push('\u{3}');
+                    self.lexer
+                        .kantor_push_text(start, self.lexer.get_position() as usize, key);
+                }
+            }
+        }
+    }
+
     pub fn parse(&mut self, formula: &str, context: &CellReferenceRC) -> Node {
         self.lexer.set_formula(formula);
         // KANTOR PATCH (tables)

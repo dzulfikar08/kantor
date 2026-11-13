@@ -19,8 +19,8 @@ use crate::error::XlsxError;
 use super::shared_strings::SharedStringTable;
 use super::util::parse_bool_with_default;
 use super::worksheets::{
-    find_or_add_formula, from_a1_to_rc, get_cell_from_excel, parse_cell_reference, parse_range,
-    CellArrayKind,
+    find_or_add_formula, get_cell_from_excel, parse_cell_reference, parse_range,
+    CellArrayKind, RcCache,
 };
 use super::xml::{attribute_value_of, reference_of, XmlNode, XmlTreeBuilder};
 use quick_xml::XmlVersion;
@@ -142,6 +142,8 @@ struct SheetDataReader<'a, 'p> {
     index_map: HashMap<i32, i32>,
     /// Cells covered by an array formula, with the anchor cell of the formula.
     array_cell: HashMap<(i32, i32), (i32, i32)>,
+    /// KANTOR PATCH (fast open): formulas converted to R1C1 so far.
+    rc_cache: RcCache,
 
     /// The open elements inside `sheetData`.
     stack: Vec<Tag>,
@@ -509,7 +511,8 @@ impl SheetDataReader<'_, '_> {
                     match formula.reference {
                         Some(_) => {
                             // It's the anchor cell. We do not use the ref attribute in IronCalc
-                            let formula = from_a1_to_rc(formula_text, self.parser, context, false)?;
+                            let formula = self.rc_cache
+                        .to_rc(formula_text, self.parser, &context, false)?;
                             match self.index_map.get(&si) {
                                 Some(index) => {
                                     // The index for that formula already exists meaning we bumped into a daughter cell first:
@@ -594,7 +597,8 @@ impl SheetDataReader<'_, '_> {
                         array_kind =
                             CellArrayKind::ArrayFormula(column2 - column1 + 1, row2 - row1 + 1);
                     }
-                    let formula = from_a1_to_rc(formula_text, self.parser, context, true)?;
+                    let formula = self.rc_cache
+                        .to_rc(formula_text, self.parser, &context, true)?;
                     formula_index = find_or_add_formula(
                         formula,
                         &mut self.shared_formulas,
@@ -603,7 +607,8 @@ impl SheetDataReader<'_, '_> {
                 }
                 "normal" => {
                     // Its a cell with a simple formula
-                    let formula = from_a1_to_rc(formula_text, self.parser, context, false)?;
+                    let formula = self.rc_cache
+                        .to_rc(formula_text, self.parser, &context, false)?;
                     formula_index = find_or_add_formula(
                         formula,
                         &mut self.shared_formulas,
@@ -663,6 +668,7 @@ pub(super) fn read_sheet_data<R: BufRead>(
         formula_lookup: HashMap::new(),
         index_map: HashMap::new(),
         array_cell: HashMap::new(),
+        rc_cache: RcCache::default(),
         stack: Vec::new(),
         row: None,
         cell: None,
