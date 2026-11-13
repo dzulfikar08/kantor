@@ -1,6 +1,8 @@
-# Signing Kantor for Windows (SignPath Foundation applied 2026-11-13)
+# Signing Kantor for Windows
 
-Applied to the SignPath Foundation on 2026-11-13 (answer pending; replies go to dzulfikar.at@gmail.com). Nothing is bought or configured yet. Today the Windows installer and zip are **unsigned**, and
+The SignPath Foundation declined Kantor on 2026-11-13: the free program is for projects that
+already show public trust (GitHub stars, forks, contributors, articles, discussions). Reapplying
+once Kantor has that is welcome. Nothing is bought or configured yet. Today the Windows installer and zip are **unsigned**, and
 the workflows only sign when the secrets below exist.
 
 ## What unsigned means for users
@@ -26,15 +28,18 @@ every release), and enterprise and Smart App Control policies accept the files.
 
 | Option | Cost (Nov 2026) | Can Kantor's owner use it? | Notes |
 |---|---|---|---|
-| **SignPath Foundation** (free signing for open-source projects) | Free | Probably: Kantor is AGPL on GitHub; apply at signpath.org | OV-level certificate in the Foundation's name, signing through SignPath's GitHub Action from release.yml. Needs a review and reproducible CI builds from a public repo (both true here). The publisher shown is "SignPath Foundation", not you. |
+| **SignPath Foundation** (free signing for open-source projects) | Free | **Not yet**: declined 2026-11-13 for too little public visibility; reapply later | OV-level certificate in the Foundation's name, signing through SignPath's GitHub Action from release.yml. Needs a review and reproducible CI builds from a public repo (both true here). The publisher shown is "SignPath Foundation", not you. |
 | **Azure Artifact Signing** (formerly Trusted Signing) | $9.99/month (5,000 signatures) | **Not today**: individuals only in the USA and Canada, organisations in the USA, Canada, EU and UK | Cheapest for those who qualify. No hardware token, and there is a GitHub Action (`azure/artifact-signing-action`). Billing starts when the account is created. |
 | **OV code-signing certificate** (Certum, Sectigo, SSL.com, DigiCert, GlobalSign…) | ~$150–300/year; Certum's open-source certificate for individuals costs less | Yes, from Indonesia, as an individual or a company | Since June 2023 the key must live on a hardware token or a cloud HSM, so a plain `.pfx` file is no longer issued. In CI that means the CA's cloud signing tool (SSL.com eSigner, Certum SimplySign, DigiCert KeyLocker…) instead of `signtool /f cert.pfx`. |
 | **EV certificate** | $400+/year | Yes | No SmartScreen advantage over OV since 2024. Not worth it for this. |
 | **Microsoft Store (MSIX)** | Free (one-time Store developer registration) | Yes | The Store re-signs the package, and users see no SmartScreen warning. Updates come from the Store, and the in-app updater must stay off. Needs an MSIX build and Store review, and AGPL terms vs the Store terms need a look (the same question as the Mac App Store). |
 
-**Recommendation:** apply to SignPath Foundation first (free, and fits an AGPL GitHub project).
-If you want the publisher to read "Dzulfikar Ats Tsauri" or a company name, buy an OV
-certificate with cloud signing. Consider the Microsoft Store later as a second channel.
+**Recommendation:** Certum's open-source code-signing certificate for an individual (the
+cheapest OV option open from Indonesia), with the publisher shown as "Open Source Developer,
+Dzulfikar Ats Tsauri". Its key lives in Certum's SimplySign cloud and is unlocked with a one-time
+code, so signing from GitHub Actions needs that code generated in CI from the token's secret;
+check this works before buying. Reapply to SignPath Foundation once
+Kantor has more public visibility. Consider the Microsoft Store later as a second channel.
 
 ## How the workflows sign (when you decide)
 
