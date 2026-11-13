@@ -1611,6 +1611,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "docx-rs",
+ "encoding_rs",
  "kantor_core",
  "log",
  "quick-xml 0.41.0",
