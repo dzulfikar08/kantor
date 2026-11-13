@@ -164,6 +164,15 @@ impl SheetData {
         }
     }
 
+    /// KANTOR PATCH (partial recalculation): every formula cell in natural
+    /// order with its formula index and whether it has no value yet; the
+    /// index is `None` for an array formula.
+    pub fn kantor_for_each_formula(&self, mut found: impl FnMut(i32, i32, Option<(i32, bool)>)) {
+        for (row, row_data) in self.rows_in_order() {
+            row_data.kantor_formulas(|column, formula| found(row, column, formula));
+        }
+    }
+
     /// KANTOR PATCH: the array formulas and spill cells in natural order. Rows
     /// of numbers and of packed cells hold none and are skipped.
     pub fn array_cells(&self) -> impl Iterator<Item = (i32, i32, &Cell)> {
@@ -171,6 +180,18 @@ impl SheetData {
             row_data
                 .array_cells()
                 .map(move |(column, cell)| (row, column, cell))
+        })
+    }
+
+    /// KANTOR PATCH (fast sort): whether an array formula or a spill cell is
+    /// in rows `top..=bottom`, columns `left..=right`. Rows of numbers and of
+    /// packed cells hold none and are not looked into.
+    pub fn kantor_has_array_cells(&self, top: i32, bottom: i32, left: i32, right: i32) -> bool {
+        (top..=bottom).any(|r| {
+            self.row(r).is_some_and(|row| {
+                row.array_cells()
+                    .any(|(column, _)| (left..=right).contains(&column))
+            })
         })
     }
 
@@ -266,6 +287,60 @@ impl SheetData {
                 self.chunks[chunk_index] = None;
             }
         }
+    }
+
+    /// Takes a row out as it is held (numbers stay numbers, packed cells
+    /// stay packed), leaving no row there.
+    fn take_row(&mut self, row: i32) -> Option<Row> {
+        let (chunk_index, index) = locate(row)?;
+        let chunk = self.chunks.get_mut(chunk_index)?.as_mut()?;
+        let taken = chunk.rows[index].take()?;
+        chunk.used -= 1;
+        self.row_count -= 1;
+        if chunk.used == 0 {
+            self.chunks[chunk_index] = None;
+        }
+        Some(taken)
+    }
+
+    /// Puts a row taken by `take_row` where there is no row.
+    fn put_row(&mut self, row: i32, data: Row) {
+        if let Some(slot) = self.row_or_insert(row) {
+            *slot = data;
+        }
+    }
+
+    /// KANTOR PATCH (fast sort): row `top + i` gets the row that was at
+    /// `order[i]`, for `order` a permutation of `top..top + order.len()`,
+    /// moving each row whole, as it is held. Only when every one of those
+    /// rows has its cells within `left..=right`; otherwise nothing changes
+    /// and it returns false (the caller moves the cells one by one).
+    pub fn kantor_permute_whole_rows(
+        &mut self,
+        top: i32,
+        left: i32,
+        right: i32,
+        order: &[i32],
+    ) -> bool {
+        let n = order.len() as i32;
+        let whole = (top..top + n).all(|r| {
+            self.row(r)
+                .and_then(Row::column_span)
+                .is_none_or(|(first, last)| first >= left && last <= right)
+        });
+        if !whole {
+            return false;
+        }
+        let mut taken: Vec<Option<Row>> = (top..top + n).map(|r| self.take_row(r)).collect();
+        for (i, &src) in order.iter().enumerate() {
+            let Some(slot) = taken.get_mut((src - top) as usize) else {
+                continue;
+            };
+            if let Some(data) = slot.take() {
+                self.put_row(top + i as i32, data);
+            }
+        }
+        true
     }
 
     /// Replaces the cells of a row. The row exists afterwards, even with no

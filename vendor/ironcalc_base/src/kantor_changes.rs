@@ -106,6 +106,13 @@ impl KantorChanges {
         self.cells.push((sheet, row1, col1, row2, col2));
     }
 
+    /// KANTOR PATCH (partial recalculation): add one diff list.
+    pub(crate) fn add_list(&mut self, list: &[Diff]) {
+        for diff in list {
+            self.diff(diff);
+        }
+    }
+
     pub(crate) fn add(&mut self, queue: &[QueueDiffs]) {
         for q in queue {
             for diff in &q.list {

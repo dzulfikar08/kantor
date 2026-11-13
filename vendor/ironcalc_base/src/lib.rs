@@ -57,6 +57,7 @@ mod functions;
 mod implicit_intersection;
 // KANTOR PATCH (conditional formatting): lazy rule evaluation API.
 pub mod kantor_changes;
+mod kantor_recalc;
 mod kantor_cf;
 mod kantor_validation;
 pub mod kantor_tables;

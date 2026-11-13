@@ -52,6 +52,20 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   doesn't have fail the build (`tools/fidelity/office_check.py`).
 
 ### Changed
+- **Big workbooks are faster to work with.** Measured on the generated 90 000-row workbook
+  (810 000 formulas, `scripts/corpus/gen_big_xlsx.py --table`, `cargo run --release -p
+  sheets_engine --example big_timing`), best of three, before → after:
+  - **Opening** is about 2.5× faster (9.3 s → 3.5 s on a quiet machine): each filled-down
+    formula is parsed once, not once per row.
+  - **Sorting** the 90 000 rows takes ~40 ms instead of ~0.4 s, and undoing it ~10 ms instead
+    of ~0.3 s: rows move whole.
+  - **Fill** (fill handle, Ctrl+D) of 9 formulas down 1000 rows takes ~0.26 s instead of 1–2 s,
+    in manual and automatic calculation: only the new cells and the formulas that read them
+    are recalculated, not the whole workbook.
+  - **Editing a cell** in automatic calculation recalculates only what depends on it (~0.15 s
+    instead of ~1 s here, most of it the summary's SUMIFS over whole columns). Workbooks with
+    dynamic arrays, circular references, or changes to sheets, rows, columns, names or tables
+    are still recalculated in full; F9 always recalculates everything.
 - Sheets: **Freeze Panes** works from what is on screen, as in Excel: on a scrolled sheet the rows
   above and columns left of the top-left cell on screen go out of sight until Unfreeze, and with
   A1 (or the top-left cell on screen) active the panes split at the middle of the screen. Freeze

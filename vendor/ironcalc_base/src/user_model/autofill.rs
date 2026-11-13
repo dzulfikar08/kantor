@@ -524,7 +524,8 @@ impl<'a> UserModel<'a> {
         }
         self.apply_fill_merge_creation(sheet, &plan, &mut diff_list)?;
         self.push_diff_list(diff_list);
-        self.evaluate();
+        // KANTOR PATCH (partial recalculation): what the fill can change.
+        self.kantor_evaluate_changes();
         Ok(())
     }
 
@@ -706,7 +707,8 @@ impl<'a> UserModel<'a> {
         }
         self.apply_fill_merge_creation(sheet, &plan, &mut diff_list)?;
         self.push_diff_list(diff_list);
-        self.evaluate();
+        // KANTOR PATCH (partial recalculation): what the fill can change.
+        self.kantor_evaluate_changes();
         Ok(())
     }
 

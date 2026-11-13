@@ -406,6 +406,10 @@ pub(crate) struct Evaluation {
     /// KANTOR PATCH (conditional formatting): formula cells read give their
     /// stored value and are not evaluated (`Model::cf_evaluate`).
     pub(crate) stored_only: bool,
+    /// KANTOR PATCH (partial recalculation): only these formula cells are
+    /// evaluated in this pass; any other gives its stored value
+    /// (`kantor_recalc.rs`).
+    pub(crate) kantor_only: Option<crate::kantor_recalc::OnlyCells>,
     /// Number of restarts the last `evaluate()` needed. For tests and tuning.
     pub(crate) restarts_in_last_evaluation: u32,
     /// Number of formulas running right now, that is the depth of the
@@ -489,6 +493,7 @@ impl Default for Evaluation {
             restart: None,
             in_pass: false,
             stored_only: false,
+            kantor_only: None,
             restarts_in_last_evaluation: 0,
             depth: 0,
             max_depth: default_max_depth(),
@@ -536,6 +541,7 @@ impl<'a> Model<'a> {
     pub fn evaluate(&mut self) {
         // KANTOR PATCH (changes): formula results may change now.
         self.kantor_evaluations += 1;
+        self.kantor_last_partial = None;
         self.sync_anchor_order();
         // Every pass starts from the same sheet: what an abandoned pass wrote
         // is undone. This is what makes a pass a function of the anchor order.
@@ -702,6 +708,12 @@ impl<'a> Model<'a> {
         self.kantor_evaluations
     }
 
+    /// KANTOR PATCH (partial recalculation): how many formulas the last
+    /// evaluation ran, if it ran only some (`kantor_evaluate_changed`).
+    pub fn kantor_last_partial(&self) -> Option<usize> {
+        self.kantor_last_partial
+    }
+
     /// KANTOR PATCH (changes): whether the last evaluation had dynamic array
     /// formulas (their spills can move into any cell).
     pub fn kantor_has_dynamic_arrays(&self) -> bool {
@@ -717,7 +729,7 @@ impl<'a> Model<'a> {
         order.extend(current.into_iter().filter(|a| !known.contains(a)));
     }
 
-    fn dynamic_anchors_in_natural_order(&self) -> Vec<CellReferenceIndex> {
+    pub(crate) fn dynamic_anchors_in_natural_order(&self) -> Vec<CellReferenceIndex> {
         let mut found = Vec::new();
         for (sheet, worksheet) in self.sheets_with_formulas() {
             // KANTOR PATCH: only the rows that can hold arrays are read.
@@ -811,6 +823,16 @@ impl<'a> Model<'a> {
             }
             // KANTOR PATCH (conditional formatting): see `stored_only`.
             Found::Spill(_) | Found::Formula(_) if self.evaluation.stored_only => {
+                self.stored_value(cell_reference)
+            }
+            // KANTOR PATCH (partial recalculation): not one to evaluate.
+            Found::Spill(_) | Found::Formula(_)
+                if self
+                    .evaluation
+                    .kantor_only
+                    .as_ref()
+                    .is_some_and(|only| !only.contains(&key(cell_reference))) =>
+            {
                 self.stored_value(cell_reference)
             }
             Found::Spill(anchor) => self.evaluate_spill_cell(cell_reference, anchor),

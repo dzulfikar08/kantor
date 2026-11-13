@@ -136,6 +136,22 @@ color, name, family, scheme`; `export/dxfs_styles.rs` writes a dxf's font as
 border`. Tested by `tests/test_kantor_fidelity.rs`
 (`font_and_dxf_children_are_in_schema_order`).
 
+## 8. Each filled-down formula is parsed once (fast open)
+
+(Numbered 8: §7 is the font element order patch on main.)
+
+Why: `from_a1_to_rc` parsed every formula cell and printed it in R1C1; on
+the generated 90k-row workbook (`scripts/corpus/gen_big_xlsx.py`, 810k
+formula cells, 36 distinct R1C1 formulas) that was ~80% of the open.
+
+What (`import/worksheets.rs` `RcCache`, used by `import/sheet_data.rs`):
+each sheet keeps a map from `Parser::kantor_rc_key` (vendor/ironcalc_base
+§17) to the R1C1 text; a formula whose key is known is only lexed. Results
+that contain the formula's own text (parse errors keep it as written) are
+not shared; formulas the key refuses take the old path.
+
+Test: `import::worksheets::tests::rc_cache_matches_parsing_each_formula`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the
