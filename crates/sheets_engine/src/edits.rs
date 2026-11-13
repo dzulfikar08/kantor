@@ -34,6 +34,9 @@ pub(crate) struct Edits {
     pub validations: HashMap<u32, (Vec<crate::Validation>, Layout)>,
     /// Charts made in Kantor (Insert Chart).
     pub charts: Vec<crate::chart_edit::NewChart>,
+    /// Charts of the file restyled in Kantor: the edited part, its
+    /// references in the rows and columns of the layout it was made in.
+    pub file_charts: HashMap<crate::drawing::DrawingKey, (Arc<str>, Layout)>,
 }
 
 /// What was edited in Kantor at any point of the session (any history
@@ -46,6 +49,7 @@ pub(crate) struct Touched {
     pub cf: HashSet<u32>,
     pub validations: HashSet<u32>,
     pub tables: HashSet<String>,
+    pub file_charts: HashSet<crate::drawing::DrawingKey>,
 }
 
 impl Workbook {
@@ -67,6 +71,7 @@ impl Workbook {
         t.tables.extend(edits.tables.keys().cloned());
         t.tables.extend(edits.tables.values().flatten().cloned());
         t.tables.extend(edits.removed_tables.iter().cloned());
+        t.file_charts.extend(edits.file_charts.keys().copied());
         self.history.edited_steps(0);
         self.history.set_edits(Arc::new(edits));
     }

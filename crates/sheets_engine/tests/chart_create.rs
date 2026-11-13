@@ -181,6 +181,7 @@ fn every_type_and_the_chart_panel() {
             ChartType::Pie => "c:pieChart",
             ChartType::Area | ChartType::StackedArea => "c:areaChart",
             ChartType::Scatter => "c:scatterChart",
+            ChartType::Other => unreachable!(),
         };
         assert!(xml.contains(want), "{kind:?}: {xml}");
         assert!(xml.contains("<a:t>Sales &amp; costs</a:t>"));
@@ -276,7 +277,9 @@ fn a_chart_added_beside_a_files_charts() {
     let b = parts(&path);
     // The other sheet's drawing, every chart of the file: as they were.
     for (name, text) in &a {
-        if name.contains("drawing2") || name == "[Content_Types].xml" {
+        // docProps/core.xml holds the save time, which may tick over between the two saves.
+        if name.contains("drawing2") || name == "[Content_Types].xml" || name == "docProps/core.xml"
+        {
             continue;
         }
         assert_eq!(Some(text), b.get(name), "{name} changed");

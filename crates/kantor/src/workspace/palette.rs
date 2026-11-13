@@ -811,7 +811,7 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: "Chart Panel",
-        detail: "Sheets · type, title, legend, series and data of the selected chart",
+        detail: "Sheets · type, title, legend, axis titles, series colours and data of the selected chart",
         keys: "",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.chart_options_doc(w, cx)),
     },

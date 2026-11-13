@@ -812,17 +812,27 @@ fn paint(
             cx.stop_propagation();
             let _ = view2.update(cx, |_, cx| cx.notify());
         });
-        let layer3 = layer.clone();
-        window.on_mouse_event(move |e: &MouseUpEvent, phase, window, cx| {
-            if phase != DispatchPhase::Capture || e.button != MouseButton::Left {
-                return;
-            }
-            if let Some(d) = layer3.borrow_mut().drag.as_mut() {
-                d.update(e.position);
-            }
-            let _ = view.update(cx, |this, cx| this.drop_drawing(window, cx));
-        });
     }
+    // Always listening: a quick click's button comes up before the frame
+    // that would add this listener for the drag, and the object would then
+    // stick to the pointer.
+    let layer3 = layer.clone();
+    window.on_mouse_event(move |e: &MouseUpEvent, phase, window, cx| {
+        if phase != DispatchPhase::Capture || e.button != MouseButton::Left {
+            return;
+        }
+        let dragging = match layer3.borrow_mut().drag.as_mut() {
+            Some(d) => {
+                d.update(e.position);
+                true
+            }
+            None => false,
+        };
+        if !dragging {
+            return;
+        }
+        let _ = view.update(cx, |this, cx| this.drop_drawing(window, cx));
+    });
 }
 
 #[cfg(test)]

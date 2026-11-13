@@ -284,6 +284,8 @@ pub(crate) struct Patches {
     pub removed_charts: Vec<SavedChart>,
     /// Filled by the save: where each chart made in Kantor went, by id.
     pub written: RefCell<Vec<(u32, SavedChart)>>,
+    /// Charts of the file restyled in Kantor: their parts are rewritten.
+    pub file_charts: Vec<crate::file_chart::FileChartSave>,
 }
 
 /// Where a save put a chart made in Kantor (the next save of the same
@@ -343,6 +345,7 @@ impl Patches {
             && self.tables.is_empty()
             && self.charts.is_empty()
             && self.removed_charts.is_empty()
+            && self.file_charts.is_empty()
     }
 }
 
@@ -4213,7 +4216,76 @@ fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
         let written = write_charts(pkg, &sheets, &patches.charts, &patches.removed_charts)?;
         *patches.written.borrow_mut() = written;
     }
+    for c in &patches.file_charts {
+        if let Some(part) = file_chart_part(pkg, &sheets, c.sheet_id, c.cnvpr)? {
+            pkg.set(&part, c.xml.clone().into_bytes());
+        }
+    }
     Ok(())
+}
+
+/// The chart part of the frame with `cNvPr id` `cnvpr` in the drawing of
+/// sheet `sheet_id` (`None` when there is none: the frame was deleted, or
+/// the package is IronCalc's own).
+fn file_chart_part(
+    pkg: &Package,
+    sheets: &[SheetEntry],
+    sheet_id: u32,
+    cnvpr: u32,
+) -> Result<Option<String>, String> {
+    let Some(sheet) = sheets
+        .iter()
+        .find(|s| s.sheet_id == sheet_id && s.kind == SheetKind::Work)
+    else {
+        return Ok(None);
+    };
+    let rels = match pkg.text(&rels_part(&sheet.part))? {
+        Some(x) => parse_rels(x)?,
+        None => return Ok(None),
+    };
+    let Some(xml) = pkg.text(&sheet.part)? else {
+        return Ok(None);
+    };
+    let sk = Skeleton::new(xml);
+    let drawing = {
+        let doc = Document::parse(&sk.xml).map_err(|e| e.to_string())?;
+        doc.root_element()
+            .children()
+            .find(|c| is_main(*c, "drawing"))
+            .and_then(|d| d.attribute((NS_R, "id")))
+            .and_then(|rid| rels.iter().find(|r| r.id == rid && !r.external))
+            .and_then(|r| resolve(&sheet.part, &r.target))
+    };
+    let Some(drawing) = drawing else {
+        return Ok(None);
+    };
+    let Some(dxml) = pkg.text(&drawing)? else {
+        return Ok(None);
+    };
+    let doc = Document::parse(dxml).map_err(|e| format!("{drawing}: {e}"))?;
+    let id = cnvpr.to_string();
+    let rid = doc
+        .root_element()
+        .children()
+        .filter(|a| crate::drawing::is_anchor(*a))
+        .find(|a| crate::drawing::c_nv_pr(*a).and_then(|n| n.attribute("id")) == Some(&id))
+        .and_then(|a| {
+            a.descendants()
+                .find(|d| d.tag_name().name() == "chart")
+                .and_then(|c| c.attribute((NS_R, "id")))
+        });
+    let Some(rid) = rid else {
+        return Ok(None);
+    };
+    let drels = match pkg.text(&rels_part(&drawing))? {
+        Some(x) => parse_rels(x)?,
+        None => return Ok(None),
+    };
+    Ok(drels
+        .iter()
+        .find(|r| r.id == rid && !r.external)
+        .and_then(|r| resolve(&drawing, &r.target))
+        .filter(|p| pkg.has(p)))
 }
 
 const CHART_CT: &str = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";

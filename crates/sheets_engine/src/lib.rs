@@ -11,10 +11,12 @@
 mod batch;
 mod cf_edit;
 mod chart_edit;
+mod chart_style;
 mod cond_format;
 mod csv;
 pub mod drawing;
 mod edits;
+mod file_chart;
 mod filter;
 mod hide;
 mod icons;
@@ -38,7 +40,7 @@ pub use cf_edit::{
     COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,
     DATA_BAR_COLORS, ICON_SETS, sqref_of,
 };
-pub use chart_edit::{ChartSpec, ChartType, LegendPos, NEW_CHART_BASE};
+pub use chart_edit::{ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor};
 pub use import::SourceFormat;
 pub use preserve::package_problems;
 pub use recovery::{SaveJob, Saved, XlsxOutput, XlsxSnapshot, write_file_atomic};
@@ -1066,7 +1068,7 @@ impl CellRange {
 
 impl Workbook {
     /// The `sheetId` of the sheet at index `sheet`.
-    pub(crate) fn sheet_id(&self, sheet: u32) -> u32 {
+    pub fn sheet_id(&self, sheet: u32) -> u32 {
         self.model
             .get_model()
             .workbook
@@ -1185,6 +1187,7 @@ impl Workbook {
                 self.cf_patches(&mut p);
                 self.validation_patches(&mut p);
                 self.chart_patches(&mut p);
+                self.file_chart_patches(&mut p);
                 p
             },
         }
@@ -1373,6 +1376,11 @@ fn write_atomic(path: &Path, write: impl FnOnce(&mut fs::File) -> Result<()>) ->
 }
 
 /// `0 -> "A"`, `25 -> "Z"`, `26 -> "AA"`.
+/// A sheet name as a reference writes it (quoted when it needs to be).
+pub fn quote_sheet_name(name: &str) -> String {
+    print::quote_sheet(name)
+}
+
 pub fn column_name(col: u32) -> String {
     number_to_column(col as i32 + 1).unwrap_or_default()
 }

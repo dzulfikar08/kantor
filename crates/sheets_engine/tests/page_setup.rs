@@ -245,7 +245,11 @@ fn untouched_sheets_stay_byte_identical() {
     let a = parts(&plain_path);
     let b = parts(&edited_path);
     for (name, text) in &a {
-        if name == "xl/worksheets/sheet3.xml" || name == "xl/workbook.xml" {
+        // docProps/core.xml holds the save time, which may tick over between the two saves.
+        if name == "xl/worksheets/sheet3.xml"
+            || name == "xl/workbook.xml"
+            || name == "docProps/core.xml"
+        {
             continue;
         }
         assert_eq!(Some(text), b.get(name), "{name} changed");

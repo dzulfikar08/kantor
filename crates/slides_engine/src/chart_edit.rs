@@ -10,7 +10,12 @@
 //! on the frame's [`ShapeSrc`](crate::model) so undo covers them; Save
 //! writes them over the original parts.
 //!
-//! Series can't be added or removed yet; categories can (at the end).
+//! Categories are added or removed at the end. Series are added after the
+//! last one (a copy of it without its own colours, its name and values one
+//! column or row further) or removed (the later series move into the
+//! removed one's cells, so the data stays one block). A table in the
+//! embedded sheet that covered the chart's cells is resized with them, so
+//! PowerPoint's "Edit Data" shows the same range.
 
 use std::io::{Cursor, Read as _, Write as _};
 use std::ops::Range;
@@ -251,6 +256,38 @@ impl Ref {
         out
     }
 
+    /// Moved by `dc` columns and `dr` rows.
+    fn shifted(&self, dc: u32, dr: u32) -> Self {
+        let mut r = self.clone();
+        r.c0 += dc;
+        r.c1 += dc;
+        r.r0 += dr;
+        r.r1 += dr;
+        r
+    }
+
+    /// The block covering both (same sheet).
+    fn union(&self, o: &Ref) -> Option<Self> {
+        (self.sheet.eq_ignore_ascii_case(&o.sheet)).then(|| Ref {
+            sheet: self.sheet.clone(),
+            c0: self.c0.min(o.c0),
+            r0: self.r0.min(o.r0),
+            c1: self.c1.max(o.c1),
+            r1: self.r1.max(o.r1),
+        })
+    }
+
+    /// `A1:C5`, without the sheet.
+    fn area(&self) -> String {
+        format!(
+            "{}{}:{}{}",
+            col_name(self.c0),
+            self.r0,
+            col_name(self.c1),
+            self.r1
+        )
+    }
+
     /// The same start, `n` cells long along its direction.
     fn resized(&self, n: u32) -> Self {
         let n = n.max(1);
@@ -301,13 +338,168 @@ fn fmt_num(v: f64) -> String {
     }
 }
 
+/// How the series of a chart change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SeriesChange {
+    Same,
+    /// One more after the last.
+    Added,
+    /// This one is gone.
+    Removed(usize),
+}
+
+/// A series' name and value references.
+fn ser_refs(ser: Node) -> (Option<Ref>, Option<Ref>) {
+    (
+        kid(ser, "tx")
+            .and_then(formula)
+            .and_then(|f| Ref::parse(&f)),
+        val_el(ser).and_then(formula).and_then(|f| Ref::parse(&f)),
+    )
+}
+
+/// The `c:f` text node under a `c:tx` / `c:val` element.
+fn f_text<'a, 'i>(el: Option<Node<'a, 'i>>) -> Option<Node<'a, 'i>> {
+    let el = el?;
+    ["strRef", "numRef"]
+        .iter()
+        .find_map(|r| kid(el, r))
+        .and_then(|r| kid(r, "f"))
+        .and_then(|f| f.first_child())
+        .filter(|t| t.is_text())
+}
+
+/// The block every reference of the chart lies in (one sheet).
+fn data_box(xml: &str) -> Option<Ref> {
+    let doc = roxmltree::Document::parse(xml).ok()?;
+    let mut out: Option<Ref> = None;
+    for ser in sers(&doc) {
+        for el in [kid(ser, "tx"), cat_el(ser), val_el(ser)]
+            .into_iter()
+            .flatten()
+        {
+            let Some(r) = formula(el).and_then(|f| Ref::parse(&f)) else {
+                continue;
+            };
+            out = Some(match out {
+                None => r,
+                Some(b) => b.union(&r)?,
+            });
+        }
+    }
+    out
+}
+
+/// The chart part with a series added or removed (caches not yet
+/// rewritten), and the cells the change empties.
+fn restructure(xml: &str, change: SeriesChange) -> anyhow::Result<(String, Vec<CellWrites>)> {
+    let doc = roxmltree::Document::parse(xml).context("chart XML")?;
+    let sers = sers(&doc);
+    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+    let mut clears: Vec<CellWrites> = Vec::new();
+    match change {
+        SeriesChange::Same => return Ok((xml.to_owned(), clears)),
+        SeriesChange::Added => {
+            let last = *sers.last().context("the chart has no series")?;
+            let p = prefix_of(xml, last);
+            let max = |name: &str| {
+                sers.iter()
+                    .filter_map(|s| kid(*s, name).and_then(|n| attr_i64(n, "val")))
+                    .max()
+                    .unwrap_or(-1)
+                    + 1
+            };
+            let (tx, val) = ser_refs(last);
+            // Series in columns move right, series in rows move down.
+            let (dc, dr) = match &val {
+                Some(v) if v.c0 == v.c1 && v.r0 != v.r1 => (1, 0),
+                Some(v) if v.r0 == v.r1 && v.c0 != v.c1 => (0, 1),
+                _ => match &tx {
+                    Some(t) if t.r0 == 1 || val.as_ref().is_some_and(|v| t.r0 < v.r0) => (1, 0),
+                    _ => (0, 1),
+                },
+            };
+            let mut clone = format!("<{p}ser>");
+            for c in last.children().filter(|c| c.is_element()) {
+                let name = c.tag_name().name();
+                match name {
+                    "idx" | "order" => {
+                        clone.push_str(&format!("<{p}{name} val=\"{}\"/>", max(name)))
+                    }
+                    // Its own colours, points and IDs stay with the original.
+                    "spPr" | "dPt" | "extLst" => {}
+                    "marker" => {
+                        let mut m = raw(xml, c).to_owned();
+                        if let Some(sp) = kid(c, "spPr") {
+                            let r = sp.range();
+                            let base = c.range().start;
+                            m.replace_range(r.start - base..r.end - base, "");
+                        }
+                        clone.push_str(&m);
+                    }
+                    "tx" | "val" | "yVal" => {
+                        let mut t = raw(xml, c).to_owned();
+                        if let Some(f) = f_text(Some(c))
+                            && let Some(r) = Ref::parse(f.text().unwrap_or_default())
+                        {
+                            let base = c.range().start;
+                            let fr = f.range();
+                            t.replace_range(
+                                fr.start - base..fr.end - base,
+                                &esc(&r.shifted(dc, dr).write()),
+                            );
+                        }
+                        clone.push_str(&t);
+                    }
+                    _ => clone.push_str(raw(xml, c)),
+                }
+            }
+            clone.push_str(&format!("</{p}ser>"));
+            let at = last.range().end;
+            edits.push((at..at, clone));
+        }
+        SeriesChange::Removed(k) => {
+            if sers.len() <= 1 {
+                bail!("A chart needs at least one series");
+            }
+            let gone = *sers.get(k).context("no such series")?;
+            edits.push((gone.range(), String::new()));
+            let refs: Vec<(Option<Ref>, Option<Ref>)> = sers.iter().map(|s| ser_refs(*s)).collect();
+            // Later series take the cells of the one before them.
+            for j in k + 1..sers.len() {
+                let (tx, val) = &refs[j - 1];
+                for (el, r) in [(kid(sers[j], "tx"), tx), (val_el(sers[j]), val)] {
+                    if let (Some(t), Some(r)) = (f_text(el), r) {
+                        edits.push((t.range(), esc(&r.write())));
+                    }
+                }
+            }
+            // The last cells used are empty now.
+            let (tx, val) = &refs[sers.len() - 1];
+            for r in [tx, val].into_iter().flatten() {
+                clears.push((r.clone(), vec![CellValue::Empty; r.cells().len()]));
+            }
+        }
+    }
+    edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+    let mut out = xml.to_owned();
+    for (r, t) in edits {
+        out.replace_range(r, &t);
+    }
+    Ok((out, clears))
+}
+
 /// The chart part with `data` in its caches; and the workbook cells it
 /// references with their new values.
 fn rewrite_chart(xml: &str, data: &ChartData) -> anyhow::Result<(String, Vec<CellWrites>)> {
     let doc = roxmltree::Document::parse(xml).context("chart XML")?;
     let sers = sers(&doc);
     if sers.len() != data.series.len() {
-        bail!("Series can't be added or removed yet");
+        bail!(
+            "The chart has {} series, not {}",
+            sers.len(),
+            data.series.len()
+        );
     }
     let n = data.categories.len();
     if n == 0 {
@@ -511,8 +703,113 @@ fn set_cell(sheet: &mut String, col: u32, row: u32, v: &CellValue) {
     sheet.insert_str(at, &new_row);
 }
 
-/// The workbook with the referenced cells set.
-fn patch_workbook(bytes: &[u8], cells: &[CellWrites]) -> anyhow::Result<Vec<u8>> {
+/// A table part with its range changed from `old` to `new` (it must cover
+/// exactly `old`): `ref`, the filter's `ref` and the columns (named after
+/// their header cells in `header`, else as they were).
+fn resize_table(
+    xml: &str,
+    old: &Ref,
+    new: &Ref,
+    header: &dyn Fn(u32) -> Option<String>,
+) -> Option<String> {
+    let doc = roxmltree::Document::parse(xml).ok()?;
+    let root = doc.root_element();
+    let r = root.attribute("ref")?;
+    if !r.replace('$', "").eq_ignore_ascii_case(&old.area()) || old.c0 != new.c0 || old.r0 != new.r0
+    {
+        return None;
+    }
+    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+    let attr_range = |n: Node, name: &str| {
+        n.attributes()
+            .find(|a| a.name() == name)
+            .map(|a| a.range_value())
+    };
+    edits.push((attr_range(root, "ref")?, new.area()));
+    if let Some(f) = root
+        .children()
+        .find(|c| c.tag_name().name() == "autoFilter")
+        && let Some(rr) = attr_range(f, "ref")
+    {
+        edits.push((rr, new.area()));
+    }
+    let cols = root
+        .children()
+        .find(|c| c.tag_name().name() == "tableColumns")?;
+    let list: Vec<Node> = cols
+        .children()
+        .filter(|c| c.tag_name().name() == "tableColumn")
+        .collect();
+    let n = (new.c1 - new.c0 + 1) as usize;
+    let mut used = std::collections::HashSet::new();
+    let mut names = Vec::new();
+    for i in 0..n {
+        let base = header(new.c0 + i as u32)
+            .filter(|h| !h.trim().is_empty())
+            .or_else(|| {
+                list.get(i)
+                    .and_then(|c| c.attribute("name"))
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| format!("Column{}", i + 1));
+        let mut name = base.clone();
+        let mut k = 2;
+        while !used.insert(name.to_lowercase()) {
+            name = format!("{base}{k}");
+            k += 1;
+        }
+        names.push(name);
+    }
+    for (i, c) in list.iter().enumerate() {
+        if i < n {
+            if let Some(rr) = attr_range(*c, "name") {
+                edits.push((rr, esc_attr(&names[i])));
+            }
+        } else {
+            edits.push((c.range(), String::new()));
+        }
+    }
+    if n > list.len() {
+        let p = prefix_of(xml, cols);
+        let first = list
+            .iter()
+            .filter_map(|c| attr_i64(*c, "id"))
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let mut add = String::new();
+        for (next, name) in (first..).zip(&names[list.len()..]) {
+            add.push_str(&format!(
+                "<{p}tableColumn id=\"{next}\" name=\"{}\"/>",
+                esc_attr(name)
+            ));
+        }
+        let end = cols.range().end;
+        let close = xml[cols.range()].rfind("</")? + cols.range().start;
+        if close < end && !xml[..end].ends_with("/>") {
+            edits.push((close..close, add));
+        } else {
+            return None;
+        }
+    }
+    if let Some(rr) = attr_range(cols, "count") {
+        edits.push((rr, n.to_string()));
+    }
+    edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+    let mut out = xml.to_owned();
+    for (r, t) in edits {
+        out.replace_range(r, &t);
+    }
+    Some(out)
+}
+
+/// The workbook with the referenced cells set; `resize` (the chart's old
+/// and new blocks) resizes a table that covered the old one.
+fn patch_workbook(
+    bytes: &[u8],
+    cells: &[CellWrites],
+    resize: Option<(Ref, Ref)>,
+) -> anyhow::Result<Vec<u8>> {
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).context("embedded workbook")?;
     let text = |zip: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str| -> Option<String> {
         let mut f = zip.by_name(name).ok()?;
@@ -555,6 +852,46 @@ fn patch_workbook(bytes: &[u8], cells: &[CellWrites]) -> anyhow::Result<Vec<u8>>
             set_cell(sheet, c, row, v);
         }
     }
+    // Tables of the data's sheet covering the old block.
+    let mut tables: Vec<(String, String)> = Vec::new();
+    if let Some((old, new)) = resize.filter(|(o, n)| o != n)
+        && let Some(part) = sheet_part(&old.sheet)
+    {
+        let header = |c: u32| -> Option<String> {
+            cells.iter().rev().find_map(|(r, vals)| {
+                r.cells().into_iter().zip(vals).find_map(|((cc, rr), v)| {
+                    (cc == c && rr == new.r0).then(|| match v {
+                        CellValue::Text(t) => t.clone(),
+                        CellValue::Number(x) => fmt_num(*x),
+                        CellValue::Empty => String::new(),
+                    })
+                })
+            })
+        };
+        let srels = parse_rels(&text(&mut zip, &rels_name(&part)).unwrap_or_default());
+        for r in srels.iter().filter(|r| r.kind() == "table") {
+            let Some(tp) = r.part(&part) else { continue };
+            let Some(x) = text(&mut zip, &tp) else {
+                continue;
+            };
+            if let Some(nx) = resize_table(&x, &old, &new, &header) {
+                tables.push((tp, nx));
+            }
+        }
+        // The sheet's used range covers the new block.
+        if let Some((_, sx)) = sheets.iter_mut().find(|(p, _)| *p == part)
+            && let Some(i) = sx.find("<dimension ref=\"")
+        {
+            let a = i + 16;
+            if let Some(len) = sx[a..].find('"') {
+                let cur = format!("{}!{}", old.sheet, &sx[a..a + len]);
+                if let Some(d) = Ref::parse(&cur).and_then(|d| d.union(&new)) {
+                    sx.replace_range(a..a + len, &d.area());
+                }
+            }
+        }
+    }
+    sheets.extend(tables);
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -660,7 +997,70 @@ impl Presentation {
     ) -> anyhow::Result<()> {
         let (part, bytes) = self.chart_bytes(slide, shape).context("not a chart")?;
         let xml = std::str::from_utf8(&bytes).context("chart part isn't text")?;
-        let (new_xml, cells) = rewrite_chart(xml, data)?;
+        self.change_chart(slide, shape, xml, &part, data, SeriesChange::Same)
+    }
+
+    /// Add a series after the last one (named `name`, values empty). One
+    /// undo step.
+    pub fn add_chart_series(
+        &mut self,
+        slide: usize,
+        shape: usize,
+        name: &str,
+    ) -> anyhow::Result<()> {
+        let (part, bytes) = self.chart_bytes(slide, shape).context("not a chart")?;
+        let xml = std::str::from_utf8(&bytes).context("chart part isn't text")?;
+        let mut data = read_chart_data(xml).context("not a chart")?;
+        let n = data.categories.len();
+        data.series.push(ChartSeries {
+            name: name.to_owned(),
+            values: vec![None; n],
+        });
+        self.change_chart(slide, shape, xml, &part, &data, SeriesChange::Added)
+    }
+
+    /// Remove series `index`. One undo step.
+    pub fn remove_chart_series(
+        &mut self,
+        slide: usize,
+        shape: usize,
+        index: usize,
+    ) -> anyhow::Result<()> {
+        let (part, bytes) = self.chart_bytes(slide, shape).context("not a chart")?;
+        let xml = std::str::from_utf8(&bytes).context("chart part isn't text")?;
+        let mut data = read_chart_data(xml).context("not a chart")?;
+        if data.series.len() <= 1 {
+            bail!("A chart needs at least one series");
+        }
+        if index >= data.series.len() {
+            bail!("no such series");
+        }
+        data.series.remove(index);
+        self.change_chart(
+            slide,
+            shape,
+            xml,
+            &part,
+            &data,
+            SeriesChange::Removed(index),
+        )
+    }
+
+    fn change_chart(
+        &mut self,
+        slide: usize,
+        shape: usize,
+        xml: &str,
+        part: &str,
+        data: &ChartData,
+        change: SeriesChange,
+    ) -> anyhow::Result<()> {
+        let part = part.to_owned();
+        let old_box = data_box(xml);
+        let (mid, clears) = restructure(xml, change)?;
+        let (new_xml, mut cells) = rewrite_chart(&mid, data)?;
+        cells.extend(clears);
+        let resize = old_box.zip(data_box(&new_xml));
         // The embedded workbook, from the chart part's relationships.
         let rels = self
             .part_bytes(&rels_name(&part))
@@ -677,7 +1077,7 @@ impl Presentation {
                     .edited_part(&p)
                     .or_else(|| self.part_bytes(&p))
                     .context("the chart's workbook is missing")?;
-                let patched = patch_workbook(&current, &cells)?;
+                let patched = patch_workbook(&current, &cells, resize)?;
                 Some((p, Arc::new(patched)))
             }
             None => None,
@@ -742,6 +1142,50 @@ mod tests {
             s.contains(r#"</row><row r="3"><c r="A3"><v>2</v></c></row><row r="4">"#),
             "{s}"
         );
+    }
+
+    #[test]
+    fn tables_follow_the_data() {
+        let t = r#"<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="1" name="Table1" displayName="Table1" ref="A1:C5" totalsRowShown="0"><autoFilter ref="A1:C5"/><tableColumns count="3"><tableColumn id="1" name=" "/><tableColumn id="2" name="2025"/><tableColumn id="3" name="2026"/></tableColumns><tableStyleInfo name="TableStyleMedium2"/></table>"#;
+        let old = Ref::parse("Sheet1!$A$1:$C$5").unwrap();
+        let wider = Ref::parse("Sheet1!$A$1:$D$5").unwrap();
+        let header = |c: u32| (c == 4).then(|| "2027".to_owned());
+        let x = resize_table(t, &old, &wider, &header).unwrap();
+        assert!(x.contains(r#"ref="A1:D5""#));
+        assert!(x.contains(r#"<autoFilter ref="A1:D5"/>"#));
+        assert!(x.contains(r#"<tableColumns count="4">"#));
+        assert!(
+            x.contains(r#"<tableColumn id="4" name="2027"/></tableColumns>"#),
+            "{x}"
+        );
+        assert!(x.contains("<tableStyleInfo"));
+        let narrower = Ref::parse("Sheet1!$A$1:$B$5").unwrap();
+        let header = |c: u32| (c == 2).then(|| "2026".to_owned());
+        let y = resize_table(t, &old, &narrower, &header).unwrap();
+        assert!(y.contains(r#"<tableColumns count="2"><tableColumn id="1" name=" "/><tableColumn id="2" name="2026"/></tableColumns>"#), "{y}");
+        // A table that isn't the chart's block stays.
+        let other = Ref::parse("Sheet1!$A$1:$C$9").unwrap();
+        assert!(resize_table(t, &other, &wider, &header).is_none());
+    }
+
+    #[test]
+    fn series_added_without_their_colours() {
+        let colored = CHART.replace(
+            "</c:tx><c:cat>",
+            "</c:tx><c:spPr><a:solidFill xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"/></c:spPr><c:cat>",
+        );
+        let (x, clears) = restructure(&colored, SeriesChange::Added).unwrap();
+        assert!(clears.is_empty());
+        roxmltree::Document::parse(&x).unwrap();
+        assert_eq!(x.matches("<c:ser>").count(), 2);
+        assert_eq!(x.matches("solidFill").count(), 1, "{x}");
+        assert!(x.contains("<c:ser><c:idx val=\"1\"/><c:tx>"), "{x}");
+        assert!(x.contains("<c:f>Sheet1!$C$1</c:f>") && x.contains("<c:f>Sheet1!$C$2:$C$3</c:f>"));
+        let (y, clears) = restructure(&x, SeriesChange::Removed(0)).unwrap();
+        assert_eq!(y.matches("<c:ser>").count(), 1);
+        assert!(y.contains("<c:f>Sheet1!$B$2:$B$3</c:f>"), "{y}");
+        assert_eq!(clears.len(), 2);
+        assert_eq!(clears[1].0.write(), "Sheet1!$C$2:$C$3");
     }
 
     #[test]

@@ -14,6 +14,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   settings exactly as Export as PDF writes them, with Page n of m, zoom (Fit, 50 to 300 %), and
   every change to the settings shown as you make it. Only the page on screen is drawn, in the
   background, so a long sheet opens its preview at once. Print's button prints the pages shown.
+- Sheets: the Chart panel now changes charts that came with the file too: chart type, title,
+  legend position, axis titles, series colours and data range. Kantor changes only those parts
+  of the chart; everything else in it (layouts, formatting, Excel's extensions) is saved as it
+  was. Combo, 3-D and other chart types Kantor can't make keep their type and data range.
+- Sheets: the Chart panel has axis titles and a colour for each series, for charts made in
+  Kantor as well.
+- Slides: the chart data panel adds a series after the last one and removes the series of the
+  current cell. The chart's embedded workbook gets the same change (later series move into the
+  removed one's cells), and a table there that covered the chart's data grows or shrinks with
+  it, so PowerPoint's *Edit Data* still matches.
 
 ### Changed
 - Sheets: **Freeze Panes** works from what is on screen, as in Excel: on a scrolled sheet the rows
@@ -26,6 +36,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Sheets: Ctrl+arrow (and Ctrl+Shift+arrow), Ctrl+Home, Home, Enter and Tab after typing, and the
   arrow keys while pointing at cells for a formula skip hidden rows and columns and rows a filter
   hides, as in Excel.
+- Sheets: a quick click on a chart or picture could leave it stuck to the pointer (it moved with
+  the mouse until the next click).
 
 ## [0.4.0] - 2026-11-12
 
