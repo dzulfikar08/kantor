@@ -213,6 +213,10 @@ pub struct Document {
     pub(crate) comments_modified: bool,
     /// `w:defaultTabStop` (twips).
     pub(crate) default_tab: u32,
+    /// Track Changes is on (`w:trackRevisions`).
+    pub(crate) track: bool,
+    /// Who tracked edits are by.
+    pub(crate) author: String,
     history: History,
 }
 
@@ -243,6 +247,8 @@ impl Document {
             comments: Vec::new(),
             comments_modified: false,
             default_tab: 720,
+            track: false,
+            author: "Kantor".to_owned(),
             history: History::default(),
         }
     }
@@ -290,6 +296,8 @@ impl Document {
             comments: read.comments,
             comments_modified: false,
             default_tab: read.default_tab,
+            track: read.track,
+            author: "Kantor".to_owned(),
             history: History::default(),
         }
     }
@@ -824,6 +832,9 @@ impl Document {
         props: Option<RunProps>,
         kind: Option<Kind>,
     ) -> Selection {
+        if self.track {
+            return self.tracked_insert(sel, text, props, kind);
+        }
         let sel = self.clamp_selection(sel);
         let (start, end) = sel.ordered();
         let props = props.unwrap_or_else(|| self.run_props_at(start));
@@ -873,6 +884,9 @@ impl Document {
     }
 
     fn delete_range(&mut self, sel: Selection, kind: Kind) -> Selection {
+        if self.track {
+            return self.tracked_delete(sel, kind, false);
+        }
         let sel = self.clamp_selection(sel);
         let (start, end) = sel.ordered();
         if start == end {
@@ -955,6 +969,17 @@ impl Document {
         let next = self.next_position(head);
         if next.para != head.para && !self.can_merge(head.para, next.para) {
             return Selection::caret(head);
+        }
+        if self.track {
+            // The caret moves past what's now struck through, as in Word.
+            return self.tracked_delete(
+                Selection {
+                    anchor: head,
+                    head: next,
+                },
+                Kind::Deleting,
+                true,
+            );
         }
         let after = self.delete_range(
             Selection {

@@ -129,6 +129,9 @@ actions!(
         SaveAs,
         ExportPdf,
         NewComment,
+        ToggleTrackChanges,
+        InsertFootnote,
+        InsertEndnote,
         ZoomIn,
         ZoomOut,
         ZoomReset,
@@ -226,6 +229,9 @@ pub fn init(cx: &mut App) {
         "y" => Redo,
         "s" => Save,
         "alt-m" => NewComment,
+        "shift-e" => ToggleTrackChanges,
+        "alt-f" => InsertFootnote,
+        "alt-d" => InsertEndnote,
         "shift-s" => SaveAs,
         "=" => ZoomIn,
         "+" => ZoomIn,
@@ -533,11 +539,12 @@ impl DocsView {
     }
 
     fn with_document(
-        doc: Document,
+        mut doc: Document,
         status: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        doc.set_author(&kantor_core::settings::Settings::load().author_name());
         let (engine, bridge) = shared(cx);
         let focus = cx.focus_handle();
         let (find, find_sub) = find::new_bar(window, cx);
@@ -2226,6 +2233,9 @@ impl Render for DocsView {
             AlignJustify => |this, w, cx| this.set_align_doc(Align::Justify, w, cx),
             Undo => |this, w, cx| this.undo_doc(w, cx),
             NewComment => |this, w, cx| this.new_comment_doc(w, cx),
+            ToggleTrackChanges => |this, w, cx| this.toggle_track_changes_doc(w, cx),
+            InsertFootnote => |this, w, cx| { let _ = (this, w, cx); },
+            InsertEndnote => |this, w, cx| { let _ = (this, w, cx); },
             Redo => |this, w, cx| this.redo_doc(w, cx),
             ZoomIn => |this, _w, cx| this.zoom_by(ZOOM_STEP, cx),
             ZoomOut => |this, _w, cx| this.zoom_by(1.0 / ZOOM_STEP, cx),

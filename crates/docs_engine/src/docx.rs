@@ -159,6 +159,8 @@ pub struct Read {
     pub comments: Vec<crate::review::Comment>,
     /// `w:defaultTabStop` (twips).
     pub default_tab: u32,
+    /// Track Changes is on (`w:trackRevisions`).
+    pub track: bool,
 }
 
 fn zip_bytes(
@@ -1802,7 +1804,7 @@ fn parse_theme_fonts(src: &str) -> (Option<String>, Option<String>) {
     (major, minor)
 }
 
-fn track_changes_on(settings: &str) -> bool {
+pub(crate) fn track_changes_on(settings: &str) -> bool {
     let mut r = quick_xml::Reader::from_str(settings);
     loop {
         match r.read_event() {
@@ -1856,17 +1858,15 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
     let rels: HashMap<String, Rel> = doc_rels.iter().map(|r| (r.id.clone(), r.clone())).collect();
     let body = parse_body(&doc_xml, &rels, &document_part)?;
     let unsupported = body.unsupported;
-    let mut preserved = body.preserved;
+    let preserved = body.preserved;
     let mut settings = None;
     let mut even_odd = false;
     let mut default_tab = 720;
+    let mut track = false;
     if let Some(name) = part("/settings")
         && let Some(src) = zip_text(&mut zip, &name)?
     {
-        if track_changes_on(&src) {
-            preserved
-                .insert("track changes switched on (Kantor's own edits aren't tracked)".into());
-        }
+        track = track_changes_on(&src);
         even_odd = settings_even_odd(&src);
         default_tab = crate::section::settings_default_tab(&src).unwrap_or(720);
         settings = Some((name, src));
@@ -1950,6 +1950,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         even_odd,
         comments,
         default_tab,
+        track,
     })
 }
 
@@ -2762,13 +2763,21 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
         .settings
         .as_ref()
         .is_some_and(|(_, s)| settings_even_odd(s));
-    if doc.even_odd_headers() != even_odd_was
+    let track_was = pkg
+        .settings
+        .as_ref()
+        .is_some_and(|(_, s)| track_changes_on(s));
+    if (doc.even_odd_headers() != even_odd_was || doc.track_changes() != track_was)
         && let Some((name, src)) = &pkg.settings
     {
-        replace.insert(
-            name.clone(),
-            set_settings_even_odd(src, doc.even_odd_headers()).into_bytes(),
-        );
+        let mut out = src.clone();
+        if doc.even_odd_headers() != even_odd_was {
+            out = set_settings_even_odd(&out, doc.even_odd_headers());
+        }
+        if doc.track_changes() != track_was {
+            out = crate::section::set_settings_track(&out, doc.track_changes());
+        }
+        replace.insert(name.clone(), out.into_bytes());
     }
 
     // Pictures inserted in Kantor that the body still uses.

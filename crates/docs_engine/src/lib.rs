@@ -24,6 +24,7 @@ mod rewrite;
 pub mod section;
 pub mod style;
 pub mod table;
+mod track;
 mod xml;
 
 pub use document::{Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, Toggle};
