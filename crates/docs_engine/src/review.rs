@@ -7,8 +7,11 @@
 //! model, so it stays visible (struck through) until the change is
 //! accepted. Paragraph-mark changes (`w:ins`/`w:del` in the mark's
 //! `w:rPr`) and formatting changes (`w:rPrChange`, `w:pPrChange`) ride in
-//! the property extras; Accept All and Reject All resolve them too. Text
-//! typed in Kantor isn't tracked.
+//! the property extras; Accept All and Reject All resolve them too.
+//! Paragraph-mark changes that can join two paragraphs are also part of
+//! [`Document::changes`], so they can be accepted or rejected one by one.
+//! Edits made in Kantor are tracked when Track Changes is on (see
+//! `track.rs`).
 //!
 //! **Comments.** `w:commentRangeStart` / `w:commentRangeEnd` are position
 //! markers and `w:commentReference` a run object (all opaque objects); the

@@ -22,7 +22,9 @@
 //!    and non-breaking hyphens, hyperlinks (text editable, the link start
 //!    tag kept), lists (`w:numPr`), tables (`w:tbl`/`w:tr`/`w:tc`, grid,
 //!    spans, vertical merges, borders), inline pictures (`wp:inline` with an
-//!    embedded blip), and the formatting the editor understands
+//!    embedded blip), footnote and endnote references (run objects whose
+//!    notes are read from `footnotes.xml` / `endnotes.xml`, see
+//!    [`crate::notes`]), and the formatting the editor understands
 //!    (`w:pStyle`, `w:jc`, `w:spacing`, `w:ind`, `w:rStyle`, `w:b`/`w:i`/
 //!    `w:u`/`w:sz`/`w:color`/`w:rFonts`…).
 //! 2. **Kept verbatim with the model**: property elements Kantor doesn't
@@ -38,7 +40,7 @@
 //!    (`w:sdt`, inline or block), simple and complex fields whose result
 //!    doesn't depend on the document (PAGE, DATE, HYPERLINK…; the whole
 //!    `begin…end` run sequence when it sits in one paragraph), equations,
-//!    smart tags and custom XML, footnote/endnote references, symbols,
+//!    smart tags and custom XML, symbols,
 //!    nested tables, and any other unknown body, paragraph or run element.
 //!    Bookmarks and permission ranges are zero-width markers that text
 //!    deletion never removes. Word's `_GoBack` bookmark, proofing marks and

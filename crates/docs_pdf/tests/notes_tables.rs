@@ -8,7 +8,8 @@ use docs_engine::{Document, NoteKind};
 use docs_layout::Engine;
 
 const W_NS: &str = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"";
-const R_NS: &str = "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"";
+const R_NS: &str =
+    "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"";
 
 fn cell(text: &str) -> String {
     let runs: Vec<String> = text
@@ -28,7 +29,8 @@ fn row(text: &str, tr_pr: &str) -> String {
 /// A table with a header row, 30 short rows, a 70-line row and a
 /// 12-line row that can't split; a paragraph with a footnote; an endnote.
 fn package() -> Vec<u8> {
-    let border = |s: &str| format!("<w:{s} w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>");
+    let border =
+        |s: &str| format!("<w:{s} w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>");
     let borders: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
         .iter()
         .map(|s| border(s))
@@ -119,7 +121,11 @@ fn rows_break_and_headers_repeat() {
     };
     let tall_pages = pages_of(tall);
     assert!(tall_pages.len() >= 2, "{tall_pages:?}");
-    assert_eq!(tall_pages[0], pages_of(tall - 2)[0], "no gap before the tall row");
+    assert_eq!(
+        tall_pages[0],
+        pages_of(tall - 2)[0],
+        "no gap before the tall row"
+    );
     // The row that can't split sits on one page.
     assert_eq!(pages_of(kept).len(), 1);
     // Every page after the first that shows the table starts with the
@@ -133,7 +139,11 @@ fn rows_break_and_headers_repeat() {
         if table_lines.is_empty() {
             continue;
         }
-        let first = p.lines.iter().min_by(|a, b| a.top.total_cmp(&b.top)).unwrap();
+        let first = p
+            .lines
+            .iter()
+            .min_by(|a, b| a.top.total_cmp(&b.top))
+            .unwrap();
         assert_eq!(first.para, header, "page {i}");
         assert!(first.repeat);
     }
@@ -147,7 +157,10 @@ fn rows_break_and_headers_repeat() {
 #[test]
 fn footnotes_at_page_bottom_and_endnotes_at_the_end() {
     let (_dir, doc) = open();
-    assert_eq!(doc.note_text(NoteKind::Footnote, "1"), "Quagmire footnote text.");
+    assert_eq!(
+        doc.note_text(NoteKind::Footnote, "1"),
+        "Quagmire footnote text."
+    );
     let mut engine = Engine::new();
     let laid = docs_pdf::lay_out(&doc, &mut engine);
     let paged = &laid.paged;
@@ -160,15 +173,30 @@ fn footnotes_at_page_bottom_and_endnotes_at_the_end() {
     assert_eq!(foot.len(), 1);
     let s = first.setup;
     let [_, y, _, h] = foot[0].rect();
-    assert!((y + h - (s.height - s.margin_bottom)).abs() < 0.5, "at the bottom of the text area");
+    assert!(
+        (y + h - (s.height - s.margin_bottom)).abs() < 0.5,
+        "at the bottom of the text area"
+    );
     // No body line runs into it.
     for l in &first.lines {
         assert!(l.top + l.height <= y + 0.5);
     }
     // The separator line above it.
-    assert!(first.rules.iter().any(|r| r.rect[1] < y && r.rect[1] > y - 20.0 && r.rect[3] < 1.0));
+    assert!(
+        first
+            .rules
+            .iter()
+            .any(|r| r.rect[1] < y && r.rect[1] > y - 20.0 && r.rect[3] < 1.0)
+    );
     // The note's number is drawn: its glyph run is a label.
-    assert!(foot[0].layout.paged.glyph_runs(0).iter().any(|r| r.source != docs_layout::RunSource::Text));
+    assert!(
+        foot[0]
+            .layout
+            .paged
+            .glyph_runs(0)
+            .iter()
+            .any(|r| r.source != docs_layout::RunSource::Text)
+    );
     // The endnote follows the last text.
     let last = laid.furniture.len() - 1;
     assert!(
@@ -181,7 +209,11 @@ fn footnotes_at_page_bottom_and_endnotes_at_the_end() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("notes.pdf");
     docs_pdf::write_file(&file, &pdf).unwrap();
-    if let Ok(out) = std::process::Command::new("pdftotext").arg(&file).arg("-").output() {
+    if let Ok(out) = std::process::Command::new("pdftotext")
+        .arg(&file)
+        .arg("-")
+        .output()
+    {
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(text.contains("Quagmire footnote text."), "{text}");
         assert!(text.contains("Zephyr endnote text."), "{text}");

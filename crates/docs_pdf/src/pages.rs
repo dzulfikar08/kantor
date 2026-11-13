@@ -479,8 +479,9 @@ fn place_notes(
 ) -> Vec<Vec<Placed>> {
     let mut out: Vec<Vec<Placed>> = vec![Vec::new(); paged.pages.len()];
     let find = |para: usize, index: usize| {
-        refs.iter()
-            .find(|r| r.kind == NoteKind::Footnote && r.pos == docs_engine::Position::new(para, index))
+        refs.iter().find(|r| {
+            r.kind == NoteKind::Footnote && r.pos == docs_engine::Position::new(para, index)
+        })
     };
     for (pi, page) in paged.pages.iter_mut().enumerate() {
         if page.notes.is_empty() {
@@ -488,14 +489,22 @@ fn place_notes(
         }
         let s = page.setup;
         let mut y = s.height - s.margin_bottom - page.notes_height;
-        page.rules.push(separator(s.margin_left, y, s.content_width()));
+        page.rules
+            .push(separator(s.margin_left, y, s.content_width()));
         y += NOTE_SEPARATOR;
         for &(para, index) in &page.notes {
             let Some(r) = find(para, index) else { continue };
             let Some(i) = doc.note_index(r.kind, &r.id) else {
                 continue;
             };
-            let l = cached_note(cache, doc, i, section_width(sections, r.section), &r.label, layout);
+            let l = cached_note(
+                cache,
+                doc,
+                i,
+                section_width(sections, r.section),
+                &r.label,
+                layout,
+            );
             let h = l.height;
             out[pi].push(Placed {
                 kind: HfKind::Footer,
