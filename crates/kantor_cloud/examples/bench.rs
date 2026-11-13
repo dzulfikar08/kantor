@@ -280,7 +280,7 @@ fn conflict(path: &str) -> Result<()> {
     );
 
     // Locks.
-    match alice.lock(path, Duration::from_secs(600)) {
+    match alice.lock(path, Duration::from_secs(600), "alice") {
         Ok(tok) => {
             println!("alice LOCK: ok ({})", tok.0);
             let e = bob.stat(path)?.etag.unwrap_or_default();
@@ -289,7 +289,7 @@ fn conflict(path: &str) -> Result<()> {
                 "bob PUT while alice holds the lock: {:?}",
                 r.map_err(|e| e.to_string())
             );
-            let r2 = bob.lock(path, Duration::from_secs(600));
+            let r2 = bob.lock(path, Duration::from_secs(600), "bob");
             println!(
                 "bob LOCK while alice holds it: {:?}",
                 r2.map(|t| t.0).map_err(|e| e.to_string())

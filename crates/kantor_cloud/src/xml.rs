@@ -72,6 +72,38 @@ pub fn parse_lock_token(body: &str) -> Option<String> {
         .map(|t| t.trim().to_string())
 }
 
+/// Who holds a lock, from a PROPFIND of `lockdiscovery` (plus Nextcloud's
+/// `nc:lock-owner-displayname` / `nc:lock-owner` when present). `None` when
+/// the reply shows no active lock.
+pub fn parse_lock_owner(body: &str) -> Option<String> {
+    let doc = roxmltree::Document::parse(body).ok()?;
+    let text_of = |n: roxmltree::Node| -> Option<String> {
+        let t: String = n
+            .descendants()
+            .filter(|d| d.is_text())
+            .filter_map(|d| d.text())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+        (!t.is_empty()).then_some(t)
+    };
+    for name in ["lock-owner-displayname", "lock-owner"] {
+        if let Some(t) = doc
+            .descendants()
+            .find(|n| n.is_element() && n.tag_name().name() == name)
+            .and_then(text_of)
+        {
+            return Some(t);
+        }
+    }
+    let active = doc.descendants().find(|n| is(*n, "activelock"))?;
+    Some(
+        child(active, "owner")
+            .and_then(text_of)
+            .unwrap_or_else(|| "?".into()),
+    )
+}
+
 fn is(n: roxmltree::Node, name: &str) -> bool {
     n.is_element() && n.tag_name().name() == name && n.tag_name().namespace() == Some(DAV)
 }
@@ -163,6 +195,26 @@ mod tests {
             Some("opaquelocktoken:1234-abcd")
         );
         assert_eq!(parse_lock_token("<d:prop xmlns:d=\"DAV:\"/>"), None);
+    }
+
+    #[test]
+    fn lock_owner_nextcloud_and_plain() {
+        let nc = r#"<d:multistatus xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns"><d:response>
+          <d:href>/f.xlsx</d:href><d:propstat><d:prop>
+          <d:lockdiscovery><d:activelock><d:owner>Kantor (budi)</d:owner></d:activelock></d:lockdiscovery>
+          <nc:lock-owner-displayname>Budi Santoso</nc:lock-owner-displayname>
+          </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"#;
+        assert_eq!(parse_lock_owner(nc).as_deref(), Some("Budi Santoso"));
+        let plain = r#"<multistatus xmlns="DAV:"><response><href>/f</href><propstat><prop>
+          <lockdiscovery><activelock><owner><href>mailto:sri@example.go.id</href></owner></activelock></lockdiscovery>
+          </prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"#;
+        assert_eq!(
+            parse_lock_owner(plain).as_deref(),
+            Some("mailto:sri@example.go.id")
+        );
+        let unlocked = r#"<multistatus xmlns="DAV:"><response><href>/f</href><propstat><prop>
+          <lockdiscovery/></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"#;
+        assert_eq!(parse_lock_owner(unlocked), None);
     }
 
     #[test]

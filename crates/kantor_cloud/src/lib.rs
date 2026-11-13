@@ -7,6 +7,9 @@
 //! It's blocking (same ureq + rustls stack as `kantor_ai` and
 //! `kantor_update`): call it off the UI thread.
 
+pub mod cache;
+pub mod session;
+pub mod sync;
 mod xml;
 
 use std::io::Read;
@@ -15,7 +18,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use ureq::http::{self, Method};
 
-pub use xml::{parse_lock_token, parse_multistatus};
+pub use xml::{parse_lock_owner, parse_lock_token, parse_multistatus};
 
 /// How long [`Client::get`] keeps retrying `425 Too Early`.
 pub const TOO_EARLY_WAIT: Duration = Duration::from_secs(15);
@@ -147,6 +150,20 @@ pub struct Client {
     auth: Option<String>,
 }
 
+/// Slowest link a transfer is planned for (128 kbit/s): after a PUT body is
+/// written, the reply may only come once the data still queued in socket
+/// buffers has crossed the link, so the wait allowed for it grows with the
+/// upload's size at this rate.
+pub const SLOWEST_LINK_BYTES_PER_SEC: u64 = 16 * 1024;
+
+/// A read or write that makes no progress for this long fails the request.
+/// Transfers have no fixed overall timeout: a 20 MB save on 500 kbit/s takes
+/// about 6 minutes and is fine as long as bytes keep moving.
+pub const STALL_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Upload progress: `(bytes sent, total)`.
+pub type Progress<'a> = &'a mut dyn FnMut(u64, u64);
+
 impl Client {
     /// `base` is the user's DAV root; paths given to the methods are relative
     /// to it, `/`-separated and unencoded (`Laporan/Q3 2026.xlsx`).
@@ -157,10 +174,11 @@ impl Client {
             // A redirected PUT must not be replayed somewhere else silently.
             .max_redirects(0)
             .timeout_connect(Some(Duration::from_secs(15)))
-            // The wait for a PUT's reply starts once the body is in local
-            // socket buffers, which can hold minutes of data on a 500 kbit/s
-            // link: 120 s timed out a 20 MB save that was still draining.
-            .timeout_per_read(Some(Duration::from_secs(600)))
+            // Progress-based: each read and write must move bytes within
+            // STALL_TIMEOUT. PUT replies get a longer, size-based wait
+            // (see `put_with_progress`).
+            .timeout_per_read(Some(STALL_TIMEOUT))
+            .timeout_per_write(Some(STALL_TIMEOUT))
             .user_agent(concat!("Kantor/", env!("CARGO_PKG_VERSION"), " (WebDAV)"))
             .build();
         let mut base = base.to_string();
@@ -211,26 +229,7 @@ impl Client {
             .agent
             .run(req)
             .map_err(|e| Error::Network(e.to_string()))?;
-        let status = resp.status().as_u16();
-        let header = |name: &str| {
-            resp.headers()
-                .get(name)
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_string)
-        };
-        let etag = header("etag").or_else(|| header("oc-etag"));
-        let lock_token = header("lock-token");
-        let mut bytes = Vec::new();
-        resp.into_body()
-            .into_reader()
-            .read_to_end(&mut bytes)
-            .map_err(|e| Error::Network(e.to_string()))?;
-        Ok(Reply {
-            status,
-            etag,
-            lock_token,
-            bytes,
-        })
+        Reply::read(resp)
     }
 
     /// The children of a folder (depth 1), without the folder itself.
@@ -256,17 +255,25 @@ impl Client {
     fn propfind(&self, path: &str, depth: u8) -> Result<Vec<Entry>, Error> {
         const BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getetag/><d:getlastmodified/><d:getcontenttype/></d:prop></d:propfind>"#;
+        let text = self.propfind_raw(path, depth, BODY)?;
+        parse_multistatus(&text)
+    }
+
+    /// A PROPFIND reply as text. Asks for gzip: Nextcloud shrinks a
+    /// 500-entry listing 15× (208 KB to 14 KB), which matters on slow links;
+    /// servers that don't compress just send it plain.
+    fn propfind_raw(&self, path: &str, depth: u8, body: &str) -> Result<String, Error> {
         let req = self
             .request("PROPFIND", path)
             .header("depth", depth.to_string())
+            .header("accept-encoding", "gzip")
             .header("content-type", "application/xml; charset=utf-8");
-        let r = self.send(req, BODY.as_bytes())?;
+        let r = self.send(req, body.as_bytes())?;
         if r.status != 207 {
             return Err(r.error());
         }
-        let text = String::from_utf8(r.bytes)
-            .map_err(|_| Error::Protocol("PROPFIND reply isn't UTF-8".into()))?;
-        parse_multistatus(&text)
+        String::from_utf8(r.decoded()?)
+            .map_err(|_| Error::Protocol("PROPFIND reply isn't UTF-8".into()))
     }
 
     /// Download a file with its current ETag.
@@ -310,9 +317,27 @@ impl Client {
         cond: Precondition,
         lock: Option<&LockToken>,
     ) -> Result<Option<String>, Error> {
+        self.put_with_progress(path, bytes, cond, lock, &mut |_, _| {})
+    }
+
+    /// [`put`](Self::put), reporting bytes handed to the connection.
+    ///
+    /// Timeouts follow progress, not the clock: every write must move bytes
+    /// within [`STALL_TIMEOUT`], and the reply may take `STALL_TIMEOUT` plus
+    /// the time the whole body needs at [`SLOWEST_LINK_BYTES_PER_SEC`]
+    /// (data still queued in buffers when the last write returns).
+    pub fn put_with_progress(
+        &self,
+        path: &str,
+        bytes: &[u8],
+        cond: Precondition,
+        lock: Option<&LockToken>,
+        progress: Progress,
+    ) -> Result<Option<String>, Error> {
         let mut req = self
             .request("PUT", path)
-            .header("content-type", "application/octet-stream");
+            .header("content-type", "application/octet-stream")
+            .header("content-length", bytes.len().to_string());
         match cond {
             Precondition::IfMatch(etag) => req = req.header("if-match", etag),
             Precondition::IfNoneMatch => req = req.header("if-none-match", "*"),
@@ -321,7 +346,28 @@ impl Client {
         if let Some(LockToken(t)) = lock {
             req = req.header("if", format!("(<{t}>)"));
         }
-        let r = self.send(req, bytes)?;
+        let total = bytes.len() as u64;
+        let mut reader = ProgressReader {
+            data: bytes,
+            pos: 0,
+            progress,
+        };
+        let body = ureq::SendBody::from_reader(&mut reader);
+        let req = req
+            .body(body)
+            .map_err(|e| Error::Protocol(format!("request: {e}")))?;
+        let reply_wait = reply_wait(total);
+        let req = self
+            .agent
+            .configure_request(req)
+            .timeout_per_read(Some(reply_wait))
+            .timeout_recv_response(Some(reply_wait))
+            .build();
+        let resp = self
+            .agent
+            .run(req)
+            .map_err(|e| Error::Network(e.to_string()))?;
+        let r = Reply::read(resp)?;
         match r.status {
             200 | 201 | 204 => Ok(r.etag),
             _ => Err(r.error()),
@@ -329,15 +375,20 @@ impl Client {
     }
 
     /// Take an exclusive write lock for `timeout` (servers may shorten it).
-    pub fn lock(&self, path: &str, timeout: Duration) -> Result<LockToken, Error> {
-        const BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
-<d:lockinfo xmlns:d="DAV:"><d:lockscope><d:exclusive/></d:lockscope><d:locktype><d:write/></d:locktype><d:owner>Kantor</d:owner></d:lockinfo>"#;
+    /// `owner` is shown to others who find the file locked (servers that
+    /// know the account show its name instead).
+    pub fn lock(&self, path: &str, timeout: Duration, owner: &str) -> Result<LockToken, Error> {
+        let body = format!(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<d:lockinfo xmlns:d="DAV:"><d:lockscope><d:exclusive/></d:lockscope><d:locktype><d:write/></d:locktype><d:owner>{}</d:owner></d:lockinfo>"#,
+            xml_escape(owner)
+        );
         let req = self
             .request("LOCK", path)
             .header("depth", "0")
             .header("timeout", format!("Second-{}", timeout.as_secs()))
             .header("content-type", "application/xml; charset=utf-8");
-        let r = self.send(req, BODY.as_bytes())?;
+        let r = self.send(req, body.as_bytes())?;
         if !matches!(r.status, 200 | 201) {
             return Err(r.error());
         }
@@ -354,6 +405,25 @@ impl Client {
             .ok_or_else(|| Error::Protocol("LOCK reply has no lock token".into()))
     }
 
+    /// Extend a lock we hold (RFC 4918 §9.10.2: LOCK with no body and the
+    /// token in `If`).
+    pub fn refresh_lock(
+        &self,
+        path: &str,
+        token: &LockToken,
+        timeout: Duration,
+    ) -> Result<(), Error> {
+        let req = self
+            .request("LOCK", path)
+            .header("if", format!("(<{}>)", token.0))
+            .header("timeout", format!("Second-{}", timeout.as_secs()));
+        let r = self.send(req, &[])?;
+        match r.status {
+            200 | 201 => Ok(()),
+            _ => Err(r.error()),
+        }
+    }
+
     pub fn unlock(&self, path: &str, token: &LockToken) -> Result<(), Error> {
         let req = self
             .request("UNLOCK", path)
@@ -363,6 +433,15 @@ impl Client {
             200 | 204 => Ok(()),
             _ => Err(r.error()),
         }
+    }
+
+    /// Who holds the lock on `path`, if anyone (best effort: Nextcloud's
+    /// display name, else the lock's `owner`).
+    pub fn lock_owner(&self, path: &str) -> Result<Option<String>, Error> {
+        const BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns"><d:prop><d:lockdiscovery/><nc:lock-owner-displayname/><nc:lock-owner/></d:prop></d:propfind>"#;
+        let text = self.propfind_raw(path, 0, BODY)?;
+        Ok(parse_lock_owner(&text))
     }
 
     /// Create a folder. An existing one (405) is fine.
@@ -383,14 +462,80 @@ impl Client {
     }
 }
 
+/// How long a PUT may wait for its reply once the body is written.
+pub fn reply_wait(body_len: u64) -> Duration {
+    STALL_TIMEOUT + Duration::from_secs(body_len / SLOWEST_LINK_BYTES_PER_SEC)
+}
+
+struct ProgressReader<'a, 'p> {
+    data: &'a [u8],
+    pos: usize,
+    progress: Progress<'p>,
+}
+
+impl Read for ProgressReader<'_, '_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = buf.len().min(self.data.len() - self.pos).min(64 * 1024);
+        buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+        self.pos += n;
+        (self.progress)(self.pos as u64, self.data.len() as u64);
+        Ok(n)
+    }
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
 struct Reply {
     status: u16,
     etag: Option<String>,
     lock_token: Option<String>,
+    gzip: bool,
     bytes: Vec<u8>,
 }
 
 impl Reply {
+    fn read(resp: http::Response<ureq::Body>) -> Result<Self, Error> {
+        let status = resp.status().as_u16();
+        let header = |name: &str| {
+            resp.headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+        };
+        let etag = header("etag").or_else(|| header("oc-etag"));
+        let lock_token = header("lock-token");
+        let gzip = header("content-encoding").is_some_and(|e| e.eq_ignore_ascii_case("gzip"));
+        let mut bytes = Vec::new();
+        resp.into_body()
+            .into_reader()
+            .read_to_end(&mut bytes)
+            .map_err(|e| Error::Network(e.to_string()))?;
+        Ok(Self {
+            status,
+            etag,
+            lock_token,
+            gzip,
+            bytes,
+        })
+    }
+
+    /// The body with `Content-Encoding: gzip` undone.
+    fn decoded(self) -> Result<Vec<u8>, Error> {
+        if !self.gzip {
+            return Ok(self.bytes);
+        }
+        let mut out = Vec::new();
+        flate2::read::GzDecoder::new(&self.bytes[..])
+            .read_to_end(&mut out)
+            .map_err(|e| Error::Protocol(format!("bad gzip reply: {e}")))?;
+        Ok(out)
+    }
+
     fn error(self) -> Error {
         status_error(self.status, &self.bytes)
     }
@@ -475,6 +620,17 @@ mod tests {
         }
         assert_eq!(percent_decode("100%"), "100%");
         assert_eq!(percent_decode("a%zz"), "a%zz");
+    }
+
+    #[test]
+    fn reply_wait_grows_with_size() {
+        assert_eq!(reply_wait(0), STALL_TIMEOUT);
+        // 20 MB at the 128 kbit/s floor: about 21 minutes on top.
+        assert_eq!(
+            reply_wait(20_300_194),
+            STALL_TIMEOUT + Duration::from_secs(20_300_194 / SLOWEST_LINK_BYTES_PER_SEC)
+        );
+        assert!(reply_wait(20_300_194) > Duration::from_secs(1200));
     }
 
     #[test]

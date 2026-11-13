@@ -98,7 +98,7 @@ fn main() -> Result<()> {
         }
         Some("lock") => {
             let remote = arg(1).context("lock <remote>")?;
-            let tok = c.lock(remote, Duration::from_secs(1800))?;
+            let tok = c.lock(remote, Duration::from_secs(1800), "Kantor dav example")?;
             println!("{}", tok.0);
         }
         Some("unlock") => {
