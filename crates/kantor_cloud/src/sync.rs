@@ -52,6 +52,8 @@ pub enum UploadOutcome {
         stamp: Option<Stamp>,
         /// Our lock turned out to be gone; take a new one.
         lock_lost: bool,
+        /// SHA-256 of the uploaded bytes.
+        sha256: Option<String>,
     },
     /// The server's copy moved on (or was deleted: `server_etag: None`).
     Conflict {
@@ -180,10 +182,12 @@ impl DocSync {
                 server,
                 stamp,
                 lock_lost,
+                sha256,
             } => {
                 if lock_lost {
                     self.lock = LockState::None;
                 }
+                self.entry.sha256 = sha256;
                 match server {
                     Some(s) => self.entry.rebase(&s),
                     None => self.entry.etag = None,
@@ -356,6 +360,7 @@ mod tests {
             }),
             stamp: Stamp::of(&d.entry.local),
             lock_lost: false,
+            sha256: None,
         }
     }
 

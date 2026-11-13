@@ -4075,6 +4075,7 @@ dependencies = [
  "docs_engine",
  "flate2",
  "log",
+ "ring",
  "roxmltree 0.21.2",
  "serde",
  "serde_json",

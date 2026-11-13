@@ -506,9 +506,16 @@ impl Workspace {
                         progress((sent, total));
                     }
                 });
-                if let UploadOutcome::Synced { server, stamp, .. } = &out {
+                if let UploadOutcome::Synced {
+                    server,
+                    stamp,
+                    sha256,
+                    ..
+                } = &out
+                {
                     let mut saved = CacheEntry {
                         synced: *stamp,
+                        sha256: sha256.clone(),
                         ..entry.clone()
                     };
                     if let Some(s) = server {
@@ -1154,7 +1161,7 @@ fn reattach(account: &CloudAccount, cache: &Cache, entry: CacheEntry) -> (DocSyn
         Err(e) if session::is_offline(&e) => (DocSync::offline(entry), false),
         Err(_) => (DocSync::new(entry, LockState::None), false),
         Ok(server) => {
-            let changed = !entry.same_version(&server);
+            let changed = !session::is_base_version(&r, &entry, &server).unwrap_or(false);
             let lock = session::take_lock(&r, cache, &entry.remote);
             if changed
                 && !entry.has_local_changes()

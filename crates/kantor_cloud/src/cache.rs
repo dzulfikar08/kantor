@@ -60,19 +60,36 @@ pub struct CacheEntry {
     pub modified: Option<String>,
     #[serde(default)]
     pub size: Option<u64>,
+    /// SHA-256 (hex) of that version's bytes: decides when the ETag
+    /// changed but the time and size didn't.
+    #[serde(default)]
+    pub sha256: Option<String>,
+}
+
+/// How a server entry compares with a working copy's base version.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Compare {
+    Same,
+    Changed,
+    /// New ETag, same modification time and size: either only a lock
+    /// changed (Nextcloud gives a file a new ETag on LOCK and UNLOCK) or a
+    /// same-size edit within the same second. Only the content can tell.
+    Unsure,
+}
+
+/// SHA-256 of `bytes`, hex.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let d = ring::digest::digest(&ring::digest::SHA256, bytes);
+    d.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 impl CacheEntry {
-    /// The server's copy is still the version this one is based on.
-    ///
-    /// Nextcloud's `files_lock` gives a file a new ETag when it is locked
-    /// or unlocked, without changing it (measured on Nextcloud 35): so a
-    /// different ETag with the same modification time and size counts as
-    /// the same version. Servers without `getlastmodified` fall back to the
-    /// ETag alone.
-    pub fn same_version(&self, server: &crate::Entry) -> bool {
+    /// Compare the server's current entry with this copy's base version,
+    /// without downloading (see [`Compare::Unsure`]; `session` settles it
+    /// with the content hash).
+    pub fn compare(&self, server: &crate::Entry) -> Compare {
         if server.etag.is_some() && server.etag == self.etag {
-            return true;
+            return Compare::Same;
         }
         match (
             &self.modified,
@@ -80,8 +97,8 @@ impl CacheEntry {
             self.size,
             server.size,
         ) {
-            (Some(a), Some(b), Some(x), Some(y)) => a == b && x == y,
-            _ => false,
+            (Some(a), Some(b), Some(x), Some(y)) if a == b && x == y => Compare::Unsure,
+            _ => Compare::Changed,
         }
     }
 
@@ -330,26 +347,30 @@ mod tests {
             last_modified: base.modified.clone(),
             content_type: None,
         };
-        assert!(base.same_version(&server));
-        // Locked: new ETag, same file.
+        assert_eq!(base.compare(&server), Compare::Same);
+        // Locked: new ETag, same time and size: only the content can tell.
         server.etag = Some("\"6af73d2b5e479\"".into());
-        assert!(base.same_version(&server));
+        assert_eq!(base.compare(&server), Compare::Unsure);
         // Really changed.
         server.last_modified = Some("Fri, 13 Nov 2026 16:40:00 GMT".into());
-        assert!(!base.same_version(&server));
+        assert_eq!(base.compare(&server), Compare::Changed);
         server.last_modified = base.modified.clone();
         server.size = Some(6);
-        assert!(!base.same_version(&server));
-        // No dates: the ETag decides.
+        assert_eq!(base.compare(&server), Compare::Changed);
+        // No dates: a new ETag is a change.
         let bare = CacheEntry {
             etag: Some("\"a1\"".into()),
             ..Default::default()
         };
         server.size = Some(5);
-        assert!(!bare.same_version(&server));
+        assert_eq!(bare.compare(&server), Compare::Changed);
         let mut rebased = bare.clone();
         rebased.rebase(&server);
-        assert!(rebased.same_version(&server));
+        assert_eq!(rebased.compare(&server), Compare::Same);
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use crate::cache::{Cache, CacheEntry, HeldLock, Stamp, write_atomic};
+use crate::cache::{Cache, CacheEntry, Compare, HeldLock, Stamp, sha256_hex, write_atomic};
 use crate::sync::{LockState, UploadOutcome, numbered};
 use crate::{Client, Error, LockToken, Precondition};
 
@@ -72,6 +72,7 @@ pub fn open(r: &Remote, cache: &Cache, remote: &str) -> Result<Opened, Error> {
 fn download(r: &Remote, cache: &Cache, entry: &mut CacheEntry) -> Result<(), Error> {
     let fetched = r.client.get(&entry.remote)?;
     write_atomic(&entry.local, &fetched.bytes).map_err(io)?;
+    entry.sha256 = Some(sha256_hex(&fetched.bytes));
     match r.client.stat(&entry.remote) {
         Ok(server) => entry.rebase(&server),
         Err(_) => {
@@ -144,12 +145,15 @@ pub fn upload(
     let mut if_match = entry.etag.clone();
     if !force {
         match r.client.stat(&entry.remote) {
-            Ok(server) if entry.same_version(&server) => if_match = server.etag,
-            Ok(server) => {
-                return UploadOutcome::Conflict {
-                    server_etag: server.etag,
-                };
-            }
+            Ok(server) => match is_base_version(r, entry, &server) {
+                Ok(true) => if_match = server.etag,
+                Ok(false) => {
+                    return UploadOutcome::Conflict {
+                        server_etag: server.etag,
+                    };
+                }
+                Err(e) => return failure(r, entry, lock, e),
+            },
             Err(Error::NotFound) if entry.etag.is_some() => {
                 return UploadOutcome::Conflict { server_etag: None };
             }
@@ -166,10 +170,14 @@ pub fn upload(
     let mut put = r
         .client
         .put_with_progress(&entry.remote, &bytes, cond, lock, progress);
-    // A 412 with our lock token may mean the lock is gone (expired while the
-    // computer slept, or removed by an admin), not that the file changed:
-    // the version check above passed. Retry without the token.
-    if let (Err(Error::Conflict), Some(token), false) = (&put, lock, force)
+    // A refusal of a PUT carrying our lock token may mean the lock is gone
+    // (expired while the computer slept, or removed by an admin), not that
+    // the file changed: the version check above passed (or the user chose
+    // to overwrite). Nextcloud answers 412, OpenCloud 500. Retry without
+    // the token.
+    if let (Err(e), Some(token)) = (&put, lock)
+        && !is_offline(e)
+        && !matches!(e, Error::Locked)
         && r.client
             .refresh_lock(&entry.remote, token, LOCK_TIMEOUT)
             .is_err()
@@ -198,6 +206,7 @@ pub fn upload(
                 server,
                 stamp,
                 lock_lost,
+                sha256: Some(sha256_hex(&bytes)),
             }
         }
         Err(e) => failure(r, entry, lock, e),
@@ -234,9 +243,29 @@ pub fn reload(r: &Remote, cache: &Cache, entry: &CacheEntry) -> Result<CacheEntr
 /// copy's base (not just a lock's new ETag). `None`: can't tell (offline).
 pub fn server_changed(r: &Remote, entry: &CacheEntry) -> Option<bool> {
     match r.client.stat(&entry.remote) {
-        Ok(server) => Some(!entry.same_version(&server)),
+        Ok(server) => is_base_version(r, entry, &server).ok().map(|same| !same),
         Err(Error::NotFound) => Some(true),
         Err(_) => None,
+    }
+}
+
+/// Whether `server` (a fresh PROPFIND of the file) is still the working
+/// copy's base version. A new ETag with the same modification time and
+/// size is settled by downloading and comparing SHA-256: Nextcloud changes
+/// the ETag on every lock and unlock, and getlastmodified has one-second
+/// resolution, so neither alone can tell a lock from a quick same-size edit.
+pub fn is_base_version(
+    r: &Remote,
+    entry: &CacheEntry,
+    server: &crate::Entry,
+) -> Result<bool, Error> {
+    match entry.compare(server) {
+        Compare::Same => Ok(true),
+        Compare::Changed => Ok(false),
+        Compare::Unsure => match &entry.sha256 {
+            Some(base) => Ok(&sha256_hex(&r.client.get(&entry.remote)?.bytes) == base),
+            None => Ok(false),
+        },
     }
 }
 

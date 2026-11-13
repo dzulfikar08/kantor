@@ -245,7 +245,7 @@ impl Render for ConflictPanel {
                 .child(body)
                 .child(
                     footer(cx)
-                        .child(div().flex_1().child(note(
+                        .child(div().flex_1().min_w_0().child(note(
                             tr(
                                 "Until you choose, saving keeps your changes on this computer only.",
                                 "Sampai Anda memilih, menyimpan hanya menyimpan perubahan di komputer ini.",

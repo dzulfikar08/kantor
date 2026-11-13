@@ -442,6 +442,22 @@ fn lost_lock_still_saves() {
     assert_eq!(d.status(), Status::Synced);
     assert_eq!(d.lock, LockState::None, "lost lock noticed, to be retaken");
     assert_eq!(server_a1(&e.alice, &path), "after lost lock");
+    // Same with the user choosing to overwrite after a conflict.
+    let token = session::take_lock(&e.alice, &e.cache, &path);
+    let LockState::Held(t) = &token else {
+        panic!("{token:?}");
+    };
+    e.alice.client.unlock(&path, t).unwrap();
+    d.lock = token;
+    e.alice2
+        .client
+        .put(&path, &xlsx_with("theirs"), Precondition::Overwrite, None)
+        .unwrap();
+    edit(&d.entry.local, "mine, forced");
+    assert_eq!(d.on_local_save(), Action::Upload);
+    assert_eq!(sync_upload(&e.alice, &mut d, false), Action::ShowConflict);
+    assert_eq!(sync_upload(&e.alice, &mut d, true), Action::None);
+    assert_eq!(server_a1(&e.alice, &path), "mine, forced");
     let _ = e.cache.forget_lock("alice", &path);
 }
 
