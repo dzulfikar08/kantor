@@ -471,6 +471,17 @@ fn slicers_survive_a_save() {
             p["xl/workbook.xml"]
                 .contains(r#"<definedName name="Slicer_Region">#N/A</definedName>"#)
         );
+        // CT_Workbook order: pivotCaches before extLst (where the slicer
+        // caches are listed), or Excel repairs the file.
+        let names: Vec<_> = wb
+            .root_element()
+            .children()
+            .filter(|n| n.is_element())
+            .map(|n| n.tag_name().name())
+            .collect();
+        let at = |n: &str| names.iter().position(|x| *x == n).unwrap();
+        assert!(at("calcPr") < at("pivotCaches"), "{names:?}");
+        assert!(at("pivotCaches") < at("extLst"), "{names:?}");
         // The sheet lists the slicer and keeps its drawing.
         let sheet = Document::parse(&p["xl/worksheets/sheet2.xml"]).unwrap();
         let slicer = sheet

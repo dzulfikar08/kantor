@@ -43,6 +43,15 @@ Also in `xlsx/`:
 
 `crates/sheets_engine/tests/corpus.rs` (part of `cargo test --workspace`) opens every file with `sheets_engine::Workbook`, saves and reopens it, and compares inputs and displayed values of every used cell. It also reads the original and the saved file independently with calamine (values, formulas, styles, merges, names, links) and checks layout, comments and zip parts, so it catches both IronCalc import losses and export losses. Each difference is a finding; findings not in `known-gaps.tsv` fail the test, and so do listed gaps that no longer happen.
 
+`tools/fidelity` (CI job `office` in `.github/workflows/fidelity.yml`) opens every file here (xlsx, docx, pptx), saves it as it is and after edits, writes files that use what Kantor creates (tables, charts, conditional formats, validation, pivots, page setup, comments, tracked changes, headers and footers, slide tables, chart data, notes), and validates every saved file with Microsoft's Open XML SDK (`tools/ooxml-validate`, Microsoft 365 format) and LibreOffice headless. Errors a saved file has and its original doesn't fail the job; known SDK false positives go in `tools/fidelity/allowlist.tsv` with a reason.
+
+```sh
+cargo build --release -p office_fidelity
+dotnet build tools/ooxml-validate -c Release -o ~/.cache/ooxv
+python3 tools/fidelity/office_check.py --scenarios target/release/office_scenarios \
+  --validator "dotnet $HOME/.cache/ooxv/OoxmlValidate.dll" [--soffice soffice] --out ~/.cache/office-check
+```
+
 `crates/sheets_engine/tests/structure.rs` opens files `13`–`16`, inserts or deletes rows and columns, saves, and checks that carried parts moved with them (validations, sparklines, charts, drawing anchors, notes and their boxes, page breaks, tables, the filter range).
 
 ```sh

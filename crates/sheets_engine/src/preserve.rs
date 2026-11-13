@@ -1519,10 +1519,15 @@ fn fix_sheet_errors(xml: &str) -> Result<FixedErrors, String> {
     })
 }
 
-fn apply_edits(xml: &str, mut edits: Vec<(std::ops::Range<usize>, String)>) -> String {
-    edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+/// Apply edits from the end of `xml` backwards. At one offset, a replaced
+/// element is replaced first and inserts go before it, in the order they
+/// were pushed (the schema order of what goes there, e.g. `<pivotCaches>`
+/// before `<extLst>`).
+fn apply_edits(xml: &str, edits: Vec<(std::ops::Range<usize>, String)>) -> String {
+    let mut edits: Vec<_> = edits.into_iter().enumerate().collect();
+    edits.sort_by_key(|(i, (r, _))| std::cmp::Reverse((r.start, !r.is_empty(), *i)));
     let mut out = xml.to_owned();
-    for (range, text) in edits {
+    for (_, (range, text)) in edits {
         out.replace_range(range, &text);
     }
     out

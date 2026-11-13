@@ -37,6 +37,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   (or its number) to edit or delete it. Notes you don't touch are saved byte for byte. The PDF
   shows them the same way.
 
+- Continuous check of saved files (CI): every test file, and files using tables, charts,
+  conditional formatting, data validation, pivot tables, page setup, comments, tracked changes,
+  headers and footers, slide tables, chart data and notes, is opened, edited and saved through
+  Kantor, then validated with the Open XML SDK and opened in LibreOffice. Errors the original file
+  doesn't have fail the build (`tools/fidelity/office_check.py`).
+
 ### Changed
 - Sheets: **Freeze Panes** works from what is on screen, as in Excel: on a scrolled sheet the rows
   above and columns left of the top-left cell on screen go out of sight until Unfreeze, and with
@@ -50,6 +56,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   works on its own, not only with Accept All / Reject All.
 
 ### Fixed
+- Files Kantor saves now pass Microsoft's Open XML SDK validator (Microsoft 365 file format), so
+  Excel and Word shouldn't ask to repair them:
+  - **Sheets:** font settings in `styles.xml` (bold, italic, underline, strikethrough) were written
+    in an order Excel doesn't expect, in every saved workbook with formatted text; conditional
+    formatting styles had the same problem with number formats, borders and alignment.
+  - **Sheets:** workbooks with pivot tables and slicers listed the pivot caches after the slicer
+    list in `workbook.xml`.
+  - **Docs:** new documents had their style definitions out of order, the Normal style twice, and
+    the zoom setting in the wrong place in `settings.xml`.
 - Sheets: Ctrl+arrow (and Ctrl+Shift+arrow), Ctrl+Home, Home, Enter and Tab after typing, and the
   arrow keys while pointing at cells for a formula skip hidden rows and columns and rows a filter
   hides, as in Excel.

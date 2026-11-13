@@ -192,10 +192,7 @@ fn styled_empty_cells_with_a_type_stay_empty() {
             matches!(&*cell, Cell::EmptyCell { .. }),
             "column {column}: {cell:?}"
         );
-        assert_eq!(
-            loaded.get_formatted_cell_value(0, 3, column).unwrap(),
-            ""
-        );
+        assert_eq!(loaded.get_formatted_cell_value(0, 3, column).unwrap(), "");
         assert_eq!(
             loaded.get_style_for_cell(0, 3, column).unwrap().fill.color,
             Color::Rgb("#FFEE00".to_string())
@@ -205,9 +202,107 @@ fn styled_empty_cells_with_a_type_stay_empty() {
     let again = save_xlsx_to_writer(&loaded, Cursor::new(Vec::new()))
         .unwrap()
         .into_inner();
-    let reloaded = Model::from_workbook(load_from_xlsx_bytes(&again, "t", "en", "UTC").unwrap(), "en").unwrap();
+    let reloaded = Model::from_workbook(
+        load_from_xlsx_bytes(&again, "t", "en", "UTC").unwrap(),
+        "en",
+    )
+    .unwrap();
     assert!(matches!(
         reloaded.workbook.worksheets[0].cell(3, 2).as_deref(),
         Some(Cell::EmptyCell { .. })
     ));
+}
+
+/// `xl/styles.xml` of a saved model.
+fn styles_xml(model: &Model) -> String {
+    use std::io::Read;
+    let bytes = save_xlsx_to_writer(model, Cursor::new(Vec::new()))
+        .unwrap()
+        .into_inner();
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    archive
+        .by_name("xl/styles.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    xml
+}
+
+/// Positions of `tags` in `xml`, which must be increasing (schema order).
+fn assert_in_order(xml: &str, tags: &[&str]) {
+    let at: Vec<usize> = tags
+        .iter()
+        .map(|t| xml.find(t).unwrap_or_else(|| panic!("{t} not in {xml}")))
+        .collect();
+    assert!(
+        at.windows(2).all(|w| w[0] < w[1]),
+        "{tags:?} at {at:?}: {xml}"
+    );
+}
+
+#[test]
+fn font_and_dxf_children_are_in_schema_order() {
+    use ironcalc_base::types::{Dxf, DxfFont, Fill, NumFmt};
+    let mut model = Model::new_empty("t", "en", "UTC", "en").unwrap();
+    let mut s = model.get_style_for_cell(0, 1, 1).unwrap();
+    s.font.b = true;
+    s.font.i = true;
+    s.font.u = true;
+    s.font.strike = true;
+    s.font.color = Color::Rgb("#FF0000".into());
+    model.set_cell_style(0, 1, 1, &s).unwrap();
+    model.workbook.styles.dxfs.push(Dxf {
+        font: Some(DxfFont {
+            strike: Some(true),
+            u: Some(true),
+            b: Some(true),
+            i: Some(true),
+            sz: Some(12),
+            color: Color::Rgb("#9C0006".into()),
+        }),
+        fill: Some(Fill {
+            color: Color::Rgb("#FFC7CE".into()),
+        }),
+        border: Some(Default::default()),
+        num_fmt: Some(NumFmt {
+            num_fmt_id: 164,
+            format_code: "0.0%".into(),
+        }),
+        alignment: Some(Alignment {
+            horizontal: HorizontalAlignment::Center,
+            ..Default::default()
+        }),
+    });
+    let xml = styles_xml(&model);
+    // CT_Font: b, i, strike, ..., u, vertAlign, sz, color, name, family, ..., scheme.
+    let bold_font = xml[xml.find("<font><b/>").expect("a bold font")..]
+        .split("</font>")
+        .next()
+        .unwrap()
+        .to_owned();
+    assert_in_order(
+        &bold_font,
+        &[
+            "<b/>",
+            "<i/>",
+            "<strike/>",
+            "<u/>",
+            "<sz ",
+            "<color ",
+            "<name ",
+            "<family ",
+            "<scheme ",
+        ],
+    );
+    // CT_Dxf: font, numFmt, fill, alignment, protection, border.
+    let dxf = &xml[xml.find("<dxf>").unwrap()..xml.find("</dxf>").unwrap()];
+    assert_in_order(
+        dxf,
+        &["<font>", "<numFmt ", "<fill>", "<alignment", "<border"],
+    );
+    assert_in_order(
+        dxf,
+        &["<b/>", "<i/>", "<strike/>", "<u/>", "<sz ", "<color "],
+    );
 }
