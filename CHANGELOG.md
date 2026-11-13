@@ -9,6 +9,19 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-13
+
+Kantor opens old Office files: Word 97-2003 `.doc`/`.dot`, `.rtf`, PowerPoint 97-2003
+`.ppt`/`.pps`/`.pot`, and Excel 97-2003 `.xls`/`.xlt` now with their formatting. Each opens as an
+unsaved copy and saves as `.docx`, `.pptx` or `.xlsx`. Docs and Slides check spelling offline in
+English and Indonesian. Docs gets Track Changes for your own typing, footnotes and endnotes, and
+table rows that break across pages; Sheets gets print preview, Freeze Panes that works on a
+scrolled sheet, and much faster open, sort, fill and editing on big workbooks; charts from files
+can be restyled and Slides charts gain and lose series. Every saved file is now checked in CI
+against Microsoft's Open XML validator, which found and fixed element-order errors that could
+make Excel and Word offer to repair a file. Files changed with the new features still haven't
+been opened in Excel, Word or PowerPoint themselves.
+
 ### Added
 - Docs opens Word 97-2003 documents and templates (`.doc`, `.dot`), as Sheets opens `.xls`: the
   file opens as an imported document and Save asks for a name for a new `.docx`, leaving the
@@ -874,7 +887,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/dzulfikar08/kantor/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/dzulfikar08/kantor/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/dzulfikar08/kantor/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/dzulfikar08/kantor/compare/v0.2.0...v0.3.0
