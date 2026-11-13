@@ -23,7 +23,7 @@ export const en = {
   h1: "Sheets, Docs and Slides that open your Office files",
   lede:
     "Kantor is a small, fast office app for Mac and Linux. Open a Word document, an Excel sheet or a PowerPoint deck, edit it, and save it back in the same format. It works offline and needs no account.",
-  facts: ["Free and open source", "About 55 MB", "Mac and Linux"],
+  facts: ["Free and open source", "About 60 MB", "Mac and Linux"],
   preview:
     'Early preview: Kantor is new and some things are still missing. <a href="#limits">Read the list</a> before you rely on it for important work.',
 
@@ -64,12 +64,12 @@ export const en = {
     sheets: {
       name: "Sheets",
       formats: [".xlsx", ".csv", ".ods", ".xls"],
-      text: "Spreadsheets with formulas, several sheets, number formats, Excel tables, charts, sort and filter. Opens .csv, .ods and .xls files too, and saves as .xlsx.",
+      text: "Spreadsheets with formulas, several sheets, number formats, Excel tables, charts, pivot tables, conditional formatting, data validation, sort and filter. Opens .csv, .ods and .xls files too, and saves as .xlsx.",
     },
     docs: {
       name: "Docs",
       formats: [".docx"],
-      text: "Letters and reports with headings, lists, tables, pictures, headers and footers with page numbers, and page sizes such as A4, Letter and F4, landscape pages too. Find and replace, and a word count.",
+      text: "Letters and reports with headings, lists, tables, pictures, headers and footers with page numbers, and page sizes such as A4, Letter and F4, landscape pages too. Comments and tracked changes, find and replace, and a word count.",
     },
     slides: {
       name: "Slides",
@@ -79,7 +79,7 @@ export const en = {
   },
   keepH3: "Saving doesn't throw away what Kantor can't show yet",
   keepText:
-    "If a file holds something Kantor doesn't understand yet, such as a Word header or an Excel comment, Kantor leaves it as it was and writes it back when you save. When it can't do that safely, it saves to a new file or tells you what will be left out.",
+    "If a file holds something Kantor doesn't understand yet, such as a Word equation or an Excel comment, Kantor leaves it as it was and writes it back when you save. When it can't do that safely, it saves to a new file or tells you what will be left out.",
   more: [
     ["Print and export to PDF", "Docs and Slides save a PDF that looks like what you see on screen, and print it through your PDF viewer; Slides also prints notes pages and handouts. Sheets prints pages the way Excel does: paper size including F4, fit to width, print titles, headers and footers."],
     ["Offline, no account", "Your files stay on your computer. There is nothing to sign up for."],
@@ -213,7 +213,7 @@ export const id = {
   h1: "Sheets, Docs, dan Slides untuk file Office Anda",
   lede:
     "Kantor adalah aplikasi perkantoran yang ringan dan cepat untuk Mac dan Linux. Buka dokumen Word, lembar Excel, atau presentasi PowerPoint, edit, lalu simpan lagi dalam format yang sama. Bisa dipakai tanpa internet dan tanpa akun.",
-  facts: ["Gratis dan open source", "Sekitar 55 MB", "Mac dan Linux"],
+  facts: ["Gratis dan open source", "Sekitar 60 MB", "Mac dan Linux"],
   preview:
     'Versi awal: Kantor masih baru dan beberapa hal belum ada. <a href="#limits">Baca daftarnya</a> sebelum memakainya untuk pekerjaan penting.',
 
@@ -254,12 +254,12 @@ export const id = {
     sheets: {
       name: "Sheets",
       formats: [".xlsx", ".csv", ".ods", ".xls"],
-      text: "Lembar kerja dengan rumus, beberapa sheet, format angka (termasuk Rupiah), tabel Excel, grafik, urutkan, dan filter. Bisa membuka file .csv, .ods, dan .xls, lalu menyimpannya sebagai .xlsx.",
+      text: "Lembar kerja dengan rumus, beberapa sheet, format angka (termasuk Rupiah), tabel Excel, grafik, pivot table, format bersyarat, validasi data, urutkan, dan filter. Bisa membuka file .csv, .ods, dan .xls, lalu menyimpannya sebagai .xlsx.",
     },
     docs: {
       name: "Docs",
       formats: [".docx"],
-      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, header dan footer dengan nomor halaman, serta ukuran kertas seperti A4, Letter, dan F4, termasuk halaman lanskap. Ada cari dan ganti, juga penghitung kata.",
+      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, header dan footer dengan nomor halaman, serta ukuran kertas seperti A4, Letter, dan F4, termasuk halaman lanskap. Ada komentar dan lacak perubahan, cari dan ganti, juga penghitung kata.",
     },
     slides: {
       name: "Slides",
@@ -269,7 +269,7 @@ export const id = {
   },
   keepH3: "Menyimpan tidak membuang yang belum bisa ditampilkan Kantor",
   keepText:
-    "Kalau file berisi sesuatu yang belum dipahami Kantor, misalnya header di Word atau komentar di Excel, Kantor membiarkannya apa adanya dan menuliskannya kembali saat Anda menyimpan. Kalau itu tidak bisa dilakukan dengan aman, Kantor menyimpan ke file baru atau memberi tahu bagian mana yang tidak ikut tersimpan.",
+    "Kalau file berisi sesuatu yang belum dipahami Kantor, misalnya persamaan di Word atau komentar di Excel, Kantor membiarkannya apa adanya dan menuliskannya kembali saat Anda menyimpan. Kalau itu tidak bisa dilakukan dengan aman, Kantor menyimpan ke file baru atau memberi tahu bagian mana yang tidak ikut tersimpan.",
   more: [
     ["Cetak dan ekspor ke PDF", "Docs dan Slides menyimpan PDF yang sama dengan tampilan di layar dan mencetaknya lewat penampil PDF; Slides juga bisa mencetak halaman catatan dan handout. Sheets mencetak halaman seperti Excel: ukuran kertas termasuk F4, muat selebar halaman, judul cetak, header, dan footer."],
     ["Tanpa internet, tanpa akun", "File Anda tetap di komputer Anda. Tidak perlu mendaftar apa pun."],

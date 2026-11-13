@@ -9,7 +9,7 @@ magick -size 1200x630 gradient:'#232838'-'#0f1219' \
   "$tmp/shot.png" -geometry +560+150 -compose over -composite \
   "$tmp/icon.png" -geometry +60+64 -composite \
   -font "$F" -fill white -pointsize 76 -annotate +64+290 "Kantor" \
-  -fill '#c9d1e3' -pointsize 30 -annotate +66+350 "Sheets, Docs and Slides" -annotate +66+392 "for Linux and macOS" \
+  -fill '#c9d1e3' -pointsize 30 -annotate +66+350 "Sheets, Docs and Slides" -annotate +66+392 "for Windows, Mac and Linux" \
   -fill '#93a0bb' -pointsize 24 -annotate +66+470 "Opens and saves Word, Excel" -annotate +66+504 "and PowerPoint files." -annotate +66+560 "Free and open source" \
   -fill '#4f8ff7' -draw "rectangle 66,590 126,596" -fill '#2fbf71' -draw "rectangle 132,590 192,596" -fill '#f47a3a' -draw "rectangle 198,590 258,596" \
   -strip "$here/../src/img/og.png"
