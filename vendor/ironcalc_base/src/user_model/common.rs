@@ -216,6 +216,9 @@ pub struct UserModel<'a> {
     history: History,
     send_queue: Vec<QueueDiffs>,
     pause_evaluation: bool,
+    /// KANTOR PATCH (partial recalculation): what changed since the model
+    /// was last evaluated.
+    kantor_unevaluated: crate::kantor_changes::KantorChanges,
     /// What the user is looking at: selected sheet, selection and scroll
     /// position of each sheet, window size. Runtime state only: it is not
     /// part of the workbook and is not serialized.
@@ -257,6 +260,7 @@ impl<'a> UserModel<'a> {
             history: History::default(),
             send_queue: vec![],
             pause_evaluation: false,
+            kantor_unevaluated: Default::default(),
             view: WorkbookView::default(),
         }
     }
@@ -277,6 +281,7 @@ impl<'a> UserModel<'a> {
             history: History::default(),
             send_queue: vec![],
             pause_evaluation: false,
+            kantor_unevaluated: Default::default(),
             view: WorkbookView::default(),
         })
     }
@@ -292,6 +297,7 @@ impl<'a> UserModel<'a> {
             history: History::default(),
             send_queue: vec![],
             pause_evaluation: false,
+            kantor_unevaluated: Default::default(),
             view: WorkbookView::default(),
         })
     }
@@ -333,6 +339,7 @@ impl<'a> UserModel<'a> {
     /// * [UserModel::redo]
     pub fn undo(&mut self) -> Result<(), String> {
         if let Some(diff_list) = self.history.undo() {
+            self.kantor_unevaluated.add_list(&diff_list);
             self.apply_undo_diff_list(&diff_list)?;
             self.send_queue.push(QueueDiffs {
                 r#type: DiffType::Undo,
@@ -348,6 +355,7 @@ impl<'a> UserModel<'a> {
     /// * [UserModel::redo]
     pub fn redo(&mut self) -> Result<(), String> {
         if let Some(diff_list) = self.history.redo() {
+            self.kantor_unevaluated.add_list(&diff_list);
             self.apply_diff_list(&diff_list)?;
             self.send_queue.push(QueueDiffs {
                 r#type: DiffType::Redo,
@@ -413,7 +421,17 @@ impl<'a> UserModel<'a> {
     /// * [Model::evaluate]
     /// * [UserModel::pause_evaluation]
     pub fn evaluate(&mut self) {
+        self.kantor_unevaluated = Default::default();
         self.model.evaluate()
+    }
+
+    /// KANTOR PATCH (partial recalculation): evaluates what the edits since
+    /// the last evaluation can have changed (everything when that can't be
+    /// told for sure, see `Model::kantor_evaluate_changed`). Returns whether
+    /// only part of the workbook was evaluated.
+    pub fn kantor_evaluate_changes(&mut self) -> bool {
+        let changes = std::mem::take(&mut self.kantor_unevaluated);
+        self.model.kantor_evaluate_changed(&changes)
     }
 
     /// Returns the list of pending diffs and removes them from the queue
@@ -489,8 +507,6 @@ impl<'a> UserModel<'a> {
         }];
         self.set_user_input_with_link_diffs(sheet, row, column, value.to_string(), &mut diff_list)?;
 
-        self.evaluate_if_not_paused();
-
         let style = self.model.get_style_for_cell(sheet, row, column)?;
 
         let line_count = value.split('\n').count() as f64;
@@ -510,6 +526,8 @@ impl<'a> UserModel<'a> {
         }
 
         self.push_diff_list(diff_list);
+        // KANTOR PATCH (partial recalculation): after the diffs are known.
+        self.evaluate_if_not_paused();
         Ok(())
     }
 
@@ -2346,6 +2364,7 @@ impl<'a> UserModel<'a> {
     }
 
     pub(crate) fn push_diff_list(&mut self, diff_list: DiffList) {
+        self.kantor_unevaluated.add_list(&diff_list);
         self.send_queue.push(QueueDiffs {
             r#type: DiffType::Redo,
             list: diff_list.clone(),
@@ -2355,7 +2374,8 @@ impl<'a> UserModel<'a> {
 
     pub(crate) fn evaluate_if_not_paused(&mut self) {
         if !self.pause_evaluation {
-            self.model.evaluate();
+            // KANTOR PATCH (partial recalculation)
+            self.kantor_evaluate_changes();
         }
     }
 }

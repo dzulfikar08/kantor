@@ -155,13 +155,24 @@ fn is_address(chunk: &str) -> bool {
     })
 }
 
+/// Whether `c` is a Latin-script letter (basic, Latin-1, Extended-A/B,
+/// Extended Additional), the only script the bundled dictionaries cover.
+fn is_latin_letter(c: char) -> bool {
+    c.is_ascii_alphabetic()
+        || matches!(c, '\u{00C0}'..='\u{024F}' | '\u{1E00}'..='\u{1EFF}') && c.is_alphabetic()
+}
+
 /// Whether a word should be checked at all: not a single letter, no digits,
-/// not ALL CAPS (acronyms).
+/// not ALL CAPS (acronyms), and only Latin letters (no dictionary covers
+/// Chinese, Japanese, Korean, Arabic, Cyrillic… so those are never flagged).
 fn worth_checking(word: &str) -> bool {
     let mut letters = 0;
     let mut upper = 0;
     for c in word.chars() {
         if c.is_numeric() {
+            return false;
+        }
+        if c.is_alphabetic() && !is_latin_letter(c) {
             return false;
         }
         if c.is_alphabetic() {

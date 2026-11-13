@@ -37,6 +37,10 @@ fn splits_words_and_skips_what_word_skips() {
     assert_eq!(texts(t, &words(t)), ["kata", "quoted", "end"]);
     assert!(words("").is_empty());
     assert!(words("ABC DEF 1234 I a").is_empty());
+    // Scripts no bundled dictionary covers are never flagged; Latin with
+    // accents still is.
+    let t = "中文 日本語 한국어 Привет مرحبا café naïve";
+    assert_eq!(texts(t, &words(t)), ["café", "naïve"]);
 }
 
 #[test]

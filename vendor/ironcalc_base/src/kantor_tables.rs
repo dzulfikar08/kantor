@@ -457,9 +457,12 @@ impl Model<'_> {
         let n = order.len() as i32;
         let ws = self.workbook.worksheet_mut(sheet)?;
         let data = &mut ws.sheet_data;
-        // Take every row's cells out.
+        // KANTOR PATCH (fast sort): rows with nothing outside the range move
+        // whole (§18).
         let mut taken: Vec<Vec<(i32, Cell)>> = Vec::with_capacity(order.len());
-        for r in top..top + n {
+        let whole_rows = data.kantor_permute_whole_rows(top, left, right, order);
+        // Otherwise take every row's cells out.
+        for r in (top..top + n).filter(|_| !whole_rows) {
             let cols = data.columns_in_row(r);
             let whole = cols.first().is_none_or(|&c| c >= left)
                 && cols.last().is_none_or(|&c| c <= right);
@@ -481,7 +484,7 @@ impl Model<'_> {
                 taken.push(cells);
             }
         }
-        for (i, &src) in order.iter().enumerate() {
+        for (i, &src) in order.iter().enumerate().filter(|_| !whole_rows) {
             let dest = top + i as i32;
             let cells = std::mem::take(&mut taken[(src - top) as usize]);
             if cells.is_empty() {
@@ -751,15 +754,11 @@ impl UserModel<'_> {
         }) {
             return Err("Can't sort merged cells".to_string());
         }
-        for r in top..=bottom {
-            for (_, cell) in ws.sheet_data.cells_in_row_between(r, left, right) {
-                if matches!(
-                    cell.as_ref(),
-                    Cell::ArrayFormula { .. } | Cell::SpillCell { .. }
-                ) {
-                    return Err("Can't sort array formulas or spilled values".to_string());
-                }
-            }
+        if ws
+            .sheet_data
+            .kantor_has_array_cells(top, bottom, left, right)
+        {
+            return Err("Can't sort array formulas or spilled values".to_string());
         }
         self.model.kantor_permute_rows(sheet, top, left, right, order)?;
         self.push_diff_list(vec![Diff::KantorPermuteRows {

@@ -1078,13 +1078,13 @@ impl DocsView {
     /// The file name, or the shell-given name while there is no file.
     fn name(&self) -> String {
         match &self.untitled_name {
-            Some(name) if self.doc.path().is_none() => name.clone(),
+            Some(name) if self.doc.source_path().is_none() => name.clone(),
             _ => self.doc.title(),
         }
     }
 
-    /// The file this document shows (an imported `.doc` too, though Save
-    /// never writes there), if any.
+    /// The file this document shows (an imported `.rtf` or `.doc` too,
+    /// though Save never writes there).
     pub fn path(&self, _: &App) -> Option<PathBuf> {
         self.doc.source_path().map(|p| p.to_path_buf())
     }
@@ -1167,7 +1167,7 @@ impl DocsView {
         let r = self.doc.resolved_at(self.sel.head);
         DocInfo {
             name: self.name(),
-            path: self.doc.path().map(|p| p.to_path_buf()),
+            path: self.doc.source_path().map(|p| p.to_path_buf()),
             dirty: self.doc.is_dirty(),
             pages: self.laid.paged.pages.len(),
             words: self.doc.word_count(),
@@ -1263,7 +1263,9 @@ impl DocsView {
             let Ok(Ok(Some(mut path))) = path.await else {
                 return false;
             };
-            if path.extension().is_none() {
+            // Kantor writes .docx only (an .rtf or .doc name would get
+            // .docx contents).
+            if path.extension().is_none() || docs_engine::is_import_path(&path) {
                 path.set_extension("docx");
             }
             this.update_in(cx, |this, window, cx| {

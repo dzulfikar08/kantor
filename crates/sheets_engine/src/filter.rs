@@ -750,7 +750,8 @@ impl Workbook {
         if self.calc.mode == CalcMode::Automatic {
             self.model.resume_evaluation();
             if steps > 0 {
-                self.model.evaluate();
+                // What the batch changed and its dependents (vendor/ironcalc_base §19).
+                self.model.kantor_evaluate_changes();
             }
         }
         if steps > 0 {

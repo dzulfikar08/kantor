@@ -266,14 +266,24 @@ pub(crate) fn result_matches_regex(calc_result: &CalcResult, reg: &regex::Regex)
     }
 }
 
+/// KANTOR PATCH (partial recalculation): `s.to_lowercase() == target`
+/// without making a lower-case copy when `s` is ASCII (criteria functions
+/// over big ranges compared every cell through a new string).
+fn lowercase_equals(s: &str, target: &str) -> bool {
+    if s.is_ascii() {
+        s.len() == target.len()
+            && s
+                .bytes()
+                .zip(target.bytes())
+                .all(|(a, b)| a.to_ascii_lowercase() == b)
+    } else {
+        s.to_lowercase() == target
+    }
+}
+
 fn result_is_equal_to_string(calc_result: &CalcResult, target: &str) -> bool {
     match calc_result {
-        CalcResult::String(s) => {
-            if target == s.to_lowercase() {
-                return true;
-            }
-            false
-        }
+        CalcResult::String(s) => lowercase_equals(s, target),
         CalcResult::EmptyCell => target.is_empty(),
         _ => false,
     }
@@ -281,12 +291,7 @@ fn result_is_equal_to_string(calc_result: &CalcResult, target: &str) -> bool {
 
 fn result_is_not_equal_to_string(calc_result: &CalcResult, target: &str) -> bool {
     match calc_result {
-        CalcResult::String(s) => {
-            if target != s.to_lowercase() {
-                return true;
-            }
-            false
-        }
+        CalcResult::String(s) => !lowercase_equals(s, target),
         _ => false,
     }
 }

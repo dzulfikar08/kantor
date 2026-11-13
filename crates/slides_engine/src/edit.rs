@@ -494,8 +494,7 @@ impl Presentation {
             return flag(&body.paras[p.para].props_at(p.offset), p.para);
         }
         let mut any = false;
-        let last = b.para.min(body.paras.len() - 1);
-        for (i, p) in body.paras.iter().enumerate().take(last + 1).skip(a.para) {
+        for (i, p) in body.paras.iter().enumerate().take(b.para + 1).skip(a.para) {
             let from = if i == a.para { a.offset } else { 0 };
             let to = if i == b.para { b.offset } else { p.text.len() };
             for (range, run) in p.run_ranges() {

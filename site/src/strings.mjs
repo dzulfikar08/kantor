@@ -68,8 +68,8 @@ export const en = {
     },
     docs: {
       name: "Docs",
-      formats: [".docx", ".doc"],
-      text: "Letters and reports with headings, lists, tables, pictures, headers and footers with page numbers, and page sizes such as A4, Letter and F4, landscape pages too. Comments and tracked changes, find and replace, and a word count. Opens .doc files too, and saves as .docx.",
+      formats: [".docx", ".doc", ".rtf"],
+      text: "Letters and reports with headings, lists, tables, pictures, headers and footers with page numbers, and page sizes such as A4, Letter and F4, landscape pages too. Comments and tracked changes, find and replace, and a word count. Opens .doc and .rtf files too, and saves them as .docx.",
     },
     slides: {
       name: "Slides",
@@ -83,6 +83,7 @@ export const en = {
   more: [
     ["Print and export to PDF", "Docs and Slides save a PDF that looks like what you see on screen, and print it through your PDF viewer; Slides also prints notes pages and handouts. Sheets prints pages the way Excel does: paper size including F4, fit to width, print titles, headers and footers."],
     ["Offline, no account", "Your files stay on your computer. There is nothing to sign up for."],
+    ["Spell check in English and Indonesian", "Docs and Slides underline misspelled words as you type and suggest corrections, with no internet needed. Add your own words to a personal dictionary."],
     [
       "Your work is safe",
       'While a document has unsaved changes, Kantor keeps a copy of it on your computer. After a crash or a power cut it offers to restore your changes, and nothing is written over your file until you save. Autosave can be <a href="' + GH + '#your-work-is-safe">turned on</a> too.',
@@ -257,8 +258,8 @@ export const id = {
     },
     docs: {
       name: "Docs",
-      formats: [".docx", ".doc"],
-      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, header dan footer dengan nomor halaman, serta ukuran kertas seperti A4, Letter, dan F4, termasuk halaman lanskap. Ada komentar dan lacak perubahan, cari dan ganti, juga penghitung kata. Bisa membuka file .doc, lalu menyimpannya sebagai .docx.",
+      formats: [".docx", ".doc", ".rtf"],
+      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, header dan footer dengan nomor halaman, serta ukuran kertas seperti A4, Letter, dan F4, termasuk halaman lanskap. Ada komentar dan lacak perubahan, cari dan ganti, juga penghitung kata. Bisa membuka file .doc dan .rtf, lalu menyimpannya sebagai .docx.",
     },
     slides: {
       name: "Slides",
@@ -272,6 +273,7 @@ export const id = {
   more: [
     ["Cetak dan ekspor ke PDF", "Docs dan Slides menyimpan PDF yang sama dengan tampilan di layar dan mencetaknya lewat penampil PDF; Slides juga bisa mencetak halaman catatan dan handout. Sheets mencetak halaman seperti Excel: ukuran kertas termasuk F4, muat selebar halaman, judul cetak, header, dan footer."],
     ["Tanpa internet, tanpa akun", "File Anda tetap di komputer Anda. Tidak perlu mendaftar apa pun."],
+    ["Cek ejaan Bahasa Indonesia dan Inggris", "Docs dan Slides menggarisbawahi kata yang salah eja saat Anda mengetik dan memberi saran perbaikan, tanpa perlu internet. Kata Anda sendiri bisa ditambahkan ke kamus pribadi."],
     [
       "Pekerjaan Anda aman",
       'Selama dokumen punya perubahan yang belum disimpan, Kantor menyimpan salinannya di komputer Anda. Setelah aplikasi tertutup mendadak atau listrik padam, Kantor menawarkan untuk memulihkan perubahan Anda, dan file Anda tidak ditimpa sampai Anda menyimpannya. Simpan otomatis juga <a href="' + GH + '#your-work-is-safe">bisa dinyalakan</a> (bahasa Inggris).',

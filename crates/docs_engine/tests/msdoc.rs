@@ -268,7 +268,7 @@ fn refuses_encrypted_old_and_foreign_files() {
     assert!(e.contains("Word 6 or Word 95"), "{e}");
 
     let e = format!("{:#}", import(b"{\\rtf1 hello}").err().unwrap());
-    assert!(e.contains("Can't open x.doc"), "{e}");
+    assert!(e.contains("not a Word 97-2003 document"), "{e}");
 }
 
 #[test]

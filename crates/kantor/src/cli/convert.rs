@@ -2,10 +2,10 @@
 //!
 //! ```text
 //! kantor convert report.docx report.pdf
+//! kantor convert letter.rtf letter.docx   (also .doc / .dot)
 //! kantor convert deck.pptx deck.pdf
 //! kantor convert --fit-width --landscape book.xlsx book.pdf
 //! kantor convert budget.ods budget.xlsx
-//! kantor convert letter.doc letter.docx
 //! kantor convert --sheet Summary book.xlsx summary.csv
 //! kantor convert -o out/ --to pdf a.docx b.docx
 //! ```
@@ -23,7 +23,7 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \n\
     Supported conversions:\n\
     \x20 .docx                                      -> .pdf\n\
-    \x20 .doc .dot (Word 97-2003)                   -> .docx .pdf\n\
+    \x20 .rtf .doc .dot (Word 97-2003)              -> .docx .pdf\n\
     \x20 .pptx                                      -> .pdf (one page per slide,\n\
     \x20                                               hidden slides left out)\n\
     \x20 .xlsx .xlsm .xls .xlsb .ods .csv .tsv      -> .xlsx .csv .tsv\n\
@@ -32,7 +32,7 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \n\
     Options:\n\
     \x20 -o, --output-dir DIR   write each INPUT to DIR/NAME.FORMAT\n\
-    \x20 -t, --to FORMAT        output format with -o: pdf, docx, xlsx, csv or tsv\n\
+    \x20 -t, --to FORMAT        output format with -o: pdf, xlsx, csv, tsv or docx\n\
     \x20     --sheet N|NAME     sheet to write to .csv/.tsv or .pdf (1-based number\n\
     \x20                        or name; default: the active sheet for .csv/.tsv,\n\
     \x20                        every visible sheet for .pdf)\n\
@@ -105,8 +105,8 @@ const SHEET_OUTPUTS: &[&str] = &["xlsx", "csv", "tsv"];
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Kind {
     DocxToPdf,
-    /// Word 97-2003 `.doc` / `.dot` to `.docx`.
-    DocToDocx,
+    /// An imported document (.rtf, .doc, .dot) written as .docx.
+    DocsToDocx,
     PptxToPdf,
     SheetsToPdf,
     Sheets,
@@ -122,11 +122,15 @@ fn kind(input: &Path, output: &Path) -> Result<Kind, Usage> {
             format!(".{e}")
         }
     };
-    if matches!(i.as_str(), "docx" | "doc" | "dot") && o == "pdf" {
+    if i == "docx" && o == "pdf" {
         return Ok(Kind::DocxToPdf);
     }
-    if matches!(i.as_str(), "doc" | "dot") && o == "docx" {
-        return Ok(Kind::DocToDocx);
+    if matches!(i.as_str(), "rtf" | "doc" | "dot") {
+        match o.as_str() {
+            "pdf" => return Ok(Kind::DocxToPdf),
+            "docx" => return Ok(Kind::DocsToDocx),
+            _ => {}
+        }
     }
     if i == "pptx" && o == "pdf" {
         return Ok(Kind::PptxToPdf);
@@ -225,9 +229,9 @@ fn parse(args: &[OsString]) -> Result<Option<Options>, Usage> {
             if positional.is_empty() {
                 return usage("no input files");
             }
-            if !matches!(to.as_str(), "pdf" | "docx" | "xlsx" | "csv" | "tsv") {
+            if !matches!(to.as_str(), "pdf" | "xlsx" | "csv" | "tsv" | "docx") {
                 return usage(format!(
-                    "--to {to}: Kantor converts to pdf, docx, xlsx, csv or tsv"
+                    "--to {to}: Kantor converts to pdf, xlsx, csv, tsv or docx"
                 ));
             }
             for input in positional {
@@ -336,7 +340,7 @@ fn convert(
     let kind = kind(input, output).map_err(|Usage(m)| anyhow!(m))?;
     match kind {
         Kind::DocxToPdf => docx_to_pdf(input, output, engine),
-        Kind::DocToDocx => doc_to_docx(input, output),
+        Kind::DocsToDocx => docs_to_docx(input, output),
         Kind::PptxToPdf => pptx_to_pdf(input, output, engine, opts.slides),
         Kind::Sheets => sheets(input, output, opts.sheet.as_deref()),
         Kind::SheetsToPdf => sheets_to_pdf(input, output, opts),
@@ -356,6 +360,7 @@ fn docx_to_pdf(
     engine: &mut Option<docs_pdf::Engine>,
 ) -> Result<String> {
     let doc = docs_engine::Document::open(input).context("can't open the document")?;
+    import_notes(input, &doc);
     // The font scan happens once, for the first document.
     let engine = engine.get_or_insert_with(docs_pdf::Engine::new);
     let laid = docs_pdf::lay_out(&doc, engine);
@@ -369,16 +374,23 @@ fn docx_to_pdf(
     ))
 }
 
-fn doc_to_docx(input: &Path, output: &Path) -> Result<String> {
+fn import_notes(input: &Path, doc: &docs_engine::Document) {
+    for note in doc.import_notes() {
+        eprintln!("kantor convert: note: {}: {note}", input.display());
+    }
+}
+
+fn docs_to_docx(input: &Path, output: &Path) -> Result<String> {
     let mut doc = docs_engine::Document::open(input).context("can't open the document")?;
-    let notes = doc.import_notes().join("; ");
+    import_notes(input, &doc);
     doc.save_as(output)?;
-    let bytes = std::fs::metadata(output).map_or(0, |m| m.len() as usize);
-    Ok(if notes.is_empty() {
-        size(bytes)
-    } else {
-        format!("{}; {notes}", size(bytes))
-    })
+    let written = std::fs::metadata(output).map(|m| m.len() as usize)?;
+    let n = doc.len();
+    Ok(format!(
+        "{n} paragraph{}, {}",
+        if n == 1 { "" } else { "s" },
+        size(written)
+    ))
 }
 
 fn pptx_to_pdf(
@@ -600,7 +612,7 @@ mod tests {
         assert!(err(&["--paper", "b9", "a.xlsx", "b.pdf"]).contains("--paper b9"));
         assert!(err(&["--scale", "5", "a.xlsx", "b.pdf"]).contains("10 to 400"));
         assert!(err(&["--scale", "50", "--fit-page", "a.xlsx", "b.pdf"]).contains("don't go"));
-        assert!(err(&["-o", "d", "-t", "odt", "a.docx"]).contains("pdf, docx, xlsx, csv or tsv"));
+        assert!(err(&["-o", "d", "-t", "odt", "a.docx"]).contains("pdf, xlsx, csv, tsv or docx"));
     }
 
     #[std::prelude::v1::test]
@@ -626,16 +638,22 @@ mod tests {
             Kind::Sheets
         );
         assert_eq!(
+            kind(Path::new("a.RTF"), Path::new("b.pdf")).unwrap(),
+            Kind::DocxToPdf
+        );
+        assert_eq!(
+            kind(Path::new("a.rtf"), Path::new("b.docx")).unwrap(),
+            Kind::DocsToDocx
+        );
+        assert!(err(&["a.rtf", "a.xlsx"]).contains(".rtf to .xlsx is not supported ("));
+        assert!(err(&["a.docx", "b.docx"]).contains(".docx to .docx is not supported ("));
+        assert_eq!(
             kind(Path::new("old.DOC"), Path::new("b.pdf")).unwrap(),
             Kind::DocxToPdf
         );
         assert_eq!(
-            kind(Path::new("a.doc"), Path::new("a.docx")).unwrap(),
-            Kind::DocToDocx
-        );
-        assert_eq!(
             kind(Path::new("t.dot"), Path::new("t.docx")).unwrap(),
-            Kind::DocToDocx
+            Kind::DocsToDocx
         );
         assert!(err(&["a.docx", "b.doc"]).contains("not supported ("));
     }

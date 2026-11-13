@@ -10,6 +10,7 @@
 //! - `msdoc`: importing Word 97-2003 `.doc` / `.dot` files (read only).
 //! - [`numbering`]: lists; [`table`]: tables; [`object`]: inline pictures
 //!   and opaque elements.
+//! - [`rtf`]: importing `.rtf` files (read-only; Save writes `.docx`).
 
 pub mod agent;
 mod document;
@@ -24,6 +25,7 @@ pub mod object;
 pub mod page;
 pub mod review;
 mod rewrite;
+pub mod rtf;
 pub mod section;
 pub mod style;
 pub mod table;
@@ -31,7 +33,7 @@ mod track;
 mod xml;
 
 pub use document::{
-    Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, Toggle, is_legacy_doc,
+    Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, Toggle, is_import_path,
 };
 pub use edit::TableEdit;
 pub use model::{

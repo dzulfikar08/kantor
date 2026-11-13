@@ -238,6 +238,39 @@ impl Row {
         }
     }
 
+    /// KANTOR PATCH (partial recalculation): the formula cells with their
+    /// column, formula index and whether they have no value yet; `None` for
+    /// an array formula, which only a row of cells holds.
+    pub(super) fn kantor_formulas(&self, mut found: impl FnMut(i32, Option<(i32, bool)>)) {
+        use crate::types::FormulaValue;
+        match self {
+            Row::Cells(cells) => {
+                for (column, cell) in cells {
+                    match cell {
+                        Cell::CellFormula { f, v, .. } => {
+                            found(*column, Some((*f, matches!(v, FormulaValue::Unevaluated))))
+                        }
+                        Cell::ArrayFormula { .. } => found(*column, None),
+                        _ => {}
+                    }
+                }
+            }
+            Row::Packed(cells) => {
+                for cell in cells {
+                    match cell {
+                        Packed::Unevaluated { c, f, .. } => found(*c, Some((*f, true))),
+                        Packed::FormulaBoolean { c, f, .. }
+                        | Packed::FormulaNumber { c, f, .. }
+                        | Packed::FormulaText { c, f, .. }
+                        | Packed::FormulaError { c, f, .. } => found(*c, Some((*f, false))),
+                        _ => {}
+                    }
+                }
+            }
+            Row::Numbers { .. } => {}
+        }
+    }
+
     /// KANTOR PATCH: the array formulas and spill cells with their column, in
     /// ascending order. Only a row of cells can hold them.
     pub(super) fn array_cells(&self) -> impl Iterator<Item = (i32, &Cell)> {
