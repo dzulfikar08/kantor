@@ -42,7 +42,7 @@ impl Stamp {
 }
 
 /// One cloud file with a working copy on this computer.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CacheEntry {
     /// The account's id (see the app's cloud settings).
     pub account: String,
@@ -55,9 +55,44 @@ pub struct CacheEntry {
     pub etag: Option<String>,
     /// The working copy's stamp when it last matched `etag`.
     pub synced: Option<Stamp>,
+    /// The server's `getlastmodified` and size for that version.
+    #[serde(default)]
+    pub modified: Option<String>,
+    #[serde(default)]
+    pub size: Option<u64>,
 }
 
 impl CacheEntry {
+    /// The server's copy is still the version this one is based on.
+    ///
+    /// Nextcloud's `files_lock` gives a file a new ETag when it is locked
+    /// or unlocked, without changing it (measured on Nextcloud 35): so a
+    /// different ETag with the same modification time and size counts as
+    /// the same version. Servers without `getlastmodified` fall back to the
+    /// ETag alone.
+    pub fn same_version(&self, server: &crate::Entry) -> bool {
+        if server.etag.is_some() && server.etag == self.etag {
+            return true;
+        }
+        match (
+            &self.modified,
+            &server.last_modified,
+            self.size,
+            server.size,
+        ) {
+            (Some(a), Some(b), Some(x), Some(y)) => a == b && x == y,
+            _ => false,
+        }
+    }
+
+    /// Take the server's current version as the base (after a download,
+    /// an upload, or a metadata-only change).
+    pub fn rebase(&mut self, server: &crate::Entry) {
+        self.etag = server.etag.clone();
+        self.modified = server.last_modified.clone();
+        self.size = server.size;
+    }
+
     /// The working copy was saved since it last matched the server.
     pub fn has_local_changes(&self) -> bool {
         Stamp::of(&self.local) != self.synced
@@ -263,6 +298,7 @@ mod tests {
             local: local.clone(),
             etag: Some("\"1\"".into()),
             synced: Stamp::of(&local),
+            ..Default::default()
         };
         assert!(!e.has_local_changes());
         assert_eq!(e.name(), "Doc.docx");
@@ -275,6 +311,45 @@ mod tests {
         e.etag = Some("\"2\"".into());
         c.save_entry(&e).unwrap();
         assert_eq!(c.entries().len(), 1, "replaced, not duplicated");
+    }
+
+    #[test]
+    fn lock_only_etag_changes_are_the_same_version() {
+        let base = CacheEntry {
+            etag: Some("\"a1\"".into()),
+            modified: Some("Fri, 13 Nov 2026 16:39:04 GMT".into()),
+            size: Some(5),
+            ..Default::default()
+        };
+        let mut server = crate::Entry {
+            href: "/f".into(),
+            name: "f".into(),
+            is_dir: false,
+            size: Some(5),
+            etag: Some("\"a1\"".into()),
+            last_modified: base.modified.clone(),
+            content_type: None,
+        };
+        assert!(base.same_version(&server));
+        // Locked: new ETag, same file.
+        server.etag = Some("\"6af73d2b5e479\"".into());
+        assert!(base.same_version(&server));
+        // Really changed.
+        server.last_modified = Some("Fri, 13 Nov 2026 16:40:00 GMT".into());
+        assert!(!base.same_version(&server));
+        server.last_modified = base.modified.clone();
+        server.size = Some(6);
+        assert!(!base.same_version(&server));
+        // No dates: the ETag decides.
+        let bare = CacheEntry {
+            etag: Some("\"a1\"".into()),
+            ..Default::default()
+        };
+        server.size = Some(5);
+        assert!(!bare.same_version(&server));
+        let mut rebased = bare.clone();
+        rebased.rebase(&server);
+        assert!(rebased.same_version(&server));
     }
 
     #[test]

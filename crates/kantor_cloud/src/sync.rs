@@ -45,9 +45,10 @@ pub enum SyncState {
 /// How an upload ended (see `session::upload`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UploadOutcome {
-    /// The server has the working copy as of `stamp`, under `etag`.
+    /// The server has the working copy as of `stamp`, as version `server`
+    /// (ETag, modification time, size).
     Synced {
-        etag: Option<String>,
+        server: Option<crate::Entry>,
         stamp: Option<Stamp>,
     },
     /// The server's copy moved on (or was deleted: `server_etag: None`).
@@ -173,8 +174,11 @@ impl DocSync {
     pub fn on_upload(&mut self, outcome: UploadOutcome) -> Action {
         let again = std::mem::take(&mut self.pending_again);
         match outcome {
-            UploadOutcome::Synced { etag, stamp } => {
-                self.entry.etag = etag;
+            UploadOutcome::Synced { server, stamp } => {
+                match server {
+                    Some(s) => self.entry.rebase(&s),
+                    None => self.entry.etag = None,
+                }
                 self.entry.synced = stamp;
                 if again || self.entry.has_local_changes() {
                     self.state = SyncState::LocalChanges;
@@ -319,6 +323,7 @@ mod tests {
             local: local.clone(),
             etag: Some("\"e1\"".into()),
             synced: Stamp::of(&local),
+            ..Default::default()
         };
         DocSync::new(entry, LockState::Held(LockToken("t".into())))
     }
@@ -331,7 +336,15 @@ mod tests {
 
     fn synced(d: &DocSync, etag: &str) -> UploadOutcome {
         UploadOutcome::Synced {
-            etag: Some(etag.into()),
+            server: Some(crate::Entry {
+                href: "/Laporan.xlsx".into(),
+                name: "Laporan.xlsx".into(),
+                is_dir: false,
+                size: None,
+                etag: Some(etag.into()),
+                last_modified: None,
+                content_type: None,
+            }),
             stamp: Stamp::of(&d.entry.local),
         }
     }

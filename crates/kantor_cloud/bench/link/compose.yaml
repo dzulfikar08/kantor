@@ -13,6 +13,7 @@ services:
     ports:
       - "127.0.0.1:28080:28080"  # -> Nextcloud web:80
       - "127.0.0.1:29200:29200"  # -> OpenCloud opencloud:9200
+      - "127.0.0.1:28474:8474"   # Toxiproxy API (e2e tests switch the link off)
   netem:
     image: alpine:3.22
     network_mode: "service:toxiproxy"

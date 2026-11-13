@@ -36,11 +36,13 @@ pub fn is_offline(e: &Error) -> bool {
     matches!(e, Error::Network(_))
 }
 
-/// Download `remote` into its working copy and lock it.
+/// Lock `remote`, then download it into its working copy.
 ///
-/// If the working copy has local saves that never reached the server
-/// (edited offline, then closed), those are kept: the copy is opened as is
-/// and syncs under the usual rules.
+/// The lock comes first: Nextcloud changes a file's ETag when it is locked,
+/// and locking first also means nobody can change it between the download
+/// and the lock. If the working copy has local saves that never reached the
+/// server (edited offline, then closed), those are kept: the copy is opened
+/// as is and syncs under the usual rules.
 pub fn open(r: &Remote, cache: &Cache, remote: &str) -> Result<Opened, Error> {
     if let Some(entry) = cache.find_remote(&r.account, remote)
         && entry.local.is_file()
@@ -49,23 +51,37 @@ pub fn open(r: &Remote, cache: &Cache, remote: &str) -> Result<Opened, Error> {
         let lock = take_lock(r, cache, remote);
         return Ok(Opened { entry, lock });
     }
-    let fetched = r.client.get(remote)?;
-    let local = cache.local_path(&r.account, remote);
-    write_atomic(&local, &fetched.bytes).map_err(io)?;
-    let etag = match fetched.etag {
-        Some(e) => Some(e),
-        None => r.client.stat(remote)?.etag,
-    };
-    let entry = CacheEntry {
+    let lock = take_lock(r, cache, remote);
+    let mut entry = CacheEntry {
         account: r.account.clone(),
         remote: remote.to_owned(),
-        synced: Stamp::of(&local),
-        local,
-        etag,
+        local: cache.local_path(&r.account, remote),
+        ..Default::default()
     };
-    cache.save_entry(&entry).map_err(io)?;
-    let lock = take_lock(r, cache, remote);
+    let downloaded = download(r, cache, &mut entry);
+    if let Err(e) = downloaded {
+        if let LockState::Held(t) = &lock {
+            let _ = release(r, cache, remote, t);
+        }
+        return Err(e);
+    }
     Ok(Opened { entry, lock })
+}
+
+/// GET into the working copy and record the version (ETag, time, size).
+fn download(r: &Remote, cache: &Cache, entry: &mut CacheEntry) -> Result<(), Error> {
+    let fetched = r.client.get(&entry.remote)?;
+    write_atomic(&entry.local, &fetched.bytes).map_err(io)?;
+    match r.client.stat(&entry.remote) {
+        Ok(server) => entry.rebase(&server),
+        Err(_) => {
+            entry.etag = fetched.etag;
+            entry.modified = None;
+            entry.size = Some(fetched.bytes.len() as u64);
+        }
+    }
+    entry.synced = Stamp::of(&entry.local);
+    cache.save_entry(entry).map_err(io)
 }
 
 /// The working copy of `remote`, for opening while the server is unreachable.
@@ -123,14 +139,17 @@ pub fn upload(
     if Stamp::of(&entry.local) != stamp {
         return UploadOutcome::Busy;
     }
+    // The ETag to send: the base, or the server's current one when only
+    // its metadata changed (a lock or unlock on Nextcloud).
+    let mut if_match = entry.etag.clone();
     if !force {
         match r.client.stat(&entry.remote) {
-            Ok(e) if e.etag != entry.etag => {
+            Ok(server) if entry.same_version(&server) => if_match = server.etag,
+            Ok(server) => {
                 return UploadOutcome::Conflict {
-                    server_etag: e.etag,
+                    server_etag: server.etag,
                 };
             }
-            Ok(_) => {}
             Err(Error::NotFound) if entry.etag.is_some() => {
                 return UploadOutcome::Conflict { server_etag: None };
             }
@@ -138,7 +157,7 @@ pub fn upload(
             Err(e) => return failure(r, entry, lock, e),
         }
     }
-    let cond = match (&entry.etag, force) {
+    let cond = match (&if_match, force) {
         (_, true) => Precondition::Overwrite,
         (Some(e), false) => Precondition::IfMatch(e),
         (None, false) => Precondition::IfNoneMatch,
@@ -148,11 +167,19 @@ pub fn upload(
         .put_with_progress(&entry.remote, &bytes, cond, lock, progress)
     {
         Ok(etag) => {
-            let etag = match etag {
-                Some(e) => Some(e),
-                None => r.client.stat(&entry.remote).ok().and_then(|e| e.etag),
-            };
-            UploadOutcome::Synced { etag, stamp }
+            let server = r.client.stat(&entry.remote).ok().or_else(|| {
+                // No PROPFIND answer: keep what the PUT said.
+                Some(crate::Entry {
+                    href: String::new(),
+                    name: entry.name().to_owned(),
+                    is_dir: false,
+                    size: Some(bytes.len() as u64),
+                    etag,
+                    last_modified: None,
+                    content_type: None,
+                })
+            });
+            UploadOutcome::Synced { server, stamp }
         }
         Err(e) => failure(r, entry, lock, e),
     }
@@ -179,19 +206,19 @@ fn failure(r: &Remote, entry: &CacheEntry, lock: Option<&LockToken>, e: Error) -
 
 /// Replace the working copy with the server's version.
 pub fn reload(r: &Remote, cache: &Cache, entry: &CacheEntry) -> Result<CacheEntry, Error> {
-    let fetched = r.client.get(&entry.remote)?;
-    write_atomic(&entry.local, &fetched.bytes).map_err(io)?;
-    let etag = match fetched.etag {
-        Some(e) => Some(e),
-        None => r.client.stat(&entry.remote)?.etag,
-    };
-    let fresh = CacheEntry {
-        etag,
-        synced: Stamp::of(&entry.local),
-        ..entry.clone()
-    };
-    cache.save_entry(&fresh).map_err(io)?;
+    let mut fresh = entry.clone();
+    download(r, cache, &mut fresh)?;
     Ok(fresh)
+}
+
+/// Whether the server's copy is a different version than the working
+/// copy's base (not just a lock's new ETag). `None`: can't tell (offline).
+pub fn server_changed(r: &Remote, entry: &CacheEntry) -> Option<bool> {
+    match r.client.stat(&entry.remote) {
+        Ok(server) => Some(!entry.same_version(&server)),
+        Err(Error::NotFound) => Some(true),
+        Err(_) => None,
+    }
 }
 
 /// Upload the working copy as `copy_name` in the same folder, never over an
