@@ -195,7 +195,7 @@ fn footnotes_at_page_bottom_and_endnotes_at_the_end() {
             .paged
             .glyph_runs(0)
             .iter()
-            .any(|r| r.source != docs_layout::RunSource::Text)
+            .any(|r| matches!(r.source, docs_layout::RunSource::Mark(_)))
     );
     // The endnote follows the last text.
     let last = laid.furniture.len() - 1;

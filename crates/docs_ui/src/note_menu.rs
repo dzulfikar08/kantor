@@ -132,9 +132,11 @@ impl DocsView {
             cx.notify();
             return;
         }
-        let text = edit.input.read(cx).value().to_string();
+        // Ctrl+Enter may have put a line break in before it closes.
+        let value = edit.input.read(cx).value().to_string();
+        let text = value.trim_end_matches(['\n', '\r']);
         if self.doc.note_text(edit.kind, &edit.id) != text
-            && self.doc.set_note_text(edit.kind, &edit.id, &text, self.sel)
+            && self.doc.set_note_text(edit.kind, &edit.id, text, self.sel)
         {
             let sel = self.sel;
             self.edited(sel, window, cx);

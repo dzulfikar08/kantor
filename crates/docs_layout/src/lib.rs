@@ -750,6 +750,9 @@ pub enum RunSource {
     Marker,
     /// The label of the placeholder for the object at this byte index.
     Label(usize),
+    /// The number of the note mark at this byte index (document text, in
+    /// the PDF too).
+    Mark(usize),
 }
 
 /// A run of glyphs sharing one font, size and colour, in page coordinates.
@@ -1532,7 +1535,7 @@ impl PagedDocument {
         match run.source {
             RunSource::Text => para_text,
             RunSource::Marker => l.marker.as_ref().map_or("", |m| m.2.as_str()),
-            RunSource::Label(i) => l
+            RunSource::Label(i) | RunSource::Mark(i) => l
                 .labels
                 .iter()
                 .find(|x| x.0 == i)
@@ -1565,15 +1568,16 @@ impl PagedDocument {
                     && let Some((_, ll, _)) = pl_layout.labels.iter().find(|x| x.0 == index)
                     && let Some(lline) = ll.get(0)
                 {
-                    let (lx, ly) = if kind == ObjectKind::Mark {
-                        (dx + b.x, dy + b.y)
+                    let (lx, ly, source) = if kind == ObjectKind::Mark {
+                        (dx + b.x, dy + b.y, RunSource::Mark(index))
                     } else {
                         (
                             dx + b.x + LABEL_PAD,
                             dy + b.y + (b.height - lline.metrics().line_height) / 2.0,
+                            RunSource::Label(index),
                         )
                     };
-                    emit_runs(&mut out, &lline, pl.para, RunSource::Label(index), lx, ly);
+                    emit_runs(&mut out, &lline, pl.para, source, lx, ly);
                 }
             }
         }
