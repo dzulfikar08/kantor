@@ -4,10 +4,11 @@
 //! first sheet, nine formula columns G:O; `--table` makes them a table).
 //!
 //!     uv run --with xlsxwriter scripts/corpus/gen_big_xlsx.py big.xlsx --table
-//!     cargo run --release -p sheets_engine --example big_timing -- big.xlsx [runs]
+//!     cargo run --release -p sheets_engine --example big_timing -- big.xlsx [runs] [fill rows]
 //!
 //! Each step after the open runs `runs` times (default 3) and is undone in
-//! between; the best and the worst time are printed.
+//! between; the best and the worst time are printed. The fill goes down
+//! 1000 rows unless told otherwise.
 
 use std::time::{Duration, Instant};
 
@@ -36,6 +37,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let path = args.next().expect("usage: big_timing <file.xlsx> [runs]");
     let runs: usize = args.next().and_then(|n| n.parse().ok()).unwrap_or(3);
+    let fill_rows: u32 = args.next().and_then(|n| n.parse().ok()).unwrap_or(1000);
 
     let t = Instant::now();
     let wb = Workbook::open(&path).expect("open");
@@ -78,11 +80,11 @@ fn main() {
         },
     );
 
-    // The last order's formulas (G:O) filled down 1000 rows.
+    // The last order's formulas (G:O) filled down `fill_rows` rows.
     let fill = Fill {
         source: CellRange::from_corners((last, 6), (last, 14)),
         direction: FillDirection::Down,
-        to: last + 1000,
+        to: last + fill_rows,
     };
     // Manual mode: the sort above left work for the next recalculation,
     // which the first fill would do. Start from up-to-date values.
@@ -92,7 +94,7 @@ fn main() {
     for mode in [CalcMode::Manual, CalcMode::Automatic] {
         wb.borrow_mut().set_calc_mode(mode);
         timed(
-            &format!("fill 9 formulas down 1000 rows ({mode:?})"),
+            &format!("fill 9 formulas down {fill_rows} rows ({mode:?})"),
             runs,
             || {
                 wb.borrow_mut().fill(0, &fill).expect("fill");
