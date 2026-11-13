@@ -11,6 +11,7 @@ pub mod components;
 pub mod disk_guard;
 pub mod find_bar;
 pub mod fonts;
+pub mod i18n;
 pub mod keys;
 pub mod metrics;
 pub mod perf;

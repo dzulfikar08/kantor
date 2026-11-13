@@ -30,6 +30,64 @@ pub struct Settings {
     pub author: Option<String>,
     /// Spell checking (`[spelling]`).
     pub spelling: SpellingSettings,
+    /// Cloud drives (`[cloud]`): WebDAV accounts. Passwords are never stored
+    /// here: they live in the OS keychain (see `kantor_ai::keys`).
+    pub cloud: CloudSettings,
+    /// Interface language: `en` or `id`; unset follows the system language
+    /// (Indonesian → `id`, anything else `en`). `KANTOR_LANG` overrides it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+}
+
+/// `[cloud]`: WebDAV accounts (Nextcloud, OpenCloud, any RFC 4918 server).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CloudSettings {
+    pub accounts: Vec<CloudAccount>,
+    /// The folder "Open from Cloud" showed last, per account id.
+    pub last_folder: BTreeMap<String, String>,
+}
+
+/// One cloud account. The app password is in the keychain under `id`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CloudAccount {
+    /// Stable id: names the keychain entry and the cache folder.
+    pub id: String,
+    /// The server address as typed (`https://drive.example.go.id`).
+    pub server: String,
+    pub user: String,
+    /// The WebDAV root of the user's files; derived from `server` and
+    /// `user` when empty (`<server>/remote.php/dav/files/<user>/`, which
+    /// Nextcloud, ownCloud and OpenCloud all serve).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub dav_url: String,
+}
+
+impl CloudAccount {
+    /// The WebDAV root the client talks to.
+    pub fn dav_root(&self) -> String {
+        if !self.dav_url.trim().is_empty() {
+            return self.dav_url.trim().to_owned();
+        }
+        let server = self.server.trim().trim_end_matches('/');
+        if server.contains("/remote.php/") || server.contains("/dav/") {
+            return format!("{server}/");
+        }
+        format!("{server}/remote.php/dav/files/{}/", self.user.trim())
+    }
+
+    /// `budi @ drive.example.go.id`.
+    pub fn label(&self) -> String {
+        let host = self
+            .server
+            .trim()
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_end_matches('/');
+        let host = host.split('/').next().unwrap_or(host);
+        format!("{} @ {host}", self.user)
+    }
 }
 
 /// `[spelling]`: offline spell checking in Docs and Slides.
@@ -153,6 +211,8 @@ impl Default for Settings {
             autosave: AutosaveSettings::default(),
             author: None,
             spelling: SpellingSettings::default(),
+            cloud: CloudSettings::default(),
+            language: None,
         }
     }
 }
@@ -214,6 +274,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cloud_account_dav_root() {
+        let mut a = CloudAccount {
+            id: "a1".into(),
+            server: "https://drive.example.go.id/".into(),
+            user: "budi".into(),
+            dav_url: String::new(),
+        };
+        assert_eq!(
+            a.dav_root(),
+            "https://drive.example.go.id/remote.php/dav/files/budi/"
+        );
+        assert_eq!(a.label(), "budi @ drive.example.go.id");
+        a.server = "https://x.example/remote.php/dav/files/budi".into();
+        assert_eq!(a.dav_root(), "https://x.example/remote.php/dav/files/budi/");
+        a.dav_url = "https://y.example/webdav/".into();
+        assert_eq!(a.dav_root(), "https://y.example/webdav/");
+    }
+
+    #[test]
+    fn cloud_settings_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        let mut s = Settings::default();
+        s.cloud.accounts.push(CloudAccount {
+            id: "a1".into(),
+            server: "https://d.example".into(),
+            user: "sri".into(),
+            dav_url: String::new(),
+        });
+        s.cloud
+            .last_folder
+            .insert("a1".into(), "Keuangan/2026".into());
+        s.save_to(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("password"));
+        assert_eq!(Settings::load_from(&path), s);
+    }
+
+    #[test]
     fn round_trip_and_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sub/settings.toml");
@@ -247,6 +346,8 @@ mod tests {
                 check_as_you_type: false,
                 language: Some("id_ID".into()),
             },
+            cloud: CloudSettings::default(),
+            language: Some("id".into()),
         };
         assert_eq!(s.author_name(), "Dewi Lestari");
         s.save_to(&path).unwrap();
