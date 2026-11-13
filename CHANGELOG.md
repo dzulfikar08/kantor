@@ -10,6 +10,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ## [Unreleased]
 
 ### Added
+- Docs opens `.rtf` files (from WordPad, TextEdit, Word or LibreOffice) as an unsaved copy: text
+  in any code page, formatting, styles and headings, lists, tables with merged cells, page setup
+  and sections, headers and footers, PNG and JPEG pictures and links come in. Save writes a
+  `.docx` and never overwrites the `.rtf`; footnotes, comments, text boxes and WMF/EMF pictures
+  are left out, and the status bar says so. `kantor convert` turns `.rtf` into `.docx` or `.pdf`,
+  and Kantor shows in "Open with" for `.rtf` files.
 - Spell check in Docs and Slides, offline, for English and Indonesian: misspelled words get a red
   wavy underline as you type. Right-click one for up to five suggestions, Ignore All or Add to
   Dictionary (your words are kept in `dictionary.txt` next to settings.toml). Text marked with a

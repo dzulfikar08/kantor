@@ -221,7 +221,25 @@ pub struct Document {
     pub(crate) notes: Vec<crate::notes::Note>,
     /// Note numbering from settings.xml (footnotes, endnotes).
     pub(crate) note_settings: [crate::notes::NoteProps; 2],
+    /// The file this document was imported from (`.rtf`), while it has
+    /// no file of its own.
+    imported: Option<Imported>,
     history: History,
+}
+
+/// Where an imported document came from.
+#[derive(Clone, Debug)]
+struct Imported {
+    source: PathBuf,
+    notes: Vec<String>,
+}
+
+/// Whether Kantor opens `path` as a read-only import (Save writes a new
+/// `.docx`) rather than a `.docx` file.
+pub fn is_import_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("rtf"))
 }
 
 impl Default for Document {
@@ -255,6 +273,7 @@ impl Document {
             author: "Kantor".to_owned(),
             notes: Vec::new(),
             note_settings: crate::notes::NoteKind::ALL.map(crate::notes::NoteProps::default_for),
+            imported: None,
             history: History::default(),
         }
     }
@@ -268,13 +287,51 @@ impl Document {
         doc
     }
 
-    /// Open a `.docx` file.
+    /// Open a `.docx` file, or import an `.rtf` one (see [`is_import_path`]).
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let bytes = std::fs::read(path)
             .map_err(|e| anyhow::anyhow!("Can't read {}: {e}", path.display()))?;
+        if is_import_path(path) {
+            return Self::import_rtf(&bytes, path)
+                .map_err(|e| anyhow::anyhow!("Can't open {}: {e:#}", path.display()));
+        }
         let read = docx::read(bytes)
             .map_err(|e| anyhow::anyhow!("Can't open {}: {e:#}", path.display()))?;
         Ok(Self::from_read(read, Some(path.to_path_buf())))
+    }
+
+    /// An `.rtf` file's contents as a new, unsaved document that remembers
+    /// `source` (for its name and Save As).
+    pub fn import_rtf(bytes: &[u8], source: &Path) -> anyhow::Result<Self> {
+        let import = crate::rtf::to_docx(bytes)?;
+        let read = docx::read(import.docx)?;
+        let mut doc = Self::from_read(read, None);
+        doc.imported = Some(Imported {
+            source: source.to_path_buf(),
+            notes: import.notes,
+        });
+        Ok(doc)
+    }
+
+    /// Opened from a format Kantor doesn't write, and not saved yet.
+    pub fn is_imported(&self) -> bool {
+        self.path.is_none() && self.imported.is_some()
+    }
+
+    /// The file this document shows: its own, or the one it was imported
+    /// from (which Save never writes).
+    pub fn source_path(&self) -> Option<&Path> {
+        self.path
+            .as_deref()
+            .or(self.imported.as_ref().map(|i| i.source.as_path()))
+    }
+
+    /// What an import couldn't bring over ("footnotes were left out").
+    pub fn import_notes(&self) -> &[String] {
+        match &self.imported {
+            Some(i) if self.path.is_none() => &i.notes,
+            _ => &[],
+        }
     }
 
     /// A document from read `.docx` contents.
@@ -306,6 +363,7 @@ impl Document {
             author: "Kantor".to_owned(),
             notes: read.notes,
             note_settings: read.note_settings,
+            imported: None,
             history: History::default(),
         }
     }
@@ -335,8 +393,7 @@ impl Document {
 
     /// File name for tabs, e.g. `report.docx`.
     pub fn title(&self) -> String {
-        self.path
-            .as_deref()
+        self.source_path()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Untitled.docx".to_owned())
@@ -344,7 +401,7 @@ impl Document {
 
     /// Default name for Save As.
     pub fn suggested_file_name(&self) -> String {
-        match self.path.as_deref().and_then(|p| p.file_stem()) {
+        match self.source_path().and_then(|p| p.file_stem()) {
             Some(stem) if self.has_unsupported_content() => {
                 format!("{} (Kantor).docx", stem.to_string_lossy())
             }
@@ -383,7 +440,19 @@ impl Document {
     ) -> anyhow::Result<Self> {
         let read = docx::read(bytes)
             .map_err(|e| anyhow::anyhow!("Can't read the recovery copy: {e:#}"))?;
+        // A recovered import still has no file of its own.
+        let (original, imported) = match original {
+            Some(p) if is_import_path(&p) => (
+                None,
+                Some(Imported {
+                    source: p,
+                    notes: Vec::new(),
+                }),
+            ),
+            other => (other, None),
+        };
         let mut doc = Self::from_read(read, original);
+        doc.imported = imported;
         for u in unsupported {
             if !doc.unsupported.contains(&u) {
                 doc.unsupported.push(u);
@@ -599,8 +668,14 @@ impl Document {
     /// Plain text of a range; paragraphs are separated by `\n`.
     pub fn text_in(&self, start: Position, end: Position) -> String {
         let mut out = String::new();
-        for i in start.para..=end.para {
-            let text = &self.paragraphs[i].text;
+        for (i, p) in self
+            .paragraphs
+            .iter()
+            .enumerate()
+            .take(end.para + 1)
+            .skip(start.para)
+        {
+            let text = &p.text;
             let a = if i == start.para { start.offset } else { 0 };
             let b = if i == end.para {
                 end.offset
@@ -1033,8 +1108,14 @@ impl Document {
             return false;
         }
         let mut out = Vec::with_capacity(end.para - start.para + 1);
-        for i in start.para..=end.para {
-            let mut p = self.paragraphs[i].clone();
+        for (i, p) in self
+            .paragraphs
+            .iter()
+            .enumerate()
+            .take(end.para + 1)
+            .skip(start.para)
+        {
+            let mut p = p.clone();
             let a = if i == start.para { start.offset } else { 0 };
             let b = if i == end.para {
                 end.offset
