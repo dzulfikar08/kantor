@@ -53,14 +53,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
     // Ctrl and Super (Mac-style Cmd) alike.
     macro_rules! both {
         ($key:literal, $action:expr) => {
-            [
-                KeyBinding::new(
-                    kantor_ui::keys::primary(concat!("ctrl-", $key)),
-                    $action,
-                    ctx,
-                ),
-                KeyBinding::new(concat!("super-", $key), $action, ctx),
-            ]
+            kantor_ui::keys::primary_pair(concat!("ctrl-", $key), $action, ctx)
         };
     }
     cx.bind_keys(
