@@ -330,26 +330,27 @@ impl Document {
     /// of one change merged).
     pub fn changes(&self) -> Vec<Change> {
         let mut out: Vec<Change> = Vec::new();
-        let mut add = |start: Position, end: Position, kind, author: &str, date: &str, text: &str| {
-            if let Some(last) = out.last_mut()
-                && last.end == start
-                && last.kind == kind
-                && last.author == author
-                && last.date == date
-            {
-                last.end = end;
-                last.text.push_str(text);
-                return;
-            }
-            out.push(Change {
-                start,
-                end,
-                kind,
-                author: author.to_owned(),
-                date: date.to_owned(),
-                text: text.to_owned(),
-            });
-        };
+        let mut add =
+            |start: Position, end: Position, kind, author: &str, date: &str, text: &str| {
+                if let Some(last) = out.last_mut()
+                    && last.end == start
+                    && last.kind == kind
+                    && last.author == author
+                    && last.date == date
+                {
+                    last.end = end;
+                    last.text.push_str(text);
+                    return;
+                }
+                out.push(Change {
+                    start,
+                    end,
+                    kind,
+                    author: author.to_owned(),
+                    date: date.to_owned(),
+                    text: text.to_owned(),
+                });
+            };
         let n = self.paragraphs.len();
         for (pi, p) in self.paragraphs.iter().enumerate() {
             for (range, run) in p.run_ranges() {

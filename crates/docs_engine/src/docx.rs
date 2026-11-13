@@ -69,6 +69,7 @@ use quick_xml::name::{Namespace, ResolveResult};
 
 use crate::document::{Document, LINE_BREAK, PAGE_BREAK, PageGeometry};
 use crate::model::*;
+use crate::notes::{Note, NoteKind, NoteProps, NotesPart};
 use crate::numbering::{Numbering, parse_ind};
 use crate::review::Revision;
 use crate::section::{HfKind, Story, set_settings_even_odd, settings_even_odd};
@@ -93,6 +94,14 @@ const REL_COMMENTS: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
 const CT_COMMENTS: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
+const REL_FOOTNOTES: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes";
+const CT_FOOTNOTES: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml";
+const REL_ENDNOTES: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes";
+const CT_ENDNOTES: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml";
 const CT_NUMBERING: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
 
@@ -112,6 +121,11 @@ pub struct Package {
     settings: Option<(String, String)>,
     /// The comments part, if the package has one.
     comments: Option<crate::review::CommentsPart>,
+    /// The footnotes and endnotes parts, if the package has them.
+    pub(crate) notes: [Option<NotesPart>; 2],
+    /// The notes as read (kind, id, element): a part is written again only
+    /// when the document's notes differ.
+    notes_read: Vec<(NoteKind, String, Option<String>)>,
     /// Relationship ids of the main document part.
     rel_ids: HashSet<String>,
     /// Every zip entry name.
@@ -161,6 +175,10 @@ pub struct Read {
     pub default_tab: u32,
     /// Track Changes is on (`w:trackRevisions`).
     pub track: bool,
+    /// Footnotes and endnotes (separators included), in file order.
+    pub notes: Vec<Note>,
+    /// Note numbering from settings.xml (footnotes, endnotes).
+    pub note_settings: [NoteProps; 2],
 }
 
 fn zip_bytes(
@@ -853,9 +871,8 @@ impl BodyParser<'_> {
                     format!("Text box: {text}")
                 }
             }
-            "footnoteReference" | "endnoteReference" => {
-                self.preserved.insert("footnotes and endnotes".into());
-                if local == "footnoteReference" {
+            "footnoteReference" | "endnoteReference" | "footnoteRef" | "endnoteRef" => {
+                if local.starts_with("footnote") {
                     "Footnote".into()
                 } else {
                     "Endnote".into()
@@ -1863,10 +1880,12 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
     let mut even_odd = false;
     let mut default_tab = 720;
     let mut track = false;
+    let mut note_settings = NoteKind::ALL.map(NoteProps::default_for);
     if let Some(name) = part("/settings")
         && let Some(src) = zip_text(&mut zip, &name)?
     {
         track = track_changes_on(&src);
+        note_settings = crate::notes::settings_note_props(&src);
         even_odd = settings_even_odd(&src);
         default_tab = crate::section::settings_default_tab(&src).unwrap_or(720);
         settings = Some((name, src));
@@ -1882,6 +1901,19 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
             name,
             root_tag: root,
         });
+    }
+    let mut notes = Vec::new();
+    let mut notes_parts: [Option<NotesPart>; 2] = [None, None];
+    for (k, kind) in NoteKind::ALL.into_iter().enumerate() {
+        let Some(name) = part(&format!("/{}", kind.root())) else {
+            continue;
+        };
+        let Some(src) = zip_text(&mut zip, &name)? else {
+            continue;
+        };
+        let (read, root_tag) = read_notes(&mut zip, kind, &name, &src, &styles, &numbering)?;
+        notes.extend(read);
+        notes_parts[k] = Some(NotesPart { name, root_tag });
     }
     let mut stories = Vec::new();
     for r in &doc_rels {
@@ -1927,6 +1959,11 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         numbering: numbering_part,
         settings,
         comments: comments_part,
+        notes: notes_parts,
+        notes_read: notes
+            .iter()
+            .map(|n: &Note| (n.kind, n.id.clone(), n.xml.clone()))
+            .collect(),
         rel_ids: rels.keys().cloned().collect(),
         parts: (0..zip.len())
             .filter_map(|i| {
@@ -1951,7 +1988,61 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         comments,
         default_tab,
         track,
+        notes,
+        note_settings,
     })
+}
+
+/// The notes of a footnotes or endnotes part, each read into its own small
+/// document. Returns them and the part's root start tag.
+fn read_notes(
+    zip: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    kind: NoteKind,
+    name: &str,
+    src: &str,
+    styles: &StyleSheet,
+    numbering: &Numbering,
+) -> anyhow::Result<(Vec<Note>, String)> {
+    let root = format!("<w:{}", kind.root());
+    let root_tag = src
+        .find(&root)
+        .and_then(|i| src[i..].find('>').map(|e| src[i..=i + e].to_owned()))
+        .unwrap_or_else(|| {
+            format!(
+                "<w:{} {} {}>",
+                kind.root(),
+                crate::notes::W_DECL,
+                crate::notes::R_DECL
+            )
+        });
+    // Each note's content goes through the body reader as a story root.
+    let open = root_tag
+        .replacen(&root, "<w:hdr", 1)
+        .trim_end_matches("/>")
+        .trim_end_matches('>')
+        .to_owned()
+        + ">";
+    let mut out = Vec::new();
+    for (id, ty, whole, inner) in crate::notes::split_notes(src, kind) {
+        let separator = ty.as_deref().is_some_and(|t| t != "normal");
+        let story = read_story(
+            zip,
+            HfKind::Header,
+            "",
+            name,
+            &format!("{open}{inner}</w:hdr>"),
+            styles,
+            numbering,
+        )?;
+        out.push(Note {
+            kind,
+            id,
+            doc: story.doc,
+            xml: Some(whole),
+            separator,
+        });
+    }
+    Ok((out, root_tag))
 }
 
 /// A header or footer part read into its own small document.
@@ -2757,6 +2848,63 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
             }
             None => {}
         }
+    }
+    // Footnotes and endnotes changed or added in Kantor.
+    for (k, kind) in NoteKind::ALL.into_iter().enumerate() {
+        let now: Vec<(NoteKind, String, Option<String>)> = doc
+            .notes()
+            .iter()
+            .filter(|n| n.kind == kind)
+            .map(|n| (n.kind, n.id.clone(), n.xml.clone()))
+            .collect();
+        let was: Vec<_> = pkg
+            .notes_read
+            .iter()
+            .filter(|n| n.0 == kind)
+            .cloned()
+            .collect();
+        if now == was {
+            continue;
+        }
+        let part = match &pkg.notes[k] {
+            Some(p) => p.clone(),
+            None => NotesPart {
+                name: match pkg.document_part.rsplit_once('/') {
+                    Some((dir, _)) => format!("{dir}/{}.xml", kind.root()),
+                    None => format!("{}.xml", kind.root()),
+                },
+                root_tag: format!(
+                    "<w:{} {} {}>",
+                    kind.root(),
+                    crate::notes::W_DECL,
+                    crate::notes::R_DECL
+                ),
+            },
+        };
+        let bytes =
+            crate::notes::write_notes(&part.root_tag, kind, doc.notes(), &body_xml).into_bytes();
+        if pkg.notes[k].is_some() {
+            replace.insert(part.name.clone(), bytes);
+            continue;
+        }
+        if pkg.has_part(&part.name) {
+            replace.insert(part.name.clone(), bytes);
+        } else {
+            add.push((part.name.clone(), bytes));
+        }
+        let (rel, ct) = match kind {
+            NoteKind::Footnote => (REL_FOOTNOTES, CT_FOOTNOTES),
+            NoteKind::Endnote => (REL_ENDNOTES, CT_ENDNOTES),
+        };
+        let id = fresh_rel_id(pkg, &format!("rIdKantor{}", kind.label()));
+        new_rels.push_str(&format!(
+            "<Relationship Id=\"{id}\" Type=\"{rel}\" Target=\"{}\"/>",
+            escape(&relative_to(&pkg.document_part, &part.name))
+        ));
+        overrides.push_str(&format!(
+            "<Override PartName=\"/{}\" ContentType=\"{ct}\"/>",
+            escape(&part.name)
+        ));
     }
     // Different odd and even pages.
     let even_odd_was = pkg

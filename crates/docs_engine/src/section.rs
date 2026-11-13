@@ -101,7 +101,7 @@ pub enum NumFormat {
 }
 
 impl NumFormat {
-    fn parse(s: &str) -> Self {
+    pub(crate) fn parse(s: &str) -> Self {
         match s {
             "lowerRoman" => Self::LowerRoman,
             "upperRoman" => Self::UpperRoman,
@@ -437,6 +437,7 @@ pub(crate) struct HfState {
     pub comments: Vec<crate::review::Comment>,
     pub comments_modified: bool,
     pub track: bool,
+    pub notes: Vec<crate::notes::Note>,
 }
 
 impl Document {
@@ -570,6 +571,7 @@ impl Document {
         self.comments = s.comments;
         self.comments_modified = s.comments_modified;
         self.track = s.track;
+        self.notes = s.notes;
     }
 
     pub(crate) fn side_state(&self) -> HfState {
@@ -580,6 +582,7 @@ impl Document {
             comments: self.comments.clone(),
             comments_modified: self.comments_modified,
             track: self.track,
+            notes: self.notes.clone(),
         }
     }
 
@@ -602,7 +605,7 @@ impl Document {
     }
 
     /// The sectPr of section `si` (creating the body's if missing).
-    fn sect_xml(&self, sections: &[Section], si: usize) -> String {
+    pub(crate) fn sect_xml(&self, sections: &[Section], si: usize) -> String {
         match sections[si].at {
             SectAt::Para(i) => para_sect(&self.paragraphs[i])
                 .unwrap_or_default()

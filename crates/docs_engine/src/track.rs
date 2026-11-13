@@ -39,7 +39,13 @@ impl Document {
         let before = self.side_state();
         self.track = on;
         let after = self.side_state();
-        self.push_command(0, Vec::new(), Vec::new(), sel, Some(Box::new((before, after))));
+        self.push_command(
+            0,
+            Vec::new(),
+            Vec::new(),
+            sel,
+            Some(Box::new((before, after))),
+        );
     }
 
     /// The largest `w:id` of a tracked change in the text.
@@ -97,7 +103,12 @@ impl Document {
     /// The user's revision of `kind` on the run next to `offset` (before it
     /// for insertions, either side for deletions), to extend instead of
     /// starting a new one.
-    fn adjacent_rev(p: &Paragraph, offset: usize, kind: RevKind, author: &str) -> Option<Arc<Revision>> {
+    fn adjacent_rev(
+        p: &Paragraph,
+        offset: usize,
+        kind: RevKind,
+        author: &str,
+    ) -> Option<Arc<Revision>> {
         p.run_ranges()
             .filter(|(r, run)| {
                 run.object.is_none()
@@ -198,7 +209,12 @@ impl Document {
     /// [`Document::delete_range`] with Track Changes on. Returns the
     /// selection after (collapsed at `start`, or at the end of what's now
     /// struck through when `forward`).
-    pub(crate) fn tracked_delete(&mut self, sel: Selection, kind: Kind, forward: bool) -> Selection {
+    pub(crate) fn tracked_delete(
+        &mut self,
+        sel: Selection,
+        kind: Kind,
+        forward: bool,
+    ) -> Selection {
         let sel = self.clamp_selection(sel);
         let (start, end) = sel.ordered();
         if start == end {
@@ -240,10 +256,11 @@ impl Document {
         let props = props.unwrap_or_else(|| self.run_props_at(start));
         let me = self.author.clone();
         let k0 = at.para - start.para;
-        let ins = Self::adjacent_rev(&out[k0], at.offset, RevKind::Insert, &me).unwrap_or_else(|| {
-            ids += 1;
-            self.new_rev(RevKind::Insert, ids)
-        });
+        let ins =
+            Self::adjacent_rev(&out[k0], at.offset, RevKind::Insert, &me).unwrap_or_else(|| {
+                ids += 1;
+                self.new_rev(RevKind::Insert, ids)
+            });
         let mut pieces = text.split('\n');
         let first_piece = pieces.next().unwrap_or_default();
         insert_tracked(&mut out[k0], at.offset, first_piece, &props, &ins);
@@ -300,7 +317,13 @@ impl Document {
 }
 
 /// Insert `text` at `offset` as part of the insertion `rev`.
-fn insert_tracked(p: &mut Paragraph, offset: usize, text: &str, props: &RunProps, rev: &Arc<Revision>) {
+fn insert_tracked(
+    p: &mut Paragraph,
+    offset: usize,
+    text: &str,
+    props: &RunProps,
+    rev: &Arc<Revision>,
+) {
     if text.is_empty() {
         return;
     }
@@ -476,7 +499,7 @@ mod tests {
         let mut d = doc(&["hello world"]);
         let c = d.backspace(caret(0, 11));
         assert_eq!(c.head, Position::new(0, 10), "caret moves left");
-        let c = d.backspace(c);
+        d.backspace(c);
         assert_eq!(texts(&d), ["hello world"], "text stays");
         assert_eq!(kinds(&d), [(RevKind::Delete, "ld".to_owned())]);
         // Delete moves the caret past the struck text.
@@ -593,15 +616,32 @@ mod tests {
         };
         let body = read("word/document.xml");
         assert!(body.contains("w:author=\"Ani Wijaya\""), "{body}");
-        assert!(body.contains("<w:delText xml:space=\"preserve\">d</w:delText>"), "{body}");
-        assert!(body.contains("<w:t xml:space=\"preserve\">,</w:t>"), "{body}");
-        assert!(body.contains("<w:rPr><w:ins w:id="), "inserted mark: {body}");
+        assert!(
+            body.contains("<w:delText xml:space=\"preserve\">d</w:delText>"),
+            "{body}"
+        );
+        assert!(
+            body.contains("<w:t xml:space=\"preserve\">,</w:t>"),
+            "{body}"
+        );
+        assert!(
+            body.contains("<w:rPr><w:ins w:id="),
+            "inserted mark: {body}"
+        );
         assert!(read("word/settings.xml").contains("<w:trackRevisions/>"));
         let back = Document::open(&path).unwrap();
         assert!(back.track_changes());
         assert_eq!(texts(&back), texts(&d));
-        let a: Vec<_> = back.changes().into_iter().map(|c| (c.kind, c.text, c.author)).collect();
-        let b: Vec<_> = d.changes().into_iter().map(|c| (c.kind, c.text, c.author)).collect();
+        let a: Vec<_> = back
+            .changes()
+            .into_iter()
+            .map(|c| (c.kind, c.text, c.author))
+            .collect();
+        let b: Vec<_> = d
+            .changes()
+            .into_iter()
+            .map(|c| (c.kind, c.text, c.author))
+            .collect();
         assert_eq!(a, b);
         // Revision ids are unique.
         let ids: Vec<&str> = body

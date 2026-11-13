@@ -225,7 +225,10 @@ fn unsupported_content_never_overwrites_the_original() {
         ["fields that depend on document content (contents, cross-references…)"],
         "tracked changes and the track changes switch are kept, not unsupported"
     );
-    assert!(doc.track_changes(), "the switch is read: Kantor tracks edits");
+    assert!(
+        doc.track_changes(),
+        "the switch is read: Kantor tracks edits"
+    );
     assert_eq!(doc.changes().len(), 1);
     assert!(doc.needs_save_as());
     assert_eq!(doc.suggested_file_name(), "complex (Kantor).docx");

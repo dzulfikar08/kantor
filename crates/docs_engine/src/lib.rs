@@ -16,6 +16,7 @@ pub mod docx;
 mod edit;
 pub mod find;
 pub mod model;
+pub mod notes;
 pub mod numbering;
 pub mod object;
 pub mod page;
@@ -33,6 +34,7 @@ pub use model::{
     Align, CellRef, Fonts, Indent, LineRule, LineSpacing, NumRef, ParaProps, Paragraph, Position,
     Rgb, Run, RunProps, Selection,
 };
+pub use notes::{Note, NoteKind, NoteProps, NoteRef, NoteRestart};
 pub use numbering::ListKind;
 pub use object::{Image, ImageFormat, Level, OBJECT, Object, Opaque};
 pub use page::{MarginPreset, Orientation, PaperSize, cm_to_twips, twips_to_cm};

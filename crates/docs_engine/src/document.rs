@@ -217,6 +217,10 @@ pub struct Document {
     pub(crate) track: bool,
     /// Who tracked edits are by.
     pub(crate) author: String,
+    /// Footnotes and endnotes (separators included), in file order.
+    pub(crate) notes: Vec<crate::notes::Note>,
+    /// Note numbering from settings.xml (footnotes, endnotes).
+    pub(crate) note_settings: [crate::notes::NoteProps; 2],
     history: History,
 }
 
@@ -249,6 +253,8 @@ impl Document {
             default_tab: 720,
             track: false,
             author: "Kantor".to_owned(),
+            notes: Vec::new(),
+            note_settings: crate::notes::NoteKind::ALL.map(crate::notes::NoteProps::default_for),
             history: History::default(),
         }
     }
@@ -298,6 +304,8 @@ impl Document {
             default_tab: read.default_tab,
             track: read.track,
             author: "Kantor".to_owned(),
+            notes: read.notes,
+            note_settings: read.note_settings,
             history: History::default(),
         }
     }
