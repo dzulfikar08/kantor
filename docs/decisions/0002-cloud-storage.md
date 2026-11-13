@@ -291,6 +291,35 @@ Because Kantor only speaks WebDAV, this choice can be revisited without touching
 6. **Slow links.** On 500 kbit/s a 2 MB save takes about 36 s and 20 MB takes about 6 minutes, so saves must never block the UI. Show progress, allow cancel, keep the local copy authoritative until the upload is confirmed. For files over about 10 MB use chunked/resumable upload (Nextcloud chunking v2, OpenCloud TUS); `kantor_cloud` sends one plain PUT and has no resume today. Turn on ureq's `gzip` feature so listings are compressed: Nextcloud shrinks a 500-entry listing 15× when asked, though OpenCloud doesn't compress. Replace the fixed 600 s read timeout with one based on upload progress.
 7. **Follow-ups before committing.** Re-run these benchmarks on an idle, server-class machine with TLS. Test locks across two real accounts. Chase the Nextcloud stale-If-Match acceptance (1 of 14 clean runs) with server logs (does it reproduce after `occ maintenance:repair` and a cold Redis?) and report it upstream if it reproduces. Report OpenCloud's `If-None-Match` behaviour upstream.
 
+## Update 2026-11-14: built (branch `feat/cloud-storage`)
+
+The UI described above now exists in Kantor (see README → *Cloud storage*). What building it
+taught us about the servers:
+
+- **Nextcloud changes a file's ETag on every LOCK and UNLOCK** (`files_lock`, Nextcloud 35), and
+  `getlastmodified` stays the same. Comparing ETags alone made every save after taking a lock a
+  false conflict. A working copy now records the server's ETag, modification time, size and the
+  SHA-256 of its bytes. A new ETag with a different time or size is a change. A new ETag with the
+  same time and size is settled by downloading the file and comparing the hash: time-and-size
+  alone was tried first, and on OpenCloud it let another client's quick, same-size save through
+  (getlastmodified has one-second resolution). When the version is unchanged, the PUT sends the
+  current ETag. Opening locks first, then downloads.
+- **Nextcloud answers `UNLOCK` with an unknown token with HTTP 500**, not 409/412. Releasing a
+  lock forgets it on any answer from the server, and keeps it for the next start only when the
+  server can't be reached.
+- **A refused PUT that carries a lock token** can mean that the lock is gone (expired while the
+  computer slept), not that the file changed. Nextcloud answers 412, OpenCloud 7.2 answers 500.
+  When refreshing the lock fails, Kantor retries without the token, and the app takes a new lock.
+- After an upload is cut off mid-way, Nextcloud can keep its own file lock for a moment. The
+  next save gets 423 even though the lock is ours. Kantor treats that as "busy, retry".
+
+End-to-end tests (`crates/kantor_cloud/tests/e2e_server.rs`, run by `bench/e2e.sh` against the
+Nextcloud stack, with two accounts, alice and bob) cover open, edit and save; a conflict from a
+second client; a lock held by another account; offline, then Sync now; an upload cut off
+mid-way; a lost lock; and crash cleanup. All 7 passed against Nextcloud 35.0.2. Against
+OpenCloud 7.2.5, with one account, so the second-account lock test was skipped, the other 6
+passed.
+
 ## Raw data and reproduction
 
 - Compose files: `crates/kantor_cloud/bench/{nextcloud,opencloud,link}/`. Toxiproxy proxies: 28080 → Nextcloud `web:80`, 29200 → OpenCloud `opencloud:9200`; netem is applied with `docker exec kspike-link-netem-1 tc qdisc replace dev eth0 root netem …`.

@@ -201,6 +201,19 @@ AI is **off** until you turn it on in `Ctrl K` → *AI Settings* and choose a pr
 
 API keys are stored in the system keychain (Secret Service on Linux, Keychain on macOS, Credential Manager on Windows); if none is available Kantor says so and keeps the key in `~/.config/kantor/ai-keys.toml`, readable only by you. Keys are never written to `settings.toml` or logs. What the provider does with your requests is governed by its own terms.
 
+## Cloud storage
+
+Kantor opens and saves files on a self-hosted drive over plain WebDAV: **Nextcloud**, **OpenCloud**/ownCloud, or any WebDAV server. Every app (Sheets, Docs, Slides) works the same way.
+
+- **Add an account:** *File* → *Cloud Accounts…* (or `Ctrl K` → *Cloud Accounts…*). Enter the server address, your user name and an **app password** (Nextcloud: *Settings → Security → Devices & sessions*; OpenCloud: *App tokens*). *Test connection* signs in and lists your files. The password is kept in the system keychain, never in `settings.toml` (with no keychain it goes to `cloud-keys.toml` next to the settings, readable only by you).
+- **Open:** *File* → *Open from Cloud…*, or the button on the start screen. Browse the folders and pick a file. Kantor downloads it to a working copy in its cache folder (`~/.cache/kantor/cloud`) and opens it like any file. The dialog remembers the last folder.
+- **Save:** `Ctrl S` saves the working copy, then uploads it in the background. The status bar shows the progress and then *Synced*. An upload has no fixed time limit: it fails only if no data moves for two minutes, so a 20 MB file on a 500 kbit/s link finishes.
+- **Conflicts:** before uploading, Kantor checks that the server's copy is still the version you opened, and the upload itself is conditional (`If-Match`). If someone else saved in the meantime, the *Changed on the server* dialog offers three choices. *Save my version as a copy* puts your version next to theirs, as `Laporan (konflik Budi 2026-11-14).xlsx` in Indonesian or `… (conflict …)` in English, and then shows theirs. *Reload the server's version* discards yours, after a confirmation. *Overwrite the server's version* replaces theirs, after a warning.
+- **Locks:** opening a file takes a WebDAV lock, which Kantor refreshes while the file is open and releases when you close it or quit. If someone else has the file open, it opens **read-only** and the status bar says who holds the lock. Your saves stay on your computer until you click the status bar (*Sync now*) and the lock is free. Locks left behind by a crash are released at the next start, and expire on the server after 30 minutes anyway.
+- **Offline:** if the server can't be reached, you keep working on the working copy. Saves stay on your computer, and the status bar says *Not synced*. When the server answers again, Kantor offers *Sync now*, which follows the same conflict rules.
+
+The language of these screens follows the system (Indonesian or English); `language = "id"` or `"en"` in `settings.toml`, or `KANTOR_LANG`, overrides it. How the servers were compared, and why Nextcloud is the suggested default, is in [docs/decisions/0002-cloud-storage.md](docs/decisions/0002-cloud-storage.md).
+
 ## Updates
 
 Kantor downloaded from the site, the GitHub releases or the install script keeps itself up to date:

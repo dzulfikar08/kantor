@@ -10,6 +10,19 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ## [Unreleased]
 
 ### Added
+- **Cloud storage** over WebDAV (Nextcloud, OpenCloud/ownCloud, any WebDAV server), in Sheets,
+  Docs and Slides. *File* → *Cloud Accounts…* adds an account with an app password, which is kept
+  in the system keychain; *File* → *Open from Cloud…* browses its folders and remembers the last
+  one. `Ctrl S` uploads in the background with progress in the status bar. The upload checks that
+  the server's copy is still the one you opened (`If-Match`). If someone else saved in the
+  meantime, a dialog offers to save your version as a copy next to theirs
+  (`Laporan (konflik Budi 2026-11-14).xlsx`), reload theirs, or overwrite theirs. Opening a file
+  locks it; if someone else has it open, it opens read-only with their name. Locks are refreshed,
+  released on close and quit, and cleaned up after a crash. If the server can't be reached, you
+  keep working and the status bar says *Not synced* until you choose *Sync now*. These screens are
+  in English or Indonesian, following the system language or `language` in settings.toml.
+  Uploads have no fixed time limit: one fails only when no data moves for two minutes, so big
+  files on slow links finish.
 - Spell check in Docs and Slides, offline, for English and Indonesian: misspelled words get a red
   wavy underline as you type. Right-click one for up to five suggestions, Ignore All or Add to
   Dictionary (your words are kept in `dictionary.txt` next to settings.toml). Text marked with a
