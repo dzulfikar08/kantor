@@ -237,7 +237,10 @@ fn parse(args: &[OsString]) -> Result<Option<Options>, Usage> {
             if positional.is_empty() {
                 return usage("no input files");
             }
-            if !matches!(to.as_str(), "pdf" | "docx" | "xlsx" | "pptx" | "csv" | "tsv") {
+            if !matches!(
+                to.as_str(),
+                "pdf" | "docx" | "xlsx" | "pptx" | "csv" | "tsv"
+            ) {
                 return usage(format!(
                     "--to {to}: Kantor converts to pdf, docx, xlsx, pptx, csv or tsv"
                 ));
@@ -640,7 +643,9 @@ mod tests {
         assert!(err(&["--paper", "b9", "a.xlsx", "b.pdf"]).contains("--paper b9"));
         assert!(err(&["--scale", "5", "a.xlsx", "b.pdf"]).contains("10 to 400"));
         assert!(err(&["--scale", "50", "--fit-page", "a.xlsx", "b.pdf"]).contains("don't go"));
-        assert!(err(&["-o", "d", "-t", "odt", "a.docx"]).contains("pdf, docx, xlsx, pptx, csv or tsv"));
+        assert!(
+            err(&["-o", "d", "-t", "odt", "a.docx"]).contains("pdf, docx, xlsx, pptx, csv or tsv")
+        );
     }
 
     #[std::prelude::v1::test]
