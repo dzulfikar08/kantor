@@ -45,5 +45,6 @@ mod test_user_input_dates_quote;
 mod test_view;
 mod test_window_size;
 mod test_kantor_defined_names_move; // KANTOR PATCH (fidelity)
+mod test_kantor_fast_fill; // KANTOR PATCH (fast fill)
 mod themes;
 mod util;

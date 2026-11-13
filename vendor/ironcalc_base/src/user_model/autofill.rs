@@ -4,12 +4,14 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use crate::{
+    constants::{LAST_COLUMN, LAST_ROW},
     expressions::{
+        parser::{static_analysis::StaticResult, Node},
         types::Area,
         utils::{is_valid_column_number, is_valid_row},
     },
     model::CellStructure,
-    types::MergedCell,
+    types::{Cell, Link, MergedCell, Style},
     user_model::sequence_detector::detect_progression,
     UserModel,
 };
@@ -19,6 +21,93 @@ use crate::user_model::history::Diff;
 const PARTIAL_MERGE_ERROR: &str =
     "Cannot auto-fill: a merged cell partially overlaps the fill area";
 const CUT_MERGE_ERROR: &str = "Cannot auto-fill: the fill size must fit whole merged cells";
+
+/// KANTOR PATCH (fast fill): one target cell of a fill, before it is written.
+struct KantorFilled {
+    /// The translated text (or the next value of a series): what upstream
+    /// typed into the cell, and what the diff replays.
+    value: String,
+    /// The value is the source's content moved over, not a series.
+    copy_formula: bool,
+    old_value: Option<Cell>,
+    old_style: Option<Style>,
+}
+
+/// KANTOR PATCH (fast fill): what a source cell gives every copy of it.
+struct KantorFillSource {
+    style: Style,
+    style_index: i32,
+    link: Option<Link>,
+}
+
+/// KANTOR PATCH (fast fill): whether the formula `node`, typed into the cell
+/// at `row`, `column` as text translated from its source, parses back to
+/// `node` itself. Relative references are offsets from the cell, so that
+/// holds when every reference stays on the sheet and nothing in the formula
+/// is looked up in the workbook when parsed or printed. Anything not known
+/// to be safe says no, and the fill takes the slow way.
+fn kantor_copies_unchanged(node: &Node, row: i32, column: i32) -> bool {
+    let on_sheet = |value: i32, absolute: bool, at: i32, last: i32| {
+        absolute || (1..=last).contains(&(at + value))
+    };
+    let row_ok = |value: i32, absolute: bool| on_sheet(value, absolute, row, LAST_ROW);
+    let column_ok = |value: i32, absolute: bool| on_sheet(value, absolute, column, LAST_COLUMN);
+    let all = |nodes: &[Node]| nodes.iter().all(|n| kantor_copies_unchanged(n, row, column));
+    match node {
+        Node::BooleanKind(_)
+        | Node::NumberKind(_)
+        | Node::StringKind(_)
+        | Node::ErrorKind(_)
+        | Node::EmptyArgKind
+        | Node::ArrayKind(_) => true,
+        Node::ReferenceKind {
+            absolute_row,
+            absolute_column,
+            row: r,
+            column: c,
+            ..
+        } => row_ok(*r, *absolute_row) && column_ok(*c, *absolute_column),
+        Node::RangeKind {
+            absolute_row1,
+            absolute_column1,
+            row1,
+            column1,
+            absolute_row2,
+            absolute_column2,
+            row2,
+            column2,
+            ..
+        } => {
+            row_ok(*row1, *absolute_row1)
+                && column_ok(*column1, *absolute_column1)
+                && row_ok(*row2, *absolute_row2)
+                && column_ok(*column2, *absolute_column2)
+        }
+        Node::OpRangeKind { left, right }
+        | Node::OpConcatenateKind { left, right }
+        | Node::OpSumKind { left, right, .. }
+        | Node::OpProductKind { left, right, .. }
+        | Node::OpPowerKind { left, right }
+        | Node::CompareKind { left, right, .. } => {
+            kantor_copies_unchanged(left, row, column)
+                && kantor_copies_unchanged(right, row, column)
+        }
+        Node::UnaryKind { right, .. } => kantor_copies_unchanged(right, row, column),
+        Node::FunctionKind { args, .. } => all(args),
+        Node::WrongReferenceKind { .. }
+        | Node::WrongRangeKind { .. }
+        | Node::LambdaDefKind { .. }
+        | Node::LambdaCallKind { .. }
+        | Node::NamedFunctionKind { .. }
+        | Node::DefinedNameKind(_)
+        | Node::TableNameKind(_)
+        | Node::TableRefKind(_)
+        | Node::NamedVariableKind { .. }
+        | Node::ImplicitIntersection { .. }
+        | Node::SpillRangeOperator { .. }
+        | Node::ParseErrorKind { .. } => false,
+    }
+}
 
 // How the merged cells of the sheet interact with a fill:
 // the merges of the source are tiled into the fill target, and the merges
@@ -353,6 +442,7 @@ impl<'a> UserModel<'a> {
     /// This simulates the user clicking on the cell outline handle and dragging it downwards (or upwards)
     pub fn auto_fill_rows(&mut self, source_area: &Area, to_row: i32) -> Result<(), String> {
         let mut diff_list = Vec::new();
+        self.kantor_fill_copies = 0;
         let sheet = source_area.sheet;
         let row1 = source_area.row;
         let column1 = source_area.column;
@@ -430,6 +520,8 @@ impl<'a> UserModel<'a> {
             column1,
             last_column,
         )?;
+        // KANTOR PATCH (fast fill): what each source cell gives its copies.
+        let mut sources = HashMap::new();
 
         for column in column1..=last_column {
             let mut index = 0;
@@ -494,30 +586,20 @@ impl<'a> UserModel<'a> {
                         .extend_to(sheet, source_row, column, row, column)?;
                 }
 
-                self.model
-                    .set_user_input(sheet, row, column, target_value.to_string())?;
-
-                // Compute the new style and set it
-                let new_style = self.model.get_style_for_cell(sheet, source_row, column)?;
-                self.model.set_cell_style(sheet, row, column, &new_style)?;
-
-                // Add the diffs
-                diff_list.push(Diff::SetCellStyle {
+                // KANTOR PATCH (fast fill): see `kantor_fill_cell`.
+                self.kantor_fill_cell(
                     sheet,
-                    row,
-                    column,
-                    old_value: Box::new(old_style),
-                    new_value: Box::new(new_style),
-                });
-                diff_list.push(Diff::SetCellValue {
-                    sheet,
-                    row,
-                    column,
-                    new_value: target_value.to_string(),
-                    old_value: Box::new(old_value),
-                });
-
-                self.fill_cell_link(sheet, source_row, column, row, column, &mut diff_list)?;
+                    (source_row, column),
+                    (row, column),
+                    KantorFilled {
+                        value: target_value,
+                        copy_formula: possible_progression.is_none(),
+                        old_value,
+                        old_style,
+                    },
+                    &mut sources,
+                    &mut diff_list,
+                )?;
 
                 index = (index + sign) % source_area.height;
             }
@@ -533,6 +615,7 @@ impl<'a> UserModel<'a> {
     /// This simulates the user clicking on the cell outline handle and dragging it to the right (or to the left)
     pub fn auto_fill_columns(&mut self, source_area: &Area, to_column: i32) -> Result<(), String> {
         let mut diff_list = Vec::new();
+        self.kantor_fill_copies = 0;
         let sheet = source_area.sheet;
         let row1 = source_area.row;
         let column1 = source_area.column;
@@ -610,6 +693,8 @@ impl<'a> UserModel<'a> {
             fill_col_start,
             fill_col_end,
         )?;
+        // KANTOR PATCH (fast fill): what each source cell gives its copies.
+        let mut sources = HashMap::new();
 
         for row in row1..=last_row {
             let mut index = 0;
@@ -675,32 +760,20 @@ impl<'a> UserModel<'a> {
                         .extend_to(sheet, row, source_column, row, column)?;
                 }
 
-                self.model
-                    .set_user_input(sheet, row, column, target_value.to_string())?;
-
-                let new_style = self.model.get_style_for_cell(sheet, row, source_column)?;
-                // Compute the new style and set it
-
-                self.model.set_cell_style(sheet, row, column, &new_style)?;
-
-                // Add the diffs
-                diff_list.push(Diff::SetCellStyle {
+                // KANTOR PATCH (fast fill): see `kantor_fill_cell`.
+                self.kantor_fill_cell(
                     sheet,
-                    row,
-                    column,
-                    old_value: Box::new(old_style),
-                    new_value: Box::new(new_style),
-                });
-
-                diff_list.push(Diff::SetCellValue {
-                    sheet,
-                    row,
-                    column,
-                    new_value: target_value.to_string(),
-                    old_value: Box::new(old_value),
-                });
-
-                self.fill_cell_link(sheet, row, source_column, row, column, &mut diff_list)?;
+                    (row, source_column),
+                    (row, column),
+                    KantorFilled {
+                        value: target_value,
+                        copy_formula: possible_progression.is_none(),
+                        old_value,
+                        old_style,
+                    },
+                    &mut sources,
+                    &mut diff_list,
+                )?;
 
                 index = (index + sign) % source_area.width;
             }
@@ -725,11 +798,25 @@ impl<'a> UserModel<'a> {
         diff_list: &mut Vec<Diff>,
     ) -> Result<(), String> {
         let new_link = self.model.get_cell_link(sheet, source_row, source_column)?;
-        let old_link = self.model.get_cell_link(sheet, row, column)?;
-        if old_link == new_link {
+        self.kantor_set_fill_link(sheet, row, column, &new_link, diff_list)
+    }
+
+    /// KANTOR PATCH (fast fill): the second half of `fill_cell_link`, with
+    /// the source's link already known.
+    fn kantor_set_fill_link(
+        &mut self,
+        sheet: u32,
+        row: i32,
+        column: i32,
+        new_link: &Option<Link>,
+        diff_list: &mut Vec<Diff>,
+    ) -> Result<(), String> {
+        let ws = self.model.workbook.worksheet(sheet)?;
+        if ws.links.get(&(row, column)) == new_link.as_ref() {
             return Ok(());
         }
-        match &new_link {
+        let old_link = self.model.get_cell_link(sheet, row, column)?;
+        match new_link {
             Some(link) => self.model.set_cell_link(sheet, row, column, link.clone())?,
             None => self.model.delete_cell_link(sheet, row, column)?,
         }
@@ -738,8 +825,125 @@ impl<'a> UserModel<'a> {
             row,
             column,
             old_value: Box::new(old_link),
-            new_value: Box::new(new_link),
+            new_value: Box::new(new_link.clone()),
         });
         Ok(())
+    }
+
+    /// KANTOR PATCH (fast fill): writes one cell of a fill (not a covered
+    /// one) and records its diffs, as upstream did inline in both fill
+    /// loops, but faster when filling many rows of formulas:
+    ///
+    /// * A formula is copied by giving the target its source's shared
+    ///   formula: references relative to the cell are stored as offsets, so
+    ///   a copy parses to the same formula wherever it lands, unless a
+    ///   reference falls off the sheet or the formula holds something parsed
+    ///   against the workbook (names, tables, lambdas; see
+    ///   `kantor_copies_unchanged`). Those, and every non-formula, still go
+    ///   through `set_user_input` with the translated text.
+    /// * Each source cell's style (and its index in the style table) and
+    ///   link are looked up once per fill, not once per copy.
+    ///
+    /// The diffs are the same as before: undo and redo replay the
+    /// translated text, so they don't depend on the shortcut.
+    fn kantor_fill_cell(
+        &mut self,
+        sheet: u32,
+        source: (i32, i32),
+        target: (i32, i32),
+        filled: KantorFilled,
+        sources: &mut HashMap<(i32, i32), KantorFillSource>,
+        diff_list: &mut Vec<Diff>,
+    ) -> Result<(), String> {
+        let (row, column) = target;
+        let copied = filled.copy_formula && self.kantor_copy_formula(sheet, source, target)?;
+        if copied {
+            self.kantor_fill_copies += 1;
+        } else {
+            self.model
+                .set_user_input(sheet, row, column, filled.value.clone())?;
+        }
+
+        let source_data = match sources.entry(source) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let style = self.model.get_style_for_cell(sheet, source.0, source.1)?;
+                let style_index = self.model.workbook.styles.get_style_index_or_create(&style);
+                let link = self.model.get_cell_link(sheet, source.0, source.1)?;
+                entry.insert(KantorFillSource {
+                    style,
+                    style_index,
+                    link,
+                })
+            }
+        };
+        self.model
+            .workbook
+            .worksheet_mut(sheet)?
+            .set_cell_style(row, column, source_data.style_index)?;
+
+        diff_list.push(Diff::SetCellStyle {
+            sheet,
+            row,
+            column,
+            old_value: Box::new(filled.old_style),
+            new_value: Box::new(source_data.style.clone()),
+        });
+        diff_list.push(Diff::SetCellValue {
+            sheet,
+            row,
+            column,
+            new_value: filled.value,
+            old_value: Box::new(filled.old_value),
+        });
+        let link = source_data.link.clone();
+        self.kantor_set_fill_link(sheet, row, column, &link, diff_list)
+    }
+
+    /// KANTOR PATCH (fast fill): puts the formula of `source` in `target` as
+    /// `set_user_input` would have with the translated formula, if that is
+    /// sure to give the same shared formula. Returns whether it did.
+    fn kantor_copy_formula(
+        &mut self,
+        sheet: u32,
+        source: (i32, i32),
+        target: (i32, i32),
+    ) -> Result<bool, String> {
+        let model = &self.model;
+        let formula = match model.workbook.worksheet(sheet)?.cell(source.0, source.1) {
+            Some(cell) => match cell.as_ref() {
+                Cell::CellFormula { f, .. } => *f,
+                _ => return Ok(false),
+            },
+            None => return Ok(false),
+        };
+        let fits = model
+            .parsed_formulas
+            .get(sheet as usize)
+            .and_then(|formulas| formulas.get(formula as usize))
+            .is_some_and(|(node, result)| {
+                matches!(result, StaticResult::Scalar)
+                    && kantor_copies_unchanged(node, target.0, target.1)
+            });
+        if !fits {
+            return Ok(false);
+        }
+        let (row, column) = target;
+        self.model.prepare_cell_for_user_input(sheet, row, column)?;
+        // As `set_user_input`: the cell keeps its style without a quote
+        // prefix (the fill sets the source's style right after anyway).
+        let mut style = self.model.get_cell_style_index(sheet, row, column)?;
+        if self.model.workbook.styles.style_is_quote_prefix(style) {
+            style = self
+                .model
+                .workbook
+                .styles
+                .get_style_without_quote_prefix(style)?;
+        }
+        self.model
+            .workbook
+            .worksheet_mut(sheet)?
+            .set_cell_with_formula(row, column, formula, style)?;
+        Ok(true)
     }
 }

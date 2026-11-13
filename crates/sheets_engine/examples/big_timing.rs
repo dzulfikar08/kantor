@@ -7,20 +7,34 @@
 //!     cargo run --release -p sheets_engine --example big_timing -- big.xlsx [runs] [fill rows]
 //!
 //! Each step after the open runs `runs` times (default 3) and is undone in
-//! between; the best and the worst time are printed. The fill goes down
-//! 1000 rows unless told otherwise.
+//! between; the best and the worst time are printed, and on Linux the least
+//! CPU time a step took (steadier than the clock on a busy machine). The
+//! fill goes down 1000 rows unless told otherwise.
 
 use std::time::{Duration, Instant};
 
 use sheets_engine::{CalcMode, CellRange, Fill, FillDirection, SortKey, Workbook};
 
+/// Time this thread has spent on a CPU (Linux), which waiting for one on a
+/// busy machine doesn't add to; `None` elsewhere.
+fn cpu_time() -> Option<Duration> {
+    let stat = std::fs::read_to_string("/proc/thread-self/schedstat").ok()?;
+    let ns = stat.split_whitespace().next()?.parse().ok()?;
+    Some(Duration::from_nanos(ns))
+}
+
 fn timed(name: &str, runs: usize, mut step: impl FnMut(), mut undo: impl FnMut()) {
     let mut times: Vec<Duration> = Vec::new();
+    let mut cpu: Vec<Duration> = Vec::new();
     let mut undos: Vec<Duration> = Vec::new();
     for _ in 0..runs {
+        let c = cpu_time();
         let t = Instant::now();
         step();
         times.push(t.elapsed());
+        if let (Some(before), Some(after)) = (c, cpu_time()) {
+            cpu.push(after - before);
+        }
         let t = Instant::now();
         undo();
         undos.push(t.elapsed());
@@ -30,7 +44,15 @@ fn timed(name: &str, runs: usize, mut step: impl FnMut(), mut undo: impl FnMut()
         let max = v.iter().max().copied().unwrap_or_default();
         format!("{min:>9.2?} (worst {max:.2?})")
     };
-    println!("{name:<44} {}   undo {}", span(&times), span(&undos));
+    let cpu = match cpu.iter().min() {
+        Some(min) => format!("   cpu {min:.2?}"),
+        None => String::new(),
+    };
+    println!(
+        "{name:<44} {}   undo {}{cpu}",
+        span(&times),
+        span(&undos)
+    );
 }
 
 fn main() {
