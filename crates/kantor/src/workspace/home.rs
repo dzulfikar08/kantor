@@ -1,6 +1,6 @@
 //! Home: the start screen shown when no tab is active.
 
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::components::{kbd, section_label};
@@ -125,6 +125,32 @@ impl Workspace {
                     .text_color(t.fg_muted)
                     .children(hints),
             )
+            .child({
+                let entity = cx.entity().downgrade();
+                h_flex()
+                    .id("home-cloud")
+                    .gap(SPACE_3)
+                    .px(SPACE_5)
+                    .py(SPACE_3)
+                    .rounded(RADIUS_MD)
+                    .border_1()
+                    .border_color(t.border)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover).border_color(t.border_strong))
+                    .text_size(FONT_SMALL)
+                    .text_color(t.fg)
+                    .child(
+                        gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Cloud)
+                            .with_size(ICON_MD)
+                            .text_color(t.accent),
+                    )
+                    .child(kantor_ui::i18n::tr("Open from Cloud…", "Buka dari Cloud…"))
+                    .on_click(move |_, window, cx| {
+                        let _ = entity.update(cx, |ws, cx| {
+                            ws.open_from_cloud(&crate::actions::OpenFromCloud, window, cx)
+                        });
+                    })
+            })
             .child(
                 div()
                     .h(px(18.))

@@ -115,6 +115,7 @@ fn main() {
             slides_ui::init(cx);
 
             ai::init(cx);
+            workspace::init_cloud_panels(cx);
             actions::bind_keys(cx);
 
             let options = WindowOptions {

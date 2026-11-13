@@ -41,6 +41,7 @@ base64 = "0.22"
 chrono = { version = "0.4", default-features = false }
 
 kantor_ai = { path = "crates/kantor_ai" }
+kantor_cloud = { path = "crates/kantor_cloud" }
 kantor_core = { path = "crates/kantor_core" }
 kantor_spell = { path = "crates/kantor_spell" }
 kantor_mem = { path = "crates/kantor_mem" }

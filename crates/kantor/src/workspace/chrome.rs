@@ -186,6 +186,8 @@ impl Workspace {
             })
         };
 
+        let file_menu = self.render_file_menu(cx);
+
         let palette_hint = div()
             .id("palette-hint")
             .flex_none()
@@ -226,6 +228,7 @@ impl Workspace {
             )
             .when(in_doc, |d| d.child(split_right).child(split_down))
             .child(inspector_toggle)
+            .child(file_menu)
             .child(palette_hint)
     }
 
@@ -255,6 +258,7 @@ impl Workspace {
             ),
         };
         let status = self.notice.clone().unwrap_or(status);
+        let cloud_chip = self.render_cloud_chip(cx);
         let panes = self
             .active
             .and_then(|i| self.tabs.get(i))
@@ -281,6 +285,8 @@ impl Workspace {
                     .child(div().text_color(t.fg).child(app)),
             )
             .when(!detail.is_empty(), |d| d.child(div().child(detail)))
+            // A cloud document: synced, uploading, offline, read-only…
+            .children(cloud_chip)
             // The active cell is in a pivot table.
             .when_some(pivot, |d, pivot| {
                 let ws = cx.entity().downgrade();

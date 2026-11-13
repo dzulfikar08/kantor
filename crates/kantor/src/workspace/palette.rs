@@ -46,6 +46,24 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.open_file(&OpenFile, window, cx),
     },
     Command {
+        title: "Open from Cloud…",
+        detail: "Buka dari Cloud · Nextcloud, OpenCloud or any WebDAV drive",
+        keys: "",
+        run: |ws, window, cx| ws.open_from_cloud(&OpenFromCloud, window, cx),
+    },
+    Command {
+        title: "Sync Now",
+        detail: "Sinkronkan Sekarang · upload a cloud document saved offline, recheck a lock",
+        keys: "",
+        run: |ws, window, cx| ws.sync_now(&SyncNow, window, cx),
+    },
+    Command {
+        title: "Cloud Accounts…",
+        detail: "Akun Cloud · add, test or remove a WebDAV account",
+        keys: "",
+        run: |ws, window, cx| ws.open_cloud_accounts(&CloudAccounts, window, cx),
+    },
+    Command {
         title: "Copy MCP Setup for Claude Code",
         detail: "AI agents can edit open documents (kantor mcp)",
         keys: "",

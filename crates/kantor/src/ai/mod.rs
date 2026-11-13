@@ -7,7 +7,7 @@
 mod formula;
 mod rewrite;
 mod settings;
-mod widgets;
+pub(crate) mod widgets;
 
 use gpui_kit::*;
 use kantor_ai::provider::ProviderId;

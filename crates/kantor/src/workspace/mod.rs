@@ -14,6 +14,7 @@ mod agent;
 mod ai;
 mod chrome;
 mod closing;
+mod cloud;
 mod doc;
 mod home;
 mod naming;
@@ -42,6 +43,7 @@ use doc::DocView;
 
 use crate::actions::*;
 use closing::Closing;
+pub use cloud::init as init_cloud_panels;
 use palette::Palette;
 
 const LOGO_SVG: &[u8] = include_bytes!("../../../../assets/icons/kantor.svg");
@@ -145,6 +147,8 @@ pub struct Workspace {
     updates: update::Updates,
     /// Recovery copies and autosave (see `recovery`).
     recovery: recovery::Recovery,
+    /// Cloud documents and panels (see `cloud`).
+    cloud: cloud::Cloud,
 }
 
 impl Workspace {
@@ -175,6 +179,7 @@ impl Workspace {
             split_bounds: Rc::default(),
             updates: update::Updates::default(),
             recovery: recovery::Recovery::default(),
+            cloud: cloud::Cloud::default(),
         };
         let ws = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -210,6 +215,7 @@ impl Workspace {
         }
         this.init_updates(cx);
         this.init_recovery(window, cx);
+        this.init_cloud(window, cx);
         this
     }
 
@@ -251,26 +257,59 @@ impl Workspace {
             let name = naming::next_untitled_name(kind, open.iter().map(String::as_str));
             view.set_untitled_name(name, cx);
         }
+        let doc = Self::doc_entry(id, view, window, cx);
+        self.docs.insert(id, doc);
+        id
+    }
+
+    /// A document with its change subscriptions, for pane `id`.
+    fn doc_entry(id: PaneId, view: DocView, window: &mut Window, cx: &mut Context<Self>) -> Doc {
+        // Every change redraws; a cloud document also checks for a save.
+        let on_change = move |ws: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+            ws.cloud_doc_changed(id, window, cx);
+            cx.notify();
+        };
         let changes = match &view {
             DocView::Sheets(e) => vec![
-                cx.observe(e, |_, _, cx| cx.notify()),
+                cx.observe_in(e, window, move |ws, _, window, cx| {
+                    on_change(ws, window, cx)
+                }),
                 // Opening cancelled: the pane goes away.
                 cx.subscribe_in(e, window, move |ws, _, event, window, cx| match event {
                     sheets_ui::SheetsEvent::Close => ws.remove_doc(id, window, cx),
                     sheets_ui::SheetsEvent::Notice(text) => ws.notice(text.clone(), cx),
                 }),
             ],
-            DocView::Docs(e) => vec![cx.observe(e, |_, _, cx| cx.notify())],
-            DocView::Slides(e) => vec![cx.observe(e, |_, _, cx| cx.notify())],
+            DocView::Docs(e) => {
+                vec![cx.observe_in(e, window, move |ws, _, window, cx| {
+                    on_change(ws, window, cx)
+                })]
+            }
+            DocView::Slides(e) => {
+                vec![cx.observe_in(e, window, move |ws, _, window, cx| {
+                    on_change(ws, window, cx)
+                })]
+            }
         };
-        self.docs.insert(
-            id,
-            Doc {
-                view,
-                _changes: changes,
-            },
-        );
-        id
+        Doc {
+            view,
+            _changes: changes,
+        }
+    }
+
+    /// Reopen pane `pane`'s file in place (its working copy was replaced:
+    /// a cloud reload). The pane keeps its place in the layout.
+    fn reload_view(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(doc) = self.docs.get(&pane) else {
+            return;
+        };
+        let (kind, path) = (doc.view.kind(), doc.view.path(cx));
+        let Some(view) = DocView::new(kind, path, window, cx) else {
+            return;
+        };
+        let doc = Self::doc_entry(pane, view, window, cx);
+        self.docs.insert(pane, doc);
+        self.activate(self.active, window, cx);
     }
 
     /// Find the tab and pane showing `path`.
@@ -501,6 +540,7 @@ impl Workspace {
                 tab.layout = layout;
                 self.docs.remove(&pane);
                 self.forget_recovery(pane, cx);
+                self.forget_cloud(pane);
                 self.activate(Some(ti), window, cx);
             }
             None => self.remove_tab(ti, window, cx),
@@ -544,6 +584,7 @@ impl Workspace {
         for pane in tab.layout.panes() {
             self.docs.remove(&pane);
             self.forget_recovery(pane, cx);
+            self.forget_cloud(pane);
         }
         let next = match self.active {
             _ if self.tabs.is_empty() => None,
@@ -745,6 +786,7 @@ impl Render for Workspace {
             .and(self.chrome.as_ref())
             .map(|c| c.palette.clone());
         let ai_panel = self.render_ai(cx);
+        let cloud_panel = self.render_cloud_panel(cx);
         let chrome = self.chrome.as_ref().map(|c| {
             (
                 c.tabs.clone(),
@@ -774,6 +816,9 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::new_document))
             .on_action(cx.listener(Self::new_presentation))
             .on_action(cx.listener(Self::open_file))
+            .on_action(cx.listener(Self::open_from_cloud))
+            .on_action(cx.listener(Self::open_cloud_accounts))
+            .on_action(cx.listener(Self::sync_now))
             .on_action(cx.listener(Self::print))
             .on_action(cx.listener(Self::close_pane))
             .on_action(cx.listener(Self::close_active_tab))
@@ -805,7 +850,7 @@ impl Render for Workspace {
         }
 
         let Some((tabs, status, sidebar, inspector)) = chrome else {
-            return root.child(content);
+            return root.child(content).children(cloud_panel);
         };
         let column = v_flex()
             .flex_1()
@@ -870,5 +915,6 @@ impl Render for Workspace {
         )
         .children(palette)
         .children(ai_panel)
+        .children(cloud_panel)
     }
 }
