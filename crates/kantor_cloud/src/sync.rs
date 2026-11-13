@@ -50,6 +50,8 @@ pub enum UploadOutcome {
     Synced {
         server: Option<crate::Entry>,
         stamp: Option<Stamp>,
+        /// Our lock turned out to be gone; take a new one.
+        lock_lost: bool,
     },
     /// The server's copy moved on (or was deleted: `server_etag: None`).
     Conflict {
@@ -174,7 +176,14 @@ impl DocSync {
     pub fn on_upload(&mut self, outcome: UploadOutcome) -> Action {
         let again = std::mem::take(&mut self.pending_again);
         match outcome {
-            UploadOutcome::Synced { server, stamp } => {
+            UploadOutcome::Synced {
+                server,
+                stamp,
+                lock_lost,
+            } => {
+                if lock_lost {
+                    self.lock = LockState::None;
+                }
                 match server {
                     Some(s) => self.entry.rebase(&s),
                     None => self.entry.etag = None,
@@ -346,6 +355,7 @@ mod tests {
                 content_type: None,
             }),
             stamp: Stamp::of(&d.entry.local),
+            lock_lost: false,
         }
     }
 

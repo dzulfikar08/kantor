@@ -20,7 +20,7 @@ pub struct Remote {
     pub client: Client,
     /// The account's id in the cache and settings.
     pub account: String,
-    /// What a lock's `owner` says ("Kantor (budi)").
+    /// What a lock's `owner` says ("budi (Kantor)"): shown to others.
     pub owner: String,
 }
 
@@ -162,10 +162,25 @@ pub fn upload(
         (Some(e), false) => Precondition::IfMatch(e),
         (None, false) => Precondition::IfNoneMatch,
     };
-    match r
+    let mut lock_lost = false;
+    let mut put = r
         .client
-        .put_with_progress(&entry.remote, &bytes, cond, lock, progress)
+        .put_with_progress(&entry.remote, &bytes, cond, lock, progress);
+    // A 412 with our lock token may mean the lock is gone (expired while the
+    // computer slept, or removed by an admin), not that the file changed:
+    // the version check above passed. Retry without the token.
+    if let (Err(Error::Conflict), Some(token), false) = (&put, lock, force)
+        && r.client
+            .refresh_lock(&entry.remote, token, LOCK_TIMEOUT)
+            .is_err()
     {
+        lock_lost = true;
+        put = r
+            .client
+            .put_with_progress(&entry.remote, &bytes, cond, None, progress);
+    }
+    let lock = if lock_lost { None } else { lock };
+    match put {
         Ok(etag) => {
             let server = r.client.stat(&entry.remote).ok().or_else(|| {
                 // No PROPFIND answer: keep what the PUT said.
@@ -179,7 +194,11 @@ pub fn upload(
                     content_type: None,
                 })
             });
-            UploadOutcome::Synced { server, stamp }
+            UploadOutcome::Synced {
+                server,
+                stamp,
+                lock_lost,
+            }
         }
         Err(e) => failure(r, entry, lock, e),
     }
@@ -267,16 +286,14 @@ pub fn refresh_lock(r: &Remote, remote: &str, token: &LockToken) -> Result<(), E
 /// it in the ledger for [`cleanup_locks`]; the lock expires anyway.
 pub fn release(r: &Remote, cache: &Cache, remote: &str, token: &LockToken) -> Result<(), Error> {
     match r.client.unlock(remote, token) {
-        Ok(()) | Err(Error::NotFound) | Err(Error::Conflict) => {
+        // Unreachable: keep it in the ledger and try again next start.
+        Err(e) if is_offline(&e) => Err(e),
+        // Any answer means the lock is released or no longer exists (an
+        // unknown token gets 412, 409, or 500 from Nextcloud 35).
+        _ => {
             let _ = cache.forget_lock(&r.account, remote);
             Ok(())
         }
-        // 4xx other than the above: the lock is gone or not ours anymore.
-        Err(Error::Http { status, .. }) if (400..500).contains(&status) => {
-            let _ = cache.forget_lock(&r.account, remote);
-            Ok(())
-        }
-        Err(e) => Err(e),
     }
 }
 

@@ -51,7 +51,7 @@ fn remote(url: &str, pass: &str, account: &str) -> Remote {
             },
         ),
         account: account.to_owned(),
-        owner: format!("Kantor ({user})"),
+        owner: format!("{user} (Kantor)"),
     }
 }
 
@@ -83,10 +83,12 @@ macro_rules! env_or_skip {
     };
 }
 
-/// A fresh .xlsx in the shared folder; returns its path.
+/// A fresh .xlsx in `<shared>/e2e` (kept out of the way of real files);
+/// returns its path.
 fn new_file(e: &Env, tag: &str) -> String {
+    e.alice.client.mkcol(&format!("{}/e2e", e.shared)).unwrap();
     let path = format!(
-        "{}/e2e-{tag}-{}.xlsx",
+        "{}/e2e/{tag}-{}.xlsx",
         e.shared,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -422,6 +424,25 @@ fn aborted_save_leaves_no_lock() {
     let t = d.lock_token().cloned().unwrap();
     session::release(ap, &e.cache, &path, &t).unwrap();
     assert_unlocked(&e, &path);
+}
+
+#[test]
+#[ignore]
+fn lost_lock_still_saves() {
+    let e = env_or_skip!();
+    let path = new_file(&e, "lostlock");
+    let opened = session::open(&e.alice, &e.cache, &path).unwrap();
+    let mut d = DocSync::new(opened.entry, opened.lock);
+    // The lock vanishes behind Kantor's back (expired while asleep).
+    let token = d.lock_token().cloned().unwrap();
+    e.alice.client.unlock(&path, &token).unwrap();
+    edit(&d.entry.local, "after lost lock");
+    assert_eq!(d.on_local_save(), Action::Upload);
+    assert_eq!(sync_upload(&e.alice, &mut d, false), Action::None);
+    assert_eq!(d.status(), Status::Synced);
+    assert_eq!(d.lock, LockState::None, "lost lock noticed, to be retaken");
+    assert_eq!(server_a1(&e.alice, &path), "after lost lock");
+    let _ = e.cache.forget_lock("alice", &path);
 }
 
 #[test]
