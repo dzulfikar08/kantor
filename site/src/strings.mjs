@@ -23,7 +23,7 @@ export const en = {
   h1: "Sheets, Docs and Slides that open your Office files",
   lede:
     "Kantor is a small, fast office app for Mac and Linux. Open a Word document, an Excel sheet or a PowerPoint deck, edit it, and save it back in the same format. It works offline and needs no account.",
-  facts: ["Free and open source", "About 60 MB", "Mac and Linux"],
+  facts: ["Free and open source", "About 65 MB", "Mac and Linux"],
   preview:
     'Early preview: Kantor is new and some things are still missing. <a href="#limits">Read the list</a> before you rely on it for important work.',
 
@@ -213,7 +213,7 @@ export const id = {
   h1: "Sheets, Docs, dan Slides untuk file Office Anda",
   lede:
     "Kantor adalah aplikasi perkantoran yang ringan dan cepat untuk Mac dan Linux. Buka dokumen Word, lembar Excel, atau presentasi PowerPoint, edit, lalu simpan lagi dalam format yang sama. Bisa dipakai tanpa internet dan tanpa akun.",
-  facts: ["Gratis dan open source", "Sekitar 60 MB", "Mac dan Linux"],
+  facts: ["Gratis dan open source", "Sekitar 65 MB", "Mac dan Linux"],
   preview:
     'Versi awal: Kantor masih baru dan beberapa hal belum ada. <a href="#limits">Baca daftarnya</a> sebelum memakainya untuk pekerjaan penting.',
 
