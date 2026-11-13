@@ -552,8 +552,11 @@ What (`src/user_model/autofill.rs`, both `auto_fill_rows` and
 * `UserModel::kantor_fill_copies` counts the cells copied by the last fill
   (for tests).
 
-10 000 rows: ~2.0 s → ~1.0 s of CPU; 1000 rows: ~0.47 → ~0.29 s (both at
-load ~40, back to back; `crates/sheets_engine/examples/big_timing.rs`).
+Idle machine, back to back (`crates/sheets_engine/examples/big_timing.rs`):
+10 000 rows 1.05 s → 0.45 s, 1000 rows 227 → 146 ms. In the app (fill job
+on its background thread) the old way was about twice as slow as in the
+example, the new one is not: 10 000 rows 2.28 s → 0.47 s, 1000 rows
+~370 → ~175 ms.
 
 Tests: `test/user_model/test_kantor_fast_fill.rs`: fills down, up, right
 and left of formulas of every kind (relative, absolute, mixed, whole
