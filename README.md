@@ -24,7 +24,7 @@ A small, fast, native office suite for Linux, macOS and Windows, written in Rust
 
 Real screenshots of the current build on Linux, in the light or dark theme to match your GitHub setting. The sample files come from [site/tools/make_samples.py](site/tools/make_samples.py).
 
-> **Status: early, all three apps work.** Sheets opens, edits and saves `.xlsx` (formulas via [IronCalc](https://github.com/ironcalc/IronCalc)), imports `.csv`, `.ods`, `.xls` and `.xlsb`, and prints to PDF. Docs opens, edits and saves `.docx` and exports PDF. Slides opens, edits, presents and saves `.pptx` and exports PDF. Saving keeps what Kantor doesn't show yet, byte for byte. Not yet checked against a large set of real-world files; see [Known gaps](#known-gaps) and [plan.md](plan.md).
+> **Status: early, all three apps work.** Sheets opens, edits and saves `.xlsx` (formulas via [IronCalc](https://github.com/ironcalc/IronCalc)), imports `.csv`, `.ods`, `.xls` and `.xlsb`, and prints to PDF. Docs opens, edits and saves `.docx` and exports PDF. Slides opens, edits, presents and saves `.pptx`, imports PowerPoint 97-2003 `.ppt` (and `.pps`/`.pot`), and exports PDF. Saving keeps what Kantor doesn't show yet, byte for byte. Not yet checked against a large set of real-world files; see [Known gaps](#known-gaps) and [plan.md](plan.md).
 
 ## Install
 
@@ -66,7 +66,7 @@ then, try the nightly builds `Kantor-Setup-nightly-x64.exe` / `Kantor-nightly-x6
 - **Installer:** run `Kantor-Setup-x64.exe` (or `Kantor-Setup-arm64.exe`). It installs for you
   alone in `%LOCALAPPDATA%\Programs\Kantor`, with no administrator prompt, and adds a Start menu
   entry, an uninstall entry (Settings → Apps) and **Open with → Kantor** for `.xlsx`, `.xlsm`,
-  `.xls`, `.ods`, `.csv`, `.docx` and `.pptx`. Your default apps stay as they are. An optional
+  `.xls`, `.ods`, `.csv`, `.docx`, `.pptx` and `.ppt`. Your default apps stay as they are. An optional
   task adds Kantor to your `PATH`.
 - **Portable:** unzip `Kantor-x64.zip` anywhere and run `kantor.exe`.
 - The builds aren't code-signed yet, so SmartScreen says *Windows protected your PC* the first
@@ -112,6 +112,8 @@ Arch Linux: a PKGBUILD for a future `kantor-bin` AUR package lives in [packaging
 
 `.pptx` editing: text boxes and placeholders (with the master's bullets, numbering and spacing), shapes and pictures you can move, resize, rotate and flip, fill and outline, a thumbnail strip to reorder slides, speaker notes, copy and paste of shapes, and a slide show with notes (`F5`). Slides are drawn as in PowerPoint: all 187 preset shapes (arrows, chevrons, callouts, flowchart symbols…) and freeform shapes, gradient and picture fills, transparency, dashed lines and arrowheads, groups, tables with PowerPoint's table styles, SmartArt, and charts (column, bar, line, area, pie, doughnut, scatter and combinations) from the values saved in the file. *Export as PDF…* writes one page per slide, hidden slides left out. *Print…* (`Ctrl P`, the toolbar's printer menu) prints slides, notes pages or handouts (1, 2, 3, 4, 6 or 9 slides per page) through your PDF viewer. **Tables and chart data can be edited:** double-click a table or chart (or the toolbar's edit button) for a panel with its cells: type into any cell, add or remove rows and columns next to the cell you're on, fill a cell with a theme colour; for charts, edit category labels, series names and values and add or remove series and categories (an embedded table covering the chart's cells grows or shrinks with them). Charts are redrawn at once, and the chart's embedded workbook gets the same values (so PowerPoint's *Edit Data* agrees). Everything else in the table, the chart part and the workbook is saved byte for byte. SmartArt is shown but can't be edited yet.
 
+**PowerPoint 97-2003 files** (`.ppt`, `.pps`, `.pot`) open as an import, the way Sheets opens `.xls`: the file opens unsaved and Save writes a new `.pptx` next to it (the `.ppt` is never changed). Kantor reads the slides, masters (backgrounds, placeholders, text styles, colour scheme), text with its formatting, bullets and fonts, shapes with their fill, outline, rotation and flips, freeforms, groups, pictures (JPEG, PNG, BMP), tables, speaker notes and hidden slides. Transitions, animations, sounds and macros are left out; OLE objects show their preview picture; EMF/WMF pictures are kept for PowerPoint but show as a grey box in Kantor. Password-protected `.ppt` files and PowerPoint 95 or older files can't be opened.
+
 ## Keyboard
 
 On macOS, use `⌘` where this table says `Ctrl` (`Ctrl Tab` stays).
@@ -146,6 +148,7 @@ By default the UI follows your Omarchy theme (live-reloading on `omarchy theme s
 ```sh
 kantor convert report.docx report.pdf          # also .ods/.xls → .xlsx, a sheet → .csv
 kantor convert deck.pptx deck.pdf              # one page per slide, hidden slides left out
+kantor convert old.ppt old.pptx                # PowerPoint 97-2003 to .pptx (.ppt to .pdf works too)
 kantor convert --handouts 6 deck.pptx h.pdf    # 1, 2, 3, 4, 6 or 9 slides per A4 page; --notes
 kantor convert book.xlsx book.pdf              # every visible sheet, as Excel prints them
 kantor convert --sheet Sales --fit-width --landscape --paper f4 book.xlsx sales.pdf

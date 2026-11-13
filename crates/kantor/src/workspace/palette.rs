@@ -41,7 +41,7 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: "Open File…",
-        detail: ".xlsx, .docx, .pptx, .csv, .ods",
+        detail: ".xlsx, .docx, .pptx, .csv, .ods, .xls, .ppt",
         keys: "Ctrl O",
         run: |ws, window, cx| ws.open_file(&OpenFile, window, cx),
     },

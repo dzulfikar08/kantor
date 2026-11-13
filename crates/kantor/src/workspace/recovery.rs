@@ -11,7 +11,7 @@
 //!   Save writes to the original, asking first if that file changed since.
 //! * **Autosave** (`[autosave] enabled` in settings.toml, off by default):
 //!   documents with a file in their own format are saved after
-//!   `idle_seconds` without changes. Imported files (.csv, .ods, .xls) and
+//!   `idle_seconds` without changes. Imported files (.csv, .ods, .xls, .ppt) and
 //!   files with content Kantor can't keep only ever get recovery copies.
 
 use std::cell::RefCell;

@@ -62,8 +62,9 @@ impl AppKind {
             "xlsx" | "xlsm" | "xls" | "xlsb" | "ods" | "csv" | "tsv" => Some(Self::Sheets),
             // Docs reads .docx only (.doc / .odt / .rtf aren't supported yet).
             "docx" => Some(Self::Docs),
-            // Slides reads .pptx only (.ppt / .odp aren't supported).
-            "pptx" => Some(Self::Slides),
+            // Slides reads .pptx and imports PowerPoint 97-2003 .ppt/.pps/.pot
+            // (.odp isn't supported).
+            "pptx" | "ppt" | "pps" | "pot" => Some(Self::Slides),
             _ => None,
         }
     }

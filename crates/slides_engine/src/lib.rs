@@ -10,6 +10,7 @@
 //! - [`render`]: what to draw, with layout/master/theme inheritance;
 //!   [`fill`]: gradients, picture fills and line formatting for display.
 //! - [`geom`]: shape outlines (preset and custom DrawingML geometry).
+//! - [`ppt`]: PowerPoint 97-2003 import (read as an equivalent `.pptx`).
 
 pub mod agent;
 pub mod chart_edit;
@@ -21,6 +22,7 @@ pub mod frame;
 pub mod geom;
 mod history;
 pub mod model;
+pub mod ppt;
 pub mod presentation;
 pub mod render;
 mod shape;

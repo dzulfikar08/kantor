@@ -10,6 +10,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ## [Unreleased]
 
 ### Added
+- Slides opens PowerPoint 97-2003 presentations (`.ppt`, and `.pps` shows and `.pot` templates):
+  slides, masters, text with its formatting, bullets and fonts, shapes, pictures, tables,
+  backgrounds, speaker notes and hidden slides. Like `.xls` in Sheets, the file opens unsaved
+  and Save writes a new `.pptx`; the `.ppt` is never changed. Transitions and animations are left
+  out; EMF/WMF pictures show as a grey box in Kantor (PowerPoint shows them in the saved
+  `.pptx`). Password-protected files and PowerPoint 95 files can't be opened. `kantor convert`
+  turns `.ppt` into `.pptx` or `.pdf`.
 - Spell check in Docs and Slides, offline, for English and Indonesian: misspelled words get a red
   wavy underline as you type. Right-click one for up to five suggestions, Ignore All or Add to
   Dictionary (your words are kept in `dictionary.txt` next to settings.toml). Text marked with a

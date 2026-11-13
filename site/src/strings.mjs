@@ -73,8 +73,8 @@ export const en = {
     },
     slides: {
       name: "Slides",
-      formats: [".pptx"],
-      text: "Presentations with text, shapes and pictures you can move and resize, tables and chart data you can edit, speaker notes, and a full-screen slide show.",
+      formats: [".pptx", ".ppt"],
+      text: "Presentations with text, shapes and pictures you can move and resize, tables and chart data you can edit, speaker notes, and a full-screen slide show. Opens .ppt files too, and saves as .pptx.",
     },
   },
   keepH3: "Saving doesn't throw away what Kantor can't show yet",
@@ -261,8 +261,8 @@ export const id = {
     },
     slides: {
       name: "Slides",
-      formats: [".pptx"],
-      text: "Presentasi dengan teks, bentuk, dan gambar yang bisa dipindah dan diubah ukurannya, tabel dan data grafik yang bisa diedit, catatan pembicara, dan tayangan layar penuh.",
+      formats: [".pptx", ".ppt"],
+      text: "Presentasi dengan teks, bentuk, dan gambar yang bisa dipindah dan diubah ukurannya, tabel dan data grafik yang bisa diedit, catatan pembicara, dan tayangan layar penuh. Bisa membuka file .ppt, lalu menyimpannya sebagai .pptx.",
     },
   },
   keepH3: "Menyimpan tidak membuang yang belum bisa ditampilkan Kantor",

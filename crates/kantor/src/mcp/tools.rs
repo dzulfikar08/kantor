@@ -33,7 +33,7 @@ const SPECS: &[Spec] = &[
     (
         "open_document",
         "Open a file",
-        "Open a file in Kantor in a new tab (or bring it to front if already open) and return its id. Sheets opens .xlsx/.xlsm/.csv/.tsv (and .ods/.xls/.xlsb read-only, saved as .xlsx), Docs .docx, Slides .pptx.",
+        "Open a file in Kantor in a new tab (or bring it to front if already open) and return its id. Sheets opens .xlsx/.xlsm/.csv/.tsv (and .ods/.xls/.xlsb read-only, saved as .xlsx), Docs .docx, Slides .pptx (and .ppt/.pps/.pot read-only, saved as .pptx).",
         || json!({"path": {"type": "string", "description": "Absolute path (~ allowed)."}}),
         &["path"],
         false,
