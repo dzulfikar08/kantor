@@ -1,6 +1,6 @@
-# Signing Kantor for Windows (decision pending)
+# Signing Kantor for Windows (SignPath Foundation applied 2026-11-13)
 
-Nothing is bought or configured yet. Today the Windows installer and zip are **unsigned**, and
+Applied to the SignPath Foundation on 2026-11-13 (answer pending; replies go to dzulfikar.at@gmail.com). Nothing is bought or configured yet. Today the Windows installer and zip are **unsigned**, and
 the workflows only sign when the secrets below exist.
 
 ## What unsigned means for users
