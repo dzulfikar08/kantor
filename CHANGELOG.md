@@ -9,6 +9,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Changed
+- Sheets: Fill Down, Fill Right and dragging the fill handle are about twice as fast on big
+  workbooks when they copy formulas (10 000 rows of nine formulas: about 2 s → 1 s), and
+  SUMIF, COUNTIF, SUMIFS and the other criteria functions with text criteria recalculate
+  about a third faster.
+
 ## [0.5.0] - 2026-11-13
 
 Kantor opens old Office files: Word 97-2003 `.doc`/`.dot`, `.rtf`, PowerPoint 97-2003
