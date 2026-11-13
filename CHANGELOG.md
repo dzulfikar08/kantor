@@ -121,6 +121,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   hides, as in Excel.
 - Sheets: a quick click on a chart or picture could leave it stuck to the pointer (it moved with
   the mouse until the next click).
+- Slides: in text boxes that don't wrap text (python-pptx's default text box, and many imported
+  .ppt slides), centred and right-aligned lines were drawn far off the slide, so only the
+  left-aligned lines showed, on screen and in PDFs. Each line now sits in the box as PowerPoint
+  puts it, and a line wider than the box spills over its edges.
 
 ## [0.4.0] - 2026-11-12
 
