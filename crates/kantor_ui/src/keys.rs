@@ -21,6 +21,26 @@ fn to_mac(keys: &str) -> Option<String> {
     Some(keys.replace("ctrl-", "cmd-"))
 }
 
+/// The two bindings of a primary shortcut written with `ctrl-` ("ctrl-x"):
+/// [`primary`] and `super-` (Super as Mac-style Cmd on Linux and Windows).
+///
+/// The primary one comes last so it takes precedence: menus and tooltips
+/// label an action with its highest-precedence binding, and GPUI-component
+/// shows `super-` as "Win" off macOS ("Win+X" instead of "Ctrl+X").
+pub fn primary_pair<A: gpui_kit::Action + Clone>(
+    keys: &'static str,
+    action: A,
+    context: Option<&str>,
+) -> [gpui_kit::KeyBinding; 2] {
+    let rest = keys.strip_prefix("ctrl-").unwrap_or(keys);
+    // Leaked like `primary` on macOS: bindings are made once, at start-up.
+    let sup: &'static str = Box::leak(format!("super-{rest}").into_boxed_str());
+    [
+        gpui_kit::KeyBinding::new(sup, action.clone(), context),
+        gpui_kit::KeyBinding::new(primary(keys), action, context),
+    ]
+}
+
 /// A shortcut label written for Linux ("Ctrl+Shift+B", "Ctrl K") as shown on
 /// this platform: "⌘⇧B", "⌘K" on macOS.
 pub fn label(keys: &str) -> String {
@@ -72,6 +92,24 @@ mod tests {
         assert_eq!(to_mac("ctrl-shift-b").as_deref(), Some("cmd-shift-b"));
         assert_eq!(to_mac("ctrl-tab"), None);
         assert_eq!(to_mac("super-q"), None);
+    }
+
+    gpui_kit::actions!(keys_test, [Cut]);
+
+    #[std::prelude::v1::test]
+    fn primary_binding_takes_precedence_over_super() {
+        let keymap = gpui_kit::Keymap::new(primary_pair("ctrl-x", Cut, Some("Docs")).into());
+        let strokes: Vec<_> = keymap
+            .bindings_for_action(&Cut)
+            .map(|b| b.keystrokes()[0].inner().clone())
+            .collect();
+        assert_eq!(strokes.len(), 2);
+        // Later bindings take precedence, so labels show the last one:
+        // Ctrl+X off macOS (not "Win+X"), ⌘X on macOS.
+        let top = strokes.last().unwrap();
+        assert_eq!(top.key, "x");
+        assert_eq!(top.modifiers.control, !cfg!(target_os = "macos"));
+        assert_eq!(top.modifiers.platform, cfg!(target_os = "macos"));
     }
 
     #[std::prelude::v1::test]
