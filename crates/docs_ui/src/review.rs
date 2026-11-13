@@ -194,13 +194,13 @@ impl DocsView {
         self.doc.set_author(&author);
         let on = !self.doc.track_changes();
         self.doc.set_track_changes(on, self.sel);
+        let sel = self.sel;
+        self.edited(sel, window, cx);
         self.status = if on {
             format!("Track Changes on: your edits are marked as {author}'s").into()
         } else {
             "Track Changes off".into()
         };
-        let sel = self.sel;
-        self.edited(sel, window, cx);
     }
 
     pub fn accept_change_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -560,6 +560,13 @@ fn review_items(menu: PopupMenu, view: &WeakEntity<DocsView>, track: bool) -> Po
                 }),
         )
         .separator();
+    let menu = item(menu, "Insert footnote  Ctrl+Alt+F", None, |v, w, cx| {
+        v.insert_note_doc(docs_engine::NoteKind::Footnote, w, cx)
+    });
+    let menu = item(menu, "Insert endnote  Ctrl+Alt+D", None, |v, w, cx| {
+        v.insert_note_doc(docs_engine::NoteKind::Endnote, w, cx)
+    })
+    .separator();
     let menu = item(
         menu,
         "New comment  Ctrl+Alt+M",

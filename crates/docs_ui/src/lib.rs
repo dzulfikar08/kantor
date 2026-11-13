@@ -24,6 +24,7 @@ mod ai;
 mod find;
 pub mod font_bridge;
 mod hf_menu;
+mod note_menu;
 mod input;
 mod page_menu;
 mod review;
@@ -467,6 +468,7 @@ pub struct DocsView {
     hf_menu_closed: Option<std::time::Instant>,
     /// A comment being written or edited in its card.
     comment_edit: Option<review::CommentEdit>,
+    note_edit: Option<note_menu::NoteEdit>,
     /// The markup column with comment cards.
     comments_visible: bool,
     /// A margin or indent being dragged on the ruler.
@@ -571,6 +573,7 @@ impl DocsView {
             hf_menu: None,
             hf_menu_closed: None,
             comment_edit: None,
+            note_edit: None,
             comments_visible: true,
             ruler_drag: None,
             engine,
@@ -1410,6 +1413,14 @@ impl DocsView {
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
         self.table_picker = None;
+        // A double click on a footnote or endnote (or its number) edits it.
+        if ev.click_count == 2
+            && let Some((kind, id)) = self.note_at_point(ev.position)
+        {
+            let at = point(ev.position.x + SPACE_3, ev.position.y + SPACE_3);
+            self.open_note(kind, id, Some(at), window, cx);
+            return;
+        }
         // A double click in a page's top or bottom margin edits its header
         // or footer (as in Word).
         if ev.click_count == 2
@@ -2236,8 +2247,8 @@ impl Render for DocsView {
             Undo => |this, w, cx| this.undo_doc(w, cx),
             NewComment => |this, w, cx| this.new_comment_doc(w, cx),
             ToggleTrackChanges => |this, w, cx| this.toggle_track_changes_doc(w, cx),
-            InsertFootnote => |this, w, cx| { let _ = (this, w, cx); },
-            InsertEndnote => |this, w, cx| { let _ = (this, w, cx); },
+            InsertFootnote => |this, w, cx| this.insert_note_doc(docs_engine::NoteKind::Footnote, w, cx),
+            InsertEndnote => |this, w, cx| this.insert_note_doc(docs_engine::NoteKind::Endnote, w, cx),
             Redo => |this, w, cx| this.redo_doc(w, cx),
             ZoomIn => |this, _w, cx| this.zoom_by(ZOOM_STEP, cx),
             ZoomOut => |this, _w, cx| this.zoom_by(1.0 / ZOOM_STEP, cx),
@@ -2260,6 +2271,7 @@ impl Render for DocsView {
             .children(self.render_table_picker(cx))
             .children(self.render_page_menu(cx))
             .children(self.render_hf_menu(cx))
+            .children(self.render_note_menu(cx))
     }
 }
 
