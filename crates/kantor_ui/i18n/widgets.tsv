@@ -1,0 +1,43 @@
+# English<TAB>Indonesian: built-in text of the gpui_kit widgets (see kantor_ui/src/i18n.rs).
+Select All	Pilih Semua
+Show password	Tampilkan kata sandi
+Hide password	Sembunyikan kata sandi
+Decrease	Kurangi
+Increase	Tambah
+Replace All	Ganti Semua
+Please select	Silakan pilih
+Search…	Cari…
+Type a command or search…	Ketik perintah atau cari…
+More options	Opsi lainnya
+Previous	Sebelumnya
+Next	Berikutnya
+No matching settings	Tidak ada pengaturan yang cocok
+Try a different keyword.	Coba kata kunci lain.
+Reset All	Atur Ulang Semua
+Palette	Palet
+Hue	Rona
+Saturation	Saturasi
+Lightness	Kecerahan
+Opacity	Opasitas
+Unnamed	Tanpa nama
+Collapse	Ciutkan
+Expand	Perluas
+Select date	Pilih tanggal
+Su	Min
+Mo	Sen
+Tu	Sel
+We	Rab
+Th	Kam
+Fr	Jum
+Sa	Sab
+January	Januari
+February	Februari
+March	Maret
+April	April
+June	Juni
+July	Juli
+August	Agustus
+September	September
+October	Oktober
+November	November
+December	Desember

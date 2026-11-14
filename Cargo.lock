@@ -4150,6 +4150,7 @@ dependencies = [
  "kantor_spell",
  "kantor_theme",
  "log",
+ "rust-i18n",
  "tempfile",
 ]
 

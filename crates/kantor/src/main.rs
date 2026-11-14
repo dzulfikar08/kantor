@@ -107,6 +107,7 @@ fn main() {
         .with_assets(kantor_ui::KantorAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            kantor_ui::widget_strings::init();
             theme::init(cx);
             kantor_ui::perf::watch_main_thread(cx);
             kantor_ui::find_bar::init(cx);

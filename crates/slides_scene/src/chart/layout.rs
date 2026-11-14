@@ -3,6 +3,7 @@
 //! measured through [`Measure`], so this module needs no fonts (tests use
 //! a fixed-width measure).
 
+use slides_engine::display_text::{tr, trf};
 use slides_engine::{EMU_PER_PT, EMU_PER_PX, Fill, LineCap, LineJoin, LineStyle, Rgb};
 
 use super::format::{format_number, is_date_code};
@@ -346,7 +347,9 @@ fn title_text(chart: &Chart) -> Option<Vec<String>> {
     match &chart.title {
         Some(t) => match &t.text {
             Some(text) => Some(text.clone()),
-            None => Some(vec![only_name().unwrap_or_else(|| "Chart Title".into())]),
+            None => Some(vec![
+                only_name().unwrap_or_else(|| tr("Chart Title").into()),
+            ]),
         },
         None if !chart.auto_title_deleted => only_name().map(|n| vec![n]),
         None => None,
@@ -433,7 +436,7 @@ pub fn legend_entries(chart: &Chart, d: &Defaults) -> Vec<Entry> {
                 text: s
                     .name
                     .clone()
-                    .unwrap_or_else(|| format!("Series{}", s.idx + 1)),
+                    .unwrap_or_else(|| trf("Series{}", &[&(s.idx + 1)])),
                 fill: st.fill,
                 line: st.line,
                 line_key,

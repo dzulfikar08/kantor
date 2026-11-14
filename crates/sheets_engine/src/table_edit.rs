@@ -297,7 +297,7 @@ impl Workbook {
             for (i, n) in names.iter_mut().enumerate() {
                 let original = n.clone();
                 if n.is_empty() {
-                    *n = format!("Column{}", i + 1);
+                    *n = crate::content_text::trf("Column{}", &[&(i + 1)]);
                 }
                 let base = n.clone();
                 let mut k = 2;

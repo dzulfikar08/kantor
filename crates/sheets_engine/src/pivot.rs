@@ -38,6 +38,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow, bail};
 use roxmltree::{Document, Node};
 
+use crate::content_text::{tr, trf};
 use crate::format::LineStyle;
 use crate::shift::{Area, Layout};
 use crate::table::{Edges, Elem, TableCellLook, line, theme, thin};
@@ -351,6 +352,12 @@ impl Func {
             Func::Var => "Var",
             Func::Varp => "Varp",
         }
+    }
+
+    /// A value field's default name, `Sum of Units`, in the interface
+    /// language (new content; see [`crate::content_text`]).
+    pub(crate) fn default_name(self, field: &str) -> String {
+        trf("{} of {}", &[&tr(self.caption()), &field])
     }
 
     /// The function over `vals`; `None` shows an empty cell. A function
@@ -1553,12 +1560,27 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
             Level::Values => Val::Str(def.data_caption_of(cache, k)),
         }
     };
+    // Labels the file doesn't hold (Excel writes them in its interface
+    // language at each refresh): English for pivot tables from a file, the
+    // interface language for ones made here.
+    let local = |en: &'static str| if def.added { tr(en) } else { en };
+    let fill = |template: &'static str, v: &dyn std::fmt::Display| {
+        if def.added {
+            trf(template, &[v])
+        } else {
+            template.replacen("{}", &v.to_string(), 1)
+        }
+    };
+    let shown = |v: Val| match v {
+        Val::Missing => text_input(local("(blank)")),
+        v => v.input(),
+    };
     let grand_label = |e: &Entry| match (e.data, &def.grand_caption) {
         (Some(d), _) if def.data_fields.len() > 1 => {
-            format!("Total {}", def.data_caption_of(cache, d))
+            fill("Total {}", &def.data_caption_of(cache, d))
         }
         (_, Some(c)) => c.clone(),
-        _ => "Grand Total".to_owned(),
+        _ => local("Grand Total").to_owned(),
     };
     let data_left = left + label_cols;
     let data_top = top + header_rows;
@@ -1604,13 +1626,13 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
                 Kind::Sub => {
                     let l = e.path.len() - 1;
                     let v = label(&col_lv[l], e.path[l]).label();
-                    put(top + 1 + l as u32, c, text_input(&format!("{v} Total")));
+                    put(top + 1 + l as u32, c, text_input(&fill("{} Total", &v)));
                 }
                 Kind::Data => {
                     let r = repeats(prev, e);
                     prev = Some(e);
                     for (l, k) in e.path.iter().enumerate().skip(r) {
-                        put(top + 1 + l as u32, c, label(&col_lv[l], *k).input());
+                        put(top + 1 + l as u32, c, shown(label(&col_lv[l], *k)));
                     }
                 }
             }
@@ -1637,7 +1659,7 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
             Kind::Sub => {
                 let l = e.path.len() - 1;
                 let v = label(&row_lv[l], e.path[l]).label();
-                put(r, left + label_col[l], text_input(&format!("{v} Total")));
+                put(r, left + label_col[l], text_input(&fill("{} Total", &v)));
             }
             Kind::Data => {
                 let rep = repeats(prev, e);
@@ -1653,7 +1675,7 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
                     if l < last && own_row {
                         continue;
                     }
-                    put(r, left + label_col[l], label(&row_lv[l], *k).input());
+                    put(r, left + label_col[l], shown(label(&row_lv[l], *k)));
                 }
             }
         }
@@ -1752,12 +1774,12 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
             put(r, left, text_input(&def.field_caption(cache, p.fld)));
             let value = match p.item {
                 Some(sel) if sel < def.fields[p.fld].items.len() => {
-                    def.item_label(cache, p.fld, sel).input()
+                    shown(def.item_label(cache, p.fld, sel))
                 }
                 _ if def.fields[p.fld].items.iter().any(|i| i.hidden) => {
-                    "(Multiple Items)".to_owned()
+                    local("(Multiple Items)").to_owned()
                 }
-                _ => "(All)".to_owned(),
+                _ => local("(All)").to_owned(),
             };
             put(r, left + 1, value);
         }

@@ -315,7 +315,12 @@ impl Workspace {
                             .when(!d.unsupported.is_empty(), |c| {
                                 c.child(field(
                                     i18n::t("Not shown or kept"),
-                                    i18n::fill(unsupported_note, &[&d.unsupported.join(", ")]),
+                                    i18n::fill(
+                                        unsupported_note,
+                                        &[&kantor_ui::content_strings::content_list(
+                                            &d.unsupported,
+                                        )],
+                                    ),
                                     false,
                                 ))
                             }),
@@ -379,7 +384,12 @@ impl Workspace {
                             .when(!d.unsupported.is_empty(), |c| {
                                 c.child(field(
                                     i18n::t("Not kept"),
-                                    i18n::fill(unsupported_note, &[&d.unsupported.join(", ")]),
+                                    i18n::fill(
+                                        unsupported_note,
+                                        &[&kantor_ui::content_strings::content_list(
+                                            &d.unsupported,
+                                        )],
+                                    ),
                                     false,
                                 ))
                             }),

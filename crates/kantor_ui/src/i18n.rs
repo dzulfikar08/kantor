@@ -85,6 +85,8 @@ pub const CATALOG_FILES: &[(&str, &str)] = &[
     ("sheets.tsv", include_str!("../i18n/sheets.tsv")),
     ("docs.tsv", include_str!("../i18n/docs.tsv")),
     ("slides.tsv", include_str!("../i18n/slides.tsv")),
+    ("widgets.tsv", include_str!("../i18n/widgets.tsv")),
+    ("content.tsv", include_str!("../i18n/content.tsv")),
 ];
 
 /// One catalog line: `(english, indonesian)`, unescaped.

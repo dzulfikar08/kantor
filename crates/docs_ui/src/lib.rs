@@ -1256,7 +1256,7 @@ impl DocsView {
                 msg,
                 &[
                     &self.doc.title(),
-                    &self.doc.unsupported_content().join(", "),
+                    &kantor_ui::content_strings::content_list(self.doc.unsupported_content()),
                 ],
             )
             .into();
@@ -1736,7 +1736,7 @@ impl DocsView {
                 .child(kantor_ui::components::dot(t.warning))
                 .child(div().flex_1().min_w_0().child({
                     let msg = i18n::t("This file has content Kantor can't show or keep yet: {}. Save writes a new copy; the original is never overwritten.");
-                    i18n::fill(msg, &[&what.join(", ")])
+                    i18n::fill(msg, &[&kantor_ui::content_strings::content_list(what)])
                 })),
         )
     }
@@ -1748,7 +1748,13 @@ fn opened_status(doc: &Document) -> String {
         tf(msg, &[&doc.title()])
     } else if !doc.preserved_content().is_empty() {
         let msg = tk("Opened {} ({} shown as placeholders, kept as they are when saving)");
-        tf(msg, &[&doc.title(), &doc.preserved_content().join(", ")])
+        tf(
+            msg,
+            &[
+                &doc.title(),
+                &kantor_ui::content_strings::content_list(doc.preserved_content()),
+            ],
+        )
     } else {
         tf("Opened {}", &[&doc.title()])
     }

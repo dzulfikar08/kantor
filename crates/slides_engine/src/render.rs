@@ -348,12 +348,12 @@ fn find_ph<'a>(shapes: &'a [Shape], ph: &Placeholder, by_idx: bool) -> Option<&'
 }
 
 fn generic_prompt(ph: &Placeholder) -> Option<&'static str> {
-    Some(match ph.ty() {
+    Some(crate::display_text::tr(match ph.ty() {
         "title" | "ctrTitle" => "Click to add title",
         "subTitle" => "Click to add subtitle",
         "body" | "obj" => "Click to add text",
         _ => return None,
-    })
+    }))
 }
 
 impl Presentation {

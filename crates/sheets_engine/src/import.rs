@@ -27,6 +27,24 @@ use ironcalc_base::types::CellType;
 
 use crate::{LANGUAGE, LOCALE, MAX_COLS, MAX_ROWS, TIMEZONE, csv};
 
+/// Something an import could not bring over faithfully. `Display` gives
+/// the English (`2 formulas kept as values`); the app words it in its own
+/// language from the variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportNote {
+    /// Formulas that failed to evaluate here, replaced by the file's values.
+    FormulasKeptAsValues(usize),
+}
+
+impl std::fmt::Display for ImportNote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FormulasKeptAsValues(1) => f.write_str("1 formula kept as values"),
+            Self::FormulasKeptAsValues(n) => write!(f, "{n} formulas kept as values"),
+        }
+    }
+}
+
 /// The kind of file a [`Workbook`](crate::Workbook) was opened from, which
 /// decides what Save does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -188,7 +206,7 @@ pub(crate) fn write_csv(model: &Model<'_>, sheet: u32, path: &Path, delimiter: u
 pub(crate) fn read_calamine(
     path: &Path,
     format: SourceFormat,
-) -> Result<(Model<'static>, Vec<String>)> {
+) -> Result<(Model<'static>, Vec<ImportNote>)> {
     let mut book =
         open_workbook_auto(path).map_err(|e| anyhow!("opening {}: {e}", path.display()))?;
     let names = book.sheet_names();
@@ -283,10 +301,7 @@ pub(crate) fn read_calamine(
     }
     let mut notes = Vec::new();
     if kept_values > 0 {
-        notes.push(format!(
-            "{kept_values} formula{} kept as values",
-            if kept_values == 1 { "" } else { "s" }
-        ));
+        notes.push(ImportNote::FormulasKeptAsValues(kept_values));
     }
     Ok((model, notes))
 }

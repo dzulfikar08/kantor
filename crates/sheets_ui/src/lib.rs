@@ -180,15 +180,26 @@ fn opened_status(book: &Workbook) -> String {
     } else {
         tf("Opened {}", &[&book.title()])
     };
-    for note in book.import_notes() {
+    for note in book.import_note_list() {
         s.push_str("; ");
-        s.push_str(note);
+        s.push_str(&match *note {
+            sheets_engine::ImportNote::FormulasKeptAsValues(1) => {
+                kantor_ui::i18n::t("1 formula kept as values").to_owned()
+            }
+            sheets_engine::ImportNote::FormulasKeptAsValues(n) => {
+                tf("{} formulas kept as values", &[&n])
+            }
+        });
     }
     s
 }
 
 /// Register Sheets key bindings. Both Ctrl and Super work (Mac-style Cmd = Super).
 pub fn init(cx: &mut App) {
+    // Pivot captions and the like in new content follow the interface language.
+    sheets_engine::set_content_translator(kantor_ui::i18n::t);
+    // Chart fallbacks ("Chart Title") come from the renderer shared with Slides.
+    slides_engine::display_text::set_display_translator(kantor_ui::i18n::t);
     let ctx = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new(kantor_ui::keys::primary("ctrl-s"), Save, ctx),

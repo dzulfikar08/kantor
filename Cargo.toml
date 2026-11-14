@@ -39,6 +39,9 @@ ring = "0.17"
 base64 = "0.22"
 # Calendar arithmetic for kantor_numfmt (already in the tree through IronCalc).
 chrono = { version = "0.4", default-features = false }
+# gpui-component's locale backend (already in the tree through gpui-kit): Kantor
+# hands it Indonesian for the widgets' own text (kantor_ui::widget_strings).
+rust-i18n = "4.2"
 
 kantor_ai = { path = "crates/kantor_ai" }
 kantor_cloud = { path = "crates/kantor_cloud" }

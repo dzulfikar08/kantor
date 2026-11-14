@@ -124,6 +124,8 @@ actions!(
 
 /// Register Slides key bindings (Ctrl, and Super as Mac-style Cmd).
 pub fn init(cx: &mut App) {
+    // Placeholder prompts and chart fallbacks follow the interface language.
+    slides_engine::display_text::set_display_translator(kantor_ui::i18n::t);
     kantor_ui::find_bar::bind_app_keys(KEY_CONTEXT, cx);
     kantor_ui::spelling::init(cx);
     let c = Some(KEY_CONTEXT);
@@ -1580,7 +1582,7 @@ impl SlidesView {
                 msg,
                 &[
                     &self.pres.title(),
-                    &self.pres.unsupported_content().join(", "),
+                    &kantor_ui::content_strings::content_list(&self.pres.unsupported_content()),
                 ],
             )
             .into();
@@ -2012,7 +2014,7 @@ impl SlidesView {
                 .child(kantor_ui::components::dot(t.warning))
                 .child(div().flex_1().min_w_0().child({
                     let msg = i18n::t("This file has content Kantor can't keep yet: {}. Save writes a new copy; the original is never overwritten.");
-                    i18n::fill(msg, &[&what.join(", ")])
+                    i18n::fill(msg, &[&kantor_ui::content_strings::content_list(&what)])
                 })),
         )
     }
