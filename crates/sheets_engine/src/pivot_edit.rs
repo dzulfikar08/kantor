@@ -677,6 +677,8 @@ impl Workbook {
             row_header_caption: captions.row_labels.clone(),
             col_header_caption: captions.column_labels.clone(),
             data_caption: captions.values.clone(),
+            missing_caption: None,
+            error_caption: None,
             xml: Arc::new(def_skeleton(&name, &captions)),
             reindexed: false,
             at: layout,
@@ -1173,6 +1175,7 @@ fn new_field() -> Field {
         show_all: false,
         sort: None,
         name: None,
+        subtotal_caption: None,
         xml: None,
     }
 }

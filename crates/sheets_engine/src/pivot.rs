@@ -31,6 +31,34 @@
 //! Refreshes are kept per history state (like drawing edits), so undo and
 //! redo bring back the matching definitions; positions are kept with the
 //! [`Layout`] they were made in and moved to the current one when used.
+//!
+//! **Captions and language.** Most labels a refresh writes have no place in
+//! the file: Excel computes them in its interface language. Which ones the
+//! file can hold (ECMA-376 Part 1 §18.10.1.73 `pivotTableDefinition`,
+//! §18.10.1.69 `pivotField` and the field items' `n`; Excel's reading per
+//! the MS-OI29500 notes on those two sections):
+//!
+//! | Label | Held by |
+//! |---|---|
+//! | `Row Labels` (compact header) | `rowHeaderCaption` |
+//! | `Column Labels` (compact header) | `colHeaderCaption` |
+//! | `Values` (the `Σ Values` field's header) | `dataCaption` |
+//! | `Grand Total` | `grandTotalCaption` |
+//! | `Total Sum of X` (grand total per data field, several data fields) | none |
+//! | `East Total` (a field's subtotals) | the field's `subtotalCaption`: one text for all of them; MS-OI29500 says Office puts the field name for `?` in it, here it's the item's name, as Excel's UI does when a subtotal label is typed over |
+//! | `(blank)` (an item for empty source cells) | none, unless the item has a caption (`n`) |
+//! | `(All)`, `(Multiple Items)` (a report filter's value) | none |
+//! | empty value cells | `missingCaption` when `showMissing` (default on; no caption = empty) |
+//! | error value cells | `errorCaption` when `showError` (default off = the error) |
+//!
+//! A pivot table made here writes its captions in the interface language
+//! where they differ from Excel's English: the root captions (see
+//! `pivot_edit::Captions`) and an `n` on its `(blank)` items. It writes no
+//! `subtotalCaption` (what Excel puts for `?` isn't settled) and nothing for
+//! the labels with no attribute, which follow the interface language only
+//! while the session that made it lasts. Pivot tables from a file show the
+//! captions it holds and Excel's English for the rest, and get no new
+//! attributes.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -287,6 +315,9 @@ pub(crate) struct Field {
     pub sort: Option<String>,
     /// A caption replacing the field name.
     pub name: Option<String>,
+    /// `subtotalCaption`: the label of each of its subtotals, `?` standing
+    /// for the item.
+    pub subtotal_caption: Option<String>,
     /// The `<pivotField>` element as read (its other attributes are kept).
     pub xml: Option<String>,
 }
@@ -456,6 +487,10 @@ pub(crate) struct Def {
     pub row_header_caption: Option<String>,
     pub col_header_caption: Option<String>,
     pub data_caption: String,
+    /// `missingCaption` when `showMissing`: shown in empty value cells.
+    pub missing_caption: Option<String>,
+    /// `errorCaption` when `showError`: shown in place of error values.
+    pub error_caption: Option<String>,
     /// The definition as read.
     pub xml: Arc<String>,
     /// Item indexes changed since the file was read: drop `<formats>` and
@@ -651,6 +686,7 @@ fn parse_def(part: &str, sheet_id: u32, cache: usize, xml: &str) -> Result<Def, 
                 show_all: attr_bool(f, "showAll", true),
                 sort: f.attribute("sortType").map(str::to_owned),
                 name: f.attribute("name").map(str::to_owned),
+                subtotal_caption: f.attribute("subtotalCaption").map(str::to_owned),
                 xml: Some(xml[f.range()].to_owned()),
             });
         }
@@ -741,6 +777,12 @@ fn parse_def(part: &str, sheet_id: u32, cache: usize, xml: &str) -> Result<Def, 
         row_header_caption: root.attribute("rowHeaderCaption").map(str::to_owned),
         col_header_caption: root.attribute("colHeaderCaption").map(str::to_owned),
         data_caption: root.attribute("dataCaption").unwrap_or("Values").to_owned(),
+        missing_caption: attr_bool(root, "showMissing", true)
+            .then(|| root.attribute("missingCaption").map(str::to_owned))
+            .flatten(),
+        error_caption: attr_bool(root, "showError", false)
+            .then(|| root.attribute("errorCaption").map(str::to_owned))
+            .flatten(),
         xml: Arc::new(xml.to_owned()),
         reindexed: false,
         at: Layout::default(),
@@ -1575,6 +1617,17 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
         Val::Missing => text_input(local("(blank)")),
         v => v.input(),
     };
+    // A subtotal's label: the field's `subtotalCaption`, else `East Total`.
+    let sub_label = |lv: &Level, k: usize| {
+        let v = label(lv, k).label();
+        match lv {
+            Level::Field(f) => match &def.fields[*f].subtotal_caption {
+                Some(c) => c.replace('?', &v),
+                None => fill("{} Total", &v),
+            },
+            Level::Values => fill("{} Total", &v),
+        }
+    };
     let grand_label = |e: &Entry| match (e.data, &def.grand_caption) {
         (Some(d), _) if def.data_fields.len() > 1 => {
             fill("Total {}", &def.data_caption_of(cache, d))
@@ -1625,8 +1678,8 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
                 Kind::Grand => put(top + 1, c, text_input(&grand_label(e))),
                 Kind::Sub => {
                     let l = e.path.len() - 1;
-                    let v = label(&col_lv[l], e.path[l]).label();
-                    put(top + 1 + l as u32, c, text_input(&fill("{} Total", &v)));
+                    let s = sub_label(&col_lv[l], e.path[l]);
+                    put(top + 1 + l as u32, c, text_input(&s));
                 }
                 Kind::Data => {
                     let r = repeats(prev, e);
@@ -1658,8 +1711,8 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
             Kind::Grand => put(r, left, text_input(&grand_label(e))),
             Kind::Sub => {
                 let l = e.path.len() - 1;
-                let v = label(&row_lv[l], e.path[l]).label();
-                put(r, left + label_col[l], text_input(&fill("{} Total", &v)));
+                let s = sub_label(&row_lv[l], e.path[l]);
+                put(r, left + label_col[l], text_input(&s));
             }
             Kind::Data => {
                 let rep = repeats(prev, e);
@@ -1706,10 +1759,16 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
                     .filter(|&&r| ce.kind == Kind::Grand || matches(ce, &col_lv, r))
                     .filter_map(|&r| records[r].get(df.fld))
                     .collect();
-                let v = match df.func.apply(&vals) {
-                    None => continue,
-                    Some(Ok(x)) => format_number(x),
-                    Some(Err(e)) => e.to_owned(),
+                let v = match (
+                    df.func.apply(&vals),
+                    &def.missing_caption,
+                    &def.error_caption,
+                ) {
+                    (None, Some(c), _) => text_input(c),
+                    (None, None, _) => continue,
+                    (Some(Ok(x)), ..) => format_number(x),
+                    (Some(Err(_)), _, Some(c)) => text_input(c),
+                    (Some(Err(e)), _, None) => e.to_owned(),
                 };
                 put(data_top + i as u32, data_left + j as u32, v);
             }
@@ -1948,12 +2007,20 @@ pub(crate) fn rematch(def: &Def, old: &Cache, new: &Cache) -> Def {
             if !fresh.is_empty() {
                 reindexed = true;
             }
-            kept.extend(fresh.into_iter().map(|x| FieldItem {
-                x: Some(x),
-                hidden: false,
-                t: None,
-                expanded: true,
-                n: None,
+            // In a pivot table made here, `(blank)` in the interface
+            // language is kept as the item's caption: the file has no other
+            // place for it, and Excel shows the caption.
+            let blank = def.added.then(|| tr("(blank)")).filter(|s| *s != "(blank)");
+            kept.extend(fresh.into_iter().map(|x| {
+                FieldItem {
+                    x: Some(x),
+                    hidden: false,
+                    t: None,
+                    expanded: true,
+                    n: blank
+                        .filter(|_| new_items[x] == Val::Missing)
+                        .map(str::to_owned),
+                }
             }));
             if let Some(dir @ ("ascending" | "descending")) = f.sort.as_deref() {
                 {
@@ -3522,6 +3589,36 @@ mod tests {
                 ["Grand Total", "7"],
             ]
         );
+    }
+
+    #[test]
+    fn captions_from_the_file_label_subtotals_and_empty_cells() {
+        let (c, recs) = cache();
+        let l = lay_out(
+            &def(r#" subtotalTop="0" subtotalCaption="Total ?""#, ""),
+            &c,
+            &recs,
+            0,
+            0,
+        );
+        let t = table(&l);
+        assert_eq!(t[4], ["Total East", "3"]);
+        assert_eq!(t[7], ["Total West", "4"]);
+        // Product across: West has no Pears.
+        let xml = |root: &str| {
+            format!(
+                r#"<pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" name="P" cacheId="1" dataCaption="Values"{root}><location ref="A1:D5" firstHeaderRow="1" firstDataRow="2" firstDataCol="1"/><pivotFields count="3"><pivotField axis="axisRow" showAll="0"><items count="3"><item x="0"/><item x="1"/><item t="default"/></items></pivotField><pivotField axis="axisCol" showAll="0"><items count="3"><item x="0"/><item x="1"/><item t="default"/></items></pivotField><pivotField dataField="1" showAll="0"/></pivotFields><rowFields count="1"><field x="0"/></rowFields><colFields count="1"><field x="1"/></colFields><dataFields count="1"><dataField name="Sum of Units" fld="2"/></dataFields></pivotTableDefinition>"#
+            )
+        };
+        let west_pears = |root: &str| {
+            let d = parse_def("p.xml", 1, 0, &xml(root)).unwrap();
+            let t = table(&lay_out(&d, &c, &recs, 0, 0));
+            assert_eq!(t[3][0], "West");
+            t[3][2].clone()
+        };
+        assert_eq!(west_pears(""), "");
+        assert_eq!(west_pears(r#" missingCaption="-""#), "'-");
+        assert_eq!(west_pears(r#" missingCaption="-" showMissing="0""#), "");
     }
 
     #[test]

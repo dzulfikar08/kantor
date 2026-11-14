@@ -655,10 +655,6 @@ fn add_pivots(pkg: &mut Package, adds: &[NewPivot]) -> Result<Vec<AddedPivot>, S
                         }])
                         .into_bytes(),
                     );
-                    ct.push_str(&format!(
-                        "<Override PartName=\"/{}\" ContentType=\"{PIVOT_RECORDS_CT}\"/>",
-                        esc_attr(&rp)
-                    ));
                     records_part = Some(rp);
                 } else {
                     // No records: the cache must not point at any.
@@ -673,6 +669,14 @@ fn add_pivots(pkg: &mut Package, adds: &[NewPivot]) -> Result<Vec<AddedPivot>, S
                     "<Override PartName=\"/{}\" ContentType=\"{PIVOT_CACHE_CT}\"/>",
                     esc_attr(&cache_part)
                 ));
+                // After the cache, as the next save carries them: saving
+                // again gives the same package.
+                if let Some(rp) = &records_part {
+                    ct.push_str(&format!(
+                        "<Override PartName=\"/{}\" ContentType=\"{PIVOT_RECORDS_CT}\"/>",
+                        esc_attr(rp)
+                    ));
+                }
                 let rid = wb_ids.next();
                 wb_rels.push(Rel {
                     id: rid.clone(),
