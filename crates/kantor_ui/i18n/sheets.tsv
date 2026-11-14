@@ -731,3 +731,27 @@ Dark	Gelap
 Sort by {}	Urutkan menurut {}
 Count: {}	Hitungan: {}
 Average: {}   Count: {}   Sum: {}	Rata-rata: {}   Hitungan: {}   Jumlah: {}
+Spell check complete. You're good to go!	Pemeriksaan ejaan selesai. Semuanya sudah beres!
+Spelling: 1 change	Ejaan: 1 perubahan
+Spelling: {} changes	Ejaan: {} perubahan
+English (United States)	Inggris (Amerika Serikat)
+Indonesian	Indonesia
+(No Suggestions)	(Tidak Ada Saran)
+Checking…	Memeriksa…
+Not in Dictionary:	Tidak Ada di Kamus:
+Suggestions:	Saran:
+Ignore Once	Abaikan Sekali
+Change	Ubah
+Change All	Ubah Semua
+Dictionary language:	Bahasa kamus:
+Spelling: English (United States)	Ejaan: Inggris (Amerika Serikat)
+Spelling: Indonesian	Ejaan: Indonesia
+Spelling (F7)	Ejaan (F7)
+Chart sheet “{}” · view only: its data is on the worksheets	Lembar bagan “{}” · hanya tampilan: datanya ada di lembar kerja
+“{}” is a chart sheet: select a worksheet tab to use this command	“{}” adalah lembar bagan: pilih tab lembar kerja untuk memakai perintah ini
+1 data validation rule not imported (formula not supported)	1 aturan validasi data tidak diimpor (rumus tidak didukung)
+{} data validation rules not imported (formula not supported)	{} aturan validasi data tidak diimpor (rumus tidak didukung)
+1 conditional formatting rule not imported (data bars, colour scales, icon sets or formulas not supported)	1 aturan pemformatan bersyarat tidak diimpor (bilah data, skala warna, set ikon, atau rumus tidak didukung)
+{} conditional formatting rules not imported (data bars, colour scales, icon sets or formulas not supported)	{} aturan pemformatan bersyarat tidak diimpor (bilah data, skala warna, set ikon, atau rumus tidak didukung)
+formatting not imported	pemformatan tidak diimpor
+formatting not imported (not an Excel 97-2003 file)	pemformatan tidak diimpor (bukan berkas Excel 97-2003)

@@ -863,8 +863,9 @@ impl SheetsView {
                     .border_color(t.border)
                     .text_size(FONT_SMALL)
                     .text_color(t.fg_muted)
-                    .child(format!(
-                        "Chart sheet \u{201c}{name}\u{201d} \u{b7} view only: its data is on the worksheets"
+                    .child(kantor_ui::i18n::tf(
+                        "Chart sheet “{}” · view only: its data is on the worksheets",
+                        &[&name],
                     )),
             )
             .child(

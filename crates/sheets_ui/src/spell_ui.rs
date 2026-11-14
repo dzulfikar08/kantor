@@ -27,6 +27,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_spell::{Lang, SpellItem, Speller, words};
+use kantor_ui::i18n::{self, tf, tk};
 use kantor_ui::{metrics::*, tokens};
 
 use crate::{KEY_CONTEXT, SheetsView};
@@ -36,7 +37,7 @@ actions!(sheets, [Spelling, SpellCancel, SpellChange]);
 const DIALOG_CONTEXT: &str = "KantorSpellDialog";
 
 /// Excel's words when the check reaches the end.
-pub(crate) const COMPLETE: &str = "Spell check complete. You're good to go!";
+pub(crate) const COMPLETE: &str = tk("Spell check complete. You're good to go!");
 
 pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
@@ -92,6 +93,14 @@ fn ordered(mut cells: Vec<TextCell>, from: (u32, u32)) -> Vec<TextCell> {
     let start = cells.iter().position(|c| (c.0, c.1) >= from).unwrap_or(0);
     cells.rotate_left(start);
     cells
+}
+
+/// The dictionary's name in the interface language.
+fn lang_label(lang: Lang) -> &'static str {
+    match lang {
+        Lang::EnUs => i18n::t("English (United States)"),
+        Lang::IdId => i18n::t("Indonesian"),
+    }
 }
 
 /// The next misspelled word at or after `at` (cell index, byte offset).
@@ -241,12 +250,11 @@ impl SheetsView {
         let Some(f) = found else {
             d.step = Step::Done;
             if d.changes > 0 {
-                self.status = format!(
-                    "Spelling: {} change{}",
-                    d.changes,
-                    if d.changes == 1 { "" } else { "s" }
-                )
-                .into();
+                self.status = if d.changes == 1 {
+                    i18n::t("Spelling: 1 change").into()
+                } else {
+                    tf("Spelling: {} changes", &[&d.changes]).into()
+                };
             }
             cx.notify();
             return;
@@ -438,13 +446,13 @@ impl SheetsView {
         let lang_picker = Button::new("spell-lang")
             .small()
             .outline()
-            .label(current.label())
+            .label(lang_label(current))
             .dropdown_caret(true)
             .dropdown_menu(move |mut menu, _, _| {
                 for lang in Lang::ALL {
                     let v = lang_view.clone();
                     menu = menu.item(
-                        PopupMenuItem::new(lang.label())
+                        PopupMenuItem::new(lang_label(lang))
                             .checked(lang == current)
                             .on_click(move |_, w, cx| {
                                 let _ = v.update(cx, |this, cx| this.spell_set_lang(lang, w, cx));
@@ -463,13 +471,13 @@ impl SheetsView {
         let body = match &d.step {
             Step::Done => v_flex()
                 .gap(SPACE_5)
-                .child(div().child(COMPLETE))
+                .child(div().child(i18n::t(COMPLETE)))
                 .child(
                     h_flex().justify_end().child(
                         Button::new("spell-ok")
                             .small()
                             .primary()
-                            .label("OK")
+                            .label(i18n::t("OK"))
                             .on_click({
                                 let v = view.clone();
                                 move |_, w, cx| {
@@ -501,7 +509,7 @@ impl SheetsView {
                                 .px(SPACE_3)
                                 .py(SPACE_1)
                                 .text_color(t.fg_dim)
-                                .child("(No Suggestions)"),
+                                .child(i18n::t("(No Suggestions)")),
                         );
                     }
                     Some(f) => {
@@ -547,7 +555,7 @@ impl SheetsView {
                                 .px(SPACE_3)
                                 .py(SPACE_1)
                                 .text_color(t.fg_dim)
-                                .child("Checking…"),
+                                .child(i18n::t("Checking…")),
                         );
                     }
                 }
@@ -555,38 +563,44 @@ impl SheetsView {
                     .flex_1()
                     .min_w_0()
                     .gap(SPACE_2)
-                    .child(label("Not in Dictionary:"))
+                    .child(label(i18n::t("Not in Dictionary:")))
                     .child(Input::new(&d.word).small().disabled(!ready))
                     .child(div().h(SPACE_2))
-                    .child(label("Suggestions:"))
+                    .child(label(i18n::t("Suggestions:")))
                     .child(list);
                 let right = v_flex()
                     .flex_none()
                     .w(px(150.))
                     .gap(SPACE_2)
                     .pt(px(18.))
-                    .child(button("spell-ignore", "Ignore Once", ready, |v, w, cx| {
-                        v.spell_skip(None, w, cx)
-                    }))
+                    .child(button(
+                        "spell-ignore",
+                        i18n::t("Ignore Once"),
+                        ready,
+                        |v, w, cx| v.spell_skip(None, w, cx),
+                    ))
                     .child(button(
                         "spell-ignore-all",
-                        "Ignore All",
+                        i18n::t("Ignore All"),
                         ready,
                         |v, w, cx| v.spell_skip(Some(SpellItem::IgnoreAll), w, cx),
                     ))
                     .child(button(
                         "spell-add",
-                        "Add to Dictionary",
+                        i18n::t("Add to Dictionary"),
                         ready,
                         |v, w, cx| v.spell_skip(Some(SpellItem::AddToDictionary), w, cx),
                     ))
                     .child(div().h(px(26.)))
-                    .child(button("spell-change", "Change", ready, |v, w, cx| {
-                        v.spell_change(false, w, cx)
-                    }))
+                    .child(button(
+                        "spell-change",
+                        i18n::t("Change"),
+                        ready,
+                        |v, w, cx| v.spell_change(false, w, cx),
+                    ))
                     .child(button(
                         "spell-change-all",
-                        "Change All",
+                        i18n::t("Change All"),
                         ready,
                         |v, w, cx| v.spell_change(true, w, cx),
                     ));
@@ -597,14 +611,14 @@ impl SheetsView {
                     .child(
                         h_flex()
                             .gap(SPACE_3)
-                            .child(label("Dictionary language:"))
+                            .child(label(i18n::t("Dictionary language:")))
                             .child(lang_picker)
                             .child(div().flex_1())
                             .child(
                                 Button::new("spell-cancel")
                                     .small()
                                     .ghost()
-                                    .label("Cancel")
+                                    .label(i18n::t("Cancel"))
                                     .on_click({
                                         let v = view.clone();
                                         move |_, w, cx| {
@@ -618,8 +632,8 @@ impl SheetsView {
             }
         };
         let title = match d.lang {
-            Lang::EnUs => "Spelling: English (United States)",
-            Lang::IdId => "Spelling: Indonesian",
+            Lang::EnUs => i18n::t("Spelling: English (United States)"),
+            Lang::IdId => i18n::t("Spelling: Indonesian"),
         };
         let card = crate::dialog::card("spelling", title, px(470.), cx)
             .track_focus(&d.focus)

@@ -33,3 +33,16 @@ custom slide shows (dropped when slides are added, removed or reordered)	peragaa
 {} in a table	{} dalam tabel
 a missing slide part ({})	komponen slide yang hilang ({})
 speaker notes that can't be read ({})	catatan pembicara yang tidak dapat dibaca ({})
+footnotes were left out	catatan kaki tidak disertakan
+comments were left out	komentar tidak disertakan
+text boxes and drawings were left out	kotak teks dan objek gambar tidak disertakan
+pictures in formats other than PNG and JPEG were left out	gambar berformat selain PNG dan JPEG tidak disertakan
+comments not imported	komentar tidak diimpor
+text boxes not imported	kotak teks tidak diimpor
+floating pictures and shapes not imported	gambar dan bentuk mengambang tidak diimpor
+pictures in formats other than PNG and JPEG not imported	gambar berformat selain PNG dan JPEG tidak diimpor
+hidden text left out	teks tersembunyi tidak disertakan
+embedded objects not imported	objek tersemat tidak diimpor
+nested tables flattened	tabel bersarang diratakan
+1 EMF/WMF picture shown as a box	1 gambar EMF/WMF ditampilkan sebagai kotak
+{} EMF/WMF pictures shown as boxes	{} gambar EMF/WMF ditampilkan sebagai kotak

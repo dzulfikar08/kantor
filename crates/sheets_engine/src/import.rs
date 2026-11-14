@@ -288,9 +288,7 @@ pub(crate) fn read_calamine(
             Ok(x) => Some(x),
             Err(e) => {
                 log::warn!("{}: formatting not read: {e}", path.display());
-                imported
-                    .notes
-                    .push(ImportNote::FormattingNotImportedNotXls);
+                imported.notes.push(ImportNote::FormattingNotImportedNotXls);
                 None
             }
         },

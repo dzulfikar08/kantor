@@ -1400,7 +1400,9 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Spelling…"),
-        detail: tk("Sheets · check the spelling of the text cells, from the active cell or in the selection"),
+        detail: tk(
+            "Sheets · check the spelling of the text cells, from the active cell or in the selection",
+        ),
         keys: "F7",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.spelling_doc(w, cx)),
     },
@@ -2332,7 +2334,7 @@ mod tests {
                 "Slides",
                 "Omarchy, Ghostty",
                 "SF Pro, Inter, …",
-                ".xlsx, .docx, .pptx, .csv, .ods",
+                ".xlsx, .docx, .pptx, .csv, .ods, .xls, .ppt",
             ];
             if !same.contains(&c.detail) {
                 assert!(indonesian(c.detail).is_some(), "detail {:?}", c.detail);

@@ -61,6 +61,20 @@ pub const CONTENT_ITEMS: &[&str] = &[
     tk("fields"),
     tk("slide sections (dropped when slides are added, removed or reordered)"),
     tk("custom slide shows (dropped when slides are added, removed or reordered)"),
+    // Import notes: .rtf (docs_engine::rtf), .doc (docs_engine::msdoc),
+    // .ppt (slides_engine::ppt).
+    tk("footnotes were left out"),
+    tk("comments were left out"),
+    tk("text boxes and drawings were left out"),
+    tk("pictures in formats other than PNG and JPEG were left out"),
+    tk("comments not imported"),
+    tk("text boxes not imported"),
+    tk("floating pictures and shapes not imported"),
+    tk("pictures in formats other than PNG and JPEG not imported"),
+    tk("hidden text left out"),
+    tk("embedded objects not imported"),
+    tk("nested tables flattened"),
+    tk("1 EMF/WMF picture shown as a box"),
 ];
 
 /// Phrases with a detail in them (an XML element or part name, kept as is).
@@ -68,6 +82,8 @@ pub const CONTENT_TEMPLATES: &[&str] = &[
     tk("{} in a table"),
     tk("a missing slide part ({})"),
     tk("speaker notes that can't be read ({})"),
+    // A count (slides_engine::ppt).
+    tk("{} EMF/WMF pictures shown as boxes"),
 ];
 
 /// One phrase in the interface language (as it is when unknown, e.g. an
@@ -144,5 +160,15 @@ mod tests {
         );
         assert_eq!(id("tracked changes"), "perubahan terlacak");
         assert_eq!(id("<w:ruby>"), "<w:ruby>");
+        // A template starting with its detail.
+        assert_eq!(
+            id("3 EMF/WMF pictures shown as boxes"),
+            "3 gambar EMF/WMF ditampilkan sebagai kotak"
+        );
+        assert_eq!(
+            id("1 EMF/WMF picture shown as a box"),
+            "1 gambar EMF/WMF ditampilkan sebagai kotak"
+        );
+        assert_eq!(id("nested tables flattened"), "tabel bersarang diratakan");
     }
 }

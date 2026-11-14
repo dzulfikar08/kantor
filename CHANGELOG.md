@@ -24,7 +24,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   Uploads have no fixed time limit, so big files on slow links finish, but a link that died is
   noticed within about 30 seconds (no data moving, or the server not answering checks while a
   reply is awaited); saves that waited upload by themselves when the server answers again, with
-  backoff after a failure. Reopening a cloud file after a restart needs no download to confirm
+  backoff after a failure; giving up on an upload closes its connection, so it can't come back
+  to life and compete with the retry. Reopening a cloud file after a restart needs no download to confirm
   it's unchanged: Kantor records the ETag after its own unlock and compares the server's SHA1
   (`oc:checksums`, sent with `OC-Checksum` on upload) when only the ETag moved. Files of 8 MB or more go up in parts (Nextcloud chunked upload v2,
   TUS on OpenCloud), so an upload cut off half-way continues where it stopped, also after a
@@ -41,6 +42,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   captions, blank table headers) follows the interface language like Office; existing text in a
   file is never rewritten. Tool results for AI agents (MCP) stay in English. Terms:
   docs/i18n-glossary.md.
+- Sheets: PivotTables made in Kantor while the interface is Indonesian keep their Indonesian
+  labels after saving, reopening and refreshing, in Kantor, Excel and LibreOffice: the row and
+  column header captions, the Values caption and Total Keseluruhan are written as the pivot's
+  caption attributes, and blank items get the "(kosong)" caption. Labels the file format has no
+  place for (each item's subtotal, "(All)", "(Multiple Items)") follow Excel's English after a
+  reopen, as in Excel. PivotTables from other files are never given captions.
 - **Read-only documents** in Sheets, Docs and Slides: *Make Read-Only* / *Allow Editing* in the
   command palette. Typing, pasting, formatting, structural changes, dragging and edits from the AI
   assistant or MCP clients are refused; selection, copy, find, zoom, print and export work.

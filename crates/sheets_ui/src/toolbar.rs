@@ -517,7 +517,7 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .ghost()
             .xsmall()
             .icon(Lucide::SpellCheck)
-            .tooltip("Spelling (F7)")
+            .tooltip(i18n::t("Spelling (F7)"))
             .on_click(move |_, w, cx| {
                 let _ = spell_view.update(cx, |v, cx| v.spelling_doc(w, cx));
             }),

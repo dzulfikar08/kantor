@@ -195,18 +195,18 @@ fn opened_status(book: &Workbook) -> String {
         s.push_str(&match *note {
             N::FormulasKeptAsValues(n) => plural(
                 n,
-                "1 formula kept as values",
-                "{} formulas kept as values",
+                tk("1 formula kept as values"),
+                tk("{} formulas kept as values"),
             ),
             N::ValidationsSkipped(n) => plural(
                 n,
-                "1 data validation rule not imported (formula not supported)",
-                "{} data validation rules not imported (formula not supported)",
+                tk("1 data validation rule not imported (formula not supported)"),
+                tk("{} data validation rules not imported (formula not supported)"),
             ),
             N::ConditionalFormatsSkipped(n) => plural(
                 n,
-                "1 conditional formatting rule not imported (data bars, colour scales, icon sets or formulas not supported)",
-                "{} conditional formatting rules not imported (data bars, colour scales, icon sets or formulas not supported)",
+                tk("1 conditional formatting rule not imported (data bars, colour scales, icon sets or formulas not supported)"),
+                tk("{} conditional formatting rules not imported (data bars, colour scales, icon sets or formulas not supported)"),
             ),
             N::FormattingNotImported => kantor_ui::i18n::t("formatting not imported").to_owned(),
             N::FormattingNotImportedNotXls => {
@@ -1953,7 +1953,7 @@ impl SheetsView {
     /// (see [`point`]); any other edit is committed first.
     fn select_sheet(&mut self, sheet: u32, window: &mut Window, cx: &mut Context<Self>) {
         if self.chart_tab.take().is_some() && self.editing.is_none() {
-            self.status = "Ready".into();
+            self.status = i18n::t("Ready").into();
             self.show_sheet(sheet, cx);
             self.load_selected_into_formula(window, cx);
             self.focus_grid(window, cx);
@@ -2008,10 +2008,8 @@ impl SheetsView {
         let Some((_, name)) = self.shown_chart_sheet(cx) else {
             return false;
         };
-        self.status = format!(
-            "\u{201c}{name}\u{201d} is a chart sheet: select a worksheet tab to use this command"
-        )
-        .into();
+        let msg = tk("“{}” is a chart sheet: select a worksheet tab to use this command");
+        self.status = tf(msg, &[&name]).into();
         cx.notify();
         true
     }
