@@ -4034,6 +4034,7 @@ version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-channel",
+ "chrono",
  "docs_engine",
  "docs_pdf",
  "docs_ui",
@@ -4042,6 +4043,7 @@ dependencies = [
  "futures",
  "gpui-kit",
  "kantor_ai",
+ "kantor_cloud",
  "kantor_core",
  "kantor_pdf",
  "kantor_theme",
@@ -4074,6 +4076,24 @@ dependencies = [
  "ureq",
  "windows-native-keyring-store",
  "zbus-secret-service-keyring-store",
+]
+
+[[package]]
+name = "kantor_cloud"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "docs_engine",
+ "flate2",
+ "log",
+ "ring",
+ "roxmltree 0.21.2",
+ "serde",
+ "serde_json",
+ "sheets_engine",
+ "tempfile",
+ "ureq",
 ]
 
 [[package]]
@@ -4142,6 +4162,7 @@ dependencies = [
  "kantor_spell",
  "kantor_theme",
  "log",
+ "rust-i18n",
  "tempfile",
 ]
 

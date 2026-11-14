@@ -9,12 +9,17 @@ use std::time::Duration;
 
 use gpui_kit::*;
 use kantor_core::settings::Settings;
+use kantor_ui::i18n::{t, tf};
 use kantor_update::http::Http;
 use kantor_update::verify::SystemVerifier;
 use kantor_update::{Channel, Config, Error, Staged, State};
 
 use super::Workspace;
 use super::closing::Closing;
+
+const UPDATE_READY: &str = kantor_ui::i18n::tk("Kantor {} is ready — Restart to update");
+const UPDATE_READY_CHOOSE: &str =
+    kantor_ui::i18n::tk("Kantor {} is ready: choose Restart to Update");
 
 #[derive(Default)]
 pub(super) enum UpdateStatus {
@@ -60,12 +65,12 @@ impl Updates {
     /// The clickable status-bar text, if there is something to say.
     pub(super) fn status_text(&self) -> Option<String> {
         match &self.status {
-            UpdateStatus::Ready(s) => Some(format!(
-                "Kantor {} is ready — Restart to update",
-                staged_display(s)
+            UpdateStatus::Ready(s) => Some(kantor_ui::i18n::fill(
+                kantor_ui::i18n::t(UPDATE_READY),
+                &[&staged_display(s)],
             )),
             UpdateStatus::Available { version, .. } => {
-                Some(format!("Kantor {version} is available — Download"))
+                Some(tf("Kantor {} is available — Download", &[version]))
             }
             UpdateStatus::Downloading { version } if self.manual => {
                 let (done, total) = (
@@ -73,9 +78,9 @@ impl Updates {
                     self.progress.1.load(Ordering::Relaxed),
                 );
                 let pct = (done * 100).checked_div(total).unwrap_or(0);
-                Some(format!("Downloading Kantor {version}… {pct}%"))
+                Some(tf("Downloading Kantor {}… {}%", &[version, &pct]))
             }
-            UpdateStatus::Checking if self.manual => Some("Checking for updates…".into()),
+            UpdateStatus::Checking if self.manual => Some(t("Checking for updates…").into()),
             _ => None,
         }
     }
@@ -84,10 +89,10 @@ impl Updates {
     pub(super) fn about_line(&self) -> String {
         let me = kantor_update::current_build().display();
         let state = match &self.status {
-            UpdateStatus::Ready(s) => format!("{} ready, restart to update", staged_display(s)),
-            UpdateStatus::Available { version, .. } => format!("{version} available"),
-            UpdateStatus::Downloading { version } => format!("downloading {version}"),
-            UpdateStatus::Checking => "checking for updates".into(),
+            UpdateStatus::Ready(s) => tf("{} ready, restart to update", &[&staged_display(s)]),
+            UpdateStatus::Available { version, .. } => tf("{} available", &[version]),
+            UpdateStatus::Downloading { version } => tf("downloading {}", &[version]),
+            UpdateStatus::Checking => t("checking for updates").into(),
             UpdateStatus::Idle => self.setting.clone(),
         };
         format!("Kantor {me} · {state}")
@@ -95,9 +100,9 @@ impl Updates {
 
     fn remember(&mut self, settings: &kantor_core::settings::UpdateSettings) {
         self.setting = if settings.enabled {
-            format!("{} channel", channel(settings).as_str())
+            tf("{} channel", &[&channel(settings).as_str()])
         } else {
-            "updates off".into()
+            t("updates off").into()
         };
     }
 }
@@ -140,7 +145,7 @@ impl Workspace {
         if !settings.enabled {
             if manual {
                 self.notice(
-                    "Updates are off ([update] enabled = false in settings.toml)".into(),
+                    t("Updates are off ([update] enabled = false in settings.toml)").into(),
                     cx,
                 );
             }
@@ -155,9 +160,9 @@ impl Workspace {
                 return;
             }
             UpdateStatus::Ready(s) if manual => {
-                let text = format!(
-                    "Kantor {} is ready: choose Restart to Update",
-                    staged_display(s)
+                let text = kantor_ui::i18n::fill(
+                    kantor_ui::i18n::t(UPDATE_READY_CHOOSE),
+                    &[&staged_display(s)],
                 );
                 self.notice(text, cx);
                 return;
@@ -196,7 +201,7 @@ impl Workspace {
                         ws.updates.status = UpdateStatus::Idle;
                         if ws.updates.manual {
                             let me = kantor_update::current_build().display();
-                            ws.notice(format!("Kantor {me} is up to date"), cx);
+                            ws.notice(tf("Kantor {} is up to date", &[&me]), cx);
                         }
                         cx.notify();
                     });
@@ -207,7 +212,7 @@ impl Workspace {
                     let _ = this.update(cx, |ws, cx| {
                         ws.updates.status = UpdateStatus::Idle;
                         if ws.updates.manual {
-                            ws.notice(format!("Update check failed: {e}"), cx);
+                            ws.notice(tf("Update check failed: {}", &[&e]), cx);
                         }
                         cx.notify();
                     });
@@ -281,7 +286,7 @@ impl Workspace {
                     Err(e) => {
                         log::warn!("update: {version} not installed: {e}");
                         if ws.updates.manual || matches!(e, Error::NotWritable(_)) {
-                            ws.notice(format!("Couldn't install Kantor {version}: {e}"), cx);
+                            ws.notice(tf("Couldn't install Kantor {}: {}", &[&version, &e]), cx);
                         }
                         ws.updates.status = UpdateStatus::Available { version, url };
                     }
@@ -307,7 +312,7 @@ impl Workspace {
             self.request_close(Closing::Restart, window, cx);
         } else {
             self.notice(
-                "No update is ready. Use Check for Updates… first.".into(),
+                t("No update is ready. Use Check for Updates… first.").into(),
                 cx,
             );
         }
@@ -322,7 +327,7 @@ impl Workspace {
         match apply_staged(&staged, true) {
             Ok(()) => true,
             Err(e) => {
-                self.notice(format!("Update failed, nothing changed: {e}"), cx);
+                self.notice(tf("Update failed, nothing changed: {}", &[&e]), cx);
                 self.updates.status = UpdateStatus::Available {
                     version: staged_display(&staged),
                     url: staged.notes_url.clone(),

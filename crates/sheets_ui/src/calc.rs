@@ -19,6 +19,7 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{Sizable as _, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, tf};
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{CalcMode, Workbook};
 
@@ -62,9 +63,9 @@ pub(crate) enum Job {
 impl Job {
     fn title(&self, doc: &str) -> String {
         match self {
-            Job::Opening { name, .. } => format!("Opening {name}…"),
-            Job::Calculating => format!("Calculating {doc}…"),
-            Job::Editing(what) => format!("{what} and recalculating {doc}…"),
+            Job::Opening { name, .. } => tf("Opening {}…", &[name]),
+            Job::Calculating => tf("Calculating {}…", &[&doc]),
+            Job::Editing(what) => tf("{} and recalculating {}…", &[&i18n::t_dyn(what), &doc]),
         }
     }
 }
@@ -93,10 +94,8 @@ fn size_text(bytes: u64) -> String {
 
 fn manual_note(book: &Workbook) -> Option<String> {
     (book.calc_mode() == CalcMode::Manual).then(|| {
-        format!(
-            "Manual calculation ({} formulas) — press F9 to recalculate",
-            book.formula_count()
-        )
+        let msg = i18n::t("Manual calculation ({} formulas) — press F9 to recalculate");
+        i18n::fill(msg, &[&book.formula_count()])
     })
 }
 
@@ -142,7 +141,7 @@ impl SheetsView {
             let _ = this.update_in(cx, |this, window, cx| this.finish_open(result, window, cx));
         });
         self.set_editing(None, cx);
-        self.status = format!("Opening {name}…").into();
+        self.status = tf("Opening {}…", &[&name]).into();
         self.opening = Some(path.clone());
         let what = Job::Opening {
             name: name.clone(),
@@ -179,7 +178,7 @@ impl SheetsView {
                 self.opening = None;
                 let mut status = opened_status(&book);
                 if let Some(took) = took.filter(|t| *t >= Duration::from_secs(1)) {
-                    status.push_str(&format!(" in {:.1} s", took.as_secs_f32()));
+                    status.push_str(&tf(" in {} s", &[&format!("{:.1}", took.as_secs_f32())]));
                 }
                 if let Some(note) = manual_note(&book) {
                     status.push_str(". ");
@@ -236,8 +235,10 @@ impl SheetsView {
             |book| book.recalculate(),
             |this, (), took, _, _| {
                 this.status = match took {
-                    Some(t) => format!("Calculated in {:.1} s", t.as_secs_f32()).into(),
-                    None => "Calculated".into(),
+                    Some(t) => {
+                        tf("Calculated in {} s", &[&format!("{:.1}", t.as_secs_f32())]).into()
+                    }
+                    None => i18n::t("Calculated").into(),
                 };
             },
             window,
@@ -344,8 +345,8 @@ impl SheetsView {
             book.needs_recalc()
         });
         self.status = match mode {
-            CalcMode::Automatic => "Automatic calculation".into(),
-            CalcMode::Manual => "Manual calculation — press F9 to recalculate".into(),
+            CalcMode::Automatic => i18n::t("Automatic calculation").into(),
+            CalcMode::Manual => i18n::t("Manual calculation — press F9 to recalculate").into(),
         };
         cx.notify();
         if mode == CalcMode::Automatic && stale {
@@ -368,14 +369,16 @@ impl SheetsView {
     fn calc_mode_status(&self, cx: &App) -> Option<String> {
         match self.busy.as_ref().map(|b| &b.what) {
             Some(Job::Opening { .. }) => return None,
-            Some(_) => return Some("Calculating…".into()),
+            Some(_) => return Some(i18n::t("Calculating…").into()),
             None => {}
         }
         let book = &self.table.read(cx).delegate().book;
         match book.calc_mode() {
             CalcMode::Automatic => None,
-            CalcMode::Manual if book.needs_recalc() => Some("Manual · Calculate (F9)".into()),
-            CalcMode::Manual => Some("Manual calculation".into()),
+            CalcMode::Manual if book.needs_recalc() => {
+                Some(i18n::t("Manual · Calculate (F9)").into())
+            }
+            CalcMode::Manual => Some(i18n::t("Manual calculation").into()),
         }
     }
 
@@ -400,12 +403,12 @@ impl SheetsView {
         let detail = match &busy.what {
             Job::Opening { bytes, .. } => format!("{} · {secs} s", size_text(*bytes)),
             Job::Calculating | Job::Editing(_) => {
-                format!("{secs} s · editing resumes when it is done")
+                tf("{} s · editing resumes when it is done", &[&secs])
             }
         };
         let cancel = matches!(busy.what, Job::Opening { .. }).then(|| {
             Button::new("sheets-cancel-open")
-                .label("Cancel")
+                .label(i18n::t("Cancel"))
                 .ghost()
                 .small()
                 .on_click(cx.listener(|this, _, _, cx| this.cancel_open(cx)))

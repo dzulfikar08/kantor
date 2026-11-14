@@ -41,6 +41,88 @@ use crate::print::SheetPrint;
 use crate::xls::{DAYS_1904, XlsFormat};
 use crate::{LANGUAGE, LOCALE, MAX_COLS, MAX_ROWS, TIMEZONE, csv};
 
+/// Something an import could not bring over faithfully. `Display` gives
+/// the English (`2 formulas kept as values`); the app words it in its own
+/// language from the variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportNote {
+    /// Formulas that failed to evaluate here, replaced by the file's values.
+    FormulasKeptAsValues(usize),
+    /// `.xls` data validation rules whose formula Kantor can't read.
+    ValidationsSkipped(usize),
+    /// `.xls` conditional formats Kantor can't express (data bars, colour
+    /// scales, icon sets, formulas).
+    ConditionalFormatsSkipped(usize),
+    /// The `.xls` formatting pass failed.
+    FormattingNotImported,
+    /// The file isn't an Excel 97-2003 file, so its formatting wasn't read.
+    FormattingNotImportedNotXls,
+    /// `.ods` data validation rules with a condition Kantor can't express.
+    OdsValidationsSkipped(usize),
+    /// `.ods` conditional formats with a condition Kantor can't express.
+    OdsConditionalFormatsSkipped(usize),
+    /// `.xls` pictures in a format Kantor doesn't read (EMF, WMF, PICT, BMP, TIFF).
+    PicturesSkipped(usize),
+    /// `.xls` charts of a type Kantor doesn't draw.
+    ChartsSkipped(usize),
+    /// `.xls` 3-D charts, shown flat.
+    ChartsShownFlat(usize),
+    /// `.xls` shapes, text boxes and controls.
+    ShapesSkipped(usize),
+    /// The `.xls` pictures and charts couldn't be brought over at all.
+    DrawingsNotImported,
+}
+
+impl std::fmt::Display for ImportNote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = |n: &usize| if *n == 1 { "" } else { "s" };
+        match self {
+            Self::FormulasKeptAsValues(1) => f.write_str("1 formula kept as values"),
+            Self::FormulasKeptAsValues(n) => write!(f, "{n} formulas kept as values"),
+            Self::ValidationsSkipped(n) => write!(
+                f,
+                "{n} data validation rule{} not imported (formula not supported)",
+                s(n)
+            ),
+            Self::ConditionalFormatsSkipped(n) => write!(
+                f,
+                "{n} conditional formatting rule{} not imported (data bars, colour scales, icon sets or formulas not supported)",
+                s(n)
+            ),
+            Self::FormattingNotImported => f.write_str("formatting not imported"),
+            Self::FormattingNotImportedNotXls => {
+                f.write_str("formatting not imported (not an Excel 97-2003 file)")
+            }
+            Self::OdsValidationsSkipped(n) => write!(
+                f,
+                "{n} data validation rule{} not imported (condition not supported)",
+                s(n)
+            ),
+            Self::OdsConditionalFormatsSkipped(n) => write!(
+                f,
+                "{n} conditional formatting rule{} not imported (condition not supported)",
+                s(n)
+            ),
+            Self::PicturesSkipped(n) => write!(
+                f,
+                "{n} picture{} not imported (EMF, WMF, PICT, BMP or TIFF format)",
+                s(n)
+            ),
+            Self::ChartsSkipped(n) => write!(
+                f,
+                "{n} chart{} not imported (radar, surface, bubble, bar of pie or combination charts)",
+                s(n)
+            ),
+            Self::ChartsShownFlat(n) => write!(f, "{n} 3-D chart{} shown flat", s(n)),
+            Self::ShapesSkipped(1) => f.write_str("1 shape, text box or control not imported"),
+            Self::ShapesSkipped(n) => {
+                write!(f, "{n} shapes, text boxes or controls not imported")
+            }
+            Self::DrawingsNotImported => f.write_str("charts and pictures not imported"),
+        }
+    }
+}
+
 /// The kind of file a [`Workbook`](crate::Workbook) was opened from, which
 /// decides what Save does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -208,7 +290,7 @@ pub(crate) fn write_csv(model: &Model<'_>, sheet: u32, path: &Path, delimiter: u
 #[derive(Default)]
 pub(crate) struct Imported {
     /// What could not be imported faithfully.
-    pub notes: Vec<String>,
+    pub notes: Vec<ImportNote>,
     /// Each sheet's print settings (`.xls`), by sheet index.
     pub prints: Vec<SheetPrint>,
     /// `Print_Area` and `Print_Titles` formulas, by sheet index.
@@ -248,9 +330,7 @@ pub(crate) fn read_calamine(
             Ok(x) => Some(x),
             Err(e) => {
                 log::warn!("{}: formatting not read: {e}", path.display());
-                imported
-                    .notes
-                    .push("formatting not imported (not an Excel 97-2003 file)".into());
+                imported.notes.push(ImportNote::FormattingNotImportedNotXls);
                 None
             }
         },
@@ -381,7 +461,7 @@ pub(crate) fn read_calamine(
             }
             Err(e) => {
                 log::warn!("{}: formatting not read: {e}", path.display());
-                imported.notes.push("formatting not imported".into());
+                imported.notes.push(ImportNote::FormattingNotImported);
             }
         }
     }
@@ -389,10 +469,9 @@ pub(crate) fn read_calamine(
         model.evaluate();
     }
     if kept_values > 0 {
-        imported.notes.push(format!(
-            "{kept_values} formula{} kept as values",
-            if kept_values == 1 { "" } else { "s" }
-        ));
+        imported
+            .notes
+            .push(ImportNote::FormulasKeptAsValues(kept_values));
     }
     Ok((model, imported))
 }

@@ -1,0 +1,48 @@
+# English<TAB>Indonesian: text Kantor writes into new content of files (pivot captions, chart titles), and engine notes shown in the UI.
+Row Labels	Label Baris
+Column Labels	Label Kolom
+Grand Total	Total Keseluruhan
+Total {}	Total {}
+{} Total	Total {}
+(blank)	(kosong)
+(Multiple Items)	(Beberapa Item)
+Column{}	Kolom{}
+Click to add title	Klik untuk menambahkan judul
+Click to add subtitle	Klik untuk menambahkan subjudul
+Click to add text	Klik untuk menambahkan teks
+Chart Title	Judul Bagan
+Series{}	Seri{}
+1 formula kept as values	1 rumus diubah menjadi nilai
+{} formulas kept as values	{} rumus diubah menjadi nilai
+tracked changes	perubahan terlacak
+comments	komentar
+fields that depend on document content (contents, cross-references…)	bidang yang bergantung pada isi dokumen (daftar isi, referensi silang…)
+content controls around table rows or cells	kontrol konten di sekitar baris atau sel tabel
+charts	bagan
+floating images and shapes	gambar dan bentuk mengambang
+drawings	objek gambar
+shapes and embedded objects	bentuk dan objek tersemat
+content controls	kontrol konten
+equations	persamaan
+nested tables	tabel bersarang
+embedded documents	dokumen tersemat
+horizontally merged cells	sel yang digabung secara horizontal
+fields	bidang
+slide sections (dropped when slides are added, removed or reordered)	bagian slide (dibuang saat slide ditambahkan, dihapus, atau diurutkan ulang)
+custom slide shows (dropped when slides are added, removed or reordered)	peragaan slide kustom (dibuang saat slide ditambahkan, dihapus, atau diurutkan ulang)
+{} in a table	{} dalam tabel
+a missing slide part ({})	komponen slide yang hilang ({})
+speaker notes that can't be read ({})	catatan pembicara yang tidak dapat dibaca ({})
+footnotes were left out	catatan kaki tidak disertakan
+comments were left out	komentar tidak disertakan
+text boxes and drawings were left out	kotak teks dan objek gambar tidak disertakan
+pictures in formats other than PNG and JPEG were left out	gambar berformat selain PNG dan JPEG tidak disertakan
+comments not imported	komentar tidak diimpor
+text boxes not imported	kotak teks tidak diimpor
+floating pictures and shapes not imported	gambar dan bentuk mengambang tidak diimpor
+pictures in formats other than PNG and JPEG not imported	gambar berformat selain PNG dan JPEG tidak diimpor
+hidden text left out	teks tersembunyi tidak disertakan
+embedded objects not imported	objek tersemat tidak diimpor
+nested tables flattened	tabel bersarang diratakan
+1 EMF/WMF picture shown as a box	1 gambar EMF/WMF ditampilkan sebagai kotak
+{} EMF/WMF pictures shown as boxes	{} gambar EMF/WMF ditampilkan sebagai kotak

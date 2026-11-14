@@ -591,20 +591,11 @@ impl XlsFormat {
             }
         }
         let mut notes = Vec::new();
-        let plural = |n: usize| if n == 1 { "" } else { "s" };
         if skipped.validations > 0 {
-            notes.push(format!(
-                "{} data validation rule{} not imported (formula not supported)",
-                skipped.validations,
-                plural(skipped.validations)
-            ));
+            notes.push(crate::ImportNote::ValidationsSkipped(skipped.validations));
         }
         if skipped.cf > 0 {
-            notes.push(format!(
-                "{} conditional formatting rule{} not imported (data bars, colour scales, icon sets or formulas not supported)",
-                skipped.cf,
-                plural(skipped.cf)
-            ));
+            notes.push(crate::ImportNote::ConditionalFormatsSkipped(skipped.cf));
         }
         notes.extend(art_skipped.notes());
         Applied {
@@ -626,7 +617,7 @@ pub(crate) struct Applied {
     /// Data validation, by model sheet.
     pub validations: Vec<(u32, Vec<Validation>)>,
     /// What was left out, for the import notes.
-    pub notes: Vec<String>,
+    pub notes: Vec<crate::ImportNote>,
     /// Pictures and charts, to show and save (`xls_drawing`).
     pub drawings: crate::xls_drawing::XlsDrawings,
 }

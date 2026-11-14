@@ -1,9 +1,10 @@
 //! Home: the start screen shown when no tab is active.
 
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::components::{kbd, section_label};
+use kantor_ui::i18n;
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 
@@ -55,7 +56,11 @@ impl Workspace {
                 div()
                     .text_size(FONT_CAPTION)
                     .text_color(if ready { accent } else { t.fg_dim })
-                    .child(if ready { "New  →" } else { "Coming soon" }),
+                    .child(if ready {
+                        i18n::t("New  →")
+                    } else {
+                        i18n::t("Coming soon")
+                    }),
             )
             .on_click(move |_, window, cx| {
                 let _ = entity.update(cx, |ws, cx| ws.launch(app, None, window, cx));
@@ -64,25 +69,35 @@ impl Workspace {
 
     pub(super) fn render_home(&mut self, cx: &mut Context<Self>) -> Div {
         let t = tokens(cx);
-        let docs = self.render_card("home-docs", AppKind::Docs, "Write .docx documents", cx);
+        let docs = self.render_card(
+            "home-docs",
+            AppKind::Docs,
+            i18n::t("Write .docx documents"),
+            cx,
+        );
         let sheets = self.render_card(
             "home-sheets",
             AppKind::Sheets,
-            "Edit .xlsx spreadsheets",
+            i18n::t("Edit .xlsx spreadsheets"),
             cx,
         );
-        let slides = self.render_card("home-slides", AppKind::Slides, "Present .pptx decks", cx);
+        let slides = self.render_card(
+            "home-slides",
+            AppKind::Slides,
+            i18n::t("Present .pptx decks"),
+            cx,
+        );
         let hints: Vec<Div> = [
-            ("Ctrl N", "New spreadsheet"),
-            ("Ctrl Shift N", "New document"),
-            ("Ctrl Alt N", "New presentation"),
-            ("Ctrl O", "Open file"),
-            ("Ctrl K", "All commands"),
+            ("Ctrl N", i18n::t("New spreadsheet")),
+            ("Ctrl Shift N", i18n::t("New document")),
+            ("Ctrl Alt N", i18n::t("New presentation")),
+            ("Ctrl O", i18n::t("Open file")),
+            ("Ctrl K", i18n::t("All commands")),
         ]
         .into_iter()
         .map(|(keys, label)| h_flex().gap(SPACE_3).child(kbd(keys, cx)).child(label))
         .collect();
-        let create = section_label("Create", cx);
+        let create = section_label(i18n::t("Create"), cx);
 
         v_flex()
             .size_full()
@@ -106,7 +121,7 @@ impl Workspace {
                         div()
                             .text_size(FONT_BODY)
                             .text_color(t.fg_muted)
-                            .child("Docs, Sheets and Slides — native, fast, yours."),
+                            .child(i18n::t("Docs, Sheets and Slides — native, fast, yours.")),
                     ),
             )
             .child(
@@ -125,6 +140,32 @@ impl Workspace {
                     .text_color(t.fg_muted)
                     .children(hints),
             )
+            .child({
+                let entity = cx.entity().downgrade();
+                h_flex()
+                    .id("home-cloud")
+                    .gap(SPACE_3)
+                    .px(SPACE_5)
+                    .py(SPACE_3)
+                    .rounded(RADIUS_MD)
+                    .border_1()
+                    .border_color(t.border)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover).border_color(t.border_strong))
+                    .text_size(FONT_SMALL)
+                    .text_color(t.fg)
+                    .child(
+                        gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Cloud)
+                            .with_size(ICON_MD)
+                            .text_color(t.accent),
+                    )
+                    .child(kantor_ui::i18n::tr("Open from Cloud…", "Buka dari Cloud…"))
+                    .on_click(move |_, window, cx| {
+                        let _ = entity.update(cx, |ws, cx| {
+                            ws.open_from_cloud(&crate::actions::OpenFromCloud, window, cx)
+                        });
+                    })
+            })
             .child(
                 div()
                     .h(px(18.))

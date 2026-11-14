@@ -5,6 +5,7 @@ use std::ops::Range;
 
 use docs_engine::LINE_BREAK;
 use gpui_kit::*;
+use kantor_ui::i18n::t;
 
 use crate::DocsView;
 
@@ -31,11 +32,11 @@ impl DocsView {
                 .map(|p| p.text.replace(LINE_BREAK, "\n"))
                 .eq(expected.iter().cloned());
         if !unchanged {
-            return Err("The text changed since it was sent; run the rewrite again.".into());
+            return Err(t("The text changed since it was sent; run the rewrite again.").into());
         }
         let sel = self.doc.replace_paragraph_texts(range, texts)?;
         self.edited(sel, window, cx);
-        self.status = "Rewritten (Undo restores the original)".into();
+        self.status = t("Rewritten (Undo restores the original)").into();
         cx.notify();
         Ok(())
     }

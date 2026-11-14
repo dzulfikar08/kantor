@@ -19,6 +19,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::components::{IconButtonExt as _, icon_button};
+use kantor_ui::i18n::{self, tk};
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{BorderPreset, CellStyle, HAlign, NumberFormat, Rgb};
 
@@ -36,28 +37,28 @@ struct Tool {
 const FONT_TOOLS: [Tool; 4] = [
     Tool {
         id: "fmt-bold",
-        label: "Bold",
+        label: tk("Bold"),
         keys: "Ctrl+B",
         icon: Lucide::Bold,
         format: Format::Bold,
     },
     Tool {
         id: "fmt-italic",
-        label: "Italic",
+        label: tk("Italic"),
         keys: "Ctrl+I",
         icon: Lucide::Italic,
         format: Format::Italic,
     },
     Tool {
         id: "fmt-underline",
-        label: "Underline",
+        label: tk("Underline"),
         keys: "Ctrl+U",
         icon: Lucide::Underline,
         format: Format::Underline,
     },
     Tool {
         id: "fmt-strike",
-        label: "Strikethrough",
+        label: tk("Strikethrough"),
         keys: "",
         icon: Lucide::Strikethrough,
         format: Format::Strikethrough,
@@ -67,21 +68,21 @@ const FONT_TOOLS: [Tool; 4] = [
 const ALIGN_TOOLS: [Tool; 3] = [
     Tool {
         id: "fmt-align-left",
-        label: "Align Left",
+        label: tk("Align Left"),
         keys: "",
         icon: Lucide::TextAlignStart,
         format: Format::Align(HAlign::Left),
     },
     Tool {
         id: "fmt-align-center",
-        label: "Align Center",
+        label: tk("Align Center"),
         keys: "",
         icon: Lucide::TextAlignCenter,
         format: Format::Align(HAlign::Center),
     },
     Tool {
         id: "fmt-align-right",
-        label: "Align Right",
+        label: tk("Align Right"),
         keys: "",
         icon: Lucide::TextAlignEnd,
         format: Format::Align(HAlign::Right),
@@ -91,14 +92,14 @@ const ALIGN_TOOLS: [Tool; 3] = [
 const SIZE_TOOLS: [Tool; 2] = [
     Tool {
         id: "fmt-size-up",
-        label: "Larger Font",
+        label: tk("Larger Font"),
         keys: "",
         icon: Lucide::AArrowUp,
         format: Format::FontSize(1),
     },
     Tool {
         id: "fmt-size-down",
-        label: "Smaller Font",
+        label: tk("Smaller Font"),
         keys: "",
         icon: Lucide::AArrowDown,
         format: Format::FontSize(-1),
@@ -108,14 +109,14 @@ const SIZE_TOOLS: [Tool; 2] = [
 const CELL_TOOLS: [Tool; 2] = [
     Tool {
         id: "fmt-wrap",
-        label: "Wrap Text",
+        label: tk("Wrap Text"),
         keys: "",
         icon: Lucide::TextWrap,
         format: Format::Wrap,
     },
     Tool {
         id: "fmt-merge",
-        label: "Merge & Center",
+        label: tk("Merge & Center"),
         keys: "",
         icon: Lucide::TableCellsMerge,
         format: Format::Merge,
@@ -124,9 +125,9 @@ const CELL_TOOLS: [Tool; 2] = [
 
 /// Border presets: label and icon.
 const BORDERS: [(BorderPreset, &str, Lucide); 3] = [
-    (BorderPreset::All, "All Borders", Lucide::Grid3x3),
-    (BorderPreset::Outline, "Outside Borders", Lucide::Square),
-    (BorderPreset::None, "No Borders", Lucide::SquareDashed),
+    (BorderPreset::All, tk("All Borders"), Lucide::Grid3x3),
+    (BorderPreset::Outline, tk("Outside Borders"), Lucide::Square),
+    (BorderPreset::None, tk("No Borders"), Lucide::SquareDashed),
 ];
 
 /// The swatches of the colour popovers, in rows: light tints for fills,
@@ -177,7 +178,7 @@ fn tool_button(tool: &Tool, active: &Active, cx: &mut Context<SheetsView>) -> Bu
     let view = cx.entity().downgrade();
     let format = tool.format;
     icon_button(tool.id, tool.icon, is_on(format, active), cx)
-        .tip(tool.label, Some(tool.keys))
+        .tip(i18n::t(tool.label), Some(tool.keys))
         .on_click(move |_, window, cx| apply(&view, format, window, cx))
 }
 
@@ -199,7 +200,7 @@ fn number_items(
     for f in NumberFormat::ALL {
         let view = view.clone();
         menu = menu.item(
-            PopupMenuItem::new(f.label())
+            PopupMenuItem::new(i18n::t_dyn(f.label()).to_owned())
                 .checked(current == f)
                 .on_click(move |_, window, cx| apply(&view, Format::Number(f), window, cx)),
         );
@@ -208,7 +209,7 @@ fn number_items(
 }
 
 fn number_label(current: NumberFormat) -> SharedString {
-    current.label().into()
+    i18n::t_dyn(current.label()).to_owned().into()
 }
 
 /// Menu entries for the border presets.
@@ -216,7 +217,7 @@ fn border_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu
     for (preset, label, icon) in BORDERS {
         let view = view.clone();
         menu = menu.item(
-            PopupMenuItem::new(label)
+            PopupMenuItem::new(i18n::t(label))
                 .icon(icon)
                 .on_click(move |_, window, cx| apply(&view, Format::Borders(preset), window, cx)),
         );
@@ -245,12 +246,17 @@ impl Paint {
 fn color_button(paint: Paint, current: Option<Hsla>, cx: &mut Context<SheetsView>) -> Popover {
     let t = tokens(cx);
     let (id, icon, label, none) = match paint {
-        Paint::Fill => ("fmt-fill", Lucide::PaintBucket, "Fill Colour", "No Fill"),
+        Paint::Fill => (
+            "fmt-fill",
+            Lucide::PaintBucket,
+            i18n::t("Fill Colour"),
+            i18n::t("No Fill"),
+        ),
         Paint::Text => (
             "fmt-text-color",
             Lucide::Baseline,
-            "Text Colour",
-            "Automatic",
+            i18n::t("Text Colour"),
+            i18n::t("Automatic"),
         ),
     };
     let view = cx.entity().downgrade();
@@ -358,7 +364,7 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
                 .ghost()
                 .xsmall()
                 .icon(IconName::Ellipsis)
-                .tooltip("More formatting")
+                .tooltip(i18n::t("More formatting"))
                 .dropdown_menu(move |mut menu, _, _| {
                     let active = Active {
                         style: &style,
@@ -373,14 +379,18 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
                         let view = view.clone();
                         let format = tool.format;
                         menu = menu.item(
-                            PopupMenuItem::new(tool.label)
+                            PopupMenuItem::new(i18n::t(tool.label))
                                 .icon(tool.icon)
                                 .checked(is_on(format, &active))
                                 .on_click(move |_, window, cx| apply(&view, format, window, cx)),
                         );
                     }
                     let menu = border_items(menu.separator(), &view);
-                    number_items(menu.separator().label("Number format"), current, &view)
+                    number_items(
+                        menu.separator().label(i18n::t("Number format")),
+                        current,
+                        &view,
+                    )
                 }),
         );
     } else {
@@ -398,7 +408,7 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
                     .xsmall()
                     .icon(Lucide::Grid3x3)
                     .dropdown_caret(true)
-                    .tooltip("Borders")
+                    .tooltip(i18n::t("Borders"))
                     .dropdown_menu(move |menu, _, _| border_items(menu, &border_view)),
             )
             .children(CELL_TOOLS.iter().map(|tool| tool_button(tool, active, cx)))
@@ -409,7 +419,7 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
                     .xsmall()
                     .label(number_label(current))
                     .dropdown_caret(true)
-                    .tooltip("Number format")
+                    .tooltip(i18n::t("Number format"))
                     .dropdown_menu(move |menu, _, _| number_items(menu, current, &view)),
             );
     }
@@ -421,7 +431,7 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .xsmall()
             .icon(Lucide::Snowflake)
             .dropdown_caret(true)
-            .tooltip("Freeze panes, hide rows and columns")
+            .tooltip(i18n::t("Freeze panes, hide rows and columns"))
             .dropdown_menu(move |menu, _, _| view_items(menu, &view_view)),
     );
     // Conditional formatting.
@@ -432,7 +442,7 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .xsmall()
             .icon(Lucide::Highlighter)
             .dropdown_caret(true)
-            .tooltip("Conditional Formatting")
+            .tooltip(i18n::t("Conditional Formatting"))
             .dropdown_menu(move |menu, window, cx| {
                 crate::cf_ui::cf_menu(menu, &cf_view, window, cx)
             }),
@@ -445,23 +455,25 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .xsmall()
             .icon(Lucide::ListChecks)
             .dropdown_caret(true)
-            .tooltip("Data Validation")
+            .tooltip(i18n::t("Data Validation"))
             .dropdown_menu(move |menu, _, _| {
                 let (a, b, c) = (dv_view.clone(), dv_view.clone(), dv_view.clone());
-                menu.item(
-                    PopupMenuItem::new("Data Validation…").on_click(move |_, w, cx| {
+                menu.item(PopupMenuItem::new(i18n::t("Data Validation…")).on_click(
+                    move |_, w, cx| {
                         let _ = a.update(cx, |v, cx| v.data_validation_doc(w, cx));
-                    }),
-                )
-                .item(
-                    PopupMenuItem::new("Circle Invalid Data").on_click(move |_, w, cx| {
+                    },
+                ))
+                .item(PopupMenuItem::new(i18n::t("Circle Invalid Data")).on_click(
+                    move |_, w, cx| {
                         let _ = b.update(cx, |v, cx| v.circle_invalid_doc(true, w, cx));
-                    }),
-                )
+                    },
+                ))
                 .item(
-                    PopupMenuItem::new("Clear Validation Circles").on_click(move |_, w, cx| {
-                        let _ = c.update(cx, |v, cx| v.circle_invalid_doc(false, w, cx));
-                    }),
+                    PopupMenuItem::new(i18n::t("Clear Validation Circles")).on_click(
+                        move |_, w, cx| {
+                            let _ = c.update(cx, |v, cx| v.circle_invalid_doc(false, w, cx));
+                        },
+                    ),
                 )
             }),
     );
@@ -473,7 +485,7 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .xsmall()
             .icon(Lucide::Table)
             .dropdown_caret(true)
-            .tooltip("Table")
+            .tooltip(i18n::t("Table"))
             .dropdown_menu(move |menu, _, _| table_items(menu, &table_view)),
     );
     // Charts.
@@ -484,7 +496,7 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .xsmall()
             .icon(Lucide::ChartColumn)
             .dropdown_caret(true)
-            .tooltip("Insert Chart")
+            .tooltip(i18n::t("Insert Chart"))
             .dropdown_menu(move |menu, _, _| crate::chart_ui::chart_menu(menu, &chart_view)),
     );
     // PivotTables.
@@ -495,7 +507,7 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .xsmall()
             .icon(Lucide::TableProperties)
             .dropdown_caret(true)
-            .tooltip("PivotTable")
+            .tooltip(i18n::t("PivotTable"))
             .dropdown_menu(move |menu, _, _| pivot_items(menu, &pivot_view)),
     );
     // Review > Spelling.
@@ -505,7 +517,7 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .ghost()
             .xsmall()
             .icon(Lucide::SpellCheck)
-            .tooltip("Spelling (F7)")
+            .tooltip(i18n::t("Spelling (F7)"))
             .on_click(move |_, w, cx| {
                 let _ = spell_view.update(cx, |v, cx| v.spelling_doc(w, cx));
             }),
@@ -518,7 +530,7 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .xsmall()
             .icon(Lucide::MessageSquare)
             .dropdown_caret(true)
-            .tooltip("Notes")
+            .tooltip(i18n::t("Notes"))
             .dropdown_menu(move |menu, _, cx| {
                 let (has_note, show_all) = notes_view
                     .upgrade()
@@ -535,12 +547,12 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .xsmall()
             .icon(Lucide::Printer)
             .dropdown_caret(true)
-            .tooltip("Print and export")
+            .tooltip(i18n::t("Print and export"))
             .dropdown_menu(move |menu, _, _| {
                 let export = print_view.clone();
                 let print = print_view.clone();
                 let menu = menu.item(
-                    PopupMenuItem::new("Export as PDF…")
+                    PopupMenuItem::new(i18n::t("Export as PDF…"))
                         .icon(Lucide::FileDown)
                         .on_click(move |_, window, cx| {
                             let _ = export.update(cx, |v, cx| v.export_pdf_doc(window, cx));
@@ -550,35 +562,37 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
                 let area = print_view.clone();
                 let clear = print_view.clone();
                 menu.separator()
-                    .item(
-                        PopupMenuItem::new("Page Setup…").on_click(move |_, window, cx| {
-                            let _ = setup.update(cx, |v, cx| v.page_setup_doc(window, cx));
-                        }),
-                    )
-                    .item(
-                        PopupMenuItem::new("Set Print Area").on_click(move |_, window, cx| {
-                            let _ =
-                                area.update(cx, |v, cx| v.set_print_area_doc(false, window, cx));
-                        }),
-                    )
-                    .item(
-                        PopupMenuItem::new("Clear Print Area").on_click(move |_, window, cx| {
-                            let _ =
-                                clear.update(cx, |v, cx| v.set_print_area_doc(true, window, cx));
-                        }),
-                    )
-                    .separator()
-                    .item(PopupMenuItem::new("Print…").icon(Lucide::Printer).on_click(
+                    .item(PopupMenuItem::new(i18n::t("Page Setup…")).on_click(
                         move |_, window, cx| {
-                            let _ = print.update(cx, |v, cx| v.print_doc(window, cx));
+                            let _ = setup.update(cx, |v, cx| v.page_setup_doc(window, cx));
                         },
                     ))
+                    .item(PopupMenuItem::new(i18n::t("Set Print Area")).on_click(
+                        move |_, window, cx| {
+                            let _ =
+                                area.update(cx, |v, cx| v.set_print_area_doc(false, window, cx));
+                        },
+                    ))
+                    .item(PopupMenuItem::new(i18n::t("Clear Print Area")).on_click(
+                        move |_, window, cx| {
+                            let _ =
+                                clear.update(cx, |v, cx| v.set_print_area_doc(true, window, cx));
+                        },
+                    ))
+                    .separator()
+                    .item(
+                        PopupMenuItem::new(i18n::t("Print…"))
+                            .icon(Lucide::Printer)
+                            .on_click(move |_, window, cx| {
+                                let _ = print.update(cx, |v, cx| v.print_doc(window, cx));
+                            }),
+                    )
             }),
     );
     if kantor_ui::ai::ai_enabled(cx) {
         row = row.child(div().flex_1()).child(kantor_ui::ai::ai_button(
             "ai-formula",
-            "Ask AI for a formula",
+            i18n::t("Ask AI for a formula"),
             kantor_ui::ai::AskForFormula,
             cx,
         ));
@@ -590,14 +604,14 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
 fn view_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
     use crate::GridCommand as G;
     let items: [(&str, &str, G); 8] = [
-        ("Freeze Panes", "", G::FreezePanes),
-        ("Freeze Top Row", "", G::FreezeTopRow),
-        ("Freeze First Column", "", G::FreezeFirstColumn),
-        ("Unfreeze Panes", "", G::Unfreeze),
-        ("Hide Rows", "Ctrl+9", G::HideRows),
-        ("Unhide Rows", "Ctrl+Shift+9", G::UnhideRows),
-        ("Hide Columns", "Ctrl+0", G::HideColumns),
-        ("Unhide Columns", "Ctrl+Shift+0", G::UnhideColumns),
+        (tk("Freeze Panes"), "", G::FreezePanes),
+        (tk("Freeze Top Row"), "", G::FreezeTopRow),
+        (tk("Freeze First Column"), "", G::FreezeFirstColumn),
+        (tk("Unfreeze Panes"), "", G::Unfreeze),
+        (tk("Hide Rows"), "Ctrl+9", G::HideRows),
+        (tk("Unhide Rows"), "Ctrl+Shift+9", G::UnhideRows),
+        (tk("Hide Columns"), "Ctrl+0", G::HideColumns),
+        (tk("Unhide Columns"), "Ctrl+Shift+0", G::UnhideColumns),
     ];
     for (i, (label, keys, command)) in items.into_iter().enumerate() {
         if i == 4 {
@@ -605,9 +619,9 @@ fn view_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
         }
         let view = view.clone();
         let text = if keys.is_empty() {
-            label.to_owned()
+            i18n::t(label).to_owned()
         } else {
-            format!("{label}  ({keys})")
+            format!("{}  ({keys})", i18n::t(label))
         };
         menu = menu.item(PopupMenuItem::new(text).on_click(move |_, window, cx| {
             let _ = view.update(cx, |v, cx| v.grid_command(command, window, cx));
@@ -620,20 +634,20 @@ fn view_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
 fn table_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
     type Run = fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>);
     let items: [(&str, &str, Run); 3] = [
-        ("Format as Table…", "Ctrl+T", |v, w, cx| {
+        (tk("Format as Table…"), "Ctrl+T", |v, w, cx| {
             v.format_as_table_doc(w, cx)
         }),
-        ("Table Design", "", |v, w, cx| v.table_design_doc(w, cx)),
-        ("Convert to Range", "", |v, w, cx| {
+        (tk("Table Design"), "", |v, w, cx| v.table_design_doc(w, cx)),
+        (tk("Convert to Range"), "", |v, w, cx| {
             v.convert_table_doc(w, cx)
         }),
     ];
     for (label, keys, run) in items {
         let view = view.clone();
         let text = if keys.is_empty() {
-            label.to_owned()
+            i18n::t(label).to_owned()
         } else {
-            format!("{label}  ({keys})")
+            format!("{}  ({keys})", i18n::t(label))
         };
         menu = menu.item(PopupMenuItem::new(text).on_click(move |_, window, cx| {
             let _ = view.update(cx, |v, cx| run(v, window, cx));
@@ -646,19 +660,19 @@ fn table_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu 
 fn pivot_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
     type Run = fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>);
     let items: [(&str, &str, Run); 5] = [
-        ("Insert PivotTable…", "", |v, w, cx| {
+        (tk("Insert PivotTable…"), "", |v, w, cx| {
             v.insert_pivot_doc(w, cx)
         }),
-        ("PivotTable Fields", "", |v, w, cx| {
+        (tk("PivotTable Fields"), "", |v, w, cx| {
             v.pivot_fields_doc(w, cx)
         }),
-        ("Refresh PivotTable", "Alt+F5", |v, w, cx| {
+        (tk("Refresh PivotTable"), "Alt+F5", |v, w, cx| {
             v.refresh_pivots_doc(false, w, cx)
         }),
-        ("Refresh All PivotTables", "Ctrl+Alt+F5", |v, w, cx| {
+        (tk("Refresh All PivotTables"), "Ctrl+Alt+F5", |v, w, cx| {
             v.refresh_pivots_doc(true, w, cx)
         }),
-        ("Delete PivotTable", "", |v, w, cx| {
+        (tk("Delete PivotTable"), "", |v, w, cx| {
             v.delete_pivot_doc(w, cx)
         }),
     ];
@@ -668,13 +682,40 @@ fn pivot_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu 
         }
         let view = view.clone();
         let text = if keys.is_empty() {
-            label.to_owned()
+            i18n::t(label).to_owned()
         } else {
-            format!("{label}  ({keys})")
+            format!("{}  ({keys})", i18n::t(label))
         };
         menu = menu.item(PopupMenuItem::new(text).on_click(move |_, window, cx| {
             let _ = view.update(cx, |v, cx| run(v, window, cx));
         }));
     }
     menu
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kantor_ui::i18n::indonesian;
+
+    /// Number format names come from sheets_engine and are shown with `t_dyn`.
+    const NUMBER_FORMAT_NAMES: [&str; 7] = [
+        tk("General"),
+        tk("Number"),
+        tk("Percent"),
+        tk("Rupiah (Rp)"),
+        tk("Dollar ($)"),
+        tk("Date"),
+        tk("Custom"),
+    ];
+
+    #[std::prelude::v1::test]
+    fn number_format_names_have_indonesian() {
+        for f in NumberFormat::ALL {
+            assert!(NUMBER_FORMAT_NAMES.contains(&f.label()), "{}", f.label());
+        }
+        for name in NUMBER_FORMAT_NAMES {
+            assert!(indonesian(name).is_some(), "{name}");
+        }
+    }
 }

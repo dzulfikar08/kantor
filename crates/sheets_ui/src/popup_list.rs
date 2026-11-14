@@ -293,7 +293,7 @@ impl PopupList {
                         .flex()
                         .items_center()
                         .text_color(t.fg_dim)
-                        .child("No matches"),
+                        .child(kantor_ui::i18n::t("No matches")),
                 )
             })
             .child(list)

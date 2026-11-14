@@ -31,11 +31,23 @@ use kantor_core::layout::{Layout, PaneId};
 use kantor_core::recovery::{self, DocInfo, FileStamp, Found, Scan, Slot, Store};
 use kantor_core::settings::{AutosaveSettings, Settings};
 use kantor_ui::disk_guard::DiskGuard;
+use kantor_ui::i18n::{self, tf, tk};
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 
 use super::doc::DocView;
 use super::{AppKind, Tab, Workspace};
+
+const DAMAGED_ONE: &str =
+    kantor_ui::i18n::tk("1 damaged recovery copy couldn't be read; kept in {}");
+const DAMAGED_MANY: &str =
+    kantor_ui::i18n::tk("{} damaged recovery copies couldn't be read; kept in {}");
+const AUTOSAVE_ON: &str =
+    kantor_ui::i18n::tk("Autosave on: documents with a file save {} s after your last change");
+const NO_RECOVERY_COPY: &str =
+    kantor_ui::i18n::tk("Couldn't keep a recovery copy of “{}” ({}). Save your work.");
+const CHANGED_ON_DISK: &str =
+    kantor_ui::i18n::tk("“{}” changed on disk since it was opened: not autosaved");
 
 /// A copy is due this long after a document's first unsaved change.
 const INTERVAL: Duration = Duration::from_secs(120);
@@ -125,13 +137,31 @@ fn kind_of(app: recovery::App) -> AppKind {
 /// "just now", "5 minutes ago", "yesterday", "3 days ago".
 pub(super) fn ago(saved_at: u64, now: u64) -> String {
     let s = now.saturating_sub(saved_at);
-    let plural = |n: u64, unit: &str| format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" });
     match s {
-        0..60 => "just now".into(),
-        60..3600 => plural(s / 60, "minute"),
-        3600..86_400 => plural(s / 3600, "hour"),
-        86_400..172_800 => "yesterday".into(),
-        _ => plural(s / 86_400, "day"),
+        0..60 => i18n::t("just now").into(),
+        60..3600 => plural(s / 60, tk("1 minute ago"), tk("{} minutes ago")),
+        3600..86_400 => plural(s / 3600, tk("1 hour ago"), tk("{} hours ago")),
+        86_400..172_800 => i18n::t("yesterday").into(),
+        _ => plural(s / 86_400, tk("1 day ago"), tk("{} days ago")),
+    }
+}
+
+/// `one` for 1, else `many` with `n` filled in (both catalog keys).
+fn plural(n: u64, one: &'static str, many: &'static str) -> String {
+    if n == 1 {
+        i18n::t(one).to_owned()
+    } else {
+        i18n::fill(i18n::t(many), &[&n])
+    }
+}
+
+/// The note about recovery copies that couldn't be read.
+fn damaged_note(n: usize, dir: &std::path::Path) -> String {
+    let dir = dir.display();
+    if n == 1 {
+        kantor_ui::i18n::fill(kantor_ui::i18n::t(DAMAGED_ONE), &[&dir])
+    } else {
+        kantor_ui::i18n::fill(kantor_ui::i18n::t(DAMAGED_MANY), &[&n, &dir])
     }
 }
 
@@ -195,12 +225,12 @@ impl Workspace {
             log::warn!("saving settings: {e:#}");
         }
         let text = if settings.autosave.enabled {
-            format!(
-                "Autosave on: documents with a file save {} s after your last change",
-                settings.autosave.idle().as_secs()
+            kantor_ui::i18n::fill(
+                kantor_ui::i18n::t(AUTOSAVE_ON),
+                &[&settings.autosave.idle().as_secs()],
             )
         } else {
-            "Autosave off (recovery copies still protect unsaved work)".into()
+            i18n::t("Autosave off (recovery copies still protect unsaved work)").into()
         };
         self.notice(text, cx);
     }
@@ -215,7 +245,7 @@ impl Workspace {
             let scan = scan.await;
             let _ = this.update_in(cx, |ws, window, cx| {
                 if scan.found.is_empty() && scan.damaged.is_empty() {
-                    ws.notice("No unsaved work to recover".into(), cx);
+                    ws.notice(i18n::t("No unsaved work to recover").into(), cx);
                 }
                 ws.offer_recovery(scan, window, cx);
             });
@@ -393,7 +423,7 @@ impl Workspace {
         if !self.recovery.warned {
             self.recovery.warned = true;
             self.notice(
-                format!("Couldn't keep a recovery copy of “{name}” ({e}). Save your work."),
+                kantor_ui::i18n::fill(kantor_ui::i18n::t(NO_RECOVERY_COPY), &[&name, e]),
                 cx,
             );
         }
@@ -429,7 +459,7 @@ impl Workspace {
                 st.autosave_blocked = true;
                 let name = view.doc_name(cx);
                 self.notice(
-                    format!("“{name}” changed on disk since it was opened: not autosaved"),
+                    kantor_ui::i18n::fill(kantor_ui::i18n::t(CHANGED_ON_DISK), &[&name]),
                     cx,
                 );
             }
@@ -494,15 +524,7 @@ impl Workspace {
             .map(|s| s.root().join("damaged"))
             .unwrap_or_default();
         if scan.found.is_empty() {
-            self.notice(
-                format!(
-                    "{} damaged recovery cop{} couldn't be read; kept in {}",
-                    scan.damaged.len(),
-                    if scan.damaged.len() == 1 { "y" } else { "ies" },
-                    damaged_dir.display()
-                ),
-                cx,
-            );
+            self.notice(damaged_note(scan.damaged.len(), &damaged_dir), cx);
             return;
         }
         let offer = Rc::new(RefCell::new(Offer {
@@ -537,12 +559,13 @@ impl Workspace {
             let t = tokens(cx);
             let o = offer.borrow();
             let now = unix_now();
+            let changes_from = i18n::t("{} · {} · changes from {}");
             let rows = o.found.iter().enumerate().map(|(i, f)| {
                 let doc = &f.manifest.doc;
                 let kind = kind_of(doc.app);
                 let place = match &doc.original {
                     Some(p) => p.display().to_string(),
-                    None => "Never saved".to_owned(),
+                    None => i18n::t("Never saved").to_owned(),
                 };
                 let id = f.id.clone();
                 let restore = {
@@ -601,24 +624,22 @@ impl Workspace {
                                     .text_size(FONT_SMALL)
                                     .text_color(t.fg_muted)
                                     .truncate()
-                                    .child(format!(
-                                        "{} · {} · changes from {}",
-                                        kind.name(),
-                                        place,
-                                        ago(f.manifest.saved_at, now)
+                                    .child(i18n::fill(
+                                        changes_from,
+                                        &[&kind.name(), &place, &ago(f.manifest.saved_at, now)],
                                     )),
                             ),
                     )
                     .child(
                         Button::new(("recover-discard", i))
-                            .label("Discard")
+                            .label(i18n::t("Discard"))
                             .ghost()
                             .small()
                             .on_click(discard),
                     )
                     .child(
                         Button::new(("recover-restore", i))
-                            .label("Restore")
+                            .label(i18n::t("Restore"))
                             .primary()
                             .small()
                             .on_click(restore),
@@ -626,26 +647,15 @@ impl Workspace {
             });
             let n = o.found.len();
             let detail = if n == 1 {
-                "Kantor closed before this document was saved. Restore it to keep working on \
-                 your changes; nothing is written to the original file until you save."
-                    .to_owned()
+                i18n::t("Kantor closed before this document was saved. Restore it to keep working on your changes; nothing is written to the original file until you save.").to_owned()
             } else {
-                format!(
-                    "Kantor closed before these {n} documents were saved. Restore them to keep \
-                     working on your changes; nothing is written to the original files until \
-                     you save."
-                )
+                tf("Kantor closed before these {} documents were saved. Restore them to keep working on your changes; nothing is written to the original files until you save.", &[&n])
             };
             let damaged = (o.damaged > 0).then(|| {
                 div()
                     .text_size(FONT_SMALL)
                     .text_color(t.fg_muted)
-                    .child(format!(
-                        "{} damaged recovery cop{} couldn't be read; kept in {}",
-                        o.damaged,
-                        if o.damaged == 1 { "y" } else { "ies" },
-                        o.damaged_dir.display()
-                    ))
+                    .child(damaged_note(o.damaged, &o.damaged_dir))
             });
             let all = |restore: bool| {
                 let (ws, offer) = (ws.clone(), offer.clone());
@@ -667,7 +677,7 @@ impl Workspace {
                 .w(px(560.))
                 .overlay_closable(false)
                 .close_button(false)
-                .title("Recover unsaved work")
+                .title(i18n::t("Recover unsaved work"))
                 .child(
                     v_flex()
                         .gap(SPACE_4)
@@ -691,20 +701,20 @@ impl Workspace {
                     DialogFooter::new()
                         .child(
                             Button::new("recover-later")
-                                .label("Not Now")
+                                .label(i18n::t("Not Now"))
                                 .ghost()
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
                         .when(n > 1, |f| {
                             f.child(
                                 Button::new("recover-discard-all")
-                                    .label("Discard All")
+                                    .label(i18n::t("Discard All"))
                                     .danger()
                                     .on_click(move |_, window, cx| discard_all(window, cx)),
                             )
                             .child(
                                 Button::new("recover-restore-all")
-                                    .label("Restore All")
+                                    .label(i18n::t("Restore All"))
                                     .primary()
                                     .on_click(move |_, window, cx| restore_all(window, cx)),
                             )
@@ -743,11 +753,13 @@ impl Workspace {
                 Ok(()) => offer.borrow_mut().found.retain(|f| f.id != found.id),
                 Err(e) => {
                     log::warn!("recovery copy {}: {e:#}", found.id);
-                    let what = if restore { "restore" } else { "discard" };
-                    self.notice(
-                        format!("Couldn't {what} “{}”: {e}", found.manifest.doc.name),
-                        cx,
-                    );
+                    let name = &found.manifest.doc.name;
+                    let text = if restore {
+                        tf("Couldn't restore “{}”: {}", &[name, &e])
+                    } else {
+                        tf("Couldn't discard “{}”: {}", &[name, &e])
+                    };
+                    self.notice(text, cx);
                     // Another Kantor took it, or it's gone: no longer on offer.
                     offer.borrow_mut().found.retain(|f| f.id != found.id);
                 }

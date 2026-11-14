@@ -24,6 +24,7 @@ use gpui_kit::component::Sizable as _;
 use gpui_kit::component::input::{self, Position, Textarea, TextareaState};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::*;
+use kantor_ui::i18n::{t, tf, tk};
 use kantor_ui::metrics::*;
 use kantor_ui::tokens::Elevation;
 use sheets_engine::{CellNote, CellRange};
@@ -210,18 +211,18 @@ pub(crate) fn cell_menu_items(
 ) -> PopupMenu {
     let item = |label: &'static str, command: NoteCommand| {
         let view = view.clone();
-        PopupMenuItem::new(label).on_click(move |_, window, cx| {
+        PopupMenuItem::new(t(label)).on_click(move |_, window, cx| {
             let _ = view.update(cx, |v, cx| {
                 v.note_command_at(command, Some(cell), window, cx)
             });
         })
     };
     if has_note {
-        menu.item(item("Edit Note", NoteCommand::Edit))
-            .item(item("Delete Note", NoteCommand::Delete))
-            .item(item("Show/Hide Note", NoteCommand::ShowHide))
+        menu.item(item(tk("Edit Note"), NoteCommand::Edit))
+            .item(item(tk("Delete Note"), NoteCommand::Delete))
+            .item(item(tk("Show/Hide Note"), NoteCommand::ShowHide))
     } else {
-        menu.item(item("New Note", NoteCommand::Edit))
+        menu.item(item(tk("New Note"), NoteCommand::Edit))
     }
 }
 
@@ -232,17 +233,21 @@ pub(crate) fn notes_menu(
     show_all: bool,
     view: &WeakEntity<SheetsView>,
 ) -> PopupMenu {
-    let items: [(&str, &str, NoteCommand); 6] = [
+    let items: [(&'static str, &str, NoteCommand); 6] = [
         (
-            if has_note { "Edit Note" } else { "New Note" },
+            if has_note {
+                tk("Edit Note")
+            } else {
+                tk("New Note")
+            },
             "Shift+F2",
             NoteCommand::Edit,
         ),
-        ("Delete Note", "", NoteCommand::Delete),
-        ("Previous Note", "", NoteCommand::Previous),
-        ("Next Note", "", NoteCommand::Next),
-        ("Show/Hide Note", "", NoteCommand::ShowHide),
-        ("Show All Notes", "", NoteCommand::ShowAll),
+        (tk("Delete Note"), "", NoteCommand::Delete),
+        (tk("Previous Note"), "", NoteCommand::Previous),
+        (tk("Next Note"), "", NoteCommand::Next),
+        (tk("Show/Hide Note"), "", NoteCommand::ShowHide),
+        (tk("Show All Notes"), "", NoteCommand::ShowAll),
     ];
     for (i, (label, keys, command)) in items.into_iter().enumerate() {
         if i == 2 || i == 4 {
@@ -250,9 +255,9 @@ pub(crate) fn notes_menu(
         }
         let view = view.clone();
         let text = if keys.is_empty() {
-            label.to_owned()
+            t(label).to_owned()
         } else {
-            format!("{label}  ({keys})")
+            format!("{}  ({keys})", t(label))
         };
         menu = menu.item(
             PopupMenuItem::new(text)
@@ -332,22 +337,26 @@ impl SheetsView {
                 let res = self.change_book(cx, |book| book.delete_notes(sheet, target));
                 self.note_status(
                     res,
-                    "Note deleted",
-                    "There is no note to delete",
+                    tk("Note deleted"),
+                    tk("There is no note to delete"),
                     window,
                     cx,
                 );
             }
             NoteCommand::ShowHide => {
                 let Some(note) = has_note(self, cx) else {
-                    self.status = "The active cell has no note".into();
+                    self.status = t("The active cell has no note").into();
                     cx.notify();
                     return;
                 };
                 let one = CellRange::from_corners((row, col), (row, col));
                 let shown = !note.shown;
                 let res = self.change_book(cx, |book| book.show_notes(sheet, one, shown));
-                let done = if shown { "Note shown" } else { "Note hidden" };
+                let done = if shown {
+                    tk("Note shown")
+                } else {
+                    tk("Note hidden")
+                };
                 self.note_status(res, done, "", window, cx);
             }
             NoteCommand::ShowAll => {
@@ -356,9 +365,9 @@ impl SheetsView {
                     cx.notify();
                 });
                 self.status = if show_all {
-                    "Notes show when the pointer is over their cell"
+                    t("Notes show when the pointer is over their cell")
                 } else {
-                    "All notes shown"
+                    t("All notes shown")
                 }
                 .into();
                 cx.notify();
@@ -381,7 +390,7 @@ impl SheetsView {
                         });
                     }
                     None => {
-                        self.status = "This sheet has no notes".into();
+                        self.status = t("This sheet has no notes").into();
                         cx.notify();
                     }
                 }
@@ -405,17 +414,18 @@ impl SheetsView {
     fn note_status(
         &mut self,
         res: anyhow::Result<bool>,
-        done: &str,
-        nothing: &str,
+        done: &'static str,
+        nothing: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.status = match res {
             Ok(true) => {
                 self.update_title(window, cx);
-                done.to_owned()
+                t(done).to_owned()
             }
-            Ok(false) => nothing.to_owned(),
+            Ok(false) if nothing.is_empty() => String::new(),
+            Ok(false) => t(nothing).to_owned(),
             Err(e) => format!("{e:#}"),
         }
         .into();
@@ -499,7 +509,7 @@ impl SheetsView {
             table.refresh(cx);
             r
         });
-        self.note_status(res, "Note saved", "", window, cx);
+        self.note_status(res, tk("Note saved"), "", window, cx);
         if refocus {
             self.focus_grid(window, cx);
         }
@@ -531,7 +541,7 @@ impl SheetsView {
             Some(b) => point(b.origin.x + b.size.width + GAP, b.origin.y),
             None => point(SPACE_7 * 4., SPACE_7 * 4.),
         };
-        let label = format!("Note on {}", sheets_engine::cell_name(ed.row, ed.col));
+        let label = tf("Note on {}", &[&sheets_engine::cell_name(ed.row, ed.col)]);
         let panel = div()
             .id("sheets-note-editor")
             .key_context(NOTE_CONTEXT)

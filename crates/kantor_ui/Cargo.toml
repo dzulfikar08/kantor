@@ -12,6 +12,7 @@ kantor_core.workspace = true
 kantor_spell.workspace = true
 log.workspace = true
 kantor_theme.workspace = true
+rust-i18n.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

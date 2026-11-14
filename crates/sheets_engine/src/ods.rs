@@ -903,21 +903,16 @@ pub(crate) struct Applied {
 
 impl Applied {
     /// What was left out, for the import notes.
-    pub fn notes(&self) -> Vec<String> {
-        let plural = |n: usize| if n == 1 { "" } else { "s" };
+    pub fn notes(&self) -> Vec<crate::ImportNote> {
         let mut notes = Vec::new();
         if self.skipped_validations > 0 {
-            notes.push(format!(
-                "{} data validation rule{} not imported (condition not supported)",
+            notes.push(crate::ImportNote::OdsValidationsSkipped(
                 self.skipped_validations,
-                plural(self.skipped_validations)
             ));
         }
         if self.skipped_cf > 0 {
-            notes.push(format!(
-                "{} conditional formatting rule{} not imported (condition not supported)",
+            notes.push(crate::ImportNote::OdsConditionalFormatsSkipped(
                 self.skipped_cf,
-                plural(self.skipped_cf)
             ));
         }
         notes

@@ -77,6 +77,30 @@ fn platform_data_dir() -> Option<PathBuf> {
     Some(base.join("kantor"))
 }
 
+/// Kantor's per-user cache directory (cloud working copies lived here
+/// before 0.5; now they are in [`data_dir`]):
+///
+/// | OS      | Directory                                         |
+/// |---------|---------------------------------------------------|
+/// | Linux   | `$XDG_CACHE_HOME/kantor` (`~/.cache/kantor`)      |
+/// | macOS   | `~/Library/Caches/Kantor`                         |
+/// | Windows | `%LOCALAPPDATA%\Kantor\Cache`                     |
+///
+/// `KANTOR_CACHE_DIR` overrides it on every OS (tests, portable installs).
+pub fn cache_dir() -> Option<PathBuf> {
+    if let Some(dir) = env_dir("KANTOR_CACHE_DIR") {
+        return Some(dir);
+    }
+    if cfg!(windows) {
+        return Some(windows_state_dir()?.join("Cache"));
+    }
+    if cfg!(target_os = "macos") {
+        return Some(home_dir()?.join("Library/Caches/Kantor"));
+    }
+    let base = env_dir("XDG_CACHE_HOME").or_else(|| Some(home_dir()?.join(".cache")))?;
+    Some(base.join("kantor"))
+}
+
 /// Where Print puts the PDF it hands to the system's PDF viewer:
 /// `<temp>/kantor-print-<pid>/<stem>.pdf` (the folder is created). The
 /// viewer may still be reading it after Kantor quits, so it isn't deleted.

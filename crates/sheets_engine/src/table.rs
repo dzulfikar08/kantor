@@ -799,7 +799,7 @@ impl Workbook {
         };
         let wanted = value.trim();
         let base = if wanted.is_empty() || wanted.starts_with('=') {
-            format!("Column{}", index + 1)
+            crate::content_text::trf("Column{}", &[&(index + 1)])
         } else {
             wanted.to_string()
         };

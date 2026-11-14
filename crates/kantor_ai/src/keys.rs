@@ -1,10 +1,13 @@
-//! API keys: in the OS keychain (macOS Keychain, Secret Service on Linux,
+//! Secrets: in the OS keychain (macOS Keychain, Secret Service on Linux,
 //! Windows Credential Manager), never in `settings.toml`, never logged.
+//! Two [`Vault`]s share the code: AI provider keys ([`AI`]) and cloud drive
+//! app passwords ([`CLOUD`]).
 //!
 //! When no keychain is available (no Secret Service running, e.g. a bare
-//! window manager without gnome-keyring/KWallet), keys fall back to
-//! `ai-keys.toml` next to the settings, readable only by the user (0600).
-//! [`save_key`] reports which one was used so the UI can warn.
+//! window manager without gnome-keyring/KWallet), secrets fall back to a
+//! file next to the settings (`ai-keys.toml`, `cloud-keys.toml`), readable
+//! only by the user (0600). [`Vault::save`] reports which one was used so
+//! the UI can warn.
 //!
 //! These calls can block (D-Bus, an unlock prompt): run them off the UI thread.
 
@@ -12,7 +15,25 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-const SERVICE: &str = "Kantor AI";
+/// A set of secrets under one keychain service name, with its own 0600
+/// fallback file.
+#[derive(Clone, Copy, Debug)]
+pub struct Vault {
+    service: &'static str,
+    file: &'static str,
+}
+
+/// API keys of AI providers, keyed by provider (`anthropic`).
+pub const AI: Vault = Vault {
+    service: "Kantor AI",
+    file: "ai-keys.toml",
+};
+
+/// Cloud drive app passwords, keyed by account id.
+pub const CLOUD: Vault = Vault {
+    service: "Kantor Cloud",
+    file: "cloud-keys.toml",
+};
 
 /// Where a key ended up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,48 +45,71 @@ pub enum KeyLocation {
 
 /// The stored key for `provider` (a provider key like `anthropic`).
 pub fn load_key(provider: &str) -> Option<String> {
-    if keychain_ready() {
-        match keyring_core::Entry::new(SERVICE, provider).and_then(|e| e.get_password()) {
-            Ok(k) => return Some(k),
-            Err(keyring_core::Error::NoEntry) => {}
-            Err(e) => log::warn!("keychain read failed: {e}"),
-        }
-    }
-    fallback_path().and_then(|p| file_load(&p, provider))
+    AI.load(provider)
 }
 
 /// Store `key` for `provider`; an empty key deletes it.
 pub fn save_key(provider: &str, key: &str) -> Result<KeyLocation, String> {
-    let key = key.trim();
-    if key.is_empty() {
-        delete_key(provider);
-        return Ok(KeyLocation::Keychain);
-    }
-    if keychain_ready() {
-        match keyring_core::Entry::new(SERVICE, provider).and_then(|e| e.set_password(key)) {
-            Ok(()) => {
-                // Don't leave an older copy in the fallback file.
-                if let Some(p) = fallback_path() {
-                    let _ = file_store(&p, provider, None);
-                }
-                return Ok(KeyLocation::Keychain);
-            }
-            Err(e) => log::warn!("keychain unavailable, using the fallback file: {e}"),
-        }
-    }
-    let path = fallback_path().ok_or("no home directory")?;
-    file_store(&path, provider, Some(key))?;
-    Ok(KeyLocation::File)
+    AI.save(provider, key)
 }
 
 pub fn delete_key(provider: &str) {
-    if keychain_ready()
-        && let Ok(e) = keyring_core::Entry::new(SERVICE, provider)
-    {
-        let _ = e.delete_credential();
+    AI.delete(provider)
+}
+
+impl Vault {
+    /// The stored secret for `name`.
+    pub fn load(&self, name: &str) -> Option<String> {
+        if keychain_ready() {
+            match keyring_core::Entry::new(self.service, name).and_then(|e| e.get_password()) {
+                Ok(k) => return Some(k),
+                Err(keyring_core::Error::NoEntry) => {}
+                Err(e) => log::warn!("keychain read failed: {e}"),
+            }
+        }
+        self.fallback_path().and_then(|p| file_load(&p, name))
     }
-    if let Some(p) = fallback_path() {
-        let _ = file_store(&p, provider, None);
+
+    /// Store `secret` for `name`; an empty one deletes it.
+    pub fn save(&self, name: &str, secret: &str) -> Result<KeyLocation, String> {
+        let secret = secret.trim();
+        if secret.is_empty() {
+            self.delete(name);
+            return Ok(KeyLocation::Keychain);
+        }
+        if keychain_ready() {
+            match keyring_core::Entry::new(self.service, name).and_then(|e| e.set_password(secret))
+            {
+                Ok(()) => {
+                    // Don't leave an older copy in the fallback file.
+                    if let Some(p) = self.fallback_path() {
+                        let _ = file_store(&p, name, None);
+                    }
+                    return Ok(KeyLocation::Keychain);
+                }
+                Err(e) => log::warn!("keychain unavailable, using the fallback file: {e}"),
+            }
+        }
+        let path = self.fallback_path().ok_or("no home directory")?;
+        file_store(&path, name, Some(secret))?;
+        Ok(KeyLocation::File)
+    }
+
+    pub fn delete(&self, name: &str) {
+        if keychain_ready()
+            && let Ok(e) = keyring_core::Entry::new(self.service, name)
+        {
+            let _ = e.delete_credential();
+        }
+        if let Some(p) = self.fallback_path() {
+            let _ = file_store(&p, name, None);
+        }
+    }
+
+    /// The fallback file's path (for messages).
+    pub fn fallback_path(&self) -> Option<PathBuf> {
+        let settings = kantor_core::settings::settings_path()?;
+        Some(settings.with_file_name(self.file))
     }
 }
 
@@ -108,11 +152,6 @@ fn platform_store() -> Result<std::sync::Arc<keyring_core::CredentialStore>, Str
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn platform_store() -> Result<std::sync::Arc<keyring_core::CredentialStore>, String> {
     Err("no keychain support on this platform".into())
-}
-
-fn fallback_path() -> Option<PathBuf> {
-    let settings = kantor_core::settings::settings_path()?;
-    Some(settings.with_file_name("ai-keys.toml"))
 }
 
 fn file_load(path: &Path, provider: &str) -> Option<String> {

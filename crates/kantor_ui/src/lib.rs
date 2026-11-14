@@ -8,14 +8,18 @@ pub mod ai;
 pub mod assets;
 pub mod cached;
 pub mod components;
+pub mod content_strings;
 pub mod disk_guard;
 pub mod find_bar;
 pub mod fonts;
+pub mod i18n;
 pub mod keys;
 pub mod metrics;
 pub mod perf;
+pub mod read_only;
 pub mod spelling;
 pub mod tokens;
+pub mod widget_strings;
 
 pub use assets::KantorAssets;
 pub use cached::CachedView;

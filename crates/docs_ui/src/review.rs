@@ -17,6 +17,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, t, t_dyn, tf, tk};
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{metrics::*, tokens};
 
@@ -50,7 +51,18 @@ pub(crate) struct Card {
 /// A short date for a card: `12 Nov 2026` from Word's ISO date.
 fn short_date(iso: &str) -> String {
     const M: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        tk("Jan"),
+        tk("Feb"),
+        tk("Mar"),
+        tk("Apr"),
+        tk("May"),
+        tk("Jun"),
+        tk("Jul"),
+        tk("Aug"),
+        tk("Sep"),
+        tk("Oct"),
+        tk("Nov"),
+        tk("Dec"),
     ];
     let d: Vec<&str> = iso.get(..10).unwrap_or("").split('-').collect();
     match (
@@ -59,7 +71,7 @@ fn short_date(iso: &str) -> String {
         d.get(2),
     ) {
         (Some(y), Some(m), Some(day)) if (1..=12).contains(&m) => {
-            format!("{} {} {y}", day.trim_start_matches('0'), M[m - 1])
+            format!("{} {} {y}", day.trim_start_matches('0'), t_dyn(M[m - 1]))
         }
         _ => String::new(),
     }
@@ -102,7 +114,7 @@ impl DocsView {
         let input = cx.new(|cx| {
             let mut s = TextareaState::new(window, cx)
                 .auto_grow(2, 8)
-                .placeholder("Write a comment");
+                .placeholder(t("Write a comment"));
             s.set_value(text, window, cx);
             s
         });
@@ -163,7 +175,7 @@ impl DocsView {
         if self.doc.delete_comment(id, self.sel) {
             let sel = self.sel;
             self.edited(sel, window, cx);
-            self.status = "Comment deleted".into();
+            self.status = t("Comment deleted").into();
         }
         cx.notify();
     }
@@ -197,9 +209,10 @@ impl DocsView {
         let sel = self.sel;
         self.edited(sel, window, cx);
         self.status = if on {
-            format!("Track Changes on: your edits are marked as {author}'s").into()
+            let msg = tk("Track Changes on: your edits are marked as {}'s");
+            tf(msg, &[&author]).into()
         } else {
-            "Track Changes off".into()
+            t("Track Changes off").into()
         };
     }
 
@@ -222,9 +235,9 @@ impl DocsView {
                 self.edited(sel, window, cx);
                 // Move on to the next change, as Word does.
                 self.go_to_change(true, cx);
-                self.status = self.changes_status(if accept { "Accepted" } else { "Rejected" });
+                self.status = self.changes_status(accept);
             }
-            None => self.status = "No tracked change at the caret".into(),
+            None => self.status = t("No tracked change at the caret").into(),
         }
         cx.notify();
     }
@@ -232,27 +245,30 @@ impl DocsView {
     pub fn resolve_all_doc(&mut self, accept: bool, window: &mut Window, cx: &mut Context<Self>) {
         let n = self.doc.changes().len() + self.doc.other_changes();
         if n == 0 {
-            self.status = "This document has no tracked changes".into();
+            self.status = t("This document has no tracked changes").into();
             cx.notify();
             return;
         }
         let sel = self.doc.resolve_all(accept, self.sel);
         self.edited(sel, window, cx);
-        self.status = format!(
-            "{} {n} tracked change{}",
-            if accept { "Accepted" } else { "Rejected" },
-            if n == 1 { "" } else { "s" }
-        )
-        .into();
+        self.status = match (accept, n) {
+            (true, 1) => t("Accepted 1 tracked change").into(),
+            (true, n) => tf("Accepted {} tracked changes", &[&n]).into(),
+            (false, 1) => t("Rejected 1 tracked change").into(),
+            (false, n) => tf("Rejected {} tracked changes", &[&n]).into(),
+        };
         cx.notify();
     }
 
-    fn changes_status(&self, verb: &str) -> SharedString {
+    fn changes_status(&self, accept: bool) -> SharedString {
         let left = self.doc.changes().len() + self.doc.other_changes();
-        match left {
-            0 => format!("{verb}: no tracked changes left").into(),
-            1 => format!("{verb}: 1 tracked change left").into(),
-            n => format!("{verb}: {n} tracked changes left").into(),
+        match (accept, left) {
+            (true, 0) => t("Accepted: no tracked changes left").into(),
+            (true, 1) => t("Accepted: 1 tracked change left").into(),
+            (true, n) => tf("Accepted: {} tracked changes left", &[&n]).into(),
+            (false, 0) => t("Rejected: no tracked changes left").into(),
+            (false, 1) => t("Rejected: 1 tracked change left").into(),
+            (false, n) => tf("Rejected: {} tracked changes left", &[&n]).into(),
         }
     }
 
@@ -288,7 +304,7 @@ impl DocsView {
 
     pub fn next_change_doc(&mut self, forward: bool, cx: &mut Context<Self>) {
         if !self.go_to_change(forward, cx) {
-            self.status = "This document has no tracked changes".into();
+            self.status = t("This document has no tracked changes").into();
             cx.notify();
         }
     }
@@ -406,7 +422,7 @@ impl DocsView {
                                 .ghost()
                                 .xsmall()
                                 .icon(Lucide::SquarePen)
-                                .tooltip("Edit comment")
+                                .tooltip(i18n::t("Edit comment"))
                                 .on_click(move |_, window, cx| {
                                     let _ = v1.update(cx, |this, cx| {
                                         this.save_comment_edit(window, cx);
@@ -419,7 +435,7 @@ impl DocsView {
                                 .ghost()
                                 .xsmall()
                                 .icon(Lucide::Trash)
-                                .tooltip("Delete comment")
+                                .tooltip(i18n::t("Delete comment"))
                                 .on_click(move |_, window, cx| {
                                     let _ = v2.update(cx, |this, cx| {
                                         this.delete_comment_doc(&i2, window, cx)
@@ -441,7 +457,7 @@ impl DocsView {
                                         Button::new("comment-cancel")
                                             .ghost()
                                             .xsmall()
-                                            .label("Cancel")
+                                            .label(i18n::t("Cancel"))
                                             .on_click(move |_, window, cx| {
                                                 let _ = v1.update(cx, |this, cx| {
                                                     this.cancel_comment_edit(window, cx)
@@ -452,7 +468,7 @@ impl DocsView {
                                         Button::new("comment-save")
                                             .primary()
                                             .xsmall()
-                                            .label("Comment")
+                                            .label(i18n::t("Comment"))
                                             .tooltip("Ctrl+Enter")
                                             .on_click(move |_, window, cx| {
                                                 let _ = v2.update(cx, |this, cx| {
@@ -512,16 +528,15 @@ pub(crate) fn review_button(view: &DocsView, cx: &mut Context<DocsView>) -> impl
     let comments = view.doc.comments().len();
     let track = view.doc.track_changes();
     let tip = match (changes, comments) {
-        (0, 0) => "Review: comments and tracked changes".to_owned(),
-        (c, 0) => format!(
-            "Review: {c} tracked change{}",
-            if c == 1 { "" } else { "s" }
-        ),
-        (0, n) => format!("Review: {n} comment{}", if n == 1 { "" } else { "s" }),
-        (c, n) => format!("Review: {c} tracked changes, {n} comments"),
+        (0, 0) => t("Review: comments and tracked changes").to_owned(),
+        (1, 0) => t("Review: 1 tracked change").to_owned(),
+        (c, 0) => tf("Review: {} tracked changes", &[&c]),
+        (0, 1) => t("Review: 1 comment").to_owned(),
+        (0, n) => tf("Review: {} comments", &[&n]),
+        (c, n) => tf("Review: {} tracked changes, {} comments", &[&c, &n]),
     };
     let tip = if track {
-        format!("{tip} (Track Changes is on)")
+        tf("{} (Track Changes is on)", &[&tip])
     } else {
         tip
     };
@@ -538,7 +553,7 @@ pub(crate) fn review_button(view: &DocsView, cx: &mut Context<DocsView>) -> impl
         .dropdown_menu(move |menu, _, cx| {
             let on = kantor_ui::spelling::enabled(cx);
             review_items(menu, &v, track).separator().item(
-                PopupMenuItem::new("Check Spelling as You Type")
+                PopupMenuItem::new(t("Check Spelling as You Type"))
                     .checked(on)
                     .on_click(|_, _, cx| kantor_ui::spelling::toggle(cx)),
             )
@@ -549,7 +564,7 @@ fn review_items(menu: PopupMenu, view: &WeakEntity<DocsView>, track: bool) -> Po
     type Run = fn(&mut DocsView, &mut Window, &mut Context<DocsView>);
     let item = |menu: PopupMenu, label: &'static str, icon: Option<Lucide>, run: Run| {
         let v = view.clone();
-        let mut it = PopupMenuItem::new(label).on_click(move |_, window, cx| {
+        let mut it = PopupMenuItem::new(t(label)).on_click(move |_, window, cx| {
             let _ = v.update(cx, |this, cx| run(this, window, cx));
         });
         if let Some(i) = icon {
@@ -560,56 +575,59 @@ fn review_items(menu: PopupMenu, view: &WeakEntity<DocsView>, track: bool) -> Po
     let v = view.clone();
     let menu = menu
         .item(
-            PopupMenuItem::new("Track Changes  Ctrl+Shift+E")
+            PopupMenuItem::new(t("Track Changes  Ctrl+Shift+E"))
                 .checked(track)
                 .on_click(move |_, window, cx| {
                     let _ = v.update(cx, |this, cx| this.toggle_track_changes_doc(window, cx));
                 }),
         )
         .separator();
-    let menu = item(menu, "Insert footnote  Ctrl+Alt+F", None, |v, w, cx| {
+    let menu = item(menu, tk("Insert footnote  Ctrl+Alt+F"), None, |v, w, cx| {
         v.insert_note_doc(docs_engine::NoteKind::Footnote, w, cx)
     });
-    let menu = item(menu, "Insert endnote  Ctrl+Alt+D", None, |v, w, cx| {
+    let menu = item(menu, tk("Insert endnote  Ctrl+Alt+D"), None, |v, w, cx| {
         v.insert_note_doc(docs_engine::NoteKind::Endnote, w, cx)
     })
     .separator();
     let menu = item(
         menu,
-        "New comment  Ctrl+Alt+M",
+        tk("New comment  Ctrl+Alt+M"),
         Some(Lucide::MessageSquarePlus),
         |v, w, cx| v.new_comment_doc(w, cx),
     );
-    let menu = item(menu, "Show or hide comments", None, |v, _, cx| {
+    let menu = item(menu, tk("Show or hide comments"), None, |v, _, cx| {
         v.toggle_comments_doc(cx)
     })
     .separator();
-    let menu = item(menu, "Accept change", Some(Lucide::Check), |v, w, cx| {
-        v.accept_change_doc(w, cx)
-    });
-    let menu = item(menu, "Reject change", Some(Lucide::X), |v, w, cx| {
+    let menu = item(
+        menu,
+        tk("Accept change"),
+        Some(Lucide::Check),
+        |v, w, cx| v.accept_change_doc(w, cx),
+    );
+    let menu = item(menu, tk("Reject change"), Some(Lucide::X), |v, w, cx| {
         v.reject_change_doc(w, cx)
     });
     let menu = item(
         menu,
-        "Next change",
+        tk("Next change"),
         Some(Lucide::ChevronDown),
         |v, _, cx| v.next_change_doc(true, cx),
     );
     let menu = item(
         menu,
-        "Previous change",
+        tk("Previous change"),
         Some(Lucide::ChevronUp),
         |v, _, cx| v.next_change_doc(false, cx),
     )
     .separator();
     let menu = item(
         menu,
-        "Accept all changes",
+        tk("Accept all changes"),
         Some(Lucide::CheckCheck),
         |v, w, cx| v.resolve_all_doc(true, w, cx),
     );
-    item(menu, "Reject all changes", None, |v, w, cx| {
+    item(menu, tk("Reject all changes"), None, |v, w, cx| {
         v.resolve_all_doc(false, w, cx)
     })
 }

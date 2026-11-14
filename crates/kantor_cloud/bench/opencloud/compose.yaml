@@ -1,0 +1,39 @@
+# OpenCloud (Go, Apache-2.0, the ownCloud Infinite Scale fork) as
+# opencloud-eu/opencloud-compose runs it, minus Traefik/TLS (Nextcloud is
+# benchmarked over plain HTTP too). Stable channel image, not -rolling.
+# Single binary with its built-in IDM, NATS and decomposed storage on a local
+# volume. Clients sign in with app tokens (auth-app service) over Basic auth.
+name: kspike-oc
+services:
+  opencloud:
+    image: opencloudeu/opencloud:7.2.5
+    user: "1000:1000"
+    entrypoint: ["/bin/sh"]
+    command: ["-c", "opencloud init || true; opencloud server"]
+    environment:
+      # The frontend PUTs to the data service at OC_URL from inside the
+      # container, so host and container port must match.
+      OC_URL: http://localhost:9200
+      OC_LOG_LEVEL: warn
+      OC_INSECURE: "true"
+      PROXY_TLS: "false"
+      PROXY_ENABLE_APP_AUTH: "true"
+      OC_ADD_RUN_SERVICES: auth-app
+      # The built-in IdP insists on an https issuer; Kantor signs in with app
+      # tokens, so it is left out (production would use TLS + the IdP or Keycloak).
+      OC_EXCLUDE_RUN_SERVICES: idp
+      # Demo users (einstein, marie, …) give the e2e tests a second account.
+      IDM_CREATE_DEMO_USERS: "true"
+      IDM_ADMIN_PASSWORD: admin-bench-pass
+      FRONTEND_CHECK_FOR_UPDATES: "false"
+    ports: ["127.0.0.1:9200:9200"]
+    volumes:
+      - config:/etc/opencloud
+      - data:/var/lib/opencloud
+networks:
+  default:
+    name: kspike
+    external: true
+volumes:
+  config:
+  data:

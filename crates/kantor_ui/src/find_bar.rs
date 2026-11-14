@@ -17,9 +17,10 @@ use gpui_kit::component::input::{self, Input, InputEvent, InputState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use kantor_core::find::{FindOptions, count_label};
+use kantor_core::find::FindOptions;
 
 use crate::components::{IconButtonExt as _, icon_button};
+use crate::i18n::{self, tf};
 use crate::metrics::*;
 use crate::tokens::{Elevation, tokens};
 
@@ -100,8 +101,8 @@ pub struct FindBar {
 impl FindBar {
     /// `formulas`: offer a "Look in formulas" toggle.
     pub fn new(formulas: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Find"));
-        let replacement = cx.new(|cx| InputState::new(window, cx).placeholder("Replace"));
+        let query = cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("Find")));
+        let replacement = cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("Replace")));
         let subscriptions = vec![
             cx.subscribe_in(&query, window, |_, _, ev: &InputEvent, _, cx| match ev {
                 InputEvent::Change => cx.emit(FindBarEvent::Search),
@@ -240,6 +241,16 @@ impl FindBar {
     }
 }
 
+/// "3 of 12", "12 matches", "No results" in the interface language.
+fn count_label(current: Option<usize>, total: usize) -> String {
+    match (current, total) {
+        (_, 0) => i18n::t("No results").to_owned(),
+        (Some(i), n) if i < n => tf("{} of {}", &[&(i + 1), &n]),
+        (_, 1) => i18n::t("1 match").to_owned(),
+        (_, n) => tf("{} matches", &[&n]),
+    }
+}
+
 impl Render for FindBar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = tokens(cx);
@@ -263,7 +274,7 @@ impl Render for FindBar {
                 "find-case",
                 Lucide::CaseSensitive,
                 o.match_case,
-                ("Match case", None),
+                (i18n::t("Match case"), None),
                 |this, _, cx| this.toggle_option(|t| t.options.match_case ^= true, cx),
                 cx,
             ))
@@ -271,7 +282,7 @@ impl Render for FindBar {
                 "find-word",
                 Lucide::WholeWord,
                 o.whole_word,
-                ("Whole word", None),
+                (i18n::t("Whole word"), None),
                 |this, _, cx| this.toggle_option(|t| t.options.whole_word ^= true, cx),
                 cx,
             ));
@@ -280,7 +291,7 @@ impl Render for FindBar {
                 "find-formulas",
                 Lucide::SquareFunction,
                 on,
-                ("Look in formulas", None),
+                (i18n::t("Look in formulas"), None),
                 |this, _, cx| {
                     this.toggle_option(
                         |t| {
@@ -309,7 +320,7 @@ impl Render for FindBar {
                 "find-prev",
                 Lucide::ChevronUp,
                 false,
-                ("Previous match", Some("Shift+Enter")),
+                (i18n::t("Previous match"), Some("Shift+Enter")),
                 |_, _, cx| cx.emit(FindBarEvent::Prev),
                 cx,
             ))
@@ -317,7 +328,7 @@ impl Render for FindBar {
                 "find-next",
                 Lucide::ChevronDown,
                 false,
-                ("Next match", Some("Enter")),
+                (i18n::t("Next match"), Some("Enter")),
                 |_, _, cx| cx.emit(FindBarEvent::Next),
                 cx,
             ))
@@ -325,7 +336,7 @@ impl Render for FindBar {
                 "find-replace-toggle",
                 Lucide::Replace,
                 self.replace,
-                ("Toggle replace", Some("Ctrl+H")),
+                (i18n::t("Toggle replace"), Some("Ctrl+H")),
                 |this, _, cx| {
                     this.replace ^= true;
                     cx.notify();
@@ -336,7 +347,7 @@ impl Render for FindBar {
                 "find-close",
                 Lucide::X,
                 false,
-                ("Close", Some("Esc")),
+                (i18n::t("Close"), Some("Esc")),
                 |this, _, cx| this.hide(cx),
                 cx,
             ));
@@ -354,7 +365,7 @@ impl Render for FindBar {
                     "find-replace-one",
                     Lucide::Replace,
                     false,
-                    ("Replace", Some("Enter")),
+                    (i18n::t("Replace"), Some("Enter")),
                     |_, _, cx| cx.emit(FindBarEvent::Replace),
                     cx,
                 ))
@@ -362,7 +373,7 @@ impl Render for FindBar {
                     "find-replace-all",
                     Lucide::ReplaceAll,
                     false,
-                    ("Replace all", Some("Ctrl+Enter")),
+                    (i18n::t("Replace all"), Some("Ctrl+Enter")),
                     |_, _, cx| cx.emit(FindBarEvent::ReplaceAll),
                     cx,
                 ))

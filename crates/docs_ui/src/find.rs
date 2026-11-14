@@ -10,6 +10,7 @@ use docs_engine::{Position, Selection};
 use gpui_kit::*;
 use kantor_core::find::{find_all, pick};
 use kantor_ui::find_bar::{FindBar, FindBarEvent};
+use kantor_ui::i18n::{t, tf};
 
 use crate::DocsView;
 
@@ -165,7 +166,11 @@ impl DocsView {
         let found = self.found.clone();
         let after = self.doc.replace_ranges(&found, &with, self.sel);
         self.edited(after, window, cx);
-        self.status = format!("Replaced {n} match{}", if n == 1 { "" } else { "es" }).into();
+        self.status = if n == 1 {
+            t("Replaced 1 match").into()
+        } else {
+            tf("Replaced {} matches", &[&n]).into()
+        };
         cx.notify();
     }
 }

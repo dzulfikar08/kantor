@@ -13,6 +13,7 @@ mod cf_edit;
 mod chart_edit;
 mod chart_style;
 mod cond_format;
+mod content_text;
 mod csv;
 pub mod drawing;
 mod edits;
@@ -48,7 +49,7 @@ pub use cf_edit::{
 };
 pub use chart_edit::{ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor};
 pub use drawing::Tab;
-pub use import::SourceFormat;
+pub use import::{ImportNote, SourceFormat};
 pub use notes::{CellNote, SheetNotes};
 pub use preserve::package_problems;
 pub use recovery::{SaveJob, Saved, XlsxOutput, XlsxSnapshot, write_file_atomic};
@@ -80,6 +81,7 @@ pub mod grid;
 pub mod tsv;
 
 pub use cond_format::{CfIcon, Conditional, DataBar, IconShape};
+pub use content_text::{Translate, set_content_translator};
 pub use filter::{
     ColumnFilter, ColumnKind, Condition, DateGroup, FilterInfo, FilterKind, FilterOp, FilterScope,
     FilterValue, checked_values, date_serial, ymd,
@@ -233,7 +235,7 @@ struct Origin {
     format: SourceFormat,
     /// The file last opened or saved (for imports, the `.ods`/`.xls` itself).
     path: Option<PathBuf>,
-    notes: Vec<String>,
+    notes: Vec<ImportNote>,
     /// The last `.xlsx` opened or saved, whose parts IronCalc doesn't model
     /// are carried into the next `.xlsx` save (see the `preserve` module).
     xlsx: Option<XlsxSource>,
@@ -665,9 +667,7 @@ impl Workbook {
             self.chart_reference_now(f)
         });
         if bytes.is_empty() {
-            self.origin
-                .notes
-                .push("charts and pictures not imported".into());
+            self.origin.notes.push(ImportNote::DrawingsNotImported);
             return;
         }
         self.drawings = drawing::Drawings::read(&bytes);
@@ -693,8 +693,14 @@ impl Workbook {
     }
 
     /// What an import could not bring over faithfully, e.g.
-    /// `"2 formulas kept as values"`. Empty for xlsx and CSV.
-    pub fn import_notes(&self) -> &[String] {
+    /// `"2 formulas kept as values"` (English). Empty for xlsx and CSV.
+    pub fn import_notes(&self) -> Vec<String> {
+        self.origin.notes.iter().map(ToString::to_string).collect()
+    }
+
+    /// [`Workbook::import_notes`] as data, for wording them in the
+    /// interface language.
+    pub fn import_note_list(&self) -> &[ImportNote] {
         &self.origin.notes
     }
 

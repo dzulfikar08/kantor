@@ -85,7 +85,13 @@ icon_assets!(
         ChartColumn,
         // AI
         Sparkles,
-        X
+        X,
+        // Cloud storage
+        Cloud,
+        CloudOff,
+        CloudUpload,
+        FileSpreadsheet,
+        Lock
     ]
 );
 

@@ -18,6 +18,9 @@ use super::doc::DocView;
 use super::{AppKind, Workspace};
 use crate::agent::{self, docs, sheets, slides};
 
+const COPIED_SETUP: &str =
+    kantor_ui::i18n::tk("Copied: {}  (run it in a terminal; `kantor mcp --print-config` has more)");
+
 /// How long an agent's message stays in the status bar.
 const NOTICE_TIME: Duration = Duration::from_secs(6);
 
@@ -84,6 +87,20 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<Value> {
+        // Edits and saves of a read-only document are refused.
+        let edits_document = tool == "save_document"
+            || (["sheets_", "docs_", "slides_"]
+                .iter()
+                .any(|p| tool.starts_with(p))
+                && !crate::mcp::tools::is_read_only(tool));
+        if edits_document {
+            let pane = self.agent_pane(agent::opt_int(args, "document")?)?;
+            if self.read_only(pane).is_some() {
+                bail!(
+                    "document {pane} is read-only in Kantor (locked by someone else, or made read-only by the user); it can be read but not changed"
+                );
+            }
+        }
         match tool {
             "list_documents" => Ok(self.list_documents(cx)),
             "open_document" => self.agent_open(args, window, cx),
@@ -98,7 +115,7 @@ impl Workspace {
                 let pane = self
                     .focused_pane()
                     .context("the new document didn't open")?;
-                self.notice(format!("Agent: new {}", kind.name()), cx);
+                self.notice(kantor_ui::i18n::tf("Agent: new {}", &[&kind.name()]), cx);
                 Ok(self.doc_json(pane, cx))
             }
             "save_document" => self.agent_save(args, window, cx),
@@ -136,9 +153,7 @@ impl Workspace {
         let command = crate::mcp::claude_code_command();
         cx.write_to_clipboard(ClipboardItem::new_string(command.clone()));
         self.notice(
-            format!(
-                "Copied: {command}  (run it in a terminal; `kantor mcp --print-config` has more)"
-            ),
+            kantor_ui::i18n::fill(kantor_ui::i18n::t(COPIED_SETUP), &[&command]),
             cx,
         );
     }
@@ -242,14 +257,14 @@ impl Workspace {
     /// the one in front.
     fn edited(&mut self, pane: PaneId, what: &str, cx: &mut Context<Self>) {
         let text = if self.focused_pane() == Some(pane) {
-            format!("Agent: {what}")
+            kantor_ui::i18n::tf("Agent: {}", &[&what])
         } else {
             let name = self
                 .docs
                 .get(&pane)
                 .map(|d| d.view.doc_name(cx))
                 .unwrap_or_default();
-            format!("Agent: {what} in {name}")
+            kantor_ui::i18n::tf("Agent: {} in {}", &[&what, &name])
         };
         self.notice(text, cx);
     }
@@ -286,7 +301,10 @@ impl Workspace {
             }
             bail!("couldn't open {}: {why}", path.display());
         }
-        self.notice(format!("Agent: opened {}", path.display()), cx);
+        self.notice(
+            kantor_ui::i18n::tf("Agent: opened {}", &[&path.display()]),
+            cx,
+        );
         Ok(self.doc_json(pane, cx))
     }
 

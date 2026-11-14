@@ -5,6 +5,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_theme::catalog::ThemeId;
 use kantor_ui::components::{IconButtonExt as _, dot, icon_button, kbd};
+use kantor_ui::i18n;
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 
@@ -23,7 +24,7 @@ impl Workspace {
         let sidebar_toggle = (!self.ui.sidebar_open).then(|| {
             let entity = entity.clone();
             icon_button("show-sidebar", IconName::PanelLeft, false, cx)
-                .tip("Show sidebar", Some("Ctrl+Shift+E"))
+                .tip(i18n::t("Show sidebar"), Some("Ctrl+Shift+E"))
                 .on_click(move |_, window, cx| {
                     let _ =
                         entity.update(cx, |ws, cx| ws.toggle_sidebar(&ToggleSidebar, window, cx));
@@ -139,7 +140,7 @@ impl Workspace {
         let new_tab = {
             let entity = entity.clone();
             icon_button("tab-new", IconName::Plus, false, cx)
-                .tip("New spreadsheet", Some("Ctrl+N"))
+                .tip(i18n::t("New spreadsheet"), Some("Ctrl+N"))
                 .on_click(move |_, window, cx| {
                     let _ =
                         entity.update(cx, |ws, cx| ws.new_spreadsheet(&NewSpreadsheet, window, cx));
@@ -150,7 +151,7 @@ impl Workspace {
         let split_right = {
             let entity = entity.clone();
             icon_button("split-right", IconName::LayoutDashboard, false, cx)
-                .tip("Split right", Some("Ctrl+\\"))
+                .tip(i18n::t("Split right"), Some("Ctrl+\\"))
                 .on_click(move |_, window, cx| {
                     let _ = entity.update(cx, |ws, cx| ws.split_right(&SplitRight, window, cx));
                 })
@@ -158,7 +159,7 @@ impl Workspace {
         let split_down = {
             let entity = entity.clone();
             icon_button("split-down", IconName::PanelBottom, false, cx)
-                .tip("Split down", Some("Ctrl+Alt+\\"))
+                .tip(i18n::t("Split down"), Some("Ctrl+Alt+\\"))
                 .on_click(move |_, window, cx| {
                     let _ = entity.update(cx, |ws, cx| ws.split_down(&SplitDown, window, cx));
                 })
@@ -173,9 +174,9 @@ impl Workspace {
             )
             .tip(
                 if self.ui.inspector_open {
-                    "Hide inspector"
+                    i18n::t("Hide inspector")
                 } else {
-                    "Show inspector"
+                    i18n::t("Show inspector")
                 },
                 Some("Ctrl+Shift+I"),
             )
@@ -185,6 +186,8 @@ impl Workspace {
                 });
             })
         };
+
+        let file_menu = self.render_file_menu(cx);
 
         let palette_hint = div()
             .id("palette-hint")
@@ -199,7 +202,7 @@ impl Workspace {
             .text_color(t.fg_muted)
             .cursor_pointer()
             .hover(|s| s.bg(t.hover))
-            .when(!compact, |d| d.child("Commands"))
+            .when(!compact, |d| d.child(i18n::t("Commands")))
             .child(kbd("Ctrl K", cx))
             .on_click(move |_, window, cx| {
                 let _ = entity.update(cx, |ws, cx| ws.toggle_palette(&TogglePalette, window, cx));
@@ -226,6 +229,7 @@ impl Workspace {
             )
             .when(in_doc, |d| d.child(split_right).child(split_down))
             .child(inspector_toggle)
+            .child(file_menu)
             .child(palette_hint)
     }
 
@@ -245,7 +249,7 @@ impl Workspace {
                 )
             }
             None => (
-                "Home",
+                i18n::t("Home"),
                 t.accent,
                 String::new(),
                 self.message.clone(),
@@ -255,6 +259,7 @@ impl Workspace {
             ),
         };
         let status = self.notice.clone().unwrap_or(status);
+        let cloud_chip = self.render_cloud_chip(cx);
         let panes = self
             .active
             .and_then(|i| self.tabs.get(i))
@@ -281,6 +286,8 @@ impl Workspace {
                     .child(div().text_color(t.fg).child(app)),
             )
             .when(!detail.is_empty(), |d| d.child(div().child(detail)))
+            // A cloud document: synced, uploading, offline, read-only…
+            .children(cloud_chip)
             // The active cell is in a pivot table.
             .when_some(pivot, |d, pivot| {
                 let ws = cx.entity().downgrade();
@@ -303,7 +310,7 @@ impl Workspace {
                 )
             })
             .when(panes > 1, |d| {
-                d.child(div().child(format!("{panes} panes")))
+                d.child(div().child(i18n::tf("{} panes", &[&panes])))
             })
             .child(div().flex_1().min_w_0().truncate().child(status))
             // Excel's Sum / Average / Count for a selected range.
@@ -339,7 +346,11 @@ impl Workspace {
                         .hover(|s| s.bg(t.hover))
                         .when(on, |d| d.text_color(t.fg))
                         .on_click(cx.listener(|ws, _, _, cx| ws.toggle_autosave(cx)))
-                        .child(if on { "Autosave On" } else { "Autosave Off" }),
+                        .child(if on {
+                            i18n::t("Autosave On")
+                        } else {
+                            i18n::t("Autosave Off")
+                        }),
                 )
             })
             .child(div().child(theme))

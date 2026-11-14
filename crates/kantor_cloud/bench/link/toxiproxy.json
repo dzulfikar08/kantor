@@ -1,0 +1,4 @@
+[
+  { "name": "nextcloud", "listen": "0.0.0.0:28080", "upstream": "web:80", "enabled": true },
+  { "name": "opencloud", "listen": "0.0.0.0:29200", "upstream": "opencloud:9200", "enabled": true }
+]

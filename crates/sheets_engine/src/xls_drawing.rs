@@ -353,38 +353,20 @@ pub(crate) struct Skipped {
 }
 
 impl Skipped {
-    pub(crate) fn notes(&self) -> Vec<String> {
-        let plural = |n: usize| if n == 1 { "" } else { "s" };
+    pub(crate) fn notes(&self) -> Vec<crate::ImportNote> {
+        use crate::ImportNote as N;
         let mut out = Vec::new();
         if self.pictures > 0 {
-            out.push(format!(
-                "{} picture{} not imported (EMF, WMF, PICT, BMP or TIFF format)",
-                self.pictures,
-                plural(self.pictures)
-            ));
+            out.push(N::PicturesSkipped(self.pictures));
         }
         if self.charts > 0 {
-            out.push(format!(
-                "{} chart{} not imported (radar, surface, bubble, bar of pie or combination charts)",
-                self.charts,
-                plural(self.charts)
-            ));
+            out.push(N::ChartsSkipped(self.charts));
         }
         if self.flat > 0 {
-            out.push(format!(
-                "{} 3-D chart{} shown flat",
-                self.flat,
-                plural(self.flat)
-            ));
+            out.push(N::ChartsShownFlat(self.flat));
         }
         if self.shapes > 0 {
-            out.push(format!(
-                "{} shape{}, text box{} or control{} not imported",
-                self.shapes,
-                plural(self.shapes),
-                if self.shapes == 1 { "" } else { "es" },
-                plural(self.shapes)
-            ));
+            out.push(N::ShapesSkipped(self.shapes));
         }
         out
     }

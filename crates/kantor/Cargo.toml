@@ -10,6 +10,8 @@ default-run = "kantor"
 [dependencies]
 anyhow.workspace = true
 async-channel = "2"
+# Local dates in conflict copy names.
+chrono = { workspace = true, features = ["clock"] }
 docs_engine.workspace = true
 docs_pdf.workspace = true
 docs_ui.workspace = true
@@ -17,6 +19,7 @@ env_logger.workspace = true
 futures.workspace = true
 gpui-kit.workspace = true
 kantor_ai.workspace = true
+kantor_cloud.workspace = true
 kantor_core.workspace = true
 kantor_pdf.workspace = true
 kantor_theme.workspace = true

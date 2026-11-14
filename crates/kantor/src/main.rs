@@ -107,6 +107,7 @@ fn main() {
         .with_assets(kantor_ui::KantorAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            kantor_ui::widget_strings::init();
             theme::init(cx);
             kantor_ui::perf::watch_main_thread(cx);
             kantor_ui::find_bar::init(cx);
@@ -115,6 +116,7 @@ fn main() {
             slides_ui::init(cx);
 
             ai::init(cx);
+            workspace::init_cloud_panels(cx);
             actions::bind_keys(cx);
 
             let options = WindowOptions {

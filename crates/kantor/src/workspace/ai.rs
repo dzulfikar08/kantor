@@ -2,6 +2,7 @@
 
 use gpui_kit::*;
 use kantor_ui::ai::{AskForFormula, ExplainFormula, OpenAiSettings, RewriteSelection};
+use kantor_ui::i18n::t;
 use kantor_ui::tokens;
 
 use super::Workspace;
@@ -44,8 +45,11 @@ impl Workspace {
     }
 
     fn open_formula(&mut self, mode: FormulaMode, window: &mut Window, cx: &mut Context<Self>) {
+        if mode == FormulaMode::Ask && self.refuse_if_read_only(cx) {
+            return;
+        }
         let Some(DocView::Sheets(sheets)) = self.focused_view() else {
-            self.message = "Formulas: open a spreadsheet first".into();
+            self.message = t("Formulas: open a spreadsheet first").into();
             cx.notify();
             return;
         };
@@ -60,8 +64,11 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.refuse_if_read_only(cx) {
+            return;
+        }
         let Some(DocView::Docs(docs)) = self.focused_view() else {
-            self.message = "Rewrite: open a document and select some text first".into();
+            self.message = t("Rewrite: open a document and select some text first").into();
             cx.notify();
             return;
         };

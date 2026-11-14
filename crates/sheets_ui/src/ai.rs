@@ -2,6 +2,7 @@
 //! read (the workbook, through `read_book`) and how it inserts a formula.
 
 use gpui_kit::*;
+use kantor_ui::i18n::tf;
 use sheets_engine::{Workbook, cell_name};
 
 use crate::SheetsView;
@@ -49,7 +50,8 @@ impl SheetsView {
         }
         self.set_cell(target.sheet, target.row, target.col, formula, cx)
             .map_err(|e| format!("{e:#}"))?;
-        self.status = format!("Formula inserted in {}", cell_name(target.row, target.col)).into();
+        let cell = cell_name(target.row, target.col);
+        self.status = tf("Formula inserted in {}", &[&cell]).into();
         self.load_selected_into_formula(window, cx);
         self.update_title(window, cx);
         cx.notify();

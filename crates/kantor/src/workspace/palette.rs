@@ -8,6 +8,7 @@ use gpui_kit::*;
 use kantor_core::fuzzy;
 use kantor_theme::catalog::{self, ThemeEntry};
 use kantor_ui::components::kbd;
+use kantor_ui::i18n::{self, fill, indonesian, t, t_dyn, tf, tk};
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 use kantor_ui::tokens::Elevation;
@@ -28,44 +29,78 @@ pub(super) struct Command {
 
 pub(super) const COMMANDS: &[Command] = &[
     Command {
-        title: "New Spreadsheet",
+        title: tk("New Spreadsheet"),
         detail: "Sheets",
         keys: "Ctrl N",
         run: |ws, window, cx| ws.new_spreadsheet(&NewSpreadsheet, window, cx),
     },
     Command {
-        title: "New Document",
+        title: tk("New Document"),
         detail: "Docs",
         keys: "Ctrl Shift N",
         run: |ws, window, cx| ws.new_document(&NewDocument, window, cx),
     },
     Command {
-        title: "Open File…",
+        title: tk("Open File…"),
         detail: ".xlsx, .docx, .pptx, .csv, .ods, .xls, .ppt",
         keys: "Ctrl O",
         run: |ws, window, cx| ws.open_file(&OpenFile, window, cx),
     },
     Command {
-        title: "Copy MCP Setup for Claude Code",
-        detail: "AI agents can edit open documents (kantor mcp)",
+        title: tk("Open from Cloud…"),
+        detail: tk("Nextcloud, OpenCloud or any WebDAV drive"),
+        keys: "",
+        run: |ws, window, cx| ws.open_from_cloud(&OpenFromCloud, window, cx),
+    },
+    Command {
+        title: tk("Sync Now"),
+        detail: tk("Upload a cloud document saved offline, recheck a lock"),
+        keys: "",
+        run: |ws, window, cx| ws.sync_now(&SyncNow, window, cx),
+    },
+    Command {
+        title: tk("Cloud Accounts…"),
+        detail: tk("Add, test or remove a WebDAV account"),
+        keys: "",
+        run: |ws, window, cx| ws.open_cloud_accounts(&CloudAccounts, window, cx),
+    },
+    Command {
+        title: tk("Copy MCP Setup for Claude Code"),
+        detail: tk("AI agents can edit open documents (kantor mcp)"),
         keys: "",
         run: |ws, _, cx| ws.copy_mcp_setup(cx),
     },
     Command {
-        title: "Save",
-        detail: "Current document",
+        title: tk("Save"),
+        detail: tk("Current document"),
         keys: "Ctrl S",
-        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.save(w, cx)),
+        run: |ws, window, cx| {
+            if !ws.refuse_if_read_only(cx) {
+                ws.with_active(window, cx, |v, w, cx| v.save(w, cx))
+            }
+        },
     },
     Command {
-        title: "Save As…",
-        detail: "Current document",
+        title: tk("Make Read-Only"),
+        detail: tk("Refuse edits to this document until you allow them"),
+        keys: "",
+        run: |ws, _, cx| ws.make_read_only(cx),
+    },
+    Command {
+        title: tk("Allow Editing"),
+        detail: tk("End read-only; a cloud file takes the lock (Edit now)"),
+        keys: "",
+        run: |ws, window, cx| ws.allow_editing(window, cx),
+    },
+    Command {
+        title: tk("Save As…"),
+        detail: tk("Current document"),
         keys: "Ctrl Shift S",
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.save_as(w, cx)),
     },
     Command {
-        title: "Export as PDF…",
-        detail: "Docs pages as laid out · Slides, one page per slide · Sheets as Excel prints",
+        title: tk("Export as PDF…"),
+        detail: tk("Docs pages as laid out · Slides, one page per slide · Sheets as Excel prints"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| v.export_pdf_doc(w, cx));
@@ -74,14 +109,14 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Print…",
-        detail: "Opens the pages as a PDF in the system viewer to print",
+        title: tk("Print…"),
+        detail: tk("Opens the pages as a PDF in the system viewer to print"),
         keys: "Ctrl P",
         run: |ws, window, cx| ws.print(&crate::actions::Print, window, cx),
     },
     Command {
-        title: "Print Notes Pages…",
-        detail: "Slides: each slide above its speaker notes",
+        title: tk("Print Notes Pages…"),
+        detail: tk("Slides: each slide above its speaker notes"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_slides(window, cx, |v, w, cx| {
@@ -90,8 +125,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Print Handouts…",
-        detail: "Slides: 3 slides per page with lines for notes (the Print menu has 1–9)",
+        title: tk("Print Handouts…"),
+        detail: tk("Slides: 3 slides per page with lines for notes (the Print menu has 1–9)"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_slides(window, cx, |v, w, cx| {
@@ -100,72 +135,72 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Edit Table or Chart Data…",
-        detail: "Slides · the selected table's cells, rows and columns, or a chart's values",
+        title: tk("Edit Table or Chart Data…"),
+        detail: tk("Slides · the selected table's cells, rows and columns, or a chart's values"),
         keys: "",
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.edit_object_doc(w, cx)),
     },
     Command {
-        title: "Undo",
-        detail: "Last edit",
+        title: tk("Undo"),
+        detail: tk("Last edit"),
         keys: "Ctrl Z",
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.undo(w, cx)),
     },
     Command {
-        title: "Redo",
-        detail: "Last undone edit",
+        title: tk("Redo"),
+        detail: tk("Last undone edit"),
         keys: "Ctrl Shift Z",
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.redo(w, cx)),
     },
     Command {
-        title: "Copy",
-        detail: "Selection (cells as tab-separated text)",
+        title: tk("Copy"),
+        detail: tk("Selection (cells as tab-separated text)"),
         keys: "Ctrl C",
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.copy(w, cx)),
     },
     Command {
-        title: "Cut",
-        detail: "Copy and delete the selection",
+        title: tk("Cut"),
+        detail: tk("Copy and delete the selection"),
         keys: "Ctrl X",
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.cut(w, cx)),
     },
     Command {
-        title: "Paste",
-        detail: "Plain text, at the caret or selected cell",
+        title: tk("Paste"),
+        detail: tk("Plain text, at the caret or selected cell"),
         keys: "Ctrl V",
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.paste(w, cx)),
     },
     Command {
-        title: "Find",
-        detail: "Text, cells or slides",
+        title: tk("Find"),
+        detail: tk("Text, cells or slides"),
         keys: "Ctrl F",
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.find(false, w, cx)),
     },
     Command {
-        title: "Replace",
-        detail: "Find and replace",
+        title: tk("Replace"),
+        detail: tk("Find and replace"),
         keys: "Ctrl H",
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.find(true, w, cx)),
     },
     Command {
-        title: "Bold",
-        detail: "Selection",
+        title: tk("Bold"),
+        detail: tk("Selection"),
         keys: "Ctrl B",
         run: |ws, window, cx| {
             ws.with_active(window, cx, |v, w, cx| v.format(CommonFormat::Bold, w, cx))
         },
     },
     Command {
-        title: "Italic",
-        detail: "Selection",
+        title: tk("Italic"),
+        detail: tk("Selection"),
         keys: "Ctrl I",
         run: |ws, window, cx| {
             ws.with_active(window, cx, |v, w, cx| v.format(CommonFormat::Italic, w, cx))
         },
     },
     Command {
-        title: "Underline",
-        detail: "Selection",
+        title: tk("Underline"),
+        detail: tk("Selection"),
         keys: "Ctrl U",
         run: |ws, window, cx| {
             ws.with_active(window, cx, |v, w, cx| {
@@ -174,8 +209,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Strikethrough",
-        detail: "Selected cells",
+        title: tk("Strikethrough"),
+        detail: tk("Selected cells"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -184,8 +219,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Align Left",
-        detail: "Selection or paragraphs",
+        title: tk("Align Left"),
+        detail: tk("Selection or paragraphs"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_active(window, cx, |v, w, cx| {
@@ -194,8 +229,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Align Center",
-        detail: "Selection or paragraphs",
+        title: tk("Align Center"),
+        detail: tk("Selection or paragraphs"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_active(window, cx, |v, w, cx| {
@@ -204,8 +239,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Align Right",
-        detail: "Selection or paragraphs",
+        title: tk("Align Right"),
+        detail: tk("Selection or paragraphs"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_active(window, cx, |v, w, cx| {
@@ -214,8 +249,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Format as General",
-        detail: "Number format",
+        title: tk("Format as General"),
+        detail: tk("Number format"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -224,8 +259,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Format as Number",
-        detail: "Number format · 1,234.50",
+        title: tk("Format as Number"),
+        detail: tk("Number format · 1,234.50"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -234,8 +269,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Format as Percent",
-        detail: "Number format · 12.50%",
+        title: tk("Format as Percent"),
+        detail: tk("Number format · 12.50%"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -244,8 +279,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Format as Rupiah",
-        detail: "Number format · Rp1,250,000",
+        title: tk("Format as Rupiah"),
+        detail: tk("Number format · Rp1,250,000"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -254,8 +289,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Format as Dollars",
-        detail: "Number format · $1,234.50",
+        title: tk("Format as Dollars"),
+        detail: tk("Number format · $1,234.50"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -264,8 +299,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Format as Date",
-        detail: "Number format · 2026-11-07",
+        title: tk("Format as Date"),
+        detail: tk("Number format · 2026-11-07"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -274,8 +309,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Fill: Light Yellow",
-        detail: "Sheets · cell background",
+        title: tk("Fill: Light Yellow"),
+        detail: tk("Sheets · cell background"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -284,8 +319,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Fill: Light Blue",
-        detail: "Sheets · cell background",
+        title: tk("Fill: Light Blue"),
+        detail: tk("Sheets · cell background"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -294,8 +329,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Fill: Light Green",
-        detail: "Sheets · cell background",
+        title: tk("Fill: Light Green"),
+        detail: tk("Sheets · cell background"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -304,8 +339,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Fill: Light Grey",
-        detail: "Sheets · cell background",
+        title: tk("Fill: Light Grey"),
+        detail: tk("Sheets · cell background"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -314,8 +349,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "No Fill",
-        detail: "Sheets · cell background",
+        title: tk("No Fill"),
+        detail: tk("Sheets · cell background"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -324,7 +359,7 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Text Colour: Red",
+        title: tk("Text Colour: Red"),
         detail: "Sheets",
         keys: "",
         run: |ws, window, cx| {
@@ -334,7 +369,7 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Text Colour: Blue",
+        title: tk("Text Colour: Blue"),
         detail: "Sheets",
         keys: "",
         run: |ws, window, cx| {
@@ -344,7 +379,7 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Text Colour: Green",
+        title: tk("Text Colour: Green"),
         detail: "Sheets",
         keys: "",
         run: |ws, window, cx| {
@@ -354,7 +389,7 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Text Colour: Automatic",
+        title: tk("Text Colour: Automatic"),
         detail: "Sheets",
         keys: "",
         run: |ws, window, cx| {
@@ -364,8 +399,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Increase Font Size",
-        detail: "Sheets · one point larger",
+        title: tk("Increase Font Size"),
+        detail: tk("Sheets · one point larger"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -374,8 +409,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Decrease Font Size",
-        detail: "Sheets · one point smaller",
+        title: tk("Decrease Font Size"),
+        detail: tk("Sheets · one point smaller"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -384,8 +419,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "All Borders",
-        detail: "Sheets · every edge of the selection",
+        title: tk("All Borders"),
+        detail: tk("Sheets · every edge of the selection"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -394,8 +429,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Outside Borders",
-        detail: "Sheets · outline of the selection",
+        title: tk("Outside Borders"),
+        detail: tk("Sheets · outline of the selection"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -404,8 +439,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "No Borders",
-        detail: "Sheets · remove borders",
+        title: tk("No Borders"),
+        detail: tk("Sheets · remove borders"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -414,24 +449,24 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Wrap Text",
-        detail: "Sheets · toggle",
+        title: tk("Wrap Text"),
+        detail: tk("Sheets · toggle"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| v.format_doc(Format::Wrap, w, cx))
         },
     },
     Command {
-        title: "Merge & Center / Unmerge",
-        detail: "Sheets · selected cells",
+        title: tk("Merge & Center / Unmerge"),
+        detail: tk("Sheets · selected cells"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| v.format_doc(Format::Merge, w, cx))
         },
     },
     Command {
-        title: "Align Top",
-        detail: "Sheets · vertical alignment",
+        title: tk("Align Top"),
+        detail: tk("Sheets · vertical alignment"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -440,8 +475,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Align Middle",
-        detail: "Sheets · vertical alignment",
+        title: tk("Align Middle"),
+        detail: tk("Sheets · vertical alignment"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -450,8 +485,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Align Bottom",
-        detail: "Sheets · vertical alignment",
+        title: tk("Align Bottom"),
+        detail: tk("Sheets · vertical alignment"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -460,8 +495,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Sort A to Z",
-        detail: "Sheets · by the active cell's column (smallest to largest, oldest to newest)",
+        title: tk("Sort A to Z"),
+        detail: tk("Sheets · by the active cell's column (smallest to largest, oldest to newest)"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -470,8 +505,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Sort Z to A",
-        detail: "Sheets · by the active cell's column, descending",
+        title: tk("Sort Z to A"),
+        detail: tk("Sheets · by the active cell's column, descending"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -480,8 +515,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Custom Sort…",
-        detail: "Sheets · sort by several columns",
+        title: tk("Custom Sort…"),
+        detail: tk("Sheets · sort by several columns"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -490,8 +525,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Filter",
-        detail: "Sheets · filter buttons on or off for the data or table",
+        title: tk("Filter"),
+        detail: tk("Sheets · filter buttons on or off for the data or table"),
         keys: "Ctrl Shift L",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -500,8 +535,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Clear Filters",
-        detail: "Sheets · show every row the sheet's filters hide",
+        title: tk("Clear Filters"),
+        detail: tk("Sheets · show every row the sheet's filters hide"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -510,8 +545,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Reapply Filters",
-        detail: "Sheets · filter again after edits",
+        title: tk("Reapply Filters"),
+        detail: tk("Sheets · filter again after edits"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -520,8 +555,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Insert Row Above",
-        detail: "Sheets · rows of the selection",
+        title: tk("Insert Row Above"),
+        detail: tk("Sheets · rows of the selection"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -530,8 +565,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Insert Row Below",
-        detail: "Sheets · rows of the selection",
+        title: tk("Insert Row Below"),
+        detail: tk("Sheets · rows of the selection"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -540,8 +575,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Delete Rows",
-        detail: "Sheets · rows of the selection",
+        title: tk("Delete Rows"),
+        detail: tk("Sheets · rows of the selection"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -550,8 +585,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Insert Column Left",
-        detail: "Sheets · columns of the selection",
+        title: tk("Insert Column Left"),
+        detail: tk("Sheets · columns of the selection"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -560,8 +595,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Insert Column Right",
-        detail: "Sheets · columns of the selection",
+        title: tk("Insert Column Right"),
+        detail: tk("Sheets · columns of the selection"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -570,8 +605,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Delete Columns",
-        detail: "Sheets · columns of the selection",
+        title: tk("Delete Columns"),
+        detail: tk("Sheets · columns of the selection"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -580,8 +615,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Autofit Column Width",
-        detail: "Sheets · fit the selected columns to their content",
+        title: tk("Autofit Column Width"),
+        detail: tk("Sheets · fit the selected columns to their content"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -590,8 +625,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Row Height…",
-        detail: "Sheets · set the selected rows' height in points",
+        title: tk("Row Height…"),
+        detail: tk("Sheets · set the selected rows' height in points"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -600,8 +635,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Autofit Row Height",
-        detail: "Sheets · fit the selected rows to their content",
+        title: tk("Autofit Row Height"),
+        detail: tk("Sheets · fit the selected rows to their content"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -610,8 +645,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Standard Column Width",
-        detail: "Sheets · reset the selected columns",
+        title: tk("Standard Column Width"),
+        detail: tk("Sheets · reset the selected columns"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -620,8 +655,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Freeze Top Row",
-        detail: "Sheets · keep row 1 in view",
+        title: tk("Freeze Top Row"),
+        detail: tk("Sheets · keep row 1 in view"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -630,8 +665,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Freeze First Column",
-        detail: "Sheets · keep column A in view",
+        title: tk("Freeze First Column"),
+        detail: tk("Sheets · keep column A in view"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -640,8 +675,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Freeze Panes",
-        detail: "Sheets · rows above and columns left of the active cell",
+        title: tk("Freeze Panes"),
+        detail: tk("Sheets · rows above and columns left of the active cell"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -650,7 +685,7 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Unfreeze Panes",
+        title: tk("Unfreeze Panes"),
         detail: "Sheets",
         keys: "",
         run: |ws, window, cx| {
@@ -660,8 +695,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Hide Rows",
-        detail: "Sheets · hide the selected rows",
+        title: tk("Hide Rows"),
+        detail: tk("Sheets · hide the selected rows"),
         keys: "Ctrl 9",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -670,8 +705,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Unhide Rows",
-        detail: "Sheets · show hidden rows in the selection (not filtered ones)",
+        title: tk("Unhide Rows"),
+        detail: tk("Sheets · show hidden rows in the selection (not filtered ones)"),
         keys: "Ctrl Shift 9",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -680,8 +715,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Hide Columns",
-        detail: "Sheets · hide the selected columns",
+        title: tk("Hide Columns"),
+        detail: tk("Sheets · hide the selected columns"),
         keys: "Ctrl 0",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -690,8 +725,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Unhide Columns",
-        detail: "Sheets · show hidden columns in the selection",
+        title: tk("Unhide Columns"),
+        detail: tk("Sheets · show hidden columns in the selection"),
         keys: "Ctrl Shift 0",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -700,7 +735,7 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Select All Cells",
+        title: tk("Select All Cells"),
         detail: "Sheets",
         keys: "Ctrl A",
         run: |ws, window, cx| {
@@ -710,8 +745,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Fill Down",
-        detail: "Sheets · copy the top row down the selection",
+        title: tk("Fill Down"),
+        detail: tk("Sheets · copy the top row down the selection"),
         keys: "Ctrl D",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -720,8 +755,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Fill Right",
-        detail: "Sheets · copy the left column across the selection",
+        title: tk("Fill Right"),
+        detail: tk("Sheets · copy the left column across the selection"),
         keys: "Ctrl R",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -730,14 +765,14 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Calculate Now",
-        detail: "Sheets · recalculate every formula",
+        title: tk("Calculate Now"),
+        detail: tk("Sheets · recalculate every formula"),
         keys: "F9",
         run: |ws, window, cx| ws.with_sheets_any(window, cx, |v, w, cx| v.calculate_doc(w, cx)),
     },
     Command {
-        title: "Automatic Calculation",
-        detail: "Sheets · recalculate after every edit",
+        title: tk("Automatic Calculation"),
+        detail: tk("Sheets · recalculate after every edit"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets_any(window, cx, |v, w, cx| {
@@ -746,8 +781,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Manual Calculation",
-        detail: "Sheets · recalculate only with F9 (for big workbooks)",
+        title: tk("Manual Calculation"),
+        detail: tk("Sheets · recalculate only with F9 (for big workbooks)"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets_any(window, cx, |v, w, cx| {
@@ -756,32 +791,36 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "New Conditional Formatting Rule…",
-        detail: "Sheets · highlight cells, top/bottom, data bars, colour scales, icon sets or a formula",
+        title: tk("New Conditional Formatting Rule…"),
+        detail: tk(
+            "Sheets · highlight cells, top/bottom, data bars, colour scales, icon sets or a formula",
+        ),
         keys: "",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.new_cf_rule_doc(w, cx)),
     },
     Command {
-        title: "Manage Conditional Formatting Rules…",
-        detail: "Sheets · edit, delete and reorder the rules of the selection or the sheet",
+        title: tk("Manage Conditional Formatting Rules…"),
+        detail: tk("Sheets · edit, delete and reorder the rules of the selection or the sheet"),
         keys: "",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.manage_cf_doc(w, cx)),
     },
     Command {
-        title: "Clear Conditional Formatting from Selected Cells",
-        detail: "Sheets · remove the rules that touch the selection",
+        title: tk("Clear Conditional Formatting from Selected Cells"),
+        detail: tk("Sheets · remove the rules that touch the selection"),
         keys: "",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.clear_cf_doc(false, w, cx)),
     },
     Command {
-        title: "Clear Conditional Formatting from Entire Sheet",
-        detail: "Sheets · remove every rule of the active sheet",
+        title: tk("Clear Conditional Formatting from Entire Sheet"),
+        detail: tk("Sheets · remove every rule of the active sheet"),
         keys: "",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.clear_cf_doc(true, w, cx)),
     },
     Command {
-        title: "Insert Chart",
-        detail: "Sheets · a column chart of the selection or the data around the active cell (other types in the toolbar's chart menu)",
+        title: tk("Insert Chart"),
+        detail: tk(
+            "Sheets · a column chart of the selection or the data around the active cell (other types in the toolbar's chart menu)",
+        ),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -790,8 +829,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Insert Line Chart",
-        detail: "Sheets · a line chart of the selection",
+        title: tk("Insert Line Chart"),
+        detail: tk("Sheets · a line chart of the selection"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -800,8 +839,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Insert Pie Chart",
-        detail: "Sheets · a pie chart of the selection",
+        title: tk("Insert Pie Chart"),
+        detail: tk("Sheets · a pie chart of the selection"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -810,172 +849,182 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Chart Panel",
-        detail: "Sheets · type, title, legend, axis titles, series colours and data of the selected chart",
+        title: tk("Chart Panel"),
+        detail: tk(
+            "Sheets · type, title, legend, axis titles, series colours and data of the selected chart",
+        ),
         keys: "",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.chart_options_doc(w, cx)),
     },
     Command {
-        title: "Format as Table…",
-        detail: "Sheets · make the selection or the data around the active cell a table with a style",
+        title: tk("Format as Table…"),
+        detail: tk(
+            "Sheets · make the selection or the data around the active cell a table with a style",
+        ),
         keys: "Ctrl T",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.format_as_table_doc(w, cx)),
     },
     Command {
-        title: "Table Design",
-        detail: "Sheets · style, header and total rows, banding, totals and name of the table at the active cell",
+        title: tk("Table Design"),
+        detail: tk(
+            "Sheets · style, header and total rows, banding, totals and name of the table at the active cell",
+        ),
         keys: "",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.table_design_doc(w, cx)),
     },
     Command {
-        title: "Convert Table to Range",
-        detail: "Sheets · keep the cells, remove the table at the active cell",
+        title: tk("Convert Table to Range"),
+        detail: tk("Sheets · keep the cells, remove the table at the active cell"),
         keys: "",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.convert_table_doc(w, cx)),
     },
     Command {
-        title: "Page Setup…",
-        detail: "Sheets · paper, orientation, scaling, margins, header and footer, print area and titles",
+        title: tk("Page Setup…"),
+        detail: tk(
+            "Sheets · paper, orientation, scaling, margins, header and footer, print area and titles",
+        ),
         keys: "",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.page_setup_doc(w, cx)),
     },
     Command {
-        title: "Set Print Area",
-        detail: "Sheets · print only the selected cells of this sheet",
+        title: tk("Set Print Area"),
+        detail: tk("Sheets · print only the selected cells of this sheet"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| v.set_print_area_doc(false, w, cx))
         },
     },
     Command {
-        title: "Clear Print Area",
-        detail: "Sheets · print the whole used range of this sheet again",
+        title: tk("Clear Print Area"),
+        detail: tk("Sheets · print the whole used range of this sheet again"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| v.set_print_area_doc(true, w, cx))
         },
     },
     Command {
-        title: "Insert PivotTable…",
-        detail: "Sheets · summarise the table, selection or data around the active cell",
+        title: tk("Insert PivotTable…"),
+        detail: tk("Sheets · summarise the table, selection or data around the active cell"),
         keys: "",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.insert_pivot_doc(w, cx)),
     },
     Command {
-        title: "PivotTable Fields",
-        detail: "Sheets · show or hide the field list of the PivotTable at the active cell",
+        title: tk("PivotTable Fields"),
+        detail: tk("Sheets · show or hide the field list of the PivotTable at the active cell"),
         keys: "",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.pivot_fields_doc(w, cx)),
     },
     Command {
-        title: "Delete PivotTable",
-        detail: "Sheets · remove the PivotTable at the active cell",
+        title: tk("Delete PivotTable"),
+        detail: tk("Sheets · remove the PivotTable at the active cell"),
         keys: "",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.delete_pivot_doc(w, cx)),
     },
     Command {
-        title: "Refresh PivotTable",
-        detail: "Sheets · recompute the PivotTable at the active cell from its data",
+        title: tk("Refresh PivotTable"),
+        detail: tk("Sheets · recompute the PivotTable at the active cell from its data"),
         keys: "Alt F5",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| v.refresh_pivots_doc(false, w, cx))
         },
     },
     Command {
-        title: "Refresh All PivotTables",
-        detail: "Sheets · recompute every PivotTable in the workbook",
+        title: tk("Refresh All PivotTables"),
+        detail: tk("Sheets · recompute every PivotTable in the workbook"),
         keys: "Ctrl Alt F5",
         run: |ws, window, cx| {
             ws.with_sheets_any(window, cx, |v, w, cx| v.refresh_pivots_doc(true, w, cx))
         },
     },
     Command {
-        title: "Pick From Validation List",
-        detail: "Sheets · open the active cell's data validation drop-down",
+        title: tk("Pick From Validation List"),
+        detail: tk("Sheets · open the active cell's data validation drop-down"),
         keys: "Alt Down",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| v.open_validation_list_doc(w, cx))
         },
     },
     Command {
-        title: "Data Validation…",
-        detail: "Sheets · allow only a list, numbers, dates, times, text length or a formula; input message and error alert",
+        title: tk("Data Validation…"),
+        detail: tk(
+            "Sheets · allow only a list, numbers, dates, times, text length or a formula; input message and error alert",
+        ),
         keys: "",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.data_validation_doc(w, cx)),
     },
     Command {
-        title: "Circle Invalid Data",
-        detail: "Sheets · ring cells whose values break their data validation",
+        title: tk("Circle Invalid Data"),
+        detail: tk("Sheets · ring cells whose values break their data validation"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| v.circle_invalid_doc(true, w, cx))
         },
     },
     Command {
-        title: "Clear Validation Circles",
-        detail: "Sheets · data validation",
+        title: tk("Clear Validation Circles"),
+        detail: tk("Sheets · data validation"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| v.circle_invalid_doc(false, w, cx))
         },
     },
     Command {
-        title: "Toggle Sidebar",
-        detail: "Open documents, recent files",
+        title: tk("Toggle Sidebar"),
+        detail: tk("Open documents, recent files"),
         keys: "Ctrl Shift E",
         run: |ws, window, cx| ws.toggle_sidebar(&ToggleSidebar, window, cx),
     },
     Command {
-        title: "Toggle Inspector",
-        detail: "Cell and workbook details",
+        title: tk("Toggle Inspector"),
+        detail: tk("Cell and workbook details"),
         keys: "Ctrl Shift I",
         run: |ws, window, cx| ws.toggle_inspector(&ToggleInspector, window, cx),
     },
     Command {
-        title: "Split Right",
-        detail: "New pane beside",
+        title: tk("Split Right"),
+        detail: tk("New pane beside"),
         keys: "Ctrl \\",
         run: |ws, window, cx| ws.split_right(&SplitRight, window, cx),
     },
     Command {
-        title: "Split Down",
-        detail: "New pane below",
+        title: tk("Split Down"),
+        detail: tk("New pane below"),
         keys: "Ctrl Alt \\",
         run: |ws, window, cx| ws.split_down(&SplitDown, window, cx),
     },
     Command {
-        title: "Close Pane",
-        detail: "Or the tab, if it has one pane",
+        title: tk("Close Pane"),
+        detail: tk("Or the tab, if it has one pane"),
         keys: "Ctrl W",
         run: |ws, window, cx| ws.close_pane(&ClosePane, window, cx),
     },
     Command {
-        title: "Close Tab",
-        detail: "All its panes",
+        title: tk("Close Tab"),
+        detail: tk("All its panes"),
         keys: "Ctrl Shift W",
         run: |ws, window, cx| ws.close_active_tab(&CloseTab, window, cx),
     },
     Command {
-        title: "Next Tab",
+        title: tk("Next Tab"),
         detail: "",
         keys: "Ctrl Tab",
         run: |ws, window, cx| ws.next_tab(&NextTab, window, cx),
     },
     Command {
-        title: "Previous Tab",
+        title: tk("Previous Tab"),
         detail: "",
         keys: "Ctrl Shift Tab",
         run: |ws, window, cx| ws.prev_tab(&PrevTab, window, cx),
     },
     Command {
-        title: "Go Home",
-        detail: "Start screen",
+        title: tk("Go Home"),
+        detail: tk("Start screen"),
         keys: "Ctrl Shift H",
         run: |ws, window, cx| ws.go_home(&GoHome, window, cx),
     },
     Command {
-        title: "Heading 1",
-        detail: "Docs · paragraph style",
+        title: tk("Heading 1"),
+        detail: tk("Docs · paragraph style"),
         keys: "Ctrl Alt 1",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -984,8 +1033,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Heading 2",
-        detail: "Docs · paragraph style",
+        title: tk("Heading 2"),
+        detail: tk("Docs · paragraph style"),
         keys: "Ctrl Alt 2",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -994,8 +1043,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Heading 3",
-        detail: "Docs · paragraph style",
+        title: tk("Heading 3"),
+        detail: tk("Docs · paragraph style"),
         keys: "Ctrl Alt 3",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1004,14 +1053,14 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Normal Text",
-        detail: "Docs · paragraph style",
+        title: tk("Normal Text"),
+        detail: tk("Docs · paragraph style"),
         keys: "Ctrl Alt 0",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.set_style_doc(None, w, cx)),
     },
     Command {
-        title: "Justify",
-        detail: "Docs · paragraphs",
+        title: tk("Justify"),
+        detail: tk("Docs · paragraphs"),
         keys: "Ctrl J",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1020,8 +1069,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Bulleted List",
-        detail: "Docs · lists",
+        title: tk("Bulleted List"),
+        detail: tk("Docs · lists"),
         keys: "Ctrl Shift 8",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1030,8 +1079,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Numbered List",
-        detail: "Docs · lists",
+        title: tk("Numbered List"),
+        detail: tk("Docs · lists"),
         keys: "Ctrl Shift 7",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1040,14 +1089,14 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Insert Table",
-        detail: "Docs · 3 × 3 (toolbar grid for other sizes)",
+        title: tk("Insert Table"),
+        detail: tk("Docs · 3 × 3 (toolbar grid for other sizes)"),
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.insert_table_doc(3, 3, w, cx)),
     },
     Command {
-        title: "Insert Row Above",
-        detail: "Docs · table",
+        title: tk("Insert Row Above"),
+        detail: tk("Docs · table"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1056,8 +1105,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Insert Row Below",
-        detail: "Docs · table",
+        title: tk("Insert Row Below"),
+        detail: tk("Docs · table"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1066,8 +1115,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Insert Column Left",
-        detail: "Docs · table",
+        title: tk("Insert Column Left"),
+        detail: tk("Docs · table"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1076,8 +1125,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Insert Column Right",
-        detail: "Docs · table",
+        title: tk("Insert Column Right"),
+        detail: tk("Docs · table"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1086,8 +1135,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Delete Row",
-        detail: "Docs · table",
+        title: tk("Delete Row"),
+        detail: tk("Docs · table"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1096,8 +1145,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Delete Column",
-        detail: "Docs · table",
+        title: tk("Delete Column"),
+        detail: tk("Docs · table"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1106,8 +1155,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Delete Table",
-        detail: "Docs · table",
+        title: tk("Delete Table"),
+        detail: tk("Docs · table"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1116,20 +1165,20 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Insert Picture…",
-        detail: "Docs · PNG or JPEG",
+        title: tk("Insert Picture…"),
+        detail: tk("Docs · PNG or JPEG"),
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.insert_image_doc(w, cx)),
     },
     Command {
-        title: "Page Setup…",
-        detail: "Docs · paper size, orientation, margins",
+        title: tk("Page Setup…"),
+        detail: tk("Docs · paper size, orientation, margins"),
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.toggle_page_menu(None, w, cx)),
     },
     Command {
-        title: "Header and Footer…",
-        detail: "Docs · text, page numbers, different first page, odd and even pages",
+        title: tk("Header and Footer…"),
+        detail: tk("Docs · text, page numbers, different first page, odd and even pages"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1138,36 +1187,36 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Add Page Numbers",
-        detail: "Docs · \"Page 1 of 9\" centred in the footer",
+        title: tk("Add Page Numbers"),
+        detail: tk("Docs · \"Page 1 of 9\" centred in the footer"),
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.add_page_numbers_doc(w, cx)),
     },
     Command {
-        title: "Insert Page Number Field",
-        detail: "Docs · the page number at the caret",
+        title: tk("Insert Page Number Field"),
+        detail: tk("Docs · the page number at the caret"),
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.insert_page_number_doc(w, cx)),
     },
     Command {
-        title: "Insert Section Break (Next Page)",
-        detail: "Docs · a new section with its own page setup, headers and footers",
+        title: tk("Insert Section Break (Next Page)"),
+        detail: tk("Docs · a new section with its own page setup, headers and footers"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| v.insert_section_break_doc(w, cx))
         },
     },
     Command {
-        title: "Track Changes",
-        detail: "Docs · turn on or off: your typing and deletions are marked for review",
+        title: tk("Track Changes"),
+        detail: tk("Docs · turn on or off: your typing and deletions are marked for review"),
         keys: "Ctrl Shift E",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| v.toggle_track_changes_doc(w, cx))
         },
     },
     Command {
-        title: "Insert Footnote",
-        detail: "Docs · a numbered note at the bottom of the page",
+        title: tk("Insert Footnote"),
+        detail: tk("Docs · a numbered note at the bottom of the page"),
         keys: "Ctrl Alt F",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1176,8 +1225,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Insert Endnote",
-        detail: "Docs · a numbered note at the end of the document",
+        title: tk("Insert Endnote"),
+        detail: tk("Docs · a numbered note at the end of the document"),
         keys: "Ctrl Alt D",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1186,62 +1235,62 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Edit Footnote or Endnote",
-        detail: "Docs · the note whose number is at the caret",
+        title: tk("Edit Footnote or Endnote"),
+        detail: tk("Docs · the note whose number is at the caret"),
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.edit_note_doc(w, cx)),
     },
     Command {
-        title: "New Comment",
-        detail: "Docs · on the selection or the word at the caret",
+        title: tk("New Comment"),
+        detail: tk("Docs · on the selection or the word at the caret"),
         keys: "Ctrl Alt M",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.new_comment_doc(w, cx)),
     },
     Command {
-        title: "Show or Hide Comments",
-        detail: "Docs · the comment cards beside the pages",
+        title: tk("Show or Hide Comments"),
+        detail: tk("Docs · the comment cards beside the pages"),
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, _, cx| v.toggle_comments_doc(cx)),
     },
     Command {
-        title: "Accept Tracked Change",
-        detail: "Docs · the insertion or deletion at the caret, then the next one",
+        title: tk("Accept Tracked Change"),
+        detail: tk("Docs · the insertion or deletion at the caret, then the next one"),
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.accept_change_doc(w, cx)),
     },
     Command {
-        title: "Reject Tracked Change",
-        detail: "Docs · the insertion or deletion at the caret, then the next one",
+        title: tk("Reject Tracked Change"),
+        detail: tk("Docs · the insertion or deletion at the caret, then the next one"),
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.reject_change_doc(w, cx)),
     },
     Command {
-        title: "Accept All Tracked Changes",
-        detail: "Docs · insertions, deletions, paragraph marks and formatting",
+        title: tk("Accept All Tracked Changes"),
+        detail: tk("Docs · insertions, deletions, paragraph marks and formatting"),
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.resolve_all_doc(true, w, cx)),
     },
     Command {
-        title: "Reject All Tracked Changes",
-        detail: "Docs · back to the text before the changes",
+        title: tk("Reject All Tracked Changes"),
+        detail: tk("Docs · back to the text before the changes"),
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.resolve_all_doc(false, w, cx)),
     },
     Command {
-        title: "Next Tracked Change",
-        detail: "Docs · select the next insertion or deletion",
+        title: tk("Next Tracked Change"),
+        detail: tk("Docs · select the next insertion or deletion"),
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, _, cx| v.next_change_doc(true, cx)),
     },
     Command {
-        title: "Previous Tracked Change",
-        detail: "Docs · select the previous insertion or deletion",
+        title: tk("Previous Tracked Change"),
+        detail: tk("Docs · select the previous insertion or deletion"),
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, _, cx| v.next_change_doc(false, cx)),
     },
     Command {
-        title: "Paper Size: A4",
-        detail: "Docs · page size, 21 × 29.7 cm",
+        title: tk("Paper Size: A4"),
+        detail: tk("Docs · page size, 21 × 29.7 cm"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1250,8 +1299,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Paper Size: Letter",
-        detail: "Docs · page size, 21.59 × 27.94 cm",
+        title: tk("Paper Size: Letter"),
+        detail: tk("Docs · page size, 21.59 × 27.94 cm"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1260,8 +1309,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Paper Size: Legal",
-        detail: "Docs · page size, 21.59 × 35.56 cm",
+        title: tk("Paper Size: Legal"),
+        detail: tk("Docs · page size, 21.59 × 35.56 cm"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1270,8 +1319,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Paper Size: A5",
-        detail: "Docs · page size, 14.8 × 21 cm",
+        title: tk("Paper Size: A5"),
+        detail: tk("Docs · page size, 14.8 × 21 cm"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1280,8 +1329,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Paper Size: F4 / Folio",
-        detail: "Docs · page size, 21.5 × 33 cm",
+        title: tk("Paper Size: F4 / Folio"),
+        detail: tk("Docs · page size, 21.5 × 33 cm"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1290,8 +1339,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Orientation: Portrait",
-        detail: "Docs · page setup",
+        title: tk("Orientation: Portrait"),
+        detail: tk("Docs · page setup"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1300,8 +1349,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Orientation: Landscape",
-        detail: "Docs · page setup",
+        title: tk("Orientation: Landscape"),
+        detail: tk("Docs · page setup"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1310,8 +1359,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Margins: Normal",
-        detail: "Docs · 2.54 cm all sides",
+        title: tk("Margins: Normal"),
+        detail: tk("Docs · 2.54 cm all sides"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1320,8 +1369,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Margins: Narrow",
-        detail: "Docs · 1.27 cm all sides",
+        title: tk("Margins: Narrow"),
+        detail: tk("Docs · 1.27 cm all sides"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1330,8 +1379,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Margins: Moderate",
-        detail: "Docs · 2.54 cm top/bottom, 1.91 cm sides",
+        title: tk("Margins: Moderate"),
+        detail: tk("Docs · 2.54 cm top/bottom, 1.91 cm sides"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1340,8 +1389,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Margins: Wide",
-        detail: "Docs · 2.54 cm top/bottom, 5.08 cm sides",
+        title: tk("Margins: Wide"),
+        detail: tk("Docs · 2.54 cm top/bottom, 5.08 cm sides"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1350,14 +1399,16 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Spelling…",
-        detail: "Sheets · check the spelling of the text cells, from the active cell or in the selection",
+        title: tk("Spelling…"),
+        detail: tk(
+            "Sheets · check the spelling of the text cells, from the active cell or in the selection",
+        ),
         keys: "F7",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.spelling_doc(w, cx)),
     },
     Command {
-        title: "New Note / Edit Note",
-        detail: "Sheets · write a note on the active cell (Review > Notes)",
+        title: tk("New Note / Edit Note"),
+        detail: tk("Sheets · write a note on the active cell (Review > Notes)"),
         keys: "Shift+F2",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -1366,8 +1417,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Delete Note",
-        detail: "Sheets · delete the notes of the selected cells",
+        title: tk("Delete Note"),
+        detail: tk("Sheets · delete the notes of the selected cells"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -1376,8 +1427,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Show/Hide Note",
-        detail: "Sheets · keep the active cell's note shown, or show it only on hover",
+        title: tk("Show/Hide Note"),
+        detail: tk("Sheets · keep the active cell's note shown, or show it only on hover"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -1386,8 +1437,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Show All Notes",
-        detail: "Sheets · show every note, or only on hover again",
+        title: tk("Show All Notes"),
+        detail: tk("Sheets · show every note, or only on hover again"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -1396,8 +1447,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Next Note",
-        detail: "Sheets · go to the next cell with a note",
+        title: tk("Next Note"),
+        detail: tk("Sheets · go to the next cell with a note"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -1406,8 +1457,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Previous Note",
-        detail: "Sheets · go to the previous cell with a note",
+        title: tk("Previous Note"),
+        detail: tk("Sheets · go to the previous cell with a note"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
@@ -1416,20 +1467,20 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Check Spelling as You Type",
-        detail: "Docs, Slides · underline misspelled words in red",
+        title: tk("Check Spelling as You Type"),
+        detail: tk("Docs, Slides · underline misspelled words in red"),
         keys: "",
         run: |_, _, cx| kantor_ui::spelling::toggle(cx),
     },
     Command {
-        title: "Toggle Ruler",
-        detail: "Docs · show or hide the ruler",
+        title: tk("Toggle Ruler"),
+        detail: tk("Docs · show or hide the ruler"),
         keys: "",
         run: |_, _, cx| docs_ui::toggle_ruler(cx),
     },
     Command {
-        title: "Zoom In",
-        detail: "Docs · page zoom",
+        title: tk("Zoom In"),
+        detail: tk("Docs · page zoom"),
         keys: "Ctrl =",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, _, cx| {
@@ -1438,8 +1489,8 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Zoom Out",
-        detail: "Docs · page zoom",
+        title: tk("Zoom Out"),
+        detail: tk("Docs · page zoom"),
         keys: "Ctrl -",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, _, cx| {
@@ -1448,97 +1499,97 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Actual Size",
-        detail: "Docs · page zoom 100%",
+        title: tk("Actual Size"),
+        detail: tk("Docs · page zoom 100%"),
         keys: "Ctrl 0",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, _, cx| v.set_zoom(1.0, cx)),
     },
     Command {
-        title: "New Presentation",
+        title: tk("New Presentation"),
         detail: "Slides",
         keys: "Ctrl Alt N",
         run: |ws, window, cx| ws.new_presentation(&NewPresentation, window, cx),
     },
     Command {
-        title: "New Slide",
+        title: tk("New Slide"),
         detail: "Slides",
         keys: "Ctrl M",
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.new_slide_doc(w, cx)),
     },
     Command {
-        title: "Duplicate Slide",
+        title: tk("Duplicate Slide"),
         detail: "Slides",
         keys: "Ctrl D",
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.duplicate_slide_doc(w, cx)),
     },
     Command {
-        title: "Delete Slide",
+        title: tk("Delete Slide"),
         detail: "Slides",
         keys: "",
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.delete_slide_doc(w, cx)),
     },
     Command {
-        title: "Move Slide Up",
+        title: tk("Move Slide Up"),
         detail: "Slides",
         keys: "Ctrl Up",
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.move_slide_doc(true, w, cx)),
     },
     Command {
-        title: "Move Slide Down",
+        title: tk("Move Slide Down"),
         detail: "Slides",
         keys: "Ctrl Down",
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.move_slide_doc(false, w, cx)),
     },
     Command {
-        title: "Duplicate Shape",
-        detail: "Slides · the selected shape",
+        title: tk("Duplicate Shape"),
+        detail: tk("Slides · the selected shape"),
         keys: "Ctrl D",
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.duplicate_doc(w, cx)),
     },
     Command {
-        title: "Bulleted List",
-        detail: "Slides · Tab / Shift Tab change the level",
+        title: tk("Bulleted List"),
+        detail: tk("Slides · Tab / Shift Tab change the level"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_slides(window, cx, |v, w, cx| v.toggle_list_doc(false, w, cx))
         },
     },
     Command {
-        title: "Numbered List",
+        title: tk("Numbered List"),
         detail: "Slides",
         keys: "",
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.toggle_list_doc(true, w, cx)),
     },
     Command {
-        title: "Shape Fill…",
-        detail: "Slides · theme colours, no fill",
+        title: tk("Shape Fill…"),
+        detail: tk("Slides · theme colours, no fill"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_slides(window, cx, |v, _, cx| v.open_paint_menu_doc(false, cx))
         },
     },
     Command {
-        title: "Shape Outline…",
-        detail: "Slides · colour and width",
+        title: tk("Shape Outline…"),
+        detail: tk("Slides · colour and width"),
         keys: "",
         run: |ws, window, cx| {
             ws.with_slides(window, cx, |v, _, cx| v.open_paint_menu_doc(true, cx))
         },
     },
     Command {
-        title: "Toggle Speaker Notes",
-        detail: "Slides · the notes pane under the slide",
+        title: tk("Toggle Speaker Notes"),
+        detail: tk("Slides · the notes pane under the slide"),
         keys: "",
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.toggle_notes_doc(w, cx)),
     },
     Command {
-        title: "Insert Text Box",
+        title: tk("Insert Text Box"),
         detail: "Slides",
         keys: "",
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.insert_text_box_doc(w, cx)),
     },
     Command {
-        title: "Insert Rectangle",
+        title: tk("Insert Rectangle"),
         detail: "Slides",
         keys: "",
         run: |ws, window, cx| {
@@ -1548,7 +1599,7 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Insert Ellipse",
+        title: tk("Insert Ellipse"),
         detail: "Slides",
         keys: "",
         run: |ws, window, cx| {
@@ -1558,89 +1609,85 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
-        title: "Insert Picture…",
-        detail: "Slides · PNG or JPEG",
+        title: tk("Insert Picture…"),
+        detail: tk("Slides · PNG or JPEG"),
         keys: "",
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.insert_image_doc(w, cx)),
     },
     Command {
-        title: "Present",
-        detail: "Slides · from the first slide",
+        title: tk("Present"),
+        detail: tk("Slides · from the first slide"),
         keys: "F5",
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.present_doc(true, w, cx)),
     },
     Command {
-        title: "Present From This Slide",
+        title: tk("Present From This Slide"),
         detail: "Slides",
         keys: "Shift F5",
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.present_doc(false, w, cx)),
     },
     Command {
-        title: "AI Settings",
-        detail: "Provider, API key, model · off by default",
+        title: tk("AI Settings"),
+        detail: tk("Provider, API key, model · off by default"),
         keys: "",
         run: |ws, window, cx| ws.open_ai_settings(&kantor_ui::ai::OpenAiSettings, window, cx),
     },
     Command {
-        title: "Ask AI for a Formula…",
-        detail: "Sheets · describe it in English or Indonesian",
+        title: tk("Ask AI for a Formula…"),
+        detail: tk("Sheets · describe it in English or Indonesian"),
         keys: "",
         run: |ws, window, cx| ws.ask_for_formula(&kantor_ui::ai::AskForFormula, window, cx),
     },
     Command {
-        title: "Explain This Formula",
-        detail: "Sheets · AI, active cell",
+        title: tk("Explain This Formula"),
+        detail: tk("Sheets · AI, active cell"),
         keys: "",
         run: |ws, window, cx| ws.explain_formula(&kantor_ui::ai::ExplainFormula, window, cx),
     },
     Command {
-        title: "Rewrite / Translate Selection…",
-        detail: "Docs · AI: Indonesian ↔ English, formal, shorter, grammar",
+        title: tk("Rewrite / Translate Selection…"),
+        detail: tk("Docs · AI: Indonesian ↔ English, formal, shorter, grammar"),
         keys: "",
         run: |ws, window, cx| ws.rewrite_selection(&kantor_ui::ai::RewriteSelection, window, cx),
     },
     Command {
-        title: "Choose Theme…",
+        title: tk("Choose Theme…"),
         detail: "Omarchy, Ghostty",
         keys: "",
         run: |ws, window, cx| ws.open_palette(PaletteMode::themes(), window, cx),
     },
     Command {
-        title: "Choose UI Font…",
+        title: tk("Choose UI Font…"),
         detail: "SF Pro, Inter, …",
         keys: "",
         run: |ws, window, cx| ws.open_palette(PaletteMode::fonts(cx), window, cx),
     },
     Command {
-        title: "Turn Autosave On or Off",
-        detail: "Saves .xlsx/.docx/.pptx files with a name after you stop typing",
+        title: tk("Turn Autosave On or Off"),
+        detail: tk("Saves .xlsx/.docx/.pptx files with a name after you stop typing"),
         keys: "",
         run: |ws, _, cx| ws.toggle_autosave(cx),
     },
     Command {
-        title: "Recover Unsaved Work…",
-        detail: "Documents left unsaved when Kantor closed unexpectedly",
+        title: tk("Recover Unsaved Work…"),
+        detail: tk("Documents left unsaved when Kantor closed unexpectedly"),
         keys: "",
         run: |ws, window, cx| ws.reoffer_recovery(window, cx),
     },
     Command {
-        title: "Check for Updates…",
-        detail: concat!(
-            "Kantor ",
-            env!("CARGO_PKG_VERSION"),
-            " · sends only its version and OS"
-        ),
+        title: tk("Check for Updates…"),
+        detail: tk("Kantor {} · sends only its version and OS"),
         keys: "",
         run: |ws, _, cx| ws.check_for_updates(true, cx),
     },
     Command {
-        title: "Restart to Update",
-        detail: "Install the downloaded update and reopen your documents",
+        title: tk("Restart to Update"),
+        detail: tk("Install the downloaded update and reopen your documents"),
         keys: "",
         run: |ws, window, cx| ws.restart_to_update(window, cx),
     },
     Command {
-        title: "Quit Kantor",
+        title: tk("Quit Kantor"),
         detail: "",
         keys: "Ctrl Q",
         run: |_, _, cx| cx.quit(),
@@ -1666,22 +1713,34 @@ impl PaletteMode {
         Self::Fonts(fonts)
     }
 
-    pub(super) fn names(&self) -> Vec<String> {
+    pub(super) fn len(&self) -> usize {
         match self {
-            Self::Commands => COMMANDS.iter().map(|c| c.title.to_owned()).collect(),
+            Self::Commands => COMMANDS.len(),
+            Self::Themes(t) => t.len(),
+            Self::Fonts(f) => f.len(),
+        }
+    }
+
+    /// Indices of the items matching `query`, best first. A command matches
+    /// by its English or its Indonesian title, whichever scores higher, so
+    /// "simpan" and "save" both find Save in either interface language.
+    pub(super) fn rank(&self, query: &str) -> Vec<usize> {
+        let names: Vec<String> = match self {
+            Self::Commands => return rank_commands(query),
             Self::Themes(t) => t.iter().map(|e| e.name.clone()).collect(),
             Self::Fonts(f) => f
                 .iter()
-                .map(|f| f.clone().unwrap_or_else(|| "Automatic".to_owned()))
+                .map(|f| f.clone().unwrap_or_else(|| t("Automatic").to_owned()))
                 .collect(),
-        }
+        };
+        fuzzy::rank(query, names.iter().map(String::as_str))
     }
 
     pub(super) fn placeholder(&self) -> &'static str {
         match self {
-            Self::Commands => "Type a command…",
-            Self::Themes(_) => "Search themes…",
-            Self::Fonts(_) => "Search fonts…",
+            Self::Commands => t("Type a command…"),
+            Self::Themes(_) => t("Search themes…"),
+            Self::Fonts(_) => t("Search fonts…"),
         }
     }
 
@@ -1692,13 +1751,42 @@ impl PaletteMode {
         }
     }
 
-    pub(super) fn noun(&self) -> &'static str {
+    /// The footer's count, e.g. "12 commands".
+    pub(super) fn count_label(&self, count: usize) -> String {
         match self {
-            Self::Commands => "commands",
-            Self::Themes(_) => "themes",
-            Self::Fonts(_) => "fonts",
+            Self::Commands => tf("{} commands", &[&count]),
+            Self::Themes(_) => tf("{} themes", &[&count]),
+            Self::Fonts(_) => tf("{} fonts", &[&count]),
         }
     }
+}
+
+/// [`PaletteMode::rank`] for commands: each title scored in both languages.
+fn rank_commands(query: &str) -> Vec<usize> {
+    let q = query.trim().to_lowercase();
+    // A title that starts with the query beats one that has it later
+    // ("simpan" → Simpan before Aktifkan atau Nonaktifkan Simpan Otomatis).
+    let score = |title: &str| {
+        let prefix = !q.is_empty() && title.to_lowercase().starts_with(&q);
+        fuzzy::score(query, title).map(|s| s + if prefix { 10 } else { 0 })
+    };
+    let mut scored: Vec<(usize, i32)> = COMMANDS
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| {
+            let en = score(c.title);
+            let id = indonesian(c.title).and_then(score);
+            en.max(id).map(|s| (i, s))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    scored.into_iter().map(|(i, _)| i).collect()
+}
+
+/// A command's detail in the interface language (the update check's
+/// detail carries the version).
+fn command_detail(cmd: &Command) -> String {
+    fill(t_dyn(cmd.detail), &[&env!("CARGO_PKG_VERSION")])
 }
 
 pub(super) struct Palette {
@@ -1735,7 +1823,7 @@ impl Workspace {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
         let subscription = cx.subscribe_in(&input, window, Self::on_palette_input);
         input.update(cx, |i, cx| i.focus(window, cx));
-        let matches: Vec<usize> = (0..mode.names().len()).collect();
+        let matches: Vec<usize> = (0..mode.len()).collect();
         // Start on the active theme/font so the picker opens where you are.
         let selected = match &mode {
             PaletteMode::Commands => 0,
@@ -1780,8 +1868,7 @@ impl Workspace {
             InputEvent::Change => {
                 let query = input.read(cx).value().to_string();
                 if let Some(p) = self.palette.as_mut() {
-                    let names = p.mode.names();
-                    p.matches = fuzzy::rank(&query, names.iter().map(String::as_str));
+                    p.matches = p.mode.rank(&query);
                     p.selected = 0;
                     p.scroll.scroll_to_item(0, ScrollStrategy::Top);
                 }
@@ -1879,15 +1966,15 @@ impl Workspace {
             }
             PaletteMode::Themes(t) => {
                 if let Some(e) = t.into_iter().nth(ix) {
-                    self.message = format!("Theme: {}", e.name).into();
+                    self.message = tf("Theme: {}", &[&e.name]).into();
                     theme::set_theme(e.id, cx);
                 }
                 self.activate(self.active, window, cx);
             }
             PaletteMode::Fonts(f) => {
                 if let Some(font) = f.into_iter().nth(ix) {
-                    self.message =
-                        format!("Font: {}", font.as_deref().unwrap_or("Automatic")).into();
+                    let name = font.as_deref().unwrap_or(t("Automatic"));
+                    self.message = tf("Font: {}", &[&name]).into();
                     theme::set_font(font, cx);
                 }
                 self.activate(self.active, window, cx);
@@ -1962,19 +2049,24 @@ impl Workspace {
                     div()
                         .text_size(FONT_BODY)
                         .text_color(t.fg)
-                        .child(COMMANDS[ix].title),
+                        .child(i18n::t(COMMANDS[ix].title)),
                 ),
                 PaletteMode::Commands => {
                     let cmd = &COMMANDS[ix];
-                    base.child(div().text_size(FONT_BODY).text_color(t.fg).child(cmd.title))
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_size(FONT_SMALL)
-                                .text_color(t.fg_dim)
-                                .child(cmd.detail),
-                        )
-                        .when(!cmd.keys.is_empty(), |d| d.child(kbd(cmd.keys, cx)))
+                    base.child(
+                        div()
+                            .text_size(FONT_BODY)
+                            .text_color(t.fg)
+                            .child(i18n::t(cmd.title)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(FONT_SMALL)
+                            .text_color(t.fg_dim)
+                            .child(command_detail(cmd)),
+                    )
+                    .when(!cmd.keys.is_empty(), |d| d.child(kbd(cmd.keys, cx)))
                 }
                 PaletteMode::Themes(themes) => {
                     let e = &themes[ix];
@@ -2037,7 +2129,10 @@ impl Workspace {
                     let (label, family) = match font {
                         Some(f) => (f.clone(), f.clone()),
                         None => (
-                            format!("Automatic ({})", automatic.as_deref().unwrap_or("system")),
+                            {
+                                let name = automatic.as_deref().unwrap_or(i18n::t("system"));
+                                i18n::tf("Automatic ({})", &[&name])
+                            },
                             automatic.clone().unwrap_or_default(),
                         ),
                     };
@@ -2062,10 +2157,14 @@ impl Workspace {
     pub(super) fn render_palette(&mut self, cx: &mut Context<Self>) -> Option<Div> {
         let t = tokens(cx);
         let entity = cx.entity().downgrade();
-        let hints: Vec<Div> = [("↑↓", "navigate"), ("↵", "choose"), ("Esc", "close")]
-            .into_iter()
-            .map(|(keys, label)| h_flex().gap(SPACE_2).child(kbd(keys, cx)).child(label))
-            .collect();
+        let hints: Vec<Div> = [
+            ("↑↓", i18n::t("navigate")),
+            ("↵", i18n::t("choose")),
+            ("Esc", i18n::t("close")),
+        ]
+        .into_iter()
+        .map(|(keys, label)| h_flex().gap(SPACE_2).child(kbd(keys, cx)).child(label))
+        .collect();
         let on_escape = cx.listener(Self::palette_escape);
         let rows_fn = cx.processor(|ws: &mut Self, range: std::ops::Range<usize>, _, cx| {
             ws.render_palette_rows(range, cx)
@@ -2113,7 +2212,7 @@ impl Workspace {
                             .items_center()
                             .text_size(FONT_SMALL)
                             .text_color(t.fg_dim)
-                            .child("No matches"),
+                            .child(i18n::t("No matches")),
                     )
                 },
                 |d| d.child(list),
@@ -2135,7 +2234,7 @@ impl Workspace {
                             _ => String::new(),
                         },
                     ))
-                    .child(format!("{count} {}", palette.mode.noun())),
+                    .child(palette.mode.count_label(count)),
             );
 
         Some(
@@ -2224,8 +2323,7 @@ impl Workspace {
                             Step::Type(q) => {
                                 if let Some(p) = ws.palette.as_mut() {
                                     p.input.update(cx, |i, cx| i.set_value(q, window, cx));
-                                    let names = p.mode.names();
-                                    p.matches = fuzzy::rank(q, names.iter().map(String::as_str));
+                                    p.matches = p.mode.rank(q);
                                     p.selected = 0;
                                 }
                                 ws.notify_palette(cx);
@@ -2263,5 +2361,44 @@ impl Workspace {
             let _ = this.update(cx, |_, cx| cx.quit());
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn first_title(query: &str) -> &'static str {
+        let ix = rank_commands(query)[0];
+        COMMANDS[ix].title
+    }
+
+    #[std::prelude::v1::test]
+    fn search_finds_commands_in_both_languages() {
+        assert_eq!(first_title("save"), "Save");
+        assert_eq!(first_title("simpan"), "Save");
+        assert_eq!(first_title("bekukan panel"), "Freeze Panes");
+        assert_eq!(first_title("sisipkan bagan"), "Insert Chart");
+        assert_eq!(first_title("buka dari cloud"), "Open from Cloud…");
+    }
+
+    #[std::prelude::v1::test]
+    fn every_command_has_indonesian() {
+        for c in COMMANDS {
+            assert!(indonesian(c.title).is_some(), "title {:?}", c.title);
+            // Details that read the same in both languages.
+            let same = [
+                "",
+                "Sheets",
+                "Docs",
+                "Slides",
+                "Omarchy, Ghostty",
+                "SF Pro, Inter, …",
+                ".xlsx, .docx, .pptx, .csv, .ods, .xls, .ppt",
+            ];
+            if !same.contains(&c.detail) {
+                assert!(indonesian(c.detail).is_some(), "detail {:?}", c.detail);
+            }
+        }
     }
 }

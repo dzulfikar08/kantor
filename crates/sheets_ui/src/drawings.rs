@@ -36,6 +36,7 @@ use slides_ui::{Painted, Painter, SceneView, paint_items};
 use crate::row_heights::RowHeights;
 use crate::table::TableState;
 use crate::{SheetGrid, SheetsView, look};
+use kantor_ui::i18n;
 use kantor_ui::metrics::ROW_GUTTER_WIDTH;
 
 /// Handle squares, logical px.
@@ -409,7 +410,7 @@ impl SheetsView {
                 });
                 self.drawings.borrow_mut().selected = None;
                 self.status = match res {
-                    Ok(()) => "Deleted".into(),
+                    Ok(()) => i18n::t("Deleted").into(),
                     Err(e) => format!("{e:#}").into(),
                 };
                 self.update_title(window, cx);
@@ -459,8 +460,8 @@ impl SheetsView {
             res
         });
         self.status = match (res, drag.grip) {
-            (Ok(()), Grip::Move) => "Moved".into(),
-            (Ok(()), _) => "Resized".into(),
+            (Ok(()), Grip::Move) => i18n::t("Moved").into(),
+            (Ok(()), _) => i18n::t("Resized").into(),
             (Err(e), _) => format!("{e:#}").into(),
         };
         self.update_title(window, cx);
@@ -862,8 +863,9 @@ impl SheetsView {
                     .border_color(t.border)
                     .text_size(FONT_SMALL)
                     .text_color(t.fg_muted)
-                    .child(format!(
-                        "Chart sheet \u{201c}{name}\u{201d} \u{b7} view only: its data is on the worksheets"
+                    .child(kantor_ui::i18n::tf(
+                        "Chart sheet “{}” · view only: its data is on the worksheets",
+                        &[&name],
                     )),
             )
             .child(

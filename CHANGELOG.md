@@ -17,6 +17,47 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   `.xlsx`'s, and saving as `.xlsx` keeps them. Other chart types (radar, surface, bubble, bar of
   pie, combination), EMF/WMF pictures and shapes are left out with a note; 3-D charts are shown
   flat.
+- **Cloud storage** over WebDAV (Nextcloud, OpenCloud/ownCloud, any WebDAV server), in Sheets,
+  Docs and Slides. *File* → *Cloud Accounts…* adds an account with an app password, which is kept
+  in the system keychain; *File* → *Open from Cloud…* browses its folders and remembers the last
+  one. `Ctrl S` uploads in the background with progress in the status bar. The upload checks that
+  the server's copy is still the one you opened (`If-Match`). If someone else saved in the
+  meantime, a dialog offers to save your version as a copy next to theirs
+  (`Laporan (konflik Budi 2026-11-14).xlsx`), reload theirs, or overwrite theirs. Opening a file
+  locks it; if someone else has it open, it opens read-only with their name. Locks are refreshed,
+  released on close and quit, and cleaned up after a crash. If the server can't be reached, you
+  keep working and the status bar says *Not synced* until you choose *Sync now*. These screens are
+  in English or Indonesian, following the system language or `language` in settings.toml.
+  Uploads have no fixed time limit, so big files on slow links finish, but a link that died is
+  noticed within about 30 seconds (no data moving, or the server not answering checks while a
+  reply is awaited); saves that waited upload by themselves when the server answers again, with
+  backoff after a failure; giving up on an upload closes its connection, so it can't come back
+  to life and compete with the retry. Reopening a cloud file after a restart needs no download to confirm
+  it's unchanged: Kantor records the ETag after its own unlock and compares the server's SHA1
+  (`oc:checksums`, sent with `OC-Checksum` on upload) when only the ETag moved. Files of 8 MB or more go up in parts (Nextcloud chunked upload v2,
+  TUS on OpenCloud), so an upload cut off half-way continues where it stopped, also after a
+  restart. A file locked by someone else opens truly read-only, with a bar naming them (their
+  display name from the server) and *Edit now* once they close it. Closing or quitting with
+  changes that aren't on the server yet asks whether to sync now, keep the local copy for later,
+  or cancel. Working copies live in Kantor's data folder (moved from the cache folder on the first
+  start); synced ones unused for 30 days are deleted, unsynced ones never.
+- **Indonesian interface** for the whole app: menus, toolbars, dialogs, palette commands, status
+  bar, settings and messages in Sheets, Docs, Slides and the start screen (about 1,500 strings).
+  It follows the system language, or `language` in settings.toml, or `KANTOR_LANG`. The command
+  palette matches commands in both languages. The widgets' own text (input menus, date picker,
+  dialog buttons) is translated too, and text Kantor writes into new content (PivotTable
+  captions, blank table headers) follows the interface language like Office; existing text in a
+  file is never rewritten. Tool results for AI agents (MCP) stay in English. Terms:
+  docs/i18n-glossary.md.
+- Sheets: PivotTables made in Kantor while the interface is Indonesian keep their Indonesian
+  labels after saving, reopening and refreshing, in Kantor, Excel and LibreOffice: the row and
+  column header captions, the Values caption and Total Keseluruhan are written as the pivot's
+  caption attributes, and blank items get the "(kosong)" caption. Labels the file format has no
+  place for (each item's subtotal, "(All)", "(Multiple Items)") follow Excel's English after a
+  reopen, as in Excel. PivotTables from other files are never given captions.
+- **Read-only documents** in Sheets, Docs and Slides: *Make Read-Only* / *Allow Editing* in the
+  command palette. Typing, pasting, formatting, structural changes, dragging and edits from the AI
+  assistant or MCP clients are refused; selection, copy, find, zoom, print and export work.
 - Sheets: Excel 97-2003 files (`.xls`, `.xlt`) bring their comments (notes), data validation
   (drop-down lists, number, date and text length rules, custom formulas, input and error
   messages) and conditional formatting (cell value and formula rules with their font, fill and

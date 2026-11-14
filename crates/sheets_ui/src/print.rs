@@ -15,6 +15,8 @@ use std::time::Duration;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
+use kantor_ui::i18n::{self, tf};
+
 use crate::SheetsView;
 
 /// Pages read from the workbook per step.
@@ -77,7 +79,7 @@ impl SheetsView {
         };
         let dir = std::env::temp_dir().join(format!("kantor-print-{}", std::process::id()));
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.status = format!("Print failed: {e}").into();
+            self.status = tf("Print failed: {}", &[&e]).into();
             cx.notify();
             return;
         }
@@ -114,12 +116,12 @@ impl SheetsView {
             sheets_pdf::write_file(&file, &bytes)?;
             Ok(pages)
         });
-        let verb = if open {
-            "Preparing to print"
+        self.status = if open {
+            tf("Preparing to print {}…", &[&display_name(&path)])
         } else {
-            "Exporting"
-        };
-        self.status = format!("{verb} {}…", display_name(&path)).into();
+            tf("Exporting {}…", &[&display_name(&path)])
+        }
+        .into();
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let mut tx: Option<SyncSender<_>> = Some(tx);
@@ -135,7 +137,12 @@ impl SheetsView {
                             .collect::<Vec<_>>()
                     });
                     if total > BATCH * 4 {
-                        this.status = format!("{verb}: page {end} of {total}…").into();
+                        this.status = if open {
+                            tf("Preparing to print: page {} of {}…", &[&end, &total])
+                        } else {
+                            tf("Exporting: page {} of {}…", &[&end, &total])
+                        }
+                        .into();
                         cx.notify();
                     }
                     pages
@@ -177,18 +184,16 @@ impl SheetsView {
             let _ = this.update(cx, |this, cx| {
                 let name = display_name(&path);
                 this.status = match (&result, open) {
-                    (Ok(pages), false) => format!(
-                        "Exported {name} ({pages} page{})",
-                        if *pages == 1 { "" } else { "s" }
-                    )
-                    .into(),
-                    (Ok(pages), true) => format!(
-                        "Opened {pages} page{} in the PDF viewer to print",
-                        if *pages == 1 { "" } else { "s" }
-                    )
-                    .into(),
-                    (Err(err), false) => format!("Export to PDF failed: {err:#}").into(),
-                    (Err(err), true) => format!("Print failed: {err:#}").into(),
+                    (Ok(1), false) => tf("Exported {} (1 page)", &[&name]).into(),
+                    (Ok(pages), false) => tf("Exported {} ({} pages)", &[&name, pages]).into(),
+                    (Ok(1), true) => i18n::t("Opened 1 page in the PDF viewer to print").into(),
+                    (Ok(pages), true) => {
+                        tf("Opened {} pages in the PDF viewer to print", &[pages]).into()
+                    }
+                    (Err(err), false) => {
+                        tf("Export to PDF failed: {}", &[&format!("{err:#}")]).into()
+                    }
+                    (Err(err), true) => tf("Print failed: {}", &[&format!("{err:#}")]).into(),
                 };
                 if open && result.is_ok() {
                     cx.open_with_system(&path);

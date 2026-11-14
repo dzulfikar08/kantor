@@ -1,0 +1,30 @@
+[package]
+name = "kantor_cloud"
+description = "Kantor cloud storage: a small blocking WebDAV client (PROPFIND, GET, conditional PUT, LOCK) with no GPUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+base64.workspace = true
+# Gzip'd PROPFIND replies (already in the tree through zip).
+flate2 = "1"
+log.workspace = true
+# SHA-256 of working copies (already linked through rustls).
+ring.workspace = true
+roxmltree.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Same blocking ureq + rustls stack as kantor_ai and kantor_update.
+ureq.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+# The dav example opens downloaded bytes through the real engines.
+docs_engine.workspace = true
+sheets_engine.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -239,9 +239,21 @@ pub(crate) fn context_menu(
     // The actions only label the items with their shortcuts (Ctrl+X, ⌘X):
     // the click handler runs instead of dispatching them.
     let items: [(&str, Box<dyn Action>, Run); 3] = [
-        ("Cut", Box::new(crate::Cut), SlidesView::cut_doc),
-        ("Copy", Box::new(crate::Copy), SlidesView::copy_doc),
-        ("Paste", Box::new(crate::Paste), SlidesView::paste_doc),
+        (
+            kantor_ui::i18n::t("Cut"),
+            Box::new(crate::Cut),
+            SlidesView::cut_doc,
+        ),
+        (
+            kantor_ui::i18n::t("Copy"),
+            Box::new(crate::Copy),
+            SlidesView::copy_doc,
+        ),
+        (
+            kantor_ui::i18n::t("Paste"),
+            Box::new(crate::Paste),
+            SlidesView::paste_doc,
+        ),
     ];
     for (label, action, run) in items {
         let v = view.clone();

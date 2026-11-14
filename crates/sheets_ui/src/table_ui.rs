@@ -23,6 +23,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, t, t_dyn, tf, tk};
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{TableOptions, TotalFunc, table_style_names};
 
@@ -33,6 +34,29 @@ actions!(sheets, [FormatAsTable, TableDesign, ConvertTableToRange]);
 
 const PANEL_WIDTH: Pixels = px(300.);
 const DEFAULT_STYLE: &str = "TableStyleMedium2";
+
+/// Texts of `sheets_engine` (table edits, total row functions) shown here,
+/// translated where shown.
+#[cfg(test)]
+const ENGINE_TEXTS: &[&str] = &[
+    tk("Select the cells of the table, not whole rows or columns"),
+    tk("Too many columns"),
+    tk("It overlaps a PivotTable"),
+    tk("Tables can't contain merged cells"),
+    tk("It overlaps the sheet's filter: remove the filter first"),
+    tk("No room for a header row"),
+    tk("No room for a data row"),
+    tk("No room for a total row"),
+    tk("A table needs a data row"),
+    tk("The row above the table must be empty to show the header row"),
+    tk("Turn on the total row first"),
+    tk("A table name starts with a letter and has no spaces or symbols"),
+    tk("Sum"),
+    tk("Average"),
+    tk("Count"),
+    tk("Count Numbers"),
+    tk("Max"),
+];
 
 pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
@@ -88,7 +112,8 @@ impl SheetsView {
                 rename: None,
                 error: None,
             });
-            self.status = "This cell is already in a table: its options are in Table Design".into();
+            self.status =
+                t("This cell is already in a table: its options are in Table Design").into();
             cx.notify();
             return;
         }
@@ -133,7 +158,7 @@ impl SheetsView {
         let (sheet, headers, style) = (d.sheet, d.headers, d.style.clone());
         let Some(range) = dialog::parse_cells(&text) else {
             if let Some(d) = self.table_dialog.as_mut() {
-                d.error = Some("Type the table's cells, such as $A$1:$D$20".into());
+                d.error = Some(t("Type the table's cells, such as $A$1:$D$20").into());
             }
             cx.notify();
             return;
@@ -148,7 +173,7 @@ impl SheetsView {
         match res {
             Ok(name) => {
                 self.table_dialog = None;
-                self.status = format!("{name} created").into();
+                self.status = tf("{} created", &[&name]).into();
                 self.table_panel = Some(TablePanel {
                     rename: None,
                     error: None,
@@ -158,7 +183,7 @@ impl SheetsView {
             }
             Err(e) => {
                 if let Some(d) = self.table_dialog.as_mut() {
-                    d.error = Some(format!("{e:#}"));
+                    d.error = Some(t_dyn(&format!("{e:#}")).to_owned());
                 }
                 cx.notify();
             }
@@ -202,7 +227,7 @@ impl SheetsView {
             return;
         }
         let Some(name) = self.active_table(cx) else {
-            self.status = "Select a cell in a table first".into();
+            self.status = t("Select a cell in a table first").into();
             cx.notify();
             return;
         };
@@ -221,7 +246,7 @@ impl SheetsView {
                 }
             }
             Err(e) => {
-                let msg = format!("{e:#}");
+                let msg = t_dyn(&format!("{e:#}")).to_owned();
                 self.status = msg.clone().into();
                 if let Some(p) = self.table_panel.as_mut() {
                     p.error = Some(msg);
@@ -237,7 +262,7 @@ impl SheetsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.edit_table(window, cx, "Table changed", |book, name| {
+        self.edit_table(window, cx, t("Table changed"), |book, name| {
             let mut o = book
                 .table_options(name)
                 .ok_or_else(|| anyhow::anyhow!("no table {name}"))?;
@@ -248,7 +273,7 @@ impl SheetsView {
 
     /// Convert to Range for the table at the active cell.
     pub fn convert_table_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.edit_table(window, cx, "Table converted to a range", |book, name| {
+        self.edit_table(window, cx, t("Table converted to a range"), |book, name| {
             book.convert_table_to_range(name)
         });
     }
@@ -268,7 +293,7 @@ impl SheetsView {
                 if let Some(p) = this.table_panel.as_mut() {
                     p.rename = None;
                 }
-                this.edit_table(w, cx, "Table renamed", |book, name| {
+                this.edit_table(w, cx, t("Table renamed"), |book, name| {
                     book.rename_table(name, &new)
                 });
                 this.focus_grid(w, cx);
@@ -294,13 +319,17 @@ impl SheetsView {
             },
             cx,
         );
-        let card = dialog::card("table-insert", "Format as Table", px(430.), cx)
+        let card = dialog::card("table-insert", t("Format as Table"), px(430.), cx)
             .key_context("KantorTableDialog")
             .on_action(cx.listener(|this, _: &input::Escape, w, cx| this.close_table_dialog(w, cx)))
-            .child(row("Where is the data?", Input::new(&d.range).small(), cx))
+            .child(row(
+                t("Where is the data?"),
+                Input::new(&d.range).small(),
+                cx,
+            ))
             .child(
                 Checkbox::new("table-headers")
-                    .label("My table has headers")
+                    .label(t("My table has headers"))
                     .checked(d.headers)
                     .on_click(move |on, _, cx| {
                         let on = *on;
@@ -313,14 +342,14 @@ impl SheetsView {
                     }),
             )
             .child(kantor_ui::components::section_label(
-                format!("Style · {}", style_label(&d.style)),
+                tf("Style · {}", &[&style_label(&d.style)]),
                 cx,
             ))
             .child(gallery)
             .children(d.error.clone().map(|e| note(e, true, cx)))
             .child(dialog::buttons(
                 "table-buttons",
-                "Create",
+                t("Create"),
                 true,
                 &view,
                 Self::table_dialog_ok,
@@ -415,14 +444,14 @@ impl SheetsView {
                     .flex_1()
                     .text_size(FONT_EMPHASIS)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("Table Design"),
+                    .child(i18n::t("Table Design")),
             )
             .child(
                 Button::new("table-panel-close")
                     .ghost()
                     .xsmall()
                     .icon(Lucide::X)
-                    .tooltip("Close")
+                    .tooltip(i18n::t("Close"))
                     .on_click(move |_, _, cx| {
                         let _ = close.update(cx, |this, cx| {
                             this.table_panel = None;
@@ -449,7 +478,7 @@ impl SheetsView {
                     Some((input, _)) => h_flex()
                         .gap(SPACE_2)
                         .child(div().flex_1().child(Input::new(input).small()))
-                        .child(note("Enter to rename", false, cx)),
+                        .child(note(i18n::t("Enter to rename"), false, cx)),
                     None => {
                         let rv = view.clone();
                         h_flex()
@@ -466,7 +495,7 @@ impl SheetsView {
                                 Button::new("table-rename")
                                     .small()
                                     .outline()
-                                    .label("Rename")
+                                    .label(i18n::t("Rename"))
                                     .on_click(move |_, w, cx| {
                                         let _ = rv.update(cx, |this, cx| this.start_rename(w, cx));
                                     }),
@@ -474,7 +503,7 @@ impl SheetsView {
                     }
                 };
                 b = b
-                    .child(kantor_ui::components::section_label("Table name", cx))
+                    .child(kantor_ui::components::section_label(i18n::t("Table name"), cx))
                     .child(name_row)
                     .child(note(info.area.name(), false, cx));
                 // Options.
@@ -494,7 +523,7 @@ impl SheetsView {
                         })
                 };
                 b = b
-                    .child(kantor_ui::components::section_label("Table style options", cx))
+                    .child(kantor_ui::components::section_label(i18n::t("Table style options"), cx))
                     .child(
                         h_flex()
                             .items_start()
@@ -502,17 +531,17 @@ impl SheetsView {
                             .child(
                                 v_flex()
                                     .gap(SPACE_3)
-                                    .child(check("to-header", "Header Row", opts.header_row, |o, v| o.header_row = v))
-                                    .child(check("to-total", "Total Row", opts.total_row, |o, v| o.total_row = v))
-                                    .child(check("to-brows", "Banded Rows", opts.banded_rows, |o, v| o.banded_rows = v))
-                                    .child(check("to-bcols", "Banded Columns", opts.banded_columns, |o, v| o.banded_columns = v)),
+                                    .child(check("to-header", i18n::t("Header Row"), opts.header_row, |o, v| o.header_row = v))
+                                    .child(check("to-total", i18n::t("Total Row"), opts.total_row, |o, v| o.total_row = v))
+                                    .child(check("to-brows", i18n::t("Banded Rows"), opts.banded_rows, |o, v| o.banded_rows = v))
+                                    .child(check("to-bcols", i18n::t("Banded Columns"), opts.banded_columns, |o, v| o.banded_columns = v)),
                             )
                             .child(
                                 v_flex()
                                     .gap(SPACE_3)
-                                    .child(check("to-first", "First Column", opts.first_column, |o, v| o.first_column = v))
-                                    .child(check("to-last", "Last Column", opts.last_column, |o, v| o.last_column = v))
-                                    .child(check("to-filter", "Filter Button", opts.filter_button, |o, v| o.filter_button = v)),
+                                    .child(check("to-first", i18n::t("First Column"), opts.first_column, |o, v| o.first_column = v))
+                                    .child(check("to-last", i18n::t("Last Column"), opts.last_column, |o, v| o.last_column = v))
+                                    .child(check("to-filter", i18n::t("Filter Button"), opts.filter_button, |o, v| o.filter_button = v)),
                             ),
                     );
                 // Total row functions.
@@ -526,17 +555,17 @@ impl SheetsView {
                             Button::new(("table-total", i))
                                 .outline()
                                 .small()
-                                .label(current.label())
+                                .label(i18n::t(current.label()))
                                 .dropdown_caret(true)
                                 .dropdown_menu(move |mut m, _, _| {
                                     for func in TotalFunc::ALL {
                                         let v = v.clone();
                                         m = m.item(
-                                            PopupMenuItem::new(func.label())
+                                            PopupMenuItem::new(i18n::t(func.label()))
                                                 .checked(func == current)
                                                 .on_click(move |_, w, cx| {
                                                     let _ = v.update(cx, |this, cx| {
-                                                        this.edit_table(w, cx, "Total changed", |book, name| {
+                                                        this.edit_table(w, cx, i18n::t("Total changed"), |book, name| {
                                                             book.set_table_total(name, i, func)
                                                         })
                                                     });
@@ -549,13 +578,13 @@ impl SheetsView {
                         ));
                     }
                     b = b
-                        .child(kantor_ui::components::section_label("Total row", cx))
+                        .child(kantor_ui::components::section_label(i18n::t("Total row"), cx))
                         .child(list);
                 }
                 let style = opts.style.clone().unwrap_or_default();
                 b = b
                     .child(kantor_ui::components::section_label(
-                        format!("Style · {}", style_label(&style)),
+                        i18n::tf("Style · {}", &[&style_label(&style)]),
                         cx,
                     ))
                     .child(self.style_gallery(
@@ -569,7 +598,7 @@ impl SheetsView {
                     Button::new("table-convert")
                         .small()
                         .outline()
-                        .label("Convert to Range")
+                        .label(i18n::t("Convert to Range"))
                         .on_click(move |_, w, cx| {
                             let _ = cv.update(cx, |this, cx| this.convert_table_doc(w, cx));
                         }),
@@ -580,7 +609,7 @@ impl SheetsView {
             _ => div()
                 .text_size(FONT_SMALL)
                 .text_color(t.fg_muted)
-                .child("Select a cell in a table to change it, or make one with Format as Table (Ctrl+T).")
+                .child(i18n::t("Select a cell in a table to change it, or make one with Format as Table (Ctrl+T)."))
                 .into_any_element(),
         };
         Some(
@@ -624,14 +653,30 @@ impl SheetsView {
 
 /// `TableStyleMedium2` → `Medium 2`.
 fn style_label(name: &str) -> String {
-    for family in ["Light", "Medium", "Dark"] {
+    for (family, label) in [
+        ("Light", tk("Light")),
+        ("Medium", tk("Medium")),
+        ("Dark", tk("Dark")),
+    ] {
         if let Some(n) = name.strip_prefix(&format!("TableStyle{family}")) {
-            return format!("{family} {n}");
+            return format!("{} {n}", t(label));
         }
     }
     if name.is_empty() {
-        "None".into()
+        t("None").into()
     } else {
         name.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[std::prelude::v1::test]
+    fn engine_texts_have_indonesian() {
+        for e in ENGINE_TEXTS {
+            assert!(kantor_ui::i18n::indonesian(e).is_some(), "{e:?}");
+        }
     }
 }

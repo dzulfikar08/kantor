@@ -18,6 +18,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, tf, tk};
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::SheetPrint;
 use sheets_pdf::preview::{Raster, Rasterizer};
@@ -310,7 +311,7 @@ impl SheetsView {
                         }
                         p.error = None;
                     }
-                    Ok(None) => p.error = Some("The page could not be drawn".into()),
+                    Ok(None) => p.error = Some(i18n::t("The page could not be drawn").into()),
                     Err(e) => p.error = Some(format!("{e:#}")),
                 }
                 cx.notify();
@@ -335,15 +336,15 @@ impl SheetsView {
         let status: Option<SharedString> = if let Some(e) = &p.error {
             Some(e.clone().into())
         } else if p.plan.is_some() && pages == 0 {
-            Some("Nothing to print on this sheet".into())
+            Some(i18n::t("Nothing to print on this sheet").into())
         } else if p.shown.is_none() {
-            Some("Drawing the page…".into())
+            Some(i18n::t("Drawing the page…").into())
         } else {
             None
         };
         let fit_percent = p.fit_percent();
         let zoom_label: SharedString = match p.zoom {
-            Zoom::Fit => format!("Fit ({fit_percent:.0}%)").into(),
+            Zoom::Fit => tf("Fit ({}%)", &[&format!("{fit_percent:.0}")]).into(),
             Zoom::Percent(z) => format!("{z}%").into(),
         };
         let nav = |id: &'static str, icon: Lucide, tip: &'static str, to: Option<usize>| {
@@ -352,7 +353,7 @@ impl SheetsView {
                 .ghost()
                 .xsmall()
                 .icon(icon)
-                .tooltip(tip)
+                .tooltip(i18n::t(tip))
                 .disabled(to.is_none())
                 .on_click(move |_, window, cx| {
                     if let Some(to) = to {
@@ -367,7 +368,7 @@ impl SheetsView {
                 .ghost()
                 .xsmall()
                 .icon(icon)
-                .tooltip(tip)
+                .tooltip(i18n::t(tip))
                 .disabled(next == p.zoom)
                 .on_click(move |_, window, cx| {
                     let _ = view.update(cx, |v, cx| v.preview_zoom(next, window, cx));
@@ -401,9 +402,9 @@ impl SheetsView {
                     })),
             );
         let page_label: SharedString = if pages == 0 {
-            "No pages".into()
+            i18n::t("No pages").into()
         } else {
-            format!("Page {} of {pages}", page + 1).into()
+            tf("Page {} of {}", &[&(page + 1), &pages]).into()
         };
         Some(
             v_flex().flex_none().gap(SPACE_3).child(page_box).child(
@@ -417,14 +418,14 @@ impl SheetsView {
                             .child(nav(
                                 "pp-prev",
                                 Lucide::ChevronLeft,
-                                "Previous page",
+                                tk("Previous page"),
                                 page.checked_sub(1),
                             ))
                             .child(div().min_w(px(92.)).text_center().child(page_label))
                             .child(nav(
                                 "pp-next",
                                 Lucide::ChevronRight,
-                                "Next page",
+                                tk("Next page"),
                                 (page + 1 < pages).then_some(page + 1),
                             )),
                     )
@@ -435,7 +436,7 @@ impl SheetsView {
                             .child(zoom_button(
                                 "pp-zoom-out",
                                 Lucide::ZoomOut,
-                                "Zoom out",
+                                tk("Zoom out"),
                                 false,
                             ))
                             .child(
@@ -443,14 +444,19 @@ impl SheetsView {
                                     .ghost()
                                     .xsmall()
                                     .label(zoom_label)
-                                    .tooltip("Fit the page")
+                                    .tooltip(i18n::t("Fit the page"))
                                     .on_click(move |_, window, cx| {
                                         let _ = fit_view.update(cx, |v, cx| {
                                             v.preview_zoom(Zoom::Fit, window, cx)
                                         });
                                     }),
                             )
-                            .child(zoom_button("pp-zoom-in", Lucide::ZoomIn, "Zoom in", true)),
+                            .child(zoom_button(
+                                "pp-zoom-in",
+                                Lucide::ZoomIn,
+                                tk("Zoom in"),
+                                true,
+                            )),
                     ),
             ),
         )

@@ -343,6 +343,15 @@ impl DocView {
         }
     }
 
+    /// The document editor's focus handle (see `kantor_ui::read_only`).
+    pub fn editor_focus(&self, cx: &App) -> FocusHandle {
+        match self {
+            Self::Sheets(e) => e.read(cx).editor_focus_handle(cx),
+            Self::Docs(e) => e.read(cx).editor_focus_handle(),
+            Self::Slides(e) => e.read(cx).editor_focus_handle(),
+        }
+    }
+
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         both_mut!(self, window, cx, |v, w, c| v.focus(w, c))
     }

@@ -18,6 +18,7 @@
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{t, tf, tk};
 use kantor_ui::metrics::*;
 use sheets_engine::{CellRange, Fill, Step, Workbook, cell_name};
 
@@ -301,7 +302,7 @@ impl SheetsView {
         let active = self.selected;
         self.set_end(active, Span::All, cx);
         self.focus_grid(window, cx);
-        self.status = "Selected all cells".into();
+        self.status = t("Selected all cells").into();
         cx.notify();
     }
 
@@ -510,7 +511,17 @@ impl SheetsView {
             return None;
         }
         let grid = self.table.read(cx).delegate();
-        grid.book.range_stats(grid.sheet, range).summary()
+        let stats = grid.book.range_stats(grid.sheet, range);
+        // Same rules as `RangeStats::summary`, in the interface language.
+        stats.summary()?;
+        let fmt = sheets_engine::grid::format_stat;
+        Some(match stats.average() {
+            None => tf("Count: {}", &[&stats.count]),
+            Some(avg) => tf(
+                "Average: {}   Count: {}   Sum: {}",
+                &[&fmt(avg), &stats.count, &fmt(stats.sum)],
+            ),
+        })
     }
 
     /// Fill, in the background for big workbooks: a fill recalculates what
@@ -522,7 +533,7 @@ impl SheetsView {
         }
         let sheet = self.table.read(cx).delegate().sheet;
         self.run_book_job(
-            Job::Editing("Filling"),
+            Job::Editing(tk("Filling")),
             move |book| book.fill(sheet, &fill),
             |this, result, _, _, cx| match result {
                 Ok(target) => {
@@ -539,7 +550,7 @@ impl SheetsView {
                         target.left
                     };
                     this.set_end((end_row, end_col), Span::Cells, cx);
-                    this.status = format!("Filled {}", target.name()).into();
+                    this.status = tf("Filled {}", &[&target.name()]).into();
                 }
                 Err(err) => this.status = format!("{err:#}").into(),
             },
@@ -589,7 +600,7 @@ impl SheetsView {
                 match fill {
                     Some(fill) => self.apply_fill(fill, window, cx),
                     None => {
-                        self.status = "Nothing to fill from".into();
+                        self.status = t("Nothing to fill from").into();
                         cx.notify();
                     }
                 }
@@ -632,27 +643,39 @@ impl SheetsView {
             }
             GridCommand::InsertRowsAbove => Box::new(move |b, s| {
                 b.insert_rows(s, rows.0, n_rows)?;
-                Ok(format!("Inserted {}", count(n_rows, "row")))
+                Ok(count(n_rows, tk("Inserted {} row"), tk("Inserted {} rows")))
             }),
             GridCommand::InsertRowsBelow => Box::new(move |b, s| {
                 b.insert_rows(s, rows.1 + 1, n_rows)?;
-                Ok(format!("Inserted {}", count(n_rows, "row")))
+                Ok(count(n_rows, tk("Inserted {} row"), tk("Inserted {} rows")))
             }),
             GridCommand::DeleteRows => Box::new(move |b, s| {
                 b.delete_rows(s, rows.0, rows.1)?;
-                Ok(format!("Deleted {}", count(n_rows, "row")))
+                Ok(count(n_rows, tk("Deleted {} row"), tk("Deleted {} rows")))
             }),
             GridCommand::InsertColumnsLeft => Box::new(move |b, s| {
                 b.insert_columns(s, cols.0, n_cols)?;
-                Ok(format!("Inserted {}", count(n_cols, "column")))
+                Ok(count(
+                    n_cols,
+                    tk("Inserted {} column"),
+                    tk("Inserted {} columns"),
+                ))
             }),
             GridCommand::InsertColumnsRight => Box::new(move |b, s| {
                 b.insert_columns(s, cols.1 + 1, n_cols)?;
-                Ok(format!("Inserted {}", count(n_cols, "column")))
+                Ok(count(
+                    n_cols,
+                    tk("Inserted {} column"),
+                    tk("Inserted {} columns"),
+                ))
             }),
             GridCommand::DeleteColumns => Box::new(move |b, s| {
                 b.delete_columns(s, cols.0, cols.1)?;
-                Ok(format!("Deleted {}", count(n_cols, "column")))
+                Ok(count(
+                    n_cols,
+                    tk("Deleted {} column"),
+                    tk("Deleted {} columns"),
+                ))
             }),
             GridCommand::FreezeTopRow
             | GridCommand::FreezeFirstColumn
@@ -742,32 +765,41 @@ impl SheetsView {
             let sheet = grid.sheet;
             let book = &mut grid.book;
             let res = match command {
-                GridCommand::HideRows => book
-                    .hide_rows(sheet, range.top, range.bottom)
-                    .map(|n| hide_status(n, "row", "Hid", "already hidden")),
+                GridCommand::HideRows => {
+                    book.hide_rows(sheet, range.top, range.bottom)
+                        .map(|n| match n {
+                            0 => t("The selected rows are already hidden").to_owned(),
+                            n => count(n, tk("Hid {} row"), tk("Hid {} rows")),
+                        })
+                }
                 GridCommand::UnhideRows => {
                     book.unhide_rows(sheet, range.top, range.bottom)
                         .map(|done| match (done.shown, done.filtered) {
-                            (0, 0) => "No hidden rows in the selection".to_owned(),
-                            (0, f) => format!(
-                                "{} hidden by a filter; clear the filter to show {}",
-                                count(f, "row"),
-                                if f == 1 { "it" } else { "them" }
-                            ),
-                            (n, 0) => format!("Unhid {}", count(n, "row")),
-                            (n, f) => format!(
-                                "Unhid {}; {} hidden by a filter stay hidden",
-                                count(n, "row"),
-                                count(f, "row")
-                            ),
+                            (0, 0) => t("No hidden rows in the selection").to_owned(),
+                            (0, f) => count(f, FILTERED_ONE, FILTERED_MANY),
+                            (n, 0) => count(n, tk("Unhid {} row"), tk("Unhid {} rows")),
+                            (n, f) => {
+                                let msg = if n == 1 {
+                                    t("Unhid {} row; {} hidden by a filter stay hidden")
+                                } else {
+                                    t("Unhid {} rows; {} hidden by a filter stay hidden")
+                                };
+                                kantor_ui::i18n::fill(msg, &[&n, &f])
+                            }
                         })
                 }
                 GridCommand::HideColumns => book
                     .set_columns_hidden(sheet, range.left, range.right, true)
-                    .map(|n| hide_status(n, "column", "Hid", "already hidden")),
+                    .map(|n| match n {
+                        0 => t("The selected columns are already hidden").to_owned(),
+                        n => count(n, tk("Hid {} column"), tk("Hid {} columns")),
+                    }),
                 _ => book
                     .set_columns_hidden(sheet, range.left, range.right, false)
-                    .map(|n| hide_status(n, "column", "Unhid", "hidden in the selection")),
+                    .map(|n| match n {
+                        0 => t("No hidden columns in the selection").to_owned(),
+                        n => count(n, tk("Unhid {} column"), tk("Unhid {} columns")),
+                    }),
             };
             grid.resize();
             table.refresh(cx);
@@ -819,9 +851,9 @@ impl SheetsView {
             res
         });
         self.status = match result {
-            Ok(true) if fit => "Fitted column widths to their content".into(),
-            Ok(true) => "Reset column widths".into(),
-            Ok(false) => "Column widths unchanged".into(),
+            Ok(true) if fit => t("Fitted column widths to their content").into(),
+            Ok(true) => t("Reset column widths").into(),
+            Ok(false) => t("Column widths unchanged").into(),
             Err(err) => format!("{err:#}").into(),
         };
         self.update_title(window, cx);
@@ -832,25 +864,14 @@ impl SheetsView {
 /// A structural edit of the workbook on one sheet; returns the status line.
 type Op = Box<dyn FnOnce(&mut Workbook, u32) -> anyhow::Result<String>>;
 
-/// `1 row`, `3 columns`.
-fn count(n: u32, what: &str) -> String {
-    if n == 1 {
-        format!("1 {what}")
-    } else {
-        format!("{n} {what}s")
-    }
-}
+/// Status line for rows hidden by a filter, which Unhide leaves alone.
+const FILTERED_ONE: &str = tk("{} row hidden by a filter; clear the filter to show it");
+const FILTERED_MANY: &str = tk("{} rows hidden by a filter; clear the filter to show them");
 
-/// `Hid 3 rows`, or `No rows already hidden`-style news when nothing changed.
-fn hide_status(n: u32, what: &str, verb: &str, none: &str) -> String {
-    if n == 0 {
-        match none {
-            "already hidden" => format!("The selected {what}s are already hidden"),
-            _ => format!("No hidden {what}s in the selection"),
-        }
-    } else {
-        format!("{verb} {}", count(n, what))
-    }
+/// `one` or `many` (catalog keys with one `{}`) translated, filled with `n`:
+/// `Inserted 1 row`, `Inserted 3 rows`.
+fn count(n: u32, one: &'static str, many: &'static str) -> String {
+    kantor_ui::i18n::fill(kantor_ui::i18n::t(if n == 1 { one } else { many }), &[&n])
 }
 
 /// An op freezing the panes: `origin` is their top-left cell, `split`
@@ -862,13 +883,17 @@ fn freeze(origin: (u32, u32), split: (u32, u32)) -> Op {
         let rows = split.0 - origin.0;
         let cols = split.1 - origin.1;
         Ok(match (rows, cols) {
-            (0, 0) => "Panes unfrozen".to_owned(),
-            (r, 0) => format!("Froze the top {}", count(r, "row")),
-            (0, c) => format!("Froze the first {}", count(c, "column")),
-            _ => format!(
-                "Froze panes above and left of {}",
-                cell_name(split.0, split.1)
+            (0, 0) => t("Panes unfrozen").to_owned(),
+            (r, 0) => count(r, tk("Froze the top {} row"), tk("Froze the top {} rows")),
+            (0, c) => count(
+                c,
+                tk("Froze the first {} column"),
+                tk("Froze the first {} columns"),
             ),
+            _ => {
+                let cell = cell_name(split.0, split.1);
+                tf("Froze panes above and left of {}", &[&cell])
+            }
         })
     })
 }
@@ -942,42 +967,57 @@ pub(crate) fn freeze_split(
 fn header_menu(menu: PopupMenu, header: Header, view: &WeakEntity<SheetsView>) -> PopupMenu {
     let item = |label: &'static str, command: GridCommand| {
         let view = view.clone();
-        PopupMenuItem::new(label).on_click(move |_, window, cx| {
+        PopupMenuItem::new(t(label)).on_click(move |_, window, cx| {
             let _ = view.update(cx, |v, cx| v.grid_command(command, window, cx));
         })
     };
     match header {
         Header::Column(_) => menu
-            .item(item("Insert Column Left", GridCommand::InsertColumnsLeft))
-            .item(item("Insert Column Right", GridCommand::InsertColumnsRight))
-            .item(item("Delete Columns", GridCommand::DeleteColumns))
+            .item(item(
+                tk("Insert Column Left"),
+                GridCommand::InsertColumnsLeft,
+            ))
+            .item(item(
+                tk("Insert Column Right"),
+                GridCommand::InsertColumnsRight,
+            ))
+            .item(item(tk("Delete Columns"), GridCommand::DeleteColumns))
             .separator()
-            .item(item("Autofit Column Width", GridCommand::AutofitColumns))
-            .item(item("Standard Column Width", GridCommand::ResetColumnWidth))
-            .item(item("Hide Columns", GridCommand::HideColumns))
-            .item(item("Unhide Columns", GridCommand::UnhideColumns))
+            .item(item(
+                tk("Autofit Column Width"),
+                GridCommand::AutofitColumns,
+            ))
+            .item(item(
+                tk("Standard Column Width"),
+                GridCommand::ResetColumnWidth,
+            ))
+            .item(item(tk("Hide Columns"), GridCommand::HideColumns))
+            .item(item(tk("Unhide Columns"), GridCommand::UnhideColumns))
             .separator()
-            .item(item("Sort A to Z", GridCommand::SortAscending))
-            .item(item("Sort Z to A", GridCommand::SortDescending))
-            .item(item("Custom Sort…", GridCommand::CustomSort))
-            .item(item("Filter", GridCommand::ToggleFilter))
+            .item(item(tk("Sort A to Z"), GridCommand::SortAscending))
+            .item(item(tk("Sort Z to A"), GridCommand::SortDescending))
+            .item(item(tk("Custom Sort…"), GridCommand::CustomSort))
+            .item(item(tk("Filter"), GridCommand::ToggleFilter))
             .separator()
-            .item(item("Freeze Panes", GridCommand::FreezePanes))
-            .item(item("Freeze First Column", GridCommand::FreezeFirstColumn))
-            .item(item("Unfreeze Panes", GridCommand::Unfreeze)),
+            .item(item(tk("Freeze Panes"), GridCommand::FreezePanes))
+            .item(item(
+                tk("Freeze First Column"),
+                GridCommand::FreezeFirstColumn,
+            ))
+            .item(item(tk("Unfreeze Panes"), GridCommand::Unfreeze)),
         Header::Row(_) => menu
-            .item(item("Insert Row Above", GridCommand::InsertRowsAbove))
-            .item(item("Insert Row Below", GridCommand::InsertRowsBelow))
-            .item(item("Delete Rows", GridCommand::DeleteRows))
+            .item(item(tk("Insert Row Above"), GridCommand::InsertRowsAbove))
+            .item(item(tk("Insert Row Below"), GridCommand::InsertRowsBelow))
+            .item(item(tk("Delete Rows"), GridCommand::DeleteRows))
             .separator()
-            .item(item("Row Height…", GridCommand::RowHeight))
-            .item(item("Autofit Row Height", GridCommand::AutofitRows))
-            .item(item("Hide Rows", GridCommand::HideRows))
-            .item(item("Unhide Rows", GridCommand::UnhideRows))
+            .item(item(tk("Row Height…"), GridCommand::RowHeight))
+            .item(item(tk("Autofit Row Height"), GridCommand::AutofitRows))
+            .item(item(tk("Hide Rows"), GridCommand::HideRows))
+            .item(item(tk("Unhide Rows"), GridCommand::UnhideRows))
             .separator()
-            .item(item("Freeze Panes", GridCommand::FreezePanes))
-            .item(item("Freeze Top Row", GridCommand::FreezeTopRow))
-            .item(item("Unfreeze Panes", GridCommand::Unfreeze)),
+            .item(item(tk("Freeze Panes"), GridCommand::FreezePanes))
+            .item(item(tk("Freeze Top Row"), GridCommand::FreezeTopRow))
+            .item(item(tk("Unfreeze Panes"), GridCommand::Unfreeze)),
     }
 }
 
@@ -1118,7 +1158,13 @@ mod tests {
 
     #[std::prelude::v1::test]
     fn counts() {
-        assert_eq!(count(1, "row"), "1 row");
-        assert_eq!(count(3, "column"), "3 columns");
+        assert_eq!(
+            count(1, tk("Inserted {} row"), tk("Inserted {} rows")),
+            "Inserted 1 row"
+        );
+        assert_eq!(
+            count(3, tk("Hid {} column"), tk("Hid {} columns")),
+            "Hid 3 columns"
+        );
     }
 }

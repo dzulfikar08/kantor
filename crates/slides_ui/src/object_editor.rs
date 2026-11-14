@@ -26,6 +26,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, tf, tk};
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{components::section_label, metrics::*, tokens};
 use slides_engine::{ChartData, Rgb, TableOp};
@@ -139,7 +140,7 @@ impl SlidesView {
         match self.object_target() {
             Some((shape, target)) => self.open_object_editor(shape, target, window, cx),
             None => {
-                self.status = "Select a table or a chart to edit its data".into();
+                self.status = i18n::t("Select a table or a chart to edit its data").into();
                 cx.notify();
             }
         }
@@ -403,7 +404,7 @@ impl SlidesView {
         };
         if add {
             d.categories
-                .push(format!("Category {}", d.categories.len() + 1));
+                .push(tf("Category {}", &[&(d.categories.len() + 1)]));
             for s in &mut d.series {
                 s.values.push(None);
             }
@@ -442,7 +443,7 @@ impl SlidesView {
             return;
         };
         let res = if add {
-            let name = format!("Series {}", d.series.len() + 1);
+            let name = tf("Series {}", &[&(d.series.len() + 1)]);
             self.pres.add_chart_series(slide, shape, &name)
         } else {
             let k = if col >= 1 && col <= d.series.len() {
@@ -484,10 +485,10 @@ impl SlidesView {
              tip: &'static str,
              run: fn(&mut SlidesView, &mut Window, &mut Context<SlidesView>)| {
                 let v = view.clone();
-                let mut b = Button::new(id).ghost().xsmall().tooltip(tip);
+                let mut b = Button::new(id).ghost().xsmall().tooltip(i18n::t(tip));
                 b = match icon {
                     Some(i) => b.icon(i),
-                    None => b.label(label),
+                    None => b.label(i18n::t(label)),
                 };
                 b.on_click(move |_, window, cx| {
                     let _ = v.update(cx, |this, cx| run(this, window, cx));
@@ -500,8 +501,8 @@ impl SlidesView {
                     .child(tool(
                         "tbl-row-above",
                         None,
-                        "+ Row above",
-                        "Insert a row above the current cell",
+                        tk("+ Row above"),
+                        tk("Insert a row above the current cell"),
                         |v, w, cx| {
                             v.table_op(
                                 |(r, _)| TableOp::InsertRow {
@@ -516,8 +517,8 @@ impl SlidesView {
                     .child(tool(
                         "tbl-row-below",
                         None,
-                        "+ Row below",
-                        "Insert a row below the current cell",
+                        tk("+ Row below"),
+                        tk("Insert a row below the current cell"),
                         |v, w, cx| {
                             v.table_op(
                                 |(r, _)| TableOp::InsertRow {
@@ -532,15 +533,15 @@ impl SlidesView {
                     .child(tool(
                         "tbl-row-del",
                         None,
-                        "− Row",
-                        "Delete the current row",
+                        tk("− Row"),
+                        tk("Delete the current row"),
                         |v, w, cx| v.table_op(|(r, _)| TableOp::DeleteRow(r), w, cx),
                     ))
                     .child(tool(
                         "tbl-col-left",
                         None,
-                        "+ Column left",
-                        "Insert a column left of the current cell",
+                        tk("+ Column left"),
+                        tk("Insert a column left of the current cell"),
                         |v, w, cx| {
                             v.table_op(
                                 |(_, c)| TableOp::InsertCol {
@@ -555,8 +556,8 @@ impl SlidesView {
                     .child(tool(
                         "tbl-col-right",
                         None,
-                        "+ Column right",
-                        "Insert a column right of the current cell",
+                        tk("+ Column right"),
+                        tk("Insert a column right of the current cell"),
                         |v, w, cx| {
                             v.table_op(
                                 |(_, c)| TableOp::InsertCol {
@@ -571,8 +572,8 @@ impl SlidesView {
                     .child(tool(
                         "tbl-col-del",
                         None,
-                        "− Column",
-                        "Delete the current column",
+                        tk("− Column"),
+                        tk("Delete the current column"),
                         |v, w, cx| v.table_op(|(_, c)| TableOp::DeleteCol(c), w, cx),
                     ));
             }
@@ -581,39 +582,41 @@ impl SlidesView {
                     .child(tool(
                         "chart-row-add",
                         None,
-                        "+ Category",
-                        "Add a category at the end",
+                        tk("+ Category"),
+                        tk("Add a category at the end"),
                         |v, w, cx| v.chart_rows(true, w, cx),
                     ))
                     .child(tool(
                         "chart-row-del",
                         None,
-                        "− Last category",
-                        "Remove the last category",
+                        tk("− Last category"),
+                        tk("Remove the last category"),
                         |v, w, cx| v.chart_rows(false, w, cx),
                     ))
                     .child(tool(
                         "chart-ser-add",
                         None,
-                        "+ Series",
-                        "Add a series after the last one",
+                        tk("+ Series"),
+                        tk("Add a series after the last one"),
                         |v, w, cx| v.chart_series_op(true, w, cx),
                     ))
                     .child(tool(
                         "chart-ser-del",
                         None,
-                        "− Series",
-                        "Remove the series of the current cell",
+                        tk("− Series"),
+                        tk("Remove the series of the current cell"),
                         |v, w, cx| v.chart_series_op(false, w, cx),
                     ));
             }
         }
         // Cell fill swatches (tables): the slide's theme colours and none.
         let swatches = (e.target == Target::Table).then(|| {
-            let mut row = h_flex()
-                .gap(SPACE_1)
-                .items_center()
-                .child(div().text_color(t.fg_muted).mr(SPACE_2).child("Cell fill"));
+            let mut row = h_flex().gap(SPACE_1).items_center().child(
+                div()
+                    .text_color(t.fg_muted)
+                    .mr(SPACE_2)
+                    .child(i18n::t("Cell fill")),
+            );
             let none = {
                 let v = view.clone();
                 div()
@@ -675,7 +678,12 @@ impl SlidesView {
                     .when(current, |d| d.border_1().border_color(t.accent))
                     .when(header, |d| d.bg(t.surface));
                 line = line.child(if corner {
-                    cell.child(div().px(SPACE_2).text_color(t.fg_dim).child("Category"))
+                    cell.child(
+                        div()
+                            .px(SPACE_2)
+                            .text_color(t.fg_dim)
+                            .child(i18n::t("Category")),
+                    )
                 } else {
                     cell.child(Input::new(input).small())
                 });
@@ -683,8 +691,8 @@ impl SlidesView {
             grid = grid.child(line);
         }
         let title = match e.target {
-            Target::Table => "Edit table",
-            Target::Chart => "Edit chart data",
+            Target::Table => i18n::t("Edit table"),
+            Target::Chart => i18n::t("Edit chart data"),
         };
         let (va, vc) = (view.clone(), view.clone());
         let footer = h_flex()
@@ -699,7 +707,7 @@ impl SlidesView {
                 Button::new("object-cancel")
                     .ghost()
                     .xsmall()
-                    .label("Close")
+                    .label(i18n::t("Close"))
                     .on_click(move |_, window, cx| {
                         let _ = vc.update(cx, |this, cx| this.close_object_editor(window, cx));
                     }),
@@ -708,7 +716,7 @@ impl SlidesView {
                 Button::new("object-apply")
                     .primary()
                     .xsmall()
-                    .label("Apply")
+                    .label(i18n::t("Apply"))
                     .tooltip("Enter")
                     .on_click(move |_, window, cx| {
                         let _ = va.update(cx, |this, cx| {

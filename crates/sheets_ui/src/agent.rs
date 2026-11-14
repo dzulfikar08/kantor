@@ -4,6 +4,7 @@
 
 use anyhow::bail;
 use gpui_kit::*;
+use kantor_ui::i18n::tf;
 use sheets_engine::{CellRange, Workbook, cell_name};
 
 use crate::SheetsView;
@@ -90,19 +91,22 @@ impl SheetsView {
                 None => book.save(),
             }
         });
-        self.status = match result {
+        // The status bar gets the interface language; the agent gets English.
+        let reply = match result {
             Ok(()) => {
                 self.disk_guard = None;
-                self.saved_status(false, cx).into()
+                self.status = self.saved_status(false, cx).into();
+                Ok(self.saved_status_english(cx))
             }
-            Err(err) => format!("Save failed: {err:#}").into(),
+            Err(err) => {
+                let err = format!("{err:#}");
+                self.status = tf("Save failed: {}", &[&err]).into();
+                Err(anyhow::anyhow!("Save failed: {err}"))
+            }
         };
         self.update_title(window, cx);
         cx.notify();
-        if self.status.starts_with("Save failed") {
-            bail!("{}", self.status)
-        }
-        Ok(self.status.to_string())
+        reply
     }
 
     /// Err while the workbook can't be read or edited: it's still opening

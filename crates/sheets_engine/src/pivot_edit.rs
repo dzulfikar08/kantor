@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 
+use crate::content_text::tr;
 use crate::pivot::{
     Cache, CacheField, DataField, Def, Field, Func, NEW_PREFIX, PageField, Rebuild, Source,
     StyleInfo, Val,
@@ -348,11 +349,9 @@ impl PivotLayout {
     pub fn value_caption(&self, k: usize) -> String {
         let v = &self.values[k];
         v.name.clone().unwrap_or_else(|| {
-            format!(
-                "{} of {}",
-                v.func.func().caption(),
-                self.fields.get(v.field).map_or("", |f| f.name.as_str())
-            )
+            v.func
+                .func()
+                .default_name(self.fields.get(v.field).map_or("", |f| f.name.as_str()))
         })
     }
 }
@@ -640,6 +639,7 @@ impl Workbook {
             self.pivots.caches.len() + 1
         ));
         let name = self.next_pivot_name();
+        let captions = Captions::new();
         let def = Def {
             part: format!("{NEW_PREFIX}pivotTable{k}.xml"),
             sheet_id,
@@ -673,11 +673,13 @@ impl Workbook {
                 col_stripes: false,
                 last_column: true,
             },
-            grand_caption: None,
-            row_header_caption: None,
-            col_header_caption: None,
-            data_caption: "Values".into(),
-            xml: Arc::new(def_skeleton(&name)),
+            grand_caption: captions.grand_total.clone(),
+            row_header_caption: captions.row_labels.clone(),
+            col_header_caption: captions.column_labels.clone(),
+            data_caption: captions.values.clone(),
+            missing_caption: None,
+            error_caption: None,
+            xml: Arc::new(def_skeleton(&name, &captions)),
             reindexed: false,
             at: layout,
             unsupported: None,
@@ -843,11 +845,11 @@ impl Workbook {
             .data_fields
             .iter()
             .map(|d| {
-                let default = format!(
-                    "{} of {}",
-                    d.func.caption(),
-                    cache.fields.get(d.fld).map_or("", |c| c.name.as_str())
-                );
+                // A name other than the default (in the interface
+                // language) is kept as the file has it.
+                let default = d
+                    .func
+                    .default_name(cache.fields.get(d.fld).map_or("", |c| c.name.as_str()));
                 PivotValueField {
                     field: d.fld,
                     func: PivotFunc::of(d.func),
@@ -1173,6 +1175,7 @@ fn new_field() -> Field {
         show_all: false,
         sort: None,
         name: None,
+        subtotal_caption: None,
         xml: None,
     }
 }
@@ -1202,11 +1205,48 @@ fn new_cache(source: Source, fields: Vec<CacheField>, at: crate::shift::Layout) 
     }
 }
 
+/// A new pivot table's captions in the interface language. `None` (and
+/// `Values`) where that is English: Excel's defaults, not written.
+struct Captions {
+    row_labels: Option<String>,
+    column_labels: Option<String>,
+    grand_total: Option<String>,
+    values: String,
+}
+
+impl Captions {
+    fn new() -> Self {
+        let own = |en: &'static str| Some(tr(en)).filter(|s| *s != en).map(str::to_owned);
+        Self {
+            row_labels: own("Row Labels"),
+            column_labels: own("Column Labels"),
+            grand_total: own("Grand Total"),
+            values: tr("Values").to_owned(),
+        }
+    }
+
+    /// The root attributes that hold them.
+    fn attributes(&self) -> String {
+        let mut out = format!(" dataCaption=\"{}\"", esc(&self.values));
+        for (attr, v) in [
+            ("grandTotalCaption", &self.grand_total),
+            ("rowHeaderCaption", &self.row_labels),
+            ("colHeaderCaption", &self.column_labels),
+        ] {
+            if let Some(v) = v {
+                out.push_str(&format!(" {attr}=\"{}\"", esc(v)));
+            }
+        }
+        out
+    }
+}
+
 /// A new pivot table definition as Excel 2016 writes one; `location`,
 /// fields, items and the rest are written from the model.
-fn def_skeleton(name: &str) -> String {
+fn def_skeleton(name: &str, captions: &Captions) -> String {
     format!(
-        "<pivotTableDefinition xmlns=\"{NS_MAIN}\" name=\"{}\" cacheId=\"0\" applyNumberFormats=\"0\" applyBorderFormats=\"0\" applyFontFormats=\"0\" applyPatternFormats=\"0\" applyAlignmentFormats=\"0\" applyWidthHeightFormats=\"1\" dataCaption=\"Values\" updatedVersion=\"6\" minRefreshableVersion=\"3\" useAutoFormatting=\"1\" itemPrintTitles=\"1\" createdVersion=\"6\" indent=\"0\" outline=\"1\" outlineData=\"1\" multipleFieldFilters=\"0\"><location ref=\"A1\" firstHeaderRow=\"1\" firstDataRow=\"1\" firstDataCol=\"0\"/><pivotTableStyleInfo name=\"{STYLE}\" showRowHeaders=\"1\" showColHeaders=\"1\" showRowStripes=\"0\" showColStripes=\"0\" showLastColumn=\"1\"/></pivotTableDefinition>",
-        esc(name)
+        "<pivotTableDefinition xmlns=\"{NS_MAIN}\" name=\"{}\" cacheId=\"0\" applyNumberFormats=\"0\" applyBorderFormats=\"0\" applyFontFormats=\"0\" applyPatternFormats=\"0\" applyAlignmentFormats=\"0\" applyWidthHeightFormats=\"1\"{} updatedVersion=\"6\" minRefreshableVersion=\"3\" useAutoFormatting=\"1\" itemPrintTitles=\"1\" createdVersion=\"6\" indent=\"0\" outline=\"1\" outlineData=\"1\" multipleFieldFilters=\"0\"><location ref=\"A1\" firstHeaderRow=\"1\" firstDataRow=\"1\" firstDataCol=\"0\"/><pivotTableStyleInfo name=\"{STYLE}\" showRowHeaders=\"1\" showColHeaders=\"1\" showRowStripes=\"0\" showColStripes=\"0\" showLastColumn=\"1\"/></pivotTableDefinition>",
+        esc(name),
+        captions.attributes()
     )
 }

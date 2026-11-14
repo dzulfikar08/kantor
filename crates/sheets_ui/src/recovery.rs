@@ -8,6 +8,7 @@ use std::time::Instant;
 use anyhow::{Result, anyhow};
 use gpui_kit::*;
 use kantor_ui::disk_guard::{DiskGuard, Overwrite, confirm_overwrite};
+use kantor_ui::i18n::{t, tf};
 use sheets_engine::{Workbook, XlsxSnapshot};
 
 use crate::calc::{Busy, Job};
@@ -102,15 +103,15 @@ impl SheetsView {
                 this.finish_open(result, window, cx);
                 if this.path(cx).is_some() {
                     this.status =
-                        format!("Restored unsaved changes to {}", this.doc_name(cx)).into();
+                        tf("Restored unsaved changes to {}", &[&this.doc_name(cx)]).into();
                 } else {
-                    this.status = "Restored unsaved changes".into();
+                    this.status = t("Restored unsaved changes").into();
                 }
                 cx.notify();
             });
         });
         this.opening = original.clone();
-        this.status = format!("Restoring {name}…").into();
+        this.status = tf("Restoring {}…", &[&name]).into();
         this.busy = Some(Busy {
             what: Job::Opening {
                 name: name.clone(),

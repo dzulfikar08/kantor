@@ -42,6 +42,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::find_bar::{FindNext, FindPrev, OpenFind, OpenReplace};
+use kantor_ui::i18n::{self, tf, tk};
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{Tokens, metrics::*, tokens};
 use slides_engine::{
@@ -123,6 +124,8 @@ actions!(
 
 /// Register Slides key bindings (Ctrl, and Super as Mac-style Cmd).
 pub fn init(cx: &mut App) {
+    // Placeholder prompts and chart fallbacks follow the interface language.
+    slides_engine::display_text::set_display_translator(kantor_ui::i18n::t);
     kantor_ui::find_bar::bind_app_keys(KEY_CONTEXT, cx);
     kantor_ui::spelling::init(cx);
     cx.bind_keys(key_bindings());
@@ -329,6 +332,17 @@ pub struct SlidesView {
     spell: spell::SpellState,
 }
 
+/// A print layout's name inside a sentence ("notes pages").
+fn print_layout_name(layout: slides_pdf::PrintLayout) -> String {
+    use slides_pdf::PrintLayout;
+    match layout {
+        PrintLayout::Slides => i18n::t("full page slides").to_owned(),
+        PrintLayout::Notes => i18n::t("notes pages").to_owned(),
+        PrintLayout::Handouts(1) => i18n::t("handouts, 1 slide per page").to_owned(),
+        PrintLayout::Handouts(n) => tf("handouts, {} slides per page", &[&n]),
+    }
+}
+
 fn cm(emu: i64) -> String {
     format!("{:.2} cm", emu as f64 / 360_000.0)
 }
@@ -337,16 +351,22 @@ impl SlidesView {
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (pres, status) = match path.as_deref().map(Presentation::open) {
             Some(Ok(p)) => {
-                let mut s = format!("Opened {}", p.title());
-                if p.is_imported() {
-                    s.push_str(" (imported; Save creates a .pptx copy)");
+                let s = if p.is_imported() {
+                    let mut s = tf(
+                        "Opened {} (imported; Save creates a .pptx copy)",
+                        &[&p.title()],
+                    );
                     for note in p.import_notes() {
                         s.push_str("; ");
-                        s.push_str(note);
+                        s.push_str(&kantor_ui::content_strings::content_item(note));
                     }
+                    s
                 } else if p.has_unsupported_content() {
-                    s.push_str(" (has unsupported content; Save creates a copy)");
-                }
+                    let msg = tk("Opened {} (has unsupported content; Save creates a copy)");
+                    tf(msg, &[&p.title()])
+                } else {
+                    tf("Opened {}", &[&p.title()])
+                };
                 (p, s)
             }
             Some(Err(err)) => {
@@ -361,7 +381,7 @@ impl SlidesView {
     /// A pane showing a presentation restored from a recovery copy (see
     /// `kantor_core::recovery`), unsaved.
     pub fn new_recovered(pres: Presentation, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let status = format!("Restored unsaved changes to {}", pres.title());
+        let status = tf("Restored unsaved changes to {}", &[&pres.title()]);
         Self::with_presentation(pres, status, window, cx)
     }
 
@@ -647,11 +667,11 @@ impl SlidesView {
             return false;
         };
         if let Some(why) = &slide.locked {
-            self.set_status(format!("This slide can't be edited: {why}"), cx);
+            self.set_status(tf("This slide can't be edited: {}", &[&why]), cx);
             return false;
         }
         if let Some(why) = shape.text.as_ref().and_then(|t| t.locked.clone()) {
-            self.set_status(format!("This text can't be edited yet: it has {why}"), cx);
+            self.set_status(tf("This text can't be edited yet: it has {}", &[&why]), cx);
             return false;
         }
         if !shape.text_editable() {
@@ -712,7 +732,7 @@ impl SlidesView {
 
     fn toggle(&mut self, toggle: Toggle, window: &mut Window, cx: &mut Context<Self>) {
         let Some(e) = self.editing.clone() else {
-            self.set_status("Select text to format it", cx);
+            self.set_status(i18n::t("Select text to format it"), cx);
             return;
         };
         let r = (self.current, e.shape);
@@ -985,7 +1005,8 @@ impl SlidesView {
     /// edited, or all paragraphs of the selected shape.
     pub fn toggle_list_doc(&mut self, numbered: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some((r, sel)) = self.list_target() else {
-            self.set_status("Select a text box or placeholder to make a list", cx);
+            let msg = i18n::t("Select a text box or placeholder to make a list");
+            self.set_status(msg, cx);
             return;
         };
         let res = self.pres.toggle_list(r, sel, numbered);
@@ -1143,14 +1164,14 @@ impl SlidesView {
     pub fn undo_doc(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         match self.pres.undo() {
             Some(f) => self.apply_focus(f, cx),
-            None => self.set_status("Nothing to undo", cx),
+            None => self.set_status(i18n::t("Nothing to undo"), cx),
         }
     }
 
     pub fn redo_doc(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         match self.pres.redo() {
             Some(f) => self.apply_focus(f, cx),
-            None => self.set_status("Nothing to redo", cx),
+            None => self.set_status(i18n::t("Nothing to redo"), cx),
         }
     }
 
@@ -1238,7 +1259,7 @@ impl SlidesView {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Insert picture (PNG or JPEG)".into()),
+            prompt: Some(i18n::t("Insert picture (PNG or JPEG)").into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else {
@@ -1362,29 +1383,34 @@ impl SlidesView {
         window.focus(&self.focus, cx);
     }
 
+    /// The slide editor's focus (typed text there edits the presentation).
+    pub fn editor_focus_handle(&self) -> FocusHandle {
+        self.focus.clone()
+    }
+
     pub fn status(&self) -> SharedString {
         self.status.clone()
     }
 
     /// For the status bar: `Slide 2 of 12`.
     pub fn location(&self) -> String {
-        format!("Slide {} of {}", self.current + 1, self.pres.len())
+        tf("Slide {} of {}", &[&(self.current + 1), &self.pres.len()])
     }
 
     pub fn info(&self) -> SlidesInfo {
         let shape = self.selected.and_then(|i| {
             let s = self.pres.slide(self.current).shapes.get(i)?;
             let kind = match &s.kind {
-                ShapeKind::Shape { text_box: true, .. } => "Text box".to_owned(),
-                ShapeKind::Shape { .. } if s.ph.is_some() => "Placeholder".to_owned(),
+                ShapeKind::Shape { text_box: true, .. } => i18n::t("Text box").to_owned(),
+                ShapeKind::Shape { .. } if s.ph.is_some() => i18n::t("Placeholder").to_owned(),
                 ShapeKind::Shape { geom, .. } => match geom {
-                    Geom::Ellipse => "Ellipse".into(),
-                    Geom::Rect => "Rectangle".into(),
-                    Geom::RoundRect => "Rounded rectangle".into(),
-                    Geom::Line => "Line".into(),
-                    Geom::Other(o) => format!("Shape ({o})"),
+                    Geom::Ellipse => i18n::t("Ellipse").into(),
+                    Geom::Rect => i18n::t("Rectangle").into(),
+                    Geom::RoundRect => i18n::t("Rounded rectangle").into(),
+                    Geom::Line => i18n::t("Line").into(),
+                    Geom::Other(o) => tf("Shape ({})", &[&o]),
                 },
-                ShapeKind::Picture { .. } => "Picture".into(),
+                ShapeKind::Picture { .. } => i18n::t("Picture").into(),
                 ShapeKind::Other { what, .. } => what.clone(),
             };
             Some((s.name.clone(), kind, self.shape_xfrm(i)?))
@@ -1496,7 +1522,7 @@ impl SlidesView {
         match kantor_core::dirs::print_pdf_path(&stem) {
             Ok(path) => self.write_pdf(path, layout, true, cx),
             Err(e) => {
-                self.status = format!("Print failed: {e}").into();
+                self.status = tf("Print failed: {}", &[&e]).into();
                 cx.notify();
             }
         }
@@ -1511,12 +1537,12 @@ impl SlidesView {
     ) {
         let job = self.painter.print_job(&self.pres, layout);
         let slides = job.deck.slides.len();
-        let verb = if open {
-            "Preparing to print"
+        self.status = if open {
+            tf("Preparing to print {}…", &[&display_name(&path)])
         } else {
-            "Exporting"
-        };
-        self.status = format!("{verb} {}…", display_name(&path)).into();
+            tf("Exporting {}…", &[&display_name(&path)])
+        }
+        .into();
         cx.notify();
         let file = path.clone();
         let task = cx.background_spawn(async move {
@@ -1528,22 +1554,24 @@ impl SlidesView {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 let name = display_name(&path);
-                let s = |n: usize| if n == 1 { "" } else { "s" };
                 this.status = match (result, open) {
-                    (Ok(_), false) => {
-                        format!("Exported {name} ({slides} slide{})", s(slides)).into()
-                    }
+                    (Ok(_), false) if slides == 1 => tf("Exported {} (1 slide)", &[&name]).into(),
+                    (Ok(_), false) => tf("Exported {} ({} slides)", &[&name, &slides]).into(),
                     (Ok(pages), true) => {
                         cx.open_with_system(&path);
-                        format!(
-                            "Opened {} ({pages} page{}) in the PDF viewer to print",
-                            layout.label().to_lowercase(),
-                            s(pages)
-                        )
-                        .into()
+                        let what = print_layout_name(layout);
+                        if pages == 1 {
+                            let msg = tk("Opened {} (1 page) in the PDF viewer to print");
+                            tf(msg, &[&what]).into()
+                        } else {
+                            let msg = tk("Opened {} ({} pages) in the PDF viewer to print");
+                            tf(msg, &[&what, &pages]).into()
+                        }
                     }
-                    (Err(err), false) => format!("Export to PDF failed: {err:#}").into(),
-                    (Err(err), true) => format!("Print failed: {err:#}").into(),
+                    (Err(err), false) => {
+                        tf("Export to PDF failed: {}", &[&format!("{err:#}")]).into()
+                    }
+                    (Err(err), true) => tf("Print failed: {}", &[&format!("{err:#}")]).into(),
                 };
                 cx.notify();
             });
@@ -1562,10 +1590,15 @@ impl SlidesView {
 
     fn save_as_task(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
         if self.pres.has_unsupported_content() {
-            self.status = format!(
+            let msg = i18n::t(
                 "{} has content Kantor can't keep ({}), so it's saved as a new file; the original stays as it is",
-                self.pres.title(),
-                self.pres.unsupported_content().join(", ")
+            );
+            self.status = i18n::fill(
+                msg,
+                &[
+                    &self.pres.title(),
+                    &kantor_ui::content_strings::content_list(&self.pres.unsupported_content()),
+                ],
             )
             .into();
             cx.notify();
@@ -1611,8 +1644,8 @@ impl SlidesView {
             self.disk_guard = None;
         }
         self.status = match result {
-            Ok(()) => format!("Saved {}", self.pres.title()).into(),
-            Err(err) => format!("Save failed: {err:#}").into(),
+            Ok(()) => tf("Saved {}", &[&self.pres.title()]).into(),
+            Err(err) => tf("Save failed: {}", &[&format!("{err:#}")]).into(),
         };
         self.update_title(window, cx);
         cx.notify();
@@ -1996,10 +2029,10 @@ impl SlidesView {
                 .text_size(FONT_SMALL)
                 .text_color(t.fg_muted)
                 .child(kantor_ui::components::dot(t.warning))
-                .child(div().flex_1().min_w_0().child(format!(
-                    "This file has content Kantor can't keep yet: {}. Save writes a new copy; the original is never overwritten.",
-                    what.join(", ")
-                ))),
+                .child(div().flex_1().min_w_0().child({
+                    let msg = i18n::t("This file has content Kantor can't keep yet: {}. Save writes a new copy; the original is never overwritten.");
+                    i18n::fill(msg, &[&kantor_ui::content_strings::content_list(&what)])
+                })),
         )
     }
 

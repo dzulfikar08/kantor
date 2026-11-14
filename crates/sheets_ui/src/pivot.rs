@@ -33,6 +33,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, t_dyn, tf, tk};
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{
     AreaEntry, AxisEntry, PivotDestination, PivotFunc, PivotLayout, ReportLayout, SubtotalPlace,
@@ -54,7 +55,28 @@ actions!(
 
 /// Width of the field list panel.
 const PANEL_WIDTH: Pixels = px(300.);
-const AREAS: [&str; 4] = ["Filters", "Columns", "Rows", "Values"];
+/// The engine's area names (also the keys of their Indonesian names).
+const AREAS: [&str; 4] = [tk("Filters"), tk("Columns"), tk("Rows"), tk("Values")];
+
+/// "Add to …" for an area of [`AREAS`].
+fn add_to_label(area: &str) -> &'static str {
+    match area {
+        "Filters" => i18n::t("Add to Filters"),
+        "Columns" => i18n::t("Add to Columns"),
+        "Rows" => i18n::t("Add to Rows"),
+        _ => i18n::t("Add to Values"),
+    }
+}
+
+/// "Move to …" for an area of [`AREAS`].
+fn move_to_label(area: &str) -> &'static str {
+    match area {
+        "Filters" => i18n::t("Move to Filters"),
+        "Columns" => i18n::t("Move to Columns"),
+        "Rows" => i18n::t("Move to Rows"),
+        _ => i18n::t("Move to Values"),
+    }
+}
 
 pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
@@ -135,26 +157,26 @@ impl Render for DragChip {
 
 /// Excel's number formats offered for value fields, besides the source's.
 const NUM_FMTS: [(&str, &str); 5] = [
-    ("Number", "#,##0.00"),
-    ("Whole number", "#,##0"),
-    ("Percent", "0%"),
-    ("Percent (0.00)", "0.00%"),
-    ("Scientific", "0.00E+00"),
+    (tk("Number"), "#,##0.00"),
+    (tk("Whole number"), "#,##0"),
+    (tk("Percent"), "0%"),
+    (tk("Percent (0.00)"), "0.00%"),
+    (tk("Scientific"), "0.00E+00"),
 ];
 
 fn layout_label(l: ReportLayout) -> &'static str {
     match l {
-        ReportLayout::Compact => "Compact form",
-        ReportLayout::Outline => "Outline form",
-        ReportLayout::Tabular => "Tabular form",
+        ReportLayout::Compact => i18n::t("Compact form"),
+        ReportLayout::Outline => i18n::t("Outline form"),
+        ReportLayout::Tabular => i18n::t("Tabular form"),
     }
 }
 
 fn subtotal_label(s: SubtotalPlace) -> &'static str {
     match s {
-        SubtotalPlace::Off => "Don't show subtotals",
-        SubtotalPlace::Top => "Subtotals at the top",
-        SubtotalPlace::Bottom => "Subtotals at the bottom",
+        SubtotalPlace::Off => i18n::t("Don't show subtotals"),
+        SubtotalPlace::Top => i18n::t("Subtotals at the top"),
+        SubtotalPlace::Bottom => i18n::t("Subtotals at the bottom"),
     }
 }
 
@@ -171,8 +193,8 @@ impl SheetsView {
         let (row, col) = self.selected;
         let p = grid.book.pivot_at(grid.sheet, row, col)?;
         Some(match p.refresh_problem {
-            None => format!("PivotTable · {}", p.name),
-            Some(_) => format!("PivotTable · {} (can't refresh here)", p.name),
+            None => tf("PivotTable · {}", &[&p.name]),
+            Some(_) => tf("PivotTable · {} (can't refresh here)", &[&p.name]),
         })
     }
 
@@ -197,9 +219,9 @@ impl SheetsView {
             res
         });
         self.status = match result {
-            Ok(0) => "This workbook has no PivotTables to refresh".into(),
-            Ok(1) => "PivotTable refreshed".into(),
-            Ok(n) => format!("{n} PivotTables refreshed").into(),
+            Ok(0) => i18n::t("This workbook has no PivotTables to refresh").into(),
+            Ok(1) => i18n::t("PivotTable refreshed").into(),
+            Ok(n) => tf("{} PivotTables refreshed", &[&n]).into(),
             Err(e) => format!("{e:#}").into(),
         };
         self.after_pivot_edit(window, cx);
@@ -244,9 +266,11 @@ impl SheetsView {
             )
         };
         let source = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Table name or range, e.g. Sheet1!A1:D20")
+            InputState::new(window, cx)
+                .placeholder(i18n::t("Table name or range, e.g. Sheet1!A1:D20"))
         });
-        let dest = cx.new(|cx| InputState::new(window, cx).placeholder("Cell, e.g. Sheet1!H2"));
+        let dest =
+            cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("Cell, e.g. Sheet1!H2")));
         source.update(cx, |i, cx| {
             i.set_value(suggestion, window, cx);
             i.focus(window, cx);
@@ -280,15 +304,21 @@ impl SheetsView {
             Ok(c) => {
                 let rows = c.range.rows_count().saturating_sub(1);
                 let names = grid.book.sheet_names();
-                let place = match &c.table {
-                    Some(t) => format!("table {t}"),
-                    None => format!(
-                        "{}!{}",
-                        names.get(c.sheet as usize).cloned().unwrap_or_default(),
-                        c.range.name()
-                    ),
-                };
-                Ok(format!("{} fields · {rows} rows · {place}", c.fields.len()))
+                Ok(match &c.table {
+                    Some(t) => {
+                        let msg = i18n::t("{} fields · {} rows · table {}");
+                        i18n::fill(msg, &[&c.fields.len(), &rows, t])
+                    }
+                    None => {
+                        let place = format!(
+                            "{}!{}",
+                            names.get(c.sheet as usize).cloned().unwrap_or_default(),
+                            c.range.name()
+                        );
+                        let msg = i18n::t("{} fields · {} rows · {}");
+                        i18n::fill(msg, &[&c.fields.len(), &rows, &place])
+                    }
+                })
             }
             Err(e) => Err(format!("{e:#}")),
         };
@@ -359,7 +389,7 @@ impl SheetsView {
                     grid.book.pivot_at(sheet, row, col).map(|p| p.name)
                 };
                 if let Some(name) = name {
-                    self.status = format!("{name}: choose its fields in the panel").into();
+                    self.status = tf("{}: choose its fields in the panel", &[&name]).into();
                     self.open_panel(sheet, name);
                 }
                 self.focus_grid(window, cx);
@@ -424,9 +454,12 @@ impl SheetsView {
                     div()
                         .text_size(FONT_EMPHASIS)
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child("Insert PivotTable"),
+                        .child(i18n::t("Insert PivotTable")),
                 )
-                .child(kantor_ui::components::section_label("Data to analyse", cx))
+                .child(kantor_ui::components::section_label(
+                    i18n::t("Data to analyse"),
+                    cx,
+                ))
                 .child(Input::new(&d.source).small())
                 .child(
                     div()
@@ -438,14 +471,22 @@ impl SheetsView {
                             check_text
                         })),
                 )
-                .child(kantor_ui::components::section_label("Put it on", cx))
+                .child(kantor_ui::components::section_label(
+                    i18n::t("Put it on"),
+                    cx,
+                ))
                 .child(
                     h_flex()
                         .gap(SPACE_3)
-                        .child(choice("pivot-new-sheet", "New sheet", d.new_sheet, true))
+                        .child(choice(
+                            "pivot-new-sheet",
+                            i18n::t("New sheet"),
+                            d.new_sheet,
+                            true,
+                        ))
                         .child(choice(
                             "pivot-existing",
-                            "Existing sheet",
+                            i18n::t("Existing sheet"),
                             !d.new_sheet,
                             false,
                         )),
@@ -467,7 +508,7 @@ impl SheetsView {
                             Button::new("pivot-cancel")
                                 .small()
                                 .ghost()
-                                .label("Cancel")
+                                .label(i18n::t("Cancel"))
                                 .on_click(move |_, w, cx| {
                                     let _ = cancel_view
                                         .update(cx, |this, cx| this.close_pivot_dialog(w, cx));
@@ -477,7 +518,7 @@ impl SheetsView {
                             Button::new("pivot-ok")
                                 .small()
                                 .primary()
-                                .label("Create")
+                                .label(i18n::t("Create"))
                                 .disabled(!check_ok)
                                 .on_click(move |_, w, cx| {
                                     let _ =
@@ -510,7 +551,7 @@ impl SheetsView {
                 if self.pivot_panel.as_ref().is_some_and(|p| p.name == name) {
                     self.pivot_panel = None;
                 }
-                format!("{name} deleted").into()
+                tf("{} deleted", &[&name]).into()
             }
             Err(e) => format!("{e:#}").into(),
         };
@@ -553,7 +594,7 @@ impl SheetsView {
             }
             None if self.pivot_panel.is_some() => self.pivot_panel = None,
             None => {
-                self.status = "Select a cell in a PivotTable to see its fields".into();
+                self.status = i18n::t("Select a cell in a PivotTable to see its fields").into();
             }
         }
         cx.notify();
@@ -635,7 +676,7 @@ impl SheetsView {
             res
         });
         self.status = match result {
-            Ok(()) => format!("{} updated", layout.name).into(),
+            Ok(()) => tf("{} updated", &[&layout.name]).into(),
             Err(e) => format!("{e:#}").into(),
         };
         self.after_pivot_edit(window, cx);
@@ -694,7 +735,7 @@ impl SheetsView {
         let Some(v) = layout.values.get(k) else {
             return;
         };
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Custom name"));
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("Custom name")));
         let caption = layout.value_caption(k);
         name.update(cx, |i, cx| {
             i.set_value(caption, window, cx);
@@ -782,7 +823,7 @@ impl SheetsView {
             return;
         };
         if !pick.checked.iter().any(|c| *c) {
-            self.status = "Choose at least one item".into();
+            self.status = i18n::t("Choose at least one item").into();
             if let Some(p) = self.pivot_panel.as_mut() {
                 p.picker = Some(pick);
             }
@@ -835,14 +876,14 @@ impl SheetsView {
                         .flex_1()
                         .text_size(FONT_EMPHASIS)
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child("PivotTable Fields"),
+                        .child(i18n::t("PivotTable Fields")),
                 )
                 .child(
                     Button::new("pivot-panel-close")
                         .ghost()
                         .xsmall()
                         .icon(Lucide::X)
-                        .tooltip("Close")
+                        .tooltip(i18n::t("Close"))
                         .on_click(move |_, _, cx| {
                             let _ = close.update(cx, |this, cx| {
                                 this.pivot_panel = None;
@@ -855,7 +896,7 @@ impl SheetsView {
             None => div()
                 .text_size(FONT_SMALL)
                 .text_color(t.fg_muted)
-                .child("Select a cell in a PivotTable to see its fields.")
+                .child(i18n::t("Select a cell in a PivotTable to see its fields."))
                 .into_any_element(),
             Some(l) => self.render_layout(l, p, cx).into_any_element(),
         };
@@ -900,7 +941,7 @@ impl SheetsView {
         );
         if let Some(why) = &l.refresh_problem {
             out = out.child(div().text_size(FONT_SMALL).text_color(t.warning).child(
-                SharedString::from(format!("Can't be rearranged here: {why}")),
+                SharedString::from(tf("Can't be rearranged here: {}", &[why])),
             ));
         }
         // The source's fields.
@@ -948,7 +989,12 @@ impl SheetsView {
                     )
                     .child(div().flex_1().min_w_0().truncate().child(label))
                     .when_some(l.area_of(f), |d, a| {
-                        d.child(div().text_size(FONT_CAPTION).text_color(t.fg_dim).child(a))
+                        d.child(
+                            div()
+                                .text_size(FONT_CAPTION)
+                                .text_color(t.fg_dim)
+                                .child(t_dyn(a)),
+                        )
                     })
                     .child(
                         Button::new(("pivot-field-menu", f))
@@ -956,23 +1002,21 @@ impl SheetsView {
                             .xsmall()
                             .icon(IconName::Ellipsis)
                             .disabled(locked)
-                            .tooltip("Add to an area")
+                            .tooltip(i18n::t("Add to an area"))
                             .dropdown_menu(move |mut m, _, _| {
                                 for area in AREAS {
                                     let v = menu_view.clone();
-                                    m = m.item(
-                                        PopupMenuItem::new(format!("Add to {area}")).on_click(
-                                            move |_, w, cx| {
-                                                let _ = v.update(cx, |this, cx| {
-                                                    let d = PivotDrag {
-                                                        entry: AreaEntry::Field(f),
-                                                        label: SharedString::default(),
-                                                    };
-                                                    this.pivot_drop(&d, area, None, w, cx)
-                                                });
-                                            },
-                                        ),
-                                    );
+                                    m = m.item(PopupMenuItem::new(add_to_label(area)).on_click(
+                                        move |_, w, cx| {
+                                            let _ = v.update(cx, |this, cx| {
+                                                let d = PivotDrag {
+                                                    entry: AreaEntry::Field(f),
+                                                    label: SharedString::default(),
+                                                };
+                                                this.pivot_drop(&d, area, None, w, cx)
+                                            });
+                                        },
+                                    ));
                                 }
                                 m
                             }),
@@ -981,7 +1025,7 @@ impl SheetsView {
         }
         out = out
             .child(kantor_ui::components::section_label(
-                "Fields · check, or drag to an area",
+                i18n::t("Fields · check, or drag to an area"),
                 cx,
             ))
             .child(list);
@@ -1035,7 +1079,7 @@ impl SheetsView {
                 list.iter()
                     .map(|e| match e {
                         AxisEntry::Field(f) => (AreaEntry::Field(*f), l.fields[*f].name.clone()),
-                        AxisEntry::Values => (AreaEntry::Values, "Σ Values".to_owned()),
+                        AxisEntry::Values => (AreaEntry::Values, i18n::t("Σ Values").to_owned()),
                     })
                     .collect()
             }
@@ -1068,7 +1112,7 @@ impl SheetsView {
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(t.fg_dim)
                     .child(gpui_kit::component::Icon::new(icon).with_size(ICON_SM))
-                    .child(area.to_uppercase()),
+                    .child(t_dyn(area).to_uppercase()),
             );
         for (k, (entry, label)) in chips.into_iter().enumerate() {
             let label: SharedString = label.into();
@@ -1132,11 +1176,11 @@ impl SheetsView {
         let ok = view.clone();
         let cancel = view.clone();
         let fmt_label = match &s.num_fmt {
-            None => "General".to_owned(),
+            None => i18n::t("General").to_owned(),
             Some(c) => NUM_FMTS
                 .iter()
                 .find(|(_, code)| code == c)
-                .map(|(n, _)| (*n).to_owned())
+                .map(|(n, _)| t_dyn(n).to_owned())
                 .unwrap_or_else(|| c.clone()),
         };
         let current = s.num_fmt.clone();
@@ -1144,38 +1188,45 @@ impl SheetsView {
             .child(
                 div()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("Value Field Settings"),
+                    .child(i18n::t("Value Field Settings")),
             )
-            .child(kantor_ui::components::section_label("Name", cx))
+            .child(kantor_ui::components::section_label(i18n::t("Name"), cx))
             .child(Input::new(&s.name).small())
             .child(kantor_ui::components::section_label(
-                "Summarize values by",
+                i18n::t("Summarize values by"),
                 cx,
             ))
             .child(
                 Button::new("pivot-func")
                     .outline()
                     .small()
-                    .label(s.func.label())
+                    .label(t_dyn(s.func.label()))
                     .dropdown_caret(true)
                     .dropdown_menu(move |mut m, _, _| {
                         for f in PivotFunc::ALL {
                             let v = func_view.clone();
-                            m = m.item(PopupMenuItem::new(f.label()).on_click(move |_, _, cx| {
-                                let _ = v.update(cx, |this, cx| {
-                                    if let Some(s) =
-                                        this.pivot_panel.as_mut().and_then(|p| p.settings.as_mut())
-                                    {
-                                        s.func = f;
-                                    }
-                                    cx.notify();
-                                });
-                            }));
+                            m = m.item(PopupMenuItem::new(t_dyn(f.label())).on_click(
+                                move |_, _, cx| {
+                                    let _ = v.update(cx, |this, cx| {
+                                        if let Some(s) = this
+                                            .pivot_panel
+                                            .as_mut()
+                                            .and_then(|p| p.settings.as_mut())
+                                        {
+                                            s.func = f;
+                                        }
+                                        cx.notify();
+                                    });
+                                },
+                            ));
                         }
                         m
                     }),
             )
-            .child(kantor_ui::components::section_label("Number format", cx))
+            .child(kantor_ui::components::section_label(
+                i18n::t("Number format"),
+                cx,
+            ))
             .child(
                 Button::new("pivot-numfmt")
                     .outline()
@@ -1184,14 +1235,14 @@ impl SheetsView {
                     .dropdown_caret(true)
                     .dropdown_menu(move |mut m, _, _| {
                         let mut choices: Vec<(String, Option<String>)> =
-                            vec![("General".into(), None)];
+                            vec![(i18n::t("General").into(), None)];
                         if let Some(c) = &source_fmt {
-                            choices.push((format!("As in the source ({c})"), Some(c.clone())));
+                            choices.push((tf("As in the source ({})", &[c]), Some(c.clone())));
                         }
                         choices.extend(
                             NUM_FMTS
                                 .iter()
-                                .map(|(n, c)| ((*n).to_owned(), Some((*c).to_owned()))),
+                                .map(|(n, c)| (t_dyn(n).to_owned(), Some((*c).to_owned()))),
                         );
                         for (label, code) in choices {
                             let v = fmt_view.clone();
@@ -1223,7 +1274,7 @@ impl SheetsView {
                         Button::new("pivot-vs-cancel")
                             .ghost()
                             .small()
-                            .label("Cancel")
+                            .label(i18n::t("Cancel"))
                             .on_click(move |_, _, cx| {
                                 let _ = cancel.update(cx, |this, cx| {
                                     if let Some(p) = this.pivot_panel.as_mut() {
@@ -1237,7 +1288,7 @@ impl SheetsView {
                         Button::new("pivot-vs-ok")
                             .primary()
                             .small()
-                            .label("Apply")
+                            .label(i18n::t("Apply"))
                             .on_click(move |_, w, cx| {
                                 let _ = ok.update(cx, |this, cx| this.apply_value_settings(w, cx));
                             }),
@@ -1283,11 +1334,11 @@ impl SheetsView {
             .child(
                 div()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(SharedString::from(format!("Show items of {}", field.name))),
+                    .child(SharedString::from(tf("Show items of {}", &[&field.name]))),
             )
             .child(
                 Checkbox::new("pivot-pick-all")
-                    .label("(All)")
+                    .label(i18n::t("(All)"))
                     .checked(all)
                     .on_click(move |on, _, cx| {
                         let on = *on;
@@ -1310,7 +1361,7 @@ impl SheetsView {
                         Button::new("pivot-pick-cancel")
                             .ghost()
                             .small()
-                            .label("Cancel")
+                            .label(i18n::t("Cancel"))
                             .on_click(move |_, _, cx| {
                                 let _ = cancel.update(cx, |this, cx| {
                                     if let Some(p) = this.pivot_panel.as_mut() {
@@ -1324,7 +1375,7 @@ impl SheetsView {
                         Button::new("pivot-pick-ok")
                             .primary()
                             .small()
-                            .label("Apply")
+                            .label(i18n::t("Apply"))
                             .on_click(move |_, w, cx| {
                                 let _ = ok.update(cx, |this, cx| this.apply_picker(w, cx));
                             }),
@@ -1341,7 +1392,7 @@ impl SheetsView {
         let (layout, subtotals) = (l.layout, l.subtotals);
         v_flex()
             .gap(SPACE_3)
-            .child(kantor_ui::components::section_label("Layout", cx))
+            .child(kantor_ui::components::section_label(i18n::t("Layout"), cx))
             .child(
                 Button::new("pivot-report-layout")
                     .outline()
@@ -1398,7 +1449,7 @@ impl SheetsView {
             )
             .child(
                 Checkbox::new("pivot-grand-row")
-                    .label("Grand total row")
+                    .label(i18n::t("Grand total row"))
                     .checked(l.grand_total_row)
                     .disabled(locked)
                     .on_click(move |on, w, cx| {
@@ -1410,7 +1461,7 @@ impl SheetsView {
             )
             .child(
                 Checkbox::new("pivot-grand-col")
-                    .label("Grand total column")
+                    .label(i18n::t("Grand total column"))
                     .checked(l.grand_total_column)
                     .disabled(locked)
                     .on_click(move |on, w, cx| {
@@ -1465,7 +1516,7 @@ fn chip_menu(
     if k > 0 {
         m = act(
             m,
-            "Move Up".into(),
+            i18n::t("Move Up").into(),
             Box::new(move |this, w, cx| {
                 this.edit_layout(|l| l.move_entry(entry, area, k - 1), w, cx)
             }),
@@ -1474,7 +1525,7 @@ fn chip_menu(
     if k + 1 < n {
         m = act(
             m,
-            "Move Down".into(),
+            i18n::t("Move Down").into(),
             Box::new(move |this, w, cx| {
                 this.edit_layout(|l| l.move_entry(entry, area, k + 1), w, cx)
             }),
@@ -1487,7 +1538,7 @@ fn chip_menu(
         }
         m = act(
             m,
-            format!("Move to {to}"),
+            move_to_label(to).into(),
             Box::new(move |this, w, cx| {
                 let d = PivotDrag {
                     entry,
@@ -1501,12 +1552,12 @@ fn chip_menu(
         AreaEntry::Value(k) => {
             m = act(
                 m.separator(),
-                "Value Field Settings…".into(),
+                i18n::t("Value Field Settings…").into(),
                 Box::new(move |this, w, cx| this.open_value_settings(k, w, cx)),
             );
             m = act(
                 m,
-                "Remove".into(),
+                i18n::t("Remove").into(),
                 Box::new(move |this, w, cx| this.edit_layout(|l| l.remove_value(k), w, cx)),
             );
         }
@@ -1514,15 +1565,15 @@ fn chip_menu(
             m = act(
                 m.separator(),
                 if area == "Filters" {
-                    "Choose Items…".into()
+                    i18n::t("Choose Items…").into()
                 } else {
-                    "Filter Items…".into()
+                    i18n::t("Filter Items…").into()
                 },
                 Box::new(move |this, _, cx| this.open_picker(f, cx)),
             );
             m = act(
                 m,
-                "Remove".into(),
+                i18n::t("Remove").into(),
                 Box::new(move |this, w, cx| this.edit_layout(|l| l.remove_field(f), w, cx)),
             );
         }
@@ -1546,19 +1597,44 @@ fn parse_cell(text: &str, names: &[String], sheet: u32) -> Result<(u32, u32, u32
             let k = names
                 .iter()
                 .position(|n| n.eq_ignore_ascii_case(&s))
-                .ok_or_else(|| format!("there is no sheet {s:?}"))?;
+                .ok_or_else(|| tf("There is no sheet {}", &[&format!("{s:?}")]))?;
             (k as u32, r)
         }
         None => (sheet, text),
     };
-    let range = sheets_engine::formula::parse_range(&r.replace('$', ""))
-        .ok_or_else(|| format!("{text:?} is not a cell: type one like Sheet1!H2"))?;
+    let range = sheets_engine::formula::parse_range(&r.replace('$', "")).ok_or_else(|| {
+        let msg = i18n::t("{} is not a cell: type one like Sheet1!H2");
+        i18n::fill(msg, &[&format!("{text:?}")])
+    })?;
     Ok((s, range.top, range.left))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Names from `sheets_engine` shown here through `t_dyn`: the value
+    /// functions (`PivotFunc::label`; StdDev, StdDevp, Var and Varp stay as
+    /// Excel names them).
+    const FUNC_LABELS: &[&str] = &[
+        tk("Sum"),
+        tk("Count"),
+        tk("Average"),
+        tk("Max"),
+        tk("Min"),
+        tk("Product"),
+        tk("Count Numbers"),
+    ];
+
+    #[std::prelude::v1::test]
+    fn shown_names_are_translated() {
+        for s in FUNC_LABELS.iter().chain(&AREAS) {
+            assert!(i18n::indonesian(s).is_some(), "{s}");
+        }
+        for (n, _) in NUM_FMTS {
+            assert!(i18n::indonesian(n).is_some(), "{n}");
+        }
+    }
 
     #[std::prelude::v1::test]
     fn destination_cells_are_read() {
