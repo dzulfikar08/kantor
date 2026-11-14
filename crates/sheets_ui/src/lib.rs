@@ -88,6 +88,7 @@ use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{CellRange, CellStyle, StyleChange, Tab, Workbook, cell_name, column_name};
 use table::{Column, DataTable, TableDelegate, TableEvent, TableState};
 
+mod notes_ui;
 mod toolbar;
 
 pub use ai::AiTarget;
@@ -284,6 +285,9 @@ pub struct SheetGrid {
     /// The sheet's filters, for the state they were read in (the header
     /// cells ask for every frame).
     filters_memo: RefCell<Option<FiltersMemo>>,
+    /// The cell with a note under the pointer, `(sheet, row, col)`: its
+    /// note is shown ([`notes_ui`]).
+    note_hover: Option<(u32, u32, u32)>,
 }
 
 /// A sheet's filters for `((revision), sheet)`.
@@ -321,6 +325,7 @@ impl SheetGrid {
             layout: row_layout::RowLayout::default(),
             validation: Default::default(),
             filters_memo: RefCell::new(None),
+            note_hover: None,
         };
         grid.resize();
         grid
@@ -728,6 +733,20 @@ impl TableDelegate for SheetGrid {
             None => content.apply(cell),
         };
         let validation = self.validation_layers(row, col, row_height, cx);
+        // A note: its corner mark, and the note while the pointer is over
+        // the cell (not while the cell is being edited).
+        let note_layers = self
+            .book
+            .note_at(sheet, row, col)
+            .map(|note| {
+                let editing = self
+                    .editor
+                    .as_ref()
+                    .is_some_and(|e| e.cell == (row, col) && e.sheet == sheet);
+                let hovered = !editing && self.note_hover == Some((sheet, row, col));
+                notes_ui::layers(&note, (sheet, row, col), hovered, &self.view, &t)
+            })
+            .unwrap_or_default();
         let down_view = self.view.clone();
         let move_view = self.view.clone();
         // References of the formula being edited: coloured border and fill.
@@ -841,6 +860,7 @@ impl TableDelegate for SheetGrid {
                 }
             })
             .children(validation)
+            .children(note_layers)
             .when_some(
                 self.editor
                     .as_ref()

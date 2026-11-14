@@ -554,5 +554,9 @@ fn horizontal_bar_value_labels_sit_outside_the_plot() {
         600.0,
         400.0,
     );
-    assert_eq!(below(&m, "600"), (false, true), "low end of a reversed axis");
+    assert_eq!(
+        below(&m, "600"),
+        (false, true),
+        "low end of a reversed axis"
+    );
 }

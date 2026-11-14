@@ -251,9 +251,18 @@ mod rel_target_tests {
             resolve_part(sheet, "/xl/comments/comment1.xml"),
             "xl/comments/comment1.xml"
         );
-        assert_eq!(resolve_part(sheet, "../tables/./table1.xml"), "xl/tables/table1.xml");
-        assert_eq!(resolve_part("xl/workbook.xml", "worksheets/sheet2.xml"), "xl/worksheets/sheet2.xml");
-        assert_eq!(resolve_part("xl/workbook.xml", "/xl/worksheets/sheet2.xml"), "xl/worksheets/sheet2.xml");
+        assert_eq!(
+            resolve_part(sheet, "../tables/./table1.xml"),
+            "xl/tables/table1.xml"
+        );
+        assert_eq!(
+            resolve_part("xl/workbook.xml", "worksheets/sheet2.xml"),
+            "xl/worksheets/sheet2.xml"
+        );
+        assert_eq!(
+            resolve_part("xl/workbook.xml", "/xl/worksheets/sheet2.xml"),
+            "xl/worksheets/sheet2.xml"
+        );
         assert_eq!(rels_part(sheet), "xl/worksheets/_rels/sheet1.xml.rels");
         assert_eq!(rels_part("xl/sheet.xml"), "xl/_rels/sheet.xml.rels");
     }

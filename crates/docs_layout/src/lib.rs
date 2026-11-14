@@ -863,8 +863,7 @@ fn on_line_end(layout: &Layout<Rgba>, k: usize, index: usize) -> usize {
         .runs()
         .flat_map(|r| r.clusters().collect::<Vec<_>>())
         .map(|c| {
-            let blank =
-                c.is_space_or_nbsp() || c.is_soft_line_break() || c.is_hard_line_break();
+            let blank = c.is_space_or_nbsp() || c.is_soft_line_break() || c.is_hard_line_break();
             (c.text_range(), blank)
         })
         .filter(|(r, _)| !r.is_empty())
