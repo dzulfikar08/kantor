@@ -18,6 +18,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Sheets: OpenDocument spreadsheets (`.ods`) open with their formatting: fonts, fills, borders,
   number formats, alignment, wrap, merged cells, column widths, row heights, hidden rows, columns
   and sheets, tab colours and frozen panes.
+- Sheets: OpenDocument spreadsheets (`.ods`) also bring their comments (notes), data validation
+  (drop-down lists, whole number, decimal, date, time and text length rules, custom formulas,
+  input and error messages) and conditional formatting (cell value, formula, text, top/bottom,
+  above/below average, duplicate, error and date rules with their formats, colour scales, data
+  bars, icon sets and ratings), and saving as `.xlsx` keeps them. A rule whose condition has no
+  Excel counterpart is left out with a note.
 - Sheets: Review > Spelling (F7, or the toolbar's spelling button) checks the text cells as
   Excel does, from the active cell or in the selection (formulas and numbers are skipped):
   Ignore Once, Ignore All, Add to Dictionary, Change and Change All (each one undo step), and a

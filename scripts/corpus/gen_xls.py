@@ -27,6 +27,10 @@ Files:
   warning alert); conditional formats (cell value between, greater than,
   equal to a text, a formula rule with a relative reference, a rule
   reading another cell absolutely) with font, fill and border formats.
+  features.ods also has a sheet "Scales" (not in the .xls: BIFF8 keeps
+  Excel 2007 rules apart): two- and three-colour scales, a data bar, an
+  icon set and a rating, text, top-N, above-average, duplicate-value and
+  date rules, and a validation on a whole column.
 * dates1904.xls: a workbook in the 1904 date system.
 * xlwt.xls: written directly as BIFF8 by xlwt (headless LibreOffice drops
   view settings): frozen rows and columns, the second sheet active, pattern
@@ -174,7 +178,7 @@ def formatted(path: Path) -> None:
     wb.save(path)
 
 
-def features(path: Path) -> None:
+def features(path: Path, scales: bool = False) -> None:
     from openpyxl.formatting.rule import CellIsRule, FormulaRule
     from openpyxl.worksheet.datavalidation import DataValidation
 
@@ -261,8 +265,64 @@ def features(path: Path) -> None:
     other = wb.create_sheet("Other")
     other["B2"] = "noted"
     other["B2"].comment = Comment("On the second sheet", "Ann")
+    if scales:
+        scales_sheet(wb)
     wb.active = 0
     wb.save(path)
+
+
+def scales_sheet(wb) -> None:
+    from openpyxl.formatting.rule import (
+        ColorScaleRule,
+        DataBarRule,
+        IconSetRule,
+        Rule,
+    )
+    from openpyxl.styles.differential import DifferentialStyle
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    ws = wb.create_sheet("Scales")
+    words = ["apple", "banana", "apricot", "cherry", "apple", "date", "fig", "grape", "kiwi", "lime"]
+    for i in range(10):
+        r = i + 1
+        for col in "ABCDE":
+            ws[f"{col}{r}"] = r
+        ws[f"F{r}"] = words[i]
+        ws[f"G{r}"] = r * 10
+        ws[f"H{r}"] = r
+    ws["I1"] = datetime.date(2024, 1, 1)
+    cf = ws.conditional_formatting
+    cf.add("A1:A10", ColorScaleRule(start_type="min", start_color="F8696B",
+                                    end_type="max", end_color="63BE7B"))
+    cf.add("B1:B10", ColorScaleRule(start_type="num", start_value=2, start_color="F8696B",
+                                    mid_type="percentile", mid_value=50, mid_color="FFEB84",
+                                    end_type="percent", end_value=90, end_color="63BE7B"))
+    cf.add("C1:C10", DataBarRule(start_type="min", end_type="max", color="638EC6"))
+    cf.add("D1:D10", IconSetRule("3Arrows", "percent", [0, 33, 67]))
+    cf.add("E1:E10", IconSetRule("5Rating", "percent", [0, 20, 40, 60, 80], showValue=False))
+    yellow = DifferentialStyle(fill=PatternFill(bgColor="FFEB9C", fill_type="solid"))
+    text = Rule(type="containsText", operator="containsText", text="ap", dxf=yellow)
+    text.formula = ['NOT(ISERROR(SEARCH("ap",F1)))']
+    cf.add("F1:F10", text)
+    begins = Rule(type="beginsWith", operator="beginsWith", text="b",
+                  dxf=DifferentialStyle(font=Font(bold=True)))
+    begins.formula = ['LEFT(F1,LEN("b"))="b"']
+    cf.add("F1:F10", begins)
+    cf.add("F1:F10", Rule(type="duplicateValues",
+                          dxf=DifferentialStyle(font=Font(color="9C0006"))))
+    cf.add("G1:G10", Rule(type="top10", rank=3,
+                          dxf=DifferentialStyle(font=Font(italic=True))))
+    cf.add("H1:H10", Rule(type="aboveAverage",
+                          dxf=DifferentialStyle(font=Font(color="0000FF"))))
+    today = Rule(type="timePeriod", timePeriod="today",
+                 dxf=DifferentialStyle(font=Font(strike=True)))
+    today.formula = ["FLOOR(I1,1)=TODAY()"]
+    cf.add("I1:I3", today)
+    dv = DataValidation(type="whole", operator="greaterThanOrEqual", formula1="1",
+                        allow_blank=True, showErrorMessage=True, errorStyle="information",
+                        errorTitle="Check", error="1 or more")
+    dv.add("H1:H1048576")
+    ws.add_data_validation(dv)
 
 
 def dates1904(path: Path) -> None:
@@ -352,8 +412,11 @@ def main() -> None:
             shutil.copy(convert(lo, src, filt, ext, tmp), OUT / f"formatted.{ext}")
         src = tmp / "features.xlsx"
         features(src)
-        for filt, ext in [("MS Excel 97", "xls"), ("calc8", "ods")]:
-            shutil.copy(convert(lo, src, filt, ext, tmp), OUT / f"features.{ext}")
+        shutil.copy(convert(lo, src, "MS Excel 97", "xls", tmp), OUT / "features.xls")
+        src = tmp / "ods" / "features.xlsx"
+        src.parent.mkdir()
+        features(src, scales=True)
+        shutil.copy(convert(lo, src, "calc8", "ods", src.parent), OUT / "features.ods")
         src = tmp / "dates1904.xlsx"
         dates1904(src)
         shutil.copy(convert(lo, src, "MS Excel 97", "xls", tmp), OUT / "dates1904.xls")
