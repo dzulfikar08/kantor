@@ -76,7 +76,7 @@ Indonesian side; changing the English key breaks the lookup.
 
 | English | Indonesian | Note |
 |---|---|---|
-| File | Berkas | MS uses "File"; LO and KBBI use "Berkas" |
+| File | Berkas | Chosen by the maintainer (LibreOffice and KBBI use "Berkas"; MS uses "File") |
 | Open | Buka | MS, LO |
 | Save | Simpan | MS, LO |
 | Save As | Simpan Sebagai | MS, LO |
@@ -141,7 +141,7 @@ Indonesian side; changing the English key breaks the lookup.
 | Home | Beranda | |
 | Command / Commands | Perintah | |
 | Sidebar | Bilah samping | |
-| Inspector | Inspektur | |
+| Inspector | Panel Properti | Chosen by the maintainer |
 | Explorer | Penjelajah | |
 | Pane | Panel | |
 | Tab | Tab | |
@@ -169,7 +169,7 @@ Indonesian side; changing the English key breaks the lookup.
 | Font | Font | MS |
 | Font Size | Ukuran Font | |
 | Bold / Italic / Underline | Tebal / Miring / Garis Bawah | MS |
-| Strikethrough | Coret | MS "Coretan"; shorter form kept |
+| Strikethrough | Coretan | Chosen by the maintainer (matches MS Office) |
 | Text Colour | Warna Teks | |
 | Fill | Isian | MS "Isian" |
 | Fill Colour | Warna Isian | |

@@ -23,7 +23,7 @@ Autosave On	Simpan Otomatis Aktif
 Autosave Off	Simpan Otomatis Nonaktif
 {} panes	{} panel
 Explorer	Penjelajah
-Inspector	Inspektur
+Inspector	Panel Properti
 No open documents	Tidak ada dokumen terbuka
 Recent	Terbaru
 Not saved yet	Belum disimpan
@@ -307,7 +307,7 @@ Data Validation…	Validasi Data…
 Circle Invalid Data	Lingkari Data Tidak Valid
 Clear Validation Circles	Hapus Lingkaran Validasi
 Toggle Sidebar	Tampilkan/Sembunyikan Bilah Samping
-Toggle Inspector	Tampilkan/Sembunyikan Inspektur
+Toggle Inspector	Tampilkan/Sembunyikan Panel Properti
 Split Right	Bagi ke Kanan
 Split Down	Bagi ke Bawah
 Close Pane	Tutup Panel
