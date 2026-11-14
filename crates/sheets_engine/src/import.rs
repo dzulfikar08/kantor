@@ -18,11 +18,14 @@
 //!   reads the formatting calamine skips (cell formats, merges, column widths,
 //!   row heights, frozen panes, gridlines, hidden and coloured tabs,
 //!   hyperlinks, page setup, sheet-local and print names, the 1904 date
-//!   system). Comments, data validation, conditional formatting, charts and
+//!   system), notes, data validation and conditional formatting. Charts and
 //!   pictures are not imported. Older BIFF5 files (Excel 5/95) get values
 //!   only.
-//! * ODS and XLSB imports bring values and formulas only: no styles, merged
-//!   cells, column widths, comments or charts.
+//! * **ODS** keeps its look too: [`crate::ods`] reads the cell styles,
+//!   number formats, merges, column widths, row heights, hidden rows,
+//!   columns and sheets, tab colours and frozen panes.
+//! * XLSB imports bring values and formulas only: no styles, merged cells,
+//!   column widths, comments or charts.
 
 use std::collections::HashMap;
 use std::fs;
@@ -212,6 +215,8 @@ pub(crate) struct Imported {
     pub print_names: HashMap<u32, (Option<String>, Option<String>)>,
     /// The tab the file opens on.
     pub active_sheet: Option<u32>,
+    /// Data validation (`.xls`), by sheet index.
+    pub validations: Vec<(u32, Vec<crate::Validation>)>,
 }
 
 /// Read an `.ods` / `.xls` / `.xlsb` file via calamine (and `.xls`
@@ -343,10 +348,24 @@ pub(crate) fn read_calamine(
     }
     // After the check: clearing the covered cells of merges changes values.
     if let Some(x) = &xls {
-        let (prints, cleared) = x.apply(&mut model, &names);
-        imported.prints = prints;
+        let applied = x.apply(&mut model, &names);
+        imported.prints = applied.prints;
+        imported.validations = applied.validations;
+        imported.notes.extend(applied.notes);
         imported.active_sheet = Some(x.globals.active).filter(|&a| (a as usize) < names.len());
-        replaced |= cleared;
+        replaced |= applied.cleared;
+    }
+    if format == SourceFormat::Ods {
+        match crate::ods::apply(path, &mut model, &names) {
+            Ok(a) => {
+                replaced |= a.cleared;
+                imported.active_sheet = a.active;
+            }
+            Err(e) => {
+                log::warn!("{}: formatting not read: {e}", path.display());
+                imported.notes.push("formatting not imported".into());
+            }
+        }
     }
     if replaced {
         model.evaluate();

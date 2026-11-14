@@ -276,11 +276,267 @@ fn malformed_xls_imports_values_or_fails_cleanly() {
 }
 
 #[test]
-fn ods_brings_values_without_formatting() {
-    // The ODS copy of the same workbook: values and formulas, no formats yet.
-    let wb = Workbook::open(corpus("formatted.ods")).unwrap();
+fn ods_brings_values_and_formatting() {
+    // The ODS copy of the same workbook.
+    let mut wb = Workbook::open(corpus("formatted.ods")).unwrap();
     assert_eq!(wb.source_format(), SourceFormat::Ods);
+    // (`=Rate*100` keeps its value: calamine doesn't bring ODS names.)
+    assert_eq!(wb.import_notes(), ["1 formula kept as values"]);
     assert_eq!(wb.display_value(0, 0, 0), "Quarterly sales, East region");
     assert_eq!(wb.input(0, 5, 1), "=SUM(B3:B5)");
-    assert_eq!(wb.cell_style(0, 0, 0).fill, None);
+
+    // Fonts, fills, alignment.
+    let a1 = wb.cell_style(0, 0, 0);
+    assert!(a1.bold);
+    assert_eq!(a1.font_size, 16);
+    assert_eq!(a1.font_name.as_deref(), Some("Arial"));
+    assert_eq!(a1.font_color, Some(0xFFFFFF));
+    assert_eq!(a1.fill, Some(0x1F4E78));
+    assert_eq!((a1.align, a1.valign), (HAlign::Center, VAlign::Center));
+    let b2 = wb.cell_style(0, 1, 1);
+    assert_eq!(b2.fill, Some(0xDDEBF7));
+    let bottom = b2.borders.bottom.unwrap();
+    assert_eq!(
+        (bottom.style, bottom.color),
+        (LineStyle::Medium, Some(0x1F4E78))
+    );
+    assert!(b2.borders.top.is_none());
+
+    // Number formats (number:*-style with their maps).
+    assert_eq!(wb.display_value(0, 2, 1), "1,200.50");
+    assert_eq!(wb.display_value(0, 4, 1), "-150.00");
+    assert_eq!(wb.display_value(0, 5, 1), "Rp 1,851");
+    assert_eq!(wb.display_value(0, 5, 5), "37.5%");
+    assert_eq!(wb.display_value(0, 7, 3), "15/03/2024");
+    assert_eq!(wb.display_value(0, 15, 0), "1.235E+03");
+
+    // Borders, wrap, indent, rotation, strikethrough.
+    let b3 = wb.cell_style(0, 2, 1);
+    assert_eq!(b3.borders.left.unwrap().style, LineStyle::Thin);
+    assert_eq!(
+        wb.cell_style(0, 5, 1).borders.bottom.unwrap().style,
+        LineStyle::Double
+    );
+    let e8 = wb.cell_style(0, 7, 4).borders;
+    assert_eq!(e8.left.unwrap().color, Some(0xFF0000));
+    assert_eq!(e8.top.unwrap().style, LineStyle::Thick);
+    let f4 = wb.cell_style(0, 3, 5);
+    assert!(f4.wrap);
+    assert_eq!(f4.valign, VAlign::Top);
+    let a5 = wb.cell_style(0, 4, 0);
+    assert_eq!(a5.indent, 2);
+    assert!(a5.italic && a5.underline && a5.strikethrough);
+    assert_eq!(wb.cell_style(0, 7, 0).rotation, 45);
+    assert_eq!(wb.cell_style(0, 7, 1).rotation, 90);
+    assert_eq!(wb.cell_style(0, 7, 2).align, HAlign::Right);
+    let f8 = wb.cell_style(0, 7, 5);
+    assert_eq!(f8.font_name.as_deref(), Some("Courier New"));
+    assert_eq!(f8.font_size, 9);
+    assert_eq!(f8.font_color, Some(0xC00000));
+    let plain = wb.cell_style(0, 2, 5);
+    assert_eq!(plain.fill, None);
+    assert!(!plain.bold);
+
+    // Layout: merges, widths, heights, hidden column and row, sheets.
+    assert_eq!(
+        wb.merges_in(0, CellRange::all()),
+        vec![
+            CellRange::from_corners((0, 0), (0, 5)),
+            CellRange::from_corners((9, 0), (10, 1)),
+        ]
+    );
+    let w = |c| wb.column_width(0, c);
+    assert!(
+        (w(1) / w(0) - 14.0 / 24.0).abs() < 0.02,
+        "{} {}",
+        w(0),
+        w(1)
+    );
+    assert!(wb.is_column_hidden(0, 6));
+    assert!(!wb.is_column_hidden(0, 5));
+    let rows = wb.row_spec(0);
+    let row = |r: u32| rows.rows.iter().find(|e| e.row == r).copied();
+    assert!((row(0).unwrap().points - 30.0).abs() < 0.1);
+    assert!((row(7).unwrap().points - 48.0).abs() < 0.1);
+    assert!(wb.is_row_hidden(0, 11));
+    assert!(!wb.is_row_hidden(0, 10));
+    assert!(!wb.sheet_hidden(1));
+    assert!(wb.sheet_hidden(2));
+
+    // Saved as .xlsx and opened again, it looks the same.
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("from-ods.xlsx");
+    wb.save_as(&out).unwrap();
+    let bytes = std::fs::read(&out).unwrap();
+    assert!(sheets_engine::package_problems(&bytes).is_empty());
+    let back = Workbook::open(&out).unwrap();
+    assert_eq!(back.cell_style(0, 0, 0).fill, Some(0x1F4E78));
+    assert_eq!(back.display_value(0, 5, 1), "Rp 1,851");
+    assert!(back.is_column_hidden(0, 6));
+    assert_eq!(back.merges_in(0, CellRange::all()).len(), 2);
+}
+
+#[test]
+fn xls_notes_round_trip() {
+    let mut wb = Workbook::open(corpus("features.xls")).unwrap();
+    let notes = wb.notes(0);
+    assert_eq!(notes.len(), 2, "{notes:?}");
+    assert_eq!((notes[0].row, notes[0].col), (1, 0));
+    assert_eq!(notes[0].author, "Ann");
+    assert_eq!(notes[0].text, "Bought weekly");
+    assert_eq!((notes[1].row, notes[1].col), (2, 2));
+    assert_eq!(notes[1].author, "Budi");
+    assert_eq!(notes[1].text, "Price went up\nin February");
+    let other = wb.notes(1);
+    assert_eq!(other.len(), 1);
+    assert_eq!((other[0].row, other[0].col), (1, 1));
+    assert_eq!(other[0].text, "On the second sheet");
+
+    // Saved as .xlsx with comment parts and their boxes; a row inserted
+    // above moves them.
+    wb.insert_rows(0, 0, 1).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("notes.xlsx");
+    wb.save_as(&out).unwrap();
+    assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
+    let bytes = std::fs::read(&out).unwrap();
+    assert!(sheets_engine::package_problems(&bytes).is_empty());
+    let c1 = part(&out, "xl/comments1.xml");
+    assert!(c1.contains("ref=\"A3\""), "{c1}");
+    assert!(c1.contains("ref=\"C4\""), "{c1}");
+    assert!(c1.contains("Price went up\nin February"), "{c1}");
+    assert!(c1.contains("<author>Budi</author>"), "{c1}");
+    let sheet1 = part(&out, "xl/worksheets/sheet1.xml");
+    assert!(sheet1.contains("<legacyDrawing r:id="), "{sheet1}");
+    let vml = part(&out, "xl/drawings/vmlDrawing1.vml");
+    assert!(vml.contains("<x:Row>2</x:Row>"), "{vml}");
+    let c2 = part(&out, "xl/comments2.xml");
+    assert!(c2.contains("ref=\"B2\""), "{c2}");
+
+    // Reopened: the notes are there (the saved file carries them on).
+    let back = Workbook::open(&out).unwrap();
+    let texts: Vec<String> = back.notes(0).into_iter().map(|n| n.text).collect();
+    assert!(texts.contains(&"Bought weekly".to_owned()), "{texts:?}");
+    let mut back = back;
+    let again = dir.path().join("again.xlsx");
+    back.save_as(&again).unwrap();
+    assert!(part(&again, "xl/comments1.xml").contains("Bought weekly"));
+}
+
+#[test]
+fn xls_data_validation_round_trip() {
+    use sheets_engine::{ErrorStyle, ValidationOperator, ValidationType};
+    let mut wb = Workbook::open(corpus("features.xls")).unwrap();
+    assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
+    let list = wb.sheet_validations(0);
+    assert_eq!(list.len(), 7, "{list:?}");
+    let at = |col: u32| list.iter().find(|v| v.ranges[0].left == col).unwrap();
+    let f = at(5);
+    assert_eq!(f.kind, ValidationType::List);
+    assert_eq!(f.formula1.as_deref(), Some("\"Open,Closed,Late\""));
+    assert_eq!(f.ranges, vec![CellRange::from_corners((1, 5), (4, 5))]);
+    assert_eq!(at(6).formula1.as_deref(), Some("$H$1:$H$3"));
+    let b = at(1);
+    assert_eq!(
+        (b.kind, b.operator),
+        (ValidationType::Whole, ValidationOperator::Between)
+    );
+    assert_eq!(
+        (b.formula1.as_deref(), b.formula2.as_deref()),
+        (Some("0"), Some("100"))
+    );
+    let prompt = b.prompt.as_ref().unwrap();
+    assert_eq!(
+        (prompt.title.as_str(), prompt.text.as_str()),
+        ("Quantity", "A whole number from 0 to 100")
+    );
+    let (style, error) = b.error.as_ref().unwrap();
+    assert_eq!(*style, ErrorStyle::Stop);
+    assert_eq!(error.text, "Use 0 to 100");
+    let c = at(2);
+    assert_eq!(
+        (c.kind, c.operator),
+        (ValidationType::Decimal, ValidationOperator::GreaterThan)
+    );
+    assert_eq!(c.error.as_ref().unwrap().0, ErrorStyle::Warning);
+    assert_eq!(at(3).formula2.as_deref(), Some("DATE(2024,12,31)"));
+    assert_eq!(at(4).kind, ValidationType::TextLength);
+    assert_eq!(at(8).formula1.as_deref(), Some("ISNUMBER(I1)"));
+    // The rules work: the drop-down, and a typed value is checked.
+    let items = wb.validation_list(0, 2, 5).unwrap();
+    assert_eq!(
+        items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+        ["Open", "Closed", "Late"]
+    );
+    let items = wb.validation_list(0, 2, 6).unwrap();
+    assert_eq!(items.len(), 3);
+    // Tea's quantity (150) is over 100; Rice's (5) is fine.
+    assert!(wb.invalid_cell(0, 3, 1));
+    assert!(!wb.invalid_cell(0, 1, 1));
+
+    // Saved as .xlsx: the rules are written, and moved with a row inserted.
+    wb.insert_rows(0, 0, 1).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("dv.xlsx");
+    wb.save_as(&out).unwrap();
+    assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
+    let sheet = part(&out, "xl/worksheets/sheet1.xml");
+    assert!(sheet.contains("<dataValidations count=\"7\">"), "{sheet}");
+    assert!(sheet.contains("sqref=\"F3:F6\""), "{sheet}");
+    let back = Workbook::open(&out).unwrap();
+    assert_eq!(back.sheet_validations(0).len(), 7);
+}
+
+#[test]
+fn xls_conditional_formats_round_trip() {
+    let mut wb = Workbook::open(corpus("features.xls")).unwrap();
+    let rules = wb.cf_rules(0, None);
+    assert_eq!(rules.len(), 4);
+    let by = |range: &str| rules.iter().find(|r| r.range == range).unwrap();
+    assert_eq!(by("B2:B5").summary, "Cell value between 1 and 10");
+    assert_eq!(by("B2:B5").format.fill, Some(0xC6EFCE));
+    let c = by("C2:C5");
+    assert_eq!(c.summary, "Cell value greater than =$I$1");
+    assert!(c.format.bold);
+    assert_eq!(c.format.font, Some(0x9C0006));
+    let f = by("F2:F5");
+    assert_eq!(f.format.fill, Some(0xFFC7CE));
+    assert!(f.format.italic);
+    let a = by("A2:A5");
+    assert_eq!(a.summary, "Formula: =AND($B2<0,LEN(A2)>3)");
+    assert!(a.format.underline);
+    assert_eq!(a.format.font, Some(0x0000FF));
+
+    // What the cells show: B2 (5) is between 1 and 10, F5 is "Late", A5's
+    // row has a negative quantity.
+    let fill = |wb: &mut Workbook, r, c| {
+        wb.conditional(0, r, c)
+            .and_then(|x| x.style.as_ref().and_then(|s| s.fill))
+    };
+    assert_eq!(fill(&mut wb, 1, 1), Some(0xC6EFCE));
+    assert_eq!(fill(&mut wb, 2, 1), None);
+    assert_eq!(fill(&mut wb, 4, 5), Some(0xFFC7CE));
+    let a5 = wb
+        .conditional(0, 4, 0)
+        .and_then(|x| x.style.clone())
+        .unwrap();
+    assert!(a5.underline);
+    assert!(
+        wb.conditional(0, 3, 0)
+            .and_then(|x| x.style.clone())
+            .is_none()
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("cf.xlsx");
+    wb.save_as(&out).unwrap();
+    assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
+    let sheet = part(&out, "xl/worksheets/sheet1.xml");
+    assert_eq!(
+        sheet.matches("<conditionalFormatting").count(),
+        4,
+        "{sheet}"
+    );
+    let back = Workbook::open(&out).unwrap();
+    assert_eq!(back.cf_rules(0, None).len(), 4);
 }

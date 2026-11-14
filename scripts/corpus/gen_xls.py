@@ -21,6 +21,12 @@ Files:
   and print titles); sheet "Plain" (gridlines off, tab colour, a formula
   using a defined name); sheet "Secret" (hidden). Names: a workbook name
   and a sheet-local one.
+* features.{xls,ods}: notes (comments) on two sheets, one with two lines;
+  data validation (inline list, list from a range, whole number between with
+  input and error messages, decimal, date, text length, custom formula, a
+  warning alert); conditional formats (cell value between, greater than,
+  equal to a text, a formula rule with a relative reference, a rule
+  reading another cell absolutely) with font, fill and border formats.
 * dates1904.xls: a workbook in the 1904 date system.
 * xlwt.xls: written directly as BIFF8 by xlwt (headless LibreOffice drops
   view settings): frozen rows and columns, the second sheet active, pattern
@@ -168,6 +174,97 @@ def formatted(path: Path) -> None:
     wb.save(path)
 
 
+def features(path: Path) -> None:
+    from openpyxl.formatting.rule import CellIsRule, FormulaRule
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Checks"
+    heads = ["Item", "Qty", "Price", "Due", "Code", "Status"]
+    for i, h in enumerate(heads, start=1):
+        ws.cell(row=1, column=i, value=h)
+    data = [
+        ("Rice", 5, 12.5, datetime.date(2024, 1, 10), "AB12", "Open"),
+        ("Coffee", 50, 99.0, datetime.date(2024, 2, 1), "CD34", "Closed"),
+        ("Tea", 150, 4.25, datetime.date(2024, 3, 5), "EF56", "Open"),
+        ("Sugar", -3, 7.0, datetime.date(2024, 4, 20), "GH78", "Late"),
+    ]
+    for r, row in enumerate(data, start=2):
+        for c, v in enumerate(row, start=1):
+            ws.cell(row=r, column=c, value=v)
+    ws["H1"] = "Open"
+    ws["H2"] = "Closed"
+    ws["H3"] = "Late"
+    ws["I1"] = 100
+
+    ws["A2"].comment = Comment("Bought weekly", "Ann")
+    ws["C3"].comment = Comment("Price went up\nin February", "Budi")
+
+    def dv(**kw):
+        sqref = kw.pop("sqref")
+        v = DataValidation(**kw)
+        v.add(sqref)
+        ws.add_data_validation(v)
+
+    dv(type="list", formula1='"Open,Closed,Late"', sqref="F2:F5")
+    dv(type="list", formula1="$H$1:$H$3", sqref="G2:G5")
+    dv(
+        type="whole",
+        operator="between",
+        formula1="0",
+        formula2="100",
+        sqref="B2:B5",
+        showInputMessage=True,
+        promptTitle="Quantity",
+        prompt="A whole number from 0 to 100",
+        showErrorMessage=True,
+        errorTitle="Too many",
+        error="Use 0 to 100",
+    )
+    dv(
+        type="decimal",
+        operator="greaterThan",
+        formula1="0",
+        sqref="C2:C5",
+        showErrorMessage=True,
+        errorStyle="warning",
+    )
+    dv(
+        type="date",
+        operator="between",
+        formula1="DATE(2024,1,1)",
+        formula2="DATE(2024,12,31)",
+        sqref="D2:D5",
+        showErrorMessage=True,
+    )
+    dv(type="textLength", operator="equal", formula1="4", sqref="E2:E5", showErrorMessage=True)
+    dv(type="custom", formula1="ISNUMBER(I1)", sqref="I1", showErrorMessage=True)
+
+    red = Font(color="9C0006", bold=True)
+    pink = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    green = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    boxed = Border(left=Side(style="thin", color="FF0000"), bottom=Side(style="thin", color="FF0000"))
+    ws.conditional_formatting.add(
+        "B2:B5", CellIsRule(operator="between", formula=["1", "10"], fill=green)
+    )
+    ws.conditional_formatting.add(
+        "C2:C5", CellIsRule(operator="greaterThan", formula=["$I$1"], font=red, border=boxed)
+    )
+    ws.conditional_formatting.add(
+        "F2:F5", CellIsRule(operator="equal", formula=['"Late"'], fill=pink, font=Font(italic=True))
+    )
+    ws.conditional_formatting.add(
+        "A2:A5", FormulaRule(formula=["AND($B2<0,LEN(A2)>3)"], font=Font(color="0000FF", underline="single"))
+    )
+
+    other = wb.create_sheet("Other")
+    other["B2"] = "noted"
+    other["B2"].comment = Comment("On the second sheet", "Ann")
+    wb.active = 0
+    wb.save(path)
+
+
 def dates1904(path: Path) -> None:
     wb = Workbook()
     wb.epoch = CALENDAR_MAC_1904
@@ -253,6 +350,10 @@ def main() -> None:
             ("calc8", "ods"),
         ]:
             shutil.copy(convert(lo, src, filt, ext, tmp), OUT / f"formatted.{ext}")
+        src = tmp / "features.xlsx"
+        features(src)
+        for filt, ext in [("MS Excel 97", "xls"), ("calc8", "ods")]:
+            shutil.copy(convert(lo, src, filt, ext, tmp), OUT / f"features.{ext}")
         src = tmp / "dates1904.xlsx"
         dates1904(src)
         shutil.copy(convert(lo, src, "MS Excel 97", "xls", tmp), OUT / "dates1904.xls")

@@ -18,23 +18,36 @@
 //! * the 1904 date system (`DATEMODE`) and which defined names are
 //!   sheet-local or built in (`LBL`), for pairing with calamine's names.
 //!
+//! * notes (`NOTE` with the text of its `OBJ`/`TXO` box) into the model's
+//!   comments, which an `.xlsx` save writes (`notes`);
+//! * data validation (`DV`) and conditional formats (`CONDFMT`/`CF`: cell
+//!   value and formula rules with font, border, fill and number formats),
+//!   their formulas decompiled from tokens by [`crate::xls_formula`]. A rule
+//!   whose formula has an unsupported token is left out (with an import
+//!   note), as are Excel 2007 rules (`CF12`: data bars, colour scales, icon
+//!   sets) and `CFEX` extras.
+//!
 //! Not read: named cell styles (`STYLE`; cells keep the formats they show),
-//! comments (Kantor neither shows nor saves them for imported files), data
-//! validation and conditional formatting (their formulas are parsed tokens),
 //! charts, pictures and shapes. Every read is bounds-checked: a malformed
 //! record is skipped, never a panic.
 
+use std::collections::HashMap;
 use std::io::Read as _;
 use std::path::Path;
 
 use anyhow::{Result, anyhow, bail};
 use ironcalc_base::Model;
 use ironcalc_base::types::{
-    Alignment, Border, BorderItem, BorderStyle, CellProtection, Col, Color, Fill, Font, FontScheme,
-    HorizontalAlignment, Link, MergedCell, NumFmt, Row, SheetState, Style, VerticalAlignment,
+    Alignment, Border, BorderItem, BorderStyle, CellProtection, Col, Color, Comment, Fill, Font,
+    FontScheme, HorizontalAlignment, Link, MergedCell, NumFmt, Row, SheetState, Style,
+    VerticalAlignment,
 };
 
+use ironcalc_base::cf_types::{CfRuleInput, ValueOperator};
+use ironcalc_base::types::{Dxf, DxfFont};
+
 use crate::print::{HeaderFooter, Margins, PageSetup, Paper, PrintOptions, SheetPrint};
+use crate::validation::{ErrorStyle, Message, Validation, ValidationOperator, ValidationType};
 use crate::{CellRange, MAX_COLS, MAX_ROWS};
 
 /// Days between the 1900 and 1904 date systems' day zero.
@@ -45,6 +58,9 @@ struct Records<'a> {
     data: &'a [u8],
     pos: usize,
     buf: Vec<u8>,
+    /// Where each `CONTINUE` payload starts in the last joined record (empty
+    /// for a record without continuations).
+    bounds: Vec<usize>,
 }
 
 const CONTINUE: u16 = 0x003C;
@@ -55,7 +71,13 @@ impl<'a> Records<'a> {
             data,
             pos,
             buf: Vec::new(),
+            bounds: Vec::new(),
         }
+    }
+
+    /// See [`Self::bounds`].
+    fn bounds(&self) -> &[usize] {
+        &self.bounds
     }
 
     fn header(&self, pos: usize) -> Option<(u16, usize)> {
@@ -76,6 +98,7 @@ impl<'a> Records<'a> {
             return None;
         }
         self.pos = end;
+        self.bounds.clear();
         // Most records have no continuation: borrow them.
         if !matches!(self.header(self.pos), Some((CONTINUE, _))) {
             return Some((typ, &self.data[start..end]));
@@ -88,6 +111,7 @@ impl<'a> Records<'a> {
             let Some(part) = self.data.get(s..e) else {
                 break;
             };
+            self.bounds.push(self.buf.len());
             self.buf.extend_from_slice(part);
             self.pos = e;
         }
@@ -400,6 +424,9 @@ pub(crate) struct Globals {
     formats: Vec<NumFmt>,
     xfs: Vec<Xf>,
     palette: Palette,
+    /// `EXTERNSHEET` entries resolved to this workbook's sheet indices
+    /// (`None`: another workbook's), for 3-D references in formulas.
+    xti: Vec<Option<(u16, u16)>>,
 }
 
 /// The formatting of an `.xls` file, read before calamine's values.
@@ -428,13 +455,27 @@ impl XlsFormat {
     }
 
     /// Apply the formatting to `model`, whose sheets calamine filled in
-    /// `names` order. Returns each sheet's print settings, by model sheet,
-    /// and whether values changed (covered cells of merges were cleared).
-    pub(crate) fn apply(&self, model: &mut Model<'_>, names: &[String]) -> (Vec<SheetPrint>, bool) {
+    /// `names` order: cell formats, layout, notes and conditional formats
+    /// go into the model; print settings and data validation come back.
+    pub(crate) fn apply(&self, model: &mut Model<'_>, names: &[String]) -> Applied {
         let g = &self.globals;
         let mut styles = StyleMap::new(g, model);
         let mut prints = Vec::with_capacity(names.len());
         let mut cleared = false;
+        let mut validations = Vec::new();
+        let mut skipped = Skipped::default();
+        let sheet_names: Vec<String> = g.sheets.iter().map(|s| s.0.clone()).collect();
+        let label_names: Vec<String> = g
+            .labels
+            .iter()
+            .map(|l| {
+                if l.builtin.is_some() {
+                    String::new()
+                } else {
+                    l.name.clone()
+                }
+            })
+            .collect();
         for (sheet, name) in names.iter().enumerate() {
             let Some(ix) = self.sheet_named(name) else {
                 prints.push(SheetPrint::default());
@@ -448,6 +489,7 @@ impl XlsFormat {
                 prints.push(SheetPrint::default());
                 continue;
             }
+            let mut rules = SheetRules::default();
             let print = read_sheet(
                 &self.stream,
                 *offset,
@@ -455,10 +497,481 @@ impl XlsFormat {
                 model,
                 &mut styles,
                 &mut cleared,
+                &mut rules,
             );
             prints.push(print.into_print());
+            let ctx = |base: (u32, u32)| crate::xls_formula::Context {
+                base,
+                sheets: &sheet_names,
+                xti: &g.xti,
+                names: &label_names,
+            };
+            let list: Vec<Validation> = rules
+                .validations
+                .into_iter()
+                .filter_map(|dv| {
+                    let v = dv.convert(&ctx);
+                    if v.is_none() {
+                        skipped.validations += 1;
+                    }
+                    v
+                })
+                .collect();
+            if !list.is_empty() {
+                validations.push((sheet as u32, list));
+            }
+            skipped.cf += rules.cf12;
+            for (ranges, cf) in rules.cf {
+                let Some(input) = cf.convert(&ranges, &ctx, g, model) else {
+                    skipped.cf += 1;
+                    continue;
+                };
+                let sqref = crate::cf_edit::sqref_of(&ranges);
+                if model
+                    .add_conditional_formatting(sheet as u32, &sqref, input)
+                    .is_err()
+                {
+                    skipped.cf += 1;
+                }
+            }
         }
-        (prints, cleared)
+        let mut notes = Vec::new();
+        let plural = |n: usize| if n == 1 { "" } else { "s" };
+        if skipped.validations > 0 {
+            notes.push(format!(
+                "{} data validation rule{} not imported (formula not supported)",
+                skipped.validations,
+                plural(skipped.validations)
+            ));
+        }
+        if skipped.cf > 0 {
+            notes.push(format!(
+                "{} conditional formatting rule{} not imported (data bars, colour scales, icon sets or formulas not supported)",
+                skipped.cf,
+                plural(skipped.cf)
+            ));
+        }
+        Applied {
+            prints,
+            cleared,
+            validations,
+            notes,
+        }
+    }
+}
+
+/// What [`XlsFormat::apply`] brings back.
+pub(crate) struct Applied {
+    /// Each sheet's print settings, by model sheet.
+    pub prints: Vec<SheetPrint>,
+    /// Values changed (covered cells of merges were cleared).
+    pub cleared: bool,
+    /// Data validation, by model sheet.
+    pub validations: Vec<(u32, Vec<Validation>)>,
+    /// What was left out, for the import notes.
+    pub notes: Vec<String>,
+}
+
+#[derive(Default)]
+struct Skipped {
+    validations: usize,
+    cf: usize,
+}
+
+/// A sheet's data validation and conditional formatting as read, their
+/// formulas still tokens.
+#[derive(Default)]
+struct SheetRules {
+    validations: Vec<RawDv>,
+    /// Each `CONDFMT`'s ranges with one of its `CF` rules.
+    cf: Vec<(Vec<CellRange>, RawCf)>,
+    /// `CF12` rules (Excel 2007 data bars, colour scales, icon sets...).
+    cf12: usize,
+}
+
+/// A `DV` record (MS-XLS 2.4.107).
+struct RawDv {
+    flags: u32,
+    prompt_title: String,
+    error_title: String,
+    prompt: String,
+    error: String,
+    formula1: Vec<u8>,
+    formula2: Vec<u8>,
+    ranges: Vec<CellRange>,
+}
+
+/// A `DV` string: a lone NUL means none.
+fn dv_string(b: &mut Bytes) -> Option<String> {
+    let s = b.string16()?;
+    Some(if s == "\0" { String::new() } else { s })
+}
+
+/// A `SqRefU`: a count, then `Ref8U` ranges (first row, last row, first
+/// column, last column).
+fn sqref(b: &mut Bytes) -> Option<Vec<CellRange>> {
+    let n = b.u16()?;
+    let mut out = Vec::new();
+    for _ in 0..n {
+        let (r1, r2, c1, c2) = (b.u16()?, b.u16()?, b.u16()?, b.u16()?);
+        if r2 < r1 || c2 < c1 || u32::from(c1) >= MAX_COLS {
+            continue;
+        }
+        out.push(CellRange::from_corners(
+            (r1 as u32, c1 as u32),
+            (r2 as u32, (c2 as u32).min(MAX_COLS - 1)),
+        ));
+    }
+    Some(out)
+}
+
+impl RawDv {
+    fn parse(d: &[u8]) -> Option<Self> {
+        let mut b = Bytes::new(d);
+        let flags = b.u32()?;
+        let prompt_title = dv_string(&mut b)?;
+        let error_title = dv_string(&mut b)?;
+        let prompt = dv_string(&mut b)?;
+        let error = dv_string(&mut b)?;
+        let cce = b.u16()? as usize;
+        b.skip(2)?;
+        let formula1 = b.take(cce)?.to_vec();
+        let cce = b.u16()? as usize;
+        b.skip(2)?;
+        let formula2 = b.take(cce)?.to_vec();
+        let ranges = sqref(&mut b)?;
+        Some(Self {
+            flags,
+            prompt_title,
+            error_title,
+            prompt,
+            error,
+            formula1,
+            formula2,
+            ranges,
+        })
+    }
+
+    fn convert<'c>(
+        self,
+        ctx: &dyn Fn((u32, u32)) -> crate::xls_formula::Context<'c>,
+    ) -> Option<Validation> {
+        let first = *self.ranges.first()?;
+        let ctx = ctx((first.top, first.left));
+        let f = self.flags;
+        let kind = match f & 0xF {
+            0 => ValidationType::Any,
+            1 => ValidationType::Whole,
+            2 => ValidationType::Decimal,
+            3 => ValidationType::List,
+            4 => ValidationType::Date,
+            5 => ValidationType::Time,
+            6 => ValidationType::TextLength,
+            7 => ValidationType::Custom,
+            _ => return None,
+        };
+        let style = match (f >> 4) & 0x7 {
+            1 => ErrorStyle::Warning,
+            2 => ErrorStyle::Information,
+            _ => ErrorStyle::Stop,
+        };
+        let operator = match (f >> 20) & 0xF {
+            1 => ValidationOperator::NotBetween,
+            2 => ValidationOperator::Equal,
+            3 => ValidationOperator::NotEqual,
+            4 => ValidationOperator::GreaterThan,
+            5 => ValidationOperator::LessThan,
+            6 => ValidationOperator::GreaterThanOrEqual,
+            7 => ValidationOperator::LessThanOrEqual,
+            _ => ValidationOperator::Between,
+        };
+        let decode = |rgce: &[u8]| -> Option<Option<String>> {
+            if rgce.is_empty() {
+                return Some(None);
+            }
+            crate::xls_formula::decompile(rgce, &ctx).map(Some)
+        };
+        let formula1 = if kind == ValidationType::List && f & 0x80 != 0 {
+            // An explicit list: one string token, items split by NULs.
+            decode(&self.formula1)?.map(|s| s.replace('\0', ","))
+        } else {
+            decode(&self.formula1)?
+        };
+        let two = matches!(
+            operator,
+            ValidationOperator::Between | ValidationOperator::NotBetween
+        ) && !matches!(
+            kind,
+            ValidationType::Any | ValidationType::List | ValidationType::Custom
+        );
+        let formula2 = if two { decode(&self.formula2)? } else { None };
+        if kind != ValidationType::Any && formula1.is_none() {
+            return None;
+        }
+        let prompt = Message {
+            title: self.prompt_title,
+            text: self.prompt,
+        };
+        Some(Validation {
+            kind,
+            operator,
+            allow_blank: f & 0x100 != 0,
+            dropdown: f & 0x200 == 0,
+            prompt: (f & 0x40000 != 0 && !(prompt.title.is_empty() && prompt.text.is_empty()))
+                .then_some(prompt),
+            error: (f & 0x80000 != 0).then_some((
+                style,
+                Message {
+                    title: self.error_title,
+                    text: self.error,
+                },
+            )),
+            formula1,
+            formula2,
+            ranges: self.ranges,
+        })
+    }
+}
+
+/// A `CF` record (MS-XLS 2.4.42): its type, operator, the differential
+/// format and the formulas.
+struct RawCf {
+    ct: u8,
+    cp: u8,
+    dxf: XlsDxf,
+    rgce1: Vec<u8>,
+    rgce2: Vec<u8>,
+}
+
+/// A `DXFN` as read: palette indices still to resolve.
+#[derive(Default)]
+struct XlsDxf {
+    num: Option<(u16, Option<String>)>,
+    bold: Option<bool>,
+    italic: Option<bool>,
+    strike: Option<bool>,
+    underline: Option<bool>,
+    height: Option<u32>,
+    font_icv: Option<u16>,
+    /// left, right, top, bottom: (style, colour) when set.
+    border: [Option<(u8, u16)>; 4],
+    /// (pattern, fore, back), each when set.
+    pattern: (Option<u8>, Option<u16>, Option<u16>),
+}
+
+impl XlsDxf {
+    /// A `DXFN` (MS-XLS 2.5.39), consuming exactly its bytes.
+    fn parse(b: &mut Bytes) -> Option<Self> {
+        let flags = b.u32()?;
+        let flags2 = b.u16()?;
+        let bit = |n: u32| flags & (1 << n) != 0;
+        let mut x = XlsDxf::default();
+        if bit(25) {
+            if flags2 & 0x1 != 0 {
+                let cb = b.u16()? as usize;
+                let body = b.take(cb.checked_sub(2)?)?;
+                let code = Bytes::new(body).string16()?;
+                x.num = Some((0, Some(code)));
+            } else {
+                b.skip(1)?;
+                x.num = Some((b.u8()? as u16, None));
+            }
+            if bit(19) {
+                x.num = None;
+            }
+        }
+        if bit(26) {
+            let f = b.take(118)?;
+            let mut fb = Bytes::new(&f[64..]);
+            let height = fb.u32()?;
+            let ts = fb.u32()?;
+            let bls = fb.u16()?;
+            let _sss = fb.u16()?;
+            let uls = fb.u8()?;
+            fb.skip(3)?;
+            let icv = fb.u32()?;
+            fb.skip(4)?;
+            let ts_ninch = fb.u32()?;
+            let _sss_ninch = fb.u32()?;
+            let uls_ninch = fb.u32()?;
+            let bls_ninch = fb.u32()?;
+            if height != 0xFFFF_FFFF && height > 0 && height < 8200 {
+                x.height = Some(height);
+            }
+            if ts_ninch & 0x2 == 0 {
+                x.italic = Some(ts & 0x2 != 0);
+            }
+            if ts_ninch & 0x80 == 0 {
+                x.strike = Some(ts & 0x80 != 0);
+            }
+            if bls_ninch == 0 && bls != 0xFFFF {
+                x.bold = Some(bls >= 700);
+            }
+            if uls_ninch == 0 && uls != 0xFF {
+                x.underline = Some(uls != 0);
+            }
+            if icv != 0xFFFF_FFFF && icv < 0x7FFF {
+                x.font_icv = Some(icv as u16);
+            }
+        }
+        if bit(27) {
+            b.skip(8)?;
+        }
+        if bit(28) {
+            let b1 = b.u32()?;
+            let b2 = b.u32()?;
+            let sides = [
+                ((b1 & 0xF) as u8, ((b1 >> 16) & 0x7F) as u16),
+                (((b1 >> 4) & 0xF) as u8, ((b1 >> 23) & 0x7F) as u16),
+                (((b1 >> 8) & 0xF) as u8, (b2 & 0x7F) as u16),
+                (((b1 >> 12) & 0xF) as u8, ((b2 >> 7) & 0x7F) as u16),
+            ];
+            for (i, side) in sides.into_iter().enumerate() {
+                if !bit(10 + i as u32) {
+                    x.border[i] = Some(side);
+                }
+            }
+        }
+        if bit(29) {
+            let p = b.u16()?;
+            let c = b.u16()?;
+            x.pattern = (
+                (!bit(16)).then_some((p >> 10) as u8 & 0x3F),
+                (!bit(17)).then_some(c & 0x7F),
+                (!bit(18)).then_some((c >> 7) & 0x7F),
+            );
+        }
+        if bit(30) {
+            b.skip(2)?;
+        }
+        Some(x)
+    }
+
+    fn convert(&self, g: &Globals) -> Dxf {
+        let p = &g.palette;
+        let font = DxfFont {
+            strike: self.strike,
+            u: self.underline,
+            b: self.bold,
+            i: self.italic,
+            sz: self
+                .height
+                .map(|h| ((h as f64 / 20.0).round() as i32).clamp(1, 409)),
+            color: self.font_icv.map_or(Color::None, |icv| p.color(icv)),
+        };
+        let font = (font != DxfFont::default()).then_some(font);
+        // A conditional fill shows its background colour when solid (as an
+        // `.xlsx` dxf's `bgColor`).
+        let fill = match self.pattern {
+            (Some(0), _, _) => None,
+            (pat, fore, back) if fore.is_some() || back.is_some() => {
+                let color = match pat.unwrap_or(1) {
+                    1 => back.or(fore).map(|icv| p.color(icv)),
+                    pat => Some(fill_color(pat, fore.unwrap_or(64), back.unwrap_or(65), p)),
+                };
+                color
+                    .filter(|c| *c != Color::None)
+                    .map(|color| Fill { color })
+            }
+            _ => None,
+        };
+        let item = |side: Option<(u8, u16)>| {
+            let (style, icv) = side?;
+            border_style(style).map(|style| BorderItem {
+                style,
+                color: p.color(icv),
+            })
+        };
+        let border = Border {
+            left: item(self.border[0]),
+            right: item(self.border[1]),
+            top: item(self.border[2]),
+            bottom: item(self.border[3]),
+            diagonal: None,
+            diagonal_down: false,
+            diagonal_up: false,
+        };
+        let border = (border != Border::default()).then_some(border);
+        let num_fmt = self.num.as_ref().map(|(id, code)| NumFmt {
+            num_fmt_id: *id as i32,
+            format_code: code.clone().unwrap_or_else(|| {
+                ironcalc_base::number_format::get_num_fmt(*id as i32, &g.formats)
+            }),
+        });
+        Dxf {
+            font,
+            fill,
+            border,
+            num_fmt,
+            alignment: None,
+        }
+    }
+}
+
+impl RawCf {
+    fn parse(d: &[u8]) -> Option<Self> {
+        let mut b = Bytes::new(d);
+        let ct = b.u8()?;
+        let cp = b.u8()?;
+        let cce1 = b.u16()? as usize;
+        let cce2 = b.u16()? as usize;
+        let dxf = XlsDxf::parse(&mut b)?;
+        let rgce1 = b.take(cce1)?.to_vec();
+        let rgce2 = b.take(cce2)?.to_vec();
+        Some(Self {
+            ct,
+            cp,
+            dxf,
+            rgce1,
+            rgce2,
+        })
+    }
+
+    fn convert<'c>(
+        &self,
+        ranges: &[CellRange],
+        ctx: &dyn Fn((u32, u32)) -> crate::xls_formula::Context<'c>,
+        g: &Globals,
+        _model: &Model<'_>,
+    ) -> Option<CfRuleInput> {
+        let first = *ranges.first()?;
+        let ctx = ctx((first.top, first.left));
+        let format = self.dxf.convert(g);
+        let f1 = crate::xls_formula::decompile(&self.rgce1, &ctx)?;
+        match self.ct {
+            1 => {
+                let operator = match self.cp {
+                    1 => ValueOperator::Between,
+                    2 => ValueOperator::NotBetween,
+                    3 => ValueOperator::Equal,
+                    4 => ValueOperator::NotEqual,
+                    5 => ValueOperator::GreaterThan,
+                    6 => ValueOperator::LessThan,
+                    7 => ValueOperator::GreaterThanOrEqual,
+                    8 => ValueOperator::LessThanOrEqual,
+                    _ => return None,
+                };
+                let formula2 =
+                    if matches!(operator, ValueOperator::Between | ValueOperator::NotBetween) {
+                        Some(crate::xls_formula::decompile(&self.rgce2, &ctx)?)
+                    } else {
+                        None
+                    };
+                Some(CfRuleInput::CellIs {
+                    operator,
+                    formula: f1,
+                    formula2,
+                    format,
+                    stop_if_true: false,
+                })
+            }
+            2 => Some(CfRuleInput::Formula {
+                formula: f1,
+                format,
+                stop_if_true: false,
+            }),
+            _ => None,
+        }
     }
 }
 
@@ -482,7 +995,11 @@ fn read_globals(stream: &[u8]) -> Result<Globals> {
         formats: Vec::new(),
         xfs: Vec::new(),
         palette: Palette(DEFAULT_PALETTE.to_vec()),
+        xti: Vec::new(),
     };
+    // Which SUPBOOK is this workbook (its marker is 0x0401).
+    let mut supbooks: Vec<bool> = Vec::new();
+    let mut raw_xti: Vec<(u16, u16, u16)> = Vec::new();
     while let Some((typ, d)) = rec.next() {
         let mut b = Bytes::new(d);
         match typ {
@@ -565,6 +1082,16 @@ fn read_globals(stream: &[u8]) -> Result<Globals> {
                     g.sheets.push(s);
                 }
             }
+            0x01AE => supbooks.push(d.len() == 4 && d[2..4] == [0x01, 0x04]),
+            0x0017 => {
+                let n = b.u16().unwrap_or(0);
+                for _ in 0..n {
+                    let (Some(sb), Some(first), Some(last)) = (b.u16(), b.u16(), b.u16()) else {
+                        break;
+                    };
+                    raw_xti.push((sb, first, last));
+                }
+            }
             0x0018 => {
                 g.labels.push(parse_label(d).unwrap_or(Label {
                     name: String::new(),
@@ -579,6 +1106,13 @@ fn read_globals(stream: &[u8]) -> Result<Globals> {
     if g.sheets.is_empty() {
         bail!("no sheets");
     }
+    g.xti = raw_xti
+        .into_iter()
+        .map(|(sb, first, last)| {
+            let internal = supbooks.get(sb as usize).copied().unwrap_or(false);
+            (internal && first <= last && (last as usize) < g.sheets.len()).then_some((first, last))
+        })
+        .collect();
     Ok(g)
 }
 
@@ -827,6 +1361,7 @@ fn read_sheet(
     model: &mut Model<'_>,
     styles: &mut StyleMap<'_>,
     cleared: &mut bool,
+    rules: &mut SheetRules,
 ) -> PrintRaw {
     let mut print = PrintRaw::default();
     let mut rec = Records::at(stream, offset);
@@ -855,6 +1390,13 @@ fn read_sheet(
     };
     let mut col_styles: Vec<(usize, u16)> = Vec::new();
     let mut row_styles: Vec<(usize, u16)> = Vec::new();
+    // Notes: the text box of the last note `OBJ`, the texts by object id,
+    // then `NOTE` records pointing at them.
+    let mut note_obj: Option<u16> = None;
+    let mut texts: HashMap<u16, String> = HashMap::new();
+    let mut notes: Vec<(u16, u16, u16, String)> = Vec::new();
+    // The ranges of the last CONDFMT and how many CF records it has left.
+    let mut condfmt: Option<(Vec<CellRange>, u16)> = None;
     while let Some((typ, d)) = rec.next() {
         if typ == 0x0809 {
             // An embedded chart's substream.
@@ -1039,6 +1581,60 @@ fn read_sheet(
                     }
                 }
             }
+            0x005D => {
+                // OBJ: its first subrecord is ftCmo (ft, cb, ot, id).
+                note_obj = match (b.u16(), b.u16(), b.u16(), b.u16()) {
+                    (Some(0x15), Some(_), Some(0x19), Some(id)) => Some(id),
+                    _ => None,
+                };
+            }
+            0x01B6 => {
+                let data = d.to_vec();
+                let bounds = rec.bounds().to_vec();
+                if let Some(id) = note_obj.take()
+                    && let Some(text) = txo_text(&data, &bounds)
+                {
+                    texts.insert(id, text);
+                }
+            }
+            0x001C => {
+                let n = (|| {
+                    let (r, c, _flags, id) = (b.u16()?, b.u16()?, b.u16()?, b.u16()?);
+                    Some((r, c, id, b.string16().unwrap_or_default()))
+                })();
+                if let Some(n) = n {
+                    notes.push(n);
+                }
+            }
+            0x01BE => {
+                if let Some(dv) = RawDv::parse(d)
+                    && !dv.ranges.is_empty()
+                {
+                    rules.validations.push(dv);
+                }
+            }
+            0x01B0 => {
+                // CONDFMT: ccf, flags, refBound, sqref.
+                condfmt = (|| {
+                    let ccf = b.u16()?;
+                    b.skip(2 + 8)?;
+                    Some((sqref(&mut b)?, ccf))
+                })()
+                .filter(|(r, _)| !r.is_empty());
+            }
+            0x01B1 => {
+                if let Some((ranges, left)) = &mut condfmt
+                    && *left > 0
+                {
+                    *left -= 1;
+                    match RawCf::parse(d) {
+                        Some(cf) => rules.cf.push((ranges.clone(), cf)),
+                        None => rules.cf12 += 1,
+                    }
+                }
+            }
+            // CF12: Excel 2007 rules (data bars, colour scales, icon sets).
+            0x087A => rules.cf12 += 1,
             0x00A1 => {
                 print.setup =
                     (|| Some((b.u16()?, b.u16()?, b.i16()?, b.u16()?, b.u16()?, b.u16()?)))();
@@ -1169,6 +1765,21 @@ fn read_sheet(
         ws.links.insert(cell, link);
     }
 
+    for (r, c, id, author) in notes {
+        let Some(text) = texts.remove(&id) else {
+            continue;
+        };
+        if u32::from(r) >= MAX_ROWS || u32::from(c) >= MAX_COLS {
+            continue;
+        }
+        ws.comments.push(Comment {
+            text,
+            author_name: author,
+            author_id: None,
+            cell_ref: crate::cell_name(r as u32, c as u32),
+        });
+    }
+
     if let Some(flags) = window2 {
         ws.show_grid_lines = flags & 0x2 != 0;
         if flags & 0x8 != 0
@@ -1182,6 +1793,43 @@ fn read_sheet(
         ws.color = styles.g.palette.color(icv);
     }
     print
+}
+
+/// The text of a `TXO` record (MS-XLS 2.4.329) whose `CONTINUE`s start at
+/// `bounds`: `cchText` at offset 10; the characters fill the continuations,
+/// each starting with its own flags byte (compressed or UTF-16).
+fn txo_text(d: &[u8], bounds: &[usize]) -> Option<String> {
+    let cch = u16::from_le_bytes([*d.get(10)?, *d.get(11)?]) as usize;
+    if cch == 0 {
+        return Some(String::new());
+    }
+    let mut units: Vec<u16> = Vec::with_capacity(cch);
+    for (i, &start) in bounds.iter().enumerate() {
+        let end = bounds.get(i + 1).copied().unwrap_or(d.len());
+        let seg = d.get(start..end)?;
+        let (&flags, chars) = seg.split_first()?;
+        let left = cch - units.len();
+        if flags & 0x01 != 0 {
+            units.extend(
+                chars
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .take(left)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]])),
+            );
+        } else {
+            units.extend(chars.iter().take(left).map(|&b| b as u16));
+        }
+        if units.len() >= cch {
+            break;
+        }
+    }
+    // Excel stores line breaks in notes as CR LF or CR.
+    let text = String::from_utf16_lossy(&units)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    Some(text)
 }
 
 /// `HLINK` (MS-XLS 2.4.140): the cells and the link. URLs (including
@@ -1334,11 +1982,16 @@ mod tests {
     /// and offsets), and with records cut short.
     #[test]
     fn damaged_streams_dont_panic() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../tests/corpus/xls/formatted.xls"
-        );
-        let clean = XlsFormat::read(Path::new(path)).unwrap().stream;
+        damage("formatted.xls", &["Report", "Plain", "Secret"]);
+        // Notes, data validation and conditional formats.
+        damage("features.xls", &["Checks", "Other"]);
+    }
+
+    fn damage(file: &str, names: &[&str]) {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/corpus/xls")
+            .join(file);
+        let clean = XlsFormat::read(&path).unwrap().stream;
         // Payload ranges, past the first BOF.
         let mut payloads = Vec::new();
         let mut pos = 0;
@@ -1349,7 +2002,7 @@ mod tests {
             }
             pos += 4 + len;
         }
-        let names: Vec<String> = ["Report", "Plain", "Secret"].map(String::from).into();
+        let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
         let mut applied = 0;
         for seed in 0..60usize {
             let mut stream = clean.clone();
@@ -1379,6 +2032,18 @@ mod tests {
             applied += 1;
         }
         assert!(applied > 30, "{applied}");
+    }
+
+    #[test]
+    fn note_text_across_continues() {
+        // cchText 5 at offset 10; "ab" compressed, then "cd\r" as UTF-16.
+        let mut d = vec![0u8; 18];
+        d[10] = 5;
+        d.extend_from_slice(&[0, b'a', b'b']);
+        d.extend_from_slice(&[1, b'c', 0, b'd', 0, b'\r', 0]);
+        assert_eq!(txo_text(&d, &[18, 21]).as_deref(), Some("abcd\n"));
+        assert_eq!(txo_text(&d, &[18]).as_deref(), Some("ab\u{1}c\0"));
+        assert_eq!(txo_text(&d[..5], &[]), None);
     }
 
     #[test]

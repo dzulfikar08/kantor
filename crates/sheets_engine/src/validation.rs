@@ -168,6 +168,24 @@ impl Validations {
     }
 }
 
+impl Validations {
+    /// An import's rules (`.xls`), by `sheetId`.
+    pub(crate) fn imported(rules: Vec<(u32, Validation)>) -> Self {
+        Validations {
+            raw: rules
+                .into_iter()
+                .map(|(sheet_id, rule)| Raw {
+                    sheet_id,
+                    sqref: crate::sqref_of(&rule.ranges),
+                    rule,
+                })
+                .collect(),
+            base: Layout::default(),
+            state: State::default(),
+        }
+    }
+}
+
 fn flag(n: Node, name: &str) -> bool {
     matches!(n.attribute(name), Some("1" | "true"))
 }
