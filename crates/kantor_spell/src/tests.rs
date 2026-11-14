@@ -382,6 +382,26 @@ fn indonesian_flags_common_typos_and_accepts_affixed_words() {
             rejected.push(w);
         }
     }
+    // A double letter typed once (or a letter typed twice) is the likely
+    // fix, so it comes first.
+    for (typo, fix) in [
+        ("tingi", "tinggi"),
+        ("sayaa", "saya"),
+        ("tingal", "tinggal"),
+    ] {
+        let sug = s.suggest(Lang::IdId, typo);
+        assert_eq!(
+            sug.first().map(String::as_str),
+            Some(fix),
+            "{typo}: {sug:?}"
+        );
+    }
+    let sug = s.suggest(Lang::EnUs, "recomend");
+    assert_eq!(
+        sug.first().map(String::as_str),
+        Some("recommend"),
+        "{sug:?}"
+    );
     assert!(
         missed.is_empty() && rejected.is_empty(),
         "typos accepted: {missed:?}; correct words flagged: {rejected:?}"
