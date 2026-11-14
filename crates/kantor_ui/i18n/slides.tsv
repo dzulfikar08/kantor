@@ -10,7 +10,7 @@ Edit table or chart data	Edit data tabel atau bagan
 Bold · Ctrl+B	Tebal · Ctrl+B
 Italic · Ctrl+I	Miring · Ctrl+I
 Underline · Ctrl+U	Garis Bawah · Ctrl+U
-Bulleted list · Tab / Shift+Tab change the level	Daftar berpoin · Tab / Shift+Tab mengubah level
+Bulleted list · Tab / Shift+Tab change the level	Daftar berpoin · Tab / Shift+Tab mengubah tingkat
 Numbered list	Daftar bernomor
 Speaker notes	Catatan pembicara
 Present · F5 (Shift+F5 from this slide)	Presentasikan · F5 (Shift+F5 dari slide ini)
@@ -24,18 +24,18 @@ Text 1	Teks 1
 Background 2	Latar Belakang 2
 Text 2	Teks 2
 Accent {}	Aksen {}
-Select a shape or picture to change its fill or outline	Pilih bentuk atau gambar untuk mengubah isian atau garis luarnya
+Select a shape or picture to change its fill or outline	Pilih bentuk atau gambar untuk mengubah isian atau garis tepinya
 Theme colours	Warna tema
 No fill	Tanpa isian
-No outline	Tanpa garis luar
+No outline	Tanpa garis tepi
 Width	Lebar
 Shape fill	Isian bentuk
-Shape outline: colour and width	Garis luar bentuk: warna dan lebar
+Shape outline: colour and width	Garis tepi bentuk: warna dan lebar
 Click to add notes	Klik untuk menambahkan catatan
 The notes can't be edited: {}	Catatan tidak dapat diedit: {}
 This text can't be edited	Teks ini tidak dapat diedit
-Replaced 1 match	1 kecocokan diganti
-Replaced {} matches	{} kecocokan diganti
+Replaced 1 match	1 hasil diganti
+Replaced {} matches	{} hasil diganti
 Agent: {}	Agen: {}
 + Row above	+ Baris di atas
 Insert a row above the current cell	Sisipkan baris di atas sel saat ini
@@ -70,19 +70,19 @@ Restored unsaved changes to {}	Perubahan yang belum disimpan dipulihkan ke {}
 This slide can't be edited: {}	Slide ini tidak dapat diedit: {}
 This text can't be edited yet: it has {}	Teks ini belum dapat diedit: berisi {}
 Select text to format it	Pilih teks untuk memformatnya
-Select a text box or placeholder to make a list	Pilih kotak teks atau placeholder untuk membuat daftar
-Nothing to undo	Tidak ada yang bisa diurungkan
-Nothing to redo	Tidak ada yang bisa diulangi
+Select a text box or placeholder to make a list	Pilih kotak teks atau tempat penampung untuk membuat daftar
+Nothing to undo	Tidak ada yang dapat diurungkan
+Nothing to redo	Tidak ada yang dapat diulangi
 Slide {} of {}	Slide {} dari {}
 Text box	Kotak teks
-Placeholder	Placeholder
+Placeholder	Tempat Penampung
 Ellipse	Elips
 Rectangle	Persegi panjang
 Rounded rectangle	Persegi panjang bersudut bulat
 Line	Garis
 Shape ({})	Bentuk ({})
 Print failed: {}	Gagal mencetak: {}
-Preparing to print {}…	Menyiapkan cetak {}…
+Preparing to print {}…	Menyiapkan pencetakan {}…
 Exporting {}…	Mengekspor {}…
 Exported {} (1 slide)	{} diekspor (1 slide)
 Exported {} ({} slides)	{} diekspor ({} slide)

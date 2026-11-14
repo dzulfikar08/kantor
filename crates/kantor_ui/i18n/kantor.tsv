@@ -11,7 +11,7 @@ New document	Dokumen baru
 New presentation	Presentasi baru
 New spreadsheet	Spreadsheet baru
 Open file	Buka berkas
-Present .pptx decks	Presentasikan dek .pptx
+Present .pptx decks	Presentasikan slide .pptx
 Write .docx documents	Tulis dokumen .docx
 Show sidebar	Tampilkan bilah samping
 Hide sidebar	Sembunyikan bilah samping
@@ -30,7 +30,7 @@ Not saved yet	Belum disimpan
 Unsaved changes	Perubahan belum disimpan
 Saved	Tersimpan
 Opened with unsupported content	Dibuka dengan konten yang tidak didukung
-Has content Kantor can't keep	Berisi konten yang tidak dapat disimpan Kantor
+Has content Kantor can't keep	Berisi konten yang tidak dapat dipertahankan Kantor
 Paragraph	Paragraf
 Style	Gaya
 Document	Dokumen
@@ -38,9 +38,9 @@ Folder	Folder
 Length	Panjang
 {} pages · {} words · {} characters · {} paragraphs	{} halaman · {} kata · {} karakter · {} paragraf
 State	Status
-Not shown or kept	Tidak ditampilkan atau disimpan
-Not kept	Tidak disimpan
-{}. Save writes a new copy; the original is never overwritten.	{}. Simpan menulis salinan baru; berkas asli tidak pernah ditimpa.
+Not shown or kept	Tidak ditampilkan atau dipertahankan
+Not kept	Tidak dipertahankan
+{}. Save writes a new copy; the original is never overwritten.	{}. Simpan menulis salinan baru; berkas aslinya tidak pernah ditimpa.
 Shape	Bentuk
 Name	Nama
 Position	Posisi
@@ -60,11 +60,11 @@ Sheets	Sheets
 Used range	Rentang terpakai
 {} rows × {} columns	{} baris × {} kolom
 Open a document to see its details here.	Buka dokumen untuk melihat detailnya di sini.
-{} is not built yet — it's on the roadmap.	{} belum dibuat — sudah ada di peta jalan.
+{} is not built yet — it's on the roadmap.	{} belum tersedia — sudah masuk rencana pengembangan.
 Kantor can't open {}	Kantor tidak dapat membuka {}
 Open document	Buka dokumen
-Formulas: open a spreadsheet first	Rumus: buka spreadsheet dulu
-Rewrite: open a document and select some text first	Tulis ulang: buka dokumen dan pilih teks dulu
+Formulas: open a spreadsheet first	Rumus: buka spreadsheet terlebih dahulu
+Rewrite: open a document and select some text first	Tulis ulang: buka dokumen dan pilih teks terlebih dahulu
 Saving “{}”…	Menyimpan “{}”…
 Saving {} documents…	Menyimpan {} dokumen…
 Kantor closes when the save has finished.	Kantor ditutup setelah penyimpanan selesai.
@@ -86,7 +86,7 @@ yesterday	kemarin
 {} days ago	{} hari yang lalu
 1 damaged recovery copy couldn't be read; kept in {}	1 salinan pemulihan yang rusak tidak dapat dibaca; disimpan di {}
 {} damaged recovery copies couldn't be read; kept in {}	{} salinan pemulihan yang rusak tidak dapat dibaca; disimpan di {}
-Autosave on: documents with a file save {} s after your last change	Simpan Otomatis aktif: dokumen yang punya berkas disimpan {} detik setelah perubahan terakhir Anda
+Autosave on: documents with a file save {} s after your last change	Simpan Otomatis aktif: dokumen yang memiliki berkas disimpan {} detik setelah perubahan terakhir Anda
 Autosave off (recovery copies still protect unsaved work)	Simpan Otomatis nonaktif (salinan pemulihan tetap melindungi pekerjaan yang belum disimpan)
 No unsaved work to recover	Tidak ada pekerjaan belum disimpan yang perlu dipulihkan
 Couldn't keep a recovery copy of “{}” ({}). Save your work.	Salinan pemulihan “{}” tidak dapat dibuat ({}). Simpan pekerjaan Anda.
@@ -118,21 +118,21 @@ Kantor {} is ready: choose Restart to Update	Kantor {} siap: pilih Mulai Ulang u
 Kantor {} is up to date	Kantor {} sudah versi terbaru
 Update check failed: {}	Pemeriksaan pembaruan gagal: {}
 Couldn't install Kantor {}: {}	Tidak dapat memasang Kantor {}: {}
-No update is ready. Use Check for Updates… first.	Belum ada pembaruan yang siap. Gunakan Periksa Pembaruan… dulu.
+No update is ready. Use Check for Updates… first.	Belum ada pembaruan yang siap. Gunakan Periksa Pembaruan… terlebih dahulu.
 Update failed, nothing changed: {}	Pembaruan gagal, tidak ada yang berubah: {}
 Agent: new {}	Agen: {} baru
 Agent: opened {}	Agen: membuka {}
 Agent: {}	Agen: {}
 Agent: {} in {}	Agen: {} di {}
-Copied: {}  (run it in a terminal; `kantor mcp --print-config` has more)	Disalin: {}  (jalankan di terminal; `kantor mcp --print-config` berisi lebih banyak)
-Describe it, e.g. total Sales where Region is Jakarta	Jelaskan, mis. total Penjualan dengan Wilayah Jakarta
+Copied: {}  (run it in a terminal; `kantor mcp --print-config` has more)	Disalin: {}  (jalankan di terminal; `kantor mcp --print-config` menampilkan selengkapnya)
+Describe it, e.g. total Sales where Region is Jakarta	Jelaskan, mis. total Penjualan untuk Wilayah Jakarta
 {} has no formula to explain.	{} tidak berisi rumus untuk dijelaskan.
 The suggested formula doesn't parse: {}. Try rephrasing.	Rumus yang disarankan tidak valid: {}. Coba ubah kalimatnya.
 {}. Try rephrasing.	{}. Coba ubah kalimatnya.
 Couldn't insert: {}	Tidak dapat menyisipkan: {}
 Asking {}…	Bertanya ke {}…
 Receiving… ({} characters)	Menerima… ({} karakter)
-Checked: shows {}	Diperiksa: menampilkan {}
+Checked: shows {}	Diperiksa: menghasilkan {}
 Ask AI for a formula	Minta AI membuat rumus
 Explain formula	Jelaskan rumus
 AI features are off. Turn them on and choose a provider in AI Settings.	Fitur AI nonaktif. Aktifkan dan pilih penyedia di Pengaturan AI.
@@ -149,8 +149,8 @@ no provider	tanpa penyedia
 Can't rewrite this: {}.	Tidak dapat menulis ulang ini: {}.
 Sends only the selected paragraphs' text to {}. Replace keeps paragraph styles; formatting inside a paragraph becomes that of its first word.	Hanya mengirim teks paragraf yang dipilih ke {}. Ganti mempertahankan gaya paragraf; format di dalam paragraf mengikuti kata pertamanya.
 Rewrite selection	Tulis ulang pilihan
-Translate to English	Terjemahkan ke Inggris
-Translate to Indonesian	Terjemahkan ke Indonesia
+Translate to English	Terjemahkan ke bahasa Inggris
+Translate to Indonesian	Terjemahkan ke bahasa Indonesia
 More formal	Lebih formal
 Shorter	Lebih singkat
 Fix grammar	Perbaiki tata bahasa
@@ -162,7 +162,7 @@ Connected: {} answered.	Terhubung: {} menjawab.
 Key removed.	Kunci dihapus.
 Couldn't save settings: {}	Tidak dapat menyimpan pengaturan: {}
 Saving the key in the system keychain…	Menyimpan kunci di keychain sistem…
-Saved. No system keychain was found, so the key is in ~/.config/kantor/ai-keys.toml (readable only by you).	Tersimpan. Keychain sistem tidak ditemukan, jadi kunci ada di ~/.config/kantor/ai-keys.toml (hanya bisa dibaca oleh Anda).
+Saved. No system keychain was found, so the key is in ~/.config/kantor/ai-keys.toml (readable only by you).	Tersimpan. Keychain sistem tidak ditemukan, jadi kunci ada di ~/.config/kantor/ai-keys.toml (hanya dapat dibaca oleh Anda).
 Couldn't save the key: {}	Tidak dapat menyimpan kunci: {}
 A key is saved in the system keychain; type a new one to replace it. {}.	Kunci tersimpan di keychain sistem; ketik kunci baru untuk menggantinya. {}.
 AI features	Fitur AI
@@ -172,8 +172,8 @@ Provider	Penyedia
 API key	Kunci API
 Base URL	URL dasar
 Model	Model
-Any model id the provider offers; empty uses the default shown.	ID model apa pun yang ditawarkan penyedia; kosong berarti memakai bawaan yang ditampilkan.
-Kantor has no AI service of its own: requests go straight from this computer to the provider chosen here, and only when you use an AI command. Each command sends only what it needs: for formulas, the column headers, up to 20 sample rows near the selection and the active cell's address; for rewriting, the selected paragraphs. Nothing is sent while AI features are off. API keys are kept in the system keychain, never in the settings file.	Kantor tidak punya layanan AI sendiri: permintaan langsung dikirim dari komputer ini ke penyedia yang dipilih di sini, dan hanya saat Anda memakai perintah AI. Setiap perintah hanya mengirim yang diperlukan: untuk rumus, judul kolom, hingga 20 baris contoh di dekat pilihan dan alamat sel aktif; untuk menulis ulang, paragraf yang dipilih. Tidak ada yang dikirim selama fitur AI nonaktif. Kunci API disimpan di keychain sistem, tidak pernah di berkas pengaturan.
+Any model id the provider offers; empty uses the default shown.	ID model apa pun yang ditawarkan penyedia; kosongkan untuk memakai model bawaan yang ditampilkan.
+Kantor has no AI service of its own: requests go straight from this computer to the provider chosen here, and only when you use an AI command. Each command sends only what it needs: for formulas, the column headers, up to 20 sample rows near the selection and the active cell's address; for rewriting, the selected paragraphs. Nothing is sent while AI features are off. API keys are kept in the system keychain, never in the settings file.	Kantor tidak memiliki layanan AI sendiri: permintaan langsung dikirim dari komputer ini ke penyedia yang dipilih di sini, dan hanya saat Anda memakai perintah AI. Setiap perintah hanya mengirim yang diperlukan: untuk rumus, judul kolom, hingga 20 baris contoh di dekat pilihan dan alamat sel aktif; untuk menulis ulang, paragraf yang dipilih. Tidak ada yang dikirim selama fitur AI nonaktif. Kunci API disimpan di keychain sistem, tidak pernah di berkas pengaturan.
 AI Settings	Pengaturan AI
 Testing…	Menguji…
 Test connection	Uji koneksi
@@ -185,7 +185,7 @@ Create a key at openrouter.ai/keys	Buat kunci di openrouter.ai/keys
 Create a key at console.groq.com	Buat kunci di console.groq.com
 Create a key at platform.deepseek.com	Buat kunci di platform.deepseek.com
 Create a key at aistudio.google.com	Buat kunci di aistudio.google.com
-Runs on this computer; nothing leaves it. Install from ollama.com	Berjalan di komputer ini; tidak ada yang keluar. Pasang dari ollama.com
+Runs on this computer; nothing leaves it. Install from ollama.com	Berjalan di komputer ini; tidak ada data yang keluar. Pasang dari ollama.com
 Optional; sent as a Bearer token	Opsional; dikirim sebagai token Bearer
 (No Spelling Suggestions)	(Tidak Ada Saran Ejaan)
 Ignore All	Abaikan Semua
@@ -197,7 +197,7 @@ Whole word	Seluruh kata
 Look in formulas	Cari di rumus
 Previous match	Hasil sebelumnya
 Next match	Hasil berikutnya
-Toggle replace	Tampilkan/sembunyikan ganti
+Toggle replace	Tampilkan/sembunyikan penggantian
 Replace all	Ganti semua
 No results	Tidak ada hasil
 1 match	1 hasil
@@ -253,8 +253,8 @@ Merge & Center / Unmerge	Gabung & Tengahkan / Pisahkan
 Align Top	Rata Atas
 Align Middle	Rata Tengah Vertikal
 Align Bottom	Rata Bawah
-Sort A to Z	Urutkan A ke Z
-Sort Z to A	Urutkan Z ke A
+Sort A to Z	Urutkan dari A ke Z
+Sort Z to A	Urutkan dari Z ke A
 Custom Sort…	Urutan Kustom…
 Filter	Filter
 Clear Filters	Hapus Filter
@@ -272,7 +272,7 @@ Standard Column Width	Lebar Kolom Standar
 Freeze Top Row	Bekukan Baris Teratas
 Freeze First Column	Bekukan Kolom Pertama
 Freeze Panes	Bekukan Panel
-Unfreeze Panes	Lepaskan Panel Beku
+Unfreeze Panes	Lepaskan Pembekuan Panel
 Hide Rows	Sembunyikan Baris
 Unhide Rows	Tampilkan Baris
 Hide Columns	Sembunyikan Kolom
@@ -386,11 +386,11 @@ Add, test or remove a WebDAV account	Tambah, uji atau hapus akun WebDAV
 AI agents can edit open documents (kantor mcp)	Agen AI dapat mengedit dokumen yang terbuka (kantor mcp)
 Current document	Dokumen saat ini
 Refuse edits to this document until you allow them	Tolak pengeditan dokumen ini sampai Anda mengizinkannya
-End read-only; a cloud file takes the lock (Edit now)	Akhiri hanya baca; berkas cloud mengambil kunci (Edit sekarang)
+End read-only; a cloud file takes the lock (Edit now)	Akhiri mode hanya baca; berkas cloud mengambil kunci (Edit sekarang)
 Docs pages as laid out · Slides, one page per slide · Sheets as Excel prints	Halaman Docs sesuai tata letak · Slides, satu halaman per slide · Sheets seperti cetakan Excel
 Opens the pages as a PDF in the system viewer to print	Membuka halaman sebagai PDF di penampil sistem untuk dicetak
 Slides: each slide above its speaker notes	Slides: setiap slide di atas catatan pembicaranya
-Slides: 3 slides per page with lines for notes (the Print menu has 1–9)	Slides: 3 slide per halaman dengan garis untuk catatan (menu Cetak punya 1–9)
+Slides: 3 slides per page with lines for notes (the Print menu has 1–9)	Slides: 3 slide per halaman dengan garis untuk catatan (menu Cetak menyediakan 1–9)
 Slides · the selected table's cells, rows and columns, or a chart's values	Slides · sel, baris dan kolom tabel terpilih, atau nilai bagan
 Last edit	Edit terakhir
 Last undone edit	Edit terakhir yang diurungkan
@@ -411,13 +411,13 @@ Sheets · cell background	Sheets · latar belakang sel
 Sheets · one point larger	Sheets · satu poin lebih besar
 Sheets · one point smaller	Sheets · satu poin lebih kecil
 Sheets · every edge of the selection	Sheets · setiap tepi pilihan
-Sheets · outline of the selection	Sheets · garis luar pilihan
+Sheets · outline of the selection	Sheets · tepi luar pilihan
 Sheets · remove borders	Sheets · hapus batas
 Sheets · toggle	Sheets · aktifkan/nonaktifkan
 Sheets · selected cells	Sheets · sel terpilih
 Sheets · vertical alignment	Sheets · perataan vertikal
 Sheets · by the active cell's column (smallest to largest, oldest to newest)	Sheets · menurut kolom sel aktif (terkecil ke terbesar, terlama ke terbaru)
-Sheets · by the active cell's column, descending	Sheets · menurut kolom sel aktif, menurun
+Sheets · by the active cell's column, descending	Sheets · menurut kolom sel aktif, urutan turun
 Sheets · sort by several columns	Sheets · urutkan menurut beberapa kolom
 Sheets · filter buttons on or off for the data or table	Sheets · tombol filter aktif atau nonaktif untuk data atau tabel
 Sheets · show every row the sheet's filters hide	Sheets · tampilkan setiap baris yang disembunyikan filter lembar
@@ -448,8 +448,8 @@ Sheets · a column chart of the selection or the data around the active cell (ot
 Sheets · a line chart of the selection	Sheets · bagan garis dari pilihan
 Sheets · a pie chart of the selection	Sheets · bagan pai dari pilihan
 Sheets · type, title, legend, axis titles, series colours and data of the selected chart	Sheets · jenis, judul, legenda, judul sumbu, warna seri dan data bagan terpilih
-Sheets · make the selection or the data around the active cell a table with a style	Sheets · jadikan pilihan atau data di sekitar sel aktif tabel bergaya
-Sheets · style, header and total rows, banding, totals and name of the table at the active cell	Sheets · gaya, baris header dan total, pita, total dan nama tabel di sel aktif
+Sheets · make the selection or the data around the active cell a table with a style	Sheets · jadikan pilihan atau data di sekitar sel aktif sebagai tabel bergaya
+Sheets · style, header and total rows, banding, totals and name of the table at the active cell	Sheets · gaya, baris header dan total, baris berpita, total dan nama tabel di sel aktif
 Sheets · keep the cells, remove the table at the active cell	Sheets · pertahankan sel, hapus tabel di sel aktif
 Sheets · paper, orientation, scaling, margins, header and footer, print area and titles	Sheets · kertas, orientasi, skala, margin, header dan footer, area cetak dan judul
 Sheets · print only the selected cells of this sheet	Sheets · cetak hanya sel terpilih di lembar ini
@@ -459,7 +459,7 @@ Sheets · show or hide the field list of the PivotTable at the active cell	Sheet
 Sheets · remove the PivotTable at the active cell	Sheets · hapus PivotTable di sel aktif
 Sheets · recompute the PivotTable at the active cell from its data	Sheets · hitung ulang PivotTable di sel aktif dari datanya
 Sheets · recompute every PivotTable in the workbook	Sheets · hitung ulang setiap PivotTable di buku kerja
-Sheets · open the active cell's data validation drop-down	Sheets · buka daftar tarik-turun validasi data sel aktif
+Sheets · open the active cell's data validation drop-down	Sheets · buka daftar menurun validasi data sel aktif
 Sheets · allow only a list, numbers, dates, times, text length or a formula; input message and error alert	Sheets · izinkan hanya daftar, angka, tanggal, waktu, panjang teks atau rumus; pesan input dan peringatan kesalahan
 Sheets · ring cells whose values break their data validation	Sheets · lingkari sel yang nilainya melanggar validasi datanya
 Sheets · data validation	Sheets · validasi data
@@ -469,7 +469,7 @@ Open documents, recent files	Dokumen terbuka, berkas terbaru
 Cell and workbook details	Detail sel dan buku kerja
 New pane beside	Panel baru di samping
 New pane below	Panel baru di bawah
-Or the tab, if it has one pane	Atau tab, jika hanya punya satu panel
+Or the tab, if it has one pane	Atau tab, jika hanya memiliki satu panel
 All its panes	Semua panelnya
 Start screen	Layar awal
 Docs · paragraph style	Docs · gaya paragraf
@@ -502,9 +502,9 @@ Docs · page size, 21.5 × 33 cm	Docs · ukuran halaman, 21,5 × 33 cm
 Docs · page setup	Docs · pengaturan halaman
 Docs · 2.54 cm all sides	Docs · 2,54 cm semua sisi
 Docs · 1.27 cm all sides	Docs · 1,27 cm semua sisi
-Docs · 2.54 cm top/bottom, 1.91 cm sides	Docs · 2,54 cm atas/bawah, 1,91 cm samping
-Docs · 2.54 cm top/bottom, 5.08 cm sides	Docs · 2,54 cm atas/bawah, 5,08 cm samping
-Docs, Slides · underline misspelled words in red	Docs, Slides · garis bawahi kata salah eja dengan merah
+Docs · 2.54 cm top/bottom, 1.91 cm sides	Docs · 2,54 cm atas/bawah, 1,91 cm kiri/kanan
+Docs · 2.54 cm top/bottom, 5.08 cm sides	Docs · 2,54 cm atas/bawah, 5,08 cm kiri/kanan
+Docs, Slides · underline misspelled words in red	Docs, Slides · garis bawahi kata yang salah eja dengan warna merah
 Docs · show or hide the ruler	Docs · tampilkan atau sembunyikan penggaris
 Docs · page zoom	Docs · zoom halaman
 Docs · page zoom 100%	Docs · zoom halaman 100%

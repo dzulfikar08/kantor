@@ -4,7 +4,7 @@
 Larger Font	Perbesar Font
 Smaller Font	Perkecil Font
 Wrap Text	Bungkus Teks
-Merge & Center	Gabungkan & Tengahkan
+Merge & Center	Gabung & Tengahkan
 All Borders	Semua Batas
 Outside Borders	Batas Luar
 No Borders	Tanpa Batas
@@ -44,7 +44,7 @@ Filter	Filter
 Freeze Panes	Bekukan Panel
 Freeze First Column	Bekukan Kolom Pertama
 Freeze Top Row	Bekukan Baris Teratas
-Unfreeze Panes	Lepaskan Panel Beku
+Unfreeze Panes	Lepaskan Pembekuan Panel
 Insert Row Above	Sisipkan Baris di Atas
 Insert Row Below	Sisipkan Baris di Bawah
 Delete Rows	Hapus Baris
@@ -55,7 +55,7 @@ Unhide Rows	Tampilkan Baris
 Selected all cells	Semua sel dipilih
 Filling	Mengisi
 Filled {}	{} diisi
-Nothing to fill from	Tidak ada yang bisa dijadikan sumber isian
+Nothing to fill from	Tidak ada sumber untuk diisikan
 Inserted {} row	{} baris disisipkan
 Inserted {} rows	{} baris disisipkan
 Deleted {} row	{} baris dihapus
@@ -83,7 +83,7 @@ Unhid {} rows; {} hidden by a filter stay hidden	{} baris ditampilkan; {} yang d
 Fitted column widths to their content	Lebar kolom disesuaikan dengan isinya
 Reset column widths	Lebar kolom dikembalikan ke standar
 Column widths unchanged	Lebar kolom tidak berubah
-Panes unfrozen	Panel tidak lagi dibekukan
+Panes unfrozen	Pembekuan panel dilepas
 Froze the top {} row	{} baris teratas dibekukan
 Froze the top {} rows	{} baris teratas dibekukan
 Froze the first {} column	{} kolom pertama dibekukan
@@ -94,10 +94,10 @@ Ready	Siap
 Value or =formula	Nilai atau =rumus
 Please wait until the workbook is ready	Harap tunggu sampai buku kerja siap
 Edit cancelled	Pengeditan dibatalkan
-{} updated — manual calculation, press F9 to recalculate	{} diperbarui — perhitungan manual, tekan F9 untuk menghitung ulang
+{} updated — manual calculation, press F9 to recalculate	{} diperbarui — penghitungan manual, tekan F9 untuk menghitung ulang
 Copied {}	{} disalin
 Cut {}	{} dipotong
-Nothing to paste	Tidak ada yang bisa ditempel
+Nothing to paste	Tidak ada yang dapat ditempel
 Pasted {}	{} ditempel
 Alignment	Perataan
 Vertical alignment	Perataan vertikal
@@ -107,20 +107,20 @@ Font size	Ukuran font
 Wrap text	Bungkus teks
 Borders	Batas
 Merged	Digabungkan
-Unmerged	Penggabungan dibatalkan
+Unmerged	Sel dipisahkan
 Opened {}	{} dibuka
 Opened {} (imported; Save creates an .xlsx copy)	{} dibuka (diimpor; Simpan membuat salinan .xlsx)
 Undone	Diurungkan
 Redone	Diulangi
-Nothing to undo	Tidak ada yang bisa diurungkan
-Nothing to redo	Tidak ada yang bisa diulangi
+Nothing to undo	Tidak ada yang dapat diurungkan
+Nothing to redo	Tidak ada yang dapat diulangi
 Please wait until the save finishes	Harap tunggu sampai penyimpanan selesai
 No matches	Tidak ada yang cocok
 Formula inserted in {}	Rumus disisipkan di {}
 Deleted	Dihapus
 Moved	Dipindahkan
 Resized	Ukuran diubah
-Nothing to replace: the matches are computed values	Tidak ada yang bisa diganti: yang cocok adalah nilai hasil hitungan
+Nothing to replace: the matches are computed values	Tidak ada yang dapat diganti: yang cocok adalah nilai hasil hitungan
 Replaced in 1 cell	Diganti di 1 sel
 Replaced in {} cells	Diganti di {} sel
 Replaced in {}	Diganti di {}
@@ -128,15 +128,15 @@ Replaced in {}	Diganti di {}
 Opening {}…	Membuka {}…
 Calculating {}…	Menghitung {}…
 {} and recalculating {}…	{} dan menghitung ulang {}…
-Manual calculation ({} formulas) — press F9 to recalculate	Perhitungan manual ({} rumus) — tekan F9 untuk menghitung ulang
+Manual calculation ({} formulas) — press F9 to recalculate	Penghitungan manual ({} rumus) — tekan F9 untuk menghitung ulang
  in {} s	 dalam {} dtk
 Calculated in {} s	Dihitung dalam {} dtk
 Calculated	Dihitung
-Automatic calculation	Perhitungan otomatis
-Manual calculation — press F9 to recalculate	Perhitungan manual — tekan F9 untuk menghitung ulang
+Automatic calculation	Penghitungan otomatis
+Manual calculation — press F9 to recalculate	Penghitungan manual — tekan F9 untuk menghitung ulang
 Calculating…	Menghitung…
 Manual · Calculate (F9)	Manual · Hitung (F9)
-Manual calculation	Perhitungan manual
+Manual calculation	Penghitungan manual
 {} s · editing resumes when it is done	{} dtk · pengeditan dapat dilanjutkan setelah selesai
 # Saving, printing, recovery
 Saving…	Menyimpan…
@@ -148,9 +148,9 @@ Saved {} with values of sheet "{}" only; CSV can't hold the other {}	{} disimpan
 Save failed: {}	Gagal menyimpan: {}
 Couldn't save “{}”: {}. Your changes are still open; try Save As.	Tidak dapat menyimpan “{}”: {}. Perubahan Anda masih terbuka; coba Simpan Sebagai.
 Print failed: {}	Gagal mencetak: {}
-Preparing to print {}…	Menyiapkan cetak {}…
+Preparing to print {}…	Menyiapkan pencetakan {}…
 Exporting {}…	Mengekspor {}…
-Preparing to print: page {} of {}…	Menyiapkan cetak: halaman {} dari {}…
+Preparing to print: page {} of {}…	Menyiapkan pencetakan: halaman {} dari {}…
 Exporting: page {} of {}…	Mengekspor: halaman {} dari {}…
 Exported {} (1 page)	{} diekspor (1 halaman)
 Exported {} ({} pages)	{} diekspor ({} halaman)
@@ -210,7 +210,7 @@ Looking for	Yang dicari
 A date occurring	Tanggal yang terjadi
 Duplicate values	Nilai duplikat
 Unique values	Nilai unik
-Format the	Format yang
+Format the	Format nilai
 Top	Atas
 Bottom	Bawah
 Number	Angka
@@ -239,7 +239,7 @@ This sheet has no conditional formatting rules.	Lembar ini tidak memiliki aturan
 No rules apply to the selected cells.	Tidak ada aturan yang berlaku untuk sel yang dipilih.
 Applies to {}	Berlaku untuk {}
 Stop	Berhenti
-Move up (applies sooner)	Pindahkan ke atas (diterapkan lebih dulu)
+Move up (applies sooner)	Pindahkan ke atas (diterapkan lebih dahulu)
 Move down	Pindahkan ke bawah
 Delete rule	Hapus aturan
 Conditional Formatting Rules	Aturan Pemformatan Bersyarat
@@ -247,7 +247,7 @@ Show rules for	Tampilkan aturan untuk
 Current selection	Pilihan saat ini
 This sheet	Lembar ini
 Selection {}	Pilihan {}
-The first rule applies first; a rule with Stop ends the list for its cells.	Aturan pertama diterapkan lebih dulu; aturan dengan Berhenti mengakhiri daftar untuk selnya.
+The first rule applies first; a rule with Stop ends the list for its cells.	Aturan pertama diterapkan lebih dahulu; aturan dengan Berhenti mengakhiri daftar untuk selnya.
 New Rule…	Aturan Baru…
 Highlight Cells Rules	Aturan Sorot Sel
 Top/Bottom Rules	Aturan Atas/Bawah
@@ -337,8 +337,8 @@ Give a number of items (1-1000) or a percentage (1-100)	Masukkan jumlah item (1-
 Type a formula, such as $B2>100	Ketik rumus, misalnya $B2>100
 A colour scale has two or three colours	Skala warna memiliki dua atau tiga warna
 Type the cells it applies to, such as A2:A20	Ketik sel tempat aturan berlaku, misalnya A2:A20
-Errors	Galat
-No errors	Tanpa galat
+Errors	Kesalahan
+No errors	Tanpa kesalahan
 Date occurring	Tanggal terjadi
 Text equal to "{}"	Teks sama dengan "{}"
 Icon set ({} icons)	Set ikon ({} ikon)
@@ -460,8 +460,8 @@ Normal	Normal
 Wide	Lebar
 Narrow	Sempit
 Center on page	Tengahkan di halaman
-Horizontally	Secara Horizontal
-Vertically	Secara Vertikal
+Horizontally	Secara horizontal
+Vertically	Secara vertikal
 Centre	Tengah
 Codes: &P page · &N pages · &D date · &T time · &F file name · &A sheet name · && an ampersand	Kode: &P halaman · &N jumlah halaman · &D tanggal · &T waktu · &F nama berkas · &A nama lembar · && tanda &
 Print area	Area cetak
@@ -483,7 +483,7 @@ File name · Page 1 of ?	Nama berkas · Halaman 1 dari ?
 Date and time · Page 1	Tanggal dan waktu · Halaman 1
 # print_preview.rs
 The page could not be drawn	Halaman tidak dapat digambar
-Nothing to print on this sheet	Tidak ada yang dicetak di lembar ini
+Nothing to print on this sheet	Tidak ada yang dapat dicetak di lembar ini
 Drawing the page…	Menggambar halaman…
 Fit ({}%)	Paskan ({}%)
 No pages	Tidak ada halaman
@@ -533,7 +533,7 @@ Create	Buat
 Select a cell in a PivotTable to see its fields	Pilih sel di PivotTable untuk melihat bidangnya
 Select a cell in a PivotTable to see its fields.	Pilih sel di PivotTable untuk melihat bidangnya.
 {} updated	{} diperbarui
-Custom name	Nama khusus
+Custom name	Nama kustom
 Choose at least one item	Pilih setidaknya satu item
 PivotTable Fields	Bidang PivotTable
 Can't be rearranged here: {}	Tidak dapat ditata ulang di sini: {}
@@ -559,12 +559,12 @@ Filter Items…	Filter Item…
 There is no sheet {}	Tidak ada lembar {}
 {} is not a cell: type one like Sheet1!H2	{} bukan sel: ketik seperti Sheet1!H2
 Sum	Jumlah
-Count	Hitung
+Count	Hitungan
 Average	Rata-rata
 Max	Maks
 Min	Min
 Product	Hasil Kali
-Count Numbers	Hitung Angka
+Count Numbers	Hitungan Angka
 # sheets_ui: data validation, filter and sort, tables
 Any value	Nilai apa pun
 Decimal	Desimal
@@ -579,7 +579,7 @@ Type a whole number	Ketik bilangan bulat
 Type a number	Ketik angka
 Type the cells of the list, such as =$A$1:$A$9	Ketik sel daftar, seperti =$A$1:$A$9
 Type the list's items separated by commas, or =cells	Ketik item daftar dipisahkan koma, atau =sel
-A typed list holds at most 255 characters: put the items in cells	Daftar yang diketik paling banyak 255 karakter: taruh item di sel
+A typed list holds at most 255 characters: put the items in cells	Daftar yang diketik paling banyak 255 karakter: letakkan item di sel
 Select the cells to validate	Pilih sel yang akan divalidasi
 Type the list's source	Ketik sumber daftar
 a value or =formula	nilai atau =rumus
@@ -588,10 +588,10 @@ e.g. =ISNUMBER(A2)	mis. =ISNUMBER(A2)
 Applies to: type the cells, such as A2:A20	Berlaku untuk: ketik selnya, seperti A2:A20
 Source: {}	Sumber: {}
 Formula: type a formula that is TRUE for valid values	Rumus: ketik rumus yang bernilai TRUE untuk nilai yang valid
-Data validation set	Validasi data dipasang
+Data validation set	Validasi data diterapkan
 Data validation cleared	Validasi data dihapus
 Input Message	Pesan Input
-Error Alert	Peringatan Galat
+Error Alert	Peringatan Kesalahan
 Allow	Izinkan
 Minimum	Minimum
 Maximum	Maksimum
@@ -604,15 +604,15 @@ Items separated by commas, or =cells such as =$H$1:$H$9 (another sheet: =Lists!$
 Formula	Rumus
 TRUE for a valid value; references are relative to the first cell.	TRUE untuk nilai yang valid; referensi relatif terhadap sel pertama.
 Ignore blank	Abaikan yang kosong
-In-cell dropdown	Daftar turun di sel
+In-cell dropdown	Daftar menurun dalam sel
 Show input message when the cell is selected	Tampilkan pesan input saat sel dipilih
 Input message	Pesan input
-Show error alert after invalid data is entered	Tampilkan peringatan galat setelah data tidak valid dimasukkan
+Show error alert after invalid data is entered	Tampilkan peringatan kesalahan setelah data tidak valid dimasukkan
 Style	Gaya
 Warning	Peringatan
 Information	Informasi
-Error message	Pesan galat
-Stop: the value can't stay (Retry / Cancel).	Berhenti: nilai tidak boleh tetap (Coba Lagi / Batal).
+Error message	Pesan kesalahan
+Stop: the value can't stay (Retry / Cancel).	Berhenti: nilai tidak boleh dipertahankan (Coba Lagi / Batal).
 Warning: asks "Continue?" (Yes / No / Cancel).	Peringatan: bertanya "Lanjutkan?" (Ya / Tidak / Batal).
 Information: tells, then keeps the value (OK / Cancel).	Informasi: memberi tahu, lalu menyimpan nilainya (OK / Batal).
 Data Validation	Validasi Data
@@ -624,15 +624,15 @@ The list of this cell is empty	Daftar sel ini kosong
 Invalid value	Nilai tidak valid
 Edit the value, or press Escape to cancel	Edit nilainya, atau tekan Escape untuk membatalkan
 {} not changed	{} tidak diubah
-The active cell has no drop-down list	Sel aktif tidak memiliki daftar turun
+The active cell has no drop-down list	Sel aktif tidak memiliki daftar menurun
 Invalid data circled	Data tidak valid dilingkari
 This sheet has no data validation	Lembar ini tidak memiliki validasi data
 Validation circles cleared	Lingkaran validasi dihapus
 Continue?	Lanjutkan?
 a table without a header row has no filter buttons	tabel tanpa baris header tidak memiliki tombol filter
 select the data to filter	pilih data yang akan difilter
-nothing to filter	tidak ada yang bisa difilter
-nothing to sort	tidak ada yang bisa diurutkan
+nothing to filter	tidak ada yang dapat difilter
+nothing to sort	tidak ada yang dapat diurutkan
 nothing to sort by	tidak ada dasar pengurutan
 the sort column is outside the range	kolom pengurutan berada di luar rentang
 No condition	Tanpa kondisi
@@ -662,12 +662,12 @@ No filter on this sheet	Tidak ada filter di lembar ini
 Filter reapplied: {} of {} rows shown	Filter diterapkan ulang: {} dari {} baris ditampilkan
 Filters cleared	Filter dihapus
 Sorted {} rows by {} levels	{} baris diurutkan dengan {} tingkat
-Sort smallest to largest	Urutkan dari Terkecil ke Terbesar
-Sort largest to smallest	Urutkan dari Terbesar ke Terkecil
-Sort oldest to newest	Urutkan dari Terlama ke Terbaru
-Sort newest to oldest	Urutkan dari Terbaru ke Terlama
-Sort A to Z	Urutkan A ke Z
-Sort Z to A	Urutkan Z ke A
+Sort smallest to largest	Urutkan dari terkecil ke terbesar
+Sort largest to smallest	Urutkan dari terbesar ke terkecil
+Sort oldest to newest	Urutkan dari terlama ke terbaru
+Sort newest to oldest	Urutkan dari terbaru ke terlama
+Sort A to Z	Urutkan dari A ke Z
+Sort Z to A	Urutkan dari Z ke A
 Number filter	Filter angka
 Date filter	Filter tanggal
 Text filter	Filter teks
@@ -685,24 +685,24 @@ Add level	Tambah tingkat
 My data has headers	Data saya memiliki header
 Sort	Urutkan
 Text (* and ? match any)	Teks (* dan ? cocok dengan apa pun)
-Sorted {} rows descending	{} baris diurutkan menurun
-Sorted {} rows ascending	{} baris diurutkan menaik
+Sorted {} rows descending	{} baris diurutkan turun
+Sorted {} rows ascending	{} baris diurutkan naik
 Select the cells of the table, not whole rows or columns	Pilih sel tabel, bukan seluruh baris atau kolom
 Too many columns	Terlalu banyak kolom
-It overlaps a PivotTable	Bertumpang tindih dengan PivotTable
+It overlaps a PivotTable	Tumpang tindih dengan PivotTable
 Tables can't contain merged cells	Tabel tidak boleh berisi sel yang digabungkan
-It overlaps the sheet's filter: remove the filter first	Bertumpang tindih dengan filter lembar: hapus filternya dulu
+It overlaps the sheet's filter: remove the filter first	Tumpang tindih dengan filter lembar: hapus filternya terlebih dahulu
 No room for a header row	Tidak ada ruang untuk baris header
 No room for a data row	Tidak ada ruang untuk baris data
 No room for a total row	Tidak ada ruang untuk baris total
 A table needs a data row	Tabel memerlukan baris data
 The row above the table must be empty to show the header row	Baris di atas tabel harus kosong untuk menampilkan baris header
-Turn on the total row first	Aktifkan baris total dulu
+Turn on the total row first	Aktifkan baris total terlebih dahulu
 A table name starts with a letter and has no spaces or symbols	Nama tabel diawali huruf dan tanpa spasi atau simbol
 This cell is already in a table: its options are in Table Design	Sel ini sudah berada di tabel: opsinya ada di Desain Tabel
 Type the table's cells, such as $A$1:$D$20	Ketik sel tabel, seperti $A$1:$D$20
 {} created	{} dibuat
-Select a cell in a table first	Pilih sel di dalam tabel dulu
+Select a cell in a table first	Pilih sel di dalam tabel terlebih dahulu
 Table changed	Tabel diubah
 Table converted to a range	Tabel dikonversi menjadi rentang
 Table renamed	Nama tabel diganti
@@ -729,5 +729,5 @@ Light	Terang
 Medium	Sedang
 Dark	Gelap
 Sort by {}	Urutkan menurut {}
-Count: {}	Hitung: {}
-Average: {}   Count: {}   Sum: {}	Rata-rata: {}   Hitung: {}   Jumlah: {}
+Count: {}	Hitungan: {}
+Average: {}   Count: {}   Sum: {}	Rata-rata: {}   Hitungan: {}   Jumlah: {}

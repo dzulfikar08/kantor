@@ -20,7 +20,7 @@ Insert the number of pages: {PAGES}	Sisipkan jumlah halaman: {PAGES}
 Left	Kiri
 Centre	Tengah
 Right	Kanan
-Section {} of {}; sections without their own use the one before	Bagian {} dari {}; bagian yang tidak memiliki sendiri memakai yang sebelumnya
+Section {} of {}; sections without their own use the one before	Bagian {} dari {}; bagian tanpa header/footer sendiri memakai milik bagian sebelumnya
 Options	Opsi
 Different first page	Halaman pertama berbeda
 Different odd and even pages	Halaman ganjil dan genap berbeda
@@ -52,8 +52,8 @@ Align right · Ctrl+R	Rata kanan · Ctrl+R
 Justify · Ctrl+J	Rata kiri-kanan · Ctrl+J
 Bulleted list · Ctrl+Shift+8	Daftar berpoin · Ctrl+Shift+8
 Numbered list · Ctrl+Shift+7	Daftar bernomor · Ctrl+Shift+7
-Decrease list level · Shift+Tab	Turunkan level daftar · Shift+Tab
-Increase list level · Tab	Naikkan level daftar · Tab
+Decrease list level · Shift+Tab	Turunkan tingkat daftar · Shift+Tab
+Increase list level · Tab	Naikkan tingkat daftar · Tab
 Insert picture (PNG or JPEG)	Sisipkan gambar (PNG atau JPEG)
 Insert row below	Sisipkan baris di bawah
 Insert column right	Sisipkan kolom di kanan
@@ -74,8 +74,8 @@ Moderate	Sedang
 Wide	Lebar
 2.54 cm all sides	2,54 cm semua sisi
 1.27 cm all sides	1,27 cm semua sisi
-2.54 cm top/bottom, 1.91 cm sides	2,54 cm atas/bawah, 1,91 cm sisi
-2.54 cm top/bottom, 5.08 cm sides	2,54 cm atas/bawah, 5,08 cm sisi
+2.54 cm top/bottom, 1.91 cm sides	2,54 cm atas/bawah, 1,91 cm kiri/kanan
+2.54 cm top/bottom, 5.08 cm sides	2,54 cm atas/bawah, 5,08 cm kiri/kanan
 Custom	Kustom
 {} landscape	{} lanskap
 Section {} of {}: changes apply to this section	Bagian {} dari {}: perubahan berlaku untuk bagian ini
@@ -97,7 +97,7 @@ Nov	Nov
 Dec	Des
 Write a comment	Tulis komentar
 Comment deleted	Komentar dihapus
-Track Changes on: your edits are marked as {}'s	Lacak Perubahan aktif: suntingan Anda ditandai sebagai milik {}
+Track Changes on: your edits are marked as {}'s	Lacak Perubahan aktif: perubahan yang Anda buat ditandai sebagai milik {}
 Track Changes off	Lacak Perubahan nonaktif
 No tracked change at the caret	Tidak ada perubahan terlacak di posisi kursor
 This document has no tracked changes	Dokumen ini tidak memiliki perubahan terlacak
@@ -136,12 +136,12 @@ Restored unsaved changes to {}	Perubahan yang belum disimpan dipulihkan ke {}
 Tables inside tables aren't supported yet	Tabel di dalam tabel belum didukung
 The caret isn't in a table	Kursor tidak berada di dalam tabel
 Can't insert {}: {}	Tidak dapat menyisipkan {}: {}
-Nothing to undo	Tidak ada yang bisa diurungkan
-Nothing to redo	Tidak ada yang bisa diulangi
+Nothing to undo	Tidak ada yang dapat diurungkan
+Nothing to redo	Tidak ada yang dapat diulangi
 Page {} of {} · {}	Halaman {} dari {} · {}
 {} has content Kantor can't keep ({}), so it's saved as a new file; the original stays as it is	{} berisi konten yang tidak dapat dipertahankan Kantor ({}), jadi disimpan sebagai berkas baru; berkas aslinya tetap seperti semula
 Print failed: {}	Gagal mencetak: {}
-Preparing to print {}…	Menyiapkan cetak {}…
+Preparing to print {}…	Menyiapkan pencetakan {}…
 Exporting {}…	Mengekspor {}…
 Exported {} (1 page)	{} diekspor (1 halaman)
 Exported {} ({} pages)	{} diekspor ({} halaman)
@@ -153,15 +153,15 @@ Save failed: {}	Gagal menyimpan: {}
 {} × {} table	Tabel {} × {}
 This file has content Kantor can't show or keep yet: {}. Save writes a new copy; the original is never overwritten.	Berkas ini berisi konten yang belum dapat ditampilkan atau dipertahankan Kantor: {}. Simpan menulis salinan baru; berkas aslinya tidak pernah ditimpa.
 Opened {} (has unsupported content; Save creates a copy)	{} dibuka (berisi konten yang tidak didukung; Simpan membuat salinan)
-Opened {} ({} shown as placeholders, kept as they are when saving)	{} dibuka ({} ditampilkan sebagai placeholder, dipertahankan apa adanya saat menyimpan)
+Opened {} ({} shown as placeholders, kept as they are when saving)	{} dibuka ({} ditampilkan sebagai tempat penampung, dipertahankan apa adanya saat menyimpan)
 Opened {}	{} dibuka
 1 word	1 kata
 {} words	{} kata
 1 character	1 karakter
 {} characters	{} karakter
 {} of {}	{} dari {}
-Replaced 1 match	1 kecocokan diganti
-Replaced {} matches	{} kecocokan diganti
+Replaced 1 match	1 hasil diganti
+Replaced {} matches	{} hasil diganti
 The text changed since it was sent; run the rewrite again.	Teks telah berubah sejak dikirim; jalankan penulisan ulang lagi.
 Rewritten (Undo restores the original)	Ditulis ulang (Urungkan mengembalikan teks asli)
 Agent: {}	Agen: {}
