@@ -34,12 +34,17 @@ every release), and enterprise and Smart App Control policies accept the files.
 | **EV certificate** | $400+/year | Yes | No SmartScreen advantage over OV since 2024. Not worth it for this. |
 | **Microsoft Store (MSIX)** | Free (one-time Store developer registration) | Yes | The Store re-signs the package, and users see no SmartScreen warning. Updates come from the Store, and the in-app updater must stay off. Needs an MSIX build and Store review, and AGPL terms vs the Store terms need a look (the same question as the Mac App Store). |
 
-**Recommendation:** Certum's open-source code-signing certificate for an individual (the
-cheapest OV option open from Indonesia), with the publisher shown as "Open Source Developer,
-Dzulfikar Ats Tsauri". Its key lives in Certum's SimplySign cloud and is unlocked with a one-time
-code, so signing from GitHub Actions needs that code generated in CI from the token's secret;
-check this works before buying. Reapply to SignPath Foundation once
-Kantor has more public visibility. Consider the Microsoft Store later as a second channel.
+**Recommendation:** Certum's "Open Source Code Signing in the Cloud" for an individual (€49 in
+Certum's EU shop, Nov 2026), with the publisher shown as "Open Source Developer, Dzulfikar Ats
+Tsauri". Certum revokes it if the software is used commercially, so if Kantor ever sells paid
+features in the same app, buy Certum's individual OV "Code Signing in the Cloud" instead
+(about €209 direct, ~$115/year from resellers). Both keep the key in Certum's SimplySign cloud,
+unlocked with a TOTP code. CI can do that without a person: open-source tools sign over HTTPS
+from a Linux runner with the TOTP seed as a secret (`IvanHanloth/super-simply-sign` action, or
+the `ssign` CLI), or drive SimplySign Desktop on a Windows runner
+(`jay0lee/certum-cloud-code-sign`). Keep the seed in the `release` environment only: anyone
+with it and the account e-mail can sign as you until the SimplySign QR code is re-issued.
+Reapply to SignPath Foundation once Kantor has more public visibility. Consider the Microsoft Store later as a second channel.
 
 ## How the workflows sign (when you decide)
 
