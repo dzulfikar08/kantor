@@ -32,6 +32,20 @@ pub(crate) enum Diff {
         new_value: String,
         old_value: Box<Option<Cell>>,
     },
+    // KANTOR PATCH (fill undo records): a fill target that got its source's
+    // formula (see `UserModel::kantor_fill_cell`). Like `SetCellValue`,
+    // but the text is not kept: redo copies the formula of
+    // `source_row`, `source_column` again (the source is outside the fill,
+    // so it holds what it held when the fill ran), translating it only
+    // when the copy can't be made as is.
+    KantorFillFormula {
+        sheet: u32,
+        row: i32,
+        column: i32,
+        source_row: i32,
+        source_column: i32,
+        old_value: Box<Option<Cell>>,
+    },
     SetArrayValue {
         sheet: u32,
         row: i32,

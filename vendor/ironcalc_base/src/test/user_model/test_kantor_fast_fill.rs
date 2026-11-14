@@ -226,3 +226,95 @@ fn changes_are_summed_up_without_the_send_queue() {
     let nothing = UserModel::from_model(new_empty_model()).flush_send_queue();
     assert_eq!(model.flush_send_queue(), nothing);
 }
+
+// KANTOR PATCH (fill undo records): copied formulas are recorded by their
+// source's position, not their text; undo and redo stay exact.
+
+/// Fills `FORMULAS` (a column of them at B10 or a row at B10) each way,
+/// then undoes and redoes three times; every state must be what the fill
+/// and the undo left the first time.
+#[test]
+fn fill_records_undo_and_redo_every_way() {
+    let n = FORMULAS.len() as i32;
+    let cases: [(bool, i32); 4] = [(true, 40), (true, 3), (false, 2 + n + 6), (false, 1)];
+    for (down, to) in cases {
+        let mut model = setup();
+        for (i, f) in FORMULAS.iter().enumerate() {
+            let (row, column) = if down {
+                (10, 2 + i as i32)
+            } else {
+                (10 + i as i32, 2)
+            };
+            model.set_user_input(0, row, column, f).unwrap();
+        }
+        model.set_user_input(0, 5, 3, "old").unwrap();
+        model.set_user_input(0, 12, 1, "old").unwrap();
+        model.evaluate();
+        let rows = (1, 10 + n + 1);
+        let columns = (1, 2 + n + 6);
+        let before = snapshot(&model, rows, columns);
+        if down {
+            let area = Area {
+                sheet: 0,
+                row: 10,
+                column: 2,
+                width: n,
+                height: 1,
+            };
+            model.auto_fill_rows(&area, to).unwrap();
+        } else {
+            let area = Area {
+                sheet: 0,
+                row: 10,
+                column: 2,
+                width: 1,
+                height: n,
+            };
+            model.auto_fill_columns(&area, to).unwrap();
+        }
+        assert!(model.kantor_fill_copies > 0);
+        model.evaluate();
+        let after = snapshot(&model, rows, columns);
+        assert_ne!(before, after);
+        for _ in 0..3 {
+            model.undo().unwrap();
+            model.evaluate();
+            assert_eq!(snapshot(&model, rows, columns), before, "undo {down} {to}");
+            model.redo().unwrap();
+            model.evaluate();
+            assert_eq!(snapshot(&model, rows, columns), after, "redo {down} {to}");
+        }
+    }
+}
+
+/// With the send queue on (upstream's default, for a remote copy), the
+/// fill's diff lists replayed on a copy of the model leave the same cells.
+#[test]
+fn fill_records_replay_on_a_remote_copy() {
+    let mut model = setup();
+    for (i, f) in FORMULAS.iter().enumerate() {
+        model.set_user_input(0, 10, 2 + i as i32, f).unwrap();
+    }
+    let _ = model.flush_send_queue();
+    let mut remote = UserModel::from_model(
+        crate::Model::from_bytes(&model.get_model().to_bytes(), "en").unwrap(),
+    );
+    let area = Area {
+        sheet: 0,
+        row: 10,
+        column: 2,
+        width: FORMULAS.len() as i32,
+        height: 1,
+    };
+    model.auto_fill_rows(&area, 25).unwrap();
+    model.undo().unwrap();
+    model.redo().unwrap();
+    remote
+        .apply_external_diffs(&model.flush_send_queue())
+        .unwrap();
+    model.evaluate();
+    remote.evaluate();
+    let span = (1, 30);
+    let columns = (1, 2 + FORMULAS.len() as i32);
+    assert_eq!(snapshot(&remote, span, columns), snapshot(&model, span, columns));
+}

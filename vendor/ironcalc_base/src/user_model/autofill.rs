@@ -24,11 +24,10 @@ const CUT_MERGE_ERROR: &str = "Cannot auto-fill: the fill size must fit whole me
 
 /// KANTOR PATCH (fast fill): one target cell of a fill, before it is written.
 struct KantorFilled {
-    /// The translated text (or the next value of a series): what upstream
-    /// typed into the cell, and what the diff replays.
-    value: String,
-    /// The value is the source's content moved over, not a series.
-    copy_formula: bool,
+    /// The next value of a series, or `None` when the source's content is
+    /// moved over (translated, as upstream typed it in, when it can't be
+    /// copied as is; see `kantor_fill_cell`).
+    series: Option<String>,
     old_value: Option<Cell>,
     old_style: Option<Style>,
 }
@@ -578,17 +577,14 @@ impl<'a> UserModel<'a> {
                 }
 
                 let old_style = self.model.get_cell_style_or_none(sheet, row, column)?;
-                let target_value;
 
                 // compute the new value and set it
-                if let Some(ref detected_progression) = possible_progression {
-                    target_value = detected_progression.next(progression_idx);
+                // KANTOR PATCH (fill undo records): a moved-over value is
+                // translated by `kantor_fill_cell`, only if it must be.
+                let series = possible_progression.as_ref().map(|detected| {
                     progression_idx += 1;
-                } else {
-                    target_value = self
-                        .model
-                        .extend_to(sheet, source_row, column, row, column)?;
-                }
+                    detected.next(progression_idx - 1)
+                });
 
                 // KANTOR PATCH (fast fill): see `kantor_fill_cell`.
                 self.kantor_fill_cell(
@@ -596,8 +592,7 @@ impl<'a> UserModel<'a> {
                     (source_row, column),
                     (row, column),
                     KantorFilled {
-                        value: target_value,
-                        copy_formula: possible_progression.is_none(),
+                        series,
                         old_value,
                         old_style,
                     },
@@ -752,17 +747,14 @@ impl<'a> UserModel<'a> {
                 }
 
                 let old_style = self.model.get_cell_style_or_none(sheet, row, column)?;
-                let target_value;
 
                 // compute the new value and set it
-                if let Some(ref detected_progression) = possible_progression {
-                    target_value = detected_progression.next(progression_idx);
+                // KANTOR PATCH (fill undo records): a moved-over value is
+                // translated by `kantor_fill_cell`, only if it must be.
+                let series = possible_progression.as_ref().map(|detected| {
                     progression_idx += 1;
-                } else {
-                    target_value = self
-                        .model
-                        .extend_to(sheet, row, source_column, row, column)?;
-                }
+                    detected.next(progression_idx - 1)
+                });
 
                 // KANTOR PATCH (fast fill): see `kantor_fill_cell`.
                 self.kantor_fill_cell(
@@ -770,8 +762,7 @@ impl<'a> UserModel<'a> {
                     (row, source_column),
                     (row, column),
                     KantorFilled {
-                        value: target_value,
-                        copy_formula: possible_progression.is_none(),
+                        series,
                         old_value,
                         old_style,
                     },
@@ -848,8 +839,12 @@ impl<'a> UserModel<'a> {
     /// * Each source cell's style (and its index in the style table) and
     ///   link are looked up once per fill, not once per copy.
     ///
-    /// The diffs are the same as before: undo and redo replay the
-    /// translated text, so they don't depend on the shortcut.
+    /// KANTOR PATCH (fill undo records): a copied formula is recorded as a
+    /// `Diff::KantorFillFormula` (the source's position), not with its
+    /// translated text: printing that text for every copy was ~30 % of a
+    /// big fill. Everything else is recorded as upstream did, with the text
+    /// typed in. Undo puts the old cell back either way; redo of a copy
+    /// copies again (`kantor_refill_formula`).
     fn kantor_fill_cell(
         &mut self,
         sheet: u32,
@@ -860,13 +855,20 @@ impl<'a> UserModel<'a> {
         diff_list: &mut Vec<Diff>,
     ) -> Result<(), String> {
         let (row, column) = target;
-        let copied = filled.copy_formula && self.kantor_copy_formula(sheet, source, target)?;
-        if copied {
+        let copied = filled.series.is_none() && self.kantor_copy_formula(sheet, source, target)?;
+        let typed = if copied {
             self.kantor_fill_copies += 1;
+            None
         } else {
-            self.model
-                .set_user_input(sheet, row, column, filled.value.clone())?;
-        }
+            let value = match filled.series {
+                Some(value) => value,
+                None => self
+                    .model
+                    .extend_to(sheet, source.0, source.1, row, column)?,
+            };
+            self.model.set_user_input(sheet, row, column, value.clone())?;
+            Some(value)
+        };
 
         let source_data = match sources.entry(source) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
@@ -894,15 +896,45 @@ impl<'a> UserModel<'a> {
             old_value: Box::new(filled.old_style),
             new_value: Box::new(source_data.style.clone()),
         });
-        diff_list.push(Diff::SetCellValue {
-            sheet,
-            row,
-            column,
-            new_value: filled.value,
-            old_value: Box::new(filled.old_value),
+        let old_value = Box::new(filled.old_value);
+        diff_list.push(match typed {
+            Some(new_value) => Diff::SetCellValue {
+                sheet,
+                row,
+                column,
+                new_value,
+                old_value,
+            },
+            None => Diff::KantorFillFormula {
+                sheet,
+                row,
+                column,
+                source_row: source.0,
+                source_column: source.1,
+                old_value,
+            },
         });
         let link = source_data.link.clone();
         self.kantor_set_fill_link(sheet, row, column, &link, diff_list)
+    }
+
+    /// KANTOR PATCH (fill undo records): redo of a `Diff::KantorFillFormula`:
+    /// `source`'s formula into `target` as the fill put it there, copied as
+    /// is when that still holds, otherwise translated and typed in.
+    pub(super) fn kantor_refill_formula(
+        &mut self,
+        sheet: u32,
+        source: (i32, i32),
+        target: (i32, i32),
+    ) -> Result<(), String> {
+        if !self.kantor_copy_formula(sheet, source, target)? {
+            let value = self
+                .model
+                .extend_to(sheet, source.0, source.1, target.0, target.1)?;
+            self.model
+                .set_user_input(sheet, target.0, target.1, value)?;
+        }
+        Ok(())
     }
 
     /// KANTOR PATCH (fast fill): puts the formula of `source` in `target` as
