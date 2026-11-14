@@ -104,6 +104,57 @@ pub fn parse_lock_owner(body: &str) -> Option<String> {
     )
 }
 
+/// The lock owner's account id when the server says it (Nextcloud's
+/// `nc:lock-owner`).
+pub fn parse_lock_user(body: &str) -> Option<String> {
+    let doc = roxmltree::Document::parse(body).ok()?;
+    doc.descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == "lock-owner")
+        .and_then(|n| n.text())
+        .map(|t| t.trim().to_owned())
+        .filter(|t| !t.is_empty())
+}
+
+/// The display name of account `user` in a user-search reply: Nextcloud's
+/// autocomplete (`ocs.data[].id` / `label`) or OpenCloud's Graph search
+/// (`value[].onPremisesSamAccountName` / `displayName`).
+pub fn parse_user_search(json: &str, user: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let found = |list: &serde_json::Value, id_keys: &[&str], name_key: &str| {
+        list.as_array()?.iter().find_map(|u| {
+            let matches = id_keys
+                .iter()
+                .any(|k| u.get(*k).and_then(|x| x.as_str()) == Some(user));
+            matches
+                .then(|| u.get(name_key)?.as_str().map(str::to_owned))
+                .flatten()
+        })
+    };
+    let name = v
+        .pointer("/ocs/data")
+        .and_then(|d| found(d, &["id"], "label"))
+        .or_else(|| {
+            v.get("value")
+                .and_then(|d| found(d, &["onPremisesSamAccountName", "id"], "displayName"))
+        })?;
+    let name = name.trim().to_owned();
+    (!name.is_empty()).then_some(name)
+}
+
+/// The display name in a Nextcloud OCS user reply or an OpenCloud Graph
+/// user reply (JSON).
+pub fn parse_display_name(json: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let name = v
+        .pointer("/ocs/data/displayname")
+        .or_else(|| v.pointer("/ocs/data/display-name"))
+        .or_else(|| v.get("displayName"))?
+        .as_str()?
+        .trim()
+        .to_owned();
+    (!name.is_empty()).then_some(name)
+}
+
 fn is(n: roxmltree::Node, name: &str) -> bool {
     n.is_element() && n.tag_name().name() == name && n.tag_name().namespace() == Some(DAV)
 }
@@ -215,6 +266,30 @@ mod tests {
         let unlocked = r#"<multistatus xmlns="DAV:"><response><href>/f</href><propstat><prop>
           <lockdiscovery/></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"#;
         assert_eq!(parse_lock_owner(unlocked), None);
+        let with_user = r#"<d:multistatus xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns"><d:response><d:propstat><d:prop>
+          <nc:lock-owner>bob</nc:lock-owner><nc:lock-owner-displayname>bob (Kantor)</nc:lock-owner-displayname>
+          </d:prop></d:propstat></d:response></d:multistatus>"#;
+        assert_eq!(parse_lock_user(with_user).as_deref(), Some("bob"));
+        assert_eq!(parse_lock_user(plain), None);
+    }
+
+    #[test]
+    fn display_names() {
+        let nc =
+            r#"{"ocs":{"meta":{"status":"ok"},"data":{"id":"bob","displayname":"Bob Santoso"}}}"#;
+        assert_eq!(parse_display_name(nc).as_deref(), Some("Bob Santoso"));
+        let oc = r#"{"id":"1","displayName":"Sri Wahyuni","onPremisesSamAccountName":"sri"}"#;
+        assert_eq!(parse_display_name(oc).as_deref(), Some("Sri Wahyuni"));
+        assert_eq!(parse_display_name(r#"{"ocs":{"data":[]}}"#), None);
+        assert_eq!(parse_display_name("not json"), None);
+        let ac = r#"{"ocs":{"data":[{"id":"bobby","label":"Bobby"},{"id":"bob","label":"Bob Santoso"}]}}"#;
+        assert_eq!(parse_user_search(ac, "bob").as_deref(), Some("Bob Santoso"));
+        assert_eq!(parse_user_search(ac, "sri"), None);
+        let graph = r#"{"value":[{"id":"u1","displayName":"Marie Curie","onPremisesSamAccountName":"marie"}]}"#;
+        assert_eq!(
+            parse_user_search(graph, "marie").as_deref(),
+            Some("Marie Curie")
+        );
     }
 
     #[test]

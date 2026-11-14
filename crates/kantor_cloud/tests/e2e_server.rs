@@ -6,7 +6,9 @@
 //! ```text
 //! KANTOR_E2E_ALICE_URL / _ALICE_PASS   alice's WebDAV root and app password
 //! KANTOR_E2E_BOB_URL   / _BOB_PASS     a second account
-//! KANTOR_E2E_SHARED                    folder alice shared with bob (same name in both roots)
+//! KANTOR_E2E_SHARED                    folder alice shared with bob
+//! KANTOR_E2E_BOB_SHARED                where bob sees it (default: the same path;
+//!                                      OpenCloud mounts shares under `Shares/`)
 //! KANTOR_E2E_ALICE_PROXY_URL           alice's root through Toxiproxy (optional)
 //! KANTOR_E2E_TOXI_API / _TOXI_PROXY    Toxiproxy API and proxy name (optional)
 //! ```
@@ -27,6 +29,7 @@ struct Env {
     alice_proxy: Option<Remote>,
     toxi: Option<(String, String)>,
     shared: String,
+    bob_shared: String,
     cache: Cache,
     _dir: tempfile::TempDir,
 }
@@ -66,6 +69,9 @@ fn env() -> Option<Env> {
         alice_proxy: var("KANTOR_E2E_ALICE_PROXY_URL").map(|u| remote(&u, &ap, "alice-proxy")),
         toxi: var("KANTOR_E2E_TOXI_API").zip(var("KANTOR_E2E_TOXI_PROXY")),
         shared: var("KANTOR_E2E_SHARED").unwrap_or_else(|| "Bersama".into()),
+        bob_shared: var("KANTOR_E2E_BOB_SHARED")
+            .or_else(|| var("KANTOR_E2E_SHARED"))
+            .unwrap_or_else(|| "Bersama".into()),
         cache: Cache::new(dir.path().join("cloud")),
         _dir: dir,
     })
@@ -81,6 +87,11 @@ macro_rules! env_or_skip {
             }
         }
     };
+}
+
+/// `path` (under alice's shared folder) as bob sees it.
+fn bob_path(e: &Env, path: &str) -> String {
+    path.replacen(&e.shared, &e.bob_shared, 1)
 }
 
 /// A fresh .xlsx in `<shared>/e2e` (kept out of the way of real files);
@@ -142,21 +153,24 @@ fn sync_upload(r: &Remote, d: &mut DocSync, force: bool) -> Action {
     d.begin_upload(total);
     let lock = d.lock_token().cloned();
     let mut last = 0;
-    let out = session::upload(r, &d.entry, lock.as_ref(), force, &mut |s, _| last = s);
+    let cache = Cache::new(d.entry.local.parent().unwrap().join(".e2e-index"));
+    let out = session::upload(r, &cache, &d.entry, lock.as_ref(), force, &mut |s, _| {
+        last = s
+    });
     if matches!(out, UploadOutcome::Synced { .. }) {
         assert_eq!(last, total, "progress reached the end");
     }
     d.on_upload(out)
 }
 
-fn assert_unlocked(e: &Env, bob_path: &str) {
-    // Bob can take (and drop) the lock: nobody holds it any more.
-    let t = e
-        .bob
-        .client
-        .lock(bob_path, Duration::from_secs(60), "bob check")
-        .expect("file should be unlocked");
-    e.bob.client.unlock(bob_path, &t).unwrap();
+fn assert_unlocked(e: &Env, path: &str) {
+    // Nobody holds a lock on the file any more (asked as both accounts).
+    assert_eq!(
+        e.alice.client.lock_holder(path).unwrap(),
+        None,
+        "{path} still locked"
+    );
+    assert_eq!(e.bob.client.lock_holder(&bob_path(e, path)).unwrap(), None);
 }
 
 #[test]
@@ -279,36 +293,78 @@ fn conflict_from_second_client() {
 fn lock_held_by_second_account() {
     let e = env_or_skip!();
     let path = new_file(&e, "lock");
-    // Bob (a different account) has it open.
-    let bob_open = session::open(&e.bob, &e.cache, &path).unwrap();
-    let LockState::Held(bob_token) = bob_open.lock else {
-        panic!("bob should hold the lock: {:?}", bob_open.lock);
+    let bp = bob_path(&e, &path);
+    // Bob (a different account) has it open. OpenCloud doesn't let a share
+    // recipient lock (Unimplemented): then alice holds it and bob is the
+    // one who finds it locked.
+    let bob_open = session::open(&e.bob, &e.cache, &bp).unwrap();
+    let bob_locks = matches!(bob_open.lock, LockState::Held(_));
+    let (holder, holder_path, other, other_path, name_var) = if bob_locks {
+        (
+            &e.bob,
+            bp.clone(),
+            &e.alice,
+            path.clone(),
+            "KANTOR_E2E_BOB_NAME",
+        )
+    } else {
+        eprintln!("bob can't lock here ({:?}); swapping roles", bob_open.lock);
+        (
+            &e.alice,
+            path.clone(),
+            &e.bob,
+            bp.clone(),
+            "KANTOR_E2E_ALICE_NAME",
+        )
     };
-    // Alice opens it: read-only, with bob's name.
-    let opened = session::open(&e.alice, &e.cache, &path).unwrap();
+    let held = if bob_locks {
+        bob_open
+    } else {
+        session::open(holder, &e.cache, &holder_path).unwrap()
+    };
+    let LockState::Held(token) = held.lock else {
+        panic!("the holder should hold the lock: {:?}", held.lock);
+    };
+    // The other account opens it: read-only, with the holder's name.
+    let opened = session::open(other, &e.cache, &other_path).unwrap();
     let LockState::LockedBy(who) = &opened.lock else {
         panic!("expected read-only, got {:?}", opened.lock);
     };
-    assert!(who.to_lowercase().contains("bob"), "owner shown as {who:?}");
+    if let Some(name) = var(name_var) {
+        assert!(
+            who.to_lowercase().contains(&name.to_lowercase()),
+            "owner shown as {who:?}, expected {name:?}"
+        );
+    }
     let mut d = DocSync::new(opened.entry, opened.lock.clone());
     assert!(matches!(d.status(), Status::ReadOnly(_)));
-    edit(&d.entry.local, "alice tries");
+    edit(&d.entry.local, "other tries");
     assert_eq!(d.on_local_save(), Action::NotifyReadOnly);
     assert_eq!(d.on_reconnect(), Action::None);
-    assert_eq!(server_a1(&e.bob, &path), "server v1");
+    assert_eq!(server_a1(holder, &holder_path), "server v1");
     // Even a direct upload attempt is refused by the server's lock.
-    let out = session::upload(&e.alice, &d.entry, None, false, &mut |_, _| {});
-    assert!(matches!(out, UploadOutcome::LockedBy(_)), "{out:?}");
+    let out = session::upload(other, &e.cache, &d.entry, None, false, &mut |_, _| {});
+    assert!(
+        matches!(out, UploadOutcome::LockedBy(_) | UploadOutcome::Failed(_)),
+        "{out:?}"
+    );
+    assert_eq!(server_a1(holder, &holder_path), "server v1");
 
-    // Bob closes; alice's "Sync now" takes the lock and can save.
-    session::release(&e.bob, &e.cache, &path, &bob_token).unwrap();
-    d.lock = session::take_lock(&e.alice, &e.cache, &path);
-    assert!(matches!(d.lock, LockState::Held(_)), "{:?}", d.lock);
+    // The holder closes; "Edit now" takes the lock (where the server lets
+    // this account lock) and the save goes through.
+    session::release(holder, &e.cache, &holder_path, &token).unwrap();
+    d.lock = session::take_lock(other, &e.cache, &other_path);
+    assert!(
+        matches!(d.lock, LockState::Held(_) | LockState::Unsupported(_)),
+        "{:?}",
+        d.lock
+    );
     assert_eq!(d.on_reconnect(), Action::Upload);
-    assert_eq!(sync_upload(&e.alice, &mut d, false), Action::None);
-    assert_eq!(server_a1(&e.bob, &path), "alice tries");
-    let t = d.lock_token().cloned().unwrap();
-    session::release(&e.alice, &e.cache, &path, &t).unwrap();
+    assert_eq!(sync_upload(other, &mut d, false), Action::None);
+    assert_eq!(server_a1(holder, &holder_path), "other tries");
+    if let Some(t) = d.lock_token().cloned() {
+        session::release(other, &e.cache, &other_path, &t).unwrap();
+    }
 }
 
 fn toxi(e: &Env, enabled: bool) {
@@ -459,6 +515,143 @@ fn lost_lock_still_saves() {
     assert_eq!(sync_upload(&e.alice, &mut d, true), Action::None);
     assert_eq!(server_a1(&e.alice, &path), "mine, forced");
     let _ = e.cache.forget_lock("alice", &path);
+}
+
+/// 12 MiB that compress badly (a big file's working copy).
+fn big_bytes(seed: u8) -> Vec<u8> {
+    let mut x: u32 = 0x9e37_79b9 ^ u32::from(seed);
+    (0..12 * 1024 * 1024)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x as u8
+        })
+        .collect()
+}
+
+#[test]
+#[ignore]
+fn big_upload_resumes_after_a_drop() {
+    let e = env_or_skip!();
+    let (Some(ap), Some(_)) = (&e.alice_proxy, &e.toxi) else {
+        eprintln!("skipped: no Toxiproxy");
+        return;
+    };
+    let path = new_file(&e, "big");
+    let opened = session::open(ap, &e.cache, &path).unwrap();
+    let mut d = DocSync::new(opened.entry, opened.lock);
+    let big = big_bytes(1);
+    std::fs::write(&d.entry.local, &big).unwrap();
+    let kind = ap.client.resumable(d.entry.folder());
+    eprintln!("resumable: {kind:?}");
+    assert_ne!(
+        kind,
+        kantor_cloud::chunked::Resumable::None,
+        "server offers resumable uploads"
+    );
+    assert_eq!(d.on_local_save(), Action::Upload);
+    let total = big.len() as u64;
+    d.begin_upload(total);
+    let lock = d.lock_token().cloned();
+    // The link goes down once the first chunk (Nextcloud: 5 MiB; TUS:
+    // 2 MiB parts) is on the server.
+    let mut cut = false;
+    let out = session::upload(ap, &e.cache, &d.entry, lock.as_ref(), false, &mut |s, _| {
+        if !cut && s >= 6_500_000 {
+            cut = true;
+            toxi(&e, false);
+        }
+    });
+    toxi(&e, true);
+    assert!(cut, "the upload got past the first chunk");
+    assert!(matches!(out, UploadOutcome::Offline(_)), "{out:?}");
+    d.on_upload(out);
+    assert!(
+        e.cache.pending_upload(&d.entry.local).is_some(),
+        "resume point kept"
+    );
+    // Sync now: continues where it stopped.
+    assert_eq!(d.on_reconnect(), Action::Upload);
+    d.begin_upload(total);
+    let mut first = None;
+    let lock = d.lock_token().cloned();
+    let out = session::upload(ap, &e.cache, &d.entry, lock.as_ref(), false, &mut |s, _| {
+        first.get_or_insert(s);
+    });
+    let first = first.unwrap_or(0);
+    eprintln!("resumed at {first} of {total}");
+    assert!(
+        first >= 2 * 1024 * 1024,
+        "resumed, not restarted (first progress {first})"
+    );
+    assert!(matches!(out, UploadOutcome::Synced { .. }), "{out:?}");
+    d.on_upload(out);
+    assert!(e.cache.pending_upload(&d.entry.local).is_none());
+    assert!(
+        e.alice.client.get(&path).unwrap().bytes == big,
+        "server has the whole file"
+    );
+    // A later save of different bytes, through the version check.
+    let big2 = big_bytes(2);
+    std::fs::write(&d.entry.local, &big2).unwrap();
+    assert_eq!(d.on_local_save(), Action::Upload);
+    assert_eq!(sync_upload(ap, &mut d, false), Action::None);
+    assert_eq!(d.status(), Status::Synced, "{:?}", d.state);
+    let got = e.alice.client.get(&path).unwrap().bytes;
+    let sha = kantor_cloud::cache::sha256_hex;
+    assert!(
+        got == big2,
+        "server has {} bytes {} (big {}, big2 {})",
+        got.len(),
+        &sha(&got)[..12],
+        &sha(&big)[..12],
+        &sha(&big2)[..12]
+    );
+    // (TUS releases the lock for the upload; the app takes it again.)
+    if let Some(t) = d.lock_token().cloned() {
+        session::release(ap, &e.cache, &path, &t).unwrap();
+    }
+}
+
+#[test]
+#[ignore]
+fn big_upload_conflict_is_refused() {
+    let e = env_or_skip!();
+    let path = new_file(&e, "bigconflict");
+    let opened = session::open(&e.alice, &e.cache, &path).unwrap();
+    let mut d = DocSync::new(opened.entry, opened.lock);
+    let t = d.lock_token().cloned().unwrap();
+    session::release(&e.alice, &e.cache, &path, &t).unwrap();
+    d.lock = LockState::None;
+    e.alice2
+        .client
+        .put(&path, &xlsx_with("theirs"), Precondition::Overwrite, None)
+        .unwrap();
+    std::fs::write(&d.entry.local, big_bytes(3)).unwrap();
+    assert_eq!(d.on_local_save(), Action::Upload);
+    assert_eq!(sync_upload(&e.alice, &mut d, false), Action::ShowConflict);
+    assert_eq!(
+        server_a1(&e.alice, &path),
+        "theirs",
+        "nothing assembled over theirs"
+    );
+    // The assemble step itself checks the ETag too (Nextcloud).
+    if let kantor_cloud::chunked::Resumable::Nextcloud { user } =
+        e.alice.client.resumable(&e.shared)
+    {
+        let r = e.alice.client.upload_nextcloud(
+            &user,
+            "kantor-e2e-stale",
+            &path,
+            &big_bytes(4),
+            Some("\"stale-etag\""),
+            None,
+            &mut |_, _| {},
+        );
+        assert!(matches!(r, Err(Error::Conflict)), "{r:?}");
+        assert_eq!(server_a1(&e.alice, &path), "theirs");
+    }
 }
 
 #[test]

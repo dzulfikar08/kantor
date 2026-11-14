@@ -37,7 +37,7 @@ impl Workspace {
     }
 
     /// Panes a close request would drop, in tab order.
-    fn closing_panes(&self, closing: Closing) -> Vec<PaneId> {
+    pub(super) fn closing_panes(&self, closing: Closing) -> Vec<PaneId> {
         match closing {
             Closing::Pane { pane, .. } => vec![pane],
             Closing::Tab(id) => self
@@ -143,7 +143,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.dirty_views(Closing::Quit, cx).is_empty() {
+        if self.dirty_views(Closing::Quit, cx).is_empty()
+            && self.unsynced_cloud(Closing::Quit).is_empty()
+        {
             self.persist(cx);
             self.recovery_quit();
             self.cloud_quit();
@@ -154,6 +156,14 @@ impl Workspace {
     }
 
     fn finish_close(&mut self, closing: Closing, window: &mut Window, cx: &mut Context<Self>) {
+        // Cloud documents whose saves haven't reached the server: ask first.
+        if !std::mem::take(&mut self.cloud.close_ok) {
+            let unsynced = self.unsynced_cloud(closing);
+            if !unsynced.is_empty() {
+                self.ask_unsynced(closing, unsynced, window, cx);
+                return;
+            }
+        }
         match closing {
             Closing::Pane { tab, pane } => {
                 if let Some(ti) = self.tab_index(tab) {
@@ -180,6 +190,141 @@ impl Workspace {
                 }
             }
         }
+    }
+
+    /// Cloud documents with saves the server doesn't have: try syncing,
+    /// keep the local copy and sync later, or cancel.
+    fn ask_unsynced(
+        &mut self,
+        closing: Closing,
+        panes: Vec<PaneId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if window.has_active_dialog(cx) {
+            return;
+        }
+        use kantor_ui::i18n::tr;
+        let names: Vec<String> = panes
+            .iter()
+            .filter_map(|p| self.docs.get(p))
+            .map(|d| d.view.doc_name(cx))
+            .collect();
+        let title = match names.as_slice() {
+            [one] => format!("{} “{one}”", tr("Not synced:", "Belum tersinkron:")),
+            many => format!(
+                "{} {}",
+                many.len(),
+                tr(
+                    "cloud documents aren't synced",
+                    "dokumen cloud belum tersinkron"
+                )
+            ),
+        };
+        let mut detail = tr(
+            "Your changes are saved on this computer, but not on the server yet. If you keep the local copy, Kantor syncs it the next time you open the file.",
+            "Perubahan Anda tersimpan di komputer ini, tetapi belum di server. Jika Anda menyimpan salinan lokal, Kantor menyinkronkannya saat berkas dibuka lagi.",
+        )
+        .to_owned();
+        if names.len() > 1 {
+            detail = format!(
+                "{}
+
+{detail}",
+                names.join(", ")
+            );
+        }
+        let ws = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let (sync_ws, keep_ws) = (ws.clone(), ws.clone());
+            let panes = panes.clone();
+            dialog
+                .w(px(460.))
+                .overlay_closable(false)
+                .close_button(false)
+                .title(title.clone())
+                .child(v_flex().child(DialogDescription::new().child(detail.clone())))
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            Button::new("unsynced-cancel")
+                                .label(tr("Cancel", "Batal"))
+                                .ghost()
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("unsynced-keep")
+                                .label(tr("Keep Local Copy", "Simpan Salinan Lokal"))
+                                .outline()
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let ws = keep_ws.clone();
+                                    window.defer(cx, move |window, cx| {
+                                        let _ = ws.update(cx, |ws, cx| {
+                                            ws.cloud.close_ok = true;
+                                            ws.finish_close(closing, window, cx);
+                                        });
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new("unsynced-sync")
+                                .label(tr("Sync Now", "Sinkronkan Sekarang"))
+                                .primary()
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let (ws, panes) = (sync_ws.clone(), panes.clone());
+                                    window.defer(cx, move |window, cx| {
+                                        let _ = ws.update(cx, |ws, cx| {
+                                            ws.sync_then_close(closing, panes, window, cx)
+                                        });
+                                    });
+                                }),
+                        ),
+                )
+        });
+    }
+
+    /// "Sync Now" in the close dialog: upload, wait, then close if all
+    /// went through (else say what's left and stay open).
+    fn sync_then_close(
+        &mut self,
+        closing: Closing,
+        panes: Vec<PaneId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for &pane in &panes {
+            self.sync_pane(pane, window, cx);
+        }
+        cx.spawn_in(window, async move |this, cx| {
+            for _ in 0..1200 {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(250))
+                    .await;
+                let Ok(busy) = this.update(cx, |ws, _| ws.cloud_uploading(&panes)) else {
+                    return;
+                };
+                if !busy {
+                    break;
+                }
+            }
+            let _ = this.update_in(cx, |ws, window, cx| {
+                if ws.unsynced_cloud(closing).is_empty() {
+                    ws.finish_close(closing, window, cx);
+                } else {
+                    ws.notice(
+                        kantor_ui::i18n::tr(
+                            "Not closed: some changes couldn't be synced.",
+                            "Tidak ditutup: sebagian perubahan tidak dapat disinkronkan.",
+                        )
+                        .into(),
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
     }
 
     fn ask_to_save(

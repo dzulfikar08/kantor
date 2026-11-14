@@ -400,6 +400,11 @@ pub fn exists(name: &str) -> bool {
     SPECS.iter().any(|s| s.0 == name)
 }
 
+/// Whether tool `name` only reads (unknown tools count as editing).
+pub fn is_read_only(name: &str) -> bool {
+    SPECS.iter().any(|s| s.0 == name && s.5)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

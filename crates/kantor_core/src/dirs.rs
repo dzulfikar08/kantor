@@ -77,7 +77,8 @@ fn platform_data_dir() -> Option<PathBuf> {
     Some(base.join("kantor"))
 }
 
-/// Kantor's per-user cache directory (working copies of cloud files):
+/// Kantor's per-user cache directory (cloud working copies lived here
+/// before 0.5; now they are in [`data_dir`]):
 ///
 /// | OS      | Directory                                         |
 /// |---------|---------------------------------------------------|

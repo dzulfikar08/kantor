@@ -5,7 +5,10 @@
 
 use std::time::Duration;
 
-use crate::cache::{Cache, CacheEntry, Compare, HeldLock, Stamp, sha256_hex, write_atomic};
+use crate::cache::{
+    Cache, CacheEntry, Compare, HeldLock, PendingUpload, Stamp, sha256_hex, write_atomic,
+};
+use crate::chunked::{RESUMABLE_MIN, Resumable};
 use crate::sync::{LockState, UploadOutcome, numbered};
 use crate::{Client, Error, LockToken, Precondition};
 
@@ -48,7 +51,9 @@ pub fn open(r: &Remote, cache: &Cache, remote: &str) -> Result<Opened, Error> {
         && entry.local.is_file()
         && entry.has_local_changes()
     {
+        let mut entry = entry;
         let lock = take_lock(r, cache, remote);
+        let _ = settle_base(r, cache, &mut entry);
         return Ok(Opened { entry, lock });
     }
     let lock = take_lock(r, cache, remote);
@@ -105,14 +110,19 @@ pub fn take_lock(r: &Remote, cache: &Cache, remote: &str) -> LockState {
             LockState::Held(token)
         }
         Err(Error::Locked) => LockState::LockedBy(
-            r.client
-                .lock_owner(remote)
+            lock_holder(r, remote)
                 .ok()
                 .flatten()
                 .unwrap_or_else(|| "?".into()),
         ),
         Err(e) if is_offline(&e) => LockState::None,
-        Err(e) => LockState::Unsupported(e.to_string()),
+        // Locks may not be possible here (OpenCloud doesn't lock files in a
+        // share's mount for the recipient) while someone else's lock is:
+        // still show the file read-only then.
+        Err(e) => match lock_holder(r, remote) {
+            Ok(Some(owner)) => LockState::LockedBy(owner),
+            _ => LockState::Unsupported(e.to_string()),
+        },
     }
 }
 
@@ -125,6 +135,7 @@ pub fn take_lock(r: &Remote, cache: &Cache, remote: &str) -> LockState {
 /// the lock token.
 pub fn upload(
     r: &Remote,
+    cache: &Cache,
     entry: &CacheEntry,
     lock: Option<&LockToken>,
     force: bool,
@@ -167,6 +178,15 @@ pub fn upload(
         (None, false) => Precondition::IfNoneMatch,
     };
     let mut lock_lost = false;
+    if bytes.len() >= RESUMABLE_MIN {
+        match resumable_upload(r, cache, entry, &bytes, &if_match, force, lock, progress) {
+            Some(Ok((etag, lock_lost))) => {
+                return synced(r, entry, &bytes, etag, stamp, lock_lost);
+            }
+            Some(Err(e)) => return failure(r, entry, lock, e),
+            None => {}
+        }
+    }
     let mut put = r
         .client
         .put_with_progress(&entry.remote, &bytes, cond, lock, progress);
@@ -213,6 +233,119 @@ pub fn upload(
     }
 }
 
+/// The outcome of an upload that went through.
+fn synced(
+    r: &Remote,
+    entry: &CacheEntry,
+    bytes: &[u8],
+    etag: Option<String>,
+    stamp: Option<Stamp>,
+    lock_lost: bool,
+) -> UploadOutcome {
+    let server = r.client.stat(&entry.remote).ok().or_else(|| {
+        Some(crate::Entry {
+            href: String::new(),
+            name: entry.name().to_owned(),
+            is_dir: false,
+            size: Some(bytes.len() as u64),
+            etag,
+            last_modified: None,
+            content_type: None,
+        })
+    });
+    UploadOutcome::Synced {
+        server,
+        stamp,
+        lock_lost,
+        sha256: Some(sha256_hex(bytes)),
+    }
+}
+
+/// A big file through Nextcloud chunking or TUS, resuming an unfinished
+/// upload of the same bytes. `None`: the server offers neither (use PUT).
+/// Ok: the new ETag if the server said it, and whether our lock had to go.
+#[allow(clippy::too_many_arguments)]
+fn resumable_upload(
+    r: &Remote,
+    cache: &Cache,
+    entry: &CacheEntry,
+    bytes: &[u8],
+    if_match: &Option<String>,
+    force: bool,
+    lock: Option<&LockToken>,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Option<Result<(Option<String>, bool), Error>> {
+    let kind = r.client.resumable(entry.folder());
+    if kind == Resumable::None {
+        return None;
+    }
+    let sha = sha256_hex(bytes);
+    let pending = cache
+        .pending_upload(&entry.local)
+        .filter(|p| p.sha256 == sha);
+    let id = match (&pending, &kind) {
+        (Some(p), _) => p.id.clone(),
+        // New for every upload: an id reused for another file would pick up
+        // that upload's chunks and destination.
+        (None, Resumable::Nextcloud { .. }) => {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos());
+            let who = sha256_hex(format!("{}\n{}\n{nanos}", entry.remote, sha).as_bytes());
+            format!("kantor-{}", &who[..24])
+        }
+        _ => String::new(),
+    };
+    let record = |id: &str| {
+        let _ = cache.set_pending_upload(
+            &entry.local,
+            Some(PendingUpload {
+                local: entry.local.clone(),
+                sha256: sha.clone(),
+                id: id.to_owned(),
+            }),
+        );
+    };
+    let cond = if force { None } else { if_match.as_deref() };
+    let result = match kind {
+        Resumable::Nextcloud { user } => {
+            record(&id);
+            r.client
+                .upload_nextcloud(&user, &id, &entry.remote, bytes, cond, lock, progress)
+                .map(|etag| (etag, false))
+        }
+        Resumable::Tus => {
+            // OpenCloud refuses to start a TUS upload onto a file locked
+            // even by us (423, whatever lock header is sent), so the lock
+            // is released for the upload and taken again afterwards by the
+            // app (`lock_lost`); If-Match still guards the start.
+            let lock_lost = match lock {
+                Some(t) => {
+                    let _ = release(r, cache, &entry.remote, t);
+                    true
+                }
+                None => false,
+            };
+            let mut url = (!id.is_empty()).then_some(id);
+            let res = r
+                .client
+                .upload_tus(&entry.remote, bytes, cond, &mut url, progress);
+            if res.is_err()
+                && let Some(u) = &url
+            {
+                record(u);
+            }
+            res.map(|()| (None, lock_lost))
+        }
+        Resumable::None => return None,
+    };
+    if result.is_ok() || !result.as_ref().is_err_and(is_offline) {
+        // Done, or refused for good (conflict, no space): start fresh next time.
+        let _ = cache.set_pending_upload(&entry.local, None);
+    }
+    Some(result)
+}
+
 fn failure(r: &Remote, entry: &CacheEntry, lock: Option<&LockToken>, e: Error) -> UploadOutcome {
     match e {
         Error::Conflict => UploadOutcome::Conflict {
@@ -220,8 +353,7 @@ fn failure(r: &Remote, entry: &CacheEntry, lock: Option<&LockToken>, e: Error) -
         },
         Error::Locked if lock.is_some() => UploadOutcome::Busy,
         Error::Locked => UploadOutcome::LockedBy(
-            r.client
-                .lock_owner(&entry.remote)
+            lock_holder(r, &entry.remote)
                 .ok()
                 .flatten()
                 .unwrap_or_else(|| "?".into()),
@@ -244,6 +376,25 @@ pub fn reload(r: &Remote, cache: &Cache, entry: &CacheEntry) -> Result<CacheEntr
 pub fn server_changed(r: &Remote, entry: &CacheEntry) -> Option<bool> {
     match r.client.stat(&entry.remote) {
         Ok(server) => is_base_version(r, entry, &server).ok().map(|same| !same),
+        Err(Error::NotFound) => Some(true),
+        Err(_) => None,
+    }
+}
+
+/// [`server_changed`], and when the server still has the base version but
+/// under a new ETag (Nextcloud changes it on LOCK and UNLOCK, not on a
+/// lock refresh), take that ETag as the base: otherwise the next upload
+/// would verify the same thing again by downloading the whole file.
+pub fn settle_base(r: &Remote, cache: &Cache, entry: &mut CacheEntry) -> Option<bool> {
+    match r.client.stat(&entry.remote) {
+        Ok(server) => {
+            let same = is_base_version(r, entry, &server).ok()?;
+            if same && server.etag != entry.etag {
+                entry.rebase(&server);
+                let _ = cache.save_entry(entry);
+            }
+            Some(!same)
+        }
         Err(Error::NotFound) => Some(true),
         Err(_) => None,
     }
@@ -303,8 +454,13 @@ pub fn save_copy(r: &Remote, entry: &CacheEntry, copy_name: &str) -> Result<Stri
 }
 
 /// Overwrite the server's copy with the working copy (the user chose to).
-pub fn overwrite(r: &Remote, entry: &CacheEntry, lock: Option<&LockToken>) -> UploadOutcome {
-    upload(r, entry, lock, true, &mut |_, _| {})
+pub fn overwrite(
+    r: &Remote,
+    cache: &Cache,
+    entry: &CacheEntry,
+    lock: Option<&LockToken>,
+) -> UploadOutcome {
+    upload(r, cache, entry, lock, true, &mut |_, _| {})
 }
 
 pub fn refresh_lock(r: &Remote, remote: &str, token: &LockToken) -> Result<(), Error> {
@@ -340,6 +496,36 @@ pub fn cleanup_locks(r: &Remote, cache: &Cache, keep: &[String]) -> usize {
         }
     }
     n
+}
+
+/// Who holds the lock on `remote`, by display name ("Bob Santoso") when the
+/// server will say it, else the lock's owner text. `None`: not locked.
+pub fn lock_holder(r: &Remote, remote: &str) -> Result<Option<String>, Error> {
+    let Some(owner) = r.client.lock_holder(remote)? else {
+        return Ok(None);
+    };
+    let user = owner
+        .user
+        .clone()
+        .or_else(|| kantor_user(&owner.text))
+        .or_else(|| id_at_issuer(&owner.text));
+    let name = user.and_then(|u| r.client.display_name(&u));
+    Ok(Some(name.unwrap_or(owner.text)))
+}
+
+/// The account id in an owner text like OpenCloud's
+/// `<uuid>@https://drive.example` (it records the user, not our owner).
+fn id_at_issuer(text: &str) -> Option<String> {
+    let (id, issuer) = text.split_once('@')?;
+    (issuer.starts_with("http") && !id.is_empty() && !id.contains(' ')).then(|| id.to_owned())
+}
+
+/// The account in an owner text Kantor wrote ("bob (Kantor)" → "bob").
+fn kantor_user(text: &str) -> Option<String> {
+    text.strip_suffix(" (Kantor)")
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .map(str::to_owned)
 }
 
 fn io(e: std::io::Error) -> Error {

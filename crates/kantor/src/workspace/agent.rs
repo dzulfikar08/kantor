@@ -84,6 +84,20 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<Value> {
+        // Edits and saves of a read-only document are refused.
+        let edits_document = tool == "save_document"
+            || (["sheets_", "docs_", "slides_"]
+                .iter()
+                .any(|p| tool.starts_with(p))
+                && !crate::mcp::tools::is_read_only(tool));
+        if edits_document {
+            let pane = self.agent_pane(agent::opt_int(args, "document")?)?;
+            if self.read_only(pane).is_some() {
+                bail!(
+                    "document {pane} is read-only in Kantor (locked by someone else, or made read-only by the user); it can be read but not changed"
+                );
+            }
+        }
         match tool {
             "list_documents" => Ok(self.list_documents(cx)),
             "open_document" => self.agent_open(args, window, cx),

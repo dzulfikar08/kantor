@@ -5,8 +5,9 @@
 #   DOCKER_HOST=... ./e2e.sh nextcloud     # stacks must be up (docker compose up -d)
 #   DOCKER_HOST=... ./e2e.sh opencloud
 #
-# Creates users alice and bob, app passwords, a folder "Bersama" that alice
-# shares with bob, then runs `cargo test -p kantor_cloud --test e2e_server
+# Nextcloud: creates users alice and bob, app passwords, a folder "Bersama"
+# that alice shares with bob. OpenCloud: uses the demo users alan and lynn.
+# Then runs `cargo test -p kantor_cloud --test e2e_server
 # -- --ignored --test-threads=1`. Credentials go to $E2E_ENV (default
 # ~/.cache/kantor-cloud-e2e.env) for the UI tests.
 set -euo pipefail
@@ -42,11 +43,31 @@ nextcloud)
   BOB_URL=$base/remote.php/dav/files/bob/
   PROXY_URL=http://127.0.0.1:28080/remote.php/dav/files/alice/
   TOXI_PROXY=nextcloud
+  EXTRA="export KANTOR_E2E_ALICE_NAME='Alice Santoso'
+export KANTOR_E2E_BOB_NAME='Bob Santoso'"
   ;;
 opencloud)
+  # Demo users (IDM_CREATE_DEMO_USERS in opencloud/compose.yaml): alan
+  # shares "Bersama" with lynn, who sees it under Shares/.
   base=http://127.0.0.1:9200
-  echo "OpenCloud users/shares are set up by hand; see the ADR." >&2
-  exit 2
+  tok() { docker exec kspike-oc-opencloud-1 opencloud auth-app create --user-name "$1" --expiration 72h 2>&1 | sed -n 's/^ *token: //p'; }
+  AP=$(tok alan); BP=$(tok lynn)
+  E="alan:$AP"
+  curl -s -u "$E" -X MKCOL "$base/remote.php/dav/files/alan/Bersama" -o /dev/null || true
+  drive=$(curl -s -u "$E" "$base/graph/v1.0/me/drives" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(next(x["id"] for x in d["value"] if x["driveType"]=="personal"))')
+  item=$(curl -s -u "$E" -X PROPFIND -H 'Depth: 0' --data '<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop><oc:fileid/></d:prop></d:propfind>' "$base/remote.php/dav/files/alan/Bersama" | grep -o '<oc:fileid>[^<]*' | sed 's/.*>//')
+  lynn=$(curl -s -u "$E" "$base/graph/v1.0/users?%24search=%22lynn%22" | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["value"][0]["id"])')
+  role=$(curl -s -u "$E" "$base/graph/v1beta1/roleManagement/permissions/roleDefinitions" | python3 -I -c 'import json,sys; print(next(r["id"] for r in json.load(sys.stdin) if r.get("displayName")=="Can edit"))')
+  curl -s -u "$E" -H 'Content-Type: application/json' -X POST \
+    -d "{\"recipients\":[{\"objectId\":\"$lynn\",\"@libre.graph.recipient.type\":\"user\"}],\"roles\":[\"$role\"]}" \
+    "$base/graph/v1beta1/drives/$drive/items/$item/invite" -o /dev/null || true
+  ALICE_URL=$base/remote.php/dav/files/alan/
+  BOB_URL=$base/remote.php/dav/files/lynn/
+  PROXY_URL=http://127.0.0.1:29200/remote.php/dav/files/alan/
+  TOXI_PROXY=opencloud
+  EXTRA="export KANTOR_E2E_BOB_SHARED=Shares/Bersama
+export KANTOR_E2E_ALICE_NAME='Alan Turing'
+export KANTOR_E2E_BOB_NAME='Lynn Conway'"
   ;;
 esac
 
@@ -59,6 +80,7 @@ export KANTOR_E2E_SHARED=Bersama
 export KANTOR_E2E_ALICE_PROXY_URL=$PROXY_URL
 export KANTOR_E2E_TOXI_API=http://127.0.0.1:28474
 export KANTOR_E2E_TOXI_PROXY=$TOXI_PROXY
+$EXTRA
 EOF
 . "$E2E_ENV"
 cd "$root"

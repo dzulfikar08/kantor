@@ -147,6 +147,19 @@ impl HeldLock {
 #[derive(Default, Serialize, Deserialize)]
 struct Index {
     entries: Vec<CacheEntry>,
+    /// Resumable uploads in progress, by working copy.
+    #[serde(default)]
+    uploads: Vec<PendingUpload>,
+}
+
+/// A resumable upload that hasn't finished (see `chunked`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingUpload {
+    pub local: PathBuf,
+    /// SHA-256 of the bytes being uploaded: a later save starts over.
+    pub sha256: String,
+    /// Nextcloud: the upload id. TUS: the upload URL.
+    pub id: String,
 }
 
 /// Index and lock ledger writes are read-modify-write; one at a time.
@@ -216,6 +229,31 @@ impl Cache {
         write_json(&self.index_path(), &index)
     }
 
+    /// The unfinished resumable upload of the working copy at `local`.
+    pub fn pending_upload(&self, local: &Path) -> Option<PendingUpload> {
+        self.load_index()
+            .uploads
+            .into_iter()
+            .find(|u| u.local == local)
+    }
+
+    /// Record (`Some`) or forget (`None`) the resumable upload of `local`.
+    pub fn set_pending_upload(
+        &self,
+        local: &Path,
+        up: Option<PendingUpload>,
+    ) -> std::io::Result<()> {
+        let _g = WRITE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut index = self.load_index();
+        let before = index.uploads.len();
+        index.uploads.retain(|u| u.local != local);
+        if up.is_none() && index.uploads.len() == before {
+            return Ok(());
+        }
+        index.uploads.extend(up);
+        write_json(&self.index_path(), &index)
+    }
+
     pub fn held_locks(&self) -> Vec<HeldLock> {
         read_json(&self.locks_path()).unwrap_or_default()
     }
@@ -238,6 +276,112 @@ impl Cache {
         }
         write_json(&self.locks_path(), &locks)
     }
+}
+
+impl Cache {
+    /// Move the working copies, index and lock ledger of an older cache
+    /// root (`old`) into this one, rewriting their paths. Copies already
+    /// present here win. Returns how many working copies moved.
+    pub fn migrate_from(&self, old: &Path) -> std::io::Result<usize> {
+        if !old.join("index.json").is_file() || old == self.root {
+            return Ok(0);
+        }
+        let _g = WRITE.lock().unwrap_or_else(|e| e.into_inner());
+        let old_index: Index = read_json(&old.join("index.json")).unwrap_or_default();
+        let mut index = self.load_index();
+        let mut moved = 0;
+        for mut e in old_index.entries {
+            let Ok(rel) = e.local.strip_prefix(old) else {
+                continue;
+            };
+            let target = self.root.join(rel);
+            if index.entries.iter().any(|x| x.local == target) {
+                continue;
+            }
+            if e.local.is_file() {
+                move_file(&e.local, &target)?;
+                moved += 1;
+            }
+            e.local = target;
+            index.entries.push(e);
+        }
+        write_json(&self.index_path(), &index)?;
+        let old_locks: Vec<HeldLock> = read_json(&old.join("locks.json")).unwrap_or_default();
+        if !old_locks.is_empty() {
+            let mut locks: Vec<HeldLock> = read_json(&self.locks_path()).unwrap_or_default();
+            for l in old_locks {
+                if !locks
+                    .iter()
+                    .any(|x| x.account == l.account && x.remote == l.remote)
+                {
+                    locks.push(l);
+                }
+            }
+            write_json(&self.locks_path(), &locks)?;
+        }
+        let _ = std::fs::remove_file(old.join("index.json"));
+        let _ = std::fs::remove_file(old.join("locks.json"));
+        remove_empty_dirs(old);
+        Ok(moved)
+    }
+
+    /// Delete working copies that match the server (no local saves), aren't
+    /// in `keep` (open now) and weren't touched for `max_age`, with their
+    /// index entries. Copies with local saves are never deleted. Returns how
+    /// many went.
+    pub fn prune(&self, max_age: std::time::Duration, keep: &[PathBuf]) -> usize {
+        let _g = WRITE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut index = self.load_index();
+        let now = std::time::SystemTime::now();
+        let mut removed = 0;
+        index.entries.retain(|e| {
+            if keep.contains(&e.local) || e.has_local_changes() {
+                return true;
+            }
+            let old = std::fs::metadata(&e.local)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| now.duration_since(t).ok())
+                .is_none_or(|age| age >= max_age);
+            if !old {
+                return true;
+            }
+            if e.local.is_file() && std::fs::remove_file(&e.local).is_err() {
+                return true;
+            }
+            removed += 1;
+            false
+        });
+        if removed > 0 {
+            let _ = write_json(&self.index_path(), &index);
+            remove_empty_dirs(&self.root);
+        }
+        removed
+    }
+}
+
+/// Rename, or copy and delete across filesystems.
+fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    if let Some(dir) = to.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    if std::fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(from, to)?;
+    std::fs::remove_file(from)
+}
+
+/// Remove empty folders under (and including) `dir`.
+fn remove_empty_dirs(dir: &Path) {
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            if e.path().is_dir() {
+                remove_empty_dirs(&e.path());
+            }
+        }
+    }
+    let _ = std::fs::remove_dir(dir);
 }
 
 /// Write `bytes` to `path` through a temporary file in the same folder, so
@@ -371,6 +515,54 @@ mod tests {
             sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn migrate_and_prune() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = Cache::new(dir.path().join("old"));
+        let new = Cache::new(dir.path().join("new"));
+        let synced = old.local_path("a", "x/Synced.xlsx");
+        let edited = old.local_path("a", "x/Edited.docx");
+        write_atomic(&synced, b"v1").unwrap();
+        write_atomic(&edited, b"v1").unwrap();
+        for (p, r) in [(&synced, "x/Synced.xlsx"), (&edited, "x/Edited.docx")] {
+            old.save_entry(&CacheEntry {
+                account: "a".into(),
+                remote: r.into(),
+                local: p.clone(),
+                synced: Stamp::of(p),
+                ..Default::default()
+            })
+            .unwrap();
+        }
+        std::fs::write(&edited, b"saved offline, longer").unwrap();
+        old.record_lock(HeldLock {
+            account: "a".into(),
+            remote: "x/Edited.docx".into(),
+            token: "t".into(),
+        })
+        .unwrap();
+        assert_eq!(new.migrate_from(old.root()).unwrap(), 2);
+        assert!(!old.root().exists(), "old root emptied and removed");
+        let e = new.find_remote("a", "x/Edited.docx").unwrap();
+        assert_eq!(e.local, new.local_path("a", "x/Edited.docx"));
+        assert!(e.has_local_changes(), "local saves survive the move");
+        assert_eq!(new.held_locks().len(), 1);
+        // Running again does nothing.
+        assert_eq!(new.migrate_from(old.root()).unwrap(), 0);
+        // Pruning: the synced copy goes, the edited one stays.
+        assert_eq!(new.prune(std::time::Duration::ZERO, &[]), 1);
+        assert!(new.find_remote("a", "x/Synced.xlsx").is_none());
+        assert!(
+            new.find_remote("a", "x/Edited.docx")
+                .unwrap()
+                .local
+                .is_file()
+        );
+        // An open copy is kept too.
+        let open = new.find_remote("a", "x/Edited.docx").unwrap().local;
+        assert_eq!(new.prune(std::time::Duration::ZERO, &[open]), 0);
     }
 
     #[test]

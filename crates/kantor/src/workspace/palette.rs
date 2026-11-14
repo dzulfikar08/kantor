@@ -73,7 +73,23 @@ pub(super) const COMMANDS: &[Command] = &[
         title: "Save",
         detail: "Current document",
         keys: "Ctrl S",
-        run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.save(w, cx)),
+        run: |ws, window, cx| {
+            if !ws.refuse_if_read_only(cx) {
+                ws.with_active(window, cx, |v, w, cx| v.save(w, cx))
+            }
+        },
+    },
+    Command {
+        title: "Make Read-Only",
+        detail: "Jadikan Hanya Baca · refuse edits to this document until you allow them",
+        keys: "",
+        run: |ws, _, cx| ws.make_read_only(cx),
+    },
+    Command {
+        title: "Allow Editing",
+        detail: "Izinkan Pengeditan · end read-only; a cloud file takes the lock (Edit now)",
+        keys: "",
+        run: |ws, window, cx| ws.allow_editing(window, cx),
     },
     Command {
         title: "Save As…",

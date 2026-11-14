@@ -14,6 +14,7 @@ pub(crate) mod jobs;
 mod widgets;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -32,6 +33,7 @@ use kantor_ui::i18n::{Lang, lang, tr};
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 
+use super::read_only::ReadOnly;
 use super::{AppKind, Workspace};
 use crate::actions::{CloudAccounts, OpenFromCloud, SyncNow};
 use accounts::AccountsPanel;
@@ -68,6 +70,8 @@ struct CloudDoc {
     seen: Option<Stamp>,
     /// The server answers again while local saves wait: offer "Sync now".
     server_back: bool,
+    /// Locked by someone else, but the lock is gone now: offer "Edit now".
+    lock_free: bool,
     /// Serializes this document's network work (upload, lock release) on
     /// the worker threads.
     ops: Arc<Mutex<()>>,
@@ -80,15 +84,49 @@ pub(super) struct Cloud {
     overlay: Option<(AnyView, Subscription)>,
     ticker: Option<Task<()>>,
     started: bool,
+    /// The user chose "Keep Local Copy" for the close in progress.
+    pub(super) close_ok: bool,
 }
 
-/// The cache of working copies (`<cache dir>/cloud`).
+/// The working copies (`<data dir>/cloud`: unsynced work must not live
+/// where cache cleaners delete things).
 pub(crate) fn cache() -> Cache {
-    let root = kantor_core::dirs::cache_dir()
+    let root = kantor_core::dirs::data_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("cloud");
     Cache::new(root)
 }
+
+/// Where working copies used to be (`<cache dir>/cloud`).
+fn old_cache_root() -> Option<PathBuf> {
+    Some(kantor_core::dirs::cache_dir()?.join("cloud"))
+}
+
+/// Move working copies from the old cache folder (once, at startup,
+/// before the session restores their tabs).
+pub(super) fn migrate_working_copies() {
+    let Some(old) = old_cache_root() else {
+        return;
+    };
+    match cache().migrate_from(&old) {
+        Ok(0) => {}
+        Ok(n) => log::info!("moved {n} cloud working copies to the data folder"),
+        Err(e) => log::warn!("moving cloud working copies: {e}"),
+    }
+}
+
+/// A session path inside the old working-copy folder, mapped to the new one.
+pub(super) fn migrated_path(path: &std::path::Path) -> PathBuf {
+    if let Some(old) = old_cache_root()
+        && let Ok(rel) = path.strip_prefix(&old)
+    {
+        return cache().root().join(rel);
+    }
+    path.to_path_buf()
+}
+
+/// Synced working copies untouched for this long are deleted at startup.
+const PRUNE_AFTER: Duration = Duration::from_secs(30 * 24 * 3600);
 
 /// A client for `account` with its stored app password (worker thread:
 /// the keychain may block).
@@ -313,6 +351,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let seen = Stamp::of(&sync.entry.local);
+        // Local saves kept from an earlier session ("Keep Local Copy", a
+        // quit while offline): send them now unless someone else has the file.
+        let send = matches!(sync.state, kantor_cloud::sync::SyncState::LocalChanges)
+            && !matches!(sync.lock, LockState::LockedBy(_));
         self.cloud.docs.insert(
             pane,
             CloudDoc {
@@ -320,11 +362,81 @@ impl Workspace {
                 account,
                 seen,
                 server_back: false,
+                lock_free: false,
                 ops: Arc::default(),
             },
         );
         self.start_cloud_ticker(window, cx);
+        self.sync_read_only(cx);
+        if send {
+            self.upload(pane, false, window, cx);
+        }
         cx.notify();
+    }
+
+    /// Cloud documents locked by someone else are read-only (see
+    /// `read_only`); others aren't, unless the user made them so.
+    fn sync_read_only(&mut self, cx: &mut Context<Self>) {
+        let wanted: Vec<(PaneId, Option<ReadOnly>)> = self
+            .cloud
+            .docs
+            .iter()
+            .map(|(&p, cd)| {
+                let ro = match &cd.sync.lock {
+                    LockState::LockedBy(owner) => Some(ReadOnly::Locked {
+                        owner: owner.clone(),
+                        free: cd.lock_free,
+                    }),
+                    _ => None,
+                };
+                (p, ro)
+            })
+            .collect();
+        for (pane, ro) in wanted {
+            if ro.is_none() && matches!(self.read_only(pane), Some(ReadOnly::Manual)) {
+                continue;
+            }
+            self.set_read_only(pane, ro, cx);
+        }
+    }
+
+    /// "Check again" on a locked document: is the lock still there?
+    pub(super) fn check_lock(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(cd) = self.cloud.docs.get(&pane) else {
+            return;
+        };
+        let (account, remote) = (cd.account.clone(), cd.sync.entry.remote.clone());
+        jobs::spawn_in(
+            cx,
+            window,
+            move |_: &dyn Fn(())| {
+                let r = remote_for(&account).ok()?;
+                session::lock_holder(&r, &remote).ok()
+            },
+            |_, _, _, _| {},
+            move |ws: &mut Self, r, _, cx| {
+                let Some(holder) = r else {
+                    ws.cloud_notice(
+                        tr("Can't reach the server.", "Server tidak dapat dihubungi."),
+                        cx,
+                    );
+                    return;
+                };
+                let Some(cd) = ws.cloud.docs.get_mut(&pane) else {
+                    return;
+                };
+                match holder {
+                    Some(owner) => {
+                        let text = read_only_notice(&owner);
+                        cd.sync.lock = LockState::LockedBy(owner);
+                        cd.lock_free = false;
+                        ws.cloud_notice(text, cx);
+                    }
+                    None => cd.lock_free = true,
+                }
+                ws.sync_read_only(cx);
+            },
+        );
     }
 
     /// After a session restore: panes showing working copies become cloud
@@ -342,8 +454,7 @@ impl Workspace {
             }
         }
         let accounts = Settings::load().cloud.accounts;
-        let has_locks = !store.held_locks().is_empty();
-        if restored.is_empty() && !has_locks {
+        if accounts.is_empty() {
             return;
         }
         let keep: Vec<(String, String)> = restored
@@ -355,6 +466,11 @@ impl Workspace {
             window,
             move |_: &dyn Fn(())| {
                 let cache = cache();
+                let open: Vec<PathBuf> = restored.iter().map(|(_, e)| e.local.clone()).collect();
+                let pruned = cache.prune(PRUNE_AFTER, &open);
+                if pruned > 0 {
+                    log::info!("deleted {pruned} old synced cloud working copies");
+                }
                 // Locks left by a previous run (crash, kill, no network at exit).
                 for a in &accounts {
                     if let Ok(r) = remote_for(a) {
@@ -469,6 +585,7 @@ impl Workspace {
                 .detach();
             }
         }
+        self.sync_read_only(cx);
         cx.notify();
     }
 
@@ -499,12 +616,37 @@ impl Workspace {
                     Err(e) => return (UploadOutcome::Failed(e), entry),
                 };
                 let mut last = 0u64;
-                let out = session::upload(&r, &entry, lock.as_ref(), force, &mut |sent, total| {
-                    // At most ~100 updates per upload.
-                    if total == 0 || sent == total || (sent - last) * 100 >= total {
-                        last = sent;
-                        progress((sent, total));
-                    }
+                // A panic in the upload must not leave the chip at
+                // "Uploading" for good: report it as a failure instead.
+                let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    session::upload(
+                        &r,
+                        &cache(),
+                        &entry,
+                        lock.as_ref(),
+                        force,
+                        &mut |sent, total| {
+                            // At most ~100 updates per upload. `sent` goes
+                            // back when a part is sent again after a drop.
+                            if total == 0
+                                || sent == total
+                                || sent < last
+                                || (sent - last) * 100 >= total
+                            {
+                                last = sent;
+                                progress((sent, total));
+                            }
+                        },
+                    )
+                }))
+                .unwrap_or_else(|_| {
+                    UploadOutcome::Failed(
+                        tr(
+                            "The upload stopped unexpectedly. Choose Sync now to try again.",
+                            "Unggahan berhenti tiba-tiba. Pilih Sinkronkan sekarang untuk mencoba lagi.",
+                        )
+                        .to_string(),
+                    )
                 });
                 if let UploadOutcome::Synced {
                     server,
@@ -584,7 +726,11 @@ impl Workspace {
             return;
         };
         if cd.sync.read_only_by().is_some() {
-            self.retry_lock(pane, window, cx);
+            if cd.lock_free {
+                self.edit_now(pane, window, cx);
+            } else {
+                self.check_lock(pane, window, cx);
+            }
             return;
         }
         if matches!(
@@ -601,9 +747,9 @@ impl Workspace {
         self.run_action(pane, action, window, cx);
     }
 
-    /// Try to take the lock of a read-only document again (the other
-    /// person may have closed it).
-    fn retry_lock(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+    /// "Edit now": take the lock of a read-only document (the other
+    /// person closed it) and reload it if they changed it.
+    pub(super) fn edit_now(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(cd) = self.cloud.docs.get(&pane) else {
             return;
         };
@@ -615,25 +761,35 @@ impl Workspace {
                 let r = remote_for(&account).ok()?;
                 let cache = cache();
                 let lock = session::take_lock(&r, &cache, &entry.remote);
-                let changed = session::server_changed(&r, &entry).unwrap_or(false);
+                let mut entry = entry;
+                let changed = session::settle_base(&r, &cache, &mut entry).unwrap_or(false);
                 let server_etag = r.client.stat(&entry.remote).ok().and_then(|e| e.etag);
-                Some((lock, changed, server_etag))
+                Some((lock, changed, server_etag, entry))
             },
             |_, _, _, _| {},
             move |ws: &mut Self, r, window, cx| {
-                let Some((lock, changed, server_etag)) = r else {
+                let Some((lock, changed, server_etag, entry)) = r else {
                     return;
                 };
                 let Some(cd) = ws.cloud.docs.get_mut(&pane) else {
                     return;
                 };
+                if !changed {
+                    // The base under the ETag the lock gave it.
+                    cd.sync.entry.etag = entry.etag;
+                    cd.sync.entry.modified = entry.modified;
+                    cd.sync.entry.size = entry.size;
+                }
                 if let LockState::LockedBy(who) = &lock {
                     let text = read_only_notice(who);
                     cd.sync.lock = lock;
+                    cd.lock_free = false;
                     ws.cloud_notice(text, cx);
+                    ws.sync_read_only(cx);
                     return;
                 }
                 cd.sync.lock = lock;
+                cd.lock_free = false;
                 let local = cd.sync.unsynced();
                 let action = if changed && local {
                     cd.sync.state = kantor_cloud::sync::SyncState::Conflict { server_etag };
@@ -650,6 +806,7 @@ impl Workspace {
                     ),
                     cx,
                 );
+                ws.sync_read_only(cx);
                 if changed && !local {
                     // They saved while it was locked: show their version.
                     ws.reload_view_from_server(pane, window, cx);
@@ -827,7 +984,8 @@ impl Workspace {
                 kantor_cloud::sync::SyncState::Offline | kantor_cloud::sync::SyncState::Failed(_)
             ) || (cd.sync.lock == LockState::None && !cd.sync.is_uploading());
             let lock = cd.sync.lock_token().cloned();
-            if !offline && !(refresh && lock.is_some()) {
+            let locked_out = cd.sync.read_only_by().is_some() && !cd.lock_free;
+            if !offline && !locked_out && !(refresh && lock.is_some()) {
                 continue;
             }
             let (account, remote, ops) = (
@@ -844,6 +1002,11 @@ impl Workspace {
                     let reachable = r.client.stat(&remote).is_ok();
                     if !reachable {
                         return Some((false, None));
+                    }
+                    if locked_out {
+                        // Don't take it: offer "Edit now" when it's free.
+                        let free = matches!(session::lock_holder(&r, &remote), Ok(None));
+                        return Some((true, free.then_some(LockState::None)));
                     }
                     let cache = cache();
                     let lock = match &lock {
@@ -865,8 +1028,10 @@ impl Workspace {
                     let Some(cd) = ws.cloud.docs.get_mut(&pane) else {
                         return;
                     };
-                    if let Some(lock) = lock {
-                        cd.sync.lock = lock;
+                    match lock {
+                        Some(LockState::None) if locked_out => cd.lock_free = true,
+                        Some(lock) => cd.sync.lock = lock,
+                        None => {}
                     }
                     let mut announce = false;
                     if reachable && matches!(cd.sync.state, kantor_cloud::sync::SyncState::Offline)
@@ -888,6 +1053,7 @@ impl Workspace {
                             cx,
                         );
                     }
+                    ws.sync_read_only(cx);
                     cx.notify();
                 },
             );
@@ -1142,6 +1308,41 @@ impl Workspace {
             })
     }
 
+    /// Cloud documents among `closing`'s panes whose saves aren't on the
+    /// server (offline, failed, uploading or waiting).
+    pub(super) fn unsynced_cloud(&self, closing: super::closing::Closing) -> Vec<PaneId> {
+        self.closing_panes(closing)
+            .into_iter()
+            .filter(|p| {
+                self.cloud.docs.get(p).is_some_and(|cd| {
+                    cd.sync.read_only_by().is_none()
+                        && (cd.sync.unsynced() || cd.sync.is_uploading())
+                })
+            })
+            .collect()
+    }
+
+    pub(super) fn cloud_uploading(&self, panes: &[PaneId]) -> bool {
+        panes.iter().any(|p| {
+            self.cloud
+                .docs
+                .get(p)
+                .is_some_and(|cd| cd.sync.is_uploading())
+        })
+    }
+
+    /// Upload one pane's working copy if it has saves the server lacks.
+    pub(super) fn sync_pane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(cd) = self.cloud.docs.get_mut(&pane) else {
+            return;
+        };
+        if cd.sync.is_uploading() {
+            return;
+        }
+        let action = cd.sync.on_reconnect();
+        self.run_action(pane, action, window, cx);
+    }
+
     /// Whether the focused document is a cloud document (for the palette).
     pub(super) fn focused_is_cloud(&self) -> bool {
         self.active
@@ -1160,9 +1361,12 @@ fn reattach(account: &CloudAccount, cache: &Cache, entry: CacheEntry) -> (DocSyn
     match r.client.stat(&entry.remote) {
         Err(e) if session::is_offline(&e) => (DocSync::offline(entry), false),
         Err(_) => (DocSync::new(entry, LockState::None), false),
-        Ok(server) => {
-            let changed = !session::is_base_version(&r, &entry, &server).unwrap_or(false);
+        Ok(_) => {
+            // Lock first, then check: the lock changes the ETag on
+            // Nextcloud, and checking after it lets the base follow.
+            let mut entry = entry;
             let lock = session::take_lock(&r, cache, &entry.remote);
+            let changed = session::settle_base(&r, cache, &mut entry).unwrap_or(true);
             if changed
                 && !entry.has_local_changes()
                 && let Ok(fresh) = session::reload(&r, cache, &entry)
@@ -1172,7 +1376,7 @@ fn reattach(account: &CloudAccount, cache: &Cache, entry: CacheEntry) -> (DocSyn
             let mut sync = DocSync::new(entry, lock);
             if changed {
                 sync.state = kantor_cloud::sync::SyncState::Conflict {
-                    server_etag: server.etag,
+                    server_etag: r.client.stat(&sync.entry.remote).ok().and_then(|e| e.etag),
                 };
             }
             (sync, false)

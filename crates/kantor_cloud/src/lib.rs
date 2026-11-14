@@ -8,6 +8,7 @@
 //! `kantor_update`): call it off the UI thread.
 
 pub mod cache;
+pub mod chunked;
 pub mod session;
 pub mod sync;
 mod xml;
@@ -18,7 +19,10 @@ use std::time::Duration;
 use base64::Engine as _;
 use ureq::http::{self, Method};
 
-pub use xml::{parse_lock_owner, parse_lock_token, parse_multistatus};
+pub use xml::{
+    parse_display_name, parse_lock_owner, parse_lock_token, parse_lock_user, parse_multistatus,
+    parse_user_search,
+};
 
 /// How long [`Client::get`] keeps retrying `425 Too Early`.
 pub const TOO_EARLY_WAIT: Duration = Duration::from_secs(15);
@@ -139,6 +143,15 @@ pub enum Precondition<'a> {
     Overwrite,
 }
 
+/// Who holds a lock.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LockOwner {
+    /// The account id, when the server says it.
+    pub user: Option<String>,
+    /// The lock's owner text ("bob (Kantor)").
+    pub text: String,
+}
+
 /// A held `LOCK`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LockToken(pub String);
@@ -222,14 +235,79 @@ impl Client {
     }
 
     fn send(&self, req: http::request::Builder, body: &[u8]) -> Result<Reply, Error> {
-        let req = req
-            .body(body)
-            .map_err(|e| Error::Protocol(format!("request: {e}")))?;
-        let resp = self
-            .agent
-            .run(req)
-            .map_err(|e| Error::Network(e.to_string()))?;
-        Reply::read(resp)
+        self.exec(req, body, None, None)
+    }
+
+    /// Run a request. A pooled keep-alive connection the server or a proxy
+    /// already closed (after a dropped link) fails at once with a broken
+    /// pipe or reset: the request is sent once more on a fresh connection.
+    /// `wait`: how long the reply may take (uploads); `progress`: report
+    /// the body's bytes as they go, offset by `.1`, of `.2`.
+    fn exec(
+        &self,
+        req: http::request::Builder,
+        body: &[u8],
+        wait: Option<Duration>,
+        mut progress: Option<(Progress<'_>, u64, u64)>,
+    ) -> Result<Reply, Error> {
+        let (parts, ()) = req
+            .body(())
+            .map_err(|e| Error::Protocol(format!("request: {e}")))?
+            .into_parts();
+        for attempt in 0..2 {
+            let mut b = http::Request::builder()
+                .method(parts.method.clone())
+                .uri(parts.uri.clone());
+            for (k, v) in &parts.headers {
+                b = b.header(k, v);
+            }
+            let result = match progress.as_mut() {
+                Some((report, base, total)) => {
+                    let (base, total) = (*base, *total);
+                    let mut f = |sent: u64, _: u64| report(base + sent, total);
+                    let mut reader = ProgressReader {
+                        data: body,
+                        pos: 0,
+                        progress: &mut f,
+                    };
+                    let req = b
+                        .body(ureq::SendBody::from_reader(&mut reader))
+                        .map_err(|e| Error::Protocol(format!("request: {e}")))?;
+                    self.run_configured(req, wait)
+                }
+                None => {
+                    let req = b
+                        .body(body)
+                        .map_err(|e| Error::Protocol(format!("request: {e}")))?;
+                    self.run_configured(req, wait)
+                }
+            };
+            match result {
+                Err(e) if attempt == 0 && stale_connection(&e) => continue,
+                Err(e) => return Err(Error::Network(e.to_string())),
+                Ok(resp) => return Reply::read(resp),
+            }
+        }
+        unreachable!("the loop returns")
+    }
+
+    fn run_configured<B: ureq::AsSendBody>(
+        &self,
+        req: http::Request<B>,
+        wait: Option<Duration>,
+    ) -> Result<http::Response<ureq::Body>, ureq::Error> {
+        match wait {
+            Some(w) => {
+                let req = self
+                    .agent
+                    .configure_request(req)
+                    .timeout_per_read(Some(w))
+                    .timeout_recv_response(Some(w))
+                    .build();
+                self.agent.run(req)
+            }
+            None => self.agent.run(req),
+        }
     }
 
     /// The children of a folder (depth 1), without the folder itself.
@@ -347,27 +425,12 @@ impl Client {
             req = req.header("if", format!("(<{t}>)"));
         }
         let total = bytes.len() as u64;
-        let mut reader = ProgressReader {
-            data: bytes,
-            pos: 0,
-            progress,
-        };
-        let body = ureq::SendBody::from_reader(&mut reader);
-        let req = req
-            .body(body)
-            .map_err(|e| Error::Protocol(format!("request: {e}")))?;
-        let reply_wait = reply_wait(total);
-        let req = self
-            .agent
-            .configure_request(req)
-            .timeout_per_read(Some(reply_wait))
-            .timeout_recv_response(Some(reply_wait))
-            .build();
-        let resp = self
-            .agent
-            .run(req)
-            .map_err(|e| Error::Network(e.to_string()))?;
-        let r = Reply::read(resp)?;
+        let r = self.exec(
+            req,
+            bytes,
+            Some(reply_wait(total)),
+            Some((progress, 0, total)),
+        )?;
         match r.status {
             200 | 201 | 204 => Ok(r.etag),
             _ => Err(r.error()),
@@ -435,6 +498,86 @@ impl Client {
         }
     }
 
+    /// Who holds the lock on `path`, if anyone: the account id when the
+    /// server says it, and the lock's owner text.
+    pub fn lock_holder(&self, path: &str) -> Result<Option<LockOwner>, Error> {
+        const BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns"><d:prop><d:lockdiscovery/><nc:lock-owner-displayname/><nc:lock-owner/></d:prop></d:propfind>"#;
+        let text = self.propfind_raw(path, 0, BODY)?;
+        Ok(parse_lock_owner(&text).map(|owner| LockOwner {
+            user: parse_lock_user(&text),
+            text: owner,
+        }))
+    }
+
+    /// An account's display name ("Bob Santoso"). Tried in order: the user
+    /// search people get when sharing (Nextcloud autocomplete, OpenCloud
+    /// Graph search; both work for ordinary users), then the user APIs
+    /// (Nextcloud OCS, OpenCloud Graph; often admin-only). `None` when the
+    /// server doesn't tell this user.
+    pub fn display_name(&self, user: &str) -> Option<String> {
+        let origin = self.origin();
+        let enc = percent_encode(user);
+        let searches = [
+            format!("{origin}/ocs/v2.php/core/autocomplete/get?search={enc}&format=json"),
+            format!("{origin}/graph/v1.0/users?$search=%22{enc}%22"),
+        ];
+        for url in searches {
+            let mut req = http::Request::builder()
+                .method(Method::GET)
+                .uri(&url)
+                .header("ocs-apirequest", "true")
+                .header("accept", "application/json");
+            if let Some(a) = &self.auth {
+                req = req.header("authorization", a);
+            }
+            if let Ok(r) = self.send(req, &[])
+                && r.status == 200
+                && let Some(name) = parse_user_search(&String::from_utf8_lossy(&r.bytes), user)
+            {
+                return Some(name);
+            }
+        }
+        let urls = [
+            format!("{origin}/ocs/v2.php/cloud/users/{enc}?format=json"),
+            format!("{origin}/graph/v1.0/users/{enc}"),
+        ];
+        for url in urls {
+            let mut req = http::Request::builder()
+                .method(Method::GET)
+                .uri(&url)
+                .header("ocs-apirequest", "true")
+                .header("accept", "application/json");
+            if let Some(a) = &self.auth {
+                req = req.header("authorization", a);
+            }
+            let Ok(r) = self.send(req, &[]) else {
+                continue;
+            };
+            if r.status == 200
+                && let Some(name) = parse_display_name(&String::from_utf8_lossy(&r.bytes))
+            {
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    /// The server's address without the WebDAV path
+    /// (`https://drive.example.go.id` from `…/remote.php/dav/files/budi/`).
+    pub fn origin(&self) -> String {
+        for marker in ["/remote.php/", "/dav/", "/webdav"] {
+            if let Some(i) = self.base.find(marker) {
+                return self.base[..i].to_owned();
+            }
+        }
+        let after_scheme = self.base.find("://").map_or(0, |i| i + 3);
+        match self.base[after_scheme..].find('/') {
+            Some(i) => self.base[..after_scheme + i].to_owned(),
+            None => self.base.trim_end_matches('/').to_owned(),
+        }
+    }
+
     /// Who holds the lock on `path`, if anyone (best effort: Nextcloud's
     /// display name, else the lock's `owner`).
     pub fn lock_owner(&self, path: &str) -> Result<Option<String>, Error> {
@@ -460,6 +603,20 @@ impl Client {
             _ => Err(r.error()),
         }
     }
+}
+
+/// A connection that was already dead when reused: the request never
+/// reached the server, so sending it again is safe.
+fn stale_connection(e: &ureq::Error) -> bool {
+    let s = e.to_string().to_ascii_lowercase();
+    [
+        "broken pipe",
+        "connection reset",
+        "peer disconnected",
+        "connection aborted",
+    ]
+    .iter()
+    .any(|p| s.contains(p))
 }
 
 /// How long a PUT may wait for its reply once the body is written.
@@ -495,6 +652,10 @@ struct Reply {
     etag: Option<String>,
     lock_token: Option<String>,
     gzip: bool,
+    /// The server speaks TUS (`Tus-Resumable` header).
+    tus: bool,
+    upload_offset: Option<u64>,
+    location: Option<String>,
     bytes: Vec<u8>,
 }
 
@@ -510,6 +671,9 @@ impl Reply {
         let etag = header("etag").or_else(|| header("oc-etag"));
         let lock_token = header("lock-token");
         let gzip = header("content-encoding").is_some_and(|e| e.eq_ignore_ascii_case("gzip"));
+        let tus = header("tus-resumable").is_some() || header("tus-version").is_some();
+        let upload_offset = header("upload-offset").and_then(|o| o.trim().parse().ok());
+        let location = header("location");
         let mut bytes = Vec::new();
         resp.into_body()
             .into_reader()
@@ -520,6 +684,9 @@ impl Reply {
             etag,
             lock_token,
             gzip,
+            tus,
+            upload_offset,
+            location,
             bytes,
         })
     }
@@ -620,6 +787,24 @@ mod tests {
         }
         assert_eq!(percent_decode("100%"), "100%");
         assert_eq!(percent_decode("a%zz"), "a%zz");
+    }
+
+    #[test]
+    fn origins() {
+        let c = |u: &str| Client::new(u, Auth::None).origin();
+        assert_eq!(
+            c("https://d.example/remote.php/dav/files/bob/"),
+            "https://d.example"
+        );
+        assert_eq!(
+            c("https://d.example/nc/remote.php/webdav/"),
+            "https://d.example/nc"
+        );
+        assert_eq!(
+            c("http://127.0.0.1:9200/dav/files/admin/"),
+            "http://127.0.0.1:9200"
+        );
+        assert_eq!(c("https://x.example/files/"), "https://x.example");
     }
 
     #[test]

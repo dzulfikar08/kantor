@@ -20,6 +20,7 @@ mod home;
 mod naming;
 mod palette;
 mod panels;
+mod read_only;
 mod recovery;
 mod splits;
 mod update;
@@ -91,6 +92,8 @@ impl AppKind {
 /// An open document; shown by exactly one pane.
 struct Doc {
     view: DocView,
+    /// Edits are refused (see `read_only`).
+    read_only: Option<read_only::ReadOnly>,
     _changes: Vec<Subscription>,
 }
 
@@ -158,6 +161,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        cloud::migrate_working_copies();
         let session = Session::load();
         let mut this = Self {
             docs: HashMap::new(),
@@ -266,6 +270,7 @@ impl Workspace {
     fn doc_entry(id: PaneId, view: DocView, window: &mut Window, cx: &mut Context<Self>) -> Doc {
         // Every change redraws; a cloud document also checks for a save.
         let on_change = move |ws: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+            ws.revert_read_only_edits(id, window, cx);
             ws.cloud_doc_changed(id, window, cx);
             cx.notify();
         };
@@ -293,6 +298,7 @@ impl Workspace {
         };
         Doc {
             view,
+            read_only: None,
             _changes: changes,
         }
     }
@@ -307,7 +313,8 @@ impl Workspace {
         let Some(view) = DocView::new(kind, path, window, cx) else {
             return;
         };
-        let doc = Self::doc_entry(pane, view, window, cx);
+        let mut doc = Self::doc_entry(pane, view, window, cx);
+        doc.read_only = self.docs.get(&pane).and_then(|d| d.read_only.clone());
         self.docs.insert(pane, doc);
         self.activate(self.active, window, cx);
     }
@@ -702,9 +709,10 @@ impl Workspace {
         for saved in &session.tabs {
             let mut ids = HashMap::new();
             for p in &saved.panes {
-                if p.path.is_file()
-                    && let Some(kind) = AppKind::for_path(&p.path)
-                    && let Some(id) = self.new_doc(kind, Some(p.path.clone()), window, cx)
+                let path = cloud::migrated_path(&p.path);
+                if path.is_file()
+                    && let Some(kind) = AppKind::for_path(&path)
+                    && let Some(id) = self.new_doc(kind, Some(path.clone()), window, cx)
                 {
                     ids.insert(p.id, id);
                 }

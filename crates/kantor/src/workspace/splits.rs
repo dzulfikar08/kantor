@@ -154,18 +154,30 @@ impl Workspace {
         let Some(doc) = self.docs.get(&pane) else {
             return div().size_full().into_any_element();
         };
+        let guard = self.read_only_guard(pane, cx);
+        let banner = self.render_read_only_banner(pane, cx);
         div()
             .id(("pane", pane as usize))
             .relative()
             .size_full()
             .overflow_hidden()
+            .flex()
+            .flex_col()
             .capture_any_mouse_down(cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                 ws.focus_pane(pane, window, cx);
             }))
+            .children(banner)
             .child(
-                doc.view
-                    .any_view()
-                    .cached(div().size_full().style().clone()),
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .child(kantor_ui::read_only::gate(
+                        doc.view
+                            .any_view()
+                            .cached(div().size_full().style().clone()),
+                        guard,
+                    )),
             )
             // In a split, the focused pane gets an accent edge.
             .when(multi && pane == focused, |d| {
