@@ -9,6 +9,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-14
+
+Kantor works with a shared cloud drive and speaks Indonesian. Open from Cloud and Save work
+with Nextcloud, OpenCloud or any WebDAV server: conflicts are caught instead of overwriting a
+colleague's work, files someone else has open are read-only with their name, and you keep
+working offline until the server is back. The whole interface is available in Indonesian. Sheets
+also gets notes you can edit, spell check, chart sheets, and pictures and charts from `.xls`
+files.
+
 ### Added
 - Sheets: Excel 97-2003 files (`.xls`, `.xlt`) bring their pictures (PNG, JPEG) and charts
   (column, bar, line and area, also stacked, pie, doughnut and scatter, with their titles, axis
@@ -1008,7 +1017,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/dzulfikar08/kantor/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dzulfikar08/kantor/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/dzulfikar08/kantor/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/dzulfikar08/kantor/compare/v0.3.0...v0.3.1
