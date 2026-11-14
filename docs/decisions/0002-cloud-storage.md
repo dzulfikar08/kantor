@@ -320,6 +320,57 @@ mid-way; a lost lock; and crash cleanup. All 7 passed against Nextcloud 35.0.2. 
 OpenCloud 7.2.5, with one account, so the second-account lock test was skipped, the other 6
 passed.
 
+## Update 2026-11-14 (later): gaps closed
+
+- **Resumable uploads.** From 8 MB, Nextcloud gets chunked upload v2 (MKCOL
+  `remote.php/dav/uploads/<user>/<id>` with `Destination`, 5 MiB parts, then MOVE of `.file`
+  with `OC-Total-Length`) and OpenCloud gets TUS (POST to the folder with `Upload-Length` and the
+  file name, PATCH in 2 MiB parts, HEAD to find the offset). The upload id or TUS URL is kept in
+  the working-copy index with the SHA-256 of the bytes, so a retry, even after a restart, skips
+  the parts the server has. Other servers get one PUT. What the servers needed:
+  - Nextcloud checks `If-Match` on that MOVE against the *source* (the assembled `.file`), so it
+    always fails. The destination's ETag and our lock token go in a tagged `If` list instead
+    (`If: <dest> (<token> ["etag"])`, RFC 4918 §10.4): the right ETag gives 204, a stale one 412.
+  - Upload ids must be new for each upload: a reused one picks up an old upload's parts.
+  - OpenCloud refuses to start a TUS upload onto a file that is locked, even by the uploader
+    (423, whatever lock header is sent). Kantor releases its lock for the upload (`If-Match` on
+    the POST still guards against conflicts) and takes it again afterwards.
+  - OpenCloud's `Location` uses its configured URL (`OC_URL`); Kantor sends the PATCHes to the
+    origin it talks to, so a proxy or another host name works.
+  - After a dropped link, pooled keep-alive connections fail at once (broken pipe, reset). Kantor
+    sends such a request once more on a new connection; before that, the first save after a
+    reconnect failed as "offline".
+- **Lock refresh doesn't change the ETag on Nextcloud; LOCK and UNLOCK do.** After taking a
+  lock, Kantor now checks the server's version and, when only the ETag moved, records the new
+  ETag as the base (`session::settle_base`). Without that, the first save after opening a working
+  copy with local changes, after *Edit now*, or after a restart downloaded the whole file again
+  to compare hashes: on 500 kbit/s that was 4 minutes for a 12 MB file before its upload began.
+- **Display names.** Nextcloud's `nc:lock-owner-displayname` is the lock's owner text. For
+  OpenCloud the owner is `<user id>@<issuer>`; the name comes from Graph `/graph/v1.0/users/{id}`,
+  which ordinary users may read. Nextcloud's OCS `/cloud/users/{id}` is admin-only (code 998), so
+  names are looked up with `/ocs/v2.php/core/autocomplete/get` instead.
+- **Share recipients can't lock on OpenCloud** (LOCK under `Shares/` answers 500
+  "Unimplemented"). When a LOCK fails that way, Kantor still checks who holds the file and opens
+  it read-only if someone does.
+- **Read-only mode** is a per-document flag in the workspace, used by cloud locks and by *Make
+  Read-Only*. A wrapper element around the document view stops edit actions (all app actions
+  except an allow-list of navigation, selection, find, zoom, copy, print and export) and typed
+  keys before the app sees them, the MCP/AI dispatch refuses edit tools, and any change that
+  still gets through is undone.
+
+End-to-end suite, now 9 tests (adds a big upload resumed after the link drops mid-way and a big
+upload refused on conflict), each run with two accounts: **9/9 against Nextcloud 35.0.2**
+(alice, bob) and **9/9 against OpenCloud 7.2.5** (demo users alan and lynn, file shared through
+the Graph invite API; `bench/e2e.sh opencloud` sets this up). In the app, over Toxiproxy with
+netem at 500 kbit/s, 300 ms round trip and 3 % loss: a 12 MB Docs save showed its progress, the
+link was cut at 87 %, Kantor was quit with *Keep Local Copy*, and after a restart the upload
+skipped the two parts already on the server and finished; the longest UI-thread pause was 0.6 s
+(opening the 12 MB document). That run found a crash of the upload worker when progress went
+backwards (a part sent again), which left the status at *Uploading*; it is fixed, and a worker
+panic now reports a failed upload. The system keychain was tested with a throwaway
+gnome-keyring in a headless D-Bus session (`scripts/keychain-test.sh`): save, read and remove
+work; the `cloud-keys.toml` fallback stays for systems without one.
+
 ## Raw data and reproduction
 
 - Compose files: `crates/kantor_cloud/bench/{nextcloud,opencloud,link}/`. Toxiproxy proxies: 28080 → Nextcloud `web:80`, 29200 → OpenCloud `opencloud:9200`; netem is applied with `docker exec kspike-link-netem-1 tc qdisc replace dev eth0 root netem …`.

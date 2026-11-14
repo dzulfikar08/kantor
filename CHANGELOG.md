@@ -22,7 +22,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   keep working and the status bar says *Not synced* until you choose *Sync now*. These screens are
   in English or Indonesian, following the system language or `language` in settings.toml.
   Uploads have no fixed time limit: one fails only when no data moves for two minutes, so big
-  files on slow links finish.
+  files on slow links finish. Files of 8 MB or more go up in parts (Nextcloud chunked upload v2,
+  TUS on OpenCloud), so an upload cut off half-way continues where it stopped, also after a
+  restart. A file locked by someone else opens truly read-only, with a bar naming them (their
+  display name from the server) and *Edit now* once they close it. Closing or quitting with
+  changes that aren't on the server yet asks whether to sync now, keep the local copy for later,
+  or cancel. Working copies live in Kantor's data folder (moved from the cache folder on the first
+  start); synced ones unused for 30 days are deleted, unsynced ones never.
+- **Read-only documents** in Sheets, Docs and Slides: *Make Read-Only* / *Allow Editing* in the
+  command palette. Typing, pasting, formatting, structural changes, dragging and edits from the AI
+  assistant or MCP clients are refused; selection, copy, find, zoom, print and export work.
 - Spell check in Docs and Slides, offline, for English and Indonesian: misspelled words get a red
   wavy underline as you type. Right-click one for up to five suggestions, Ignore All or Add to
   Dictionary (your words are kept in `dictionary.txt` next to settings.toml). Text marked with a
