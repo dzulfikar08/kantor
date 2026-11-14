@@ -9,6 +9,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+- Sheets: chart sheets can be edited as in Excel. Showing one selects its chart, and the Chart
+  panel (the Chart button over it) changes its type, title, legend, axis titles, series colours
+  and data range, saved back into the chart's part. A chart sheet's tab has Excel's right-click
+  menu: Rename, Delete, Move Left, Move Right, Hide and Unhide; worksheet tabs offer Unhide for
+  hidden chart sheets. Each change is one undo step, and a chart sheet deleted, saved and then
+  brought back with Undo is saved again.
+
 ## [0.6.0] - 2026-11-14
 
 Kantor works with a shared cloud drive and speaks Indonesian. Open from Cloud and Save work
@@ -90,12 +98,6 @@ files.
   that work on cells say so instead of changing a sheet out of sight. PDF export, printing and
   `kantor convert` print each chart sheet on its own landscape page. Saving keeps them, in the
   same order.
-- Sheets: chart sheets can be edited as in Excel. Showing one selects its chart, and the Chart
-  panel (the Chart button over it) changes its type, title, legend, axis titles, series colours
-  and data range, saved back into the chart's part. A chart sheet's tab has Excel's right-click
-  menu: Rename, Delete, Move Left, Move Right, Hide and Unhide; worksheet tabs offer Unhide for
-  hidden chart sheets. Each change is one undo step, and a chart sheet deleted, saved and then
-  brought back with Undo is saved again.
 - Sheets: notes (comments) in `.xlsx` and `.xls` files are shown as in Excel: a small red
   triangle in the cell's top-right corner, and the note with its author in a box beside the
   cell while the pointer is over it. They move with inserted and deleted rows and columns.
