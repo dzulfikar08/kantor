@@ -10,6 +10,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ## [Unreleased]
 
 ### Added
+- Sheets: Excel 97-2003 files (`.xls`, `.xlt`) bring their pictures (PNG, JPEG) and charts
+  (column, bar, line and area, also stacked, pie, doughnut and scatter, with their titles, axis
+  titles, legend and series colours), placed over the same cells as in Excel, and chart sheets
+  open in their own tab. They follow their cells, can be moved, resized and deleted like an
+  `.xlsx`'s, and saving as `.xlsx` keeps them. Other chart types (radar, surface, bubble, bar of
+  pie, combination), EMF/WMF pictures and shapes are left out with a note; 3-D charts are shown
+  flat.
 - Sheets: Excel 97-2003 files (`.xls`, `.xlt`) bring their comments (notes), data validation
   (drop-down lists, number, date and text length rules, custom formulas, input and error
   messages) and conditional formatting (cell value and formula rules with their font, fill and

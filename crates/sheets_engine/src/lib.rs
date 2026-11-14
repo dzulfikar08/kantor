@@ -38,6 +38,7 @@ mod table_edit;
 mod validation;
 mod validation_edit;
 mod xls;
+mod xls_drawing;
 mod xls_formula;
 mod xls_ftab;
 
@@ -611,6 +612,7 @@ impl Workbook {
             }
             validation = validation::Validations::imported(rules);
         }
+        let xls_drawings = std::mem::take(&mut imported.drawings);
         let mut book = Self {
             calc,
             model,
@@ -636,9 +638,35 @@ impl Workbook {
             panes: HashMap::new(),
         };
         book.apply_read_panes(&panes);
+        if !xls_drawings.is_empty() {
+            book.import_drawings(&xls_drawings);
+        }
         // The file's cached values are right: no recalculation.
         book.sync_pivot_grids(false);
         Ok(book)
+    }
+
+    /// An import's pictures and charts (`.xls`): written as a package
+    /// that the drawings are shown from and the first `.xlsx` save carries
+    /// them from, as for an opened `.xlsx` (see [`xls_drawing::package`]).
+    fn import_drawings(&mut self, d: &xls_drawing::XlsDrawings) {
+        let names = self.sheet_names();
+        let ids: HashMap<String, u32> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.clone(), self.sheet_id(i as u32)))
+            .collect();
+        let bytes = xls_drawing::package(d, &|n| ids.get(n).copied(), &|f| {
+            self.chart_reference_now(f)
+        });
+        if bytes.is_empty() {
+            self.origin
+                .notes
+                .push("charts and pictures not imported".into());
+            return;
+        }
+        self.drawings = drawing::Drawings::read(&bytes);
+        self.origin.xlsx = Some(XlsxSource::Bytes(bytes));
     }
 
     /// Where Save writes. `None` for new workbooks and for imports

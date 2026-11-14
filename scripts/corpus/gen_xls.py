@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Generate the legacy-format import fixtures in tests/corpus/xls/ (CC0, made-up data).
 
-    uv run --with openpyxl==3.1.5 --with xlwt==1.3.0 scripts/corpus/gen_xls.py [LO_APPIMAGE]
+    uv run --with openpyxl==3.1.5 --with xlwt==1.3.0 --with pillow==13.0.0 \
+        --with olefile==0.47 scripts/corpus/gen_xls.py [LO_APPIMAGE]
 
 Builds .xlsx workbooks with openpyxl, then has LibreOffice (headless) convert
 them to Excel 97-2003 (.xls), an Excel 97-2003 template (.xlt) and
@@ -31,6 +32,14 @@ Files:
   Excel 2007 rules apart): two- and three-colour scales, a data bar, an
   icon set and a rating, text, top-N, above-average, duplicate-value and
   date rules, and a validation on a whole column.
+* drawings.xls: pictures and charts. Sheet "Data": a column chart with a
+  title and axis titles, a PNG picture and a JPEG one. Sheet "Charts": a
+  stacked horizontal bar chart, a line chart, a stacked area chart, a pie,
+  a doughnut, a scatter chart and a radar chart (not shown by Kantor: an
+  import note). "Overview": a chart sheet (LibreOffice writes chart sheets
+  as worksheets holding a chart, so the generator rewrites it as a BIFF
+  chart sheet: BOUNDSHEET type 2 and the chart substream in place of the
+  worksheet's).
 * dates1904.xls: a workbook in the 1904 date system.
 * xlwt.xls: written directly as BIFF8 by xlwt (headless LibreOffice drops
   view settings): frozen rows and columns, the second sheet active, pattern
@@ -325,6 +334,122 @@ def scales_sheet(wb) -> None:
     ws.add_data_validation(dv)
 
 
+def picture(fmt: str, size: tuple[int, int], color: str):
+    import io
+
+    from PIL import Image as PImage, ImageDraw
+
+    im = PImage.new("RGB", size, "white")
+    d = ImageDraw.Draw(im)
+    d.rectangle([4, 4, size[0] - 5, size[1] - 5], outline=color, width=4)
+    d.ellipse([size[0] // 4, size[1] // 4, size[0] * 3 // 4, size[1] * 3 // 4], fill=color)
+    out = io.BytesIO()
+    im.save(out, fmt)
+    out.seek(0)
+    return out
+
+
+def drawings(path: Path) -> None:
+    from openpyxl.chart import (AreaChart, BarChart, DoughnutChart, LineChart, PieChart,
+                                RadarChart, Reference, ScatterChart, Series)
+    from openpyxl.drawing.image import Image
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws.append(["Quarter", "North", "South"])
+    for row in [("Q1", 10, 7), ("Q2", 14, 9), ("Q3", 12, 15), ("Q4", 18, 11)]:
+        ws.append(row)
+    data = Reference(ws, min_col=2, min_row=1, max_col=3, max_row=5)
+    cats = Reference(ws, min_col=1, min_row=2, max_row=5)
+
+    def chart(c, title, refs=data):
+        c.title = title
+        c.add_data(refs, titles_from_data=True)
+        c.set_categories(cats)
+        return c
+
+    col = chart(BarChart(), "Sales by quarter")
+    col.type = "col"
+    col.x_axis.title = "Quarter"
+    col.y_axis.title = "Units"
+    ws.add_chart(col, "E2")
+    ws.add_image(Image(picture("PNG", (120, 80), "#1F77B4")), "A8")
+    ws.add_image(Image(picture("JPEG", (90, 60), "#D62728")), "C8")
+
+    sheet = wb.create_sheet("Charts")
+    bar = chart(BarChart(), "Stacked bars")
+    bar.type = "bar"
+    bar.grouping = "stacked"
+    bar.overlap = 100
+    sheet.add_chart(bar, "A1")
+    sheet.add_chart(chart(LineChart(), "Line"), "J1")
+    area = chart(AreaChart(), "Area")
+    area.grouping = "stacked"
+    sheet.add_chart(area, "A17")
+    sheet.add_chart(chart(PieChart(), "Pie", Reference(ws, min_col=2, min_row=1, max_row=5)), "J17")
+    sheet.add_chart(chart(DoughnutChart(), "Doughnut",
+                          Reference(ws, min_col=3, min_row=1, max_row=5)), "A33")
+    scatter = ScatterChart()
+    scatter.title = "Scatter"
+    scatter.series.append(Series(Reference(ws, min_col=3, min_row=2, max_row=5),
+                                 Reference(ws, min_col=2, min_row=2, max_row=5),
+                                 title="South vs North"))
+    sheet.add_chart(scatter, "J33")
+    sheet.add_chart(chart(RadarChart(), "Radar"), "A49")
+
+    overview = wb.create_chartsheet("Overview")
+    overview.add_chart(chart(BarChart(), "Overview"))
+    wb.save(path)
+
+
+def make_chart_sheet(path: Path, name: str) -> None:
+    """Turn worksheet `name` (holding one chart) into a BIFF8 chart sheet:
+    its BOUNDSHEET type becomes 2 and its substream the chart's (the rest
+    of the old substream is zero-filled: the stream keeps its size)."""
+    import struct
+
+    import olefile
+
+    ole = olefile.OleFileIO(str(path), write_mode=True)
+    data = bytearray(ole.openstream("Workbook").read())
+
+    def records(pos):
+        while pos + 4 <= len(data):
+            typ, size = struct.unpack_from("<HH", data, pos)
+            yield pos, typ, bytes(data[pos + 4:pos + 4 + size])
+            pos += 4 + size
+
+    offset = None
+    for pos, typ, body in records(0):
+        if typ == 0x0085 and body[8:].decode("latin-1").endswith(name):
+            offset = struct.unpack_from("<I", body)[0]
+            data[pos + 4 + 5] = 2
+        if typ == 0x000A:
+            break
+    if offset is None:
+        sys.exit(f"no sheet {name}")
+    depth, start, end = 0, None, None
+    for pos, typ, body in records(offset):
+        if typ == 0x0809:
+            depth += 1
+            if depth == 2:
+                start = pos
+        elif typ == 0x000A:
+            depth -= 1
+            if depth == 1 and start is not None and end is None:
+                end = pos + 4
+            if depth == 0:
+                sheet_end = pos + 4
+                break
+    if start is None:
+        sys.exit(f"no chart on {name}")
+    chart = bytes(data[start:end])
+    data[offset:sheet_end] = chart + bytes(sheet_end - offset - len(chart))
+    ole.write_stream("Workbook", bytes(data))
+    ole.close()
+
+
 def dates1904(path: Path) -> None:
     wb = Workbook()
     wb.epoch = CALENDAR_MAC_1904
@@ -417,6 +542,11 @@ def main() -> None:
         src.parent.mkdir()
         features(src, scales=True)
         shutil.copy(convert(lo, src, "calc8", "ods", src.parent), OUT / "features.ods")
+        src = tmp / "drawings.xlsx"
+        drawings(src)
+        out = convert(lo, src, "MS Excel 97", "xls", tmp)
+        make_chart_sheet(out, "Overview")
+        shutil.copy(out, OUT / "drawings.xls")
         src = tmp / "dates1904.xlsx"
         dates1904(src)
         shutil.copy(convert(lo, src, "MS Excel 97", "xls", tmp), OUT / "dates1904.xls")

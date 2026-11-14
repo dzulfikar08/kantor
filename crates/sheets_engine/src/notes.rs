@@ -86,7 +86,8 @@ impl Workbook {
     /// Notes a save writes from the model: an import's (an `.xlsx`'s are
     /// carried with its parts), moved to where their cells are now.
     pub(crate) fn note_patches(&self, out: &mut crate::preserve::Patches) {
-        if self.origin.xlsx.is_some() {
+        // An `.xls` import's original holds its drawings only.
+        if self.origin.xlsx.is_some() && !self.origin.format.is_imported() {
             return;
         }
         let moves = self.origin.xlsx_layout.moves_to(&self.history.layout());
