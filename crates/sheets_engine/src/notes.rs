@@ -7,8 +7,14 @@
 //! the model: a comments part and the VML boxes Excel needs to show them,
 //! at the cells they moved to with inserted and deleted rows and columns.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::Workbook;
 use crate::shift::parse_range;
+
+/// A sheet's notes by `(row, col)` (0-based) of the cell they are on now.
+pub type SheetNotes = HashMap<(u32, u32), CellNote>;
 
 /// A note on a cell.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +52,35 @@ impl Workbook {
                 })
             })
             .collect()
+    }
+
+    /// The notes of `sheet` (an index) by the cell they are on now: moved
+    /// with inserted and deleted rows and columns since the file was opened
+    /// (a note whose cell was deleted is gone). For the grid's note marks
+    /// and hover boxes.
+    pub fn notes_now(&self, sheet: u32) -> Arc<SheetNotes> {
+        if let Some(n) = self.cached(|c| c.notes.get(&sheet).cloned()) {
+            return n;
+        }
+        let list = self.notes(sheet);
+        let mut map = SheetNotes::new();
+        if !list.is_empty() {
+            let moves = self.origin.xlsx_layout.moves_to(&self.history.layout());
+            let id = self.sheet_id(sheet);
+            for n in list {
+                if let Some(at) = moves.cell(id, n.row, n.col) {
+                    map.entry(at).or_insert(n);
+                }
+            }
+        }
+        let map = Arc::new(map);
+        self.cached(|c| c.notes.insert(sheet, map.clone()));
+        map
+    }
+
+    /// The note on the cell at `(row, col)` of `sheet` now, if any.
+    pub fn note_at(&self, sheet: u32, row: u32, col: u32) -> Option<CellNote> {
+        self.notes_now(sheet).get(&(row, col)).cloned()
     }
 
     /// Notes a save writes from the model: an import's (an `.xlsx`'s are
