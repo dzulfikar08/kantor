@@ -83,6 +83,8 @@ export const en = {
   more: [
     ["Print and export to PDF", "Docs and Slides save a PDF that looks like what you see on screen, and print it through your PDF viewer; Slides also prints notes pages and handouts. Sheets prints pages the way Excel does: paper size including F4, fit to width, print titles, headers and footers."],
     ["Offline, no account", "Your files stay on your computer. There is nothing to sign up for."],
+    ["In English or Indonesian", "The whole app, menus to messages, is available in Indonesian. It follows your system language, and the command palette finds commands in both languages."],
+    ["Your team's cloud drive", "Open and save files on Nextcloud, OpenCloud or any WebDAV server. If a colleague saved first, Kantor asks before anything is overwritten; a file someone else has open opens read-only with their name. Without internet you keep working, and it syncs when the server is back."],
     ["Spell check in English and Indonesian", "Docs and Slides underline misspelled words as you type and suggest corrections; Sheets checks your text cells with F7, as Excel does. No internet needed. Add your own words to a personal dictionary."],
     [
       "Your work is safe",
@@ -274,6 +276,8 @@ export const id = {
   more: [
     ["Cetak dan ekspor ke PDF", "Docs dan Slides menyimpan PDF yang sama dengan tampilan di layar dan mencetaknya lewat penampil PDF; Slides juga bisa mencetak halaman catatan dan handout. Sheets mencetak halaman seperti Excel: ukuran kertas termasuk F4, muat selebar halaman, judul cetak, header, dan footer."],
     ["Tanpa internet, tanpa akun", "File Anda tetap di komputer Anda. Tidak perlu mendaftar apa pun."],
+    ["Dalam Bahasa Indonesia atau Inggris", "Seluruh aplikasi, dari menu sampai pesan, tersedia dalam Bahasa Indonesia. Bahasanya mengikuti sistem Anda, dan palet perintah menemukan perintah dalam kedua bahasa."],
+    ["Penyimpanan cloud tim Anda", "Buka dan simpan berkas di Nextcloud, OpenCloud, atau server WebDAV lain. Kalau rekan Anda sudah menyimpan lebih dulu, Kantor bertanya sebelum ada yang ditimpa; berkas yang sedang dibuka orang lain terbuka hanya-baca dengan namanya. Tanpa internet Anda tetap bisa bekerja, lalu berkas disinkronkan saat server kembali tersedia."],
     ["Cek ejaan Bahasa Indonesia dan Inggris", "Docs dan Slides menggarisbawahi kata yang salah eja saat Anda mengetik dan memberi saran perbaikan; Sheets memeriksa sel teks Anda dengan F7, seperti Excel. Tanpa perlu internet. Kata Anda sendiri bisa ditambahkan ke kamus pribadi."],
     [
       "Pekerjaan Anda aman",
