@@ -46,6 +46,7 @@ mod bench;
 mod calc;
 mod cell_editor;
 mod cf_ui;
+mod chart_sheet_ui;
 mod chart_ui;
 mod cond_paint;
 mod data_validation;
@@ -80,7 +81,7 @@ use std::rc::Rc;
 use gpui_kit::component::{
     Sizable as _, h_flex,
     input::{Input, InputEvent, InputState},
-    menu::{PopupMenu, PopupMenuItem},
+    menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
     v_flex,
 };
 use gpui_kit::prelude::*;
@@ -150,6 +151,8 @@ pub enum Format {
 const KEY_CONTEXT: &str = "KantorSheets";
 /// The grid, not the formula bar: there Ctrl+Z undoes typing instead.
 const GRID_CONTEXT: &str = "KantorSheetsGrid";
+/// A chart sheet shown in place of the grid.
+pub(crate) const CHART_SHEET_CONTEXT: &str = "KantorSheetsChartSheet";
 const MIN_ROWS: u32 = 1000;
 const MIN_COLS: u32 = 26;
 /// Below this pane width the formula bar drops its labels.
@@ -205,6 +208,23 @@ pub fn init(cx: &mut App) {
         ),
         KeyBinding::new("super-shift-z", Redo, Some(GRID_CONTEXT)),
         KeyBinding::new(kantor_ui::keys::primary("ctrl-y"), Redo, Some(GRID_CONTEXT)),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-z"),
+            Undo,
+            Some(CHART_SHEET_CONTEXT),
+        ),
+        KeyBinding::new("super-z", Undo, Some(CHART_SHEET_CONTEXT)),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-shift-z"),
+            Redo,
+            Some(CHART_SHEET_CONTEXT),
+        ),
+        KeyBinding::new("super-shift-z", Redo, Some(CHART_SHEET_CONTEXT)),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-y"),
+            Redo,
+            Some(CHART_SHEET_CONTEXT),
+        ),
         // The formula bar keeps its own text clipboard.
         KeyBinding::new(kantor_ui::keys::primary("ctrl-c"), Copy, Some(GRID_CONTEXT)),
         KeyBinding::new("super-c", Copy, Some(GRID_CONTEXT)),
@@ -1130,6 +1150,8 @@ pub struct SheetsView {
     /// `Workbook::chart_sheet_name`), and what has focus while it shows.
     chart_tab: Option<usize>,
     chart_focus: FocusHandle,
+    /// The Rename prompt of a chart sheet's tab.
+    chart_rename: Option<chart_sheet_ui::ChartRename>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1182,6 +1204,7 @@ impl SheetsView {
             opening: None,
             busy_focus: cx.focus_handle(),
             chart_tab: None,
+            chart_rename: None,
             chart_focus: cx.focus_handle(),
             bench: bench::ScrollBench::from_env(),
             row_resize: None,
@@ -1931,6 +1954,10 @@ impl SheetsView {
             cx.notify();
             res
         });
+        // Undone or redone away: a chart sheet's deletion or hiding.
+        if self.chart_tab.is_some() && !self.on_chart_sheet(cx) {
+            self.leave_chart_sheet(window, cx);
+        }
         self.status = match (result, redo) {
             (Ok(true), false) => "Undone".into(),
             (Ok(true), true) => "Redone".into(),
@@ -2001,23 +2028,22 @@ impl SheetsView {
         if self.editing.is_some() {
             self.commit_edit(None, window, cx);
         }
-        self.drawings.borrow_mut().selected = None;
+        // Its chart is selected, as in Excel: the Chart panel edits it.
+        self.drawings.borrow_mut().selected = self.chart_sheet_chart(k, cx);
         self.chart_tab = Some(k);
         window.focus(&self.chart_focus, cx);
         cx.notify();
     }
 
-    /// The chart sheet shown, if one is (and still exists).
+    /// The chart sheet shown, if one is (and still has a tab: not deleted
+    /// or hidden).
     fn shown_chart_sheet(&self, cx: &App) -> Option<(usize, String)> {
         let k = self.chart_tab?;
-        let name = self
-            .table
-            .read(cx)
-            .delegate()
-            .book
-            .chart_sheet_name(k)?
-            .to_owned();
-        Some((k, name))
+        let book = &self.table.read(cx).delegate().book;
+        if !book.tabs().contains(&Tab::Chart(k)) {
+            return None;
+        }
+        Some((k, book.chart_sheet_name(k)?))
     }
 
     /// Whether a chart sheet is shown instead of the grid.
@@ -2292,6 +2318,7 @@ impl SheetsView {
         let chart = self.shown_chart_sheet(cx).map(|(k, _)| k);
         let grid = self.table.read(cx).delegate();
         let names = grid.book.sheet_names();
+        let hidden = std::rc::Rc::new(grid.book.hidden_chart_sheets());
         let tabs: Vec<(Tab, String)> = grid
             .book
             .tabs()
@@ -2308,16 +2335,19 @@ impl SheetsView {
             Some(k) => Tab::Chart(k),
             None => Tab::Sheet(grid.sheet),
         };
+        let count = tabs.len();
         h_flex()
             .gap(SPACE_1)
-            .children(tabs.into_iter().map(|(tab, name)| {
+            .children(tabs.into_iter().enumerate().map(|(i, (tab, name))| {
                 let view = cx.entity().downgrade();
+                let menu_view = view.clone();
+                let hidden = hidden.clone();
                 let selected = tab == active;
                 let id = match tab {
                     Tab::Sheet(ix) => ElementId::from(("sheet-tab", ix as usize)),
                     Tab::Chart(k) => ElementId::from(("chart-sheet-tab", k)),
                 };
-                div()
+                let tab_div = div()
                     .id(id)
                     .h(CONTROL_SM)
                     .px(SPACE_5)
@@ -2350,7 +2380,28 @@ impl SheetsView {
                             Tab::Sheet(ix) => this.select_sheet(ix, window, cx),
                             Tab::Chart(k) => this.select_chart_sheet(k, window, cx),
                         });
-                    })
+                    });
+                // Excel's tab menu: chart sheets' (worksheets' only lists
+                // hidden chart sheets to unhide).
+                if matches!(tab, Tab::Chart(_)) || !hidden.is_empty() {
+                    tab_div
+                        .context_menu(move |menu, _, _| match tab {
+                            Tab::Chart(k) => chart_sheet_ui::chart_tab_menu(
+                                menu,
+                                k,
+                                i == 0,
+                                i + 1 == count,
+                                &hidden,
+                                &menu_view,
+                            ),
+                            Tab::Sheet(_) => {
+                                chart_sheet_ui::unhide_items(menu, &hidden, &menu_view)
+                            }
+                        })
+                        .into_any_element()
+                } else {
+                    tab_div.into_any_element()
+                }
             }))
     }
 }
@@ -2440,7 +2491,17 @@ impl Render for SheetsView {
             .text_size(FONT_BODY)
             .child(measure)
             .when_some(chart_sheet.clone(), |root, (k, name)| {
-                root.child(self.render_chart_sheet_pane(k, name, cx))
+                let chart_panel = self.render_chart_panel(cx);
+                let pane = self.render_chart_sheet_pane(k, name, cx);
+                root.child(
+                    h_flex()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .items_start()
+                        .child(pane)
+                        .children(chart_panel),
+                )
             })
             .when(chart_sheet.is_none(), |root| {
                 root.child({
@@ -2591,6 +2652,7 @@ impl Render for SheetsView {
             .children(self.render_dv_dialog(cx))
             .children(self.render_spell_dialog(cx))
             .children(self.render_note_editor(cx))
+            .children(self.render_chart_rename(cx))
             .into_any_element()
     }
 }

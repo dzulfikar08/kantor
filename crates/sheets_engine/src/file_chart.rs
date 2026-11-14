@@ -72,11 +72,8 @@ impl Workbook {
         if chart_sheet_of_key(key.sheet_id).is_some() {
             return self.chart_sheet_chart_shown(key);
         }
-        self.sheet_index_of(key.sheet_id).is_some_and(|s| {
-            self.drawings(s)
-                .iter()
-                .any(|d| d.key == key && d.editable)
-        })
+        self.sheet_index_of(key.sheet_id)
+            .is_some_and(|s| self.drawings(s).iter().any(|d| d.key == key && d.editable))
     }
 
     /// The sheet (an index) a chart's data defaults to: its own; a chart

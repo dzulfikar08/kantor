@@ -46,8 +46,8 @@ pub use cf_edit::{
     COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,
     DATA_BAR_COLORS, ICON_SETS, sqref_of,
 };
-pub use chart_sheet::sheet_name_problem;
 pub use chart_edit::{ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor};
+pub use chart_sheet::sheet_name_problem;
 pub use drawing::Tab;
 pub use import::SourceFormat;
 pub use notes::{CellNote, SheetNotes};

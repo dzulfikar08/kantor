@@ -189,7 +189,11 @@ fn chart_sheet_charts_restyle_and_save_in_place() {
     // Undone and saved: the part as it was.
     assert!(wb.undo().unwrap());
     let undone = save(&mut wb, dir.path(), "undone.xlsx");
-    assert!(changed(&plain, &undone).is_empty(), "{:?}", changed(&plain, &undone));
+    assert!(
+        changed(&plain, &undone).is_empty(),
+        "{:?}",
+        changed(&plain, &undone)
+    );
     // Redone: edited again.
     assert!(wb.redo().unwrap());
     let redone = save(&mut wb, dir.path(), "redone.xlsx");
@@ -233,9 +237,18 @@ fn chart_sheet_tabs_rename_move_hide_and_delete() {
     let (share, _) = chart_of(&wb, "Share");
 
     // Rename, following Excel's rules.
-    assert!(wb.rename_chart_sheet(rev, "data").is_err(), "a worksheet's name");
-    assert!(wb.rename_chart_sheet(rev, "share").is_err(), "a chart sheet's");
-    assert!(wb.rename_chart_sheet(rev, "Hidden chart").is_err(), "a hidden one's");
+    assert!(
+        wb.rename_chart_sheet(rev, "data").is_err(),
+        "a worksheet's name"
+    );
+    assert!(
+        wb.rename_chart_sheet(rev, "share").is_err(),
+        "a chart sheet's"
+    );
+    assert!(
+        wb.rename_chart_sheet(rev, "Hidden chart").is_err(),
+        "a hidden one's"
+    );
     assert!(wb.rename_chart_sheet(rev, "a/b").is_err());
     assert!(wb.rename_chart_sheet(rev, "").is_err());
     wb.rename_chart_sheet(rev, "Revenue").unwrap();
@@ -282,7 +295,10 @@ fn chart_sheet_tabs_rename_move_hide_and_delete() {
     assert!(!p.contains_key("xl/chartsheets/sheet1.xml"));
     assert!(!p.contains_key("xl/charts/chart1.xml"));
     assert!(!text(&p, "[Content_Types].xml").contains("chartsheets/sheet1.xml"));
-    assert_eq!(listed(&p), ["Share", "Data", "Hidden chart (hidden)", "Notes"]);
+    assert_eq!(
+        listed(&p),
+        ["Share", "Data", "Hidden chart (hidden)", "Notes"]
+    );
     for _ in 0..6 {
         assert!(wb.undo().unwrap());
     }
@@ -300,13 +316,24 @@ fn chart_sheet_tabs_rename_move_hide_and_delete() {
         "{diff:?}"
     );
     let ct = text(&p, "[Content_Types].xml");
-    for part in ["/xl/chartsheets/sheet1.xml", "/xl/drawings/drawing1.xml", "/xl/charts/chart1.xml"] {
-        assert_eq!(ct.matches(&format!("\"{part}\"")).count(), 1, "{part}: {ct}");
+    for part in [
+        "/xl/chartsheets/sheet1.xml",
+        "/xl/drawings/drawing1.xml",
+        "/xl/charts/chart1.xml",
+    ] {
+        assert_eq!(
+            ct.matches(&format!("\"{part}\"")).count(),
+            1,
+            "{part}: {ct}"
+        );
     }
     let back = Workbook::open(dir.path().join("c.xlsx")).unwrap();
     assert_eq!(tab_names(&back), TABS);
     let (_, key) = chart_of(&back, "Revenue chart");
-    assert_eq!(back.chart_info(key).unwrap().spec.title, "Revenue by region");
+    assert_eq!(
+        back.chart_info(key).unwrap().spec.title,
+        "Revenue by region"
+    );
 }
 
 #[test]
@@ -360,7 +387,13 @@ fn names_scoped_to_sheets_follow_moved_chart_sheets() {
     let p = save(&mut wb, dir.path(), "a.xlsx");
     assert_eq!(
         listed(&p),
-        ["Data", "Share", "Hidden chart (hidden)", "Notes", "Revenue chart"]
+        [
+            "Data",
+            "Share",
+            "Hidden chart (hidden)",
+            "Notes",
+            "Revenue chart"
+        ]
     );
     let wbx = text(&p, "xl/workbook.xml");
     assert!(wbx.contains("localSheetId=\"3\""), "{wbx}");

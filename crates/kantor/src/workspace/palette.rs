@@ -813,7 +813,7 @@ pub(super) const COMMANDS: &[Command] = &[
         title: "Chart Panel",
         detail: "Sheets · type, title, legend, axis titles, series colours and data of the selected chart",
         keys: "",
-        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.chart_options_doc(w, cx)),
+        run: |ws, window, cx| ws.with_sheets_any(window, cx, |v, w, cx| v.chart_options_doc(w, cx)),
     },
     Command {
         title: "Format as Table…",
