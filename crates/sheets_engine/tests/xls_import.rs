@@ -540,3 +540,69 @@ fn xls_conditional_formats_round_trip() {
     let back = Workbook::open(&out).unwrap();
     assert_eq!(back.cf_rules(0, None).len(), 4);
 }
+
+fn cf_ranges(wb: &Workbook) -> Vec<String> {
+    wb.cf_rules(0, None).into_iter().map(|r| r.range).collect()
+}
+
+/// The first `CF` in the file is Excel's priority 1: listed first (Manage
+/// Rules), applied first, saved as `priority="1"`; Move Up / Move Down,
+/// Delete and Stop If True act on the rule picked in that list.
+#[test]
+fn xls_conditional_formats_keep_their_priority_order() {
+    let mut wb = Workbook::open(corpus("features.xls")).unwrap();
+    // As LibreOffice and Excel list them (file order).
+    assert_eq!(cf_ranges(&wb), ["B2:B5", "C2:C5", "F2:F5", "A2:A5"]);
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("order.xlsx");
+    wb.save_as(&out).unwrap();
+    let sheet = part(&out, "xl/worksheets/sheet1.xml");
+    let priority = |range: &str| {
+        let block = &sheet[sheet.find(&format!("sqref=\"{range}\"")).unwrap()..];
+        let block = &block[..block.find("</conditionalFormatting>").unwrap()];
+        let at = block.find("priority=\"").unwrap() + 10;
+        block[at..at + 1].to_owned()
+    };
+    assert_eq!(
+        ["B2:B5", "C2:C5", "F2:F5", "A2:A5"].map(priority),
+        ["1", "2", "3", "4"]
+    );
+    assert_eq!(
+        cf_ranges(&Workbook::open(&out).unwrap()),
+        cf_ranges(&wb)
+    );
+
+    // Move the last one up, then the first one down.
+    let a = wb.cf_rules(0, None)[3].index;
+    wb.move_cf_rule(0, a, true).unwrap();
+    assert_eq!(cf_ranges(&wb), ["B2:B5", "C2:C5", "A2:A5", "F2:F5"]);
+    let b = wb.cf_rules(0, None)[0].index;
+    wb.move_cf_rule(0, b, false).unwrap();
+    assert_eq!(cf_ranges(&wb), ["C2:C5", "B2:B5", "A2:A5", "F2:F5"]);
+    // At either end nothing moves.
+    let top = wb.cf_rules(0, None)[0].index;
+    wb.move_cf_rule(0, top, true).unwrap();
+    assert_eq!(cf_ranges(&wb)[0], "C2:C5");
+
+    // Stop If True on the second one shown.
+    let second = wb.cf_rules(0, None)[1].clone();
+    let mut def = second.def.clone().unwrap();
+    def.stop_if_true = true;
+    wb.update_cf_rule(0, second.index, &second.range, &def)
+        .unwrap();
+    let stops: Vec<bool> = wb
+        .cf_rules(0, None)
+        .iter()
+        .map(|r| r.stop_if_true)
+        .collect();
+    assert_eq!(stops, [false, true, false, false]);
+    assert_eq!(cf_ranges(&wb)[1], "B2:B5");
+
+    // Delete the third one shown.
+    let third = wb.cf_rules(0, None)[2].index;
+    wb.delete_cf_rule(0, third).unwrap();
+    assert_eq!(cf_ranges(&wb), ["C2:C5", "B2:B5", "F2:F5"]);
+    assert!(wb.undo().unwrap());
+    assert_eq!(cf_ranges(&wb), ["C2:C5", "B2:B5", "A2:A5", "F2:F5"]);
+}
