@@ -108,7 +108,9 @@ fn main() -> Result<()> {
         imports.extend(files(&corpus.join("xls"), ext)?);
     }
     for src in &imports {
-        let ext = src.extension().map_or(String::new(), |e| e.to_string_lossy().into_owned());
+        let ext = src
+            .extension()
+            .map_or(String::new(), |e| e.to_string_lossy().into_owned());
         let name = format!("import_{}_{ext}.xlsx", stem(src));
         run.scenario(&name.clone(), |o| {
             let mut wb = Workbook::open(src)?;

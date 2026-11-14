@@ -970,7 +970,8 @@ fn apply_table(
             continue;
         }
         for col in cols.iter_mut() {
-            if col.min as u32 - 1 >= *first && col.max as u32 - 1 <= *last {
+            let (lo, hi) = (col.min as u32 - 1, col.max as u32 - 1);
+            if lo >= *first && hi <= *last {
                 col.style = Some(s);
             }
         }
