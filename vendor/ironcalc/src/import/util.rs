@@ -201,3 +201,69 @@ mod tests {
         assert!(get_bool(node, "other"));
     }
 }
+
+/// KANTOR PATCH (rel targets): the zip path of the part a relationship
+/// `target` of the part `source` points to, per OPC (ECMA-376 Part 2 §9.3):
+/// a target starting with `/` is relative to the package root (openpyxl
+/// writes `/xl/comments/comment1.xml`), anything else to the folder of
+/// `source`, with `.` and `..` segments applied.
+/// `resolve_part("xl/worksheets/sheet1.xml", "../comments1.xml")` is
+/// `xl/comments1.xml`.
+pub(crate) fn resolve_part(source: &str, target: &str) -> String {
+    let joined = match target.strip_prefix('/') {
+        Some(absolute) => absolute.to_string(),
+        None => {
+            let dir = source.rfind('/').map_or("", |i| &source[..=i]);
+            format!("{dir}{target}")
+        }
+    };
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in joined.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            s => segments.push(s),
+        }
+    }
+    segments.join("/")
+}
+
+/// KANTOR PATCH (rel targets): the relationships part of `source`,
+/// `xl/worksheets/sheet1.xml` -> `xl/worksheets/_rels/sheet1.xml.rels`.
+pub(crate) fn rels_part(source: &str) -> String {
+    match source.rfind('/') {
+        Some(i) => format!("{}_rels/{}.rels", &source[..=i], &source[i + 1..]),
+        None => format!("_rels/{source}.rels"),
+    }
+}
+
+#[cfg(test)]
+mod rel_target_tests {
+    use super::{rels_part, resolve_part};
+
+    #[test]
+    fn resolves_relative_and_absolute_targets() {
+        let sheet = "xl/worksheets/sheet1.xml";
+        assert_eq!(resolve_part(sheet, "../comments1.xml"), "xl/comments1.xml");
+        assert_eq!(
+            resolve_part(sheet, "/xl/comments/comment1.xml"),
+            "xl/comments/comment1.xml"
+        );
+        assert_eq!(
+            resolve_part(sheet, "../tables/./table1.xml"),
+            "xl/tables/table1.xml"
+        );
+        assert_eq!(
+            resolve_part("xl/workbook.xml", "worksheets/sheet2.xml"),
+            "xl/worksheets/sheet2.xml"
+        );
+        assert_eq!(
+            resolve_part("xl/workbook.xml", "/xl/worksheets/sheet2.xml"),
+            "xl/worksheets/sheet2.xml"
+        );
+        assert_eq!(rels_part(sheet), "xl/worksheets/_rels/sheet1.xml.rels");
+        assert_eq!(rels_part("xl/sheet.xml"), "xl/_rels/sheet.xml.rels");
+    }
+}

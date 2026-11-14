@@ -287,6 +287,11 @@ pub struct Presentation {
     /// Media added in this session (part name → bytes).
     pub(crate) media: HashMap<String, Arc<Vec<u8>>>,
     pub(crate) path: Option<PathBuf>,
+    /// The file this presentation was opened from or last saved to,
+    /// including an imported `.ppt` (unlike `path`, where Save writes).
+    pub(crate) source: Option<PathBuf>,
+    /// What an import could not bring over (empty for `.pptx`).
+    pub(crate) import_notes: Vec<String>,
     pub(crate) history: History,
     pub(crate) unsupported: Vec<String>,
     pub(crate) next_slide_num: u32,
@@ -383,8 +388,20 @@ impl Presentation {
         Self::from_bytes(template::new_package()).expect("built-in template opens")
     }
 
+    /// Open a `.pptx`, or import a PowerPoint 97-2003 `.ppt`/`.pps`/`.pot`
+    /// (see [`crate::ppt`]): an import has no [`Self::path`], so Save asks
+    /// for a new `.pptx` name and the original is never overwritten.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+        if crate::ppt::is_legacy_path(path) || crate::ppt::is_compound_file(&bytes) {
+            let imported = crate::ppt::convert(&bytes)
+                .with_context(|| format!("{} can't be opened", path.display()))?;
+            let mut p = Self::from_bytes(imported.pptx)
+                .with_context(|| format!("{} can't be opened", path.display()))?;
+            p.source = Some(path.to_path_buf());
+            p.import_notes = imported.notes;
+            return Ok(p);
+        }
         let mut p = Self::from_bytes(bytes).with_context(|| {
             format!(
                 "{} is not a PowerPoint file Kantor can read",
@@ -392,6 +409,7 @@ impl Presentation {
             )
         })?;
         p.path = Some(path.to_path_buf());
+        p.source = p.path.clone();
         Ok(p)
     }
 
@@ -606,6 +624,8 @@ impl Presentation {
             },
             media: HashMap::new(),
             path: None,
+            source: None,
+            import_notes: Vec::new(),
             history: History::default(),
             unsupported,
             next_slide_num,
@@ -631,21 +651,39 @@ impl Presentation {
         self.slides.is_empty()
     }
 
+    /// Where Save writes: `None` for new presentations and imports.
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }
 
+    /// The file this presentation was opened from or last saved to,
+    /// including an imported `.ppt` (unlike [`Self::path`]). Use it to
+    /// identify the document.
+    pub fn source_path(&self) -> Option<&Path> {
+        self.path.as_deref().or(self.source.as_deref())
+    }
+
+    /// Opened from a PowerPoint 97-2003 file that Save doesn't write.
+    pub fn is_imported(&self) -> bool {
+        self.path.is_none() && self.source.is_some()
+    }
+
+    /// What an import could not bring over faithfully, e.g. `"2 EMF/WMF
+    /// pictures shown as boxes"`. Empty for `.pptx`.
+    pub fn import_notes(&self) -> &[String] {
+        &self.import_notes
+    }
+
     pub fn title(&self) -> String {
-        self.path
-            .as_deref()
+        self.source_path()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Untitled.pptx".to_owned())
     }
 
     pub fn suggested_file_name(&self) -> String {
-        match self.path.as_deref().and_then(|p| p.file_stem()) {
-            Some(stem) if self.has_unsupported_content() => {
+        match self.source_path().and_then(|p| p.file_stem()) {
+            Some(stem) if self.path.is_some() && self.has_unsupported_content() => {
                 format!("{} (Kantor).pptx", stem.to_string_lossy())
             }
             Some(stem) => format!("{}.pptx", stem.to_string_lossy()),
@@ -672,7 +710,13 @@ impl Presentation {
         unsupported: Vec<String>,
     ) -> anyhow::Result<Self> {
         let mut p = Self::from_bytes(bytes).context("reading the recovery copy")?;
-        p.path = original;
+        // An imported .ppt stays an import: Save still asks for a .pptx.
+        if original.as_deref().is_some_and(crate::ppt::is_legacy_path) {
+            p.source = original;
+        } else {
+            p.path = original;
+            p.source = p.path.clone();
+        }
         for u in unsupported {
             if !p.unsupported_content().contains(&u) {
                 p.unsupported.push(u);
@@ -752,6 +796,14 @@ impl Presentation {
 
     /// Save to `path` (refuses to overwrite the original when content would be lost).
     pub fn save_as(&mut self, path: &Path) -> anyhow::Result<()> {
+        if crate::ppt::is_legacy_path(path) {
+            bail!(
+                "Kantor saves presentations as .pptx; choose a name ending in .pptx instead of {}",
+                path.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            );
+        }
         if self.has_unsupported_content()
             && let Some(orig) = self.path.as_deref()
             && same_file(orig, path)
@@ -764,6 +816,8 @@ impl Presentation {
         }
         self.write_to(path)?;
         self.path = Some(path.to_path_buf());
+        self.source = self.path.clone();
+        self.import_notes.clear();
         Ok(())
     }
 

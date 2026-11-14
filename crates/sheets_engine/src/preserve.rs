@@ -286,6 +286,9 @@ pub(crate) struct Patches {
     pub written: RefCell<Vec<(u32, SavedChart)>>,
     /// Charts of the file restyled in Kantor: their parts are rewritten.
     pub file_charts: Vec<crate::file_chart::FileChartSave>,
+    /// Notes of an import, by `sheetId`: written with their VML boxes to
+    /// sheets that have none.
+    pub notes: Vec<(u32, Vec<crate::notes::NoteSave>)>,
 }
 
 /// Where a save put a chart made in Kantor (the next save of the same
@@ -346,6 +349,7 @@ impl Patches {
             && self.charts.is_empty()
             && self.removed_charts.is_empty()
             && self.file_charts.is_empty()
+            && self.notes.is_empty()
     }
 }
 
@@ -1923,6 +1927,21 @@ pub(crate) struct DrawingSources {
     pub theme: Option<String>,
     /// Every sheet's name and `sheetId` (references in charts name sheets).
     pub sheets: Vec<(String, u32)>,
+    /// The chart sheets, in tab order.
+    pub chart_sheets: Vec<ChartSheetSource>,
+}
+
+/// A chart sheet of a package (`xl/chartsheets/sheetN.xml`).
+pub(crate) struct ChartSheetSource {
+    pub name: String,
+    /// `state` hidden or very hidden.
+    pub hidden: bool,
+    /// The `sheetId`s of the worksheets before it, nearest first: saving
+    /// puts it back after the first of them still there ([`sheet_slots`]).
+    pub before: Vec<u32>,
+    pub drawing: Option<DrawingSource>,
+    /// The chart sheet part's XML (its print settings).
+    pub xml: Option<String>,
 }
 
 /// The drawings of the worksheets of `bytes`. Parts that can't be read are
@@ -1944,51 +1963,62 @@ pub(crate) fn drawing_sources(bytes: &[u8]) -> Result<DrawingSources, String> {
         .find(|r| r.short_kind() == "theme" && !r.external)
         .and_then(|r| resolve(&wb, &r.target))
         .and_then(|t| orig.text(&t).ok().flatten());
-    for s in sheets.iter().filter(|s| s.kind == SheetKind::Work) {
-        let Some(sheet_rels) = orig.text(&rels_part(&s.part)).ok().flatten() else {
-            continue;
-        };
-        let Ok(sheet_rels) = parse_rels(&sheet_rels) else {
-            continue;
-        };
-        // A worksheet has at most one drawing (`<drawing r:id>`): its
-        // relationship says which, without reading the sheet's cells.
-        let Some(part) = sheet_rels
-            .iter()
-            .find(|r| r.short_kind() == "drawing" && !r.external)
-            .and_then(|r| resolve(&s.part, &r.target))
-        else {
-            continue;
-        };
-        let Some(xml) = orig.text(&part).ok().flatten() else {
-            continue;
-        };
-        let rels = match orig.text(&rels_part(&part)).ok().flatten() {
-            Some(x) => parse_rels(&x).unwrap_or_default(),
-            None => Vec::new(),
-        };
-        let mut targets = HashMap::new();
-        let mut parts = HashMap::new();
-        for r in rels.iter().filter(|r| !r.external) {
-            let Some(t) = resolve(&part, &r.target) else {
-                continue;
-            };
-            if matches!(r.short_kind(), "chart" | "image")
-                && !parts.contains_key(&t)
-                && let Ok(Some(data)) = orig.get(&t)
-            {
-                parts.insert(t.clone(), data);
-            }
-            targets.insert(r.id.clone(), (r.short_kind().to_owned(), t));
+    for (i, s) in sheets.iter().enumerate() {
+        let drawing = sheet_drawing(&orig, s);
+        match s.kind {
+            SheetKind::Work => out.drawings.extend(drawing),
+            SheetKind::Chart => out.chart_sheets.push(ChartSheetSource {
+                name: s.name.clone(),
+                hidden: s.state.as_deref().is_some_and(|v| v != "visible"),
+                before: sheets[..i]
+                    .iter()
+                    .rev()
+                    .filter(|w| w.kind == SheetKind::Work)
+                    .map(|w| w.sheet_id)
+                    .collect(),
+                drawing,
+                xml: orig.text(&s.part).ok().flatten(),
+            }),
         }
-        out.drawings.push(DrawingSource {
-            sheet_id: s.sheet_id,
-            xml,
-            targets,
-            parts,
-        });
     }
     Ok(out)
+}
+
+/// The drawing of a worksheet or chart sheet (`<drawing r:id>`; a sheet
+/// has at most one), with the charts and pictures it links to.
+fn sheet_drawing(orig: &Original<'_>, s: &SheetEntry) -> Option<DrawingSource> {
+    let sheet_rels = orig.text(&rels_part(&s.part)).ok().flatten()?;
+    let sheet_rels = parse_rels(&sheet_rels).ok()?;
+    // Its relationship says which, without reading the sheet's cells.
+    let part = sheet_rels
+        .iter()
+        .find(|r| r.short_kind() == "drawing" && !r.external)
+        .and_then(|r| resolve(&s.part, &r.target))?;
+    let xml = orig.text(&part).ok().flatten()?;
+    let rels = match orig.text(&rels_part(&part)).ok().flatten() {
+        Some(x) => parse_rels(&x).unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let mut targets = HashMap::new();
+    let mut parts = HashMap::new();
+    for r in rels.iter().filter(|r| !r.external) {
+        let Some(t) = resolve(&part, &r.target) else {
+            continue;
+        };
+        if matches!(r.short_kind(), "chart" | "image")
+            && !parts.contains_key(&t)
+            && let Ok(Some(data)) = orig.get(&t)
+        {
+            parts.insert(t.clone(), data);
+        }
+        targets.insert(r.id.clone(), (r.short_kind().to_owned(), t));
+    }
+    Some(DrawingSource {
+        sheet_id: s.sheet_id,
+        xml,
+        targets,
+        parts,
+    })
 }
 
 /// The bytes of part `name` of package `bytes`.
@@ -4225,6 +4255,99 @@ fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
         if let Some(part) = file_chart_part(pkg, &sheets, c.sheet_id, c.cnvpr)? {
             pkg.set(&part, c.xml.clone().into_bytes());
         }
+    }
+    if !patches.notes.is_empty() {
+        write_notes(pkg, &sheets, &patches.notes)?;
+    }
+    Ok(())
+}
+
+const COMMENTS_CT: &str =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml";
+const VML_CT: &str = "application/vnd.openxmlformats-officedocument.vmlDrawing";
+
+/// Add the notes of sheets that have no comments part: a `comments` part,
+/// a VML drawing with their boxes, and the sheet's `<legacyDrawing>`.
+fn write_notes(
+    pkg: &mut Package,
+    sheets: &[SheetEntry],
+    notes: &[(u32, Vec<crate::notes::NoteSave>)],
+) -> Result<(), String> {
+    let mut ct = String::new();
+    let has_vml_default = ContentTypes::parse(pkg.text(CONTENT_TYPES)?.ok_or("no content types")?)?
+        .defaults
+        .contains_key("vml");
+    for (block, (id, list)) in notes.iter().enumerate() {
+        let Some(sheet) = sheets
+            .iter()
+            .find(|s| s.sheet_id == *id && s.kind == SheetKind::Work)
+        else {
+            continue;
+        };
+        let rels_name = rels_part(&sheet.part);
+        let mut rels = match pkg.text(&rels_name)? {
+            Some(x) => parse_rels(x)?,
+            None => Vec::new(),
+        };
+        if rels
+            .iter()
+            .any(|r| matches!(r.short_kind(), "comments" | "vmlDrawing"))
+        {
+            continue;
+        }
+        let comments = (1..)
+            .map(|n| format!("xl/comments{n}.xml"))
+            .find(|n| !pkg.has(n))
+            .expect("a free name");
+        let vml = (1..)
+            .map(|n| format!("xl/drawings/vmlDrawing{n}.vml"))
+            .find(|n| !pkg.has(n))
+            .expect("a free name");
+        pkg.set(&comments, crate::notes::comments_xml(list).into_bytes());
+        pkg.set(&vml, crate::notes::vml_xml(list, block + 1).into_bytes());
+        ct.push_str(&format!(
+            "<Override PartName=\"/{}\" ContentType=\"{COMMENTS_CT}\"/>",
+            esc_attr(&comments)
+        ));
+        let mut alloc = IdAlloc::new(&rels);
+        let vml_rid = alloc.next();
+        rels.push(Rel {
+            id: alloc.next(),
+            kind: format!("{REL_BASE}comments"),
+            target: relative(&sheet.part, &comments),
+            external: false,
+        });
+        rels.push(Rel {
+            id: vml_rid.clone(),
+            kind: format!("{REL_BASE}vmlDrawing"),
+            target: relative(&sheet.part, &vml),
+            external: false,
+        });
+        pkg.set(&rels_name, write_rels(&rels).into_bytes());
+        let xml = pkg.take_text(&sheet.part)?.ok_or("sheet part is missing")?;
+        let patch = SheetPatch {
+            elements: vec![(
+                "legacyDrawing",
+                Some(format!("<legacyDrawing r:id=\"{}\"/>", esc_attr(&vml_rid))),
+            )],
+            ..SheetPatch::default()
+        };
+        let new = patch_sheet(&xml, &patch).map_err(|e| format!("{:?}: {e}", sheet.name))?;
+        pkg.set(&sheet.part, new.into_bytes());
+    }
+    if !has_vml_default && !ct.is_empty() {
+        ct.push_str(&format!(
+            "<Default Extension=\"vml\" ContentType=\"{VML_CT}\"/>"
+        ));
+    }
+    if !ct.is_empty() {
+        let mut types = pkg
+            .text(CONTENT_TYPES)?
+            .ok_or("no content types")?
+            .to_owned();
+        let at = types.rfind("</Types>").ok_or("content types not closed")?;
+        types.insert_str(at, &ct);
+        pkg.set(CONTENT_TYPES, types.into_bytes());
     }
     Ok(())
 }

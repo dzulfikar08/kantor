@@ -16,6 +16,8 @@ zip.workspace = true
 quick-xml = "0.41"
 unicode-segmentation = "1"
 log.workspace = true
+# Code pages of imported .rtf files.
+encoding_rs.workspace = true
 tempfile.workspace = true
 
 [lints]

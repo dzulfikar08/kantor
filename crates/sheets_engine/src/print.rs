@@ -288,6 +288,30 @@ pub(crate) struct Prints {
 }
 
 impl Prints {
+    /// Print settings an import read (`.xls`), by `sheetId`, with its
+    /// print area and titles formulas.
+    pub(crate) fn imported(
+        sheets: impl IntoIterator<Item = (u32, SheetPrint)>,
+        names: HashMap<u32, (Option<String>, Option<String>)>,
+    ) -> Self {
+        Self {
+            sheets: sheets
+                .into_iter()
+                .map(|(id, print)| {
+                    (
+                        id,
+                        Raw {
+                            print,
+                            ..Raw::default()
+                        },
+                    )
+                })
+                .collect(),
+            names,
+            base: Layout::default(),
+        }
+    }
+
     /// `skeletons`: the package's [`crate::preserve::worksheet_skeletons`].
     pub(crate) fn read(bytes: &[u8], skeletons: &Result<Vec<(u32, String)>, String>) -> Self {
         let mut sheets = HashMap::new();
@@ -388,6 +412,27 @@ fn length_mm(v: &str) -> Option<f64> {
         .ok()
         .filter(|x| *x > 0.0)
         .map(|x| x * k)
+}
+
+/// A chart sheet's print settings (`<chartsheet>`: margins, page setup,
+/// header and footer). Without an orientation it prints landscape, as
+/// Excel does.
+pub(crate) fn chart_sheet_print(xml: &str) -> SheetPrint {
+    let Ok(doc) = Document::parse(xml) else {
+        return SheetPrint {
+            setup: PageSetup {
+                landscape: true,
+                ..PageSetup::default()
+            },
+            ..SheetPrint::default()
+        };
+    };
+    let root = doc.root_element();
+    let mut p = parse_sheet(root).print;
+    if child(root, "pageSetup").is_none_or(|n| n.attribute("orientation").is_none()) {
+        p.setup.landscape = true;
+    }
+    p
 }
 
 fn parse_sheet(root: Node) -> Raw {

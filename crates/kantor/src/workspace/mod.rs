@@ -63,11 +63,14 @@ impl AppKind {
     pub fn for_path(path: &std::path::Path) -> Option<Self> {
         let ext = path.extension()?.to_str()?.to_ascii_lowercase();
         match ext.as_str() {
-            "xlsx" | "xlsm" | "xls" | "xlsb" | "ods" | "csv" | "tsv" => Some(Self::Sheets),
-            // Docs reads .docx only (.doc / .odt / .rtf aren't supported yet).
+            "xlsx" | "xlsm" | "xls" | "xlt" | "xlsb" | "ods" | "csv" | "tsv" => Some(Self::Sheets),
+            // Docs reads .docx (.odt isn't supported yet).
             "docx" => Some(Self::Docs),
-            // Slides reads .pptx only (.ppt / .odp aren't supported).
-            "pptx" => Some(Self::Slides),
+            // Read-only imports: Save writes a .docx copy.
+            "rtf" | "doc" | "dot" => Some(Self::Docs),
+            // Slides reads .pptx and imports PowerPoint 97-2003 .ppt/.pps/.pot
+            // (.odp isn't supported).
+            "pptx" | "ppt" | "pps" | "pot" => Some(Self::Slides),
             _ => None,
         }
     }
@@ -420,6 +423,22 @@ impl Workspace {
         cx: &mut Context<Self>,
         f: impl FnOnce(&mut SheetsView, &mut Window, &mut Context<SheetsView>),
     ) {
+        // Commands on cells say why they do nothing on a chart sheet.
+        self.with_sheets_any(window, cx, |v, w, cx| {
+            if !v.chart_sheet_blocks(cx) {
+                f(v, w, cx);
+            }
+        });
+    }
+
+    /// Like `with_sheets`, also while a chart sheet is shown (commands on
+    /// the whole workbook: export, calculation).
+    fn with_sheets_any(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut SheetsView, &mut Window, &mut Context<SheetsView>),
+    ) {
         if let Some(DocView::Sheets(view)) = self.focused_view() {
             view.update(cx, |v, cx| f(v, window, cx));
         }
@@ -481,7 +500,7 @@ impl Workspace {
     pub(crate) fn print(&mut self, _: &Print, window: &mut Window, cx: &mut Context<Self>) {
         self.with_docs(window, cx, |v, w, cx| v.print_doc(w, cx));
         self.with_slides(window, cx, |v, w, cx| v.print_doc(w, cx));
-        self.with_sheets(window, cx, |v, w, cx| v.print_doc(w, cx));
+        self.with_sheets_any(window, cx, |v, w, cx| v.print_doc(w, cx));
     }
 
     fn open_file(&mut self, _: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {

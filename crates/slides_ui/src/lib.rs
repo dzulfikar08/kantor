@@ -128,6 +128,11 @@ pub fn init(cx: &mut App) {
     slides_engine::display_text::set_display_translator(kantor_ui::i18n::t);
     kantor_ui::find_bar::bind_app_keys(KEY_CONTEXT, cx);
     kantor_ui::spelling::init(cx);
+    cx.bind_keys(key_bindings());
+}
+
+/// The editor's and the presenter's own key bindings.
+fn key_bindings() -> Vec<KeyBinding> {
     let c = Some(KEY_CONTEXT);
     let p = Some(PRESENTER_CONTEXT);
     let mut keys = vec![
@@ -173,10 +178,7 @@ pub fn init(cx: &mut App) {
     ];
     macro_rules! primary {
         ($($key:literal => $action:expr),* $(,)?) => {
-            keys.extend([$(
-                KeyBinding::new(kantor_ui::keys::primary(concat!("ctrl-", $key)), $action, c),
-                KeyBinding::new(concat!("super-", $key), $action, c),
-            )*]);
+            $(keys.extend(kantor_ui::keys::primary_pair(concat!("ctrl-", $key), $action, c));)*
         };
     }
     primary!(
@@ -202,7 +204,8 @@ pub fn init(cx: &mut App) {
         "-" => ZoomOut,
         "0" => ZoomFit,
     );
-    cx.bind_keys(keys);
+    keys.extend(object_editor::key_bindings());
+    keys
 }
 
 /// Shapes copied in any Slides view (so they paste into another
@@ -348,7 +351,17 @@ impl SlidesView {
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (pres, status) = match path.as_deref().map(Presentation::open) {
             Some(Ok(p)) => {
-                let s = if p.has_unsupported_content() {
+                let s = if p.is_imported() {
+                    let mut s = tf(
+                        "Opened {} (imported; Save creates a .pptx copy)",
+                        &[&p.title()],
+                    );
+                    for note in p.import_notes() {
+                        s.push_str("; ");
+                        s.push_str(&kantor_ui::content_strings::content_item(note));
+                    }
+                    s
+                } else if p.has_unsupported_content() {
                     let msg = tk("Opened {} (has unsupported content; Save creates a copy)");
                     tf(msg, &[&p.title()])
                 } else {
@@ -1315,13 +1328,15 @@ impl SlidesView {
     /// The file name, or the shell-given name while there is no file.
     fn name(&self) -> String {
         match &self.untitled_name {
-            Some(name) if self.pres.path().is_none() => name.clone(),
+            Some(name) if self.pres.source_path().is_none() => name.clone(),
             _ => self.pres.title(),
         }
     }
 
+    /// The file this presentation shows (an imported `.ppt` too, though
+    /// Save never writes there), if any.
     pub fn path(&self, _: &App) -> Option<PathBuf> {
-        self.pres.path().map(|p| p.to_path_buf())
+        self.pres.source_path().map(|p| p.to_path_buf())
     }
 
     pub fn is_dirty(&self, _: &App) -> bool {
@@ -1402,7 +1417,7 @@ impl SlidesView {
         });
         SlidesInfo {
             name: self.name(),
-            path: self.pres.path().map(|p| p.to_path_buf()),
+            path: self.pres.source_path().map(|p| p.to_path_buf()),
             dirty: self.pres.is_dirty(),
             slides: self.pres.len(),
             current: self.current,
@@ -1462,7 +1477,7 @@ impl SlidesView {
     pub fn export_pdf_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let dir = self
             .pres
-            .path()
+            .source_path()
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf())
             .or_else(kantor_core::dirs::home_dir)
@@ -1590,12 +1605,12 @@ impl SlidesView {
         }
         let dir = self
             .pres
-            .path()
+            .source_path()
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf())
             .or_else(kantor_core::dirs::home_dir)
             .unwrap_or_else(|| PathBuf::from("."));
-        let name = if self.pres.path().is_none() {
+        let name = if self.pres.source_path().is_none() {
             self.name()
         } else {
             self.pres.suggested_file_name()
@@ -1605,7 +1620,9 @@ impl SlidesView {
             let Ok(Ok(Some(mut path))) = path.await else {
                 return false;
             };
-            if path.extension().is_none() {
+            // Kantor writes .pptx: no extension, or a PowerPoint 97-2003
+            // one (an imported file's), becomes .pptx.
+            if path.extension().is_none() || slides_engine::ppt::is_legacy_path(&path) {
                 path.set_extension("pptx");
             }
             this.update_in(cx, |this, window, cx| {

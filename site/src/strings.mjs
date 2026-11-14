@@ -23,7 +23,7 @@ export const en = {
   h1: "Sheets, Docs and Slides that open your Office files",
   lede:
     "Kantor is a small, fast office app for Mac and Linux. Open a Word document, an Excel sheet or a PowerPoint deck, edit it, and save it back in the same format. It works offline and needs no account.",
-  facts: ["Free and open source", "About 60 MB", "Mac and Linux"],
+  facts: ["Free and open source", "About 65 MB", "Mac and Linux"],
   preview:
     'Early preview: Kantor is new and some things are still missing. <a href="#limits">Read the list</a> before you rely on it for important work.',
 
@@ -43,18 +43,18 @@ export const en = {
   shots: {
     sheets: {
       tab: "Sheets",
-      alt: "Kantor Sheets with a quarterly sales workbook: a merged title row, coloured header cells with borders, amounts in rupiah and percentages against target. A block of cells is selected and the status bar shows their sum, average and count.",
-      caption: "A formatted sales report in Sheets, with rupiah amounts and percentages. Select cells and their sum, average and count appear at the bottom.",
+      alt: "Kantor Sheets with a coffee chain's sales by city for 2026, in rupiah millions. The quarters are shaded by a green colour scale, cities below target are highlighted in red, best sellers have data bars, and a bar chart beside the table compares the first and fourth quarters. The year's totals are selected and the status bar shows their sum, average and count.",
+      caption: "Sales by city in Sheets, with conditional formatting, data bars and a chart that follows the cells. Select cells and their sum, average and count appear at the bottom.",
     },
     docs: {
       tab: "Docs",
-      alt: "Kantor Docs showing a short report on an A4 page, with headings, a bulleted list, a bar chart picture and a table, below the formatting toolbar and ruler.",
-      caption: "A report in Docs, on an A4 page with headings, a list, a picture and a table.",
+      alt: "Kantor Docs showing a quarterly review on an A4 page: a heading, a table of sales by city, and a paragraph with tracked changes, the inserted words underlined and the deleted ones struck through in the reviewer's colour. A comment card sits beside the page, a misspelt word has a red wavy underline, and two footnotes are at the bottom of the page.",
+      caption: "A report in Docs with a table, tracked changes, a comment, spell check and footnotes, as Word lays them out.",
     },
     slides: {
       tab: "Slides",
-      alt: "Kantor Slides with a four-slide deck. The thumbnails are on the left, and the open slide has a gradient title band, a table of regions and a column chart, with speaker notes below.",
-      caption: "A presentation in Slides with gradients, PowerPoint shapes, a table and a chart, as PowerPoint draws them.",
+      alt: "Kantor Slides with a four-slide deck. The thumbnails are on the left, and the open slide has a title, three key figures in rounded boxes and a clustered column chart of sales per city for four quarters, with speaker notes below.",
+      caption: "A presentation in Slides with key figures and a chart, as PowerPoint draws them.",
     },
   },
   shotsNote: "Real screenshots of Kantor on Linux. It follows your system's light or dark look.",
@@ -64,17 +64,17 @@ export const en = {
     sheets: {
       name: "Sheets",
       formats: [".xlsx", ".csv", ".ods", ".xls"],
-      text: "Spreadsheets with formulas, several sheets, number formats, Excel tables, charts, pivot tables, conditional formatting, data validation, sort and filter. Opens .csv, .ods and .xls files too, and saves as .xlsx.",
+      text: "Spreadsheets with formulas, several sheets, number formats, Excel tables, charts, pivot tables, conditional formatting, data validation, sort and filter. Opens .csv, .ods and .xls files too (with their formatting; Excel 97-2003 files also keep their comments, data validation and conditional formatting), and saves as .xlsx.",
     },
     docs: {
       name: "Docs",
-      formats: [".docx"],
-      text: "Letters and reports with headings, lists, tables, pictures, headers and footers with page numbers, and page sizes such as A4, Letter and F4, landscape pages too. Comments and tracked changes, find and replace, and a word count.",
+      formats: [".docx", ".doc", ".rtf"],
+      text: "Letters and reports with headings, lists, tables, pictures, headers and footers with page numbers, and page sizes such as A4, Letter and F4, landscape pages too. Comments and tracked changes, find and replace, and a word count. Opens .doc and .rtf files too, and saves them as .docx.",
     },
     slides: {
       name: "Slides",
-      formats: [".pptx"],
-      text: "Presentations with text, shapes and pictures you can move and resize, tables and chart data you can edit, speaker notes, and a full-screen slide show.",
+      formats: [".pptx", ".ppt"],
+      text: "Presentations with text, shapes and pictures you can move and resize, tables and chart data you can edit, speaker notes, and a full-screen slide show. Opens .ppt files too, and saves as .pptx.",
     },
   },
   keepH3: "Saving doesn't throw away what Kantor can't show yet",
@@ -83,6 +83,7 @@ export const en = {
   more: [
     ["Print and export to PDF", "Docs and Slides save a PDF that looks like what you see on screen, and print it through your PDF viewer; Slides also prints notes pages and handouts. Sheets prints pages the way Excel does: paper size including F4, fit to width, print titles, headers and footers."],
     ["Offline, no account", "Your files stay on your computer. There is nothing to sign up for."],
+    ["Spell check in English and Indonesian", "Docs and Slides underline misspelled words as you type and suggest corrections; Sheets checks your text cells with F7, as Excel does. No internet needed. Add your own words to a personal dictionary."],
     [
       "Your work is safe",
       'While a document has unsaved changes, Kantor keeps a copy of it on your computer. After a crash or a power cut it offers to restore your changes, and nothing is written over your file until you save. Autosave can be <a href="' + GH + '#your-work-is-safe">turned on</a> too.',
@@ -175,9 +176,11 @@ export const en = {
     "Word: floating pictures, shapes and equations aren't shown properly yet, and headers and footers with pictures or tables can't be edited. Kantor keeps them and saves them unchanged.",
     "Word: dot leaders at tab stops aren't drawn, and a footnote or endnote too long for its page doesn't continue onto the next one.",
     "Word: you can track your own edits, add comments and accept or reject changes, but formatting changes you make aren't tracked yet.",
+    "Word 97-2003 (.doc): text boxes, floating pictures and shapes, comments and WMF/EMF pictures aren't brought in, and files from Word 6 or Word 95 and password-protected files don't open.",
     "Excel: conditional formatting rules, tables (Format as Table), data validation and page setup can be made and changed in Kantor; files changed this way haven't been opened in Excel itself yet.",
     "Excel: macros aren't carried over when you save, and Kantor tells you when that happens. Pivot tables can be created, rearranged, refreshed and deleted, but not grouped by date or number, and calculated fields aren't supported yet.",
-    "Excel: charts can be inserted (column, bar, line, pie, area, scatter) and changed in a Chart panel, including charts that came with the file (combo and 3-D charts keep their type and data range); chart sheets, shapes and text boxes aren't shown yet.",
+    "Excel 97-2003 (.xls) and OpenDocument (.ods): charts and pictures aren't brought in, and .ods files open without their conditional formatting, data validation and comments.",
+    "Excel: charts can be inserted (column, bar, line, pie, area, scatter) and changed in a Chart panel, including charts that came with the file (combo and 3-D charts keep their type and data range); chart sheets are shown and printed but can't be changed, renamed, moved or deleted yet; shapes and text boxes aren't shown yet.",
     "PowerPoint: table cells and chart data (with series and categories added or removed) are edited in a panel, not on the slide, and SmartArt can't be edited (some shows as a plain box).",
   ],
   reportH3: "Found a file that Kantor gets wrong?",
@@ -211,7 +214,7 @@ export const id = {
   h1: "Sheets, Docs, dan Slides untuk file Office Anda",
   lede:
     "Kantor adalah aplikasi perkantoran yang ringan dan cepat untuk Mac dan Linux. Buka dokumen Word, lembar Excel, atau presentasi PowerPoint, edit, lalu simpan lagi dalam format yang sama. Bisa dipakai tanpa internet dan tanpa akun.",
-  facts: ["Gratis dan open source", "Sekitar 60 MB", "Mac dan Linux"],
+  facts: ["Gratis dan open source", "Sekitar 65 MB", "Mac dan Linux"],
   preview:
     'Versi awal: Kantor masih baru dan beberapa hal belum ada. <a href="#limits">Baca daftarnya</a> sebelum memakainya untuk pekerjaan penting.',
 
@@ -231,18 +234,18 @@ export const id = {
   shots: {
     sheets: {
       tab: "Sheets",
-      alt: "Kantor Sheets membuka laporan penjualan per kuartal: baris judul yang digabung, sel judul kolom berwarna dengan garis tepi, nominal rupiah, dan persentase terhadap target. Sekelompok sel dipilih dan bilah status menampilkan jumlah, rata-rata, dan banyaknya.",
-      caption: "Laporan penjualan berformat di Sheets, dengan nominal rupiah dan persentase. Pilih beberapa sel, lalu jumlah, rata-rata, dan banyaknya muncul di bagian bawah.",
+      alt: "Kantor Sheets membuka penjualan sebuah kedai kopi per kota tahun 2026, dalam juta rupiah. Kolom kuartal diwarnai skala warna hijau, kota yang di bawah target disorot merah, menu terlaris punya bilah data, dan grafik batang di samping tabel membandingkan kuartal pertama dan keempat. Total setahun dipilih dan bilah status menampilkan jumlah, rata-rata, dan banyaknya.",
+      caption: "Penjualan per kota di Sheets, dengan pemformatan bersyarat, bilah data, dan grafik yang mengikuti isi sel. Pilih beberapa sel, lalu jumlah, rata-rata, dan banyaknya muncul di bagian bawah.",
     },
     docs: {
       tab: "Docs",
-      alt: "Kantor Docs menampilkan laporan singkat di kertas A4, dengan judul, daftar berpoin, gambar grafik batang, dan tabel, di bawah toolbar dan penggaris.",
-      caption: "Laporan di Docs, di kertas A4 dengan judul, daftar, gambar, dan tabel.",
+      alt: "Kantor Docs menampilkan laporan kuartalan di kertas A4: judul bagian, tabel penjualan per kota, dan paragraf dengan perubahan terlacak, kata yang ditambahkan bergaris bawah dan yang dihapus dicoret dengan warna peninjau. Kartu komentar ada di samping halaman, kata yang salah eja bergaris bawah merah bergelombang, dan dua catatan kaki ada di bagian bawah halaman.",
+      caption: "Laporan di Docs dengan tabel, perubahan terlacak, komentar, cek ejaan, dan catatan kaki, tersusun seperti di Word.",
     },
     slides: {
       tab: "Slides",
-      alt: "Kantor Slides dengan presentasi empat slide. Gambar kecil slide ada di kiri, dan slide yang dibuka berisi pita judul bergradasi, tabel per wilayah, dan grafik kolom, dengan catatan pembicara di bawahnya.",
-      caption: "Presentasi di Slides dengan gradasi, bentuk PowerPoint, tabel, dan grafik, tampil seperti di PowerPoint.",
+      alt: "Kantor Slides dengan presentasi empat slide. Gambar kecil slide ada di kiri, dan slide yang dibuka berisi judul, tiga angka utama dalam kotak bersudut bulat, dan grafik kolom penjualan per kota selama empat kuartal, dengan catatan pembicara di bawahnya.",
+      caption: "Presentasi di Slides dengan angka utama dan grafik, tampil seperti di PowerPoint.",
     },
   },
   shotsNote: "Tangkapan layar asli Kantor di Linux. Tampilannya mengikuti mode terang atau gelap sistem Anda.",
@@ -252,17 +255,17 @@ export const id = {
     sheets: {
       name: "Sheets",
       formats: [".xlsx", ".csv", ".ods", ".xls"],
-      text: "Lembar kerja dengan rumus, beberapa sheet, format angka (termasuk Rupiah), tabel Excel, grafik, pivot table, format bersyarat, validasi data, urutkan, dan filter. Bisa membuka file .csv, .ods, dan .xls, lalu menyimpannya sebagai .xlsx.",
+      text: "Lembar kerja dengan rumus, beberapa sheet, format angka (termasuk Rupiah), tabel Excel, grafik, pivot table, format bersyarat, validasi data, urutkan, dan filter. Bisa membuka file .csv, .ods, dan .xls (tetap dengan formatnya; file Excel 97-2003 juga membawa komentar, validasi data, dan format bersyaratnya), lalu menyimpannya sebagai .xlsx.",
     },
     docs: {
       name: "Docs",
-      formats: [".docx"],
-      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, header dan footer dengan nomor halaman, serta ukuran kertas seperti A4, Letter, dan F4, termasuk halaman lanskap. Ada komentar dan lacak perubahan, cari dan ganti, juga penghitung kata.",
+      formats: [".docx", ".doc", ".rtf"],
+      text: "Surat dan laporan dengan judul, daftar, tabel, gambar, header dan footer dengan nomor halaman, serta ukuran kertas seperti A4, Letter, dan F4, termasuk halaman lanskap. Ada komentar dan lacak perubahan, cari dan ganti, juga penghitung kata. Bisa membuka file .doc dan .rtf, lalu menyimpannya sebagai .docx.",
     },
     slides: {
       name: "Slides",
-      formats: [".pptx"],
-      text: "Presentasi dengan teks, bentuk, dan gambar yang bisa dipindah dan diubah ukurannya, tabel dan data grafik yang bisa diedit, catatan pembicara, dan tayangan layar penuh.",
+      formats: [".pptx", ".ppt"],
+      text: "Presentasi dengan teks, bentuk, dan gambar yang bisa dipindah dan diubah ukurannya, tabel dan data grafik yang bisa diedit, catatan pembicara, dan tayangan layar penuh. Bisa membuka file .ppt, lalu menyimpannya sebagai .pptx.",
     },
   },
   keepH3: "Menyimpan tidak membuang yang belum bisa ditampilkan Kantor",
@@ -271,6 +274,7 @@ export const id = {
   more: [
     ["Cetak dan ekspor ke PDF", "Docs dan Slides menyimpan PDF yang sama dengan tampilan di layar dan mencetaknya lewat penampil PDF; Slides juga bisa mencetak halaman catatan dan handout. Sheets mencetak halaman seperti Excel: ukuran kertas termasuk F4, muat selebar halaman, judul cetak, header, dan footer."],
     ["Tanpa internet, tanpa akun", "File Anda tetap di komputer Anda. Tidak perlu mendaftar apa pun."],
+    ["Cek ejaan Bahasa Indonesia dan Inggris", "Docs dan Slides menggarisbawahi kata yang salah eja saat Anda mengetik dan memberi saran perbaikan; Sheets memeriksa sel teks Anda dengan F7, seperti Excel. Tanpa perlu internet. Kata Anda sendiri bisa ditambahkan ke kamus pribadi."],
     [
       "Pekerjaan Anda aman",
       'Selama dokumen punya perubahan yang belum disimpan, Kantor menyimpan salinannya di komputer Anda. Setelah aplikasi tertutup mendadak atau listrik padam, Kantor menawarkan untuk memulihkan perubahan Anda, dan file Anda tidak ditimpa sampai Anda menyimpannya. Simpan otomatis juga <a href="' + GH + '#your-work-is-safe">bisa dinyalakan</a> (bahasa Inggris).',
@@ -362,9 +366,11 @@ export const id = {
     "Word: gambar mengambang, bentuk, dan persamaan belum tampil dengan benar, dan header atau footer yang berisi gambar atau tabel belum bisa diedit. Kantor menyimpannya tanpa diubah.",
     "Word: garis titik-titik (leader) di tab belum digambar, dan catatan kaki atau catatan akhir yang terlalu panjang untuk halamannya belum berlanjut ke halaman berikutnya.",
     "Word: Anda bisa melacak suntingan Anda sendiri (track changes), menambah komentar, dan menerima atau menolak perubahan, tetapi perubahan format yang Anda buat belum dilacak.",
+    "Word 97-2003 (.doc): kotak teks, gambar dan bentuk mengambang, komentar, serta gambar WMF/EMF tidak ikut terbuka, dan file dari Word 6 atau Word 95 serta file berkata sandi tidak bisa dibuka.",
     "Excel: aturan format bersyarat, tabel (Format as Table), validasi data, dan pengaturan halaman bisa dibuat dan diubah di Kantor; file yang diubah dengan cara ini belum dicoba dibuka di Excel sendiri.",
     "Excel: makro tidak ikut tersimpan, dan Kantor memberi tahu Anda saat itu terjadi. Pivot table bisa dibuat, disusun ulang, di-refresh, dan dihapus, tetapi belum bisa dikelompokkan per tanggal atau angka, dan calculated field belum didukung.",
-    "Excel: grafik bisa disisipkan (kolom, batang, garis, pai, area, sebar) dan diubah lewat panel Grafik, termasuk grafik bawaan file (grafik kombinasi dan 3-D tetap dengan jenis dan rentang datanya); chart sheet, bentuk (shape), serta kotak teks belum ditampilkan.",
+    "Excel 97-2003 (.xls) dan OpenDocument (.ods): grafik dan gambar tidak ikut terbuka, dan file .ods terbuka tanpa format bersyarat, validasi data, dan komentarnya.",
+    "Excel: grafik bisa disisipkan (kolom, batang, garis, pai, area, sebar) dan diubah lewat panel Grafik, termasuk grafik bawaan file (grafik kombinasi dan 3-D tetap dengan jenis dan rentang datanya); chart sheet sudah ditampilkan dan dicetak, tetapi belum bisa diubah, diganti nama, dipindah, atau dihapus; bentuk (shape) serta kotak teks belum ditampilkan.",
     "PowerPoint: isi tabel dan data grafik (termasuk menambah atau menghapus seri dan kategori) diedit lewat panel, bukan langsung di slide, dan SmartArt belum bisa diedit (sebagian tampil sebagai kotak polos).",
   ],
   reportH3: "Menemukan file yang salah tampil di Kantor?",

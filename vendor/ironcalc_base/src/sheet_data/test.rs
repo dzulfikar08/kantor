@@ -571,3 +571,48 @@ fn a_packed_row_is_saved_as_its_cells() {
     assert_eq!(read, packed);
     assert!(is_packed(&read, 4));
 }
+
+// ── KANTOR PATCH: cheap snapshots ───────────────────────────────────────────
+
+#[test]
+fn a_clone_shares_chunks_until_either_is_written() {
+    let mut data = SheetData::new();
+    for row in 1..=3000 {
+        data.set_row(row, [(1, number(row as f64)), (2, number(1.0))]);
+    }
+    let snapshot = data.clone();
+    // Each kind of write, on the original: the snapshot keeps what it had.
+    data.set_cell(5, 1, number(-1.0));
+    data.set_cell_style(6, 1, 3);
+    if let Some(Cell::NumberCell { v, .. }) = data.cell_mut(7, 1) {
+        *v = -7.0;
+    }
+    data.remove_cell(8, 1);
+    data.remove_row(9);
+    data.set_row(2500, [(4, number(0.0))]);
+    assert!(data.kantor_permute_whole_rows(10, 1, 2, &[11, 10]));
+    for row in 1..=3000 {
+        let expected = [(1, number(row as f64)), (2, number(1.0))];
+        assert_eq!(
+            snapshot.cells_in_row(row),
+            expected
+                .iter()
+                .map(|(c, cell)| (*c, Cow::Borrowed(cell)))
+                .collect::<Vec<_>>(),
+            "row {row}"
+        );
+    }
+    assert_eq!(data.cell(5, 1).as_deref(), Some(&number(-1.0)));
+    assert_eq!(data.cell(7, 1).as_deref(), Some(&number(-7.0)));
+    assert_eq!(data.cell(8, 1), None);
+    assert!(data.columns_in_row(9).is_empty());
+    assert_eq!(data.columns_in_row(2500), vec![4]);
+    assert_eq!(data.cell(10, 1).as_deref(), Some(&number(11.0)));
+    // And writes to the snapshot leave the original alone.
+    let mut snapshot = snapshot;
+    snapshot.set_cell(3000, 1, number(0.5));
+    assert_eq!(data.cell(3000, 1).as_deref(), Some(&number(3000.0)));
+    // Chunks nobody wrote are still shared.
+    assert!(data.kantor_shares_chunk(&snapshot, 1));
+    assert!(!data.kantor_shares_chunk(&snapshot, 0));
+}

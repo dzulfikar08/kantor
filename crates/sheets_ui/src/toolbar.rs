@@ -510,6 +510,18 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .tooltip(i18n::t("PivotTable"))
             .dropdown_menu(move |menu, _, _| pivot_items(menu, &pivot_view)),
     );
+    // Review > Spelling.
+    let spell_view = cx.entity().downgrade();
+    row = row.child(separator(cx)).child(
+        Button::new("spelling")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::SpellCheck)
+            .tooltip("Spelling (F7)")
+            .on_click(move |_, w, cx| {
+                let _ = spell_view.update(cx, |v, cx| v.spelling_doc(w, cx));
+            }),
+    );
     // Export as PDF and Print.
     let print_view = cx.entity().downgrade();
     row = row.child(separator(cx)).child(

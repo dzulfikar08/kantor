@@ -36,13 +36,17 @@ const css = asset("site.css");
 const js = asset("site.js");
 
 cpSync(join(src, "img"), join(dist, "img"), { recursive: true });
+// Images keep their names; a content hash in the query makes a new screenshot show at once
+// (the CDN and browsers cache /img/* for a day).
+const img = (name) =>
+  `/img/${name}?v=${createHash("sha256").update(readFileSync(join(src, "img", name))).digest("hex").slice(0, 10)}`;
 for (const f of readdirSync(join(root, "static"))) cpSync(join(root, "static", f), join(dist, f));
 
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const APPS = ["sheets", "docs", "slides"];
 
 function picture(app, t, first) {
-  const set = (theme, ext) => `/img/${app}-${theme}-800.${ext} 800w, /img/${app}-${theme}-1550.${ext} 1550w`;
+  const set = (theme, ext) => `${img(`${app}-${theme}-800.${ext}`)} 800w, ${img(`${app}-${theme}-1550.${ext}`)} 1550w`;
   const sizes = "(min-width: 1180px) 1100px, calc(100vw - 2.5rem)";
   const sources = ["dark", "light"]
     .flatMap((theme) =>
@@ -55,7 +59,7 @@ function picture(app, t, first) {
   const load = first ? 'fetchpriority="high"' : 'loading="lazy"';
   return `<picture>
           ${sources}
-          <img src="/img/${app}-light-1550.png" srcset="${set("light", "png")}" sizes="${sizes}" width="${SHOT_W}" height="${SHOT_H}" alt="${esc(t.shots[app].alt)}" ${load} decoding="async">
+          <img src="${img(`${app}-light-1550.png`)}" srcset="${set("light", "png")}" sizes="${sizes}" width="${SHOT_W}" height="${SHOT_H}" alt="${esc(t.shots[app].alt)}" ${load} decoding="async">
         </picture>`;
 }
 
@@ -96,7 +100,7 @@ function windowsCard(t) {
 function page(t, other) {
   if (WINDOWS_RELEASED) t = withWindows(t);
   const url = SITE + t.path;
-  const ogImage = `${SITE}/img/og.png`;
+  const ogImage = `${SITE}${img("og.png")}`;
   // Text the script needs for the states it switches between.
   const i18n = {
     lang: t.lang,

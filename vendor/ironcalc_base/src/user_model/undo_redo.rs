@@ -22,6 +22,14 @@ impl<'a> UserModel<'a> {
                     column,
                     new_value: _,
                     old_value,
+                }
+                // KANTOR PATCH (fill undo records): undone as a typed value.
+                | Diff::KantorFillFormula {
+                    sheet,
+                    row,
+                    column,
+                    old_value,
+                    ..
                 } => {
                     needs_evaluation = true;
                     // If the current cell is a dynamic ArrayFormula anchor, its
@@ -706,6 +714,22 @@ impl<'a> UserModel<'a> {
                     needs_evaluation = true;
                     self.model
                         .set_user_input(*sheet, *row, *column, new_value.to_string())?;
+                }
+                // KANTOR PATCH (fill undo records): the fill's copy again.
+                Diff::KantorFillFormula {
+                    sheet,
+                    row,
+                    column,
+                    source_row,
+                    source_column,
+                    old_value: _,
+                } => {
+                    needs_evaluation = true;
+                    self.kantor_refill_formula(
+                        *sheet,
+                        (*source_row, *source_column),
+                        (*row, *column),
+                    )?;
                 }
                 Diff::SetArrayValue {
                     sheet,

@@ -31,7 +31,7 @@ use super::{
     shared_strings::{decode_xlsx_escapes, SharedStringTable},
     sheet_data::{read_sheet_data, SheetDataXml},
     tables::load_table,
-    util::{get_attribute, get_bool_false, get_color, get_number},
+    util::{get_attribute, get_bool_false, get_color, get_number, rels_part, resolve_part},
 };
 
 pub(crate) struct Sheet {
@@ -363,21 +363,35 @@ fn load_comments<R: Read + std::io::Seek>(
     let file = archive.by_name(path)?;
     let doc = XmlNode::parse(BufReader::new(file))?;
     let ws = &doc;
+    // KANTOR PATCH (rel targets): note authors, `<authors><author>` by `authorId`.
+    let authors: Vec<String> = ws
+        .children()
+        .filter(|n| n.has_tag_name("authors"))
+        .flat_map(|n| n.children().filter(|a| a.has_tag_name("author")))
+        .map(|a| a.text().unwrap_or("").to_string())
+        .collect();
     let comment_list = ws
         .children()
         .filter(|n| n.has_tag_name("commentList"))
         .collect::<Vec<&XmlNode>>();
     if comment_list.len() == 1 {
-        for comment in comment_list[0].children() {
+        for comment in comment_list[0]
+            .children()
+            .filter(|n| n.has_tag_name("comment"))
+        {
             let text = comment
                 .descendants()
                 .filter(|n| n.has_tag_name("t"))
-                .map(|n| n.text().unwrap().to_string())
+                .map(|n| n.text().unwrap_or("").to_string())
                 .collect::<Vec<String>>()
                 .join("");
             let cell_ref = get_attribute(comment, "ref")?.to_string();
-            // TODO: Read author_name from the list of authors
-            let author_name = "".to_string();
+            let author_id = comment
+                .attribute("authorId")
+                .and_then(|id| id.parse::<usize>().ok());
+            let author_name = author_id
+                .and_then(|id| authors.get(id).cloned())
+                .unwrap_or_default();
             comments.push(Comment {
                 text,
                 author_name,
@@ -461,6 +475,47 @@ pub(super) fn from_a1_to_rc(
     }
 
     Ok(to_rc_format(&t))
+}
+
+/// KANTOR PATCH (fast open): the R1C1 form of the formulas a sheet has
+/// converted so far, by `Parser::kantor_rc_key`. A filled-down column holds
+/// the same formula in every row (`=D2*E2`, `=D3*E3`, ...), which is one
+/// R1C1 formula: it is parsed once, and the other rows are only lexed.
+#[derive(Default)]
+pub(super) struct RcCache {
+    map: HashMap<String, String>,
+    key: String,
+}
+
+impl RcCache {
+    pub(super) fn to_rc(
+        &mut self,
+        formula: String,
+        parser: &mut Parser,
+        context: &str,
+        is_array_formula: bool,
+    ) -> Result<String, XlsxError> {
+        let cell_reference =
+            parse_reference(context).map_err(|error| XlsxError::Xml(error.to_string()))?;
+        if !parser.kantor_rc_key(&formula, &cell_reference, &mut self.key) {
+            return from_a1_to_rc(formula, parser, context.to_string(), is_array_formula);
+        }
+        self.key.push(if is_array_formula { 'A' } else { 'N' });
+        if let Some(rc) = self.map.get(&self.key) {
+            return Ok(rc.clone());
+        }
+        let mut t = parser.parse(&formula, &cell_reference);
+        if !is_array_formula {
+            add_implicit_intersection(&mut t, true);
+        }
+        let rc = to_rc_format(&t);
+        // A parse error, even one deep inside, keeps the whole formula as
+        // written (not relative to the cell): not reusable.
+        if !rc.contains(formula.as_str()) {
+            self.map.insert(self.key.clone(), rc.clone());
+        }
+        Ok(rc)
+    }
 }
 
 /// The index of a formula among the shared formulas of the sheet being read,
@@ -705,12 +760,9 @@ fn load_sheet_rels<R: Read + std::io::Seek>(
     let mut comments = Vec::new();
     // relationship id ("rId4") -> target of the hyperlink
     let mut hyperlinks = HashMap::new();
-    let v: Vec<&str> = path.split("/worksheets/").collect();
-    let mut path = v[0].to_string();
-    path.push_str("/worksheets/_rels/");
-    path.push_str(v[1]);
-    path.push_str(".rels");
-    let file = archive.by_name(&path);
+    // KANTOR PATCH (rel targets): targets resolved per OPC, see `resolve_part`.
+    let sheet_part = path;
+    let file = archive.by_name(&rels_part(sheet_part));
     if file.is_err() {
         return Ok((comments, hyperlinks));
     }
@@ -723,24 +775,14 @@ fn load_sheet_rels<R: Read + std::io::Seek>(
     for rel in rels {
         let t = get_attribute(rel, "Type")?.to_string();
         if t.ends_with("comments") {
-            let mut target = get_attribute(rel, "Target")?.to_string();
-            // Target="../comments1.xlsx"
-            target.replace_range(..2, v[0]);
+            let target = resolve_part(sheet_part, get_attribute(rel, "Target")?);
             comments = load_comments(archive, &target)?;
         } else if t.ends_with("hyperlink") {
             let id = get_attribute(rel, "Id")?.to_string();
             let target = get_attribute(rel, "Target")?.to_string();
             hyperlinks.insert(id, target);
         } else if t.ends_with("table") {
-            let mut target = get_attribute(rel, "Target")?.to_string();
-
-            let path = if let Some(p) = target.strip_prefix('/') {
-                p.to_string()
-            } else {
-                // Target="../table1.xlsx"
-                target.replace_range(..2, v[0]);
-                target
-            };
+            let path = resolve_part(sheet_part, get_attribute(rel, "Target")?);
 
             let table = load_table(archive, &path, sheet_name)?;
             tables.insert(table.name.clone(), table);
@@ -1035,12 +1077,7 @@ pub(super) fn load_sheets<R: Read + std::io::Seek>(
     for sheet in &workbook.worksheets {
         let rel = &rels[&sheet.id];
         if rel.rel_type.ends_with("worksheet") {
-            let path = &rel.target;
-            let path = if let Some(p) = path.strip_prefix('/') {
-                p.to_string()
-            } else {
-                format!("xl/{path}")
-            };
+            let path = resolve_part("xl/workbook.xml", &rel.target);
             sheet_rels.insert(
                 &sheet.id,
                 load_sheet_rels(archive, &path, tables, &sheet.name)?,
@@ -1060,12 +1097,7 @@ pub(super) fn load_sheets<R: Read + std::io::Seek>(
         let state = &sheet.state;
         let rel = &rels[rel_id];
         if rel.rel_type.ends_with("worksheet") {
-            let path = &rel.target;
-            let path = if let Some(p) = path.strip_prefix('/') {
-                p.to_string()
-            } else {
-                format!("xl/{path}")
-            };
+            let path = resolve_part("xl/workbook.xml", &rel.target);
             let (comments, hyperlink_rels) = sheet_rels
                 .get(rel_id)
                 .ok_or_else(|| XlsxError::Xml("Corrupt XML structure".to_string()))?;
@@ -1114,6 +1146,102 @@ mod tests {
         for value in ["", "abc", "NaN", "nan", "inf", "-inf", "Infinity", "1e400"] {
             assert_eq!(parse_cell_number(Some(value)), 0.0, "{value}");
         }
+    }
+
+    /// KANTOR PATCH (fast open): converting through `RcCache` gives what
+    /// converting every formula on its own gives, for filled-down formulas
+    /// (the cache's hits) and for the cases it must not share: text that
+    /// looks like references, functions named like cells, ranges whose ends
+    /// swap, whole rows and columns, other sheets, names, parse errors.
+    #[test]
+    fn rc_cache_matches_parsing_each_formula() {
+        use super::{from_a1_to_rc, RcCache};
+        use ironcalc_base::expressions::parser::new_parser_english;
+        use ironcalc_base::expressions::utils::number_to_column;
+
+        let mut seed: u64 = 0x2026_1113;
+        let mut next = move |n: u64| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) % n
+        };
+        // A reference `d` rows and columns from the cell, or absolute.
+        let reference = |row: i32, col: i32, d: (i32, i32), abs: (bool, bool)| {
+            let r = if abs.0 { d.0.abs() + 1 } else { (row + d.0).max(1) };
+            let c = if abs.1 { d.1.abs() + 1 } else { (col + d.1).max(1) };
+            format!(
+                "{}{}{}{}",
+                if abs.1 { "$" } else { "" },
+                number_to_column(c).unwrap(),
+                if abs.0 { "$" } else { "" },
+                r
+            )
+        };
+        type Piece = Box<dyn Fn(i32, i32) -> String>;
+        let mut templates: Vec<Vec<Piece>> = Vec::new();
+        for _ in 0..300 {
+            let mut pieces: Vec<Piece> = Vec::new();
+            for _ in 0..1 + next(4) {
+                let d = (next(7) as i32 - 3, next(7) as i32 - 3);
+                let d2 = (next(9) as i32 - 4, next(9) as i32 - 4);
+                let abs = (next(3) == 0, next(3) == 0);
+                let abs2 = (next(3) == 0, next(3) == 0);
+                let piece: Piece = match next(16) {
+                    0 => Box::new(move |r, c| reference(r, c, d, abs)),
+                    1 => Box::new(move |r, c| {
+                        format!("SUM({}:{})", reference(r, c, d, abs), reference(r, c, d2, abs2))
+                    }),
+                    2 => Box::new(move |r, c| format!("Sheet2!{}", reference(r, c, d, abs))),
+                    3 => Box::new(move |r, c| format!("'My Sheet'!{}", reference(r, c, d, abs))),
+                    4 => Box::new(move |r, c| format!("\"{}\"", reference(r, c, d, abs))),
+                    5 => Box::new(|_, _| "LOG10(100)".to_string()),
+                    6 => Box::new(move |_, c| {
+                        let col = number_to_column((c + d.1).max(1)).unwrap();
+                        format!("COUNT({col}:{col})")
+                    }),
+                    7 => Box::new(move |r, _| format!("SUM({}:{})", (r + d.0).max(1), (r + d2.0).max(1))),
+                    8 => Box::new(|_, _| "Rate".to_string()),
+                    9 => Box::new(move |r, c| format!("{}#", reference(r, c, d, abs))),
+                    10 => Box::new(move |r, c| format!("{}+", reference(r, c, d, abs))),
+                    11 => Box::new(move |r, c| format!("@{}", reference(r, c, d, abs))),
+                    12 => Box::new(|_, _| "#N/A".to_string()),
+                    13 => Box::new(move |r, c| format!("VLOOKUP({},Sheet2!$A:$D,2,FALSE)", reference(r, c, d, abs))),
+                    14 => Box::new(move |r, c| format!("IF({} > 1, \"x\", TRUE)", reference(r, c, d, abs))),
+                    _ => Box::new(move |r, c| format!("{} * 2.5%", reference(r, c, d, abs))),
+                };
+                pieces.push(piece);
+            }
+            templates.push(pieces);
+        }
+        let names = vec![("Rate".to_string(), None, "Sheet1!$A$1".to_string())];
+        let sheets = vec!["Sheet1".to_string(), "Sheet2".to_string(), "My Sheet".to_string()];
+        let mut alone = new_parser_english(sheets.clone(), names.clone(), HashMap::new());
+        let mut cached = new_parser_english(sheets, names, HashMap::new());
+        let mut cache = RcCache::default();
+        let ops = ["+", "-", "*", "&", "<", ","];
+        let mut hits = 0;
+        for _ in 0..20_000 {
+            let template = &templates[next(templates.len() as u64) as usize];
+            let (row, col) = (1 + next(40) as i32, 1 + next(12) as i32);
+            let mut formula = String::new();
+            for (i, piece) in template.iter().enumerate() {
+                if i > 0 {
+                    formula.push_str(ops[i % ops.len()]);
+                }
+                formula.push_str(&piece(row, col));
+            }
+            let context = format!("Sheet1!{}{row}", number_to_column(col).unwrap());
+            let array = next(10) == 0;
+            let before = cache.map.len();
+            let expected = from_a1_to_rc(formula.clone(), &mut alone, context.clone(), array).unwrap();
+            let got = cache.to_rc(formula.clone(), &mut cached, &context, array).unwrap();
+            assert_eq!(got, expected, "{formula} at {context}");
+            if cache.map.len() == before {
+                hits += 1;
+            }
+        }
+        assert!(hits > 10_000, "only {hits} formulas were found in the cache");
     }
 
     #[test]

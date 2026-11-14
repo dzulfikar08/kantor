@@ -8,6 +8,9 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+# .ppt import: the compound file container and compressed EMF/WMF pictures.
+cfb = "0.14"
+flate2 = "1"
 # Rgb, Position/Selection, grapheme helpers and the font substitution table.
 docs_engine.workspace = true
 # Reading: byte ranges of every element, so unmodelled XML is copied verbatim.

@@ -151,23 +151,23 @@ impl Workbook {
             .filter(|r| !hidden.contains(r))
             .collect();
         let model = self.model.get_model();
-        let mut rows: Vec<(u32, Vec<CellValue>)> = visible
+        // Every row's key values side by side, and the rows sorted as
+        // positions among them: one allocation, not one per row.
+        let width = keys.len();
+        let values: Vec<CellValue> = visible
             .iter()
-            .map(|&r| {
-                (
-                    r,
-                    keys.iter()
-                        .map(|k| cell_value(model, sheet, r, k.col))
-                        .collect(),
-                )
-            })
+            .flat_map(|&r| keys.iter().map(move |k| cell_value(model, sheet, r, k.col)))
             .collect();
-        rows.sort_by(|a, b| compare_keyed(&a.1, &b.1, keys));
+        let mut rows: Vec<u32> = (0..visible.len() as u32).collect();
+        rows.sort_by(|&a, &b| {
+            let (a, b) = (a as usize * width, b as usize * width);
+            compare_keyed(&values[a..a + width], &values[b..b + width], keys)
+        });
         // Destination of each row: visible slots get the sorted rows, hidden
         // rows keep theirs.
         let mut order: Vec<i32> = (range.top..=range.bottom).map(|r| r as i32 + 1).collect();
-        for (slot, (src, _)) in visible.iter().zip(&rows) {
-            order[(slot - range.top) as usize] = *src as i32 + 1;
+        for (slot, &src) in visible.iter().zip(&rows) {
+            order[(slot - range.top) as usize] = visible[src as usize] as i32 + 1;
         }
         let count = rows.len();
         if order

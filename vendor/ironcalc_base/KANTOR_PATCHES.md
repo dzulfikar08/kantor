@@ -406,14 +406,21 @@ even for an edit nowhere near a rule. And `UserModel` put every diff list on
 its `send_queue` (upstream: to sync a remote copy), which Kantor never sent:
 a second copy of every edit's diffs, old values included, for the session.
 
-* `UserModel::kantor_take_changes()` (`src/kantor_changes.rs`) empties the
-  queue into a `KantorChanges`: rectangles whose values may have changed
+* `UserModel::kantor_take_changes()` (`src/kantor_changes.rs`) returns a
+  `KantorChanges` summed up from every diff list pushed, undone or redone
+  since the last call (it used to empty the `send_queue` instead, which
+  only happened on sheets with conditional formatting; elsewhere the copy
+  stayed for the session): rectangles whose values may have changed
   (cell values, array formulas, cleared ranges, sorted rows), sheets where
   anything may have moved (rows/columns inserted, deleted or moved, merges,
   conditional formatting rules, sheet filters), `all` for workbook-wide
   changes (sheets, names, tables, locale, theme, named styles), `restyled`
   for changes that keep values (styles, sizes, hidden rows, frozen panes).
   Undo and redo report the cells of the diff list they apply.
+* `UserModel::kantor_stop_send_queue()` stops filling `send_queue`
+  (`flush_send_queue` then returns nothing); `sheets_engine` calls it on
+  every workbook. The queue cloned each diff list (~75 ms for a 10 000-row
+  fill) to keep a copy nobody read.
 * `Model::kantor_evaluations()` counts `evaluate()` passes (formula results
   change without a diff); `Model::kantor_has_dynamic_arrays()` says whether
   the last pass had dynamic arrays (whose spills can land anywhere).
@@ -423,6 +430,197 @@ a second copy of every edit's diffs, old values included, for the session.
 
 Used by `crates/sheets_engine/src/cond_format.rs` (`cond_sync`). Tests:
 `kantor_changes::tests`, `sheets_engine` `cond_format::invalidation`.
+
+## 17. Keying formulas by what they parse to (fast open)
+
+Why: the xlsx reader parses every formula cell's A1 text to turn it into the
+R1C1 form the model keeps. A filled-down column is one R1C1 formula written
+90 000 times (`E2*F2`, `E3*F3`, ...), and parsing them was ~80% of opening
+the generated 90k-row workbook (810k formula cells).
+
+* `Parser::kantor_rc_key(formula, context, key)` lexes the formula and
+  writes a key in which every reference is what `parse` makes of it
+  (absolute parts as they are, relative parts as offsets from `context`,
+  range ends put in order first, as `parse_primary` does) and every other
+  token is its text. Two formulas on one sheet with equal keys parse to the
+  same tree. It refuses (returns false) formulas with `[` (structured
+  references depend on the table the cell is in) and ones the lexer
+  rejects. The caller (vendor/ironcalc §8) also never shares a result that
+  is a parse error, whose text is the formula as written.
+* `Lexer::set_formula` reuses its buffer; `Lexer::kantor_push_text` copies a
+  token's text into the key.
+
+Test: `rc_cache_matches_parsing_each_formula` in vendor/ironcalc (20 000
+random formulas, filled-down and not, compared with parsing each alone).
+
+## 18. Sorting moves rows whole (fast sort)
+
+Why: sorting the 90k-row table took ~0.4–0.5 s (and its undo as long):
+`kantor_permute_rows` took every row apart into cells and built it again,
+and checked every cell of the range for array formulas through `Cow<Cell>`.
+
+* `SheetData::kantor_permute_whole_rows` moves the rows as they are held
+  (packed, numbers or cells) when every row of the range has its cells
+  within the sorted columns; otherwise the old cell-by-cell path runs.
+* `SheetData::kantor_has_array_cells` looks only into rows of cells (rows
+  of numbers and packed rows can't hold array formulas or spills).
+
+Tests: the sort tests of `crates/sheets_engine` (tables, ranges, filters,
+undo), and `kantor_tables` tests here.
+
+## 19. Partial recalculation
+
+Why: every edit IronCalc evaluated the whole workbook (and auto-fill did so
+even in manual calculation): filling 1000 rows of formulas in the 90k-row
+workbook took 1–2 s, nearly all of it recalculating 810k formulas whose
+inputs hadn't changed.
+
+What (`src/kantor_recalc.rs`):
+
+* `UserModel` keeps `kantor_unevaluated`, the `KantorChanges` (§16) of every
+  diff list pushed, undone or redone since the last evaluation.
+  `evaluate_if_not_paused`, auto-fill and the new public
+  `UserModel::kantor_evaluate_changes` evaluate only what those changes can
+  reach (`Model::kantor_evaluate_changed`); `UserModel::evaluate` stays a full
+  evaluation (F9) and empties the record.
+* Dependents are worked out from the parsed formulas each time, no graph is
+  kept: formula cells are grouped into runs (consecutive rows of a column with
+  one shared formula), each run's references are translated over the run at
+  once, and the changed rectangles are spread to the rows that read them
+  until nothing new is marked. Formulas still without a value (typed in
+  manual mode) are evaluated too.
+* Only the marked cells run; any other formula read gives its stored value
+  (`Evaluation::kantor_only`, also honoured by the lookup cache's "is this
+  vector ready" check).
+* Always evaluated, with their dependents: volatile functions (RAND,
+  RANDBETWEEN, RANDARRAY, NOW, TODAY), and formulas whose reads can't be
+  told from the formula: OFFSET, INDIRECT, CELL, INFO, SHEETS, SUBTOTAL and
+  AGGREGATE (hidden rows), GETPIVOTDATA, HYPERLINK, defined names, tables
+  and structured references, `:` between function results, spills (`#`),
+  user functions.
+* Falls back to a full evaluation: changes to sheets, rows/columns, merges,
+  rules, names, tables or more than 64 scattered rectangles on a sheet (§16
+  says "sheet" or "all"); dynamic arrays or array formulas anywhere (spills
+  can land on any cell; formulas IronCalc thinks may return an array, such as
+  some INDEX or name formulas typed in, become dynamic arrays); dynamic
+  links; more than 30M run checks; a pass that met a circular reference
+  (which cells of a loop get `#CIRC!` depends on where the evaluation
+  entered it) or a restart.
+* `Model::kantor_last_partial()` says how many formulas the last evaluation
+  ran when it was partial (for tests and timing).
+* Fixes found on the way: `UserModel::set_user_input` evaluated before its
+  diff list was recorded (now after, so the edit is known); criteria
+  functions (`COUNTIF`, `SUMIFS`...) compared text through a lower-case copy
+  of every cell, now without a copy for ASCII text (`functions/util.rs`),
+  and lower-cased the criterion itself for every cell too (once now: a
+  whole-column `SUMIF` on 90k rows went from ~6.9 to ~4.3 ms).
+
+Tests: `kantor_recalc::tests`: random formula graphs on two sheets (own and
+cross-sheet references, mixed absolute ranges, whole columns, lookups,
+criteria functions, OFFSET/INDIRECT, SUBTOTAL) with random edits, fills,
+clears, undo and redo; after each partial evaluation every value is compared
+with a full evaluation, in automatic mode (with and without loops) and in
+manual mode (several edits, then one evaluation; most must be partial). A
+fill down a 2000-row running total runs only the new cells; an edit at the
+top runs the chain and nothing else.
+
+## 20. Fast fill
+
+Why: filling 9 formulas down 10 000 rows of the 90k-row test workbook took
+~2 s, ~1.9 s of it writing the 90 000 cells: each got its source formula
+printed for its position (`extend_to`), then typed in (`set_user_input`:
+parsed again, units worked out, the shared formula looked up by its R1C1
+text), and the source's style rebuilt and searched for in the style table,
+and its link cloned, once per cell.
+
+What (`src/user_model/autofill.rs`, both `auto_fill_rows` and
+`auto_fill_columns`; `kantor_fill_cell`):
+
+* A target whose source is a plain formula (not an array or dynamic one)
+  gets the source's shared formula index directly when
+  `kantor_copies_unchanged` says the translated text would parse back to the
+  same formula: relative references are stored as offsets, so that holds
+  when every reference stays on the sheet and the formula holds nothing
+  looked up in the workbook (defined names, tables, lambdas, `@`, spill `#`,
+  wrong references, parse errors say no). The cell goes through
+  `prepare_cell_for_user_input` and drops a quote prefix as
+  `set_user_input` would. Everything else is typed in as before.
+* Each source cell's style, its index in the style table and its link are
+  looked up once per fill (`KantorFillSource`).
+* The diffs were unchanged (the translated text, old values and styles), so
+  undo and redo are exactly as before. Section 22 since records a copied
+  formula by its source instead of its text.
+* `UserModel::kantor_fill_copies` counts the cells copied by the last fill
+  (for tests).
+
+Idle machine, back to back (`crates/sheets_engine/examples/big_timing.rs`):
+10 000 rows 1.05 s → 0.45 s, 1000 rows 227 → 146 ms. In the app (fill job
+on its background thread) the old way was about twice as slow as in the
+example, the new one is not: 10 000 rows 2.28 s → 0.47 s, 1000 rows
+~370 → ~175 ms.
+
+Tests: `test/user_model/test_kantor_fast_fill.rs`: fills down, up, right
+and left of formulas of every kind (relative, absolute, mixed, whole
+columns, other sheet, a name, an array, OFFSET, references falling off the
+sheet) compared with typing each translated formula in; undo and redo
+restore exactly; the change summary without the send queue.
+
+## 21. Cheap snapshots (copy-on-write rows)
+
+Why: a recovery copy or a Save snapshots the workbook on the UI thread
+(`sheets_engine` `Workbook::xlsx_snapshot`, a clone of `types::Workbook`)
+and writes it in the background. On the 90k-row test workbook the clone
+took 55-73 ms, nearly all of it copying every sheet's cells, which stalled
+typing every time a recovery copy was due.
+
+What (`src/sheet_data/chunks.rs`): `SheetData` holds its chunks of 1024
+rows as `Arc<Chunk>` instead of `Box<Chunk>`. A clone copies one pointer per
+chunk; the writers (`row_mut`, `row_or_insert`, `remove_row`, `take_row`)
+go through `Arc::make_mut`, so a chunk is copied the first time it is
+written while a clone shares it (well under a millisecond), and never
+otherwise. Reads are unchanged. bitcode encodes an `Arc` as it did the
+`Box`: saved bytes are identical.
+
+Effect: the snapshot 55-73 ms → 3-6 ms (machine under load), measured with
+`KANTOR_BIG_XLSX=big.xlsx cargo test --release -p sheets_engine
+snapshot_timing -- --ignored --nocapture`.
+
+Tests: `sheet_data/test.rs` (`a_clone_shares_chunks_until_either_is_written`:
+every kind of write on either side leaves the other unchanged, untouched
+chunks stay shared) and `sheet_data/chunks.rs`
+(`shared_chunks_save_as_boxed_ones_did`).
+
+## 22. Fill undo records without the formula text
+
+Why: after section 20, printing each copied formula's text for its undo
+record (`extend_to`, once per target cell) was ~30 % of a big fill; the
+text was only ever read again by redo.
+
+What (`src/user_model/{history,autofill,undo_redo}.rs`, `src/kantor_changes.rs`):
+
+* `Diff::KantorFillFormula { sheet, row, column, source_row, source_column,
+  old_value }`: a fill target that got its source's shared formula
+  (`kantor_copy_formula`). Everything else a fill writes (series, values,
+  formulas typed in because they can't be copied, covered cells) is
+  recorded as before.
+* `kantor_fill_cell` translates the source's text only when it types it in
+  (no copy possible).
+* Undo restores `old_value` exactly as for `SetCellValue` (same match arm).
+  Redo (and `apply_external_diffs`) calls `kantor_refill_formula`: the
+  source is outside the fill and redo only runs on the state the undo left,
+  so it holds the formula it held when the fill ran; it is copied again,
+  or, if the copy can't be made, translated and typed in as upstream did.
+* `KantorChanges` reports the cell, as for `SetCellValue`.
+
+Effect (`crates/sheets_engine/examples/big_timing.rs`, thread CPU time,
+back to back): 10 000 rows 396 → 283 ms (Manual), 410 → 275 ms
+(Automatic); 1000 rows ~137 → ~127 ms (mostly recalculation there). Redo
+of a fill copies instead of parsing each formula again.
+
+Tests: `test/user_model/test_kantor_fast_fill.rs`
+(`fill_records_undo_and_redo_every_way`: down, up, right, left, three
+undo/redo rounds each; `fill_records_replay_on_a_remote_copy`), with the
+section 20 tests unchanged.
 
 ## Updating or dropping
 

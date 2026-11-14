@@ -306,3 +306,24 @@ fn font_and_dxf_children_are_in_schema_order() {
         &["<b/>", "<i/>", "<strike/>", "<u/>", "<sz ", "<color "],
     );
 }
+
+/// openpyxl writes the comments relationship with an absolute target
+/// (`/xl/comments/comment1.xml`); the file used to fail to open with "file
+/// not found in archive". Fixture: `tests/gen_openpyxl_comments.py`.
+#[test]
+fn comments_with_an_absolute_rel_target_open() {
+    let bytes = std::fs::read("tests/openpyxl_comments.xlsx").unwrap();
+    let workbook = load_from_xlsx_bytes(&bytes, "t", "en", "UTC").unwrap();
+    let comments = &workbook.worksheets[0].comments;
+    let found: Vec<(&str, &str, &str)> = comments
+        .iter()
+        .map(|c| (c.cell_ref.as_str(), c.author_name.as_str(), c.text.as_str()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("B2", "Rina", "Includes the pop-up stall."),
+            ("A3", "Bayu", "New shop opened in March."),
+        ]
+    );
+}

@@ -54,14 +54,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
     // Ctrl and Super (Mac-style Cmd) alike.
     macro_rules! both {
         ($key:literal, $action:expr) => {
-            [
-                KeyBinding::new(
-                    kantor_ui::keys::primary(concat!("ctrl-", $key)),
-                    $action,
-                    ctx,
-                ),
-                KeyBinding::new(concat!("super-", $key), $action, ctx),
-            ]
+            kantor_ui::keys::primary_pair(concat!("ctrl-", $key), $action, ctx)
         };
     }
     cx.bind_keys(
@@ -531,8 +524,9 @@ impl SheetsView {
         })
     }
 
-    /// Fill, in the background for big workbooks: IronCalc recalculates
-    /// the whole workbook after a fill, even in manual calculation.
+    /// Fill, in the background for big workbooks: a fill recalculates what
+    /// it changed even in manual calculation, and everything when IronCalc
+    /// can't trace that.
     fn apply_fill(&mut self, fill: Fill, window: &mut Window, cx: &mut Context<Self>) {
         if self.blocked(cx) {
             return;
@@ -733,17 +727,13 @@ impl SheetsView {
             let (rows, cols) = table.scrolled_view(cx);
             let grid = table.delegate_mut();
             let sheet = grid.sheet;
-            // With panes already frozen, they hold the screen's top-left.
-            let (fr, fc) = grid.book.frozen(sheet);
-            let origin = grid.book.frozen_origin(sheet);
             let first_col = (cols.start as u32).saturating_sub(1);
-            let view = (
-                if fr > 0 { origin.0 } else { rows.start as u32 },
-                if fc > 0 { origin.1 } else { first_col },
-            );
-            let in_view = (
-                rows.len() as u32 + fr.saturating_sub(origin.0),
-                cols.len() as u32 + fc.saturating_sub(origin.1),
+            let (view, in_view) = freeze_view(
+                active,
+                grid.book.frozen(sheet),
+                grid.book.frozen_origin(sheet),
+                (rows.start as u32, first_col),
+                (rows.len() as u32, cols.len() as u32),
             );
             let (origin, split) = freeze_split(command, active, view, in_view);
             let res = freeze(origin, split)(&mut grid.book, sheet);
@@ -908,6 +898,32 @@ fn freeze(origin: (u32, u32), split: (u32, u32)) -> Op {
     })
 }
 
+/// The screen's top-left cell and size that [`freeze_split`] works from, per
+/// axis: with panes already frozen (`frozen` the first unfrozen row and
+/// column, `origin` their top-left), the frozen part when the `active` cell
+/// is in it, otherwise the scrolled part (`scrolled` its first row and
+/// column on screen, `scrolled_len` how many it shows). Measuring from the
+/// frozen part's origin there would freeze every row scrolled out of sight
+/// between them, a pane taller than the window.
+pub(crate) fn freeze_view(
+    active: (u32, u32),
+    frozen: (u32, u32),
+    origin: (u32, u32),
+    scrolled: (u32, u32),
+    scrolled_len: (u32, u32),
+) -> ((u32, u32), (u32, u32)) {
+    let axis = |active: u32, frozen: u32, origin: u32, scrolled: u32, len: u32| {
+        if frozen > 0 && active < frozen {
+            (origin, len + frozen.saturating_sub(origin))
+        } else {
+            (scrolled, len)
+        }
+    };
+    let (top, rows) = axis(active.0, frozen.0, origin.0, scrolled.0, scrolled_len.0);
+    let (left, cols) = axis(active.1, frozen.1, origin.1, scrolled.1, scrolled_len.1);
+    ((top, left), (rows, cols))
+}
+
 /// Where Excel's freeze commands put the panes, as `(origin, split)`:
 /// the panes' top-left cell and the first unfrozen row and column.
 ///
@@ -1049,6 +1065,31 @@ pub(crate) fn corner_element(element: Stateful<Div>, view: &WeakEntity<SheetsVie
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[std::prelude::v1::test]
+    fn refreezing_below_frozen_panes_starts_at_the_screen() {
+        use GridCommand::*;
+        // Row 1 frozen, scrolled to row 53 (index 52), active F62: rows
+        // 53-61 freeze, not 1-61 (taller than the window).
+        let (view, in_view) = freeze_view((61, 5), (1, 0), (0, 0), (52, 0), (19, 12));
+        assert_eq!((view, in_view), ((52, 0), (19, 12)));
+        assert_eq!(
+            freeze_split(FreezePanes, (61, 5), view, in_view),
+            ((52, 0), (61, 5))
+        );
+        // Active inside the frozen rows 1-5: the panes keep their origin.
+        let (view, in_view) = freeze_view((2, 3), (5, 0), (0, 0), (40, 0), (19, 12));
+        assert_eq!((view, in_view), ((0, 0), (24, 12)));
+        assert_eq!(
+            freeze_split(FreezePanes, (2, 3), view, in_view),
+            ((0, 0), (2, 3))
+        );
+        // Nothing frozen: the scrolled part, as before.
+        assert_eq!(
+            freeze_view((14, 4), (0, 0), (0, 0), (10, 2), (30, 12)),
+            ((10, 2), (30, 12))
+        );
+    }
 
     #[std::prelude::v1::test]
     fn freeze_panes_like_excel() {

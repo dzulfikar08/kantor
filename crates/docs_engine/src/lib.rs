@@ -7,8 +7,10 @@
 //! - [`docx`]: reading and writing `.docx`, and the round-trip safety rules
 //!   (what's modelled, kept verbatim, carried as an opaque object, or
 //!   "unsupported content" that sends Save to Save As).
+//! - `msdoc`: importing Word 97-2003 `.doc` / `.dot` files (read only).
 //! - [`numbering`]: lists; [`table`]: tables; [`object`]: inline pictures
 //!   and opaque elements.
+//! - [`rtf`]: importing `.rtf` files (read-only; Save writes `.docx`).
 
 pub mod agent;
 mod document;
@@ -16,19 +18,23 @@ pub mod docx;
 mod edit;
 pub mod find;
 pub mod model;
+mod msdoc;
 pub mod notes;
 pub mod numbering;
 pub mod object;
 pub mod page;
 pub mod review;
 mod rewrite;
+pub mod rtf;
 pub mod section;
 pub mod style;
 pub mod table;
 mod track;
 mod xml;
 
-pub use document::{Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, Toggle};
+pub use document::{
+    Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, Toggle, is_import_path,
+};
 pub use edit::TableEdit;
 pub use model::{
     Align, CellRef, Fonts, Indent, LineRule, LineSpacing, NumRef, ParaProps, Paragraph, Position,

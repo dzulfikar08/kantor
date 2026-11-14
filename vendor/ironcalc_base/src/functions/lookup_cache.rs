@@ -498,10 +498,14 @@ impl<'a> Model<'a> {
             };
             let position = CellReferenceIndex { sheet, row, column };
             let evaluated = |position: CellReferenceIndex| {
-                self.evaluation
-                    .cells
-                    .get(&(position.sheet, position.row, position.column))
-                    == Some(&CellState::Evaluated)
+                let key = (position.sheet, position.row, position.column);
+                self.evaluation.cells.get(&key) == Some(&CellState::Evaluated)
+                    // KANTOR PATCH (partial recalculation): read as stored.
+                    || self
+                        .evaluation
+                        .kantor_only
+                        .as_ref()
+                        .is_some_and(|only| !only.contains(&key))
             };
             let ready = match self.fetch_cell(position).as_deref() {
                 None => true,

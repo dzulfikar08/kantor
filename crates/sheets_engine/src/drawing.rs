@@ -315,6 +315,34 @@ pub(crate) struct Drawings {
     /// Objects ever edited this session: their anchors are written on every
     /// save (a saved edit that is undone must be undone in the next file).
     touched: HashSet<DrawingKey>,
+    /// The file's chart sheets, in tab order (shown, not edited; `preserve`
+    /// carries their parts through save).
+    chart_sheets: Vec<ChartSheet>,
+}
+
+/// A chart sheet as opened.
+#[derive(Debug)]
+struct ChartSheet {
+    name: String,
+    hidden: bool,
+    /// `sheetId`s of the worksheets before it in the file, nearest first.
+    before: Vec<u32>,
+    objects: Vec<Object>,
+    print: crate::SheetPrint,
+}
+
+/// A sheet tab: a worksheet (its index) or a chart sheet (its index among
+/// [`Workbook::chart_sheet_name`]'s).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Tab {
+    Sheet(u32),
+    Chart(usize),
+}
+
+/// The `sheetId` in the [`DrawingKey`]s of chart sheet `k`'s objects: far
+/// from any worksheet's, so caches keyed by it never mix the two.
+pub fn chart_sheet_key_id(k: usize) -> u32 {
+    u32::MAX - 1 - k as u32
 }
 
 fn is(n: Node, ns: &str, name: &str) -> bool {
@@ -575,6 +603,20 @@ impl Drawings {
                 sheets.insert(d.sheet_id, objects);
             }
         }
+        let chart_sheets = src
+            .chart_sheets
+            .into_iter()
+            .map(|c| ChartSheet {
+                name: c.name,
+                hidden: c.hidden,
+                before: c.before,
+                objects: c
+                    .drawing
+                    .map(|d| read_objects(&d.xml, &d.targets, d.parts))
+                    .unwrap_or_default(),
+                print: crate::print::chart_sheet_print(c.xml.as_deref().unwrap_or_default()),
+            })
+            .collect();
         Drawings {
             sheets,
             theme: src.theme.map(Into::into),
@@ -584,11 +626,12 @@ impl Drawings {
                 .map(|(n, id)| (n.to_lowercase(), id))
                 .collect(),
             touched: HashSet::new(),
+            chart_sheets,
         }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.sheets.is_empty()
+        self.sheets.is_empty() && self.chart_sheets.is_empty()
     }
 
     /// A chart of the file: its frame's `cNvPr id` and its part's XML as
@@ -636,6 +679,29 @@ fn current_anchor(obj: &Object, key: DrawingKey, edits: &Edits, now: &Layout) ->
                 .moved(&Layout::default().moves_to(now), key.sheet_id),
         ),
     }
+}
+
+/// Where the objects of a chart sheet go in a `w` × `h` pane: absolute
+/// anchors (what chart sheets use) scaled so their extent fills it, any
+/// other anchor the whole pane.
+pub fn chart_sheet_rects(drawings: &[Drawing], w: f64, h: f64) -> Vec<[f64; 4]> {
+    let (mut ew, mut eh) = (0i64, 0i64);
+    for d in drawings {
+        if let Anchor::Absolute { x, y, cx, cy } = d.anchor {
+            ew = ew.max(x + cx);
+            eh = eh.max(y + cy);
+        }
+    }
+    drawings
+        .iter()
+        .map(|d| match d.anchor {
+            Anchor::Absolute { x, y, cx, cy } if ew > 0 && eh > 0 => {
+                let (sx, sy) = (w / ew as f64, h / eh as f64);
+                [x as f64 * sx, y as f64 * sy, cx as f64 * sx, cy as f64 * sy]
+            }
+            _ => [0.0, 0.0, w, h],
+        })
+        .collect()
 }
 
 /// A value in a range a chart refers to.
@@ -713,6 +779,75 @@ impl Workbook {
     /// Whether any sheet has drawings.
     pub fn has_drawings(&self) -> bool {
         !self.drawings.is_empty() || !self.edits().charts.is_empty()
+    }
+
+    /// The tabs in order: the worksheets, with the file's chart sheets
+    /// where saving puts them (after the nearest worksheet before them
+    /// that is still there, as `preserve` does). Hidden chart sheets, and
+    /// those a worksheet took the name of (saving drops them), are left
+    /// out.
+    pub fn tabs(&self) -> Vec<Tab> {
+        let names = self.sheet_names();
+        let n = names.len() as u32;
+        let ids: Vec<u32> = (0..n).map(|i| self.sheet_id(i)).collect();
+        let lower: HashSet<String> = names.iter().map(|s| s.to_lowercase()).collect();
+        let mut tabs: Vec<Tab> = (0..n).map(Tab::Sheet).collect();
+        for (k, cs) in self.drawings.chart_sheets.iter().enumerate() {
+            if cs.hidden || lower.contains(&cs.name.to_lowercase()) {
+                continue;
+            }
+            let mut at = cs
+                .before
+                .iter()
+                .find_map(|id| ids.iter().position(|x| x == id))
+                .and_then(|i| tabs.iter().position(|t| *t == Tab::Sheet(i as u32)))
+                .map_or(0, |p| p + 1);
+            // After the chart sheets put there before (they came first).
+            while matches!(tabs.get(at), Some(Tab::Chart(_))) {
+                at += 1;
+            }
+            tabs.insert(at, Tab::Chart(k));
+        }
+        tabs
+    }
+
+    /// Chart sheet `k`'s name.
+    pub fn chart_sheet_name(&self, k: usize) -> Option<&str> {
+        self.drawings.chart_sheets.get(k).map(|c| c.name.as_str())
+    }
+
+    /// Chart sheet `k`'s print settings (landscape unless it says
+    /// otherwise).
+    pub fn chart_sheet_print(&self, k: usize) -> crate::SheetPrint {
+        self.drawings
+            .chart_sheets
+            .get(k)
+            .map(|c| c.print.clone())
+            .unwrap_or_default()
+    }
+
+    /// The objects of chart sheet `k` (usually one chart), bottom to top,
+    /// with their anchors as in the file (chart sheets use absolute ones).
+    /// Not editable.
+    pub fn chart_sheet_drawings(&self, k: usize) -> Vec<Drawing> {
+        let Some(cs) = self.drawings.chart_sheets.get(k) else {
+            return Vec::new();
+        };
+        let sheet_id = chart_sheet_key_id(k);
+        cs.objects
+            .iter()
+            .enumerate()
+            .map(|(index, obj)| Drawing {
+                key: DrawingKey { sheet_id, index },
+                name: obj.name.clone(),
+                descr: obj.descr.clone(),
+                anchor: obj.anchor,
+                kind: obj.kind.clone(),
+                editable: false,
+                hidden: obj.hidden,
+                prints: obj.prints,
+            })
+            .collect()
     }
 
     /// The workbook theme's XML (`xl/theme/theme1.xml`), for charts.

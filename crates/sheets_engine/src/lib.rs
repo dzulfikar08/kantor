@@ -23,7 +23,9 @@ mod hide;
 mod icons;
 mod import;
 mod look;
+mod notes;
 mod numfmt;
+mod ods;
 mod pivot;
 mod pivot_edit;
 mod preserve;
@@ -36,13 +38,18 @@ mod table;
 mod table_edit;
 mod validation;
 mod validation_edit;
+mod xls;
+mod xls_formula;
+mod xls_ftab;
 
 pub use cf_edit::{
     COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,
     DATA_BAR_COLORS, ICON_SETS, sqref_of,
 };
 pub use chart_edit::{ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor};
+pub use drawing::Tab;
 pub use import::{ImportNote, SourceFormat};
+pub use notes::{CellNote, SheetNotes};
 pub use preserve::package_problems;
 pub use recovery::{SaveJob, Saved, XlsxOutput, XlsxSnapshot, write_file_atomic};
 pub use table_edit::{TableOptions, TotalFunc, table_style_names, valid_table_name};
@@ -163,24 +170,29 @@ struct Cache {
     pivots: HashMap<u32, std::sync::Arc<Vec<pivot::Placed>>>,
     /// Each sheet's hidden rows (`grid::hidden_rows`).
     hidden_rows: HashMap<u32, std::sync::Arc<std::collections::HashSet<u32>>>,
+    /// Each sheet's notes at the cells they are on now (`notes`).
+    notes: HashMap<u32, std::sync::Arc<notes::SheetNotes>>,
 }
 
 /// When formulas are recalculated, like Excel's calculation options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CalcMode {
-    /// After every edit (IronCalc recalculates the whole workbook).
+    /// After every edit: the edited cells' dependents are recalculated
+    /// (the whole workbook when IronCalc can't tell them, see
+    /// `UserModel::kantor_evaluate_changes`).
     #[default]
     Automatic,
     /// Only on request ([`Workbook::recalculate`]). Edits leave other
     /// formulas' values as they were; a formula typed in is pending
     /// ([`Workbook::is_pending`]) until then. (Auto-fill is the exception:
-    /// IronCalc recalculates after it in any mode.)
+    /// it recalculates what the fill and the edits before it changed, in
+    /// any mode.)
     Manual,
 }
 
 /// Workbooks with more formula cells than this open in [`CalcMode::Manual`]:
-/// IronCalc recalculates everything after each edit, which takes seconds to
-/// minutes at this size.
+/// an edit IronCalc can't trace recalculates everything, which takes seconds
+/// to minutes at this size.
 pub const MANUAL_CALC_FORMULAS: usize = 50_000;
 
 /// Calculation state of a workbook.
@@ -442,8 +454,9 @@ impl Workbook {
     /// A new, empty workbook with one sheet.
     pub fn new_empty() -> Result<Self> {
         lazy_conditional_formatting();
-        let model = UserModel::new_empty("Untitled", LOCALE, TIMEZONE, LANGUAGE)
+        let mut model = UserModel::new_empty("Untitled", LOCALE, TIMEZONE, LANGUAGE)
             .map_err(|e| anyhow!("creating workbook: {e}"))?;
+        model.kantor_stop_send_queue();
         let table_styles = table::CustomStyles::default();
         Ok(Self {
             model,
@@ -478,7 +491,7 @@ impl Workbook {
         let Some(format) = SourceFormat::from_extension(ext) else {
             bail!("unsupported file type: .{ext}");
         };
-        let mut notes = Vec::new();
+        let mut imported = import::Imported::default();
         let mut xlsx = None;
         // The file asked for a recalculation that wasn't done (too big).
         let mut stale = false;
@@ -518,8 +531,8 @@ impl Workbook {
             }
             _ => {
                 // Evaluated by the import, which compares with the file's values.
-                let (model, n) = import::read_calamine(path, format)?;
-                notes = n;
+                let (model, i) = import::read_calamine(path, format)?;
+                imported = i;
                 (model, format)
             }
         };
@@ -534,18 +547,72 @@ impl Workbook {
             _ => table::CustomStyles::default(),
         };
         let mut model = UserModel::from_model(model);
+        model.kantor_stop_send_queue();
         if calc.mode == CalcMode::Manual {
             model.pause_evaluation();
         }
         let Extras {
             validation,
             drawings,
-            prints,
+            mut prints,
             pivots,
             panes,
         } = extras
             .map(|h| h.join().unwrap_or_default())
             .unwrap_or_default();
+        // An import's page setup: saved like an edit (there is no original
+        // package to carry it from).
+        let mut touched = edits::Touched::default();
+        if !imported.prints.is_empty() || !imported.print_names.is_empty() {
+            let id = |sheet: u32| {
+                model
+                    .get_model()
+                    .workbook
+                    .worksheet(sheet)
+                    .map_or(sheet + 1, |ws| ws.sheet_id)
+            };
+            let default = print::SheetPrint {
+                header_footer: print::HeaderFooter {
+                    scale_with_doc: true,
+                    align_with_margins: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut sheets = Vec::new();
+            for (sheet, p) in imported.prints.iter().enumerate() {
+                let sheet = sheet as u32;
+                if *p != default || imported.print_names.contains_key(&sheet) {
+                    touched.prints.insert(id(sheet));
+                }
+                sheets.push((id(sheet), p.clone()));
+            }
+            let names = imported
+                .print_names
+                .iter()
+                .map(|(&sheet, n)| {
+                    touched.prints.insert(id(sheet));
+                    (id(sheet), n.clone())
+                })
+                .collect();
+            prints = print::Prints::imported(sheets, names);
+        }
+        if let Some(sheet) = imported.active_sheet {
+            let _ = model.set_selected_sheet(sheet);
+        }
+        // An import's data validation: saved like an edit.
+        let mut validation = validation;
+        if !imported.validations.is_empty() {
+            let mut rules = Vec::new();
+            for (sheet, list) in std::mem::take(&mut imported.validations) {
+                let Ok(ws) = model.get_model().workbook.worksheet(sheet) else {
+                    continue;
+                };
+                touched.validations.insert(ws.sheet_id);
+                rules.extend(list.into_iter().map(|v| (ws.sheet_id, v)));
+            }
+            validation = validation::Validations::imported(rules);
+        }
         let mut book = Self {
             calc,
             model,
@@ -554,7 +621,7 @@ impl Workbook {
             origin: Origin {
                 format,
                 path: Some(path.to_path_buf()),
-                notes,
+                notes: imported.notes,
                 xlsx,
                 xlsx_layout: shift::Layout::default(),
             },
@@ -567,7 +634,7 @@ impl Workbook {
             prints,
             pivots,
             saved_charts: HashMap::new(),
-            touched: Default::default(),
+            touched,
             panes: HashMap::new(),
         };
         book.apply_read_panes(&panes);
@@ -791,6 +858,31 @@ impl Workbook {
         cells
     }
 
+    /// The cells of `sheet` holding typed text (not formulas, numbers,
+    /// dates or booleans), with their text, in reading order: what
+    /// Spelling checks.
+    pub fn text_cells(&self, sheet: u32) -> Vec<(u32, u32, String)> {
+        let model = self.model.get_model();
+        let Ok(ws) = model.workbook.worksheet(sheet) else {
+            return Vec::new();
+        };
+        let strings = &model.workbook.shared_strings;
+        let mut cells: Vec<(u32, u32, String)> = ws
+            .sheet_data
+            .cells()
+            .filter(|(row, col, _)| *row >= 1 && *col >= 1)
+            .filter_map(|(row, col, cell)| match *cell {
+                Cell::SharedString { si, .. } => strings
+                    .get(si as usize)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| (row as u32 - 1, col as u32 - 1, s.clone())),
+                _ => None,
+            })
+            .collect();
+        cells.sort_unstable_by_key(|c| (c.0, c.1));
+        cells
+    }
+
     /// Whether `cell` has something typed in (a value or a formula; not just
     /// a style or a spilled value). Cheaper than `input` (no formula text).
     fn has_input(&self, cell: &Cell) -> bool {
@@ -887,7 +979,7 @@ impl Workbook {
         }
         if self.calc.mode == CalcMode::Automatic {
             self.model.resume_evaluation();
-            self.model.evaluate();
+            self.model.kantor_evaluate_changes();
         }
         if done > 0 {
             self.history.edited_steps(done);
@@ -1196,6 +1288,7 @@ impl Workbook {
                 self.validation_patches(&mut p);
                 self.chart_patches(&mut p);
                 self.file_chart_patches(&mut p);
+                self.note_patches(&mut p);
                 p
             },
         }
@@ -1402,6 +1495,27 @@ pub fn cell_name(row: u32, col: u32) -> String {
 mod tests {
     use super::*;
     use std::io::Write as _;
+
+    #[test]
+    fn text_cells_are_typed_text_only() {
+        let mut wb = Workbook::new_empty().unwrap();
+        wb.set_input(0, 3, 0, "Teh end").unwrap();
+        wb.set_input(0, 0, 1, "12").unwrap();
+        wb.set_input(0, 0, 0, "Hello wrld").unwrap();
+        wb.set_input(0, 1, 0, "=\"formula text\"").unwrap();
+        wb.set_input(0, 1, 1, "TRUE").unwrap();
+        wb.set_input(0, 2, 0, "2026-11-14").unwrap();
+        wb.set_input(0, 2, 1, "'123").unwrap();
+        let cells = wb.text_cells(0);
+        let got: Vec<(u32, u32, &str)> =
+            cells.iter().map(|(r, c, t)| (*r, *c, t.as_str())).collect();
+        assert_eq!(
+            got,
+            [(0, 0, "Hello wrld"), (2, 1, "123"), (3, 0, "Teh end")]
+        );
+        // The formula bar shows a quoted number with its quote.
+        assert_eq!(wb.input(0, 2, 1), "'123");
+    }
 
     #[test]
     fn set_inputs_undoes_as_one_step() {

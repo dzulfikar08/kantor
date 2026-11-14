@@ -216,6 +216,18 @@ pub struct UserModel<'a> {
     history: History,
     send_queue: Vec<QueueDiffs>,
     pause_evaluation: bool,
+    /// KANTOR PATCH (partial recalculation): what changed since the model
+    /// was last evaluated.
+    kantor_unevaluated: crate::kantor_changes::KantorChanges,
+    /// KANTOR PATCH (changes): what changed since `kantor_take_changes`
+    /// was last called.
+    kantor_changed: crate::kantor_changes::KantorChanges,
+    /// KANTOR PATCH (changes): whether changes go on `send_queue` (upstream,
+    /// for syncing a remote copy). See `kantor_stop_send_queue`.
+    kantor_send_queue: bool,
+    /// KANTOR PATCH (fast fill): cells the last fill gave their source's
+    /// formula without parsing it again (for tests).
+    pub(crate) kantor_fill_copies: usize,
     /// What the user is looking at: selected sheet, selection and scroll
     /// position of each sheet, window size. Runtime state only: it is not
     /// part of the workbook and is not serialized.
@@ -257,6 +269,10 @@ impl<'a> UserModel<'a> {
             history: History::default(),
             send_queue: vec![],
             pause_evaluation: false,
+            kantor_unevaluated: Default::default(),
+            kantor_changed: Default::default(),
+            kantor_send_queue: true,
+            kantor_fill_copies: 0,
             view: WorkbookView::default(),
         }
     }
@@ -277,6 +293,10 @@ impl<'a> UserModel<'a> {
             history: History::default(),
             send_queue: vec![],
             pause_evaluation: false,
+            kantor_unevaluated: Default::default(),
+            kantor_changed: Default::default(),
+            kantor_send_queue: true,
+            kantor_fill_copies: 0,
             view: WorkbookView::default(),
         })
     }
@@ -292,6 +312,10 @@ impl<'a> UserModel<'a> {
             history: History::default(),
             send_queue: vec![],
             pause_evaluation: false,
+            kantor_unevaluated: Default::default(),
+            kantor_changed: Default::default(),
+            kantor_send_queue: true,
+            kantor_fill_copies: 0,
             view: WorkbookView::default(),
         })
     }
@@ -333,11 +357,15 @@ impl<'a> UserModel<'a> {
     /// * [UserModel::redo]
     pub fn undo(&mut self) -> Result<(), String> {
         if let Some(diff_list) = self.history.undo() {
+            self.kantor_unevaluated.add_list(&diff_list);
+            self.kantor_changed.add_list(&diff_list);
             self.apply_undo_diff_list(&diff_list)?;
-            self.send_queue.push(QueueDiffs {
-                r#type: DiffType::Undo,
-                list: diff_list.clone(),
-            });
+            if self.kantor_send_queue {
+                self.send_queue.push(QueueDiffs {
+                    r#type: DiffType::Undo,
+                    list: diff_list.clone(),
+                });
+            }
         };
         Ok(())
     }
@@ -348,11 +376,15 @@ impl<'a> UserModel<'a> {
     /// * [UserModel::redo]
     pub fn redo(&mut self) -> Result<(), String> {
         if let Some(diff_list) = self.history.redo() {
+            self.kantor_unevaluated.add_list(&diff_list);
+            self.kantor_changed.add_list(&diff_list);
             self.apply_diff_list(&diff_list)?;
-            self.send_queue.push(QueueDiffs {
-                r#type: DiffType::Redo,
-                list: diff_list.clone(),
-            });
+            if self.kantor_send_queue {
+                self.send_queue.push(QueueDiffs {
+                    r#type: DiffType::Redo,
+                    list: diff_list.clone(),
+                });
+            }
         };
         Ok(())
     }
@@ -374,12 +406,18 @@ impl<'a> UserModel<'a> {
     }
 
     /// KANTOR PATCH (changes): what changed since the last call (edits,
-    /// undos, redos), emptying the queue of changes upstream keeps for
-    /// syncing a remote copy (Kantor never sends it). See `kantor_changes`.
+    /// undos, redos). See `kantor_changes`.
     pub fn kantor_take_changes(&mut self) -> crate::kantor_changes::KantorChanges {
-        let mut changes = crate::kantor_changes::KantorChanges::default();
-        changes.add(&std::mem::take(&mut self.send_queue));
-        changes
+        std::mem::take(&mut self.kantor_changed)
+    }
+
+    /// KANTOR PATCH (changes): stop putting changes on the queue upstream
+    /// keeps for syncing a remote copy (`flush_send_queue` returns nothing
+    /// from now on). Kantor never sends it: the queue was a second copy of
+    /// every diff list, made at every edit and kept until drained.
+    pub fn kantor_stop_send_queue(&mut self) {
+        self.kantor_send_queue = false;
+        self.send_queue = Vec::new();
     }
 
     /// KANTOR PATCH (data validation): drop what redo would bring back, for
@@ -413,7 +451,17 @@ impl<'a> UserModel<'a> {
     /// * [Model::evaluate]
     /// * [UserModel::pause_evaluation]
     pub fn evaluate(&mut self) {
+        self.kantor_unevaluated = Default::default();
         self.model.evaluate()
+    }
+
+    /// KANTOR PATCH (partial recalculation): evaluates what the edits since
+    /// the last evaluation can have changed (everything when that can't be
+    /// told for sure, see `Model::kantor_evaluate_changed`). Returns whether
+    /// only part of the workbook was evaluated.
+    pub fn kantor_evaluate_changes(&mut self) -> bool {
+        let changes = std::mem::take(&mut self.kantor_unevaluated);
+        self.model.kantor_evaluate_changed(&changes)
     }
 
     /// Returns the list of pending diffs and removes them from the queue
@@ -489,8 +537,6 @@ impl<'a> UserModel<'a> {
         }];
         self.set_user_input_with_link_diffs(sheet, row, column, value.to_string(), &mut diff_list)?;
 
-        self.evaluate_if_not_paused();
-
         let style = self.model.get_style_for_cell(sheet, row, column)?;
 
         let line_count = value.split('\n').count() as f64;
@@ -510,6 +556,8 @@ impl<'a> UserModel<'a> {
         }
 
         self.push_diff_list(diff_list);
+        // KANTOR PATCH (partial recalculation): after the diffs are known.
+        self.evaluate_if_not_paused();
         Ok(())
     }
 
@@ -2346,16 +2394,21 @@ impl<'a> UserModel<'a> {
     }
 
     pub(crate) fn push_diff_list(&mut self, diff_list: DiffList) {
-        self.send_queue.push(QueueDiffs {
-            r#type: DiffType::Redo,
-            list: diff_list.clone(),
-        });
+        self.kantor_unevaluated.add_list(&diff_list);
+        self.kantor_changed.add_list(&diff_list);
+        if self.kantor_send_queue {
+            self.send_queue.push(QueueDiffs {
+                r#type: DiffType::Redo,
+                list: diff_list.clone(),
+            });
+        }
         self.history.push(diff_list);
     }
 
     pub(crate) fn evaluate_if_not_paused(&mut self) {
         if !self.pause_evaluation {
-            self.model.evaluate();
+            // KANTOR PATCH (partial recalculation)
+            self.kantor_evaluate_changes();
         }
     }
 }

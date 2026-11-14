@@ -836,6 +836,123 @@ fn paint(
     });
 }
 
+impl SheetsView {
+    /// A chart sheet in place of the toolbar, formula bar and grid: a bar
+    /// naming it, and its chart filling the rest.
+    pub(crate) fn render_chart_sheet_pane(
+        &self,
+        k: usize,
+        name: String,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        use kantor_ui::metrics::*;
+        let t = kantor_ui::tokens(cx);
+        gpui_kit::component::v_flex()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .track_focus(&self.chart_focus)
+            .child(
+                gpui_kit::component::h_flex()
+                    .flex_none()
+                    .h(CONTROL_LG)
+                    .px(SPACE_4)
+                    .gap(SPACE_2)
+                    .bg(t.chrome)
+                    .border_b_1()
+                    .border_color(t.border)
+                    .text_size(FONT_SMALL)
+                    .text_color(t.fg_muted)
+                    .child(format!(
+                        "Chart sheet \u{201c}{name}\u{201d} \u{b7} view only: its data is on the worksheets"
+                    )),
+            )
+            .child(
+                div()
+                    .id("chart-sheet")
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .p(SPACE_5)
+                    .bg(t.surface)
+                    .child(self.render_chart_sheet(k, cx)),
+            )
+    }
+
+    /// Chart sheet `k` filling the pane (read-only: no selection).
+    pub(crate) fn render_chart_sheet(&self, k: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        let layer = self.drawings.clone();
+        let table = self.table.clone();
+        let other = kantor_ui::tokens(cx).fg_muted;
+        canvas(
+            |_, _, _| {},
+            move |bounds, _, window, cx| {
+                paint_chart_sheet(&layer, &table, k, bounds, other, window, cx)
+            },
+        )
+        .size_full()
+    }
+}
+
+fn paint_chart_sheet(
+    layer: &Rc<RefCell<DrawLayer>>,
+    table: &Entity<TableState<SheetGrid>>,
+    k: usize,
+    bounds: Bounds<Pixels>,
+    other: Hsla,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if layer.borrow().painter.is_none() {
+        let (engine, bridge) = docs_ui::shared_text(cx);
+        layer.borrow_mut().painter = Some(Rc::new(Painter::new(engine, bridge)));
+    }
+    let (w, h) = (
+        f64::from(f32::from(bounds.size.width)),
+        f64::from(f32::from(bounds.size.height)),
+    );
+    if w < 1.0 || h < 1.0 {
+        return;
+    }
+    let book = &table.read(cx).delegate().book;
+    let drawings: Vec<Drawing> = book
+        .chart_sheet_drawings(k)
+        .into_iter()
+        .filter(|d| !d.hidden)
+        .collect();
+    let rects = sheets_engine::drawing::chart_sheet_rects(&drawings, w, h);
+    let mut l = layer.borrow_mut();
+    let Some(painter) = l.painter.clone() else {
+        return;
+    };
+    let built: Vec<Arc<Vec<Item>>> = {
+        let mut engine = painter.engine.borrow_mut();
+        drawings
+            .iter()
+            .zip(&rects)
+            .map(|(d, r)| {
+                l.scenes
+                    .items(&mut engine, book, d, r[2] as f32, r[3] as f32)
+            })
+            .collect()
+    };
+    let painted: Vec<Option<Rc<Painted>>> = built
+        .into_iter()
+        .map(|items| l.painted(items, cx))
+        .collect();
+    drop(l);
+    window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        for (r, p) in rects.iter().zip(painted) {
+            let Some(p) = p else { continue };
+            let at = point(
+                bounds.origin.x + px(r[0] as f32),
+                bounds.origin.y + px(r[1] as f32),
+            );
+            paint_items(&p, SceneView::px(at, 1.0), other, &painter.bridge, window);
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
 

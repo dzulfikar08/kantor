@@ -42,7 +42,7 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Open File…"),
-        detail: ".xlsx, .docx, .pptx, .csv, .ods",
+        detail: ".xlsx, .docx, .pptx, .csv, .ods, .xls, .ppt",
         keys: "Ctrl O",
         run: |ws, window, cx| ws.open_file(&OpenFile, window, cx),
     },
@@ -105,7 +105,7 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| v.export_pdf_doc(w, cx));
             ws.with_slides(window, cx, |v, w, cx| v.export_pdf_doc(w, cx));
-            ws.with_sheets(window, cx, |v, w, cx| v.export_pdf_doc(w, cx));
+            ws.with_sheets_any(window, cx, |v, w, cx| v.export_pdf_doc(w, cx));
         },
     },
     Command {
@@ -768,14 +768,14 @@ pub(super) const COMMANDS: &[Command] = &[
         title: tk("Calculate Now"),
         detail: tk("Sheets · recalculate every formula"),
         keys: "F9",
-        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.calculate_doc(w, cx)),
+        run: |ws, window, cx| ws.with_sheets_any(window, cx, |v, w, cx| v.calculate_doc(w, cx)),
     },
     Command {
         title: tk("Automatic Calculation"),
         detail: tk("Sheets · recalculate after every edit"),
         keys: "",
         run: |ws, window, cx| {
-            ws.with_sheets(window, cx, |v, w, cx| {
+            ws.with_sheets_any(window, cx, |v, w, cx| {
                 v.set_calc_mode_doc(CalcMode::Automatic, w, cx)
             })
         },
@@ -785,7 +785,7 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: tk("Sheets · recalculate only with F9 (for big workbooks)"),
         keys: "",
         run: |ws, window, cx| {
-            ws.with_sheets(window, cx, |v, w, cx| {
+            ws.with_sheets_any(window, cx, |v, w, cx| {
                 v.set_calc_mode_doc(CalcMode::Manual, w, cx)
             })
         },
@@ -933,7 +933,7 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: tk("Sheets · recompute every PivotTable in the workbook"),
         keys: "Ctrl Alt F5",
         run: |ws, window, cx| {
-            ws.with_sheets(window, cx, |v, w, cx| v.refresh_pivots_doc(true, w, cx))
+            ws.with_sheets_any(window, cx, |v, w, cx| v.refresh_pivots_doc(true, w, cx))
         },
     },
     Command {
@@ -1397,6 +1397,12 @@ pub(super) const COMMANDS: &[Command] = &[
                 v.set_margins_doc(docs_ui::MarginPreset::Wide, w, cx)
             })
         },
+    },
+    Command {
+        title: tk("Spelling…"),
+        detail: tk("Sheets · check the spelling of the text cells, from the active cell or in the selection"),
+        keys: "F7",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.spelling_doc(w, cx)),
     },
     Command {
         title: tk("Check Spelling as You Type"),

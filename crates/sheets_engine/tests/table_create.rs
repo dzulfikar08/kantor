@@ -353,7 +353,8 @@ fn a_file_table_restyled_keeps_its_part_and_markup() {
     assert!(sales.contains("<calculatedColumnFormula>"), "{sales}");
     // Everything else as a plain save wrote it.
     for (name, text) in &a {
-        if name == "xl/tables/table1.xml" {
+        // docProps/core.xml holds the save time, which may tick over between the two saves.
+        if name == "xl/tables/table1.xml" || name == "docProps/core.xml" {
             continue;
         }
         assert_eq!(Some(text), b.get(name), "{name} changed");

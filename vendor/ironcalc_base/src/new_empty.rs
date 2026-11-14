@@ -661,6 +661,7 @@ impl<'a> Model<'a> {
             shared_formula_lookup: Vec::new(),
             kantor_pivots: Vec::new(),
             kantor_evaluations: 0,
+            kantor_last_partial: None,
             parsed_defined_names: HashMap::new(),
             parser,
             locale,

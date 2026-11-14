@@ -136,6 +136,44 @@ color, name, family, scheme`; `export/dxfs_styles.rs` writes a dxf's font as
 border`. Tested by `tests/test_kantor_fidelity.rs`
 (`font_and_dxf_children_are_in_schema_order`).
 
+## 8. Each filled-down formula is parsed once (fast open)
+
+(Numbered 8: §7 is the font element order patch on main.)
+
+Why: `from_a1_to_rc` parsed every formula cell and printed it in R1C1; on
+the generated 90k-row workbook (`scripts/corpus/gen_big_xlsx.py`, 810k
+formula cells, 36 distinct R1C1 formulas) that was ~80% of the open.
+
+What (`import/worksheets.rs` `RcCache`, used by `import/sheet_data.rs`):
+each sheet keeps a map from `Parser::kantor_rc_key` (vendor/ironcalc_base
+§17) to the R1C1 text; a formula whose key is known is only lexed. Results
+that contain the formula's own text (parse errors keep it as written) are
+not shared; formulas the key refuses take the old path.
+
+Test: `import::worksheets::tests::rc_cache_matches_parsing_each_formula`.
+
+## 9. Relationship targets resolved per OPC; note authors
+
+Why: openpyxl writes a worksheet's comments relationship with an absolute
+target (`/xl/comments/comment1.xml`). The comments branch replaced the first
+two characters of the target with `xl`, giving `xl/xl/comments/...`, so the
+workbook failed to open ("Zip Error: specified file not found in archive").
+The table branch and the workbook-level targets handled `/` but not `./`,
+nested `../` or targets of parts outside `xl/worksheets/`. Note authors were
+read as empty.
+
+What (`import/util.rs` `resolve_part`, `rels_part`): a target starting with
+`/` is relative to the package root, anything else to the source part's
+folder, with `.` and `..` applied. Used for the sheet rels part, comments,
+tables, worksheet paths (`import/worksheets.rs`) and the theme
+(`import/mod.rs`). `load_comments` reads `<authors>` and sets
+`Comment::author_name` from `authorId`, skips non-`comment` children and
+accepts an empty `<t/>`.
+
+Tests: `import::util::rel_target_tests`,
+`tests/test_kantor_fidelity.rs` `comments_with_an_absolute_rel_target_open`
+(fixture `tests/openpyxl_comments.xlsx` from `tests/gen_openpyxl_comments.py`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

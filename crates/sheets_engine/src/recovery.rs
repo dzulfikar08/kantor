@@ -1,8 +1,10 @@
 //! Saving without stopping the UI: recovery copies and autosave.
 //!
 //! [`Workbook::xlsx_snapshot`] copies what an `.xlsx` save needs (IronCalc's cells,
-//! the original package, pivot / drawing / tab state) on the UI thread; that
-//! is a memory copy, far quicker than writing the file. [`XlsxSnapshot::render`]
+//! the original package, pivot / drawing / tab state) on the UI thread; the
+//! cells are shared with the workbook, copied a chunk of rows at a time only
+//! when an edit writes there while the snapshot lives (vendored IronCalc
+//! patch §21), so it takes a few milliseconds on a 90 000-row workbook. [`XlsxSnapshot::render`]
 //! then builds the `.xlsx` on any thread. An autosave hands the result back to
 //! [`Workbook::commit_autosave`]; a recovery copy is just written somewhere
 //! else, and [`Workbook::open_recovered`] reads it back as the original

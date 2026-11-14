@@ -1,13 +1,8 @@
 # Code signing policy
 
-**Windows:** Kantor has applied to the SignPath Foundation for free code signing. Once the
-application is accepted, Windows release files (`Kantor-Setup-*.exe`, `kantor.exe`,
-`kantor.com` in the zips) will carry this notice:
-
-> Free code signing provided by [SignPath.io](https://signpath.io), certificate by
-> [SignPath Foundation](https://signpath.org).
-
-Until then the Windows builds are unsigned (see [windows-signing.md](windows-signing.md)).
+**Windows:** the Windows release files (`Kantor-Setup-*.exe`, and `kantor.exe` and `kantor.com`
+in the zips) are not signed yet. See [windows-signing.md](windows-signing.md) for what that means
+and the options being considered.
 
 **macOS:** `Kantor.dmg` and `Kantor.app` are signed with the maintainer's Apple Developer ID
 (team `F6Q6UFUK69`) and notarised by Apple.

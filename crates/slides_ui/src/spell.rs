@@ -236,16 +236,20 @@ pub(crate) fn context_menu(
         );
     }
     type Run = fn(&mut SlidesView, &mut Window, &mut Context<SlidesView>);
-    let items: [(&str, Run); 3] = [
-        (kantor_ui::i18n::t("Cut"), SlidesView::cut_doc),
-        (kantor_ui::i18n::t("Copy"), SlidesView::copy_doc),
-        (kantor_ui::i18n::t("Paste"), SlidesView::paste_doc),
+    // The actions only label the items with their shortcuts (Ctrl+X, ⌘X):
+    // the click handler runs instead of dispatching them.
+    let items: [(&str, Box<dyn Action>, Run); 3] = [
+        (kantor_ui::i18n::t("Cut"), Box::new(crate::Cut), SlidesView::cut_doc),
+        (kantor_ui::i18n::t("Copy"), Box::new(crate::Copy), SlidesView::copy_doc),
+        (kantor_ui::i18n::t("Paste"), Box::new(crate::Paste), SlidesView::paste_doc),
     ];
-    for (label, run) in items {
+    for (label, action, run) in items {
         let v = view.clone();
-        menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
-            let _ = v.update(cx, |v, cx| run(v, window, cx));
-        }));
+        menu = menu.item(PopupMenuItem::new(label).action(action).on_click(
+            move |_, window, cx| {
+                let _ = v.update(cx, |v, cx| run(v, window, cx));
+            },
+        ));
     }
     menu
 }

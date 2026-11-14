@@ -418,3 +418,38 @@ fn edits_and_inserted_rows_combine() {
     };
     assert_eq!(from.row, 24, "F20 moved down by 5");
 }
+
+#[test]
+fn chart_sheet_objects_fill_the_pane() {
+    let d = |index, anchor| Drawing {
+        key: DrawingKey { sheet_id: 7, index },
+        name: String::new(),
+        descr: String::new(),
+        anchor,
+        kind: Arc::new(DrawingKind::Other("sp".into())),
+        editable: false,
+        hidden: false,
+        prints: true,
+    };
+    let chart = d(
+        0,
+        Anchor::Absolute {
+            x: 0,
+            y: 0,
+            cx: 1000,
+            cy: 500,
+        },
+    );
+    let label = d(
+        1,
+        Anchor::Absolute {
+            x: 500,
+            y: 250,
+            cx: 100,
+            cy: 50,
+        },
+    );
+    let rects = chart_sheet_rects(&[chart, label], 800.0, 600.0);
+    assert_eq!(rects[0], [0.0, 0.0, 800.0, 600.0]);
+    assert_eq!(rects[1], [400.0, 300.0, 80.0, 60.0]);
+}

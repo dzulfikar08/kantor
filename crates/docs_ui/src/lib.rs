@@ -207,10 +207,7 @@ pub fn init(cx: &mut App) {
     // Shortcuts with the primary modifier: Ctrl, and Super as Mac-style Cmd.
     macro_rules! primary {
         ($($key:literal => $action:expr),* $(,)?) => {
-            keys.extend([$(
-                KeyBinding::new(kantor_ui::keys::primary(concat!("ctrl-", $key)), $action, c),
-                KeyBinding::new(concat!("super-", $key), $action, c),
-            )*]);
+            $(keys.extend(kantor_ui::keys::primary_pair(concat!("ctrl-", $key), $action, c));)*
         };
     }
     primary!(
@@ -773,6 +770,13 @@ impl DocsView {
             // by a line break ends before it.
             if soft {
                 e = text[..e].trim_end_matches(' ').len().max(range.start);
+                // Wrapped inside a word: the end is where the next line
+                // starts (and draws the caret); stop before the last char.
+                if e == range.end
+                    && let Some((i, _)) = text[range.start..e].char_indices().next_back()
+                {
+                    e = range.start + i;
+                }
             } else if text[..e].ends_with(docs_engine::LINE_BREAK) {
                 e -= docs_engine::LINE_BREAK.len_utf8();
             }
@@ -1085,13 +1089,15 @@ impl DocsView {
     /// The file name, or the shell-given name while there is no file.
     fn name(&self) -> String {
         match &self.untitled_name {
-            Some(name) if self.doc.path().is_none() => name.clone(),
+            Some(name) if self.doc.source_path().is_none() => name.clone(),
             _ => self.doc.title(),
         }
     }
 
+    /// The file this document shows (an imported `.rtf` or `.doc` too,
+    /// though Save never writes there).
     pub fn path(&self, _: &App) -> Option<PathBuf> {
-        self.doc.path().map(|p| p.to_path_buf())
+        self.doc.source_path().map(|p| p.to_path_buf())
     }
 
     pub fn is_dirty(&self, _: &App) -> bool {
@@ -1178,7 +1184,7 @@ impl DocsView {
         let r = self.doc.resolved_at(self.sel.head);
         DocInfo {
             name: self.name(),
-            path: self.doc.path().map(|p| p.to_path_buf()),
+            path: self.doc.source_path().map(|p| p.to_path_buf()),
             dirty: self.doc.is_dirty(),
             pages: self.laid.paged.pages.len(),
             words: self.doc.word_count(),
@@ -1264,12 +1270,12 @@ impl DocsView {
         }
         let dir = self
             .doc
-            .path()
+            .source_path()
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf())
             .or_else(kantor_core::dirs::home_dir)
             .unwrap_or_else(|| PathBuf::from("."));
-        let name = if self.doc.path().is_none() {
+        let name = if self.doc.source_path().is_none() {
             self.name()
         } else {
             self.doc.suggested_file_name()
@@ -1279,7 +1285,9 @@ impl DocsView {
             let Ok(Ok(Some(mut path))) = path.await else {
                 return false;
             };
-            if path.extension().is_none() {
+            // Kantor writes .docx only (an .rtf or .doc name would get
+            // .docx contents).
+            if path.extension().is_none() || docs_engine::is_import_path(&path) {
                 path.set_extension("docx");
             }
             this.update_in(cx, |this, window, cx| {
@@ -1301,7 +1309,7 @@ impl DocsView {
     fn export_pdf(&mut self, _: &ExportPdf, window: &mut Window, cx: &mut Context<Self>) {
         let dir = self
             .doc
-            .path()
+            .source_path()
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf())
             .or_else(kantor_core::dirs::home_dir)
@@ -1743,7 +1751,17 @@ impl DocsView {
 }
 
 fn opened_status(doc: &Document) -> String {
-    if doc.has_unsupported_content() {
+    if doc.is_imported() {
+        let mut s = tf(
+            "Opened {} (imported; Save creates a .docx copy)",
+            &[&doc.title()],
+        );
+        for note in doc.import_notes() {
+            s.push_str("; ");
+            s.push_str(&kantor_ui::content_strings::content_item(note));
+        }
+        s
+    } else if doc.has_unsupported_content() {
         let msg = tk("Opened {} (has unsupported content; Save creates a copy)");
         tf(msg, &[&doc.title()])
     } else if !doc.preserved_content().is_empty() {

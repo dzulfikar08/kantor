@@ -2,7 +2,9 @@
 //!
 //! ```text
 //! kantor convert report.docx report.pdf
+//! kantor convert letter.rtf letter.docx   (also .doc / .dot)
 //! kantor convert deck.pptx deck.pdf
+//! kantor convert old.ppt old.pptx
 //! kantor convert --fit-width --landscape book.xlsx book.pdf
 //! kantor convert budget.ods budget.xlsx
 //! kantor convert --sheet Summary book.xlsx summary.csv
@@ -22,15 +24,18 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \n\
     Supported conversions:\n\
     \x20 .docx                                      -> .pdf\n\
-    \x20 .pptx                                      -> .pdf (one page per slide,\n\
+    \x20 .rtf .doc .dot (Word 97-2003)              -> .docx .pdf\n\
+    \x20 .pptx .ppt .pps .pot                       -> .pdf (one page per slide,\n\
     \x20                                               hidden slides left out)\n\
-    \x20 .xlsx .xlsm .xls .xlsb .ods .csv .tsv      -> .xlsx .csv .tsv\n\
-    \x20 .xlsx .xlsm .xls .xlsb .ods .csv .tsv      -> .pdf (printed as Excel prints:\n\
-    \x20                                               every visible sheet, or --sheet)\n\
+    \x20 .ppt .pps .pot                             -> .pptx\n\
+    \x20 .xlsx .xlsm .xls .xlt .xlsb .ods .csv .tsv -> .xlsx .csv .tsv\n\
+    \x20 .xlsx .xlsm .xls .xlt .xlsb .ods .csv .tsv -> .pdf (printed as Excel prints:\n\
+    \x20                                               every visible sheet and chart\n\
+    \x20                                               sheet, or --sheet)\n\
     \n\
     Options:\n\
     \x20 -o, --output-dir DIR   write each INPUT to DIR/NAME.FORMAT\n\
-    \x20 -t, --to FORMAT        output format with -o: pdf, xlsx, csv or tsv\n\
+    \x20 -t, --to FORMAT        output format with -o: pdf, docx, xlsx, pptx, csv or tsv\n\
     \x20     --sheet N|NAME     sheet to write to .csv/.tsv or .pdf (1-based number\n\
     \x20                        or name; default: the active sheet for .csv/.tsv,\n\
     \x20                        every visible sheet for .pdf)\n\
@@ -96,14 +101,19 @@ fn ext(p: &Path) -> String {
 }
 
 const SHEET_INPUTS: &[&str] = &[
-    "xlsx", "xlsm", "xls", "xla", "xlsb", "ods", "csv", "tsv", "tab",
+    "xlsx", "xlsm", "xls", "xla", "xlt", "xlsb", "ods", "csv", "tsv", "tab",
 ];
 const SHEET_OUTPUTS: &[&str] = &["xlsx", "csv", "tsv"];
+const SLIDES_INPUTS: &[&str] = &["pptx", "ppt", "pps", "pot"];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Kind {
     DocxToPdf,
+    /// An imported document (.rtf, .doc, .dot) written as .docx.
+    DocsToDocx,
     PptxToPdf,
+    /// PowerPoint 97-2003 to `.pptx`.
+    PptToPptx,
     SheetsToPdf,
     Sheets,
 }
@@ -121,8 +131,18 @@ fn kind(input: &Path, output: &Path) -> Result<Kind, Usage> {
     if i == "docx" && o == "pdf" {
         return Ok(Kind::DocxToPdf);
     }
-    if i == "pptx" && o == "pdf" {
+    if matches!(i.as_str(), "rtf" | "doc" | "dot") {
+        match o.as_str() {
+            "pdf" => return Ok(Kind::DocxToPdf),
+            "docx" => return Ok(Kind::DocsToDocx),
+            _ => {}
+        }
+    }
+    if SLIDES_INPUTS.contains(&i.as_str()) && o == "pdf" {
         return Ok(Kind::PptxToPdf);
+    }
+    if i != "pptx" && SLIDES_INPUTS.contains(&i.as_str()) && o == "pptx" {
+        return Ok(Kind::PptToPptx);
     }
     if SHEET_INPUTS.contains(&i.as_str()) && SHEET_OUTPUTS.contains(&o.as_str()) {
         return Ok(Kind::Sheets);
@@ -218,9 +238,12 @@ fn parse(args: &[OsString]) -> Result<Option<Options>, Usage> {
             if positional.is_empty() {
                 return usage("no input files");
             }
-            if !matches!(to.as_str(), "pdf" | "xlsx" | "csv" | "tsv") {
+            if !matches!(
+                to.as_str(),
+                "pdf" | "docx" | "xlsx" | "pptx" | "csv" | "tsv"
+            ) {
                 return usage(format!(
-                    "--to {to}: Kantor converts to pdf, xlsx, csv or tsv"
+                    "--to {to}: Kantor converts to pdf, docx, xlsx, pptx, csv or tsv"
                 ));
             }
             for input in positional {
@@ -329,7 +352,9 @@ fn convert(
     let kind = kind(input, output).map_err(|Usage(m)| anyhow!(m))?;
     match kind {
         Kind::DocxToPdf => docx_to_pdf(input, output, engine),
+        Kind::DocsToDocx => docs_to_docx(input, output),
         Kind::PptxToPdf => pptx_to_pdf(input, output, engine, opts.slides),
+        Kind::PptToPptx => ppt_to_pptx(input, output),
         Kind::Sheets => sheets(input, output, opts.sheet.as_deref()),
         Kind::SheetsToPdf => sheets_to_pdf(input, output, opts),
     }
@@ -348,6 +373,7 @@ fn docx_to_pdf(
     engine: &mut Option<docs_pdf::Engine>,
 ) -> Result<String> {
     let doc = docs_engine::Document::open(input).context("can't open the document")?;
+    import_notes(input, &doc);
     // The font scan happens once, for the first document.
     let engine = engine.get_or_insert_with(docs_pdf::Engine::new);
     let laid = docs_pdf::lay_out(&doc, engine);
@@ -361,6 +387,25 @@ fn docx_to_pdf(
     ))
 }
 
+fn import_notes(input: &Path, doc: &docs_engine::Document) {
+    for note in doc.import_notes() {
+        eprintln!("kantor convert: note: {}: {note}", input.display());
+    }
+}
+
+fn docs_to_docx(input: &Path, output: &Path) -> Result<String> {
+    let mut doc = docs_engine::Document::open(input).context("can't open the document")?;
+    import_notes(input, &doc);
+    doc.save_as(output)?;
+    let written = std::fs::metadata(output).map(|m| m.len() as usize)?;
+    let n = doc.len();
+    Ok(format!(
+        "{n} paragraph{}, {}",
+        if n == 1 { "" } else { "s" },
+        size(written)
+    ))
+}
+
 fn pptx_to_pdf(
     input: &Path,
     output: &Path,
@@ -368,6 +413,9 @@ fn pptx_to_pdf(
     layout: Option<slides_pdf::PrintLayout>,
 ) -> Result<String> {
     let pres = slides_engine::Presentation::open(input).context("can't open the presentation")?;
+    for note in pres.import_notes() {
+        eprintln!("kantor convert: note: {}: {note}", input.display());
+    }
     let engine = engine.get_or_insert_with(docs_pdf::Engine::new);
     let (bytes, pages) = match layout {
         None => slides_pdf::export(&pres, engine)?,
@@ -395,6 +443,22 @@ fn pptx_to_pdf(
             n => format!(", {n} hidden slides left out"),
         },
         size(bytes.len())
+    ))
+}
+
+fn ppt_to_pptx(input: &Path, output: &Path) -> Result<String> {
+    let mut pres =
+        slides_engine::Presentation::open(input).context("can't open the presentation")?;
+    for note in pres.import_notes() {
+        eprintln!("kantor convert: note: {}: {note}", input.display());
+    }
+    pres.save_as(output)?;
+    let written = std::fs::metadata(output).map(|m| m.len() as usize)?;
+    let n = pres.len();
+    Ok(format!(
+        "{n} slide{}, {}",
+        if n == 1 { "" } else { "s" },
+        size(written)
     ))
 }
 
@@ -580,7 +644,9 @@ mod tests {
         assert!(err(&["--paper", "b9", "a.xlsx", "b.pdf"]).contains("--paper b9"));
         assert!(err(&["--scale", "5", "a.xlsx", "b.pdf"]).contains("10 to 400"));
         assert!(err(&["--scale", "50", "--fit-page", "a.xlsx", "b.pdf"]).contains("don't go"));
-        assert!(err(&["-o", "d", "-t", "odt", "a.docx"]).contains("pdf, xlsx, csv or tsv"));
+        assert!(
+            err(&["-o", "d", "-t", "odt", "a.docx"]).contains("pdf, docx, xlsx, pptx, csv or tsv")
+        );
     }
 
     #[std::prelude::v1::test]
@@ -594,6 +660,22 @@ mod tests {
             Kind::PptxToPdf
         );
         assert!(err(&["a.pptx", "a.png"]).contains(".pptx to .png is not supported ("));
+        for ext in ["ppt", "PPS", "pot"] {
+            let input = format!("old.{ext}");
+            assert_eq!(
+                kind(Path::new(&input), Path::new("old.pdf")).unwrap(),
+                Kind::PptxToPdf
+            );
+            assert_eq!(
+                kind(Path::new(&input), Path::new("new.pptx")).unwrap(),
+                Kind::PptToPptx
+            );
+        }
+        assert!(err(&["a.pptx", "b.pptx"]).contains(".pptx to .pptx is not supported"));
+        let o = parse(&args(&["--notes", "a.ppt", "b.pdf"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(o.slides, Some(slides_pdf::PrintLayout::Notes));
         assert!(err(&["a.pdf", "a.png"]).contains("not supported yet"));
         assert!(err(&["a.docx", "a.xlsx"]).contains(".docx to .xlsx is not supported ("));
         assert!(err(&["a", "b.pdf"]).contains("(no extension)"));
@@ -605,5 +687,24 @@ mod tests {
             kind(Path::new("a.ods"), Path::new("b.tsv")).unwrap(),
             Kind::Sheets
         );
+        assert_eq!(
+            kind(Path::new("a.RTF"), Path::new("b.pdf")).unwrap(),
+            Kind::DocxToPdf
+        );
+        assert_eq!(
+            kind(Path::new("a.rtf"), Path::new("b.docx")).unwrap(),
+            Kind::DocsToDocx
+        );
+        assert!(err(&["a.rtf", "a.xlsx"]).contains(".rtf to .xlsx is not supported ("));
+        assert!(err(&["a.docx", "b.docx"]).contains(".docx to .docx is not supported ("));
+        assert_eq!(
+            kind(Path::new("old.DOC"), Path::new("b.pdf")).unwrap(),
+            Kind::DocxToPdf
+        );
+        assert_eq!(
+            kind(Path::new("t.dot"), Path::new("t.docx")).unwrap(),
+            Kind::DocsToDocx
+        );
+        assert!(err(&["a.docx", "b.doc"]).contains("not supported ("));
     }
 }

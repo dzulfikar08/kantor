@@ -26,7 +26,8 @@ Kantor includes code from these projects, under their own licences:
     crates/kantor_spell/dict/README_en_US.txt.
   - id_ID (Indonesian) from hunspell-id (https://github.com/shuLhan/hunspell-id),
     Copyright the hunspell-id authors and Benitius Brevoort. LGPL-3.0-only:
-    crates/kantor_spell/dict/LICENSE-id_ID.txt.
+    crates/kantor_spell/dict/LICENSE-id_ID.txt. Modified by Kantor (encoding line,
+    904 rare entries removed, 2026-11-13/14): see crates/kantor_spell/dict/README.md.
 
 Other dependencies are linked as crates; their licences are checked by cargo-deny (deny.toml).
 

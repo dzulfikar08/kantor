@@ -44,6 +44,105 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - **Read-only documents** in Sheets, Docs and Slides: *Make Read-Only* / *Allow Editing* in the
   command palette. Typing, pasting, formatting, structural changes, dragging and edits from the AI
   assistant or MCP clients are refused; selection, copy, find, zoom, print and export work.
+- Sheets: Excel 97-2003 files (`.xls`, `.xlt`) bring their comments (notes), data validation
+  (drop-down lists, number, date and text length rules, custom formulas, input and error
+  messages) and conditional formatting (cell value and formula rules with their font, fill and
+  border formats), and saving as `.xlsx` keeps them. Excel 2007 data bars, colour scales and icon
+  sets in `.xls` files, and rules whose formula Kantor can't read, are left out with a note.
+- Sheets: OpenDocument spreadsheets (`.ods`) open with their formatting: fonts, fills, borders,
+  number formats, alignment, wrap, merged cells, column widths, row heights, hidden rows, columns
+  and sheets, tab colours and frozen panes.
+- Sheets: Review > Spelling (F7, or the toolbar's spelling button) checks the text cells as
+  Excel does, from the active cell or in the selection (formulas and numbers are skipped):
+  Ignore Once, Ignore All, Add to Dictionary, Change and Change All (each one undo step), and a
+  dictionary language picker.
+- Sheets: chart sheets from Excel files (a tab that is one whole chart) are shown in their place
+  among the sheet tabs, the chart filling the window and following the cells it reads. They are
+  view only for now: commands that work on cells say so instead of changing a sheet out of sight.
+  PDF export, printing and `kantor convert` print each chart sheet on its own landscape page.
+  Saving keeps them, in the same order.
+- Sheets: notes (comments) in `.xlsx` and `.xls` files are shown as in Excel: a small red
+  triangle in the cell's top-right corner, and the note with its author in a box beside the
+  cell while the pointer is over it. They move with inserted and deleted rows and columns.
+  Adding, editing and deleting notes isn't possible yet.
+
+### Fixed
+- Slides: after Apply in the table or chart data editor, the chart (or table) stays selected
+  instead of the slide title. Tab and Shift+Tab now move between the editor's cells, Escape
+  closes it, and Backspace in an empty cell no longer deletes the chart.
+- Sheets: workbooks with notes made by openpyxl (and other tools that write absolute part
+  paths) open; they failed with "specified file not found in archive". Note authors are read
+  too.
+- Charts in Sheets, Slides and PDF export: axis labels go on the side of the plot where the axis
+  is. A bar chart with its categories in reverse order (first at the top) drew its value labels
+  inside the plot, over the first bars; they now sit above the plot, as in Excel, or below it
+  when the axis crosses at the maximum category.
+- Docs: Up and Down no longer get stuck on a line when the line above (or below) is shorter and
+  wraps, and clicking right of a wrapped line puts the caret at that line's end instead of the
+  start of the next line. End on a line that wraps inside a long word stays on that line.
+
+### Changed
+- Indonesian spell check flags far more typos: 904 archaic and regional spellings in the
+  bundled dictionary that sit one keystroke from everyday words (such as "tingi" for "tinggi",
+  "todak" for "tidak", "masarakat" for "masyarakat") are no longer accepted.
+- Spelling suggestions put the fix for swapped letters or a missing or extra double letter
+  first ("tingi" suggests "tinggi", "recomend" suggests "recommend").
+- Sheets: Fill Down, Fill Right and dragging the fill handle are much faster on big workbooks
+  when they copy formulas (nine formulas down 10 000 rows of a 90 000-row workbook: 2.3 s →
+  0.5 s; 1 000 rows: 0.37 s → 0.18 s), and SUMIF, COUNTIF, SUMIFS and the other criteria
+  functions with text criteria recalculate about a third faster.
+- Sheets: filling formulas down a big range is about a third faster again (10 000 rows of the
+  90 000-row workbook: 0.40 s → 0.28 s), and redoing such a fill is faster too.
+- Sheets: writing the recovery copy of a big workbook no longer pauses typing (90 000 rows:
+  about 60 ms → 5 ms on the UI thread); Save and autosave start quicker the same way.
+
+### Fixed
+- Sheets: conditional formatting rules from `.xls` files are applied and listed in Manage Rules
+  in the file's priority order (the first rule first, as in Excel). They were reversed.
+
+## [0.5.0] - 2026-11-13
+
+Kantor opens old Office files: Word 97-2003 `.doc`/`.dot`, `.rtf`, PowerPoint 97-2003
+`.ppt`/`.pps`/`.pot`, and Excel 97-2003 `.xls`/`.xlt` now with their formatting. Each opens as an
+unsaved copy and saves as `.docx`, `.pptx` or `.xlsx`. Docs and Slides check spelling offline in
+English and Indonesian. Docs gets Track Changes for your own typing, footnotes and endnotes, and
+table rows that break across pages; Sheets gets print preview, Freeze Panes that works on a
+scrolled sheet, and much faster open, sort, fill and editing on big workbooks; charts from files
+can be restyled and Slides charts gain and lose series. Every saved file is now checked in CI
+against Microsoft's Open XML validator, which found and fixed element-order errors that could
+make Excel and Word offer to repair a file. Files changed with the new features still haven't
+been opened in Excel, Word or PowerPoint themselves.
+
+### Added
+- Docs opens Word 97-2003 documents and templates (`.doc`, `.dot`), as Sheets opens `.xls`: the
+  file opens as an imported document and Save asks for a name for a new `.docx`, leaving the
+  original untouched. Text, character and paragraph formatting, styles and headings, lists,
+  tables (merged cells, borders, shading), page size, margins and sections, headers and footers,
+  hyperlinks and inline PNG/JPEG pictures come over; the status bar lists what didn't
+  (text boxes, floating shapes, comments, WMF/EMF pictures). Password-protected files and files
+  from Word 6/95 are refused with a message. `kantor convert` takes `.doc` too (to `.docx` or
+  `.pdf`), and the Windows installer and macOS app offer Kantor for `.doc` and `.dot`.
+- Docs opens `.rtf` files (from WordPad, TextEdit, Word or LibreOffice) as an unsaved copy: text
+  in any code page, formatting, styles and headings, lists, tables with merged cells, page setup
+  and sections, headers and footers, PNG and JPEG pictures and links come in. Save writes a
+  `.docx` and never overwrites the `.rtf`; footnotes, comments, text boxes and WMF/EMF pictures
+  are left out, and the status bar says so. `kantor convert` turns `.rtf` into `.docx` or `.pdf`,
+  and Kantor shows in "Open with" for `.rtf` files.
+- Sheets: Excel 97-2003 files (`.xls`) open looking as they do in Excel, not just their values:
+  fonts, fill colours, borders, number formats, alignment (wrap, indent, rotation), merged cells,
+  column widths, row heights, frozen panes, gridlines, hidden rows, columns and sheets, tab
+  colours, the sheet that was open, hyperlinks, named ranges and page setup (paper, orientation,
+  margins, fit to page, print area and titles, headers and footers, page breaks). Workbooks in
+  the 1904 date system show the right dates. Excel 97-2003 templates (`.xlt`) open too. Saving
+  still writes a new `.xlsx`. Comments, data validation, conditional formatting, charts and
+  pictures in `.xls` files aren't imported yet.
+- Slides opens PowerPoint 97-2003 presentations (`.ppt`, and `.pps` shows and `.pot` templates):
+  slides, masters, text with its formatting, bullets and fonts, shapes, pictures, tables,
+  backgrounds, speaker notes and hidden slides. Like `.xls` in Sheets, the file opens unsaved
+  and Save writes a new `.pptx`; the `.ppt` is never changed. Transitions and animations are left
+  out; EMF/WMF pictures show as a grey box in Kantor (PowerPoint shows them in the saved
+  `.pptx`). Password-protected files and PowerPoint 95 files can't be opened. `kantor convert`
+  turns `.ppt` into `.pptx` or `.pdf`.
 - Spell check in Docs and Slides, offline, for English and Indonesian: misspelled words get a red
   wavy underline as you type. Right-click one for up to five suggestions, Ignore All or Add to
   Dictionary (your words are kept in `dictionary.txt` next to settings.toml). Text marked with a
@@ -86,6 +185,20 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   doesn't have fail the build (`tools/fidelity/office_check.py`).
 
 ### Changed
+- **Big workbooks are faster to work with.** Measured on the generated 90 000-row workbook
+  (810 000 formulas, `scripts/corpus/gen_big_xlsx.py --table`, `cargo run --release -p
+  sheets_engine --example big_timing`), best of three, before → after:
+  - **Opening** is about 2.5× faster (9.3 s → 3.5 s on a quiet machine): each filled-down
+    formula is parsed once, not once per row.
+  - **Sorting** the 90 000 rows takes ~40 ms instead of ~0.4 s, and undoing it ~10 ms instead
+    of ~0.3 s: rows move whole.
+  - **Fill** (fill handle, Ctrl+D) of 9 formulas down 1000 rows takes ~0.26 s instead of 1–2 s,
+    in manual and automatic calculation: only the new cells and the formulas that read them
+    are recalculated, not the whole workbook.
+  - **Editing a cell** in automatic calculation recalculates only what depends on it (~0.15 s
+    instead of ~1 s here, most of it the summary's SUMIFS over whole columns). Workbooks with
+    dynamic arrays, circular references, or changes to sheets, rows, columns, names or tables
+    are still recalculated in full; F9 always recalculates everything.
 - Sheets: **Freeze Panes** works from what is on screen, as in Excel: on a scrolled sheet the rows
   above and columns left of the top-left cell on screen go out of sight until Unfreeze, and with
   A1 (or the top-left cell on screen) active the panes split at the middle of the screen. Freeze
@@ -112,6 +225,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   hides, as in Excel.
 - Sheets: a quick click on a chart or picture could leave it stuck to the pointer (it moved with
   the mouse until the next click).
+- Slides: in text boxes that don't wrap text (python-pptx's default text box, and many imported
+  .ppt slides), centred and right-aligned lines were drawn far off the slide, so only the
+  left-aligned lines showed, on screen and in PDFs. Each line now sits in the box as PowerPoint
+  puts it, and a line wider than the box spills over its edges.
 
 ## [0.4.0] - 2026-11-12
 
@@ -861,7 +978,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/dzulfikar08/kantor/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/dzulfikar08/kantor/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/dzulfikar08/kantor/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/dzulfikar08/kantor/compare/v0.2.0...v0.3.0
