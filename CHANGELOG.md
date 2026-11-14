@@ -43,6 +43,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   when they copy formulas (nine formulas down 10 000 rows of a 90 000-row workbook: 2.3 s →
   0.5 s; 1 000 rows: 0.37 s → 0.18 s), and SUMIF, COUNTIF, SUMIFS and the other criteria
   functions with text criteria recalculate about a third faster.
+- Sheets: filling formulas down a big range is about a third faster again (10 000 rows of the
+  90 000-row workbook: 0.40 s → 0.28 s), and redoing such a fill is faster too.
+- Sheets: writing the recovery copy of a big workbook no longer pauses typing (90 000 rows:
+  about 60 ms → 5 ms on the UI thread); Save and autosave start quicker the same way.
+
+### Fixed
+- Sheets: conditional formatting rules from `.xls` files are applied and listed in Manage Rules
+  in the file's priority order (the first rule first, as in Excel). They were reversed.
 
 ## [0.5.0] - 2026-11-13
 

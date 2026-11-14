@@ -118,6 +118,9 @@ impl KantorChanges {
         match diff {
             Diff::SetCellValue {
                 sheet, row, column, ..
+            }
+            | Diff::KantorFillFormula {
+                sheet, row, column, ..
             } => self.rect(*sheet, *row, *column, *row, *column),
             // An array formula's anchor and the cells it covers.
             Diff::SetArrayValue {

@@ -521,12 +521,18 @@ impl XlsFormat {
                 validations.push((sheet as u32, list));
             }
             skipped.cf += rules.cf12;
+            let mut inputs = Vec::new();
             for (ranges, cf) in rules.cf {
                 let Some(input) = cf.convert(&ranges, &ctx, g, model) else {
                     skipped.cf += 1;
                     continue;
                 };
-                let sqref = crate::cf_edit::sqref_of(&ranges);
+                inputs.push((crate::cf_edit::sqref_of(&ranges), input));
+            }
+            // The first rule in the file comes first in priority (Excel's
+            // priority 1); each rule added goes to the top: add the last
+            // one first.
+            for (sqref, input) in inputs.into_iter().rev() {
                 if model
                     .add_conditional_formatting(sheet as u32, &sqref, input)
                     .is_err()

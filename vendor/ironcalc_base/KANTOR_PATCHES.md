@@ -547,8 +547,9 @@ What (`src/user_model/autofill.rs`, both `auto_fill_rows` and
   `set_user_input` would. Everything else is typed in as before.
 * Each source cell's style, its index in the style table and its link are
   looked up once per fill (`KantorFillSource`).
-* The diffs are unchanged (the translated text, old values and styles), so
-  undo and redo are exactly as before.
+* The diffs were unchanged (the translated text, old values and styles), so
+  undo and redo are exactly as before. Section 22 since records a copied
+  formula by its source instead of its text.
 * `UserModel::kantor_fill_copies` counts the cells copied by the last fill
   (for tests).
 
@@ -563,6 +564,63 @@ and left of formulas of every kind (relative, absolute, mixed, whole
 columns, other sheet, a name, an array, OFFSET, references falling off the
 sheet) compared with typing each translated formula in; undo and redo
 restore exactly; the change summary without the send queue.
+
+## 21. Cheap snapshots (copy-on-write rows)
+
+Why: a recovery copy or a Save snapshots the workbook on the UI thread
+(`sheets_engine` `Workbook::xlsx_snapshot`, a clone of `types::Workbook`)
+and writes it in the background. On the 90k-row test workbook the clone
+took 55-73 ms, nearly all of it copying every sheet's cells, which stalled
+typing every time a recovery copy was due.
+
+What (`src/sheet_data/chunks.rs`): `SheetData` holds its chunks of 1024
+rows as `Arc<Chunk>` instead of `Box<Chunk>`. A clone copies one pointer per
+chunk; the writers (`row_mut`, `row_or_insert`, `remove_row`, `take_row`)
+go through `Arc::make_mut`, so a chunk is copied the first time it is
+written while a clone shares it (well under a millisecond), and never
+otherwise. Reads are unchanged. bitcode encodes an `Arc` as it did the
+`Box`: saved bytes are identical.
+
+Effect: the snapshot 55-73 ms → 3-6 ms (machine under load), measured with
+`KANTOR_BIG_XLSX=big.xlsx cargo test --release -p sheets_engine
+snapshot_timing -- --ignored --nocapture`.
+
+Tests: `sheet_data/test.rs` (`a_clone_shares_chunks_until_either_is_written`:
+every kind of write on either side leaves the other unchanged, untouched
+chunks stay shared) and `sheet_data/chunks.rs`
+(`shared_chunks_save_as_boxed_ones_did`).
+
+## 22. Fill undo records without the formula text
+
+Why: after section 20, printing each copied formula's text for its undo
+record (`extend_to`, once per target cell) was ~30 % of a big fill; the
+text was only ever read again by redo.
+
+What (`src/user_model/{history,autofill,undo_redo}.rs`, `src/kantor_changes.rs`):
+
+* `Diff::KantorFillFormula { sheet, row, column, source_row, source_column,
+  old_value }`: a fill target that got its source's shared formula
+  (`kantor_copy_formula`). Everything else a fill writes (series, values,
+  formulas typed in because they can't be copied, covered cells) is
+  recorded as before.
+* `kantor_fill_cell` translates the source's text only when it types it in
+  (no copy possible).
+* Undo restores `old_value` exactly as for `SetCellValue` (same match arm).
+  Redo (and `apply_external_diffs`) calls `kantor_refill_formula`: the
+  source is outside the fill and redo only runs on the state the undo left,
+  so it holds the formula it held when the fill ran; it is copied again,
+  or, if the copy can't be made, translated and typed in as upstream did.
+* `KantorChanges` reports the cell, as for `SetCellValue`.
+
+Effect (`crates/sheets_engine/examples/big_timing.rs`, thread CPU time,
+back to back): 10 000 rows 396 → 283 ms (Manual), 410 → 275 ms
+(Automatic); 1000 rows ~137 → ~127 ms (mostly recalculation there). Redo
+of a fill copies instead of parsing each formula again.
+
+Tests: `test/user_model/test_kantor_fast_fill.rs`
+(`fill_records_undo_and_redo_every_way`: down, up, right, left, three
+undo/redo rounds each; `fill_records_replay_on_a_remote_copy`), with the
+section 20 tests unchanged.
 
 ## Updating or dropping
 
