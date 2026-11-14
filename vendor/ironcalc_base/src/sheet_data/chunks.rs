@@ -91,9 +91,7 @@ impl SheetData {
         if chunk >= self.chunks.len() {
             self.chunks.resize_with(chunk + 1, || None);
         }
-        let chunk = Arc::make_mut(
-            self.chunks[chunk].get_or_insert_with(|| Arc::new(Chunk::new())),
-        );
+        let chunk = Arc::make_mut(self.chunks[chunk].get_or_insert_with(|| Arc::new(Chunk::new())));
         if chunk.rows[index].is_none() {
             chunk.rows[index] = Some(Row::default());
             chunk.used += 1;

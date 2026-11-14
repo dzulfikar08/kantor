@@ -316,5 +316,8 @@ fn fill_records_replay_on_a_remote_copy() {
     remote.evaluate();
     let span = (1, 30);
     let columns = (1, 2 + FORMULAS.len() as i32);
-    assert_eq!(snapshot(&remote, span, columns), snapshot(&model, span, columns));
+    assert_eq!(
+        snapshot(&remote, span, columns),
+        snapshot(&model, span, columns)
+    );
 }

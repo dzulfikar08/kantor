@@ -568,10 +568,7 @@ fn xls_conditional_formats_keep_their_priority_order() {
         ["B2:B5", "C2:C5", "F2:F5", "A2:A5"].map(priority),
         ["1", "2", "3", "4"]
     );
-    assert_eq!(
-        cf_ranges(&Workbook::open(&out).unwrap()),
-        cf_ranges(&wb)
-    );
+    assert_eq!(cf_ranges(&Workbook::open(&out).unwrap()), cf_ranges(&wb));
 
     // Move the last one up, then the first one down.
     let a = wb.cf_rules(0, None)[3].index;

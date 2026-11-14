@@ -866,7 +866,8 @@ impl<'a> UserModel<'a> {
                     .model
                     .extend_to(sheet, source.0, source.1, row, column)?,
             };
-            self.model.set_user_input(sheet, row, column, value.clone())?;
+            self.model
+                .set_user_input(sheet, row, column, value.clone())?;
             Some(value)
         };
 
