@@ -564,6 +564,31 @@ columns, other sheet, a name, an array, OFFSET, references falling off the
 sheet) compared with typing each translated formula in; undo and redo
 restore exactly; the change summary without the send queue.
 
+## 21. Cheap snapshots (copy-on-write rows)
+
+Why: a recovery copy or a Save snapshots the workbook on the UI thread
+(`sheets_engine` `Workbook::xlsx_snapshot`, a clone of `types::Workbook`)
+and writes it in the background. On the 90k-row test workbook the clone
+took 55-73 ms, nearly all of it copying every sheet's cells, which stalled
+typing every time a recovery copy was due.
+
+What (`src/sheet_data/chunks.rs`): `SheetData` holds its chunks of 1024
+rows as `Arc<Chunk>` instead of `Box<Chunk>`. A clone copies one pointer per
+chunk; the writers (`row_mut`, `row_or_insert`, `remove_row`, `take_row`)
+go through `Arc::make_mut`, so a chunk is copied the first time it is
+written while a clone shares it (well under a millisecond), and never
+otherwise. Reads are unchanged. bitcode encodes an `Arc` as it did the
+`Box`: saved bytes are identical.
+
+Effect: the snapshot 55-73 ms → 3-6 ms (machine under load), measured with
+`KANTOR_BIG_XLSX=big.xlsx cargo test --release -p sheets_engine
+snapshot_timing -- --ignored --nocapture`.
+
+Tests: `sheet_data/test.rs` (`a_clone_shares_chunks_until_either_is_written`:
+every kind of write on either side leaves the other unchanged, untouched
+chunks stay shared) and `sheet_data/chunks.rs`
+(`shared_chunks_save_as_boxed_ones_did`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the
