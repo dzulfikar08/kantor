@@ -315,8 +315,9 @@ pub(crate) struct Drawings {
     /// Objects ever edited this session: their anchors are written on every
     /// save (a saved edit that is undone must be undone in the next file).
     touched: HashSet<DrawingKey>,
-    /// The file's chart sheets, in tab order (shown, not edited; `preserve`
-    /// carries their parts through save).
+    /// The file's chart sheets as opened, in tab order (`preserve` carries
+    /// their parts through save; renamed, moved, hidden or deleted ones
+    /// follow [`crate::edits::Edits::chart_sheets`]).
     chart_sheets: Vec<ChartSheet>,
 }
 
@@ -324,11 +325,42 @@ pub(crate) struct Drawings {
 #[derive(Debug)]
 struct ChartSheet {
     name: String,
-    hidden: bool,
+    state: Option<String>,
     /// `sheetId`s of the worksheets before it in the file, nearest first.
     before: Vec<u32>,
+    /// Its part (`xl/chartsheets/sheet1.xml`): carrying keeps part names,
+    /// so this finds it in every later save of the session.
+    part: String,
+    rel_kind: String,
+    /// Its parts as opened, to put back if a save left it out (deleted,
+    /// saved, then the deletion undone).
+    bundle: Arc<Vec<crate::preserve::BundlePart>>,
     objects: Vec<Object>,
     print: crate::SheetPrint,
+}
+
+/// See [`Drawings::chart_sheet_parts`].
+pub(crate) struct ChartSheetParts {
+    pub part: String,
+    pub rel_kind: String,
+    pub bundle: Arc<Vec<crate::preserve::BundlePart>>,
+    /// Its charts: part name and XML as opened.
+    pub charts: Vec<(String, Arc<str>)>,
+}
+
+/// A chart sheet of the file in a history state: what it is called, whether
+/// it is hidden and where its tab is. Chart sheets missing from the state's
+/// list were deleted.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ChartSheetNow {
+    /// Its index among the chart sheets as opened.
+    pub k: usize,
+    pub name: String,
+    /// `None` (visible), `hidden` or `veryHidden`.
+    pub state: Option<String>,
+    /// `sheetId`s of worksheets it goes after, nearest first: its tab
+    /// follows the first of them still there (none: the first tabs).
+    pub after: Vec<u32>,
 }
 
 /// A sheet tab: a worksheet (its index) or a chart sheet (its index among
@@ -343,6 +375,14 @@ pub enum Tab {
 /// from any worksheet's, so caches keyed by it never mix the two.
 pub fn chart_sheet_key_id(k: usize) -> u32 {
     u32::MAX - 1 - k as u32
+}
+
+/// Which chart sheet a [`DrawingKey::sheet_id`] made by
+/// [`chart_sheet_key_id`] stands for (`None`: a worksheet's).
+pub fn chart_sheet_of_key(sheet_id: u32) -> Option<usize> {
+    // Far above any real sheetId (Excel's stay below 65536).
+    let k = (u32::MAX - 1).checked_sub(sheet_id)? as usize;
+    (k < 1 << 20).then_some(k)
 }
 
 fn is(n: Node, ns: &str, name: &str) -> bool {
@@ -608,8 +648,11 @@ impl Drawings {
             .into_iter()
             .map(|c| ChartSheet {
                 name: c.name,
-                hidden: c.hidden,
+                state: c.state.filter(|v| v != "visible"),
                 before: c.before,
+                part: c.part,
+                rel_kind: c.rel_kind,
+                bundle: Arc::new(c.bundle),
                 objects: c
                     .drawing
                     .map(|d| read_objects(&d.xml, &d.targets, d.parts))
@@ -630,14 +673,44 @@ impl Drawings {
         }
     }
 
+    pub(crate) fn chart_sheet_count(&self) -> usize {
+        self.chart_sheets.len()
+    }
+
+    /// Chart sheet `k`'s parts as opened, for a save.
+    pub(crate) fn chart_sheet_parts(&self, k: usize) -> Option<ChartSheetParts> {
+        let c = self.chart_sheets.get(k)?;
+        Some(ChartSheetParts {
+            part: c.part.clone(),
+            rel_kind: c.rel_kind.clone(),
+            bundle: c.bundle.clone(),
+            charts: c
+                .objects
+                .iter()
+                .filter_map(|o| match &*o.kind {
+                    DrawingKind::Chart { part, xml, .. } => Some((part.to_string(), xml.clone())),
+                    _ => None,
+                })
+                .collect(),
+        })
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.sheets.is_empty() && self.chart_sheets.is_empty()
+    }
+
+    /// The object `key` as opened, on a worksheet or a chart sheet.
+    fn object(&self, key: DrawingKey) -> Option<&Object> {
+        match chart_sheet_of_key(key.sheet_id) {
+            Some(k) => self.chart_sheets.get(k)?.objects.get(key.index),
+            None => self.sheets.get(&key.sheet_id)?.get(key.index),
+        }
     }
 
     /// A chart of the file: its frame's `cNvPr id` and its part's XML as
     /// opened (`None`: not a chart, or its id isn't unique).
     pub(crate) fn chart_source(&self, key: DrawingKey) -> Option<(u32, Arc<str>)> {
-        let obj = self.sheets.get(&key.sheet_id)?.get(key.index)?;
+        let obj = self.object(key)?;
         let DrawingKind::Chart { xml, .. } = &*obj.kind else {
             return None;
         };
@@ -781,23 +854,46 @@ impl Workbook {
         !self.drawings.is_empty() || !self.edits().charts.is_empty()
     }
 
-    /// The tabs in order: the worksheets, with the file's chart sheets
-    /// where saving puts them (after the nearest worksheet before them
-    /// that is still there, as `preserve` does). Hidden chart sheets, and
-    /// those a worksheet took the name of (saving drops them), are left
-    /// out.
-    pub fn tabs(&self) -> Vec<Tab> {
+    /// The file's chart sheets in the current state, in their order (hidden
+    /// ones too; deleted ones are left out).
+    pub(crate) fn chart_sheets_now(&self) -> Vec<ChartSheetNow> {
+        if let Some(list) = &self.edits().chart_sheets {
+            return (**list).clone();
+        }
+        self.drawings
+            .chart_sheets
+            .iter()
+            .enumerate()
+            .map(|(k, c)| ChartSheetNow {
+                k,
+                name: c.name.clone(),
+                state: c.state.clone(),
+                after: c.before.clone(),
+            })
+            .collect()
+    }
+
+    fn chart_sheet_now(&self, k: usize) -> Option<ChartSheetNow> {
+        self.chart_sheets_now().into_iter().find(|c| c.k == k)
+    }
+
+    /// Every tab in order, hidden chart sheets included: the worksheets,
+    /// with the chart sheets where saving puts them (after the nearest
+    /// worksheet before them that is still there, as `preserve` does).
+    /// Chart sheets a worksheet took the name of (saving drops them) are
+    /// left out.
+    pub(crate) fn all_tabs(&self) -> Vec<Tab> {
         let names = self.sheet_names();
         let n = names.len() as u32;
         let ids: Vec<u32> = (0..n).map(|i| self.sheet_id(i)).collect();
         let lower: HashSet<String> = names.iter().map(|s| s.to_lowercase()).collect();
         let mut tabs: Vec<Tab> = (0..n).map(Tab::Sheet).collect();
-        for (k, cs) in self.drawings.chart_sheets.iter().enumerate() {
-            if cs.hidden || lower.contains(&cs.name.to_lowercase()) {
+        for cs in self.chart_sheets_now() {
+            if lower.contains(&cs.name.to_lowercase()) {
                 continue;
             }
             let mut at = cs
-                .before
+                .after
                 .iter()
                 .find_map(|id| ids.iter().position(|x| x == id))
                 .and_then(|i| tabs.iter().position(|t| *t == Tab::Sheet(i as u32)))
@@ -806,14 +902,43 @@ impl Workbook {
             while matches!(tabs.get(at), Some(Tab::Chart(_))) {
                 at += 1;
             }
-            tabs.insert(at, Tab::Chart(k));
+            tabs.insert(at, Tab::Chart(cs.k));
         }
         tabs
     }
 
-    /// Chart sheet `k`'s name.
-    pub fn chart_sheet_name(&self, k: usize) -> Option<&str> {
-        self.drawings.chart_sheets.get(k).map(|c| c.name.as_str())
+    /// The tabs in order: the worksheets, with the file's chart sheets
+    /// where saving puts them (after the nearest worksheet before them
+    /// that is still there, as `preserve` does). Hidden chart sheets, and
+    /// those a worksheet took the name of (saving drops them), are left
+    /// out.
+    pub fn tabs(&self) -> Vec<Tab> {
+        let hidden: HashSet<usize> = self
+            .chart_sheets_now()
+            .into_iter()
+            .filter(|c| c.state.is_some())
+            .map(|c| c.k)
+            .collect();
+        self.all_tabs()
+            .into_iter()
+            .filter(|t| !matches!(t, Tab::Chart(k) if hidden.contains(k)))
+            .collect()
+    }
+
+    /// Chart sheet `k`'s name now (`None`: there is no such chart sheet, or
+    /// it was deleted).
+    pub fn chart_sheet_name(&self, k: usize) -> Option<String> {
+        self.chart_sheet_now(k).map(|c| c.name)
+    }
+
+    /// Hidden chart sheets (not "very hidden" ones, which Excel doesn't
+    /// list either) as `(k, name)`, for Unhide.
+    pub fn hidden_chart_sheets(&self) -> Vec<(usize, String)> {
+        self.chart_sheets_now()
+            .into_iter()
+            .filter(|c| c.state.as_deref() == Some("hidden"))
+            .map(|c| (c.k, c.name))
+            .collect()
     }
 
     /// Chart sheet `k`'s print settings (landscape unless it says
@@ -827,25 +952,53 @@ impl Workbook {
     }
 
     /// The objects of chart sheet `k` (usually one chart), bottom to top,
-    /// with their anchors as in the file (chart sheets use absolute ones).
-    /// Not editable.
+    /// with their anchors as in the file (chart sheets use absolute ones),
+    /// charts restyled in Kantor as they are now. Charts are `editable`
+    /// (in the Chart panel; they aren't moved or resized). Empty for a
+    /// deleted chart sheet.
     pub fn chart_sheet_drawings(&self, k: usize) -> Vec<Drawing> {
         let Some(cs) = self.drawings.chart_sheets.get(k) else {
             return Vec::new();
         };
+        if self.chart_sheet_now(k).is_none() {
+            return Vec::new();
+        }
         let sheet_id = chart_sheet_key_id(k);
+        let restyled = self.edits();
         cs.objects
             .iter()
             .enumerate()
-            .map(|(index, obj)| Drawing {
-                key: DrawingKey { sheet_id, index },
-                name: obj.name.clone(),
-                descr: obj.descr.clone(),
-                anchor: obj.anchor,
-                kind: obj.kind.clone(),
-                editable: false,
-                hidden: obj.hidden,
-                prints: obj.prints,
+            .map(|(index, obj)| {
+                let key = DrawingKey { sheet_id, index };
+                let chart = matches!(&*obj.kind, DrawingKind::Chart { .. });
+                Drawing {
+                    key,
+                    name: obj.name.clone(),
+                    descr: obj.descr.clone(),
+                    anchor: obj.anchor,
+                    kind: match &*obj.kind {
+                        DrawingKind::Chart { part, .. }
+                            if restyled.file_charts.contains_key(&key) =>
+                        {
+                            match self.file_chart_now(key) {
+                                Some((xml, _)) => Arc::new(DrawingKind::Chart {
+                                    part: format!(
+                                        "{part}#kantor/{:x}",
+                                        crate::chart_edit::fxhash(&xml)
+                                    )
+                                    .into(),
+                                    xml: xml.into(),
+                                    current_refs: true,
+                                }),
+                                None => obj.kind.clone(),
+                            }
+                        }
+                        _ => obj.kind.clone(),
+                    },
+                    editable: chart && obj.id.is_some(),
+                    hidden: obj.hidden,
+                    prints: obj.prints,
+                }
             })
             .collect()
     }

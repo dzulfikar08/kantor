@@ -16,13 +16,15 @@ use anyhow::{Result, anyhow, bail};
 
 use crate::chart_edit::{ChartInfo, ChartSpec, ChartType, NEW_CHART_BASE};
 use crate::chart_style;
-use crate::drawing::DrawingKey;
+use crate::drawing::{DrawingKey, chart_sheet_of_key};
 use crate::shift::Layout;
 use crate::{CellRange, Workbook};
 
 /// An edited chart part to write at save.
 pub(crate) struct FileChartSave {
     pub sheet_id: u32,
+    /// The chart sheet part it is on (`None`: on worksheet `sheet_id`).
+    pub chart_sheet: Option<String>,
     /// `cNvPr id` of its frame in the sheet's drawing.
     pub cnvpr: u32,
     pub xml: String,
@@ -44,7 +46,7 @@ impl Workbook {
     }
 
     /// A chart part with its references moved from `layout` to now.
-    fn refs_now(&self, xml: &str, layout: &Layout) -> String {
+    pub(crate) fn refs_now(&self, xml: &str, layout: &Layout) -> String {
         let moves = layout.moves_to(&self.history.layout());
         if moves.is_empty() {
             return xml.to_owned();
@@ -65,12 +67,33 @@ impl Workbook {
         })
     }
 
+    /// Whether file chart `key` is there now (not deleted, nor its sheet).
+    fn file_chart_shown(&self, key: DrawingKey) -> bool {
+        if chart_sheet_of_key(key.sheet_id).is_some() {
+            return self.chart_sheet_chart_shown(key);
+        }
+        self.sheet_index_of(key.sheet_id).is_some_and(|s| {
+            self.drawings(s)
+                .iter()
+                .any(|d| d.key == key && d.editable)
+        })
+    }
+
+    /// The sheet (an index) a chart's data defaults to: its own; a chart
+    /// sheet's charts name theirs, else the first worksheet.
+    fn chart_home(&self, key: DrawingKey) -> Option<u32> {
+        match chart_sheet_of_key(key.sheet_id) {
+            Some(_) => Some(0),
+            None => self.sheet_index_of(key.sheet_id),
+        }
+    }
+
     /// See [`Workbook::chart_info`].
     pub(crate) fn file_chart_info(&self, key: DrawingKey) -> Option<ChartInfo> {
         // Deleted charts aren't shown.
-        self.drawings(self.sheet_index_of(key.sheet_id)?)
-            .iter()
-            .find(|d| d.key == key && d.editable)?;
+        if !self.file_chart_shown(key) {
+            return None;
+        }
         let (xml, _) = self.file_chart_now(key)?;
         let style = chart_style::read(&xml).ok()?;
         // The data: the block every reference lies in, on one sheet.
@@ -137,7 +160,7 @@ impl Workbook {
         // Can the range give these series back? (Else a new range replaces
         // them, and the panel says so.)
         if !unknown && !style.fixed {
-            let sheet_now = self.sheet_index_of(key.sheet_id)?;
+            let sheet_now = self.chart_home(key)?;
             let mut probe = spec.clone();
             if probe.kind == ChartType::Other {
                 probe.kind = ChartType::Column;
@@ -184,9 +207,7 @@ impl Workbook {
         let (mut xml, _) = self
             .file_chart_now(key)
             .ok_or_else(|| anyhow!("Kantor can't change this chart"))?;
-        let sheet = self
-            .sheet_index_of(key.sheet_id)
-            .ok_or_else(|| anyhow!("no sheet"))?;
+        let sheet = self.chart_home(key).ok_or_else(|| anyhow!("no sheet"))?;
         let data_changed = old.data != spec.data
             || old.by_rows != spec.by_rows
             || old.data_sheet != spec.data_sheet;
@@ -249,12 +270,16 @@ impl Workbook {
         let mut keys: Vec<&DrawingKey> = self.touched.file_charts.iter().collect();
         keys.sort_by_key(|k| (k.sheet_id, k.index));
         for key in keys {
-            let Some(sheet) = self.sheet_index_of(key.sheet_id) else {
-                continue;
-            };
-            if !self.drawings(sheet).iter().any(|d| d.key == *key) {
+            if !self.file_chart_shown(*key) {
                 continue; // deleted
             }
+            let chart_sheet = match chart_sheet_of_key(key.sheet_id) {
+                Some(k) => match self.drawings.chart_sheet_parts(k) {
+                    Some(p) => Some(p.part),
+                    None => continue,
+                },
+                None => None,
+            };
             let (Some((cnvpr, _)), Some((xml, _))) =
                 (self.drawings.chart_source(*key), self.file_chart_now(*key))
             else {
@@ -262,6 +287,7 @@ impl Workbook {
             };
             out.file_charts.push(FileChartSave {
                 sheet_id: key.sheet_id,
+                chart_sheet,
                 cnvpr,
                 xml,
             });
