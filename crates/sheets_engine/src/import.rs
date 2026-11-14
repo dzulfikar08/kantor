@@ -215,7 +215,7 @@ pub(crate) struct Imported {
     pub print_names: HashMap<u32, (Option<String>, Option<String>)>,
     /// The tab the file opens on.
     pub active_sheet: Option<u32>,
-    /// Data validation (`.xls`), by sheet index.
+    /// Data validation (`.xls`, `.ods`), by sheet index.
     pub validations: Vec<(u32, Vec<crate::Validation>)>,
 }
 
@@ -360,6 +360,8 @@ pub(crate) fn read_calamine(
             Ok(a) => {
                 replaced |= a.cleared;
                 imported.active_sheet = a.active;
+                imported.notes.extend(a.notes());
+                imported.validations = a.validations;
             }
             Err(e) => {
                 log::warn!("{}: formatting not read: {e}", path.display());

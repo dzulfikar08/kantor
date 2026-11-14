@@ -11,11 +11,21 @@
 //! * a column's default cell style, column widths, row heights, hidden
 //!   rows and columns, merged cells;
 //! * hidden sheets and tab colours (table styles); frozen panes, gridlines
-//!   and the active sheet (`settings.xml`).
+//!   and the active sheet (`settings.xml`);
+//! * notes (`office:annotation`) into the model's comments, which an
+//!   `.xlsx` save writes (`notes`);
+//! * data validation (`table:content-validations`, by the cells naming
+//!   them): lists, whole numbers, decimals, dates, times, text lengths and
+//!   formulas, with input and error messages;
+//! * conditional formats: LibreOffice's `calcext:conditional-formats`
+//!   (cell value, formula, text, top/bottom, average, duplicate, error and
+//!   date rules, colour scales, data bars, icon sets and ratings), or, in
+//!   files without them, the `style:map` conditions of the cells' styles.
+//!   Formats come from the conditional styles. A rule or validation whose
+//!   condition has no Excel counterpart is left out with an import note.
 //!
-//! Not read: conditional formats, validation, notes, charts and pictures,
-//! page setup. Runs of cells repeated beyond [`MAX_RUN`] (a style given to
-//! the rest of a sheet) are left unformatted.
+//! Not read: charts and pictures, page setup. Runs of cells repeated beyond
+//! [`MAX_RUN`] (a style given to the rest of a sheet) are left unformatted.
 
 use std::collections::HashMap;
 use std::io::Read as _;
@@ -23,13 +33,20 @@ use std::path::Path;
 
 use anyhow::{Result, anyhow};
 use ironcalc_base::Model;
+use ironcalc_base::cf_types::{
+    CfRuleInput, Cfvo, ColorScaleThreshold, Icon, IconThreshold, PeriodType, TextOperator,
+    ValueOperator, icon_set_icons,
+};
+use ironcalc_base::expressions::types::CellReferenceIndex;
 use ironcalc_base::types::{
-    Alignment, Border, BorderItem, BorderStyle, CellProtection, Col, Color, Fill, Font, FontScheme,
-    HorizontalAlignment, MergedCell, Row, SheetState, Style, VerticalAlignment,
+    Alignment, Border, BorderItem, BorderStyle, CellProtection, Col, Color, Comment, Dxf, DxfFont,
+    Fill, Font, FontScheme, HorizontalAlignment, MergedCell, NumFmt, Row, SheetState, Style,
+    VerticalAlignment,
 };
 use roxmltree::{Document, Node};
 
-use crate::{MAX_COLS, MAX_ROWS};
+use crate::validation::{ErrorStyle, Message, Validation, ValidationOperator, ValidationType};
+use crate::{CellRange, MAX_COLS, MAX_ROWS};
 
 const NS_TABLE: &str = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
 const NS_STYLE: &str = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
@@ -39,6 +56,9 @@ const NS_OFFICE: &str = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
 const NS_SVG: &str = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
 const NS_CONFIG: &str = "urn:oasis:names:tc:opendocument:xmlns:config:1.0";
 const NS_LOEXT: &str = "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0";
+const NS_CALCEXT: &str = "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0";
+const NS_TEXT: &str = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
+const NS_DC: &str = "http://purl.org/dc/elements/1.1/";
 
 /// Cells formatted at most per repeated run (rows × columns).
 const MAX_RUN: u64 = 20_000;
@@ -517,6 +537,18 @@ struct Styles<'a, 'i> {
     tables: HashMap<String, (bool, Option<String>)>,
     /// The `table-cell` default style.
     default: Look,
+    /// Cell style names by display name (`calcext:condition`s use those).
+    display: HashMap<String, String>,
+    /// Each cell style's conditions (`style:map`): condition, the style it
+    /// applies, base cell address.
+    maps: HashMap<String, Vec<StyleMapEntry>>,
+}
+
+/// A `style:map` of a cell style.
+struct StyleMapEntry {
+    condition: String,
+    apply: String,
+    base: Option<String>,
 }
 
 impl<'a, 'i> Styles<'a, 'i> {
@@ -541,6 +573,8 @@ impl<'a, 'i> Styles<'a, 'i> {
             rows: HashMap::new(),
             tables: HashMap::new(),
             default: Look::default(),
+            display: HashMap::new(),
+            maps: HashMap::new(),
         };
         for d in docs {
             for n in d.descendants().filter(|n| n.is_element()) {
@@ -568,6 +602,23 @@ impl<'a, 'i> Styles<'a, 'i> {
                 };
                 match attr(n, NS_STYLE, "family") {
                     Some("table-cell") => {
+                        if let Some(d) = attr(n, NS_STYLE, "display-name") {
+                            s.display.insert(d.to_owned(), name.to_owned());
+                        }
+                        let maps: Vec<StyleMapEntry> = n
+                            .children()
+                            .filter(|c| c.has_tag_name((NS_STYLE, "map")))
+                            .filter_map(|m| {
+                                Some(StyleMapEntry {
+                                    condition: attr(m, NS_STYLE, "condition")?.to_owned(),
+                                    apply: attr(m, NS_STYLE, "apply-style-name")?.to_owned(),
+                                    base: attr(m, NS_STYLE, "base-cell-address").map(str::to_owned),
+                                })
+                            })
+                            .collect();
+                        if !maps.is_empty() {
+                            s.maps.insert(name.to_owned(), maps);
+                        }
                         let parent = attr(n, NS_STYLE, "parent-style-name").map(str::to_owned);
                         s.cells
                             .insert(name.to_owned(), (read_look(n, &fonts), parent));
@@ -601,6 +652,33 @@ impl<'a, 'i> Styles<'a, 'i> {
             }
         }
         s
+    }
+
+    /// What a conditional style sets itself and through its parents up to
+    /// `Default` (which every cell already has): the format a rule applies.
+    fn dxf(&self, name: &str) -> Option<Dxf> {
+        let name = if self.cells.contains_key(name) {
+            name
+        } else {
+            self.display.get(name)?.as_str()
+        };
+        let mut chain = Vec::new();
+        let mut at = Some(name.to_owned());
+        while let Some(n) = at {
+            if chain.len() > 20 || n == "Default" {
+                break;
+            }
+            let Some((look, parent)) = self.cells.get(&n) else {
+                break;
+            };
+            chain.push(look);
+            at = parent.clone();
+        }
+        let l = chain
+            .into_iter()
+            .rev()
+            .fold(Look::default(), |acc, l| acc.with(l));
+        Some(look_dxf(&l, &self.numbers))
     }
 
     /// A cell style with its parents applied, on the default.
@@ -817,6 +895,33 @@ pub(crate) struct Applied {
     /// Values changed (covered cells of merges were cleared).
     pub cleared: bool,
     pub active: Option<u32>,
+    /// Data validation, by model sheet.
+    pub validations: Vec<(u32, Vec<Validation>)>,
+    skipped_validations: usize,
+    skipped_cf: usize,
+}
+
+impl Applied {
+    /// What was left out, for the import notes.
+    pub fn notes(&self) -> Vec<String> {
+        let plural = |n: usize| if n == 1 { "" } else { "s" };
+        let mut notes = Vec::new();
+        if self.skipped_validations > 0 {
+            notes.push(format!(
+                "{} data validation rule{} not imported (condition not supported)",
+                self.skipped_validations,
+                plural(self.skipped_validations)
+            ));
+        }
+        if self.skipped_cf > 0 {
+            notes.push(format!(
+                "{} conditional formatting rule{} not imported (condition not supported)",
+                self.skipped_cf,
+                plural(self.skipped_cf)
+            ));
+        }
+        notes
+    }
 }
 
 /// Read the formatting of the `.ods` at `path` and apply it to `model`,
@@ -838,6 +943,7 @@ pub(crate) fn apply(path: &Path, model: &mut Model<'_>, names: &[String]) -> Res
     docs.push(&content);
     let styles = Styles::read(&docs);
     let (views, active) = read_settings(&settings);
+    let validations = read_validations(&content);
 
     // The default font: the workbook's, so unformatted cells look as in
     // the file.
@@ -894,6 +1000,7 @@ pub(crate) fn apply(path: &Path, model: &mut Model<'_>, names: &[String]) -> Res
             model,
             &mut map,
             views.get(name),
+            &validations,
             &mut applied,
         );
     }
@@ -927,9 +1034,11 @@ fn apply_table(
     model: &mut Model<'_>,
     map: &mut StyleMap,
     view: Option<&View>,
+    validations: &HashMap<String, DvDef>,
     applied: &mut Applied,
 ) {
     let styles = map.styles;
+    let mut rules = TableRules::default();
     // Columns: widths, visibility, default cell styles.
     let mut cols: Vec<Col> = Vec::new();
     let mut col_defaults: Vec<(u32, u32, String)> = Vec::new();
@@ -1027,6 +1136,29 @@ fn apply_table(
             let style = attr(cell, NS_TABLE, "style-name")
                 .or(row_default)
                 .or_else(|| col_default(c));
+            let rect = CellRange::from_corners(
+                (r, c),
+                (
+                    r.saturating_add(n - 1).min(MAX_ROWS - 1),
+                    c.saturating_add(m - 1).min(MAX_COLS - 1),
+                ),
+            );
+            if let Some(v) = attr(cell, NS_TABLE, "content-validation-name") {
+                rules.validations.push(v, rect);
+            }
+            if let Some(name) = style
+                && styles.maps.contains_key(name)
+            {
+                rules.mapped.push(name, rect);
+            }
+            if let Some(a) = child(cell, NS_OFFICE, "annotation") {
+                let author = child(a, NS_DC, "creator")
+                    .and_then(|n| n.text())
+                    .unwrap_or_default();
+                rules
+                    .notes
+                    .push((r, c, author.trim().to_owned(), paragraphs(a)));
+            }
             if let Some(name) = style
                 && name != "Default"
                 && u64::from(n) * u64::from(m) <= MAX_RUN
@@ -1070,6 +1202,7 @@ fn apply_table(
         r = r.saturating_add(n);
     }
 
+    apply_rules(table, sheet, model, styles, validations, rules, applied);
     let Ok(ws) = model.workbook.worksheet_mut(sheet) else {
         return;
     };
@@ -1133,6 +1266,892 @@ fn set_style(model: &mut Model<'_>, sheet: u32, row: u32, col: u32, s: i32) {
     }
     if let Ok(ws) = model.workbook.worksheet_mut(sheet) {
         let _ = ws.set_cell_style(r, c, s);
+    }
+}
+
+// ------------------------------------------------------------------ rules and notes
+
+/// The format a conditional style applies.
+fn look_dxf(l: &Look, numbers: &HashMap<String, Node>) -> Dxf {
+    let font = DxfFont {
+        strike: l.strike,
+        u: l.underline,
+        b: l.bold,
+        i: l.italic,
+        sz: l.size.map(|s| (s.round() as i32).clamp(1, 409)),
+        color: match &l.color {
+            Some(Some(c)) => Color::Rgb(c.clone()),
+            _ => Color::None,
+        },
+    };
+    let font = (font != DxfFont::default()).then_some(font);
+    let fill = match &l.fill {
+        Some(Some(c)) => Some(Fill {
+            color: Color::Rgb(c.clone()),
+        }),
+        _ => None,
+    };
+    let b = |i: usize| l.border[i].clone().flatten();
+    let border = Border {
+        left: b(0),
+        right: b(1),
+        top: b(2),
+        bottom: b(3),
+        diagonal: None,
+        diagonal_down: false,
+        diagonal_up: false,
+    };
+    let border = (border != Border::default()).then_some(border);
+    let num_fmt = l
+        .data_style
+        .as_deref()
+        .and_then(|d| format_code(d, numbers))
+        .map(|format_code| NumFmt {
+            num_fmt_id: 164,
+            format_code,
+        });
+    Dxf {
+        font,
+        fill,
+        border,
+        num_fmt,
+        alignment: None,
+    }
+}
+
+/// `s` split at the `sep`s outside quotes, brackets and parentheses.
+fn split_top(s: &str, sep: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let (mut depth, mut dq, mut sq, mut start) = (0i32, false, false, 0);
+    for (i, c) in s.char_indices() {
+        match c {
+            '"' if !sq => dq = !dq,
+            '\'' if !dq => sq = !sq,
+            '(' | '[' if !dq && !sq => depth += 1,
+            ')' | ']' if !dq && !sq => depth -= 1,
+            c if c == sep && depth == 0 && !dq && !sq => {
+                parts.push(&s[start..i]);
+                start = i + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
+}
+
+/// The arguments' text of `name(...)` when `s` is exactly that call.
+fn call<'a>(s: &'a str, name: &str) -> Option<&'a str> {
+    let inner = s
+        .trim()
+        .strip_prefix(name)?
+        .trim_start()
+        .strip_prefix('(')?
+        .strip_suffix(')')?;
+    // The last parenthesis closes this call, not one inside it.
+    let mut depth = 0i32;
+    let mut dq = false;
+    for c in inner.chars() {
+        match c {
+            '"' => dq = !dq,
+            '(' if !dq => depth += 1,
+            ')' if !dq => {
+                depth -= 1;
+                if depth < 0 {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    (depth == 0).then_some(inner)
+}
+
+/// A condition without its namespace prefix (`of:`, `ooo:`).
+fn strip_ns(s: &str) -> &str {
+    match s.split_once(':') {
+        Some((ns, rest))
+            if !ns.is_empty()
+                && ns.chars().all(|c| c.is_ascii_alphanumeric())
+                && !rest.starts_with('=') =>
+        {
+            rest
+        }
+        _ => s,
+    }
+}
+
+/// An OpenFormula expression in Excel syntax (no `=`).
+fn expr(s: &str) -> String {
+    crate::import::open_formula_to_excel(s.trim())
+        .trim_start_matches('=')
+        .to_owned()
+}
+
+/// The text of a `"..."` literal.
+fn string_literal(s: &str) -> Option<String> {
+    let inner = s.trim().strip_prefix('"')?.strip_suffix('"')?;
+    let mut out = String::new();
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '"' {
+            // Only an escaped quote ("") may be inside.
+            if chars.next() != Some('"') {
+                return None;
+            }
+        }
+        out.push(c);
+    }
+    Some(out)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Bound {
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    Between,
+    NotBetween,
+}
+
+impl Bound {
+    fn value_operator(self) -> ValueOperator {
+        match self {
+            Bound::Eq => ValueOperator::Equal,
+            Bound::Ne => ValueOperator::NotEqual,
+            Bound::Lt => ValueOperator::LessThan,
+            Bound::Gt => ValueOperator::GreaterThan,
+            Bound::Le => ValueOperator::LessThanOrEqual,
+            Bound::Ge => ValueOperator::GreaterThanOrEqual,
+            Bound::Between => ValueOperator::Between,
+            Bound::NotBetween => ValueOperator::NotBetween,
+        }
+    }
+
+    fn validation_operator(self) -> ValidationOperator {
+        match self {
+            Bound::Eq => ValidationOperator::Equal,
+            Bound::Ne => ValidationOperator::NotEqual,
+            Bound::Lt => ValidationOperator::LessThan,
+            Bound::Gt => ValidationOperator::GreaterThan,
+            Bound::Le => ValidationOperator::LessThanOrEqual,
+            Bound::Ge => ValidationOperator::GreaterThanOrEqual,
+            Bound::Between => ValidationOperator::Between,
+            Bound::NotBetween => ValidationOperator::NotBetween,
+        }
+    }
+}
+
+/// `<=5`, `>[.A1]`...: the operator and the operand.
+fn comparison(s: &str) -> Option<(Bound, &str)> {
+    let s = s.trim();
+    [
+        ("<=", Bound::Le),
+        (">=", Bound::Ge),
+        ("!=", Bound::Ne),
+        ("<>", Bound::Ne),
+        ("=", Bound::Eq),
+        ("<", Bound::Lt),
+        (">", Bound::Gt),
+    ]
+    .into_iter()
+    .find_map(|(tok, b)| s.strip_prefix(tok).map(|rest| (b, rest.trim())))
+    .filter(|(_, rest)| !rest.is_empty())
+}
+
+/// A two-operand call's arguments (`between(1,10)`; some files separate
+/// them with `;`).
+fn two(inner: &str) -> Option<Vec<&str>> {
+    [',', ';']
+        .into_iter()
+        .map(|sep| split_top(inner, sep))
+        .find(|args| args.len() == 2)
+}
+
+/// `subject()<op>v`, `subject-is-between(a,b)`, `subject-is-not-between(a,b)`.
+fn bounds<'a>(s: &'a str, subject: &str) -> Option<(Bound, Vec<&'a str>)> {
+    let s = s.trim();
+    if let Some(inner) = call(s, &format!("{subject}-is-between")) {
+        return Some((Bound::Between, two(inner)?));
+    }
+    if let Some(inner) = call(s, &format!("{subject}-is-not-between")) {
+        return Some((Bound::NotBetween, two(inner)?));
+    }
+    let rest = s.strip_prefix(subject)?.trim_start().strip_prefix("()")?;
+    let (b, v) = comparison(rest)?;
+    Some((b, vec![v]))
+}
+
+/// An ODF cell address (`Sheet.A1`, `$'My sheet'.$B$2`): 0-based row, column.
+fn odf_cell(s: &str) -> Option<(u32, u32)> {
+    let s = s.trim();
+    let mut sq = false;
+    let mut dot = None;
+    for (i, c) in s.char_indices() {
+        match c {
+            '\'' => sq = !sq,
+            '.' if !sq => dot = Some(i),
+            _ => {}
+        }
+    }
+    let cell = dot.map_or(s, |d| &s[d + 1..]);
+    let a = crate::shift::parse_range(cell)?.area();
+    Some((a.top, a.left))
+}
+
+/// A list of ODF ranges (`Sheet.A1:Sheet.B5 Sheet.D1`).
+fn odf_ranges(s: &str) -> Vec<CellRange> {
+    split_top(s, ' ')
+        .into_iter()
+        .filter(|p| !p.trim().is_empty())
+        .filter_map(|p| {
+            let ends = split_top(p, ':');
+            let a = odf_cell(ends[0])?;
+            let b = match ends.get(1) {
+                Some(e) => odf_cell(e)?,
+                None => a,
+            };
+            Some(CellRange::from_corners(a, b))
+        })
+        .collect()
+}
+
+/// Rectangles of cells joined into as few ranges as they make: runs along
+/// rows first, then those stacked with the same columns.
+fn merge_rects(mut v: Vec<CellRange>) -> Vec<CellRange> {
+    v.sort_by_key(|r| (r.top, r.bottom, r.left));
+    let mut across: Vec<CellRange> = Vec::new();
+    for r in v {
+        match across.last_mut() {
+            Some(p) if p.top == r.top && p.bottom == r.bottom && r.left <= p.right + 1 => {
+                p.right = p.right.max(r.right);
+            }
+            _ => across.push(r),
+        }
+    }
+    across.sort_by_key(|r| (r.left, r.right, r.top));
+    let mut down: Vec<CellRange> = Vec::new();
+    for r in across {
+        match down.last_mut() {
+            Some(p) if p.left == r.left && p.right == r.right && r.top <= p.bottom + 1 => {
+                p.bottom = p.bottom.max(r.bottom);
+            }
+            _ => down.push(r),
+        }
+    }
+    down.sort_by_key(|r| (r.top, r.left));
+    down
+}
+
+/// Text of an element's `text:p` paragraphs, one line each.
+fn paragraphs(n: Node) -> String {
+    fn inline(n: Node, out: &mut String) {
+        for c in n.children() {
+            if c.is_text() {
+                out.push_str(c.text().unwrap_or_default());
+            } else if c.has_tag_name((NS_TEXT, "s")) {
+                let k: usize = attr(c, NS_TEXT, "c")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(1);
+                out.push_str(&" ".repeat(k.min(1000)));
+            } else if c.has_tag_name((NS_TEXT, "tab")) {
+                out.push('\t');
+            } else if c.has_tag_name((NS_TEXT, "line-break")) {
+                out.push('\n');
+            } else if c.tag_name().namespace() == Some(NS_TEXT) {
+                inline(c, out);
+            }
+        }
+    }
+    n.children()
+        .filter(|c| c.has_tag_name((NS_TEXT, "p")))
+        .map(|p| {
+            let mut s = String::new();
+            inline(p, &mut s);
+            s
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `f` (Excel syntax, relative to `from`) relative to `to` instead.
+fn rebase(
+    model: &mut Model<'_>,
+    sheet: u32,
+    f: String,
+    from: Option<(u32, u32)>,
+    to: (u32, u32),
+) -> Option<String> {
+    let Some(from) = from.filter(|b| *b != to) else {
+        return Some(f);
+    };
+    let at = |(r, c): (u32, u32)| CellReferenceIndex {
+        sheet,
+        row: r as i32 + 1,
+        column: c as i32 + 1,
+    };
+    let moved = model
+        .extend_copied_value(&format!("={f}"), &at(from), &at(to))
+        .ok()?;
+    Some(moved.trim_start_matches('=').to_owned())
+}
+
+/// A `table:content-validation`, waiting for the cells that use it.
+struct DvDef {
+    condition: String,
+    allow_blank: bool,
+    dropdown: bool,
+    base: Option<(u32, u32)>,
+    prompt: Option<Message>,
+    error: Option<(ErrorStyle, Message)>,
+}
+
+fn read_validations(content: &Document) -> HashMap<String, DvDef> {
+    let mut out = HashMap::new();
+    for v in content
+        .descendants()
+        .filter(|n| n.has_tag_name((NS_TABLE, "content-validation")))
+    {
+        let (Some(name), Some(condition)) =
+            (attr(v, NS_TABLE, "name"), attr(v, NS_TABLE, "condition"))
+        else {
+            continue;
+        };
+        let shown = |m: Node| attr(m, NS_TABLE, "display") != Some("false");
+        let message = |m: Node| Message {
+            title: attr(m, NS_TABLE, "title").unwrap_or_default().to_owned(),
+            text: paragraphs(m),
+        };
+        let prompt = child(v, NS_TABLE, "help-message")
+            .filter(|m| shown(*m))
+            .map(message)
+            .filter(|m| !(m.title.is_empty() && m.text.is_empty()));
+        let error = child(v, NS_TABLE, "error-message")
+            .filter(|m| shown(*m))
+            .map(|m| {
+                let style = match attr(m, NS_TABLE, "message-type") {
+                    Some("warning") => ErrorStyle::Warning,
+                    Some("information") => ErrorStyle::Information,
+                    _ => ErrorStyle::Stop,
+                };
+                (style, message(m))
+            });
+        out.insert(
+            name.to_owned(),
+            DvDef {
+                condition: condition.to_owned(),
+                allow_blank: attr(v, NS_TABLE, "allow-empty-cell") != Some("false"),
+                dropdown: attr(v, NS_TABLE, "display-list") != Some("none"),
+                base: attr(v, NS_TABLE, "base-cell-address").and_then(odf_cell),
+                prompt,
+                error,
+            },
+        );
+    }
+    out
+}
+
+impl DvDef {
+    /// The rule on `ranges`, or `None` when its condition has no Excel
+    /// counterpart.
+    fn convert(
+        &self,
+        ranges: Vec<CellRange>,
+        model: &mut Model<'_>,
+        sheet: u32,
+    ) -> Option<Validation> {
+        let first = *ranges.first()?;
+        let to = (first.top, first.left);
+        let mut fix = |s: &str| rebase(model, sheet, expr(s), self.base, to);
+        let cond = strip_ns(&self.condition).trim();
+        let mut operator = ValidationOperator::Between;
+        let mut formula2 = None;
+        let (kind, formula1) = if let Some(inner) = call(cond, "cell-content-is-in-list") {
+            let items = split_top(inner, ';');
+            let texts: Option<Vec<String>> = items.iter().map(|i| string_literal(i)).collect();
+            let f = match texts {
+                Some(t) if t.iter().all(|x| !x.contains(',')) => {
+                    format!("\"{}\"", t.join(","))
+                }
+                Some(_) => return None,
+                None if items.len() == 1 => fix(items[0])?,
+                None => return None,
+            };
+            (ValidationType::List, f)
+        } else if let Some(inner) = call(cond, "is-true-formula") {
+            (ValidationType::Custom, fix(inner)?)
+        } else {
+            let (kind, rest) = if cond.starts_with("cell-content-text-length") {
+                (ValidationType::TextLength, cond)
+            } else {
+                let (kind, rest) = [
+                    ("cell-content-is-whole-number()", ValidationType::Whole),
+                    ("cell-content-is-decimal-number()", ValidationType::Decimal),
+                    ("cell-content-is-date()", ValidationType::Date),
+                    ("cell-content-is-time()", ValidationType::Time),
+                ]
+                .into_iter()
+                .find_map(|(p, k)| cond.strip_prefix(p).map(|r| (k, r)))?;
+                (kind, rest.trim_start().strip_prefix("and")?)
+            };
+            let subject = if kind == ValidationType::TextLength {
+                "cell-content-text-length"
+            } else {
+                "cell-content"
+            };
+            let (b, args) = bounds(rest, subject)?;
+            operator = b.validation_operator();
+            if args.len() == 2 {
+                formula2 = Some(fix(args[1])?);
+            }
+            (kind, fix(args[0])?)
+        };
+        Some(Validation {
+            kind,
+            operator,
+            allow_blank: self.allow_blank,
+            dropdown: self.dropdown,
+            prompt: self.prompt.clone(),
+            error: self.error.clone(),
+            formula1: Some(formula1),
+            formula2,
+            ranges,
+        })
+    }
+}
+
+/// A rule's formulas, relative to the top-left cell of its ranges.
+struct RuleCtx<'m, 'a> {
+    model: &'m mut Model<'a>,
+    sheet: u32,
+    base: Option<(u32, u32)>,
+    to: (u32, u32),
+}
+
+impl RuleCtx<'_, '_> {
+    fn fix(&mut self, s: &str) -> Option<String> {
+        rebase(self.model, self.sheet, expr(s), self.base, self.to)
+    }
+
+    /// A cell-value rule.
+    fn cell_is(&mut self, b: Bound, args: &[&str], format: Dxf) -> Option<CfRuleInput> {
+        let formula = self.fix(args.first()?)?;
+        let formula2 = match args.get(1) {
+            Some(a) => Some(self.fix(a)?),
+            None => None,
+        };
+        Some(CfRuleInput::CellIs {
+            operator: b.value_operator(),
+            formula,
+            formula2,
+            format,
+            stop_if_true: false,
+        })
+    }
+
+    /// A `calcext:condition`'s value (LibreOffice's own syntax).
+    fn calcext(&mut self, value: &str, format: Dxf) -> Option<CfRuleInput> {
+        let v = value.trim();
+        let stop_if_true = false;
+        if let Some(inner) = call(v, "between") {
+            return self.cell_is(Bound::Between, &two(inner)?, format);
+        }
+        if let Some(inner) = call(v, "not-between") {
+            return self.cell_is(Bound::NotBetween, &two(inner)?, format);
+        }
+        if let Some(inner) = call(v, "formula-is") {
+            return Some(CfRuleInput::Formula {
+                formula: self.fix(inner)?,
+                format,
+                stop_if_true,
+            });
+        }
+        for (name, operator) in [
+            ("begins-with", TextOperator::BeginsWith),
+            ("ends-with", TextOperator::EndsWith),
+            ("contains-text", TextOperator::Contains),
+            ("not-contains-text", TextOperator::DoesNotContain),
+        ] {
+            if let Some(inner) = call(v, name) {
+                return Some(CfRuleInput::Text {
+                    operator,
+                    value: string_literal(inner)?,
+                    format,
+                    stop_if_true,
+                });
+            }
+        }
+        for (name, bottom, percent) in [
+            ("top-elements", false, false),
+            ("bottom-elements", true, false),
+            ("top-percent", false, true),
+            ("bottom-percent", true, true),
+        ] {
+            if let Some(inner) = call(v, name) {
+                let rank = inner.trim().parse::<f64>().ok()?;
+                if !(1.0..=1000.0).contains(&rank) {
+                    return None;
+                }
+                let rank = rank.round() as u32;
+                return Some(if bottom {
+                    CfRuleInput::Bottom10 {
+                        rank,
+                        percent,
+                        format,
+                        stop_if_true,
+                    }
+                } else {
+                    CfRuleInput::Top10 {
+                        rank,
+                        percent,
+                        format,
+                        stop_if_true,
+                    }
+                });
+            }
+        }
+        match v {
+            "duplicate" => Some(CfRuleInput::DuplicateValues {
+                format,
+                stop_if_true,
+            }),
+            "unique" => Some(CfRuleInput::UniqueValues {
+                format,
+                stop_if_true,
+            }),
+            "above-average" => Some(CfRuleInput::AboveAverage {
+                format,
+                stop_if_true,
+            }),
+            "below-average" => Some(CfRuleInput::BelowAverage {
+                format,
+                stop_if_true,
+            }),
+            "is-error" => Some(CfRuleInput::Errors {
+                format,
+                stop_if_true,
+            }),
+            "is-no-error" => Some(CfRuleInput::NoErrors {
+                format,
+                stop_if_true,
+            }),
+            _ => {
+                let (b, operand) = comparison(v)?;
+                self.cell_is(b, &[operand], format)
+            }
+        }
+    }
+
+    /// A `style:map` condition (ODF's own syntax).
+    fn style_map(&mut self, condition: &str, format: Dxf) -> Option<CfRuleInput> {
+        let c = strip_ns(condition).trim();
+        if let Some(inner) = call(c, "is-true-formula") {
+            return Some(CfRuleInput::Formula {
+                formula: self.fix(inner)?,
+                format,
+                stop_if_true: false,
+            });
+        }
+        let (b, args) = bounds(c, "cell-content")?;
+        self.cell_is(b, &args, format)
+    }
+
+    /// A colour scale, data bar or icon set's threshold: `Some(None)` is
+    /// automatic.
+    fn cfvo(&mut self, entry: Node) -> Option<Option<Cfvo>> {
+        let value = attr(entry, NS_CALCEXT, "value").unwrap_or("0");
+        let num = || value.trim().parse::<f64>().ok().filter(|v| v.is_finite());
+        Some(Some(match attr(entry, NS_CALCEXT, "type")? {
+            "minimum" => Cfvo::Min,
+            "maximum" => Cfvo::Max,
+            "auto-minimum" | "auto-maximum" => return Some(None),
+            "number" => Cfvo::Number(num()?),
+            "percent" => Cfvo::Percent(num()?),
+            "percentile" => Cfvo::Percentile(num()?),
+            "formula" => Cfvo::Formula(self.fix(value)?),
+            _ => return None,
+        }))
+    }
+
+    fn color_scale(&mut self, n: Node) -> Option<CfRuleInput> {
+        let mut thresholds = Vec::new();
+        let entries: Vec<Node> = n
+            .children()
+            .filter(|c| c.has_tag_name((NS_CALCEXT, "color-scale-entry")))
+            .collect();
+        let last = entries.len().checked_sub(1)?;
+        for (i, e) in entries.into_iter().enumerate() {
+            let cfvo = self
+                .cfvo(e)?
+                .unwrap_or(if i == last { Cfvo::Max } else { Cfvo::Min });
+            let color = color(attr(e, NS_CALCEXT, "color")?)?;
+            thresholds.push(ColorScaleThreshold {
+                cfvo,
+                color: Color::Rgb(color),
+            });
+        }
+        (2..=3)
+            .contains(&thresholds.len())
+            .then_some(CfRuleInput::ColorScale { thresholds })
+    }
+
+    fn data_bar(&mut self, n: Node) -> Option<CfRuleInput> {
+        let entries: Vec<Node> = n
+            .children()
+            .filter(|c| c.has_tag_name((NS_CALCEXT, "formatting-entry")))
+            .collect();
+        let (min, max) = match entries.as_slice() {
+            [a, b] => (self.cfvo(*a)?, self.cfvo(*b)?),
+            _ => (None, None),
+        };
+        let rgb = |name: &str, default: &str| {
+            Color::Rgb(
+                attr(n, NS_CALCEXT, name)
+                    .and_then(color)
+                    .unwrap_or_else(|| default.to_owned()),
+            )
+        };
+        Some(CfRuleInput::DataBar {
+            min,
+            max,
+            positive_color: rgb("positive-color", "#638EC6"),
+            negative_color: rgb("negative-color", "#FF0000"),
+            is_gradient: attr(n, NS_CALCEXT, "gradient") != Some("false"),
+            show_value: attr(n, NS_CALCEXT, "show-value") != Some("false"),
+        })
+    }
+
+    fn icon_set(&mut self, n: Node) -> Option<CfRuleInput> {
+        let set = attr(n, NS_CALCEXT, "icon-set-type")?;
+        let entries: Vec<Node> = n
+            .children()
+            .filter(|c| c.has_tag_name((NS_CALCEXT, "formatting-entry")))
+            .collect();
+        // LibreOffice writes "show value" on the set or on its first entry.
+        let show_value = std::iter::once(n)
+            .chain(entries.iter().copied())
+            .all(|e| attr(e, NS_CALCEXT, "show-value") != Some("false"));
+        let mut cfvos = Vec::new();
+        for e in &entries {
+            let cfvo = self.cfvo(*e)?.unwrap_or(Cfvo::Min);
+            cfvos.push((cfvo, attr(*e, NS_CALCEXT, "greater-equal") != Some("false")));
+        }
+        if let Some((count, icon, rgb)) = rating(set) {
+            if cfvos.len() != count {
+                return None;
+            }
+            return Some(CfRuleInput::IconRating {
+                icon,
+                color: Color::Rgb(rgb.to_owned()),
+                thresholds: cfvos,
+                show_value,
+            });
+        }
+        let icons = icon_set_icons(set)?;
+        if icons.len() != cfvos.len() {
+            return None;
+        }
+        Some(CfRuleInput::IconSet {
+            thresholds: icons
+                .into_iter()
+                .zip(cfvos)
+                .map(|((icon, color), (cfvo, is_strict))| IconThreshold {
+                    icon,
+                    cfvo,
+                    color,
+                    is_strict,
+                })
+                .collect(),
+            show_value,
+        })
+    }
+}
+
+/// Rating sets: icon count, icon and colour (as an `.xlsx` import makes them).
+fn rating(set: &str) -> Option<(usize, Icon, &'static str)> {
+    match set {
+        "3Stars" => Some((3, Icon::Star, "#FFD700")),
+        "5Quarters" => Some((5, Icon::Circle, "#FFD700")),
+        "3Rating" => Some((3, Icon::FlatRectangle, "#4472C4")),
+        "4Rating" | "4Boxes" => Some((4, Icon::FlatRectangle, "#4472C4")),
+        "5Rating" | "5Boxes" => Some((5, Icon::FlatRectangle, "#4472C4")),
+        _ => None,
+    }
+}
+
+fn period(date: &str) -> Option<PeriodType> {
+    Some(match date {
+        "today" => PeriodType::Today,
+        "yesterday" => PeriodType::Yesterday,
+        "tomorrow" => PeriodType::Tomorrow,
+        "last-7-days" => PeriodType::Last7Days,
+        "this-week" => PeriodType::ThisWeek,
+        "last-week" => PeriodType::LastWeek,
+        "next-week" => PeriodType::NextWeek,
+        "this-month" => PeriodType::ThisMonth,
+        "last-month" => PeriodType::LastMonth,
+        "next-month" => PeriodType::NextMonth,
+        "this-year" => PeriodType::ThisYear,
+        "last-year" => PeriodType::LastYear,
+        "next-year" => PeriodType::NextYear,
+        _ => return None,
+    })
+}
+
+/// Cell rectangles grouped by a name, in the order the names first appear.
+#[derive(Default)]
+struct Grouped {
+    index: HashMap<String, usize>,
+    groups: Vec<(String, Vec<CellRange>)>,
+}
+
+impl Grouped {
+    fn push(&mut self, name: &str, rect: CellRange) {
+        let i = *self.index.entry(name.to_owned()).or_insert_with(|| {
+            self.groups.push((name.to_owned(), Vec::new()));
+            self.groups.len() - 1
+        });
+        self.groups[i].1.push(rect);
+    }
+}
+
+/// What a table's cells said about rules and notes.
+#[derive(Default)]
+struct TableRules {
+    /// Cells by validation name.
+    validations: Grouped,
+    /// Cells by cell style, for styles with `style:map`s.
+    mapped: Grouped,
+    /// Notes: row, column, author, text.
+    notes: Vec<(u32, u32, String, String)>,
+}
+
+/// Bring a table's data validation, conditional formats and notes into
+/// `model` (validation comes back in `applied`).
+fn apply_rules(
+    table: Node,
+    sheet: u32,
+    model: &mut Model<'_>,
+    styles: &Styles,
+    defs: &HashMap<String, DvDef>,
+    rules: TableRules,
+    applied: &mut Applied,
+) {
+    if let Ok(ws) = model.workbook.worksheet_mut(sheet) {
+        for (r, c, author, text) in rules.notes {
+            ws.comments.push(Comment {
+                text,
+                author_name: author,
+                author_id: None,
+                cell_ref: crate::cell_name(r, c),
+            });
+        }
+    }
+
+    let mut list = Vec::new();
+    for (name, rects) in rules.validations.groups {
+        let Some(def) = defs.get(&name) else {
+            continue;
+        };
+        match def.convert(merge_rects(rects), model, sheet) {
+            Some(v) => list.push(v),
+            None => applied.skipped_validations += 1,
+        }
+    }
+    if !list.is_empty() {
+        applied.validations.push((sheet, list));
+    }
+
+    // Each rule in file order: (ranges, the rule).
+    let mut inputs: Vec<(Vec<CellRange>, CfRuleInput)> = Vec::new();
+    let calcext = child(table, NS_CALCEXT, "conditional-formats");
+    if let Some(formats) = calcext {
+        for f in formats
+            .children()
+            .filter(|c| c.has_tag_name((NS_CALCEXT, "conditional-format")))
+        {
+            let ranges = odf_ranges(attr(f, NS_CALCEXT, "target-range-address").unwrap_or(""));
+            let Some(first) = ranges.first().copied() else {
+                applied.skipped_cf += f.children().filter(|c| c.is_element()).count();
+                continue;
+            };
+            for rule in f.children().filter(|c| c.is_element()) {
+                let base = attr(rule, NS_CALCEXT, "base-cell-address").and_then(odf_cell);
+                let mut ctx = RuleCtx {
+                    model,
+                    sheet,
+                    base,
+                    to: (first.top, first.left),
+                };
+                let format = |key: &str| {
+                    attr(rule, NS_CALCEXT, key)
+                        .and_then(|s| styles.dxf(s))
+                        .unwrap_or_default()
+                };
+                let input = match rule.tag_name().name() {
+                    "condition" => {
+                        let value = attr(rule, NS_CALCEXT, "value").unwrap_or("");
+                        ctx.calcext(value, format("apply-style-name"))
+                    }
+                    "date-is" => attr(rule, NS_CALCEXT, "date").and_then(period).map(|p| {
+                        CfRuleInput::TimePeriod {
+                            time_period: p,
+                            date1: None,
+                            date2: None,
+                            format: format("style"),
+                            stop_if_true: false,
+                        }
+                    }),
+                    "color-scale" => ctx.color_scale(rule),
+                    "data-bar" => ctx.data_bar(rule),
+                    "icon-set" => ctx.icon_set(rule),
+                    _ => None,
+                };
+                match input {
+                    Some(i) => inputs.push((ranges.clone(), i)),
+                    None => applied.skipped_cf += 1,
+                }
+            }
+        }
+    } else {
+        // Without LibreOffice's own list (which repeats these), the
+        // conditions of the cells' styles.
+        for (name, rects) in rules.mapped.groups {
+            let Some(maps) = styles.maps.get(&name) else {
+                continue;
+            };
+            let ranges = merge_rects(rects);
+            let Some(first) = ranges.first().copied() else {
+                continue;
+            };
+            for m in maps {
+                let mut ctx = RuleCtx {
+                    model,
+                    sheet,
+                    base: m.base.as_deref().and_then(odf_cell),
+                    to: (first.top, first.left),
+                };
+                let format = styles.dxf(&m.apply).unwrap_or_default();
+                match ctx.style_map(&m.condition, format) {
+                    Some(i) => inputs.push((ranges.clone(), i)),
+                    None => applied.skipped_cf += 1,
+                }
+            }
+        }
+    }
+    // The first rule in the file comes first in priority; each rule added
+    // goes to the top: add the last one first.
+    for (ranges, input) in inputs.into_iter().rev() {
+        let sqref = crate::cf_edit::sqref_of(&ranges);
+        if model
+            .add_conditional_formatting(sheet, &sqref, input)
+            .is_err()
+        {
+            applied.skipped_cf += 1;
+        }
     }
 }
 
@@ -1209,6 +2228,58 @@ mod tests {
         assert!(border("none").is_none());
         // 64 px: Excel's 8.43 characters.
         assert!((width_chars(48.0) - 8.43).abs() < 0.01);
+    }
+
+    #[test]
+    fn condition_syntax() {
+        assert_eq!(
+            odf_ranges("'My sheet'.A1:'My sheet'.B3 $Two.$D$5"),
+            vec![
+                CellRange::from_corners((0, 0), (2, 1)),
+                CellRange::from_corners((4, 3), (4, 3)),
+            ]
+        );
+        assert_eq!(odf_cell("Sheet.Q7"), Some((6, 16)));
+        assert_eq!(odf_cell("nonsense"), None);
+        assert_eq!(call("between(1,10)", "between"), Some("1,10"));
+        assert_eq!(call("between(1,2)+(3)", "between"), None);
+        assert_eq!(call("not-between(1,2)", "between"), None);
+        assert_eq!(
+            split_top("DATE(2024;1;1),\"a,b\"", ','),
+            ["DATE(2024;1;1)", "\"a,b\""]
+        );
+        assert_eq!(
+            string_literal("\"say \"\"hi\"\"\""),
+            Some("say \"hi\"".into())
+        );
+        assert_eq!(string_literal("\"a\"&\"b\""), None);
+        assert_eq!(strip_ns("of:is-true-formula(1)"), "is-true-formula(1)");
+        assert_eq!(comparison(">= [.A1]"), Some((Bound::Ge, "[.A1]")));
+        assert_eq!(comparison("="), None);
+        let (b, args) =
+            bounds("cell-content-text-length()<>3", "cell-content-text-length").unwrap();
+        assert_eq!((b, args), (Bound::Ne, vec!["3"]));
+        assert!(bounds("cell-content-is-between(1)", "cell-content").is_none());
+    }
+
+    #[test]
+    fn rectangles_merge() {
+        let r = |a: (u32, u32), b: (u32, u32)| CellRange::from_corners(a, b);
+        // A column cell by cell, then a long run, then a last row; a second
+        // block beside it.
+        let cells = vec![
+            r((0, 7), (0, 7)),
+            r((1, 7), (1, 7)),
+            r((0, 8), (0, 8)),
+            r((1, 8), (1, 8)),
+            r((2, 7), (1000, 7)),
+            r((1001, 7), (1001, 7)),
+            r((5, 1), (5, 1)),
+        ];
+        assert_eq!(
+            merge_rects(cells),
+            vec![r((0, 7), (1, 8)), r((2, 7), (1001, 7)), r((5, 1), (5, 1)),]
+        );
     }
 
     #[test]
