@@ -24,13 +24,15 @@
 //! charts, pictures and shapes. Every read is bounds-checked: a malformed
 //! record is skipped, never a panic.
 
+use std::collections::HashMap;
 use std::io::Read as _;
 use std::path::Path;
 
 use anyhow::{Result, anyhow, bail};
 use ironcalc_base::Model;
 use ironcalc_base::types::{
-    Alignment, Border, BorderItem, BorderStyle, CellProtection, Col, Color, Fill, Font, FontScheme,
+    Alignment, Border, BorderItem, BorderStyle, CellProtection, Col, Color, Comment, Fill, Font,
+    FontScheme,
     HorizontalAlignment, Link, MergedCell, NumFmt, Row, SheetState, Style, VerticalAlignment,
 };
 
@@ -45,6 +47,9 @@ struct Records<'a> {
     data: &'a [u8],
     pos: usize,
     buf: Vec<u8>,
+    /// Where each `CONTINUE` payload starts in the last joined record (empty
+    /// for a record without continuations).
+    bounds: Vec<usize>,
 }
 
 const CONTINUE: u16 = 0x003C;
@@ -55,7 +60,13 @@ impl<'a> Records<'a> {
             data,
             pos,
             buf: Vec::new(),
+            bounds: Vec::new(),
         }
+    }
+
+    /// See [`Self::bounds`].
+    fn bounds(&self) -> &[usize] {
+        &self.bounds
     }
 
     fn header(&self, pos: usize) -> Option<(u16, usize)> {
@@ -76,6 +87,7 @@ impl<'a> Records<'a> {
             return None;
         }
         self.pos = end;
+        self.bounds.clear();
         // Most records have no continuation: borrow them.
         if !matches!(self.header(self.pos), Some((CONTINUE, _))) {
             return Some((typ, &self.data[start..end]));
@@ -88,6 +100,7 @@ impl<'a> Records<'a> {
             let Some(part) = self.data.get(s..e) else {
                 break;
             };
+            self.bounds.push(self.buf.len());
             self.buf.extend_from_slice(part);
             self.pos = e;
         }
@@ -855,6 +868,11 @@ fn read_sheet(
     };
     let mut col_styles: Vec<(usize, u16)> = Vec::new();
     let mut row_styles: Vec<(usize, u16)> = Vec::new();
+    // Notes: the text box of the last note `OBJ`, the texts by object id,
+    // then `NOTE` records pointing at them.
+    let mut note_obj: Option<u16> = None;
+    let mut texts: HashMap<u16, String> = HashMap::new();
+    let mut notes: Vec<(u16, u16, u16, String)> = Vec::new();
     while let Some((typ, d)) = rec.next() {
         if typ == 0x0809 {
             // An embedded chart's substream.
@@ -1039,6 +1057,31 @@ fn read_sheet(
                     }
                 }
             }
+            0x005D => {
+                // OBJ: its first subrecord is ftCmo (ft, cb, ot, id).
+                note_obj = match (b.u16(), b.u16(), b.u16(), b.u16()) {
+                    (Some(0x15), Some(_), Some(0x19), Some(id)) => Some(id),
+                    _ => None,
+                };
+            }
+            0x01B6 => {
+                let data = d.to_vec();
+                let bounds = rec.bounds().to_vec();
+                if let Some(id) = note_obj.take()
+                    && let Some(text) = txo_text(&data, &bounds)
+                {
+                    texts.insert(id, text);
+                }
+            }
+            0x001C => {
+                let n = (|| {
+                    let (r, c, _flags, id) = (b.u16()?, b.u16()?, b.u16()?, b.u16()?);
+                    Some((r, c, id, b.string16().unwrap_or_default()))
+                })();
+                if let Some(n) = n {
+                    notes.push(n);
+                }
+            }
             0x00A1 => {
                 print.setup =
                     (|| Some((b.u16()?, b.u16()?, b.i16()?, b.u16()?, b.u16()?, b.u16()?)))();
@@ -1169,6 +1212,21 @@ fn read_sheet(
         ws.links.insert(cell, link);
     }
 
+    for (r, c, id, author) in notes {
+        let Some(text) = texts.remove(&id) else {
+            continue;
+        };
+        if u32::from(r) >= MAX_ROWS || u32::from(c) >= MAX_COLS {
+            continue;
+        }
+        ws.comments.push(Comment {
+            text,
+            author_name: author,
+            author_id: None,
+            cell_ref: crate::cell_name(r as u32, c as u32),
+        });
+    }
+
     if let Some(flags) = window2 {
         ws.show_grid_lines = flags & 0x2 != 0;
         if flags & 0x8 != 0
@@ -1182,6 +1240,41 @@ fn read_sheet(
         ws.color = styles.g.palette.color(icv);
     }
     print
+}
+
+/// The text of a `TXO` record (MS-XLS 2.4.329) whose `CONTINUE`s start at
+/// `bounds`: `cchText` at offset 10; the characters fill the continuations,
+/// each starting with its own flags byte (compressed or UTF-16).
+fn txo_text(d: &[u8], bounds: &[usize]) -> Option<String> {
+    let cch = u16::from_le_bytes([*d.get(10)?, *d.get(11)?]) as usize;
+    if cch == 0 {
+        return Some(String::new());
+    }
+    let mut units: Vec<u16> = Vec::with_capacity(cch);
+    for (i, &start) in bounds.iter().enumerate() {
+        let end = bounds.get(i + 1).copied().unwrap_or(d.len());
+        let seg = d.get(start..end)?;
+        let (&flags, chars) = seg.split_first()?;
+        let left = cch - units.len();
+        if flags & 0x01 != 0 {
+            units.extend(
+                chars
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .take(left)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]])),
+            );
+        } else {
+            units.extend(chars.iter().take(left).map(|&b| b as u16));
+        }
+        if units.len() >= cch {
+            break;
+        }
+    }
+    // Excel stores line breaks in notes as CR LF or CR.
+    let text = String::from_utf16_lossy(&units).replace("\r\n", "\n").replace('\r', "\n");
+    Some(text)
 }
 
 /// `HLINK` (MS-XLS 2.4.140): the cells and the link. URLs (including

@@ -286,6 +286,9 @@ pub(crate) struct Patches {
     pub written: RefCell<Vec<(u32, SavedChart)>>,
     /// Charts of the file restyled in Kantor: their parts are rewritten.
     pub file_charts: Vec<crate::file_chart::FileChartSave>,
+    /// Notes of an import, by `sheetId`: written with their VML boxes to
+    /// sheets that have none.
+    pub notes: Vec<(u32, Vec<crate::notes::NoteSave>)>,
 }
 
 /// Where a save put a chart made in Kantor (the next save of the same
@@ -346,6 +349,7 @@ impl Patches {
             && self.charts.is_empty()
             && self.removed_charts.is_empty()
             && self.file_charts.is_empty()
+            && self.notes.is_empty()
     }
 }
 
@@ -4225,6 +4229,96 @@ fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
         if let Some(part) = file_chart_part(pkg, &sheets, c.sheet_id, c.cnvpr)? {
             pkg.set(&part, c.xml.clone().into_bytes());
         }
+    }
+    if !patches.notes.is_empty() {
+        write_notes(pkg, &sheets, &patches.notes)?;
+    }
+    Ok(())
+}
+
+const COMMENTS_CT: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml";
+const VML_CT: &str = "application/vnd.openxmlformats-officedocument.vmlDrawing";
+
+/// Add the notes of sheets that have no comments part: a `comments` part,
+/// a VML drawing with their boxes, and the sheet's `<legacyDrawing>`.
+fn write_notes(
+    pkg: &mut Package,
+    sheets: &[SheetEntry],
+    notes: &[(u32, Vec<crate::notes::NoteSave>)],
+) -> Result<(), String> {
+    let mut ct = String::new();
+    let has_vml_default = ContentTypes::parse(pkg.text(CONTENT_TYPES)?.ok_or("no content types")?)?
+        .defaults
+        .contains_key("vml");
+    for (block, (id, list)) in notes.iter().enumerate() {
+        let Some(sheet) = sheets
+            .iter()
+            .find(|s| s.sheet_id == *id && s.kind == SheetKind::Work)
+        else {
+            continue;
+        };
+        let rels_name = rels_part(&sheet.part);
+        let mut rels = match pkg.text(&rels_name)? {
+            Some(x) => parse_rels(x)?,
+            None => Vec::new(),
+        };
+        if rels
+            .iter()
+            .any(|r| matches!(r.short_kind(), "comments" | "vmlDrawing"))
+        {
+            continue;
+        }
+        let comments = (1..)
+            .map(|n| format!("xl/comments{n}.xml"))
+            .find(|n| !pkg.has(n))
+            .expect("a free name");
+        let vml = (1..)
+            .map(|n| format!("xl/drawings/vmlDrawing{n}.vml"))
+            .find(|n| !pkg.has(n))
+            .expect("a free name");
+        pkg.set(&comments, crate::notes::comments_xml(list).into_bytes());
+        pkg.set(&vml, crate::notes::vml_xml(list, block + 1).into_bytes());
+        ct.push_str(&format!(
+            "<Override PartName=\"/{}\" ContentType=\"{COMMENTS_CT}\"/>",
+            esc_attr(&comments)
+        ));
+        let mut alloc = IdAlloc::new(&rels);
+        let vml_rid = alloc.next();
+        rels.push(Rel {
+            id: alloc.next(),
+            kind: format!("{REL_BASE}comments"),
+            target: relative(&sheet.part, &comments),
+            external: false,
+        });
+        rels.push(Rel {
+            id: vml_rid.clone(),
+            kind: format!("{REL_BASE}vmlDrawing"),
+            target: relative(&sheet.part, &vml),
+            external: false,
+        });
+        pkg.set(&rels_name, write_rels(&rels).into_bytes());
+        let xml = pkg.take_text(&sheet.part)?.ok_or("sheet part is missing")?;
+        let patch = SheetPatch {
+            elements: vec![(
+                "legacyDrawing",
+                Some(format!("<legacyDrawing r:id=\"{}\"/>", esc_attr(&vml_rid))),
+            )],
+            ..SheetPatch::default()
+        };
+        let new = patch_sheet(&xml, &patch).map_err(|e| format!("{:?}: {e}", sheet.name))?;
+        pkg.set(&sheet.part, new.into_bytes());
+    }
+    if !has_vml_default && !ct.is_empty() {
+        ct.push_str(&format!("<Default Extension=\"vml\" ContentType=\"{VML_CT}\"/>"));
+    }
+    if !ct.is_empty() {
+        let mut types = pkg
+            .text(CONTENT_TYPES)?
+            .ok_or("no content types")?
+            .to_owned();
+        let at = types.rfind("</Types>").ok_or("content types not closed")?;
+        types.insert_str(at, &ct);
+        pkg.set(CONTENT_TYPES, types.into_bytes());
     }
     Ok(())
 }

@@ -22,6 +22,7 @@ mod hide;
 mod icons;
 mod import;
 mod look;
+mod notes;
 mod numfmt;
 mod pivot;
 mod pivot_edit;
@@ -43,6 +44,7 @@ pub use cf_edit::{
 };
 pub use chart_edit::{ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor};
 pub use import::SourceFormat;
+pub use notes::CellNote;
 pub use preserve::package_problems;
 pub use recovery::{SaveJob, Saved, XlsxOutput, XlsxSnapshot, write_file_atomic};
 pub use table_edit::{TableOptions, TotalFunc, table_style_names, valid_table_name};
@@ -1234,6 +1236,7 @@ impl Workbook {
                 self.validation_patches(&mut p);
                 self.chart_patches(&mut p);
                 self.file_chart_patches(&mut p);
+                self.note_patches(&mut p);
                 p
             },
         }

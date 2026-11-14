@@ -284,3 +284,50 @@ fn ods_brings_values_without_formatting() {
     assert_eq!(wb.input(0, 5, 1), "=SUM(B3:B5)");
     assert_eq!(wb.cell_style(0, 0, 0).fill, None);
 }
+
+#[test]
+fn xls_notes_round_trip() {
+    let mut wb = Workbook::open(corpus("features.xls")).unwrap();
+    let notes = wb.notes(0);
+    assert_eq!(notes.len(), 2, "{notes:?}");
+    assert_eq!((notes[0].row, notes[0].col), (1, 0));
+    assert_eq!(notes[0].author, "Ann");
+    assert_eq!(notes[0].text, "Bought weekly");
+    assert_eq!((notes[1].row, notes[1].col), (2, 2));
+    assert_eq!(notes[1].author, "Budi");
+    assert_eq!(notes[1].text, "Price went up\nin February");
+    let other = wb.notes(1);
+    assert_eq!(other.len(), 1);
+    assert_eq!((other[0].row, other[0].col), (1, 1));
+    assert_eq!(other[0].text, "On the second sheet");
+
+    // Saved as .xlsx with comment parts and their boxes; a row inserted
+    // above moves them.
+    wb.insert_rows(0, 0, 1).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("notes.xlsx");
+    wb.save_as(&out).unwrap();
+    assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
+    let bytes = std::fs::read(&out).unwrap();
+    assert!(sheets_engine::package_problems(&bytes).is_empty());
+    let c1 = part(&out, "xl/comments1.xml");
+    assert!(c1.contains("ref=\"A3\""), "{c1}");
+    assert!(c1.contains("ref=\"C4\""), "{c1}");
+    assert!(c1.contains("Price went up\nin February"), "{c1}");
+    assert!(c1.contains("<author>Budi</author>"), "{c1}");
+    let sheet1 = part(&out, "xl/worksheets/sheet1.xml");
+    assert!(sheet1.contains("<legacyDrawing r:id="), "{sheet1}");
+    let vml = part(&out, "xl/drawings/vmlDrawing1.vml");
+    assert!(vml.contains("<x:Row>2</x:Row>"), "{vml}");
+    let c2 = part(&out, "xl/comments2.xml");
+    assert!(c2.contains("ref=\"B2\""), "{c2}");
+
+    // Reopened: the notes are there (the saved file carries them on).
+    let back = Workbook::open(&out).unwrap();
+    let texts: Vec<String> = back.notes(0).into_iter().map(|n| n.text).collect();
+    assert!(texts.contains(&"Bought weekly".to_owned()), "{texts:?}");
+    let mut back = back;
+    let again = dir.path().join("again.xlsx");
+    back.save_as(&again).unwrap();
+    assert!(part(&again, "xl/comments1.xml").contains("Bought weekly"));
+}
