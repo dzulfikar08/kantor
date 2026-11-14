@@ -478,17 +478,39 @@ impl Speller {
     }
 }
 
-/// Swapped letters are the most common typo (`teh`, `recieve`): move
-/// suggestions made of exactly the word's letters to the front, keeping
-/// the checker's order otherwise.
+/// Two neighbouring letters swapped is the most common typo (`teh`,
+/// `recieve`), then a double letter typed once or a letter typed twice
+/// (`tingi`, `sayaa`, `recomend`): move suggestions that fix one of those
+/// to the front, swaps first, keeping the checker's order otherwise.
 fn rank_suggestions(word: &str, out: &mut [String]) {
-    let key = |w: &str| {
-        let mut v: Vec<char> = w.to_lowercase().chars().collect();
-        v.sort_unstable();
-        v
-    };
-    let letters = key(word);
-    out.sort_by_key(|s| key(s) != letters);
+    let lower: Vec<char> = word.to_lowercase().chars().collect();
+    out.sort_by_key(|s| {
+        let s: Vec<char> = s.to_lowercase().chars().collect();
+        if swaps(&s, &lower) {
+            0
+        } else if undoubles(&s, &lower) || undoubles(&lower, &s) {
+            1
+        } else {
+            2
+        }
+    });
+}
+
+/// Whether `a` is `b` with two neighbouring letters swapped.
+fn swaps(a: &[char], b: &[char]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let diff: Vec<usize> = (0..a.len()).filter(|&i| a[i] != b[i]).collect();
+    matches!(diff[..], [i, j] if j == i + 1 && a[i] == b[j] && a[j] == b[i])
+}
+
+/// Whether `short` is `long` with one letter of a doubled pair dropped.
+fn undoubles(long: &[char], short: &[char]) -> bool {
+    long.len() == short.len() + 1
+        && (1..long.len()).any(|i| {
+            long[i] == long[i - 1] && long[..i] == short[..i] && long[i + 1..] == short[i..]
+        })
 }
 
 /// The dictionary of the span holding byte `at` (see [`Speller::misspelled_in`]).

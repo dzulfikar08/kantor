@@ -18,8 +18,17 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Sheets: OpenDocument spreadsheets (`.ods`) open with their formatting: fonts, fills, borders,
   number formats, alignment, wrap, merged cells, column widths, row heights, hidden rows, columns
   and sheets, tab colours and frozen panes.
+- Sheets: Review > Spelling (F7, or the toolbar's spelling button) checks the text cells as
+  Excel does, from the active cell or in the selection (formulas and numbers are skipped):
+  Ignore Once, Ignore All, Add to Dictionary, Change and Change All (each one undo step), and a
+  dictionary language picker.
 
 ### Changed
+- Indonesian spell check flags far more typos: 904 archaic and regional spellings in the
+  bundled dictionary that sit one keystroke from everyday words (such as "tingi" for "tinggi",
+  "todak" for "tidak", "masarakat" for "masyarakat") are no longer accepted.
+- Spelling suggestions put the fix for swapped letters or a missing or extra double letter
+  first ("tingi" suggests "tinggi", "recomend" suggests "recommend").
 - Sheets: Fill Down, Fill Right and dragging the fill handle are much faster on big workbooks
   when they copy formulas (nine formulas down 10 000 rows of a 90 000-row workbook: 2.3 s →
   0.5 s; 1 000 rows: 0.37 s → 0.18 s), and SUMIF, COUNTIF, SUMIFS and the other criteria

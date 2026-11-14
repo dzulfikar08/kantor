@@ -15,6 +15,7 @@ image.workspace = true
 log.workspace = true
 kantor_core.workspace = true
 kantor_mem.workspace = true
+kantor_spell.workspace = true
 kantor_ui.workspace = true
 sheets_engine.workspace = true
 # Charts and pictures over the grid: built by sheets_scene (the Slides chart

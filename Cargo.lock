@@ -6994,6 +6994,7 @@ dependencies = [
  "image",
  "kantor_core",
  "kantor_mem",
+ "kantor_spell",
  "kantor_ui",
  "log",
  "sheets_engine",
