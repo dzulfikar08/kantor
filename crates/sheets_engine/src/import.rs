@@ -18,11 +18,14 @@
 //!   reads the formatting calamine skips (cell formats, merges, column widths,
 //!   row heights, frozen panes, gridlines, hidden and coloured tabs,
 //!   hyperlinks, page setup, sheet-local and print names, the 1904 date
-//!   system). Comments, data validation, conditional formatting, charts and
+//!   system), notes, data validation and conditional formatting. Charts and
 //!   pictures are not imported. Older BIFF5 files (Excel 5/95) get values
 //!   only.
-//! * ODS and XLSB imports bring values and formulas only: no styles, merged
-//!   cells, column widths, comments or charts.
+//! * **ODS** keeps its look too: [`crate::ods`] reads the cell styles,
+//!   number formats, merges, column widths, row heights, hidden rows,
+//!   columns and sheets, tab colours and frozen panes.
+//! * XLSB imports bring values and formulas only: no styles, merged cells,
+//!   column widths, comments or charts.
 
 use std::collections::HashMap;
 use std::fs;
