@@ -2,7 +2,9 @@
 
 The SignPath Foundation declined Kantor on 2026-11-13: the free program is for projects that
 already show public trust (GitHub stars, forks, contributors, articles, discussions). Reapplying
-once Kantor has that is welcome. Nothing is bought or configured yet. Today the Windows installer and zip are **unsigned**, and
+once Kantor has that is welcome. On 2026-11-14 the decision was to buy no certificate for now:
+Windows downloads stay unsigned and show the SmartScreen warning (the download page explains
+**More info** → **Run anyway**). The options below are kept for if that changes. Today the Windows installer and zip are **unsigned**, and
 the workflows only sign when the secrets below exist.
 
 ## What unsigned means for users
