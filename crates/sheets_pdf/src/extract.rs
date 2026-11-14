@@ -219,10 +219,96 @@ pub(crate) fn fit_rows(
     }
 }
 
+/// The page's header and footer (Excel's `&P`, `&N`, `&A`... fields).
+fn header_footer(
+    out: &mut PageContent,
+    plan: &Plan,
+    sp: &crate::SheetPlan,
+    pr: crate::PageRef,
+    default_family: Arc<str>,
+    default_size: f32,
+) {
+    let p = &sp.print;
+    let m = p.margins;
+    let (pw, scale) = (out.width, out.scale);
+    let fields = hf::Fields {
+        page: pr.number,
+        pages: plan.pages.len() as i64,
+        date: plan.options.date.clone(),
+        time: plan.options.time.clone(),
+        file: plan.options.file_name.clone(),
+        folder: plan.options.folder.clone(),
+        sheet: sp.name.clone(),
+    };
+    let (head, foot) = p.header_footer.for_page(pr.nth);
+    out.header = hf::parse(head, &fields);
+    out.footer = hf::parse(foot, &fields);
+    let side = |margin: f64| {
+        if p.header_footer.align_with_margins {
+            (margin * INCH) as f32
+        } else {
+            (0.3 * INCH) as f32
+        }
+    };
+    out.hf = HfLayout {
+        left: side(m.left),
+        right: pw - side(m.right),
+        header: (m.header * INCH) as f32,
+        footer: (m.footer * INCH) as f32,
+        scale: if p.header_footer.scale_with_doc {
+            scale
+        } else {
+            1.0
+        },
+        family: default_family,
+        size: default_size,
+    };
+}
+
+/// A chart sheet's page: its objects over the printable area, with the
+/// sheet's header and footer.
+fn chart_sheet_page(
+    book: &Workbook,
+    plan: &Plan,
+    sp: &crate::SheetPlan,
+    pr: crate::PageRef,
+) -> PageContent {
+    let m = sp.print.margins;
+    let (pw, ph) = (sp.page.0 as f32, sp.page.1 as f32);
+    let left = (m.left * INCH) as f32;
+    let top = (m.top * INCH) as f32;
+    let w = (pw - left - (m.right * INCH) as f32).max(36.0);
+    let h = (ph - top - (m.bottom * INCH) as f32).max(36.0);
+    let mut out = PageContent {
+        width: pw,
+        height: ph,
+        origin: [left, top],
+        scale: 1.0,
+        block: [w, h],
+        overlays: sp
+            .drawings
+            .overlays(book, (0, 0), (0, 0), [0.0, 0.0], [0.0, 0.0, w, h]),
+        ..PageContent::default()
+    };
+    let family = family(&book.default_font_name());
+    header_footer(
+        &mut out,
+        plan,
+        sp,
+        pr,
+        family,
+        book.default_font_size() as f32,
+    );
+    out
+}
+
 /// The content of page `index` of `plan`.
 pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
     let pr = plan.pages[index];
     let sp = &plan.sheets[pr.sheet];
+    if sp.chart_sheet.is_some() {
+        return chart_sheet_page(book, plan, sp, pr);
+    }
     let (_, grid) = &sp.areas[pr.area];
     let sheet = sp.sheet;
     let p = &sp.print;
@@ -634,39 +720,7 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
         }
     }
 
-    // Header and footer.
-    let fields = hf::Fields {
-        page: pr.number,
-        pages: plan.pages.len() as i64,
-        date: plan.options.date.clone(),
-        time: plan.options.time.clone(),
-        file: plan.options.file_name.clone(),
-        folder: plan.options.folder.clone(),
-        sheet: sp.name.clone(),
-    };
-    let (head, foot) = p.header_footer.for_page(pr.nth);
-    out.header = hf::parse(head, &fields);
-    out.footer = hf::parse(foot, &fields);
-    let side = |margin: f64| {
-        if p.header_footer.align_with_margins {
-            (margin * INCH) as f32
-        } else {
-            (0.3 * INCH) as f32
-        }
-    };
-    out.hf = HfLayout {
-        left: side(m.left),
-        right: pw - side(m.right),
-        header: (m.header * INCH) as f32,
-        footer: (m.footer * INCH) as f32,
-        scale: if p.header_footer.scale_with_doc {
-            scale
-        } else {
-            1.0
-        },
-        family: default_family,
-        size: default_size,
-    };
+    header_footer(&mut out, plan, sp, pr, default_family, default_size);
     out
 }
 

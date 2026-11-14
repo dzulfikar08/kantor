@@ -376,6 +376,22 @@ impl Workspace {
         cx: &mut Context<Self>,
         f: impl FnOnce(&mut SheetsView, &mut Window, &mut Context<SheetsView>),
     ) {
+        // Commands on cells say why they do nothing on a chart sheet.
+        self.with_sheets_any(window, cx, |v, w, cx| {
+            if !v.chart_sheet_blocks(cx) {
+                f(v, w, cx);
+            }
+        });
+    }
+
+    /// Like `with_sheets`, also while a chart sheet is shown (commands on
+    /// the whole workbook: export, calculation).
+    fn with_sheets_any(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut SheetsView, &mut Window, &mut Context<SheetsView>),
+    ) {
         if let Some(DocView::Sheets(view)) = self.focused_view() {
             view.update(cx, |v, cx| f(v, window, cx));
         }
@@ -437,7 +453,7 @@ impl Workspace {
     pub(crate) fn print(&mut self, _: &Print, window: &mut Window, cx: &mut Context<Self>) {
         self.with_docs(window, cx, |v, w, cx| v.print_doc(w, cx));
         self.with_slides(window, cx, |v, w, cx| v.print_doc(w, cx));
-        self.with_sheets(window, cx, |v, w, cx| v.print_doc(w, cx));
+        self.with_sheets_any(window, cx, |v, w, cx| v.print_doc(w, cx));
     }
 
     fn open_file(&mut self, _: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {

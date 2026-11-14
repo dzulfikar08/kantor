@@ -84,7 +84,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::{metrics::*, tokens};
-use sheets_engine::{CellRange, CellStyle, StyleChange, Workbook, cell_name, column_name};
+use sheets_engine::{CellRange, CellStyle, StyleChange, Tab, Workbook, cell_name, column_name};
 use table::{Column, DataTable, TableDelegate, TableEvent, TableState};
 
 mod toolbar;
@@ -1046,6 +1046,10 @@ pub struct SheetsView {
     /// A save written while the workbook was in the background, to record
     /// when it's back.
     pending_save: Option<sheets_engine::Saved>,
+    /// The chart sheet shown instead of the grid (an index of
+    /// `Workbook::chart_sheet_name`), and what has focus while it shows.
+    chart_tab: Option<usize>,
+    chart_focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1097,6 +1101,8 @@ impl SheetsView {
             busy: None,
             opening: None,
             busy_focus: cx.focus_handle(),
+            chart_tab: None,
+            chart_focus: cx.focus_handle(),
             bench: bench::ScrollBench::from_env(),
             row_resize: None,
             row_height_prompt: None,
@@ -1879,6 +1885,12 @@ impl SheetsView {
     /// A sheet tab was clicked. While a formula is pointing, the edit goes on
     /// (see [`point`]); any other edit is committed first.
     fn select_sheet(&mut self, sheet: u32, window: &mut Window, cx: &mut Context<Self>) {
+        if self.chart_tab.take().is_some() && self.editing.is_none() {
+            self.show_sheet(sheet, cx);
+            self.load_selected_into_formula(window, cx);
+            self.focus_grid(window, cx);
+            return;
+        }
         if self.editing.is_some() {
             if self.can_point(window, cx) {
                 self.point_to_sheet(sheet, window, cx);
@@ -1890,6 +1902,50 @@ impl SheetsView {
         self.select_cell(0, 0, cx);
         self.load_selected_into_formula(window, cx);
         self.focus_grid(window, cx);
+    }
+
+    /// Show chart sheet `k` in place of the grid (an edit in progress is
+    /// committed first, as when Excel leaves a sheet).
+    fn select_chart_sheet(&mut self, k: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            self.commit_edit(None, window, cx);
+        }
+        self.drawings.borrow_mut().selected = None;
+        self.chart_tab = Some(k);
+        window.focus(&self.chart_focus, cx);
+        cx.notify();
+    }
+
+    /// The chart sheet shown, if one is (and still exists).
+    fn shown_chart_sheet(&self, cx: &App) -> Option<(usize, String)> {
+        let k = self.chart_tab?;
+        let name = self
+            .table
+            .read(cx)
+            .delegate()
+            .book
+            .chart_sheet_name(k)?
+            .to_owned();
+        Some((k, name))
+    }
+
+    /// Whether a chart sheet is shown instead of the grid.
+    pub fn on_chart_sheet(&self, cx: &App) -> bool {
+        self.shown_chart_sheet(cx).is_some()
+    }
+
+    /// For commands on cells: `true` (and a status saying why) when a chart
+    /// sheet is shown, so they don't change a worksheet out of sight.
+    pub fn chart_sheet_blocks(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((_, name)) = self.shown_chart_sheet(cx) else {
+            return false;
+        };
+        self.status = format!(
+            "\u{201c}{name}\u{201d} is a chart sheet: select a worksheet tab to use this command"
+        )
+        .into();
+        cx.notify();
+        true
     }
 
     /// Show `sheet` in the grid, leaving the selection and any edit alone.
@@ -2139,21 +2195,41 @@ impl SheetsView {
 
     fn render_sheet_tabs(&self, cx: &mut Context<Self>) -> Div {
         let t = tokens(cx);
+        let chart = self.shown_chart_sheet(cx).map(|(k, _)| k);
         let grid = self.table.read(cx).delegate();
-        let active = grid.sheet;
         let names = grid.book.sheet_names();
+        let tabs: Vec<(Tab, String)> = grid
+            .book
+            .tabs()
+            .into_iter()
+            .map(|tab| {
+                let name = match tab {
+                    Tab::Sheet(i) => names[i as usize].clone(),
+                    Tab::Chart(k) => grid.book.chart_sheet_name(k).unwrap_or_default().to_owned(),
+                };
+                (tab, name)
+            })
+            .collect();
+        let active = match chart {
+            Some(k) => Tab::Chart(k),
+            None => Tab::Sheet(grid.sheet),
+        };
         h_flex()
             .gap(SPACE_1)
-            .children(names.into_iter().enumerate().map(|(ix, name)| {
-                let ix = ix as u32;
+            .children(tabs.into_iter().map(|(tab, name)| {
                 let view = cx.entity().downgrade();
-                let selected = ix == active;
+                let selected = tab == active;
+                let id = match tab {
+                    Tab::Sheet(ix) => ElementId::from(("sheet-tab", ix as usize)),
+                    Tab::Chart(k) => ElementId::from(("chart-sheet-tab", k)),
+                };
                 div()
-                    .id(("sheet-tab", ix as usize))
+                    .id(id)
                     .h(CONTROL_SM)
                     .px(SPACE_5)
                     .flex()
                     .items_center()
+                    .gap(SPACE_2)
                     .rounded(RADIUS_SM)
                     .text_size(FONT_SMALL)
                     .font_weight(FontWeight::MEDIUM)
@@ -2168,9 +2244,18 @@ impl SheetsView {
                         },
                         |d| d.text_color(t.fg_muted).hover(|s| s.bg(t.hover)),
                     )
+                    .when(matches!(tab, Tab::Chart(_)), |d| {
+                        d.child(
+                            gpui_kit::component::Icon::new(gpui_kit::assets::IconName::ChartColumn)
+                                .xsmall(),
+                        )
+                    })
                     .child(name)
                     .on_click(move |_, window, cx| {
-                        let _ = view.update(cx, |this, cx| this.select_sheet(ix, window, cx));
+                        let _ = view.update(cx, |this, cx| match tab {
+                            Tab::Sheet(ix) => this.select_sheet(ix, window, cx),
+                            Tab::Chart(k) => this.select_chart_sheet(k, window, cx),
+                        });
                     })
             }))
     }
@@ -2197,6 +2282,7 @@ impl Render for SheetsView {
             Vec::new()
         };
         let tabs = self.render_sheet_tabs(cx);
+        let chart_sheet = self.shown_chart_sheet(cx);
         let editing = self.editing.is_some();
         let width = self.width.get();
         let compact = width > px(0.) && width < COMPACT_WIDTH;
@@ -2257,125 +2343,132 @@ impl Render for SheetsView {
             .text_color(t.fg)
             .text_size(FONT_BODY)
             .child(measure)
-            .child({
-                let style = self.active_style(cx);
-                let merged = {
-                    let grid = self.table.read(cx).delegate();
-                    let (r, c) = self.selected;
-                    grid.book.merge_at(grid.sheet, r, c).is_some()
-                };
-                toolbar::render(
-                    &toolbar::Active {
-                        style: &style,
-                        merged,
-                    },
-                    compact,
-                    cx,
-                )
+            .when_some(chart_sheet.clone(), |root, (k, name)| {
+                root.child(self.render_chart_sheet_pane(k, name, cx))
+            })
+            .when(chart_sheet.is_none(), |root| {
+                root.child({
+                    let style = self.active_style(cx);
+                    let merged = {
+                        let grid = self.table.read(cx).delegate();
+                        let (r, c) = self.selected;
+                        grid.book.merge_at(grid.sheet, r, c).is_some()
+                    };
+                    toolbar::render(
+                        &toolbar::Active {
+                            style: &style,
+                            merged,
+                        },
+                        compact,
+                        cx,
+                    )
+                })
             })
             // Formula bar: name box + input
-            .child(
-                h_flex()
-                    .flex_none()
-                    .h(CONTROL_LG + SPACE_3)
-                    .gap(SPACE_4)
-                    .px(SPACE_4)
-                    .bg(t.chrome)
-                    .border_b_1()
-                    .border_color(t.border)
-                    .child(
-                        div()
-                            .flex_none()
-                            .w(if compact { px(52.) } else { px(72.) })
-                            .h(CONTROL_MD)
-                            .px(SPACE_4)
-                            .flex()
-                            .items_center()
-                            .rounded(RADIUS_SM)
-                            .bg(t.surface)
-                            .border_1()
-                            .border_color(if editing { t.accent } else { t.border })
-                            .text_size(FONT_SMALL)
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(if editing { t.accent } else { t.fg_muted })
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .child(SharedString::from(self.selection_ref(cx))),
-                            ),
-                    )
-                    .when(!compact, |d| {
-                        d.child(
+            .when(chart_sheet.is_none(), |root| {
+                root.child(
+                    h_flex()
+                        .flex_none()
+                        .h(CONTROL_LG + SPACE_3)
+                        .gap(SPACE_4)
+                        .px(SPACE_4)
+                        .bg(t.chrome)
+                        .border_b_1()
+                        .border_color(t.border)
+                        .child(
                             div()
-                                .text_size(FONT_EMPHASIS)
-                                .italic()
-                                .text_color(t.fg_dim)
-                                .child("fx"),
+                                .flex_none()
+                                .w(if compact { px(52.) } else { px(72.) })
+                                .h(CONTROL_MD)
+                                .px(SPACE_4)
+                                .flex()
+                                .items_center()
+                                .rounded(RADIUS_SM)
+                                .bg(t.surface)
+                                .border_1()
+                                .border_color(if editing { t.accent } else { t.border })
+                                .text_size(FONT_SMALL)
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(if editing { t.accent } else { t.fg_muted })
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .child(SharedString::from(self.selection_ref(cx))),
+                                ),
                         )
-                    })
-                    .child(
-                        div()
-                            .flex_1()
-                            .relative()
-                            .key_context(cell_editor::FORMULA_BAR_CONTEXT)
-                            .child(
-                                Input::new(&self.formula)
-                                    .small()
-                                    .text_color(point::refs_text_color(&bar_refs, t.fg)),
+                        .when(!compact, |d| {
+                            d.child(
+                                div()
+                                    .text_size(FONT_EMPHASIS)
+                                    .italic()
+                                    .text_color(t.fg_dim)
+                                    .child("fx"),
                             )
-                            .child(point::colored_refs(self.formula.clone(), bar_refs, t.fg)),
-                    ),
-            )
-            // Grid, and the PivotTable Fields panel beside it.
-            .child({
-                let panel = self.render_pivot_panel(cx);
-                let table_panel = self.render_table_panel(cx);
-                let chart_panel = self.render_chart_panel(cx);
-                h_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .items_start()
-                    .child(
-                        self.validation_actions(self.grid_actions(div(), cx), cx)
-                            .flex_1()
-                            .min_w_0()
-                            .h_full()
-                            .key_context(GRID_CONTEXT)
-                            .on_action(cx.listener(Self::undo))
-                            .on_action(cx.listener(Self::redo))
-                            .on_action(cx.listener(Self::copy))
-                            .on_action(cx.listener(Self::cut))
-                            .on_action(cx.listener(Self::paste))
-                            .on_action(cx.listener(Self::extend_up))
-                            .on_action(cx.listener(Self::extend_down))
-                            .on_action(cx.listener(Self::extend_left))
-                            .on_action(cx.listener(Self::extend_right))
-                            .on_action(cx.listener(Self::toggle_bold))
-                            .on_action(cx.listener(Self::toggle_italic))
-                            .on_action(cx.listener(Self::toggle_underline))
-                            // A drag only extends the range if it started on a cell
-                            // (cells set `dragging` after this capture listener runs).
-                            .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
-                                this.dragging = false;
-                                this.point_dragging = false;
-                                this.reset_grid_drag(cx);
-                            }))
-                            .capture_any_mouse_up(cx.listener(|this, _, window, cx| {
-                                this.dragging = false;
-                                this.point_dragging = false;
-                                this.end_grid_drag(window, cx);
-                                this.row_resize_end(window, cx);
-                            }))
-                            .on_key_down(cx.listener(Self::on_grid_key))
-                            .relative()
-                            .child(DataTable::new(&self.table).bordered(false).small())
-                            .child(self.render_drawings(cx)),
-                    )
-                    .children(panel)
-                    .children(table_panel)
-                    .children(chart_panel)
+                        })
+                        .child(
+                            div()
+                                .flex_1()
+                                .relative()
+                                .key_context(cell_editor::FORMULA_BAR_CONTEXT)
+                                .child(
+                                    Input::new(&self.formula)
+                                        .small()
+                                        .text_color(point::refs_text_color(&bar_refs, t.fg)),
+                                )
+                                .child(point::colored_refs(self.formula.clone(), bar_refs, t.fg)),
+                        ),
+                )
+                // Grid, and the PivotTable Fields panel beside it.
+                .child({
+                    let panel = self.render_pivot_panel(cx);
+                    let table_panel = self.render_table_panel(cx);
+                    let chart_panel = self.render_chart_panel(cx);
+                    h_flex()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .items_start()
+                        .child(
+                            self.validation_actions(self.grid_actions(div(), cx), cx)
+                                .flex_1()
+                                .min_w_0()
+                                .h_full()
+                                .key_context(GRID_CONTEXT)
+                                .on_action(cx.listener(Self::undo))
+                                .on_action(cx.listener(Self::redo))
+                                .on_action(cx.listener(Self::copy))
+                                .on_action(cx.listener(Self::cut))
+                                .on_action(cx.listener(Self::paste))
+                                .on_action(cx.listener(Self::extend_up))
+                                .on_action(cx.listener(Self::extend_down))
+                                .on_action(cx.listener(Self::extend_left))
+                                .on_action(cx.listener(Self::extend_right))
+                                .on_action(cx.listener(Self::toggle_bold))
+                                .on_action(cx.listener(Self::toggle_italic))
+                                .on_action(cx.listener(Self::toggle_underline))
+                                // A drag only extends the range if it started on a cell
+                                // (cells set `dragging` after this capture listener runs).
+                                .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
+                                    this.dragging = false;
+                                    this.point_dragging = false;
+                                    this.reset_grid_drag(cx);
+                                }))
+                                .capture_any_mouse_up(cx.listener(|this, _, window, cx| {
+                                    this.dragging = false;
+                                    this.point_dragging = false;
+                                    this.end_grid_drag(window, cx);
+                                    this.row_resize_end(window, cx);
+                                }))
+                                .on_key_down(cx.listener(Self::on_grid_key))
+                                .relative()
+                                .child(DataTable::new(&self.table).bordered(false).small())
+                                .child(self.render_drawings(cx)),
+                        )
+                        .children(panel)
+                        .children(table_panel)
+                        .children(chart_panel)
+                })
             })
             // Sheet tabs
             .child(

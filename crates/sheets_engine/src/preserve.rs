@@ -1936,6 +1936,8 @@ pub(crate) struct ChartSheetSource {
     /// puts it back after the first of them still there ([`sheet_slots`]).
     pub before: Vec<u32>,
     pub drawing: Option<DrawingSource>,
+    /// The chart sheet part's XML (its print settings).
+    pub xml: Option<String>,
 }
 
 /// The drawings of the worksheets of `bytes`. Parts that can't be read are
@@ -1971,6 +1973,7 @@ pub(crate) fn drawing_sources(bytes: &[u8]) -> Result<DrawingSources, String> {
                     .map(|w| w.sheet_id)
                     .collect(),
                 drawing,
+                xml: orig.text(&s.part).ok().flatten(),
             }),
         }
     }

@@ -328,6 +328,7 @@ struct ChartSheet {
     /// `sheetId`s of the worksheets before it in the file, nearest first.
     before: Vec<u32>,
     objects: Vec<Object>,
+    print: crate::SheetPrint,
 }
 
 /// A sheet tab: a worksheet (its index) or a chart sheet (its index among
@@ -613,6 +614,7 @@ impl Drawings {
                     .drawing
                     .map(|d| read_objects(&d.xml, &d.targets, d.parts))
                     .unwrap_or_default(),
+                print: crate::print::chart_sheet_print(c.xml.as_deref().unwrap_or_default()),
             })
             .collect();
         Drawings {
@@ -677,6 +679,29 @@ fn current_anchor(obj: &Object, key: DrawingKey, edits: &Edits, now: &Layout) ->
                 .moved(&Layout::default().moves_to(now), key.sheet_id),
         ),
     }
+}
+
+/// Where the objects of a chart sheet go in a `w` × `h` pane: absolute
+/// anchors (what chart sheets use) scaled so their extent fills it, any
+/// other anchor the whole pane.
+pub fn chart_sheet_rects(drawings: &[Drawing], w: f64, h: f64) -> Vec<[f64; 4]> {
+    let (mut ew, mut eh) = (0i64, 0i64);
+    for d in drawings {
+        if let Anchor::Absolute { x, y, cx, cy } = d.anchor {
+            ew = ew.max(x + cx);
+            eh = eh.max(y + cy);
+        }
+    }
+    drawings
+        .iter()
+        .map(|d| match d.anchor {
+            Anchor::Absolute { x, y, cx, cy } if ew > 0 && eh > 0 => {
+                let (sx, sy) = (w / ew as f64, h / eh as f64);
+                [x as f64 * sx, y as f64 * sy, cx as f64 * sx, cy as f64 * sy]
+            }
+            _ => [0.0, 0.0, w, h],
+        })
+        .collect()
 }
 
 /// A value in a range a chart refers to.
@@ -789,6 +814,16 @@ impl Workbook {
     /// Chart sheet `k`'s name.
     pub fn chart_sheet_name(&self, k: usize) -> Option<&str> {
         self.drawings.chart_sheets.get(k).map(|c| c.name.as_str())
+    }
+
+    /// Chart sheet `k`'s print settings (landscape unless it says
+    /// otherwise).
+    pub fn chart_sheet_print(&self, k: usize) -> crate::SheetPrint {
+        self.drawings
+            .chart_sheets
+            .get(k)
+            .map(|c| c.print.clone())
+            .unwrap_or_default()
     }
 
     /// The objects of chart sheet `k` (usually one chart), bottom to top,

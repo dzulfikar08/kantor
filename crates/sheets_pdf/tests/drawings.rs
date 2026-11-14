@@ -274,3 +274,29 @@ fn sheets_without_drawings_print_as_before() {
     let plan = Plan::new(&book, &Options::default(), &mut Shaper::new());
     assert!(plan.sheets.iter().all(|s| s.drawings.is_empty()));
 }
+
+#[test]
+fn chart_sheets_print_as_landscape_pages_in_tab_order() {
+    let mut book = open("xlsx/22_chart_sheets.xlsx");
+    let opts = Options {
+        date: "11/11/2026".into(),
+        time: "9:00 AM".into(),
+        ..Options::default()
+    };
+    let plan = Plan::new(&book, &opts, &mut Shaper::new());
+    let names: Vec<&str> = plan.sheets.iter().map(|s| s.name.as_str()).collect();
+    // The hidden chart sheet doesn't print.
+    assert_eq!(names, ["Revenue chart", "Data", "Share", "Notes"]);
+    let first = &plan.sheets[0];
+    assert_eq!(first.chart_sheet, Some(0));
+    assert!(first.page.0 > first.page.1, "landscape");
+    let doc = export(&mut book, &opts);
+    let t = texts(&doc);
+    assert_eq!(t.len(), 4, "{t:?}");
+    assert!(t[0].contains("Revenue by region"), "{}", t[0]);
+    assert!(t[0].contains("North"), "categories from the Data sheet");
+    assert!(t[2].contains("Share of total"), "{}", t[2]);
+    // Asking for worksheets prints only them.
+    let opts = only(&book, "Data");
+    assert_eq!(texts(&export(&mut book, &opts)).len(), 1);
+}

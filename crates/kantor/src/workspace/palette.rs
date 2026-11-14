@@ -70,7 +70,7 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| v.export_pdf_doc(w, cx));
             ws.with_slides(window, cx, |v, w, cx| v.export_pdf_doc(w, cx));
-            ws.with_sheets(window, cx, |v, w, cx| v.export_pdf_doc(w, cx));
+            ws.with_sheets_any(window, cx, |v, w, cx| v.export_pdf_doc(w, cx));
         },
     },
     Command {
@@ -733,14 +733,14 @@ pub(super) const COMMANDS: &[Command] = &[
         title: "Calculate Now",
         detail: "Sheets · recalculate every formula",
         keys: "F9",
-        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.calculate_doc(w, cx)),
+        run: |ws, window, cx| ws.with_sheets_any(window, cx, |v, w, cx| v.calculate_doc(w, cx)),
     },
     Command {
         title: "Automatic Calculation",
         detail: "Sheets · recalculate after every edit",
         keys: "",
         run: |ws, window, cx| {
-            ws.with_sheets(window, cx, |v, w, cx| {
+            ws.with_sheets_any(window, cx, |v, w, cx| {
                 v.set_calc_mode_doc(CalcMode::Automatic, w, cx)
             })
         },
@@ -750,7 +750,7 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Sheets · recalculate only with F9 (for big workbooks)",
         keys: "",
         run: |ws, window, cx| {
-            ws.with_sheets(window, cx, |v, w, cx| {
+            ws.with_sheets_any(window, cx, |v, w, cx| {
                 v.set_calc_mode_doc(CalcMode::Manual, w, cx)
             })
         },
@@ -886,7 +886,7 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Sheets · recompute every PivotTable in the workbook",
         keys: "Ctrl Alt F5",
         run: |ws, window, cx| {
-            ws.with_sheets(window, cx, |v, w, cx| v.refresh_pivots_doc(true, w, cx))
+            ws.with_sheets_any(window, cx, |v, w, cx| v.refresh_pivots_doc(true, w, cx))
         },
     },
     Command {

@@ -58,7 +58,8 @@ const MM: f64 = 72.0 / 25.4;
 /// What to print and how, beyond the file's own settings.
 #[derive(Debug, Clone, Default)]
 pub struct Options {
-    /// Sheets to print (0-based); `None`: every visible sheet.
+    /// Sheets to print (0-based); `None`: every visible sheet and chart
+    /// sheet, in tab order.
     pub sheets: Option<Vec<u32>>,
     /// Paper, overriding the sheets'.
     pub paper: Option<Paper>,
@@ -136,6 +137,9 @@ pub struct SheetPlan {
     pub areas: Vec<(CellRange, paginate::Grid)>,
     /// Charts and pictures to print, and where cells are on the sheet.
     pub drawings: drawings::SheetDrawings,
+    /// A chart sheet (its index in `Workbook::chart_sheet_name`): one page,
+    /// its chart filling the printable area; `sheet` is then unused.
+    pub chart_sheet: Option<usize>,
 }
 
 impl SheetPlan {
@@ -181,21 +185,29 @@ impl Plan {
     /// height).
     pub fn new(book: &Workbook, opts: &Options, shaper: &mut Shaper) -> Plan {
         let names = book.sheet_names();
-        let sheets: Vec<u32> = match &opts.sheets {
+        let tabs: Vec<sheets_engine::Tab> = match &opts.sheets {
             Some(s) => s
                 .iter()
                 .copied()
                 .filter(|&s| (s as usize) < names.len())
+                .map(sheets_engine::Tab::Sheet)
                 .collect(),
-            None => (0..names.len() as u32)
-                .filter(|&s| !book.sheet_hidden(s))
+            None => book
+                .tabs()
+                .into_iter()
+                .filter(|t| !matches!(*t, sheets_engine::Tab::Sheet(s) if book.sheet_hidden(s)))
                 .collect(),
         };
         let mut plans = Vec::new();
         let mut pages = Vec::new();
         let mut number = 0i64;
-        for sheet in sheets {
-            let plan = sheet_plan(book, sheet, &names[sheet as usize], opts, shaper);
+        for tab in tabs {
+            let plan = match tab {
+                sheets_engine::Tab::Sheet(sheet) => {
+                    sheet_plan(book, sheet, &names[sheet as usize], opts, shaper)
+                }
+                sheets_engine::Tab::Chart(k) => chart_sheet_plan(book, k, opts),
+            };
             let ix = plans.len();
             let mut nth = 0;
             for (area, (_, grid)) in plan.areas.iter().enumerate() {
@@ -223,6 +235,58 @@ impl Plan {
             pages,
             options: opts.clone(),
         }
+    }
+}
+
+/// A chart sheet's one page: its print settings (with `opts`' overrides)
+/// and its objects filling the printable area.
+fn chart_sheet_plan(book: &Workbook, k: usize, opts: &Options) -> SheetPlan {
+    let mut print = book.chart_sheet_print(k);
+    if let Some(p) = opts.paper {
+        print.setup.paper = p;
+    }
+    if let Some(l) = opts.landscape {
+        print.setup.landscape = l;
+    }
+    let (pw, ph) = (
+        print.setup.paper.width_mm * MM,
+        print.setup.paper.height_mm * MM,
+    );
+    let page = if print.setup.landscape {
+        (pw.max(ph), pw.min(ph))
+    } else {
+        (pw.min(ph), pw.max(ph))
+    };
+    let m = print.margins;
+    let avail_w = (page.0 - (m.left + m.right) * INCH).max(36.0);
+    let avail_h = (page.1 - (m.top + m.bottom) * INCH).max(36.0);
+    let found: Vec<_> = book
+        .chart_sheet_drawings(k)
+        .into_iter()
+        .filter(|d| d.prints && !d.hidden)
+        .collect();
+    let drawings = drawings::SheetDrawings::filling(book, found, avail_w, avail_h);
+    let one = CellRange::from_corners((0, 0), (0, 0));
+    SheetPlan {
+        sheet: 0,
+        name: book.chart_sheet_name(k).unwrap_or_default().to_owned(),
+        print,
+        // Unused: a chart sheet has no cells.
+        columns: book.print_columns(0),
+        rows: Vec::new(),
+        default_row: 15.0,
+        page,
+        heading: (0.0, 0.0),
+        areas: vec![(
+            one,
+            paginate::Grid {
+                cols: vec![(0, 0)],
+                rows: vec![(0, 0)],
+                scale: 1.0,
+            },
+        )],
+        drawings,
+        chart_sheet: Some(k),
     }
 }
 
@@ -324,6 +388,7 @@ fn sheet_plan(
         heading,
         areas: Vec::new(),
         drawings: Default::default(),
+        chart_sheet: None,
     };
     let mut grids = Vec::new();
     for area in areas {
