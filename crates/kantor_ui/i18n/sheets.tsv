@@ -1,0 +1,733 @@
+# English<TAB>Indonesian, one string per line (see kantor_ui/src/i18n.rs).
+# Sheets: toolbar, menus, dialogs and status text of crates/sheets_ui.
+# Toolbar
+Larger Font	Perbesar Font
+Smaller Font	Perkecil Font
+Wrap Text	Bungkus Teks
+Merge & Center	Gabungkan & Tengahkan
+All Borders	Semua Batas
+Outside Borders	Batas Luar
+No Borders	Tanpa Batas
+Fill Colour	Warna Isian
+No Fill	Tanpa Isian
+Text Colour	Warna Teks
+More formatting	Format lainnya
+Freeze panes, hide rows and columns	Bekukan panel, sembunyikan baris dan kolom
+Conditional Formatting	Pemformatan Bersyarat
+Data Validation…	Validasi Data…
+Circle Invalid Data	Lingkari Data Tidak Valid
+Clear Validation Circles	Hapus Lingkaran Validasi
+Insert Chart	Sisipkan Bagan
+PivotTable	PivotTable
+Print and export	Cetak dan ekspor
+Page Setup…	Pengaturan Halaman…
+Set Print Area	Atur Area Cetak
+Clear Print Area	Hapus Area Cetak
+Ask AI for a formula	Minta AI membuat rumus
+Format as Table…	Format sebagai Tabel…
+Insert PivotTable…	Sisipkan PivotTable…
+Refresh PivotTable	Segarkan PivotTable
+Refresh All PivotTables	Segarkan Semua PivotTable
+Delete PivotTable	Hapus PivotTable
+Rupiah (Rp)	Rupiah (Rp)
+Dollar ($)	Dolar ($)
+# Header menus and grid commands
+Insert Column Left	Sisipkan Kolom di Kiri
+Insert Column Right	Sisipkan Kolom di Kanan
+Delete Columns	Hapus Kolom
+Autofit Column Width	Paskan Otomatis Lebar Kolom
+Standard Column Width	Lebar Kolom Standar
+Hide Columns	Sembunyikan Kolom
+Unhide Columns	Tampilkan Kolom
+Custom Sort…	Urutan Kustom…
+Filter	Filter
+Freeze Panes	Bekukan Panel
+Freeze First Column	Bekukan Kolom Pertama
+Freeze Top Row	Bekukan Baris Teratas
+Unfreeze Panes	Lepaskan Panel Beku
+Insert Row Above	Sisipkan Baris di Atas
+Insert Row Below	Sisipkan Baris di Bawah
+Delete Rows	Hapus Baris
+Row Height…	Tinggi Baris…
+Autofit Row Height	Paskan Otomatis Tinggi Baris
+Hide Rows	Sembunyikan Baris
+Unhide Rows	Tampilkan Baris
+Selected all cells	Semua sel dipilih
+Filling	Mengisi
+Filled {}	{} diisi
+Nothing to fill from	Tidak ada yang bisa dijadikan sumber isian
+Inserted {} row	{} baris disisipkan
+Inserted {} rows	{} baris disisipkan
+Deleted {} row	{} baris dihapus
+Deleted {} rows	{} baris dihapus
+Inserted {} column	{} kolom disisipkan
+Inserted {} columns	{} kolom disisipkan
+Deleted {} column	{} kolom dihapus
+Deleted {} columns	{} kolom dihapus
+The selected rows are already hidden	Baris yang dipilih sudah tersembunyi
+The selected columns are already hidden	Kolom yang dipilih sudah tersembunyi
+Hid {} row	{} baris disembunyikan
+Hid {} rows	{} baris disembunyikan
+Hid {} column	{} kolom disembunyikan
+Hid {} columns	{} kolom disembunyikan
+No hidden rows in the selection	Tidak ada baris tersembunyi dalam pilihan
+No hidden columns in the selection	Tidak ada kolom tersembunyi dalam pilihan
+Unhid {} row	{} baris ditampilkan
+Unhid {} rows	{} baris ditampilkan
+Unhid {} column	{} kolom ditampilkan
+Unhid {} columns	{} kolom ditampilkan
+Unhid {} row; {} hidden by a filter stay hidden	{} baris ditampilkan; {} yang disembunyikan filter tetap tersembunyi
+Unhid {} rows; {} hidden by a filter stay hidden	{} baris ditampilkan; {} yang disembunyikan filter tetap tersembunyi
+{} row hidden by a filter; clear the filter to show it	{} baris disembunyikan oleh filter; hapus filter untuk menampilkannya
+{} rows hidden by a filter; clear the filter to show them	{} baris disembunyikan oleh filter; hapus filter untuk menampilkannya
+Fitted column widths to their content	Lebar kolom disesuaikan dengan isinya
+Reset column widths	Lebar kolom dikembalikan ke standar
+Column widths unchanged	Lebar kolom tidak berubah
+Panes unfrozen	Panel tidak lagi dibekukan
+Froze the top {} row	{} baris teratas dibekukan
+Froze the top {} rows	{} baris teratas dibekukan
+Froze the first {} column	{} kolom pertama dibekukan
+Froze the first {} columns	{} kolom pertama dibekukan
+Froze panes above and left of {}	Panel di atas dan di kiri {} dibekukan
+# Status line
+Ready	Siap
+Value or =formula	Nilai atau =rumus
+Please wait until the workbook is ready	Harap tunggu sampai buku kerja siap
+Edit cancelled	Pengeditan dibatalkan
+{} updated — manual calculation, press F9 to recalculate	{} diperbarui — perhitungan manual, tekan F9 untuk menghitung ulang
+Copied {}	{} disalin
+Cut {}	{} dipotong
+Nothing to paste	Tidak ada yang bisa ditempel
+Pasted {}	{} ditempel
+Alignment	Perataan
+Vertical alignment	Perataan vertikal
+Fill colour	Warna isian
+Text colour	Warna teks
+Font size	Ukuran font
+Wrap text	Bungkus teks
+Borders	Batas
+Merged	Digabungkan
+Unmerged	Penggabungan dibatalkan
+Opened {}	{} dibuka
+Opened {} (imported; Save creates an .xlsx copy)	{} dibuka (diimpor; Simpan membuat salinan .xlsx)
+Undone	Diurungkan
+Redone	Diulangi
+Nothing to undo	Tidak ada yang bisa diurungkan
+Nothing to redo	Tidak ada yang bisa diulangi
+Please wait until the save finishes	Harap tunggu sampai penyimpanan selesai
+No matches	Tidak ada yang cocok
+Formula inserted in {}	Rumus disisipkan di {}
+Deleted	Dihapus
+Moved	Dipindahkan
+Resized	Ukuran diubah
+Nothing to replace: the matches are computed values	Tidak ada yang bisa diganti: yang cocok adalah nilai hasil hitungan
+Replaced in 1 cell	Diganti di 1 sel
+Replaced in {} cells	Diganti di {} sel
+Replaced in {}	Diganti di {}
+# Calculation
+Opening {}…	Membuka {}…
+Calculating {}…	Menghitung {}…
+{} and recalculating {}…	{} dan menghitung ulang {}…
+Manual calculation ({} formulas) — press F9 to recalculate	Perhitungan manual ({} rumus) — tekan F9 untuk menghitung ulang
+ in {} s	 dalam {} dtk
+Calculated in {} s	Dihitung dalam {} dtk
+Calculated	Dihitung
+Automatic calculation	Perhitungan otomatis
+Manual calculation — press F9 to recalculate	Perhitungan manual — tekan F9 untuk menghitung ulang
+Calculating…	Menghitung…
+Manual · Calculate (F9)	Manual · Hitung (F9)
+Manual calculation	Perhitungan manual
+{} s · editing resumes when it is done	{} dtk · pengeditan dapat dilanjutkan setelah selesai
+# Saving, printing, recovery
+Saving…	Menyimpan…
+Saving {}…	Menyimpan {}…
+Saving {}… (then again with your latest changes)	Menyimpan {}… (lalu sekali lagi dengan perubahan terbaru Anda)
+Autosaved {}	{} disimpan otomatis
+Saved {}	{} disimpan
+Saved {} with values of sheet "{}" only; CSV can't hold the other {}	{} disimpan hanya dengan nilai lembar "{}"; CSV tidak dapat menampung {} lembar lainnya
+Save failed: {}	Gagal menyimpan: {}
+Couldn't save “{}”: {}. Your changes are still open; try Save As.	Tidak dapat menyimpan “{}”: {}. Perubahan Anda masih terbuka; coba Simpan Sebagai.
+Print failed: {}	Gagal mencetak: {}
+Preparing to print {}…	Menyiapkan cetak {}…
+Exporting {}…	Mengekspor {}…
+Preparing to print: page {} of {}…	Menyiapkan cetak: halaman {} dari {}…
+Exporting: page {} of {}…	Mengekspor: halaman {} dari {}…
+Exported {} (1 page)	{} diekspor (1 halaman)
+Exported {} ({} pages)	{} diekspor ({} halaman)
+Opened 1 page in the PDF viewer to print	1 halaman dibuka di penampil PDF untuk dicetak
+Opened {} pages in the PDF viewer to print	{} halaman dibuka di penampil PDF untuk dicetak
+Export to PDF failed: {}	Gagal mengekspor ke PDF: {}
+Restored unsaved changes to {}	Perubahan yang belum disimpan dipulihkan ke {}
+Restored unsaved changes	Perubahan yang belum disimpan dipulihkan
+Restoring {}…	Memulihkan {}…
+# Row height
+Unhid 1 row	1 baris ditampilkan
+Those rows are hidden by a filter; clear the filter to show them	Baris tersebut disembunyikan oleh filter; hapus filter untuk menampilkannya
+Row height {} pt: row {}	Tinggi baris {} pt: baris {}
+Row height {} pt: rows {}–{}	Tinggi baris {} pt: baris {}–{}
+Fitted the height of row {}	Tinggi baris {} disesuaikan
+Fitted the height of rows {}–{}	Tinggi baris {}–{} disesuaikan
+Row height unchanged	Tinggi baris tidak berubah
+Points	Poin
+Row height must be a number of points from 0 to {}	Tinggi baris harus berupa angka poin dari 0 sampai {}
+Row {}	Baris {}
+Rows {}–{}	Baris {}–{}
+Row height (pt) · {}	Tinggi baris (pt) · {}
+Enter to apply	Enter untuk menerapkan
+Cell value	Nilai sel
+Specific text	Teks tertentu
+Dates occurring	Tanggal yang terjadi
+Duplicate or unique values	Nilai duplikat atau unik
+Top or bottom ranked values	Nilai peringkat atas atau bawah
+Above or below average	Di atas atau di bawah rata-rata
+Blanks	Sel kosong
+Use a formula	Gunakan rumus
+Data bar	Bilah data
+Color scale	Skala warna
+Icon set	Set ikon
+e.g. A2:A20	mis. A2:A20
+a number, text or =formula	angka, teks, atau =rumus
+and	dan
+text to look for	teks yang dicari
+e.g. =$B2>100	mis. =$B2>100
+Kantor can't edit this kind of rule yet (it can delete or move it)	Kantor belum dapat mengedit jenis aturan ini (hanya dapat menghapus atau memindahkannya)
+Rank: type a whole number	Peringkat: ketik bilangan bulat
+Rule changed	Aturan diubah
+Conditional formatting rule added	Aturan pemformatan bersyarat ditambahkan
+Conditional formatting added to {}	Pemformatan bersyarat ditambahkan ke {}
+No conditional formatting rules here	Tidak ada aturan pemformatan bersyarat di sini
+1 rule cleared	1 aturan dihapus
+{} rules cleared	{} aturan dihapus
+Edit Formatting Rule	Edit Aturan Pemformatan
+New Formatting Rule	Aturan Pemformatan Baru
+Applies to	Berlaku untuk
+Rule type	Jenis aturan
+Cell value is	Nilai sel
+Value	Nilai
+And	Dan
+Text	Teks
+Looking for	Yang dicari
+A date occurring	Tanggal yang terjadi
+Duplicate values	Nilai duplikat
+Unique values	Nilai unik
+Format the	Format yang
+Top	Atas
+Bottom	Bawah
+Number	Angka
+% of the selected range	% dari rentang yang dipilih
+Values	Nilai
+Above average	Di atas rata-rata
+Below average	Di bawah rata-rata
+Cells that are	Sel yang
+Blank	Kosong
+Not blank	Tidak kosong
+Format where	Format jika
+The formula is true for the cells to format; references are relative to the first cell of the range.	Rumus bernilai benar untuk sel yang akan diformat; referensi relatif terhadap sel pertama rentang.
+Bar colour	Warna bilah
+Fill	Isian
+Gradient	Gradien
+Solid	Padat
+Colours	Warna
+Icons	Ikon
+Reverse icon order	Balik urutan ikon
+Show icon only	Tampilkan ikon saja
+Thresholds split the range in equal percentages, as Excel does.	Ambang batas membagi rentang dalam persentase yang sama, seperti di Excel.
+Custom format	Format kustom
+Font colour	Warna font
+Stop if true (rules below don't apply to these cells)	Berhenti jika benar (aturan di bawahnya tidak berlaku untuk sel ini)
+This sheet has no conditional formatting rules.	Lembar ini tidak memiliki aturan pemformatan bersyarat.
+No rules apply to the selected cells.	Tidak ada aturan yang berlaku untuk sel yang dipilih.
+Applies to {}	Berlaku untuk {}
+Stop	Berhenti
+Move up (applies sooner)	Pindahkan ke atas (diterapkan lebih dulu)
+Move down	Pindahkan ke bawah
+Delete rule	Hapus aturan
+Conditional Formatting Rules	Aturan Pemformatan Bersyarat
+Show rules for	Tampilkan aturan untuk
+Current selection	Pilihan saat ini
+This sheet	Lembar ini
+Selection {}	Pilihan {}
+The first rule applies first; a rule with Stop ends the list for its cells.	Aturan pertama diterapkan lebih dulu; aturan dengan Berhenti mengakhiri daftar untuk selnya.
+New Rule…	Aturan Baru…
+Highlight Cells Rules	Aturan Sorot Sel
+Top/Bottom Rules	Aturan Atas/Bawah
+Data Bars	Bilah Data
+Color Scales	Skala Warna
+Icon Sets	Set Ikon
+Gradient Fill	Isian Gradien
+Solid Fill	Isian Padat
+{} Data Bar	Bilah Data {}
+{} Color Scale	Skala Warna {}
+Clear Rules from Selected Cells	Hapus Aturan dari Sel yang Dipilih
+Clear Rules from Entire Sheet	Hapus Aturan dari Seluruh Lembar
+Manage Rules…	Kelola Aturan…
+Greater Than…	Lebih Besar Dari…
+Less Than…	Lebih Kecil Dari…
+Between…	Di Antara…
+Equal To…	Sama Dengan…
+Text that Contains…	Teks yang Berisi…
+A Date Occurring…	Tanggal yang Terjadi…
+Duplicate Values…	Nilai Duplikat…
+Top 10 Items…	10 Item Teratas…
+Top 10%…	10% Teratas…
+Bottom 10 Items…	10 Item Terbawah…
+Bottom 10%…	10% Terbawah…
+Above Average…	Di Atas Rata-rata…
+Below Average…	Di Bawah Rata-rata…
+greater than	lebih besar dari
+less than	lebih kecil dari
+between	di antara
+not between	tidak di antara
+equal to	sama dengan
+not equal to	tidak sama dengan
+greater than or equal to	lebih besar dari atau sama dengan
+less than or equal to	lebih kecil dari atau sama dengan
+containing	yang berisi
+not containing	yang tidak berisi
+beginning with	yang diawali
+ending with	yang diakhiri
+Yesterday	Kemarin
+Today	Hari ini
+Tomorrow	Besok
+In the last 7 days	Dalam 7 hari terakhir
+Last week	Minggu lalu
+This week	Minggu ini
+Next week	Minggu depan
+Last month	Bulan lalu
+This month	Bulan ini
+Next month	Bulan depan
+Light Red Fill with Dark Red Text	Isian Merah Muda dengan Teks Merah Tua
+Yellow Fill with Dark Yellow Text	Isian Kuning dengan Teks Kuning Tua
+Green Fill with Dark Green Text	Isian Hijau dengan Teks Hijau Tua
+Light Red Fill	Isian Merah Muda
+Red Text	Teks Merah
+Blue	Biru
+Green	Hijau
+Red	Merah
+Orange	Oranye
+Light Blue	Biru Muda
+Purple	Ungu
+Green - Yellow - Red	Hijau - Kuning - Merah
+Red - Yellow - Green	Merah - Kuning - Hijau
+Green - White - Red	Hijau - Putih - Merah
+Red - White - Green	Merah - Putih - Hijau
+Blue - White - Red	Biru - Putih - Merah
+Red - White - Blue	Merah - Putih - Biru
+White - Red	Putih - Merah
+Red - White	Merah - Putih
+Green - White	Hijau - Putih
+White - Green	Putih - Hijau
+Green - Yellow	Hijau - Kuning
+Yellow - Green	Kuning - Hijau
+3 Arrows	3 Panah
+3 Arrows (Gray)	3 Panah (Abu-abu)
+3 Triangles	3 Segitiga
+4 Arrows	4 Panah
+5 Arrows	5 Panah
+3 Traffic Lights	3 Lampu Lalu Lintas
+4 Traffic Lights	4 Lampu Lalu Lintas
+3 Signs	3 Rambu
+3 Symbols (Circled)	3 Simbol (Berlingkar)
+3 Symbols	3 Simbol
+3 Flags	3 Bendera
+5 Ratings	5 Peringkat
+Type the value to compare with	Ketik nilai pembanding
+Type the text to look for	Ketik teks yang dicari
+Give a number of items (1-1000) or a percentage (1-100)	Masukkan jumlah item (1-1000) atau persentase (1-100)
+Type a formula, such as $B2>100	Ketik rumus, misalnya $B2>100
+A colour scale has two or three colours	Skala warna memiliki dua atau tiga warna
+Type the cells it applies to, such as A2:A20	Ketik sel tempat aturan berlaku, misalnya A2:A20
+Errors	Galat
+No errors	Tanpa galat
+Date occurring	Tanggal terjadi
+Text equal to "{}"	Teks sama dengan "{}"
+Icon set ({} icons)	Set ikon ({} ikon)
+Rating ({} steps)	Peringkat ({} langkah)
+{}-color scale	Skala {} warna
+Cell value {} {} and {}	Nilai sel {} {} dan {}
+Cell value {} {}	Nilai sel {} {}
+Text {} "{}"	Teks {} "{}"
+Date occurring: {}	Tanggal terjadi: {}
+Bottom {}	{} terbawah
+Top {}	{} teratas
+Blank cells	Sel kosong
+Cells with something in them	Sel yang berisi sesuatu
+Formula: {}	Rumus: {}
+# chart_ui.rs
+{} chart inserted	Bagan {} disisipkan
+No title	Tanpa judul
+e.g. A1:C13	mis. A1:C13
+Data: type the chart's cells, such as A1:C13	Data: ketik sel bagan, misalnya A1:C13
+Data: there's no sheet called {}	Data: tidak ada lembar bernama {}
+Chart	Bagan
+Kantor can't change this chart's type	Kantor tidak dapat mengubah jenis bagan ini
+Type	Jenis
+Title	Judul
+Legend	Legenda
+Horizontal axis	Sumbu horizontal
+Vertical axis	Sumbu vertikal
+Series in	Seri dalam
+Columns	Kolom
+Rows	Baris
+Kantor can't change the type or data of a {} chart; titles, legend and colours can be changed.	Kantor tidak dapat mengubah jenis atau data bagan {}; judul, legenda, dan warna dapat diubah.
+This chart's series don't come from one block of cells: a new data range replaces them.	Seri bagan ini tidak berasal dari satu blok sel: rentang data baru akan menggantikannya.
+Press Enter in a box to apply it.	Tekan Enter di kotak untuk menerapkannya.
+Delete Chart	Hapus Bagan
+Kantor can't change this object: select a chart.	Kantor tidak dapat mengubah objek ini: pilih sebuah bagan.
+Select a chart to change it.	Pilih bagan untuk mengubahnya.
+Series colours	Warna seri
+Colour	Warna
+Automatic	Otomatis
+Series {}	Seri {}
+Chart Panel	Panel Bagan
+Column Chart	Bagan Kolom
+Stacked Column Chart	Bagan Kolom Bertumpuk
+Bar Chart	Bagan Batang
+Stacked Bar Chart	Bagan Batang Bertumpuk
+Line Chart	Bagan Garis
+Stacked Line Chart	Bagan Garis Bertumpuk
+Pie Chart	Bagan Pai
+Area Chart	Bagan Area
+Stacked Area Chart	Bagan Area Bertumpuk
+Scatter Chart	Bagan Sebar
+Other Chart	Bagan Lain
+Column	Kolom
+Stacked Column	Kolom Bertumpuk
+Bar	Batang
+Stacked Bar	Batang Bertumpuk
+Line	Garis
+Stacked Line	Garis Bertumpuk
+Pie	Pai
+Area	Area
+Stacked Area	Area Bertumpuk
+Scatter	Sebar
+Other	Lainnya
+Combo	Kombinasi
+100% Stacked Column	Kolom Bertumpuk 100%
+100% Stacked Bar	Batang Bertumpuk 100%
+100% Stacked Line	Garis Bertumpuk 100%
+100% Stacked Area	Area Bertumpuk 100%
+Doughnut	Donat
+3-D Column	Kolom 3-D
+3-D Line	Garis 3-D
+3-D Area	Area 3-D
+3-D Pie	Pai 3-D
+Pie of Pie	Pai dari Pai
+Radar	Radar
+Bubble	Gelembung
+Stock	Saham
+Surface	Permukaan
+Right	Kanan
+Left	Kiri
+# page_setup.rs
+Top margin: type centimetres	Margin atas: ketik dalam sentimeter
+Bottom margin: type centimetres	Margin bawah: ketik dalam sentimeter
+Left margin: type centimetres	Margin kiri: ketik dalam sentimeter
+Right margin: type centimetres	Margin kanan: ketik dalam sentimeter
+Header margin: type centimetres	Margin header: ketik dalam sentimeter
+Footer margin: type centimetres	Margin footer: ketik dalam sentimeter
+Pages wide: type a whole number (blank: automatic)	Lebar halaman: ketik bilangan bulat (kosong: otomatis)
+Pages tall: type a whole number (blank: automatic)	Tinggi halaman: ketik bilangan bulat (kosong: otomatis)
+Fit to: give pages wide, tall or both	Paskan ke: isi jumlah halaman lebar, tinggi, atau keduanya
+Scale: type a percentage from 10 to 400	Skala: ketik persentase dari 10 sampai 400
+Auto	Otomatis
+First page number: type a number, or leave it blank	Nomor halaman pertama: ketik angka, atau biarkan kosong
+Headers and footers hold at most 255 characters	Header dan footer paling banyak 255 karakter
+Print area: type ranges such as $A$1:$F$40	Area cetak: ketik rentang seperti $A$1:$F$40
+Rows to repeat: type rows such as $1:$2	Baris yang diulang: ketik baris seperti $1:$2
+Columns to repeat: type columns such as $A:$B	Kolom yang diulang: ketik kolom seperti $A:$B
+Page setup changed	Pengaturan halaman diubah
+Print area cleared	Area cetak dihapus
+Print area set to {}	Area cetak diatur ke {}
+Page	Halaman
+Header/Footer	Header/Footer
+Sheet	Lembar
+Paper size	Ukuran kertas
+Scaling	Penskalaan
+Adjust to %	Sesuaikan ke %
+Fit to pages	Paskan ke halaman
+Pages	Halaman
+wide by	lebar kali
+tall (blank: automatic)	tinggi (kosong: otomatis)
+Scale	Skala
+% of normal size	% dari ukuran normal
+First page number	Nomor halaman pertama
+Page order	Urutan halaman
+Down, then over	Ke bawah, lalu ke samping
+Over, then down	Ke samping, lalu ke bawah
+Presets	Prasetel
+Normal	Normal
+Wide	Lebar
+Narrow	Sempit
+Center on page	Tengahkan di halaman
+Horizontally	Secara Horizontal
+Vertically	Secara Vertikal
+Centre	Tengah
+Codes: &P page · &N pages · &D date · &T time · &F file name · &A sheet name · && an ampersand	Kode: &P halaman · &N jumlah halaman · &D tanggal · &T waktu · &F nama berkas · &A nama lembar · && tanda &
+Print area	Area cetak
+Selection	Pilihan
+Clear	Kosongkan
+Rows to repeat	Baris yang diulang
+Columns to repeat	Kolom yang diulang
+Gridlines	Garis kisi
+Row and column headings	Judul baris dan kolom
+Black and white	Hitam putih
+(none)	(tidak ada)
+Page 1	Halaman 1
+Page 1 of ?	Halaman 1 dari ?
+Sheet name	Nama lembar
+File name	Nama berkas
+Date	Tanggal
+Sheet name · Page 1	Nama lembar · Halaman 1
+File name · Page 1 of ?	Nama berkas · Halaman 1 dari ?
+Date and time · Page 1	Tanggal dan waktu · Halaman 1
+# print_preview.rs
+The page could not be drawn	Halaman tidak dapat digambar
+Nothing to print on this sheet	Tidak ada yang dicetak di lembar ini
+Drawing the page…	Menggambar halaman…
+Fit ({}%)	Paskan ({}%)
+No pages	Tidak ada halaman
+Page {} of {}	Halaman {} dari {}
+Previous page	Halaman sebelumnya
+Next page	Halaman berikutnya
+Zoom out	Perkecil
+Fit the page	Paskan halaman
+Zoom in	Perbesar
+# pivot.rs
+Filters	Filter
+Add to Filters	Tambahkan ke Filter
+Add to Columns	Tambahkan ke Kolom
+Add to Rows	Tambahkan ke Baris
+Add to Values	Tambahkan ke Nilai
+Move to Filters	Pindahkan ke Filter
+Move to Columns	Pindahkan ke Kolom
+Move to Rows	Pindahkan ke Baris
+Move to Values	Pindahkan ke Nilai
+Whole number	Bilangan bulat
+Percent	Persen
+Percent (0.00)	Persen (0,00)
+Scientific	Ilmiah
+Compact form	Bentuk ringkas
+Outline form	Bentuk kerangka
+Tabular form	Bentuk tabel
+Don't show subtotals	Jangan tampilkan subtotal
+Subtotals at the top	Subtotal di atas
+Subtotals at the bottom	Subtotal di bawah
+PivotTable · {}	PivotTable · {}
+PivotTable · {} (can't refresh here)	PivotTable · {} (tidak dapat disegarkan di sini)
+This workbook has no PivotTables to refresh	Buku kerja ini tidak memiliki PivotTable untuk disegarkan
+PivotTable refreshed	PivotTable disegarkan
+{} PivotTables refreshed	{} PivotTable disegarkan
+Table name or range, e.g. Sheet1!A1:D20	Nama tabel atau rentang, mis. Sheet1!A1:D20
+Cell, e.g. Sheet1!H2	Sel, mis. Sheet1!H2
+{} fields · {} rows · table {}	{} bidang · {} baris · tabel {}
+{} fields · {} rows · {}	{} bidang · {} baris · {}
+{}: choose its fields in the panel	{}: pilih bidangnya di panel
+Insert PivotTable	Sisipkan PivotTable
+Data to analyse	Data yang dianalisis
+Put it on	Letakkan di
+New sheet	Lembar baru
+Existing sheet	Lembar yang ada
+Create	Buat
+{} deleted	{} dihapus
+Select a cell in a PivotTable to see its fields	Pilih sel di PivotTable untuk melihat bidangnya
+Select a cell in a PivotTable to see its fields.	Pilih sel di PivotTable untuk melihat bidangnya.
+{} updated	{} diperbarui
+Custom name	Nama khusus
+Choose at least one item	Pilih setidaknya satu item
+PivotTable Fields	Bidang PivotTable
+Can't be rearranged here: {}	Tidak dapat ditata ulang di sini: {}
+Add to an area	Tambahkan ke area
+Fields · check, or drag to an area	Bidang · centang, atau seret ke area
+Σ Values	Σ Nilai
+General	Umum
+Value Field Settings	Pengaturan Bidang Nilai
+Name	Nama
+Summarize values by	Ringkas nilai menurut
+Number format	Format angka
+As in the source ({})	Seperti di sumber ({})
+Show items of {}	Tampilkan item {}
+(All)	(Semua)
+Layout	Tata Letak
+Grand total row	Baris total keseluruhan
+Grand total column	Kolom total keseluruhan
+Move Up	Pindahkan ke Atas
+Move Down	Pindahkan ke Bawah
+Value Field Settings…	Pengaturan Bidang Nilai…
+Choose Items…	Pilih Item…
+Filter Items…	Filter Item…
+There is no sheet {}	Tidak ada lembar {}
+{} is not a cell: type one like Sheet1!H2	{} bukan sel: ketik seperti Sheet1!H2
+Sum	Jumlah
+Count	Hitung
+Average	Rata-rata
+Max	Maks
+Min	Min
+Product	Hasil Kali
+Count Numbers	Hitung Angka
+# sheets_ui: data validation, filter and sort, tables
+Any value	Nilai apa pun
+Decimal	Desimal
+List	Daftar
+Time	Waktu
+Text length	Panjang teks
+Custom	Kustom
+Type a value	Ketik nilai
+Type a date such as 2026-01-31 or 31/01/2026	Ketik tanggal seperti 2026-01-31 atau 31/01/2026
+Type a time such as 9:30	Ketik waktu seperti 9:30
+Type a whole number	Ketik bilangan bulat
+Type a number	Ketik angka
+Type the cells of the list, such as =$A$1:$A$9	Ketik sel daftar, seperti =$A$1:$A$9
+Type the list's items separated by commas, or =cells	Ketik item daftar dipisahkan koma, atau =sel
+A typed list holds at most 255 characters: put the items in cells	Daftar yang diketik paling banyak 255 karakter: taruh item di sel
+Select the cells to validate	Pilih sel yang akan divalidasi
+Type the list's source	Ketik sumber daftar
+a value or =formula	nilai atau =rumus
+Yes, No, Maybe   or   =$H$1:$H$9	Ya, Tidak, Mungkin   atau   =$H$1:$H$9
+e.g. =ISNUMBER(A2)	mis. =ISNUMBER(A2)
+Applies to: type the cells, such as A2:A20	Berlaku untuk: ketik selnya, seperti A2:A20
+Source: {}	Sumber: {}
+Formula: type a formula that is TRUE for valid values	Rumus: ketik rumus yang bernilai TRUE untuk nilai yang valid
+Data validation set	Validasi data dipasang
+Data validation cleared	Validasi data dihapus
+Input Message	Pesan Input
+Error Alert	Peringatan Galat
+Allow	Izinkan
+Minimum	Minimum
+Maximum	Maksimum
+Dates as 2026-01-31 or 31/01/2026, or =formula	Tanggal seperti 2026-01-31 atau 31/01/2026, atau =rumus
+Times as 9:30, or =formula	Waktu seperti 9:30, atau =rumus
+Number of characters	Jumlah karakter
+A number, or =formula such as =$B$1	Angka, atau =rumus seperti =$B$1
+Source	Sumber
+Items separated by commas, or =cells such as =$H$1:$H$9 (another sheet: =Lists!$A$1:$A$9)	Item dipisahkan koma, atau =sel seperti =$H$1:$H$9 (lembar lain: =Lists!$A$1:$A$9)
+Formula	Rumus
+TRUE for a valid value; references are relative to the first cell.	TRUE untuk nilai yang valid; referensi relatif terhadap sel pertama.
+Ignore blank	Abaikan yang kosong
+In-cell dropdown	Daftar turun di sel
+Show input message when the cell is selected	Tampilkan pesan input saat sel dipilih
+Input message	Pesan input
+Show error alert after invalid data is entered	Tampilkan peringatan galat setelah data tidak valid dimasukkan
+Style	Gaya
+Warning	Peringatan
+Information	Informasi
+Error message	Pesan galat
+Stop: the value can't stay (Retry / Cancel).	Berhenti: nilai tidak boleh tetap (Coba Lagi / Batal).
+Warning: asks "Continue?" (Yes / No / Cancel).	Peringatan: bertanya "Lanjutkan?" (Ya / Tidak / Batal).
+Information: tells, then keeps the value (OK / Cancel).	Informasi: memberi tahu, lalu menyimpan nilainya (OK / Batal).
+Data Validation	Validasi Data
+Clear All	Hapus Semua
+This value doesn't match the data validation restrictions defined for this cell.	Nilai ini tidak sesuai dengan batasan validasi data yang ditetapkan untuk sel ini.
+Retry	Coba Lagi
+The list of this cell is empty	Daftar sel ini kosong
+{} breaks its data validation	{} melanggar validasi datanya
+Invalid value	Nilai tidak valid
+Edit the value, or press Escape to cancel	Edit nilainya, atau tekan Escape untuk membatalkan
+{} not changed	{} tidak diubah
+The active cell has no drop-down list	Sel aktif tidak memiliki daftar turun
+Invalid data circled	Data tidak valid dilingkari
+This sheet has no data validation	Lembar ini tidak memiliki validasi data
+Validation circles cleared	Lingkaran validasi dihapus
+Continue?	Lanjutkan?
+a table without a header row has no filter buttons	tabel tanpa baris header tidak memiliki tombol filter
+select the data to filter	pilih data yang akan difilter
+nothing to filter	tidak ada yang bisa difilter
+nothing to sort	tidak ada yang bisa diurutkan
+nothing to sort by	tidak ada dasar pengurutan
+the sort column is outside the range	kolom pengurutan berada di luar rentang
+No condition	Tanpa kondisi
+Equals	Sama dengan
+Does not equal	Tidak sama dengan
+Greater than	Lebih besar dari
+Greater than or equal to	Lebih besar dari atau sama dengan
+Less than	Lebih kecil dari
+Less than or equal to	Lebih kecil dari atau sama dengan
+Between	Di antara
+Begins with	Diawali dengan
+Ends with	Diakhiri dengan
+Contains	Berisi
+Does not contain	Tidak berisi
+Before	Sebelum
+After	Sesudah
+Type a value for the condition	Ketik nilai untuk kondisi
+{} is not a date (use 2025-03-01)	{} bukan tanggal (gunakan 2025-03-01)
+{} is not a number	{} bukan angka
+Type both ends of the range	Ketik kedua ujung rentang
+Search	Cari
+{} of {} rows shown	{} dari {} baris ditampilkan
+Filter cleared: {} of {} rows shown	Filter dihapus: {} dari {} baris ditampilkan
+Filter buttons on: click one to filter or sort	Tombol filter aktif: klik salah satu untuk memfilter atau mengurutkan
+Filter off: every row shown	Filter nonaktif: semua baris ditampilkan
+No filter on this sheet	Tidak ada filter di lembar ini
+Filter reapplied: {} of {} rows shown	Filter diterapkan ulang: {} dari {} baris ditampilkan
+Filters cleared	Filter dihapus
+Sorted {} rows by {} levels	{} baris diurutkan dengan {} tingkat
+Sort smallest to largest	Urutkan dari Terkecil ke Terbesar
+Sort largest to smallest	Urutkan dari Terbesar ke Terkecil
+Sort oldest to newest	Urutkan dari Terlama ke Terbaru
+Sort newest to oldest	Urutkan dari Terbaru ke Terlama
+Sort A to Z	Urutkan A ke Z
+Sort Z to A	Urutkan Z ke A
+Number filter	Filter angka
+Date filter	Filter tanggal
+Text filter	Filter teks
+(Blanks)	(Kosong)
+(Select All)	(Pilih Semua)
+(Select All Search Results)	(Pilih Semua Hasil Pencarian)
+{} more: search to narrow	{} lagi: cari untuk mempersempit
+Clear filter	Hapus filter
+This column has a filter Kantor keeps but can't edit (top 10, colour or dynamic). Choosing values replaces it.	Kolom ini memiliki filter yang disimpan Kantor tetapi tidak dapat diedit (10 teratas, warna, atau dinamis). Memilih nilai akan menggantinya.
+Column {}	Kolom {}
+Sort by	Urutkan menurut
+Then by	Lalu menurut
+Sort {}	Urutkan {}
+Add level	Tambah tingkat
+My data has headers	Data saya memiliki header
+Sort	Urutkan
+Text (* and ? match any)	Teks (* dan ? cocok dengan apa pun)
+Sorted {} rows descending	{} baris diurutkan menurun
+Sorted {} rows ascending	{} baris diurutkan menaik
+Select the cells of the table, not whole rows or columns	Pilih sel tabel, bukan seluruh baris atau kolom
+Too many columns	Terlalu banyak kolom
+It overlaps a PivotTable	Bertumpang tindih dengan PivotTable
+Tables can't contain merged cells	Tabel tidak boleh berisi sel yang digabungkan
+It overlaps the sheet's filter: remove the filter first	Bertumpang tindih dengan filter lembar: hapus filternya dulu
+No room for a header row	Tidak ada ruang untuk baris header
+No room for a data row	Tidak ada ruang untuk baris data
+No room for a total row	Tidak ada ruang untuk baris total
+A table needs a data row	Tabel memerlukan baris data
+The row above the table must be empty to show the header row	Baris di atas tabel harus kosong untuk menampilkan baris header
+Turn on the total row first	Aktifkan baris total dulu
+A table name starts with a letter and has no spaces or symbols	Nama tabel diawali huruf dan tanpa spasi atau simbol
+This cell is already in a table: its options are in Table Design	Sel ini sudah berada di tabel: opsinya ada di Desain Tabel
+Type the table's cells, such as $A$1:$D$20	Ketik sel tabel, seperti $A$1:$D$20
+{} created	{} dibuat
+Select a cell in a table first	Pilih sel di dalam tabel dulu
+Table changed	Tabel diubah
+Table converted to a range	Tabel dikonversi menjadi rentang
+Table renamed	Nama tabel diganti
+Format as Table	Format sebagai Tabel
+Where is the data?	Di mana datanya?
+My table has headers	Tabel saya memiliki header
+Style · {}	Gaya · {}
+Table Design	Desain Tabel
+Enter to rename	Enter untuk mengganti nama
+Table name	Nama tabel
+Table style options	Opsi gaya tabel
+Header Row	Baris Header
+Total Row	Baris Total
+Banded Rows	Baris Berpita
+Banded Columns	Kolom Berpita
+First Column	Kolom Pertama
+Last Column	Kolom Terakhir
+Filter Button	Tombol Filter
+Total changed	Total diubah
+Total row	Baris total
+Convert to Range	Konversi ke Rentang
+Select a cell in a table to change it, or make one with Format as Table (Ctrl+T).	Pilih sel di dalam tabel untuk mengubahnya, atau buat tabel dengan Format sebagai Tabel (Ctrl+T).
+Light	Terang
+Medium	Sedang
+Dark	Gelap
+Sort by {}	Urutkan menurut {}
+Count: {}	Hitung: {}
+Average: {}   Count: {}   Sum: {}	Rata-rata: {}   Hitung: {}   Jumlah: {}

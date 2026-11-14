@@ -11,10 +11,44 @@ use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::{Sizable as _, h_flex, tooltip::Tooltip, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, t, t_dyn, tk};
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{metrics::*, tokens};
 
 use crate::DocsView;
+
+/// "Footnote" / "Endnote" in the interface language.
+pub(crate) fn kind_label(kind: NoteKind) -> &'static str {
+    match kind {
+        NoteKind::Footnote => t("Footnote"),
+        NoteKind::Endnote => t("Endnote"),
+    }
+}
+
+/// Why the engine won't edit a header, footer or note, in the interface
+/// language.
+const LOCK_REASONS: [&str; 4] = [
+    tk(
+        "This header has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet",
+    ),
+    tk(
+        "This footer has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet",
+    ),
+    tk(
+        "This footnote has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet",
+    ),
+    tk(
+        "This endnote has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet",
+    ),
+];
+
+pub(crate) fn lock_reason(why: &str) -> &str {
+    if LOCK_REASONS.contains(&why) {
+        t_dyn(why)
+    } else {
+        why
+    }
+}
 
 /// The note being edited.
 pub(crate) struct NoteEdit {
@@ -40,7 +74,7 @@ impl DocsView {
         match self.doc.note_at(self.sel.head) {
             Some((kind, id)) => self.open_note(kind, id, None, window, cx),
             None => {
-                self.status = "Put the caret after a footnote or endnote number".into();
+                self.status = t("Put the caret after a footnote or endnote number").into();
                 cx.notify();
             }
         }
@@ -96,7 +130,10 @@ impl DocsView {
         let input = cx.new(|cx| {
             let mut s = TextareaState::new(window, cx)
                 .auto_grow(2, 8)
-                .placeholder(format!("Write the {}", kind.label().to_lowercase()));
+                .placeholder(match kind {
+                    NoteKind::Footnote => t("Write the footnote"),
+                    NoteKind::Endnote => t("Write the endnote"),
+                });
             s.set_value(text, window, cx);
             s
         });
@@ -140,7 +177,11 @@ impl DocsView {
         {
             let sel = self.sel;
             self.edited(sel, window, cx);
-            self.status = format!("{} updated", edit.kind.label()).into();
+            self.status = match edit.kind {
+                NoteKind::Footnote => t("Footnote updated"),
+                NoteKind::Endnote => t("Endnote updated"),
+            }
+            .into();
         }
         cx.notify();
     }
@@ -152,7 +193,11 @@ impl DocsView {
         if self.doc.delete_note(edit.kind, &edit.id, self.sel) {
             let sel = self.sel;
             self.edited(sel, window, cx);
-            self.status = format!("{} deleted", edit.kind.label()).into();
+            self.status = match edit.kind {
+                NoteKind::Footnote => t("Footnote deleted"),
+                NoteKind::Endnote => t("Endnote deleted"),
+            }
+            .into();
         }
         self.focus(window, cx);
         cx.notify();
@@ -172,7 +217,7 @@ impl DocsView {
             .find(|r| r.kind == edit.kind && r.id == edit.id)
             .map(|r| r.label)
             .unwrap_or_default();
-        let title = format!("{} {label}", edit.kind.label());
+        let title = format!("{} {label}", kind_label(edit.kind));
         let button = |id: &'static str, text: &'static str, primary: bool| {
             div()
                 .id(id)
@@ -196,15 +241,16 @@ impl DocsView {
                 .rounded(RADIUS_MD)
                 .bg(t.surface)
                 .text_color(t.fg_muted)
-                .child(why.clone())
+                .child(lock_reason(why).to_owned())
                 .into_any_element(),
             None => Textarea::new(&edit.input).small().into_any_element(),
         };
         let delete = {
             let v = view.clone();
-            button("docs-note-delete", "Delete", false)
+            button("docs-note-delete", i18n::t("Delete"), false)
                 .tooltip(|window, cx| {
-                    Tooltip::new("Delete the note and its number in the text").build(window, cx)
+                    Tooltip::new(i18n::t("Delete the note and its number in the text"))
+                        .build(window, cx)
                 })
                 .on_click(move |_, window, cx| {
                     let _ = v.update(cx, |this, cx| this.delete_open_note(window, cx));
@@ -212,8 +258,10 @@ impl DocsView {
         };
         let done = {
             let v = view.clone();
-            button("docs-note-apply", "Done", true)
-                .tooltip(|window, cx| Tooltip::new("Done  Ctrl+Enter").build(window, cx))
+            button("docs-note-apply", i18n::t("Done"), true)
+                .tooltip(|window, cx| {
+                    Tooltip::new(format!("{}  Ctrl+Enter", i18n::t("Done"))).build(window, cx)
+                })
                 .on_click(move |_, window, cx| {
                     let _ = v.update(cx, |this, cx| {
                         this.apply_note(window, cx);

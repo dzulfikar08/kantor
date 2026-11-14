@@ -16,6 +16,7 @@ use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, tooltip::Tooltip, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, t, tf, tk};
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{components::section_label, metrics::*, tokens};
 
@@ -41,11 +42,19 @@ pub(crate) struct HfMenu {
 
 fn type_label(ty: HfType, first: bool, even: bool) -> &'static str {
     match ty {
-        HfType::First => "First page",
-        HfType::Even => "Even pages",
-        HfType::Default if even => "Odd pages",
-        HfType::Default if first => "Other pages",
-        HfType::Default => "Every page",
+        HfType::First => t("First page"),
+        HfType::Even => t("Even pages"),
+        HfType::Default if even => t("Odd pages"),
+        HfType::Default if first => t("Other pages"),
+        HfType::Default => t("Every page"),
+    }
+}
+
+/// "Header" / "Footer" in the interface language.
+pub(crate) fn kind_label(kind: HfKind) -> &'static str {
+    match kind {
+        HfKind::Header => t("Header"),
+        HfKind::Footer => t("Footer"),
     }
 }
 
@@ -101,9 +110,13 @@ impl DocsView {
                 let (text, align) = self.doc.hf_text(section, kind, ty);
                 let locked = self.doc.hf_locked(section, kind, ty);
                 let input = cx.new(|cx| {
-                    let mut s = TextareaState::new(window, cx)
-                        .auto_grow(1, 4)
-                        .placeholder(format!("No {}", kind.label().to_lowercase()));
+                    let mut s =
+                        TextareaState::new(window, cx)
+                            .auto_grow(1, 4)
+                            .placeholder(match kind {
+                                HfKind::Header => t("No header"),
+                                HfKind::Footer => t("No footer"),
+                            });
                     s.set_value(text, window, cx);
                     s
                 });
@@ -160,7 +173,11 @@ impl DocsView {
         if changed {
             let sel = self.sel;
             self.edited(sel, window, cx);
-            self.status = format!("{} updated", kind.label()).into();
+            self.status = match kind {
+                HfKind::Header => t("Header updated"),
+                HfKind::Footer => t("Footer updated"),
+            }
+            .into();
         }
         self.hf_menu = None;
         cx.notify();
@@ -191,14 +208,14 @@ impl DocsView {
         let section = self.doc.section_of(self.sel.head.para);
         let (text, _) = self.doc.hf_text(section, HfKind::Footer, HfType::Default);
         if text.contains("{PAGE}") {
-            self.status = "This section's footer already has page numbers".into();
+            self.status = t("This section's footer already has page numbers").into();
             cx.notify();
             return;
         }
         let new = if text.trim().is_empty() {
-            "Page {PAGE} of {PAGES}".to_owned()
+            t("Page {PAGE} of {PAGES}").to_owned()
         } else {
-            format!("{text}\nPage {{PAGE}} of {{PAGES}}")
+            format!("{text}\n{}", t("Page {PAGE} of {PAGES}"))
         };
         if self.doc.set_hf_text(
             section,
@@ -210,11 +227,12 @@ impl DocsView {
         ) {
             let sel = self.sel;
             self.edited(sel, window, cx);
-            self.status = "Page numbers added to the footer".into();
+            self.status = t("Page numbers added to the footer").into();
         } else {
             self.status = self
                 .doc
                 .hf_locked(section, HfKind::Footer, HfType::Default)
+                .map(|why| crate::note_menu::lock_reason(&why).to_owned())
                 .unwrap_or_default()
                 .into();
         }
@@ -235,9 +253,9 @@ impl DocsView {
             Some(sel) => {
                 self.edited(sel, window, cx);
                 self.status =
-                    "Section break inserted: Page setup now changes this section only".into();
+                    t("Section break inserted: Page setup now changes this section only").into();
             }
-            None => self.status = "A section break can't go inside a table".into(),
+            None => self.status = t("A section break can't go inside a table").into(),
         }
         cx.notify();
     }
@@ -292,7 +310,7 @@ impl DocsView {
                 .cursor_pointer()
                 .when(on, |d| d.bg(t.selected).text_color(t.fg))
                 .when(!on, |d| d.text_color(t.fg_muted).hover(|s| s.bg(t.hover)))
-                .child(k.label())
+                .child(kind_label(k))
                 .on_click(move |_, window, cx| {
                     let _ = v.update(cx, |this, cx| {
                         this.hf_menu = None;
@@ -324,7 +342,7 @@ impl DocsView {
                         .rounded(RADIUS_MD)
                         .bg(t.surface)
                         .text_color(t.fg_muted)
-                        .child(why.clone()),
+                        .child(crate::note_menu::lock_reason(why).to_owned()),
                 );
                 fields = fields.child(col);
                 continue;
@@ -344,8 +362,8 @@ impl DocsView {
                         .text_color(t.fg_muted)
                         .cursor_pointer()
                         .hover(|s| s.bg(t.hover).text_color(t.fg))
-                        .child(text)
-                        .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
+                        .child(i18n::t(text))
+                        .tooltip(move |window, cx| Tooltip::new(i18n::t(tip)).build(window, cx))
                         .on_click(move |_, window, cx| {
                             input.update(cx, |s, cx| s.insert(insert, window, cx));
                         })
@@ -364,7 +382,7 @@ impl DocsView {
                     .when(on, |d| d.bg(t.selected).text_color(t.fg))
                     .when(!on, |d| d.text_color(t.fg_muted).hover(|s| s.bg(t.hover)))
                     .child(Icon::new(icon).with_size(ICON_SM))
-                    .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
+                    .tooltip(move |window, cx| Tooltip::new(i18n::t(tip)).build(window, cx))
                     .on_click(move |_, _, cx| {
                         let _ = v.update(cx, |this, cx| {
                             if let Some(m) = &mut this.hf_menu
@@ -381,20 +399,24 @@ impl DocsView {
                     .gap(SPACE_2)
                     .child(token(
                         format!("hf-page-{i}").into(),
-                        "Page number",
-                        "Insert the page number: {PAGE}",
+                        tk("Page number"),
+                        tk("Insert the page number: {PAGE}"),
                         "{PAGE}",
                     ))
                     .child(token(
                         format!("hf-pages-{i}").into(),
-                        "Page count",
-                        "Insert the number of pages: {PAGES}",
+                        tk("Page count"),
+                        tk("Insert the number of pages: {PAGES}"),
                         "{PAGES}",
                     ))
                     .child(div().flex_1())
-                    .child(align_btn(Align::Left, Lucide::TextAlignStart, "Left"))
-                    .child(align_btn(Align::Center, Lucide::TextAlignCenter, "Centre"))
-                    .child(align_btn(Align::Right, Lucide::TextAlignEnd, "Right")),
+                    .child(align_btn(Align::Left, Lucide::TextAlignStart, tk("Left")))
+                    .child(align_btn(
+                        Align::Center,
+                        Lucide::TextAlignCenter,
+                        tk("Centre"),
+                    ))
+                    .child(align_btn(Align::Right, Lucide::TextAlignEnd, tk("Right"))),
             );
             fields = fields.child(col);
         }
@@ -411,18 +433,20 @@ impl DocsView {
                 .bg(t.accent)
                 .text_color(t.accent_fg)
                 .cursor_pointer()
-                .child("Apply")
-                .tooltip(|window, cx| Tooltip::new("Apply  Ctrl+Enter").build(window, cx))
+                .child(i18n::t("Apply"))
+                .tooltip(|window, cx| {
+                    Tooltip::new(format!("{}  Ctrl+Enter", i18n::t("Apply"))).build(window, cx)
+                })
                 .on_click(move |_, window, cx| {
                     let _ = v.update(cx, |this, cx| this.apply_hf(window, cx));
                 })
         };
         let note = (sections.len() > 1).then(|| {
-            div().px(SPACE_4).text_color(t.fg_muted).child(format!(
-                "Section {} of {}; sections without their own use the one before",
-                menu.section + 1,
-                sections.len()
-            ))
+            let msg = tk("Section {} of {}; sections without their own use the one before");
+            div()
+                .px(SPACE_4)
+                .text_color(t.fg_muted)
+                .child(tf(msg, &[&(menu.section + 1), &sections.len()]))
         });
 
         let panel = v_flex()
@@ -446,16 +470,20 @@ impl DocsView {
             .child(tabs)
             .children(note)
             .child(fields)
-            .child(section_label("Options", cx).px(SPACE_4).pt(SPACE_2))
+            .child(
+                section_label(i18n::t("Options"), cx)
+                    .px(SPACE_4)
+                    .pt(SPACE_2),
+            )
             .child(check(
                 "hf-first",
-                "Different first page",
+                i18n::t("Different first page"),
                 first,
                 DocsView::set_title_page_doc,
             ))
             .child(check(
                 "hf-even",
-                "Different odd and even pages",
+                i18n::t("Different odd and even pages"),
                 even,
                 DocsView::set_even_odd_doc,
             ))
@@ -490,7 +518,9 @@ pub(crate) fn hf_button(view: &DocsView, cx: &mut Context<DocsView>) -> Stateful
                 .hover(|s| s.bg(t.hover).text_color(t.fg))
         })
         .child(Icon::new(Lucide::PanelTop).with_size(ICON_MD))
-        .tooltip(|window, cx| Tooltip::new("Header and footer, page numbers").build(window, cx))
+        .tooltip(|window, cx| {
+            Tooltip::new(i18n::t("Header and footer, page numbers")).build(window, cx)
+        })
         .on_click(move |ev, window, cx| {
             let p = ev.position();
             let at = point(p.x + SPACE_7, p.y + SPACE_7);

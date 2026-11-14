@@ -5,6 +5,7 @@ use gpui_kit::component::{ActiveTheme as _, IconName, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::components::{IconButtonExt as _, dot, icon_button, section_label};
+use kantor_ui::i18n;
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 
@@ -77,10 +78,10 @@ impl Workspace {
         let t = tokens(cx);
         let entity = cx.entity().downgrade();
         let header = self.panel_header(
-            "Explorer",
+            i18n::t("Explorer"),
             "hide-sidebar",
             IconName::PanelLeft,
-            ("Hide sidebar", "Ctrl+Shift+E"),
+            (i18n::t("Hide sidebar"), "Ctrl+Shift+E"),
             |ws, window, cx| ws.toggle_sidebar(&ToggleSidebar, window, cx),
             cx,
         );
@@ -119,7 +120,7 @@ impl Workspace {
                     .px(SPACE_4)
                     .text_size(FONT_SMALL)
                     .text_color(t.fg_dim)
-                    .child("No open documents"),
+                    .child(i18n::t("No open documents")),
             );
         }
 
@@ -163,9 +164,9 @@ impl Workspace {
 
         // Create
         let create: Vec<_> = [
-            (AppKind::Sheets, "New spreadsheet", t.sheets, true),
-            (AppKind::Docs, "New document", t.docs, true),
-            (AppKind::Slides, "New presentation", t.slides, true),
+            (AppKind::Sheets, i18n::t("New spreadsheet"), t.sheets, true),
+            (AppKind::Docs, i18n::t("New document"), t.docs, true),
+            (AppKind::Slides, i18n::t("New presentation"), t.slides, true),
         ]
         .into_iter()
         .map(|(app, label, color, ready)| {
@@ -192,9 +193,9 @@ impl Workspace {
                 .children(rows)
         };
         let has_recent = !recent.is_empty();
-        let open_section = section("Open", open, cx);
-        let recent_section = section("Recent", recent, cx);
-        let create_section = section("Create", create, cx);
+        let open_section = section(i18n::t("Open"), open, cx);
+        let recent_section = section(i18n::t("Recent"), recent, cx);
+        let create_section = section(i18n::t("Create"), create, cx);
 
         let handle = div()
             .id("sidebar-handle")
@@ -241,10 +242,10 @@ impl Workspace {
     pub(super) fn render_inspector(&mut self, cx: &mut Context<Self>) -> Div {
         let t = tokens(cx);
         let header = self.panel_header(
-            "Inspector",
+            i18n::t("Inspector"),
             "hide-inspector",
             IconName::PanelRight,
-            ("Hide inspector", "Ctrl+Shift+I"),
+            (i18n::t("Hide inspector"), "Ctrl+Shift+I"),
             |ws, window, cx| ws.toggle_inspector(&ToggleInspector, window, cx),
             cx,
         );
@@ -271,6 +272,8 @@ impl Workspace {
                 )
         };
 
+        let unsupported_note =
+            i18n::t("{}. Save writes a new copy; the original is never overwritten.");
         let body = match self.focused_view() {
             Some(DocView::Docs(view)) => {
                 let d = view.read(cx).info();
@@ -279,43 +282,40 @@ impl Workspace {
                     .as_deref()
                     .and_then(|p| p.parent())
                     .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "Not saved yet".to_owned());
+                    .unwrap_or_else(|| i18n::t("Not saved yet").to_owned());
                 let state = match (d.dirty, d.unsupported.is_empty()) {
-                    (true, _) => "Unsaved changes",
-                    (false, true) => "Saved",
-                    (false, false) => "Opened with unsupported content",
+                    (true, _) => i18n::t("Unsaved changes"),
+                    (false, true) => i18n::t("Saved"),
+                    (false, false) => i18n::t("Opened with unsupported content"),
                 };
                 v_flex()
                     .gap(SPACE_7)
                     .child(
                         v_flex()
                             .gap(SPACE_5)
-                            .child(section_label("Paragraph", cx))
-                            .child(field("Style", d.style, false))
-                            .child(field("Font", d.font, false)),
+                            .child(section_label(i18n::t("Paragraph"), cx))
+                            .child(field(i18n::t("Style"), d.style, false))
+                            .child(field(i18n::t("Font"), d.font, false)),
                     )
                     .child(
                         v_flex()
                             .gap(SPACE_5)
-                            .child(section_label("Document", cx))
-                            .child(field("File", d.name, false))
-                            .child(field("Folder", folder, false))
+                            .child(section_label(i18n::t("Document"), cx))
+                            .child(field(i18n::t("File"), d.name, false))
+                            .child(field(i18n::t("Folder"), folder, false))
                             .child(field(
-                                "Length",
-                                format!(
-                                    "{} pages · {} words · {} characters · {} paragraphs",
-                                    d.pages, d.words, d.chars, d.paragraphs
+                                i18n::t("Length"),
+                                i18n::fill(
+                                    i18n::t("{} pages · {} words · {} characters · {} paragraphs"),
+                                    &[&d.pages, &d.words, &d.chars, &d.paragraphs],
                                 ),
                                 false,
                             ))
-                            .child(field("State", state.to_owned(), false))
+                            .child(field(i18n::t("State"), state.to_owned(), false))
                             .when(!d.unsupported.is_empty(), |c| {
                                 c.child(field(
-                                    "Not shown or kept",
-                                    format!(
-                                        "{}. Save writes a new copy; the original is never overwritten.",
-                                        d.unsupported.join(", ")
-                                    ),
+                                    i18n::t("Not shown or kept"),
+                                    i18n::fill(unsupported_note, &[&d.unsupported.join(", ")]),
                                     false,
                                 ))
                             }),
@@ -328,32 +328,32 @@ impl Workspace {
                     .as_deref()
                     .and_then(|p| p.parent())
                     .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "Not saved yet".to_owned());
+                    .unwrap_or_else(|| i18n::t("Not saved yet").to_owned());
                 let state = match (d.dirty, d.unsupported.is_empty()) {
-                    (true, _) => "Unsaved changes",
-                    (false, true) => "Saved",
-                    (false, false) => "Has content Kantor can't keep",
+                    (true, _) => i18n::t("Unsaved changes"),
+                    (false, true) => i18n::t("Saved"),
+                    (false, false) => i18n::t("Has content Kantor can't keep"),
                 };
                 let len = slides_ui::SlidesView::format_length;
                 let shape = match d.shape {
                     Some((name, kind, x)) => v_flex()
                         .gap(SPACE_5)
-                        .child(section_label("Shape", cx))
-                        .child(field("Name", format!("{name} · {kind}"), false))
+                        .child(section_label(i18n::t("Shape"), cx))
+                        .child(field(i18n::t("Name"), format!("{name} · {kind}"), false))
                         .child(field(
-                            "Position",
+                            i18n::t("Position"),
                             format!("{} × {}", len(x.x), len(x.y)),
                             false,
                         ))
                         .child(field(
-                            "Size",
+                            i18n::t("Size"),
                             format!("{} × {}", len(x.cx), len(x.cy)),
                             false,
                         )),
                     None => v_flex()
                         .gap(SPACE_5)
-                        .child(section_label("Shape", cx))
-                        .child(field("Selection", String::new(), false)),
+                        .child(section_label(i18n::t("Shape"), cx))
+                        .child(field(i18n::t("Selection"), String::new(), false)),
                 };
                 v_flex()
                     .gap(SPACE_7)
@@ -361,28 +361,25 @@ impl Workspace {
                     .child(
                         v_flex()
                             .gap(SPACE_5)
-                            .child(section_label("Slide", cx))
+                            .child(section_label(i18n::t("Slide"), cx))
                             .child(field(
-                                "Slide",
-                                format!("{} of {}", d.current + 1, d.slides),
+                                i18n::t("Slide"),
+                                i18n::tf("{} of {}", &[&(d.current + 1), &d.slides]),
                                 false,
                             ))
-                            .child(field("Layout", d.layout, false)),
+                            .child(field(i18n::t("Layout"), d.layout, false)),
                     )
                     .child(
                         v_flex()
                             .gap(SPACE_5)
-                            .child(section_label("Presentation", cx))
-                            .child(field("File", d.name, false))
-                            .child(field("Folder", folder, false))
-                            .child(field("State", state.to_owned(), false))
+                            .child(section_label(i18n::t("Presentation"), cx))
+                            .child(field(i18n::t("File"), d.name, false))
+                            .child(field(i18n::t("Folder"), folder, false))
+                            .child(field(i18n::t("State"), state.to_owned(), false))
                             .when(!d.unsupported.is_empty(), |c| {
                                 c.child(field(
-                                    "Not kept",
-                                    format!(
-                                        "{}. Save writes a new copy; the original is never overwritten.",
-                                        d.unsupported.join(", ")
-                                    ),
+                                    i18n::t("Not kept"),
+                                    i18n::fill(unsupported_note, &[&d.unsupported.join(", ")]),
                                     false,
                                 ))
                             }),
@@ -397,7 +394,7 @@ impl Workspace {
                     .as_deref()
                     .and_then(|p| p.parent())
                     .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "Not saved yet".to_owned());
+                    .unwrap_or_else(|| i18n::t("Not saved yet").to_owned());
                 let sheet = book
                     .sheets
                     .get(book.active_sheet)
@@ -409,41 +406,45 @@ impl Workspace {
                     .child(
                         v_flex()
                             .gap(SPACE_5)
-                            .child(section_label("Cell", cx))
+                            .child(section_label(i18n::t("Cell"), cx))
                             .child(field(
-                                "Address",
+                                i18n::t("Address"),
                                 format!("{} · {sheet}", cell.address),
                                 false,
                             ))
                             .child(field(
-                                if is_formula { "Formula" } else { "Content" },
+                                if is_formula {
+                                    i18n::t("Formula")
+                                } else {
+                                    i18n::t("Content")
+                                },
                                 cell.input,
                                 is_formula,
                             ))
-                            .child(field("Value", cell.value, false)),
+                            .child(field(i18n::t("Value"), cell.value, false)),
                     )
                     .child(
                         v_flex()
                             .gap(SPACE_5)
-                            .child(section_label("Workbook", cx))
-                            .child(field("File", book.name, false))
-                            .child(field("Folder", folder, false))
+                            .child(section_label(i18n::t("Workbook"), cx))
+                            .child(field(i18n::t("File"), book.name, false))
+                            .child(field(i18n::t("Folder"), folder, false))
                             .child(field(
-                                "Sheets",
+                                i18n::t("Sheets"),
                                 format!("{} ({})", book.sheets.len(), book.sheets.join(", ")),
                                 false,
                             ))
                             .child(field(
-                                "Used range",
-                                format!("{} rows × {} columns", book.used.0, book.used.1),
+                                i18n::t("Used range"),
+                                i18n::tf("{} rows × {} columns", &[&book.used.0, &book.used.1]),
                                 false,
                             ))
                             .child(field(
-                                "State",
+                                i18n::t("State"),
                                 if book.dirty {
-                                    "Unsaved changes".to_owned()
+                                    i18n::t("Unsaved changes").to_owned()
                                 } else {
-                                    "Saved".to_owned()
+                                    i18n::t("Saved").to_owned()
                                 },
                                 false,
                             )),
@@ -453,7 +454,7 @@ impl Workspace {
                 div()
                     .text_size(FONT_SMALL)
                     .text_color(t.fg_dim)
-                    .child("Open a document to see its details here."),
+                    .child(i18n::t("Open a document to see its details here.")),
             ),
         };
 

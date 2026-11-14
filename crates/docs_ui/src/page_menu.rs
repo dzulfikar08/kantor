@@ -10,6 +10,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, tooltip::Tooltip, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, t_dyn, tf, tk};
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{Tokens, components::section_label, metrics::*, tokens};
 
@@ -23,7 +24,27 @@ pub(crate) struct PageMenu {
     _subs: Vec<Subscription>,
 }
 
-const SIDES: [&str; 4] = ["Top", "Bottom", "Left", "Right"];
+const SIDES: [&str; 4] = [tk("Top"), tk("Bottom"), tk("Left"), tk("Right")];
+
+/// Margin preset names and details from the engine, marked for the catalog.
+const MARGIN_TEXT: [&str; 8] = [
+    tk("Normal"),
+    tk("Narrow"),
+    tk("Moderate"),
+    tk("Wide"),
+    tk("2.54 cm all sides"),
+    tk("1.27 cm all sides"),
+    tk("2.54 cm top/bottom, 1.91 cm sides"),
+    tk("2.54 cm top/bottom, 5.08 cm sides"),
+];
+
+fn margin_text(s: &str) -> &str {
+    if MARGIN_TEXT.contains(&s) {
+        t_dyn(s)
+    } else {
+        s
+    }
+}
 
 fn format_cm(tw: u32) -> String {
     let s = format!("{:.2}", twips_to_cm(tw));
@@ -48,13 +69,13 @@ fn margins(p: &PageGeometry) -> [u32; 4] {
 
 /// Short label for the toolbar, e.g. `A4` or `F4 ⟂` (landscape).
 pub(crate) fn page_label(p: &PageGeometry) -> String {
-    let paper = PaperSize::of(p).map_or("Custom", |s| match s {
+    let paper = PaperSize::of(p).map_or(i18n::t("Custom"), |s| match s {
         PaperSize::F4 => "F4",
         s => s.label(),
     });
     match p.orientation() {
         Orientation::Portrait => paper.to_owned(),
-        Orientation::Landscape => format!("{paper} landscape"),
+        Orientation::Landscape => tf("{} landscape", &[&paper]),
     }
 }
 
@@ -188,9 +209,10 @@ impl DocsView {
         let paper = PaperSize::of(&page);
         let sections = self.doc.sections().len();
         let section_note = (sections > 1).then(|| {
-            format!(
-                "Section {} of {sections}: changes apply to this section",
-                self.doc.section_of(self.sel.head.para) + 1
+            let msg = tk("Section {} of {}: changes apply to this section");
+            tf(
+                msg,
+                &[&(self.doc.section_of(self.sel.head.para) + 1), &sections],
             )
         });
         let margin = MarginPreset::of(&page);
@@ -236,8 +258,8 @@ impl DocsView {
         for m in MarginPreset::ALL {
             presets = presets.child(row(
                 format!("docs-margins-{}", m.label()).into(),
-                m.label(),
-                m.detail(),
+                margin_text(m.label()),
+                margin_text(m.detail()),
                 margin == Some(m),
                 Box::new(move |v, w, cx| v.set_margins_doc(m, w, cx)),
             ));
@@ -256,7 +278,7 @@ impl DocsView {
                 .cursor_pointer()
                 .when(on, |d| d.bg(t.selected).text_color(t.fg))
                 .when(!on, |d| d.text_color(t.fg_muted).hover(|s| s.bg(t.hover)))
-                .child(label)
+                .child(i18n::t(label))
                 .on_click(move |_, window, cx| {
                     let _ = v.update(cx, |this, cx| this.set_orientation_doc(o, window, cx));
                 })
@@ -268,14 +290,14 @@ impl DocsView {
             .bg(t.surface)
             .border_1()
             .border_color(t.border)
-            .child(segment(Orientation::Portrait, "Portrait"))
-            .child(segment(Orientation::Landscape, "Landscape"));
+            .child(segment(Orientation::Portrait, tk("Portrait")))
+            .child(segment(Orientation::Landscape, tk("Landscape")));
 
         let field = |i: usize| {
             v_flex()
                 .flex_1()
                 .gap(SPACE_1)
-                .child(div().text_color(t.fg_muted).child(SIDES[i]))
+                .child(div().text_color(t.fg_muted).child(t_dyn(SIDES[i])))
                 .child(Input::new(&menu.inputs[i]).small())
         };
         let apply = {
@@ -291,8 +313,10 @@ impl DocsView {
                 .bg(t.accent)
                 .text_color(t.accent_fg)
                 .cursor_pointer()
-                .child("Apply")
-                .tooltip(|window, cx| Tooltip::new("Apply custom margins  Enter").build(window, cx))
+                .child(i18n::t("Apply"))
+                .tooltip(|window, cx| {
+                    Tooltip::new(i18n::t("Apply custom margins  Enter")).build(window, cx)
+                })
                 .on_click(move |_, window, cx| {
                     let _ = v.update(cx, |this, cx| this.apply_custom_margins(window, cx));
                 })
@@ -323,13 +347,13 @@ impl DocsView {
                 cx.notify();
             }))
             .children(section_note.map(|n| div().px(SPACE_4).text_color(t.fg_muted).child(n)))
-            .child(heading("Paper size", &t, cx))
+            .child(heading(i18n::t("Paper size"), &t, cx))
             .child(papers)
-            .child(heading("Orientation", &t, cx))
+            .child(heading(i18n::t("Orientation"), &t, cx))
             .child(div().px(SPACE_4).child(orientation))
-            .child(heading("Margins", &t, cx))
+            .child(heading(i18n::t("Margins"), &t, cx))
             .child(presets)
-            .child(heading("Custom margins (cm)", &t, cx))
+            .child(heading(i18n::t("Custom margins (cm)"), &t, cx))
             .child(custom);
         Some(deferred(
             anchored()
@@ -367,7 +391,7 @@ pub(crate) fn page_button(view: &DocsView, cx: &mut Context<DocsView>) -> Statef
         .child(Icon::new(Lucide::FileText).with_size(ICON_MD))
         .child(page_label(&view.page_geometry()))
         .tooltip(|window, cx| {
-            Tooltip::new("Page setup: size, orientation, margins").build(window, cx)
+            Tooltip::new(i18n::t("Page setup: size, orientation, margins")).build(window, cx)
         })
         .on_click(move |ev, window, cx| {
             let p = ev.position();

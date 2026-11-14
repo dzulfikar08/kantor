@@ -10,6 +10,7 @@ use gpui_kit::*;
 use kantor_core::settings::Settings;
 use kantor_spell::{Lang, SpellItem, SpellMenu, Speller};
 
+use crate::i18n::t;
 use crate::tokens::tokens;
 
 /// Whether misspelled words are underlined, and the default dictionary.
@@ -96,7 +97,13 @@ pub type OnSpellItem = Rc<dyn Fn(&SpellItem, &mut Window, &mut App)>;
 /// separator.
 pub fn menu_items(mut menu: PopupMenu, m: &SpellMenu, on_click: OnSpellItem) -> PopupMenu {
     for item in &m.items {
-        let mut it = PopupMenuItem::new(item.label());
+        let label = match item {
+            SpellItem::Replace(s) => s.clone(),
+            SpellItem::NoSuggestions => t("(No Spelling Suggestions)").to_owned(),
+            SpellItem::IgnoreAll => t("Ignore All").to_owned(),
+            SpellItem::AddToDictionary => t("Add to Dictionary").to_owned(),
+        };
+        let mut it = PopupMenuItem::new(label);
         match item {
             SpellItem::NoSuggestions => it = it.disabled(true),
             _ => {

@@ -25,6 +25,7 @@ use gpui_kit::component::input::{self, Input, InputEvent, InputState};
 use gpui_kit::component::{Sizable as _, h_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, tf};
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{RowHeight, Workbook};
 
@@ -365,13 +366,11 @@ impl SheetsView {
             res
         });
         self.status = match result {
-            Ok(done) if done.shown > 0 => format!(
-                "Unhid {} row{}",
-                done.shown,
-                if done.shown == 1 { "" } else { "s" }
-            )
-            .into(),
-            Ok(_) => "Those rows are hidden by a filter; clear the filter to show them".into(),
+            Ok(done) if done.shown == 1 => i18n::t("Unhid 1 row").into(),
+            Ok(done) if done.shown > 0 => tf("Unhid {} rows", &[&done.shown]).into(),
+            Ok(_) => {
+                i18n::t("Those rows are hidden by a filter; clear the filter to show them").into()
+            }
             Err(err) => format!("{err:#}").into(),
         };
         self.update_title(window, cx);
@@ -512,15 +511,13 @@ impl SheetsView {
             cx.notify();
             res
         });
-        let what = if first == last {
-            format!("row {}", first + 1)
-        } else {
-            format!("rows {}–{}", first + 1, last + 1)
-        };
+        let (a, b) = (first + 1, last + 1);
         self.status = match (result, points) {
-            (Ok(true), Some(p)) => format!("Row height {} pt: {what}", trim(p)).into(),
-            (Ok(true), None) => format!("Fitted the height of {what}").into(),
-            (Ok(false), _) => "Row height unchanged".into(),
+            (Ok(true), Some(p)) if a == b => tf("Row height {} pt: row {}", &[&trim(p), &a]).into(),
+            (Ok(true), Some(p)) => tf("Row height {} pt: rows {}–{}", &[&trim(p), &a, &b]).into(),
+            (Ok(true), None) if a == b => tf("Fitted the height of row {}", &[&a]).into(),
+            (Ok(true), None) => tf("Fitted the height of rows {}–{}", &[&a, &b]).into(),
+            (Ok(false), _) => i18n::t("Row height unchanged").into(),
             (Err(err), _) => format!("{err:#}").into(),
         };
         self.update_title(window, cx);
@@ -545,7 +542,7 @@ impl SheetsView {
             let px = grid.layout.heights.borrow().height(row);
             px / px_per_point(&grid.book, grid.sheet)
         };
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Points"));
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("Points")));
         input.update(cx, |i, cx| {
             i.set_value(trim((points * 4.0).round() / 4.0), window, cx);
             i.focus(window, cx);
@@ -573,11 +570,8 @@ impl SheetsView {
                         }
                     }
                     _ => {
-                        self.status = format!(
-                            "Row height must be a number of points from 0 to {}",
-                            sheets_engine::MAX_ROW_POINTS
-                        )
-                        .into();
+                        let msg = i18n::t("Row height must be a number of points from 0 to {}");
+                        self.status = i18n::fill(msg, &[&sheets_engine::MAX_ROW_POINTS]).into();
                         cx.notify();
                     }
                 }
@@ -602,9 +596,9 @@ impl SheetsView {
             .height_rows(cx)
             .map(|(a, b)| {
                 if a == b {
-                    format!("Row {}", a + 1)
+                    tf("Row {}", &[&(a + 1)])
                 } else {
-                    format!("Rows {}–{}", a + 1, b + 1)
+                    tf("Rows {}–{}", &[&(a + 1), &(b + 1)])
                 }
             })
             .unwrap_or_default();
@@ -630,7 +624,7 @@ impl SheetsView {
                         .text_size(FONT_SMALL)
                         .text_color(t.fg_muted)
                         .mb(SPACE_3)
-                        .child(SharedString::from(format!("Row height (pt) · {rows}"))),
+                        .child(SharedString::from(tf("Row height (pt) · {}", &[&rows]))),
                 )
                 .child(
                     h_flex()
@@ -640,7 +634,7 @@ impl SheetsView {
                             div()
                                 .text_size(FONT_SMALL)
                                 .text_color(t.fg_dim)
-                                .child("Enter to apply"),
+                                .child(i18n::t("Enter to apply")),
                         ),
                 )
                 .into_any_element(),

@@ -1,0 +1,99 @@
+# English<TAB>Indonesian, one string per line (see kantor_ui/src/i18n.rs).
+New slide · Ctrl+M	Slide baru · Ctrl+M
+Duplicate slide · Ctrl+D	Duplikat slide · Ctrl+D
+Delete slide	Hapus slide
+Insert text box	Sisipkan kotak teks
+Insert rectangle	Sisipkan persegi panjang
+Insert ellipse	Sisipkan elips
+Insert picture (PNG or JPEG)	Sisipkan gambar (PNG atau JPEG)
+Edit table or chart data	Edit data tabel atau bagan
+Bold · Ctrl+B	Tebal · Ctrl+B
+Italic · Ctrl+I	Miring · Ctrl+I
+Underline · Ctrl+U	Garis Bawah · Ctrl+U
+Bulleted list · Tab / Shift+Tab change the level	Daftar berpoin · Tab / Shift+Tab mengubah level
+Numbered list	Daftar bernomor
+Speaker notes	Catatan pembicara
+Present · F5 (Shift+F5 from this slide)	Presentasikan · F5 (Shift+F5 dari slide ini)
+Print and export	Cetak dan ekspor
+Print slides…	Cetak slide…
+Print notes pages…	Cetak halaman catatan…
+Print handouts: 1 slide per page…	Cetak handout: 1 slide per halaman…
+Print handouts: {} slides per page…	Cetak handout: {} slide per halaman…
+Background 1	Latar Belakang 1
+Text 1	Teks 1
+Background 2	Latar Belakang 2
+Text 2	Teks 2
+Accent {}	Aksen {}
+Select a shape or picture to change its fill or outline	Pilih bentuk atau gambar untuk mengubah isian atau garis luarnya
+Theme colours	Warna tema
+No fill	Tanpa isian
+No outline	Tanpa garis luar
+Width	Lebar
+Shape fill	Isian bentuk
+Shape outline: colour and width	Garis luar bentuk: warna dan lebar
+Click to add notes	Klik untuk menambahkan catatan
+The notes can't be edited: {}	Catatan tidak dapat diedit: {}
+This text can't be edited	Teks ini tidak dapat diedit
+Replaced 1 match	1 kecocokan diganti
+Replaced {} matches	{} kecocokan diganti
+Agent: {}	Agen: {}
++ Row above	+ Baris di atas
+Insert a row above the current cell	Sisipkan baris di atas sel saat ini
++ Row below	+ Baris di bawah
+Insert a row below the current cell	Sisipkan baris di bawah sel saat ini
+− Row	− Baris
+Delete the current row	Hapus baris saat ini
++ Column left	+ Kolom di kiri
+Insert a column left of the current cell	Sisipkan kolom di kiri sel saat ini
++ Column right	+ Kolom di kanan
+Insert a column right of the current cell	Sisipkan kolom di kanan sel saat ini
+− Column	− Kolom
+Delete the current column	Hapus kolom saat ini
++ Category	+ Kategori
+Add a category at the end	Tambahkan kategori di akhir
+− Last category	− Kategori terakhir
+Remove the last category	Hapus kategori terakhir
++ Series	+ Seri
+Add a series after the last one	Tambahkan seri setelah yang terakhir
+− Series	− Seri
+Remove the series of the current cell	Hapus seri dari sel saat ini
+Select a table or a chart to edit its data	Pilih tabel atau bagan untuk mengedit datanya
+Category {}	Kategori {}
+Series {}	Seri {}
+Cell fill	Isian sel
+Category	Kategori
+Edit table	Edit tabel
+Edit chart data	Edit data bagan
+Opened {} (has unsupported content; Save creates a copy)	{} dibuka (berisi konten yang tidak didukung; Simpan membuat salinan)
+Opened {}	{} dibuka
+Restored unsaved changes to {}	Perubahan yang belum disimpan dipulihkan ke {}
+This slide can't be edited: {}	Slide ini tidak dapat diedit: {}
+This text can't be edited yet: it has {}	Teks ini belum dapat diedit: berisi {}
+Select text to format it	Pilih teks untuk memformatnya
+Select a text box or placeholder to make a list	Pilih kotak teks atau placeholder untuk membuat daftar
+Nothing to undo	Tidak ada yang bisa diurungkan
+Nothing to redo	Tidak ada yang bisa diulangi
+Slide {} of {}	Slide {} dari {}
+Text box	Kotak teks
+Placeholder	Placeholder
+Ellipse	Elips
+Rectangle	Persegi panjang
+Rounded rectangle	Persegi panjang bersudut bulat
+Line	Garis
+Shape ({})	Bentuk ({})
+Print failed: {}	Gagal mencetak: {}
+Preparing to print {}…	Menyiapkan cetak {}…
+Exporting {}…	Mengekspor {}…
+Exported {} (1 slide)	{} diekspor (1 slide)
+Exported {} ({} slides)	{} diekspor ({} slide)
+Opened {} (1 page) in the PDF viewer to print	{} (1 halaman) dibuka di penampil PDF untuk dicetak
+Opened {} ({} pages) in the PDF viewer to print	{} ({} halaman) dibuka di penampil PDF untuk dicetak
+Export to PDF failed: {}	Gagal mengekspor ke PDF: {}
+{} has content Kantor can't keep ({}), so it's saved as a new file; the original stays as it is	{} berisi konten yang tidak dapat dipertahankan Kantor ({}), jadi disimpan sebagai berkas baru; berkas aslinya tetap seperti semula
+Saved {}	{} disimpan
+Save failed: {}	Gagal menyimpan: {}
+This file has content Kantor can't keep yet: {}. Save writes a new copy; the original is never overwritten.	Berkas ini berisi konten yang belum dapat dipertahankan Kantor: {}. Simpan menulis salinan baru; berkas aslinya tidak pernah ditimpa.
+full page slides	slide halaman penuh
+notes pages	halaman catatan
+handouts, 1 slide per page	handout, 1 slide per halaman
+handouts, {} slides per page	handout, {} slide per halaman

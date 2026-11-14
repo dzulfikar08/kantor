@@ -13,6 +13,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::components::icon_button;
+use kantor_ui::i18n::{self, tf};
 use kantor_ui::{metrics::*, tokens};
 use slides_engine::Geom;
 use slides_pdf::PrintLayout;
@@ -63,7 +64,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-new",
             Lucide::SquarePlus,
-            "New slide · Ctrl+M",
+            i18n::t("New slide · Ctrl+M"),
             false,
             |v, w, cx| v.new_slide_doc(w, cx),
             cx,
@@ -71,7 +72,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-duplicate",
             Lucide::CopyPlus,
-            "Duplicate slide · Ctrl+D",
+            i18n::t("Duplicate slide · Ctrl+D"),
             false,
             |v, w, cx| v.duplicate_slide_doc(w, cx),
             cx,
@@ -79,7 +80,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-delete",
             Lucide::Delete,
-            "Delete slide",
+            i18n::t("Delete slide"),
             false,
             |v, w, cx| v.delete_slide_doc(w, cx),
             cx,
@@ -88,7 +89,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-text-box",
             Lucide::Type,
-            "Insert text box",
+            i18n::t("Insert text box"),
             false,
             |v, w, cx| v.insert_text_box_doc(w, cx),
             cx,
@@ -96,7 +97,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-rect",
             Lucide::Square,
-            "Insert rectangle",
+            i18n::t("Insert rectangle"),
             false,
             |v, w, cx| v.insert_shape_doc(Geom::Rect, w, cx),
             cx,
@@ -104,7 +105,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-ellipse",
             Lucide::Circle,
-            "Insert ellipse",
+            i18n::t("Insert ellipse"),
             false,
             |v, w, cx| v.insert_shape_doc(Geom::Ellipse, w, cx),
             cx,
@@ -112,7 +113,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-image",
             Lucide::ImagePlus,
-            "Insert picture (PNG or JPEG)",
+            i18n::t("Insert picture (PNG or JPEG)"),
             false,
             |v, w, cx| v.insert_image_doc(w, cx),
             cx,
@@ -121,7 +122,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
             d.child(tool(
                 "slides-edit-object",
                 Lucide::SquarePen,
-                "Edit table or chart data",
+                i18n::t("Edit table or chart data"),
                 false,
                 |v, w, cx| v.edit_object_doc(w, cx),
                 cx,
@@ -133,7 +134,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-bold",
             Lucide::Bold,
-            "Bold · Ctrl+B",
+            i18n::t("Bold · Ctrl+B"),
             view.is_on(Toggle::Bold),
             |v, w, cx| v.toggle_doc(Toggle::Bold, w, cx),
             cx,
@@ -141,7 +142,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-italic",
             Lucide::Italic,
-            "Italic · Ctrl+I",
+            i18n::t("Italic · Ctrl+I"),
             view.is_on(Toggle::Italic),
             |v, w, cx| v.toggle_doc(Toggle::Italic, w, cx),
             cx,
@@ -149,7 +150,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-underline",
             Lucide::Underline,
-            "Underline · Ctrl+U",
+            i18n::t("Underline · Ctrl+U"),
             view.is_on(Toggle::Underline),
             |v, w, cx| v.toggle_doc(Toggle::Underline, w, cx),
             cx,
@@ -158,7 +159,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-bullets",
             Lucide::List,
-            "Bulleted list · Tab / Shift+Tab change the level",
+            i18n::t("Bulleted list · Tab / Shift+Tab change the level"),
             view.is_list(false),
             |v, w, cx| v.toggle_list_doc(false, w, cx),
             cx,
@@ -166,7 +167,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-numbering",
             Lucide::ListOrdered,
-            "Numbered list",
+            i18n::t("Numbered list"),
             view.is_list(true),
             |v, w, cx| v.toggle_list_doc(true, w, cx),
             cx,
@@ -175,7 +176,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-notes",
             Lucide::NotepadText,
-            "Speaker notes",
+            i18n::t("Speaker notes"),
             view.notes_open(),
             |v, w, cx| v.toggle_notes_doc(w, cx),
             cx,
@@ -184,7 +185,7 @@ pub(crate) fn render(view: &SlidesView, cx: &mut Context<SlidesView>) -> Div {
         .child(tool(
             "slides-present",
             Lucide::Presentation,
-            "Present · F5 (Shift+F5 from this slide)",
+            i18n::t("Present · F5 (Shift+F5 from this slide)"),
             false,
             |v, w, cx| v.present_doc(true, w, cx),
             cx,
@@ -199,7 +200,7 @@ fn print_button(cx: &mut Context<SlidesView>) -> impl IntoElement {
         .xsmall()
         .icon(Lucide::Printer)
         .dropdown_caret(true)
-        .tooltip("Print and export")
+        .tooltip(i18n::t("Print and export"))
         .dropdown_menu(move |menu, _, _| print_items(menu, &view))
 }
 
@@ -207,7 +208,7 @@ fn print_items(menu: PopupMenu, view: &WeakEntity<SlidesView>) -> PopupMenu {
     let export = view.clone();
     let mut menu = menu
         .item(
-            PopupMenuItem::new("Export as PDF…")
+            PopupMenuItem::new(i18n::t("Export as PDF…"))
                 .icon(Lucide::FileDown)
                 .on_click(move |_, window, cx| {
                     let _ = export.update(cx, |v, cx| v.export_pdf_doc(window, cx));
@@ -220,10 +221,10 @@ fn print_items(menu: PopupMenu, view: &WeakEntity<SlidesView>) -> PopupMenu {
     for layout in layouts {
         let v = view.clone();
         let label = match layout {
-            PrintLayout::Slides => "Print slides…".to_owned(),
-            PrintLayout::Notes => "Print notes pages…".to_owned(),
-            PrintLayout::Handouts(1) => "Print handouts: 1 slide per page…".to_owned(),
-            PrintLayout::Handouts(n) => format!("Print handouts: {n} slides per page…"),
+            PrintLayout::Slides => i18n::t("Print slides…").to_owned(),
+            PrintLayout::Notes => i18n::t("Print notes pages…").to_owned(),
+            PrintLayout::Handouts(1) => i18n::t("Print handouts: 1 slide per page…").to_owned(),
+            PrintLayout::Handouts(n) => tf("Print handouts: {} slides per page…", &[&n]),
         };
         let item = PopupMenuItem::new(label).on_click(move |_, window, cx| {
             let _ = v.update(cx, |v, cx| v.print_layout_doc(layout, window, cx));

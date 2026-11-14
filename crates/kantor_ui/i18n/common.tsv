@@ -1,0 +1,57 @@
+# English<TAB>Indonesian, one string per line (see kantor_ui/src/i18n.rs).
+# Shared words and the glossary every area follows. Area files may repeat a
+# line only with the same Indonesian.
+File	Berkas
+Edit	Edit
+Format	Format
+Data	Data
+Home	Beranda
+Open	Buka
+Open File…	Buka Berkas…
+Save	Simpan
+Save As…	Simpan Sebagai…
+Close	Tutup
+Print	Cetak
+Print…	Cetak…
+Export as PDF…	Ekspor sebagai PDF…
+Undo	Urungkan
+Redo	Ulangi
+Cut	Potong
+Copy	Salin
+Paste	Tempel
+Delete	Hapus
+Find	Cari
+Replace	Ganti
+Bold	Tebal
+Italic	Miring
+Underline	Garis Bawah
+Strikethrough	Coret
+Align Left	Rata Kiri
+Align Center	Rata Tengah
+Align Right	Rata Kanan
+Justify	Rata Kiri-Kanan
+Cancel	Batal
+OK	OK
+Apply	Terapkan
+Done	Selesai
+Settings	Pengaturan
+Zoom In	Perbesar
+Zoom Out	Perkecil
+Font	Font
+Table	Tabel
+Picture	Gambar
+Comment	Komentar
+Header	Header
+Footer	Footer
+Rename	Ganti Nama
+Close Tab	Tutup Tab
+Page Setup	Pengaturan Halaman
+Margins	Margin
+Orientation	Orientasi
+Portrait	Potret
+Landscape	Lanskap
+Remove	Hapus
+Yes	Ya
+No	Tidak
+Don't Save	Jangan Simpan
+None	Tidak ada

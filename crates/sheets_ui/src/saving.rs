@@ -12,6 +12,7 @@ use std::time::Instant;
 
 use futures::channel::oneshot;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, tf, tk};
 use sheets_engine::{Saved, SourceFormat};
 
 use crate::{SheetsEvent, SheetsView};
@@ -50,7 +51,7 @@ impl SheetsView {
         self.saving
             .as_ref()
             .filter(|s| !s.autosave)
-            .map(|_| "Saving…".to_owned())
+            .map(|_| i18n::t("Saving…").to_owned())
     }
 
     /// A save is running and nothing changed since its snapshot (closing
@@ -82,16 +83,13 @@ impl SheetsView {
         if let Some(saving) = &mut self.saving {
             if !autosave && saving.path == path {
                 saving.again = true;
-                self.status = format!(
-                    "Saving {}… (then again with your latest changes)",
-                    file_name(&path)
-                )
-                .into();
+                let msg = i18n::t("Saving {}… (then again with your latest changes)");
+                self.status = i18n::fill(msg, &[&file_name(&path)]).into();
                 cx.notify();
                 return self.saved_signal();
             }
             if !autosave {
-                self.status = "Please wait until the save finishes".into();
+                self.status = i18n::t("Please wait until the save finishes").into();
                 cx.notify();
             }
             return None;
@@ -133,7 +131,7 @@ impl SheetsView {
             _task: task,
         });
         if !autosave {
-            self.status = format!("Saving {}…", file_name(&path)).into();
+            self.status = tf("Saving {}…", &[&file_name(&path)]).into();
         }
         cx.notify();
         Some(rx)
@@ -196,21 +194,34 @@ impl SheetsView {
         }
     }
 
+    /// The status line after a save, in the interface language.
     pub(crate) fn saved_status(&self, autosave: bool, cx: &App) -> String {
+        self.saved_message(autosave, i18n::t, cx)
+    }
+
+    /// The same in English, for MCP agents.
+    pub(crate) fn saved_status_english(&self, cx: &App) -> String {
+        self.saved_message(false, |en| en, cx)
+    }
+
+    fn saved_message(
+        &self,
+        autosave: bool,
+        tr: fn(&'static str) -> &'static str,
+        cx: &App,
+    ) -> String {
         let book = &self.table.read(cx).delegate().book;
         if autosave {
-            return format!("Autosaved {}", book.title());
+            return i18n::fill(tr(tk("Autosaved {}")), &[&book.title()]);
         }
         let lost = book.sheets_lost_in_csv();
         if matches!(book.source_format(), SourceFormat::Csv { .. }) && lost > 0 {
             let sheet = book.active_sheet() as usize;
             let name = book.sheet_names().get(sheet).cloned().unwrap_or_default();
-            format!(
-                "Saved {} with values of sheet \"{name}\" only; CSV can't hold the other {lost}",
-                book.title()
-            )
+            let msg = tk("Saved {} with values of sheet \"{}\" only; CSV can't hold the other {}");
+            i18n::fill(tr(msg), &[&book.title(), &name, &lost])
         } else {
-            format!("Saved {}", book.title())
+            i18n::fill(tr(tk("Saved {}")), &[&book.title()])
         }
     }
 
@@ -221,10 +232,11 @@ impl SheetsView {
         if autosave {
             return;
         }
-        self.status = format!("Save failed: {err}").into();
-        cx.emit(SheetsEvent::Notice(format!(
-            "Couldn't save “{}”: {err}. Your changes are still open; try Save As.",
-            file_name(path)
+        self.status = tf("Save failed: {}", &[&err]).into();
+        let msg = i18n::t("Couldn't save “{}”: {}. Your changes are still open; try Save As.");
+        cx.emit(SheetsEvent::Notice(i18n::fill(
+            msg,
+            &[&file_name(path), &err],
         )));
         cx.notify();
     }

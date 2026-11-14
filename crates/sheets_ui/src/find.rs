@@ -10,6 +10,7 @@
 use gpui_kit::*;
 use kantor_core::find::{FindOptions, contains, pick, replace_all};
 use kantor_ui::find_bar::{self, FindBar, FindBarEvent};
+use kantor_ui::i18n::{t, tf};
 use kantor_ui::metrics::*;
 
 use crate::SheetsView;
@@ -184,15 +185,13 @@ impl SheetsView {
         });
         self.status = match result {
             Err(err) => format!("{err:#}").into(),
-            Ok(()) if n == 0 => "Nothing to replace: the matches are computed values".into(),
-            Ok(()) if all => {
-                format!("Replaced in {n} cell{}", if n == 1 { "" } else { "s" }).into()
+            Ok(()) if n == 0 => t("Nothing to replace: the matches are computed values").into(),
+            Ok(()) if all && n == 1 => t("Replaced in 1 cell").into(),
+            Ok(()) if all => tf("Replaced in {} cells", &[&n]).into(),
+            Ok(()) => {
+                let cell = sheets_engine::cell_name(cells[0].0, cells[0].1);
+                tf("Replaced in {}", &[&cell]).into()
             }
-            Ok(()) => format!(
-                "Replaced in {}",
-                sheets_engine::cell_name(cells[0].0, cells[0].1)
-            )
-            .into(),
         };
         self.load_selected_into_formula(window, cx);
         self.update_title(window, cx);

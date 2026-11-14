@@ -16,6 +16,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_core::recovery::FileStamp;
 
+use crate::i18n::{t, tf};
+
 /// The file Save would overwrite, as Kantor last saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiskGuard {
@@ -55,9 +57,8 @@ pub fn confirm_overwrite(
     if window.has_active_dialog(cx) {
         return;
     }
-    let title: SharedString = format!("“{name}” changed since Kantor last saved it").into();
-    let detail: SharedString = "Another app or person may have edited it. Replace it with your \
-         version, or save yours as a new file to keep both."
+    let title: SharedString = tf("“{}” changed since Kantor last saved it", &[&name]).into();
+    let detail: SharedString = t("Another app or person may have edited it. Replace it with your version, or save yours as a new file to keep both.")
         .into();
     let answer = Rc::new(answer);
     window.open_dialog(cx, move |dialog, _, _| {
@@ -88,19 +89,19 @@ pub fn confirm_overwrite(
                 DialogFooter::new()
                     .child(
                         Button::new("overwrite-cancel")
-                            .label("Cancel")
+                            .label(t("Cancel"))
                             .ghost()
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .child(
                         Button::new("overwrite-replace")
-                            .label("Replace")
+                            .label(t("Replace"))
                             .danger()
                             .on_click(reply(Overwrite::Replace)),
                     )
                     .child(
                         Button::new("overwrite-save-as")
-                            .label("Save As…")
+                            .label(t("Save As…"))
                             .primary()
                             .on_click(save_as),
                     ),

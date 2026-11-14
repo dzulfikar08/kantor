@@ -18,6 +18,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{t, t_dyn, tf, tk};
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{
     COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfSpec, CfTextOp, DATA_BAR_COLORS,
@@ -62,17 +63,17 @@ impl Kind {
 
     fn label(self) -> &'static str {
         match self {
-            Kind::CellValue => "Cell value",
-            Kind::Text => "Specific text",
-            Kind::Dates => "Dates occurring",
-            Kind::Duplicates => "Duplicate or unique values",
-            Kind::TopBottom => "Top or bottom ranked values",
-            Kind::Average => "Above or below average",
-            Kind::Blanks => "Blanks",
-            Kind::Formula => "Use a formula",
-            Kind::DataBar => "Data bar",
-            Kind::ColorScale => "Color scale",
-            Kind::IconSet => "Icon set",
+            Kind::CellValue => t("Cell value"),
+            Kind::Text => t("Specific text"),
+            Kind::Dates => t("Dates occurring"),
+            Kind::Duplicates => t("Duplicate or unique values"),
+            Kind::TopBottom => t("Top or bottom ranked values"),
+            Kind::Average => t("Above or below average"),
+            Kind::Blanks => t("Blanks"),
+            Kind::Formula => t("Use a formula"),
+            Kind::DataBar => t("Data bar"),
+            Kind::ColorScale => t("Color scale"),
+            Kind::IconSet => t("Icon set"),
         }
     }
 
@@ -175,12 +176,12 @@ impl SheetsView {
             e.update(cx, |i, cx| i.set_value(v.to_owned(), window, cx));
             e
         };
-        let range = mk(window, cx, range_text, "e.g. A2:A20");
-        let value = mk(window, cx, "", "a number, text or =formula");
-        let value2 = mk(window, cx, "", "and");
-        let text = mk(window, cx, "", "text to look for");
+        let range = mk(window, cx, range_text, t("e.g. A2:A20"));
+        let value = mk(window, cx, "", t("a number, text or =formula"));
+        let value2 = mk(window, cx, "", t("and"));
+        let text = mk(window, cx, "", t("text to look for"));
         let rank = mk(window, cx, "10", "");
-        let formula = mk(window, cx, "", "e.g. =$B2>100");
+        let formula = mk(window, cx, "", t("e.g. =$B2>100"));
         let subs = [&range, &value, &value2, &text, &rank, &formula]
             .into_iter()
             .map(|e| {
@@ -246,7 +247,7 @@ impl SheetsView {
         let Some(def) = info.def.clone() else {
             if let Some(m) = self.cf_manager.as_mut() {
                 m.error = Some(
-                    "Kantor can't edit this kind of rule yet (it can delete or move it)".into(),
+                    t("Kantor can't edit this kind of rule yet (it can delete or move it)").into(),
                 );
             }
             cx.notify();
@@ -356,7 +357,7 @@ impl SheetsView {
                 rank: text(&d.rank)
                     .trim()
                     .parse()
-                    .map_err(|_| "Rank: type a whole number".to_owned())?,
+                    .map_err(|_| t("Rank: type a whole number").to_owned())?,
                 percent: d.percent,
             },
             Kind::Average => CfSpec::Average { below: d.below },
@@ -403,15 +404,15 @@ impl SheetsView {
                     None => grid.book.add_cf_rule(sheet, &range, &def),
                 };
                 table.refresh(cx);
-                r.map_err(|e| format!("{e:#}"))
+                r.map_err(|e| error_text(&e))
             })
         });
         match res {
             Ok(()) => {
                 self.status = if edit.is_some() {
-                    "Rule changed".into()
+                    t("Rule changed").into()
                 } else {
-                    "Conditional formatting rule added".into()
+                    t("Conditional formatting rule added").into()
                 };
                 self.close_cf_dialog(window, cx);
                 self.update_title(window, cx);
@@ -442,8 +443,8 @@ impl SheetsView {
             r
         });
         self.status = match res {
-            Ok(()) => format!("Conditional formatting added to {range}").into(),
-            Err(e) => format!("{e:#}").into(),
+            Ok(()) => tf("Conditional formatting added to {}", &[&range]).into(),
+            Err(e) => error_text(&e).into(),
         };
         self.update_title(window, cx);
         cx.notify();
@@ -463,10 +464,10 @@ impl SheetsView {
             r
         });
         self.status = match res {
-            Ok(0) => "No conditional formatting rules here".into(),
-            Ok(1) => "1 rule cleared".into(),
-            Ok(n) => format!("{n} rules cleared").into(),
-            Err(e) => format!("{e:#}").into(),
+            Ok(0) => t("No conditional formatting rules here").into(),
+            Ok(1) => t("1 rule cleared").into(),
+            Ok(n) => tf("{} rules cleared", &[&n]).into(),
+            Err(e) => error_text(&e).into(),
         };
         self.update_title(window, cx);
         cx.notify();
@@ -506,7 +507,7 @@ impl SheetsView {
             r
         });
         if let Some(m) = self.cf_manager.as_mut() {
-            m.error = res.err().map(|e| format!("{e:#}"));
+            m.error = res.err().map(|e| error_text(&e));
         }
         self.update_title(window, cx);
         cx.notify();
@@ -541,15 +542,15 @@ impl SheetsView {
                 m
             });
         let title = if d.edit.is_some() {
-            "Edit Formatting Rule"
+            t("Edit Formatting Rule")
         } else {
-            "New Formatting Rule"
+            t("New Formatting Rule")
         };
         let mut card = dialog::card("cf-rule", title, px(470.), cx)
             .key_context("KantorCfDialog")
             .on_action(cx.listener(|this, _: &input::Escape, w, cx| this.close_cf_dialog(w, cx)))
-            .child(row("Applies to", Input::new(&d.range).small(), cx))
-            .child(row("Rule type", kind, cx))
+            .child(row(t("Applies to"), Input::new(&d.range).small(), cx))
+            .child(row(t("Rule type"), kind, cx))
             .child(self.render_cf_kind(d, &view, cx));
         if d.kind.has_format() {
             card = card.child(self.render_cf_format(d, &view, cx));
@@ -558,7 +559,7 @@ impl SheetsView {
             .children(d.error.clone().map(|e| note(e, true, cx)))
             .child(dialog::buttons(
                 "cf-buttons",
-                "OK",
+                t("OK"),
                 true,
                 &view,
                 Self::cf_dialog_ok,
@@ -604,7 +605,7 @@ impl SheetsView {
                     .into_iter()
                     .map(|c| {
                         (
-                            c.label().to_owned(),
+                            t_dyn(c.label()).to_owned(),
                             c == d.compare,
                             Box::new(move |d: &mut CfDialog| d.compare = c)
                                 as Box<dyn Fn(&mut CfDialog)>,
@@ -612,13 +613,13 @@ impl SheetsView {
                     })
                     .collect();
                 out = out.child(row(
-                    "Cell value is",
-                    menu_button("cf-compare", d.compare.label().to_owned(), items),
+                    t("Cell value is"),
+                    menu_button("cf-compare", t_dyn(d.compare.label()).to_owned(), items),
                     cx,
                 ));
-                out = out.child(row("Value", Input::new(&d.value).small(), cx));
+                out = out.child(row(t("Value"), Input::new(&d.value).small(), cx));
                 if d.compare.two_values() {
-                    out = out.child(row("And", Input::new(&d.value2).small(), cx));
+                    out = out.child(row(t("And"), Input::new(&d.value2).small(), cx));
                 }
             }
             Kind::Text => {
@@ -626,7 +627,7 @@ impl SheetsView {
                     .into_iter()
                     .map(|c| {
                         (
-                            c.label().to_owned(),
+                            t_dyn(c.label()).to_owned(),
                             c == d.text_op,
                             Box::new(move |d: &mut CfDialog| d.text_op = c)
                                 as Box<dyn Fn(&mut CfDialog)>,
@@ -635,18 +636,18 @@ impl SheetsView {
                     .collect();
                 out = out
                     .child(row(
-                        "Text",
-                        menu_button("cf-textop", d.text_op.label().to_owned(), items),
+                        t("Text"),
+                        menu_button("cf-textop", t_dyn(d.text_op.label()).to_owned(), items),
                         cx,
                     ))
-                    .child(row("Looking for", Input::new(&d.text).small(), cx));
+                    .child(row(t("Looking for"), Input::new(&d.text).small(), cx));
             }
             Kind::Dates => {
                 let items = CfPeriod::ALL
                     .into_iter()
                     .map(|p| {
                         (
-                            p.label().to_owned(),
+                            t_dyn(p.label()).to_owned(),
                             p == d.period,
                             Box::new(move |d: &mut CfDialog| d.period = p)
                                 as Box<dyn Fn(&mut CfDialog)>,
@@ -654,17 +655,17 @@ impl SheetsView {
                     })
                     .collect();
                 out = out.child(row(
-                    "A date occurring",
-                    menu_button("cf-period", d.period.label().to_owned(), items),
+                    t("A date occurring"),
+                    menu_button("cf-period", t_dyn(d.period.label()).to_owned(), items),
                     cx,
                 ));
             }
             Kind::Duplicates => {
                 out = out.child(row(
-                    "Format",
+                    t("Format"),
                     choices(
                         "cf-dup",
-                        &[(false, "Duplicate values"), (true, "Unique values")],
+                        &[(false, t("Duplicate values")), (true, t("Unique values"))],
                         d.unique,
                         view,
                         |this, v| {
@@ -680,10 +681,10 @@ impl SheetsView {
                 let pv = view.clone();
                 out = out
                     .child(row(
-                        "Format the",
+                        t("Format the"),
                         choices(
                             "cf-top",
-                            &[(false, "Top"), (true, "Bottom")],
+                            &[(false, t("Top")), (true, t("Bottom"))],
                             d.bottom,
                             view,
                             |this, v| {
@@ -695,13 +696,13 @@ impl SheetsView {
                         cx,
                     ))
                     .child(row(
-                        "Number",
+                        t("Number"),
                         h_flex()
                             .gap(SPACE_4)
                             .child(div().w(px(80.)).child(Input::new(&d.rank).small()))
                             .child(
                                 Checkbox::new("cf-percent")
-                                    .label("% of the selected range")
+                                    .label(t("% of the selected range"))
                                     .checked(d.percent)
                                     .on_click(move |on, _, cx| {
                                         let on = *on;
@@ -718,10 +719,10 @@ impl SheetsView {
             }
             Kind::Average => {
                 out = out.child(row(
-                    "Values",
+                    t("Values"),
                     choices(
                         "cf-avg",
-                        &[(false, "Above average"), (true, "Below average")],
+                        &[(false, t("Above average")), (true, t("Below average"))],
                         d.below,
                         view,
                         |this, v| {
@@ -735,10 +736,10 @@ impl SheetsView {
             }
             Kind::Blanks => {
                 out = out.child(row(
-                    "Cells that are",
+                    t("Cells that are"),
                     choices(
                         "cf-blank",
-                        &[(false, "Blank"), (true, "Not blank")],
+                        &[(false, t("Blank")), (true, t("Not blank"))],
                         d.not_blank,
                         view,
                         |this, v| {
@@ -752,9 +753,9 @@ impl SheetsView {
             }
             Kind::Formula => {
                 out = out
-                    .child(row("Format where", Input::new(&d.formula).small(), cx))
+                    .child(row(t("Format where"), Input::new(&d.formula).small(), cx))
                     .child(note(
-                        "The formula is true for the cells to format; references are relative to the first cell of the range.",
+                        t("The formula is true for the cells to format; references are relative to the first cell of the range."),
                         false,
                         cx,
                     ));
@@ -765,7 +766,7 @@ impl SheetsView {
                     .map(|(n, c)| {
                         let c = *c;
                         (
-                            n.to_string(),
+                            t(n).to_owned(),
                             c == d.bar_color,
                             Box::new(move |d: &mut CfDialog| d.bar_color = c)
                                 as Box<dyn Fn(&mut CfDialog)>,
@@ -775,15 +776,15 @@ impl SheetsView {
                 let name = DATA_BAR_COLORS
                     .iter()
                     .find(|(_, c)| *c == d.bar_color)
-                    .map(|(n, _)| n.to_string())
+                    .map(|(n, _)| t(n).to_owned())
                     .unwrap_or_else(|| format!("#{:06X}", d.bar_color));
                 out = out
-                    .child(row("Bar colour", menu_button("cf-bar", name, items), cx))
+                    .child(row(t("Bar colour"), menu_button("cf-bar", name, items), cx))
                     .child(row(
-                        "Fill",
+                        t("Fill"),
                         choices(
                             "cf-grad",
-                            &[(true, "Gradient"), (false, "Solid")],
+                            &[(true, t("Gradient")), (false, t("Solid"))],
                             d.gradient,
                             view,
                             |this, v| {
@@ -801,7 +802,7 @@ impl SheetsView {
                     .enumerate()
                     .map(|(i, (n, _))| {
                         (
-                            n.to_string(),
+                            t(n).to_owned(),
                             i == d.scale,
                             Box::new(move |d: &mut CfDialog| d.scale = i)
                                 as Box<dyn Fn(&mut CfDialog)>,
@@ -809,12 +810,12 @@ impl SheetsView {
                     })
                     .collect();
                 out = out.child(row(
-                    "Colours",
+                    t("Colours"),
                     h_flex()
                         .gap(SPACE_4)
                         .child(menu_button(
                             "cf-scale",
-                            COLOR_SCALES[d.scale].0.to_owned(),
+                            t(COLOR_SCALES[d.scale].0).to_owned(),
                             items,
                         ))
                         .child(scale_strip(COLOR_SCALES[d.scale].1)),
@@ -827,7 +828,7 @@ impl SheetsView {
                     .enumerate()
                     .map(|(i, (n, _))| {
                         (
-                            n.to_string(),
+                            t(n).to_owned(),
                             i == d.icon_set,
                             Box::new(move |d: &mut CfDialog| d.icon_set = i)
                                 as Box<dyn Fn(&mut CfDialog)>,
@@ -838,8 +839,8 @@ impl SheetsView {
                 let ov = view.clone();
                 out = out
                     .child(row(
-                        "Icons",
-                        menu_button("cf-icons", ICON_SETS[d.icon_set].0.to_owned(), items),
+                        t("Icons"),
+                        menu_button("cf-icons", t(ICON_SETS[d.icon_set].0).to_owned(), items),
                         cx,
                     ))
                     .child(row(
@@ -848,7 +849,7 @@ impl SheetsView {
                             .gap(SPACE_6)
                             .child(
                                 Checkbox::new("cf-reverse")
-                                    .label("Reverse icon order")
+                                    .label(t("Reverse icon order"))
                                     .checked(d.reverse)
                                     .on_click(move |on, _, cx| {
                                         let on = *on;
@@ -862,7 +863,7 @@ impl SheetsView {
                             )
                             .child(
                                 Checkbox::new("cf-icons-only")
-                                    .label("Show icon only")
+                                    .label(t("Show icon only"))
                                     .checked(d.icons_only)
                                     .on_click(move |on, _, cx| {
                                         let on = *on;
@@ -877,7 +878,7 @@ impl SheetsView {
                         cx,
                     ))
                     .child(note(
-                        "Thresholds split the range in equal percentages, as Excel does.",
+                        t("Thresholds split the range in equal percentages, as Excel does."),
                         false,
                         cx,
                     ));
@@ -897,8 +898,8 @@ impl SheetsView {
         let preset_label = CfFormat::PRESETS
             .iter()
             .find(|(_, f)| *f == current)
-            .map(|(n, _)| n.to_string())
-            .unwrap_or_else(|| "Custom format".into());
+            .map(|(n, _)| t(n).to_owned())
+            .unwrap_or_else(|| t("Custom format").to_owned());
         let presets = Button::new("cf-preset")
             .outline()
             .small()
@@ -907,7 +908,7 @@ impl SheetsView {
             .dropdown_menu(move |mut m, _, _| {
                 for (name, f) in CfFormat::PRESETS {
                     let v = pv.clone();
-                    m = m.item(PopupMenuItem::new(name).checked(f == current).on_click(
+                    m = m.item(PopupMenuItem::new(t(name)).checked(f == current).on_click(
                         move |_, _, cx| {
                             let _ = v.update(cx, |this, cx| {
                                 if let Some(d) = this.cf_dialog.as_mut() {
@@ -983,37 +984,37 @@ impl SheetsView {
         let sv = view.clone();
         v_flex()
             .gap(SPACE_3)
-            .child(kantor_ui::components::section_label("Format", cx))
+            .child(kantor_ui::components::section_label(t("Format"), cx))
             .child(h_flex().gap(SPACE_4).child(presets).child(format_chip(
                 &current,
                 "AaBbCc 123",
                 cx,
             )))
-            .child(row("Fill", swatch_row("cf-fill", false), cx))
-            .child(row("Font colour", swatch_row("cf-font", true), cx))
+            .child(row(t("Fill"), swatch_row("cf-fill", false), cx))
+            .child(row(t("Font colour"), swatch_row("cf-font", true), cx))
             .child(
                 h_flex()
                     .gap(SPACE_6)
-                    .child(check("cf-bold", "Bold", current.bold, |f, v| f.bold = v))
-                    .child(check("cf-italic", "Italic", current.italic, |f, v| {
+                    .child(check("cf-bold", t("Bold"), current.bold, |f, v| f.bold = v))
+                    .child(check("cf-italic", t("Italic"), current.italic, |f, v| {
                         f.italic = v
                     }))
                     .child(check(
                         "cf-underline",
-                        "Underline",
+                        t("Underline"),
                         current.underline,
                         |f, v| f.underline = v,
                     ))
                     .child(check(
                         "cf-strike",
-                        "Strikethrough",
+                        t("Strikethrough"),
                         current.strike,
                         |f, v| f.strike = v,
                     )),
             )
             .child(
                 Checkbox::new("cf-stop")
-                    .label("Stop if true (rules below don't apply to these cells)")
+                    .label(t("Stop if true (rules below don't apply to these cells)"))
                     .checked(d.stop)
                     .on_click(move |on, _, cx| {
                         let on = *on;
@@ -1032,7 +1033,7 @@ impl SheetsView {
             return None;
         }
         let m = self.cf_manager.as_ref()?;
-        let t = tokens(cx);
+        let tok = tokens(cx);
         let view = cx.entity().downgrade();
         let (rules, sel) = {
             let grid = self.table.read(cx).delegate();
@@ -1046,14 +1047,14 @@ impl SheetsView {
             .overflow_y_scroll()
             .rounded(RADIUS_SM)
             .border_1()
-            .border_color(t.border)
-            .bg(t.bg);
+            .border_color(tok.border)
+            .bg(tok.bg);
         if rules.is_empty() {
             list = list.child(div().p(SPACE_5).child(note(
                 if m.whole_sheet {
-                    "This sheet has no conditional formatting rules."
+                    t("This sheet has no conditional formatting rules.")
                 } else {
-                    "No rules apply to the selected cells."
+                    t("No rules apply to the selected cells.")
                 },
                 false,
                 cx,
@@ -1076,28 +1077,24 @@ impl SheetsView {
                     .px(SPACE_4)
                     .py(SPACE_3)
                     .gap(SPACE_4)
-                    .when(k > 0, |d| d.border_t_1().border_color(t.border))
+                    .when(k > 0, |d| d.border_t_1().border_color(tok.border))
                     .child(
                         v_flex()
                             .flex_1()
                             .min_w_0()
                             .gap(SPACE_1)
-                            .child(
-                                div()
-                                    .truncate()
-                                    .child(SharedString::from(r.summary.clone())),
-                            )
+                            .child(div().truncate().child(SharedString::from(summary_text(&r))))
                             .child(
                                 div()
                                     .text_size(FONT_SMALL)
-                                    .text_color(t.fg_muted)
-                                    .child(SharedString::from(format!("Applies to {}", r.range))),
+                                    .text_color(tok.fg_muted)
+                                    .child(SharedString::from(tf("Applies to {}", &[&r.range]))),
                             ),
                     )
                     .child(format_chip(&r.format, "AaBb", cx))
                     .child(
                         Checkbox::new(("cf-row-stop", k))
-                            .label("Stop")
+                            .label(t("Stop"))
                             .checked(r.stop_if_true)
                             .disabled(def.as_ref().is_none_or(|d| !d.spec.has_format()))
                             .on_click(move |on, w, cx| {
@@ -1119,7 +1116,7 @@ impl SheetsView {
                             .ghost()
                             .xsmall()
                             .icon(Lucide::ChevronUp)
-                            .tooltip("Move up (applies sooner)")
+                            .tooltip(t("Move up (applies sooner)"))
                             .disabled(k == 0)
                             .on_click(move |_, w, cx| {
                                 let _ = uv.update(cx, |this, cx| {
@@ -1132,7 +1129,7 @@ impl SheetsView {
                             .ghost()
                             .xsmall()
                             .icon(Lucide::ChevronDown)
-                            .tooltip("Move down")
+                            .tooltip(t("Move down"))
                             .disabled(k + 1 == n)
                             .on_click(move |_, w, cx| {
                                 let _ = wv.update(cx, |this, cx| {
@@ -1144,7 +1141,7 @@ impl SheetsView {
                         Button::new(("cf-row-edit", k))
                             .ghost()
                             .xsmall()
-                            .label("Edit")
+                            .label(t("Edit"))
                             .on_click(move |_, w, cx| {
                                 let _ = ev.update(cx, |this, cx| {
                                     let sheet = this.cf_manager.as_ref().map_or(0, |m| m.sheet);
@@ -1157,7 +1154,7 @@ impl SheetsView {
                             .ghost()
                             .xsmall()
                             .icon(Lucide::Trash)
-                            .tooltip("Delete rule")
+                            .tooltip(t("Delete rule"))
                             .on_click(move |_, w, cx| {
                                 let _ = dv.update(cx, |this, cx| {
                                     this.manage_cf(w, cx, |b, s| b.delete_cf_rule(s, idx))
@@ -1168,7 +1165,7 @@ impl SheetsView {
         }
         let nv = view.clone();
         let cv = view.clone();
-        let card = dialog::card("cf-manage", "Conditional Formatting Rules", px(600.), cx)
+        let card = dialog::card("cf-manage", t("Conditional Formatting Rules"), px(600.), cx)
             .key_context("KantorCfManager")
             .on_action(cx.listener(|this, _: &input::Escape, w, cx| {
                 this.cf_manager = None;
@@ -1178,10 +1175,10 @@ impl SheetsView {
             .child(
                 h_flex()
                     .gap(SPACE_4)
-                    .child(note("Show rules for", false, cx))
+                    .child(note(t("Show rules for"), false, cx))
                     .child(choices(
                         "cf-scope",
-                        &[(false, "Current selection"), (true, "This sheet")],
+                        &[(false, t("Current selection")), (true, t("This sheet"))],
                         m.whole_sheet,
                         &view,
                         |this, v| {
@@ -1191,10 +1188,10 @@ impl SheetsView {
                         },
                     ))
                     .child(div().flex_1())
-                    .child(note(format!("Selection {}", sel.name()), false, cx)),
+                    .child(note(tf("Selection {}", &[&sel.name()]), false, cx)),
             )
             .child(note(
-                "The first rule applies first; a rule with Stop ends the list for its cells.",
+                t("The first rule applies first; a rule with Stop ends the list for its cells."),
                 false,
                 cx,
             ))
@@ -1207,7 +1204,7 @@ impl SheetsView {
                         Button::new("cf-manage-new")
                             .small()
                             .outline()
-                            .label("New Rule…")
+                            .label(t("New Rule…"))
                             .on_click(move |_, w, cx| {
                                 let _ = nv.update(cx, |this, cx| this.new_cf_rule_doc(w, cx));
                             }),
@@ -1217,7 +1214,7 @@ impl SheetsView {
                         Button::new("cf-manage-close")
                             .small()
                             .primary()
-                            .label("Close")
+                            .label(t("Close"))
                             .on_click(move |_, w, cx| {
                                 let _ = cv.update(cx, |this, cx| {
                                     this.cf_manager = None;
@@ -1235,6 +1232,142 @@ impl SheetsView {
             cx.listener(|this, _: &NewConditionalRule, w, cx| this.new_cf_rule_doc(w, cx)),
         )
         .on_action(cx.listener(|this, _: &ManageConditionalRules, w, cx| this.manage_cf_doc(w, cx)))
+    }
+}
+
+/// Strings from `sheets_engine::cf_edit` shown in the UI (labels, preset and
+/// colour names, error messages); translated where shown with `t`/`t_dyn`.
+#[cfg(test)]
+const ENGINE_KEYS: &[&str] = &[
+    tk("greater than"),
+    tk("less than"),
+    tk("between"),
+    tk("not between"),
+    tk("equal to"),
+    tk("not equal to"),
+    tk("greater than or equal to"),
+    tk("less than or equal to"),
+    tk("containing"),
+    tk("not containing"),
+    tk("beginning with"),
+    tk("ending with"),
+    tk("Yesterday"),
+    tk("Today"),
+    tk("Tomorrow"),
+    tk("In the last 7 days"),
+    tk("Last week"),
+    tk("This week"),
+    tk("Next week"),
+    tk("Last month"),
+    tk("This month"),
+    tk("Next month"),
+    tk("Light Red Fill with Dark Red Text"),
+    tk("Yellow Fill with Dark Yellow Text"),
+    tk("Green Fill with Dark Green Text"),
+    tk("Light Red Fill"),
+    tk("Red Text"),
+    tk("Blue"),
+    tk("Green"),
+    tk("Red"),
+    tk("Orange"),
+    tk("Light Blue"),
+    tk("Purple"),
+    tk("Green - Yellow - Red"),
+    tk("Red - Yellow - Green"),
+    tk("Green - White - Red"),
+    tk("Red - White - Green"),
+    tk("Blue - White - Red"),
+    tk("Red - White - Blue"),
+    tk("White - Red"),
+    tk("Red - White"),
+    tk("Green - White"),
+    tk("White - Green"),
+    tk("Green - Yellow"),
+    tk("Yellow - Green"),
+    tk("3 Arrows"),
+    tk("3 Arrows (Gray)"),
+    tk("3 Triangles"),
+    tk("4 Arrows"),
+    tk("5 Arrows"),
+    tk("3 Traffic Lights"),
+    tk("4 Traffic Lights"),
+    tk("3 Signs"),
+    tk("3 Symbols (Circled)"),
+    tk("3 Symbols"),
+    tk("3 Flags"),
+    tk("5 Ratings"),
+    tk("Type the value to compare with"),
+    tk("Type the text to look for"),
+    tk("Give a number of items (1-1000) or a percentage (1-100)"),
+    tk("Type a formula, such as $B2>100"),
+    tk("A colour scale has two or three colours"),
+    tk("Type the cells it applies to, such as A2:A20"),
+    tk("Errors"),
+    tk("No errors"),
+    tk("Date occurring"),
+];
+
+/// An engine error for the UI, translated when it's one of the known
+/// messages.
+fn error_text(e: &anyhow::Error) -> String {
+    let s = format!("{e:#}");
+    t_dyn(&s).to_owned()
+}
+
+/// The Manage Rules line for a rule, in the interface language (the
+/// engine's `summary` is English).
+fn summary_text(r: &sheets_engine::CfRuleInfo) -> String {
+    let Some(def) = r.def.as_ref() else {
+        let s = r.summary.as_str();
+        let inner =
+            |pre: &str, post: &str| s.strip_prefix(pre)?.strip_suffix(post).map(str::to_owned);
+        if let Some(v) = inner("Text equal to \"", "\"") {
+            return tf("Text equal to \"{}\"", &[&v]);
+        }
+        if let Some(n) = inner("Icon set (", " icons)") {
+            return tf("Icon set ({} icons)", &[&n]);
+        }
+        if let Some(n) = inner("Rating (", " steps)") {
+            return tf("Rating ({} steps)", &[&n]);
+        }
+        if let Some(n) = s.strip_suffix("-color scale") {
+            return tf("{}-color scale", &[&n]);
+        }
+        return t_dyn(s).to_owned();
+    };
+    match &def.spec {
+        CfSpec::CellValue { op, value, value2 } if op.two_values() => {
+            let op = t_dyn(op.label());
+            tf("Cell value {} {} and {}", &[&op, value, value2])
+        }
+        CfSpec::CellValue { op, value, .. } => tf("Cell value {} {}", &[&t_dyn(op.label()), value]),
+        CfSpec::Text { op, text } => tf("Text {} \"{}\"", &[&t_dyn(op.label()), text]),
+        CfSpec::Dates { period } => {
+            let p = t_dyn(period.label()).to_lowercase();
+            tf("Date occurring: {}", &[&p])
+        }
+        CfSpec::Duplicates { unique: false } => t("Duplicate values").to_owned(),
+        CfSpec::Duplicates { unique: true } => t("Unique values").to_owned(),
+        CfSpec::TopBottom {
+            bottom,
+            rank,
+            percent,
+        } => {
+            let n = format!("{rank}{}", if *percent { "%" } else { "" });
+            if *bottom {
+                tf("Bottom {}", &[&n])
+            } else {
+                tf("Top {}", &[&n])
+            }
+        }
+        CfSpec::Average { below: false } => t("Above average").to_owned(),
+        CfSpec::Average { below: true } => t("Below average").to_owned(),
+        CfSpec::Blanks { not: false } => t("Blank cells").to_owned(),
+        CfSpec::Blanks { not: true } => t("Cells with something in them").to_owned(),
+        CfSpec::Formula { formula } => tf("Formula: {}", &[formula]),
+        CfSpec::DataBar { .. } => t("Data bar").to_owned(),
+        CfSpec::ColorScale { colors } => tf("{}-color scale", &[&colors.len()]),
+        CfSpec::IconSet { .. } => r.summary.clone(),
     }
 }
 
@@ -1286,7 +1419,7 @@ pub(crate) fn cf_menu(
 ) -> PopupMenu {
     let open = |label: &'static str, pick: fn() -> Pick, view: &WeakEntity<SheetsView>| {
         let v = view.clone();
-        PopupMenuItem::new(label).on_click(move |_, w, cx| {
+        PopupMenuItem::new(t_dyn(label)).on_click(move |_, w, cx| {
             let (kind, set) = pick();
             let _ = v.update(cx, |this, cx| this.open_cf_dialog(kind, |d| set(d), w, cx));
         })
@@ -1297,9 +1430,9 @@ pub(crate) fn cf_menu(
     let sv = view.clone();
     let iv = view.clone();
     let menu = menu
-        .submenu("Highlight Cells Rules", window, cx, move |m, _, _| {
+        .submenu(t("Highlight Cells Rules"), window, cx, move |m, _, _| {
             m.item(open(
-                "Greater Than…",
+                tk("Greater Than…"),
                 || {
                     (
                         Kind::CellValue,
@@ -1309,7 +1442,7 @@ pub(crate) fn cf_menu(
                 &hv,
             ))
             .item(open(
-                "Less Than…",
+                tk("Less Than…"),
                 || {
                     (
                         Kind::CellValue,
@@ -1319,7 +1452,7 @@ pub(crate) fn cf_menu(
                 &hv,
             ))
             .item(open(
-                "Between…",
+                tk("Between…"),
                 || {
                     (
                         Kind::CellValue,
@@ -1329,7 +1462,7 @@ pub(crate) fn cf_menu(
                 &hv,
             ))
             .item(open(
-                "Equal To…",
+                tk("Equal To…"),
                 || {
                     (
                         Kind::CellValue,
@@ -1339,39 +1472,39 @@ pub(crate) fn cf_menu(
                 &hv,
             ))
             .item(open(
-                "Text that Contains…",
+                tk("Text that Contains…"),
                 || (Kind::Text, Box::new(|_| {})),
                 &hv,
             ))
             .item(open(
-                "A Date Occurring…",
+                tk("A Date Occurring…"),
                 || (Kind::Dates, Box::new(|_| {})),
                 &hv,
             ))
             .item(open(
-                "Duplicate Values…",
+                tk("Duplicate Values…"),
                 || (Kind::Duplicates, Box::new(|_| {})),
                 &hv,
             ))
         })
-        .submenu("Top/Bottom Rules", window, cx, move |m, _, _| {
+        .submenu(t("Top/Bottom Rules"), window, cx, move |m, _, _| {
             m.item(open(
-                "Top 10 Items…",
+                tk("Top 10 Items…"),
                 || (Kind::TopBottom, Box::new(|_| {})),
                 &tv,
             ))
             .item(open(
-                "Top 10%…",
+                tk("Top 10%…"),
                 || (Kind::TopBottom, Box::new(|d| d.percent = true)),
                 &tv,
             ))
             .item(open(
-                "Bottom 10 Items…",
+                tk("Bottom 10 Items…"),
                 || (Kind::TopBottom, Box::new(|d| d.bottom = true)),
                 &tv,
             ))
             .item(open(
-                "Bottom 10%…",
+                tk("Bottom 10%…"),
                 || {
                     (
                         Kind::TopBottom,
@@ -1384,26 +1517,26 @@ pub(crate) fn cf_menu(
                 &tv,
             ))
             .item(open(
-                "Above Average…",
+                tk("Above Average…"),
                 || (Kind::Average, Box::new(|_| {})),
                 &tv,
             ))
             .item(open(
-                "Below Average…",
+                tk("Below Average…"),
                 || (Kind::Average, Box::new(|d| d.below = true)),
                 &tv,
             ))
         })
-        .submenu("Data Bars", window, cx, move |mut m, _, _| {
+        .submenu(t("Data Bars"), window, cx, move |mut m, _, _| {
             for gradient in [true, false] {
                 m = m.label(if gradient {
-                    "Gradient Fill"
+                    t("Gradient Fill")
                 } else {
-                    "Solid Fill"
+                    t("Solid Fill")
                 });
                 for (name, color) in DATA_BAR_COLORS {
                     let v = bv.clone();
-                    m = m.item(PopupMenuItem::new(format!("{name} Data Bar")).on_click(
+                    m = m.item(PopupMenuItem::new(tf("{} Data Bar", &[&t(name)])).on_click(
                         move |_, w, cx| {
                             let _ = v.update(cx, |this, cx| {
                                 this.quick_cf(CfSpec::DataBar { color, gradient }, w, cx)
@@ -1414,29 +1547,31 @@ pub(crate) fn cf_menu(
             }
             m
         })
-        .submenu("Color Scales", window, cx, move |mut m, _, _| {
+        .submenu(t("Color Scales"), window, cx, move |mut m, _, _| {
             for (name, colors) in COLOR_SCALES {
                 let v = sv.clone();
-                m = m.item(PopupMenuItem::new(format!("{name} Color Scale")).on_click(
-                    move |_, w, cx| {
-                        let _ = v.update(cx, |this, cx| {
-                            this.quick_cf(
-                                CfSpec::ColorScale {
-                                    colors: colors.to_vec(),
-                                },
-                                w,
-                                cx,
-                            )
-                        });
-                    },
-                ));
+                m = m.item(
+                    PopupMenuItem::new(tf("{} Color Scale", &[&t(name)])).on_click(
+                        move |_, w, cx| {
+                            let _ = v.update(cx, |this, cx| {
+                                this.quick_cf(
+                                    CfSpec::ColorScale {
+                                        colors: colors.to_vec(),
+                                    },
+                                    w,
+                                    cx,
+                                )
+                            });
+                        },
+                    ),
+                );
             }
             m
         })
-        .submenu("Icon Sets", window, cx, move |mut m, _, _| {
+        .submenu(t("Icon Sets"), window, cx, move |mut m, _, _| {
             for (name, set) in ICON_SETS {
                 let v = iv.clone();
-                m = m.item(PopupMenuItem::new(name).on_click(move |_, w, cx| {
+                m = m.item(PopupMenuItem::new(t(name)).on_click(move |_, w, cx| {
                     let _ = v.update(cx, |this, cx| {
                         this.quick_cf(
                             CfSpec::IconSet {
@@ -1457,22 +1592,46 @@ pub(crate) fn cf_menu(
     let c1 = view.clone();
     let c2 = view.clone();
     let mv = view.clone();
-    menu.item(PopupMenuItem::new("New Rule…").on_click(move |_, w, cx| {
-        let _ = nv.update(cx, |this, cx| this.new_cf_rule_doc(w, cx));
-    }))
+    menu.item(
+        PopupMenuItem::new(t("New Rule…")).on_click(move |_, w, cx| {
+            let _ = nv.update(cx, |this, cx| this.new_cf_rule_doc(w, cx));
+        }),
+    )
     .item(
-        PopupMenuItem::new("Clear Rules from Selected Cells").on_click(move |_, w, cx| {
+        PopupMenuItem::new(t("Clear Rules from Selected Cells")).on_click(move |_, w, cx| {
             let _ = c1.update(cx, |this, cx| this.clear_cf_doc(false, w, cx));
         }),
     )
     .item(
-        PopupMenuItem::new("Clear Rules from Entire Sheet").on_click(move |_, w, cx| {
+        PopupMenuItem::new(t("Clear Rules from Entire Sheet")).on_click(move |_, w, cx| {
             let _ = c2.update(cx, |this, cx| this.clear_cf_doc(true, w, cx));
         }),
     )
     .item(
-        PopupMenuItem::new("Manage Rules…").on_click(move |_, w, cx| {
+        PopupMenuItem::new(t("Manage Rules…")).on_click(move |_, w, cx| {
             let _ = mv.update(cx, |this, cx| this.manage_cf_doc(w, cx));
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[std::prelude::v1::test]
+    fn engine_strings_have_indonesian() {
+        let missing: Vec<&str> = ENGINE_KEYS
+            .iter()
+            .copied()
+            .chain(DATA_BAR_COLORS.iter().map(|(n, _)| *n))
+            .chain(COLOR_SCALES.iter().map(|(n, _)| *n))
+            .chain(ICON_SETS.iter().map(|(n, _)| *n))
+            .chain(CfFormat::PRESETS.iter().map(|(n, _)| *n))
+            .chain(CfCompare::ALL.iter().map(|c| c.label()))
+            .chain(CfTextOp::ALL.iter().map(|c| c.label()))
+            .chain(CfPeriod::ALL.iter().map(|c| c.label()))
+            .filter(|k| kantor_ui::i18n::indonesian(k).is_none())
+            .collect();
+        assert!(missing.is_empty(), "no Indonesian for {missing:?}");
+    }
 }

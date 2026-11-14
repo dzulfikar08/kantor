@@ -41,7 +41,7 @@ pub fn client_allowed(ai: &AiSettings) -> bool {
 
 /// The chosen provider's name for privacy lines ("Anthropic (Claude)").
 pub fn provider_label(ai: &AiSettings) -> &'static str {
-    ProviderId::from_key(&ai.provider).map_or("no provider", |p| p.info().label)
+    ProviderId::from_key(&ai.provider).map_or(kantor_ui::i18n::t("no provider"), |p| p.info().label)
 }
 
 enum Msg<T> {

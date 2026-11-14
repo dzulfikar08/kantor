@@ -24,6 +24,7 @@
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, t, tf, tk};
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 use kantor_ui::tokens::Elevation;
@@ -49,7 +50,7 @@ actions!(
 const ALERT_CONTEXT: &str = "KantorSheetsAlert";
 /// Excel's message when a rule's alert has no text of its own.
 const DEFAULT_ERROR: &str =
-    "This value doesn't match the data validation restrictions defined for this cell.";
+    tk("This value doesn't match the data validation restrictions defined for this cell.");
 
 pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
@@ -111,14 +112,21 @@ pub(crate) struct Alert {
 
 impl Alert {
     fn buttons(&self) -> &'static [(&'static str, Outcome)] {
+        const STOP: &[(&str, Outcome)] = &[
+            (tk("Retry"), Outcome::Retry),
+            (tk("Cancel"), Outcome::Discard),
+        ];
+        const WARNING: &[(&str, Outcome)] = &[
+            (tk("Yes"), Outcome::Keep),
+            (tk("No"), Outcome::Retry),
+            (tk("Cancel"), Outcome::Discard),
+        ];
+        const INFORMATION: &[(&str, Outcome)] =
+            &[(tk("OK"), Outcome::Keep), (tk("Cancel"), Outcome::Discard)];
         match self.style {
-            ErrorStyle::Stop => &[("Retry", Outcome::Retry), ("Cancel", Outcome::Discard)],
-            ErrorStyle::Warning => &[
-                ("Yes", Outcome::Keep),
-                ("No", Outcome::Retry),
-                ("Cancel", Outcome::Discard),
-            ],
-            ErrorStyle::Information => &[("OK", Outcome::Keep), ("Cancel", Outcome::Discard)],
+            ErrorStyle::Stop => STOP,
+            ErrorStyle::Warning => WARNING,
+            ErrorStyle::Information => INFORMATION,
         }
     }
 
@@ -311,7 +319,7 @@ impl SheetsView {
             return;
         };
         if items.is_empty() {
-            self.status = "The list of this cell is empty".into();
+            self.status = t("The list of this cell is empty").into();
             cx.notify();
             return;
         }
@@ -397,7 +405,7 @@ impl SheetsView {
         let unchanged = self.table.read(cx).delegate().book.input(sheet, row, col) == input;
         if !unchanged {
             self.status = match self.set_cell(sheet, row, col, &input, cx) {
-                Ok(()) => format!("{} updated", cell_name(row, col)).into(),
+                Ok(()) => tf("{} updated", &[&cell_name(row, col)]).into(),
                 Err(e) => format!("{e:#}").into(),
             };
         }
@@ -435,7 +443,7 @@ impl SheetsView {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         self.set_alert_shown(true, cx);
-        self.status = format!("{} breaks its data validation", cell_name(row, col)).into();
+        self.status = tf("{} breaks its data validation", &[&cell_name(row, col)]).into();
         self.alert = Some(Alert {
             sheet,
             cell: (row, col),
@@ -443,12 +451,12 @@ impl SheetsView {
             step,
             style,
             title: if msg.title.is_empty() {
-                "Invalid value".into()
+                t("Invalid value").into()
             } else {
                 msg.title.into()
             },
             text: if msg.text.is_empty() {
-                DEFAULT_ERROR.into()
+                t(DEFAULT_ERROR).into()
             } else {
                 msg.text.into()
             },
@@ -467,7 +475,7 @@ impl SheetsView {
         let (row, col) = alert.cell;
         match outcome {
             Outcome::Keep => {
-                self.status = format!("{} updated", cell_name(row, col)).into();
+                self.status = tf("{} updated", &[&cell_name(row, col)]).into();
                 self.finish_commit(alert.sheet, alert.cell, alert.step, window, cx);
                 return;
             }
@@ -488,11 +496,11 @@ impl SheetsView {
         self.select_cell(row, col, cx);
         if outcome == Outcome::Retry {
             self.start_edit(Some(alert.value), window, cx);
-            self.status = "Edit the value, or press Escape to cancel".into();
+            self.status = t("Edit the value, or press Escape to cancel").into();
         } else {
             self.load_selected_into_formula(window, cx);
             self.focus_grid(window, cx);
-            self.status = format!("{} not changed", cell_name(row, col)).into();
+            self.status = tf("{} not changed", &[&cell_name(row, col)]).into();
         }
         self.update_title(window, cx);
         cx.notify();
@@ -525,7 +533,7 @@ impl SheetsView {
     pub fn open_validation_list_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_validation_list(window, cx);
         if self.table.read(cx).delegate().validation.list.is_none() && self.alert.is_none() {
-            self.status = "The active cell has no drop-down list".into();
+            self.status = t("The active cell has no drop-down list").into();
             cx.notify();
         }
     }
@@ -542,9 +550,9 @@ impl SheetsView {
             has
         });
         self.status = match (on, has) {
-            (true, true) => "Invalid data circled".into(),
-            (true, false) => "This sheet has no data validation".into(),
-            (false, _) => "Validation circles cleared".into(),
+            (true, true) => t("Invalid data circled").into(),
+            (true, false) => t("This sheet has no data validation").into(),
+            (false, _) => t("Validation circles cleared").into(),
         };
         cx.notify();
     }
@@ -583,7 +591,7 @@ impl SheetsView {
                             .hover(|s| s.bg(t.hover))
                     }
                 })
-                .child(*label)
+                .child(i18n::t(label))
                 .on_click(
                     cx.listener(move |this, _, window, cx| this.alert_press(Some(ix), window, cx)),
                 )
@@ -601,7 +609,7 @@ impl SheetsView {
             )
             .child(div().text_color(t.fg_muted).child(alert.text.clone()))
             .when(alert.style == ErrorStyle::Warning, |d| {
-                d.child(div().text_color(t.fg).child("Continue?"))
+                d.child(div().text_color(t.fg).child(i18n::t("Continue?")))
             });
         let card = v_flex()
             .id("validation-alert")
@@ -618,7 +626,7 @@ impl SheetsView {
                 let Some(alert) = &this.alert else { return };
                 let key = e.keystroke.key.to_ascii_lowercase();
                 let hit = alert.buttons().iter().position(|(label, _)| {
-                    label
+                    i18n::t(label)
                         .chars()
                         .next()
                         .map(|c| c.to_ascii_lowercase().to_string())

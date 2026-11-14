@@ -2074,7 +2074,7 @@ where
                 .id(("icon-sort", col_ix))
                 .test_support()
                 .role(gpui::Role::Button)
-                .aria_label(format!("Sort by {}", col_group.column.name))
+                .aria_label(kantor_ui::i18n::tf("Sort by {}", &[&col_group.column.name]))
                 .p(px(2.))
                 .rounded(cx.theme().radius / 2.)
                 .map(|this| match is_on {

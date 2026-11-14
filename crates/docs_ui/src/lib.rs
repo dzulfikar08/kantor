@@ -50,6 +50,7 @@ use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, t, tf, tk};
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{Tokens, metrics::*, tokens};
 
@@ -541,7 +542,7 @@ impl DocsView {
     /// A pane showing a document restored from a recovery copy (see
     /// `kantor_core::recovery`), unsaved.
     pub fn new_recovered(doc: Document, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let status = format!("Restored unsaved changes to {}", doc.title());
+        let status = tf("Restored unsaved changes to {}", &[&doc.title()]);
         Self::with_document(doc, status, window, cx)
     }
 
@@ -902,7 +903,7 @@ impl DocsView {
         match self.doc.insert_table(self.sel, rows, cols) {
             Some(sel) => self.edited(sel, window, cx),
             None => {
-                self.status = "Tables inside tables aren't supported yet".into();
+                self.status = t("Tables inside tables aren't supported yet").into();
                 cx.notify();
             }
         }
@@ -913,7 +914,12 @@ impl DocsView {
         match self.doc.edit_table(self.sel, edit) {
             Ok(sel) => self.edited(sel, window, cx),
             Err(msg) => {
-                self.status = msg.into();
+                const KNOWN: &str = tk("The caret isn't in a table");
+                self.status = if msg == KNOWN {
+                    t(KNOWN).into()
+                } else {
+                    msg.into()
+                };
                 cx.notify();
             }
         }
@@ -925,7 +931,7 @@ impl DocsView {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Insert picture (PNG or JPEG)".into()),
+            prompt: Some(t("Insert picture (PNG or JPEG)").into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else {
@@ -945,7 +951,8 @@ impl DocsView {
                 match result {
                     Ok(sel) => this.edited(sel, window, cx),
                     Err(err) => {
-                        this.status = format!("Can't insert {name}: {err:#}").into();
+                        this.status =
+                            tf("Can't insert {}: {}", &[&name, &format!("{err:#}")]).into();
                         cx.notify();
                     }
                 }
@@ -1001,7 +1008,7 @@ impl DocsView {
         match self.doc.undo() {
             Some(sel) => self.edited(sel, window, cx),
             None => {
-                self.status = "Nothing to undo".into();
+                self.status = t("Nothing to undo").into();
                 cx.notify();
             }
         }
@@ -1011,7 +1018,7 @@ impl DocsView {
         match self.doc.redo() {
             Some(sel) => self.edited(sel, window, cx),
             None => {
-                self.status = "Nothing to redo".into();
+                self.status = t("Nothing to redo").into();
                 cx.notify();
             }
         }
@@ -1156,7 +1163,8 @@ impl DocsView {
         let total = (self.doc.word_count(), self.doc.char_count());
         let (start, end) = self.sel.ordered();
         let selected = (start != end).then(|| self.doc.stats_in(start, end));
-        format!("Page {page} of {pages} · {}", count_text(total, selected))
+        let counts = count_text(total, selected);
+        tf("Page {} of {} · {}", &[&page, &pages, &counts])
     }
 
     pub fn info(&self) -> DocInfo {
@@ -1241,10 +1249,15 @@ impl DocsView {
     /// Ask for a path and save there; resolves to whether the document is saved.
     fn save_as_task(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
         if self.doc.has_unsupported_content() {
-            self.status = format!(
+            let msg = t(
                 "{} has content Kantor can't keep ({}), so it's saved as a new file; the original stays as it is",
-                self.doc.title(),
-                self.doc.unsupported_content().join(", ")
+            );
+            self.status = i18n::fill(
+                msg,
+                &[
+                    &self.doc.title(),
+                    &self.doc.unsupported_content().join(", "),
+                ],
             )
             .into();
             cx.notify();
@@ -1320,7 +1333,7 @@ impl DocsView {
         match kantor_core::dirs::print_pdf_path(&stem) {
             Ok(path) => self.write_pdf(path, true, cx),
             Err(e) => {
-                self.status = format!("Print failed: {e}").into();
+                self.status = tf("Print failed: {}", &[&e]).into();
                 cx.notify();
             }
         }
@@ -1336,12 +1349,12 @@ impl DocsView {
             &self.laid.strikes,
         );
         let pages = scene.pages.len().max(1);
-        let verb = if open {
-            "Preparing to print"
+        self.status = if open {
+            tf("Preparing to print {}…", &[&display_name(&path)])
         } else {
-            "Exporting"
-        };
-        self.status = format!("{verb} {}…", display_name(&path)).into();
+            tf("Exporting {}…", &[&display_name(&path)])
+        }
+        .into();
         cx.notify();
         let file = path.clone();
         let task = cx.background_spawn(async move {
@@ -1352,15 +1365,21 @@ impl DocsView {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 let name = display_name(&path);
-                let plural = if pages == 1 { "" } else { "s" };
                 this.status = match (result, open) {
-                    (Ok(()), false) => format!("Exported {name} ({pages} page{plural})").into(),
+                    (Ok(()), false) if pages == 1 => tf("Exported {} (1 page)", &[&name]).into(),
+                    (Ok(()), false) => tf("Exported {} ({} pages)", &[&name, &pages]).into(),
                     (Ok(()), true) => {
                         cx.open_with_system(&path);
-                        format!("Opened {pages} page{plural} in the PDF viewer to print").into()
+                        if pages == 1 {
+                            t("Opened 1 page in the PDF viewer to print").into()
+                        } else {
+                            tf("Opened {} pages in the PDF viewer to print", &[&pages]).into()
+                        }
                     }
-                    (Err(err), false) => format!("Export to PDF failed: {err:#}").into(),
-                    (Err(err), true) => format!("Print failed: {err:#}").into(),
+                    (Err(err), false) => {
+                        tf("Export to PDF failed: {}", &[&format!("{err:#}")]).into()
+                    }
+                    (Err(err), true) => tf("Print failed: {}", &[&format!("{err:#}")]).into(),
                 };
                 cx.notify();
             });
@@ -1378,8 +1397,8 @@ impl DocsView {
             self.disk_guard = None;
         }
         self.status = match result {
-            Ok(()) => format!("Saved {}", self.doc.title()).into(),
-            Err(err) => format!("Save failed: {err:#}").into(),
+            Ok(()) => tf("Saved {}", &[&self.doc.title()]).into(),
+            Err(err) => tf("Save failed: {}", &[&format!("{err:#}")]).into(),
         };
         self.update_title(window, cx);
         cx.notify();
@@ -1659,9 +1678,9 @@ impl DocsView {
             grid = grid.child(row);
         }
         let label = if hr > 0 && hc > 0 {
-            format!("{hr} × {hc} table")
+            tf("{} × {} table", &[&hr, &hc])
         } else {
-            "Insert table".to_owned()
+            i18n::t("Insert table").to_owned()
         };
         Some(deferred(
             anchored().position(at).child(
@@ -1715,49 +1734,44 @@ impl DocsView {
                 .text_size(FONT_SMALL)
                 .text_color(t.fg_muted)
                 .child(kantor_ui::components::dot(t.warning))
-                .child(div().flex_1().min_w_0().child(format!(
-                    "This file has content Kantor can't show or keep yet: {}. Save writes a new copy; the original is never overwritten.",
-                    what.join(", ")
-                ))),
+                .child(div().flex_1().min_w_0().child({
+                    let msg = i18n::t("This file has content Kantor can't show or keep yet: {}. Save writes a new copy; the original is never overwritten.");
+                    i18n::fill(msg, &[&what.join(", ")])
+                })),
         )
     }
 }
 
 fn opened_status(doc: &Document) -> String {
-    let mut s = format!("Opened {}", doc.title());
     if doc.has_unsupported_content() {
-        s.push_str(" (has unsupported content; Save creates a copy)");
+        let msg = tk("Opened {} (has unsupported content; Save creates a copy)");
+        tf(msg, &[&doc.title()])
     } else if !doc.preserved_content().is_empty() {
-        s.push_str(&format!(
-            " ({} shown as placeholders, kept as they are when saving)",
-            doc.preserved_content().join(", ")
-        ));
+        let msg = tk("Opened {} ({} shown as placeholders, kept as they are when saving)");
+        tf(msg, &[&doc.title(), &doc.preserved_content().join(", ")])
+    } else {
+        tf("Opened {}", &[&doc.title()])
     }
-    s
 }
 
 /// `1,234 words · 6,789 characters`, or for a selection
 /// `12 of 1,234 words · 60 characters`.
 fn count_text(total: (usize, usize), selected: Option<(usize, usize)>) -> String {
-    let plural = |n: usize, word: &str| {
-        format!(
-            "{} {word}{}",
-            group_thousands(n),
-            if n == 1 { "" } else { "s" }
-        )
+    let words = |n: usize| match n {
+        1 => t("1 word").to_owned(),
+        n => tf("{} words", &[&group_thousands(n)]),
+    };
+    let characters = |n: usize| match n {
+        1 => t("1 character").to_owned(),
+        n => tf("{} characters", &[&group_thousands(n)]),
     };
     match selected {
-        Some((words, chars)) => format!(
-            "{} of {} · {}",
-            group_thousands(words),
-            plural(total.0, "word"),
-            plural(chars, "character")
-        ),
-        None => format!(
+        Some((w, chars)) => format!(
             "{} · {}",
-            plural(total.0, "word"),
-            plural(total.1, "character")
+            tf("{} of {}", &[&group_thousands(w), &words(total.0)]),
+            characters(chars)
         ),
+        None => format!("{} · {}", words(total.0), characters(total.1)),
     }
 }
 

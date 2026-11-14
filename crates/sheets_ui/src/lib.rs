@@ -83,6 +83,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, tf, tk};
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{CellRange, CellStyle, StyleChange, Workbook, cell_name, column_name};
 use table::{Column, DataTable, TableDelegate, TableEvent, TableState};
@@ -173,10 +174,12 @@ pub struct BookInfo {
 
 /// Status line after opening: imports say that Save writes a copy as `.xlsx`.
 fn opened_status(book: &Workbook) -> String {
-    let mut s = format!("Opened {}", book.title());
-    if book.source_format().is_imported() {
-        s.push_str(" (imported; Save creates an .xlsx copy)");
-    }
+    let mut s = if book.source_format().is_imported() {
+        let msg = kantor_ui::i18n::t("Opened {} (imported; Save creates an .xlsx copy)");
+        kantor_ui::i18n::fill(msg, &[&book.title()])
+    } else {
+        tf("Opened {}", &[&book.title()])
+    };
     for note in book.import_notes() {
         s.push_str("; ");
         s.push_str(note);
@@ -1054,7 +1057,7 @@ impl SheetsView {
     /// (the pane shows its progress meanwhile).
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let book = Workbook::new_empty().expect("empty workbook");
-        let status = "Ready".to_owned();
+        let status = i18n::t("Ready").to_owned();
 
         let view = cx.entity().downgrade();
         let table = cx.new(|cx| {
@@ -1066,7 +1069,8 @@ impl SheetsView {
                 .col_movable(false)
                 .sortable(false)
         });
-        let formula = cx.new(|cx| InputState::new(window, cx).placeholder("Value or =formula"));
+        let formula =
+            cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("Value or =formula")));
         let cell_input = cx.new(|cx| InputState::new(window, cx));
 
         let subscriptions = vec![
@@ -1134,7 +1138,7 @@ impl SheetsView {
     /// While opening or recalculating, refuse a command (and say why).
     fn blocked(&mut self, cx: &mut Context<Self>) -> bool {
         if self.busy.is_some() {
-            self.status = "Please wait until the workbook is ready".into();
+            self.status = i18n::t("Please wait until the workbook is ready").into();
             cx.notify();
         }
         self.busy.is_some()
@@ -1332,7 +1336,7 @@ impl SheetsView {
         }
         self.load_selected_into_formula(window, cx);
         self.focus_grid(window, cx);
-        self.status = "Edit cancelled".into();
+        self.status = i18n::t("Edit cancelled").into();
         cx.notify();
     }
 
@@ -1357,12 +1361,11 @@ impl SheetsView {
             let manual = self.table.read(cx).delegate().book.calc_mode() == CalcMode::Manual;
             let stored = result.is_ok();
             self.status = match result {
-                Ok(()) if manual => format!(
-                    "{} updated — manual calculation, press F9 to recalculate",
-                    cell_name(row, col)
-                )
-                .into(),
-                Ok(()) => format!("{} updated", cell_name(row, col)).into(),
+                Ok(()) if manual => {
+                    let msg = i18n::t("{} updated — manual calculation, press F9 to recalculate");
+                    i18n::fill(msg, &[&cell_name(row, col)]).into()
+                }
+                Ok(()) => tf("{} updated", &[&cell_name(row, col)]).into(),
                 Err(err) => format!("{err:#}").into(),
             };
             // A value its data validation rejects waits for the alert.
@@ -1619,7 +1622,7 @@ impl SheetsView {
             return;
         }
         let range = self.copy_range(cx);
-        self.status = format!("Copied {}", range.name()).into();
+        self.status = tf("Copied {}", &[&range.name()]).into();
         cx.notify();
     }
 
@@ -1630,7 +1633,7 @@ impl SheetsView {
         }
         let range = self.copy_range(cx);
         self.clear_selected(window, cx);
-        self.status = format!("Cut {}", range.name()).into();
+        self.status = tf("Cut {}", &[&range.name()]).into();
         cx.notify();
     }
 
@@ -1641,7 +1644,7 @@ impl SheetsView {
             return;
         }
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
-            self.status = "Nothing to paste".into();
+            self.status = i18n::t("Nothing to paste").into();
             cx.notify();
             return;
         };
@@ -1660,8 +1663,8 @@ impl SheetsView {
             res
         });
         self.status = match result {
-            Ok(Some(range)) => format!("Pasted {}", range.name()).into(),
-            Ok(None) => "Nothing to paste".into(),
+            Ok(Some(range)) => tf("Pasted {}", &[&range.name()]).into(),
+            Ok(None) => i18n::t("Nothing to paste").into(),
             Err(err) => format!("{err:#}").into(),
         };
         self.load_selected_into_formula(window, cx);
@@ -1692,33 +1695,39 @@ impl SheetsView {
             Unmerge,
         }
         let (edit, what) = match format {
-            Format::Bold => (Edit::Style(StyleChange::Bold(!style.bold)), "Bold"),
-            Format::Italic => (Edit::Style(StyleChange::Italic(!style.italic)), "Italic"),
+            Format::Bold => (Edit::Style(StyleChange::Bold(!style.bold)), tk("Bold")),
+            Format::Italic => (
+                Edit::Style(StyleChange::Italic(!style.italic)),
+                tk("Italic"),
+            ),
             Format::Underline => (
                 Edit::Style(StyleChange::Underline(!style.underline)),
-                "Underline",
+                tk("Underline"),
             ),
             Format::Strikethrough => (
                 Edit::Style(StyleChange::Strikethrough(!style.strikethrough)),
-                "Strikethrough",
+                tk("Strikethrough"),
             ),
             Format::Align(a) => {
                 let a = if style.align == a { HAlign::General } else { a };
-                (Edit::Style(StyleChange::Align(a)), "Alignment")
+                (Edit::Style(StyleChange::Align(a)), tk("Alignment"))
             }
-            Format::VAlign(a) => (Edit::Style(StyleChange::VAlign(a)), "Vertical alignment"),
+            Format::VAlign(a) => (
+                Edit::Style(StyleChange::VAlign(a)),
+                tk("Vertical alignment"),
+            ),
             Format::Number(f) => (Edit::Style(StyleChange::NumberFormat(f)), f.label()),
-            Format::Fill(c) => (Edit::Style(StyleChange::Fill(c)), "Fill colour"),
-            Format::FontColor(c) => (Edit::Style(StyleChange::FontColor(c)), "Text colour"),
-            Format::FontSize(d) => (Edit::Style(StyleChange::FontSizeDelta(d)), "Font size"),
-            Format::Wrap => (Edit::Style(StyleChange::Wrap(!style.wrap)), "Wrap text"),
-            Format::Borders(p) => (Edit::Borders(p), "Borders"),
+            Format::Fill(c) => (Edit::Style(StyleChange::Fill(c)), tk("Fill colour")),
+            Format::FontColor(c) => (Edit::Style(StyleChange::FontColor(c)), tk("Text colour")),
+            Format::FontSize(d) => (Edit::Style(StyleChange::FontSizeDelta(d)), tk("Font size")),
+            Format::Wrap => (Edit::Style(StyleChange::Wrap(!style.wrap)), tk("Wrap text")),
+            Format::Borders(p) => (Edit::Borders(p), tk("Borders")),
             Format::Merge => {
                 let grid = self.table.read(cx).delegate();
                 if grid.book.merges_in(grid.sheet, range).is_empty() {
-                    (Edit::Merge, "Merged")
+                    (Edit::Merge, tk("Merged"))
                 } else {
-                    (Edit::Unmerge, "Unmerged")
+                    (Edit::Unmerge, tk("Unmerged"))
                 }
             }
         };
@@ -1735,7 +1744,7 @@ impl SheetsView {
             res
         });
         self.status = match result {
-            Ok(()) => format!("{what}: {}", range.name()).into(),
+            Ok(()) => format!("{}: {}", i18n::t_dyn(what), range.name()).into(),
             Err(err) => format!("{err:#}").into(),
         };
         // A merge moves the active cell to its anchor.
@@ -1836,10 +1845,10 @@ impl SheetsView {
             res
         });
         self.status = match (result, redo) {
-            (Ok(true), false) => "Undone".into(),
-            (Ok(true), true) => "Redone".into(),
-            (Ok(false), false) => "Nothing to undo".into(),
-            (Ok(false), true) => "Nothing to redo".into(),
+            (Ok(true), false) => i18n::t("Undone").into(),
+            (Ok(true), true) => i18n::t("Redone").into(),
+            (Ok(false), false) => i18n::t("Nothing to undo").into(),
+            (Ok(false), true) => i18n::t("Nothing to redo").into(),
             (Err(err), _) => format!("{err:#}").into(),
         };
         self.load_selected_into_formula(window, cx);
@@ -2106,7 +2115,7 @@ impl SheetsView {
             return Task::ready(false);
         }
         if self.saving.is_some() {
-            self.status = "Please wait until the save finishes".into();
+            self.status = i18n::t("Please wait until the save finishes").into();
             cx.notify();
             return Task::ready(false);
         }

@@ -10,6 +10,7 @@ use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, tf};
 use kantor_ui::{metrics::*, tokens};
 
 use crate::SlidesView;
@@ -33,7 +34,8 @@ pub(crate) struct NotesPane {
 
 impl NotesPane {
     pub fn new(window: &mut Window, cx: &mut Context<SlidesView>) -> Self {
-        let input = cx.new(|cx| TextareaState::new(window, cx).placeholder("Click to add notes"));
+        let input =
+            cx.new(|cx| TextareaState::new(window, cx).placeholder(i18n::t("Click to add notes")));
         let sub = cx.subscribe_in(
             &input,
             window,
@@ -175,7 +177,7 @@ impl SlidesView {
                             .pb(SPACE_3)
                             .text_size(FONT_SMALL)
                             .text_color(t.fg_muted)
-                            .child(format!("The notes can't be edited: {why}")),
+                            .child(tf("The notes can't be edited: {}", &[&why])),
                     )
                 }),
         )

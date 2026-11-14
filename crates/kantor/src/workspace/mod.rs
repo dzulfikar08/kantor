@@ -36,6 +36,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_core::layout::{Axis, Layout, PaneId, Path as LayoutPath};
 use kantor_core::session::{PaneState, Session, TabState, UiState};
+use kantor_ui::i18n::{t, tf};
 use kantor_ui::metrics::*;
 use kantor_ui::{CachedView, tokens};
 use sheets_ui::SheetsView;
@@ -357,7 +358,7 @@ impl Workspace {
     }
 
     fn not_yet(&mut self, app: AppKind, cx: &mut Context<Self>) {
-        self.message = format!("{} is not built yet — it's on the roadmap.", app.name()).into();
+        self.message = tf("{} is not built yet — it's on the roadmap.", &[&app.name()]).into();
         cx.notify();
     }
 
@@ -469,7 +470,7 @@ impl Workspace {
         match AppKind::for_path(&path) {
             Some(app) => self.launch(app, Some(path), window, cx),
             None => {
-                self.message = format!("Kantor can't open {}", path.display()).into();
+                self.message = tf("Kantor can't open {}", &[&path.display()]).into();
                 cx.notify();
             }
         }
@@ -488,7 +489,7 @@ impl Workspace {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Open document".into()),
+            prompt: Some(t("Open document").into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else {

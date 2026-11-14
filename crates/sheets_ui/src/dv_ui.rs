@@ -16,6 +16,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{t, t_dyn, tf, tk};
 use kantor_ui::metrics::*;
 use sheets_engine::{
     ErrorStyle, Message, Validation, ValidationOperator, ValidationType, list_source,
@@ -35,32 +36,56 @@ pub(crate) enum Tab {
 }
 
 const KINDS: [(ValidationType, &str); 8] = [
-    (ValidationType::Any, "Any value"),
-    (ValidationType::Whole, "Whole number"),
-    (ValidationType::Decimal, "Decimal"),
-    (ValidationType::List, "List"),
-    (ValidationType::Date, "Date"),
-    (ValidationType::Time, "Time"),
-    (ValidationType::TextLength, "Text length"),
-    (ValidationType::Custom, "Custom"),
+    (ValidationType::Any, tk("Any value")),
+    (ValidationType::Whole, tk("Whole number")),
+    (ValidationType::Decimal, tk("Decimal")),
+    (ValidationType::List, tk("List")),
+    (ValidationType::Date, tk("Date")),
+    (ValidationType::Time, tk("Time")),
+    (ValidationType::TextLength, tk("Text length")),
+    (ValidationType::Custom, tk("Custom")),
 ];
 
 const OPERATORS: [(ValidationOperator, &str); 8] = [
-    (ValidationOperator::Between, "between"),
-    (ValidationOperator::NotBetween, "not between"),
-    (ValidationOperator::Equal, "equal to"),
-    (ValidationOperator::NotEqual, "not equal to"),
-    (ValidationOperator::GreaterThan, "greater than"),
-    (ValidationOperator::LessThan, "less than"),
+    (ValidationOperator::Between, tk("between")),
+    (ValidationOperator::NotBetween, tk("not between")),
+    (ValidationOperator::Equal, tk("equal to")),
+    (ValidationOperator::NotEqual, tk("not equal to")),
+    (ValidationOperator::GreaterThan, tk("greater than")),
+    (ValidationOperator::LessThan, tk("less than")),
     (
         ValidationOperator::GreaterThanOrEqual,
-        "greater than or equal to",
+        tk("greater than or equal to"),
     ),
-    (ValidationOperator::LessThanOrEqual, "less than or equal to"),
+    (
+        ValidationOperator::LessThanOrEqual,
+        tk("less than or equal to"),
+    ),
 ];
 
+/// The messages `sheets_engine::validation_edit` gives back, translated
+/// where the dialog shows them.
+#[cfg(test)]
+const ENGINE_ERRORS: &[&str] = &[
+    tk("Type a value"),
+    tk("Type a date such as 2026-01-31 or 31/01/2026"),
+    tk("Type a time such as 9:30"),
+    tk("Type a whole number"),
+    tk("Type a number"),
+    tk("Type the cells of the list, such as =$A$1:$A$9"),
+    tk("Type the list's items separated by commas, or =cells"),
+    tk("A typed list holds at most 255 characters: put the items in cells"),
+    tk("Select the cells to validate"),
+    tk("Type the list's source"),
+];
+
+fn engine_error(e: &anyhow::Error) -> String {
+    let s = format!("{e:#}");
+    t_dyn(&s).to_owned()
+}
+
 fn label<T: PartialEq + Copy>(list: &[(T, &'static str)], v: T) -> &'static str {
-    list.iter().find(|(k, _)| *k == v).map_or("", |(_, l)| l)
+    list.iter().find(|(k, _)| *k == v).map_or("", |(_, l)| t(l))
 }
 
 fn compares(kind: ValidationType) -> bool {
@@ -146,7 +171,7 @@ impl SheetsView {
         };
         let is_list = v.kind == ValidationType::List;
         let is_custom = v.kind == ValidationType::Custom;
-        let applies = mk(window, cx, sqref_of(&[sel]), "e.g. A2:A20");
+        let applies = mk(window, cx, sqref_of(&[sel]), t("e.g. A2:A20"));
         let value1 = mk(
             window,
             cx,
@@ -155,7 +180,7 @@ impl SheetsView {
             } else {
                 String::new()
             },
-            "a value or =formula",
+            t("a value or =formula"),
         );
         let value2 = mk(
             window,
@@ -165,7 +190,7 @@ impl SheetsView {
             } else {
                 String::new()
             },
-            "a value or =formula",
+            t("a value or =formula"),
         );
         let source = mk(
             window,
@@ -178,7 +203,7 @@ impl SheetsView {
             } else {
                 String::new()
             },
-            "Yes, No, Maybe   or   =$H$1:$H$9",
+            t("Yes, No, Maybe   or   =$H$1:$H$9"),
         );
         let formula = mk(
             window,
@@ -191,7 +216,7 @@ impl SheetsView {
             } else {
                 String::new()
             },
-            "e.g. =ISNUMBER(A2)",
+            t("e.g. =ISNUMBER(A2)"),
         );
         let pm = v.prompt.clone().unwrap_or_default();
         let (style, em) = v
@@ -267,25 +292,28 @@ impl SheetsView {
         let text = |e: &Entity<InputState>| e.read(cx).value().to_string();
         let ranges = dialog::parse_ranges(&text(&d.applies).replace(' ', ","))
             .filter(|r| !r.is_empty())
-            .ok_or("Applies to: type the cells, such as A2:A20")?;
+            .ok_or_else(|| t("Applies to: type the cells, such as A2:A20").to_owned())?;
         let (formula1, formula2) = match d.kind {
             ValidationType::Any => (None, None),
             ValidationType::List => (
-                Some(list_source(&text(&d.source)).map_err(|e| format!("Source: {e}"))?),
+                Some(
+                    list_source(&text(&d.source))
+                        .map_err(|e| tf("Source: {}", &[&engine_error(&e)]))?,
+                ),
                 None,
             ),
             ValidationType::Custom => {
                 let f = text(&d.formula);
                 let f = f.trim().trim_start_matches('=').trim();
                 if f.is_empty() {
-                    return Err("Formula: type a formula that is TRUE for valid values".into());
+                    return Err(t("Formula: type a formula that is TRUE for valid values").into());
                 }
                 (Some(f.to_owned()), None)
             }
             k => {
-                let a = validation_operand(k, &text(&d.value1)).map_err(|e| format!("{e}"))?;
+                let a = validation_operand(k, &text(&d.value1)).map_err(|e| engine_error(&e))?;
                 let b = if two(d.op) {
-                    Some(validation_operand(k, &text(&d.value2)).map_err(|e| format!("{e}"))?)
+                    Some(validation_operand(k, &text(&d.value2)).map_err(|e| engine_error(&e))?)
                 } else {
                     None
                 };
@@ -325,10 +353,10 @@ impl SheetsView {
             self.table.update(cx, |table, cx| {
                 let r = table.delegate_mut().book.set_validation(sheet, &ranges, v);
                 table.refresh(cx);
-                r.map_err(|e| format!("{e:#}"))
+                r.map_err(|e| engine_error(&e))
             })
         });
-        self.after_dv(res, "Data validation set", window, cx);
+        self.after_dv(res, t("Data validation set"), window, cx);
     }
 
     fn dv_clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -338,15 +366,15 @@ impl SheetsView {
         let sheet = d.sheet;
         let text = d.applies.read(cx).value().to_string();
         let res = dialog::parse_ranges(&text.replace(' ', ","))
-            .ok_or_else(|| "Applies to: type the cells, such as A2:A20".to_owned())
+            .ok_or_else(|| t("Applies to: type the cells, such as A2:A20").to_owned())
             .and_then(|ranges| {
                 self.table.update(cx, |table, cx| {
                     let r = table.delegate_mut().book.clear_validation(sheet, &ranges);
                     table.refresh(cx);
-                    r.map_err(|e| format!("{e:#}"))
+                    r.map_err(|e| engine_error(&e))
                 })
             });
-        self.after_dv(res, "Data validation cleared", window, cx);
+        self.after_dv(res, t("Data validation cleared"), window, cx);
     }
 
     fn after_dv(
@@ -377,9 +405,9 @@ impl SheetsView {
         let tabs = choices(
             "dv-tab",
             &[
-                (Tab::Settings, "Settings"),
-                (Tab::Input, "Input Message"),
-                (Tab::Error, "Error Alert"),
+                (Tab::Settings, t("Settings")),
+                (Tab::Input, t("Input Message")),
+                (Tab::Error, t("Error Alert")),
             ],
             d.tab,
             &view,
@@ -417,7 +445,7 @@ impl SheetsView {
                     .dropdown_menu(move |mut m, _, _| {
                         for (k, l) in KINDS {
                             let v = kv.clone();
-                            m = m.item(PopupMenuItem::new(l).checked(k == current).on_click(
+                            m = m.item(PopupMenuItem::new(t(l)).checked(k == current).on_click(
                                 move |_, _, cx| {
                                     let _ = v.update(cx, |this, cx| {
                                         if let Some(d) = this.dv_dialog.as_mut() {
@@ -430,12 +458,12 @@ impl SheetsView {
                         }
                         m
                     });
-                let mut b = v_flex().gap(SPACE_4).child(row("Allow", kind, cx));
+                let mut b = v_flex().gap(SPACE_4).child(row(t("Allow"), kind, cx));
                 if compares(d.kind) {
                     let ov = view.clone();
                     let cur = d.op;
                     b = b.child(row(
-                        "Data",
+                        t("Data"),
                         Button::new("dv-op")
                             .outline()
                             .small()
@@ -444,16 +472,18 @@ impl SheetsView {
                             .dropdown_menu(move |mut m, _, _| {
                                 for (o, l) in OPERATORS {
                                     let v = ov.clone();
-                                    m = m.item(PopupMenuItem::new(l).checked(o == cur).on_click(
-                                        move |_, _, cx| {
-                                            let _ = v.update(cx, |this, cx| {
-                                                if let Some(d) = this.dv_dialog.as_mut() {
-                                                    d.op = o;
-                                                }
-                                                cx.notify();
-                                            });
-                                        },
-                                    ));
+                                    m = m.item(
+                                        PopupMenuItem::new(t(l)).checked(o == cur).on_click(
+                                            move |_, _, cx| {
+                                                let _ = v.update(cx, |this, cx| {
+                                                    if let Some(d) = this.dv_dialog.as_mut() {
+                                                        d.op = o;
+                                                    }
+                                                    cx.notify();
+                                                });
+                                            },
+                                        ),
+                                    );
                                 }
                                 m
                             }),
@@ -461,41 +491,41 @@ impl SheetsView {
                     ));
                     let (l1, l2) = match d.op {
                         ValidationOperator::Between | ValidationOperator::NotBetween => {
-                            ("Minimum", "Maximum")
+                            (t("Minimum"), t("Maximum"))
                         }
                         ValidationOperator::GreaterThan
-                        | ValidationOperator::GreaterThanOrEqual => ("Minimum", ""),
+                        | ValidationOperator::GreaterThanOrEqual => (t("Minimum"), ""),
                         ValidationOperator::LessThan | ValidationOperator::LessThanOrEqual => {
-                            ("Maximum", "")
+                            (t("Maximum"), "")
                         }
-                        _ => ("Value", ""),
+                        _ => (t("Value"), ""),
                     };
                     b = b.child(row(l1, Input::new(&d.value1).small(), cx));
                     if two(d.op) {
                         b = b.child(row(l2, Input::new(&d.value2).small(), cx));
                     }
                     let hint = match d.kind {
-                        ValidationType::Date => "Dates as 2026-01-31 or 31/01/2026, or =formula",
-                        ValidationType::Time => "Times as 9:30, or =formula",
-                        ValidationType::TextLength => "Number of characters",
-                        _ => "A number, or =formula such as =$B$1",
+                        ValidationType::Date => t("Dates as 2026-01-31 or 31/01/2026, or =formula"),
+                        ValidationType::Time => t("Times as 9:30, or =formula"),
+                        ValidationType::TextLength => t("Number of characters"),
+                        _ => t("A number, or =formula such as =$B$1"),
                     };
                     b = b.child(note(hint, false, cx));
                 }
                 match d.kind {
                     ValidationType::List => {
                         b = b
-                            .child(row("Source", Input::new(&d.source).small(), cx))
+                            .child(row(t("Source"), Input::new(&d.source).small(), cx))
                             .child(note(
-                                "Items separated by commas, or =cells such as =$H$1:$H$9 (another sheet: =Lists!$A$1:$A$9)",
+                                t("Items separated by commas, or =cells such as =$H$1:$H$9 (another sheet: =Lists!$A$1:$A$9)"),
                                 false,
                                 cx,
                             ));
                     }
                     ValidationType::Custom => {
-                        b = b.child(row("Formula", Input::new(&d.formula).small(), cx)).child(
+                        b = b.child(row(t("Formula"), Input::new(&d.formula).small(), cx)).child(
                             note(
-                                "TRUE for a valid value; references are relative to the first cell.",
+                                t("TRUE for a valid value; references are relative to the first cell."),
                                 false,
                                 cx,
                             ),
@@ -505,47 +535,54 @@ impl SheetsView {
                 }
                 let mut opts = h_flex().gap(SPACE_6);
                 if d.kind != ValidationType::Any {
-                    opts = opts.child(check("dv-blank", "Ignore blank", d.allow_blank, |d, v| {
-                        d.allow_blank = v
-                    }));
+                    opts = opts.child(check(
+                        "dv-blank",
+                        t("Ignore blank"),
+                        d.allow_blank,
+                        |d, v| d.allow_blank = v,
+                    ));
                 }
                 if d.kind == ValidationType::List {
                     opts = opts.child(check(
                         "dv-dropdown",
-                        "In-cell dropdown",
+                        t("In-cell dropdown"),
                         d.dropdown,
                         |d, v| d.dropdown = v,
                     ));
                 }
                 b.child(opts)
-                    .child(row("Applies to", Input::new(&d.applies).small(), cx))
+                    .child(row(t("Applies to"), Input::new(&d.applies).small(), cx))
             }
             Tab::Input => v_flex()
                 .gap(SPACE_4)
                 .child(check(
                     "dv-show-prompt",
-                    "Show input message when the cell is selected",
+                    t("Show input message when the cell is selected"),
                     d.show_prompt,
                     |d, v| d.show_prompt = v,
                 ))
-                .child(row("Title", Input::new(&d.prompt_title).small(), cx))
-                .child(row("Input message", Input::new(&d.prompt_text).small(), cx)),
+                .child(row(t("Title"), Input::new(&d.prompt_title).small(), cx))
+                .child(row(
+                    t("Input message"),
+                    Input::new(&d.prompt_text).small(),
+                    cx,
+                )),
             Tab::Error => v_flex()
                 .gap(SPACE_4)
                 .child(check(
                     "dv-show-error",
-                    "Show error alert after invalid data is entered",
+                    t("Show error alert after invalid data is entered"),
                     d.show_error,
                     |d, v| d.show_error = v,
                 ))
                 .child(row(
-                    "Style",
+                    t("Style"),
                     choices(
                         "dv-style",
                         &[
-                            (ErrorStyle::Stop, "Stop"),
-                            (ErrorStyle::Warning, "Warning"),
-                            (ErrorStyle::Information, "Information"),
+                            (ErrorStyle::Stop, t("Stop")),
+                            (ErrorStyle::Warning, t("Warning")),
+                            (ErrorStyle::Information, t("Information")),
                         ],
                         d.style,
                         &view,
@@ -557,14 +594,20 @@ impl SheetsView {
                     ),
                     cx,
                 ))
-                .child(row("Title", Input::new(&d.error_title).small(), cx))
-                .child(row("Error message", Input::new(&d.error_text).small(), cx))
+                .child(row(t("Title"), Input::new(&d.error_title).small(), cx))
+                .child(row(
+                    t("Error message"),
+                    Input::new(&d.error_text).small(),
+                    cx,
+                ))
                 .child(note(
                     match d.style {
-                        ErrorStyle::Stop => "Stop: the value can't stay (Retry / Cancel).",
-                        ErrorStyle::Warning => "Warning: asks \"Continue?\" (Yes / No / Cancel).",
+                        ErrorStyle::Stop => t("Stop: the value can't stay (Retry / Cancel)."),
+                        ErrorStyle::Warning => {
+                            t("Warning: asks \"Continue?\" (Yes / No / Cancel).")
+                        }
                         ErrorStyle::Information => {
-                            "Information: tells, then keeps the value (OK / Cancel)."
+                            t("Information: tells, then keeps the value (OK / Cancel).")
                         }
                     },
                     false,
@@ -572,7 +615,7 @@ impl SheetsView {
                 )),
         };
         let clear = view.clone();
-        let card = dialog::card("data-validation", "Data Validation", px(480.), cx)
+        let card = dialog::card("data-validation", t("Data Validation"), px(480.), cx)
             .key_context("KantorDvDialog")
             .on_action(cx.listener(|this, _: &input::Escape, w, cx| this.close_dv(w, cx)))
             .child(tabs)
@@ -584,7 +627,7 @@ impl SheetsView {
                         Button::new("dv-clear")
                             .small()
                             .outline()
-                            .label("Clear All")
+                            .label(t("Clear All"))
                             .on_click(move |_, w, cx| {
                                 let _ = clear.update(cx, |this, cx| this.dv_clear(w, cx));
                             }),
@@ -592,7 +635,7 @@ impl SheetsView {
                     .child(div().flex_1())
                     .child(dialog::buttons(
                         "dv-buttons",
-                        "OK",
+                        t("OK"),
                         true,
                         &view,
                         Self::dv_ok,
@@ -606,5 +649,17 @@ impl SheetsView {
         root.on_action(
             cx.listener(|this, _: &DataValidation, w, cx| this.data_validation_doc(w, cx)),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[std::prelude::v1::test]
+    fn engine_errors_have_indonesian() {
+        for e in ENGINE_ERRORS {
+            assert!(kantor_ui::i18n::indonesian(e).is_some(), "{e:?}");
+        }
     }
 }

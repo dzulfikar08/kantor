@@ -33,7 +33,7 @@ impl DocsView {
         let (r, sel) = f(&mut self.doc, self.sel)?;
         self.typing_props = None;
         self.edited(sel, window, cx);
-        self.status = format!("Agent: {what}").into();
+        self.status = kantor_ui::i18n::tf("Agent: {}", &[&what]).into();
         Ok(r)
     }
 
@@ -58,12 +58,13 @@ impl DocsView {
             }
             None => self.doc.save(),
         };
-        let ok = result.is_ok();
+        // The tool's answer stays in English whatever the interface
+        // language (the status bar shows the translated one).
+        let outcome = result.as_ref().map(|_| ()).map_err(|e| format!("{e:#}"));
         self.after_save(result, window, cx);
-        if ok {
-            Ok(self.status.to_string())
-        } else {
-            bail!("{}", self.status)
+        match outcome {
+            Ok(()) => Ok(format!("Saved {}", self.doc.title())),
+            Err(e) => bail!("Save failed: {e}"),
         }
     }
 }

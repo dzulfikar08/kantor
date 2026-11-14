@@ -1,0 +1,167 @@
+# English<TAB>Indonesian, one string per line (see kantor_ui/src/i18n.rs).
+First page	Halaman pertama
+Even pages	Halaman genap
+Odd pages	Halaman ganjil
+Other pages	Halaman lainnya
+Every page	Setiap halaman
+No header	Tanpa header
+No footer	Tanpa footer
+Header updated	Header diperbarui
+Footer updated	Footer diperbarui
+This section's footer already has page numbers	Footer bagian ini sudah memiliki nomor halaman
+Page {PAGE} of {PAGES}	Halaman {PAGE} dari {PAGES}
+Page numbers added to the footer	Nomor halaman ditambahkan ke footer
+Section break inserted: Page setup now changes this section only	Pemisah bagian disisipkan: Pengaturan Halaman kini hanya mengubah bagian ini
+A section break can't go inside a table	Pemisah bagian tidak dapat ditempatkan di dalam tabel
+Page number	Nomor halaman
+Insert the page number: {PAGE}	Sisipkan nomor halaman: {PAGE}
+Page count	Jumlah halaman
+Insert the number of pages: {PAGES}	Sisipkan jumlah halaman: {PAGES}
+Left	Kiri
+Centre	Tengah
+Right	Kanan
+Section {} of {}; sections without their own use the one before	Bagian {} dari {}; bagian yang tidak memiliki sendiri memakai yang sebelumnya
+Options	Opsi
+Different first page	Halaman pertama berbeda
+Different odd and even pages	Halaman ganjil dan genap berbeda
+Header and footer, page numbers	Header dan footer, nomor halaman
+Footnote	Catatan Kaki
+Endnote	Catatan Akhir
+This header has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet	Header ini berisi gambar, tabel, atau objek lain; Kantor menampilkannya dan mempertahankannya apa adanya, tetapi belum dapat mengeditnya
+This footer has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet	Footer ini berisi gambar, tabel, atau objek lain; Kantor menampilkannya dan mempertahankannya apa adanya, tetapi belum dapat mengeditnya
+This footnote has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet	Catatan kaki ini berisi gambar, tabel, atau objek lain; Kantor menampilkannya dan mempertahankannya apa adanya, tetapi belum dapat mengeditnya
+This endnote has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet	Catatan akhir ini berisi gambar, tabel, atau objek lain; Kantor menampilkannya dan mempertahankannya apa adanya, tetapi belum dapat mengeditnya
+Put the caret after a footnote or endnote number	Letakkan kursor setelah nomor catatan kaki atau catatan akhir
+Write the footnote	Tulis catatan kaki
+Write the endnote	Tulis catatan akhir
+Footnote updated	Catatan kaki diperbarui
+Endnote updated	Catatan akhir diperbarui
+Footnote deleted	Catatan kaki dihapus
+Endnote deleted	Catatan akhir dihapus
+Delete the note and its number in the text	Hapus catatan dan nomornya di dalam teks
+Bold · Ctrl+B	Tebal · Ctrl+B
+Italic · Ctrl+I	Miring · Ctrl+I
+Underline · Ctrl+U	Garis Bawah · Ctrl+U
+Normal text · Ctrl+Alt+0	Teks normal · Ctrl+Alt+0
+Heading 1 · Ctrl+Alt+1	Judul 1 · Ctrl+Alt+1
+Heading 2 · Ctrl+Alt+2	Judul 2 · Ctrl+Alt+2
+Heading 3 · Ctrl+Alt+3	Judul 3 · Ctrl+Alt+3
+Align left · Ctrl+L	Rata kiri · Ctrl+L
+Center · Ctrl+E	Rata tengah · Ctrl+E
+Align right · Ctrl+R	Rata kanan · Ctrl+R
+Justify · Ctrl+J	Rata kiri-kanan · Ctrl+J
+Bulleted list · Ctrl+Shift+8	Daftar berpoin · Ctrl+Shift+8
+Numbered list · Ctrl+Shift+7	Daftar bernomor · Ctrl+Shift+7
+Decrease list level · Shift+Tab	Turunkan level daftar · Shift+Tab
+Increase list level · Tab	Naikkan level daftar · Tab
+Insert picture (PNG or JPEG)	Sisipkan gambar (PNG atau JPEG)
+Insert row below	Sisipkan baris di bawah
+Insert column right	Sisipkan kolom di kanan
+Delete row	Hapus baris
+Delete column	Hapus kolom
+Delete table	Hapus tabel
+Rewrite or translate with AI	Tulis ulang atau terjemahkan dengan AI
+Zoom out · Ctrl+-	Perkecil · Ctrl+-
+Zoom in · Ctrl+=	Perbesar · Ctrl+=
+Insert table	Sisipkan tabel
+Actual size · Ctrl+0	Ukuran sebenarnya · Ctrl+0
+Print and export	Cetak dan ekspor
+Top	Atas
+Bottom	Bawah
+Normal	Normal
+Narrow	Sempit
+Moderate	Sedang
+Wide	Lebar
+2.54 cm all sides	2,54 cm semua sisi
+1.27 cm all sides	1,27 cm semua sisi
+2.54 cm top/bottom, 1.91 cm sides	2,54 cm atas/bawah, 1,91 cm sisi
+2.54 cm top/bottom, 5.08 cm sides	2,54 cm atas/bawah, 5,08 cm sisi
+Custom	Kustom
+{} landscape	{} lanskap
+Section {} of {}: changes apply to this section	Bagian {} dari {}: perubahan berlaku untuk bagian ini
+Apply custom margins  Enter	Terapkan margin kustom  Enter
+Paper size	Ukuran kertas
+Custom margins (cm)	Margin kustom (cm)
+Page setup: size, orientation, margins	Pengaturan halaman: ukuran, orientasi, margin
+Jan	Jan
+Feb	Feb
+Mar	Mar
+Apr	Apr
+May	Mei
+Jun	Jun
+Jul	Jul
+Aug	Agu
+Sep	Sep
+Oct	Okt
+Nov	Nov
+Dec	Des
+Write a comment	Tulis komentar
+Comment deleted	Komentar dihapus
+Track Changes on: your edits are marked as {}'s	Lacak Perubahan aktif: suntingan Anda ditandai sebagai milik {}
+Track Changes off	Lacak Perubahan nonaktif
+No tracked change at the caret	Tidak ada perubahan terlacak di posisi kursor
+This document has no tracked changes	Dokumen ini tidak memiliki perubahan terlacak
+Accepted 1 tracked change	1 perubahan terlacak diterima
+Accepted {} tracked changes	{} perubahan terlacak diterima
+Rejected 1 tracked change	1 perubahan terlacak ditolak
+Rejected {} tracked changes	{} perubahan terlacak ditolak
+Accepted: no tracked changes left	Diterima: tidak ada lagi perubahan terlacak
+Accepted: 1 tracked change left	Diterima: tersisa 1 perubahan terlacak
+Accepted: {} tracked changes left	Diterima: tersisa {} perubahan terlacak
+Rejected: no tracked changes left	Ditolak: tidak ada lagi perubahan terlacak
+Rejected: 1 tracked change left	Ditolak: tersisa 1 perubahan terlacak
+Rejected: {} tracked changes left	Ditolak: tersisa {} perubahan terlacak
+Edit comment	Edit komentar
+Delete comment	Hapus komentar
+Review: comments and tracked changes	Tinjau: komentar dan perubahan terlacak
+Review: 1 tracked change	Tinjau: 1 perubahan terlacak
+Review: {} tracked changes	Tinjau: {} perubahan terlacak
+Review: 1 comment	Tinjau: 1 komentar
+Review: {} comments	Tinjau: {} komentar
+Review: {} tracked changes, {} comments	Tinjau: {} perubahan terlacak, {} komentar
+{} (Track Changes is on)	{} (Lacak Perubahan aktif)
+Check Spelling as You Type	Periksa Ejaan Saat Mengetik
+Track Changes  Ctrl+Shift+E	Lacak Perubahan  Ctrl+Shift+E
+Insert footnote  Ctrl+Alt+F	Sisipkan catatan kaki  Ctrl+Alt+F
+Insert endnote  Ctrl+Alt+D	Sisipkan catatan akhir  Ctrl+Alt+D
+New comment  Ctrl+Alt+M	Komentar baru  Ctrl+Alt+M
+Show or hide comments	Tampilkan atau sembunyikan komentar
+Accept change	Terima perubahan
+Reject change	Tolak perubahan
+Next change	Perubahan berikutnya
+Previous change	Perubahan sebelumnya
+Accept all changes	Terima semua perubahan
+Reject all changes	Tolak semua perubahan
+Restored unsaved changes to {}	Perubahan yang belum disimpan dipulihkan ke {}
+Tables inside tables aren't supported yet	Tabel di dalam tabel belum didukung
+The caret isn't in a table	Kursor tidak berada di dalam tabel
+Can't insert {}: {}	Tidak dapat menyisipkan {}: {}
+Nothing to undo	Tidak ada yang bisa diurungkan
+Nothing to redo	Tidak ada yang bisa diulangi
+Page {} of {} · {}	Halaman {} dari {} · {}
+{} has content Kantor can't keep ({}), so it's saved as a new file; the original stays as it is	{} berisi konten yang tidak dapat dipertahankan Kantor ({}), jadi disimpan sebagai berkas baru; berkas aslinya tetap seperti semula
+Print failed: {}	Gagal mencetak: {}
+Preparing to print {}…	Menyiapkan cetak {}…
+Exporting {}…	Mengekspor {}…
+Exported {} (1 page)	{} diekspor (1 halaman)
+Exported {} ({} pages)	{} diekspor ({} halaman)
+Opened 1 page in the PDF viewer to print	1 halaman dibuka di penampil PDF untuk dicetak
+Opened {} pages in the PDF viewer to print	{} halaman dibuka di penampil PDF untuk dicetak
+Export to PDF failed: {}	Gagal mengekspor ke PDF: {}
+Saved {}	{} disimpan
+Save failed: {}	Gagal menyimpan: {}
+{} × {} table	Tabel {} × {}
+This file has content Kantor can't show or keep yet: {}. Save writes a new copy; the original is never overwritten.	Berkas ini berisi konten yang belum dapat ditampilkan atau dipertahankan Kantor: {}. Simpan menulis salinan baru; berkas aslinya tidak pernah ditimpa.
+Opened {} (has unsupported content; Save creates a copy)	{} dibuka (berisi konten yang tidak didukung; Simpan membuat salinan)
+Opened {} ({} shown as placeholders, kept as they are when saving)	{} dibuka ({} ditampilkan sebagai placeholder, dipertahankan apa adanya saat menyimpan)
+Opened {}	{} dibuka
+1 word	1 kata
+{} words	{} kata
+1 character	1 karakter
+{} characters	{} karakter
+{} of {}	{} dari {}
+Replaced 1 match	1 kecocokan diganti
+Replaced {} matches	{} kecocokan diganti
+The text changed since it was sent; run the rewrite again.	Teks telah berubah sejak dikirim; jalankan penulisan ulang lagi.
+Rewritten (Undo restores the original)	Ditulis ulang (Urungkan mengembalikan teks asli)
+Agent: {}	Agen: {}

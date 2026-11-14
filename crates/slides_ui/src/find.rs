@@ -7,6 +7,7 @@
 use gpui_kit::*;
 use kantor_core::find::{find_all, pick};
 use kantor_ui::find_bar::{FindBar, FindBarEvent};
+use kantor_ui::i18n::{self, tf};
 use slides_engine::{Focus, TextMatch};
 
 use crate::SlidesView;
@@ -209,10 +210,9 @@ impl SlidesView {
                 self.editing = None;
                 self.after_edit(window, cx);
                 self.status = match (n, all) {
-                    (0, _) => "This text can't be edited".into(),
-                    (n, true) => {
-                        format!("Replaced {n} match{}", if n == 1 { "" } else { "es" }).into()
-                    }
+                    (0, _) => i18n::t("This text can't be edited").into(),
+                    (1, true) => i18n::t("Replaced 1 match").into(),
+                    (n, true) => tf("Replaced {} matches", &[&n]).into(),
                     _ => SharedString::default(),
                 };
                 if !all && let Some(((slide, shape), para, offset)) = caret {

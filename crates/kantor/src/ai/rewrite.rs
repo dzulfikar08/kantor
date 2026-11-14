@@ -13,10 +13,15 @@ use gpui_kit::*;
 use kantor_ai::prompt::{self, RewriteMode};
 use kantor_ai::{AiError, Cancel};
 use kantor_core::settings::Settings;
+use kantor_ui::i18n::{self, tf};
 use kantor_ui::metrics::*;
 
 use super::widgets::{PREVIEW_MAX_HEIGHT, Status, card, footer, note, result_box, status_line};
 use super::{AI_PANEL, ClosePanel, PanelEvent};
+
+const SENDS_PARAGRAPHS: &str = kantor_ui::i18n::tk(
+    "Sends only the selected paragraphs' text to {}. Replace keeps paragraph styles; formatting inside a paragraph becomes that of its first word.",
+);
 
 enum State {
     Idle,
@@ -132,10 +137,21 @@ impl RewritePanel {
     fn status(&self) -> Status {
         match &self.state {
             State::Idle | State::Ready(_) => Status::None,
-            State::Working { chars: 0 } => Status::Busy(format!("Asking {}…", self.provider)),
-            State::Working { chars } => Status::Busy(format!("Receiving… ({chars} characters)")),
+            State::Working { chars: 0 } => Status::Busy(tf("Asking {}…", &[&self.provider])),
+            State::Working { chars } => Status::Busy(tf("Receiving… ({} characters)", &[chars])),
             State::Failed(e) => Status::Error(e.clone()),
         }
+    }
+}
+
+/// A rewrite mode's button label in the interface language.
+fn mode_label(mode: RewriteMode) -> &'static str {
+    match mode {
+        RewriteMode::ToEnglish => i18n::t("Translate to English"),
+        RewriteMode::ToIndonesian => i18n::t("Translate to Indonesian"),
+        RewriteMode::Formal => i18n::t("More formal"),
+        RewriteMode::Shorter => i18n::t("Shorter"),
+        RewriteMode::FixGrammar => i18n::t("Fix grammar"),
     }
 }
 
@@ -145,15 +161,16 @@ impl Render for RewritePanel {
         let busy = matches!(self.state, State::Working { .. });
         let ready = matches!(self.state, State::Ready(_));
         let subtitle = match &self.source {
-            Ok((r, _)) if r.len() == 1 => Some("1 paragraph".to_owned()),
-            Ok((r, _)) => Some(format!("{} paragraphs", r.len())),
+            Ok((r, _)) if r.len() == 1 => Some(i18n::t("1 paragraph").to_owned()),
+            Ok((r, _)) => Some(tf("{} paragraphs", &[&r.len()])),
             Err(_) => None,
         };
 
+        let sends_paragraphs = kantor_ui::i18n::t(SENDS_PARAGRAPHS);
         let mut body = v_flex().p(SPACE_7).gap(SPACE_5);
         if !self.enabled {
             body = body.child(note(
-                "AI features are off. Turn them on and choose a provider in AI Settings.",
+                i18n::t("AI features are off. Turn them on and choose a provider in AI Settings."),
                 cx,
             ));
         } else {
@@ -163,7 +180,7 @@ impl Render for RewritePanel {
                         div()
                             .text_size(FONT_SMALL)
                             .text_color(t.danger)
-                            .child(format!("Can't rewrite this: {e}.")),
+                            .child(tf("Can't rewrite this: {}.", &[e])),
                     );
                 }
                 Ok(_) => {
@@ -172,21 +189,15 @@ impl Render for RewritePanel {
                         let selected = self.mode == Some(mode);
                         let mut b = Button::new(("ai-mode", i))
                             .small()
-                            .label(mode.label())
+                            .label(mode_label(mode))
                             .disabled(busy)
                             .on_click(cx.listener(move |this, _, _, cx| this.run_mode(mode, cx)));
                         b = if selected { b.primary() } else { b.outline() };
                         modes = modes.child(b);
                     }
-                    body = body.child(modes).child(note(
-                        format!(
-                            "Sends only the selected paragraphs' text to {}. Replace keeps \
-                             paragraph styles; formatting inside a paragraph becomes that of its \
-                             first word.",
-                            self.provider
-                        ),
-                        cx,
-                    ));
+                    body = body
+                        .child(modes)
+                        .child(note(i18n::fill(sends_paragraphs, &[&self.provider]), cx));
                 }
             }
             if let State::Ready(paras) = &self.state {
@@ -211,7 +222,7 @@ impl Render for RewritePanel {
                 Button::new("ai-open-settings")
                     .primary()
                     .small()
-                    .label("AI Settings…")
+                    .label(i18n::t("AI Settings…"))
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(PanelEvent::OpenSettings))),
             );
         } else {
@@ -220,14 +231,18 @@ impl Render for RewritePanel {
                     Button::new("ai-close")
                         .ghost()
                         .small()
-                        .label(if busy { "Cancel" } else { "Close" })
+                        .label(if busy {
+                            i18n::t("Cancel")
+                        } else {
+                            i18n::t("Close")
+                        })
                         .on_click(cx.listener(|this, _, _, cx| this.close(cx))),
                 )
                 .child(
                     Button::new("ai-replace")
                         .primary()
                         .small()
-                        .label("Replace")
+                        .label(i18n::t("Replace"))
                         .disabled(!ready)
                         .on_click(cx.listener(|this, _, window, cx| this.replace(window, cx))),
                 );
@@ -240,7 +255,7 @@ impl Render for RewritePanel {
             .on_action(cx.listener(|this, _: &ClosePanel, _, cx| this.close(cx)))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
-                card("Rewrite selection", subtitle, cx)
+                card(i18n::t("Rewrite selection"), subtitle, cx)
                     .child(body)
                     .child(buttons),
             )

@@ -16,6 +16,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, t_dyn, tf, tk};
 use kantor_ui::metrics::*;
 use sheets_engine::{
     HEADER_FOOTER_PRESETS, Margins, PAPERS, Paper, SheetPrint, join_sections, split_sections,
@@ -72,7 +73,24 @@ pub(crate) struct PageSetupDialog {
     _subs: Vec<Subscription>,
 }
 
-const MARGIN_LABELS: [&str; 6] = ["Top", "Bottom", "Left", "Right", "Header", "Footer"];
+const MARGIN_LABELS: [&str; 6] = [
+    tk("Top"),
+    tk("Bottom"),
+    tk("Left"),
+    tk("Right"),
+    tk("Header"),
+    tk("Footer"),
+];
+
+/// Margin errors, one sentence per margin (same order as `MARGIN_LABELS`).
+const MARGIN_ERRORS: [&str; 6] = [
+    tk("Top margin: type centimetres"),
+    tk("Bottom margin: type centimetres"),
+    tk("Left margin: type centimetres"),
+    tk("Right margin: type centimetres"),
+    tk("Header margin: type centimetres"),
+    tk("Footer margin: type centimetres"),
+];
 
 fn margins_cm(m: &Margins) -> [f64; 6] {
     [m.top, m.bottom, m.left, m.right, m.header, m.footer].map(|v| v * CM_PER_INCH)
@@ -93,7 +111,7 @@ impl PageSetupDialog {
         p.setup.over_then_down = self.over_then_down;
         p.setup.black_and_white = self.black_and_white;
         if self.fit {
-            let pages = |e: &Entity<InputState>, what: &str| -> Result<u32, String> {
+            let pages = |e: &Entity<InputState>, err: &'static str| -> Result<u32, String> {
                 let t = text(e);
                 if t.trim().is_empty() {
                     return Ok(0);
@@ -102,29 +120,40 @@ impl PageSetupDialog {
                     .parse::<u32>()
                     .ok()
                     .filter(|n| *n <= 32767)
-                    .ok_or_else(|| format!("Pages {what}: type a whole number (blank: automatic)"))
+                    .ok_or_else(|| i18n::t(err).to_owned())
             };
-            let (w, h) = (pages(&self.fit_w, "wide")?, pages(&self.fit_h, "tall")?);
+            let (w, h) = (
+                pages(
+                    &self.fit_w,
+                    tk("Pages wide: type a whole number (blank: automatic)"),
+                )?,
+                pages(
+                    &self.fit_h,
+                    tk("Pages tall: type a whole number (blank: automatic)"),
+                )?,
+            );
             if w == 0 && h == 0 {
-                return Err("Fit to: give pages wide, tall or both".into());
+                return Err(i18n::t("Fit to: give pages wide, tall or both").into());
             }
             p.setup.fit = Some((w, h));
         } else {
             let s = dialog::parse_number(&text(&self.scale))
                 .filter(|v| (10.0..=400.0).contains(v))
-                .ok_or("Scale: type a percentage from 10 to 400")?;
+                .ok_or(i18n::t("Scale: type a percentage from 10 to 400"))?;
             p.setup.scale = s.round() as u32;
             p.setup.fit = None;
         }
         let first = text(&self.first_page);
-        p.setup.first_page_number = if first.trim().is_empty() || first.trim() == "Auto" {
+        p.setup.first_page_number = if first.trim().is_empty()
+            || (first.trim() == "Auto" || first.trim() == i18n::t("Auto"))
+        {
             None
         } else {
             Some(
                 first
                     .trim()
                     .parse::<i32>()
-                    .map_err(|_| "First page number: type a number, or leave it blank")?,
+                    .map_err(|_| i18n::t("First page number: type a number, or leave it blank"))?,
             )
         };
         let b = &self.base.margins;
@@ -135,7 +164,7 @@ impl PageSetupDialog {
             }
             m[i] = dialog::parse_number(&text(e))
                 .filter(|v| (0.0..=50.0).contains(v))
-                .ok_or_else(|| format!("{} margin: type centimetres", MARGIN_LABELS[i]))?
+                .ok_or_else(|| t_dyn(MARGIN_ERRORS[i]).to_owned())?
                 / CM_PER_INCH;
         }
         p.margins = Margins {
@@ -155,21 +184,27 @@ impl PageSetupDialog {
         p.header_footer.odd_header = join_sections(&h[0], &h[1], &h[2]);
         p.header_footer.odd_footer = join_sections(&f[0], &f[1], &f[2]);
         if p.header_footer.odd_header.len() > 255 || p.header_footer.odd_footer.len() > 255 {
-            return Err("Headers and footers hold at most 255 characters".into());
+            return Err(i18n::t("Headers and footers hold at most 255 characters").into());
         }
         p.print_area = dialog::parse_ranges(&text(&self.area))
-            .ok_or("Print area: type ranges such as $A$1:$F$40")?;
+            .ok_or(i18n::t("Print area: type ranges such as $A$1:$F$40"))?;
         let rows = text(&self.rows);
         p.title_rows = if rows.trim().is_empty() {
             None
         } else {
-            Some(dialog::parse_rows(&rows).ok_or("Rows to repeat: type rows such as $1:$2")?)
+            Some(
+                dialog::parse_rows(&rows)
+                    .ok_or(i18n::t("Rows to repeat: type rows such as $1:$2"))?,
+            )
         };
         let cols = text(&self.cols);
         p.title_cols = if cols.trim().is_empty() {
             None
         } else {
-            Some(dialog::parse_cols(&cols).ok_or("Columns to repeat: type columns such as $A:$B")?)
+            Some(
+                dialog::parse_cols(&cols)
+                    .ok_or(i18n::t("Columns to repeat: type columns such as $A:$B"))?,
+            )
         };
         Ok(p)
     }
@@ -220,7 +255,7 @@ impl SheetsView {
                 .map(|n| n.to_string())
                 .unwrap_or_default(),
         );
-        first_page.update(cx, |i, cx| i.set_placeholder("Auto", window, cx));
+        first_page.update(cx, |i, cx| i.set_placeholder(i18n::t("Auto"), window, cx));
         let margins_shown = m.map(cm_text);
         let margins = margins_shown.clone().map(|v| new(window, cx, v));
         let header = hs.clone().map(|s| new(window, cx, s));
@@ -333,7 +368,7 @@ impl SheetsView {
                             d.preview.release(window);
                         }
                         if changed {
-                            self.status = "Page setup changed".into();
+                            self.status = i18n::t("Page setup changed").into();
                         }
                         self.focus_grid(window, cx);
                         self.update_title(window, cx);
@@ -373,8 +408,8 @@ impl SheetsView {
             grid.book.set_print_settings(sheet, p).map(|()| sel)
         });
         self.status = match res {
-            Ok(_) if clear => "Print area cleared".into(),
-            Ok(sel) => format!("Print area set to {}", sel.name()).into(),
+            Ok(_) if clear => i18n::t("Print area cleared").into(),
+            Ok(sel) => tf("Print area set to {}", &[&sel.name()]).into(),
             Err(e) => format!("{e:#}").into(),
         };
         self.update_title(window, cx);
@@ -391,10 +426,10 @@ impl SheetsView {
         let tabs = choices(
             "ps-tab",
             &[
-                (Tab::Page, "Page"),
-                (Tab::Margins, "Margins"),
-                (Tab::HeaderFooter, "Header/Footer"),
-                (Tab::Sheet, "Sheet"),
+                (Tab::Page, i18n::t("Page")),
+                (Tab::Margins, i18n::t("Margins")),
+                (Tab::HeaderFooter, i18n::t("Header/Footer")),
+                (Tab::Sheet, i18n::t("Sheet")),
             ],
             d.tab,
             &view,
@@ -418,7 +453,11 @@ impl SheetsView {
                 .cloned()
                 .unwrap_or_default()
         };
-        let title = if d.printing { "Print" } else { "Page Setup" };
+        let title = if d.printing {
+            i18n::t("Print")
+        } else {
+            i18n::t("Page Setup")
+        };
         let settings = v_flex()
             .flex_1()
             .min_w_0()
@@ -452,7 +491,11 @@ impl SheetsView {
         )
         .child(dialog::buttons(
             "ps-buttons",
-            if d.printing { "Print" } else { "OK" },
+            if d.printing {
+                i18n::t("Print")
+            } else {
+                i18n::t("OK")
+            },
             true,
             &view,
             Self::page_setup_ok,
@@ -495,10 +538,10 @@ impl SheetsView {
         v_flex()
             .gap(SPACE_4)
             .child(row(
-                "Orientation",
+                i18n::t("Orientation"),
                 choices(
                     "ps-orient",
-                    &[(false, "Portrait"), (true, "Landscape")],
+                    &[(false, i18n::t("Portrait")), (true, i18n::t("Landscape"))],
                     d.landscape,
                     view,
                     |this, v| {
@@ -509,12 +552,15 @@ impl SheetsView {
                 ),
                 cx,
             ))
-            .child(row("Paper size", paper, cx))
+            .child(row(i18n::t("Paper size"), paper, cx))
             .child(row(
-                "Scaling",
+                i18n::t("Scaling"),
                 choices(
                     "ps-fit",
-                    &[(false, "Adjust to %"), (true, "Fit to pages")],
+                    &[
+                        (false, i18n::t("Adjust to %")),
+                        (true, i18n::t("Fit to pages")),
+                    ],
                     d.fit,
                     view,
                     |this, v| {
@@ -527,35 +573,38 @@ impl SheetsView {
             ))
             .child(if d.fit {
                 row(
-                    "Pages",
+                    i18n::t("Pages"),
                     h_flex()
                         .gap(SPACE_3)
                         .child(div().w(px(64.)).child(Input::new(&d.fit_w).small()))
-                        .child(note("wide by", false, cx))
+                        .child(note(i18n::t("wide by"), false, cx))
                         .child(div().w(px(64.)).child(Input::new(&d.fit_h).small()))
-                        .child(note("tall (blank: automatic)", false, cx)),
+                        .child(note(i18n::t("tall (blank: automatic)"), false, cx)),
                     cx,
                 )
             } else {
                 row(
-                    "Scale",
+                    i18n::t("Scale"),
                     h_flex()
                         .gap(SPACE_3)
                         .child(div().w(px(80.)).child(Input::new(&d.scale).small()))
-                        .child(note("% of normal size", false, cx)),
+                        .child(note(i18n::t("% of normal size"), false, cx)),
                     cx,
                 )
             })
             .child(row(
-                "First page number",
+                i18n::t("First page number"),
                 div().w(px(80.)).child(Input::new(&d.first_page).small()),
                 cx,
             ))
             .child(row(
-                "Page order",
+                i18n::t("Page order"),
                 choices(
                     "ps-order",
-                    &[(false, "Down, then over"), (true, "Over, then down")],
+                    &[
+                        (false, i18n::t("Down, then over")),
+                        (true, i18n::t("Over, then down")),
+                    ],
                     d.over_then_down,
                     view,
                     |this, v| {
@@ -602,7 +651,7 @@ impl SheetsView {
                             div()
                                 .w(px(52.))
                                 .text_size(FONT_SMALL)
-                                .child(MARGIN_LABELS[i]),
+                                .child(t_dyn(MARGIN_LABELS[i])),
                         )
                         .child(div().w(px(80.)).child(Input::new(&d.margins[i]).small()))
                         .child(note("cm", false, cx)),
@@ -615,22 +664,22 @@ impl SheetsView {
         v_flex()
             .gap(SPACE_4)
             .child(row(
-                "Presets",
+                i18n::t("Presets"),
                 h_flex()
                     .gap(SPACE_2)
-                    .child(preset(0, "Normal", Margins::default()))
-                    .child(preset(1, "Wide", Margins::WIDE))
-                    .child(preset(2, "Narrow", Margins::NARROW)),
+                    .child(preset(0, i18n::t("Normal"), Margins::default()))
+                    .child(preset(1, i18n::t("Wide"), Margins::WIDE))
+                    .child(preset(2, i18n::t("Narrow"), Margins::NARROW)),
                 cx,
             ))
             .child(grid)
             .child(row(
-                "Center on page",
+                i18n::t("Center on page"),
                 h_flex()
                     .gap(SPACE_6)
                     .child(
                         Checkbox::new("ps-center-h")
-                            .label("Horizontally")
+                            .label(i18n::t("Horizontally"))
                             .checked(d.center_h)
                             .on_click(move |on, _, cx| {
                                 let on = *on;
@@ -644,7 +693,7 @@ impl SheetsView {
                     )
                     .child(
                         Checkbox::new("ps-center-v")
-                            .label("Vertically")
+                            .label(i18n::t("Vertically"))
                             .checked(d.center_v)
                             .on_click(move |on, _, cx| {
                                 let on = *on;
@@ -672,21 +721,23 @@ impl SheetsView {
             let presets = Button::new(id)
                 .outline()
                 .small()
-                .label("Presets")
+                .label(i18n::t("Presets"))
                 .dropdown_caret(true)
                 .dropdown_menu(move |mut m, _, _| {
                     for (name, text) in HEADER_FOOTER_PRESETS {
                         let v = v.clone();
                         let targets = targets.clone();
-                        m = m.item(PopupMenuItem::new(name).on_click(move |_, window, cx| {
-                            let s = split_sections(text);
-                            let _ = v.update(cx, |_, cx| {
-                                for (e, val) in targets.iter().zip(s) {
-                                    e.update(cx, |i, cx| i.set_value(val, window, cx));
-                                }
-                                cx.notify();
-                            });
-                        }));
+                        m = m.item(PopupMenuItem::new(t_dyn(name)).on_click(
+                            move |_, window, cx| {
+                                let s = split_sections(text);
+                                let _ = v.update(cx, |_, cx| {
+                                    for (e, val) in targets.iter().zip(s) {
+                                        e.update(cx, |i, cx| i.set_value(val, window, cx));
+                                    }
+                                    cx.notify();
+                                });
+                            },
+                        ));
                     }
                     m
                 });
@@ -701,7 +752,7 @@ impl SheetsView {
                 )
                 .child(
                     h_flex().gap(SPACE_3).children(
-                        ["Left", "Centre", "Right"]
+                        [i18n::t("Left"), i18n::t("Centre"), i18n::t("Right")]
                             .iter()
                             .enumerate()
                             .map(|(i, l)| {
@@ -716,10 +767,10 @@ impl SheetsView {
         };
         v_flex()
             .gap(SPACE_6)
-            .child(part("ps-header-presets", "Header", &d.header))
-            .child(part("ps-footer-presets", "Footer", &d.footer))
+            .child(part("ps-header-presets", i18n::t("Header"), &d.header))
+            .child(part("ps-footer-presets", i18n::t("Footer"), &d.footer))
             .child(note(
-                "Codes: &P page · &N pages · &D date · &T time · &F file name · &A sheet name · && an ampersand",
+                i18n::t("Codes: &P page · &N pages · &D date · &T time · &F file name · &A sheet name · && an ampersand"),
                 false,
                 cx,
             ))
@@ -767,67 +818,70 @@ impl SheetsView {
         v_flex()
             .gap(SPACE_4)
             .child(row(
-                "Print area",
+                i18n::t("Print area"),
                 h_flex()
                     .gap(SPACE_2)
                     .child(div().flex_1().child(Input::new(&d.area).small()))
                     .child(fill(
                         "ps-area-sel",
-                        "Selection",
+                        i18n::t("Selection"),
                         d.area.clone(),
                         dialog::range_text(&sel),
                     ))
                     .child(fill(
                         "ps-area-clear",
-                        "Clear",
+                        i18n::t("Clear"),
                         d.area.clone(),
                         String::new(),
                     )),
                 cx,
             ))
             .child(row(
-                "Rows to repeat",
+                i18n::t("Rows to repeat"),
                 h_flex()
                     .gap(SPACE_2)
                     .child(div().flex_1().child(Input::new(&d.rows).small()))
                     .child(fill(
                         "ps-rows-sel",
-                        "Selection",
+                        i18n::t("Selection"),
                         d.rows.clone(),
                         dialog::rows_text((sel.top, sel.bottom)),
                     )),
                 cx,
             ))
             .child(row(
-                "Columns to repeat",
+                i18n::t("Columns to repeat"),
                 h_flex()
                     .gap(SPACE_2)
                     .child(div().flex_1().child(Input::new(&d.cols).small()))
                     .child(fill(
                         "ps-cols-sel",
-                        "Selection",
+                        i18n::t("Selection"),
                         d.cols.clone(),
                         dialog::cols_text((sel.left, sel.right)),
                     )),
                 cx,
             ))
-            .child(kantor_ui::components::section_label("Print", cx))
+            .child(kantor_ui::components::section_label(i18n::t("Print"), cx))
             .child(
                 h_flex()
                     .gap(SPACE_6)
                     .flex_wrap()
-                    .child(check("ps-grid", "Gridlines", d.grid_lines, |d, v| {
-                        d.grid_lines = v
-                    }))
+                    .child(check(
+                        "ps-grid",
+                        i18n::t("Gridlines"),
+                        d.grid_lines,
+                        |d, v| d.grid_lines = v,
+                    ))
                     .child(check(
                         "ps-headings",
-                        "Row and column headings",
+                        i18n::t("Row and column headings"),
                         d.headings,
                         |d, v| d.headings = v,
                     ))
                     .child(check(
                         "ps-bw",
-                        "Black and white",
+                        i18n::t("Black and white"),
                         d.black_and_white,
                         |d, v| d.black_and_white = v,
                     )),
@@ -842,5 +896,36 @@ impl SheetsView {
             .on_action(
                 cx.listener(|this, _: &ClearPrintArea, w, cx| this.set_print_area_doc(true, w, cx)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kantor_ui::i18n::indonesian;
+
+    /// Header and footer preset names from `sheets_engine`, shown with
+    /// `t_dyn`.
+    const PRESET_NAMES: &[&str] = &[
+        tk("(none)"),
+        tk("Page 1"),
+        tk("Page 1 of ?"),
+        tk("Sheet name"),
+        tk("File name"),
+        tk("Date"),
+        tk("Sheet name · Page 1"),
+        tk("File name · Page 1 of ?"),
+        tk("Date and time · Page 1"),
+    ];
+
+    #[std::prelude::v1::test]
+    fn shown_names_are_translated() {
+        for (name, _) in HEADER_FOOTER_PRESETS {
+            assert!(PRESET_NAMES.contains(&name), "{name}");
+            assert!(indonesian(name).is_some(), "{name}");
+        }
+        for s in MARGIN_LABELS.iter().chain(&MARGIN_ERRORS) {
+            assert!(indonesian(s).is_some(), "{s}");
+        }
     }
 }

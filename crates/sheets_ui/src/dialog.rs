@@ -136,7 +136,7 @@ pub(crate) fn buttons(
             Button::new((id, 0usize))
                 .small()
                 .ghost()
-                .label("Cancel")
+                .label(kantor_ui::i18n::t("Cancel"))
                 .on_click(move |_, w, cx| {
                     let _ = cancel_view.update(cx, |this, cx| cancel(this, w, cx));
                 }),

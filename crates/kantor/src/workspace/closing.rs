@@ -16,6 +16,7 @@ use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_core::layout::PaneId;
+use kantor_ui::i18n::{t, tf};
 
 /// What a close request will remove. Tabs are named by id, not index, so a
 /// request stays correct while the dialog is open.
@@ -93,8 +94,8 @@ impl Workspace {
         let id = self.save_wait;
         let names: Vec<String> = saving.iter().map(|v| v.doc_name(cx)).collect();
         let title = match names.as_slice() {
-            [one] => format!("Saving “{one}”…"),
-            many => format!("Saving {} documents…", many.len()),
+            [one] => tf("Saving “{}”…", &[one]),
+            many => tf("Saving {} documents…", &[&many.len()]),
         };
         let ws = cx.entity().downgrade();
         window.open_dialog(cx, move |dialog, _, _| {
@@ -106,12 +107,12 @@ impl Workspace {
                 .keyboard(false)
                 .title(title.clone())
                 .child(v_flex().child(
-                    DialogDescription::new().child("Kantor closes when the save has finished."),
+                    DialogDescription::new().child(t("Kantor closes when the save has finished.")),
                 ))
                 .footer(
                     DialogFooter::new().child(
                         Button::new("saving-cancel")
-                            .label("Don't Close")
+                            .label(t("Don't Close"))
                             .ghost()
                             .on_click(move |_, window, cx| {
                                 let _ = ws.update(cx, |ws, _| ws.save_wait += 1);
@@ -339,24 +340,25 @@ impl Workspace {
             .map(|v| {
                 let name = v.doc_name(cx);
                 if v.is_saving(cx) {
-                    format!("{name} (saving…)")
+                    tf("{} (saving…)", &[&name])
                 } else {
                     name
                 }
             })
             .collect();
         let (title, save_label) = match names.as_slice() {
-            [one] => (format!("Save changes to “{one}”?"), "Save"),
+            [one] => (tf("Save changes to “{}”?", &[one]), t("Save")),
             many => (
-                format!("{} documents have unsaved changes", many.len()),
-                "Save All",
+                tf("{} documents have unsaved changes", &[&many.len()]),
+                t("Save All"),
             ),
         };
         let detail = match names.len() {
-            1 => "Your changes will be lost if you don't save them.".to_owned(),
+            1 => t("Your changes will be lost if you don't save them.").to_owned(),
             _ => format!(
-                "{}\n\nYour changes will be lost if you don't save them.",
-                names.join(", ")
+                "{}\n\n{}",
+                names.join(", "),
+                t("Your changes will be lost if you don't save them.")
             ),
         };
         let ws = cx.entity().downgrade();
@@ -399,13 +401,13 @@ impl Workspace {
                     DialogFooter::new()
                         .child(
                             Button::new("close-cancel")
-                                .label("Cancel")
+                                .label(t("Cancel"))
                                 .ghost()
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
                         .child(
                             Button::new("close-discard")
-                                .label("Don't Save")
+                                .label(t("Don't Save"))
                                 .danger()
                                 .on_click(move |_, window, cx| {
                                     window.close_dialog(cx);
@@ -439,7 +441,7 @@ impl Workspace {
             return;
         }
         let waits: Vec<Task<()>> = dirty.iter().map(|v| v.wait_saved(cx)).collect();
-        self.message = "Closing when the save has finished…".into();
+        self.message = t("Closing when the save has finished…").into();
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             for wait in waits {
@@ -468,7 +470,7 @@ impl Workspace {
                 if !saved.await {
                     let _ = this.update(cx, |ws, cx| {
                         let name = view.doc_name(cx);
-                        ws.message = format!("Not closed: “{name}” wasn't saved.").into();
+                        ws.message = tf("Not closed: “{}” wasn't saved.", &[&name]).into();
                         cx.notify();
                     });
                     return;

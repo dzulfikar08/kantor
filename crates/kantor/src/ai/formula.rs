@@ -14,12 +14,22 @@ use kantor_ai::prompt::{self, FormulaReply, Lang};
 use kantor_ai::sample::{SheetSample, sample_sheet};
 use kantor_ai::{AiError, Cancel};
 use kantor_core::settings::Settings;
+use kantor_ui::i18n::{self, tf};
 use kantor_ui::metrics::*;
 use sheets_engine::check::{FormulaPreview, evaluate_in_copy};
 use sheets_ui::{AiTarget, SheetsView};
 
 use super::widgets::{Status, card, footer, note, result_box, status_line};
 use super::{AI_PANEL, ClosePanel, PanelEvent};
+
+const DESCRIBE_HINT: &str =
+    kantor_ui::i18n::tk("Describe it, e.g. total Sales where Region is Jakarta");
+const BAD_FORMULA: &str =
+    kantor_ui::i18n::tk("The suggested formula doesn't parse: {}. Try rephrasing.");
+const SENDS_SAMPLE: &str = kantor_ui::i18n::tk(
+    "Sends the column headers, up to 20 sample rows and the address {} to {}. Write in English or Bahasa Indonesia.",
+);
+const SENDS_FORMULA: &str = kantor_ui::i18n::tk("Sends this formula and the column headers to {}.");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FormulaMode {
@@ -86,10 +96,8 @@ impl FormulaPanel {
                 (target, sample, book.input(sheet, target.row, target.col))
             })
         };
-        let input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Describe it, e.g. total Sales where Region is Jakarta")
-        });
+        let input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(kantor_ui::i18n::t(DESCRIBE_HINT)));
         let subscription =
             cx.subscribe_in(&input, window, |this, _, ev: &InputEvent, window, cx| {
                 if let InputEvent::PressEnter { .. } = ev {
@@ -165,7 +173,7 @@ impl FormulaPanel {
     fn explain(&mut self, cx: &mut Context<Self>) {
         if !self.formula.starts_with('=') {
             self.state = State::Failed {
-                message: format!("{} has no formula to explain.", self.sample.active),
+                message: tf("{} has no formula to explain.", &[&self.sample.active]),
                 formula: None,
             };
             return;
@@ -231,7 +239,7 @@ impl FormulaPanel {
             }
             Some(Err(e)) => {
                 self.state = State::Failed {
-                    message: format!("The suggested formula doesn't parse: {e}. Try rephrasing."),
+                    message: kantor_ui::i18n::fill(kantor_ui::i18n::t(BAD_FORMULA), &[&e]),
                     formula: Some(reply.formula),
                 };
                 cx.notify();
@@ -251,7 +259,7 @@ impl FormulaPanel {
                 this.state = match r {
                     Ok(preview) => State::Ready { reply, preview },
                     Err(e) => State::Failed {
-                        message: format!("{e}. Try rephrasing."),
+                        message: tf("{}. Try rephrasing.", &[&e]),
                         formula: Some(reply.formula),
                     },
                 };
@@ -277,7 +285,7 @@ impl FormulaPanel {
             Ok(()) => cx.emit(PanelEvent::Close),
             Err(e) => {
                 self.state = State::Failed {
-                    message: format!("Couldn't insert: {e}"),
+                    message: tf("Couldn't insert: {}", &[&e]),
                     formula: Some(formula),
                 };
                 cx.notify();
@@ -299,11 +307,11 @@ impl FormulaPanel {
     fn status(&self) -> Status {
         match &self.state {
             State::Idle => Status::None,
-            State::Asking { chars: 0 } => Status::Busy(format!("Asking {}…", self.provider)),
-            State::Asking { chars } => Status::Busy(format!("Receiving… ({chars} characters)")),
+            State::Asking { chars: 0 } => Status::Busy(tf("Asking {}…", &[&self.provider])),
+            State::Asking { chars } => Status::Busy(tf("Receiving… ({} characters)", &[chars])),
             State::Ready { preview, .. } => match &preview.warning {
                 Some(w) => Status::Warn(w.clone()),
-                None => Status::Ok(format!("Checked: shows {}", preview.value)),
+                None => Status::Ok(tf("Checked: shows {}", &[&preview.value])),
             },
             State::Explained(_) => Status::None,
             State::Failed { message, .. } => Status::Error(message.clone()),
@@ -315,36 +323,30 @@ impl Render for FormulaPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = kantor_ui::tokens(cx);
         let title = match self.mode {
-            FormulaMode::Ask => "Ask AI for a formula",
-            FormulaMode::Explain => "Explain formula",
+            FormulaMode::Ask => i18n::t("Ask AI for a formula"),
+            FormulaMode::Explain => i18n::t("Explain formula"),
         };
         let subtitle = format!("{} · {}", self.sample.sheet, self.sample.active);
         let busy = matches!(self.state, State::Asking { .. });
         let ready = matches!(self.state, State::Ready { .. });
 
+        let sends_sample = kantor_ui::i18n::t(SENDS_SAMPLE);
         let mut body = v_flex().p(SPACE_7).gap(SPACE_5);
         if !self.enabled {
             body = body.child(note(
-                "AI features are off. Turn them on and choose a provider in AI Settings.",
+                i18n::t("AI features are off. Turn them on and choose a provider in AI Settings."),
                 cx,
             ));
         } else {
             body = match self.mode {
                 FormulaMode::Ask => body.child(Input::new(&self.input)).child(note(
-                    format!(
-                        "Sends the column headers, up to 20 sample rows and the address {} to {}. \
-                         Write in English or Bahasa Indonesia.",
-                        self.sample.active, self.provider
-                    ),
+                    i18n::fill(sends_sample, &[&self.sample.active, &self.provider]),
                     cx,
                 )),
                 FormulaMode::Explain => body
                     .child(result_box(cx).child(self.formula.clone()))
                     .child(note(
-                        format!(
-                            "Sends this formula and the column headers to {}.",
-                            self.provider
-                        ),
+                        kantor_ui::i18n::fill(kantor_ui::i18n::t(SENDS_FORMULA), &[&self.provider]),
                         cx,
                     )),
             };
@@ -371,7 +373,7 @@ impl Render for FormulaPanel {
                                     .pt(SPACE_3)
                                     .text_size(FONT_SMALL)
                                     .text_color(t.fg_dim)
-                                    .child(format!("Result now: {}", preview.value)),
+                                    .child(tf("Result now: {}", &[&preview.value])),
                             ),
                     );
                 }
@@ -394,7 +396,7 @@ impl Render for FormulaPanel {
                 Button::new("ai-open-settings")
                     .primary()
                     .small()
-                    .label("AI Settings…")
+                    .label(i18n::t("AI Settings…"))
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(PanelEvent::OpenSettings))),
             );
         } else {
@@ -402,7 +404,11 @@ impl Render for FormulaPanel {
                 Button::new("ai-close")
                     .ghost()
                     .small()
-                    .label(if busy { "Cancel" } else { "Close" })
+                    .label(if busy {
+                        i18n::t("Cancel")
+                    } else {
+                        i18n::t("Close")
+                    })
                     .on_click(cx.listener(|this, _, _, cx| this.close(cx))),
             );
             if self.mode == FormulaMode::Ask {
@@ -411,7 +417,11 @@ impl Render for FormulaPanel {
                         Button::new("ai-ask")
                             .outline()
                             .small()
-                            .label(if ready { "Ask again" } else { "Ask" })
+                            .label(if ready {
+                                i18n::t("Ask again")
+                            } else {
+                                i18n::t("Ask")
+                            })
                             .disabled(busy)
                             .on_click(cx.listener(|this, _, _, cx| this.ask(cx))),
                     )
@@ -419,7 +429,7 @@ impl Render for FormulaPanel {
                         Button::new("ai-insert")
                             .primary()
                             .small()
-                            .label(format!("Insert in {}", self.sample.active))
+                            .label(tf("Insert in {}", &[&self.sample.active]))
                             .disabled(!ready)
                             .on_click(cx.listener(|this, _, window, cx| this.insert(window, cx))),
                     );

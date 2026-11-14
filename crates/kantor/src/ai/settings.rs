@@ -13,16 +13,18 @@ use gpui_kit::*;
 use kantor_ai::keys::{self, KeyLocation};
 use kantor_ai::{Cancel, PROVIDERS, ProviderConfig, ProviderId};
 use kantor_core::settings::{AiProviderSettings, AiSettings, Settings};
+use kantor_ui::i18n::{self, t_dyn, tf};
 use kantor_ui::metrics::*;
 
 use super::widgets::{Status, card, field, footer, note, status_line};
 use super::{AI_PANEL, ClosePanel, PanelEvent};
 
-const PRIVACY: &str = "Kantor has no AI service of its own: requests go straight from this \
-computer to the provider chosen here, and only when you use an AI command. Each command sends \
-only what it needs: for formulas, the column headers, up to 20 sample rows near the selection \
-and the active cell's address; for rewriting, the selected paragraphs. Nothing is sent while AI \
-features are off. API keys are kept in the system keychain, never in the settings file.";
+const KEY_SAVED: &str =
+    kantor_ui::i18n::tk("A key is saved in the system keychain; type a new one to replace it. {}.");
+
+const PRIVACY: &str = i18n::tk(
+    "Kantor has no AI service of its own: requests go straight from this computer to the provider chosen here, and only when you use an AI command. Each command sends only what it needs: for formulas, the column headers, up to 20 sample rows near the selection and the active cell's address; for rewriting, the selected paragraphs. Nothing is sent while AI features are off. API keys are kept in the system keychain, never in the settings file.",
+);
 
 pub struct SettingsPanel {
     draft: AiSettings,
@@ -89,9 +91,9 @@ impl SettingsPanel {
             i.set_value(typed, window, cx);
             i.set_placeholder(
                 if info.needs_key {
-                    "Paste your API key"
+                    i18n::t("Paste your API key")
                 } else {
-                    "Optional"
+                    i18n::t("Optional")
                 },
                 window,
                 cx,
@@ -105,7 +107,7 @@ impl SettingsPanel {
             i.set_value(saved.model.unwrap_or_default(), window, cx);
             i.set_placeholder(
                 if info.default_model.is_empty() {
-                    "Model id"
+                    i18n::t("Model id")
                 } else {
                     info.default_model
                 },
@@ -174,7 +176,7 @@ impl SettingsPanel {
         ai.enabled = true;
         ai.provider = provider.key().to_owned();
         let typed = self.typed_keys.get(&provider).cloned();
-        self.status = Status::Busy(format!("Connecting to {}…", provider.info().label));
+        self.status = Status::Busy(tf("Connecting to {}…", &[&t_dyn(provider.info().label)]));
         self.test = Some(super::run(
             cx,
             move |cancel, _| {
@@ -192,7 +194,7 @@ impl SettingsPanel {
             |this: &mut Self, r, cx| {
                 this.test = None;
                 this.status = match r {
-                    Ok(model) => Status::Ok(format!("Connected: {model} answered.")),
+                    Ok(model) => Status::Ok(tf("Connected: {} answered.", &[&model])),
                     Err(e) => Status::Error(e.to_string()),
                 };
                 cx.notify();
@@ -214,7 +216,7 @@ impl SettingsPanel {
             |_, _, _| {},
             move |this: &mut Self, _, cx| {
                 this.has_key.insert(provider, false);
-                this.status = Status::Ok("Key removed.".into());
+                this.status = Status::Ok(i18n::t("Key removed.").into());
                 cx.notify();
             },
         );
@@ -230,7 +232,7 @@ impl SettingsPanel {
         let mut settings = Settings::load();
         settings.ai = self.draft.clone();
         if let Err(err) = settings.save() {
-            self.status = Status::Error(format!("Couldn't save settings: {err:#}"));
+            self.status = Status::Error(tf("Couldn't save settings: {}", &[&format!("{err:#}")]));
             cx.notify();
             return;
         }
@@ -240,7 +242,7 @@ impl SettingsPanel {
             cx.emit(PanelEvent::Close);
             return;
         }
-        self.status = Status::Busy("Saving the key in the system keychain…".into());
+        self.status = Status::Busy(i18n::t("Saving the key in the system keychain…").into());
         let _ = window;
         super::run(
             cx,
@@ -262,13 +264,11 @@ impl SettingsPanel {
                     Ok(true) => {
                         this.saved = true;
                         this.status = Status::Warn(
-                            "Saved. No system keychain was found, so the key is in \
-                             ~/.config/kantor/ai-keys.toml (readable only by you)."
-                                .into(),
+                            i18n::t("Saved. No system keychain was found, so the key is in ~/.config/kantor/ai-keys.toml (readable only by you).").into(),
                         );
                     }
                     Err(e) => {
-                        this.status = Status::Error(format!("Couldn't save the key: {e}"));
+                        this.status = Status::Error(tf("Couldn't save the key: {}", &[&e]));
                     }
                 }
                 cx.notify();
@@ -293,28 +293,29 @@ impl Render for SettingsPanel {
         let provider_menu = Button::new("ai-provider")
             .outline()
             .small()
-            .label(info.label)
+            .label(t_dyn(info.label).to_owned())
             .dropdown_caret(true)
             .dropdown_menu(move |mut menu, _, _| {
                 for p in PROVIDERS {
                     let view = view.clone();
                     let id = p.id;
-                    menu = menu.item(PopupMenuItem::new(p.label).checked(id == current).on_click(
-                        move |_, window, cx| {
-                            let _ = view.update(cx, |v, cx| v.set_provider(id, window, cx));
-                        },
-                    ));
+                    menu = menu.item(
+                        PopupMenuItem::new(t_dyn(p.label).to_owned())
+                            .checked(id == current)
+                            .on_click(move |_, window, cx| {
+                                let _ = view.update(cx, |v, cx| v.set_provider(id, window, cx));
+                            }),
+                    );
                 }
                 menu
             });
 
         let has_key = self.has_key.get(&self.provider).copied();
         let key_note = match has_key {
-            Some(true) => format!(
-                "A key is saved in the system keychain; type a new one to replace it. {}.",
-                info.key_hint
-            ),
-            _ => format!("{}.", info.key_hint),
+            Some(true) => {
+                kantor_ui::i18n::fill(kantor_ui::i18n::t(KEY_SAVED), &[&t_dyn(info.key_hint)])
+            }
+            _ => format!("{}.", t_dyn(info.key_hint)),
         };
         let testing = self.test.is_some();
 
@@ -327,7 +328,7 @@ impl Render for SettingsPanel {
                     .child(
                         Switch::new("ai-enabled")
                             .checked(self.draft.enabled)
-                            .label("AI features")
+                            .label(i18n::t("AI features"))
                             .on_click(cx.listener(|this, on: &bool, _, cx| {
                                 this.draft.enabled = *on;
                                 cx.notify();
@@ -336,17 +337,17 @@ impl Render for SettingsPanel {
                     .child(div().flex_1())
                     .child(note(
                         if self.draft.enabled {
-                            "On"
+                            i18n::t("On")
                         } else {
-                            "Off: Kantor never contacts an AI provider"
+                            i18n::t("Off: Kantor never contacts an AI provider")
                         },
                         cx,
                     )),
             )
-            .child(field("Provider", provider_menu, cx))
+            .child(field(i18n::t("Provider"), provider_menu, cx))
             .child(
                 field(
-                    "API key",
+                    i18n::t("API key"),
                     h_flex()
                         .gap(SPACE_3)
                         .child(div().flex_1().child(Input::new(&self.key).mask_toggle()))
@@ -355,7 +356,7 @@ impl Render for SettingsPanel {
                                 Button::new("ai-forget-key")
                                     .ghost()
                                     .small()
-                                    .label("Remove")
+                                    .label(i18n::t("Remove"))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.forget_key(window, cx)
                                     })),
@@ -366,13 +367,15 @@ impl Render for SettingsPanel {
                 .child(note(key_note, cx)),
             )
             .when(info.base_url_editable, |d| {
-                d.child(field("Base URL", Input::new(&self.base_url), cx))
+                d.child(field(i18n::t("Base URL"), Input::new(&self.base_url), cx))
             })
-            .child(field("Model", Input::new(&self.model), cx).child(note(
-                "Any model id the provider offers; empty uses the default shown.",
-                cx,
-            )))
-            .child(note(PRIVACY, cx));
+            .child(
+                field(i18n::t("Model"), Input::new(&self.model), cx).child(note(
+                    i18n::t("Any model id the provider offers; empty uses the default shown."),
+                    cx,
+                )),
+            )
+            .child(note(t_dyn(PRIVACY), cx));
 
         div()
             .id("ai-settings")
@@ -382,7 +385,7 @@ impl Render for SettingsPanel {
             .on_action(cx.listener(|this, _: &input::Escape, _, cx| this.close(cx)))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
-                card("AI Settings", None, cx).child(body).child(
+                card(i18n::t("AI Settings"), None, cx).child(body).child(
                     footer(cx)
                         .child(div().flex_1().children(status_line(&self.status, cx)))
                         .child(
@@ -390,9 +393,9 @@ impl Render for SettingsPanel {
                                 .outline()
                                 .small()
                                 .label(if testing {
-                                    "Testing…"
+                                    i18n::t("Testing…")
                                 } else {
-                                    "Test connection"
+                                    i18n::t("Test connection")
                                 })
                                 .disabled(testing)
                                 .on_click(cx.listener(|this, _, _, cx| this.test_connection(cx))),
@@ -402,7 +405,7 @@ impl Render for SettingsPanel {
                                 Button::new("ai-cancel")
                                     .ghost()
                                     .small()
-                                    .label("Cancel")
+                                    .label(i18n::t("Cancel"))
                                     .on_click(cx.listener(|this, _, _, cx| this.close(cx))),
                             )
                         })
@@ -410,10 +413,49 @@ impl Render for SettingsPanel {
                             Button::new("ai-save")
                                 .primary()
                                 .small()
-                                .label(if self.saved { "Done" } else { "Save" })
+                                .label(if self.saved {
+                                    i18n::t("Done")
+                                } else {
+                                    i18n::t("Save")
+                                })
                                 .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
                         ),
                 ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use kantor_ai::PROVIDERS;
+    use kantor_ui::i18n::{indonesian, tk};
+
+    /// Provider labels and key hints come from kantor_ai and are shown with
+    /// `t_dyn`; these are their catalog keys.
+    const PROVIDER_TEXTS: &[&str] = &[
+        tk("Ollama (local)"),
+        tk("Other (OpenAI-compatible)"),
+        tk("Create a key at console.anthropic.com"),
+        tk("Create a key at platform.openai.com"),
+        tk("Create a key at openrouter.ai/keys"),
+        tk("Create a key at console.groq.com"),
+        tk("Create a key at platform.deepseek.com"),
+        tk("Create a key at aistudio.google.com"),
+        tk("Runs on this computer; nothing leaves it. Install from ollama.com"),
+        tk("Optional; sent as a Bearer token"),
+    ];
+
+    #[std::prelude::v1::test]
+    fn provider_hints_are_translated() {
+        for p in PROVIDERS {
+            assert!(
+                PROVIDER_TEXTS.contains(&p.key_hint),
+                "key hint {:?} is not in PROVIDER_TEXTS",
+                p.key_hint
+            );
+        }
+        for s in PROVIDER_TEXTS {
+            assert!(indonesian(s).is_some(), "{s:?} has no Indonesian");
+        }
     }
 }

@@ -26,6 +26,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_ui::i18n::{self, t, t_dyn, tf};
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{
@@ -34,6 +35,18 @@ use sheets_engine::{
 };
 
 use crate::SheetsView;
+
+/// Messages of `sheets_engine` (filter and sort) that reach the status bar
+/// through [`SheetsView::book_op`], translated there.
+#[cfg(test)]
+const ENGINE_ERRORS: &[&str] = &[
+    i18n::tk("a table without a header row has no filter buttons"),
+    i18n::tk("select the data to filter"),
+    i18n::tk("nothing to filter"),
+    i18n::tk("nothing to sort"),
+    i18n::tk("nothing to sort by"),
+    i18n::tk("the sort column is outside the range"),
+];
 
 /// Values listed at most (search narrows a longer list).
 const MAX_LISTED: usize = 500;
@@ -60,20 +73,20 @@ pub(crate) enum Cond {
 impl Cond {
     fn label(self) -> &'static str {
         match self {
-            Cond::None => "No condition",
-            Cond::Equals => "Equals",
-            Cond::NotEquals => "Does not equal",
-            Cond::Greater => "Greater than",
-            Cond::GreaterEq => "Greater than or equal to",
-            Cond::Less => "Less than",
-            Cond::LessEq => "Less than or equal to",
-            Cond::Between => "Between",
-            Cond::BeginsWith => "Begins with",
-            Cond::EndsWith => "Ends with",
-            Cond::Contains => "Contains",
-            Cond::NotContains => "Does not contain",
-            Cond::Before => "Before",
-            Cond::After => "After",
+            Cond::None => t("No condition"),
+            Cond::Equals => t("Equals"),
+            Cond::NotEquals => t("Does not equal"),
+            Cond::Greater => t("Greater than"),
+            Cond::GreaterEq => t("Greater than or equal to"),
+            Cond::Less => t("Less than"),
+            Cond::LessEq => t("Less than or equal to"),
+            Cond::Between => t("Between"),
+            Cond::BeginsWith => t("Begins with"),
+            Cond::EndsWith => t("Ends with"),
+            Cond::Contains => t("Contains"),
+            Cond::NotContains => t("Does not contain"),
+            Cond::Before => t("Before"),
+            Cond::After => t("After"),
         }
     }
 
@@ -117,18 +130,18 @@ impl Cond {
             return Ok(None);
         }
         if a.is_empty() {
-            return Err("Type a value for the condition".into());
+            return Err(t("Type a value for the condition").into());
         }
         let value = |s: &str| -> Result<String, String> {
             match kind {
                 ColumnKind::Date => date_serial(s)
                     .map(|n| n.to_string())
-                    .ok_or_else(|| format!("{s:?} is not a date (use 2025-03-01)")),
+                    .ok_or_else(|| tf("{} is not a date (use 2025-03-01)", &[&format!("{s:?}")])),
                 ColumnKind::Number => s
                     .replace(',', "")
                     .parse::<f64>()
                     .map(|n| n.to_string())
-                    .map_err(|_| format!("{s:?} is not a number")),
+                    .map_err(|_| tf("{} is not a number", &[&format!("{s:?}")])),
                 ColumnKind::Text => Ok(s.to_owned()),
             }
         };
@@ -153,7 +166,7 @@ impl Cond {
             Cond::NotContains => one(FilterOp::NotEqual, format!("*{}*", esc(a))),
             Cond::Between => {
                 if b.is_empty() {
-                    return Err("Type both ends of the range".into());
+                    return Err(t("Type both ends of the range").into());
                 }
                 Ok(Some(FilterKind::Custom {
                     and: true,
@@ -285,9 +298,9 @@ impl SheetsView {
             .and_then(|k| Cond::from_filter(k, kind))
             .unwrap_or((Cond::None, String::new(), String::new()));
         let other = matches!(current, Some(FilterKind::Other(_)));
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder(t("Search")));
         let value1 = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder(kind)));
-        let value2 = cx.new(|cx| InputState::new(window, cx).placeholder("and"));
+        let value2 = cx.new(|cx| InputState::new(window, cx).placeholder(t("and")));
         value1.update(cx, |i, cx| i.set_value(a, window, cx));
         value2.update(cx, |i, cx| i.set_value(b, window, cx));
         let subs = vec![
@@ -386,7 +399,7 @@ impl SheetsView {
         self.filter_menu = None;
         self.book_op(window, cx, move |b, _| {
             let (shown, total) = b.set_column_filter(sheet, &scope, col, filter)?;
-            Ok(format!("{shown} of {total} rows shown"))
+            Ok(tf("{} of {} rows shown", &[&shown, &total]))
         });
         self.focus_grid(window, cx);
     }
@@ -398,7 +411,7 @@ impl SheetsView {
         let (sheet, scope, col) = (menu.sheet, menu.scope, menu.col);
         self.book_op(window, cx, move |b, _| {
             let (shown, total) = b.set_column_filter(sheet, &scope, col, None)?;
-            Ok(format!("Filter cleared: {shown} of {total} rows shown"))
+            Ok(tf("Filter cleared: {} of {} rows shown", &[&shown, &total]))
         });
         self.focus_grid(window, cx);
     }
@@ -442,7 +455,7 @@ impl SheetsView {
         });
         self.status = match result {
             Ok(msg) => msg.into(),
-            Err(err) => format!("{err:#}").into(),
+            Err(err) => t_dyn(&format!("{err:#}")).to_owned().into(),
         };
         self.load_selected_into_formula(window, cx);
         self.update_title(window, cx);
@@ -489,9 +502,9 @@ impl SheetsView {
         let range = self.range(cx);
         self.book_op(window, cx, move |b, sheet| {
             Ok(if b.toggle_filter(sheet, range)? {
-                "Filter buttons on: click one to filter or sort".into()
+                t("Filter buttons on: click one to filter or sort").into()
             } else {
-                "Filter off: every row shown".into()
+                t("Filter off: every row shown").into()
             })
         });
     }
@@ -509,7 +522,7 @@ impl SheetsView {
         self.book_op(window, cx, move |b, sheet| {
             let filters = b.filters(sheet);
             if filters.is_empty() {
-                anyhow::bail!("No filter on this sheet");
+                anyhow::bail!(t("No filter on this sheet"));
             }
             let (mut shown, mut total) = (0, 0);
             for f in filters {
@@ -522,9 +535,9 @@ impl SheetsView {
                 total += t;
             }
             Ok(if reapply {
-                format!("Filter reapplied: {shown} of {total} rows shown")
+                tf("Filter reapplied: {} of {} rows shown", &[&shown, &total])
             } else {
-                "Filters cleared".into()
+                t("Filters cleared").into()
             })
         });
     }
@@ -580,7 +593,7 @@ impl SheetsView {
         } = p;
         self.book_op(window, cx, move |b, _| {
             let n = b.sort_range(sheet, range, &levels, header)?;
-            Ok(format!("Sorted {n} rows by {} levels", levels.len()))
+            Ok(tf("Sorted {} rows by {} levels", &[&n, &levels.len()]))
         });
         self.focus_grid(window, cx);
     }
@@ -593,9 +606,15 @@ impl SheetsView {
         let view = cx.entity().downgrade();
         let query = menu.search.read(cx).value().to_lowercase();
         let (az, za) = match menu.kind {
-            ColumnKind::Number => ("Sort smallest to largest", "Sort largest to smallest"),
-            ColumnKind::Date => ("Sort oldest to newest", "Sort newest to oldest"),
-            ColumnKind::Text => ("Sort A to Z", "Sort Z to A"),
+            ColumnKind::Number => (
+                i18n::t("Sort smallest to largest"),
+                i18n::t("Sort largest to smallest"),
+            ),
+            ColumnKind::Date => (
+                i18n::t("Sort oldest to newest"),
+                i18n::t("Sort newest to oldest"),
+            ),
+            ColumnKind::Text => (i18n::t("Sort A to Z"), i18n::t("Sort Z to A")),
         };
         let item = |id: &'static str, label: &'static str, desc: bool| {
             h_flex()
@@ -650,9 +669,9 @@ impl SheetsView {
                 }
             });
         let cond_label = match menu.kind {
-            ColumnKind::Number => "Number filter",
-            ColumnKind::Date => "Date filter",
-            ColumnKind::Text => "Text filter",
+            ColumnKind::Number => i18n::t("Number filter"),
+            ColumnKind::Date => i18n::t("Date filter"),
+            ColumnKind::Text => i18n::t("Text filter"),
         };
         let condition = v_flex()
             .gap(SPACE_2)
@@ -680,7 +699,7 @@ impl SheetsView {
         let rows = shown_ix.into_iter().map(|i| {
             let v = view.clone();
             let label = if menu.values[i].text.is_empty() {
-                "(Blanks)".to_owned()
+                i18n::t("(Blanks)").to_owned()
             } else {
                 menu.values[i].text.clone()
             };
@@ -710,9 +729,9 @@ impl SheetsView {
             .child(
                 Checkbox::new("filter-all")
                     .label(if query.is_empty() {
-                        "(Select All)"
+                        i18n::t("(Select All)")
                     } else {
-                        "(Select All Search Results)"
+                        i18n::t("(Select All Search Results)")
                     })
                     .checked(all_checked)
                     .on_click(move |on, _, cx| {
@@ -737,7 +756,7 @@ impl SheetsView {
                     div()
                         .text_size(FONT_SMALL)
                         .text_color(t.fg_dim)
-                        .child(format!("{more} more: search to narrow")),
+                        .child(i18n::tf("{} more: search to narrow", &[&more])),
                 )
             });
         let filtered = self
@@ -753,7 +772,7 @@ impl SheetsView {
                 Button::new("filter-clear")
                     .ghost()
                     .small()
-                    .label("Clear filter")
+                    .label(i18n::t("Clear filter"))
                     .disabled(!filtered)
                     .on_click(cx.listener(|this, _, w, cx| this.clear_filter_menu_column(w, cx))),
             )
@@ -762,14 +781,14 @@ impl SheetsView {
                 Button::new("filter-cancel")
                     .ghost()
                     .small()
-                    .label("Cancel")
+                    .label(i18n::t("Cancel"))
                     .on_click(cx.listener(|this, _, w, cx| this.close_filter_menu(w, cx))),
             )
             .child(
                 Button::new("filter-ok")
                     .primary()
                     .small()
-                    .label("OK")
+                    .label(i18n::t("OK"))
                     .on_click(cx.listener(|this, _, w, cx| this.apply_filter_menu(w, cx))),
             );
         let panel = v_flex()
@@ -808,7 +827,7 @@ impl SheetsView {
                     div()
                         .text_size(FONT_SMALL)
                         .text_color(t.fg_dim)
-                        .child("This column has a filter Kantor keeps but can't edit (top 10, colour or dynamic). Choosing values replaces it."),
+                        .child(i18n::t("This column has a filter Kantor keeps but can't edit (top 10, colour or dynamic). Choosing values replaces it.")),
                 )
             })
             .child(Input::new(&menu.search).small())
@@ -835,7 +854,7 @@ impl SheetsView {
                     return h;
                 }
             }
-            format!("Column {}", column_name(c))
+            i18n::tf("Column {}", &[&column_name(c)])
         };
         let columns: Vec<(u32, String)> = (p.range.left..=p.range.right.min(p.range.left + 200))
             .map(|c| (c, col_label(c)))
@@ -853,7 +872,11 @@ impl SheetsView {
                         .w(px(64.))
                         .text_size(FONT_SMALL)
                         .text_color(t.fg_muted)
-                        .child(if i == 0 { "Sort by" } else { "Then by" }),
+                        .child(if i == 0 {
+                            i18n::t("Sort by")
+                        } else {
+                            i18n::t("Then by")
+                        }),
                 )
                 .child(
                     Button::new(("sort-col", i))
@@ -899,7 +922,7 @@ impl SheetsView {
                     Button::new(("sort-remove", i))
                         .ghost()
                         .small()
-                        .label("Remove")
+                        .label(i18n::t("Remove"))
                         .disabled(i == 0)
                         .on_click(move |_, _, cx| {
                             let _ = v3.update(cx, |this, cx| {
@@ -937,7 +960,7 @@ impl SheetsView {
                     div()
                         .text_size(FONT_SMALL)
                         .text_color(t.fg_muted)
-                        .child(SharedString::from(format!("Sort {}", p.range.name()))),
+                        .child(SharedString::from(i18n::tf("Sort {}", &[&p.range.name()]))),
                 )
                 .children(levels)
                 .child(
@@ -947,7 +970,7 @@ impl SheetsView {
                             Button::new("sort-add")
                                 .ghost()
                                 .small()
-                                .label("Add level")
+                                .label(i18n::t("Add level"))
                                 .disabled(p.levels.len() >= 8)
                                 .on_click(move |_, _, cx| {
                                     let _ = add_view.update(cx, |this, cx| {
@@ -966,7 +989,7 @@ impl SheetsView {
                         )
                         .child(
                             Checkbox::new("sort-header")
-                                .label("My data has headers")
+                                .label(i18n::t("My data has headers"))
                                 .checked(p.header)
                                 .on_click(move |on, _, cx| {
                                     let on = *on;
@@ -987,7 +1010,7 @@ impl SheetsView {
                             Button::new("sort-cancel")
                                 .ghost()
                                 .small()
-                                .label("Cancel")
+                                .label(i18n::t("Cancel"))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.sort_panel = None;
                                     cx.notify();
@@ -997,7 +1020,7 @@ impl SheetsView {
                             Button::new("sort-ok")
                                 .primary()
                                 .small()
-                                .label("Sort")
+                                .label(i18n::t("Sort"))
                                 .on_click(
                                     cx.listener(|this, _, w, cx| this.apply_sort_panel(w, cx)),
                                 ),
@@ -1010,7 +1033,7 @@ impl SheetsView {
 
 fn matches_query(v: &FilterValue, query: &str) -> bool {
     let text = if v.text.is_empty() {
-        "(blanks)"
+        return t("(Blanks)").to_lowercase().contains(query);
     } else {
         &v.text
     };
@@ -1020,29 +1043,26 @@ fn matches_query(v: &FilterValue, query: &str) -> bool {
 fn placeholder(kind: ColumnKind) -> &'static str {
     match kind {
         ColumnKind::Date => "2025-03-01",
-        ColumnKind::Number => "Number",
-        ColumnKind::Text => "Text (* and ? match any)",
+        ColumnKind::Number => t("Number"),
+        ColumnKind::Text => t("Text (* and ? match any)"),
     }
 }
 
 fn header_title(book: &Workbook, sheet: u32, row: u32, col: u32) -> String {
     let h = book.display_value(sheet, row, col);
     if h.is_empty() {
-        format!("Column {}", column_name(col))
+        tf("Column {}", &[&column_name(col)])
     } else {
         h
     }
 }
 
 fn sorted_status(n: usize, descending: bool) -> String {
-    format!(
-        "Sorted {n} rows {}",
-        if descending {
-            "descending"
-        } else {
-            "ascending"
-        }
-    )
+    if descending {
+        tf("Sorted {} rows descending", &[&n])
+    } else {
+        tf("Sorted {} rows ascending", &[&n])
+    }
 }
 
 #[cfg(test)]
@@ -1077,5 +1097,12 @@ mod tests {
         );
         assert!(Cond::Greater.filter(ColumnKind::Number, "x", "").is_err());
         assert_eq!(Cond::None.filter(ColumnKind::Text, "", "").unwrap(), None);
+    }
+
+    #[std::prelude::v1::test]
+    fn engine_errors_have_indonesian() {
+        for e in ENGINE_ERRORS {
+            assert!(kantor_ui::i18n::indonesian(e).is_some(), "{e:?}");
+        }
     }
 }

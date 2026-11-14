@@ -237,9 +237,9 @@ pub(crate) fn context_menu(
     }
     type Run = fn(&mut SlidesView, &mut Window, &mut Context<SlidesView>);
     let items: [(&str, Run); 3] = [
-        ("Cut", SlidesView::cut_doc),
-        ("Copy", SlidesView::copy_doc),
-        ("Paste", SlidesView::paste_doc),
+        (kantor_ui::i18n::t("Cut"), SlidesView::cut_doc),
+        (kantor_ui::i18n::t("Copy"), SlidesView::copy_doc),
+        (kantor_ui::i18n::t("Paste"), SlidesView::paste_doc),
     ];
     for (label, run) in items {
         let v = view.clone();

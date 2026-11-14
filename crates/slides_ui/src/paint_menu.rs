@@ -9,6 +9,7 @@ use gpui_kit::component::{Icon, Sizable as _, h_flex, tooltip::Tooltip, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::components::{icon_button, section_label};
+use kantor_ui::i18n::{self, tf};
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{metrics::*, tokens};
 use slides_engine::{EMU_PER_PT, Emu, Paint};
@@ -35,12 +36,12 @@ const WIDTHS: [f32; 7] = [0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6.0];
 /// A readable name for a theme colour slot.
 fn slot_name(slot: &str) -> String {
     match slot {
-        "bg1" => "Background 1".into(),
-        "tx1" => "Text 1".into(),
-        "bg2" => "Background 2".into(),
-        "tx2" => "Text 2".into(),
+        "bg1" => i18n::t("Background 1").into(),
+        "tx1" => i18n::t("Text 1").into(),
+        "bg2" => i18n::t("Background 2").into(),
+        "tx2" => i18n::t("Text 2").into(),
         s => match s.strip_prefix("accent") {
-            Some(n) => format!("Accent {n}"),
+            Some(n) => tf("Accent {}", &[&n]),
             None => s.to_owned(),
         },
     }
@@ -63,10 +64,8 @@ impl SlidesView {
             return;
         }
         if self.paint_target().is_none() {
-            self.set_status(
-                "Select a shape or picture to change its fill or outline",
-                cx,
-            );
+            let msg = i18n::t("Select a shape or picture to change its fill or outline");
+            self.set_status(msg, cx);
             return;
         }
         self.paint_menu = Some(PaintMenu { at, kind });
@@ -202,13 +201,17 @@ impl SlidesView {
                 this.paint_menu_closed = Some(Instant::now());
                 cx.notify();
             }))
-            .child(section_label("Theme colours", cx).px(SPACE_4).pt(SPACE_2))
+            .child(
+                section_label(i18n::t("Theme colours"), cx)
+                    .px(SPACE_4)
+                    .pt(SPACE_2),
+            )
             .child(swatches);
         match kind {
             PaintKind::Fill => {
                 panel = panel.child(row(
                     "slides-no-fill",
-                    "No fill".into(),
+                    i18n::t("No fill").into(),
                     look.fill.is_none(),
                     Box::new(|v, w, cx| v.set_fill_doc(Paint::None, w, cx)),
                 ));
@@ -216,11 +219,11 @@ impl SlidesView {
             PaintKind::Line => {
                 panel = panel.child(row(
                     "slides-no-line",
-                    "No outline".into(),
+                    i18n::t("No outline").into(),
                     look.line.is_none(),
                     Box::new(|v, w, cx| v.set_line_doc(Some(Paint::None), None, w, cx)),
                 ));
-                panel = panel.child(section_label("Width", cx).px(SPACE_4).pt(SPACE_2));
+                panel = panel.child(section_label(i18n::t("Width"), cx).px(SPACE_4).pt(SPACE_2));
                 let width = look.line.map(|l| l.1);
                 let mut widths = v_flex();
                 for (k, pt) in WIDTHS.into_iter().enumerate() {
@@ -261,11 +264,11 @@ pub(crate) fn paint_button(
 ) -> impl IntoElement {
     let v = cx.entity().downgrade();
     let (id, icon, tip) = match kind {
-        PaintKind::Fill => ("slides-fill", Lucide::PaintBucket, "Shape fill"),
+        PaintKind::Fill => ("slides-fill", Lucide::PaintBucket, i18n::t("Shape fill")),
         PaintKind::Line => (
             "slides-line",
             Lucide::PenLine,
-            "Shape outline: colour and width",
+            i18n::t("Shape outline: colour and width"),
         ),
     };
     let open = view.paint_menu.as_ref().is_some_and(|m| m.kind == kind);
