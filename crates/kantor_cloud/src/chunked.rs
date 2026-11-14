@@ -20,8 +20,12 @@ use crate::{Client, Error, LockToken, Reply, STALL_TIMEOUT, percent_encode, repl
 pub const RESUMABLE_MIN: usize = 8 * 1024 * 1024;
 /// Nextcloud v2 chunk size (its minimum is 5 MiB, except the last chunk).
 pub const NC_CHUNK: usize = 5 * 1024 * 1024;
-/// TUS PATCH size: how much is redone at worst after a drop.
-pub const TUS_CHUNK: usize = 2 * 1024 * 1024;
+/// TUS PATCH sizes: an upload starts with small parts, so a drop on a
+/// slow link costs little, and doubles the size after each part that took
+/// less than [`TUS_FAST_PART`], up to the largest.
+pub const TUS_CHUNK_MIN: usize = 1024 * 1024;
+pub const TUS_CHUNK_MAX: usize = 8 * 1024 * 1024;
+const TUS_FAST_PART: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// How a server takes resumable uploads.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -161,6 +165,7 @@ impl Client {
             let name = format!("{:05}", i + 1);
             let len = chunk.len() as u64;
             if have.iter().any(|(n, s)| *n == name && *s == Some(len)) {
+                log::info!("upload {id}: part {name} already on the server");
                 sent += len;
                 progress(sent, total);
                 continue;
@@ -247,8 +252,10 @@ impl Client {
         };
         let u = url.clone().unwrap_or_default();
         progress(offset, total);
+        let mut size = TUS_CHUNK_MIN;
         while offset < total {
-            let end = (offset as usize + TUS_CHUNK).min(bytes.len());
+            let end = (offset as usize + size).min(bytes.len());
+            let started = std::time::Instant::now();
             let part = &bytes[offset as usize..end];
             let req = self
                 .request_url("PATCH", &u)
@@ -260,6 +267,9 @@ impl Client {
                 return Err(r.error());
             }
             offset = r.upload_offset.unwrap_or(end as u64);
+            if started.elapsed() < TUS_FAST_PART {
+                size = (size * 2).min(TUS_CHUNK_MAX);
+            }
         }
         Ok(())
     }

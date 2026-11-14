@@ -400,6 +400,34 @@ work; the `cloud-keys.toml` fallback stays for systems without one.
 - e2e: 11 tests, adding `dead_link_fails_fast` and `restart_check_needs_no_download`; 11/11 on
   Nextcloud 35.0.2 and on OpenCloud 7.2.5.
 
+## Update 2026-11-14 (fourth pass): the stall after the link came back
+
+In the third pass a 12 MB save cut at 43 % sat at 43 % for about three minutes after the link
+came back. Logging each request (an id, the part, bytes handed over, start, give-up, end) and
+reading Nextcloud's PHP-FPM log showed why. When Kantor gave up on part 1 (all 5 MiB handed
+over, the server checks failing), that request was only abandoned, not stopped: its socket
+stayed open, the data the dead link had held was delivered when the link returned, and
+Nextcloud logged two `PUT …/00001` (201) running side by side, the abandoned one and the
+retry. Two copies of the same part shared the 500 kbit/s link, so each took about twice as
+long (the retry 159 s instead of about 90 s).
+
+Fix: each upload request gets a ureq agent of its own, and giving up shuts that agent down
+(`Agent::shutdown`), which closes the socket at once. In the rerun the abandoned request ended
+the moment Kantor gave up ("Agent is shut down"), Nextcloud logged it as an incomplete PUT
+(400), and only the retry's part 1 arrived (201). Same run both times (12 MB .docx, 500 kbit/s,
+300 ms round trip, 3 % loss, link swallowed ~70 s after Save, restored 40 s later), time from
+link restored to *Synced*:
+
+- before: 4 min 59 s (part 1 sent twice in parallel, 159 s);
+- after: 3 min 52 s (part 1 sent once, 91 s). Most of what remains is the 12 MB itself at
+  500 kbit/s, plus up to 26 s before the retry starts (the 15 s server check and the first
+  backoff step).
+
+Smaller parts on slow links: Nextcloud's chunked upload v2 requires parts of at least 5 MiB
+(except the last), so Nextcloud keeps 5 MiB parts. TUS (OpenCloud) has no minimum, so its PATCH
+parts now start at 1 MiB and double after each part that took under 5 s, up to 8 MiB: a drop on
+a slow link costs at most 1 MiB, a fast link soon uses big parts.
+
 ## Raw data and reproduction
 
 - Compose files: `crates/kantor_cloud/bench/{nextcloud,opencloud,link}/`. Toxiproxy proxies: 28080 → Nextcloud `web:80`, 29200 → OpenCloud `opencloud:9200`; netem is applied with `docker exec kspike-link-netem-1 tc qdisc replace dev eth0 root netem …`.

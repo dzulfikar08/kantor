@@ -188,6 +188,9 @@ pub struct LockToken(pub String);
 #[derive(Clone)]
 pub struct Client {
     agent: ureq::Agent,
+    /// The agent's settings, for uploads that get an agent of their own
+    /// (see [`Client::exec_watched`]).
+    config: ureq::config::Config,
     /// Ends with `/`, e.g. `https://drive.example/remote.php/dav/files/alice/`.
     base: String,
     auth: Option<String>,
@@ -240,7 +243,8 @@ impl Client {
             base.push('/');
         }
         Self {
-            agent: config.into(),
+            agent: config.clone().into(),
+            config,
             base,
             auth: auth.header(),
         }
@@ -330,9 +334,15 @@ impl Client {
     /// moving fails it. Once all of it is handed over, the reply may take
     /// long (bytes still queued on the way, a big file being assembled), so
     /// the server is checked every [`PROBE_EVERY`] on a new connection, and
-    /// [`PROBES_TO_GIVE_UP`] failed checks in a row fail it. A failed
-    /// request is left to end on its own (its socket timeouts); parts of a
-    /// resumable upload that arrived stay on the server.
+    /// [`PROBES_TO_GIVE_UP`] failed checks in a row fail it.
+    ///
+    /// The upload gets an agent (connection) of its own, and giving up
+    /// shuts it down: the socket closes at once, so the abandoned request
+    /// can't come back to life when the link does and compete with the
+    /// retry for the same part (it did: data a dead link had held was
+    /// delivered later, and two copies of the same 5 MiB part crossed a
+    /// 500 kbit/s link side by side). Parts that arrived stay on the
+    /// server.
     fn exec_watched(
         &self,
         parts: http::request::Parts,
@@ -347,10 +357,31 @@ impl Client {
             Sent(u64),
             Done(Result<Reply, Error>),
         }
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let what = format!(
+            "{} …{}",
+            parts.method,
+            parts
+                .uri
+                .path()
+                .rsplit('/')
+                .take(2)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("/")
+        );
         let (tx, rx) = channel::<Event>();
-        let me = self.clone();
+        let agent: ureq::Agent = self.config.clone().into();
+        let mut me = self.clone();
+        me.agent = agent.clone();
         let data: std::sync::Arc<[u8]> = std::sync::Arc::from(body);
         let len = data.len() as u64;
+        let started = Instant::now();
+        log::info!("dav #{id} {what}: start, {len} bytes");
+        let worker_what = what.clone();
         std::thread::Builder::new()
             .name("kantor-dav".into())
             .spawn(move || {
@@ -359,9 +390,24 @@ impl Client {
                     let _ = sent_tx.send(Event::Sent(sent));
                 };
                 let r = me.exec_parts(&parts, &data, Some(wait), Some((&mut report, 0, len)));
+                log::info!(
+                    "dav #{id} {worker_what}: request ended after {:.1} s: {}",
+                    started.elapsed().as_secs_f64(),
+                    match &r {
+                        Ok(reply) => format!("HTTP {}", reply.status),
+                        Err(e) => e.to_string(),
+                    }
+                );
                 let _ = tx.send(Event::Done(r));
             })
             .map_err(|e| Error::Network(format!("can't start a request: {e}")))?;
+        let give_up = |sent: u64, why: &str| {
+            log::warn!(
+                "dav #{id} {what}: given up after {:.1} s, {sent} of {len} bytes handed over: {why}",
+                started.elapsed().as_secs_f64()
+            );
+            agent.clone().shutdown();
+        };
         let mut sent = 0u64;
         let mut moved = Instant::now();
         let mut next_probe: Option<Instant> = None;
@@ -378,7 +424,13 @@ impl Client {
                     }
                     continue;
                 }
-                Ok(Event::Done(r)) => return r,
+                Ok(Event::Done(r)) => {
+                    log::info!(
+                        "dav #{id} {what}: done after {:.1} s",
+                        started.elapsed().as_secs_f64()
+                    );
+                    return r;
+                }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
                     return Err(Error::Network("the request ended without an answer".into()));
@@ -386,6 +438,7 @@ impl Client {
             }
             if sent < len {
                 if moved.elapsed() >= STALL_TIMEOUT {
+                    give_up(sent, "no data moving");
                     return Err(Error::Network(format!(
                         "no data moved for {} s",
                         STALL_TIMEOUT.as_secs()
@@ -405,6 +458,7 @@ impl Client {
             } else {
                 failed_probes += 1;
                 if failed_probes >= PROBES_TO_GIVE_UP {
+                    give_up(sent, "server checks failed");
                     return Err(Error::Network(
                         "the connection was lost while waiting for the server's reply".into(),
                     ));
