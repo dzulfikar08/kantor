@@ -1351,6 +1351,11 @@ impl SlidesView {
         window.focus(&self.focus, cx);
     }
 
+    /// The slide editor's focus (typed text there edits the presentation).
+    pub fn editor_focus_handle(&self) -> FocusHandle {
+        self.focus.clone()
+    }
+
     pub fn status(&self) -> SharedString {
         self.status.clone()
     }

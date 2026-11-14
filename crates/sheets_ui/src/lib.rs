@@ -2001,6 +2001,11 @@ impl SheetsView {
         self.focus_grid(window, cx);
     }
 
+    /// The grid's focus (typing there starts a cell edit).
+    pub fn editor_focus_handle(&self, cx: &App) -> FocusHandle {
+        self.table.read(cx).focus_handle(cx)
+    }
+
     pub fn save_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save(&Save, window, cx);
     }

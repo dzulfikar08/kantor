@@ -1135,6 +1135,11 @@ impl DocsView {
         window.focus(&self.focus, cx);
     }
 
+    /// The page editor's focus (typed text there edits the document).
+    pub fn editor_focus_handle(&self) -> FocusHandle {
+        self.focus.clone()
+    }
+
     /// Status line for the app's status bar.
     pub fn status(&self) -> SharedString {
         self.status.clone()
