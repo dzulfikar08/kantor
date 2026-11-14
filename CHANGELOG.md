@@ -21,8 +21,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   released on close and quit, and cleaned up after a crash. If the server can't be reached, you
   keep working and the status bar says *Not synced* until you choose *Sync now*. These screens are
   in English or Indonesian, following the system language or `language` in settings.toml.
-  Uploads have no fixed time limit: one fails only when no data moves for two minutes, so big
-  files on slow links finish. Files of 8 MB or more go up in parts (Nextcloud chunked upload v2,
+  Uploads have no fixed time limit, so big files on slow links finish, but a link that died is
+  noticed within about 30 seconds (no data moving, or the server not answering checks while a
+  reply is awaited); saves that waited upload by themselves when the server answers again, with
+  backoff after a failure. Reopening a cloud file after a restart needs no download to confirm
+  it's unchanged: Kantor records the ETag after its own unlock and compares the server's SHA1
+  (`oc:checksums`, sent with `OC-Checksum` on upload) when only the ETag moved. Files of 8 MB or more go up in parts (Nextcloud chunked upload v2,
   TUS on OpenCloud), so an upload cut off half-way continues where it stopped, also after a
   restart. A file locked by someone else opens truly read-only, with a bar naming them (their
   display name from the server) and *Edit now* once they close it. Closing or quitting with
@@ -32,7 +36,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - **Indonesian interface** for the whole app: menus, toolbars, dialogs, palette commands, status
   bar, settings and messages in Sheets, Docs, Slides and the start screen (about 1,500 strings).
   It follows the system language, or `language` in settings.toml, or `KANTOR_LANG`. The command
-  palette matches commands in both languages. Tool results for AI agents (MCP) stay in English.
+  palette matches commands in both languages. The widgets' own text (input menus, date picker,
+  dialog buttons) is translated too, and text Kantor writes into new content (PivotTable
+  captions, blank table headers) follows the interface language like Office; existing text in a
+  file is never rewritten. Tool results for AI agents (MCP) stay in English. Terms:
+  docs/i18n-glossary.md.
 - **Read-only documents** in Sheets, Docs and Slides: *Make Read-Only* / *Allow Editing* in the
   command palette. Typing, pasting, formatting, structural changes, dragging and edits from the AI
   assistant or MCP clients are refused; selection, copy, find, zoom, print and export work.

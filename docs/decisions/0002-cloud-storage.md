@@ -371,6 +371,35 @@ panic now reports a failed upload. The system keychain was tested with a throwaw
 gnome-keyring in a headless D-Bus session (`scripts/keychain-test.sh`): save, read and remove
 work; the `cloud-keys.toml` fallback stays for systems without one.
 
+## Update 2026-11-14 (third pass): dead links and checks without downloads
+
+- **Dead links.** The old rule failed a request only after two minutes without progress, and an
+  upload's reply could wait two minutes plus the body's size at 128 kbit/s (about 7 minutes for
+  a 5 MiB part), because data still queued in buffers looks the same as a dead link. Now a
+  request fails after 30 s without a byte moving, and an upload runs on its own thread: once its
+  body is handed over, the server is checked on a new connection every 10 s, and two failed
+  checks in a row end the wait. A slow link keeps waiting as long as the server answers. Tested
+  with a Toxiproxy `timeout` toxic (data swallowed both ways, connections left open, like Wi-Fi
+  dropping): `dead_link_fails_fast` notices it after 30.1 s on Nextcloud and 30.5 s on OpenCloud.
+  In the app at 500 kbit/s, 300 ms, 3 % loss, a 12 MB save cut at 43 % showed *Not synced*
+  26–37 s after the cut; when the link came back the upload restarted by itself within 8 s,
+  skipped the part already on the server and finished.
+- **Retrying.** Waiting saves upload by themselves when the server answers again (checked every
+  15 s); after a failed try the next waits 15 s, doubling to 5 minutes. An attempt Kantor gave up
+  on can still complete later; when the server then already has exactly our bytes (same size and
+  SHA1), the next upload counts as synced instead of a conflict.
+- **Checks without downloads.** Kantor sends `OC-Checksum: SHA1:…` with each PUT and with the
+  chunked upload's MOVE; Nextcloud keeps it and reports it in `oc:checksums`, and OpenCloud
+  computes SHA1, MD5 and ADLER32 for every file itself. When only the ETag moved, the SHA1
+  settles it; the download-and-hash check is left for files uploaded by other clients to a
+  Nextcloud that kept no checksum. After its own UNLOCK, Kantor records the new ETag (it held
+  the lock until then), and when it takes a lock it compares the version just before and after,
+  so reopening after a restart needs no check at all. Measured in the app, 12 MB .docx at
+  500 kbit/s: the status was *Synced* about 2 s after the window appeared, against 3 min 20 s
+  to 3 min 43 s for the download check (forced by a stale ETag on a file without a checksum).
+- e2e: 11 tests, adding `dead_link_fails_fast` and `restart_check_needs_no_download`; 11/11 on
+  Nextcloud 35.0.2 and on OpenCloud 7.2.5.
+
 ## Raw data and reproduction
 
 - Compose files: `crates/kantor_cloud/bench/{nextcloud,opencloud,link}/`. Toxiproxy proxies: 28080 → Nextcloud `web:80`, 29200 → OpenCloud `opencloud:9200`; netem is applied with `docker exec kspike-link-netem-1 tc qdisc replace dev eth0 root netem …`.
