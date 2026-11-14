@@ -9,6 +9,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+- Sheets: Excel 97-2003 files (`.xls`, `.xlt`) bring their comments (notes), data validation
+  (drop-down lists, number, date and text length rules, custom formulas, input and error
+  messages) and conditional formatting (cell value and formula rules with their font, fill and
+  border formats), and saving as `.xlsx` keeps them. Excel 2007 data bars, colour scales and icon
+  sets in `.xls` files, and rules whose formula Kantor can't read, are left out with a note.
+- Sheets: OpenDocument spreadsheets (`.ods`) open with their formatting: fonts, fills, borders,
+  number formats, alignment, wrap, merged cells, column widths, row heights, hidden rows, columns
+  and sheets, tab colours and frozen panes.
+
 ### Changed
 - Sheets: Fill Down, Fill Right and dragging the fill handle are much faster on big workbooks
   when they copy formulas (nine formulas down 10 000 rows of a 90 000-row workbook: 2.3 s →
