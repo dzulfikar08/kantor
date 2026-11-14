@@ -331,3 +331,121 @@ fn xls_notes_round_trip() {
     back.save_as(&again).unwrap();
     assert!(part(&again, "xl/comments1.xml").contains("Bought weekly"));
 }
+
+#[test]
+fn xls_data_validation_round_trip() {
+    use sheets_engine::{ErrorStyle, ValidationOperator, ValidationType};
+    let mut wb = Workbook::open(corpus("features.xls")).unwrap();
+    assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
+    let list = wb.sheet_validations(0);
+    assert_eq!(list.len(), 7, "{list:?}");
+    let at = |col: u32| list.iter().find(|v| v.ranges[0].left == col).unwrap();
+    let f = at(5);
+    assert_eq!(f.kind, ValidationType::List);
+    assert_eq!(f.formula1.as_deref(), Some("\"Open,Closed,Late\""));
+    assert_eq!(f.ranges, vec![CellRange::from_corners((1, 5), (4, 5))]);
+    assert_eq!(at(6).formula1.as_deref(), Some("$H$1:$H$3"));
+    let b = at(1);
+    assert_eq!(
+        (b.kind, b.operator),
+        (ValidationType::Whole, ValidationOperator::Between)
+    );
+    assert_eq!(
+        (b.formula1.as_deref(), b.formula2.as_deref()),
+        (Some("0"), Some("100"))
+    );
+    let prompt = b.prompt.as_ref().unwrap();
+    assert_eq!(
+        (prompt.title.as_str(), prompt.text.as_str()),
+        ("Quantity", "A whole number from 0 to 100")
+    );
+    let (style, error) = b.error.as_ref().unwrap();
+    assert_eq!(*style, ErrorStyle::Stop);
+    assert_eq!(error.text, "Use 0 to 100");
+    let c = at(2);
+    assert_eq!(
+        (c.kind, c.operator),
+        (ValidationType::Decimal, ValidationOperator::GreaterThan)
+    );
+    assert_eq!(c.error.as_ref().unwrap().0, ErrorStyle::Warning);
+    assert_eq!(at(3).formula2.as_deref(), Some("DATE(2024,12,31)"));
+    assert_eq!(at(4).kind, ValidationType::TextLength);
+    assert_eq!(at(8).formula1.as_deref(), Some("ISNUMBER(I1)"));
+    // The rules work: the drop-down, and a typed value is checked.
+    let items = wb.validation_list(0, 2, 5).unwrap();
+    assert_eq!(
+        items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+        ["Open", "Closed", "Late"]
+    );
+    let items = wb.validation_list(0, 2, 6).unwrap();
+    assert_eq!(items.len(), 3);
+    // Tea's quantity (150) is over 100; Rice's (5) is fine.
+    assert!(wb.invalid_cell(0, 3, 1));
+    assert!(!wb.invalid_cell(0, 1, 1));
+
+    // Saved as .xlsx: the rules are written, and moved with a row inserted.
+    wb.insert_rows(0, 0, 1).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("dv.xlsx");
+    wb.save_as(&out).unwrap();
+    assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
+    let sheet = part(&out, "xl/worksheets/sheet1.xml");
+    assert!(sheet.contains("<dataValidations count=\"7\">"), "{sheet}");
+    assert!(sheet.contains("sqref=\"F3:F6\""), "{sheet}");
+    let back = Workbook::open(&out).unwrap();
+    assert_eq!(back.sheet_validations(0).len(), 7);
+}
+
+#[test]
+fn xls_conditional_formats_round_trip() {
+    let mut wb = Workbook::open(corpus("features.xls")).unwrap();
+    let rules = wb.cf_rules(0, None);
+    assert_eq!(rules.len(), 4);
+    let by = |range: &str| rules.iter().find(|r| r.range == range).unwrap();
+    assert_eq!(by("B2:B5").summary, "Cell value between 1 and 10");
+    assert_eq!(by("B2:B5").format.fill, Some(0xC6EFCE));
+    let c = by("C2:C5");
+    assert_eq!(c.summary, "Cell value greater than =$I$1");
+    assert!(c.format.bold);
+    assert_eq!(c.format.font, Some(0x9C0006));
+    let f = by("F2:F5");
+    assert_eq!(f.format.fill, Some(0xFFC7CE));
+    assert!(f.format.italic);
+    let a = by("A2:A5");
+    assert_eq!(a.summary, "Formula: =AND($B2<0,LEN(A2)>3)");
+    assert!(a.format.underline);
+    assert_eq!(a.format.font, Some(0x0000FF));
+
+    // What the cells show: B2 (5) is between 1 and 10, F5 is "Late", A5's
+    // row has a negative quantity.
+    let fill = |wb: &mut Workbook, r, c| {
+        wb.conditional(0, r, c)
+            .and_then(|x| x.style.as_ref().and_then(|s| s.fill))
+    };
+    assert_eq!(fill(&mut wb, 1, 1), Some(0xC6EFCE));
+    assert_eq!(fill(&mut wb, 2, 1), None);
+    assert_eq!(fill(&mut wb, 4, 5), Some(0xFFC7CE));
+    let a5 = wb
+        .conditional(0, 4, 0)
+        .and_then(|x| x.style.clone())
+        .unwrap();
+    assert!(a5.underline);
+    assert!(
+        wb.conditional(0, 3, 0)
+            .and_then(|x| x.style.clone())
+            .is_none()
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("cf.xlsx");
+    wb.save_as(&out).unwrap();
+    assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
+    let sheet = part(&out, "xl/worksheets/sheet1.xml");
+    assert_eq!(
+        sheet.matches("<conditionalFormatting").count(),
+        4,
+        "{sheet}"
+    );
+    let back = Workbook::open(&out).unwrap();
+    assert_eq!(back.cf_rules(0, None).len(), 4);
+}

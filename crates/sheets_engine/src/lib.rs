@@ -37,6 +37,8 @@ mod table_edit;
 mod validation;
 mod validation_edit;
 mod xls;
+mod xls_formula;
+mod xls_ftab;
 
 pub use cf_edit::{
     COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,
@@ -591,6 +593,19 @@ impl Workbook {
         }
         if let Some(sheet) = imported.active_sheet {
             let _ = model.set_selected_sheet(sheet);
+        }
+        // An import's data validation: saved like an edit.
+        let mut validation = validation;
+        if !imported.validations.is_empty() {
+            let mut rules = Vec::new();
+            for (sheet, list) in std::mem::take(&mut imported.validations) {
+                let Ok(ws) = model.get_model().workbook.worksheet(sheet) else {
+                    continue;
+                };
+                touched.validations.insert(ws.sheet_id);
+                rules.extend(list.into_iter().map(|v| (ws.sheet_id, v)));
+            }
+            validation = validation::Validations::imported(rules);
         }
         let mut book = Self {
             calc,

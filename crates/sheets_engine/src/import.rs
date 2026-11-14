@@ -212,6 +212,8 @@ pub(crate) struct Imported {
     pub print_names: HashMap<u32, (Option<String>, Option<String>)>,
     /// The tab the file opens on.
     pub active_sheet: Option<u32>,
+    /// Data validation (`.xls`), by sheet index.
+    pub validations: Vec<(u32, Vec<crate::Validation>)>,
 }
 
 /// Read an `.ods` / `.xls` / `.xlsb` file via calamine (and `.xls`
@@ -343,10 +345,12 @@ pub(crate) fn read_calamine(
     }
     // After the check: clearing the covered cells of merges changes values.
     if let Some(x) = &xls {
-        let (prints, cleared) = x.apply(&mut model, &names);
-        imported.prints = prints;
+        let applied = x.apply(&mut model, &names);
+        imported.prints = applied.prints;
+        imported.validations = applied.validations;
+        imported.notes.extend(applied.notes);
         imported.active_sheet = Some(x.globals.active).filter(|&a| (a as usize) < names.len());
-        replaced |= cleared;
+        replaced |= applied.cleared;
     }
     if replaced {
         model.evaluate();

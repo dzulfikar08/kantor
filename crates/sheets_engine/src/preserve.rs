@@ -4236,7 +4236,8 @@ fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
     Ok(())
 }
 
-const COMMENTS_CT: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml";
+const COMMENTS_CT: &str =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml";
 const VML_CT: &str = "application/vnd.openxmlformats-officedocument.vmlDrawing";
 
 /// Add the notes of sheets that have no comments part: a `comments` part,
@@ -4309,7 +4310,9 @@ fn write_notes(
         pkg.set(&sheet.part, new.into_bytes());
     }
     if !has_vml_default && !ct.is_empty() {
-        ct.push_str(&format!("<Default Extension=\"vml\" ContentType=\"{VML_CT}\"/>"));
+        ct.push_str(&format!(
+            "<Default Extension=\"vml\" ContentType=\"{VML_CT}\"/>"
+        ));
     }
     if !ct.is_empty() {
         let mut types = pkg
