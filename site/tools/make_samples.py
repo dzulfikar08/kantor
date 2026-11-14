@@ -6,10 +6,10 @@ chain, "Kopi Senja", with outlets in eight Indonesian cities.
 
 Writes
 - sales.xlsx: quarterly sales per city (Rp million) with a colour scale, a highlight rule for
-  cities below target, data bars, a note (comment), a column chart beside the data, and a
-  best-sellers table;
-- report.docx: a quarterly review with headings, a table, footnotes, tracked changes (an
-  insertion and a deletion by two people), a comment and one misspelt word;
+  cities below target, data bars, a bar chart beside the data and a best-sellers table;
+- report.docx: a quarterly review with headings, a table, footnotes, tracked changes
+  (insertions and deletions), a comment and one misspelt word; page 2 is long enough that one
+  Page Up from its end shows the bottom of page 1 (see shots.sh);
 - review.pptx: a four-slide deck; slide 3 has a column chart beside three key figures.
 """
 import datetime
@@ -36,7 +36,6 @@ SALES = [
 # ---------- Sheets ----------
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, Reference
-from openpyxl.comments import Comment
 from openpyxl.formatting.rule import CellIsRule, ColorScaleRule, DataBarRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
@@ -63,11 +62,11 @@ ws["A1"].fill = solid(NAVY)
 ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
 ws.merge_cells("A2:E2")
 ws["A2"] = "Rp million, net of tax"
-ws["A2"].font = Font(italic=True, color="595959")
+ws["A2"].font = Font(italic=True)
 ws.merge_cells("F2:H2")
 ws["F2"] = datetime.date(2026, 11, 14)
 ws["F2"].number_format = "d mmm yyyy"
-ws["F2"].font = Font(italic=True, color="595959")
+ws["F2"].font = Font(italic=True)
 ws["F2"].alignment = Alignment(horizontal="right")
 
 thin = Side(style="thin", color="BFBFBF")
@@ -104,8 +103,9 @@ for c in range(1, 9):
     cell.border = Border(top=Side(style="thin", color="000000"),
                          bottom=Side(style="double", color="000000"))
 
-# Conditional formatting: a white-to-green scale on the quarters, Excel's "light red fill with
-# dark red text" for cities below target, green text for those above.
+# Conditional formatting: a white-to-green scale on the quarters and Excel's "light red fill with
+# dark red text" for cities below target. Text outside filled cells keeps the default colour, so
+# it reads in the dark theme too.
 ws.conditional_formatting.add(
     f"B{first}:E{last}",
     ColorScaleRule(start_type="min", start_color="FFFFFF", end_type="max", end_color="63BE7B"))
@@ -113,18 +113,10 @@ ws.conditional_formatting.add(
     f"H{first}:H{last}",
     CellIsRule(operator="lessThan", formula=["0"], fill=solid("FFC7CE"),
                font=Font(color="9C0006")))
-ws.conditional_formatting.add(
-    f"H{first}:H{last}",
-    CellIsRule(operator="greaterThanOrEqual", formula=["0"], font=Font(color="006100")))
-
-note = Comment("Rina: the Tunjungan outlet was closed for three weeks of renovation in "
-               "August, so Q3 is low.", "Rina")
-note.width, note.height = 220, 80
-ws[f"D{first + 2}"].comment = note
 
 # Best sellers with data bars.
 b0 = tot + 2
-ws.cell(row=b0, column=1, value="Best sellers, Q4").font = Font(bold=True, color=NAVY)
+ws.cell(row=b0, column=1, value="Best sellers, Q4").font = Font(bold=True)
 for i, h in enumerate(["Menu item", "", "", "Cups", "Share"], 1):
     c = ws.cell(row=b0 + 1, column=i, value=h or None)
     c.font = Font(bold=True, color=NAVY)
@@ -143,9 +135,9 @@ ws.conditional_formatting.add(
     f"D{b0 + 2}:D{b0 + 1 + len(items)}",
     DataBarRule(start_type="num", start_value=0, end_type="max", color="5B9BD5"))
 
-# A clustered column chart beside the table: Q1 and Q4 per city.
+# A clustered bar chart beside the table: Q1 and Q4 per city, first city at the top.
 ch = BarChart()
-ch.type = "col"
+ch.type = "bar"
 ch.grouping = "clustered"
 ch.title = "Q1 and Q4 by city (Rp million)"
 ch.add_data(Reference(ws, min_col=2, min_row=4, max_row=last), titles_from_data=True)
@@ -154,11 +146,15 @@ ch.set_categories(Reference(ws, min_col=1, min_row=first, max_row=last))
 ch.legend.position = "b"
 ch.series[0].graphicalProperties.solidFill = "9DC3E6"
 ch.series[1].graphicalProperties.solidFill = "1F4E78"
-ch.width, ch.height = 13.5, 9.2
+ch.width, ch.height = 11.5, 7.9
+ch.y_axis.number_format = "#,##0"
+ch.x_axis.scaling.orientation = "maxMin"
+ch.gapWidth = 60
 ws.add_chart(ch, "J4")
 
-ws.freeze_panes = "B5"
+ws.freeze_panes = "A5"
 wb.save(out / "sales.xlsx")
+
 
 # ---------- Docs: a quarterly review with tracked changes, a comment and footnotes ----------
 from docx import Document
@@ -244,6 +240,15 @@ para(["Sales grew in seven of our eight cities this quarter. Together the outlet
       "Rp 1,581 million", ("fn", 1), ", 4 percent more than in the second quarter, and the "
       "iced palm-sugar coffee is still a third of every order."])
 
+d.add_heading("Highlights", level=1)
+for t in ["Bandung and Denpasar grew fastest, by 12 and 15 percent.",
+          "Surabaya fell 13 percent while the Tunjungan outlet was being renovated.",
+          "Cups sold per day rose from 2,310 to 2,450 across all outlets."]:
+    d.add_paragraph(t, style="List Bullet")
+para(["Weekday mornings are still our busiest hours: more than half of all cups are sold before "
+      "eleven, most of them to take away. Delivery orders through the apps grew to 28 percent of "
+      "sales, so two outlets now have a separate pick-up counter for riders."])
+
 d.add_heading("Sales by city", level=1)
 rows = [("City", "Q2 (Rp m)", "Q3 (Rp m)", "Change")]
 for name, v in zip(CITIES, SALES):
@@ -261,7 +266,6 @@ for ri, row in enumerate(rows):
         if ri in (0, len(rows) - 1):
             for run in cell.paragraphs[0].runs:
                 run.font.bold = True
-d.add_paragraph()
 
 d.add_heading("Plans for 2027", level=1)
 _, runs = para(["We plan to open ", ("del", "two", "Budi Santoso"), ("ins", "three", "Budi Santoso"),
@@ -273,11 +277,28 @@ d.add_comment(runs[" new outlets next year"], text="Can we fund three from this 
 para(["The new roastery in Bekasi should ", ("run", "recieve"), " its first green beans from "
       "Toraja and Gayo in November", ("del", ", if the permits are ready", "Budi Santoso"),
       ". From then on we roast for all outlets ourselves."])
-d.add_heading("Next steps", level=1)
+d.add_heading("Next steps", level=1).paragraph_format.page_break_before = True
 for t in ["Confirm the Semarang lease before 15 October.",
           "Train two head baristas for each new outlet.",
           "Move the till reports to the new spreadsheet."]:
     d.add_paragraph(t, style="List Number")
+
+d.add_heading("Appendix: cost of a new outlet", level=1)
+costs = [("Item", "Rp million"), ("Fit-out and furniture", "420"), ("Espresso machine and grinders", "180"),
+         ("Deposit and first three months of rent", "190"), ("Opening stock and training", "60"),
+         ("Total", "850")]
+ct = d.add_table(rows=len(costs), cols=2)
+ct.style = "Light Grid Accent 1"
+for ri, row in enumerate(costs):
+    for ci, v in enumerate(row):
+        ct.cell(ri, ci).text = v
+        if ci:
+            ct.cell(ri, ci).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+d.add_paragraph()
+para(["Prices are the middle of three quotes from contractors in Semarang and Solo, received in "
+      "September. Rent assumes a ground-floor unit of about 60 square metres on a main road, with "
+      "a two-year lease paid quarterly. The espresso machine is the same model as in our other "
+      "outlets, so parts and training can be shared."])
 
 NOTES = {
     1: "Net of tax and returns, from the till reports of 30 September.",
@@ -377,7 +398,7 @@ for i, lbl in enumerate(["Sales by city", "Best sellers", "Three new outlets"]):
 
 # 3: key figures beside a chart
 s = prs.slides.add_slide(prs.slide_layouts[6])
-title(s, "Every quarter beat the last", "Sales per city, Rp million")
+title(s, "Sales grew every quarter", "Sales per city, Rp million")
 q1 = sum(v[0] for v in SALES)
 q4 = sum(v[3] for v in SALES)
 figs = [(f"{q4 + q1 + sum(v[1] + v[2] for v in SALES):,.0f}", "Rp million in 2026"),

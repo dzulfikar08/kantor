@@ -15,32 +15,56 @@ mcp="python3 -I $here/mcp_call.py"
 themes=/usr/share/omarchy/themes
 export XDISP=${XDISP:-:96}
 
-out=KSITE
+out=KSITE xout=KSITEX
 xpid=""
 cleanup() {
   [ -n "$xpid" ] && kill "$xpid" 2>/dev/null || true
   hyprctl output remove "$out" >/dev/null
+  hyprctl output remove "$xout" >/dev/null
 }
 hyprctl output create headless "$out" >/dev/null
+hyprctl output create headless "$xout" >/dev/null
 trap cleanup EXIT
 # 1600x1000 at 1.25: a 1240x780 window is captured at 1550x975. Placed far from eDP-1.
 hyprctl eval "hl.monitor({ output = '$out', mode = '1600x1000@60', position = '0x4000', scale = 1.25 })" >/dev/null
 sleep 1
 WS=$(hyprctl monitors -j | jq -r ".[] | select(.name==\"$out\") | .activeWorkspace.id")
 export WS
-# Docs needs key presses (to scroll the page), which go to a private X server on the same output.
-hyprctl eval "hl.exec_cmd('Xwayland $XDISP -geometry 1550x975 -noreset', { workspace = '$WS silent' })" >/dev/null
+# Docs needs key presses (to scroll the page), which go to a private X server on a second
+# headless output at scale 1 (Kantor itself scales by 1.25 there: GPUI_X11_SCALE_FACTOR).
+hyprctl eval "hl.monitor({ output = '$xout', mode = '1600x1000@60', position = '0x6000', scale = 1 })" >/dev/null
+sleep 1
+xws=$(hyprctl monitors -j | jq -r ".[] | select(.name==\"$xout\") | .activeWorkspace.id")
+hyprctl eval "hl.exec_cmd('Xwayland $XDISP -geometry 1550x975 -noreset', { workspace = '$xws silent' })" >/dev/null
 for _ in $(seq 1 40); do DISPLAY=$XDISP xdotool getdisplaygeometry >/dev/null 2>&1 && break; sleep 0.25; done
 xpid=$(pgrep -f "^Xwayland $XDISP " | head -1)
 
+# Place names and the like, as a user would have added them to the dictionary; "recieve" stays
+# flagged on purpose.
+words="Kopi
+Senja
+Rina
+Wulandari
+Tunjungan
+Yogyakarta
+Makassar
+Denpasar
+Bekasi
+Toraja
+Gayo
+Rp
+roastery"
 want() { [ -z "${ONLY:-}" ] || [[ " $ONLY " == *" $1 "* ]]; }
 for pair in dark:catppuccin light:catppuccin-latte; do
   m=${pair%%:*}; t=$themes/${pair#*:}/colors.toml
   # Sheets: the year's totals selected (the status bar sums them).
   want "sheets-$m" && POST="$mcp sheets_select '{\"range\":\"F5:F12\"}' >/dev/null" WAIT=8 \
     "$here/capture.sh" "$t" "sheets-$m" "$here/shots" "$samples/sales.xlsx"
-  # Docs: the lower half of page 1 (table, tracked changes, comment, footnotes).
-  want "docs-$m" && WAIT=8 STEPS="${DOCS_STEPS:-key ctrl+End
+  # Docs: the lower half of page 1 (table, tracked changes, comment, footnotes): the end of the
+  # document, then one screen up. The text after the appendix table sets where that lands.
+  want "docs-$m" && WAIT=8 WORDS="$words" STEPS="${DOCS_STEPS:-key ctrl+End
+sleep 0.5
+key Prior
 sleep 1}" "$here/xcapture.sh" "$t" "docs-$m" "$here/shots" "$samples/report.docx"
   want "slides-$m" && POST="$mcp slides_go_to '{\"slide\":3}' >/dev/null" WAIT=8 \
     "$here/capture.sh" "$t" "slides-$m" "$here/shots" "$samples/review.pptx"

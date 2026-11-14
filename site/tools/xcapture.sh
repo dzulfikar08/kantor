@@ -5,7 +5,8 @@
 # usage: xcapture.sh <omarchy-colors.toml> <tag> <out-dir> <absolute path to a file>
 # Env: KANTOR_BIN, XDISP (X display, e.g. :96), WAIT (seconds to load), POST (shell run against
 #      the instance before STEPS, e.g. an mcp_call.py selection), STEPS (lines of xdotool
-#      arguments run in order; "sleep N" pauses).
+#      arguments run in order; "sleep N" pauses), WORDS (words for the throwaway personal
+#      spelling dictionary, one per line, as if added with Add to Dictionary).
 set -euo pipefail
 colors=$1 tag=$2 out=$3 file=$4
 here=$(cd "$(dirname "$0")" && pwd)
@@ -17,6 +18,7 @@ rm -rf "$root"; mkdir -p "$root/config/kantor" "$root/state/omarchy/current/them
 cp "$colors" "$root/state/omarchy/current/theme/colors.toml"
 echo 1 > "$root/state/omarchy/current/theme.generation"
 printf '[update]\nenabled = false\n' > "$root/config/kantor/settings.toml"
+[ -n "${WORDS:-}" ] && printf '%s\n' "$WORDS" > "$root/config/kantor/dictionary.txt"
 
 env -u WAYLAND_DISPLAY DISPLAY="$disp" GPUI_X11_SCALE_FACTOR=1.25 XDG_CONFIG_HOME="$root/config" \
   XDG_STATE_HOME="$root/state" KANTOR_SOCKET_DIR="$root/sock" "$bin" "$file" >"$root/log" 2>&1 &

@@ -74,15 +74,21 @@ They are real Kantor windows on Linux, captured with `grim` from Hyprland:
 KANTOR_BIN=$PWD/target/release/kantor PY=/path/to/venv/bin/python site/tools/shots.sh
 ```
 
-`shots.sh` generates three sample files (`make_samples.py`, made-up content: a formatted sales
-workbook in rupiah, a short report with a list, a picture and a table, and a four-slide deck with
-gradients, chevrons, a table and a chart) and opens each in its own Kantor with throwaway config,
+`shots.sh` generates three sample files (`make_samples.py`, made-up content for a coffee chain:
+a sales-by-city workbook with a colour scale, highlight rules, data bars and a bar chart; a
+quarterly review with a table, tracked changes, a comment, a misspelt word and footnotes; and a
+four-slide deck whose third slide has key figures and a column chart) and opens each in its own
+Kantor with throwaway config,
 state and socket directories (your settings and session are never touched; update checks are
 off), in the Catppuccin (dark) and Catppuccin Latte (light) Omarchy themes. Kantor runs on a
 private headless Hyprland output (`KSITE`, 1600×1000 at 125 %, removed afterwards), so nothing
 appears on your screen and focus never moves. A selection (Sheets) and the slide to show
 (Slides) are set through Kantor's own MCP server (`mcp_call.py`), and the window is captured with
-`grim -T` (just that window, no notifications or cursor), then closed. `images.sh` converts the
+`grim -T` (just that window, no notifications or cursor), then closed. Docs needs key presses
+(Ctrl+End, then Page Up, to show the bottom of page 1 with its footnotes), so `xcapture.sh` runs it
+in a private Xwayland server on a second headless output (`KSITEX`) and sends them with `xdotool`;
+its throwaway personal dictionary holds the place and people names, so only the deliberate typo is
+underlined. `ONLY="docs-light sheets-dark"` retakes just those captures. `images.sh` converts the
 captures in `tools/shots/` to the site's formats and `og.sh` renders the 1200×630 card. The
 repository README uses the same WebP files.
 

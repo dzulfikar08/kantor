@@ -47,11 +47,11 @@ for pair in dark:catppuccin light:catppuccin-latte; do
   DISPLAY=$disp xdotool windowmove "$win" 0 0 windowsize "$win" 1550 975
   sleep 6
   KANTOR_SOCKET_DIR=$root/sock XDG_RUNTIME_DIR=$root/sock KANTOR_BIN=$bin \
-    python3 -I "$here/mcp_call.py" sheets_select '{"range":"F16"}' >/dev/null
+    python3 -I "$here/mcp_call.py" sheets_select '{"range":"H15"}' >/dev/null
   DISPLAY=$disp xdotool windowfocus --sync "$win"
   sleep 0.5
-  # Sales of the regions above target, as a share of all sales: three coloured ranges.
-  DISPLAY=$disp xdotool type --delay 60 '=SUMIF(H5:H10,">0",F5:F10)/F11'
+  # Sales of the cities above target, as a share of all sales: three coloured ranges.
+  DISPLAY=$disp xdotool type --delay 60 '=SUMIF(H5:H12,">0",F5:F12)/F13'
   sleep 1.5
   DISPLAY=$disp import -window root "$root/shot.png"
   DISPLAY=$disp xdotool key Escape

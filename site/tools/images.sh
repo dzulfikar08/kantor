@@ -8,6 +8,6 @@ for f in "$here"/shots/*.png; do
   for w in 1550 800; do
     magick "$f" -resize "${w}x" -strip -quality 82 "$out/$n-$w.webp"
     magick "$f" -resize "${w}x" -strip -quality 55 "$out/$n-$w.avif"
-    magick "$f" -resize "${w}x" -strip -define png:compression-level=9 -colors 256 "$out/$n-$w.png"
+    magick "$f" -resize "${w}x" -strip -define png:compression-level=9 +dither -colors 256 "$out/$n-$w.png"
   done
 done

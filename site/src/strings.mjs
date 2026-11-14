@@ -43,18 +43,18 @@ export const en = {
   shots: {
     sheets: {
       tab: "Sheets",
-      alt: "Kantor Sheets with a quarterly sales workbook: a merged title row, coloured header cells with borders, amounts in rupiah and percentages against target. A block of cells is selected and the status bar shows their sum, average and count.",
-      caption: "A formatted sales report in Sheets, with rupiah amounts and percentages. Select cells and their sum, average and count appear at the bottom.",
+      alt: "Kantor Sheets with a coffee chain's sales by city for 2026, in rupiah millions. The quarters are shaded by a green colour scale, cities below target are highlighted in red, best sellers have data bars, and a bar chart beside the table compares the first and fourth quarters. The year's totals are selected and the status bar shows their sum, average and count.",
+      caption: "Sales by city in Sheets, with conditional formatting, data bars and a chart that follows the cells. Select cells and their sum, average and count appear at the bottom.",
     },
     docs: {
       tab: "Docs",
-      alt: "Kantor Docs showing a short report on an A4 page, with headings, a bulleted list, a bar chart picture and a table, below the formatting toolbar and ruler.",
-      caption: "A report in Docs, on an A4 page with headings, a list, a picture and a table.",
+      alt: "Kantor Docs showing a quarterly review on an A4 page: a heading, a table of sales by city, and a paragraph with tracked changes, the inserted words underlined and the deleted ones struck through in the reviewer's colour. A comment card sits beside the page, a misspelt word has a red wavy underline, and two footnotes are at the bottom of the page.",
+      caption: "A report in Docs with a table, tracked changes, a comment, spell check and footnotes, as Word lays them out.",
     },
     slides: {
       tab: "Slides",
-      alt: "Kantor Slides with a four-slide deck. The thumbnails are on the left, and the open slide has a gradient title band, a table of regions and a column chart, with speaker notes below.",
-      caption: "A presentation in Slides with gradients, PowerPoint shapes, a table and a chart, as PowerPoint draws them.",
+      alt: "Kantor Slides with a four-slide deck. The thumbnails are on the left, and the open slide has a title, three key figures in rounded boxes and a clustered column chart of sales per city for four quarters, with speaker notes below.",
+      caption: "A presentation in Slides with key figures and a chart, as PowerPoint draws them.",
     },
   },
   shotsNote: "Real screenshots of Kantor on Linux. It follows your system's light or dark look.",
@@ -234,18 +234,18 @@ export const id = {
   shots: {
     sheets: {
       tab: "Sheets",
-      alt: "Kantor Sheets membuka laporan penjualan per kuartal: baris judul yang digabung, sel judul kolom berwarna dengan garis tepi, nominal rupiah, dan persentase terhadap target. Sekelompok sel dipilih dan bilah status menampilkan jumlah, rata-rata, dan banyaknya.",
-      caption: "Laporan penjualan berformat di Sheets, dengan nominal rupiah dan persentase. Pilih beberapa sel, lalu jumlah, rata-rata, dan banyaknya muncul di bagian bawah.",
+      alt: "Kantor Sheets membuka penjualan sebuah kedai kopi per kota tahun 2026, dalam juta rupiah. Kolom kuartal diwarnai skala warna hijau, kota yang di bawah target disorot merah, menu terlaris punya bilah data, dan grafik batang di samping tabel membandingkan kuartal pertama dan keempat. Total setahun dipilih dan bilah status menampilkan jumlah, rata-rata, dan banyaknya.",
+      caption: "Penjualan per kota di Sheets, dengan pemformatan bersyarat, bilah data, dan grafik yang mengikuti isi sel. Pilih beberapa sel, lalu jumlah, rata-rata, dan banyaknya muncul di bagian bawah.",
     },
     docs: {
       tab: "Docs",
-      alt: "Kantor Docs menampilkan laporan singkat di kertas A4, dengan judul, daftar berpoin, gambar grafik batang, dan tabel, di bawah toolbar dan penggaris.",
-      caption: "Laporan di Docs, di kertas A4 dengan judul, daftar, gambar, dan tabel.",
+      alt: "Kantor Docs menampilkan laporan kuartalan di kertas A4: judul bagian, tabel penjualan per kota, dan paragraf dengan perubahan terlacak, kata yang ditambahkan bergaris bawah dan yang dihapus dicoret dengan warna peninjau. Kartu komentar ada di samping halaman, kata yang salah eja bergaris bawah merah bergelombang, dan dua catatan kaki ada di bagian bawah halaman.",
+      caption: "Laporan di Docs dengan tabel, perubahan terlacak, komentar, cek ejaan, dan catatan kaki, tersusun seperti di Word.",
     },
     slides: {
       tab: "Slides",
-      alt: "Kantor Slides dengan presentasi empat slide. Gambar kecil slide ada di kiri, dan slide yang dibuka berisi pita judul bergradasi, tabel per wilayah, dan grafik kolom, dengan catatan pembicara di bawahnya.",
-      caption: "Presentasi di Slides dengan gradasi, bentuk PowerPoint, tabel, dan grafik, tampil seperti di PowerPoint.",
+      alt: "Kantor Slides dengan presentasi empat slide. Gambar kecil slide ada di kiri, dan slide yang dibuka berisi judul, tiga angka utama dalam kotak bersudut bulat, dan grafik kolom penjualan per kota selama empat kuartal, dengan catatan pembicara di bawahnya.",
+      caption: "Presentasi di Slides dengan angka utama dan grafik, tampil seperti di PowerPoint.",
     },
   },
   shotsNote: "Tangkapan layar asli Kantor di Linux. Tampilannya mengikuti mode terang atau gelap sistem Anda.",

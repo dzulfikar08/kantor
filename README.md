@@ -6,14 +6,14 @@ A small, fast, native office suite for Linux, macOS and Windows, written in Rust
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="site/src/img/sheets-dark-1550.webp">
-  <img src="site/src/img/sheets-light-1550.webp" width="100%" alt="Kantor Sheets showing a quarterly sales workbook: a merged title row on a dark blue fill, column headers on a light blue fill with borders, amounts in Rupiah such as Rp412.500.000, a vs-target column in green and red percentages, and a yellow note block. A range of cells is selected and the status bar shows its sum, average and count.">
+  <img src="site/src/img/sheets-light-1550.webp" width="100%" alt="Kantor Sheets showing a coffee chain's sales by city in rupiah millions: a green colour scale on the quarters, cities below target highlighted in red, data bars on the best sellers and a bar chart beside the table. The year's totals are selected and the status bar shows their sum, average and count.">
 </picture>
 
 <table>
   <tr>
-    <td width="33%"><picture><source media="(prefers-color-scheme: dark)" srcset="site/src/img/sheets-dark-800.webp"><img src="site/src/img/sheets-light-800.webp" alt="Sheets: a formatted sales workbook with fills, borders, merged cells and Rupiah and percent number formats."></picture></td>
-    <td width="33%"><picture><source media="(prefers-color-scheme: dark)" srcset="site/src/img/docs-dark-800.webp"><img src="site/src/img/docs-light-800.webp" alt="Docs: a one-page report on an A4 page with a title, headings, a bulleted list, a bar chart picture and a table, below the toolbar and ruler."></picture></td>
-    <td width="33%"><picture><source media="(prefers-color-scheme: dark)" srcset="site/src/img/slides-dark-800.webp"><img src="site/src/img/slides-light-800.webp" alt="Slides: a slide with a gradient title band, a table of regions and a clustered column chart, with slide thumbnails on the left and the speaker notes below."></picture></td>
+    <td width="33%"><picture><source media="(prefers-color-scheme: dark)" srcset="site/src/img/sheets-dark-800.webp"><img src="site/src/img/sheets-light-800.webp" alt="Sheets: sales by city with a colour scale, highlighted cells, data bars and a bar chart."></picture></td>
+    <td width="33%"><picture><source media="(prefers-color-scheme: dark)" srcset="site/src/img/docs-dark-800.webp"><img src="site/src/img/docs-light-800.webp" alt="Docs: a report with a table, tracked changes, a comment card beside the page, a spelling underline and footnotes."></picture></td>
+    <td width="33%"><picture><source media="(prefers-color-scheme: dark)" srcset="site/src/img/slides-dark-800.webp"><img src="site/src/img/slides-light-800.webp" alt="Slides: a slide with three key figures and a clustered column chart, with slide thumbnails on the left and the speaker notes below."></picture></td>
   </tr>
   <tr>
     <td align="center">Sheets</td>
@@ -92,7 +92,7 @@ Arch Linux: a PKGBUILD for a future `kantor-bin` AUR package lives in [packaging
 
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/sheets-formula-dark.webp">
-    <img src="docs/images/sheets-formula-light.webp" width="720" alt="A SUMIF formula being typed in cell F16 of the sales workbook. Its references H5:H10, F5:F10 and F11 are coloured in the cell and in the formula bar, and the same ranges are outlined in those colours on the grid.">
+    <img src="docs/images/sheets-formula-light.webp" width="720" alt="A SUMIF formula being typed in cell H15 of the sales workbook. Its references H5:H12, F5:F12 and F13 are coloured in the cell and in the formula bar, and the same ranges are outlined in those colours on the grid.">
   </picture>
 
 - **Grid work:** select rows, columns or everything, `Ctrl`+arrows to the edge of the data, fill handle and `Ctrl D` / `Ctrl R` (series continue), autofit columns, insert/delete rows and columns, freeze panes, copy and paste ranges as tab-separated text. The status bar shows Sum, Average and Count of the selection.
