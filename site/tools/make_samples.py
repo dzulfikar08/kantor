@@ -149,6 +149,10 @@ ch.series[1].graphicalProperties.solidFill = "1F4E78"
 ch.width, ch.height = 11.5, 7.9
 ch.y_axis.number_format = "#,##0"
 ch.x_axis.scaling.orientation = "maxMin"
+# With the categories reversed, the value axis crosses at the first city (the
+# top); "at maximum category" keeps it and its labels below the bars, as Excel
+# users set it.
+ch.y_axis.crosses = "max"
 ch.gapWidth = 60
 ws.add_chart(ch, "J4")
 

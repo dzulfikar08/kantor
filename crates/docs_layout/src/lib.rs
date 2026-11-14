@@ -844,6 +844,45 @@ pub struct PagedDocument {
     line_pages: Vec<Vec<(usize, f32, f32)>>,
 }
 
+/// `index` hit on line `k` of `layout`, kept on that line. A hit past the
+/// end of a line that isn't the paragraph's last gives the line's end,
+/// which is also where the next line starts, and carets (downstream) are
+/// drawn there: moving Up from the right of a shorter wrapped line, or
+/// clicking right of it, left the caret on the line below. Like Word's End
+/// key, such a hit goes before the line's trailing spaces or break (or
+/// before its last character when the line wrapped inside a word).
+fn on_line_end(layout: &Layout<Rgba>, k: usize, index: usize) -> usize {
+    let Some(line) = layout.get(k) else {
+        return index;
+    };
+    let range = line.text_range();
+    if k + 1 >= layout.len() || index < range.end {
+        return index;
+    }
+    let mut clusters: Vec<(Range<usize>, bool)> = line
+        .runs()
+        .flat_map(|r| r.clusters().collect::<Vec<_>>())
+        .map(|c| {
+            let blank = c.is_space_or_nbsp() || c.is_soft_line_break() || c.is_hard_line_break();
+            (c.text_range(), blank)
+        })
+        .filter(|(r, _)| !r.is_empty())
+        .collect();
+    clusters.sort_by_key(|(r, _)| r.start);
+    let end = clusters
+        .iter()
+        .rev()
+        .find(|(_, blank)| !blank)
+        .map_or(range.start, |(r, _)| r.end);
+    if end < range.end {
+        return end.max(range.start);
+    }
+    clusters
+        .last()
+        .map_or(range.start, |(r, _)| r.start)
+        .max(range.start)
+}
+
 /// Inline box ids of tabs start here (object boxes use their index).
 const TAB_BOX: usize = 1 << 20;
 
@@ -1715,7 +1754,7 @@ impl PagedDocument {
         let m = *layout.get(pl.line)?.metrics();
         let ly = ((m.block_min_coord + m.block_max_coord) / 2.0).max(pl.top - dy);
         let cursor = Cursor::from_point(layout, x - dx, ly);
-        Some((pl.para, cursor.index()))
+        Some((pl.para, on_line_end(layout, pl.line, cursor.index())))
     }
 
     /// The layout line (index into `layouts[para].lines()`) showing `index`.

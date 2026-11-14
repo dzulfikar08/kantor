@@ -27,11 +27,25 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   view only for now: commands that work on cells say so instead of changing a sheet out of sight.
   PDF export, printing and `kantor convert` print each chart sheet on its own landscape page.
   Saving keeps them, in the same order.
+- Sheets: notes (comments) in `.xlsx` and `.xls` files are shown as in Excel: a small red
+  triangle in the cell's top-right corner, and the note with its author in a box beside the
+  cell while the pointer is over it. They move with inserted and deleted rows and columns.
+  Adding, editing and deleting notes isn't possible yet.
 
 ### Fixed
 - Slides: after Apply in the table or chart data editor, the chart (or table) stays selected
   instead of the slide title. Tab and Shift+Tab now move between the editor's cells, Escape
   closes it, and Backspace in an empty cell no longer deletes the chart.
+- Sheets: workbooks with notes made by openpyxl (and other tools that write absolute part
+  paths) open; they failed with "specified file not found in archive". Note authors are read
+  too.
+- Charts in Sheets, Slides and PDF export: axis labels go on the side of the plot where the axis
+  is. A bar chart with its categories in reverse order (first at the top) drew its value labels
+  inside the plot, over the first bars; they now sit above the plot, as in Excel, or below it
+  when the axis crosses at the maximum category.
+- Docs: Up and Down no longer get stuck on a line when the line above (or below) is shorter and
+  wraps, and clicking right of a wrapped line puts the caret at that line's end instead of the
+  start of the next line. End on a line that wraps inside a long word stays on that line.
 
 ### Changed
 - Indonesian spell check flags far more typos: 904 archaic and regional spellings in the

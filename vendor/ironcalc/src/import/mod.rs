@@ -65,11 +65,7 @@ fn resolve_theme_path(rels: &HashMap<String, Relationship>) -> Option<String> {
         .find(|r| r.rel_type.ends_with("/theme"))?
         .target
         .clone();
-    Some(if let Some(absolute) = target.strip_prefix('/') {
-        absolute.to_string()
-    } else {
-        format!("xl/{target}")
-    })
+    Some(util::resolve_part("xl/workbook.xml", &target))
 }
 
 // FIXME: This is a bit of a HACK. We basically re-parse all the defined names assuming the context is `A1`

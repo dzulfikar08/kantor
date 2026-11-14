@@ -48,7 +48,7 @@ pub use cf_edit::{
 pub use chart_edit::{ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor};
 pub use drawing::Tab;
 pub use import::SourceFormat;
-pub use notes::CellNote;
+pub use notes::{CellNote, SheetNotes};
 pub use preserve::package_problems;
 pub use recovery::{SaveJob, Saved, XlsxOutput, XlsxSnapshot, write_file_atomic};
 pub use table_edit::{TableOptions, TotalFunc, table_style_names, valid_table_name};
@@ -168,6 +168,8 @@ struct Cache {
     pivots: HashMap<u32, std::sync::Arc<Vec<pivot::Placed>>>,
     /// Each sheet's hidden rows (`grid::hidden_rows`).
     hidden_rows: HashMap<u32, std::sync::Arc<std::collections::HashSet<u32>>>,
+    /// Each sheet's notes at the cells they are on now (`notes`).
+    notes: HashMap<u32, std::sync::Arc<notes::SheetNotes>>,
 }
 
 /// When formulas are recalculated, like Excel's calculation options.

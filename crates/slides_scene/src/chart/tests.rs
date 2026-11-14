@@ -494,3 +494,69 @@ fn crowded_categories_rotate() {
     assert!(!rotated.is_empty());
     assert!(rotated.iter().all(|l| l.rot == -45.0));
 }
+
+/// A horizontal bar chart as openpyxl writes it: both axes `axPos="l"`, no
+/// `c:crosses`. `cat_scaling` is the category axis' `c:scaling`, `val_extra`
+/// goes after the value axis' `c:crossAx`.
+fn hbar(cat_scaling: &str, val_extra: &str) -> String {
+    space(
+        &format!(
+            r#"<c:barChart><c:barDir val="bar"/><c:grouping val="clustered"/>{}<c:gapWidth val="60"/><c:axId val="1"/><c:axId val="2"/></c:barChart><c:catAx><c:axId val="1"/><c:scaling>{cat_scaling}</c:scaling><c:axPos val="l"/><c:crossAx val="2"/></c:catAx><c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:axPos val="l"/><c:majorGridlines/><c:crossAx val="1"/>{val_extra}</c:valAx>"#,
+            ser(0, "First", &CATS, &[100.0, 300.0, 600.0], ""),
+        ),
+        r#"<c:autoTitleDeleted val="1"/>"#,
+    )
+}
+
+/// The plot's top and bottom: the top and bottom of the bars' rows.
+fn bar_rows(m: &[Mark]) -> Vec<[f32; 4]> {
+    drawn(&solid_boxes(m), A1)
+}
+
+#[test]
+fn horizontal_bar_value_labels_sit_outside_the_plot() {
+    let orient = |o: &str| format!(r#"<c:orientation val="{o}"/>"#);
+    let below = |m: &[Mark], text: &str| {
+        let bars = bar_rows(m);
+        let bottom = bars.iter().map(|b| b[3]).fold(f32::MIN, f32::max);
+        let top = bars.iter().map(|b| b[1]).fold(f32::MAX, f32::min);
+        let l = label(m, text);
+        (l.y >= bottom - 0.01, l.y + l.h <= top + 0.01)
+    };
+    // Default: first category at the bottom, value labels below the plot.
+    let m = marks(&hbar(&orient("minMax"), ""), 600.0, 400.0);
+    let bars = bar_rows(&m);
+    assert!(bars[0][1] > bars[2][1], "Alpha at the bottom: {bars:?}");
+    assert_eq!(below(&m, "600"), (true, false), "{:?}", label(&m, "600"));
+    // Categories reversed (first at the top): the value axis crosses at the
+    // first category, so it and its labels move above the plot, as in Excel,
+    // and stay off the bars.
+    let m = marks(&hbar(&orient("maxMin"), ""), 600.0, 400.0);
+    let bars = bar_rows(&m);
+    assert!(bars[0][1] < bars[2][1], "Alpha at the top: {bars:?}");
+    assert_eq!(below(&m, "600"), (false, true), "{:?}", label(&m, "600"));
+    // Reversed with "crosses at maximum category": labels back at the bottom.
+    let m = marks(
+        &hbar(&orient("maxMin"), r#"<c:crosses val="max"/>"#),
+        600.0,
+        400.0,
+    );
+    assert_eq!(below(&m, "600"), (true, false), "{:?}", label(&m, "600"));
+    // Tick labels "high" go to the top edge, "low" to the bottom.
+    let m = marks(
+        &hbar(&orient("minMax"), r#"<c:tickLblPos val="high"/>"#),
+        600.0,
+        400.0,
+    );
+    assert_eq!(below(&m, "600"), (false, true), "{:?}", label(&m, "600"));
+    let m = marks(
+        &hbar(&orient("maxMin"), r#"<c:tickLblPos val="low"/>"#),
+        600.0,
+        400.0,
+    );
+    assert_eq!(
+        below(&m, "600"),
+        (false, true),
+        "low end of a reversed axis"
+    );
+}
