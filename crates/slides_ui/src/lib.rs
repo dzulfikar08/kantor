@@ -125,6 +125,11 @@ actions!(
 pub fn init(cx: &mut App) {
     kantor_ui::find_bar::bind_app_keys(KEY_CONTEXT, cx);
     kantor_ui::spelling::init(cx);
+    cx.bind_keys(key_bindings());
+}
+
+/// The editor's and the presenter's own key bindings.
+fn key_bindings() -> Vec<KeyBinding> {
     let c = Some(KEY_CONTEXT);
     let p = Some(PRESENTER_CONTEXT);
     let mut keys = vec![
@@ -196,7 +201,8 @@ pub fn init(cx: &mut App) {
         "-" => ZoomOut,
         "0" => ZoomFit,
     );
-    cx.bind_keys(keys);
+    keys.extend(object_editor::key_bindings());
+    keys
 }
 
 /// Shapes copied in any Slides view (so they paste into another

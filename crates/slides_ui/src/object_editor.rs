@@ -10,6 +10,12 @@
 //!
 //! *Apply* writes the typed text as one undo step (`Presentation::
 //! edit_table` / `set_chart_data`); structure buttons apply at once.
+//!
+//! Keys in the panel stay in the panel: Tab / Shift+Tab move between
+//! cells, Enter applies, Escape closes, and Backspace in an empty cell does
+//! nothing. Without its own key context they would fall through to the
+//! slide (Tab selected the next shape, so Apply left the slide title
+//! selected; Backspace deleted the chart).
 
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -26,6 +32,57 @@ use slides_engine::{ChartData, Rgb, TableOp};
 
 use crate::SlidesView;
 use crate::draw::hsla;
+
+/// Key context of the panel (inside the editor's).
+pub(crate) const KEY_CONTEXT: &str = "SlidesObjectEditor";
+
+actions!(
+    slides_object_editor,
+    [NextCell, PrevCell, ApplyPanel, ClosePanel, Swallow]
+);
+
+/// The panel's key bindings: they win over the slide's for the same keys.
+pub(crate) fn key_bindings() -> Vec<KeyBinding> {
+    let c = Some(KEY_CONTEXT);
+    vec![
+        KeyBinding::new("tab", NextCell, c),
+        KeyBinding::new("shift-tab", PrevCell, c),
+        KeyBinding::new("enter", ApplyPanel, c),
+        KeyBinding::new("escape", ClosePanel, c),
+        // A single-line input passes these on when it has nothing to do.
+        KeyBinding::new("shift-enter", Swallow, c),
+        KeyBinding::new("backspace", Swallow, c),
+        KeyBinding::new("shift-backspace", Swallow, c),
+    ]
+}
+
+/// The cell after (or before) `at` in reading order, wrapping; `skip` is
+/// a cell without an input (the chart's corner).
+fn step_cell(
+    widths: &[usize],
+    at: (usize, usize),
+    back: bool,
+    skip: Option<(usize, usize)>,
+) -> Option<(usize, usize)> {
+    let all: Vec<(usize, usize)> = widths
+        .iter()
+        .enumerate()
+        .flat_map(|(r, &w)| (0..w).map(move |c| (r, c)))
+        .filter(|&p| Some(p) != skip)
+        .collect();
+    if all.is_empty() {
+        return None;
+    }
+    let n = all.len();
+    let i = all.iter().position(|&p| p == at);
+    let j = match (i, back) {
+        (Some(i), false) => (i + 1) % n,
+        (Some(i), true) => (i + n - 1) % n,
+        (None, false) => 0,
+        (None, true) => n - 1,
+    };
+    Some(all[j])
+}
 
 /// What the panel edits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,16 +197,14 @@ impl SlidesView {
                         subs.push(cx.subscribe_in(
                             &input,
                             window,
-                            move |this, _, ev: &InputEvent, window, cx| match ev {
+                            move |this, _, ev: &InputEvent, _window, cx| match ev {
                                 InputEvent::Focus => {
                                     if let Some(e) = &mut this.object_editor {
                                         e.current = (r, c);
                                         cx.notify();
                                     }
                                 }
-                                InputEvent::PressEnter { .. } => {
-                                    this.apply_object_editor(false, window, cx);
-                                }
+                                // Enter is the panel's `ApplyPanel` binding.
                                 _ => {}
                             },
                         ));
@@ -171,6 +226,25 @@ impl SlidesView {
             current,
             error: None,
             _subs: subs,
+        });
+        cx.notify();
+    }
+
+    /// Tab / Shift+Tab: focus the next or previous cell, text selected.
+    fn object_next_cell(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(e) = &mut self.object_editor else {
+            return;
+        };
+        let widths: Vec<usize> = e.cells.iter().map(Vec::len).collect();
+        let skip = (e.target == Target::Chart).then_some((0, 0));
+        let Some((r, c)) = step_cell(&widths, e.current, back, skip) else {
+            return;
+        };
+        e.current = (r, c);
+        let input = e.cells[r][c].clone();
+        input.update(cx, |i, cx| {
+            i.focus(window, cx);
+            i.select_all(window, cx);
         });
         cx.notify();
     }
@@ -251,6 +325,10 @@ impl SlidesView {
         };
         match result {
             Ok(()) => {
+                // The edited object stays selected (as in PowerPoint).
+                if slide == self.current {
+                    self.selected = Some(shape);
+                }
                 self.after_object_edit(window, cx);
                 if !keep_open {
                     self.close_object_editor(window, cx);
@@ -642,6 +720,14 @@ impl SlidesView {
         let b = self.viewport.get();
         let panel = v_flex()
             .id("slides-object-editor")
+            .key_context(KEY_CONTEXT)
+            .on_action(cx.listener(|this, _: &NextCell, w, cx| this.object_next_cell(false, w, cx)))
+            .on_action(cx.listener(|this, _: &PrevCell, w, cx| this.object_next_cell(true, w, cx)))
+            .on_action(cx.listener(|this, _: &ApplyPanel, w, cx| {
+                this.apply_object_editor(false, w, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ClosePanel, w, cx| this.close_object_editor(w, cx)))
+            .on_action(|_: &Swallow, _, _| {})
             .occlude()
             .max_w(b.size.width - SPACE_7)
             .max_h(b.size.height - SPACE_7)
@@ -690,5 +776,48 @@ mod tests {
         assert_eq!(parse_num("abc"), None);
         assert_eq!(fmt_num(Some(14.0)), "14");
         assert_eq!(fmt_num(Some(14.25)), "14.25");
+    }
+
+    #[std::prelude::v1::test]
+    fn tab_walks_the_cells_and_skips_the_chart_corner() {
+        let w = [3, 3];
+        let skip = Some((0, 0));
+        assert_eq!(step_cell(&w, (0, 1), false, skip), Some((0, 2)));
+        assert_eq!(step_cell(&w, (0, 2), false, skip), Some((1, 0)));
+        assert_eq!(step_cell(&w, (1, 2), false, skip), Some((0, 1)));
+        assert_eq!(step_cell(&w, (0, 1), true, skip), Some((1, 2)));
+        assert_eq!(step_cell(&w, (1, 0), true, None), Some((0, 2)));
+        assert_eq!(step_cell(&[], (0, 0), false, None), None);
+    }
+
+    /// Keys typed in the panel resolve to the panel's actions, not the
+    /// slide's (Tab used to select the next shape, so after Apply the
+    /// slide title was selected instead of the chart; Backspace in an
+    /// empty cell deleted the chart).
+    #[std::prelude::v1::test]
+    fn panel_keys_win_over_the_slide() {
+        let keymap = Keymap::new(crate::key_bindings());
+        let in_panel = [
+            KeyContext::parse(crate::KEY_CONTEXT).unwrap(),
+            KeyContext::parse(KEY_CONTEXT).unwrap(),
+        ];
+        let first = |key: &'static str| {
+            let ks = Keystroke::parse(key).unwrap();
+            let (b, _) = keymap.bindings_for_input(&[ks], &in_panel);
+            b.first().map(|b| b.action().name())
+        };
+        assert_eq!(first("tab"), Some(NextCell.name()));
+        assert_eq!(first("shift-tab"), Some(PrevCell.name()));
+        assert_eq!(first("enter"), Some(ApplyPanel.name()));
+        assert_eq!(first("escape"), Some(ClosePanel.name()));
+        assert_eq!(first("backspace"), Some(Swallow.name()));
+        // On the slide itself Tab still moves between shapes.
+        let on_slide = [KeyContext::parse(crate::KEY_CONTEXT).unwrap()];
+        let ks = Keystroke::parse("tab").unwrap();
+        let (b, _) = keymap.bindings_for_input(&[ks], &on_slide);
+        assert_eq!(
+            b.first().map(|b| b.action().name()),
+            Some(crate::NextShape.name())
+        );
     }
 }
