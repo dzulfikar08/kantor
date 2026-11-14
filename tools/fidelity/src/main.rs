@@ -280,6 +280,20 @@ fn sheet_edits(wb: &mut Workbook) -> Result<()> {
     wb.insert_columns(0, 1, 1)?;
     wb.delete_rows(0, 3, 3)?;
     wb.set_row_heights(0, 0, 0, RowHeight::Points(24.0))?;
+    // Notes: the file's first one edited, its last one deleted, a new one
+    // shown all the time.
+    let cells = wb.note_cells(0);
+    if let Some(&(row, col)) = cells.first() {
+        let old = wb.note_at(0, row, col).map(|n| n.text).unwrap_or_default();
+        wb.set_note(0, row, col, &format!("{old}\n(edited)"), "Kantor")?;
+    }
+    if cells.len() > 1
+        && let Some(&(row, col)) = cells.last()
+    {
+        wb.delete_notes(0, CellRange::from_corners((row, col), (row, col)))?;
+    }
+    wb.set_note(0, 40, 6, "Kantor:\nA new note & <more>", "Kantor")?;
+    wb.show_notes(0, CellRange::from_corners((40, 6), (40, 6)), true)?;
     Ok(())
 }
 

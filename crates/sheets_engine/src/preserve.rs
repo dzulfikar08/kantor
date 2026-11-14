@@ -4266,18 +4266,22 @@ const COMMENTS_CT: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml";
 const VML_CT: &str = "application/vnd.openxmlformats-officedocument.vmlDrawing";
 
-/// Add the notes of sheets that have no comments part: a `comments` part,
-/// a VML drawing with their boxes, and the sheet's `<legacyDrawing>`.
+/// Write the notes of the sheets in `notes` (each sheet's whole list, at
+/// the cells they are on now): its comments part (comments the list keeps
+/// unchanged stay as the file had them), the VML note boxes (boxes of
+/// notes still there are kept with their size; other VML shapes, such as
+/// form controls, are left alone) and the sheet's `<legacyDrawing>`. An
+/// empty list removes the sheet's notes. Threaded comments on notes that
+/// were edited or deleted go too (the note is then a plain note).
 fn write_notes(
     pkg: &mut Package,
     sheets: &[SheetEntry],
     notes: &[(u32, Vec<crate::notes::NoteSave>)],
 ) -> Result<(), String> {
-    let mut ct = String::new();
-    let has_vml_default = ContentTypes::parse(pkg.text(CONTENT_TYPES)?.ok_or("no content types")?)?
-        .defaults
-        .contains_key("vml");
-    for (block, (id, list)) in notes.iter().enumerate() {
+    let mut adds = String::new();
+    let mut dropped: Vec<String> = Vec::new();
+    let mut next_block = vml_blocks(pkg) + 1;
+    for (id, list) in notes {
         let Some(sheet) = sheets
             .iter()
             .find(|s| s.sheet_id == *id && s.kind == SheetKind::Work)
@@ -4289,67 +4293,508 @@ fn write_notes(
             Some(x) => parse_rels(x)?,
             None => Vec::new(),
         };
-        if rels
-            .iter()
-            .any(|r| matches!(r.short_kind(), "comments" | "vmlDrawing"))
+        let sheet_xml = pkg.text(&sheet.part)?.ok_or("sheet part is missing")?;
+        let legacy = legacy_drawing_rid(sheet_xml);
+        let target = |rels: &[Rel], f: &dyn Fn(&Rel) -> bool| {
+            rels.iter()
+                .find(|r| !r.external && f(r))
+                .and_then(|r| Some((r.id.clone(), resolve(&sheet.part, &r.target)?)))
+        };
+        let comments = target(&rels, &|r| r.short_kind() == "comments");
+        let vml = legacy
+            .as_ref()
+            .and_then(|rid| target(&rels, &|r| &r.id == rid));
+        let threaded = target(&rels, &|r| r.short_kind() == "threadedComment");
+
+        // The comments part.
+        let old = match &comments {
+            Some((_, part)) => pkg.text(part)?.map(str::to_owned),
+            None => None,
+        };
+        let changed = changed_refs(old.as_deref(), list);
+        match (&comments, list.is_empty()) {
+            (Some((rid, part)), true) => {
+                pkg.remove(part);
+                dropped.push(part.clone());
+                rels.retain(|r| &r.id != rid);
+            }
+            (Some((_, part)), false) => {
+                let xml = old
+                    .as_deref()
+                    .and_then(|o| merge_comments(o, list).ok())
+                    .unwrap_or_else(|| crate::notes::comments_xml(list));
+                pkg.set(part, xml.into_bytes());
+            }
+            (None, false) => {
+                let part = free_name(pkg, "xl/comments", ".xml");
+                pkg.set(&part, crate::notes::comments_xml(list).into_bytes());
+                adds.push_str(&format!(
+                    "<Override PartName=\"/{}\" ContentType=\"{COMMENTS_CT}\"/>",
+                    esc_attr(&part)
+                ));
+                let id = IdAlloc::new(&rels).next();
+                rels.push(Rel {
+                    id,
+                    kind: format!("{REL_BASE}comments"),
+                    target: relative(&sheet.part, &part),
+                    external: false,
+                });
+            }
+            (None, true) => {}
+        }
+
+        // Threaded comments of notes changed or deleted.
+        if let Some((_, part)) = &threaded
+            && !changed.is_empty()
+            && let Some(x) = pkg.text(part)?
+            && let Some(new) = drop_threaded(x, &changed)
         {
+            pkg.set(part, new.into_bytes());
+        }
+
+        // The VML boxes.
+        let old_vml = match &vml {
+            Some((_, part)) => pkg.text(part)?.map(str::to_owned),
+            None => None,
+        };
+        let mut legacy_patch: Option<Option<String>> = None;
+        match (&vml, old_vml) {
+            (Some((rid, part)), Some(old)) => {
+                let merged = merge_vml(&old, list, next_block).unwrap_or_else(|_| {
+                    // Not readable: a new drawing of the notes alone.
+                    (crate::notes::vml_xml(list, next_block), !list.is_empty())
+                });
+                if merged.0.contains(&format!("data=\"{next_block}\"")) {
+                    next_block += 1;
+                }
+                if merged.1 {
+                    pkg.set(part, merged.0.into_bytes());
+                } else {
+                    // No shapes left: the drawing goes.
+                    pkg.remove(part);
+                    dropped.push(part.clone());
+                    rels.retain(|r| &r.id != rid);
+                    legacy_patch = Some(None);
+                }
+            }
+            _ if !list.is_empty() => {
+                let part = free_name(pkg, "xl/drawings/vmlDrawing", ".vml");
+                pkg.set(&part, crate::notes::vml_xml(list, next_block).into_bytes());
+                next_block += 1;
+                if let Some((rid, _)) = &vml {
+                    rels.retain(|r| &r.id != rid);
+                }
+                let rid = IdAlloc::new(&rels).next();
+                rels.push(Rel {
+                    id: rid.clone(),
+                    kind: format!("{REL_BASE}vmlDrawing"),
+                    target: relative(&sheet.part, &part),
+                    external: false,
+                });
+                adds.push_str(&format!(
+                    "<Override PartName=\"/{}\" ContentType=\"{VML_CT}\"/>",
+                    esc_attr(&part)
+                ));
+                legacy_patch = Some(Some(format!(
+                    "<legacyDrawing r:id=\"{}\"/>",
+                    esc_attr(&rid)
+                )));
+            }
+            _ => {}
+        }
+        if rels.is_empty() {
+            pkg.remove(&rels_name);
+        } else {
+            pkg.set(&rels_name, write_rels(&rels).into_bytes());
+        }
+        if let Some(element) = legacy_patch {
+            let xml = pkg.take_text(&sheet.part)?.ok_or("sheet part is missing")?;
+            let patch = SheetPatch {
+                elements: vec![("legacyDrawing", element)],
+                ..SheetPatch::default()
+            };
+            let new = patch_sheet(&xml, &patch).map_err(|e| format!("{:?}: {e}", sheet.name))?;
+            pkg.set(&sheet.part, new.into_bytes());
+        }
+    }
+    if adds.is_empty() && dropped.is_empty() {
+        return Ok(());
+    }
+    let types = pkg.text(CONTENT_TYPES)?.ok_or("no content types")?;
+    let doc = Document::parse(types).map_err(|e| e.to_string())?;
+    let mut edits = Vec::new();
+    for n in doc.root_element().children().filter(|n| n.is_element()) {
+        let name = n.attribute("PartName").unwrap_or_default();
+        let name = name.strip_prefix('/').unwrap_or(name);
+        if n.tag_name().name() == "Override" && dropped.iter().any(|d| d.eq_ignore_ascii_case(name))
+        {
+            edits.push((n.range(), String::new()));
+        }
+    }
+    let at = types.rfind("</Types>").ok_or("content types not closed")?;
+    edits.push((at..at, adds));
+    let new = apply_edits(types, edits);
+    pkg.set(CONTENT_TYPES, new.into_bytes());
+    Ok(())
+}
+
+/// `prefix{n}suffix` with the first `n` the package doesn't use.
+fn free_name(pkg: &Package, prefix: &str, suffix: &str) -> String {
+    (1..)
+        .map(|n| format!("{prefix}{n}{suffix}"))
+        .find(|n| !pkg.has(n))
+        .expect("a free name")
+}
+
+/// The highest VML shape id block (`<o:idmap data>`) of the package's VML
+/// drawings (0 if none).
+fn vml_blocks(pkg: &Package) -> usize {
+    let mut max = 0;
+    for name in pkg.parts() {
+        if !name.to_lowercase().ends_with(".vml") {
             continue;
         }
-        let comments = (1..)
-            .map(|n| format!("xl/comments{n}.xml"))
-            .find(|n| !pkg.has(n))
-            .expect("a free name");
-        let vml = (1..)
-            .map(|n| format!("xl/drawings/vmlDrawing{n}.vml"))
-            .find(|n| !pkg.has(n))
-            .expect("a free name");
-        pkg.set(&comments, crate::notes::comments_xml(list).into_bytes());
-        pkg.set(&vml, crate::notes::vml_xml(list, block + 1).into_bytes());
-        ct.push_str(&format!(
-            "<Override PartName=\"/{}\" ContentType=\"{COMMENTS_CT}\"/>",
-            esc_attr(&comments)
-        ));
-        let mut alloc = IdAlloc::new(&rels);
-        let vml_rid = alloc.next();
-        rels.push(Rel {
-            id: alloc.next(),
-            kind: format!("{REL_BASE}comments"),
-            target: relative(&sheet.part, &comments),
-            external: false,
-        });
-        rels.push(Rel {
-            id: vml_rid.clone(),
-            kind: format!("{REL_BASE}vmlDrawing"),
-            target: relative(&sheet.part, &vml),
-            external: false,
-        });
-        pkg.set(&rels_name, write_rels(&rels).into_bytes());
-        let xml = pkg.take_text(&sheet.part)?.ok_or("sheet part is missing")?;
-        let patch = SheetPatch {
-            elements: vec![(
-                "legacyDrawing",
-                Some(format!("<legacyDrawing r:id=\"{}\"/>", esc_attr(&vml_rid))),
-            )],
-            ..SheetPatch::default()
+        let Ok(Some(x)) = pkg.text(name) else {
+            continue;
         };
-        let new = patch_sheet(&xml, &patch).map_err(|e| format!("{:?}: {e}", sheet.name))?;
-        pkg.set(&sheet.part, new.into_bytes());
+        for (i, _) in x.match_indices("idmap") {
+            let rest = &x[i..];
+            let Some(d) = rest.find("data=") else {
+                continue;
+            };
+            let v = rest[d + 5..].trim_start_matches(['"', '\'']);
+            let end = v.find(['"', '\'']).unwrap_or(0);
+            for n in v[..end]
+                .split(',')
+                .filter_map(|n| n.trim().parse::<usize>().ok())
+            {
+                max = max.max(n);
+            }
+        }
     }
-    if !has_vml_default && !ct.is_empty() {
-        ct.push_str(&format!(
-            "<Default Extension=\"vml\" ContentType=\"{VML_CT}\"/>"
-        ));
+    max
+}
+
+/// The relationship id of a worksheet's `<legacyDrawing>` (the note boxes;
+/// `legacyDrawingHF` is the header and footer pictures').
+fn legacy_drawing_rid(sheet: &str) -> Option<String> {
+    let sk = Skeleton::new(sheet);
+    let doc = Document::parse(&sk.xml).ok()?;
+    let n = doc
+        .root_element()
+        .children()
+        .find(|c| is_main(*c, "legacyDrawing"))?;
+    n.attributes()
+        .find(|a| a.name() == "id" && matches!(a.namespace(), Some(NS_R) | Some(NS_R_STRICT)))
+        .map(|a| a.value().to_owned())
+}
+
+/// A `<comment>`'s cell, as `(row, col)`.
+fn comment_cell(c: Node) -> Option<(u32, u32)> {
+    let a = crate::shift::parse_range(c.attribute("ref")?)?.area();
+    Some((a.top, a.left))
+}
+
+/// A `<comment>`'s text as IronCalc reads it: every `<t>` joined.
+fn comment_text(c: Node) -> String {
+    c.descendants()
+        .filter(|n| n.is_element() && n.tag_name().name() == "t")
+        .filter_map(|n| n.text())
+        .collect()
+}
+
+/// Cells (as `A1`) of the comments part `old` whose note `list` changes or
+/// deletes.
+fn changed_refs(old: Option<&str>, list: &[crate::notes::NoteSave]) -> HashSet<(u32, u32)> {
+    let mut out = HashSet::new();
+    let Some(doc) = old.and_then(|o| Document::parse(o).ok()) else {
+        return out;
+    };
+    for c in doc
+        .descendants()
+        .filter(|n| n.is_element() && n.tag_name().name() == "comment")
+    {
+        let Some(at) = comment_cell(c) else { continue };
+        let same = list
+            .iter()
+            .any(|n| (n.row, n.col) == at && n.text == comment_text(c));
+        if !same {
+            out.insert(at);
+        }
     }
-    if !ct.is_empty() {
-        let mut types = pkg
-            .text(CONTENT_TYPES)?
-            .ok_or("no content types")?
-            .to_owned();
-        let at = types.rfind("</Types>").ok_or("content types not closed")?;
-        types.insert_str(at, &ct);
-        pkg.set(CONTENT_TYPES, types.into_bytes());
+    out
+}
+
+/// The comments part `old` holding the notes of `list`: comments that are
+/// unchanged (same cell, author and text) are kept as they are, with their
+/// formatting; the others are written new.
+fn merge_comments(old: &str, list: &[crate::notes::NoteSave]) -> Result<String, String> {
+    let doc = Document::parse(old).map_err(|e| e.to_string())?;
+    let root = doc.root_element();
+    if root.tag_name().name() != "comments"
+        || root.tag_name().namespace() != Some(NS_MAIN)
+        || !old[root.range()].starts_with("<comments")
+    {
+        return Err("unexpected comments part".into());
     }
-    Ok(())
+    let elements: Vec<Node> = root.children().filter(|n| n.is_element()).collect();
+    let first = elements.first().ok_or("empty comments part")?;
+    let mut authors: Vec<String> = root
+        .children()
+        .filter(|n| is_main(*n, "authors"))
+        .flat_map(|a| a.children().filter(|n| is_main(*n, "author")))
+        .map(|a| a.text().unwrap_or_default().to_owned())
+        .collect();
+    let old_comments: Vec<Node> = root
+        .children()
+        .filter(|n| is_main(*n, "commentList"))
+        .flat_map(|l| l.children().filter(|n| is_main(*n, "comment")))
+        .collect();
+    let mut body = String::new();
+    for n in list {
+        let kept = old_comments.iter().find(|c| {
+            comment_cell(**c) == Some((n.row, n.col))
+                && comment_text(**c) == n.text
+                && c.attribute("authorId")
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .and_then(|i| authors.get(i))
+                    == Some(&n.author)
+        });
+        match kept {
+            Some(c) => body.push_str(&old[c.range()]),
+            None => {
+                let author = match authors.iter().position(|a| *a == n.author) {
+                    Some(i) => i,
+                    None => {
+                        authors.push(n.author.clone());
+                        authors.len() - 1
+                    }
+                };
+                body.push_str(&format!(
+                    "<comment ref=\"{}\" authorId=\"{author}\">{}</comment>",
+                    crate::cell_name(n.row, n.col),
+                    crate::notes::text_xml(&n.author, &n.text)
+                ));
+            }
+        }
+    }
+    let mut out = old[..first.range().start].to_owned();
+    out.push_str("<authors>");
+    for a in &authors {
+        out.push_str(&format!("<author>{}</author>", esc_text(a)));
+    }
+    out.push_str("</authors><commentList>");
+    out.push_str(&body);
+    out.push_str("</commentList>");
+    for e in &elements {
+        if !is_main(*e, "authors") && !is_main(*e, "commentList") {
+            out.push_str(&old[e.range()]);
+        }
+    }
+    out.push_str("</comments>");
+    Ok(out)
+}
+
+/// The threaded comments part `xml` without the threads on `cells`
+/// (`None` if it has none of them).
+fn drop_threaded(xml: &str, cells: &HashSet<(u32, u32)>) -> Option<String> {
+    let doc = Document::parse(xml).ok()?;
+    let edits: Vec<_> = doc
+        .descendants()
+        .filter(|n| n.is_element() && n.tag_name().name() == "threadedComment")
+        .filter(|n| comment_cell(*n).is_some_and(|c| cells.contains(&c)))
+        .map(|n| (n.range(), String::new()))
+        .collect();
+    (!edits.is_empty()).then(|| apply_edits(xml, edits))
+}
+
+const VML_V: &str = "urn:schemas-microsoft-com:vml";
+const VML_O: &str = "urn:schemas-microsoft-com:office:office";
+const VML_X: &str = "urn:schemas-microsoft-com:office:excel";
+
+/// The VML drawing `old` with the note boxes of `list`: boxes of notes
+/// still there are kept (shown or hidden as the note is now), boxes of
+/// deleted notes go, new notes get a box. Other shapes stay. Also says
+/// whether any shape is left. `block`: the id block for new shapes if the
+/// drawing has no shape ids of its own.
+fn merge_vml(
+    old: &str,
+    list: &[crate::notes::NoteSave],
+    block: usize,
+) -> Result<(String, bool), String> {
+    let doc = Document::parse(old).map_err(|e| e.to_string())?;
+    let root = doc.root_element();
+    if root.lookup_namespace_uri(Some("v")) != Some(VML_V)
+        || root.lookup_namespace_uri(Some("o")) != Some(VML_O)
+        || root.lookup_namespace_uri(Some("x")) != Some(VML_X)
+    {
+        return Err("unexpected VML namespaces".into());
+    }
+    let close = old[..root.range().end]
+        .rfind("</")
+        .filter(|&i| i > root.range().start)
+        .ok_or("VML not closed")?;
+    let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+    let mut boxed: HashSet<(u32, u32)> = HashSet::new();
+    let mut max_id = 0usize;
+    let mut shapes_left = 0usize;
+    let mut has_type = false;
+    for n in root.descendants().filter(|n| n.is_element()) {
+        if n.tag_name().name() == "shapetype" && n.attribute("id") == Some("_x0000_t202") {
+            has_type = true;
+        }
+        if n.tag_name().name() != "shape" || n.tag_name().namespace() != Some(VML_V) {
+            continue;
+        }
+        if let Some(id) = n
+            .attribute("id")
+            .and_then(|i| i.strip_prefix("_x0000_s"))
+            .and_then(|i| i.parse::<usize>().ok())
+        {
+            max_id = max_id.max(id);
+        }
+        let data = n.children().find(|c| {
+            c.is_element()
+                && c.tag_name().name() == "ClientData"
+                && c.attribute("ObjectType") == Some("Note")
+        });
+        let Some(data) = data else {
+            shapes_left += 1;
+            continue;
+        };
+        let at = match (child_number(data, "Row"), child_number(data, "Column")) {
+            (Some((_, r)), Some((_, c))) => (r, c),
+            _ => {
+                shapes_left += 1;
+                continue;
+            }
+        };
+        let note = list.iter().find(|n| (n.row, n.col) == at);
+        let Some(note) = note.filter(|_| boxed.insert(at)) else {
+            edits.push((n.range(), String::new()));
+            continue;
+        };
+        shapes_left += 1;
+        let visible = data
+            .children()
+            .find(|c| c.is_element() && c.tag_name().name() == "Visible");
+        if visible.is_some() == note.shown {
+            continue;
+        }
+        // Shown or hidden: the style's visibility and `<x:Visible/>`.
+        if let Some(style) = n
+            .attributes()
+            .find(|a| a.name() == "style" && a.namespace().is_none())
+        {
+            let v = style.value();
+            let (from, to) = if note.shown {
+                ("visibility:hidden", "visibility:visible")
+            } else {
+                ("visibility:visible", "visibility:hidden")
+            };
+            let new = if v.contains(from) {
+                v.replace(from, to)
+            } else if v.contains(to) {
+                v.to_owned()
+            } else {
+                format!("{};{to}", v.trim_end_matches(';'))
+            };
+            edits.push((style.range_value(), esc_attr(&new)));
+        }
+        match visible {
+            Some(vis) => edits.push((vis.range(), String::new())),
+            None => {
+                let end = data.range().end;
+                let at = old[..end].rfind("</").ok_or("ClientData not closed")?;
+                edits.push((at..at, "<x:Visible/>".into()));
+            }
+        }
+    }
+    let mut added = String::new();
+    let new: Vec<_> = list
+        .iter()
+        .filter(|n| !boxed.contains(&(n.row, n.col)))
+        .collect();
+    if !new.is_empty() && !has_type {
+        added.push_str(crate::notes::VML_SHAPETYPE);
+    }
+    let mut id = if max_id > 0 { max_id } else { 1024 * block };
+    let mut idmap = String::new();
+    if max_id == 0 && !new.is_empty() {
+        idmap = format!(
+            "<o:shapelayout v:ext=\"edit\"><o:idmap v:ext=\"edit\" data=\"{block}\"/></o:shapelayout>"
+        );
+    }
+    for (i, n) in new.iter().enumerate() {
+        id += 1;
+        added.push_str(&crate::notes::vml_shape(n, id, shapes_left + i + 1));
+    }
+    shapes_left += new.len();
+    if !idmap.is_empty() && !old.contains("shapelayout") {
+        added.insert_str(0, &idmap);
+    }
+    edits.push((close..close, added));
+    Ok((apply_edits(old, edits), shapes_left > 0))
+}
+
+/// Notes the package shows all the time (`<x:Visible/>` in their VML box),
+/// as `(sheetId, row, col)`.
+pub(crate) fn shown_notes(bytes: &[u8]) -> HashSet<(u32, u32, u32)> {
+    let mut out = HashSet::new();
+    let Ok(orig) = Original::new(bytes) else {
+        return out;
+    };
+    let Ok(Some(root)) = orig.text("_rels/.rels") else {
+        return out;
+    };
+    let Ok(root_rels) = parse_rels(&root) else {
+        return out;
+    };
+    let Ok((_, _, _, sheets)) = workbook_sheets(&root_rels, &|name| orig.text(name)) else {
+        return out;
+    };
+    for s in sheets.iter().filter(|s| s.kind == SheetKind::Work) {
+        let Some(rels) = orig
+            .text(&rels_part(&s.part))
+            .ok()
+            .flatten()
+            .and_then(|x| parse_rels(&x).ok())
+        else {
+            continue;
+        };
+        for r in rels
+            .iter()
+            .filter(|r| r.short_kind() == "vmlDrawing" && !r.external)
+        {
+            let Some(xml) = resolve(&s.part, &r.target).and_then(|p| orig.text(&p).ok().flatten())
+            else {
+                continue;
+            };
+            if !xml.contains("Visible") {
+                continue;
+            }
+            let Ok(doc) = Document::parse(&xml) else {
+                continue;
+            };
+            for data in doc.descendants().filter(|n| {
+                n.is_element()
+                    && n.tag_name().name() == "ClientData"
+                    && n.attribute("ObjectType") == Some("Note")
+            }) {
+                let shown = data
+                    .children()
+                    .any(|c| c.is_element() && c.tag_name().name() == "Visible");
+                if let (true, Some((_, row)), Some((_, col))) = (
+                    shown,
+                    child_number(data, "Row"),
+                    child_number(data, "Column"),
+                ) {
+                    out.insert((s.sheet_id, row, col));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The chart part of the frame with `cNvPr id` `cnvpr` in the drawing of

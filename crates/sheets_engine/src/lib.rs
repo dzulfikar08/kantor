@@ -152,6 +152,8 @@ pub struct Workbook {
     /// Top-left cells of frozen panes frozen on a scrolled sheet, by
     /// `sheetId` (`grid::set_frozen_at`).
     panes: HashMap<u32, (u32, u32)>,
+    /// Notes the opened file shows all the time, `(sheetId, row, col)`.
+    shown_notes: std::collections::HashSet<(u32, u32, u32)>,
 }
 
 /// See [`Workbook::cached`].
@@ -473,6 +475,7 @@ impl Workbook {
             saved_charts: HashMap::new(),
             touched: Default::default(),
             panes: HashMap::new(),
+            shown_notes: Default::default(),
         })
     }
 
@@ -555,6 +558,7 @@ impl Workbook {
             mut prints,
             pivots,
             panes,
+            shown_notes,
         } = extras
             .map(|h| h.join().unwrap_or_default())
             .unwrap_or_default();
@@ -634,6 +638,7 @@ impl Workbook {
             saved_charts: HashMap::new(),
             touched,
             panes: HashMap::new(),
+            shown_notes,
         };
         book.apply_read_panes(&panes);
         // The file's cached values are right: no recalculation.
@@ -1376,6 +1381,8 @@ struct Extras {
     pivots: pivot::Pivots,
     /// Top-left cells of frozen panes (`grid::read_panes`).
     panes: HashMap<u32, (u32, u32)>,
+    /// Notes shown all the time (`preserve::shown_notes`).
+    shown_notes: std::collections::HashSet<(u32, u32, u32)>,
 }
 
 impl Extras {
@@ -1388,6 +1395,7 @@ impl Extras {
             prints: print::Prints::read(bytes, &skeletons),
             pivots: pivot::Pivots::read(bytes),
             panes: grid::read_panes(&skeletons),
+            shown_notes: preserve::shown_notes(bytes),
         }
     }
 }
