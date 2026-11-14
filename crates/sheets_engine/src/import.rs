@@ -352,6 +352,18 @@ pub(crate) fn read_calamine(
         imported.active_sheet = Some(x.globals.active).filter(|&a| (a as usize) < names.len());
         replaced |= applied.cleared;
     }
+    if format == SourceFormat::Ods {
+        match crate::ods::apply(path, &mut model, &names) {
+            Ok(a) => {
+                replaced |= a.cleared;
+                imported.active_sheet = a.active;
+            }
+            Err(e) => {
+                log::warn!("{}: formatting not read: {e}", path.display());
+                imported.notes.push("formatting not imported".into());
+            }
+        }
+    }
     if replaced {
         model.evaluate();
     }

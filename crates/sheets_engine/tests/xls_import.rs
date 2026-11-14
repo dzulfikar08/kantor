@@ -276,13 +276,104 @@ fn malformed_xls_imports_values_or_fails_cleanly() {
 }
 
 #[test]
-fn ods_brings_values_without_formatting() {
-    // The ODS copy of the same workbook: values and formulas, no formats yet.
-    let wb = Workbook::open(corpus("formatted.ods")).unwrap();
+fn ods_brings_values_and_formatting() {
+    // The ODS copy of the same workbook.
+    let mut wb = Workbook::open(corpus("formatted.ods")).unwrap();
     assert_eq!(wb.source_format(), SourceFormat::Ods);
+    // (`=Rate*100` keeps its value: calamine doesn't bring ODS names.)
+    assert_eq!(wb.import_notes(), ["1 formula kept as values"]);
     assert_eq!(wb.display_value(0, 0, 0), "Quarterly sales, East region");
     assert_eq!(wb.input(0, 5, 1), "=SUM(B3:B5)");
-    assert_eq!(wb.cell_style(0, 0, 0).fill, None);
+
+    // Fonts, fills, alignment.
+    let a1 = wb.cell_style(0, 0, 0);
+    assert!(a1.bold);
+    assert_eq!(a1.font_size, 16);
+    assert_eq!(a1.font_name.as_deref(), Some("Arial"));
+    assert_eq!(a1.font_color, Some(0xFFFFFF));
+    assert_eq!(a1.fill, Some(0x1F4E78));
+    assert_eq!((a1.align, a1.valign), (HAlign::Center, VAlign::Center));
+    let b2 = wb.cell_style(0, 1, 1);
+    assert_eq!(b2.fill, Some(0xDDEBF7));
+    let bottom = b2.borders.bottom.unwrap();
+    assert_eq!(
+        (bottom.style, bottom.color),
+        (LineStyle::Medium, Some(0x1F4E78))
+    );
+    assert!(b2.borders.top.is_none());
+
+    // Number formats (number:*-style with their maps).
+    assert_eq!(wb.display_value(0, 2, 1), "1,200.50");
+    assert_eq!(wb.display_value(0, 4, 1), "-150.00");
+    assert_eq!(wb.display_value(0, 5, 1), "Rp 1,851");
+    assert_eq!(wb.display_value(0, 5, 5), "37.5%");
+    assert_eq!(wb.display_value(0, 7, 3), "15/03/2024");
+    assert_eq!(wb.display_value(0, 15, 0), "1.235E+03");
+
+    // Borders, wrap, indent, rotation, strikethrough.
+    let b3 = wb.cell_style(0, 2, 1);
+    assert_eq!(b3.borders.left.unwrap().style, LineStyle::Thin);
+    assert_eq!(
+        wb.cell_style(0, 5, 1).borders.bottom.unwrap().style,
+        LineStyle::Double
+    );
+    let e8 = wb.cell_style(0, 7, 4).borders;
+    assert_eq!(e8.left.unwrap().color, Some(0xFF0000));
+    assert_eq!(e8.top.unwrap().style, LineStyle::Thick);
+    let f4 = wb.cell_style(0, 3, 5);
+    assert!(f4.wrap);
+    assert_eq!(f4.valign, VAlign::Top);
+    let a5 = wb.cell_style(0, 4, 0);
+    assert_eq!(a5.indent, 2);
+    assert!(a5.italic && a5.underline && a5.strikethrough);
+    assert_eq!(wb.cell_style(0, 7, 0).rotation, 45);
+    assert_eq!(wb.cell_style(0, 7, 1).rotation, 90);
+    assert_eq!(wb.cell_style(0, 7, 2).align, HAlign::Right);
+    let f8 = wb.cell_style(0, 7, 5);
+    assert_eq!(f8.font_name.as_deref(), Some("Courier New"));
+    assert_eq!(f8.font_size, 9);
+    assert_eq!(f8.font_color, Some(0xC00000));
+    let plain = wb.cell_style(0, 2, 5);
+    assert_eq!(plain.fill, None);
+    assert!(!plain.bold);
+
+    // Layout: merges, widths, heights, hidden column and row, sheets.
+    assert_eq!(
+        wb.merges_in(0, CellRange::all()),
+        vec![
+            CellRange::from_corners((0, 0), (0, 5)),
+            CellRange::from_corners((9, 0), (10, 1)),
+        ]
+    );
+    let w = |c| wb.column_width(0, c);
+    assert!(
+        (w(1) / w(0) - 14.0 / 24.0).abs() < 0.02,
+        "{} {}",
+        w(0),
+        w(1)
+    );
+    assert!(wb.is_column_hidden(0, 6));
+    assert!(!wb.is_column_hidden(0, 5));
+    let rows = wb.row_spec(0);
+    let row = |r: u32| rows.rows.iter().find(|e| e.row == r).copied();
+    assert!((row(0).unwrap().points - 30.0).abs() < 0.1);
+    assert!((row(7).unwrap().points - 48.0).abs() < 0.1);
+    assert!(wb.is_row_hidden(0, 11));
+    assert!(!wb.is_row_hidden(0, 10));
+    assert!(!wb.sheet_hidden(1));
+    assert!(wb.sheet_hidden(2));
+
+    // Saved as .xlsx and opened again, it looks the same.
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("from-ods.xlsx");
+    wb.save_as(&out).unwrap();
+    let bytes = std::fs::read(&out).unwrap();
+    assert!(sheets_engine::package_problems(&bytes).is_empty());
+    let back = Workbook::open(&out).unwrap();
+    assert_eq!(back.cell_style(0, 0, 0).fill, Some(0x1F4E78));
+    assert_eq!(back.display_value(0, 5, 1), "Rp 1,851");
+    assert!(back.is_column_hidden(0, 6));
+    assert_eq!(back.merges_in(0, CellRange::all()).len(), 2);
 }
 
 #[test]
