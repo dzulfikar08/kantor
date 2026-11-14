@@ -16,7 +16,7 @@ use super::Workspace;
 use super::doc::CommonFormat;
 use crate::actions::*;
 use crate::theme;
-use sheets_ui::{BorderPreset, CalcMode, Format, GridCommand, NumberFormat, VAlign};
+use sheets_ui::{BorderPreset, CalcMode, Format, GridCommand, NoteCommand, NumberFormat, VAlign};
 
 /// A palette command.
 pub(super) struct Command {
@@ -1354,6 +1354,66 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Sheets · check the spelling of the text cells, from the active cell or in the selection",
         keys: "F7",
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.spelling_doc(w, cx)),
+    },
+    Command {
+        title: "New Note / Edit Note",
+        detail: "Sheets · write a note on the active cell (Review > Notes)",
+        keys: "Shift+F2",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.note_command(NoteCommand::Edit, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Delete Note",
+        detail: "Sheets · delete the notes of the selected cells",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.note_command(NoteCommand::Delete, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Show/Hide Note",
+        detail: "Sheets · keep the active cell's note shown, or show it only on hover",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.note_command(NoteCommand::ShowHide, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Show All Notes",
+        detail: "Sheets · show every note, or only on hover again",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.note_command(NoteCommand::ShowAll, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Next Note",
+        detail: "Sheets · go to the next cell with a note",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.note_command(NoteCommand::Next, w, cx)
+            })
+        },
+    },
+    Command {
+        title: "Previous Note",
+        detail: "Sheets · go to the previous cell with a note",
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.note_command(NoteCommand::Previous, w, cx)
+            })
+        },
     },
     Command {
         title: "Check Spelling as You Type",

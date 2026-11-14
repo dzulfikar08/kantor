@@ -281,6 +281,10 @@ pub struct TableState<D: TableDelegate> {
     selection_mode: SelectionMode,
     right_clicked_row: Option<usize>,
     right_clicked_cell: Option<(usize, usize)>,
+    /// KANTOR PATCH (cell menu): the cell whose menu opens (the menu is
+    /// built after the right click's selection has cleared
+    /// `right_clicked_cell`).
+    menu_cell: Option<(usize, usize)>,
     selected_col: Option<usize>,
     selected_cell: Option<(usize, usize)>,
 
@@ -325,6 +329,7 @@ where
             selected_row: None,
             right_clicked_row: None,
             right_clicked_cell: None,
+            menu_cell: None,
             selected_col: None,
             selected_cell: None,
             resizing_col: None,
@@ -1048,6 +1053,11 @@ where
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // KANTOR PATCH (cell menu): with cell selection the cell under the
+        // pointer took the right click (it lets it reach the menu).
+        if self.cell_selectable {
+            return;
+        }
         self.right_clicked_row = row_ix;
         self.right_clicked_cell = None;
         cx.emit(TableEvent::RightClickedRow(row_ix));
@@ -1065,8 +1075,10 @@ where
             return;
         }
 
-        cx.stop_propagation();
+        // KANTOR PATCH (cell menu): no `stop_propagation`, so the table's
+        // context menu (a bubble-phase listener above) opens for cells too.
         self.right_clicked_cell = Some((row_ix, col_ix));
+        self.menu_cell = Some((row_ix, col_ix));
         self.right_clicked_row = None;
         cx.emit(TableEvent::RightClickedCell(row_ix, col_ix));
     }
@@ -3005,6 +3017,15 @@ where
                     if let Some(row_ix) = view.read(cx).right_clicked_row {
                         view.update(cx, |menu, cx| {
                             menu.delegate_mut().context_menu(row_ix, this, window, cx)
+                        })
+                    } else if let Some((row_ix, col_ix)) = view.read(cx).menu_cell {
+                        // KANTOR PATCH (cell menu): the cell's menu; the
+                        // right-clicked mark isn't kept (the delegate selects).
+                        view.update(cx, |table, cx| {
+                            table.right_clicked_cell = None;
+                            table
+                                .delegate_mut()
+                                .cell_context_menu(row_ix, col_ix, this, window, cx)
                         })
                     } else {
                         this
