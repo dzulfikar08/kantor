@@ -18,8 +18,8 @@
 //!   reads the formatting calamine skips (cell formats, merges, column widths,
 //!   row heights, frozen panes, gridlines, hidden and coloured tabs,
 //!   hyperlinks, page setup, sheet-local and print names, the 1904 date
-//!   system), notes, data validation and conditional formatting. Charts and
-//!   pictures are not imported. Older BIFF5 files (Excel 5/95) get values
+//!   system), notes, data validation and conditional formatting, and
+//!   [`crate::xls_drawing`] its pictures and charts. Older BIFF5 files (Excel 5/95) get values
 //!   only.
 //! * **ODS** keeps its look too: [`crate::ods`] reads the cell styles,
 //!   number formats, merges, column widths, row heights, hidden rows,
@@ -217,6 +217,8 @@ pub(crate) struct Imported {
     pub active_sheet: Option<u32>,
     /// Data validation (`.xls`, `.ods`), by sheet index.
     pub validations: Vec<(u32, Vec<crate::Validation>)>,
+    /// Pictures and charts (`.xls`).
+    pub drawings: crate::xls_drawing::XlsDrawings,
 }
 
 /// Read an `.ods` / `.xls` / `.xlsb` file via calamine (and `.xls`
@@ -232,7 +234,7 @@ pub(crate) fn read_calamine(
     });
     let mut book =
         open_workbook_auto(path).map_err(|e| anyhow!("opening {}: {e}", path.display()))?;
-    let names = book.sheet_names();
+    let mut names = book.sheet_names();
     if names.is_empty() {
         bail!("{} has no sheets", path.display());
     }
@@ -254,6 +256,13 @@ pub(crate) fn read_calamine(
         },
         None => None,
     };
+    // Chart sheets are shown from their charts, not as empty worksheets.
+    if let Some(x) = &xls {
+        names.retain(|n| !x.globals.sheets.iter().any(|s| s.0 == *n && s.3 == 2));
+        if names.is_empty() {
+            bail!("{} has no worksheets", path.display());
+        }
+    }
     let date1904 = xls.as_ref().is_some_and(|x| x.globals.date1904);
     // With the file's own formats coming, dates need no format of ours.
     let styled = xls.is_some();
@@ -352,7 +361,14 @@ pub(crate) fn read_calamine(
         imported.prints = applied.prints;
         imported.validations = applied.validations;
         imported.notes.extend(applied.notes);
-        imported.active_sheet = Some(x.globals.active).filter(|&a| (a as usize) < names.len());
+        imported.drawings = applied.drawings;
+        // The active tab counts every sheet; the model has worksheets only.
+        imported.active_sheet = x
+            .globals
+            .sheets
+            .get(x.globals.active as usize)
+            .and_then(|s| names.iter().position(|n| *n == s.0))
+            .map(|i| i as u32);
         replaced |= applied.cleared;
     }
     if format == SourceFormat::Ods {

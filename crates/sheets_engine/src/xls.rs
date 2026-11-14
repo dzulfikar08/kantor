@@ -27,8 +27,11 @@
 //!   note), as are Excel 2007 rules (`CF12`: data bars, colour scales, icon
 //!   sets) and `CFEX` extras.
 //!
+//! * pictures and charts (`MSODRAWINGGROUP`, `MSODRAWING`, `OBJ` and chart
+//!   substreams), read by [`crate::xls_drawing`].
+//!
 //! Not read: named cell styles (`STYLE`; cells keep the formats they show),
-//! charts, pictures and shapes. Every read is bounds-checked: a malformed
+//! shapes and text boxes. Every read is bounds-checked: a malformed
 //! record is skipped, never a panic.
 
 use std::collections::HashMap;
@@ -54,7 +57,7 @@ use crate::{CellRange, MAX_COLS, MAX_ROWS};
 pub(crate) const DAYS_1904: f64 = 1462.0;
 
 /// A record and its `CONTINUE`s, joined.
-struct Records<'a> {
+pub(crate) struct Records<'a> {
     data: &'a [u8],
     pos: usize,
     buf: Vec<u8>,
@@ -66,7 +69,7 @@ struct Records<'a> {
 const CONTINUE: u16 = 0x003C;
 
 impl<'a> Records<'a> {
-    fn at(data: &'a [u8], pos: usize) -> Self {
+    pub(crate) fn at(data: &'a [u8], pos: usize) -> Self {
         Self {
             data,
             pos,
@@ -90,7 +93,7 @@ impl<'a> Records<'a> {
 
     /// The next record: its type and payload (with any `CONTINUE` payloads
     /// appended). `None` at the end of the stream or on a truncated record.
-    fn next(&mut self) -> Option<(u16, &[u8])> {
+    pub(crate) fn next(&mut self) -> Option<(u16, &[u8])> {
         let (typ, len) = self.header(self.pos)?;
         let start = self.pos + 4;
         let end = start.checked_add(len)?;
@@ -120,37 +123,37 @@ impl<'a> Records<'a> {
 }
 
 /// Little-endian reads that return `None` past the end.
-struct Bytes<'a> {
+pub(crate) struct Bytes<'a> {
     data: &'a [u8],
     pos: usize,
 }
 
 impl<'a> Bytes<'a> {
-    fn new(data: &'a [u8]) -> Self {
+    pub(crate) fn new(data: &'a [u8]) -> Self {
         Self { data, pos: 0 }
     }
-    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+    pub(crate) fn take(&mut self, n: usize) -> Option<&'a [u8]> {
         let s = self.data.get(self.pos..self.pos.checked_add(n)?)?;
         self.pos += n;
         Some(s)
     }
-    fn skip(&mut self, n: usize) -> Option<()> {
+    pub(crate) fn skip(&mut self, n: usize) -> Option<()> {
         self.take(n).map(|_| ())
     }
-    fn u8(&mut self) -> Option<u8> {
+    pub(crate) fn u8(&mut self) -> Option<u8> {
         self.take(1).map(|b| b[0])
     }
-    fn u16(&mut self) -> Option<u16> {
+    pub(crate) fn u16(&mut self) -> Option<u16> {
         self.take(2).map(|b| u16::from_le_bytes([b[0], b[1]]))
     }
-    fn i16(&mut self) -> Option<i16> {
+    pub(crate) fn i16(&mut self) -> Option<i16> {
         self.u16().map(|v| v as i16)
     }
-    fn u32(&mut self) -> Option<u32> {
+    pub(crate) fn u32(&mut self) -> Option<u32> {
         self.take(4)
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     }
-    fn f64(&mut self) -> Option<f64> {
+    pub(crate) fn f64(&mut self) -> Option<f64> {
         let b = self.take(8)?;
         let mut a = [0u8; 8];
         a.copy_from_slice(b);
@@ -182,12 +185,12 @@ impl<'a> Bytes<'a> {
         Some(s)
     }
     /// `XLUnicodeString`: a 16-bit count, then [`Self::chars`].
-    fn string16(&mut self) -> Option<String> {
+    pub(crate) fn string16(&mut self) -> Option<String> {
         let cch = self.u16()? as usize;
         self.chars(cch)
     }
     /// `ShortXLUnicodeString`: an 8-bit count, then [`Self::chars`].
-    fn string8(&mut self) -> Option<String> {
+    pub(crate) fn string8(&mut self) -> Option<String> {
         let cch = self.u8()? as usize;
         self.chars(cch)
     }
@@ -414,9 +417,9 @@ impl PrintRaw {
 /// The workbook-level part of the stream.
 pub(crate) struct Globals {
     pub date1904: bool,
-    /// Sheets in tab order: (name, stream offset, visibility, is a
-    /// worksheet).
-    sheets: Vec<(String, usize, SheetState, bool)>,
+    /// Sheets in tab order: (name, stream offset, visibility, type: 0
+    /// worksheet, 1 macro sheet, 2 chart sheet...).
+    pub(crate) sheets: Vec<(String, usize, SheetState, u8)>,
     pub labels: Vec<Label>,
     /// The tab Excel shows when the file opens.
     pub active: u32,
@@ -426,7 +429,10 @@ pub(crate) struct Globals {
     palette: Palette,
     /// `EXTERNSHEET` entries resolved to this workbook's sheet indices
     /// (`None`: another workbook's), for 3-D references in formulas.
-    xti: Vec<Option<(u16, u16)>>,
+    pub(crate) xti: Vec<Option<(u16, u16)>>,
+    /// The OfficeArt drawing group (`MSODRAWINGGROUP`): the pictures every
+    /// sheet's drawing shares.
+    drawing_group: Vec<u8>,
 }
 
 /// The formatting of an `.xls` file, read before calamine's values.
@@ -464,6 +470,11 @@ impl XlsFormat {
         let mut cleared = false;
         let mut validations = Vec::new();
         let mut skipped = Skipped::default();
+        let mut drawings = crate::xls_drawing::XlsDrawings::default();
+        let mut art_skipped = crate::xls_drawing::Skipped::default();
+        if !g.drawing_group.is_empty() {
+            drawings.blips = crate::xls_drawing::blip_store(&g.drawing_group);
+        }
         let sheet_names: Vec<String> = g.sheets.iter().map(|s| s.0.clone()).collect();
         let label_names: Vec<String> = g
             .labels
@@ -481,14 +492,20 @@ impl XlsFormat {
                 prints.push(SheetPrint::default());
                 continue;
             };
-            let (_, offset, state, is_worksheet) = &g.sheets[ix];
+            let (_, offset, state, kind) = &g.sheets[ix];
             if let Ok(ws) = model.workbook.worksheet_mut(sheet as u32) {
                 ws.state = state.clone();
             }
-            if !is_worksheet {
+            if *kind != 0 {
                 prints.push(SheetPrint::default());
                 continue;
             }
+            let ctx = |base: (u32, u32)| crate::xls_formula::Context {
+                base,
+                sheets: &sheet_names,
+                xti: &g.xti,
+                names: &label_names,
+            };
             let mut rules = SheetRules::default();
             let print = read_sheet(
                 &self.stream,
@@ -500,12 +517,19 @@ impl XlsFormat {
                 &mut rules,
             );
             prints.push(print.into_print());
-            let ctx = |base: (u32, u32)| crate::xls_formula::Context {
-                base,
-                sheets: &sheet_names,
-                xti: &g.xti,
-                names: &label_names,
-            };
+            if !rules.objects.is_empty() {
+                let objects = crate::xls_drawing::sheet_objects(
+                    &rules.drawing,
+                    std::mem::take(&mut rules.objects),
+                    &rules.geometry,
+                    &drawings.blips,
+                    &ctx((0, 0)),
+                    &mut art_skipped,
+                );
+                if !objects.is_empty() {
+                    drawings.sheets.push((name.clone(), objects));
+                }
+            }
             let list: Vec<Validation> = rules
                 .validations
                 .into_iter()
@@ -541,6 +565,31 @@ impl XlsFormat {
                 }
             }
         }
+        // Chart sheets (the model has no sheet for them).
+        let ctx = crate::xls_formula::Context {
+            base: (0, 0),
+            sheets: &sheet_names,
+            xti: &g.xti,
+            names: &label_names,
+        };
+        for (name, offset, state, kind) in &g.sheets {
+            drawings.order.push((name.clone(), *kind == 2));
+            if *kind != 2 {
+                continue;
+            }
+            let recs = crate::xls_drawing::substream(&self.stream, *offset);
+            match crate::xls_drawing::parse_chart(&recs, &ctx) {
+                Ok(chart) => {
+                    art_skipped.flat += usize::from(chart.three_d);
+                    drawings.chart_sheets.push(crate::xls_drawing::ChartSheet {
+                        name: name.clone(),
+                        hidden: *state != SheetState::Visible,
+                        chart,
+                    });
+                }
+                Err(_) => art_skipped.charts += 1,
+            }
+        }
         let mut notes = Vec::new();
         let plural = |n: usize| if n == 1 { "" } else { "s" };
         if skipped.validations > 0 {
@@ -557,11 +606,13 @@ impl XlsFormat {
                 plural(skipped.cf)
             ));
         }
+        notes.extend(art_skipped.notes());
         Applied {
             prints,
             cleared,
             validations,
             notes,
+            drawings,
         }
     }
 }
@@ -576,6 +627,8 @@ pub(crate) struct Applied {
     pub validations: Vec<(u32, Vec<Validation>)>,
     /// What was left out, for the import notes.
     pub notes: Vec<String>,
+    /// Pictures and charts, to show and save (`xls_drawing`).
+    pub drawings: crate::xls_drawing::XlsDrawings,
 }
 
 #[derive(Default)]
@@ -593,6 +646,12 @@ struct SheetRules {
     cf: Vec<(Vec<CellRange>, RawCf)>,
     /// `CF12` rules (Excel 2007 data bars, colour scales, icon sets...).
     cf12: usize,
+    /// The sheet's OfficeArt drawing (its `MSODRAWING` records joined).
+    drawing: Vec<u8>,
+    /// Its `OBJ`s in order, each with the chart substream after it.
+    objects: Vec<crate::xls_drawing::RawObj>,
+    /// Column widths and row heights in Excel's pixels, for anchors.
+    geometry: crate::xls_drawing::Geometry,
 }
 
 /// A `DV` record (MS-XLS 2.4.107).
@@ -1002,6 +1061,7 @@ fn read_globals(stream: &[u8]) -> Result<Globals> {
         xfs: Vec::new(),
         palette: Palette(DEFAULT_PALETTE.to_vec()),
         xti: Vec::new(),
+        drawing_group: Vec::new(),
     };
     // Which SUPBOOK is this workbook (its marker is 0x0401).
     let mut supbooks: Vec<bool> = Vec::new();
@@ -1082,12 +1142,13 @@ fn read_globals(stream: &[u8]) -> Result<Globals> {
                     };
                     let kind = b.u8()?;
                     let name = b.string8()?;
-                    Some((name, pos, state, kind == 0))
+                    Some((name, pos, state, kind))
                 })();
                 if let Some(s) = sheet {
                     g.sheets.push(s);
                 }
             }
+            0x00EB => g.drawing_group.extend_from_slice(d),
             0x01AE => supbooks.push(d.len() == 4 && d[2..4] == [0x01, 0x04]),
             0x0017 => {
                 let n = b.u16().unwrap_or(0);
@@ -1403,20 +1464,32 @@ fn read_sheet(
     let mut notes: Vec<(u16, u16, u16, String)> = Vec::new();
     // The ranges of the last CONDFMT and how many CF records it has left.
     let mut condfmt: Option<(Vec<CellRange>, u16)> = None;
+    // The records of the embedded chart being read.
+    let mut chart: Option<Vec<(u16, Vec<u8>)>> = None;
     while let Some((typ, d)) = rec.next() {
         if typ == 0x0809 {
             // An embedded chart's substream.
             depth += 1;
-            continue;
-        }
-        if typ == 0x000A {
+            if depth == 2 {
+                chart = Some(Vec::new());
+            }
+        } else if typ == 0x000A {
             depth -= 1;
             if depth == 0 {
                 break;
             }
-            continue;
         }
-        if depth > 1 {
+        if depth > 1 || typ == 0x000A {
+            if let Some(c) = &mut chart {
+                c.push((typ, d.to_vec()));
+            }
+            if depth == 1
+                && let Some(c) = chart.take()
+                && let Some(obj) = rules.objects.last_mut()
+                && obj.chart.is_none()
+            {
+                obj.chart = Some(c);
+            }
             continue;
         }
         let mut b = Bytes::new(d);
@@ -1589,11 +1662,17 @@ fn read_sheet(
             }
             0x005D => {
                 // OBJ: its first subrecord is ftCmo (ft, cb, ot, id).
-                note_obj = match (b.u16(), b.u16(), b.u16(), b.u16()) {
-                    (Some(0x15), Some(_), Some(0x19), Some(id)) => Some(id),
+                let cmo = match (b.u16(), b.u16(), b.u16(), b.u16()) {
+                    (Some(0x15), Some(_), Some(ot), Some(id)) => Some((ot, id)),
                     _ => None,
                 };
+                note_obj = cmo.filter(|c| c.0 == 0x19).map(|c| c.1);
+                rules.objects.push(crate::xls_drawing::RawObj {
+                    ot: cmo.map(|c| c.0),
+                    chart: None,
+                });
             }
+            0x00EC => rules.drawing.extend_from_slice(d),
             0x01B6 => {
                 let data = d.to_vec();
                 let bounds = rec.bounds().to_vec();
@@ -1750,6 +1829,9 @@ fn read_sheet(
     rows.sort_by_key(|r| r.r);
     rows.dedup_by_key(|r| r.r);
     ws.rows = rows;
+    if !rules.objects.is_empty() {
+        rules.geometry = crate::xls_drawing::Geometry::of(ws, default_points);
+    }
 
     // Covered cells of a merge hold no content (IronCalc's rule).
     for m in &merges {

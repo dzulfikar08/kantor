@@ -231,7 +231,9 @@ impl Workbook {
     /// the sheets whose notes were edited this session (an empty list
     /// removes the sheet's notes from the file).
     pub(crate) fn note_patches(&self, out: &mut crate::preserve::Patches) {
-        let carried = self.origin.xlsx.is_some();
+        // An `.xls` import's original package holds its drawings only, so
+        // its notes are written from the model like a new workbook's.
+        let carried = self.origin.xlsx.is_some() && !self.origin.format.is_imported();
         let mut ids: HashSet<u32> = self.edits().notes.keys().copied().collect();
         ids.extend(self.touched.notes.iter().copied());
         for sheet in 0..self.sheet_names().len() as u32 {
