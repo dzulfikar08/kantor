@@ -1459,7 +1459,7 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
             if a.ax.delete {
                 continue;
             }
-            let side = side_of(a);
+            let side = side_of(&axes, a);
             let mut need = 0.0f32;
             if a.ax.tick_lbl_pos != "none" {
                 let lh = fonts[i].size_pt * PX_PER_PT * 1.2;
@@ -1588,15 +1588,13 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
         } else {
             plot[1] + plot[3] * (1.0 - cf)
         };
-        let side = side_of(a);
+        let side = side_of(&axes, a);
         let label_at = match a.ax.tick_lbl_pos.as_str() {
-            "low" => match side {
-                Side::L | Side::R => plot[0],
-                _ => plot[1] + plot[3],
-            },
-            "high" => match side {
-                Side::L | Side::R => plot[0] + plot[2],
-                _ => plot[1],
+            "low" | "high" => match side {
+                Side::L => plot[0],
+                Side::R => plot[0] + plot[2],
+                Side::T => plot[1],
+                Side::B => plot[1] + plot[3],
             },
             _ => line_at,
         };
@@ -1743,13 +1741,29 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
     }
 }
 
-fn side_of(a: &Ax) -> Side {
-    let crosses_max = a.ax.crosses.as_deref() == Some("max");
-    match (a.vertical, a.ax.pos, crosses_max) {
-        (true, AxPos::R, _) | (true, _, true) => Side::R,
-        (true, _, _) => Side::L,
-        (false, AxPos::T, _) | (false, _, true) => Side::T,
-        (false, _, _) => Side::B,
+/// Which side of the plot `a`'s labels go on. Like Excel, this follows
+/// where the axis sits, not `c:axPos` (openpyxl writes `l` for every
+/// axis): an axis crossing at the top (right) edge, e.g. a bar chart's value
+/// axis when the categories run top to bottom (`maxMin`), has its labels
+/// above (right of) the plot; anywhere else below (left). `low` / `high`
+/// tick labels sit at the end of the crossing axis' minimum / maximum.
+fn side_of(axes: &[Ax], a: &Ax) -> Side {
+    let other = axes
+        .iter()
+        .find(|x| x.ax.id == a.ax.cross_ax && x.vertical != a.vertical);
+    let far = match (other, a.ax.tick_lbl_pos.as_str()) {
+        (Some(o), "low") => o.ax.reversed,
+        (Some(o), "high") => !o.ax.reversed,
+        (Some(o), _) => a.cross_frac(o) > 0.999,
+        (None, _) => {
+            a.ax.crosses.as_deref() == Some("max") || matches!(a.ax.pos, AxPos::R | AxPos::T)
+        }
+    };
+    match (a.vertical, far) {
+        (true, true) => Side::R,
+        (true, false) => Side::L,
+        (false, true) => Side::T,
+        (false, false) => Side::B,
     }
 }
 
