@@ -86,6 +86,9 @@ jobs:
       - name: Charts fixture matches its generator
         run: uv run --with xlsxwriter==3.3.1 scripts/corpus/gen_charts_xlsx.py --check
 
+      - name: Chart sheets fixture matches its generator
+        run: uv run --with xlsxwriter==3.3.1 scripts/corpus/gen_chartsheets_xlsx.py --check
+
       - name: Round-trip fidelity test
         run: cargo test -p sheets_engine --test corpus -- --nocapture
 

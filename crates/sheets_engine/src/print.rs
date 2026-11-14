@@ -414,6 +414,27 @@ fn length_mm(v: &str) -> Option<f64> {
         .map(|x| x * k)
 }
 
+/// A chart sheet's print settings (`<chartsheet>`: margins, page setup,
+/// header and footer). Without an orientation it prints landscape, as
+/// Excel does.
+pub(crate) fn chart_sheet_print(xml: &str) -> SheetPrint {
+    let Ok(doc) = Document::parse(xml) else {
+        return SheetPrint {
+            setup: PageSetup {
+                landscape: true,
+                ..PageSetup::default()
+            },
+            ..SheetPrint::default()
+        };
+    };
+    let root = doc.root_element();
+    let mut p = parse_sheet(root).print;
+    if child(root, "pageSetup").is_none_or(|n| n.attribute("orientation").is_none()) {
+        p.setup.landscape = true;
+    }
+    p
+}
+
 fn parse_sheet(root: Node) -> Raw {
     let mut raw = Raw::default();
     let p = &mut raw.print;

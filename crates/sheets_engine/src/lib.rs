@@ -46,6 +46,7 @@ pub use cf_edit::{
     DATA_BAR_COLORS, ICON_SETS, sqref_of,
 };
 pub use chart_edit::{ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor};
+pub use drawing::Tab;
 pub use import::SourceFormat;
 pub use notes::CellNote;
 pub use preserve::package_problems;

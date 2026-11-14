@@ -221,6 +221,27 @@ impl SheetGeometry for Geometry<'_> {
     }
 }
 
+/// What prints for `d` (`None`: something Kantor can't draw).
+fn print_kind(book: &Workbook, d: &Drawing, theme: &mut Option<ChartTheme>) -> Option<PrintKind> {
+    Some(match &*d.kind {
+        DrawingKind::Picture { part, data, crop } => PrintKind::Picture {
+            part: part.clone(),
+            data: data.clone(),
+            crop: *crop,
+        },
+        DrawingKind::Chart {
+            xml, current_refs, ..
+        } => {
+            let t = theme.get_or_insert_with(|| ChartTheme::of(book));
+            PrintKind::Chart(
+                Arc::new(t.parse(xml).filter(Chart::drawable)?),
+                *current_refs,
+            )
+        }
+        DrawingKind::Other(_) => return None,
+    })
+}
+
 impl SheetDrawings {
     /// Place `found` (from [`printed`]) on the sheet of `plan`, whose rows
     /// must cover their anchors.
@@ -252,22 +273,8 @@ impl SheetDrawings {
             if rect[2] <= 0.0 || rect[3] <= 0.0 {
                 continue;
             }
-            let kind = match &*d.kind {
-                DrawingKind::Picture { part, data, crop } => PrintKind::Picture {
-                    part: part.clone(),
-                    data: data.clone(),
-                    crop: *crop,
-                },
-                DrawingKind::Chart {
-                    xml, current_refs, ..
-                } => {
-                    let t = theme.get_or_insert_with(|| ChartTheme::of(book));
-                    match t.parse(xml).filter(Chart::drawable) {
-                        Some(c) => PrintKind::Chart(Arc::new(c), *current_refs),
-                        None => continue,
-                    }
-                }
-                DrawingKind::Other(_) => continue,
+            let Some(kind) = print_kind(book, &d, &mut theme) else {
+                continue;
             };
             items.push(PrintDrawing {
                 key: d.key,
@@ -285,6 +292,29 @@ impl SheetDrawings {
 
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
+    }
+
+    /// A chart sheet's objects filling a `w` × `h` point block (one
+    /// "cell" that size), as `Workbook::chart_sheet_drawings` lays them.
+    pub(crate) fn filling(book: &Workbook, found: Vec<Drawing>, w: f64, h: f64) -> Self {
+        let rects = sheets_engine::drawing::chart_sheet_rects(&found, w, h);
+        let mut theme: Option<ChartTheme> = None;
+        let mut items = Vec::new();
+        for (d, rect) in found.into_iter().zip(rects) {
+            if let Some(kind) = print_kind(book, &d, &mut theme) {
+                items.push(PrintDrawing {
+                    key: d.key,
+                    rect,
+                    kind,
+                });
+            }
+        }
+        Self {
+            items,
+            col_starts: vec![0.0, w],
+            row_starts: vec![0.0, h],
+            defaults: theme.map(|t| Arc::new(t.defaults().clone())),
+        }
     }
 
     /// The objects showing on a page whose own cells are columns

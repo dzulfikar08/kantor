@@ -1927,6 +1927,21 @@ pub(crate) struct DrawingSources {
     pub theme: Option<String>,
     /// Every sheet's name and `sheetId` (references in charts name sheets).
     pub sheets: Vec<(String, u32)>,
+    /// The chart sheets, in tab order.
+    pub chart_sheets: Vec<ChartSheetSource>,
+}
+
+/// A chart sheet of a package (`xl/chartsheets/sheetN.xml`).
+pub(crate) struct ChartSheetSource {
+    pub name: String,
+    /// `state` hidden or very hidden.
+    pub hidden: bool,
+    /// The `sheetId`s of the worksheets before it, nearest first: saving
+    /// puts it back after the first of them still there ([`sheet_slots`]).
+    pub before: Vec<u32>,
+    pub drawing: Option<DrawingSource>,
+    /// The chart sheet part's XML (its print settings).
+    pub xml: Option<String>,
 }
 
 /// The drawings of the worksheets of `bytes`. Parts that can't be read are
@@ -1948,51 +1963,62 @@ pub(crate) fn drawing_sources(bytes: &[u8]) -> Result<DrawingSources, String> {
         .find(|r| r.short_kind() == "theme" && !r.external)
         .and_then(|r| resolve(&wb, &r.target))
         .and_then(|t| orig.text(&t).ok().flatten());
-    for s in sheets.iter().filter(|s| s.kind == SheetKind::Work) {
-        let Some(sheet_rels) = orig.text(&rels_part(&s.part)).ok().flatten() else {
-            continue;
-        };
-        let Ok(sheet_rels) = parse_rels(&sheet_rels) else {
-            continue;
-        };
-        // A worksheet has at most one drawing (`<drawing r:id>`): its
-        // relationship says which, without reading the sheet's cells.
-        let Some(part) = sheet_rels
-            .iter()
-            .find(|r| r.short_kind() == "drawing" && !r.external)
-            .and_then(|r| resolve(&s.part, &r.target))
-        else {
-            continue;
-        };
-        let Some(xml) = orig.text(&part).ok().flatten() else {
-            continue;
-        };
-        let rels = match orig.text(&rels_part(&part)).ok().flatten() {
-            Some(x) => parse_rels(&x).unwrap_or_default(),
-            None => Vec::new(),
-        };
-        let mut targets = HashMap::new();
-        let mut parts = HashMap::new();
-        for r in rels.iter().filter(|r| !r.external) {
-            let Some(t) = resolve(&part, &r.target) else {
-                continue;
-            };
-            if matches!(r.short_kind(), "chart" | "image")
-                && !parts.contains_key(&t)
-                && let Ok(Some(data)) = orig.get(&t)
-            {
-                parts.insert(t.clone(), data);
-            }
-            targets.insert(r.id.clone(), (r.short_kind().to_owned(), t));
+    for (i, s) in sheets.iter().enumerate() {
+        let drawing = sheet_drawing(&orig, s);
+        match s.kind {
+            SheetKind::Work => out.drawings.extend(drawing),
+            SheetKind::Chart => out.chart_sheets.push(ChartSheetSource {
+                name: s.name.clone(),
+                hidden: s.state.as_deref().is_some_and(|v| v != "visible"),
+                before: sheets[..i]
+                    .iter()
+                    .rev()
+                    .filter(|w| w.kind == SheetKind::Work)
+                    .map(|w| w.sheet_id)
+                    .collect(),
+                drawing,
+                xml: orig.text(&s.part).ok().flatten(),
+            }),
         }
-        out.drawings.push(DrawingSource {
-            sheet_id: s.sheet_id,
-            xml,
-            targets,
-            parts,
-        });
     }
     Ok(out)
+}
+
+/// The drawing of a worksheet or chart sheet (`<drawing r:id>`; a sheet
+/// has at most one), with the charts and pictures it links to.
+fn sheet_drawing(orig: &Original<'_>, s: &SheetEntry) -> Option<DrawingSource> {
+    let sheet_rels = orig.text(&rels_part(&s.part)).ok().flatten()?;
+    let sheet_rels = parse_rels(&sheet_rels).ok()?;
+    // Its relationship says which, without reading the sheet's cells.
+    let part = sheet_rels
+        .iter()
+        .find(|r| r.short_kind() == "drawing" && !r.external)
+        .and_then(|r| resolve(&s.part, &r.target))?;
+    let xml = orig.text(&part).ok().flatten()?;
+    let rels = match orig.text(&rels_part(&part)).ok().flatten() {
+        Some(x) => parse_rels(&x).unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let mut targets = HashMap::new();
+    let mut parts = HashMap::new();
+    for r in rels.iter().filter(|r| !r.external) {
+        let Some(t) = resolve(&part, &r.target) else {
+            continue;
+        };
+        if matches!(r.short_kind(), "chart" | "image")
+            && !parts.contains_key(&t)
+            && let Ok(Some(data)) = orig.get(&t)
+        {
+            parts.insert(t.clone(), data);
+        }
+        targets.insert(r.id.clone(), (r.short_kind().to_owned(), t));
+    }
+    Some(DrawingSource {
+        sheet_id: s.sheet_id,
+        xml,
+        targets,
+        parts,
+    })
 }
 
 /// The bytes of part `name` of package `bytes`.

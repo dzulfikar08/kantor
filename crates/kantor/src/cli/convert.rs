@@ -30,7 +30,8 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \x20 .ppt .pps .pot                             -> .pptx\n\
     \x20 .xlsx .xlsm .xls .xlt .xlsb .ods .csv .tsv -> .xlsx .csv .tsv\n\
     \x20 .xlsx .xlsm .xls .xlt .xlsb .ods .csv .tsv -> .pdf (printed as Excel prints:\n\
-    \x20                                               every visible sheet, or --sheet)\n\
+    \x20                                               every visible sheet and chart\n\
+    \x20                                               sheet, or --sheet)\n\
     \n\
     Options:\n\
     \x20 -o, --output-dir DIR   write each INPUT to DIR/NAME.FORMAT\n\
