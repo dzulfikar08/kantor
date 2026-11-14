@@ -152,6 +152,28 @@ not shared; formulas the key refuses take the old path.
 
 Test: `import::worksheets::tests::rc_cache_matches_parsing_each_formula`.
 
+## 9. Relationship targets resolved per OPC; note authors
+
+Why: openpyxl writes a worksheet's comments relationship with an absolute
+target (`/xl/comments/comment1.xml`). The comments branch replaced the first
+two characters of the target with `xl`, giving `xl/xl/comments/...`, so the
+workbook failed to open ("Zip Error: specified file not found in archive").
+The table branch and the workbook-level targets handled `/` but not `./`,
+nested `../` or targets of parts outside `xl/worksheets/`. Note authors were
+read as empty.
+
+What (`import/util.rs` `resolve_part`, `rels_part`): a target starting with
+`/` is relative to the package root, anything else to the source part's
+folder, with `.` and `..` applied. Used for the sheet rels part, comments,
+tables, worksheet paths (`import/worksheets.rs`) and the theme
+(`import/mod.rs`). `load_comments` reads `<authors>` and sets
+`Comment::author_name` from `authorId`, skips non-`comment` children and
+accepts an empty `<t/>`.
+
+Tests: `import::util::rel_target_tests`,
+`tests/test_kantor_fidelity.rs` `comments_with_an_absolute_rel_target_open`
+(fixture `tests/openpyxl_comments.xlsx` from `tests/gen_openpyxl_comments.py`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

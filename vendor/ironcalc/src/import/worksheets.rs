@@ -31,7 +31,7 @@ use super::{
     shared_strings::{decode_xlsx_escapes, SharedStringTable},
     sheet_data::{read_sheet_data, SheetDataXml},
     tables::load_table,
-    util::{get_attribute, get_bool_false, get_color, get_number},
+    util::{get_attribute, get_bool_false, get_color, get_number, rels_part, resolve_part},
 };
 
 pub(crate) struct Sheet {
@@ -363,21 +363,35 @@ fn load_comments<R: Read + std::io::Seek>(
     let file = archive.by_name(path)?;
     let doc = XmlNode::parse(BufReader::new(file))?;
     let ws = &doc;
+    // KANTOR PATCH (rel targets): note authors, `<authors><author>` by `authorId`.
+    let authors: Vec<String> = ws
+        .children()
+        .filter(|n| n.has_tag_name("authors"))
+        .flat_map(|n| n.children().filter(|a| a.has_tag_name("author")))
+        .map(|a| a.text().unwrap_or("").to_string())
+        .collect();
     let comment_list = ws
         .children()
         .filter(|n| n.has_tag_name("commentList"))
         .collect::<Vec<&XmlNode>>();
     if comment_list.len() == 1 {
-        for comment in comment_list[0].children() {
+        for comment in comment_list[0]
+            .children()
+            .filter(|n| n.has_tag_name("comment"))
+        {
             let text = comment
                 .descendants()
                 .filter(|n| n.has_tag_name("t"))
-                .map(|n| n.text().unwrap().to_string())
+                .map(|n| n.text().unwrap_or("").to_string())
                 .collect::<Vec<String>>()
                 .join("");
             let cell_ref = get_attribute(comment, "ref")?.to_string();
-            // TODO: Read author_name from the list of authors
-            let author_name = "".to_string();
+            let author_id = comment
+                .attribute("authorId")
+                .and_then(|id| id.parse::<usize>().ok());
+            let author_name = author_id
+                .and_then(|id| authors.get(id).cloned())
+                .unwrap_or_default();
             comments.push(Comment {
                 text,
                 author_name,
@@ -746,12 +760,9 @@ fn load_sheet_rels<R: Read + std::io::Seek>(
     let mut comments = Vec::new();
     // relationship id ("rId4") -> target of the hyperlink
     let mut hyperlinks = HashMap::new();
-    let v: Vec<&str> = path.split("/worksheets/").collect();
-    let mut path = v[0].to_string();
-    path.push_str("/worksheets/_rels/");
-    path.push_str(v[1]);
-    path.push_str(".rels");
-    let file = archive.by_name(&path);
+    // KANTOR PATCH (rel targets): targets resolved per OPC, see `resolve_part`.
+    let sheet_part = path;
+    let file = archive.by_name(&rels_part(sheet_part));
     if file.is_err() {
         return Ok((comments, hyperlinks));
     }
@@ -764,24 +775,14 @@ fn load_sheet_rels<R: Read + std::io::Seek>(
     for rel in rels {
         let t = get_attribute(rel, "Type")?.to_string();
         if t.ends_with("comments") {
-            let mut target = get_attribute(rel, "Target")?.to_string();
-            // Target="../comments1.xlsx"
-            target.replace_range(..2, v[0]);
+            let target = resolve_part(sheet_part, get_attribute(rel, "Target")?);
             comments = load_comments(archive, &target)?;
         } else if t.ends_with("hyperlink") {
             let id = get_attribute(rel, "Id")?.to_string();
             let target = get_attribute(rel, "Target")?.to_string();
             hyperlinks.insert(id, target);
         } else if t.ends_with("table") {
-            let mut target = get_attribute(rel, "Target")?.to_string();
-
-            let path = if let Some(p) = target.strip_prefix('/') {
-                p.to_string()
-            } else {
-                // Target="../table1.xlsx"
-                target.replace_range(..2, v[0]);
-                target
-            };
+            let path = resolve_part(sheet_part, get_attribute(rel, "Target")?);
 
             let table = load_table(archive, &path, sheet_name)?;
             tables.insert(table.name.clone(), table);
@@ -1076,12 +1077,7 @@ pub(super) fn load_sheets<R: Read + std::io::Seek>(
     for sheet in &workbook.worksheets {
         let rel = &rels[&sheet.id];
         if rel.rel_type.ends_with("worksheet") {
-            let path = &rel.target;
-            let path = if let Some(p) = path.strip_prefix('/') {
-                p.to_string()
-            } else {
-                format!("xl/{path}")
-            };
+            let path = resolve_part("xl/workbook.xml", &rel.target);
             sheet_rels.insert(
                 &sheet.id,
                 load_sheet_rels(archive, &path, tables, &sheet.name)?,
@@ -1101,12 +1097,7 @@ pub(super) fn load_sheets<R: Read + std::io::Seek>(
         let state = &sheet.state;
         let rel = &rels[rel_id];
         if rel.rel_type.ends_with("worksheet") {
-            let path = &rel.target;
-            let path = if let Some(p) = path.strip_prefix('/') {
-                p.to_string()
-            } else {
-                format!("xl/{path}")
-            };
+            let path = resolve_part("xl/workbook.xml", &rel.target);
             let (comments, hyperlink_rels) = sheet_rels
                 .get(rel_id)
                 .ok_or_else(|| XlsxError::Xml("Corrupt XML structure".to_string()))?;
