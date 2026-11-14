@@ -769,6 +769,13 @@ impl DocsView {
             // by a line break ends before it.
             if soft {
                 e = text[..e].trim_end_matches(' ').len().max(range.start);
+                // Wrapped inside a word: the end is where the next line
+                // starts (and draws the caret); stop before the last char.
+                if e == range.end
+                    && let Some((i, _)) = text[range.start..e].char_indices().next_back()
+                {
+                    e = range.start + i;
+                }
             } else if text[..e].ends_with(docs_engine::LINE_BREAK) {
                 e -= docs_engine::LINE_BREAK.len_utf8();
             }
