@@ -179,6 +179,7 @@ impl Client {
             .request_url("MOVE", &format!("{up}/.file"))
             .header("destination", &dest)
             .header("oc-total-length", total.to_string())
+            .header("oc-checksum", format!("SHA1:{}", crate::sha1_hex(bytes)))
             .header("overwrite", "T");
         // The destination's ETag and our lock go in a tagged `If` list:
         // Nextcloud checks `If-Match` on a MOVE against the source (the

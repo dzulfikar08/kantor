@@ -44,6 +44,13 @@ pub use widgets::init;
 
 /// How often an offline document checks whether the server is back.
 const RECONNECT_EVERY: Duration = Duration::from_secs(15);
+
+/// Waits before uploading again by itself after an upload failed because
+/// the server couldn't be reached (doubling from the first to the last);
+/// the server is checked every [`RECONNECT_EVERY`] meanwhile, and when it
+/// answers again the upload starts at once.
+const RETRY_FIRST: Duration = Duration::from_secs(15);
+const RETRY_MAX: Duration = Duration::from_secs(300);
 /// Wait before retrying an upload the server was too busy for.
 const RETRY_AFTER: Duration = Duration::from_secs(5);
 
@@ -72,6 +79,10 @@ struct CloudDoc {
     server_back: bool,
     /// Locked by someone else, but the lock is gone now: offer "Edit now".
     lock_free: bool,
+    /// After a failed upload: when to try again by itself, and the wait
+    /// before the next try after that (doubles up to [`RETRY_MAX`]).
+    retry_at: Option<std::time::Instant>,
+    retry_wait: Duration,
     /// Serializes this document's network work (upload, lock release) on
     /// the worker threads.
     ops: Arc<Mutex<()>>,
@@ -363,6 +374,8 @@ impl Workspace {
                 seen,
                 server_back: false,
                 lock_free: false,
+                retry_at: None,
+                retry_wait: RETRY_FIRST,
                 ops: Arc::default(),
             },
         );
@@ -652,12 +665,14 @@ impl Workspace {
                     server,
                     stamp,
                     sha256,
+                    sha1,
                     ..
                 } = &out
                 {
                     let mut saved = CacheEntry {
                         synced: *stamp,
                         sha256: sha256.clone(),
+                        sha1: sha1.clone(),
                         ..entry.clone()
                     };
                     if let Some(s) = server {
@@ -681,6 +696,13 @@ impl Workspace {
                 let synced = matches!(outcome, UploadOutcome::Synced { .. });
                 let offline = matches!(outcome, UploadOutcome::Offline(_));
                 let action = cd.sync.on_upload(outcome);
+                if offline {
+                    cd.retry_at = Some(std::time::Instant::now() + cd.retry_wait);
+                    cd.retry_wait = (cd.retry_wait * 2).min(RETRY_MAX);
+                } else {
+                    cd.retry_at = None;
+                    cd.retry_wait = RETRY_FIRST;
+                }
                 if synced {
                     ws.cloud_notice(
                         format!(
@@ -760,9 +782,9 @@ impl Workspace {
             move |_: &dyn Fn(())| {
                 let r = remote_for(&account).ok()?;
                 let cache = cache();
-                let lock = session::take_lock(&r, &cache, &entry.remote);
                 let mut entry = entry;
-                let changed = session::settle_base(&r, &cache, &mut entry).unwrap_or(false);
+                let (lock, changed) = session::take_lock_settled(&r, &cache, &mut entry);
+                let changed = changed.unwrap_or(false);
                 let server_etag = r.client.stat(&entry.remote).ok().and_then(|e| e.etag);
                 Some((lock, changed, server_etag, entry))
             },
@@ -1021,7 +1043,7 @@ impl Workspace {
                     Some((true, lock))
                 },
                 |_, _, _, _| {},
-                move |ws: &mut Self, r, _, cx| {
+                move |ws: &mut Self, r, window, cx| {
                     let Some((reachable, lock)) = r else {
                         return;
                     };
@@ -1033,27 +1055,22 @@ impl Workspace {
                         Some(lock) => cd.sync.lock = lock,
                         None => {}
                     }
-                    let mut announce = false;
+                    let mut action = Action::None;
                     if reachable && matches!(cd.sync.state, kantor_cloud::sync::SyncState::Offline)
                     {
-                        if cd.sync.unsynced() {
-                            // Offer "Sync now" rather than uploading behind the user's back.
-                            announce = !cd.server_back;
-                            cd.server_back = true;
+                        // The server answers again: send the saves that
+                        // waited (the conflict checks still apply). Right
+                        // after a failure the next try waits for its turn.
+                        let due = cd.retry_at.is_none_or(|t| std::time::Instant::now() >= t);
+                        if !cd.sync.unsynced() || due {
+                            action = cd.sync.on_reconnect();
                         } else {
-                            cd.sync.on_reconnect();
+                            // Until then the chip offers "Sync now".
+                            cd.server_back = true;
                         }
                     }
-                    if announce {
-                        ws.cloud_notice(
-                            tr(
-                                "The server is back. Choose Sync now to upload your changes.",
-                                "Server sudah kembali. Pilih Sinkronkan sekarang untuk mengunggah perubahan Anda.",
-                            ),
-                            cx,
-                        );
-                    }
                     ws.sync_read_only(cx);
+                    ws.run_action(pane, action, window, cx);
                     cx.notify();
                 },
             );
@@ -1365,8 +1382,8 @@ fn reattach(account: &CloudAccount, cache: &Cache, entry: CacheEntry) -> (DocSyn
             // Lock first, then check: the lock changes the ETag on
             // Nextcloud, and checking after it lets the base follow.
             let mut entry = entry;
-            let lock = session::take_lock(&r, cache, &entry.remote);
-            let changed = session::settle_base(&r, cache, &mut entry).unwrap_or(true);
+            let (lock, changed) = session::take_lock_settled(&r, cache, &mut entry);
+            let changed = changed.unwrap_or(true);
             if changed
                 && !entry.has_local_changes()
                 && let Ok(fresh) = session::reload(&r, cache, &entry)

@@ -64,6 +64,10 @@ pub struct CacheEntry {
     /// changed but the time and size didn't.
     #[serde(default)]
     pub sha256: Option<String>,
+    /// SHA1 (hex) of the same bytes: compared with the server's
+    /// `oc:checksums` so that check needs no download.
+    #[serde(default)]
+    pub sha1: Option<String>,
 }
 
 /// How a server entry compares with a working copy's base version.
@@ -489,7 +493,7 @@ mod tests {
             size: Some(5),
             etag: Some("\"a1\"".into()),
             last_modified: base.modified.clone(),
-            content_type: None,
+            ..Default::default()
         };
         assert_eq!(base.compare(&server), Compare::Same);
         // Locked: new ETag, same time and size: only the content can tell.

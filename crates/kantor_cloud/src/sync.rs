@@ -48,12 +48,14 @@ pub enum UploadOutcome {
     /// The server has the working copy as of `stamp`, as version `server`
     /// (ETag, modification time, size).
     Synced {
-        server: Option<crate::Entry>,
+        server: Option<Box<crate::Entry>>,
         stamp: Option<Stamp>,
         /// Our lock turned out to be gone; take a new one.
         lock_lost: bool,
         /// SHA-256 of the uploaded bytes.
         sha256: Option<String>,
+        /// SHA1 of the uploaded bytes.
+        sha1: Option<String>,
     },
     /// The server's copy moved on (or was deleted: `server_etag: None`).
     Conflict {
@@ -183,11 +185,13 @@ impl DocSync {
                 stamp,
                 lock_lost,
                 sha256,
+                sha1,
             } => {
                 if lock_lost {
                     self.lock = LockState::None;
                 }
                 self.entry.sha256 = sha256;
+                self.entry.sha1 = sha1;
                 match server {
                     Some(s) => self.entry.rebase(&s),
                     None => self.entry.etag = None,
@@ -349,18 +353,18 @@ mod tests {
 
     fn synced(d: &DocSync, etag: &str) -> UploadOutcome {
         UploadOutcome::Synced {
-            server: Some(crate::Entry {
+            server: Some(Box::new(crate::Entry {
                 href: "/Laporan.xlsx".into(),
                 name: "Laporan.xlsx".into(),
                 is_dir: false,
                 size: None,
                 etag: Some(etag.into()),
-                last_modified: None,
-                content_type: None,
-            }),
+                ..Default::default()
+            })),
             stamp: Stamp::of(&d.entry.local),
             lock_lost: false,
             sha256: None,
+            sha1: None,
         }
     }
 

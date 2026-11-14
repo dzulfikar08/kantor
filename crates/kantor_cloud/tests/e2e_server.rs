@@ -614,6 +614,109 @@ fn big_upload_resumes_after_a_drop() {
     }
 }
 
+/// Add (`true`) or remove a toxic that swallows all data both ways
+/// without closing the connections: a link that died silently (Wi-Fi
+/// gone), unlike a disabled proxy, which refuses connections at once.
+fn blackhole(e: &Env, on: bool) {
+    let (api, proxy) = e.toxi.as_ref().unwrap();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    for stream in ["upstream", "downstream"] {
+        let name = format!("blackhole_{stream}");
+        if on {
+            let body = format!(
+                r#"{{"name":"{name}","type":"timeout","stream":"{stream}","attributes":{{"timeout":0}}}}"#
+            );
+            let r = agent
+                .post(&format!("{api}/proxies/{proxy}/toxics"))
+                .send(body)
+                .unwrap();
+            assert!(r.status().is_success(), "{}", r.status());
+        } else {
+            let _ = agent
+                .delete(&format!("{api}/proxies/{proxy}/toxics/{name}"))
+                .call();
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn dead_link_fails_fast() {
+    let e = env_or_skip!();
+    let (Some(ap), Some(_)) = (&e.alice_proxy, &e.toxi) else {
+        eprintln!("skipped: no Toxiproxy");
+        return;
+    };
+    let path = new_file(&e, "dead");
+    let opened = session::open(ap, &e.cache, &path).unwrap();
+    let mut d = DocSync::new(opened.entry, opened.lock);
+    // 3 MB: one plain PUT, small enough to sit in socket buffers, so the
+    // reply wait (not the sending) has to notice the dead link.
+    let bytes: Vec<u8> = big_bytes(3)[..3 * 1024 * 1024].to_vec();
+    std::fs::write(&d.entry.local, &bytes).unwrap();
+    assert_eq!(d.on_local_save(), Action::Upload);
+    blackhole(&e, true);
+    let start = Instant::now();
+    let a = sync_upload(ap, &mut d, false);
+    let took = start.elapsed();
+    blackhole(&e, false);
+    eprintln!("dead link noticed after {took:?}");
+    assert_eq!(a, Action::None);
+    assert_eq!(d.status(), Status::NotSynced, "{:?}", d.state);
+    assert!(took < Duration::from_secs(60), "took {took:?}");
+    // The link is back: the next try goes through.
+    assert_eq!(d.on_reconnect(), Action::Upload);
+    let a = sync_upload(ap, &mut d, false);
+    assert_eq!(a, Action::None);
+    assert_eq!(d.status(), Status::Synced, "{:?}", d.state);
+    assert!(e.alice.client.get(&path).unwrap().bytes == bytes);
+    if let Some(t) = d.lock_token().cloned() {
+        session::release(ap, &e.cache, &path, &t).unwrap();
+    }
+}
+
+#[test]
+#[ignore]
+fn restart_check_needs_no_download() {
+    let e = env_or_skip!();
+    let path = new_file(&e, "restart");
+    let opened = session::open(&e.alice, &e.cache, &path).unwrap();
+    let mut d = DocSync::new(opened.entry, opened.lock);
+    edit(&d.entry.local, "before restart");
+    assert_eq!(d.on_local_save(), Action::Upload);
+    assert_eq!(sync_upload(&e.alice, &mut d, false), Action::None);
+    // What the app does after an upload: keep the entry.
+    e.cache.save_entry(&d.entry).unwrap();
+    let token = d.lock_token().cloned().unwrap();
+    session::release(&e.alice, &e.cache, &path, &token).unwrap();
+
+    // Next start. A wrong SHA-256 makes any download-and-hash check fail,
+    // so passing proves no download was needed.
+    let mut entry = e.cache.find_remote("alice", &path).unwrap();
+    entry.sha256 = Some("0".repeat(64));
+    let server = e.alice.client.stat(&path).unwrap();
+    assert_eq!(
+        entry.etag, server.etag,
+        "the ETag after our UNLOCK was recorded"
+    );
+    let (lock, changed) = session::take_lock_settled(&e.alice, &e.cache, &mut entry);
+    assert!(matches!(lock, LockState::Held(_)), "{lock:?}");
+    assert_eq!(changed, Some(false));
+
+    // Without the recorded ETag (an old index, a crash), the server's SHA1
+    // settles it, still without a download.
+    let server = e.alice.client.stat(&path).unwrap();
+    assert!(server.sha1().is_some(), "server keeps a SHA1: {server:?}");
+    entry.etag = Some("\"stale\"".into());
+    assert!(session::is_base_version(&e.alice, &entry, &server).unwrap());
+    if let LockState::Held(t) = lock {
+        session::release(&e.alice, &e.cache, &path, &t).unwrap();
+    }
+}
+
 #[test]
 #[ignore]
 fn big_upload_conflict_is_refused() {

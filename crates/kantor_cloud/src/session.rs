@@ -52,8 +52,7 @@ pub fn open(r: &Remote, cache: &Cache, remote: &str) -> Result<Opened, Error> {
         && entry.has_local_changes()
     {
         let mut entry = entry;
-        let lock = take_lock(r, cache, remote);
-        let _ = settle_base(r, cache, &mut entry);
+        let (lock, _) = take_lock_settled(r, cache, &mut entry);
         return Ok(Opened { entry, lock });
     }
     let lock = take_lock(r, cache, remote);
@@ -78,6 +77,7 @@ fn download(r: &Remote, cache: &Cache, entry: &mut CacheEntry) -> Result<(), Err
     let fetched = r.client.get(&entry.remote)?;
     write_atomic(&entry.local, &fetched.bytes).map_err(io)?;
     entry.sha256 = Some(sha256_hex(&fetched.bytes));
+    entry.sha1 = Some(crate::sha1_hex(&fetched.bytes));
     match r.client.stat(&entry.remote) {
         Ok(server) => entry.rebase(&server),
         Err(_) => {
@@ -158,6 +158,18 @@ pub fn upload(
         match r.client.stat(&entry.remote) {
             Ok(server) => match is_base_version(r, entry, &server) {
                 Ok(true) => if_match = server.etag,
+                // An earlier upload of these very bytes went through after
+                // Kantor had given up on it (the link came back): nothing
+                // to send, and no conflict.
+                Ok(false) if has_bytes(&server, &bytes) => {
+                    return UploadOutcome::Synced {
+                        server: Some(Box::new(server)),
+                        stamp,
+                        lock_lost: false,
+                        sha256: Some(sha256_hex(&bytes)),
+                        sha1: Some(crate::sha1_hex(&bytes)),
+                    };
+                }
                 Ok(false) => {
                     return UploadOutcome::Conflict {
                         server_etag: server.etag,
@@ -209,26 +221,7 @@ pub fn upload(
     }
     let lock = if lock_lost { None } else { lock };
     match put {
-        Ok(etag) => {
-            let server = r.client.stat(&entry.remote).ok().or_else(|| {
-                // No PROPFIND answer: keep what the PUT said.
-                Some(crate::Entry {
-                    href: String::new(),
-                    name: entry.name().to_owned(),
-                    is_dir: false,
-                    size: Some(bytes.len() as u64),
-                    etag,
-                    last_modified: None,
-                    content_type: None,
-                })
-            });
-            UploadOutcome::Synced {
-                server,
-                stamp,
-                lock_lost,
-                sha256: Some(sha256_hex(&bytes)),
-            }
-        }
+        Ok(etag) => synced(r, entry, &bytes, etag, stamp, lock_lost),
         Err(e) => failure(r, entry, lock, e),
     }
 }
@@ -243,22 +236,28 @@ fn synced(
     lock_lost: bool,
 ) -> UploadOutcome {
     let server = r.client.stat(&entry.remote).ok().or_else(|| {
+        // No PROPFIND answer: keep what the upload said.
         Some(crate::Entry {
-            href: String::new(),
             name: entry.name().to_owned(),
-            is_dir: false,
             size: Some(bytes.len() as u64),
             etag,
-            last_modified: None,
-            content_type: None,
+            ..Default::default()
         })
     });
     UploadOutcome::Synced {
-        server,
+        server: server.map(Box::new),
         stamp,
         lock_lost,
         sha256: Some(sha256_hex(bytes)),
+        sha1: Some(crate::sha1_hex(bytes)),
     }
+}
+
+/// Whether the server's file is exactly `bytes` by its checksum (no
+/// download): same size and the same SHA1.
+fn has_bytes(server: &crate::Entry, bytes: &[u8]) -> bool {
+    server.size == Some(bytes.len() as u64)
+        && server.sha1().is_some_and(|s| s == crate::sha1_hex(bytes))
 }
 
 /// A big file through Nextcloud chunking or TUS, resuming an unfinished
@@ -400,6 +399,48 @@ pub fn settle_base(r: &Remote, cache: &Cache, entry: &mut CacheEntry) -> Option<
     }
 }
 
+/// Take the lock and keep `entry`'s base in step, without downloading in
+/// the usual case. Nextcloud gives the file a new ETag on LOCK, so the
+/// version is checked just before the lock (same ETag as the base: the
+/// server has our base) and again after it: when only the ETag moved in
+/// between (same time and size, and the same SHA1 if the server keeps
+/// one), the new ETag becomes the base. Otherwise the full check
+/// ([`settle_base`]) decides. Returns the lock and whether the server's
+/// copy changed (`None`: can't tell).
+pub fn take_lock_settled(
+    r: &Remote,
+    cache: &Cache,
+    entry: &mut CacheEntry,
+) -> (LockState, Option<bool>) {
+    let before = r.client.stat(&entry.remote).ok();
+    let lock = take_lock(r, cache, &entry.remote);
+    let same_before = before
+        .as_ref()
+        .is_some_and(|b| entry.compare(b) == Compare::Same);
+    if same_before
+        && let Ok(after) = r.client.stat(&entry.remote)
+        && entry.compare(&after) != Compare::Changed
+        && checksum_agrees(entry, &after)
+    {
+        if after.etag != entry.etag {
+            entry.rebase(&after);
+            let _ = cache.save_entry(entry);
+        }
+        return (lock, Some(false));
+    }
+    let changed = settle_base(r, cache, entry);
+    (lock, changed)
+}
+
+/// The server's SHA1 doesn't contradict the base (no SHA1 on either side
+/// counts as agreeing).
+fn checksum_agrees(entry: &CacheEntry, server: &crate::Entry) -> bool {
+    match (&entry.sha1, server.sha1()) {
+        (Some(ours), Some(theirs)) => *ours == theirs,
+        _ => true,
+    }
+}
+
 /// Whether `server` (a fresh PROPFIND of the file) is still the working
 /// copy's base version. A new ETag with the same modification time and
 /// size is settled by downloading and comparing SHA-256: Nextcloud changes
@@ -413,9 +454,12 @@ pub fn is_base_version(
     match entry.compare(server) {
         Compare::Same => Ok(true),
         Compare::Changed => Ok(false),
-        Compare::Unsure => match &entry.sha256 {
-            Some(base) => Ok(&sha256_hex(&r.client.get(&entry.remote)?.bytes) == base),
-            None => Ok(false),
+        // The server's SHA1 settles it without a download when both sides
+        // have one (OpenCloud always; Nextcloud for files Kantor uploaded).
+        Compare::Unsure => match (&entry.sha1, server.sha1(), &entry.sha256) {
+            (Some(ours), Some(theirs), _) => Ok(*ours == theirs),
+            (_, _, Some(base)) => Ok(&sha256_hex(&r.client.get(&entry.remote)?.bytes) == base),
+            _ => Ok(false),
         },
     }
 }
@@ -475,8 +519,23 @@ pub fn release(r: &Remote, cache: &Cache, remote: &str, token: &LockToken) -> Re
         Err(e) if is_offline(&e) => Err(e),
         // Any answer means the lock is released or no longer exists (an
         // unknown token gets 412, 409, or 500 from Nextcloud 35).
-        _ => {
+        Err(_) => {
             let _ = cache.forget_lock(&r.account, remote);
+            Ok(())
+        }
+        Ok(()) => {
+            let _ = cache.forget_lock(&r.account, remote);
+            // Nextcloud gives the file a new ETag on UNLOCK. We held the lock
+            // until now, so a new ETag with the same time and size is still
+            // our base: record it, and the next start needs no check.
+            if let Some(mut entry) = cache.find_remote(&r.account, remote)
+                && let Ok(server) = r.client.stat(remote)
+                && entry.compare(&server) == Compare::Unsure
+                && checksum_agrees(&entry, &server)
+            {
+                entry.rebase(&server);
+                let _ = cache.save_entry(&entry);
+            }
             Ok(())
         }
     }

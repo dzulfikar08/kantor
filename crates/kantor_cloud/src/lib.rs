@@ -111,7 +111,7 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 /// One item of a listing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Entry {
     /// As the server sent it (percent-encoded, usually an absolute path).
     pub href: String,
@@ -123,6 +123,35 @@ pub struct Entry {
     pub etag: Option<String>,
     pub last_modified: Option<String>,
     pub content_type: Option<String>,
+    /// `oc:checksums` (Nextcloud, OpenCloud): `SHA1:… MD5:… ADLER32:…`.
+    /// OpenCloud computes them for every file; Nextcloud keeps the one a
+    /// client sent with `OC-Checksum` (Kantor sends SHA1).
+    pub checksums: Option<String>,
+}
+
+impl Entry {
+    /// The server's SHA1 of the content (lowercase hex), if it keeps one.
+    pub fn sha1(&self) -> Option<String> {
+        sha1_in(self.checksums.as_deref()?)
+    }
+}
+
+/// The SHA1 in an `oc:checksums` value (`SHA1:ab… MD5:…`), lowercase.
+pub fn sha1_in(checksums: &str) -> Option<String> {
+    checksums
+        .split_whitespace()
+        .find_map(|c| {
+            let (kind, hex) = c.split_once(':')?;
+            kind.eq_ignore_ascii_case("sha1")
+                .then(|| hex.to_ascii_lowercase())
+        })
+        .filter(|h| h.len() == 40 && h.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// SHA1 of `bytes` as lowercase hex, the form `OC-Checksum` takes.
+pub fn sha1_hex(bytes: &[u8]) -> String {
+    let d = ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, bytes);
+    d.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// A downloaded file.
@@ -156,6 +185,7 @@ pub struct LockOwner {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LockToken(pub String);
 
+#[derive(Clone)]
 pub struct Client {
     agent: ureq::Agent,
     /// Ends with `/`, e.g. `https://drive.example/remote.php/dav/files/alice/`.
@@ -172,7 +202,18 @@ pub const SLOWEST_LINK_BYTES_PER_SEC: u64 = 16 * 1024;
 /// A read or write that makes no progress for this long fails the request.
 /// Transfers have no fixed overall timeout: a 20 MB save on 500 kbit/s takes
 /// about 6 minutes and is fine as long as bytes keep moving.
-pub const STALL_TIMEOUT: Duration = Duration::from_secs(120);
+pub const STALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// While an upload waits for its reply (data still crossing the link, or
+/// the server assembling the file), the server is asked every this often,
+/// on a new connection, whether it's still there.
+pub const PROBE_EVERY: Duration = Duration::from_secs(10);
+
+/// How long one of those checks may take.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Failed checks in a row that mean the link is gone.
+const PROBES_TO_GIVE_UP: u32 = 2;
 
 /// Upload progress: `(bytes sent, total)`.
 pub type Progress<'a> = &'a mut dyn FnMut(u64, u64);
@@ -238,22 +279,149 @@ impl Client {
         self.exec(req, body, None, None)
     }
 
+    /// Whether the server answers at all (any HTTP status), on a new
+    /// connection within [`PROBE_TIMEOUT`].
+    pub fn reachable(&self) -> bool {
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .max_redirects(0)
+            .timeout_global(Some(PROBE_TIMEOUT))
+            .build()
+            .into();
+        let mut b = http::Request::builder()
+            .method(Method::HEAD)
+            .uri(self.base.as_str());
+        if let Some(a) = &self.auth {
+            b = b.header("authorization", a);
+        }
+        match b.body(()) {
+            Ok(req) => agent.run(req).is_ok(),
+            Err(_) => false,
+        }
+    }
+
     /// Run a request. A pooled keep-alive connection the server or a proxy
     /// already closed (after a dropped link) fails at once with a broken
     /// pipe or reset: the request is sent once more on a fresh connection.
     /// `wait`: how long the reply may take (uploads); `progress`: report
     /// the body's bytes as they go, offset by `.1`, of `.2`.
+    ///
+    /// Requests with a `wait` (uploads, assembling a chunked upload) are
+    /// watched: see [`exec_watched`](Self::exec_watched).
     fn exec(
         &self,
         req: http::request::Builder,
         body: &[u8],
         wait: Option<Duration>,
-        mut progress: Option<(Progress<'_>, u64, u64)>,
+        progress: Option<(Progress<'_>, u64, u64)>,
     ) -> Result<Reply, Error> {
         let (parts, ()) = req
             .body(())
             .map_err(|e| Error::Protocol(format!("request: {e}")))?
             .into_parts();
+        match wait {
+            Some(wait) => self.exec_watched(parts, body, wait, progress),
+            None => self.exec_parts(&parts, body, None, progress),
+        }
+    }
+
+    /// Run an upload on its own thread and tell a dead link from a slow
+    /// one. While the body is being sent, [`STALL_TIMEOUT`] without a byte
+    /// moving fails it. Once all of it is handed over, the reply may take
+    /// long (bytes still queued on the way, a big file being assembled), so
+    /// the server is checked every [`PROBE_EVERY`] on a new connection, and
+    /// [`PROBES_TO_GIVE_UP`] failed checks in a row fail it. A failed
+    /// request is left to end on its own (its socket timeouts); parts of a
+    /// resumable upload that arrived stay on the server.
+    fn exec_watched(
+        &self,
+        parts: http::request::Parts,
+        body: &[u8],
+        wait: Duration,
+        mut progress: Option<(Progress<'_>, u64, u64)>,
+    ) -> Result<Reply, Error> {
+        use std::sync::mpsc::{RecvTimeoutError, channel};
+        use std::time::Instant;
+
+        enum Event {
+            Sent(u64),
+            Done(Result<Reply, Error>),
+        }
+        let (tx, rx) = channel::<Event>();
+        let me = self.clone();
+        let data: std::sync::Arc<[u8]> = std::sync::Arc::from(body);
+        let len = data.len() as u64;
+        std::thread::Builder::new()
+            .name("kantor-dav".into())
+            .spawn(move || {
+                let sent_tx = tx.clone();
+                let mut report = move |sent: u64, _: u64| {
+                    let _ = sent_tx.send(Event::Sent(sent));
+                };
+                let r = me.exec_parts(&parts, &data, Some(wait), Some((&mut report, 0, len)));
+                let _ = tx.send(Event::Done(r));
+            })
+            .map_err(|e| Error::Network(format!("can't start a request: {e}")))?;
+        let mut sent = 0u64;
+        let mut moved = Instant::now();
+        let mut next_probe: Option<Instant> = None;
+        let mut failed_probes = 0;
+        loop {
+            match rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(Event::Sent(s)) => {
+                    if s != sent {
+                        sent = s;
+                        moved = Instant::now();
+                    }
+                    if let Some((report, base, total)) = progress.as_mut() {
+                        report(*base + s, *total);
+                    }
+                    continue;
+                }
+                Ok(Event::Done(r)) => return r,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(Error::Network("the request ended without an answer".into()));
+                }
+            }
+            if sent < len {
+                if moved.elapsed() >= STALL_TIMEOUT {
+                    return Err(Error::Network(format!(
+                        "no data moved for {} s",
+                        STALL_TIMEOUT.as_secs()
+                    )));
+                }
+                continue;
+            }
+            // Everything is handed over: wait for the reply while the
+            // server still answers.
+            let now = Instant::now();
+            let due = *next_probe.get_or_insert(moved + PROBE_EVERY);
+            if now < due {
+                continue;
+            }
+            if self.reachable() {
+                failed_probes = 0;
+            } else {
+                failed_probes += 1;
+                if failed_probes >= PROBES_TO_GIVE_UP {
+                    return Err(Error::Network(
+                        "the connection was lost while waiting for the server's reply".into(),
+                    ));
+                }
+            }
+            next_probe = Some(Instant::now() + PROBE_EVERY);
+        }
+    }
+
+    /// [`exec`](Self::exec) on the calling thread.
+    fn exec_parts(
+        &self,
+        parts: &http::request::Parts,
+        body: &[u8],
+        wait: Option<Duration>,
+        mut progress: Option<(Progress<'_>, u64, u64)>,
+    ) -> Result<Reply, Error> {
         for attempt in 0..2 {
             let mut b = http::Request::builder()
                 .method(parts.method.clone())
@@ -332,7 +500,7 @@ impl Client {
 
     fn propfind(&self, path: &str, depth: u8) -> Result<Vec<Entry>, Error> {
         const BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
-<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getetag/><d:getlastmodified/><d:getcontenttype/></d:prop></d:propfind>"#;
+<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop><d:resourcetype/><d:getcontentlength/><d:getetag/><d:getlastmodified/><d:getcontenttype/><oc:checksums/></d:prop></d:propfind>"#;
         let text = self.propfind_raw(path, depth, BODY)?;
         parse_multistatus(&text)
     }
@@ -412,10 +580,13 @@ impl Client {
         lock: Option<&LockToken>,
         progress: Progress,
     ) -> Result<Option<String>, Error> {
+        // Nextcloud keeps this and reports it in `oc:checksums`, so a later
+        // check can tell "same content, new ETag" without a download.
         let mut req = self
             .request("PUT", path)
             .header("content-type", "application/octet-stream")
-            .header("content-length", bytes.len().to_string());
+            .header("content-length", bytes.len().to_string())
+            .header("oc-checksum", format!("SHA1:{}", sha1_hex(bytes)));
         match cond {
             Precondition::IfMatch(etag) => req = req.header("if-match", etag),
             Precondition::IfNoneMatch => req = req.header("if-none-match", "*"),
@@ -787,6 +958,21 @@ mod tests {
         }
         assert_eq!(percent_decode("100%"), "100%");
         assert_eq!(percent_decode("a%zz"), "a%zz");
+    }
+
+    #[test]
+    fn sha1_from_checksums() {
+        let h = "c98cd2493c3f31ea0cfc1b1cf9df6184c64fb89d";
+        assert_eq!(sha1_in(&format!("SHA1:{h}")).as_deref(), Some(h));
+        // OpenCloud lists several; case differs between servers.
+        let upper = h.to_ascii_uppercase();
+        assert_eq!(
+            sha1_in(&format!("MD5:abc sha1:{upper} ADLER32:1234")).as_deref(),
+            Some(h)
+        );
+        assert_eq!(sha1_in("MD5:abc"), None);
+        assert_eq!(sha1_in("SHA1:nothex"), None);
+        assert_eq!(sha1_hex(b"hello checksum\n"), h);
     }
 
     #[test]

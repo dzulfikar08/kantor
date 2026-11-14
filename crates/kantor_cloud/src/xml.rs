@@ -32,6 +32,7 @@ pub fn parse_multistatus(body: &str) -> Result<Vec<Entry>, Error> {
             etag: None,
             last_modified: None,
             content_type: None,
+            checksums: None,
         };
         for ps in resp.children().filter(|n| is(*n, "propstat")) {
             let ok = child(ps, "status")
@@ -44,6 +45,19 @@ pub fn parse_multistatus(body: &str) -> Result<Vec<Entry>, Error> {
                 continue;
             }
             for p in prop.children().filter(|n| n.is_element()) {
+                if p.tag_name().name() == "checksums" {
+                    let sums: Vec<&str> = p
+                        .descendants()
+                        .filter(|n| n.is_text())
+                        .filter_map(|n| n.text())
+                        .map(str::trim)
+                        .filter(|t| !t.is_empty())
+                        .collect();
+                    if !sums.is_empty() {
+                        entry.checksums = Some(sums.join(" "));
+                    }
+                    continue;
+                }
                 if p.tag_name().namespace() != Some(DAV) {
                     continue;
                 }
@@ -175,6 +189,28 @@ fn name_of(href: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checksums_are_read() {
+        let body = r#"<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
+ <d:response><d:href>/remote.php/dav/files/alice/a.txt</d:href>
+  <d:propstat><d:prop><d:getetag>"e1"</d:getetag>
+   <oc:checksums><oc:checksum>SHA1:c98cd2493c3f31ea0cfc1b1cf9df6184c64fb89d MD5:x</oc:checksum></oc:checksums>
+  </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+ </d:response>
+ <d:response><d:href>/remote.php/dav/files/alice/b.txt</d:href>
+  <d:propstat><d:prop><d:getetag>"e2"</d:getetag></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+  <d:propstat><d:prop><oc:checksums/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat>
+ </d:response>
+</d:multistatus>"#;
+        let e = parse_multistatus(body).unwrap();
+        assert_eq!(
+            e[0].sha1().as_deref(),
+            Some("c98cd2493c3f31ea0cfc1b1cf9df6184c64fb89d")
+        );
+        assert_eq!(e[1].checksums, None);
+    }
 
     // Trimmed from a real Nextcloud 35 reply.
     const NEXTCLOUD: &str = r#"<?xml version="1.0"?>
