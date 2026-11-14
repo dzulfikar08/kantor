@@ -197,15 +197,14 @@ impl SlidesView {
                         subs.push(cx.subscribe_in(
                             &input,
                             window,
-                            move |this, _, ev: &InputEvent, _window, cx| match ev {
-                                InputEvent::Focus => {
-                                    if let Some(e) = &mut this.object_editor {
-                                        e.current = (r, c);
-                                        cx.notify();
-                                    }
+                            // Enter is the panel's `ApplyPanel` binding.
+                            move |this, _, ev: &InputEvent, _window, cx| {
+                                if let InputEvent::Focus = ev
+                                    && let Some(e) = &mut this.object_editor
+                                {
+                                    e.current = (r, c);
+                                    cx.notify();
                                 }
-                                // Enter is the panel's `ApplyPanel` binding.
-                                _ => {}
                             },
                         ));
                         input
