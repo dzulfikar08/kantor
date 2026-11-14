@@ -29,6 +29,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   changes that aren't on the server yet asks whether to sync now, keep the local copy for later,
   or cancel. Working copies live in Kantor's data folder (moved from the cache folder on the first
   start); synced ones unused for 30 days are deleted, unsynced ones never.
+- **Indonesian interface** for the whole app: menus, toolbars, dialogs, palette commands, status
+  bar, settings and messages in Sheets, Docs, Slides and the start screen (about 1,500 strings).
+  It follows the system language, or `language` in settings.toml, or `KANTOR_LANG`. The command
+  palette matches commands in both languages. Tool results for AI agents (MCP) stay in English.
 - **Read-only documents** in Sheets, Docs and Slides: *Make Read-Only* / *Allow Editing* in the
   command palette. Typing, pasting, formatting, structural changes, dragging and edits from the AI
   assistant or MCP clients are refused; selection, copy, find, zoom, print and export work.
