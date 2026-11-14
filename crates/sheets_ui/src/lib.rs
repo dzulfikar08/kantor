@@ -66,6 +66,7 @@ mod recovery;
 mod row_heights;
 mod row_layout;
 mod saving;
+mod spell_ui;
 // Upstream code, kept close to GPUI Kit's so it can be compared.
 #[allow(dead_code, clippy::all)]
 mod table;
@@ -243,6 +244,8 @@ pub fn init(cx: &mut App) {
     pivot::bind_keys(cx);
     table_ui::bind_keys(cx);
     data_validation::bind_keys(cx);
+    spell_ui::bind_keys(cx);
+    kantor_ui::spelling::init(cx);
 }
 
 /// Feeds one sheet of a [`Workbook`] to the table.
@@ -1038,6 +1041,8 @@ pub struct SheetsView {
     dv_dialog: Option<dv_ui::DvDialog>,
     /// The Page Setup card (see [`page_setup`]).
     page_setup: Option<page_setup::PageSetupDialog>,
+    /// The Spelling dialog (see [`spell_ui`]).
+    spell_dialog: Option<spell_ui::SpellDialog>,
     /// A restored recovery copy's original: Save asks before overwriting it
     /// if it changed on disk (see [`recovery`]).
     disk_guard: Option<kantor_ui::disk_guard::DiskGuard>,
@@ -1108,6 +1113,7 @@ impl SheetsView {
             pivot_dialog: None,
             pivot_panel: None,
             page_setup: None,
+            spell_dialog: None,
             table_dialog: None,
             cf_dialog: None,
             dv_dialog: None,
@@ -2241,6 +2247,7 @@ impl Render for SheetsView {
         let root = self.cf_actions(root, cx);
         let root = self.dv_actions(root, cx);
         let root = self.chart_actions(root, cx);
+        let root = self.spell_actions(root, cx);
         use kantor_ui::find_bar as fb;
         root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
@@ -2400,6 +2407,7 @@ impl Render for SheetsView {
             .children(self.render_cf_manager(cx))
             .children(self.render_cf_dialog(cx))
             .children(self.render_dv_dialog(cx))
+            .children(self.render_spell_dialog(cx))
             .into_any_element()
     }
 }

@@ -50,6 +50,7 @@ icon_assets!(
         Replace,
         ReplaceAll,
         // Sheets toolbar
+        SpellCheck,
         PaintBucket,
         Baseline,
         AArrowUp,

@@ -1350,6 +1350,12 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: "Spelling…",
+        detail: "Sheets · check the spelling of the text cells, from the active cell or in the selection",
+        keys: "F7",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.spelling_doc(w, cx)),
+    },
+    Command {
         title: "Check Spelling as You Type",
         detail: "Docs, Slides · underline misspelled words in red",
         keys: "",

@@ -829,6 +829,31 @@ impl Workbook {
         cells
     }
 
+    /// The cells of `sheet` holding typed text (not formulas, numbers,
+    /// dates or booleans), with their text, in reading order: what
+    /// Spelling checks.
+    pub fn text_cells(&self, sheet: u32) -> Vec<(u32, u32, String)> {
+        let model = self.model.get_model();
+        let Ok(ws) = model.workbook.worksheet(sheet) else {
+            return Vec::new();
+        };
+        let strings = &model.workbook.shared_strings;
+        let mut cells: Vec<(u32, u32, String)> = ws
+            .sheet_data
+            .cells()
+            .filter(|(row, col, _)| *row >= 1 && *col >= 1)
+            .filter_map(|(row, col, cell)| match *cell {
+                Cell::SharedString { si, .. } => strings
+                    .get(si as usize)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| (row as u32 - 1, col as u32 - 1, s.clone())),
+                _ => None,
+            })
+            .collect();
+        cells.sort_unstable_by_key(|c| (c.0, c.1));
+        cells
+    }
+
     /// Whether `cell` has something typed in (a value or a formula; not just
     /// a style or a spilled value). Cheaper than `input` (no formula text).
     fn has_input(&self, cell: &Cell) -> bool {
@@ -1440,6 +1465,27 @@ pub fn cell_name(row: u32, col: u32) -> String {
 mod tests {
     use super::*;
     use std::io::Write as _;
+
+    #[test]
+    fn text_cells_are_typed_text_only() {
+        let mut wb = Workbook::new_empty().unwrap();
+        wb.set_input(0, 3, 0, "Teh end").unwrap();
+        wb.set_input(0, 0, 1, "12").unwrap();
+        wb.set_input(0, 0, 0, "Hello wrld").unwrap();
+        wb.set_input(0, 1, 0, "=\"formula text\"").unwrap();
+        wb.set_input(0, 1, 1, "TRUE").unwrap();
+        wb.set_input(0, 2, 0, "2026-11-14").unwrap();
+        wb.set_input(0, 2, 1, "'123").unwrap();
+        let cells = wb.text_cells(0);
+        let got: Vec<(u32, u32, &str)> =
+            cells.iter().map(|(r, c, t)| (*r, *c, t.as_str())).collect();
+        assert_eq!(
+            got,
+            [(0, 0, "Hello wrld"), (2, 1, "123"), (3, 0, "Teh end")]
+        );
+        // The formula bar shows a quoted number with its quote.
+        assert_eq!(wb.input(0, 2, 1), "'123");
+    }
 
     #[test]
     fn set_inputs_undoes_as_one_step() {
