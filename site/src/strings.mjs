@@ -64,7 +64,7 @@ export const en = {
     sheets: {
       name: "Sheets",
       formats: [".xlsx", ".csv", ".ods", ".xls"],
-      text: "Spreadsheets with formulas, several sheets, number formats, Excel tables, charts, pivot tables, conditional formatting, data validation, sort and filter. Opens .csv, .ods and .xls files too (with their formatting, comments, data validation and conditional formatting), and saves as .xlsx.",
+      text: "Spreadsheets with formulas, several sheets, number formats, Excel tables, charts, pivot tables, conditional formatting, data validation, notes, sort and filter. Opens .csv, .ods and .xls files too (with their formatting, comments, data validation and conditional formatting), and saves as .xlsx.",
     },
     docs: {
       name: "Docs",
@@ -79,7 +79,7 @@ export const en = {
   },
   keepH3: "Saving doesn't throw away what Kantor can't show yet",
   keepText:
-    "If a file holds something Kantor doesn't understand yet, such as a Word equation or an Excel comment, Kantor leaves it as it was and writes it back when you save. When it can't do that safely, it saves to a new file or tells you what will be left out.",
+    "If a file holds something Kantor doesn't understand yet, such as a Word equation or an Excel slicer, Kantor leaves it as it was and writes it back when you save. When it can't do that safely, it saves to a new file or tells you what will be left out.",
   more: [
     ["Print and export to PDF", "Docs and Slides save a PDF that looks like what you see on screen, and print it through your PDF viewer; Slides also prints notes pages and handouts. Sheets prints pages the way Excel does: paper size including F4, fit to width, print titles, headers and footers."],
     ["Offline, no account", "Your files stay on your computer. There is nothing to sign up for."],
@@ -255,7 +255,7 @@ export const id = {
     sheets: {
       name: "Sheets",
       formats: [".xlsx", ".csv", ".ods", ".xls"],
-      text: "Lembar kerja dengan rumus, beberapa sheet, format angka (termasuk Rupiah), tabel Excel, grafik, pivot table, format bersyarat, validasi data, urutkan, dan filter. Bisa membuka file .csv, .ods, dan .xls (tetap dengan format, komentar, validasi data, dan format bersyaratnya), lalu menyimpannya sebagai .xlsx.",
+      text: "Lembar kerja dengan rumus, beberapa sheet, format angka (termasuk Rupiah), tabel Excel, grafik, pivot table, format bersyarat, validasi data, catatan sel (notes), urutkan, dan filter. Bisa membuka file .csv, .ods, dan .xls (tetap dengan format, komentar, validasi data, dan format bersyaratnya), lalu menyimpannya sebagai .xlsx.",
     },
     docs: {
       name: "Docs",
@@ -270,7 +270,7 @@ export const id = {
   },
   keepH3: "Menyimpan tidak membuang yang belum bisa ditampilkan Kantor",
   keepText:
-    "Kalau file berisi sesuatu yang belum dipahami Kantor, misalnya persamaan di Word atau komentar di Excel, Kantor membiarkannya apa adanya dan menuliskannya kembali saat Anda menyimpan. Kalau itu tidak bisa dilakukan dengan aman, Kantor menyimpan ke file baru atau memberi tahu bagian mana yang tidak ikut tersimpan.",
+    "Kalau file berisi sesuatu yang belum dipahami Kantor, misalnya persamaan di Word atau slicer di Excel, Kantor membiarkannya apa adanya dan menuliskannya kembali saat Anda menyimpan. Kalau itu tidak bisa dilakukan dengan aman, Kantor menyimpan ke file baru atau memberi tahu bagian mana yang tidak ikut tersimpan.",
   more: [
     ["Cetak dan ekspor ke PDF", "Docs dan Slides menyimpan PDF yang sama dengan tampilan di layar dan mencetaknya lewat penampil PDF; Slides juga bisa mencetak halaman catatan dan handout. Sheets mencetak halaman seperti Excel: ukuran kertas termasuk F4, muat selebar halaman, judul cetak, header, dan footer."],
     ["Tanpa internet, tanpa akun", "File Anda tetap di komputer Anda. Tidak perlu mendaftar apa pun."],

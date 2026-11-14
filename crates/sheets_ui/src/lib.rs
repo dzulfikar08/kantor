@@ -80,6 +80,7 @@ use std::rc::Rc;
 use gpui_kit::component::{
     Sizable as _, h_flex,
     input::{Input, InputEvent, InputState},
+    menu::{PopupMenu, PopupMenuItem},
     v_flex,
 };
 use gpui_kit::prelude::*;
@@ -89,6 +90,7 @@ use sheets_engine::{CellRange, CellStyle, StyleChange, Tab, Workbook, cell_name,
 use table::{Column, DataTable, TableDelegate, TableEvent, TableState};
 
 mod notes_ui;
+pub use notes_ui::NoteCommand;
 mod toolbar;
 
 pub use ai::AiTarget;
@@ -246,6 +248,7 @@ pub fn init(cx: &mut App) {
     table_ui::bind_keys(cx);
     data_validation::bind_keys(cx);
     spell_ui::bind_keys(cx);
+    notes_ui::bind_keys(cx);
     kantor_ui::spelling::init(cx);
 }
 
@@ -288,6 +291,12 @@ pub struct SheetGrid {
     /// The cell with a note under the pointer, `(sheet, row, col)`: its
     /// note is shown ([`notes_ui`]).
     note_hover: Option<(u32, u32, u32)>,
+    /// The cell whose note is being written, `(sheet, row, col)`, and where
+    /// it is on screen ([`notes_ui`]).
+    note_editing: Option<(u32, u32, u32)>,
+    note_anchor: notes_ui::NoteAnchor,
+    /// Show All Notes: every note's box is shown (a view setting).
+    show_all_notes: bool,
 }
 
 /// A sheet's filters for `((revision), sheet)`.
@@ -326,6 +335,9 @@ impl SheetGrid {
             validation: Default::default(),
             filters_memo: RefCell::new(None),
             note_hover: None,
+            note_editing: None,
+            note_anchor: Default::default(),
+            show_all_notes: false,
         };
         grid.resize();
         grid
@@ -412,6 +424,38 @@ impl SheetGrid {
 impl TableDelegate for SheetGrid {
     fn columns_count(&self, _: &App) -> usize {
         self.cols as usize + 1
+    }
+
+    /// A cell's right-click menu: the clipboard, then its note, as in Excel.
+    fn cell_context_menu(
+        &mut self,
+        row_ix: usize,
+        col_ix: usize,
+        menu: PopupMenu,
+        _: &mut Window,
+        _: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        if col_ix == 0 {
+            return menu;
+        }
+        let cell = (row_ix as u32, col_ix as u32 - 1);
+        type Run = fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>);
+        let clip: [(&str, &str, Run); 3] = [
+            ("Cut", "Ctrl+X", SheetsView::cut_doc),
+            ("Copy", "Ctrl+C", SheetsView::copy_doc),
+            ("Paste", "Ctrl+V", SheetsView::paste_doc),
+        ];
+        let mut menu = menu;
+        for (label, keys, run) in clip {
+            let view = self.view.clone();
+            menu = menu.item(PopupMenuItem::new(format!("{label}  ({keys})")).on_click(
+                move |_, window, cx| {
+                    let _ = view.update(cx, |v, cx| run(v, window, cx));
+                },
+            ));
+        }
+        let has_note = self.book.note_at(self.sheet, cell.0, cell.1).is_some();
+        notes_ui::cell_menu_items(menu.separator(), cell, has_note, &self.view)
     }
 
     fn rows_count(&self, _: &App) -> usize {
@@ -734,8 +778,10 @@ impl TableDelegate for SheetGrid {
         };
         let validation = self.validation_layers(row, col, row_height, cx);
         // A note: its corner mark, and the note while the pointer is over
-        // the cell (not while the cell is being edited).
-        let note_layers = self
+        // the cell or when it is shown (not while the cell or the note is
+        // being edited).
+        let note_edited = self.note_editing == Some((sheet, row, col));
+        let mut note_layers = self
             .book
             .note_at(sheet, row, col)
             .map(|note| {
@@ -743,10 +789,17 @@ impl TableDelegate for SheetGrid {
                     .editor
                     .as_ref()
                     .is_some_and(|e| e.cell == (row, col) && e.sheet == sheet);
-                let hovered = !editing && self.note_hover == Some((sheet, row, col));
-                notes_ui::layers(&note, (sheet, row, col), hovered, &self.view, &t)
+                let shown = !editing
+                    && !note_edited
+                    && (self.note_hover == Some((sheet, row, col))
+                        || note.shown
+                        || self.show_all_notes);
+                notes_ui::layers(&note, (sheet, row, col), shown, &self.view, &t)
             })
             .unwrap_or_default();
+        if note_edited {
+            note_layers.push(notes_ui::anchor_layer(&self.note_anchor));
+        }
         let down_view = self.view.clone();
         let move_view = self.view.clone();
         // References of the formula being edited: coloured border and fill.
@@ -1063,6 +1116,8 @@ pub struct SheetsView {
     page_setup: Option<page_setup::PageSetupDialog>,
     /// The Spelling dialog (see [`spell_ui`]).
     spell_dialog: Option<spell_ui::SpellDialog>,
+    /// The note being written (see [`notes_ui`]).
+    note_edit: Option<notes_ui::NoteEditor>,
     /// A restored recovery copy's original: Save asks before overwriting it
     /// if it changed on disk (see [`recovery`]).
     disk_guard: Option<kantor_ui::disk_guard::DiskGuard>,
@@ -1140,6 +1195,7 @@ impl SheetsView {
             pivot_panel: None,
             page_setup: None,
             spell_dialog: None,
+            note_edit: None,
             table_dialog: None,
             cf_dialog: None,
             dv_dialog: None,
@@ -1224,6 +1280,14 @@ impl SheetsView {
                     self.load_selected_into_formula(window, cx);
                 }
                 cx.notify();
+            }
+            TableEvent::RightClickedCell(row, col) if *col > 0 => {
+                // Excel: a right click outside the selection selects the
+                // cell; inside it the selection stays.
+                let cell = (*row as u32, *col as u32 - 1);
+                if self.editing.is_none() && !self.range(cx).contains(cell.0, cell.1) {
+                    self.select_cell(cell.0, cell.1, cx);
+                }
             }
             TableEvent::DoubleClickedCell(row, col) if *col > 0 => {
                 self.selected = (*row as u32, *col as u32 - 1);
@@ -2116,6 +2180,8 @@ impl SheetsView {
         if self.blocked(cx) {
             return;
         }
+        // A note being written is part of what gets saved.
+        self.commit_note(false, window, cx);
         let Some(target) = self
             .table
             .read(cx)
@@ -2134,6 +2200,7 @@ impl SheetsView {
     }
 
     fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_note(false, window, cx);
         self.save_as_task(window, cx).detach();
     }
 
@@ -2355,6 +2422,7 @@ impl Render for SheetsView {
         let root = self.dv_actions(root, cx);
         let root = self.chart_actions(root, cx);
         let root = self.spell_actions(root, cx);
+        let root = self.note_actions(root, cx);
         use kantor_ui::find_bar as fb;
         root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
@@ -2522,6 +2590,7 @@ impl Render for SheetsView {
             .children(self.render_cf_dialog(cx))
             .children(self.render_dv_dialog(cx))
             .children(self.render_spell_dialog(cx))
+            .children(self.render_note_editor(cx))
             .into_any_element()
     }
 }

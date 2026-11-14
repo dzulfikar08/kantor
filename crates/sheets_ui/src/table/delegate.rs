@@ -163,6 +163,20 @@ pub trait TableDelegate: Sized + 'static {
         menu
     }
 
+    /// KANTOR PATCH (cell menu): the context menu of the cell at the given
+    /// row and column (right-clicked, with cell selection on).
+    fn cell_context_menu(
+        &mut self,
+        row_ix: usize,
+        col_ix: usize,
+        menu: PopupMenu,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        let _ = (row_ix, col_ix, window, cx);
+        menu
+    }
+
     /// Render cell at the given row and column.
     fn render_td(
         &mut self,

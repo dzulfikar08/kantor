@@ -36,12 +36,22 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Sheets: notes (comments) in `.xlsx` and `.xls` files are shown as in Excel: a small red
   triangle in the cell's top-right corner, and the note with its author in a box beside the
   cell while the pointer is over it. They move with inserted and deleted rows and columns.
-  Adding, editing and deleting notes isn't possible yet.
+- Sheets: notes can be added, edited and deleted as in Excel: *New Note* / *Edit Note*
+  (Shift+F2, a cell's right-click menu or the toolbar's Notes menu) opens a box beside the
+  cell that starts with your name (Settings' author, else your account name). Clicking
+  elsewhere or pressing Escape ends the edit and keeps the text, as in Excel. The same menus
+  have *Delete Note* (the selected cells' notes), *Show/Hide Note*, *Show All Notes* and
+  *Previous/Next Note*; the palette has them too. Each change is one undo step, and saving
+  writes the notes so Excel shows them (notes you didn't change keep their formatting and box
+  size; a note shown all the time stays shown in Excel). Right-clicking a cell now opens a menu
+  (Cut, Copy, Paste and the note commands); right-clicking outside the selection selects the cell.
 
 ### Fixed
 - Slides: after Apply in the table or chart data editor, the chart (or table) stays selected
   instead of the slide title. Tab and Shift+Tab now move between the editor's cells, Escape
   closes it, and Backspace in an empty cell no longer deletes the chart.
+- Sheets: after a save, inserting or deleting rows and columns could put a file's notes on the
+  wrong cells until the workbook was opened again.
 - Sheets: workbooks with notes made by openpyxl (and other tools that write absolute part
   paths) open; they failed with "specified file not found in archive". Note authors are read
   too.

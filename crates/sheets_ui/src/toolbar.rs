@@ -510,6 +510,23 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
                 let _ = spell_view.update(cx, |v, cx| v.spelling_doc(w, cx));
             }),
     );
+    // Review > Notes.
+    let notes_view = cx.entity().downgrade();
+    row = row.child(
+        Button::new("notes-menu")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::MessageSquare)
+            .dropdown_caret(true)
+            .tooltip("Notes")
+            .dropdown_menu(move |menu, _, cx| {
+                let (has_note, show_all) = notes_view
+                    .upgrade()
+                    .map(|v| v.read(cx).note_menu_state(cx))
+                    .unwrap_or_default();
+                crate::notes_ui::notes_menu(menu, has_note, show_all, &notes_view)
+            }),
+    );
     // Export as PDF and Print.
     let print_view = cx.entity().downgrade();
     row = row.child(separator(cx)).child(
