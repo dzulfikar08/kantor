@@ -9,6 +9,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+- Sheets: chart sheets from Excel files (a tab that is one whole chart) are shown in their place
+  among the sheet tabs, the chart filling the window and following the cells it reads. They are
+  view only for now: commands that work on cells say so instead of changing a sheet out of sight.
+  PDF export, printing and `kantor convert` print each chart sheet on its own landscape page.
+  Saving keeps them, in the same order.
+
+### Fixed
+- Slides: after Apply in the table or chart data editor, the chart (or table) stays selected
+  instead of the slide title. Tab and Shift+Tab now move between the editor's cells, Escape
+  closes it, and Backspace in an empty cell no longer deletes the chart.
+
 ### Changed
 - Sheets: Fill Down, Fill Right and dragging the fill handle are much faster on big workbooks
   when they copy formulas (nine formulas down 10 000 rows of a 90 000-row workbook: 2.3 s →

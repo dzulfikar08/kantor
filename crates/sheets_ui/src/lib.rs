@@ -1886,6 +1886,7 @@ impl SheetsView {
     /// (see [`point`]); any other edit is committed first.
     fn select_sheet(&mut self, sheet: u32, window: &mut Window, cx: &mut Context<Self>) {
         if self.chart_tab.take().is_some() && self.editing.is_none() {
+            self.status = "Ready".into();
             self.show_sheet(sheet, cx);
             self.load_selected_into_formula(window, cx);
             self.focus_grid(window, cx);
