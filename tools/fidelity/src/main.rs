@@ -1,5 +1,6 @@
 //! Writes `.xlsx`, `.docx` and `.pptx` files through Kantor's engines: every
-//! corpus file opened and saved, opened, edited and saved, and files that use
+//! corpus file opened and saved, opened, edited and saved (`.xls`, `.xlt`
+//! and `.ods` imports too), and files that use
 //! what Kantor itself writes (tables, charts, conditional formats, data
 //! validation, pivot tables, page setup, panes, hidden rows and columns, row
 //! heights; comments, tracked changes, headers and footers, sections; slide
@@ -98,6 +99,33 @@ fn main() -> Result<()> {
             again.set_input(0, 0, 0, "again")?;
             again.save_as(&path)?;
             Ok(Some(src.clone()))
+        });
+    }
+    // Imports (.xls, .xlt, .ods) saved as .xlsx: their formats, notes, data
+    // validation and conditional formats written from the model.
+    let mut imports = Vec::new();
+    for ext in ["xls", "xlt", "ods"] {
+        imports.extend(files(&corpus.join("xls"), ext)?);
+    }
+    for src in &imports {
+        let ext = src.extension().map_or(String::new(), |e| e.to_string_lossy().into_owned());
+        let name = format!("import_{}_{ext}.xlsx", stem(src));
+        run.scenario(&name.clone(), |o| {
+            let mut wb = Workbook::open(src)?;
+            let path = o.join(&name);
+            wb.save_as(&path)?;
+            Ok(None)
+        });
+        let name = format!("import_edit_{}_{ext}.xlsx", stem(src));
+        run.scenario(&name.clone(), |o| {
+            let mut wb = Workbook::open(src)?;
+            sheet_edits(&mut wb)?;
+            let path = o.join(&name);
+            wb.save_as(&path)?;
+            let mut again = Workbook::open(&path)?;
+            again.set_input(0, 0, 0, "again")?;
+            again.save_as(&path)?;
+            Ok(None)
         });
     }
     run.scenario("kantor_features.xlsx", |o| {
