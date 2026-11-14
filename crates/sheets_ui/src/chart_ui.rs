@@ -260,6 +260,10 @@ impl SheetsView {
     ) -> Result<Option<u32>, String> {
         let t = text.trim().trim_start_matches('=');
         let Some((name, _)) = t.rsplit_once('!') else {
+            // A chart sheet has no cells: its data stays on its sheet.
+            if sheets_engine::drawing::chart_sheet_of_key(key.sheet_id).is_some() {
+                return Ok(self.selected_chart(cx).and_then(|(_, i)| i.spec.data_sheet));
+            }
             return Ok(None);
         };
         let name = name.trim();
@@ -307,7 +311,7 @@ impl SheetsView {
             );
         let a_chart = self.drawings.borrow().selected.is_some();
         let body: AnyElement = match self.selected_chart(cx) {
-            Some((_, info)) => {
+            Some((key, info)) => {
                 let spec = info.spec.clone();
                 let tv = view.clone();
                 let current = spec.kind;
@@ -371,6 +375,9 @@ impl SheetsView {
                         m
                     });
                 let colours = series_colours(&info, &view, cx);
+                // A chart sheet's chart goes with its sheet (tab menu).
+                let on_chart_sheet =
+                    sheets_engine::drawing::chart_sheet_of_key(key.sheet_id).is_some();
                 let dv = view.clone();
                 let av = view.clone();
                 v_flex()
@@ -426,7 +433,7 @@ impl SheetsView {
                                         let _ = av.update(cx, |this, cx| this.apply_chart_inputs(w, cx));
                                     }),
                             )
-                            .child(
+                            .when(!on_chart_sheet, |d| d.child(
                                 Button::new("chart-delete")
                                     .small()
                                     .outline()
@@ -437,7 +444,7 @@ impl SheetsView {
                                             this.drawing_key("delete", w, cx);
                                         });
                                     }),
-                            ),
+                            )),
                     )
                     .into_any_element()
             }
@@ -467,7 +474,7 @@ impl SheetsView {
                 .text_color(t.fg)
                 .overflow_y_scroll()
                 .on_action(cx.listener(|this, _: &input::Escape, w, cx| {
-                    this.focus_grid(w, cx);
+                    this.refocus(w, cx);
                     cx.notify();
                 }))
                 .child(header)

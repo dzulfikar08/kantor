@@ -253,7 +253,25 @@ pub(crate) struct Context<'a> {
     pub pivots: &'a PivotSave,
     /// Sheet features edited in Kantor, written over what the package has.
     pub patches: &'a Patches,
+    /// The chart sheets to save, in order (`None`: the original's, as they
+    /// are).
+    pub chart_sheets: Option<&'a [ChartSheetPlan]>,
 }
+
+/// A chart sheet to save (see `crate::chart_sheet`).
+pub(crate) struct ChartSheetPlan {
+    pub name: String,
+    pub state: Option<String>,
+    /// `sheetId`s of worksheets it goes after, nearest first.
+    pub after: Vec<u32>,
+    /// Its part, found by name in the package carried from.
+    pub part: String,
+    pub rel_kind: String,
+    /// Its parts, put back when the package carried from has none of them.
+    pub bundle: std::sync::Arc<Vec<BundlePart>>,
+}
+
+const RELS_CT: &str = "application/vnd.openxmlformats-package.relationships+xml";
 
 /// What a save writes over the package for features edited in Kantor (see
 /// [`apply_patches`]). Sheets and names not listed are left as they are.
@@ -1938,14 +1956,74 @@ pub(crate) struct DrawingSources {
 /// A chart sheet of a package (`xl/chartsheets/sheetN.xml`).
 pub(crate) struct ChartSheetSource {
     pub name: String,
-    /// `state` hidden or very hidden.
-    pub hidden: bool,
+    /// The chart sheet part (what identifies it in later saves: carrying
+    /// keeps part names).
+    pub part: String,
+    /// Its workbook relationship type.
+    pub rel_kind: String,
+    /// The `<sheet>` element's `state` (`hidden`, `veryHidden`).
+    pub state: Option<String>,
     /// The `sheetId`s of the worksheets before it, nearest first: saving
     /// puts it back after the first of them still there ([`sheet_slots`]).
     pub before: Vec<u32>,
     pub drawing: Option<DrawingSource>,
     /// The chart sheet part's XML (its print settings).
     pub xml: Option<String>,
+    /// The chart sheet part and every part it links to, as opened: a save
+    /// puts them back when the package being carried from no longer has
+    /// them (a chart sheet deleted, saved, then the deletion undone).
+    pub bundle: Vec<BundlePart>,
+}
+
+/// A part of a [`ChartSheetSource::bundle`].
+#[derive(Clone, Debug)]
+pub(crate) struct BundlePart {
+    pub name: String,
+    pub data: Vec<u8>,
+    pub content_type: String,
+}
+
+/// `part` and every part it links to (internal relationships, followed
+/// recursively), with their content types. Empty when any of them can't be
+/// read.
+fn part_bundle(orig: &Original<'_>, ct: &ContentTypes, part: &str) -> Vec<BundlePart> {
+    fn walk(
+        orig: &Original<'_>,
+        ct: &ContentTypes,
+        part: &str,
+        out: &mut Vec<BundlePart>,
+    ) -> Option<()> {
+        if out.iter().any(|p| p.name == part) {
+            return Some(());
+        }
+        out.push(BundlePart {
+            name: part.to_owned(),
+            data: orig.get(part).ok()??,
+            content_type: ct.of(part)?.to_owned(),
+        });
+        let rp = rels_part(part);
+        let Some(xml) = orig.text(&rp).ok()? else {
+            return Some(());
+        };
+        let rels = parse_rels(&xml).ok()?;
+        out.push(BundlePart {
+            name: rp,
+            data: xml.into_bytes(),
+            content_type: RELS_CT.to_owned(),
+        });
+        for rel in rels.iter().filter(|r| !r.external) {
+            if NEVER_CARRY.contains(&rel.short_kind()) {
+                return None;
+            }
+            walk(orig, ct, &resolve(part, &rel.target)?, out)?;
+        }
+        Some(())
+    }
+    let mut out = Vec::new();
+    match walk(orig, ct, part, &mut out) {
+        Some(()) => out,
+        None => Vec::new(),
+    }
 }
 
 /// The drawings of the worksheets of `bytes`. Parts that can't be read are
@@ -1967,13 +2045,27 @@ pub(crate) fn drawing_sources(bytes: &[u8]) -> Result<DrawingSources, String> {
         .find(|r| r.short_kind() == "theme" && !r.external)
         .and_then(|r| resolve(&wb, &r.target))
         .and_then(|t| orig.text(&t).ok().flatten());
+    let ct = if sheets.iter().any(|s| s.kind == SheetKind::Chart) {
+        orig.text(CONTENT_TYPES)
+            .ok()
+            .flatten()
+            .and_then(|x| ContentTypes::parse(&x).ok())
+    } else {
+        None
+    };
     for (i, s) in sheets.iter().enumerate() {
         let drawing = sheet_drawing(&orig, s);
         match s.kind {
             SheetKind::Work => out.drawings.extend(drawing),
             SheetKind::Chart => out.chart_sheets.push(ChartSheetSource {
                 name: s.name.clone(),
-                hidden: s.state.as_deref().is_some_and(|v| v != "visible"),
+                part: s.part.clone(),
+                rel_kind: s.rel_kind.clone(),
+                state: s.state.clone(),
+                bundle: ct
+                    .as_ref()
+                    .map(|ct| part_bundle(&orig, ct, &s.part))
+                    .unwrap_or_default(),
                 before: sheets[..i]
                     .iter()
                     .rev()
@@ -2190,6 +2282,9 @@ struct Merge<'o, 'a> {
     cf_failed: bool,
     /// Parts not to carry (deleted pivot tables), lower case.
     dropped: HashSet<String>,
+    /// Parts put back that the original doesn't have (a chart sheet an
+    /// earlier save of the session left out), written as they are.
+    restored: Vec<BundlePart>,
 }
 
 impl Merge<'_, '_> {
@@ -2310,6 +2405,16 @@ impl Merge<'_, '_> {
                 )),
             }
         }
+        for b in &self.restored {
+            new.set(&b.name, b.data.clone());
+            if b.content_type != RELS_CT && self.new_ct.of(&b.name) != Some(&b.content_type) {
+                ct_entries.push_str(&format!(
+                    "<Override PartName=\"/{}\" ContentType=\"{}\"/>",
+                    esc_attr(&b.name),
+                    esc_attr(&b.content_type)
+                ));
+            }
+        }
         if !ct_entries.is_empty() {
             let xml = new
                 .text(CONTENT_TYPES)?
@@ -2387,6 +2492,7 @@ fn merge(
         cf_carried: false,
         cf_failed: false,
         dropped: HashSet::new(),
+        restored: Vec::new(),
     };
     m.dropped = ctx.pivots.dropped.clone();
     m.replaced.extend(
@@ -2423,6 +2529,7 @@ fn merge(
         &new_sheets,
         &new_wb,
         &mut wb_ids,
+        ctx.chart_sheets,
         notes,
     );
     let chart_rids: BTreeSet<String> = orig_sheets
@@ -2580,6 +2687,7 @@ fn merge(
     };
 
     if m.copy.is_empty()
+        && m.restored.is_empty()
         && adds.iter().all(|a| a.rels.is_empty())
         && sheet_edits.is_empty()
         && m.removals.is_empty()
@@ -3811,18 +3919,22 @@ struct ChartSheet {
     state: Option<String>,
     /// The workbook relationship to add.
     rel: Rel,
-    /// Position in the original's sheet list.
-    orig_index: usize,
+    /// `sheetId`s of the worksheets it goes after, nearest first.
+    after: Vec<u32>,
 }
 
-/// Plan the original's chart sheets (with their drawings and charts) and
-/// pick their sheet ids and relationship ids in the new workbook.
+/// Plan the chart sheets (with their drawings and charts) and pick their
+/// sheet ids and relationship ids in the new workbook: the original's, or
+/// those of `plan` (found in the original by part name, else put back from
+/// their parts as opened).
+#[allow(clippy::too_many_arguments)]
 fn carry_chart_sheets(
     m: &mut Merge,
     orig_sheets: &[SheetEntry],
     new_sheets: &[SheetEntry],
     new_wb: &str,
     ids: &mut IdAlloc,
+    plan: Option<&[ChartSheetPlan]>,
     notes: &mut Vec<String>,
 ) -> Vec<ChartSheet> {
     let mut used_ids: HashSet<u32> = new_sheets.iter().map(|s| s.sheet_id).collect();
@@ -3833,40 +3945,109 @@ fn carry_chart_sheets(
         .max()
         .unwrap_or(0);
     let names: HashSet<String> = new_sheets.iter().map(|s| s.name.to_lowercase()).collect();
+    // What to save: the plan, else the original's chart sheets as they are.
+    struct Want<'p> {
+        name: String,
+        state: Option<String>,
+        after: Vec<u32>,
+        part: String,
+        rel_kind: String,
+        bundle: Option<&'p [BundlePart]>,
+    }
+    let wants: Vec<Want> = match plan {
+        Some(plan) => plan
+            .iter()
+            .map(|p| Want {
+                name: p.name.clone(),
+                state: p.state.clone(),
+                after: p.after.clone(),
+                part: p.part.clone(),
+                rel_kind: p.rel_kind.clone(),
+                bundle: Some(&p.bundle),
+            })
+            .collect(),
+        None => orig_sheets
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.kind == SheetKind::Chart)
+            .map(|(i, cs)| Want {
+                name: cs.name.clone(),
+                state: cs.state.clone(),
+                after: orig_sheets[..i]
+                    .iter()
+                    .rev()
+                    .filter(|s| s.kind == SheetKind::Work)
+                    .map(|s| s.sheet_id)
+                    .collect(),
+                part: cs.part.clone(),
+                rel_kind: cs.rel_kind.clone(),
+                bundle: None,
+            })
+            .collect(),
+    };
     let mut out = Vec::new();
-    for (i, cs) in orig_sheets.iter().enumerate() {
-        if cs.kind != SheetKind::Chart {
-            continue;
-        }
-        if names.contains(&cs.name.to_lowercase()) {
+    for w in wants {
+        if names.contains(&w.name.to_lowercase()) {
             notes.push(format!(
                 "chart sheet {:?} not kept: a sheet has its name",
-                cs.name
+                w.name
             ));
             continue;
         }
-        if let Err(e) = m.carry(&cs.part) {
-            notes.push(format!("chart sheet {:?} not kept: {e}", cs.name));
-            continue;
-        }
-        let sheet_id = if used_ids.contains(&cs.sheet_id) {
-            max_id += 1;
-            max_id
-        } else {
-            cs.sheet_id
+        let orig = orig_sheets
+            .iter()
+            .find(|s| s.kind == SheetKind::Chart && s.part == w.part);
+        let found_id = match orig {
+            Some(cs) => {
+                if let Err(e) = m.carry(&cs.part) {
+                    notes.push(format!("chart sheet {:?} not kept: {e}", w.name));
+                    continue;
+                }
+                Some(cs.sheet_id)
+            }
+            None => {
+                let bundle = w.bundle.unwrap_or_default();
+                let clash = bundle.iter().find(|b| {
+                    let lower = b.name.to_lowercase();
+                    m.orig.has(&b.name)
+                        || m.written.contains(&lower)
+                        || m.copy.iter().any(|c| c.to_lowercase() == lower)
+                        || m.restored.iter().any(|r| r.name.to_lowercase() == lower)
+                });
+                if bundle.is_empty() || clash.is_some() {
+                    notes.push(format!(
+                        "chart sheet {:?} not kept: its parts {}",
+                        w.name,
+                        match clash {
+                            Some(c) => format!("clash with {}", c.name),
+                            None => "could not be read".to_owned(),
+                        }
+                    ));
+                    continue;
+                }
+                m.restored.extend(bundle.iter().cloned());
+                None
+            }
+        };
+        let sheet_id = match found_id {
+            Some(id) if !used_ids.contains(&id) => id,
+            _ => {
+                max_id += 1;
+                max_id
+            }
         };
         used_ids.insert(sheet_id);
         out.push(ChartSheet {
-            name: cs.name.clone(),
+            name: w.name,
             sheet_id,
-            state: cs.state.clone(),
+            state: w.state,
             rel: Rel {
                 id: ids.next(),
-                kind: cs.rel_kind.clone(),
-                target: relative(new_wb, &cs.part),
+                kind: w.rel_kind,
+                target: relative(new_wb, &w.part),
                 external: false,
             },
-            orig_index: i,
+            after: w.after,
         });
     }
     out
@@ -3879,20 +4060,16 @@ enum Slot<'a> {
     Chart(&'a ChartSheet),
 }
 
-/// The new workbook's sheets with the chart sheets put back where they were:
-/// after the nearest sheet before them that still exists.
-fn sheet_slots<'a>(
-    orig_sheets: &[SheetEntry],
-    new_sheets: &[SheetEntry],
-    charts: &'a [ChartSheet],
-) -> Vec<Slot<'a>> {
+/// The new workbook's sheets with the chart sheets put back where they go:
+/// after the nearest worksheet before them that still exists, in the order
+/// of `charts`.
+fn sheet_slots<'a>(new_sheets: &[SheetEntry], charts: &'a [ChartSheet]) -> Vec<Slot<'a>> {
     let mut slots: Vec<Slot> = (0..new_sheets.len()).map(Slot::New).collect();
     for cs in charts {
-        let before = orig_sheets[..cs.orig_index]
+        let before = cs
+            .after
             .iter()
-            .rev()
-            .filter(|s| s.kind == SheetKind::Work)
-            .find_map(|s| new_sheets.iter().position(|n| n.sheet_id == s.sheet_id));
+            .find_map(|id| new_sheets.iter().position(|n| n.sheet_id == *id));
         let mut at = match before {
             Some(n) => {
                 slots
@@ -3904,7 +4081,7 @@ fn sheet_slots<'a>(
             None => 0,
         };
         // After chart sheets put there before (they came first).
-        while matches!(slots.get(at), Some(Slot::Chart(c)) if c.orig_index < cs.orig_index) {
+        while matches!(slots.get(at), Some(Slot::Chart(_))) {
             at += 1;
         }
         slots.insert(at, Slot::Chart(cs));
@@ -3951,7 +4128,7 @@ fn edit_workbook(
     let doc = Document::parse(new_xml).map_err(|e| format!("saved workbook: {e}"))?;
     let root = doc.root_element();
     let orig_doc = Document::parse(orig_xml).map_err(|e| format!("workbook: {e}"))?;
-    let slots = sheet_slots(orig_sheets, new_sheets, charts);
+    let slots = sheet_slots(new_sheets, charts);
     // IronCalc's index -> index in the saved list.
     let new_index: Vec<usize> = (0..new_sheets.len())
         .map(|i| {
@@ -4256,7 +4433,21 @@ fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
         *patches.written.borrow_mut() = written;
     }
     for c in &patches.file_charts {
-        if let Some(part) = file_chart_part(pkg, &sheets, c.sheet_id, c.cnvpr)? {
+        let sheet_part = match &c.chart_sheet {
+            // Only if it was saved (not left out for a name a worksheet took).
+            Some(part) => sheets
+                .iter()
+                .find(|s| s.kind == SheetKind::Chart && s.part == *part)
+                .map(|s| s.part.clone()),
+            None => sheets
+                .iter()
+                .find(|s| s.sheet_id == c.sheet_id && s.kind == SheetKind::Work)
+                .map(|s| s.part.clone()),
+        };
+        let Some(sheet_part) = sheet_part else {
+            continue;
+        };
+        if let Some(part) = file_chart_part(pkg, &sheet_part, c.cnvpr)? {
             pkg.set(&part, c.xml.clone().into_bytes());
         }
     }
@@ -4802,25 +4993,14 @@ pub(crate) fn shown_notes(bytes: &[u8]) -> HashSet<(u32, u32, u32)> {
 }
 
 /// The chart part of the frame with `cNvPr id` `cnvpr` in the drawing of
-/// sheet `sheet_id` (`None` when there is none: the frame was deleted, or
-/// the package is IronCalc's own).
-fn file_chart_part(
-    pkg: &Package,
-    sheets: &[SheetEntry],
-    sheet_id: u32,
-    cnvpr: u32,
-) -> Result<Option<String>, String> {
-    let Some(sheet) = sheets
-        .iter()
-        .find(|s| s.sheet_id == sheet_id && s.kind == SheetKind::Work)
-    else {
-        return Ok(None);
-    };
-    let rels = match pkg.text(&rels_part(&sheet.part))? {
+/// the worksheet or chart sheet part `sheet_part` (`None` when there is
+/// none: the frame was deleted, or the package is IronCalc's own).
+fn file_chart_part(pkg: &Package, sheet_part: &str, cnvpr: u32) -> Result<Option<String>, String> {
+    let rels = match pkg.text(&rels_part(sheet_part))? {
         Some(x) => parse_rels(x)?,
         None => return Ok(None),
     };
-    let Some(xml) = pkg.text(&sheet.part)? else {
+    let Some(xml) = pkg.text(sheet_part)? else {
         return Ok(None);
     };
     let sk = Skeleton::new(xml);
@@ -4831,7 +5011,7 @@ fn file_chart_part(
             .find(|c| is_main(*c, "drawing"))
             .and_then(|d| d.attribute((NS_R, "id")))
             .and_then(|rid| rels.iter().find(|r| r.id == rid && !r.external))
-            .and_then(|r| resolve(&sheet.part, &r.target))
+            .and_then(|r| resolve(sheet_part, &r.target))
     };
     let Some(drawing) = drawing else {
         return Ok(None);
@@ -5970,6 +6150,7 @@ mod tests {
             drawings: &HashMap::new(),
             pivots: &PivotSave::default(),
             patches: &Patches::default(),
+            chart_sheets: None,
         };
         let done = finish(out, original, &ctx);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());

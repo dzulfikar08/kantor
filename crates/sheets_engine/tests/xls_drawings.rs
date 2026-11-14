@@ -158,7 +158,7 @@ fn pictures_and_charts_are_imported() {
     assert!(chart_xml(&charts[4]).contains("<c:doughnutChart>"));
 
     // The chart sheet.
-    assert_eq!(wb.chart_sheet_name(0), Some("Overview"));
+    assert_eq!(wb.chart_sheet_name(0).as_deref(), Some("Overview"));
     let sheet = wb.chart_sheet_drawings(0);
     assert_eq!(sheet.len(), 1);
     assert!(matches!(sheet[0].anchor, Anchor::Absolute { .. }));

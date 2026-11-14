@@ -11,6 +11,7 @@
 mod batch;
 mod cf_edit;
 mod chart_edit;
+mod chart_sheet;
 mod chart_style;
 mod cond_format;
 mod content_text;
@@ -48,6 +49,7 @@ pub use cf_edit::{
     DATA_BAR_COLORS, ICON_SETS, sqref_of,
 };
 pub use chart_edit::{ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor};
+pub use chart_sheet::sheet_name_problem;
 pub use drawing::Tab;
 pub use import::{ImportNote, SourceFormat};
 pub use notes::{CellNote, SheetNotes};
@@ -1322,6 +1324,7 @@ impl Workbook {
                 self.note_patches(&mut p);
                 p
             },
+            chart_sheets: self.chart_sheet_plans(),
         }
     }
 }
@@ -1352,6 +1355,7 @@ struct XlsxParts {
     moves: shift::Moves,
     drawings: HashMap<u32, Vec<drawing::SaveEdit>>,
     patches: preserve::Patches,
+    chart_sheets: Option<Vec<preserve::ChartSheetPlan>>,
 }
 
 /// IronCalc's `.xlsx` of `model`, with the parts of `original` it doesn't
@@ -1402,6 +1406,7 @@ fn build_xlsx(
         tables: &table_now,
         drawings: &parts.drawings,
         patches: &parts.patches,
+        chart_sheets: parts.chart_sheets.as_deref(),
     };
     Ok(preserve::finish(written, original, &ctx))
 }

@@ -40,6 +40,9 @@ pub(crate) struct Edits {
     /// Notes added, edited or deleted in Kantor: a sheet's whole list, at
     /// the cells of the layout it was made in.
     pub notes: HashMap<u32, (Vec<crate::CellNote>, Layout)>,
+    /// The file's chart sheets once one was renamed, moved, hidden or
+    /// deleted in Kantor (`None`: as opened).
+    pub chart_sheets: Option<Arc<Vec<crate::drawing::ChartSheetNow>>>,
 }
 
 /// What was edited in Kantor at any point of the session (any history

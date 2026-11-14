@@ -849,25 +849,13 @@ impl SheetsView {
         let t = kantor_ui::tokens(cx);
         gpui_kit::component::v_flex()
             .flex_1()
-            .min_h_0()
-            .w_full()
+            .min_w_0()
+            .h_full()
             .track_focus(&self.chart_focus)
-            .child(
-                gpui_kit::component::h_flex()
-                    .flex_none()
-                    .h(CONTROL_LG)
-                    .px(SPACE_4)
-                    .gap(SPACE_2)
-                    .bg(t.chrome)
-                    .border_b_1()
-                    .border_color(t.border)
-                    .text_size(FONT_SMALL)
-                    .text_color(t.fg_muted)
-                    .child(kantor_ui::i18n::tf(
-                        "Chart sheet “{}” · view only: its data is on the worksheets",
-                        &[&name],
-                    )),
-            )
+            .key_context(crate::CHART_SHEET_CONTEXT)
+            .on_action(cx.listener(SheetsView::undo))
+            .on_action(cx.listener(SheetsView::redo))
+            .child(self.render_chart_sheet_bar(&name, cx))
             .child(
                 div()
                     .id("chart-sheet")
@@ -880,7 +868,8 @@ impl SheetsView {
             )
     }
 
-    /// Chart sheet `k` filling the pane (read-only: no selection).
+    /// Chart sheet `k` filling the pane (its chart is edited in the Chart
+    /// panel; it isn't moved or resized).
     pub(crate) fn render_chart_sheet(&self, k: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let layer = self.drawings.clone();
         let table = self.table.clone();

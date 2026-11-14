@@ -168,6 +168,15 @@ fn main() -> Result<()> {
             Ok(Some(src.clone()))
         });
     }
+    // Chart sheets: their charts restyled, tabs renamed, moved, hidden and
+    // deleted, a deletion saved and undone (put back from the opened parts).
+    let chart_sheets = corpus.join("xlsx/22_chart_sheets.xlsx");
+    run.scenario("chart_sheets_edited.xlsx", |o| {
+        let mut wb = Workbook::open(&chart_sheets)?;
+        chart_sheet_edits(&mut wb, o)?;
+        wb.save_as(o.join("chart_sheets_edited.xlsx"))?;
+        Ok(Some(chart_sheets.clone()))
+    });
     let pivots = corpus.join("xlsx/21_pivot_tables.xlsx");
     run.scenario("pivots_21_pivot_tables.xlsx", |o| {
         let mut wb = Workbook::open(&pivots)?;
@@ -614,6 +623,44 @@ fn filters(wb: &mut Workbook) -> Result<()> {
 }
 
 /// Refresh, re-lay-out, delete and insert pivots in file 21.
+fn chart_sheet_edits(wb: &mut Workbook, out: &Path) -> Result<()> {
+    use sheets_engine::{ChartType, LegendPos, Tab};
+    let charts: Vec<usize> = wb
+        .tabs()
+        .into_iter()
+        .filter_map(|t| match t {
+            Tab::Chart(k) => Some(k),
+            _ => None,
+        })
+        .collect();
+    for (i, &k) in charts.iter().enumerate() {
+        let Some(key) = wb.chart_sheet_drawings(k).first().map(|d| d.key) else {
+            continue;
+        };
+        let Some(info) = wb.chart_info(key) else {
+            continue;
+        };
+        let mut spec = info.spec;
+        spec.title = format!("Edited {i}");
+        spec.legend = LegendPos::Top;
+        if !info.fixed && i == 0 {
+            spec.kind = ChartType::Line;
+        }
+        wb.set_chart(key, spec)?;
+    }
+    if let [first, second, ..] = charts[..] {
+        wb.rename_chart_sheet(first, "Renamed chart")?;
+        wb.move_chart_sheet(first, wb.tabs().len())?;
+        wb.delete_chart_sheet(second)?;
+        wb.insert_rows(0, 0, 1)?;
+        wb.save_as(out.join("chart_sheets_edited.step.xlsx"))?;
+        wb.undo()?; // the row
+        wb.undo()?; // the deletion
+        wb.set_chart_sheet_hidden(first, true)?;
+    }
+    Ok(())
+}
+
 fn pivot_edits(wb: &mut Workbook) -> Result<()> {
     let mut found = Vec::new();
     for s in 0..wb.sheet_names().len() as u32 {
