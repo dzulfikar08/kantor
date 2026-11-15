@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 kantor_core.workspace = true
+kantor_ooxml.workspace = true
 # Default features pull in image decoding, which Docs doesn't need yet.
 docx-rs = { version = "0.4.22", default-features = false }
 # Same versions docx-rs uses, for the package scan (no duplicate crates).

@@ -51,6 +51,7 @@ kantor_core = { path = "crates/kantor_core" }
 kantor_spell = { path = "crates/kantor_spell" }
 kantor_mem = { path = "crates/kantor_mem" }
 kantor_numfmt = { path = "crates/kantor_numfmt" }
+kantor_ooxml = { path = "crates/kantor_ooxml" }
 kantor_pdf = { path = "crates/kantor_pdf" }
 kantor_theme = { path = "crates/kantor_theme" }
 kantor_ui = { path = "crates/kantor_ui" }

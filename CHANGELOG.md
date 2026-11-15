@@ -9,6 +9,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Strict Open XML files (Office's "Strict Open XML" Save As type, ISO/IEC 29500 Strict) open in
+  Sheets, Docs and Slides instead of being refused, date cells included. Save writes them under
+  the same name as standard Open XML (Transitional), the format Excel, Word and PowerPoint save by
+  default and every Office version and LibreOffice opens.
+
+### Fixed
+
+- Docs: a `.docx` whose XML parts start with a byte order mark (files written with Microsoft's
+  Open XML SDK) was saved damaged, and Kantor couldn't open the saved file again.
+
 ## [0.7.0] - 2026-11-15
 
 Sheets tabs work like Excel's: insert, delete, rename, move or copy, colour and hide sheets, and

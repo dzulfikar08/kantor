@@ -414,7 +414,8 @@ impl Presentation {
     }
 
     pub fn from_bytes(bytes: Vec<u8>) -> anyhow::Result<Self> {
-        let bytes = Arc::new(bytes);
+        // Strict Open XML is read, and kept for saving, as Transitional.
+        let bytes = Arc::new(kantor_ooxml::transitional(bytes)?);
         let zip =
             zip::ZipArchive::new(Cursor::new(bytes.as_slice())).context("not a zip package")?;
         let names: HashSet<String> = zip
@@ -435,9 +436,6 @@ impl Presentation {
             .iter()
             .find(|r| r.kind() == "officeDocument")
             .context("no main document relationship")?;
-        if office.ty.contains("purl.oclc.org") {
-            bail!("Strict Open XML presentations aren't supported yet");
-        }
         let pres_part = resolve("", &office.target);
         let pres_xml = rd.text(&pres_part)?.context("no presentation part")?;
         let pres_rels = rd.rels(&pres_part)?;

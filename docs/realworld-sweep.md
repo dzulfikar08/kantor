@@ -110,16 +110,35 @@ Every saved file reopened and every opened file exported a PDF, in both runs.
 
 Each fix has a synthetic regression test (crates/sheets_engine/tests/realworld.rs,
 docs_engine `self_closing_section_properties_get_page_setup_inside`,
-`strict_documents_are_named`, msdoc `refuses_encrypted_old_and_foreign_files`,
+msdoc `refuses_encrypted_old_and_foreign_files`,
 slides_engine ppt `huge_group_spaces_fit_32_bit_coordinates`, docs_engine
 page `missing_elements_are_inserted_in_schema_order`).
 
+## Strict Open XML (later)
+
+The 8 Strict Open XML files (ISO/IEC 29500 Strict: 5 `.pptx`, 2 `.docx`,
+1 `.xlsx`) open now. `crates/kantor_ooxml` rewrites a Strict package as
+Transitional before the Sheets, Docs and Slides readers run: Strict
+namespace and relationship-type URIs (`http://purl.oclc.org/ooxml/...`) map
+to their Transitional ones, ISO 8601 date cells (`t="d"`) become serial
+numbers, DrawingML percentages (`"35%"`) and lengths with units (`"1in"`)
+become numbers, and `conformance="strict"` goes. The rewritten package is
+what the document keeps, so Save writes Transitional under the same name.
+Rerun on those 8 files: all ok (opened, saved, reopened, printed, 0 new
+Open XML SDK errors). The 2 `.docx` also showed that a part starting with a
+byte order mark (the Open XML SDK writes one) was saved damaged; fixed.
+A rerun of all `.docx` and `.pptx` files: 112/114 and 62/62 ok, so 412 of
+the 424 files are ok now.
+
+Tests: `crates/{sheets,docs,slides}_engine/tests/strict.rs` open Strict
+fixtures made from corpus files by `scripts/corpus/gen_strict.py` and compare
+them with their Transitional originals; `tools/fidelity` validates the
+Transitional files saved from them.
+
 ## Left
 
-Refused (19):
+Refused (11; 19 before Strict Open XML was read):
 
-- 8 Strict Open XML files (5 `.pptx`, 2 `.docx`, 1 `.xlsx`): Kantor doesn't
-  read ISO 29500 Strict yet.
 - 3 Word 6/95 `.doc` files (refused by design).
 - 3 `.xlsx` packages laid out unusually: the workbook part not at
   `xl/workbook.xml` (2), part names with backslashes (1).

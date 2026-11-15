@@ -245,6 +245,28 @@ fn main() -> Result<()> {
             Ok(Some(src.clone()))
         });
     }
+    // Strict Open XML files (scripts/corpus/gen_strict.py), saved as
+    // Transitional: checked against the Transitional files they were made from.
+    let strict = corpus.join("strict");
+    run.scenario("strict_dates.xlsx", |o| {
+        let mut wb = Workbook::open(strict.join("dates.xlsx"))?;
+        sheet_edits(&mut wb)?;
+        wb.save_as(o.join("strict_dates.xlsx"))?;
+        Ok(Some(corpus.join("xlsx/04_dates.xlsx")))
+    });
+    run.scenario("strict_report.docx", |o| {
+        let mut doc = Document::open(&strict.join("report.docx"))?;
+        doc_edits(&mut doc)?;
+        doc.save_as(&o.join("strict_report.docx"))?;
+        Ok(Some(corpus.join("docx/report.docx")))
+    });
+    run.scenario("strict_deck.pptx", |o| {
+        let mut p = Presentation::open(&strict.join("deck.pptx"))?;
+        slide_edits(&mut p)?;
+        p.save_as(&o.join("strict_deck.pptx"))?;
+        Ok(Some(corpus.join("pptx/deck.pptx")))
+    });
+
     run.scenario("new_deck.pptx", |o| {
         let mut p = Presentation::new();
         let i = p.new_slide(Some(0))?;
