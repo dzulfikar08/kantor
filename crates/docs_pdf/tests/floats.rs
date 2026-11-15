@@ -199,10 +199,7 @@ fn groups_charts_turns_shadows_and_tight_wrap() {
         .unwrap();
     let r = tri.rect;
     let past = laid.paged.pages[page].lines.iter().any(|l| {
-        l.top + l.height > r[1]
-            && l.top < r[1] + r[3]
-            && l.x + l.width > r[0] + 10.0
-            && l.x < r[0]
+        l.top + l.height > r[1] && l.top < r[1] + r[3] && l.x + l.width > r[0] + 10.0 && l.x < r[0]
     });
     assert!(past, "no line under the triangle's slope");
     // The PDF: chart labels and the turned text box's text are text.
