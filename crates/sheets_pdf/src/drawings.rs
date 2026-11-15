@@ -34,6 +34,8 @@ pub enum PrintKind {
     /// A parsed chart, before its live data, and whether its references
     /// are in the current rows and columns (made in Kantor).
     Chart(Arc<Chart>, bool),
+    /// A shape's element XML (see `DrawingKind::Shape`).
+    Shape(Arc<str>),
 }
 
 /// An object to print and where it is on the sheet.
@@ -55,10 +57,12 @@ pub struct SheetDrawings {
     col_starts: Vec<f64>,
     row_starts: Vec<f64>,
     defaults: Option<Arc<Defaults>>,
+    /// The workbook theme's XML, for shapes.
+    theme: Option<Arc<str>>,
 }
 
-/// The objects of `sheet` that print: charts and pictures that aren't
-/// hidden and print with the sheet.
+/// The objects of `sheet` that print: charts, pictures and shapes that
+/// aren't hidden and print with the sheet.
 pub(crate) fn printed(book: &Workbook, sheet: u32) -> Vec<Drawing> {
     if !book.has_drawings() {
         return Vec::new();
@@ -70,7 +74,9 @@ pub(crate) fn printed(book: &Workbook, sheet: u32) -> Vec<Drawing> {
                 && !d.hidden
                 && matches!(
                     *d.kind,
-                    DrawingKind::Chart { .. } | DrawingKind::Picture { .. }
+                    DrawingKind::Chart { .. }
+                        | DrawingKind::Picture { .. }
+                        | DrawingKind::Shape { .. }
                 )
         })
         .collect()
@@ -238,6 +244,7 @@ fn print_kind(book: &Workbook, d: &Drawing, theme: &mut Option<ChartTheme>) -> O
                 *current_refs,
             )
         }
+        DrawingKind::Shape { xml } => PrintKind::Shape(xml.clone()),
         DrawingKind::Other(_) => return None,
     })
 }
@@ -287,6 +294,7 @@ impl SheetDrawings {
             col_starts,
             row_starts,
             defaults: theme.map(|t| Arc::new(t.defaults().clone())),
+            theme: book.theme_xml(),
         }
     }
 
@@ -314,6 +322,7 @@ impl SheetDrawings {
             col_starts: vec![0.0, w],
             row_starts: vec![0.0, h],
             defaults: theme.map(|t| Arc::new(t.defaults().clone())),
+            theme: book.theme_xml(),
         }
     }
 
@@ -360,6 +369,17 @@ impl SheetDrawings {
                         hash,
                         chart: Arc::new(chart),
                         defaults: defaults.clone(),
+                    }
+                }
+                PrintKind::Shape(xml) => {
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    xml.hash(&mut h);
+                    OverlayKind::Shape {
+                        key: d.key,
+                        hash: h.finish(),
+                        xml: xml.clone(),
+                        theme: self.theme.clone(),
                     }
                 }
             };

@@ -300,3 +300,26 @@ fn chart_sheets_print_as_landscape_pages_in_tab_order() {
     let opts = only(&book, "Data");
     assert_eq!(texts(&export(&mut book, &opts)).len(), 1);
 }
+
+#[test]
+fn shapes_and_text_boxes_print_with_their_text() {
+    let mut book = open("xlsx/23_shapes.xlsx");
+    let opts = only(&book, "Shapes");
+    let plan = Plan::new(&book, &opts, &mut Shaper::new());
+    // Everything but the hidden shape is placed.
+    assert_eq!(plan.sheets[0].drawings.items.len(), 9);
+    let all = texts(&export(&mut book, &opts)).join("\n");
+    for t in ["Revenue", "Gradient", "First", "Second", "Note!", "Run"] {
+        assert!(all.contains(t), "{t} missing from {all}");
+    }
+    // Edited text prints.
+    let key = book
+        .drawings(0)
+        .into_iter()
+        .find(|d| d.name == "Revenue box")
+        .unwrap()
+        .key;
+    book.set_shape_text(key, "Turnover").unwrap();
+    let all = texts(&export(&mut book, &opts)).join("\n");
+    assert!(all.contains("Turnover"), "{all}");
+}

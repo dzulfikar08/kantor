@@ -75,10 +75,11 @@ pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) ->
     let src = cx.src;
     let base = n.range().start;
     let local = n.tag_name().name();
-    let ns: &'static str = if n.tag_name().namespace() == Some(NS_DSP) {
-        NS_DSP
-    } else {
-        NS_P
+    // Worksheet drawings (`xdr:`) use the same elements too.
+    let ns: &'static str = match n.tag_name().namespace() {
+        Some(NS_DSP) => NS_DSP,
+        Some(crate::sheet_shape::NS_XDR) => crate::sheet_shape::NS_XDR,
+        _ => NS_P,
     };
     let in_p = n.tag_name().namespace() == Some(ns);
     let nv = n

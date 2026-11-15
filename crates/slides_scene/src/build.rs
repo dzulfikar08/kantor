@@ -571,7 +571,7 @@ pub(crate) struct Draw {
 
 /// The strokes of `paths` (and their arrowheads: the head on the first
 /// open path's start, the tail on the last one's end).
-fn strokes(
+pub(crate) fn strokes(
     mut paths: Vec<Path>,
     color: crate::Rgba,
     width: f32,

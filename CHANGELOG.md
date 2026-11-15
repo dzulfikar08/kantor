@@ -42,6 +42,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Sheets: chart sheets can be copied (Move or Copy) and get a tab colour (Tab Color…).
 - Sheets: the Chart panel sets data labels (value, category name, series name, percentage on pies; label position and number format, for all series or one) and axis options (minimum, maximum, major unit, logarithmic scale, reverse order, number format, display units), drawn on screen and in PDFs. Charts from `.xlsx` and `.xls` files keep theirs, and a chart you don't change is saved exactly as it was.
 
+- Sheets: shapes, text boxes, lines and arrows, groups and form-control buttons on a sheet are
+  drawn as in Excel instead of grey boxes: their geometry (all of Excel's preset shapes and
+  freeforms), solid and gradient fills, outlines with dashes and arrowheads, turns and flips, and
+  their text with its alignment, margins and fonts. They print with the sheet and in the PDF.
+  Double-click a shape or text box to edit its text (one undo step; the rest of the file is saved
+  as it was). The toolbar's Shapes menu inserts a text box, rectangle, rounded rectangle, oval,
+  line, arrow, right arrow or speech bubble at the active cell, and Move or Copy brings a sheet's
+  shapes and text boxes with it.
+
 ### Changed
 - Docs: files with a table of contents or cross-references are saved in place like any other
   file (they used to need a new name). Their fields are written back as they were.

@@ -43,6 +43,9 @@ pub(crate) struct Edits {
     /// The file's chart sheets once one was renamed, moved, hidden or
     /// deleted in Kantor (`None`: as opened).
     pub chart_sheets: Option<Arc<Vec<crate::drawing::ChartSheetNow>>>,
+    /// Shapes and text boxes of the file whose text was edited in Kantor:
+    /// their element's XML now (see [`crate::drawing::DrawingKind::Shape`]).
+    pub shape_texts: HashMap<crate::drawing::DrawingKey, Arc<str>>,
 }
 
 /// What was edited in Kantor at any point of the session (any history
@@ -57,6 +60,7 @@ pub(crate) struct Touched {
     pub tables: HashSet<String>,
     pub file_charts: HashSet<crate::drawing::DrawingKey>,
     pub notes: HashSet<u32>,
+    pub shape_texts: HashSet<crate::drawing::DrawingKey>,
 }
 
 impl Workbook {
@@ -88,6 +92,7 @@ impl Workbook {
         t.tables.extend(edits.removed_tables.iter().cloned());
         t.file_charts.extend(edits.file_charts.keys().copied());
         t.notes.extend(edits.notes.keys().copied());
+        t.shape_texts.extend(edits.shape_texts.keys().copied());
         self.history.set_edits(Arc::new(edits));
         // Answers cached for this state since its IronCalc step are stale.
         *self.cache.borrow_mut() = crate::Cache::default();

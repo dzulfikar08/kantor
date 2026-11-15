@@ -11,8 +11,11 @@
 //!   Excel's size), or a printed page.
 //! - **Objects** ([`Drawing`]): charts (`graphicFrame` → `c:chart`), with
 //!   their part's XML for the renderer, pictures (`pic` → `a:blip`, with
-//!   cropping), and anything else as [`DrawingKind::Other`] (shapes, text
-//!   boxes, groups...), which the grid shows as a box.
+//!   cropping), shapes, text boxes, connectors and groups (`sp`, `cxnSp`,
+//!   `grpSp`, also form controls' shapes inside `mc:AlternateContent`) as
+//!   their element's XML ([`DrawingKind::Shape`], drawn by `sheets_scene`;
+//!   text edited with [`Workbook::set_shape_text`]), and anything else as
+//!   [`DrawingKind::Other`], which the grid shows as a box.
 //! - **Live data**: [`Workbook::chart_reference`] reads the cells a chart
 //!   series points at (`c:f`), with the rows and columns inserted or deleted
 //!   since opening applied, so a chart follows edits.
@@ -235,8 +238,11 @@ pub enum DrawingKind {
         data: Arc<Vec<u8>>,
         crop: [f32; 4],
     },
-    /// Something not drawn (a shape, text box, group, connector, a chart
-    /// whose part is missing...): the element's name.
+    /// A shape, text box, connector or group: its element's XML, which
+    /// declares the namespaces it uses (it parses on its own).
+    Shape { xml: Arc<str> },
+    /// Something not drawn (a chart whose part is missing, an OLE
+    /// object...): the element's name.
     Other(String),
 }
 
@@ -255,6 +261,9 @@ pub(crate) struct Object {
     /// saved and then undone), and the namespaces declared around it.
     xml: String,
     namespaces: Arc<str>,
+    /// Inside `mc:AlternateContent` (a form control's shape): shown, never
+    /// edited.
+    alternate: bool,
 }
 
 /// An object on a sheet as it is now.
@@ -302,6 +311,9 @@ pub(crate) struct SaveEdit {
     pub xml: String,
     /// The namespace declarations it needs (`xmlns:xdr="..." ...`).
     pub namespaces: String,
+    /// Its object element as it is now, when its text was edited this
+    /// session (written in place of the one in the file).
+    pub object: Option<String>,
 }
 
 /// The drawings of the opened file.
@@ -610,7 +622,26 @@ fn read_objects(
         .collect::<Vec<_>>()
         .join(" ")
         .into();
-    for a in doc.root_element().children().filter(|n| is_anchor(*n)) {
+    // Anchors, and those of form controls (`mc:AlternateContent`, whose
+    // first choice Excel shows).
+    let anchors = doc.root_element().children().flat_map(|n| {
+        if is_anchor(n) {
+            vec![(n, false)]
+        } else if n.is_element() && n.tag_name().name() == "AlternateContent" {
+            n.children()
+                .find(|c| c.is_element() && c.tag_name().name() == "Choice")
+                .map(|c| {
+                    c.children()
+                        .filter(|a| is_anchor(*a))
+                        .map(|a| (a, true))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    });
+    for (a, alternate) in anchors {
         let Some(anchor) = parse_anchor(a) else {
             continue;
         };
@@ -620,9 +651,16 @@ fn read_objects(
             *ids.entry(id).or_default() += 1;
         }
         let kind = match object_element(a) {
+            Some(obj) if is_shape(obj) => DrawingKind::Shape {
+                xml: standalone(&xml[obj.range()], &in_scope(obj)).into(),
+            },
             Some(obj) => kind(obj, targets, &mut parts),
             None => DrawingKind::Other("anchor".into()),
         };
+        // Only shapes of form controls: their other objects stay unseen.
+        if alternate && !matches!(kind, DrawingKind::Shape { .. }) {
+            continue;
+        }
         out.push(Object {
             id,
             name: nv
@@ -643,14 +681,57 @@ fn read_objects(
                 .is_none_or(|v| v != "0" && v != "false"),
             xml: xml[a.range()].to_owned(),
             namespaces: namespaces.clone(),
+            alternate,
         });
     }
     for o in &mut out {
-        if o.id.is_some_and(|id| ids[&id] > 1) {
+        if o.alternate || o.id.is_some_and(|id| ids[&id] > 1) {
             o.id = None;
         }
     }
     out
+}
+
+/// The namespace declarations in scope at `n` (`xmlns:p="..." ...`).
+fn in_scope(n: Node) -> String {
+    n.namespaces()
+        .filter(|ns| ns.name() != Some("xml"))
+        .map(|ns| match ns.name() {
+            Some(p) => format!("xmlns:{p}=\"{}\"", esc(ns.uri())),
+            None => format!("xmlns=\"{}\"", esc(ns.uri())),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Whether `obj` is a shape, text box, connector or group (in the
+/// SpreadsheetML drawing namespace).
+fn is_shape(obj: Node) -> bool {
+    obj.tag_name().namespace() == Some(NS_XDR)
+        && matches!(obj.tag_name().name(), "sp" | "cxnSp" | "grpSp")
+}
+
+/// An element's XML with the namespace declarations `namespaces`
+/// (`xmlns:p="..."`, as declared around it) added to its start tag, so it
+/// parses on its own. Declarations it makes itself are kept.
+pub(crate) fn standalone(element: &str, namespaces: &str) -> String {
+    let Some(end) = element.find(|c: char| c.is_whitespace() || c == '>' || c == '/') else {
+        return element.to_owned();
+    };
+    let tag_end = element.find('>').unwrap_or(element.len());
+    let start_tag = &element[..tag_end];
+    let mut add = String::new();
+    for decl in namespaces.split(' ').filter(|d| !d.is_empty()) {
+        let name = decl.split('=').next().unwrap_or_default();
+        let own = start_tag
+            .split(|c: char| c.is_whitespace())
+            .any(|t| t.split('=').next() == Some(name));
+        if !own {
+            add.push(' ');
+            add.push_str(decl);
+        }
+    }
+    format!("{}{add}{}", &element[..end], &element[end..])
 }
 
 impl Drawings {
@@ -773,10 +854,21 @@ impl Drawings {
         Some((obj.id?, xml.clone()))
     }
 
-    /// Every edited object's state for a save, by `sheetId`.
-    pub(crate) fn save_edits(&self, edits: &Edits, now: &Layout) -> HashMap<u32, Vec<SaveEdit>> {
+    /// Every edited object's state for a save, by `sheetId`: moved,
+    /// resized or deleted ones, and those whose text was edited (`texts`
+    /// has the current state's, `text_touched` every one edited this
+    /// session).
+    pub(crate) fn save_edits(
+        &self,
+        edits: &Edits,
+        now: &Layout,
+        texts: &HashMap<DrawingKey, Arc<str>>,
+        text_touched: &HashSet<DrawingKey>,
+    ) -> HashMap<u32, Vec<SaveEdit>> {
         let mut out: HashMap<u32, Vec<SaveEdit>> = HashMap::new();
-        for key in &self.touched {
+        let mut keys: Vec<&DrawingKey> = self.touched.iter().collect();
+        keys.extend(text_touched.iter().filter(|k| !self.touched.contains(k)));
+        for key in keys {
             let Some(obj) = self
                 .sheets
                 .get(&key.sheet_id)
@@ -785,11 +877,19 @@ impl Drawings {
                 continue;
             };
             let Some(id) = obj.id else { continue };
+            let object = text_touched.contains(key).then(|| match texts.get(key) {
+                Some(x) => x.to_string(),
+                None => match &*obj.kind {
+                    DrawingKind::Shape { xml } => xml.to_string(),
+                    _ => String::new(),
+                },
+            });
             out.entry(key.sheet_id).or_default().push(SaveEdit {
                 id,
                 anchor: current_anchor(obj, *key, edits, now),
                 xml: obj.xml.clone(),
                 namespaces: obj.namespaces.to_string(),
+                object: object.filter(|o| !o.is_empty()),
             });
         }
         out
@@ -883,6 +983,13 @@ impl Workbook {
                     descr: obj.descr.clone(),
                     anchor: current_anchor(obj, key, &edits, &now)?,
                     kind: match (&*obj.kind, restyled.file_charts.contains_key(&key)) {
+                        (DrawingKind::Shape { .. }, _)
+                            if restyled.shape_texts.contains_key(&key) =>
+                        {
+                            Arc::new(DrawingKind::Shape {
+                                xml: restyled.shape_texts[&key].clone(),
+                            })
+                        }
                         (DrawingKind::Chart { part, .. }, true) => {
                             let (xml, _) = self.file_chart_now(key)?;
                             Arc::new(DrawingKind::Chart {

@@ -23,6 +23,7 @@
 
 mod build;
 pub mod chart;
+mod free;
 pub mod geom;
 pub mod paint;
 pub mod table;

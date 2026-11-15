@@ -48,7 +48,7 @@ fn objects(wb: &Workbook, sheet: u32) -> (usize, usize, Vec<String>) {
                 xml.push(x.to_string());
             }
             DrawingKind::Picture { .. } => pictures += 1,
-            DrawingKind::Other(_) => {}
+            _ => {}
         }
     }
     (charts, pictures, xml)

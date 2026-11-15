@@ -499,6 +499,17 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .tooltip(i18n::t("Insert Chart"))
             .dropdown_menu(move |menu, _, _| crate::chart_ui::chart_menu(menu, &chart_view)),
     );
+    // Text box and shapes.
+    let shape_view = cx.entity().downgrade();
+    row = row.child(
+        Button::new("shape-menu")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::Shapes)
+            .dropdown_caret(true)
+            .tooltip(i18n::t("Shapes"))
+            .dropdown_menu(move |menu, _, _| crate::shape_ui::shape_menu(menu, &shape_view)),
+    );
     // PivotTables.
     let pivot_view = cx.entity().downgrade();
     row = row.child(separator(cx)).child(

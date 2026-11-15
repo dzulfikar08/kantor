@@ -12,8 +12,12 @@
 //!   rows; number formats come from the cells (through `kantor_numfmt`,
 //!   like the grid's).
 //! - **Pictures** are one [`slides_scene::Picture`] with their cropping.
-//! - Anything else (shapes, text boxes, chart types Kantor can't draw) is
-//!   a [`Prim::Unsupported`] box, which the screen shows as a placeholder.
+//! - **Shapes**, text boxes, connectors and groups are read and drawn by
+//!   Slides' shape code ([`shape_items`]): preset and custom geometry,
+//!   solid and gradient fills, outlines with dashes and arrowheads, and
+//!   their text (Excel's 11 pt default, the theme's fonts and colours).
+//! - Anything else (chart types Kantor can't draw, OLE objects) is a
+//!   [`Prim::Unsupported`] box, which the screen shows as a placeholder.
 //!
 //! Items are in the object's own px (`0..w`, `0..h`); [`translated`]
 //! places them. [`DrawingScenes`] caches built charts per object, size and
@@ -27,17 +31,19 @@ use std::sync::Arc;
 use docs_layout::Engine;
 use sheets_engine::Workbook;
 use sheets_engine::drawing::{Drawing, DrawingKey, DrawingKind, RefData, RefValue};
-use slides_engine::theme::{ClrMap, ColorCtx, Theme};
-use slides_engine::{Fill, Rgb};
+use slides_engine::theme::{ClrMap, ColorCtx, ListStyle, Theme};
+use slides_engine::{EMU_PER_PX, Fill, Rgb, Xfrm};
 use slides_scene::chart::model::Line;
 use slides_scene::chart::{self, Chart, Defaults};
-use slides_scene::{Affine, Item, Picture, Prim};
+use slides_scene::{Affine, Builder, Item, Picture, Prim};
 
 /// The chart look of a workbook: its theme's colours and fonts.
 pub struct ChartTheme {
     theme: Theme,
     map: ClrMap,
     defaults: Defaults,
+    /// For shapes: the workbook's theme, or Office's when it has none.
+    shape_theme: Theme,
 }
 
 impl ChartTheme {
@@ -55,6 +61,12 @@ impl ChartTheme {
             Defaults::default()
         };
         Self {
+            // Shapes refer to theme colours and styles: Office's when the
+            // workbook has no theme.
+            shape_theme: match theme_xml {
+                Some(x) => Theme::parse(x),
+                None => Theme::parse(&slides_engine::sheet_shape::office_theme()),
+            },
             theme,
             map,
             defaults,
@@ -204,6 +216,46 @@ pub fn live_chart(base: &Chart, book: &Workbook, current: bool) -> (Chart, u64) 
     (chart, h.finish())
 }
 
+/// The items of a shape, text box, connector or group (its element's XML,
+/// see `DrawingKind::Shape`) drawn into `w` × `h` px; a placeholder box
+/// when it can't be read. Its own turn and flips apply inside the box.
+pub fn shape_items(
+    builder: &Builder,
+    engine: &mut Engine,
+    theme: &ChartTheme,
+    xml: &str,
+    w: f32,
+    h: f32,
+) -> Vec<Item> {
+    let colors = ColorCtx {
+        theme: &theme.shape_theme,
+        map: &theme.map,
+        ph: None,
+    };
+    let Some(shape) = slides_engine::sheet_shape::parse(&format!("<r>{xml}</r>"), colors) else {
+        return placeholder(w, h);
+    };
+    let emu = |v: f32| (v * EMU_PER_PX).round() as i64;
+    let mut xfrm = Xfrm::new(0, 0, emu(w), emu(h));
+    if let Some(own) = shape.xfrm {
+        xfrm.rot = own.rot;
+        xfrm.flip_h = own.flip_h;
+        xfrm.flip_v = own.flip_v;
+    }
+    // Excel's shape text: 11 pt in the theme's body font.
+    let mut base = ListStyle::default();
+    for l in &mut base.0 {
+        l.size = Some(1100);
+    }
+    let minor = theme.shape_theme.minor_font.clone();
+    let text = |s: &slides_engine::Shape, x: &Xfrm| {
+        slides_engine::render::free_shape_text(s, &base, minor.as_deref(), x)
+    };
+    let mut out = Vec::new();
+    builder.free_shape(engine, &shape, &xfrm, &text, &mut out);
+    out
+}
+
 /// `items` moved by `(x, y)`.
 pub fn translated(items: &[Item], x: f32, y: f32) -> Vec<Item> {
     let t = Affine::translate(x, y);
@@ -273,6 +325,8 @@ struct Live {
 #[derive(Default)]
 pub struct DrawingScenes {
     theme: Option<Arc<ChartTheme>>,
+    /// Shapes' text layouts.
+    shapes: Builder,
     /// Parsed chart parts, by part name.
     parsed: HashMap<Arc<str>, Option<Arc<Chart>>>,
     live: HashMap<DrawingKey, Live>,
@@ -367,6 +421,26 @@ impl DrawingScenes {
                 return Arc::new(picture_items(part, data, *crop, w, h));
             }
             DrawingKind::Other(_) => return Arc::new(placeholder(w, h)),
+            DrawingKind::Shape { xml } => {
+                let hash = {
+                    let mut h = DefaultHasher::new();
+                    xml.hash(&mut h);
+                    h.finish()
+                };
+                let key = (d.key, q(w), q(h));
+                if let Some((h0, items)) = self.built.get(&key)
+                    && *h0 == hash
+                {
+                    return items.clone();
+                }
+                let theme = self.theme(book);
+                let items = Arc::new(shape_items(&self.shapes, engine, &theme, xml, w, h));
+                if self.built.len() >= MAX_BUILT {
+                    self.built.clear();
+                }
+                self.built.insert(key, (hash, items.clone()));
+                return items;
+            }
             DrawingKind::Chart { .. } => {}
         }
         let Some((chart, hash)) = self.live(book, d) else {

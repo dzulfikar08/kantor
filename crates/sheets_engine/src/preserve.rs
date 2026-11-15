@@ -334,6 +334,9 @@ pub(crate) struct ChartSave {
     pub xml: String,
     /// A picture (copied with its sheet) instead of a chart.
     pub picture: Option<PictureSave>,
+    /// A shape or text box instead of a chart: its element (its `cNvPr
+    /// id` is set here).
+    pub shape: Option<String>,
 }
 
 /// A picture to add to a drawing (see [`ChartSave::picture`]).
@@ -5146,6 +5149,10 @@ fn write_charts(
             let mut dxml = dxml;
             dxml.replace_range(range, "");
             pkg.set(&r.drawing, dxml.into_bytes());
+            if r.rid.is_empty() {
+                // A shape: no part of its own.
+                continue;
+            }
             let rels_name = rels_part(&r.drawing);
             if let Some(x) = pkg.text(&rels_name)? {
                 let mut rels = parse_rels(x)?;
@@ -5261,15 +5268,30 @@ fn write_charts(
             // Saved before in this drawing: update it there.
             if let Some(sv) = &c.saved
                 && sv.drawing == drawing
-                && pkg.has(&sv.part)
+                && (c.shape.is_some() || pkg.has(&sv.part))
                 && let Some(range) = chart_anchor_range(&dxml, sv.cnvpr, &sv.rid)
             {
-                match &c.picture {
-                    Some(pic) => pkg.set(&sv.part, pic.data.to_vec()),
-                    None => pkg.set(&sv.part, c.xml.clone().into_bytes()),
+                match (&c.picture, &c.shape) {
+                    (_, Some(_)) => {}
+                    (Some(pic), _) => pkg.set(&sv.part, pic.data.to_vec()),
+                    _ => pkg.set(&sv.part, c.xml.clone().into_bytes()),
                 }
                 dxml.replace_range(range, &object_anchor(&prefix, c, sv.cnvpr, &sv.rid));
                 written.push((c.id, sv.clone()));
+                continue;
+            }
+            if let Some(obj) = &c.shape {
+                anchors.push_str(&object_anchor(&prefix, c, next_id, ""));
+                written.push((
+                    c.id,
+                    SavedChart {
+                        drawing: drawing.clone(),
+                        cnvpr: next_id,
+                        part: String::new(),
+                        rid: String::new(),
+                    },
+                ));
+                next_id += cnvpr_count(obj);
                 continue;
             }
             let (part, kind) = match &c.picture {
@@ -5342,17 +5364,19 @@ fn write_charts(
 }
 
 /// The byte range of the anchor holding chart `rid` with `cNvPr id` `cnvpr`
-/// in drawing XML.
+/// in drawing XML (`rid` empty: a shape, found by its id alone).
 fn chart_anchor_range(xml: &str, cnvpr: u32, rid: &str) -> Option<std::ops::Range<usize>> {
     let doc = Document::parse(xml).ok()?;
     let a = doc.root_element().children().find(|a| {
         crate::drawing::is_anchor(*a)
             && crate::drawing::c_nv_pr(*a).and_then(|n| n.attribute("id"))
                 == Some(&cnvpr.to_string())
-            && a.descendants().any(|d| {
-                (d.tag_name().name() == "chart" && d.attribute((NS_R, "id")) == Some(rid))
-                    || (d.tag_name().name() == "blip" && d.attribute((NS_R, "embed")) == Some(rid))
-            })
+            && (rid.is_empty()
+                || a.descendants().any(|d| {
+                    (d.tag_name().name() == "chart" && d.attribute((NS_R, "id")) == Some(rid))
+                        || (d.tag_name().name() == "blip"
+                            && d.attribute((NS_R, "embed")) == Some(rid))
+                }))
     })?;
     Some(a.range())
 }
@@ -5381,6 +5405,13 @@ fn object_anchor(p: &str, c: &ChartSave, id: u32, rid: &str) -> String {
             format!("</{p}absoluteAnchor>"),
         ),
     };
+    if let Some(obj) = &c.shape {
+        return format!(
+            "{open}{pos}{obj}<{p}clientData/>{close}",
+            pos = c.anchor.position_xml(p),
+            obj = with_cnvpr_id(obj, id),
+        );
+    }
     if let Some(pic) = &c.picture {
         const A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
         let [l, t, r, b] = pic.crop.map(|f| (f * 100_000.0).round() as i64);
@@ -5407,6 +5438,35 @@ fn object_anchor(p: &str, c: &ChartSave, id: u32, rid: &str) -> String {
         name = esc_attr(&c.name),
         rid = esc_attr(rid),
     )
+}
+
+/// An object element with its `cNvPr` ids numbered from `id` (a group's
+/// shapes after the group's own), so they are unique in the drawing.
+fn with_cnvpr_id(obj: &str, id: u32) -> String {
+    let Ok(doc) = Document::parse(obj) else {
+        return obj.to_owned();
+    };
+    let ranges: Vec<std::ops::Range<usize>> = doc
+        .descendants()
+        .filter(|n| n.tag_name().name() == "cNvPr")
+        .filter_map(|n| n.attributes().find(|a| a.name() == "id"))
+        .map(|a| a.range_value())
+        .collect();
+    let mut s = obj.to_owned();
+    for (i, r) in ranges.into_iter().enumerate().rev() {
+        s.replace_range(r, &(id + i as u32).to_string());
+    }
+    s
+}
+
+/// How many `cNvPr` ids an object element takes.
+fn cnvpr_count(obj: &str) -> u32 {
+    let n = Document::parse(obj).map_or(0, |d| {
+        d.descendants()
+            .filter(|n| n.tag_name().name() == "cNvPr")
+            .count()
+    });
+    (n as u32).max(1)
 }
 
 /// A worksheet's XML with `<drawing r:id="rid"/>` in schema order.
@@ -5985,7 +6045,7 @@ fn move_part(
                 if let Some(e) = id.and_then(|id| edited.iter().find(|e| e.id == id)) {
                     seen.insert(e.id);
                     let text = match e.anchor {
-                        Some(a) => placed_anchor(anchor, &a, xml),
+                        Some(a) => placed_anchor(anchor, &a, xml, e.object.as_deref()),
                         None => String::new(),
                     };
                     edits.push((anchor.range(), text));
@@ -6018,7 +6078,7 @@ fn move_part(
                     let wrapped = format!("<r {}>{}</r>", e.namespaces, e.xml);
                     let doc = Document::parse(&wrapped).ok()?;
                     let el = doc.root_element().first_element_child()?;
-                    Some(placed_anchor(el, &a, &wrapped))
+                    Some(placed_anchor(el, &a, &wrapped, e.object.as_deref()))
                 })
                 .collect();
             if !missing.is_empty() {
@@ -6092,7 +6152,14 @@ fn move_part(
 
 /// An anchor element (`src[a.range()]`) with its position elements
 /// replaced by `anchor`'s, as the same kind of anchor.
-fn placed_anchor(a: Node, anchor: &crate::drawing::Anchor, src: &str) -> String {
+/// `object`: the object element to write instead of the anchor's own (a
+/// shape whose text was edited).
+fn placed_anchor(
+    a: Node,
+    anchor: &crate::drawing::Anchor,
+    src: &str,
+    object: Option<&str>,
+) -> String {
     let text = &src[a.range()];
     let tag = text[1..]
         .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
@@ -6121,8 +6188,16 @@ fn placed_anchor(a: Node, anchor: &crate::drawing::Anchor, src: &str) -> String 
         format!("<{tag}>")
     };
     out.push_str(&anchor.position_xml(prefix));
+    let mut object = object;
     for c in a.children() {
         if c.is_element() && matches!(c.tag_name().name(), "from" | "to" | "ext" | "pos") {
+            continue;
+        }
+        if c.is_element()
+            && c.tag_name().name() != "clientData"
+            && let Some(o) = object.take()
+        {
+            out.push_str(o);
             continue;
         }
         out.push_str(&src[c.range()]);
