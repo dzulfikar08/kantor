@@ -346,3 +346,58 @@ fn shapes_are_built_once_per_size_and_text() {
     let c = scenes.items(&mut engine, &book, &d, 200.0, 100.0);
     assert!(!Arc::ptr_eq(&a, &c));
 }
+
+fn text_colors(items: &[Item]) -> Vec<[u8; 3]> {
+    items
+        .iter()
+        .filter_map(|i| match &i.prim {
+            Prim::Text(t) => Some(t.runs.iter().map(|r| {
+                let c = r.run.color.0;
+                [c[0], c[1], c[2]]
+            })),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+#[test]
+fn default_text_on_no_fill_reads_on_a_dark_grid() {
+    let mut book = Workbook::open(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/xlsx/23_shapes.xlsx"),
+    )
+    .unwrap();
+    let mut engine = Engine::new();
+    let mut scenes = DrawingScenes::default();
+    let find =
+        |book: &Workbook, n: &str| book.drawings(0).into_iter().find(|d| d.name == n).unwrap();
+    // A text box with its fill taken off: black text, white on dark.
+    let d = find(&book, "Notes box");
+    book.edit_shape(d.key, |x| {
+        sheets_engine::shape_format::set_fill(x, sheets_engine::ShapeFill::None)
+    })
+    .unwrap();
+    let d = find(&book, "Notes box");
+    let light = scenes.items(&mut engine, &book, &d, 200.0, 100.0);
+    assert!(
+        text_colors(&light).iter().all(|c| *c == [0, 0, 0]),
+        "{:?}",
+        text_colors(&light)
+    );
+    scenes.set_dark_text(Some(Rgb([0xEE, 0xEE, 0xEE])));
+    let dark = scenes.items(&mut engine, &book, &d, 200.0, 100.0);
+    let cs = text_colors(&dark);
+    assert!(
+        !cs.is_empty() && cs.iter().all(|c| *c == [0xEE, 0xEE, 0xEE]),
+        "{cs:?}"
+    );
+    // White text on a filled shape keeps its colour.
+    let rev = scenes.items(
+        &mut engine,
+        &book,
+        &find(&book, "Revenue box"),
+        200.0,
+        100.0,
+    );
+    assert!(text_colors(&rev).iter().all(|c| *c == [255, 255, 255]));
+}

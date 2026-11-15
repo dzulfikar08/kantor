@@ -67,9 +67,11 @@ mod popup_list;
 mod print;
 mod print_preview;
 mod recovery;
+mod rich;
 mod row_heights;
 mod row_layout;
 mod saving;
+mod shape_format_ui;
 mod shape_ui;
 mod sheet_tab_ui;
 mod spell_ui;
@@ -873,25 +875,13 @@ impl TableDelegate for SheetGrid {
             None => content.apply(cell),
         };
         let validation = self.validation_layers(row, col, row_height, cx);
-        // A note: its corner mark, and the note while the pointer is over
-        // the cell or when it is shown (not while the cell or the note is
-        // being edited).
+        // A note: its corner mark and hover target (the drawing layer draws
+        // its box while the pointer is over the cell or when it is shown).
         let note_edited = self.note_editing == Some((sheet, row, col));
         let mut note_layers = self
             .book
             .note_at(sheet, row, col)
-            .map(|note| {
-                let editing = self
-                    .editor
-                    .as_ref()
-                    .is_some_and(|e| e.cell == (row, col) && e.sheet == sheet);
-                let shown = !editing
-                    && !note_edited
-                    && (self.note_hover == Some((sheet, row, col))
-                        || note.shown
-                        || self.show_all_notes);
-                notes_ui::layers(&note, (sheet, row, col), shown, &self.view, &t)
-            })
+            .map(|_| notes_ui::layers((sheet, row, col), &self.view, &t))
             .unwrap_or_default();
         if note_edited {
             note_layers.push(notes_ui::anchor_layer(&self.note_anchor));
@@ -1205,6 +1195,8 @@ pub struct SheetsView {
     /// The Chart panel (see [`chart_ui`]) and a "series in rows" choice
     /// waiting for the window.
     chart_panel: Option<chart_ui::ChartPanel>,
+    /// Format Shape, beside the grid.
+    shape_panel: Option<shape_format_ui::ShapePanel>,
     pending_chart_rows: Option<bool>,
     /// The Data Validation card (see [`dv_ui`]).
     dv_dialog: Option<dv_ui::DvDialog>,
@@ -1311,6 +1303,7 @@ impl SheetsView {
             cf_dialog: None,
             dv_dialog: None,
             chart_panel: None,
+            shape_panel: None,
             pending_chart_rows: None,
             cf_manager: None,
             table_panel: None,
@@ -2622,6 +2615,7 @@ impl Render for SheetsView {
         }
         self.apply_pending_chart(window, cx);
         self.sync_chart_panel(window, cx);
+        self.sync_shape_panel(window, cx);
         let root = self.editor_actions(v_flex(), cx);
         let root = self.point_actions(root, cx);
         let root = self.calc_actions(root, cx);
@@ -2740,6 +2734,7 @@ impl Render for SheetsView {
                     let panel = self.render_pivot_panel(cx);
                     let table_panel = self.render_table_panel(cx);
                     let chart_panel = self.render_chart_panel(cx);
+                    let shape_panel = self.render_shape_panel(cx);
                     h_flex()
                         .flex_1()
                         .min_h_0()
@@ -2765,7 +2760,12 @@ impl Render for SheetsView {
                                 .on_action(cx.listener(Self::toggle_underline))
                                 // A drag only extends the range if it started on a cell
                                 // (cells set `dragging` after this capture listener runs).
-                                .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
+                                .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
+                                    // A click on the grid ends a shape's or note's
+                                    // text edit (the editors' menus pop up outside
+                                    // them, so a click outside can't end it).
+                                    this.commit_shape_text(false, window, cx);
+                                    this.commit_note(false, window, cx);
                                     this.dragging = false;
                                     this.point_dragging = false;
                                     this.reset_grid_drag(cx);
@@ -2784,6 +2784,7 @@ impl Render for SheetsView {
                         .children(panel)
                         .children(table_panel)
                         .children(chart_panel)
+                        .children(shape_panel)
                 })
             })
             // Sheet tabs

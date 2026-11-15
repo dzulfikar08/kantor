@@ -26,7 +26,7 @@ mod icons;
 mod import;
 mod look;
 mod move_chart;
-mod notes;
+pub mod notes;
 mod numfmt;
 mod ods;
 mod ods_drawing;
@@ -41,6 +41,7 @@ mod print;
 mod recovery;
 mod rows;
 mod shape_edit;
+pub mod shape_format;
 mod sheet_tabs;
 mod shift;
 mod sort;
@@ -63,10 +64,11 @@ pub use chart_sheet::sheet_name_problem;
 pub use drawing::Tab;
 pub use import::{ImportNote, SourceFormat};
 pub use move_chart::{ChartPlace, MovedChart};
-pub use notes::{CellNote, SheetNotes};
+pub use notes::{CellNote, NoteBox, NoteRun, SheetNotes};
 pub use preserve::package_problems;
 pub use recovery::{SaveJob, Saved, XlsxOutput, XlsxSnapshot, write_file_atomic};
 pub use shape_edit::ShapePreset;
+pub use shape_format::{OutlineEdit, ShapeFill, TextAnchor};
 pub use sheet_tabs::{STANDARD_COLORS, TabColor, theme_tints};
 pub use table_edit::{TableOptions, TotalFunc, table_style_names, valid_table_name};
 pub use validation_edit::{
@@ -179,7 +181,7 @@ pub struct Workbook {
     /// `sheetId` (`grid::set_frozen_at`).
     panes: HashMap<u32, (u32, u32)>,
     /// Notes the opened file shows all the time, `(sheetId, row, col)`.
-    shown_notes: std::collections::HashSet<(u32, u32, u32)>,
+    note_extras: HashMap<(u32, u32, u32), notes::NoteExtra>,
 }
 
 /// See [`Workbook::cached`].
@@ -501,7 +503,7 @@ impl Workbook {
             saved_charts: HashMap::new(),
             touched: Default::default(),
             panes: HashMap::new(),
-            shown_notes: Default::default(),
+            note_extras: Default::default(),
         })
     }
 
@@ -602,7 +604,7 @@ impl Workbook {
             mut prints,
             pivots,
             panes,
-            shown_notes,
+            note_extras,
         } = extras
             .map(|h| h.join().unwrap_or_default())
             .unwrap_or_default();
@@ -683,7 +685,7 @@ impl Workbook {
             saved_charts: HashMap::new(),
             touched,
             panes: HashMap::new(),
-            shown_notes,
+            note_extras,
         };
         book.apply_read_panes(&panes);
         if !xls_drawings.is_empty() {
@@ -1463,8 +1465,8 @@ struct Extras {
     pivots: pivot::Pivots,
     /// Top-left cells of frozen panes (`grid::read_panes`).
     panes: HashMap<u32, (u32, u32)>,
-    /// Notes shown all the time (`preserve::shown_notes`).
-    shown_notes: std::collections::HashSet<(u32, u32, u32)>,
+    /// Notes' shown state, boxes and formatted text (`preserve::note_extras`).
+    note_extras: HashMap<(u32, u32, u32), notes::NoteExtra>,
 }
 
 impl Extras {
@@ -1477,7 +1479,7 @@ impl Extras {
             prints: print::Prints::read(bytes, &skeletons),
             pivots: pivot::Pivots::read(bytes),
             panes: grid::read_panes(&skeletons),
-            shown_notes: preserve::shown_notes(bytes),
+            note_extras: preserve::note_extras(bytes),
         }
     }
 }

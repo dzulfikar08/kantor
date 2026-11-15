@@ -4862,6 +4862,13 @@ fn merge_comments(old: &str, list: &[crate::notes::NoteSave]) -> Result<String, 
                     .and_then(|i| i.parse::<usize>().ok())
                     .and_then(|i| authors.get(i))
                     == Some(&n.author)
+                && n.runs.as_ref().is_none_or(|runs| {
+                    c.children()
+                        .find(|t| is_main(*t, "text"))
+                        .and_then(|t| crate::notes::read_runs(t, old))
+                        .as_deref()
+                        == Some(&runs[..])
+                })
         });
         match kept {
             Some(c) => body.push_str(&old[c.range()]),
@@ -4876,7 +4883,7 @@ fn merge_comments(old: &str, list: &[crate::notes::NoteSave]) -> Result<String, 
                 body.push_str(&format!(
                     "<comment ref=\"{}\" authorId=\"{author}\">{}</comment>",
                     crate::cell_name(n.row, n.col),
-                    crate::notes::text_xml(&n.author, &n.text)
+                    crate::notes::note_text_xml(n)
                 ));
             }
         }
@@ -4978,6 +4985,36 @@ fn merge_vml(
             continue;
         };
         shapes_left += 1;
+        // A box moved or resized in Kantor: its anchor.
+        if let Some(a) = note.anchor {
+            let el = data
+                .children()
+                .find(|c| c.is_element() && c.tag_name().name() == "Anchor");
+            match el.and_then(text_of) {
+                Some(t) if parse_anchor(t.text().unwrap_or_default()) == Some(a) => {}
+                Some(t) => edits.push((t.range(), crate::notes::anchor_text(a))),
+                None if el.is_none() => {
+                    // Before `AutoFill` / `Row`, as Excel orders them.
+                    let at = data
+                        .children()
+                        .find(|c| {
+                            c.is_element() && matches!(c.tag_name().name(), "AutoFill" | "Row")
+                        })
+                        .map(|c| c.range().start);
+                    if let Some(at) = at {
+                        let p = match data.lookup_prefix(VML_X) {
+                            Some(p) if !p.is_empty() => format!("{p}:"),
+                            _ => String::new(),
+                        };
+                        edits.push((
+                            at..at,
+                            format!("<{p}Anchor>{}</{p}Anchor>", crate::notes::anchor_text(a)),
+                        ));
+                    }
+                }
+                None => {}
+            }
+        }
         let visible = data
             .children()
             .find(|c| c.is_element() && c.tag_name().name() == "Visible");
@@ -5040,10 +5077,12 @@ fn merge_vml(
     Ok((apply_edits(old, edits), shapes_left > 0))
 }
 
-/// Notes the package shows all the time (`<x:Visible/>` in their VML box),
-/// as `(sheetId, row, col)`.
-pub(crate) fn shown_notes(bytes: &[u8]) -> HashSet<(u32, u32, u32)> {
-    let mut out = HashSet::new();
+/// What the package says of each note besides its text: shown all the
+/// time (`<x:Visible/>` in its VML box), its box's `x:Anchor`, and its
+/// formatted text when that differs from Excel's default formatting
+/// (bold author line, then plain text), by `(sheetId, row, col)`.
+pub(crate) fn note_extras(bytes: &[u8]) -> HashMap<(u32, u32, u32), crate::notes::NoteExtra> {
+    let mut out: HashMap<(u32, u32, u32), crate::notes::NoteExtra> = HashMap::new();
     let Ok(orig) = Original::new(bytes) else {
         return out;
     };
@@ -5065,39 +5104,80 @@ pub(crate) fn shown_notes(bytes: &[u8]) -> HashSet<(u32, u32, u32)> {
         else {
             continue;
         };
-        for r in rels
-            .iter()
-            .filter(|r| r.short_kind() == "vmlDrawing" && !r.external)
-        {
-            let Some(xml) = resolve(&s.part, &r.target).and_then(|p| orig.text(&p).ok().flatten())
-            else {
-                continue;
-            };
-            if !xml.contains("Visible") {
-                continue;
-            }
-            let Ok(doc) = Document::parse(&xml) else {
-                continue;
-            };
-            for data in doc.descendants().filter(|n| {
-                n.is_element()
-                    && n.tag_name().name() == "ClientData"
-                    && n.attribute("ObjectType") == Some("Note")
-            }) {
-                let shown = data
-                    .children()
-                    .any(|c| c.is_element() && c.tag_name().name() == "Visible");
-                if let (true, Some((_, row)), Some((_, col))) = (
-                    shown,
-                    child_number(data, "Row"),
-                    child_number(data, "Column"),
-                ) {
-                    out.insert((s.sheet_id, row, col));
+        let part = |r: &Rel| resolve(&s.part, &r.target).and_then(|p| orig.text(&p).ok().flatten());
+        for r in rels.iter().filter(|r| !r.external) {
+            match r.short_kind() {
+                "vmlDrawing" => {
+                    let Some(xml) = part(r) else { continue };
+                    let Ok(doc) = Document::parse(&xml) else {
+                        continue;
+                    };
+                    for data in doc.descendants().filter(|n| {
+                        n.is_element()
+                            && n.tag_name().name() == "ClientData"
+                            && n.attribute("ObjectType") == Some("Note")
+                    }) {
+                        let (Some((_, row)), Some((_, col))) =
+                            (child_number(data, "Row"), child_number(data, "Column"))
+                        else {
+                            continue;
+                        };
+                        let e = out.entry((s.sheet_id, row, col)).or_default();
+                        e.shown = data
+                            .children()
+                            .any(|c| c.is_element() && c.tag_name().name() == "Visible");
+                        e.anchor = data
+                            .children()
+                            .find(|c| c.is_element() && c.tag_name().name() == "Anchor")
+                            .and_then(|a| parse_anchor(a.text()?));
+                    }
                 }
+                "comments" => {
+                    let Some(xml) = part(r) else { continue };
+                    let Ok(doc) = Document::parse(&xml) else {
+                        continue;
+                    };
+                    let authors: Vec<String> = doc
+                        .descendants()
+                        .filter(|n| is_main(*n, "author"))
+                        .map(|a| a.text().unwrap_or_default().to_owned())
+                        .collect();
+                    for c in doc.descendants().filter(|n| is_main(*n, "comment")) {
+                        let Some((row, col)) = comment_cell(c) else {
+                            continue;
+                        };
+                        let Some(text) = c.children().find(|n| is_main(*n, "text")) else {
+                            continue;
+                        };
+                        let Some(runs) = crate::notes::read_runs(text, &xml) else {
+                            continue;
+                        };
+                        let author = c
+                            .attribute("authorId")
+                            .and_then(|i| i.parse::<usize>().ok())
+                            .and_then(|i| authors.get(i))
+                            .cloned()
+                            .unwrap_or_default();
+                        if crate::notes::NoteRun::is_default(&runs, &author) {
+                            continue;
+                        }
+                        out.entry((s.sheet_id, row, col)).or_default().runs = Some(runs.into());
+                    }
+                }
+                _ => {}
             }
         }
     }
     out
+}
+
+/// An `x:Anchor`'s eight numbers.
+pub(crate) fn parse_anchor(text: &str) -> Option<[u32; 8]> {
+    let v: Vec<u32> = text
+        .split(',')
+        .map(|n| n.trim().parse().ok())
+        .collect::<Option<_>>()?;
+    v.try_into().ok()
 }
 
 /// The chart part of the frame with `cNvPr id` `cnvpr` in the drawing of

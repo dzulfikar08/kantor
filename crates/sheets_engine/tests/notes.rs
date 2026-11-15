@@ -289,3 +289,91 @@ fn notes_follow_rows_inserted_after_a_save() {
     assert_eq!(note(&back, 3, 0).unwrap().0, "Bayu");
     assert_eq!(text(&back, 0, 0).as_deref(), Some("top"));
 }
+
+// ------------------------------------------------ note boxes and formatting
+
+#[test]
+fn note_boxes_and_formatted_text_save_in_place() {
+    use sheets_engine::notes::{NoteBox, NoteRun};
+    let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/xlsx/12_comments_links_props.xlsx");
+    let mut wb = Workbook::open(&src).unwrap();
+    let a3 = wb.note_at(0, 2, 0).unwrap();
+    assert_eq!(a3.place, None);
+    assert_eq!(a3.runs, None);
+    // B1's box moved and made bigger.
+    let place = NoteBox {
+        left: (2, 5),
+        top: (1, 0),
+        right: (5, 10),
+        bottom: (8, 3),
+    };
+    wb.set_note_place(0, 0, 1, place).unwrap();
+    // The same place again: no undo step.
+    let rev = wb.revision();
+    wb.set_note_place(0, 0, 1, place).unwrap();
+    assert_eq!(wb.revision(), rev);
+    let out = scratch("boxes.xlsx");
+    wb.save_as(&out).unwrap();
+    assert!(problems(&out).is_empty(), "{:?}", problems(&out));
+    let before = parts(&src);
+    let after = parts(&out);
+    // Only B1's anchor went into the VML; the comments part is as it was.
+    assert_eq!(before["xl/comments1.xml"], after["xl/comments1.xml"]);
+    let vml = &after["xl/drawings/vmlDrawing1.vml"];
+    assert!(
+        vml.contains("<x:Anchor>3, 5, 1, 0, 6, 10, 8, 3</x:Anchor><x:AutoFill>"),
+        "{vml}"
+    );
+    assert_eq!(vml.matches("<x:Anchor>").count(), 1);
+    let back = Workbook::open(&out).unwrap();
+    assert_eq!(back.note_at(0, 0, 1).unwrap().place, Some(place));
+    // A box follows its cell down when rows go in above.
+    let mut moved = Workbook::open(&out).unwrap();
+    moved.insert_rows(0, 0, 2).unwrap();
+    let n = moved.note_at(0, 2, 1).unwrap();
+    assert_eq!(n.place_or_default().anchor(n.row, n.col)[2], 3);
+
+    // Formatted text: a bold red word in A3's note.
+    let mut wb = Workbook::open(&out).unwrap();
+    let runs = vec![
+        NoteRun {
+            text: "Komentar ".into(),
+            ..NoteRun::default()
+        },
+        NoteRun {
+            text: "penting".into(),
+            bold: true,
+            color: Some(0xC00000),
+            size: Some(1100),
+            ..NoteRun::default()
+        },
+        NoteRun {
+            text: " sekali.".into(),
+            italic: true,
+            ..NoteRun::default()
+        },
+    ];
+    wb.set_note_runs(0, 2, 0, runs.clone(), "Kantor").unwrap();
+    assert_eq!(
+        wb.note_at(0, 2, 0).unwrap().text,
+        "Komentar penting sekali."
+    );
+    let out2 = scratch("formatted.xlsx");
+    wb.save_as(&out2).unwrap();
+    assert!(problems(&out2).is_empty(), "{:?}", problems(&out2));
+    let c = &parts(&out2)["xl/comments1.xml"];
+    // B1's comment stays as it was; A3's is written with its runs.
+    assert!(c.contains("<comment ref=\"B1\" authorId=\"0\"><text><r><t>Budget figure from the planning meeting.</t></r></text></comment>"));
+    assert!(c.contains("<r><rPr><b/><sz val=\"11\"/><color rgb=\"FFC00000\"/><rFont val=\"Tahoma\"/></rPr><t xml:space=\"preserve\">penting</t></r>"), "{c}");
+    let back = Workbook::open(&out2).unwrap();
+    let n = back.note_at(0, 2, 0).unwrap();
+    let got = n.runs.as_deref().unwrap();
+    assert_eq!(got.len(), 3);
+    assert!(got[1].bold && got[1].color == Some(0xC00000));
+    assert!(got[2].italic);
+    // B1's box kept its place through the second save.
+    assert_eq!(back.note_at(0, 0, 1).unwrap().place, Some(place));
+    // Plain text with Excel's default formatting reads as plain.
+    assert_eq!(back.note_at(0, 0, 1).unwrap().runs, None);
+}
