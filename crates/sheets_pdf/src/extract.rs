@@ -557,11 +557,11 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
                 }
             };
             // An IMAGE formula's picture instead of its value (the alt text).
-            if cell.merge.is_none() {
-                if let Some(image) = book.cell_image(sheet, rp.index, cp.index) {
-                    out.overlays.extend(image_overlay(image, rect, clip));
-                    continue;
-                }
+            if cell.merge.is_none()
+                && let Some(image) = book.cell_image(sheet, rp.index, cp.index)
+            {
+                out.overlays.extend(image_overlay(image, rect, clip));
+                continue;
             }
             if cell.text.is_empty() {
                 continue;

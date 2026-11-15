@@ -272,7 +272,7 @@ impl Fitter {
         if 7 * mp < 2 * n {
             return;
         }
-        let mut extra = (7 * mp - 2 * n + 1) / 2;
+        let mut extra = (7 * mp - 2 * n).div_ceil(2);
         let rep = mp.saturating_sub(n);
         let mut slope = 0.0;
         if rep > 0 {

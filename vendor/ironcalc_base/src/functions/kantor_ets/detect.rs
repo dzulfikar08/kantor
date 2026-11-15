@@ -9,7 +9,7 @@ use std::f64::consts::PI;
 
 use super::num::{bit_compare, div_zero, flip_sign, mul, round_away, sign_of, to_u32};
 
-const TWO_PI: f64 = 6.283185307179586;
+const TWO_PI: f64 = std::f64::consts::TAU;
 const INT32_MIN: f64 = -2147483648.0;
 const INT32_MAX: f64 = 2147483647.0;
 /// Longest series considered by the detector.
@@ -571,7 +571,7 @@ impl<'a> Detector<'a> {
         }
         for k in -1..=1 {
             let lag = r.hi + k;
-            if lag + 1 <= self.n as i64 {
+            if lag < self.n as i64 {
                 fx.push((lag + 1) as f64);
                 fy.push(self.acf_at(lag));
             }

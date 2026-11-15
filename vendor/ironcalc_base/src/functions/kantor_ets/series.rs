@@ -633,14 +633,9 @@ struct Binning {
 
 /// Histogram geometry for the full range of steps.
 fn make_binning(st: &StepStats) -> Binning {
-    let mut base = if st.min == 0.0 {
-        STEP_TOLERANCE
-    } else if bit_compare(STEP_TOLERANCE, st.min) == 1 && bit_compare(STEP_TOLERANCE, st.max) == -1
-    {
-        STEP_TOLERANCE
-    } else {
-        st.min
-    };
+    let tiny = st.min == 0.0
+        || (bit_compare(STEP_TOLERANCE, st.min) == 1 && bit_compare(STEP_TOLERANCE, st.max) == -1);
+    let mut base = if tiny { STEP_TOLERANCE } else { st.min };
     base = div_zero(base, 5.0);
     let bw0 = div_zero(base, 5.0);
     let range = st.max - st.min;

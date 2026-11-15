@@ -151,7 +151,7 @@ fn erfinv(y: f64) -> f64 {
     } else if v > 0.9375 {
         let a = flush((1.0 + v) * 0.5);
         let b = flush((1.0 - v) * 0.5);
-        flush(tail_quantile(a, b) * 0.7071067811865476)
+        flush(tail_quantile(a, b) * std::f64::consts::FRAC_1_SQRT_2)
     } else {
         let w = (-(1.0 - v).ln()).sqrt();
         let r = if v > 0.85 {
@@ -175,5 +175,5 @@ pub(crate) fn normal_quantile(p: f64) -> f64 {
         return tail_quantile(p, 1.0 - p);
     }
     let y = flush(p * 2.0) - 1.0;
-    flush(erfinv(y) * 1.4142135623730951)
+    flush(erfinv(y) * std::f64::consts::SQRT_2)
 }

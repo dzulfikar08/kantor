@@ -257,7 +257,7 @@ enum Axis {
     Child,
     Descendant,
     DescendantOrSelf,
-    SelfAxis,
+    Itself,
     Parent,
     Ancestor,
     AncestorOrSelf,
@@ -521,7 +521,7 @@ impl Parser {
     fn step(&mut self) -> Parse<Step> {
         if self.eat(&Tok::Dot) {
             return Ok(Step {
-                axis: Axis::SelfAxis,
+                axis: Axis::Itself,
                 test: NodeTest::Node,
                 predicates: Vec::new(),
             });
@@ -543,7 +543,7 @@ impl Parser {
                 "child" => Axis::Child,
                 "descendant" => Axis::Descendant,
                 "descendant-or-self" => Axis::DescendantOrSelf,
-                "self" => Axis::SelfAxis,
+                "self" => Axis::Itself,
                 "parent" => Axis::Parent,
                 "ancestor" => Axis::Ancestor,
                 "ancestor-or-self" => Axis::AncestorOrSelf,
@@ -732,7 +732,7 @@ fn axis_items<'a, 'i>(axis: Axis, item: Item<'a, 'i>) -> Vec<Item<'a, 'i>> {
         Item::Node(n) => n,
         Item::Attr(owner, _) => {
             return match axis {
-                Axis::SelfAxis => vec![item],
+                Axis::Itself => vec![item],
                 Axis::Parent => vec![Item::Node(owner)],
                 Axis::Ancestor | Axis::AncestorOrSelf => {
                     let mut v: Vec<Item> = if axis == Axis::AncestorOrSelf {
@@ -753,7 +753,7 @@ fn axis_items<'a, 'i>(axis: Axis, item: Item<'a, 'i>) -> Vec<Item<'a, 'i>> {
         Axis::Child => nodes(&mut node.children()),
         Axis::Descendant => nodes(&mut node.descendants().skip(1)),
         Axis::DescendantOrSelf => nodes(&mut node.descendants()),
-        Axis::SelfAxis => vec![item],
+        Axis::Itself => vec![item],
         Axis::Parent => nodes(&mut node.parent().into_iter()),
         Axis::Ancestor => nodes(&mut node.ancestors().skip(1)),
         Axis::AncestorOrSelf => nodes(&mut node.ancestors()),
