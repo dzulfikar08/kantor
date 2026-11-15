@@ -24,6 +24,22 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   linking each line to its heading. Each update is one undo step.
 - Docs: Ctrl+click follows a hyperlink. A link to a place in the document jumps there; web and
   e-mail addresses open in your browser, and other kinds of address ask first.
+- Slides: tables, charts and SmartArt can be selected, dragged, nudged with the arrow keys,
+  resized with their handles, deleted, copied and pasted as in PowerPoint. Resizing a table
+  scales its columns and rows; a chart is drawn again at its new size. A pasted chart or SmartArt
+  gets its own copy of its data (and the chart's workbook), so editing it leaves the original
+  alone. Charts and SmartArt can be grouped with other shapes; tables can't (as in PowerPoint).
+  Saving changes only the object's position and size in the file.
+- Slides: table cells are typed into on the slide: click a cell for the caret, double-click for a
+  word. Tab and Shift+Tab go to the next and previous cell (its text selected), and Tab in the
+  last cell adds a row. Drag a border between two columns to make one wider and the other
+  narrower. The edit panel stays for fills and for whole rows and columns.
+- Slides: rows and columns can be added to and removed from tables with merged cells. A row or
+  column added inside a merged cell widens it, and removing the first row or column of a merged
+  cell hands its text to the cell that takes its place, as PowerPoint does.
+- Slides: text in a turned shape is drawn turned on screen, as in the PDF and PowerPoint, and so
+  is vertical text (reading down, reading up, East Asian vertical), in the editor, the
+  thumbnails and the slide show.
 - Slides: groups can be edited as in PowerPoint. Click a group to select it, click again (or
   double-click) to select a shape inside it, Esc goes back to the group. Moving, resizing or
   turning a group moves its shapes with it; a shape inside can be moved, resized, turned,

@@ -16,6 +16,7 @@ Regenerate with
 `uv run --with python-pptx==1.0.2 scripts/corpus/gen_pptx_frames.py tests/corpus/pptx`.
 """
 import io
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -108,6 +109,11 @@ buf = io.BytesIO()
 prs.save(buf)
 src = zipfile.ZipFile(io.BytesIO(buf.getvalue()))
 parts = {n: src.read(n) for n in src.namelist()}
+# python-pptx writes negative axis ids, which the Open XML SDK rejects
+# (they must be unsigned): make them positive.
+for n in parts:
+    if n.startswith("ppt/charts/chart"):
+        parts[n] = re.sub(rb'(<c:(?:axId|crossAx) val=")-', rb"\1", parts[n])
 with zipfile.ZipFile(out / "frames.pptx", "w", zipfile.ZIP_DEFLATED) as z:
     for name in ["[Content_Types].xml"] + sorted(n for n in parts if n != "[Content_Types].xml"):
         info = zipfile.ZipInfo(name, date_time=FIXED)
