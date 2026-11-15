@@ -155,6 +155,9 @@ pub struct NoteProps {
     pub format: NumFormat,
     pub start: u32,
     pub restart: NoteRestart,
+    /// Endnotes at the end of each section (`w:pos w:val="sectEnd"`)
+    /// instead of the end of the document.
+    pub section_end: bool,
 }
 
 impl NoteProps {
@@ -167,6 +170,7 @@ impl NoteProps {
             },
             start: 1,
             restart: NoteRestart::Continuous,
+            section_end: false,
         }
     }
 
@@ -184,6 +188,7 @@ impl NoteProps {
                         self.start = v;
                     }
                 }
+                "pos" => self.section_end = c.attr("val") == Some("sectEnd"),
                 "numRestart" => {
                     self.restart = match c.attr("val") {
                         Some("eachSect") => NoteRestart::EachSection,
@@ -360,6 +365,21 @@ impl Document {
         self.notes
             .iter()
             .position(|n| n.kind == kind && n.id == id && !n.separator)
+    }
+
+    /// The continuation notice of `kind` (`w:type="continuationNotice"`),
+    /// when it has text: shown under a note that continues on the next
+    /// page. Index into [`Self::notes`].
+    pub fn continuation_notice(&self, kind: NoteKind) -> Option<usize> {
+        self.notes.iter().position(|n| {
+            n.kind == kind
+                && n.separator
+                && n.xml.as_deref().is_some_and(|x| {
+                    let tag = &x[..x.find('>').unwrap_or(x.len())];
+                    tag.contains("\"continuationNotice\"")
+                })
+                && n.doc.paragraphs.iter().any(|p| !p.text.trim().is_empty())
+        })
     }
 
     /// Numbering of `kind` in section `si`: settings.xml's, then the

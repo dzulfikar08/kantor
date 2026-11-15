@@ -578,3 +578,97 @@ mod flow_tests {
         assert!(!f[1].behind && f[1].z == 3);
     }
 }
+
+#[cfg(test)]
+mod note_tests {
+    use crate::{
+        Block, Engine, GapBlock, NOTE_SEPARATOR, NoteSplit, PageSetup, PagedDocument, Paragraph,
+    };
+    use std::sync::Arc;
+
+    fn lay(paras: &[Paragraph], blocks: &[Block]) -> PagedDocument {
+        let mut e = Engine::new();
+        let setup = PageSetup::a4();
+        let layouts = paras
+            .iter()
+            .map(|p| Arc::new(e.layout_paragraph(p, setup.content_width())))
+            .collect();
+        PagedDocument::paginate_blocks(paras, layouts, blocks, setup)
+    }
+
+    #[test]
+    fn long_footnotes_continue_on_the_next_page() {
+        let s = PageSetup::a4();
+        // A short paragraph with a note of 100 lines of 20 px (2000 px:
+        // longer than a page), then text.
+        let mut p = Paragraph::new("ab");
+        let breaks: Vec<f32> = (1..=100).map(|i| i as f32 * 20.0).collect();
+        p.notes.push((0, 2000.0));
+        p.note_splits.push(NoteSplit {
+            index: 0,
+            breaks,
+            notice: 0.0,
+        });
+        let paras = vec![Paragraph::new("ab"), p, Paragraph::new("cd")];
+        let blocks: Vec<Block> = (0..3).map(Block::Para).collect();
+        let doc = lay(&paras, &blocks);
+        let first = &doc.pages[0];
+        // The reference stays on the first page with the note's start.
+        assert!(first.lines.iter().any(|l| l.para == 1));
+        assert_eq!(first.note_parts.len(), 1);
+        let a = first.note_parts[0];
+        assert!(a.more && a.from == 0.0 && a.to > 0.0);
+        assert_eq!(a.to % 20.0, 0.0, "breaks at a line");
+        // The rest of the first page's text area is the note's.
+        let bottom = s.height - s.margin_bottom;
+        assert!(first.notes_height + NOTE_SEPARATOR >= a.to);
+        assert!(
+            first
+                .lines
+                .iter()
+                .all(|l| l.top + l.height <= bottom - first.notes_height + 0.01)
+        );
+        // It goes on (continued) on the next pages until it's all shown.
+        let mut shown = a.to;
+        for page in &doc.pages[1..] {
+            for part in &page.note_parts {
+                assert!(page.continued);
+                assert_eq!(part.from, shown);
+                shown = part.to;
+            }
+        }
+        assert_eq!(shown, 2000.0);
+        // Text after the reference goes on the next page, above the note.
+        let next = doc
+            .pages
+            .iter()
+            .position(|p| p.lines.iter().any(|l| l.para == 2))
+            .unwrap();
+        assert!(next >= 1);
+    }
+
+    #[test]
+    fn gaps_break_at_their_lines() {
+        let paras: Vec<Paragraph> = (0..3).map(|_| Paragraph::new("ab")).collect();
+        let mut blocks: Vec<Block> = (0..3).map(Block::Para).collect();
+        blocks.push(Block::Gap(GapBlock {
+            id: 7,
+            breaks: (1..=80).map(|i| i as f32 * 20.0).collect(),
+            before: 12.0,
+        }));
+        let doc = lay(&paras, &blocks);
+        let parts: Vec<_> = doc.pages.iter().flat_map(|p| p.gaps.iter()).collect();
+        assert!(parts.len() >= 2, "{parts:?}");
+        assert_eq!(parts[0].from, 0.0);
+        for w in parts.windows(2) {
+            assert_eq!(w[0].to, w[1].from);
+            assert_eq!(w[0].to % 20.0, 0.0);
+        }
+        assert_eq!(parts.last().unwrap().to, 1600.0);
+        // It starts right after the text.
+        let last_line = doc.pages[0].lines.last().unwrap();
+        assert!(
+            (parts[0].y - (last_line.top + last_line.height + 8.0 * crate::PT + 12.0)).abs() < 0.5
+        );
+    }
+}

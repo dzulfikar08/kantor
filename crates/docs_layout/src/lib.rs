@@ -240,6 +240,52 @@ pub struct Paragraph {
     pub no_wrap: bool,
     /// Floating objects anchored here (see [`float`]).
     pub floats: Vec<FloatSpec>,
+    /// Footnotes that may continue on the next page: where each may break.
+    pub note_splits: Vec<NoteSplit>,
+}
+
+/// Where a footnote may break when it's too long for its page.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NoteSplit {
+    /// Byte index of its reference.
+    pub index: usize,
+    /// Heights from the note's top it may break at (its lines' bottoms),
+    /// ascending; the last is its whole height.
+    pub breaks: Vec<f32>,
+    /// Height of the continuation notice shown under the part that
+    /// continues (0: none).
+    pub notice: f32,
+}
+
+/// The part of a footnote shown on a page: from `from` to `to` (px from
+/// the note's top).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NotePart {
+    pub para: usize,
+    pub index: usize,
+    pub from: f32,
+    pub to: f32,
+    /// It goes on on the next page.
+    pub more: bool,
+}
+
+/// Vertical room in the text flow that can break across pages (endnotes):
+/// `breaks` as in [`NoteSplit`], `before` the space above it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GapBlock {
+    pub id: usize,
+    pub breaks: Vec<f32>,
+    pub before: f32,
+}
+
+/// The part of a [`GapBlock`] on a page: its top `y` (page coordinates)
+/// and the stretch `from`..`to` it shows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GapPart {
+    pub id: usize,
+    pub y: f32,
+    pub from: f32,
+    pub to: f32,
 }
 
 /// How text lines up at a tab stop.
@@ -325,6 +371,7 @@ impl Paragraph {
             notes: Vec::new(),
             no_wrap: false,
             floats: Vec::new(),
+            note_splits: Vec::new(),
         }
     }
 
@@ -785,6 +832,7 @@ impl TableBlock {
 pub enum Block {
     Para(usize),
     Table(TableBlock),
+    Gap(GapBlock),
 }
 
 // ── pages ──────────────────────────────────────────────────────────────────
@@ -831,6 +879,14 @@ pub struct Page {
     pub number: u32,
     /// Floating objects anchored on this page, in document order.
     pub floats: Vec<PlacedFloat>,
+    /// The footnotes shown at its bottom (whole, or the part that fits),
+    /// in order: a note continued from the page before comes first.
+    pub note_parts: Vec<NotePart>,
+    /// It starts with a footnote continued from the page before (under
+    /// Word's full-width continuation separator).
+    pub continued: bool,
+    /// Gap blocks (endnotes) placed on it.
+    pub gaps: Vec<GapPart>,
     /// Room taken by its wrapping objects whose position doesn't depend on
     /// the text (relative to the page or margins), for a second pass.
     pub fixed: Vec<WrapArea>,
@@ -1092,6 +1148,9 @@ fn tab_widths(
 /// Space above a page's footnotes, holding the short separator line, px.
 pub const NOTE_SEPARATOR: f32 = 18.0;
 
+/// Room left for text on a page that starts with a continued footnote, px.
+const CONTINUED_TEXT: f32 = 60.0;
+
 /// Lines a paragraph keeps together at a page break (Word's widow/orphan control).
 const MIN_LINES: usize = 2;
 
@@ -1110,6 +1169,9 @@ struct Flow<'a> {
     has_floats: bool,
     /// The paragraph whose floating objects are already placed.
     floats_placed: Option<usize>,
+    /// Footnotes going on on the next page: paragraph, reference, the
+    /// height shown so far.
+    carry: Vec<(usize, usize, f32)>,
     pages: Vec<Page>,
     line_pages: Vec<Vec<(usize, f32, f32)>>,
     y: f32,
@@ -1171,6 +1233,146 @@ impl Flow<'_> {
             .get(self.pages.len() - 1)
             .cloned()
             .unwrap_or_default();
+        self.continue_notes();
+    }
+
+    /// The split of a footnote, if it may break across pages.
+    fn note_split(&self, pi: usize, index: usize) -> Option<&NoteSplit> {
+        self.paras[pi].note_splits.iter().find(|s| s.index == index)
+    }
+
+    /// Put the footnotes carried over at the bottom of the new page, under
+    /// a continuation separator: as much as fits while leaving a few lines
+    /// for text, the rest carried on again.
+    fn continue_notes(&mut self) {
+        if self.carry.is_empty() {
+            return;
+        }
+        let carry = std::mem::take(&mut self.carry);
+        let page = self.pages.len() - 1;
+        let max = (self.setup.content_height() - CONTINUED_TEXT).max(NOTE_SEPARATOR * 2.0);
+        let mut used = NOTE_SEPARATOR;
+        let mut parts = Vec::new();
+        for (pi, index, from) in carry {
+            let Some(split) = self.note_split(pi, index).cloned() else {
+                continue;
+            };
+            let total = split.breaks.last().copied().unwrap_or(from);
+            if !self.carry.is_empty() {
+                self.carry.push((pi, index, from));
+                continue;
+            }
+            if used + (total - from) <= max {
+                parts.push(NotePart {
+                    para: pi,
+                    index,
+                    from,
+                    to: total,
+                    more: false,
+                });
+                used += total - from;
+                continue;
+            }
+            let room = max - used - split.notice;
+            // The lowest break that fits; at least one line (progress).
+            let to = split
+                .breaks
+                .iter()
+                .copied()
+                .rev()
+                .find(|b| *b > from + 0.01 && b - from <= room)
+                .or_else(|| split.breaks.iter().copied().find(|b| *b > from + 0.01))
+                .unwrap_or(total);
+            parts.push(NotePart {
+                para: pi,
+                index,
+                from,
+                to,
+                more: to < total,
+            });
+            used += to - from + if to < total { split.notice } else { 0.0 };
+            if to < total {
+                self.carry.push((pi, index, to));
+            }
+        }
+        let p = &mut self.pages[page];
+        p.continued = true;
+        p.notes_height = used;
+        p.note_parts = parts;
+    }
+
+    /// Whether line `k` of paragraph `pi` (its bottom at `bottom`, with
+    /// `prior` px of footnotes from lines before it on the page not placed
+    /// yet) fits with the first part of a footnote that will continue.
+    fn fits_with_split(&self, pi: usize, k: usize, bottom: f32, prior: f32) -> bool {
+        let Some(line) = self.layouts[pi].layout.get(k) else {
+            return false;
+        };
+        let r = line.text_range();
+        let last = k + 1 == self.layouts[pi].layout.len();
+        let first = self.paras[pi]
+            .notes
+            .iter()
+            .filter(|(i, _)| *i >= r.start && (*i < r.end || last))
+            .find_map(|(i, _)| self.note_split(pi, *i))
+            .and_then(|s| s.breaks.first().map(|b| b + s.notice));
+        let Some(first) = first else {
+            return false;
+        };
+        let page_bottom = self.setup.height - self.setup.margin_bottom;
+        let notes = self.pages.last().map_or(0.0, |p| p.notes_height);
+        bottom + self.notes_cost(prior + first) + notes <= page_bottom
+    }
+
+    /// Room for endnotes and the like, breaking across pages where it may.
+    fn place_gap(&mut self, g: &GapBlock) {
+        if !self.at_top() {
+            self.y += g.before;
+        }
+        let total = g.breaks.last().copied().unwrap_or(0.0);
+        let mut from = 0.0f32;
+        let mut guard = 0;
+        loop {
+            guard += 1;
+            let avail = self.bottom() - self.y;
+            let page = self.pages.len() - 1;
+            if total - from <= avail + 0.01 || guard > 1000 {
+                self.pages[page].gaps.push(GapPart {
+                    id: g.id,
+                    y: self.y,
+                    from,
+                    to: total,
+                });
+                self.y += total - from;
+                return;
+            }
+            let fit = g
+                .breaks
+                .iter()
+                .copied()
+                .rev()
+                .find(|b| *b > from + 0.01 && b - from <= avail);
+            let to = match fit {
+                Some(b) => Some(b),
+                // Not even a line fits on an empty page: one anyway.
+                None if self.at_top() => g.breaks.iter().copied().find(|b| *b > from + 0.01),
+                None => None,
+            };
+            if let Some(to) = to {
+                self.pages[page].gaps.push(GapPart {
+                    id: g.id,
+                    y: self.y,
+                    from,
+                    to,
+                });
+                from = to;
+                if from >= total - 0.01 {
+                    self.y += 0.0;
+                    return;
+                }
+            }
+            self.new_page();
+        }
     }
 
     /// Place paragraph `pi`'s floating objects on the current page, its
@@ -1454,20 +1656,71 @@ impl Flow<'_> {
             repeat: false,
         });
         self.line_pages[pi].push((page, dy, dx));
-        // Its footnotes go to the bottom of this page.
+        // Its footnotes go to the bottom of this page; one too long for
+        // what's left starts here and goes on on the next page.
         let notes = &self.paras[pi].notes;
-        if !notes.is_empty() {
-            let line = layout.layout.get(k).expect("line exists");
-            let r = line.text_range();
-            let last = k + 1 == layout.layout.len();
-            let cost = self.notes_cost(self.line_notes(pi, k));
+        if notes.is_empty() {
+            return;
+        }
+        let line = layout.layout.get(k).expect("line exists");
+        let r = line.text_range();
+        let last = k + 1 == layout.layout.len();
+        let here: Vec<(usize, f32)> = notes
+            .iter()
+            .filter(|(i, _)| *i >= r.start && (*i < r.end || last))
+            .copied()
+            .collect();
+        let line_bottom = top + m.line_height;
+        for (i, h) in here {
+            self.pages[page].notes.push((pi, i));
+            if !self.carry.is_empty() {
+                // Notes after one that continues follow it.
+                self.carry.push((pi, i, 0.0));
+                continue;
+            }
+            let p = &self.pages[page];
+            let sep = if p.notes_height > 0.0 {
+                0.0
+            } else {
+                NOTE_SEPARATOR
+            };
+            let page_bottom = p.setup.height - p.setup.margin_bottom;
+            let avail = page_bottom - line_bottom - p.notes_height - sep;
+            let whole = NotePart {
+                para: pi,
+                index: i,
+                from: 0.0,
+                to: h,
+                more: false,
+            };
+            let split = self.note_split(pi, i);
+            let part = match split {
+                Some(s) if h > avail + 0.01 => s
+                    .breaks
+                    .iter()
+                    .copied()
+                    .rev()
+                    .find(|b| *b > 0.01 && b + s.notice <= avail)
+                    .filter(|b| *b < h - 0.01),
+                _ => None,
+            };
             let p = &mut self.pages[page];
-            for (i, _) in notes {
-                if *i >= r.start && (*i < r.end || last) {
-                    p.notes.push((pi, *i));
+            match part {
+                Some(to) => {
+                    p.note_parts.push(NotePart {
+                        to,
+                        more: true,
+                        ..whole
+                    });
+                    // The page's text area ends at this line.
+                    p.notes_height = (page_bottom - line_bottom).max(p.notes_height + sep + to);
+                    self.carry.push((pi, i, to));
+                }
+                None => {
+                    p.note_parts.push(whole);
+                    p.notes_height += h + sep;
                 }
             }
-            p.notes_height += cost;
         }
     }
 
@@ -1525,6 +1778,11 @@ impl Flow<'_> {
             while i + fit < n {
                 let k = i + fit;
                 if self.y + h + heights[k] > bottom - self.notes_cost(nh + notes[k]) {
+                    // A long footnote starts here and continues (Word
+                    // keeps the reference with the note's first lines).
+                    if notes[k] > 0.0 && self.fits_with_split(pi, k, self.y + h + heights[k], nh) {
+                        fit += 1;
+                    }
                     break;
                 }
                 h += heights[k];
@@ -1898,6 +2156,7 @@ impl PagedDocument {
             pre,
             has_floats,
             floats_placed: None,
+            carry: Vec::new(),
             pages: Vec::new(),
             line_pages: vec![Vec::new(); n],
             y: 0.0,
@@ -1918,12 +2177,19 @@ impl PagedDocument {
                 Block::Table(t) => {
                     flow.place_table(t);
                 }
+                Block::Gap(g) => flow.place_gap(g),
             }
         }
         // Sections with no blocks still get their page.
         while next < sections.len() {
             flow.start_section(next);
             next += 1;
+        }
+        // A footnote still going on gets the pages it needs.
+        let mut guard = 0;
+        while !flow.carry.is_empty() && guard < 1000 {
+            flow.new_page();
+            guard += 1;
         }
         let Flow {
             pages,
@@ -1937,6 +2203,36 @@ impl PagedDocument {
             pages,
             line_pages,
         }
+    }
+
+    /// The stretch `from`..`to` (px down page `page`) of a laid-out
+    /// story, moved up to start at 0: the part of a long note shown on a
+    /// page.
+    pub fn slice(&self, page: usize, from: f32, to: f32) -> Self {
+        let mut out = Self {
+            setup: self.setup,
+            layouts: self.layouts.clone(),
+            pages: Vec::new(),
+            line_pages: self
+                .line_pages
+                .iter()
+                .map(|v| v.iter().map(|&(p, dy, dx)| (p, dy - from, dx)).collect())
+                .collect(),
+        };
+        let mut pg = self.pages.get(page).cloned().unwrap_or_default();
+        pg.lines
+            .retain(|l| l.top >= from - 0.5 && l.top + l.height <= to + 0.5);
+        for l in &mut pg.lines {
+            l.top -= from;
+            l.dy -= from;
+        }
+        pg.rules
+            .retain(|r| r.rect[1] >= from - 0.5 && r.rect[1] <= to + 0.5);
+        for r in &mut pg.rules {
+            r.rect[1] -= from;
+        }
+        out.pages.push(pg);
+        out
     }
 
     /// Size and margins of page `page`.
