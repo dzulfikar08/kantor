@@ -80,6 +80,9 @@ impl Document {
         let mut doc = std::mem::take(&mut self.stories[index].doc);
         doc.media_stem = media_stem(&self.stories[index].part);
         doc.field_props = Some(props);
+        // Edits in it are tracked as the body's are.
+        doc.track = self.track;
+        doc.author = self.author.clone();
         Some((
             PartEdit {
                 part: PartRef::Story(index),
@@ -99,6 +102,8 @@ impl Document {
         let mut doc = std::mem::take(&mut self.notes[index].doc);
         doc.field_props = Some(props);
         doc.media_stem = format!("{}{}_", kind.element(), id.trim_start_matches('-'));
+        doc.track = self.track;
+        doc.author = self.author.clone();
         Some((
             PartEdit {
                 part: PartRef::Note(index),
@@ -146,6 +151,7 @@ impl Document {
         doc.clear_history();
         doc.media_stem.clear();
         doc.field_props = None;
+        doc.track = false;
         let empty = doc.paragraphs.iter().all(|p| p.text.is_empty()) && doc.tables.is_empty();
         match e.part {
             PartRef::Story(i) => {
@@ -178,6 +184,53 @@ impl Document {
         }
         self.push_hf(e.before, e.para, sel);
         true
+    }
+
+    /// Tracked changes in headers, footers, footnotes and endnotes (each
+    /// insertion, deletion or formatting change counted once).
+    pub fn part_changes(&self) -> usize {
+        self.part_docs()
+            .map(|d| d.changes().len() + d.other_changes())
+            .sum()
+    }
+
+    /// The documents of the headers, footers and notes Kantor edits.
+    fn part_docs(&self) -> impl Iterator<Item = &Document> {
+        self.stories
+            .iter()
+            .filter(|s| s.locked.is_none())
+            .map(|s| &s.doc)
+            .chain(self.notes.iter().filter(|n| !n.separator).map(|n| &n.doc))
+    }
+
+    /// Accept or reject every tracked change in the headers, footers and
+    /// notes (part of Accept All / Reject All). Returns whether any
+    /// changed; Save then writes those parts.
+    pub(crate) fn resolve_parts(&mut self, accept: bool) -> bool {
+        let mut changed = false;
+        for i in 0..self.stories.len() {
+            if self.stories[i].locked.is_some() || !self.stories[i].doc.has_changes() {
+                continue;
+            }
+            let mut d = std::mem::take(&mut self.stories[i].doc);
+            d.resolve_all(accept, Selection::default());
+            d.clear_history();
+            self.stories[i].doc = d;
+            self.stories[i].modified = true;
+            changed = true;
+        }
+        for i in 0..self.notes.len() {
+            if self.notes[i].separator || !self.notes[i].doc.has_changes() {
+                continue;
+            }
+            let mut d = std::mem::take(&mut self.notes[i].doc);
+            d.resolve_all(accept, Selection::default());
+            d.clear_history();
+            self.notes[i].doc = d;
+            self.notes[i].xml = None;
+            changed = true;
+        }
+        changed
     }
 
     /// A new, empty header or footer for section `si`'s `ty` pages, with

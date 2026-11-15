@@ -566,6 +566,18 @@ impl Document {
             return false;
         }
         let tb = f.text.clone().expect("text box");
+        if self.track
+            && let Some(doc) =
+                self.tracked_text_box(&tb.doc, &f.text_box_text().unwrap_or_default(), text)
+        {
+            let mut nf = f.clone();
+            nf.text = Some(Arc::new(TextBox {
+                doc,
+                ..(*tb).clone()
+            }));
+            nf.text_edited = true;
+            return self.swap_object(para, index, Some(crate::Object::Float(Arc::new(nf))));
+        }
         let first = tb.doc.paragraphs().first().cloned().unwrap_or_default();
         let props = first
             .runs
@@ -594,6 +606,76 @@ impl Document {
         }));
         nf.text_edited = true;
         self.swap_object(para, index, Some(crate::Object::Float(Arc::new(nf))))
+    }
+
+    /// A text box's document with `old` (its text) changed to `new` as a
+    /// tracked edit by the user: the part that differs struck through and
+    /// the new text inserted. `None` when its text has objects in it.
+    fn tracked_text_box(&self, doc: &Document, old: &str, new: &str) -> Option<Document> {
+        if doc
+            .paragraphs
+            .iter()
+            .any(|p| p.text.contains(crate::OBJECT))
+        {
+            return None;
+        }
+        // The common start and end (on character boundaries).
+        let pre = old
+            .char_indices()
+            .zip(new.chars())
+            .find(|((_, a), b)| a != b)
+            .map_or(old.len().min(new.len()), |((i, _), _)| i);
+        let mut pre = (0..=pre)
+            .rev()
+            .find(|&i| old.is_char_boundary(i) && new.is_char_boundary(i))?;
+        let max_suf = (old.len() - pre).min(new.len() - pre);
+        let mut suf = old[old.len() - max_suf..]
+            .chars()
+            .rev()
+            .zip(new[new.len() - max_suf..].chars().rev())
+            .take_while(|(a, b)| a == b)
+            .map(|(a, _)| a.len_utf8())
+            .sum::<usize>();
+        // Whole words, as a reader sees the change.
+        while let Some(c) = old[..pre]
+            .chars()
+            .next_back()
+            .filter(|c| c.is_alphanumeric())
+        {
+            pre -= c.len_utf8();
+        }
+        while let Some(c) = old[old.len() - suf..]
+            .chars()
+            .next()
+            .filter(|c| c.is_alphanumeric())
+        {
+            suf -= c.len_utf8();
+        }
+        let at = |byte: usize| {
+            let mut left = byte;
+            for (i, line) in old.split('\n').enumerate() {
+                if left <= line.len() {
+                    return crate::Position::new(i, left);
+                }
+                left -= line.len() + 1;
+            }
+            doc.end()
+        };
+        let mut d = doc.clone();
+        d.track = true;
+        d.author = self.author.clone();
+        let sel = crate::Selection {
+            anchor: at(pre),
+            head: at(old.len() - suf),
+        };
+        let middle = &new[pre..new.len() - suf];
+        if middle.is_empty() {
+            d.delete_selection(sel);
+        } else {
+            d.insert_text(sel, middle, None);
+        }
+        d.clear_history();
+        Some(d)
     }
 
     /// The floating object whose character is at `para`/`index`.
@@ -650,9 +732,43 @@ impl Document {
         self.swap_object(para, index, Some(o))
     }
 
-    /// Delete a floating object.
+    /// Delete a floating object. With Track Changes on it's marked
+    /// deleted instead (its anchor in a `w:del`, as Word does), unless the
+    /// user inserted it with tracking on.
     pub fn delete_float(&mut self, para: usize, index: usize) -> bool {
-        self.float_at(para, index).is_some() && self.swap_object(para, index, None)
+        if self.float_at(para, index).is_none() {
+            return false;
+        }
+        if self.track {
+            let mut p = self.paragraphs[para].clone();
+            let i = p.split_run_at(index);
+            let own = p.runs[i]
+                .rev
+                .as_ref()
+                .is_some_and(|r| r.kind == crate::RevKind::Insert && r.author == self.author);
+            if !own {
+                if p.runs[i]
+                    .rev
+                    .as_ref()
+                    .is_some_and(|r| r.kind == crate::RevKind::Delete)
+                {
+                    return false;
+                }
+                p.runs[i].rev = Some(self.new_rev(crate::RevKind::Delete, self.max_rev_id() + 1));
+                p.normalize();
+                let sel = crate::Selection::caret(crate::Position::new(para, index));
+                self.replace(
+                    para,
+                    1,
+                    vec![p],
+                    (sel, sel),
+                    crate::document::Kind::Other,
+                    true,
+                );
+                return true;
+            }
+        }
+        self.swap_object(para, index, None)
     }
 
     /// The Layout Options choice of the object at `para`/`index`: inline

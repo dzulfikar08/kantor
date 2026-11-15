@@ -346,6 +346,12 @@ fn float_scene(
             pictures,
             l.key() + 1,
         );
+        out.content
+            .rules
+            .extend(l.strike_rules().into_iter().map(|r| {
+                let [rx, ry, w, h] = r.rect;
+                ([rx + x, ry + y, w, h], r.color)
+            }));
     }
     out
 }
@@ -379,6 +385,11 @@ pub fn scene_of(
                     &mut pictures,
                     f.layout.key() + 1,
                 );
+                out.rules
+                    .extend(f.layout.strike_rules().into_iter().map(|r| {
+                        let [x, y, w, h] = r.rect;
+                        ([x + f.x, y + f.y, w, h], r.color)
+                    }));
             }
             add_page(
                 &mut out,

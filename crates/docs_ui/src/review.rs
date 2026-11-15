@@ -46,6 +46,53 @@ pub(crate) struct Card {
     /// The card's top-left corner, window coordinates.
     pub at: Point<Pixels>,
     pub active: bool,
+    /// A formatting change's balloon instead of a comment.
+    pub change: Option<ChangeNote>,
+}
+
+/// What a formatting change's balloon shows (Word's "Formatted: Bold").
+#[derive(Clone, Debug)]
+pub(crate) struct ChangeNote {
+    pub author: String,
+    pub date: String,
+    pub label: String,
+    pub start: docs_engine::Position,
+    pub end: docs_engine::Position,
+}
+
+/// Word's balloon text for a formatting change: "Formatted: Font: Bold".
+pub(crate) fn format_label(items: &[docs_engine::FormatItem]) -> String {
+    use docs_engine::{Align, FormatItem as F};
+    let parts: Vec<String> = items
+        .iter()
+        .map(|it| match it {
+            F::Bold(true) => t("Font: Bold").to_owned(),
+            F::Bold(false) => t("Font: Not Bold").to_owned(),
+            F::Italic(true) => t("Font: Italic").to_owned(),
+            F::Italic(false) => t("Font: Not Italic").to_owned(),
+            F::Underline(true) => t("Underline").to_owned(),
+            F::Underline(false) => t("No underline").to_owned(),
+            F::Font(Some(f)) => tf("Font: {}", &[f]),
+            F::Font(None) => t("Font: (Default)").to_owned(),
+            F::Size(Some(hp)) => tf("Font: {} pt", &[&(*hp as f32 / 2.0)]),
+            F::Size(None) => t("Font size: (Default)").to_owned(),
+            F::FontColor => t("Font color").to_owned(),
+            F::CharStyle(n) | F::Style(n) => tf("Style: {}", &[n]),
+            F::Align(Align::Left) => t("Left").to_owned(),
+            F::Align(Align::Center) => t("Centered").to_owned(),
+            F::Align(Align::Right) => t("Right").to_owned(),
+            F::Align(Align::Justify) => t("Justified").to_owned(),
+            F::Indent => t("Indent").to_owned(),
+            F::Spacing => t("Spacing").to_owned(),
+            F::LineSpacing => t("Line spacing").to_owned(),
+            F::List(true) => t("Bulleted or numbered").to_owned(),
+            F::List(false) => t("Not a list").to_owned(),
+            F::PageBreakBefore => t("Page break before").to_owned(),
+            F::TabStops => t("Tab stops").to_owned(),
+            F::Other => t("Other formatting").to_owned(),
+        })
+        .collect();
+    tf("Formatted: {}", &[&parts.join(", ")])
 }
 
 /// A short date for a card: `12 Nov 2026` from Word's ISO date.
@@ -81,7 +128,13 @@ impl DocsView {
     /// Whether the markup column shows (the document has comments).
     pub(crate) fn markup_visible(&self) -> bool {
         self.comments_visible
-            && (!self.main_doc().comments().is_empty() || self.comment_edit.is_some())
+            && (!self.main_doc().comments().is_empty()
+                || self.comment_edit.is_some()
+                || self
+                    .main_doc()
+                    .changes()
+                    .iter()
+                    .any(|c| c.kind == docs_engine::RevKind::Format))
     }
 
     pub fn toggle_comments_doc(&mut self, cx: &mut Context<Self>) {
@@ -227,8 +280,19 @@ impl DocsView {
         self.resolve_change(false, window, cx);
     }
 
+    /// Tracked changes in the whole document: text, headers, footers and
+    /// notes (the one being edited included).
+    pub(crate) fn change_count(&self) -> usize {
+        let count = |d: &docs_engine::Document| d.changes().len() + d.other_changes();
+        match &self.part {
+            Some(s) => count(&s.main) + s.main.part_changes() + count(&self.doc),
+            None => count(&self.doc) + self.doc.part_changes(),
+        }
+    }
+
+    /// Accept or reject the change at the caret: in the text, or in the
+    /// header, footer or note being edited.
     fn resolve_change(&mut self, accept: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.leave_part(window, cx);
         let done = if accept {
             self.doc.accept_change(self.sel)
         } else {
@@ -248,7 +312,7 @@ impl DocsView {
 
     pub fn resolve_all_doc(&mut self, accept: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.leave_part(window, cx);
-        let n = self.doc.changes().len() + self.doc.other_changes();
+        let n = self.change_count();
         if n == 0 {
             self.status = t("This document has no tracked changes").into();
             cx.notify();
@@ -266,7 +330,7 @@ impl DocsView {
     }
 
     fn changes_status(&self, accept: bool) -> SharedString {
-        let left = self.doc.changes().len() + self.doc.other_changes();
+        let left = self.change_count();
         match (accept, left) {
             (true, 0) => t("Accepted: no tracked changes left").into(),
             (true, 1) => t("Accepted: 1 tracked change left").into(),
@@ -314,6 +378,34 @@ impl DocsView {
         }
     }
 
+    /// Change bars for the visible pages: every line holding a tracked
+    /// change, `(page, top, height)`.
+    pub(crate) fn change_bars(&self) -> Vec<(usize, f32, f32)> {
+        let changes = self.doc.changes();
+        if changes.is_empty() {
+            return Vec::new();
+        }
+        let visible = self.geometry().visible_pages(self.laid.paged.pages.len());
+        let mut out: Vec<(usize, f32, f32)> = Vec::new();
+        for c in changes {
+            let mut rects: Vec<(usize, f32, f32)> = self
+                .laid
+                .selection_rects((c.start.para, c.start.offset), (c.end.para, c.end.offset))
+                .into_iter()
+                .map(|(p, r)| (p, r[1], r[3]))
+                .collect();
+            if let Some(k) = self.laid.caret(c.start.para, c.start.offset) {
+                rects.push((k.page, k.top, k.height));
+            }
+            for r in rects {
+                if visible.contains(&r.0) && !out.contains(&r) {
+                    out.push(r);
+                }
+            }
+        }
+        out
+    }
+
     // ── cards ──────────────────────────────────────────────────────────────
 
     /// Comment cards for the comments on visible pages, stacked so they
@@ -357,8 +449,52 @@ impl DocsView {
                     anchor,
                     at,
                     active,
+                    change: None,
                 },
                 h,
+            ));
+        }
+        // Formatting changes: a balloon each, as Word shows them (the
+        // text's; a header, footer or note being edited shows its changes
+        // on the page only).
+        let body_changes = if self.part.is_none() {
+            self.doc.changes()
+        } else {
+            Vec::new()
+        };
+        for c in body_changes {
+            if c.kind != docs_engine::RevKind::Format {
+                continue;
+            }
+            let Some(pc) = paged.caret(c.start.para, c.start.offset) else {
+                continue;
+            };
+            if !visible.contains(&pc.page) {
+                continue;
+            }
+            let anchor = g.page_to_screen(pc.page, pc.x, pc.top + pc.height * 0.85);
+            let (pw, _) = g.page_size(pc.page);
+            let right = g.page_to_screen(pc.page, pw, pc.top);
+            let at = point(right.x + px(16.), g.page_to_screen(pc.page, 0., pc.top).y);
+            let active = c.start <= sb && c.end >= sa;
+            let label = format_label(&c.format);
+            let lines = (label.chars().count() as f32 / 32.0).ceil().max(1.0);
+            cards.push((
+                f32::from(at.y),
+                Card {
+                    id: format!("fmt-{}-{}-{}", c.start.para, c.start.offset, c.para as u8),
+                    anchor,
+                    at,
+                    active,
+                    change: Some(ChangeNote {
+                        author: c.author,
+                        date: c.date,
+                        label,
+                        start: c.start,
+                        end: c.end,
+                    }),
+                },
+                40.0 + lines * 18.0,
             ));
         }
         cards.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -382,6 +518,9 @@ impl DocsView {
         cards
             .iter()
             .filter_map(|card| {
+                if let Some(note) = &card.change {
+                    return Some(change_card(card, note, &view, &t, origin));
+                }
                 let c = self.doc.comments().iter().find(|c| c.id == card.id)?;
                 let id = card.id.clone();
                 let editing = self.comment_edit.as_ref().filter(|e| e.id == card.id);
@@ -526,11 +665,102 @@ impl DocsView {
     }
 }
 
+/// A formatting change's balloon: who made it, when, and what it did;
+/// a click selects the changed text, the buttons accept or reject it.
+fn change_card(
+    card: &Card,
+    note: &ChangeNote,
+    view: &WeakEntity<DocsView>,
+    t: &kantor_ui::tokens::Tokens,
+    origin: Point<Pixels>,
+) -> AnyElement {
+    let color = docs_pdf::build::author_color(&note.author);
+    let ink = rgb((color.0[0] as u32) << 16 | (color.0[1] as u32) << 8 | color.0[2] as u32);
+    let sel = Selection {
+        anchor: note.start,
+        head: note.end,
+    };
+    let caret = Selection::caret(note.start);
+    let (v1, v2, v3) = (view.clone(), view.clone(), view.clone());
+    let id = card.id.clone();
+    v_flex()
+        .id(SharedString::from(format!("change-card-{id}")))
+        .absolute()
+        .left(card.at.x - origin.x)
+        .top(card.at.y - origin.y)
+        .w(px(CARD_W))
+        .gap(SPACE_1)
+        .p(SPACE_2)
+        .rounded(RADIUS_LG)
+        .bg(t.elevated)
+        .border_1()
+        .border_l_4()
+        .border_color(if card.active { t.accent } else { t.border })
+        .when(card.active, |d| d.shadow(t.shadow(Elevation::Popover)))
+        .text_size(FONT_SMALL)
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(move |_, window, cx| {
+            let _ = v1.update(cx, |this, cx| {
+                this.sel = sel;
+                this.reveal_caret.set(true);
+                this.focus(window, cx);
+                cx.notify();
+            });
+        })
+        .child(
+            h_flex()
+                .gap(SPACE_2)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(ink)
+                        .child(note.author.clone()),
+                )
+                .child(div().text_color(t.fg_dim).child(short_date(&note.date)))
+                .child(
+                    Button::new(SharedString::from(format!("change-accept-{id}")))
+                        .ghost()
+                        .xsmall()
+                        .icon(Lucide::Check)
+                        .tooltip(i18n::t("Accept change"))
+                        .on_click(move |_, window, cx| {
+                            let _ = v2.update(cx, |this, cx| {
+                                this.sel = caret;
+                                this.accept_change_doc(window, cx)
+                            });
+                        }),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("change-reject-{id}")))
+                        .ghost()
+                        .xsmall()
+                        .icon(Lucide::X)
+                        .tooltip(i18n::t("Reject change"))
+                        .on_click(move |_, window, cx| {
+                            let _ = v3.update(cx, |this, cx| {
+                                this.sel = caret;
+                                this.reject_change_doc(window, cx)
+                            });
+                        }),
+                ),
+        )
+        .child(
+            div()
+                .text_color(t.fg)
+                .whitespace_normal()
+                .child(note.label.clone()),
+        )
+        .into_any_element()
+}
+
 /// The toolbar's Review menu.
 pub(crate) fn review_button(view: &DocsView, cx: &mut Context<DocsView>) -> impl IntoElement {
     let v = cx.entity().downgrade();
-    let changes = view.doc.changes().len() + view.doc.other_changes();
-    let comments = view.doc.comments().len();
+    let changes = view.change_count();
+    let comments = view.main_doc().comments().len();
     let track = view.doc.track_changes();
     let tip = match (changes, comments) {
         (0, 0) => t("Review: comments and tracked changes").to_owned(),
@@ -646,6 +876,17 @@ mod tests {
     fn short_dates() {
         assert_eq!(short_date("2026-11-03T09:00:00Z"), "3 Nov 2026");
         assert_eq!(short_date(""), "");
+    }
+
+    #[std::prelude::v1::test]
+    fn format_labels_read_like_words() {
+        use docs_engine::{Align, FormatItem as F};
+        assert_eq!(format_label(&[F::Bold(true)]), "Formatted: Font: Bold");
+        assert_eq!(
+            format_label(&[F::Align(Align::Center), F::Indent]),
+            "Formatted: Centered, Indent"
+        );
+        assert_eq!(format_label(&[F::Size(Some(24))]), "Formatted: Font: 12 pt");
     }
 
     #[std::prelude::v1::test]

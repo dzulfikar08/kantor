@@ -85,11 +85,9 @@ impl DocsView {
     /// Bring the underlines up to date after the document changed (or
     /// checking was switched on or off).
     pub(crate) fn refresh_spelling(&mut self, cx: &mut Context<Self>) {
-        // Headers, footers and notes being edited aren't checked (the
-        // body's underlines come back when editing returns there).
-        if self.part.is_some() {
-            return;
-        }
+        // While a header, footer or note is edited, `self.doc` is that
+        // part: it's checked the same way (the cache keeps the body's
+        // results for when editing returns there).
         let st = &mut self.spell;
         if !kantor_ui::spelling::enabled(cx) {
             if !st.flags.is_empty() || !st.cache.is_empty() {
@@ -225,7 +223,6 @@ impl DocsView {
         }
         self.spell.typing = false;
         if kantor_ui::spelling::enabled(cx)
-            && self.part.is_none()
             && let Some(Some(flags)) = self.spell.flags.get(pos.para)
         {
             let default = kantor_ui::spelling::default_lang(cx);

@@ -11,6 +11,28 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Docs: with Track Changes on, formatting changes are tracked as in Word (bold, italic,
+  underline, fonts, sizes, colours, styles, alignment, indents, spacing, lists and tab stops):
+  each shows as a balloon beside the page ("Formatted: Font: Bold", with its author and date) and
+  is accepted (the formatting stays) or rejected (the old formatting comes back) on its own, from
+  the balloon, the Review menu or the palette. Formatting changes in files from Word are no longer
+  resolved only by Accept All / Reject All.
+- Docs: with Track Changes on, *Replace All* strikes each match through and inserts the
+  replacement after it; inserting a table row marks it inserted and deleting a row (or the
+  whole table) marks it deleted with its text struck through until the change is accepted, as
+  Word does; deleting a floating picture or shape marks it deleted, and text box edits are
+  tracked. Inserted and deleted rows in files from Word open (they used to send Save to Save
+  As) and are accepted or rejected like any change. Lines with tracked changes get Word's
+  change bar in the left margin.
+- Docs: Track Changes now covers headers, footers, footnotes and endnotes: edits made in them
+  are recorded and shown (deletions struck through, on screen and in the PDF), the change at
+  the caret is accepted or rejected while editing them, and Accept All / Reject All resolve the
+  changes in them too. Spell check works in a header, footer or note being edited.
+- Docs: with Track Changes on, updating fields (`F9`, *Update Table*) and inserting a field are
+  tracked as Word does: the old result is struck through and the new one inserted, so a table
+  of contents or a cross-reference that changed can be reviewed and rejected. Saved files with
+  tracked fields pass the Open XML validator (a deleted field's code is written as Word's
+  `w:delInstrText`, and tracked simple fields as complex ones).
 - Docs: Word 97-2003 (`.doc`) files open with their floating pictures (PNG, JPEG), shapes and
   text boxes, placed, wrapped and drawn as in Word and saved into the new `.docx`. Floating
   objects in headers and footers, grouped shapes and freeform shapes drawn with formulas are

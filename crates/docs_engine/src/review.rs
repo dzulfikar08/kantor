@@ -23,10 +23,12 @@
 use std::sync::Arc;
 
 use crate::document::{Document, Kind};
+use crate::fmt_track;
 use crate::model::{
     OBJECT, Object, Opaque, Paragraph, Position, RunProps, Selection, element_name,
 };
 use crate::object::Level;
+use crate::track_table;
 use crate::xml;
 
 /// What a tracked change does.
@@ -34,6 +36,9 @@ use crate::xml;
 pub enum RevKind {
     Insert,
     Delete,
+    /// A formatting change (`w:rPrChange`, `w:pPrChange`): only in
+    /// [`Change`]s, never on a run's [`Revision`].
+    Format,
 }
 
 /// A tracked insertion or deletion: its start tag and who made it when.
@@ -85,6 +90,14 @@ pub struct Change {
     pub author: String,
     pub date: String,
     pub text: String,
+    /// What a formatting change did (empty for insertions and deletions).
+    pub format: Vec<crate::fmt_track::FormatItem>,
+    /// A paragraph's formatting change (`w:pPrChange`) rather than its
+    /// text's.
+    pub para: bool,
+    /// An inserted or deleted table row (`w:trPr/w:ins|w:del`), from its
+    /// first cell to its last.
+    pub row: bool,
 }
 
 /// A comment from `comments.xml` (or added in Kantor).
@@ -313,59 +326,126 @@ fn clear_mark_revs(p: &mut Paragraph) {
     }
 }
 
-/// The old properties a `w:rPrChange` / `w:pPrChange` holds, as the inner
-/// property element.
-fn change_inner(change: &str, inner: &str) -> Option<String> {
-    let open = change.find(&format!("<w:{inner}"))?;
-    let close = format!("</w:{inner}>");
-    match change[open..].find(&close) {
-        Some(e) => Some(change[open..open + e + close.len()].to_owned()),
-        None => {
-            // `<w:rPr/>`: no old properties.
-            let end = change[open..].find("/>")? + open + 2;
-            Some(change[open..end].to_owned())
-        }
+/// Join `right` onto `left` as a removed paragraph mark does: an empty
+/// left paragraph takes the right one's formatting (the mark that's left
+/// is the right one's, as in Word).
+fn join(left: &mut Paragraph, right: Paragraph) {
+    if left.text.is_empty() {
+        let props = right.props.clone();
+        left.append(right);
+        left.props = props;
+    } else {
+        left.append(right);
+    }
+}
+
+/// Remove a resolved change's text: a floating object marked deleted
+/// goes too (deleting text keeps them otherwise).
+fn drop_change(p: &mut Paragraph, r: std::ops::Range<usize>) {
+    if r.len() == OBJECT.len_utf8() && matches!(p.object_at(r.start), Some(Object::Float(_))) {
+        p.remove_object(r.start);
+    } else {
+        p.delete(r);
     }
 }
 
 impl Document {
-    /// Tracked insertions and deletions in document order (consecutive runs
-    /// of one change merged).
+    /// Tracked changes in document order: insertions and deletions
+    /// (consecutive runs of one change merged), paragraph marks that can
+    /// join two paragraphs, and formatting changes (a paragraph's first,
+    /// then its text's).
     pub fn changes(&self) -> Vec<Change> {
         let mut out: Vec<Change> = Vec::new();
-        let mut add =
-            |start: Position, end: Position, kind, author: &str, date: &str, text: &str| {
-                if let Some(last) = out.last_mut()
-                    && last.end == start
-                    && last.kind == kind
-                    && last.author == author
-                    && last.date == date
-                {
-                    last.end = end;
-                    last.text.push_str(text);
-                    return;
-                }
-                out.push(Change {
-                    start,
-                    end,
-                    kind,
-                    author: author.to_owned(),
-                    date: date.to_owned(),
-                    text: text.to_owned(),
-                });
-            };
+        let mut add = |c: Change| {
+            if let Some(last) = out.last_mut()
+                && last.end == c.start
+                && last.kind == c.kind
+                && last.author == c.author
+                && last.date == c.date
+                && last.format == c.format
+                && !last.para
+                && !c.para
+                && !last.row
+                && !c.row
+            {
+                last.end = c.end;
+                last.text.push_str(&c.text);
+                return;
+            }
+            out.push(c);
+        };
         let n = self.paragraphs.len();
         for (pi, p) in self.paragraphs.iter().enumerate() {
+            // A tracked table row, at its first paragraph.
+            if let Some(c) = p.cell
+                && (pi == 0
+                    || self.paragraphs[pi - 1]
+                        .cell
+                        .is_none_or(|q| q.table != c.table || q.row != c.row))
+                && let Some(row) = self
+                    .tables
+                    .get(&c.table)
+                    .and_then(|t| t.rows.get(c.row as usize))
+                && let Some((kind, author, date)) = track_table::row_rev(row)
+                && let Some((_, b)) = Self::row_paras(&self.paragraphs[pi..], c.table, c.row)
+            {
+                let b = pi + b;
+                add(Change {
+                    start: Position::new(pi, 0),
+                    end: Position::new(b, self.paragraphs[b].text.len()),
+                    kind,
+                    author,
+                    date,
+                    text: String::new(),
+                    format: Vec::new(),
+                    para: false,
+                    row: true,
+                });
+            }
+            if let Some(ch) = fmt_track::para_change(&p.props) {
+                let (author, date) = fmt_track::who_when(ch);
+                add(Change {
+                    start: Position::new(pi, 0),
+                    end: Position::new(pi, p.text.len()),
+                    kind: RevKind::Format,
+                    author,
+                    date,
+                    text: p.text.clone(),
+                    format: self.para_format_items(&p.props, ch),
+                    para: true,
+                    row: false,
+                });
+            }
             for (range, run) in p.run_ranges() {
-                let Some(rev) = &run.rev else { continue };
-                add(
-                    Position::new(pi, range.start),
-                    Position::new(pi, range.end),
-                    rev.kind,
-                    &rev.author,
-                    &rev.date,
-                    &p.text[range],
-                );
+                if let Some(rev) = &run.rev {
+                    add(Change {
+                        start: Position::new(pi, range.start),
+                        end: Position::new(pi, range.end),
+                        kind: rev.kind,
+                        author: rev.author.clone(),
+                        date: rev.date.clone(),
+                        text: p.text[range.clone()].to_owned(),
+                        format: Vec::new(),
+                        para: false,
+                        row: false,
+                    });
+                }
+                if !range.is_empty()
+                    && let Some(ch) = fmt_track::run_change(&run.props)
+                {
+                    let (author, date) = fmt_track::who_when(ch);
+                    add(Change {
+                        start: Position::new(pi, range.start),
+                        end: Position::new(pi, range.end),
+                        kind: RevKind::Format,
+                        author,
+                        date,
+                        text: p.text[range.clone()].to_owned(),
+                        format: self.run_format_items(&run.props, ch),
+                        para: false,
+                        row: false,
+                    });
+                }
             }
             // An inserted or deleted paragraph mark (not the last one,
             // which has nothing to join).
@@ -373,21 +453,24 @@ impl Document {
                 && self.can_merge(pi, pi + 1)
                 && let Some((kind, author, date)) = mark_rev(p)
             {
-                add(
-                    Position::new(pi, p.text.len()),
-                    Position::new(pi + 1, 0),
+                add(Change {
+                    start: Position::new(pi, p.text.len()),
+                    end: Position::new(pi + 1, 0),
                     kind,
-                    &author,
-                    &date,
-                    "\n",
-                );
+                    author,
+                    date,
+                    text: "\n".into(),
+                    format: Vec::new(),
+                    para: false,
+                    row: false,
+                });
             }
         }
         out
     }
 
-    /// Paragraph-mark and formatting changes (resolved only by Accept All /
-    /// Reject All).
+    /// Paragraph-mark changes that can't join paragraphs (resolved only by
+    /// Accept All / Reject All).
     pub fn other_changes(&self) -> usize {
         self.paragraphs
             .iter()
@@ -399,22 +482,7 @@ impl Document {
                 } else {
                     mark_revs(p)
                 };
-                let fmt = p
-                    .props
-                    .extras
-                    .iter()
-                    .filter(|x| element_name(x) == "pPrChange")
-                    .count()
-                    + p.runs
-                        .iter()
-                        .filter(|r| {
-                            r.props
-                                .extras
-                                .iter()
-                                .any(|x| element_name(x) == "rPrChange")
-                        })
-                        .count();
-                i as usize + d as usize + fmt
+                i as usize + d as usize
             })
             .sum()
     }
@@ -427,31 +495,65 @@ impl Document {
     /// The change at (or touching) the caret / overlapping the selection.
     pub fn change_at(&self, sel: Selection) -> Option<Change> {
         let (a, b) = self.clamp_selection(sel).ordered();
-        self.changes()
-            .into_iter()
-            .find(|c| c.start <= b && c.end >= a && (a != b || (c.start <= a && a <= c.end)))
+        let all = self.changes();
+        let hit =
+            |c: &&Change| c.start <= b && c.end >= a && (a != b || (c.start <= a && a <= c.end));
+        // The text's own change before its paragraph's formatting.
+        all.iter()
+            .filter(hit)
+            .find(|c| !c.para)
+            .or_else(|| all.iter().find(hit))
+            .cloned()
     }
 
-    /// Accept or reject the tracked insertions/deletions in `start..end`
-    /// (runs only): one undo step. Returns where the caret goes.
+    /// Accept or reject the tracked changes in `start..end` (`only`: just
+    /// that one kind; formatting changes of the paragraph or of its text):
+    /// one undo step. Returns where the caret goes.
     fn resolve_runs(
         &mut self,
         start: Position,
         end: Position,
         accept: bool,
         sel: Selection,
+        only: Option<(RevKind, bool)>,
     ) -> Selection {
-        let first = start.para;
-        let last = end.para.min(self.paragraphs.len() - 1);
+        let wants = |kind: RevKind, para: bool| only.is_none_or(|o| o == (kind, para));
+        // Whole tables, so their rows can be resolved too.
+        let mut first = start.para;
+        let mut last = end.para.min(self.paragraphs.len() - 1);
+        if let Some(c) = self.paragraphs[first].cell {
+            first = self.table_range(c.table).start;
+        }
+        if let Some(c) = self.paragraphs[last].cell {
+            last = self.table_range(c.table).end - 1;
+        }
         let mut new: Vec<Paragraph> = self.paragraphs[first..=last].to_vec();
         for (k, p) in new.iter_mut().enumerate() {
             let pi = first + k;
+            if pi < start.para || pi > end.para {
+                continue;
+            }
             let lo = if pi == start.para { start.offset } else { 0 };
             let hi = if pi == end.para {
                 end.offset
             } else {
                 p.text.len()
             };
+            if wants(RevKind::Format, true) {
+                fmt_track::resolve_para(&mut p.props, accept);
+            }
+            if wants(RevKind::Format, false) && lo < hi {
+                p.split_run_at(lo);
+                p.split_run_at(hi);
+                let mut at = 0;
+                for run in &mut p.runs {
+                    let r = at..at + run.len;
+                    at = r.end;
+                    if r.start >= lo && r.end <= hi && !r.is_empty() {
+                        fmt_track::resolve_run(&mut run.props, accept);
+                    }
+                }
+            }
             // Ranges to drop (back to front) and runs to keep as plain text.
             let mut drop: Vec<std::ops::Range<usize>> = Vec::new();
             let mut at = 0;
@@ -459,13 +561,12 @@ impl Document {
                 let r = at..at + run.len;
                 at = r.end;
                 let Some(rev) = run.rev.clone() else { continue };
-                if r.end <= lo || r.start >= hi {
+                if r.end <= lo || r.start >= hi || !wants(rev.kind, false) {
                     continue;
                 }
                 let remove = matches!(
                     (rev.kind, accept),
-                    (crate::review::RevKind::Delete, true)
-                        | (crate::review::RevKind::Insert, false)
+                    (RevKind::Delete, true) | (RevKind::Insert, false)
                 );
                 if remove {
                     drop.push(r);
@@ -475,7 +576,7 @@ impl Document {
             }
             for r in drop.into_iter().rev() {
                 // Markers (bookmarks, comment ranges) survive the removal.
-                p.delete(r);
+                drop_change(p, r);
             }
             p.normalize();
         }
@@ -491,19 +592,75 @@ impl Document {
             if !ins && !del {
                 continue;
             }
+            let kind = if ins {
+                RevKind::Insert
+            } else {
+                RevKind::Delete
+            };
+            if !wants(kind, false) {
+                continue;
+            }
             clear_mark_revs(&mut new[k]);
             if (del && accept) || (ins && !accept) {
                 let right = new.remove(k + 1);
-                new[k].append(right);
+                join(&mut new[k], right);
             }
         }
         let count = last - first + 1;
-        let after = Selection::caret(self.clamp_pos_in(&new, first, start));
-        self.replace(first, count, new, (sel, after), Kind::Other, true);
-        after
+        let mut tables = self.tables.clone();
+        let only_rows = match only {
+            Some((_, true)) | Some((RevKind::Format, _)) => Some(None),
+            Some((k, false)) => Some(Some(k)),
+            None => None,
+        };
+        let rows = match only_rows {
+            Some(None) => false,
+            Some(k) => track_table::resolve_rows(
+                &mut new,
+                &mut tables,
+                first,
+                Some((start, end)),
+                accept,
+                k,
+            ),
+            None => track_table::resolve_rows(
+                &mut new,
+                &mut tables,
+                first,
+                Some((start, end)),
+                accept,
+                None,
+            ),
+        };
+        if new.is_empty() && count == self.paragraphs.len() {
+            new.push(Paragraph::default());
+        }
+        let after = Selection::caret(self.clamp_pos_in(&new, first, start, count));
+        self.replace_with_tables(
+            first,
+            count,
+            new,
+            rows.then_some(tables),
+            (sel, after),
+            Kind::Other,
+            true,
+        );
+        self.clamp_selection(after)
     }
 
-    fn clamp_pos_in(&self, paras: &[Paragraph], first: usize, pos: Position) -> Position {
+    /// `pos` after paragraphs `first..first + count` became `paras`.
+    fn clamp_pos_in(
+        &self,
+        paras: &[Paragraph],
+        first: usize,
+        pos: Position,
+        count: usize,
+    ) -> Position {
+        let total = self.paragraphs.len() - count + paras.len();
+        if pos.para >= first + paras.len() {
+            let para = (first + paras.len()).min(total.saturating_sub(1));
+            return Position::new(para, 0);
+        }
         let p = &paras[pos.para - first];
         Position::new(pos.para, pos.offset.min(p.text.len()))
     }
@@ -520,23 +677,40 @@ impl Document {
 
     fn resolve_at(&mut self, sel: Selection, accept: bool) -> Option<Selection> {
         let (a, b) = self.clamp_selection(sel).ordered();
-        let (start, end) = if a == b {
+        if a == b {
             let c = self.change_at(sel)?;
-            (c.start, c.end)
-        } else {
-            let cs: Vec<Change> = self
-                .changes()
-                .into_iter()
-                .filter(|c| c.start < b && c.end > a)
-                .collect();
-            (cs.first()?.start.min(a), cs.last()?.end.max(b))
-        };
-        Some(self.resolve_runs(start, end, accept, sel))
+            return Some(self.resolve_runs(c.start, c.end, accept, sel, Some((c.kind, c.para))));
+        }
+        let cs: Vec<Change> = self
+            .changes()
+            .into_iter()
+            .filter(|c| c.start < b && c.end > a || (c.para && c.start <= b && c.end >= a))
+            .collect();
+        let start = cs.iter().map(|c| c.start).min()?.min(a);
+        let end = cs.iter().map(|c| c.end).max()?.max(b);
+        Some(self.resolve_runs(start, end, accept, sel, None))
     }
 
     /// Accept (or reject) every tracked change: insertions, deletions,
-    /// paragraph marks and formatting. One undo step.
+    /// paragraph marks, formatting and table rows, in the text and in the
+    /// headers, footers and notes. One undo step.
     pub fn resolve_all(&mut self, accept: bool, sel: Selection) -> Selection {
+        let before = self.side_state();
+        let rev = self.revision();
+        let after = self.resolve_body(accept, sel);
+        let body = self.revision() != rev;
+        if self.resolve_parts(accept) {
+            if body {
+                let now = self.side_state();
+                self.set_last_side(before, now);
+            } else {
+                self.push_hf(before, None, sel);
+            }
+        }
+        after
+    }
+
+    fn resolve_body(&mut self, accept: bool, sel: Selection) -> Selection {
         let old = self.paragraphs.clone();
         let mut out: Vec<Paragraph> = Vec::with_capacity(old.len());
         // Paragraphs whose mark is removed join the next one.
@@ -557,58 +731,19 @@ impl Document {
                 }
                 // Formatting changes: accept drops the record, reject puts
                 // the old properties back.
-                let change = run
-                    .props
-                    .extras
-                    .iter()
-                    .find(|x| element_name(x) == "rPrChange")
-                    .map(str::to_owned);
-                if let Some(change) = change {
-                    if accept {
-                        run.props.extras.remove("rPrChange");
-                    } else {
-                        let mut props = RunProps::default();
-                        if let Some(inner) = change_inner(&change, "rPr") {
-                            crate::docx::parse_rpr_into(&inner, &mut props);
-                        }
-                        run.props = props;
-                    }
-                }
+                fmt_track::resolve_run(&mut run.props, accept);
             }
             for r in drop.into_iter().rev() {
-                p.delete(r);
+                drop_change(&mut p, r);
             }
-            let pchange = p
-                .props
-                .extras
-                .iter()
-                .find(|x| element_name(x) == "pPrChange")
-                .map(str::to_owned);
-            if let Some(change) = pchange {
-                p.props.extras.remove("pPrChange");
-                if !accept && let Some(inner) = change_inner(&change, "pPr") {
-                    let keep: Vec<String> = p
-                        .props
-                        .extras
-                        .iter()
-                        .filter(|x| matches!(element_name(x), "rPr" | "sectPr"))
-                        .map(str::to_owned)
-                        .collect();
-                    let mut props = crate::model::ParaProps::default();
-                    crate::docx::parse_ppr_into(&inner, &mut props);
-                    for k in keep {
-                        props.extras.push(&k);
-                    }
-                    p.props = props;
-                }
-            }
+            fmt_track::resolve_para(&mut p.props, accept);
             let (ins, del) = mark_revs(&p);
             let joins = (del && accept) || (ins && !accept);
             clear_mark_revs(&mut p);
             p.normalize();
             if join_next && let Some(prev) = out.last_mut() {
                 if prev.cell == p.cell {
-                    prev.append(p);
+                    join(prev, p);
                 } else {
                     out.push(p);
                 }
@@ -617,15 +752,25 @@ impl Document {
             }
             join_next = joins;
         }
+        let mut tables = self.tables.clone();
+        let rows = track_table::resolve_rows(&mut out, &mut tables, 0, None, accept, None);
         if out.is_empty() {
             out.push(Paragraph::default());
         }
-        if out == old {
+        if out == old && !rows {
             return sel;
         }
         let n = old.len();
         let after = self.clamp_selection_in(&out, sel);
-        self.replace(0, n, out, (sel, after), Kind::Other, true);
+        self.replace_with_tables(
+            0,
+            n,
+            out,
+            rows.then_some(tables),
+            (sel, after),
+            Kind::Other,
+            true,
+        );
         after
     }
 

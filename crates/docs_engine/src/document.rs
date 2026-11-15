@@ -1232,6 +1232,7 @@ impl Document {
             }
             out.push(p);
         }
+        self.track_formats(start.para, &mut out);
         self.replace(start.para, out.len(), out, (sel, sel), Kind::Other, true);
         true
     }
@@ -1248,7 +1249,7 @@ impl Document {
     pub fn format_paragraphs(&mut self, sel: Selection, f: impl Fn(&mut ParaProps)) {
         let sel = self.clamp_selection(sel);
         let (start, end) = sel.ordered();
-        let out: Vec<Paragraph> = self.paragraphs[start.para..=end.para]
+        let mut out: Vec<Paragraph> = self.paragraphs[start.para..=end.para]
             .iter()
             .cloned()
             .map(|mut p| {
@@ -1256,6 +1257,7 @@ impl Document {
                 p
             })
             .collect();
+        self.track_formats(start.para, &mut out);
         self.replace(start.para, out.len(), out, (sel, sel), Kind::Other, true);
     }
 

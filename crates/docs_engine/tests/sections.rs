@@ -387,20 +387,23 @@ fn formatting_and_paragraph_mark_changes_resolve() {
         "{:?}",
         doc.unsupported_content()
     );
-    // The formatting change; the inserted mark is a change in the text
-    // (it can be accepted or rejected on its own).
-    assert_eq!(doc.other_changes(), 1);
-    assert_eq!(doc.changes().len(), 1);
-    assert_eq!(doc.changes()[0].text, "\n");
+    // The formatting change and the inserted mark are both changes in the
+    // text (each can be accepted or rejected on its own).
+    assert_eq!(doc.other_changes(), 0);
+    let ch = doc.changes();
+    assert_eq!(ch.len(), 2, "{ch:?}");
+    assert_eq!(ch[0].kind, docs_engine::RevKind::Format);
+    assert_eq!(ch[0].format, [docs_engine::FormatItem::Bold(true)]);
+    assert_eq!(ch[1].text, "\n");
     let mut rejected = doc.clone();
     // Accept: bold stays, the paragraphs stay apart.
     doc.resolve_all(true, Selection::default());
-    assert_eq!(doc.other_changes(), 0);
+    assert!(!doc.has_changes());
     assert_eq!(doc.len(), 2);
     assert_eq!(doc.paragraph(0).runs[0].props.bold, Some(true));
     // Reject: not bold, and the inserted mark joins the paragraphs.
     rejected.resolve_all(false, Selection::default());
-    assert_eq!(rejected.other_changes(), 0);
+    assert!(!rejected.has_changes());
     assert_eq!(rejected.len(), 1);
     assert_eq!(rejected.paragraph(0).text, "onetwo");
     assert_ne!(rejected.paragraph(0).runs[0].props.bold, Some(true));

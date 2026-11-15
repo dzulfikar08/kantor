@@ -57,9 +57,20 @@ pub struct StoryLayout {
     pub paras: Vec<docs_engine::Paragraph>,
     /// Height of its content, px.
     pub height: f32,
+    /// The layout paragraphs, kept only when some text is struck through
+    /// (tracked deletions).
+    pub strikes: Arc<Vec<docs_layout::Paragraph>>,
 }
 
 impl StoryLayout {
+    /// Strikethrough lines for its tracked deletions (its own coordinates).
+    pub fn strike_rules(&self) -> Vec<RuleRect> {
+        if self.strikes.is_empty() {
+            return Vec::new();
+        }
+        self.paged.strike_rules(0, &self.strikes)
+    }
+
     pub fn text(&self, para: usize) -> &str {
         self.paras.get(para).map_or("", |p| p.text.as_str())
     }
@@ -261,7 +272,13 @@ fn lay_story(
     if let Some(last) = lps.last() {
         height += last.space_after_pt * docs_layout::PT;
     }
+    let strikes = if lps.iter().any(|p| !p.strikes.is_empty()) {
+        Arc::new(lps)
+    } else {
+        Arc::default()
+    };
     StoryLayout {
+        strikes,
         story,
         note,
         text_box: None,
@@ -790,6 +807,7 @@ fn note_part(l: Arc<StoryLayout>, from: f32, to: f32) -> Arc<StoryLayout> {
         paged: l.paged.slice(0, from, to),
         paras: l.paras.clone(),
         height: to - from,
+        strikes: l.strikes.clone(),
     })
 }
 
