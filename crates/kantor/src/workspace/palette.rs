@@ -1278,7 +1278,9 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Update Field"),
-        detail: tk("Docs · the fields in the selection, or the one at the caret: dates, cross-references, contents"),
+        detail: tk(
+            "Docs · the fields in the selection, or the one at the caret: dates, cross-references, contents",
+        ),
         keys: "F9",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.update_fields_doc(w, cx)),
     },

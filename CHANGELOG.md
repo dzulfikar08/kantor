@@ -9,6 +9,25 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+- Docs: fields from Word show their results, on the page and in the PDF, instead of grey
+  placeholders: a table of contents, cross-references, caption numbers, dates, document
+  properties and links. F9 (Update Field) updates the fields in the selection or at the caret as
+  Word does: page references get Kantor's own page numbers, cross-references the bookmark's
+  text, captions their numbers, dates and times their format, and a mail merge field shows
+  «Name». Update Table rebuilds a table of contents from the headings, keeping its TOC styles and
+  linking each line to its heading. Each update is one undo step.
+- Docs: Ctrl+click follows a hyperlink. A link to a place in the document jumps there; web and
+  e-mail addresses open in your browser, and other kinds of address ask first.
+
+### Changed
+- Docs: files with a table of contents or cross-references are saved in place like any other
+  file (they used to need a new name). Their fields are written back as they were.
+- Docs: `SECTIONPAGES` in a header or footer shows the number of pages in its section.
+
+### Fixed
+- Docs: a page break at the very end of a paragraph no longer leaves an empty page after it.
+
 ## [0.7.0] - 2026-11-15
 
 Sheets tabs work like Excel's: insert, delete, rename, move or copy, colour and hide sheets, and

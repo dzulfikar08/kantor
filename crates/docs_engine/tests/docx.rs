@@ -638,16 +638,7 @@ fn opaque_elements_are_kept_byte_for_byte() {
         .collect();
     assert_eq!(
         labels,
-        [
-            "",
-            "Budi",
-            "3",
-            "Floating image",
-            "",
-            "",
-            "Equation",
-            ""
-        ]
+        ["", "Budi", "3", "Floating image", "", "", "Equation", ""]
     );
     // The DATE field's result is text between its marks.
     assert!(doc.paragraph(1).text.contains("7/11/2026"));

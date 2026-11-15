@@ -161,7 +161,11 @@ fn fields_show_their_results_and_save_in_place() {
         assert!(xml.contains(want), "{want} missing in\n{xml}");
     }
     let back = Document::open(&copy).unwrap();
-    assert_eq!(back.paragraphs(), doc.paragraphs(), "same model after a save");
+    assert_eq!(
+        back.paragraphs(),
+        doc.paragraphs(),
+        "same model after a save"
+    );
     assert!(back.unsupported_content().is_empty());
 
     // An edit elsewhere leaves the other paragraphs and parts as they were.
@@ -177,7 +181,11 @@ fn fields_show_their_results_and_save_in_place() {
         }
         if name == "word/document.xml" {
             let cut = text.rfind("<w:p>").unwrap();
-            assert_eq!(&text[..cut], &second[name][..cut], "paragraphs before the edit");
+            assert_eq!(
+                &text[..cut],
+                &second[name][..cut],
+                "paragraphs before the edit"
+            );
             continue;
         }
         assert_eq!(Some(text), second.get(name), "{name} changed");
@@ -272,11 +280,7 @@ fn f9_updates_the_field_at_the_caret_and_update_table_the_contents() {
     // Caret in the DATE result: only that field changes.
     let p = find(&doc, "Prepared on");
     let at = doc.paragraph(p).text.find("January").unwrap();
-    doc.update_fields(
-        Selection::caret(Position::new(p, at)),
-        &cx(),
-        &mut lay_out,
-    );
+    doc.update_fields(Selection::caret(Position::new(p, at)), &cx(), &mut lay_out);
     assert_eq!(
         shown(&doc, p),
         "Prepared on 15 November 2026 for Old title. Dear ,"
@@ -288,11 +292,7 @@ fn f9_updates_the_field_at_the_caret_and_update_table_the_contents() {
     assert_eq!(doc.revision(), rev);
 
     // Update Table from anywhere rebuilds the table of contents only.
-    doc.update_tables_of_contents(
-        Selection::caret(Position::new(p, 0)),
-        &cx(),
-        &mut lay_out,
-    );
+    doc.update_tables_of_contents(Selection::caret(Position::new(p, 0)), &cx(), &mut lay_out);
     assert_eq!(shown(&doc, 3), "Results\t2");
     assert_eq!(
         shown(&doc, find(&doc, "Sales by city")),
@@ -304,12 +304,8 @@ fn f9_updates_the_field_at_the_caret_and_update_table_the_contents() {
 
 #[test]
 fn toc_switches_levels_and_missing_bookmarks() {
-    let mut doc = Document::open(&corpus("fields.docx")).unwrap();
+    let doc = Document::open(&corpus("fields.docx")).unwrap();
     // `\o "1-1"`: level 1 only; `\n`: no page numbers.
-    let span = doc.fields()[0].clone();
-    let (b, _) = (span.begin, span.end);
-    let text = doc.paragraph(b.para).text.clone();
-    assert!(text.starts_with(OBJECT));
     let instr = r#" TOC \o "1-1" \n \h "#;
     let mut doc2 = with_instr(&doc, 0, instr);
     doc2.update_tables_of_contents(Selection::default(), &cx(), &mut lay_out);
@@ -323,15 +319,10 @@ fn toc_switches_levels_and_missing_bookmarks() {
     assert_eq!(shown(&doc3, 1), NO_TOC_ENTRIES);
 
     // A REF to a bookmark that's gone.
-    let i = doc
-        .fields()
-        .iter()
-        .position(|f| f.kind() == "REF")
-        .unwrap();
+    let i = doc.fields().iter().position(|f| f.kind() == "REF").unwrap();
     let mut doc4 = with_instr(&doc, i, " REF _Gone \\h ");
     doc4.update_fields(all(&doc4), &cx(), &mut lay_out);
     assert!(shown(&doc4, find(&doc4, "See ")).contains(NO_BOOKMARK));
-    let _ = &mut doc;
 }
 
 /// `doc` with field `i`'s instruction replaced (rebuilt through a save).
@@ -343,8 +334,14 @@ fn with_instr(doc: &Document, i: usize, instr: &str) -> Document {
     let mut p = parts(&std::fs::read(&path).unwrap());
     let old = doc.fields()[i].instr.clone();
     let xml = p.get_mut("word/document.xml").unwrap();
-    let from = format!("<w:instrText xml:space=\"preserve\">{}</w:instrText>", escape(&old));
-    let to = format!("<w:instrText xml:space=\"preserve\">{}</w:instrText>", escape(instr));
+    let from = format!(
+        "<w:instrText xml:space=\"preserve\">{}</w:instrText>",
+        escape(&old)
+    );
+    let to = format!(
+        "<w:instrText xml:space=\"preserve\">{}</w:instrText>",
+        escape(instr)
+    );
     assert!(xml.contains(&from), "{from}");
     *xml = xml.replacen(&from, &to, 1);
     let mut out = Vec::new();
@@ -423,9 +420,15 @@ fn broken_fields_are_saved_as_valid_xml() {
     doc.save_as(&path).unwrap();
     let xml = parts(&std::fs::read(&path).unwrap())["word/document.xml"].clone();
     assert!(!xml.contains("<w:fldSimple"), "{xml}");
-    assert!(xml.contains(r#"<w:instrText xml:space="preserve"> TITLE \* MERGEFORMAT </w:instrText>"#));
+    assert!(
+        xml.contains(r#"<w:instrText xml:space="preserve"> TITLE \* MERGEFORMAT </w:instrText>"#)
+    );
     let back = Document::open(&path).unwrap();
     assert!(back.unsupported_content().is_empty());
-    let title = back.fields().into_iter().find(|f| f.kind() == "TITLE").unwrap();
+    let title = back
+        .fields()
+        .into_iter()
+        .find(|f| f.kind() == "TITLE")
+        .unwrap();
     assert_eq!(title.end.para, title.begin.para + 1);
 }

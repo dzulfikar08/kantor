@@ -37,20 +37,29 @@
 //!    text with a placeholder in the layout, written back byte for byte:
 //!    floating pictures (`wp:anchor`), shapes and text boxes
 //!    (`mc:AlternateContent`, `w:pict`, `w:object`), content controls
-//!    (`w:sdt`, inline or block), simple and complex fields whose result
-//!    doesn't depend on the document (PAGE, DATE, HYPERLINK…; the whole
-//!    `begin…end` run sequence when it sits in one paragraph), equations,
+//!    (`w:sdt`, inline or block), page number fields (PAGE, NUMPAGES,
+//!    SECTIONPAGES: the whole `begin…end` run sequence, numbered per page)
+//!    and fields whose runs are laid out unusually, equations,
 //!    smart tags and custom XML, symbols,
 //!    nested tables, and any other unknown body, paragraph or run element.
 //!    Bookmarks and permission ranges are zero-width markers that text
 //!    deletion never removes. Word's `_GoBack` bookmark, proofing marks and
 //!    `w:lastRenderedPageBreak` are dropped (no content).
+//!
+//!    Other fields are modelled as their result between two zero-width
+//!    marks ([`FieldMark`]): the start holds the code's XML (`fldChar
+//!    begin`, the instruction runs and the separator run, or the
+//!    `<w:fldSimple>` start tag), the end its closing run or tag. A field
+//!    may span paragraphs (a table of contents); its result is ordinary
+//!    text, nested fields included. A table of contents' block content
+//!    control is unwrapped the same way: its start and end tags are
+//!    zero-width markers (`Level::Wrap`) on its first and last paragraph.
+//!    See [`crate::fields`].
 //! 4. **Unsupported** (the conservative whole-document flag, see
 //!    [`Read::unsupported`]): tracked changes (`w:ins`, `w:del`, moves,
-//!    property changes, "track changes" switched on), comments, fields that
-//!    depend on document content (TOC, REF, PAGEREF, SEQ…) or span
-//!    paragraphs, content controls around table rows or cells, and unusual
-//!    namespace prefixes. Their XML is still kept as opaque objects where
+//!    property changes, "track changes" switched on), comments, fields whose
+//!    code (not result) runs across paragraphs or that never end, content
+//!    controls around table rows or cells, and unusual namespace prefixes. Their XML is still kept as opaque objects where
 //!    possible, but the document counts as "imported with unsupported
 //!    content": [`crate::Document::save`] refuses to overwrite the original,
 //!    the UI routes Save to Save As, and `save_as` refuses the original's
@@ -1447,7 +1456,12 @@ impl BodyParser<'_> {
     }
 
     /// A run holding a `w:fldChar` closed (`run` is its source range).
-    fn fld_run_closed(&mut self, fld: RunFld, (run_start, after): (usize, usize), stack_len: usize) {
+    fn fld_run_closed(
+        &mut self,
+        fld: RunFld,
+        (run_start, after): (usize, usize),
+        stack_len: usize,
+    ) {
         let clean = !self.run_pushed;
         match fld {
             RunFld::Begin => {}
@@ -1785,8 +1799,7 @@ impl BodyParser<'_> {
                 // A field whose code (or whole opaque field) runs on into
                 // the next paragraph: Kantor can't keep it.
                 while let Some(f) = self.fields.pop_if(|f| f.mode != FieldMode::Result) {
-                    self.unsupported
-                        .insert("fields spanning paragraphs".into());
+                    self.unsupported.insert("fields spanning paragraphs".into());
                     // Keep what Word shows of it here as text.
                     if f.in_result && !f.result.is_empty() {
                         self.para.push_tracked(
@@ -2817,6 +2830,33 @@ fn write_paragraph(out: &mut String, p: &Paragraph) {
         write_p(out, p, &runs);
         return;
     }
+    // Only wraps, starts before ends: the paragraph is one `<w:p>` inside
+    // them, wherever the caret put text around them.
+    let wraps: Vec<&Run> = runs
+        .iter()
+        .filter(|(_, r)| r.object.as_ref().is_some_and(Object::is_wrap))
+        .map(|(_, r)| *r)
+        .collect();
+    let is_end = |r: &Run| matches!(&r.object, Some(Object::Opaque(o)) if o.xml.starts_with("</"));
+    let blocks = runs
+        .iter()
+        .any(|(_, r)| r.object.as_ref().is_some_and(Object::is_block));
+    let first_end = wraps.iter().position(|r| is_end(r)).unwrap_or(wraps.len());
+    if !blocks && wraps[first_end..].iter().all(|r| is_end(r)) {
+        for r in &wraps[..first_end] {
+            write_run(out, "", r);
+        }
+        let inner: Vec<_> = runs
+            .iter()
+            .filter(|(_, r)| !r.object.as_ref().is_some_and(Object::is_wrap))
+            .cloned()
+            .collect();
+        write_p(out, p, &inner);
+        for r in &wraps[first_end..] {
+            write_run(out, "", r);
+        }
+        return;
+    }
     // Segments of runs between block objects and wraps.
     let mut segs: Vec<Seg> = vec![Vec::new()];
     let mut cuts: Vec<&Run> = Vec::new();
@@ -2835,12 +2875,16 @@ fn write_paragraph(out: &mut String, p: &Paragraph) {
     // Wraps alone don't make the paragraph go away: one segment is its
     // `<w:p>` even when empty (the first with text, else the one after the
     // leading wraps).
-    let has_block = cuts.iter().any(|r| r.object.as_ref().is_some_and(Object::is_block));
+    let has_block = cuts
+        .iter()
+        .any(|r| r.object.as_ref().is_some_and(Object::is_block));
     let main = (!has_block).then(|| {
-        segs.iter().position(|s| !markers_only(s)).unwrap_or_else(|| {
-            let lead = segs.iter().take_while(|s| s.is_empty()).count();
-            lead.min(segs.len() - 1)
-        })
+        segs.iter()
+            .position(|s| !markers_only(s))
+            .unwrap_or_else(|| {
+                let lead = segs.iter().take_while(|s| s.is_empty()).count();
+                lead.min(segs.len() - 1)
+            })
     });
     for (k, seg) in segs.iter().enumerate() {
         if k > 0 {

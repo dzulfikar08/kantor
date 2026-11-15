@@ -56,7 +56,10 @@ impl FieldSpan {
 
     /// The result's range (between the marks).
     pub fn result(&self) -> (Position, Position) {
-        (Position::new(self.begin.para, self.begin.offset + OBJ), self.end)
+        (
+            Position::new(self.begin.para, self.begin.offset + OBJ),
+            self.end,
+        )
     }
 
     /// Whether `pos` is inside the field (marks included).
@@ -82,10 +85,9 @@ pub fn spans(paras: &[Paragraph]) -> Vec<FieldSpan> {
             match &**f {
                 FieldMark::Begin { .. } => open.push((pos, f.clone())),
                 FieldMark::End { simple, .. } => {
-                    if open
-                        .last()
-                        .is_some_and(|(_, b)| matches!(&**b, FieldMark::Begin { simple: s, .. } if s == simple))
-                        && let Some((begin, mark)) = open.pop()
+                    if open.last().is_some_and(
+                        |(_, b)| matches!(&**b, FieldMark::Begin { simple: s, .. } if s == simple),
+                    ) && let Some((begin, mark)) = open.pop()
                     {
                         out.push(FieldSpan {
                             begin,
@@ -113,14 +115,18 @@ pub(crate) fn writable(paras: &[Paragraph]) -> Option<Vec<Paragraph>> {
     let mut drop: Vec<Position> = Vec::new();
     for (i, p) in paras.iter().enumerate() {
         for (r, run) in p.run_ranges() {
-            if matches!(run.object, Some(Object::Field(_))) && !paired.contains(&Position::new(i, r.start)) {
+            if matches!(run.object, Some(Object::Field(_)))
+                && !paired.contains(&Position::new(i, r.start))
+            {
                 drop.push(Position::new(i, r.start));
             }
         }
     }
     let loose: Vec<&FieldSpan> = spans
         .iter()
-        .filter(|s| matches!(&*s.mark, FieldMark::Begin { simple: true, .. }) && !simple_holds(paras, s))
+        .filter(|s| {
+            matches!(&*s.mark, FieldMark::Begin { simple: true, .. }) && !simple_holds(paras, s)
+        })
         .collect();
     if drop.is_empty() && loose.is_empty() {
         return None;
@@ -128,7 +134,11 @@ pub(crate) fn writable(paras: &[Paragraph]) -> Option<Vec<Paragraph>> {
     let mut out = paras.to_vec();
     for s in loose {
         let instr = s.instr.clone();
-        replace_mark(&mut out, s.begin, Object::Field(Arc::new(complex_begin(&instr, true))));
+        replace_mark(
+            &mut out,
+            s.begin,
+            Object::Field(Arc::new(complex_begin(&instr, true))),
+        );
         replace_mark(
             &mut out,
             s.end,
@@ -165,7 +175,10 @@ fn simple_holds(paras: &[Paragraph], s: &FieldSpan) -> bool {
 fn complex_begin(instr: &str, result: bool) -> FieldMark {
     match FieldMark::begin(instr) {
         FieldMark::Begin {
-            instr, code, simple, ..
+            instr,
+            code,
+            simple,
+            ..
         } => FieldMark::Begin {
             instr,
             code,
@@ -251,7 +264,19 @@ impl Instr {
                 let name = t[1..].to_owned();
                 let takes = matches!(
                     name.as_str(),
-                    "*" | "@" | "#" | "r" | "s" | "d" | "b" | "c" | "f" | "l" | "o" | "t" | "p" | "n"
+                    "*" | "@"
+                        | "#"
+                        | "r"
+                        | "s"
+                        | "d"
+                        | "b"
+                        | "c"
+                        | "f"
+                        | "l"
+                        | "o"
+                        | "t"
+                        | "p"
+                        | "n"
                 );
                 let arg = match tokens.get(i) {
                     Some((a, true)) => Some(a.clone()),
@@ -354,7 +379,8 @@ impl Instr {
 
     /// `\* MERGEFORMAT`: the new result keeps the old one's formatting.
     fn merge_format(&self) -> bool {
-        self.formats().any(|f| f.eq_ignore_ascii_case("mergeformat"))
+        self.formats()
+            .any(|f| f.eq_ignore_ascii_case("mergeformat"))
     }
 }
 
@@ -408,7 +434,9 @@ const DAYS_EN: [&str; 7] = [
     "Saturday",
     "Sunday",
 ];
-const DAYS_ID: [&str; 7] = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"];
+const DAYS_ID: [&str; 7] = [
+    "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu",
+];
 
 /// `t` written with a Word date-time picture (`\@ "d MMMM yyyy"`):
 /// `d dd ddd dddd`, `M MM MMM MMMM`, `yy yyyy`, `h hh` (12-hour), `H HH`,
@@ -676,8 +704,8 @@ fn bookmarks(paras: &[Paragraph]) -> HashMap<String, Bookmark> {
 /// spaces between paragraphs).
 fn text_between(paras: &[Paragraph], a: Position, b: Position) -> String {
     let mut out = String::new();
-    for i in a.para..=b.para.min(paras.len().saturating_sub(1)) {
-        let p = &paras[i];
+    let last = b.para.min(paras.len().saturating_sub(1));
+    for (i, p) in paras.iter().enumerate().take(last + 1).skip(a.para) {
         let from = if i == a.para { a.offset } else { 0 };
         let to = if i == b.para { b.offset } else { p.text.len() };
         if i > a.para {
@@ -698,15 +726,27 @@ impl Document {
     /// A paragraph's outline level from its style (1–9: built-in headings
     /// and styles with `w:outlineLvl`), if it has one.
     fn style_level(&self, p: &Paragraph) -> Option<u8> {
-        for st in self.styles.chain(p.props.style.as_deref()).into_iter().rev() {
+        for st in self
+            .styles
+            .chain(p.props.style.as_deref())
+            .into_iter()
+            .rev()
+        {
             if let Some(l) = outline_of(&st.para.extras) {
                 return (l < 9).then_some(l + 1);
             }
             let name = st.name.to_ascii_lowercase();
-            if let Some(n) = name.strip_prefix("heading ").and_then(|n| n.parse::<u8>().ok()) {
+            if let Some(n) = name
+                .strip_prefix("heading ")
+                .and_then(|n| n.parse::<u8>().ok())
+            {
                 return (1..=9).contains(&n).then_some(n);
             }
-            if let Some(n) = st.id.strip_prefix("Heading").and_then(|n| n.parse::<u8>().ok()) {
+            if let Some(n) = st
+                .id
+                .strip_prefix("Heading")
+                .and_then(|n| n.parse::<u8>().ok())
+            {
                 return (1..=9).contains(&n).then_some(n);
             }
         }
@@ -767,7 +807,7 @@ impl<'a> Eval<'a> {
         let lang = |e: &crate::model::Extras| {
             e.iter()
                 .find(|x| element_name(x) == "lang")
-                .and_then(|x| xml::parse(x))
+                .and_then(xml::parse)
                 .and_then(|el| el.attr("val").map(str::to_owned))
         };
         let l = lang(&props.extras)
@@ -793,7 +833,11 @@ impl<'a> Eval<'a> {
                     "SAVEDATE" => "modified",
                     _ => "lastPrinted",
                 };
-                match self.props.core(el).and_then(|v| parse_time(&v, self.cx.offset)) {
+                match self
+                    .props
+                    .core(el)
+                    .and_then(|v| parse_time(&v, self.cx.offset))
+                {
                     Some(t) => Outcome::Text(self.date(span, &i, t, "M/d/yyyy h:mm:ss am/pm")),
                     None => Outcome::Keep,
                 }
@@ -827,13 +871,15 @@ impl<'a> Eval<'a> {
                 None => Outcome::Keep,
             },
             "NUMWORDS" => Outcome::Text(i.number(word_count(self.paras) as u32)),
-            "NUMCHARS" => Outcome::Text(i.number(
-                self.paras
-                    .iter()
-                    .flat_map(|p| p.text.chars())
-                    .filter(|&c| c != OBJECT && !c.is_whitespace())
-                    .count() as u32,
-            )),
+            "NUMCHARS" => Outcome::Text(
+                i.number(
+                    self.paras
+                        .iter()
+                        .flat_map(|p| p.text.chars())
+                        .filter(|&c| c != OBJECT && !c.is_whitespace())
+                        .count() as u32,
+                ),
+            ),
             "MERGEFIELD" => match i.args.first() {
                 Some(name) => Outcome::Text(format!("«{name}»")),
                 None => Outcome::Keep,
@@ -846,9 +892,17 @@ impl<'a> Eval<'a> {
             "REF" => self.reference(&i, i.args.first().map(String::as_str)),
             "NOTEREF" => self.note_ref(&i),
             "PAGEREF" => self.page_ref(span, &i),
-            k if !k.is_empty() && i.switches.iter().all(|(s, _)| s != "@") && self.bookmarks.contains_key(&i.kind) => {
+            k if !k.is_empty()
+                && i.switches.iter().all(|(s, _)| s != "@")
+                && self.bookmarks.contains_key(&i.kind) =>
+            {
                 // `{ Bookmark }` alone is a REF.
-                let name = span.instr.split_whitespace().next().unwrap_or_default().to_owned();
+                let name = span
+                    .instr
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned();
                 self.reference(&i, Some(&name))
             }
             _ => Outcome::Keep,
@@ -856,14 +910,12 @@ impl<'a> Eval<'a> {
     }
 
     fn bookmark(&self, name: &str) -> Option<&Bookmark> {
-        self.bookmarks
-            .get(name)
-            .or_else(|| {
-                self.bookmarks
-                    .iter()
-                    .find(|(k, _)| k.eq_ignore_ascii_case(name))
-                    .map(|(_, v)| v)
-            })
+        self.bookmarks.get(name).or_else(|| {
+            self.bookmarks
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v)
+        })
     }
 
     fn reference(&self, i: &Instr, name: Option<&str>) -> Outcome {
@@ -913,7 +965,12 @@ impl<'a> Eval<'a> {
         if i.has("p") {
             let here = pages.page_of(span.begin);
             return Outcome::Text(if here == Some(page) {
-                if b.start < span.begin { "above" } else { "below" }.into()
+                if b.start < span.begin {
+                    "above"
+                } else {
+                    "below"
+                }
+                .into()
             } else {
                 format!("on page {shown}")
             });
@@ -936,7 +993,11 @@ fn word_count(paras: &[Paragraph]) -> usize {
 
 /// Every `SEQ` field's number (`None`: hidden by `\h` or with nothing to
 /// show), counting per identifier in document order.
-fn seq_values(doc: &Document, paras: &[Paragraph], spans: &[FieldSpan]) -> HashMap<usize, Option<u32>> {
+fn seq_values(
+    doc: &Document,
+    paras: &[Paragraph],
+    spans: &[FieldSpan],
+) -> HashMap<usize, Option<u32>> {
     let mut out = HashMap::new();
     let mut counters: HashMap<String, u32> = HashMap::new();
     let seqs: Vec<(&FieldSpan, Instr)> = spans
@@ -949,7 +1010,6 @@ fn seq_values(doc: &Document, paras: &[Paragraph], spans: &[FieldSpan]) -> HashM
     }
     // Heading levels, for `\s` restarts.
     let levels: Vec<Option<u8>> = paras.iter().map(|p| doc.style_level(p)).collect();
-    let mut last_para = 0;
     let mut seen_heading: HashMap<String, usize> = HashMap::new();
     for (s, i) in seqs {
         let Some(id) = i.args.first().map(|a| a.to_ascii_lowercase()) else {
@@ -965,8 +1025,6 @@ fn seq_values(doc: &Document, paras: &[Paragraph], spans: &[FieldSpan]) -> HashM
             }
             seen_heading.insert(id.clone(), s.begin.para);
         }
-        let _ = last_para;
-        last_para = s.begin.para;
         let c = counters.entry(id).or_insert(0);
         if let Some(r) = i.arg("r").and_then(|r| r.trim().parse::<u32>().ok()) {
             *c = r;
@@ -992,9 +1050,15 @@ fn set_result(paras: &mut Vec<Paragraph>, span: &FieldSpan, text: &str) -> usize
     let old_first = (start.para..=end.para).find_map(|k| {
         let p = &paras[k];
         let from = if k == start.para { start.offset } else { 0 };
-        let to = if k == end.para { end.offset } else { p.text.len() };
+        let to = if k == end.para {
+            end.offset
+        } else {
+            p.text.len()
+        };
         p.run_ranges()
-            .find(|(r, run)| r.start >= from && r.end <= to && !r.is_empty() && run.object.is_none())
+            .find(|(r, run)| {
+                r.start >= from && r.end <= to && !r.is_empty() && run.object.is_none()
+            })
             .map(|(_, run)| run.clone())
     });
     let props = match (&old_first, i.merge_format()) {
@@ -1132,7 +1196,10 @@ impl Document {
                 parts
                     .chunks(2)
                     .filter_map(|c| {
-                        Some((c.first()?.to_string(), c.get(1).and_then(|l| l.parse().ok()).unwrap_or(1)))
+                        Some((
+                            c.first()?.to_string(),
+                            c.get(1).and_then(|l| l.parse().ok()).unwrap_or(1),
+                        ))
                     })
                     .collect()
             })
@@ -1156,7 +1223,10 @@ impl Document {
                         s.begin.para == k && {
                             let si = Instr::parse(&s.instr);
                             si.kind == "SEQ"
-                                && si.args.first().is_some_and(|a| a.to_ascii_lowercase() == *c)
+                                && si
+                                    .args
+                                    .first()
+                                    .is_some_and(|a| a.to_ascii_lowercase() == *c)
                         }
                     })
                     .then_some(1)
@@ -1164,7 +1234,10 @@ impl Document {
                 let style = p.props.style.as_deref().map(|id| {
                     (
                         id.to_owned(),
-                        self.styles.get(id).map(|s| s.name.clone()).unwrap_or_default(),
+                        self.styles
+                            .get(id)
+                            .map(|s| s.name.clone())
+                            .unwrap_or_default(),
                     )
                 });
                 let from_custom = style.as_ref().and_then(|(id, name)| {
@@ -1179,9 +1252,8 @@ impl Document {
                     .flatten()
                     .filter(|&l| l < 9)
                     .map(|l| l + 1);
-                let from_style = by_style.and_then(|(a, b)| {
-                    self.style_level(p).filter(|l| (a..=b).contains(l))
-                });
+                let from_style =
+                    by_style.and_then(|(a, b)| self.style_level(p).filter(|l| (a..=b).contains(l)));
                 let from_outline = from_outline.filter(|l| match by_style {
                     Some((a, b)) => (a..=b).contains(l),
                     None => true,
@@ -1206,7 +1278,9 @@ impl Document {
                 continue;
             }
             let text = match markers.get(k).cloned().flatten() {
-                Some(m) if caption.is_none() && !m.trim().is_empty() => format!("{}\t{text}", m.trim()),
+                Some(m) if caption.is_none() && !m.trim().is_empty() => {
+                    format!("{}\t{text}", m.trim())
+                }
                 _ => text,
             };
             out.push(Entry {
@@ -1299,7 +1373,9 @@ fn rebuild_toc(doc: &Document, paras: &mut Vec<Paragraph>, span: &FieldSpan) -> 
     for e in &entries {
         let p = &mut paras[e.para];
         let existing = p.objects().find_map(|(_, o)| {
-            bookmark_of(o).filter(|(s, _, n)| *s && n.starts_with("_Toc")).map(|(_, _, n)| n)
+            bookmark_of(o)
+                .filter(|(s, _, n)| *s && n.starts_with("_Toc"))
+                .map(|(_, _, n)| n)
         });
         let name = match existing {
             Some(n) => n,
@@ -1311,11 +1387,13 @@ fn rebuild_toc(doc: &Document, paras: &mut Vec<Paragraph>, span: &FieldSpan) -> 
                         break n;
                     }
                 };
-                let marker = |xml: String| Object::Opaque(Arc::new(Opaque {
-                    level: Level::Marker,
-                    xml,
-                    label: String::new(),
-                }));
+                let marker = |xml: String| {
+                    Object::Opaque(Arc::new(Opaque {
+                        level: Level::Marker,
+                        xml,
+                        label: String::new(),
+                    }))
+                };
                 let mut start = Run::text(OBJ, RunProps::default());
                 start.object = Some(marker(format!(
                     "<w:bookmarkStart w:id=\"{next_id}\" w:name=\"{name}\"/>"
@@ -1360,9 +1438,13 @@ fn rebuild_toc(doc: &Document, paras: &mut Vec<Paragraph>, span: &FieldSpan) -> 
                 props: para_props(e.level),
                 ..Paragraph::default()
             };
-            let link: Option<Arc<str>> = i
-                .has("h")
-                .then(|| format!("<w:hyperlink w:anchor=\"{}\" w:history=\"1\">", xml::escape(name)).into());
+            let link: Option<Arc<str>> = i.has("h").then(|| {
+                format!(
+                    "<w:hyperlink w:anchor=\"{}\" w:history=\"1\">",
+                    xml::escape(name)
+                )
+                .into()
+            });
             p.push_tracked(&e.text, text_props.clone(), link.clone(), None);
             if !no_pages(e.level) {
                 p.push_tracked(&sep, text_props.clone(), link.clone(), None);
@@ -1371,7 +1453,11 @@ fn rebuild_toc(doc: &Document, paras: &mut Vec<Paragraph>, span: &FieldSpan) -> 
                 // The marks' XML has no run properties.
                 p.push_object(Object::Field(begin), RunProps::default(), link.clone());
                 p.push_tracked("1", text_props.clone(), link.clone(), None);
-                p.push_object(Object::Field(Arc::new(FieldMark::end())), RunProps::default(), link);
+                p.push_object(
+                    Object::Field(Arc::new(FieldMark::end())),
+                    RunProps::default(),
+                    link,
+                );
             }
             p
         })
@@ -1392,7 +1478,10 @@ fn rebuild_toc(doc: &Document, paras: &mut Vec<Paragraph>, span: &FieldSpan) -> 
     let head_end = span.begin.offset + OBJ;
     let visible = |p: &Paragraph, r: Range<usize>| {
         p.run_ranges().any(|(rr, run)| {
-            rr.start >= r.start && rr.end <= r.end && !rr.is_empty() && !run.object.as_ref().is_some_and(Object::is_zero_width)
+            rr.start >= r.start
+                && rr.end <= r.end
+                && !rr.is_empty()
+                && !run.object.as_ref().is_some_and(Object::is_zero_width)
         })
     };
     let mut out: Vec<Paragraph> = Vec::new();
@@ -1447,12 +1536,18 @@ fn rebuild_toc(doc: &Document, paras: &mut Vec<Paragraph>, span: &FieldSpan) -> 
         }
     }
     // A section break inside the old table stays with the last paragraph.
-    if let Some(sect) = paras[pa..=pb]
-        .iter()
-        .rev()
-        .find_map(|p| p.props.extras.iter().find(|x| element_name(x) == "sectPr").map(str::to_owned))
-        && let Some(last) = out.last_mut()
-        && !last.props.extras.iter().any(|x| element_name(x) == "sectPr")
+    if let Some(sect) = paras[pa..=pb].iter().rev().find_map(|p| {
+        p.props
+            .extras
+            .iter()
+            .find(|x| element_name(x) == "sectPr")
+            .map(str::to_owned)
+    }) && let Some(last) = out.last_mut()
+        && !last
+            .props
+            .extras
+            .iter()
+            .any(|x| element_name(x) == "sectPr")
     {
         last.props.extras.push(&sect);
     }
@@ -1560,7 +1655,11 @@ impl Document {
         cx: &FieldContext,
         lay_out: &mut dyn FnMut(&Document) -> Box<dyn PageLookup>,
     ) -> Selection {
-        let tocs: Vec<FieldSpan> = self.fields().into_iter().filter(|s| s.kind() == "TOC").collect();
+        let tocs: Vec<FieldSpan> = self
+            .fields()
+            .into_iter()
+            .filter(|s| s.kind() == "TOC")
+            .collect();
         let here: Vec<usize> = tocs
             .iter()
             .filter(|s| s.contains(sel.head))
@@ -1615,7 +1714,10 @@ impl Document {
                 let ev = Eval::new(&snapshot, &paras, cx, &now);
                 for s in now.iter().filter(|s| targets.contains(&s.id())) {
                     let k = s.kind();
-                    if k == "TOC" || k == "PAGEREF" || matches!(k.as_str(), "REF" | "NOTEREF") != refs {
+                    if k == "TOC"
+                        || k == "PAGEREF"
+                        || matches!(k.as_str(), "REF" | "NOTEREF") != refs
+                    {
                         continue;
                     }
                     if let Outcome::Text(t) = ev.eval(s) {
@@ -1657,11 +1759,7 @@ impl Document {
             return sel;
         }
         let old = &self.paragraphs;
-        let start = old
-            .iter()
-            .zip(&paras)
-            .take_while(|(a, b)| a == b)
-            .count();
+        let start = old.iter().zip(&paras).take_while(|(a, b)| a == b).count();
         let tail = old[start..]
             .iter()
             .rev()
@@ -1672,8 +1770,7 @@ impl Document {
         let new: Vec<Paragraph> = paras[start..paras.len() - tail].to_vec();
         let after = Selection::caret(sel.head);
         self.replace(start, count, new, (sel, after), Kind::Other, true);
-        let after = self.clamp_selection(after);
-        after
+        self.clamp_selection(after)
     }
 
     /// Where the hyperlink at `pos` goes: a hyperlink's run, or a
@@ -1683,7 +1780,10 @@ impl Document {
         let run = p
             .run_ranges()
             .find(|(r, _)| r.start <= pos.offset && pos.offset < r.end)
-            .or_else(|| p.run_ranges().find(|(r, _)| r.end == pos.offset && !r.is_empty()))
+            .or_else(|| {
+                p.run_ranges()
+                    .find(|(r, _)| r.end == pos.offset && !r.is_empty())
+            })
             .map(|(_, run)| run);
         if let Some(tag) = run.and_then(|r| r.link.as_deref())
             && let Some(el) = xml::parse(&format!("{tag}</w:hyperlink>"))
@@ -1703,8 +1803,7 @@ impl Document {
         let field = self
             .fields()
             .into_iter()
-            .filter(|s| s.contains(pos) && s.kind() == "HYPERLINK")
-            .last()?;
+            .rfind(|s| s.contains(pos) && s.kind() == "HYPERLINK")?;
         let i = Instr::parse(&field.instr);
         match (i.args.first(), i.arg("l")) {
             (Some(url), Some(a)) => Some(LinkTarget::Url(format!("{url}#{a}"))),
@@ -1718,7 +1817,11 @@ impl Document {
     pub fn bookmark_position(&self, name: &str) -> Option<Position> {
         let b = bookmarks(&self.paragraphs);
         b.get(name)
-            .or_else(|| b.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v))
+            .or_else(|| {
+                b.iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                    .map(|(_, v)| v)
+            })
             .map(|b| b.start)
     }
 }
@@ -1765,14 +1868,21 @@ mod tests {
         assert_eq!(n("PAGE \\* roman", 4), "iv");
         assert_eq!(n("PAGE \\* ROMAN", 14), "XIV");
         assert_eq!(n("SEQ x \\* alphabetic", 3), "c");
-        assert_eq!(n("SEQ x \\* ALPHABETIC", 28), "BB", "Word repeats the letter");
+        assert_eq!(
+            n("SEQ x \\* ALPHABETIC", 28),
+            "BB",
+            "Word repeats the letter"
+        );
         assert_eq!(n("SEQ x \\* Ordinal", 22), "22nd");
         assert_eq!(n("SEQ x \\* Arabic \\* MERGEFORMAT", 7), "7");
         let c = |s: &str, v| Instr::parse(s).cased(v);
         assert_eq!(c("TITLE \\* Upper", "Laporan tahunan"), "LAPORAN TAHUNAN");
         assert_eq!(c("TITLE \\* Lower", "Laporan"), "laporan");
         assert_eq!(c("TITLE \\* Caps", "laporan tahunan"), "Laporan Tahunan");
-        assert_eq!(c("TITLE \\* FirstCap", "laporan tahunan"), "Laporan tahunan");
+        assert_eq!(
+            c("TITLE \\* FirstCap", "laporan tahunan"),
+            "Laporan tahunan"
+        );
     }
 
     #[test]
@@ -1791,16 +1901,27 @@ mod tests {
         assert_eq!(f("h:mm AM/PM"), "2:07 PM");
         assert_eq!(f("hh:mm:ss"), "14:07:09");
         assert_eq!(f("'Week of' d MMM"), "Week of 5 Mar");
-        assert_eq!(format_date(t, "dddd, d MMMM yyyy", true), "Kamis, 5 Maret 2026");
+        assert_eq!(
+            format_date(t, "dddd, d MMMM yyyy", true),
+            "Kamis, 5 Maret 2026"
+        );
     }
 
     #[test]
     fn spans_pair_nested_marks() {
         let mut p = Paragraph::new("");
         let mark = |m: FieldMark| Object::Field(Arc::new(m));
-        p.push_object(mark(complex_begin(" TOC \\o ", true)), RunProps::default(), None);
+        p.push_object(
+            mark(complex_begin(" TOC \\o ", true)),
+            RunProps::default(),
+            None,
+        );
         p.push("Intro\t", RunProps::default());
-        p.push_object(mark(complex_begin(" PAGEREF _Toc1 ", true)), RunProps::default(), None);
+        p.push_object(
+            mark(complex_begin(" PAGEREF _Toc1 ", true)),
+            RunProps::default(),
+            None,
+        );
         p.push("1", RunProps::default());
         p.push_object(mark(FieldMark::end()), RunProps::default(), None);
         let mut q = Paragraph::new("");

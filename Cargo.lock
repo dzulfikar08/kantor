@@ -5336,6 +5336,7 @@ name = "office_fidelity"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "docs_engine",
  "docs_pdf",
  "serde_json",

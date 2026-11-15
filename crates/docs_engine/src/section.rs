@@ -762,10 +762,14 @@ impl Document {
                 p.runs[0].props = run_props.clone();
                 let mut rest = line;
                 while !rest.is_empty() {
-                    let next = [PageField::Page, PageField::NumPages, PageField::SectionPages]
-                        .into_iter()
-                        .filter_map(|f| rest.find(f.token()).map(|at| (at, f)))
-                        .min_by_key(|x| x.0);
+                    let next = [
+                        PageField::Page,
+                        PageField::NumPages,
+                        PageField::SectionPages,
+                    ]
+                    .into_iter()
+                    .filter_map(|f| rest.find(f.token()).map(|at| (at, f)))
+                    .min_by_key(|x| x.0);
                     match next {
                         Some((at, f)) => {
                             p.push(&rest[..at], run_props.clone());

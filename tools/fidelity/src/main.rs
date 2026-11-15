@@ -218,6 +218,29 @@ fn main() -> Result<()> {
         doc.save_as(&o.join("review_all.docx"))?;
         Ok(Some(review_src.clone()))
     });
+    // Fields updated (F9 over everything, then Update Table): a rebuilt
+    // table of contents with new `_Toc` bookmarks and PAGEREF fields,
+    // results replaced, a simple field given its end tag.
+    let fields_src = corpus.join("docx/fields.docx");
+    run.scenario("fields_updated.docx", |o| {
+        let mut doc = Document::open(&fields_src)?;
+        let cx = docs_engine::FieldContext {
+            now: chrono::NaiveDate::from_ymd_opt(2026, 11, 15)
+                .and_then(|d| d.and_hms_opt(9, 0, 0))
+                .context("date")?,
+            offset: chrono::FixedOffset::east_opt(7 * 3600).context("offset")?,
+        };
+        let mut engine = docs_pdf::Engine::new();
+        let all = Selection {
+            anchor: Position::new(0, 0),
+            head: doc.end(),
+        };
+        doc.update_fields(all, &cx, &mut |d| docs_pdf::field_pages(d, &mut engine));
+        let caret = Selection::caret(Position::new(0, 0));
+        doc.update_tables_of_contents(caret, &cx, &mut |d| docs_pdf::field_pages(d, &mut engine));
+        doc.save_as(&o.join("fields_updated.docx"))?;
+        Ok(Some(fields_src.clone()))
+    });
     run.scenario("new_doc.docx", |o| {
         let mut doc = Document::new();
         let end = doc.end();

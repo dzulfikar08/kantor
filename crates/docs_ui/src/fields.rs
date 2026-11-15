@@ -67,9 +67,11 @@ impl DocsView {
         }
         let rev = self.doc.revision();
         let engine = self.engine.clone();
-        let sel = self.doc.update_tables_of_contents(self.sel, &now(), &mut |d| {
-            docs_pdf::field_pages(d, &mut engine.borrow_mut())
-        });
+        let sel = self
+            .doc
+            .update_tables_of_contents(self.sel, &now(), &mut |d| {
+                docs_pdf::field_pages(d, &mut engine.borrow_mut())
+            });
         if self.doc.revision() != rev {
             self.edited(sel, window, cx);
         } else {

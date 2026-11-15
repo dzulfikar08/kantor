@@ -1180,7 +1180,8 @@ impl Flow<'_> {
         // The empty line after a break that ends the paragraph doesn't
         // break again (its range is empty, right after the break).
         let r = line.text_range();
-        r.end > r.start && self.paras[pi].text.as_bytes().get(r.end - 1) == Some(&(PAGE_BREAK as u8))
+        r.end > r.start
+            && self.paras[pi].text.as_bytes().get(r.end - 1) == Some(&(PAGE_BREAK as u8))
     }
 
     /// Height of the footnotes referenced from line `k` of paragraph `pi`.
@@ -1843,7 +1844,10 @@ impl PagedDocument {
             for item in line.items() {
                 if let PositionedLayoutItem::InlineBox(b) = item
                     && let Some(&(index, kind)) = l.objects.get(b.id as usize)
-                    && !matches!(kind, ObjectKind::Hidden | ObjectKind::Mark | ObjectKind::Text)
+                    && !matches!(
+                        kind,
+                        ObjectKind::Hidden | ObjectKind::Mark | ObjectKind::Text
+                    )
                 {
                     out.push(PlacedObject {
                         para: pl.para,

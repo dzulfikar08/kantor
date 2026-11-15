@@ -446,7 +446,11 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         let mut placed = Vec::new();
         for (kind, story) in [(HfKind::Header, h), (HfKind::Footer, f)] {
             let Some(i) = story else { continue };
-            let section_pages = in_section.get(&page.section).copied().unwrap_or(1).to_string();
+            let section_pages = in_section
+                .get(&page.section)
+                .copied()
+                .unwrap_or(1)
+                .to_string();
             let l = cache
                 .entry((i, number.clone(), section_pages.clone(), width.to_bits()))
                 .or_insert_with(|| {

@@ -222,7 +222,11 @@ pub fn layout_paragraph(
                     next == index + docs_engine::OBJECT.len_utf8()
                         && o.field().is_some_and(|m| !m.is_begin())
                 });
-                match f.instr().filter(|_| empty).and_then(docs_engine::fields::empty_result_label) {
+                match f
+                    .instr()
+                    .filter(|_| empty)
+                    .and_then(docs_engine::fields::empty_result_label)
+                {
                     Some(label) => InlineObject {
                         index,
                         kind: ObjectKind::Text,

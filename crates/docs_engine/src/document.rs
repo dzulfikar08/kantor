@@ -637,7 +637,7 @@ impl Document {
             track: self.track,
             author: self.author.clone(),
             notes: self.notes.clone(),
-            note_settings: self.note_settings.clone(),
+            note_settings: self.note_settings,
             imported: self.imported.clone(),
             history: History::default(),
         }
