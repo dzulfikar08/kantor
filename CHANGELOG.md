@@ -227,6 +227,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   drawing and the custom position and size (`custLinFactNeighbor`, `custScale`) into the
   SmartArt's data, as PowerPoint does. SmartArt inside a group is now shown from its drawing and
   its text can be edited there too. A resized SmartArt is still scaled, not laid out again.
+- Slides: East Asian vertical text (`eaVert`, also `mongolianVert`) is drawn as PowerPoint draws
+  it, on screen and in the PDF: Chinese, Japanese and Korean characters stand upright down the
+  line while Latin text and numbers are turned, and the ideographic comma and full stop sit at the
+  top right. Stacked WordArt text (`wordArtVert`, `wordArtVertRtl`) stands every character
+  upright.
 
 ### Changed
 - Docs: files with a table of contents or cross-references are saved in place like any other

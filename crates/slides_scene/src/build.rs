@@ -536,9 +536,10 @@ impl Builder {
             v => {
                 // Laid out in the box turned a quarter: its insets turn too.
                 let [l, t, r, b] = text.insets;
-                let (insets, angle) = match v {
-                    Vert::Down => ([t, r, b, l], std::f32::consts::FRAC_PI_2),
-                    _ => ([b, l, t, r], -std::f32::consts::FRAC_PI_2),
+                let (insets, angle) = if v.is_down() {
+                    ([t, r, b, l], std::f32::consts::FRAC_PI_2)
+                } else {
+                    ([b, l, t, r], -std::f32::consts::FRAC_PI_2)
                 };
                 let turned = RenderText {
                     insets,
@@ -554,18 +555,130 @@ impl Builder {
                 (laid, t)
             }
         };
-        let runs = glyph_runs(&laid.layout);
+        let mut runs = glyph_runs(&laid.layout);
+        let origin = p(laid.dx, laid.dy);
+        if matches!(text.vert, Vert::EaDown | Vert::Stacked) {
+            // East Asian vertical text: CJK characters (all characters when
+            // stacked) stand upright, each turned back about its centre.
+            let all = text.vert == Vert::Stacked;
+            let (upright, kept) = upright_glyphs(runs, all);
+            runs = kept;
+            for run in upright {
+                let g = &run.run.glyphs[0];
+                let size = run.run.font_size;
+                // The centre of the glyph's em box (ideographic: 0.88 em
+                // above the baseline to 0.12 below).
+                let c = p(
+                    origin.x + g.x + g.advance / 2.0,
+                    origin.y + g.y - size * 0.38,
+                );
+                // Ideographic commas and full stops sit at the top right
+                // of their em box in vertical text (bottom left across):
+                // up and right on the slide is back along the line and
+                // against the line advance here.
+                let (sx, sy) = match run.sample().chars().next() {
+                    Some('、' | '。' | '，' | '．') => (-size * 0.6, -size * 0.6),
+                    _ => (0.0, 0.0),
+                };
+                let back = Affine::translate(-c.x, -c.y)
+                    .then(Affine::rotate(-std::f32::consts::FRAC_PI_2))
+                    .then(Affine::translate(c.x + sx, c.y + sy))
+                    .then(transform);
+                out.push(Item {
+                    layer,
+                    transform: snap(back),
+                    prim: Prim::Text(Text {
+                        origin,
+                        runs: vec![run],
+                    }),
+                });
+            }
+        }
         if !runs.is_empty() {
             out.push(Item {
                 layer,
                 transform,
-                prim: Prim::Text(Text {
-                    origin: p(laid.dx, laid.dy),
-                    runs,
-                }),
+                prim: Prim::Text(Text { origin, runs }),
             });
         }
     }
+}
+
+/// An affine with float noise in its turn removed (a quarter turn and its
+/// inverse leave ~1e-8 behind), so upright text is drawn as such.
+fn snap(mut t: Affine) -> Affine {
+    for v in [&mut t.a, &mut t.b, &mut t.c, &mut t.d] {
+        if v.abs() < 1e-5 {
+            *v = 0.0;
+        }
+        for k in [-1.0f32, 1.0] {
+            if (*v - k).abs() < 1e-5 {
+                *v = k;
+            }
+        }
+    }
+    t
+}
+
+/// Split glyph runs into single-glyph runs of the glyphs that stand
+/// upright in vertical text (every glyph if `all`) and the runs of the
+/// rest (in pieces, so each piece keeps its glyphs in order).
+fn upright_glyphs(
+    runs: Vec<crate::TextRun>,
+    all: bool,
+) -> (Vec<crate::TextRun>, Vec<crate::TextRun>) {
+    let mut up = Vec::new();
+    let mut kept = Vec::new();
+    for tr in runs {
+        let is_up = |g: &docs_layout::PositionedGlyph| {
+            all || tr
+                .text
+                .get(g.cluster.clone())
+                .and_then(|s| s.chars().next())
+                .is_some_and(slides_engine::frame::upright_in_vertical)
+        };
+        if !tr.run.glyphs.iter().any(&is_up) {
+            kept.push(tr);
+            continue;
+        }
+        let mut rest: Vec<docs_layout::PositionedGlyph> = Vec::new();
+        let flush = |rest: &mut Vec<docs_layout::PositionedGlyph>,
+                     kept: &mut Vec<crate::TextRun>| {
+            if rest.is_empty() {
+                return;
+            }
+            let mut r = tr.clone();
+            let glyphs = std::mem::take(rest);
+            r.run.origin_x = glyphs[0].x;
+            r.run.advance = glyphs.iter().map(|g| g.advance).sum();
+            r.run.text_range = glyphs[0]
+                .cluster
+                .start
+                .min(glyphs[glyphs.len() - 1].cluster.start)
+                ..glyphs[0]
+                    .cluster
+                    .end
+                    .max(glyphs[glyphs.len() - 1].cluster.end);
+            r.run.glyphs = glyphs;
+            kept.push(r);
+        };
+        for g in &tr.run.glyphs {
+            if is_up(g) {
+                flush(&mut rest, &mut kept);
+                let mut r = tr.clone();
+                r.run.origin_x = g.x;
+                r.run.advance = g.advance;
+                r.run.underline = None;
+                r.run.text_range = g.cluster.clone();
+                r.run.glyphs = vec![g.clone()];
+                up.push(r);
+            } else {
+                rest.push(g.clone());
+            }
+        }
+        flush(&mut rest, &mut kept);
+    }
+    (up, kept)
 }
 
 /// Where a shape is drawn from: the slide (for its master, rels and
