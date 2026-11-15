@@ -780,3 +780,40 @@ fn a_second_pivot_on_the_same_data_shares_its_cache() {
     let (_, p) = save(&mut wb, dir.path(), "two-caches.xlsx");
     assert_eq!(p["xl/workbook.xml"].matches("<pivotCache ").count(), 2);
 }
+
+#[test]
+fn copying_a_sheet_brings_its_pivots() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = data_book();
+    let s = new_pivot(&mut wb);
+    arrange(&mut wb, s, &["Region"]);
+    let copy = wb.copy_sheet(s, 99).unwrap();
+    let p = wb.pivot_at(copy, 2, 0).unwrap();
+    assert_eq!(p.name, "PivotTable2");
+    assert_eq!(grid(&wb, copy, (2, 0, 6, 1)), grid(&wb, s, (2, 0, 6, 1)));
+    // Its own pivot: changing it leaves the original alone.
+    let mut l = wb.pivot_layout(copy, 2, 0).unwrap();
+    l.rows = vec![AxisEntry::Field(2)];
+    wb.set_pivot_layout(copy, 2, 0, &l).unwrap();
+    assert_eq!(wb.display_value(copy, 3, 0), "Apples");
+    assert_eq!(wb.display_value(s, 3, 0), "East");
+    let (path, p) = save(&mut wb, dir.path(), "copied-sheet.xlsx");
+    assert_eq!(p["xl/workbook.xml"].matches("<pivotCache ").count(), 1);
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(back.pivot_tables(copy).len(), 1);
+    assert_eq!(back.display_value(copy, 3, 0), "Apples");
+    // One undo step takes the copy and its pivot away.
+    assert!(wb.undo().unwrap());
+    assert!(wb.undo().unwrap());
+    assert_eq!(wb.sheet_names().len(), 2);
+    assert_eq!(wb.pivot_tables(s).len(), 1);
+    // A pivot from a file, never laid out here, copies too.
+    let mut back = Workbook::open(&path).unwrap();
+    let c2 = back.copy_sheet(s, 99).unwrap();
+    assert_eq!(grid(&back, c2, (2, 0, 6, 1)), grid(&back, s, (2, 0, 6, 1)));
+    let (path, _) = save(&mut back, dir.path(), "copied-file-pivot.xlsx");
+    let again = Workbook::open(&path).unwrap();
+    assert_eq!(again.pivot_tables(c2).len(), 1);
+    let mut again = again;
+    assert_eq!(again.refresh_pivot(c2, 2, 0).unwrap(), 3, "all three share the cache");
+}

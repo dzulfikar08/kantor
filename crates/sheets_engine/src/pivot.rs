@@ -3011,7 +3011,8 @@ pub(crate) fn def_xml(laid: &LaidXml, location: Area) -> Option<String> {
     let xml = def.xml.as_str();
     let doc = Document::parse(xml).ok()?;
     let root = doc.root_element();
-    let mut sets: Vec<(&str, String)> = vec![("updatedVersion", "6".into())];
+    let mut sets: Vec<(&str, String)> =
+        vec![("name", def.name.clone()), ("updatedVersion", "6".into())];
     sets.extend(def.root_sets.iter().map(|(k, v)| (*k, v.clone())));
     let start = root_start_with(xml, &sets)?;
     let name = root_name(xml)?;
@@ -3167,6 +3168,29 @@ fn style_info_xml(s: &StyleInfo) -> String {
         u8::from(s.last_column)
     ));
     out
+}
+
+/// A definition as read with its row and column items as the file has
+/// them (for a copy of a pivot table not laid out in Kantor).
+pub(crate) fn laid_of(def: &Def) -> LaidXml {
+    let inner = |name: &str| -> String {
+        let Ok(doc) = Document::parse(&def.xml) else {
+            return String::new();
+        };
+        child(doc.root_element(), name)
+            .map(|n| {
+                n.children()
+                    .filter(|c| c.is_element())
+                    .map(|c| def.xml[c.range()].to_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    LaidXml {
+        def: def.clone(),
+        row_items_xml: inner("rowItems"),
+        col_items_xml: inner("colItems"),
+    }
 }
 
 /// What [`def_xml`] needs.

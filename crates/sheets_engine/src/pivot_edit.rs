@@ -1548,6 +1548,51 @@ impl Workbook {
         Ok(())
     }
 
+    /// Give the copy of sheet `from` (Move or Copy, already made, with
+    /// `sheetId` `to_id`) copies of its pivot tables, on the same caches
+    /// (the cells came with the sheet). Part of the copy's undo step.
+    pub(crate) fn copy_sheet_pivots(&mut self, from: u32, to_id: u32) -> Result<()> {
+        let placed = self.placed_pivots(from);
+        if placed.is_empty() {
+            return Ok(());
+        }
+        self.keep_pivot_records()
+            .map_err(|e| anyhow!("can't copy the PivotTables: {e}"))?;
+        let state = self.pivot_state();
+        let layout = self.history.layout();
+        let mut next = (*state).clone();
+        for p in placed.iter() {
+            let laid = match state.defs.get(&p.index) {
+                Some(l) => (**l).clone(),
+                None => crate::pivot::laid_of(&p.def),
+            };
+            let name = self.next_pivot_name();
+            let k = self.pivots.defs.len() + 1;
+            let mut def = laid.def.clone();
+            def.part = format!("{NEW_PREFIX}pivotTable{k}.xml");
+            def.sheet_id = to_id;
+            def.name = name;
+            def.location = p.area;
+            def.at = layout.clone();
+            def.added = true;
+            def.in_origin = false;
+            let index = self.pivots.defs.len();
+            self.pivots.defs.push(Arc::new(def.clone()));
+            next.defs.insert(
+                index,
+                Arc::new(crate::pivot::LaidXml {
+                    def,
+                    row_items_xml: laid.row_items_xml,
+                    col_items_xml: laid.col_items_xml,
+                }),
+            );
+        }
+        self.history.set_pivot_state(Arc::new(next));
+        self.cache.borrow_mut().pivots.clear();
+        self.sync_pivot_grids(true);
+        Ok(())
+    }
+
     /// Delete the pivot table at `(row, col)`: its cells (and its parts at
     /// the next save; its cache too if no other pivot table uses it). One
     /// undo step.
