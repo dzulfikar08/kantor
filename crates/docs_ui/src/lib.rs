@@ -23,6 +23,7 @@ mod agent;
 mod ai;
 mod fields;
 mod find;
+mod floats;
 pub mod font_bridge;
 mod hf_menu;
 mod input;
@@ -306,6 +307,8 @@ struct Laid {
     paged: PagedDocument,
     texts: Vec<String>,
     furniture: Vec<Vec<docs_pdf::Placed>>,
+    /// Per page: its floating objects (back to front).
+    floats: Vec<Vec<docs_pdf::FloatItem>>,
     /// Layout paragraphs when some text is struck through (else empty).
     strikes: Arc<Vec<docs_layout::Paragraph>>,
     boxes: Rc<PageBoxes>,
@@ -504,6 +507,12 @@ pub struct DocsView {
     _find_sub: Subscription,
     /// Spell checking as you type.
     spell: spell::SpellState,
+    /// The selected floating object, one being dragged, a text box being
+    /// edited, and the colours shapes resolve against.
+    float_sel: Option<floats::FloatSel>,
+    float_drag: Option<floats::FloatDrag>,
+    text_box_edit: Option<floats::TextBoxEdit>,
+    painter: Rc<docs_pdf::floats::Painter>,
 }
 
 /// Cache key: everything that affects shaping and line breaking.
@@ -563,6 +572,7 @@ impl DocsView {
         doc.set_author(&kantor_core::settings::Settings::load().author_name());
         let (engine, bridge) = shared(cx);
         let focus = cx.focus_handle();
+        let doc_for_painter = doc.clone();
         let (find, find_sub) = find::new_bar(window, cx);
         let mut this = Self {
             doc,
@@ -576,6 +586,7 @@ impl DocsView {
                 paged: PagedDocument::paginate(&[], Vec::new(), PageSetup::a4()),
                 texts: Vec::new(),
                 furniture: Vec::new(),
+                floats: Vec::new(),
                 strikes: Arc::default(),
                 boxes: Rc::default(),
             }),
@@ -606,6 +617,10 @@ impl DocsView {
             found_current: None,
             _find_sub: find_sub,
             spell: spell::SpellState::default(),
+            float_sel: None,
+            float_drag: None,
+            text_box_edit: None,
+            painter: Rc::new(docs_pdf::floats::Painter::new(&doc_for_painter)),
         };
         this.relayout();
         this.refresh_spelling(cx);
@@ -640,6 +655,7 @@ impl DocsView {
             paged: laid.paged,
             texts,
             furniture: laid.furniture,
+            floats: laid.floats,
             strikes: laid.strikes,
             boxes,
         });
@@ -719,6 +735,7 @@ impl DocsView {
 
     /// Move the caret (or the selection head when extending).
     fn move_to(&mut self, pos: Position, extend: bool, cx: &mut Context<Self>) {
+        self.float_sel = None;
         let pos = self.doc.clamp(pos);
         if extend {
             self.sel.head = pos;
@@ -819,6 +836,7 @@ impl DocsView {
     // ── editing ────────────────────────────────────────────────────────────
 
     fn insert(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.float_sel = None;
         let props = self.typing_props.take();
         let sel = self.doc.insert_text(self.sel, text, props);
         self.marked = None;
@@ -1367,6 +1385,7 @@ impl DocsView {
             &self.doc,
             &self.laid.paged,
             &self.laid.furniture,
+            &self.laid.floats,
             &self.laid.strikes,
         );
         let pages = scene.pages.len().max(1);
@@ -1469,6 +1488,9 @@ impl DocsView {
         window.focus(&self.focus, cx);
         self.table_picker = None;
         self.spell.typing = false;
+        if self.float_mouse_down(ev, window, cx) {
+            return;
+        }
         // A double click on a footnote or endnote (or its number) edits it.
         if ev.click_count == 2
             && let Some((kind, id)) = self.note_at_point(ev.position)
@@ -1539,6 +1561,9 @@ impl DocsView {
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.float_mouse_move(ev, cx) {
+            return;
+        }
         if !self.dragging {
             return;
         }
@@ -1856,6 +1881,12 @@ struct Frame {
     /// Decoded pictures on the visible pages, by `(paragraph, byte index)`.
     images: HashMap<(usize, usize), Arc<RenderImage>>,
     hf_images: HashMap<(usize, usize, usize), Arc<RenderImage>>,
+    /// Floating objects on the visible pages, their pictures, the selected
+    /// one's box and a drag going on.
+    floats: Vec<floats::FloatPaint>,
+    float_images: HashMap<(usize, String), Arc<RenderImage>>,
+    float_sel: Option<(usize, [f32; 4])>,
+    float_drag: Option<floats::FloatDrag>,
     sel: Selection,
     marked: Option<Range<usize>>,
     zoom: f32,
@@ -2013,6 +2044,32 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             let pb = rect(page, [0., 0., page_w, page_h]);
             window.paint_drop_shadows(pb, Corners::default(), &shadow);
             window.paint_quad(fill(pb, f.t.paper));
+            let mut text_box =
+                |window: &mut Window, l: &docs_pdf::StoryLayout, (x, y): (f32, f32)| {
+                    let mut bridge = f.bridge.borrow_mut();
+                    let first = l.paged.pages.first().map_or(&[][..], |p| &p.rules[..]);
+                    for rule in first.iter().cloned().chain(l.paged.tab_rules(0)) {
+                        let mut r = rule.rect;
+                        r[0] += x;
+                        r[1] += y;
+                        r[2] = r[2].max(1.0 / z);
+                        r[3] = r[3].max(1.0 / z);
+                        window.paint_quad(fill(rect(page, r), layout_color(rule.color)));
+                    }
+                    let runs = l.paged.glyph_runs(0);
+                    paint_runs(
+                        window,
+                        &g,
+                        page,
+                        &l.paged,
+                        &runs,
+                        &|i| l.text(i),
+                        (x, y),
+                        1.0,
+                        (&mut bridge, &ts, &f.t),
+                    );
+                };
+            floats::paint_floats(f, &g, page, true, window, &mut text_box);
             for (_, r, current) in found.iter().filter(|(p, _, _)| *p == page) {
                 let color = if *current {
                     f.t.find_match_current
@@ -2134,6 +2191,8 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                 (&mut bridge, &ts, &f.t),
             );
             drop(bridge);
+            floats::paint_floats(f, &g, page, false, window, &mut text_box);
+            floats::paint_float_selection(f, &g, page, window);
             paint_misspelled(window, &g, page, paged, &runs, &f.misspelled, cx);
             if let Some(x) = f.guide {
                 let line = [x - 0.5 / z, 0., 1. / z, page_h];
@@ -2192,6 +2251,15 @@ impl Render for DocsView {
             self.scroll_to_caret();
         }
         let images = self.visible_images(window, cx);
+        let float_images = self.visible_float_images(window, cx);
+        let float_paint = floats::float_paint(
+            &self.doc,
+            &self.laid,
+            &self.painter,
+            self.geometry().visible_pages(self.laid.paged.pages.len()),
+        );
+        let float_sel = self.float_sel_rect();
+        let layout_button = self.render_layout_button(cx);
         let hf_images = self.visible_hf_images(window, cx);
         let cards = self.comment_cards();
         let (sa, sb) = self.sel.ordered();
@@ -2236,6 +2304,10 @@ impl Render for DocsView {
             laid: self.laid.clone(),
             images,
             hf_images,
+            floats: float_paint,
+            float_images,
+            float_sel,
+            float_drag: self.float_drag,
             sel: self.sel,
             marked: self.marked.clone(),
             zoom: self.zoom,
@@ -2285,10 +2357,14 @@ impl Render for DocsView {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _: &MouseUpEvent, _, _| this.dragging = false),
+                cx.listener(|this, _: &MouseUpEvent, window, cx| {
+                    this.dragging = false;
+                    this.float_mouse_up(window, cx);
+                }),
             )
             .on_scroll(cx.listener(Self::on_scroll))
             .child(page)
+            .children(layout_button)
             .children(card_elements)
             .when(self.find.read(cx).is_open(), |el| {
                 el.child(self.find.clone())
@@ -2339,11 +2415,20 @@ impl Render for DocsView {
                 this.page_menu = None;
                 this.tab_menu = None;
                 this.ruler_drag = None;
+                this.text_box_edit = None;
                 let h = this.sel.head;
                 this.move_to(h, false, cx)
             },
-            Backspace => |this, w, cx| { let s = this.doc.backspace(this.sel); this.edited(s, w, cx) },
-            Delete => |this, w, cx| { let s = this.doc.delete_forward(this.sel); this.edited(s, w, cx) },
+            Backspace => |this, w, cx| {
+                if this.delete_selected_float(w, cx) { return; }
+                let s = this.doc.backspace(this.sel);
+                this.edited(s, w, cx)
+            },
+            Delete => |this, w, cx| {
+                if this.delete_selected_float(w, cx) { return; }
+                let s = this.doc.delete_forward(this.sel);
+                this.edited(s, w, cx)
+            },
             DeleteWordBack => |this, w, cx| {
                 if this.sel.is_empty() { this.sel.head = this.doc.prev_word_position(this.sel.head); }
                 let s = this.doc.delete_selection(this.sel);
@@ -2421,6 +2506,7 @@ impl Render for DocsView {
             .children(self.render_tab_menu(cx))
             .children(self.render_hf_menu(cx))
             .children(self.render_note_menu(cx))
+            .children(self.render_text_box_menu(cx))
     }
 }
 

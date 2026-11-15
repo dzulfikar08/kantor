@@ -1309,19 +1309,16 @@ impl Flow<'_> {
                     // in the placed line's origin instead.
                     br.state_mut()
                         .set_line_max_advance((b - a).min(base.avail).max(1.0));
-                    match br.break_next() {
-                        Some(parley::layout::YieldData::LineBreak(d)) => {
-                            let h = d.metrics.line_height;
-                            if row_h == 0.0 && self.y + h > self.bottom() + 0.01 && !self.at_top() {
-                                br.revert();
-                                self.new_page();
-                                continue 'lines;
-                            }
-                            placed.push((self.pages.len() - 1, k, self.y, (a, b)));
-                            row_h = row_h.max(h);
-                            k += 1;
+                    if let Some(parley::layout::YieldData::LineBreak(d)) = br.break_next() {
+                        let h = d.metrics.line_height;
+                        if row_h == 0.0 && self.y + h > self.bottom() + 0.01 && !self.at_top() {
+                            br.revert();
+                            self.new_page();
+                            continue 'lines;
                         }
-                        Some(_) | None => {}
+                        placed.push((self.pages.len() - 1, k, self.y, (a, b)));
+                        row_h = row_h.max(h);
+                        k += 1;
                     }
                     if br.is_done() {
                         break;

@@ -152,6 +152,17 @@ impl Package {
         zip_text(&mut zip, name).ok().flatten()
     }
 
+    /// The theme part's text (colours of shapes), if the package has one.
+    pub(crate) fn theme_text(&self) -> Option<String> {
+        let mut names: Vec<&String> = self
+            .parts
+            .iter()
+            .filter(|p| p.starts_with("word/theme/") && p.ends_with(".xml"))
+            .collect();
+        names.sort();
+        self.part_text(names.first()?)
+    }
+
     /// Where the main document's relationship `id` points (a hyperlink's
     /// address).
     pub(crate) fn rel_target(&self, id: &str) -> Option<String> {
@@ -3065,7 +3076,7 @@ fn write_table(out: &mut String, t: &Table, id: u32, paras: &[Paragraph], availa
     }
 }
 
-fn body_xml(doc: &Document) -> String {
+pub(crate) fn body_xml(doc: &Document) -> String {
     let mut out = String::with_capacity(4096);
     let fixed = crate::fields::writable(doc.paragraphs());
     let paras = fixed.as_deref().unwrap_or(doc.paragraphs());

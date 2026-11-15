@@ -236,3 +236,41 @@ fn in_line_and_back_and_delete() {
     doc.undo();
     assert_eq!(floats(&doc).len(), n);
 }
+
+#[test]
+fn text_box_text_is_edited_and_saved() {
+    let mut doc = open();
+    let (para, index, tb) = floats(&doc)
+        .into_iter()
+        .find(|f| f.2.name == "Text Box 1")
+        .unwrap();
+    assert_eq!(tb.text_locked(), None);
+    assert_eq!(
+        tb.text_box_text().as_deref(),
+        Some("Text box\nwith two paragraphs")
+    );
+    assert!(doc.set_text_box_text(para, index, "Edited\nin Kantor\nthree"));
+    let saved = doc.to_docx_bytes().unwrap();
+    let xml = document_xml(&saved);
+    // The shape and its VML fallback both carry the new text.
+    assert_eq!(xml.matches("in Kantor").count(), 2, "{xml}");
+    assert!(!xml.contains("with two paragraphs"));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tb.docx");
+    std::fs::write(&path, &saved).unwrap();
+    let back = Document::open(&path).unwrap();
+    let f = back.float_at(para, index).unwrap();
+    assert_eq!(
+        f.text_box_text().as_deref(),
+        Some("Edited\nin Kantor\nthree")
+    );
+    // Its placement is untouched.
+    assert_eq!(f.at, tb.at);
+    doc.undo();
+    let f = doc.float_at(para, index).unwrap();
+    assert_eq!(
+        f.text_box_text().as_deref(),
+        Some("Text box\nwith two paragraphs")
+    );
+    assert!(!f.is_modified());
+}

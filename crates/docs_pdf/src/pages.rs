@@ -33,6 +33,7 @@ use docs_layout::{
 };
 
 use crate::build::{self, Marks};
+use crate::floats::{self, FloatItem};
 
 /// Lays out one paragraph broken at a width (the Docs view passes its
 /// cache, export the engine).
@@ -44,6 +45,9 @@ pub struct StoryLayout {
     pub story: usize,
     /// Index into [`Document::notes`] (footnotes and endnotes).
     pub note: Option<usize>,
+    /// A text box: its object's header or footer story (`None`: the
+    /// body), paragraph and byte index.
+    pub text_box: Option<(Option<usize>, usize, usize)>,
     /// Laid out on one tall page whose content area starts at 0, 0.
     pub paged: PagedDocument,
     /// The story's paragraphs as laid out (page numbers filled in).
@@ -59,6 +63,16 @@ impl StoryLayout {
 
     /// The small document laid out (for its pictures).
     pub fn doc<'a>(&self, doc: &'a Document) -> &'a Document {
+        if let Some((story, para, index)) = self.text_box {
+            let owner = match story {
+                Some(s) => doc.stories().get(s).map_or(doc, |st| &st.doc),
+                None => doc,
+            };
+            return owner
+                .float_at(para, index)
+                .and_then(|f| f.text.as_ref())
+                .map_or(owner, |t| &t.doc);
+        }
         match self.note {
             Some(i) => &doc.notes()[i].doc,
             None => &doc.stories()[self.story].doc,
@@ -67,6 +81,9 @@ impl StoryLayout {
 
     /// A key telling stories apart (picture caches).
     pub fn key(&self) -> usize {
+        if let Some((story, para, index)) = self.text_box {
+            return (3 << 40) + (story.map_or(0, |s| s + 1) << 32) + (para << 12) + index;
+        }
         match self.note {
             Some(i) => (1 << 24) + i,
             None => self.story,
@@ -104,6 +121,9 @@ pub struct Layout {
     pub paged: PagedDocument,
     /// Per page: its header and/or footer.
     pub furniture: Vec<Vec<Placed>>,
+    /// Per page: its floating objects (body, header and footer), in
+    /// z-order (lowest first).
+    pub floats: Vec<Vec<FloatItem>>,
     /// The layout paragraphs, kept only when some text is struck through
     /// (tracked deletions; see [`PagedDocument::strike_rules`]).
     pub strikes: Arc<Vec<docs_layout::Paragraph>>,
@@ -209,6 +229,7 @@ fn lay_story(
     StoryLayout {
         story,
         note,
+        text_box: None,
         paged,
         paras,
         height,
@@ -483,11 +504,111 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         placed.extend(notes.get(pi).into_iter().flatten().cloned());
         furniture.push(placed);
     }
+    let floats = place_floats(doc, &paged, &furniture, layout);
     Layout {
         paged,
         furniture,
+        floats,
         strikes,
     }
+}
+
+/// A floating object's item on a page, its text box laid out.
+fn float_item(
+    doc: &Document,
+    (story, para, index): (Option<usize>, usize, usize),
+    rect: [f32; 4],
+    layout: &mut LayoutFn,
+) -> Option<FloatItem> {
+    let owner = match story {
+        Some(s) => &doc.stories().get(s)?.doc,
+        None => doc,
+    };
+    let f = owner.float_at(para, index)?;
+    let text = f.text.as_ref().map(|tb| {
+        let [l, t, r, b] = floats::insets(f);
+        let width = (rect[2] - l - r).max(8.0);
+        let mut sl = lay_story(
+            &tb.doc,
+            tb.doc.paragraphs().to_vec(),
+            width,
+            &Marks::default(),
+            layout,
+            usize::MAX,
+            None,
+        );
+        sl.text_box = Some((story, para, index));
+        let room = rect[3] - t - b;
+        let dy = match tb.v_align {
+            docs_engine::float::FloatAlign::Center => ((room - sl.height) / 2.0).max(0.0),
+            docs_engine::float::FloatAlign::End => (room - sl.height).max(0.0),
+            _ => 0.0,
+        };
+        (Arc::new(sl), rect[0] + l, rect[1] + t + dy)
+    });
+    Some(FloatItem {
+        para,
+        index,
+        story,
+        rect,
+        z: f.at.z,
+        behind: f.at.behind,
+        text,
+    })
+}
+
+/// Every page's floating objects: the body's where the layout put them,
+/// headers' and footers' from where those landed.
+fn place_floats(
+    doc: &Document,
+    paged: &PagedDocument,
+    furniture: &[Vec<Placed>],
+    layout: &mut LayoutFn,
+) -> Vec<Vec<FloatItem>> {
+    let mut out = Vec::with_capacity(paged.pages.len());
+    for (pi, page) in paged.pages.iter().enumerate() {
+        let mut items = Vec::new();
+        for pf in &page.floats {
+            if let Some(it) = float_item(doc, (None, pf.para, pf.index), pf.rect, layout) {
+                items.push(it);
+            }
+        }
+        for placed in furniture.get(pi).into_iter().flatten() {
+            if placed.note.is_some() || placed.layout.note.is_some() {
+                continue;
+            }
+            let story = placed.layout.story;
+            let Some(st) = doc.stories().get(story) else {
+                continue;
+            };
+            for (para, p) in st.doc.paragraphs().iter().enumerate() {
+                for (index, o) in p.objects() {
+                    let docs_engine::Object::Float(f) = o else {
+                        continue;
+                    };
+                    let line = placed.layout.paged.caret(para, index);
+                    let top = placed
+                        .layout
+                        .paged
+                        .caret(para, 0)
+                        .map_or(placed.y, |c| placed.y + c.top);
+                    let at = docs_layout::AnchorAt {
+                        para_top: top,
+                        line_top: line.map_or(top, |c| placed.y + c.top),
+                        char_x: line.map_or(placed.x, |c| placed.x + c.x),
+                    };
+                    let rect = floats::place(f, index, &page.setup, page.number, at);
+                    if let Some(it) = float_item(doc, (Some(story), para, index), rect, layout) {
+                        items.push(it);
+                    }
+                }
+            }
+        }
+        // Behind the text first, then by z-order (stable: document order).
+        items.sort_by_key(|it| (!it.behind, it.z));
+        out.push(items);
+    }
+    out
 }
 
 /// Place footnotes at the bottom of their pages and endnotes after the

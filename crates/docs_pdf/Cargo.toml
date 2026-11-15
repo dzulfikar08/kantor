@@ -14,6 +14,9 @@ log.workspace = true
 tempfile.workspace = true
 # PDF writer (ADR 0001). No "simple-text": layout is parley's, krilla only
 # embeds the glyphs it is given. "raster-images" embeds PNG/JPEG pictures.
+# Floating shapes: DrawingML preset geometry and theme colours, as Slides.
+slides_engine.workspace = true
+roxmltree.workspace = true
 krilla = { version = "0.8", default-features = false, features = ["raster-images"] }
 
 [dev-dependencies]

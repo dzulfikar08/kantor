@@ -343,12 +343,22 @@ pub struct Float {
     pub descr: String,
     /// A shape's text box.
     pub text: Option<Arc<TextBox>>,
+    /// The text box's text was changed in Kantor: its `w:txbxContent` is
+    /// written from [`Float::text`].
+    pub text_edited: bool,
 }
 
 impl PartialEq for Float {
     fn eq(&self, o: &Self) -> bool {
         // The text box is read from the XML.
-        self.xml == o.xml && self.at == o.at && self.read == o.read && self.kind == o.kind
+        self.xml == o.xml
+            && self.at == o.at
+            && self.read == o.read
+            && self.kind == o.kind
+            && self.text_edited == o.text_edited
+            && (!self.text_edited
+                || self.text.as_ref().map(|t| t.doc.paragraphs())
+                    == o.text.as_ref().map(|t| t.doc.paragraphs()))
     }
 }
 
@@ -359,6 +369,11 @@ impl Hash for Float {
         self.xml.hash(h);
         self.at.hash(h);
         self.kind.hash(h);
+        if self.text_edited
+            && let Some(t) = &self.text
+        {
+            t.doc.paragraphs().hash(h);
+        }
     }
 }
 
@@ -373,9 +388,15 @@ impl Float {
         }
     }
 
+    /// A floating object from its run content (`<w:drawing>` or
+    /// `<mc:AlternateContent>`), pictures' parts unresolved.
+    pub fn from_xml(xml_src: &str) -> Option<Self> {
+        read(xml_src, &|_| None)
+    }
+
     /// Whether Kantor changed it (its XML gets rewritten on save).
     pub fn is_modified(&self) -> bool {
-        self.at != self.read
+        self.at != self.read || self.text_edited
     }
 
     /// A copy placed at `at`.
@@ -389,10 +410,44 @@ impl Float {
         if !self.is_modified() {
             return Cow::Borrowed(&self.xml);
         }
-        match patch(&self.xml, &self.read, &self.at) {
-            Some(s) => Cow::Owned(s),
-            None => Cow::Borrowed(&self.xml),
+        let mut xml = Cow::Borrowed(&*self.xml);
+        if self.at != self.read
+            && let Some(s) = patch(&xml, &self.read, &self.at)
+        {
+            xml = Cow::Owned(s);
         }
+        if self.text_edited
+            && let Some(t) = &self.text
+        {
+            xml = Cow::Owned(replace_text_box(&xml, &crate::docx::body_xml(&t.doc)));
+        }
+        xml
+    }
+
+    /// Why the text box can't be edited as plain text (tables, pictures
+    /// or other objects in it), if so; `None` also when it has no text box.
+    pub fn text_locked(&self) -> Option<&'static str> {
+        let t = self.text.as_ref()?;
+        let other = t
+            .doc
+            .paragraphs()
+            .iter()
+            .any(|p| p.cell.is_some() || p.objects().any(|(_, o)| !o.is_zero_width()));
+        other.then_some(
+            "This text box has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet",
+        )
+    }
+
+    /// The text box's text for the editor: paragraphs joined with `\n`.
+    pub fn text_box_text(&self) -> Option<String> {
+        let t = self.text.as_ref()?;
+        let lines: Vec<String> = t
+            .doc
+            .paragraphs()
+            .iter()
+            .map(|p| p.text.replace(crate::OBJECT, ""))
+            .collect();
+        Some(lines.join("\n"))
     }
 
     /// The `a:prstGeom` / `a:custGeom` element of a shape or picture, as
@@ -442,9 +497,105 @@ pub(crate) fn share_parts(paras: &mut [crate::Paragraph], doc: &Document) {
     }
 }
 
+/// Byte offset of the next start tag with local name `name`.
+fn next_start_tag(src: &str, name: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(i) = src[from..].find(name).map(|i| from + i) {
+        from = i + name.len();
+        let lt = src[..i].rfind('<')?;
+        let tag = &src[lt + 1..i];
+        let after = src[from..].chars().next();
+        if !tag.starts_with('/')
+            && (tag.is_empty() || (tag.ends_with(':') && !tag.contains(char::is_whitespace)))
+            && matches!(after, Some(' ' | '>' | '/' | '\t' | '\n' | '\r'))
+        {
+            return Some(lt);
+        }
+    }
+    None
+}
+
+/// `src` with the inside of every `w:txbxContent` (the shape's and its
+/// VML fallback's) replaced by `body`.
+fn replace_text_box(src: &str, body: &str) -> String {
+    let mut out = String::with_capacity(src.len() + body.len());
+    let mut rest = src;
+    // The next start tag (searching from inside an element, so not with a
+    // reader: its end tags wouldn't match).
+    while let Some(lt) = next_start_tag(rest, "txbxContent") {
+        out.push_str(&rest[..lt]);
+        rest = &rest[lt..];
+        let Some(r) = element_range(rest, "txbxContent") else {
+            break;
+        };
+        let whole = &rest[r.clone()];
+        let open_end = whole.find('>').map_or(whole.len(), |i| i + 1);
+        let open = &whole[..open_end];
+        let qname = open
+            .trim_start_matches('<')
+            .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .next()
+            .unwrap_or("w:txbxContent")
+            .to_owned();
+        out.push_str(&rest[..r.start]);
+        if open.ends_with("/>") {
+            out.push_str(open.trim_end_matches("/>"));
+            out.push('>');
+        } else {
+            out.push_str(open);
+        }
+        out.push_str(body);
+        out.push_str(&format!("</{qname}>"));
+        rest = &rest[r.end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 // ── editing ────────────────────────────────────────────────────────────────
 
 impl Document {
+    /// Replace a text box's text (`\n` separates paragraphs): one undo
+    /// step. Each paragraph keeps the formatting of the box's first
+    /// paragraph and first text run.
+    pub fn set_text_box_text(&mut self, para: usize, index: usize, text: &str) -> bool {
+        let Some(f) = self.float_at(para, index) else {
+            return false;
+        };
+        if f.text_locked().is_some() || f.text_box_text().is_none_or(|t| t == text) {
+            return false;
+        }
+        let tb = f.text.clone().expect("text box");
+        let first = tb.doc.paragraphs().first().cloned().unwrap_or_default();
+        let props = first
+            .runs
+            .iter()
+            .find(|r| r.object.is_none())
+            .map(|r| r.props.clone())
+            .unwrap_or_default();
+        let paras: Vec<crate::Paragraph> = text
+            .split('\n')
+            .map(|line| {
+                let mut p = crate::Paragraph {
+                    props: first.props.clone(),
+                    ..crate::Paragraph::styled(line, props.clone())
+                };
+                p.props.extras.remove("sectPr");
+                p
+            })
+            .collect();
+        let mut doc = tb.doc.clone();
+        doc.paragraphs = paras;
+        doc.tables.clear();
+        let mut nf = f.clone();
+        nf.text = Some(Arc::new(TextBox {
+            doc,
+            ..(*tb).clone()
+        }));
+        nf.text_edited = true;
+        self.swap_object(para, index, Some(crate::Object::Float(Arc::new(nf))))
+    }
+
     /// The floating object whose character is at `para`/`index`.
     pub fn float_at(&self, para: usize, index: usize) -> Option<&Float> {
         self.paragraphs
@@ -871,6 +1022,7 @@ pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> 
             .unwrap_or_default()
             .to_owned(),
         text: None,
+        text_edited: false,
     })
 }
 
