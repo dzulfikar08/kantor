@@ -12,7 +12,6 @@ use crate::calc_result::CalcResult;
 use crate::expressions::parser::ArrayNode;
 use crate::expressions::token::get_error_by_name;
 use crate::expressions::types::CellReferenceIndex;
-use crate::formatter::format::parse_formatted_number;
 use crate::{CfFormula, CfValue, Model, UserModel};
 
 /// The value of a formula that may be a range or an array.
@@ -89,7 +88,7 @@ impl Model<'_> {
         if !currencies.iter().any(|e| e == currency) {
             currencies.push(currency);
         }
-        if let Ok((v, _)) = parse_formatted_number(input, &currencies, self.locale) {
+        if let Ok((v, _)) = self.kantor_parse_input(input, &currencies) {
             return Some(CfValue::Number(v));
         }
         if let Ok(b) = input.to_lowercase().parse::<bool>() {

@@ -211,3 +211,51 @@ fn edited_sheet_drops_the_x14_copy_and_others_stay() {
         assert!(after.contains(v), "{v:?} lost");
     }
 }
+
+/// A typed time is a number with a time format (Excel), so a time rule
+/// checks it: 9:30 is inside 8:00–17:00, 18:15 and 7:00 PM are not.
+#[test]
+fn typed_times_meet_time_rules() {
+    let mut wb = Workbook::new_empty().unwrap();
+    let hours = Validation {
+        kind: ValidationType::Time,
+        formula1: Some(validation_operand(ValidationType::Time, "8:00").unwrap()),
+        formula2: Some(validation_operand(ValidationType::Time, "17:00").unwrap()),
+        ..whole_1_to_10()
+    };
+    wb.set_validation(0, &[CellRange::from_corners((0, 0), (9, 0))], hours)
+        .unwrap();
+    wb.set_input(0, 0, 0, "9:30").unwrap();
+    assert!(wb.validate_cell(0, 0, 0).is_none(), "9:30 is office hours");
+    assert_eq!(wb.display(0, 0, 0).text, "9:30");
+    wb.set_input(0, 1, 0, "18:15").unwrap();
+    assert!(wb.validate_cell(0, 1, 0).is_some());
+    wb.set_input(0, 2, 0, "7:00 PM").unwrap();
+    assert!(wb.validate_cell(0, 2, 0).is_some());
+    wb.set_input(0, 3, 0, "2:45 pm").unwrap();
+    assert!(wb.validate_cell(0, 3, 0).is_none());
+    assert_eq!(wb.display(0, 3, 0).text, "2:45 PM");
+    // Arithmetic on typed times (the result takes A4's format, as in Excel).
+    wb.set_input(0, 0, 1, "=A4-A1").unwrap();
+    assert_eq!(wb.display(0, 0, 1).text, "5:15 AM");
+}
+
+/// The formula bar shows a typed time as Excel does, and editing it back
+/// in keeps the value and the cell's format.
+#[test]
+fn typed_time_formula_bar_text() {
+    let mut wb = Workbook::new_empty().unwrap();
+    wb.set_input(0, 0, 0, "9:30").unwrap();
+    wb.set_input(0, 1, 0, "11/16/2026 14:05").unwrap();
+    wb.set_input(0, 2, 0, "11/16/2026").unwrap();
+    assert_eq!(wb.input(0, 0, 0), "9:30:00 AM");
+    assert_eq!(wb.input(0, 1, 0), "11/16/2026 2:05:00 PM");
+    assert_eq!(wb.display(0, 1, 0).text, "11/16/2026 14:05");
+    assert_eq!(wb.input(0, 2, 0), "11/16/2026");
+    for row in 0..2 {
+        let (before, shown) = (wb.input(0, row, 0), wb.display(0, row, 0).text);
+        wb.set_input(0, row, 0, &before.clone()).unwrap();
+        assert_eq!(wb.input(0, row, 0), before);
+        assert_eq!(wb.display(0, row, 0).text, shown);
+    }
+}

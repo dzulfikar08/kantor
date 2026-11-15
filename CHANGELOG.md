@@ -11,6 +11,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Sheets: a typed time (`9:30`, `9:30 PM`, `14:05:30`, `27:15`) or date and time
+  (`11/16/2026 9:30`) is a time, as in Excel: it shows with an `h:mm`-style format, adds and
+  subtracts, and meets time validation rules; the formula bar shows it as Excel does
+  (`9:30:00 AM`). On Indonesian systems dates are typed day first (`16/11/2026 9:30`) and
+  Indonesian month names work (`16-Agu-2026`).
 - Docs: Word 97-2003 (`.doc`) files open with their floating pictures (PNG, JPEG), shapes and
   text boxes, placed, wrapped and drawn as in Word and saved into the new `.docx`. Floating
   objects in headers and footers, grouped shapes and freeform shapes drawn with formulas are

@@ -268,6 +268,11 @@ fn opened_status(book: &Workbook) -> String {
 pub fn init(cx: &mut App) {
     // Pivot captions and the like in new content follow the interface language.
     sheets_engine::set_content_translator(kantor_ui::i18n::t);
+    // Typed dates follow the system's language as Excel follows the
+    // regional settings: Indonesian reads 16/11/2026 9:30 day first.
+    if kantor_ui::i18n::lang() == kantor_ui::i18n::Lang::Id {
+        sheets_engine::set_input_locale("id");
+    }
     // Chart fallbacks ("Chart Title") come from the renderer shared with Slides.
     slides_engine::display_text::set_display_translator(kantor_ui::i18n::t);
     let ctx = Some(KEY_CONTEXT);

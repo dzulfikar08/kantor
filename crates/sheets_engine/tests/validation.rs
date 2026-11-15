@@ -147,10 +147,13 @@ fn checks_typed_values() {
     assert!(!valid(&mut wb, r, 'G', "2025-01-01"));
     // Times before noon.
     assert!(valid(&mut wb, r, 'I', "0.25"));
-    // (IronCalc reads a typed "9:30" as text, so times go in as formulas.)
     assert!(valid(&mut wb, r, 'I', "=TIME(9,30,0)"));
     assert!(!valid(&mut wb, r, 'I', "=TIME(15,0,0)"));
-    assert!(!valid(&mut wb, r, 'I', "9:30"), "text is not a time");
+    // A typed time is a time, as in Excel.
+    assert!(valid(&mut wb, r, 'I', "9:30"));
+    assert!(valid(&mut wb, r, 'I', "9:30 AM"));
+    assert!(!valid(&mut wb, r, 'I', "3:00 PM"));
+    assert!(!valid(&mut wb, r, 'I', "14:05:30"));
     // At most 5 characters, numbers by their digits.
     assert!(valid(&mut wb, r, 'K', "hello"));
     assert!(!valid(&mut wb, r, 'K', "hello!"));
