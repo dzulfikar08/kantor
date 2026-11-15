@@ -177,6 +177,25 @@ impl Workbook {
         {
             return Ok(count);
         }
+        // Notes on the sorted cells go with their rows, as in Excel.
+        let notes = self.note_list(sheet);
+        let moved: Vec<crate::CellNote> = {
+            let dest: std::collections::HashMap<u32, u32> = order
+                .iter()
+                .enumerate()
+                .map(|(i, &src)| (src as u32 - 1, range.top + i as u32))
+                .collect();
+            notes
+                .iter()
+                .map(|n| {
+                    let inside = n.col >= range.left && n.col <= range.right;
+                    match dest.get(&n.row).filter(|_| inside) {
+                        Some(&row) => crate::CellNote { row, ..n.clone() },
+                        None => n.clone(),
+                    }
+                })
+                .collect()
+        };
         self.model.pause_evaluation();
         let r = self
             .model
@@ -190,6 +209,9 @@ impl Workbook {
             .map_err(|e| anyhow!("{e}"));
         self.end_batch(u32::from(r.is_ok()));
         r?;
+        if moved != notes {
+            self.notes_with_edit(vec![(sheet, moved)]);
+        }
         Ok(count)
     }
 

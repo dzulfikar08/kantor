@@ -1219,6 +1219,9 @@ pub struct SheetsView {
     /// A sheet tab dialog (Rename, Delete, Move or Copy, Tab Color,
     /// Unhide; see [`sheet_tab_ui`]).
     tab_dialog: Option<sheet_tab_ui::TabDialog>,
+    /// The notes of the cells last copied or cut, with the clipboard text
+    /// they go with (Paste brings them while the clipboard holds it).
+    note_clip: Option<(String, sheets_engine::NoteClip)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1273,6 +1276,7 @@ impl SheetsView {
             busy_focus: cx.focus_handle(),
             chart_tab: None,
             tab_dialog: None,
+            note_clip: None,
             chart_focus: cx.focus_handle(),
             bench: bench::ScrollBench::from_env(),
             row_resize: None,
@@ -1789,13 +1793,20 @@ impl SheetsView {
         self.paste(&Paste, window, cx);
     }
 
-    /// Put the selected range on the clipboard as tab-separated inputs.
-    fn copy_range(&mut self, cx: &mut Context<Self>) -> CellRange {
+    /// Put the selected range on the clipboard as tab-separated inputs, and
+    /// keep its notes for Paste (`cut`: they move).
+    fn copy_range(&mut self, cut: bool, cx: &mut Context<Self>) -> CellRange {
         let range = self.op_range(cx).unwrap_or_else(|| self.range(cx));
-        let text = {
+        let (text, clip) = {
             let grid = self.table.read(cx).delegate();
-            grid.book.range_tsv(grid.sheet, range)
+            (
+                grid.book.range_tsv(grid.sheet, range),
+                grid.book.note_clip(grid.sheet, range, cut),
+            )
         };
+        // Notes are pasted with the cells while the clipboard still holds
+        // this copy.
+        self.note_clip = Some((text.clone(), clip));
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         range
     }
@@ -1804,7 +1815,7 @@ impl SheetsView {
         if self.editing.is_some() {
             return;
         }
-        let range = self.copy_range(cx);
+        let range = self.copy_range(false, cx);
         self.status = tf("Copied {}", &[&range.name()]).into();
         cx.notify();
     }
@@ -1814,7 +1825,7 @@ impl SheetsView {
         if self.editing.is_some() || self.blocked(cx) {
             return;
         }
-        let range = self.copy_range(cx);
+        let range = self.copy_range(true, cx);
         self.clear_selected(window, cx);
         self.status = tf("Cut {}", &[&range.name()]).into();
         cx.notify();
@@ -1832,10 +1843,23 @@ impl SheetsView {
             return;
         };
         let (row, col) = self.selected;
+        // The notes of the cells copied in Kantor go with them (Excel's
+        // Paste); after Cut they move, once.
+        let clip = self
+            .note_clip
+            .as_ref()
+            .filter(|(copied, _)| *copied == text)
+            .map(|(_, clip)| clip.clone());
+        if clip.as_ref().is_some_and(|c| c.is_cut()) {
+            self.note_clip = None;
+        }
         let result = self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
             let sheet = grid.sheet;
-            let res = grid.book.paste_tsv(sheet, row, col, &text);
+            let res = match &clip {
+                Some(clip) => grid.book.paste_tsv_with_notes(sheet, row, col, &text, clip),
+                None => grid.book.paste_tsv(sheet, row, col, &text),
+            };
             if let Ok(Some(range)) = &res {
                 grid.end = (range.bottom, range.right);
                 grid.span = Span::Cells;

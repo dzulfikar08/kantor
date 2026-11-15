@@ -98,6 +98,7 @@ pub use grid::{Fill, FillDirection, RangeStats, Step};
 pub use hide::Unhidden;
 pub use icons::IconPath;
 pub use look::CellLook;
+pub use notes::NoteClip;
 pub use numfmt::Display;
 pub use pivot::PivotInfo;
 pub use pivot_edit::{

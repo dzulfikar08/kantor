@@ -28,6 +28,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   column widths, conditional formatting, data validation, notes, print settings and the sheet's
   own names. Each command is one undo step, and the order, hidden sheets and tab colours are
   saved.
+- Sheets: notes follow their cells as in Excel. Sorting moves them with their rows, Paste brings
+  the notes of cells copied in Kantor (and replaces those of the cells pasted over), Cut and
+  Paste moves them, and the fill handle copies them along with the cells. Each is still one undo
+  step.
 
 ## [0.6.0] - 2026-11-14
 

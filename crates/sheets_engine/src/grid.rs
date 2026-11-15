@@ -421,6 +421,7 @@ impl Workbook {
         }
         let area = fill.source.area(sheet);
         let to = fill.to as i32 + 1;
+        let notes = self.filled_notes(sheet, fill, target);
         let res = match fill.direction {
             FillDirection::Down | FillDirection::Up => self.model.auto_fill_rows(&area, to),
             FillDirection::Right | FillDirection::Left => self.model.auto_fill_columns(&area, to),
@@ -435,7 +436,59 @@ impl Workbook {
             }
         }
         self.history.edited_steps(steps);
+        if let Some(list) = notes {
+            self.notes_with_edit(vec![(sheet, list)]);
+        }
         Ok(target)
+    }
+
+    /// The notes of `sheet` after `fill`: Excel's fill handle copies the
+    /// source cells' notes along with their contents and formats, in the
+    /// same pattern; the filled cells lose their own. `None`: no change.
+    fn filled_notes(
+        &self,
+        sheet: u32,
+        fill: &Fill,
+        target: CellRange,
+    ) -> Option<Vec<crate::CellNote>> {
+        let list = self.note_list(sheet);
+        let src = fill.source;
+        let source_notes: Vec<&crate::CellNote> =
+            list.iter().filter(|n| src.contains(n.row, n.col)).collect();
+        let new_cells =
+            |n: &&crate::CellNote| target.contains(n.row, n.col) && !src.contains(n.row, n.col);
+        if source_notes.is_empty() && !list.iter().any(|n| new_cells(&n)) {
+            return None;
+        }
+        let vertical = matches!(fill.direction, FillDirection::Down | FillDirection::Up);
+        let (h, w) = (
+            i64::from(src.bottom - src.top + 1),
+            i64::from(src.right - src.left + 1),
+        );
+        let mut out: Vec<crate::CellNote> =
+            list.iter().filter(|n| !new_cells(n)).cloned().collect();
+        for r in target.top..=target.bottom {
+            for c in target.left..=target.right {
+                if src.contains(r, c) {
+                    continue;
+                }
+                let (sr, sc) = if vertical {
+                    let k = (i64::from(r) - i64::from(src.top)).rem_euclid(h);
+                    (src.top + k as u32, c)
+                } else {
+                    let k = (i64::from(c) - i64::from(src.left)).rem_euclid(w);
+                    (r, src.left + k as u32)
+                };
+                if let Some(n) = source_notes.iter().find(|n| (n.row, n.col) == (sr, sc)) {
+                    out.push(crate::CellNote {
+                        row: r,
+                        col: c,
+                        ..(*n).clone()
+                    });
+                }
+            }
+        }
+        Some(out)
     }
 
     /// Series IronCalc's auto-fill misses: lines of the source holding typed

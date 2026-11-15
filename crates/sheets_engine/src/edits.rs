@@ -89,5 +89,7 @@ impl Workbook {
         t.file_charts.extend(edits.file_charts.keys().copied());
         t.notes.extend(edits.notes.keys().copied());
         self.history.set_edits(Arc::new(edits));
+        // Answers cached for this state since its IronCalc step are stale.
+        *self.cache.borrow_mut() = crate::Cache::default();
     }
 }
