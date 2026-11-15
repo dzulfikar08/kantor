@@ -152,18 +152,13 @@ pub struct FieldPages {
 impl FieldPages {
     pub fn new(doc: &Document, laid: Layout) -> Self {
         let sections = doc.sections();
+        let labels = pages::page_labels(doc, &sections, &laid.paged);
         let numbers = laid
             .paged
             .pages
             .iter()
-            .map(|p| {
-                let format = sections
-                    .get(p.section)
-                    .or(sections.last())
-                    .map(|s| s.props.num_format)
-                    .unwrap_or_default();
-                (p.number, format.format(p.number))
-            })
+            .zip(labels)
+            .map(|(p, l)| (p.number, l))
             .collect();
         Self {
             paged: laid.paged,

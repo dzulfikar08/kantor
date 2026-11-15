@@ -641,3 +641,48 @@ fn word_365_threads_round_trip() {
     assert_eq!(back.parent.as_deref(), Some("2"));
     assert!(again.comments().iter().find(|c| c.id == "2").unwrap().done);
 }
+
+#[test]
+fn page_number_format_writes_pg_num_type() {
+    use docs_engine::{ChapterSep, NumFormat, PageNumbering};
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("n.docx");
+    let mut doc = Document::new();
+    doc.insert_text(Selection::default(), "One", None);
+    let n = PageNumbering {
+        format: NumFormat::LowerLetter,
+        start: Some(5),
+        chapter: Some((2, ChapterSep::EnDash)),
+    };
+    doc.set_page_numbering(0, n, Selection::default());
+    doc.save_as(&out).unwrap();
+    let p = parts(&std::fs::read(&out).unwrap());
+    let d = text(&p, "word/document.xml");
+    assert!(
+        d.contains(
+            r#"<w:pgNumType w:fmt="lowerLetter" w:start="5" w:chapStyle="2" w:chapSep="enDash"/>"#
+        ),
+        "{d}"
+    );
+    // pgNumType sits after pgMar, before cols (schema order).
+    let (a, b) = (d.find("<w:pgMar").unwrap(), d.find("<w:pgNumType").unwrap());
+    assert!(a < b);
+    if let Some(c) = d.find("<w:cols") {
+        assert!(b < c);
+    }
+    let mut back = Document::open(&out).unwrap();
+    assert_eq!(back.sections()[0].props.numbering(), n);
+    assert_eq!(
+        back.sections()[0].props.page_label(2, Some("4")),
+        "4\u{2013}b"
+    );
+    // Other attributes on the element are kept.
+    let only_fmt = PageNumbering {
+        format: NumFormat::UpperRoman,
+        ..PageNumbering::default()
+    };
+    back.set_page_numbering(0, only_fmt, Selection::default());
+    back.save_as(&out).unwrap();
+    let d = text(&parts(&std::fs::read(&out).unwrap()), "word/document.xml");
+    assert!(d.contains(r#"<w:pgNumType w:fmt="upperRoman"/>"#), "{d}");
+}

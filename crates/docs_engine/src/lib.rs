@@ -60,8 +60,8 @@ pub use page::{MarginPreset, Orientation, PaperSize, cm_to_twips, twips_to_cm};
 pub use part_edit::{PartEdit, PartRef};
 pub use review::{Anchor, Change, Comment, RevKind, Revision};
 pub use section::{
-    HfKind, HfType, NumFormat, PageField, Section, SectionProps, SectionStart, Story, page_field,
-    with_page_numbers,
+    ChapterSep, HfKind, HfType, NumFormat, PageField, PageNumbering, Section, SectionProps,
+    SectionStart, Story, page_field, with_page_numbers,
 };
 pub use style::{
     HEADING_STYLES, Proofing, ResolvedLine, ResolvedPara, ResolvedRun, StyleSheet, font_stack,

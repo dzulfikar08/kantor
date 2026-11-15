@@ -1299,6 +1299,12 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.add_page_numbers_doc(w, cx)),
     },
     Command {
+        title: tk("Format Page Numbers…"),
+        detail: tk("Docs · i, ii, iii or A, B, C; chapter numbers; start at a number"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.open_page_numbers_doc(w, cx)),
+    },
+    Command {
         title: tk("Insert Page Number Field"),
         detail: tk("Docs · the page number at the caret"),
         keys: "",

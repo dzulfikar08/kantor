@@ -435,6 +435,17 @@ impl DocsView {
                     tk("Insert the number of pages"),
                     PageField::NumPages,
                 ))
+                .child({
+                    let v = view.clone();
+                    button(
+                        "docs-hf-pgnum",
+                        i18n::t("Format Page Numbers…"),
+                        tk("Number format, chapter numbers, where numbering starts"),
+                    )
+                    .on_click(move |_, window, cx| {
+                        let _ = v.update(cx, |this, cx| this.open_page_numbers_doc(window, cx));
+                    })
+                })
                 .child(distance(i18n::t("Header from top"), &menu.header))
                 .child(distance(i18n::t("Footer from bottom"), &menu.footer))
                 .child(div().flex_1())

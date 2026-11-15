@@ -11,6 +11,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Docs: *Format Page Numbers…* (palette, and a button on the Header & Footer bar) sets a section's
+  page number format (1, 2, 3 / a, b, c / A, B, C / i, ii, iii / I, II, III), whether page numbers
+  include the chapter number (from numbered headings of a chosen level, with Word's separators,
+  e.g. "2-5") and whether numbering continues from the previous section or starts at a number,
+  saved as Word's `w:pgNumType`.
 - Docs: comments can be replied to, resolved and reopened, as in Word: each comment card shows
   its thread (the replies under the first comment), a Reply box, and Resolve / Reopen; a
   resolved thread is dimmed and folded to its first comment. Deleting the first comment deletes

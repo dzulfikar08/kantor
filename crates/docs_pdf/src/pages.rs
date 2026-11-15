@@ -639,6 +639,7 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         *in_section.entry(page.section).or_default() += 1;
     }
     let mut cache: HashMap<(usize, String, String, u32), Arc<StoryLayout>> = HashMap::new();
+    let labels = page_labels(doc, &sections, &paged);
     let mut furniture = Vec::with_capacity(paged.pages.len());
     for (pi, page) in paged.pages.iter().enumerate() {
         let si = page.section.min(sections.len() - 1);
@@ -652,7 +653,7 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         } else {
             st.default
         };
-        let number = props.num_format.format(page.number);
+        let number = labels[pi].clone();
         let setup = page.setup;
         let width = setup.content_width();
         let mut placed = Vec::new();
@@ -697,6 +698,38 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         floats,
         strikes,
     }
+}
+
+/// Every page's number as its section shows it (format, and the chapter
+/// number before it when the section includes one).
+pub(crate) fn page_labels(
+    doc: &Document,
+    sections: &[docs_engine::Section],
+    paged: &PagedDocument,
+) -> Vec<String> {
+    let mut chapters: HashMap<u8, Vec<Option<String>>> = HashMap::new();
+    let mut last_para = 0;
+    paged
+        .pages
+        .iter()
+        .map(|page| {
+            let Some(s) = sections.get(page.section).or(sections.last()) else {
+                return page.number.to_string();
+            };
+            if let Some(l) = page.lines.iter().find(|l| !l.repeat) {
+                last_para = l.para;
+            }
+            let chapter = s.props.chapter.and_then(|(level, _)| {
+                chapters
+                    .entry(level)
+                    .or_insert_with(|| doc.chapter_numbers(level))
+                    .get(last_para)
+                    .cloned()
+                    .flatten()
+            });
+            s.props.page_label(page.number, chapter.as_deref())
+        })
+        .collect()
 }
 
 /// A floating object's item on a page, its text box laid out.
