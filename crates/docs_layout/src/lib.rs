@@ -535,17 +535,17 @@ impl Engine {
             .map(|(i, _)| i)
             .collect();
         if tabs.is_empty() {
-            return self.layout_with_tabs(para, width, &[]);
+            return self.layout_with_tabs(para, width, &[], &[]);
         }
-        let first = self.layout_with_tabs(para, width, &vec![0.01; tabs.len()]);
-        let plan = tab_widths(para, &first, &tabs, width);
+        let first = self.layout_with_tabs(para, width, &vec![0.01; tabs.len()], &[]);
+        let (plan, line_extra) = tab_widths(para, &first, &tabs, width);
         // Hidden tabs take no room.
         let widths: Vec<f32> = plan
             .iter()
             .zip(&tabs)
             .map(|(p, &at)| if para.is_hidden(at) { 0.0 } else { p.0 })
             .collect();
-        let mut laid = self.layout_with_tabs(para, width, &widths);
+        let mut laid = self.layout_with_tabs(para, width, &widths, &line_extra);
         laid.tab_fills = tabs
             .iter()
             .zip(&plan)
@@ -566,8 +566,15 @@ impl Engine {
     }
 
     /// [`Self::layout_paragraph`] with the tabs (in text order) `tab_widths`
-    /// px wide.
-    fn layout_with_tabs(&mut self, para: &Paragraph, width: f32, tab_widths: &[f32]) -> ParaLayout {
+    /// px wide; line `k` may run `line_extra[k]` px into the right margin
+    /// (a custom tab stop past it).
+    fn layout_with_tabs(
+        &mut self,
+        para: &Paragraph,
+        width: f32,
+        tab_widths: &[f32],
+        line_extra: &[f32],
+    ) -> ParaLayout {
         let left = para.indent_left_pt * PT;
         let right = para.indent_right_pt * PT;
         let first = para.first_line_pt * PT;
@@ -741,7 +748,29 @@ impl Engine {
             }
         };
         let avail = (width - dx - right).max(8.0);
-        layout.break_all_lines((!para.no_wrap).then_some(avail));
+        let max_extra = line_extra.iter().copied().fold(0.0f32, f32::max);
+        if para.no_wrap || max_extra <= 0.0 {
+            layout.break_all_lines((!para.no_wrap).then_some(avail));
+        } else {
+            // Modern Word lets a line run into the right margin up to a
+            // tab stop set there.
+            let mut br = layout.break_lines();
+            br.state_mut().set_layout_max_advance(avail + max_extra);
+            let mut k = 0usize;
+            for _ in 0..100_000 {
+                if br.is_done() {
+                    break;
+                }
+                let extra = line_extra.get(k).copied().unwrap_or(0.0);
+                br.state_mut().set_line_max_advance(avail + extra);
+                match br.break_next() {
+                    Some(parley::layout::YieldData::LineBreak(_)) => k += 1,
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+            br.finish();
+        }
         let alignment = match para.align {
             Align::Start => Alignment::Start,
             Align::Center => Alignment::Center,
@@ -1093,14 +1122,18 @@ const TAB_BOX: usize = 1 << 20;
 /// from a layout with empty tabs (`tabs` are their byte offsets), as Word:
 /// the next custom stop right of the tab (bar tabs aren't stops), the
 /// left indent of a hanging first line when that comes first, else the
-/// next default stop. Stops past the right indent act as if at it.
+/// next default stop. A custom stop past the right indent is honoured, the
+/// line running into the margin (Word 2013 and later); default stops stop
+/// at the right indent. Also returns, per line of `laid`, how far it may
+/// run past the right indent.
 fn tab_widths(
     para: &Paragraph,
     laid: &ParaLayout,
     tabs: &[usize],
     width: f32,
-) -> Vec<(f32, Leader)> {
+) -> (Vec<(f32, Leader)>, Vec<f32>) {
     let mut out = vec![(0.0f32, Leader::None); tabs.len()];
+    let mut line_extra = Vec::new();
     let left = para.indent_left_pt * PT;
     let right_edge = (width - para.indent_right_pt * PT).max(left + 8.0);
     let default = if para.default_tab > 1.0 {
@@ -1117,6 +1150,7 @@ fn tab_widths(
     stops.sort_by(|a, b| a.pos.total_cmp(&b.pos));
     let min_w = para.size_pt * PT * 0.25;
     for line in laid.layout.lines() {
+        line_extra.push(0.0f32);
         // Tab boxes on this line, in order, with their x (column coords).
         let mut on_line: Vec<(usize, f32)> = Vec::new();
         let mut line_end_x = 0.0f32;
@@ -1142,18 +1176,27 @@ fn tab_widths(
             // The text after this tab up to the next tab or the line's end.
             let seg_end = on_line.get(j + 1).map_or(line_end_x, |n| n.1);
             let seg = (seg_end - x0).max(0.0);
-            let custom = stops.iter().find(|t| t.pos > x + 0.5);
+            let custom = stops.iter().find(|t| t.pos > x + 0.5).copied();
             // A hanging indent counts as a stop (Word's list tab).
             let implicit = (left > x + 0.5).then_some(TabStop::new(left, TabAlign::Left));
-            let stop = match (custom, implicit) {
-                (Some(c), Some(i)) if i.pos < c.pos => i,
-                (Some(c), _) => *c,
-                (None, Some(i)) => i,
-                (None, None) => {
-                    TabStop::new(((x / default).floor() + 1.0) * default, TabAlign::Left)
-                }
+            let (stop, is_custom) = match (custom, implicit) {
+                (Some(c), Some(i)) if i.pos < c.pos => (i, false),
+                (Some(c), _) => (c, true),
+                (None, Some(i)) => (i, false),
+                (None, None) => (
+                    TabStop::new(((x / default).floor() + 1.0) * default, TabAlign::Left),
+                    false,
+                ),
             };
-            let pos = stop.pos.min(right_edge);
+            // A custom stop in the margin keeps its place (the text after
+            // a left one may run on to it); never past the page's width
+            // again from the indent.
+            let edge = if is_custom && stop.pos > right_edge {
+                stop.pos.min(right_edge + width)
+            } else {
+                right_edge
+            };
+            let pos = stop.pos.min(edge);
             let w = match stop.align {
                 TabAlign::Left | TabAlign::Bar => pos - x,
                 TabAlign::Center => pos - x - seg / 2.0,
@@ -1176,15 +1219,23 @@ fn tab_widths(
             // Past the stop already: at least a space's worth; never past
             // the right indent (a little slack keeps the line from wrapping).
             let aligned_end = stop.align != TabAlign::Left;
-            let room = right_edge - 0.05 - x - if aligned_end { seg } else { 0.0 };
-            let w = w.min(room).max(min_w).min(width.max(1.0));
+            let room = edge - 0.05 - x - if aligned_end { seg } else { 0.0 };
+            let w = w.min(room).max(min_w).min(edge.max(1.0));
             if let Some(slot) = out.get_mut(k) {
                 *slot = (w, stop.leader);
+            }
+            if edge > right_edge
+                && let Some(e) = line_extra.last_mut()
+            {
+                // Room for the stop and, after a left stop, the text that
+                // follows it.
+                let after = if aligned_end { 0.0 } else { seg };
+                *e = e.max(edge - right_edge + after);
             }
             shift += w;
         }
     }
-    out
+    (out, line_extra)
 }
 
 /// Space above a page's footnotes, holding the short separator line, px.
@@ -3769,15 +3820,30 @@ mod tab_tests {
 
     #[test]
     fn stops_past_the_right_indent_and_hanging_indents() {
-        // A right stop beyond the margin acts as one at the margin.
+        // A right stop in the margin is honoured, as in Word 2013+: the
+        // text after it ends there, on the same line.
         let setup = PageSetup::a4();
         let mut p = Paragraph::new("a\t9");
         p.tabs = vec![TabStop::new(setup.content_width() + 40.0, TabAlign::Right)];
         let (doc, col) = one(&p);
         let end = x_of(&doc, p.text.len());
-        assert!(end <= col + setup.content_width() + 0.01);
-        assert!(end > col + setup.content_width() - 1.0);
+        assert!(end <= col + setup.content_width() + 40.01, "{end}");
+        assert!(end > col + setup.content_width() + 39.0, "{end}");
         assert_eq!(doc.pages[0].lines.len(), 1);
+        // A left stop there too: the text starts at it.
+        let mut p = Paragraph::new("a\tb");
+        p.tabs = vec![TabStop::new(setup.content_width() + 20.0, TabAlign::Left)];
+        let (doc, col) = one(&p);
+        let b = x_of(&doc, 2);
+        assert!((b - col - setup.content_width() - 20.0).abs() < 0.6, "{b}");
+        assert_eq!(doc.pages[0].lines.len(), 1);
+        // Default stops still end at the margin: no stop past it.
+        let mut p = Paragraph::new("a\t9");
+        p.tabs = vec![TabStop::new(30.0 * MM, TabAlign::Left)];
+        p.default_tab = setup.content_width() * 0.75;
+        let (doc, col) = one(&p);
+        let x = x_of(&doc, 3);
+        assert!(x <= col + setup.content_width() + 0.01, "{x}");
         // Hanging indent: the first tab goes to the left indent, before a
         // later custom stop and before the default ones.
         let mut p = Paragraph::new("1.\tItem");

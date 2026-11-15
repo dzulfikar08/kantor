@@ -11,6 +11,9 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Docs: a tab stop set past the right margin is honoured as in Word 2013 and later: the line runs
+  into the margin up to it (a right-aligned page number or a form line that ends there), instead of
+  the stop acting as if it were at the margin.
 - Docs: *Format Page Numbers…* (palette, and a button on the Header & Footer bar) sets a section's
   page number format (1, 2, 3 / a, b, c / A, B, C / i, ii, iii / I, II, III), whether page numbers
   include the chapter number (from numbered headings of a chosen level, with Word's separators,
