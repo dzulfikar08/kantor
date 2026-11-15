@@ -172,7 +172,7 @@ export const en = {
 
   limitsH2: "What's missing in this preview",
   limitsIntro:
-    "Kantor is early software and hasn't been tried on a large set of real-world files yet. Keep a copy of anything important, and expect these gaps:",
+    "Kantor is early software. It has been tried on a few hundred real-world files, but not yet for how pages look next to Office. Keep a copy of anything important, and expect these gaps:",
   limits: [
     "Printing goes through your PDF viewer: Kantor makes the pages and the viewer sends them to the printer.",
     "Word: floating pictures, shapes and equations aren't shown properly yet, and headers and footers with pictures or tables can't be edited. Kantor keeps them and saves them unchanged.",
@@ -364,7 +364,7 @@ export const id = {
 
   limitsH2: "Yang belum ada di versi awal ini",
   limitsIntro:
-    "Kantor masih baru dan belum dicoba dengan banyak file dari dunia nyata. Simpan salinan file penting, dan perhatikan kekurangan berikut:",
+    "Kantor masih baru. Kantor sudah dicoba dengan beberapa ratus file dari dunia nyata, tetapi tampilan halamannya belum dibandingkan dengan Office. Simpan salinan file penting, dan perhatikan kekurangan berikut:",
   limits: [
     "Pencetakan lewat penampil PDF: Kantor menyiapkan halamannya, lalu penampil PDF mengirimnya ke printer.",
     "Word: gambar mengambang, bentuk, dan persamaan belum tampil dengan benar, dan header atau footer yang berisi gambar atau tabel belum bisa diedit. Kantor menyimpannya tanpa diubah.",
