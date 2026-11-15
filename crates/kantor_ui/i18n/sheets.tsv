@@ -376,6 +376,41 @@ Delete Chart	Hapus Bagan
 Kantor can't change this object: select a chart.	Kantor tidak dapat mengubah objek ini: pilih sebuah bagan.
 Select a chart to change it.	Pilih bagan untuk mengubahnya.
 Series colours	Warna seri
+Linked to source	Tertaut ke sumber
+{}: type a number, or leave it empty for Auto	{}: ketik angka, atau kosongkan untuk Otomatis
+The minimum must be less than the maximum.	Minimum harus lebih kecil dari maksimum.
+The major unit must be more than 0.	Unit utama harus lebih dari 0.
+Negative or zero values can't be plotted on a logarithmic scale.	Nilai negatif atau nol tidak dapat diplot pada skala logaritmik.
+All Series	Semua Seri
+Default	Bawaan
+Data Labels	Label Data
+Series	Seri
+Category Name	Nama Kategori
+Series Name	Nama Seri
+Percentage	Persentase
+Label Position	Posisi Label
+Values in reverse order	Nilai dalam urutan terbalik
+Categories in reverse order	Kategori dalam urutan terbalik
+Logarithmic scale	Skala logaritmik
+Axis Options	Opsi Sumbu
+Axis	Sumbu
+Major unit	Unit utama
+Display units	Unit tampilan
+Inside End	Ujung Dalam
+Inside Base	Dasar Dalam
+Outside End	Ujung Luar
+Above	Atas
+Below	Bawah
+Best Fit	Paling Pas
+Hundreds	Ratusan
+Thousands	Ribuan
+10000	10000
+100000	100000
+Millions	Jutaan
+10000000	10000000
+100000000	100000000
+Billions	Miliaran
+Trillions	Triliunan
 Colour	Warna
 Automatic	Otomatis
 Series {}	Seri {}
@@ -808,7 +843,6 @@ Move or Copy	Pindahkan atau Salin
 Move “{}”	Pindahkan “{}”
 Before sheet:	Sebelum lembar:
 Create a copy	Buat salinan
-Chart sheets can be moved, not copied.	Lembar bagan dapat dipindahkan, tetapi tidak dapat disalin.
 Lighter	Lebih terang
 Darker	Lebih gelap
 Theme Colors	Warna Tema
@@ -826,7 +860,6 @@ Move Right	Pindahkan ke Kanan
 Tab Color…	Warna Tab…
 Hide	Sembunyikan
 Unhide…	Tampilkan…
-Chart sheets have no tab colour in Kantor	Lembar bagan tidak memiliki warna tab di Kantor
 New Sheet	Lembar Baru
 Insert Sheet	Sisipkan Lembar
 Sheets · a new worksheet after the sheet shown	Sheets · lembar kerja baru setelah lembar yang ditampilkan
@@ -837,3 +870,11 @@ Move or Copy Sheet…	Pindahkan atau Salin Lembar…
 Hide Sheet	Sembunyikan Lembar
 Unhide Sheet…	Tampilkan Lembar…
 Sheets · hidden sheets	Sheets · lembar tersembunyi
+Move Chart…	Pindahkan Bagan…
+Move Chart	Pindahkan Bagan
+Choose where you want the chart to be placed:	Pilih tempat bagan akan diletakkan:
+New sheet:	Lembar baru:
+Object in:	Objek di:
+Chart moved	Bagan dipindahkan
+Select a chart to move it.	Pilih bagan untuk memindahkannya.
+“{}” will be deleted with its chart.	“{}” akan dihapus beserta bagannya.

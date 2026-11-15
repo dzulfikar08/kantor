@@ -97,7 +97,13 @@ impl Workbook {
             return None;
         }
         let (xml, _) = self.file_chart_now(key)?;
-        let style = chart_style::read(&xml).ok()?;
+        self.xml_chart_info(key, &xml)
+    }
+
+    /// What the Chart panel shows for chart `key` whose part is `xml` (its
+    /// references in the current rows and columns).
+    pub(crate) fn xml_chart_info(&self, key: DrawingKey, xml: &str) -> Option<ChartInfo> {
+        let style = chart_style::read(xml).ok()?;
         // The data: the block every reference lies in, on one sheet.
         let mut sheet: Option<String> = None;
         let mut area: Option<CellRange> = None;
@@ -158,6 +164,9 @@ impl Workbook {
             x_title: style.x_title.clone(),
             y_title: style.y_title.clone(),
             colors: style.colors.clone(),
+            labels: style.labels.clone(),
+            x_axis: style.axes[0].0.clone(),
+            y_axis: style.axes[1].0.clone(),
         };
         // Can the range give these series back? (Else a new range replaces
         // them, and the panel says so.)
@@ -192,6 +201,10 @@ impl Workbook {
             data_unknown: unknown,
             has_axes: style.has_axes,
             series: style.names,
+            label_positions: style.label_positions,
+            percent_labels: style.percent_labels,
+            x_value: style.axes[0].1,
+            y_value: style.axes[1].1,
             spec,
         })
     }
@@ -202,13 +215,30 @@ impl Workbook {
         let info = self
             .file_chart_info(key)
             .ok_or_else(|| anyhow!("Kantor can't change this chart"))?;
-        let old = &info.spec;
-        if *old == spec {
+        if info.spec == spec {
             return Ok(());
         }
-        let (mut xml, _) = self
+        let (xml, _) = self
             .file_chart_now(key)
             .ok_or_else(|| anyhow!("Kantor can't change this chart"))?;
+        let xml = self.restyled_xml(key, xml, &info, &spec)?;
+        self.own_edit(|e, layout| {
+            e.file_charts.insert(key, (xml.into(), layout.clone()));
+        });
+        Ok(())
+    }
+
+    /// Chart part `xml` (shown in the panel as `info`) changed to `spec`.
+    pub(crate) fn restyled_xml(
+        &self,
+        key: DrawingKey,
+        xml: String,
+        info: &ChartInfo,
+        spec: &ChartSpec,
+    ) -> Result<String> {
+        let mut xml = xml;
+        let old = &info.spec;
+        let spec = spec.clone();
         let sheet = self.chart_home(key).ok_or_else(|| anyhow!("no sheet"))?;
         let data_changed = old.data != spec.data
             || old.by_rows != spec.by_rows
@@ -239,7 +269,7 @@ impl Workbook {
                     info.kind_label
                 );
             }
-            xml = chart_style::set_kind(&xml, spec.kind)?;
+            xml = chart_style::drop_bad_positions(&chart_style::set_kind(&xml, spec.kind)?);
         }
         if spec.title != old.title {
             xml = chart_style::set_title(&xml, &spec.title)?;
@@ -261,10 +291,24 @@ impl Workbook {
                 xml = chart_style::set_color(&xml, i, new)?;
             }
         }
-        self.own_edit(|e, layout| {
-            e.file_charts.insert(key, (xml.into(), layout.clone()));
-        });
-        Ok(())
+        let style = chart_style::read(&xml)?;
+        for (i, now) in style.labels.iter().enumerate() {
+            let new = spec.labels.get(i).cloned().unwrap_or_default();
+            let was = old.labels.get(i).cloned().unwrap_or_default();
+            if new != was && new != *now {
+                xml = chart_style::set_labels(&xml, i, &new)?;
+            }
+        }
+        for (horizontal, new, was) in [
+            (true, &spec.x_axis, &old.x_axis),
+            (false, &spec.y_axis, &old.y_axis),
+        ] {
+            // A pie has no axes: their options don't apply.
+            if new != was && info.has_axes {
+                xml = chart_style::set_axis_options(&xml, horizontal, new)?;
+            }
+        }
+        Ok(xml)
     }
 
     /// File charts edited this session, for a save: their current parts.

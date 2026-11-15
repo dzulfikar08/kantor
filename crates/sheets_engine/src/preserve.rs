@@ -298,6 +298,9 @@ pub(crate) struct Patches {
     pub cf_sheets: HashSet<u32>,
     /// Charts made in Kantor, added with their drawing.
     pub charts: Vec<ChartSave>,
+    /// Chart sheet parts whose tab colour changed: `<tabColor>`'s
+    /// attributes (`None`: no colour).
+    pub chart_sheet_tabs: Vec<(String, Option<String>)>,
     /// Charts an earlier save of this session added that are gone since.
     pub removed_charts: Vec<SavedChart>,
     /// Filled by the save: where each chart made in Kantor went, by id.
@@ -327,8 +330,33 @@ pub(crate) struct ChartSave {
     pub sheet_id: u32,
     pub name: String,
     pub anchor: crate::drawing::Anchor,
-    /// The `c:chartSpace` part.
+    /// The `c:chartSpace` part (empty for a picture).
     pub xml: String,
+    /// A picture (copied with its sheet) instead of a chart.
+    pub picture: Option<PictureSave>,
+}
+
+/// A picture to add to a drawing (see [`ChartSave::picture`]).
+pub(crate) struct PictureSave {
+    pub data: std::sync::Arc<Vec<u8>>,
+    /// Its media part's extension (`png`).
+    pub ext: String,
+    pub crop: [f32; 4],
+    pub descr: String,
+}
+
+/// The content type of a picture part with extension `ext`.
+fn image_ct(ext: &str) -> String {
+    match ext.to_lowercase().as_str() {
+        "jpg" | "jpeg" => "image/jpeg".into(),
+        "gif" => "image/gif".into(),
+        "bmp" => "image/bmp".into(),
+        "tif" | "tiff" => "image/tiff".into(),
+        "emf" => "image/x-emf".into(),
+        "wmf" => "image/x-wmf".into(),
+        "svg" => "image/svg+xml".into(),
+        other => format!("image/{other}"),
+    }
 }
 
 /// A table to write from the model.
@@ -368,6 +396,7 @@ impl Patches {
             && self.removed_charts.is_empty()
             && self.file_charts.is_empty()
             && self.notes.is_empty()
+            && self.chart_sheet_tabs.is_empty()
     }
 }
 
@@ -506,6 +535,17 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
             notes,
             pivots: PivotsSaved { added, tables },
         }
+    };
+    // Chart sheets made in Kantor in a workbook with no original: merged
+    // into IronCalc's own package (they are put back from their parts).
+    let own: Vec<u8>;
+    let original = match original {
+        Some(o) => Some(o),
+        None if ctx.chart_sheets.is_some_and(|p| !p.is_empty()) => {
+            own = ironcalc.clone();
+            Some(&own[..])
+        }
+        None => None,
     };
     let Some(original) = original else {
         drop(new);
@@ -1612,12 +1652,17 @@ fn set_tab_color(xml: &str, color: Option<&str>) -> Result<Option<String>, Strin
             for a in pr.attributes() {
                 write_attr(&mut out, a, &HashMap::new())?;
             }
-            out.push('>');
-            out.push_str(tab.as_deref().unwrap_or_default());
+            let mut inner = String::from(tab.as_deref().unwrap_or_default());
             for child in pr.children().filter(|c| !is_main(*c, "tabColor")) {
-                write_node(child, &mut out, &HashMap::new())?;
+                write_node(child, &mut inner, &HashMap::new())?;
             }
-            out.push_str("</sheetPr>");
+            if inner.is_empty() {
+                out.push_str("/>");
+            } else {
+                out.push('>');
+                out.push_str(&inner);
+                out.push_str("</sheetPr>");
+            }
             (pr.range(), out)
         }
         None => {
@@ -4428,6 +4473,16 @@ fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
     if patches.is_empty() {
         return Ok(());
     }
+    for (part, tab) in &patches.chart_sheet_tabs {
+        let Some(xml) = pkg.text(part)? else {
+            continue;
+        };
+        if let Some(fixed) =
+            set_tab_color(xml, tab.as_deref()).map_err(|e| format!("tab colour of {part}: {e}"))?
+        {
+            pkg.set(part, fixed.into_bytes());
+        }
+    }
     let root_rels = parse_rels(pkg.text("_rels/.rels")?.ok_or("no _rels/.rels")?)?;
     let read = |p: &str| Ok(pkg.text(p)?.map(str::to_owned));
     let (wb, _, wb_xml, sheets) = workbook_sheets(&root_rels, &read)?;
@@ -5099,15 +5154,17 @@ fn write_charts(
             }
             pkg.remove(&r.part);
             pkg.remove(&rels_part(&r.part));
-            let types = pkg
+            let mut types = pkg
                 .text(CONTENT_TYPES)?
                 .ok_or("no content types")?
                 .to_owned();
-            let o = format!(
-                "<Override PartName=\"/{}\" ContentType=\"{CHART_CT}\"/>",
-                esc_attr(&r.part)
-            );
-            pkg.set(CONTENT_TYPES, types.replace(&o, "").into_bytes());
+            let o = format!("<Override PartName=\"/{}\"", esc_attr(&r.part));
+            if let Some(at) = types.find(&o)
+                && let Some(end) = types[at..].find("/>")
+            {
+                types.replace_range(at..at + end + 2, "");
+            }
+            pkg.set(CONTENT_TYPES, types.into_bytes());
         }
     }
     let mut ct = String::new();
@@ -5207,28 +5264,50 @@ fn write_charts(
                 && pkg.has(&sv.part)
                 && let Some(range) = chart_anchor_range(&dxml, sv.cnvpr, &sv.rid)
             {
-                pkg.set(&sv.part, c.xml.clone().into_bytes());
-                dxml.replace_range(range, &chart_anchor(&prefix, c, sv.cnvpr, &sv.rid));
+                match &c.picture {
+                    Some(pic) => pkg.set(&sv.part, pic.data.to_vec()),
+                    None => pkg.set(&sv.part, c.xml.clone().into_bytes()),
+                }
+                dxml.replace_range(range, &object_anchor(&prefix, c, sv.cnvpr, &sv.rid));
                 written.push((c.id, sv.clone()));
                 continue;
             }
-            let part = (1..)
-                .map(|n| format!("xl/charts/chart{n}.xml"))
-                .find(|n| !pkg.has(n))
-                .expect("a free name");
-            pkg.set(&part, c.xml.clone().into_bytes());
-            ct.push_str(&format!(
-                "<Override PartName=\"/{}\" ContentType=\"{CHART_CT}\"/>",
-                esc_attr(&part)
-            ));
+            let (part, kind) = match &c.picture {
+                Some(pic) => {
+                    let ext = pic.ext.to_lowercase();
+                    let part = (1..)
+                        .map(|n| format!("xl/media/image{n}.{ext}"))
+                        .find(|n| !pkg.has(n))
+                        .expect("a free name");
+                    pkg.set(&part, pic.data.to_vec());
+                    ct.push_str(&format!(
+                        "<Override PartName=\"/{}\" ContentType=\"{}\"/>",
+                        esc_attr(&part),
+                        image_ct(&ext)
+                    ));
+                    (part, "image")
+                }
+                None => {
+                    let part = (1..)
+                        .map(|n| format!("xl/charts/chart{n}.xml"))
+                        .find(|n| !pkg.has(n))
+                        .expect("a free name");
+                    pkg.set(&part, c.xml.clone().into_bytes());
+                    ct.push_str(&format!(
+                        "<Override PartName=\"/{}\" ContentType=\"{CHART_CT}\"/>",
+                        esc_attr(&part)
+                    ));
+                    (part, "chart")
+                }
+            };
             let rid = IdAlloc::new(&drawing_rels).next();
             drawing_rels.push(Rel {
                 id: rid.clone(),
-                kind: format!("{REL_BASE}chart"),
+                kind: format!("{REL_BASE}{kind}"),
                 target: relative(&drawing, &part),
                 external: false,
             });
-            anchors.push_str(&chart_anchor(&prefix, c, next_id, &rid));
+            anchors.push_str(&object_anchor(&prefix, c, next_id, &rid));
             written.push((
                 c.id,
                 SavedChart {
@@ -5270,15 +5349,17 @@ fn chart_anchor_range(xml: &str, cnvpr: u32, rid: &str) -> Option<std::ops::Rang
         crate::drawing::is_anchor(*a)
             && crate::drawing::c_nv_pr(*a).and_then(|n| n.attribute("id"))
                 == Some(&cnvpr.to_string())
-            && a.descendants()
-                .any(|d| d.tag_name().name() == "chart" && d.attribute((NS_R, "id")) == Some(rid))
+            && a.descendants().any(|d| {
+                (d.tag_name().name() == "chart" && d.attribute((NS_R, "id")) == Some(rid))
+                    || (d.tag_name().name() == "blip" && d.attribute((NS_R, "embed")) == Some(rid))
+            })
     })?;
     Some(a.range())
 }
 
 /// The anchor of a new chart in a drawing whose SpreadsheetDrawing prefix is
 /// `p` (`xdr:` or empty).
-fn chart_anchor(p: &str, c: &ChartSave, id: u32, rid: &str) -> String {
+fn object_anchor(p: &str, c: &ChartSave, id: u32, rid: &str) -> String {
     let (open, close) = match c.anchor {
         crate::drawing::Anchor::TwoCell { edit_as, .. } => {
             let e = match edit_as {
@@ -5300,6 +5381,26 @@ fn chart_anchor(p: &str, c: &ChartSave, id: u32, rid: &str) -> String {
             format!("</{p}absoluteAnchor>"),
         ),
     };
+    if let Some(pic) = &c.picture {
+        const A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+        let [l, t, r, b] = pic.crop.map(|f| (f * 100_000.0).round() as i64);
+        let src = if [l, t, r, b] == [0; 4] {
+            String::new()
+        } else {
+            format!("<a:srcRect l=\"{l}\" t=\"{t}\" r=\"{r}\" b=\"{b}\"/>")
+        };
+        let descr = if pic.descr.is_empty() {
+            String::new()
+        } else {
+            format!(" descr=\"{}\"", esc_attr(&pic.descr))
+        };
+        return format!(
+            "{open}{pos}<{p}pic xmlns:a=\"{A}\"><{p}nvPicPr><{p}cNvPr id=\"{id}\" name=\"{name}\"{descr}/><{p}cNvPicPr><a:picLocks noChangeAspect=\"1\"/></{p}cNvPicPr></{p}nvPicPr><{p}blipFill><a:blip xmlns:r=\"{NS_R}\" r:embed=\"{rid}\"/>{src}<a:stretch><a:fillRect/></a:stretch></{p}blipFill><{p}spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></{p}spPr></{p}pic><{p}clientData/>{close}",
+            pos = c.anchor.position_xml(p),
+            name = esc_attr(&c.name),
+            rid = esc_attr(rid),
+        );
+    }
     format!(
         "{open}{pos}<{p}graphicFrame macro=\"\"><{p}nvGraphicFramePr><{p}cNvPr id=\"{id}\" name=\"{name}\"/><{p}cNvGraphicFramePr/></{p}nvGraphicFramePr><{p}xfrm><a:off x=\"0\" y=\"0\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"/><a:ext cx=\"0\" cy=\"0\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"/></{p}xfrm><a:graphic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"><c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:r=\"{NS_R}\" r:id=\"{rid}\"/></a:graphicData></a:graphic></{p}graphicFrame><{p}clientData/>{close}",
         pos = c.anchor.position_xml(p),

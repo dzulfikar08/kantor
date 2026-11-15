@@ -450,7 +450,8 @@ Sheets · remove every rule of the active sheet	Sheets · hapus setiap aturan pa
 Sheets · a column chart of the selection or the data around the active cell (other types in the toolbar's chart menu)	Sheets · bagan kolom dari pilihan atau data di sekitar sel aktif (jenis lain di menu bagan pada bilah alat)
 Sheets · a line chart of the selection	Sheets · bagan garis dari pilihan
 Sheets · a pie chart of the selection	Sheets · bagan pai dari pilihan
-Sheets · type, title, legend, axis titles, series colours and data of the selected chart	Sheets · jenis, judul, legenda, judul sumbu, warna seri dan data bagan terpilih
+Sheets · type, title, legend, axis titles, series colours, data labels, axis options and data of the selected chart	Sheets · jenis, judul, legenda, judul sumbu, warna seri, label data, opsi sumbu dan data bagan terpilih
+Sheets · put the selected chart on a new chart sheet or on another sheet	Sheets · letakkan bagan terpilih di lembar bagan baru atau di lembar lain
 Sheets · make the selection or the data around the active cell a table with a style	Sheets · jadikan pilihan atau data di sekitar sel aktif sebagai tabel bergaya
 Sheets · style, header and total rows, banding, totals and name of the table at the active cell	Sheets · gaya, baris header dan total, baris berpita, total dan nama tabel di sel aktif
 Sheets · keep the cells, remove the table at the active cell	Sheets · pertahankan sel, hapus tabel di sel aktif

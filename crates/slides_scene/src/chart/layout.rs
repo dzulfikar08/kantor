@@ -8,7 +8,7 @@ use slides_engine::{EMU_PER_PT, EMU_PER_PX, Fill, LineCap, LineJoin, LineStyle, 
 
 use super::format::{format_number, is_date_code};
 use super::model::*;
-use super::scale::{Fixed, Scale, auto_scale, intervals_for};
+use super::scale::{Fixed, Scale, auto_scale, intervals_for, log_scale};
 use crate::geom::{Affine, P, Path, PathFill, p};
 use crate::paint::{dash_array, fill_paint};
 use crate::{FillRule, Prim, Rgba, Stroke};
@@ -1184,11 +1184,13 @@ impl Ax<'_> {
     /// Tick label texts and the values they sit at.
     fn ticks(&self) -> Vec<(f64, String)> {
         match &self.value {
-            Some(s) => s
-                .ticks()
-                .into_iter()
-                .map(|v| (v, format_number(v, self.fmt.as_deref())))
-                .collect(),
+            Some(s) => {
+                let div = self.ax.disp_units.as_ref().map_or(1.0, |d| d.div);
+                s.ticks()
+                    .into_iter()
+                    .map(|v| (v, format_number(v / div, self.fmt.as_deref())))
+                    .collect()
+            }
             None => (0..self.ncat)
                 .map(|i| {
                     (
@@ -1448,6 +1450,8 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
                     },
                     n,
                 )
+            } else if let Some(base) = a.ax.log_base {
+                log_scale(a.lo, a.hi, fixed, base)
             } else {
                 auto_scale(a.lo, a.hi, fixed, n)
             });
@@ -1499,6 +1503,17 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
                 let (_, th) = o.measure(&text, &tf, None);
                 need += th + 4.0;
             }
+            if a.value.is_some()
+                && let Some(text) = a.ax.disp_units.as_ref().and_then(|d| d.label.as_ref())
+            {
+                let (_, th) = o.measure(text, &fonts[i], None);
+                if a.vertical {
+                    // Above the axis' top label.
+                    room[2] = room[2].max(th * 1.6 + 4.0);
+                } else {
+                    need += th + 4.0;
+                }
+            }
             let k = match side {
                 Side::L => 0,
                 Side::R => 1,
@@ -1526,6 +1541,21 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
             };
             let at: Vec<f64> = match (&a.value, minor) {
                 (Some(s), false) => s.ticks(),
+                (Some(s), true) if s.log.is_some() => {
+                    // 2..9 times each power, Excel's minor ticks on a log axis.
+                    let mut out = Vec::new();
+                    let mut v = s.min;
+                    while v < s.max && out.len() < 2000 {
+                        for k in 1..10 {
+                            let m = v * k as f64;
+                            if m <= s.max {
+                                out.push(m);
+                            }
+                        }
+                        v *= s.unit.max(2.0);
+                    }
+                    out
+                }
                 (Some(s), true) => {
                     let u = s.unit / 5.0;
                     let n = ((s.max - s.min) / u).round().clamp(0.0, 2000.0) as usize;
@@ -1704,6 +1734,40 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
                 }
             }
         }
+        // Display units label: over the top label (vertical axes) or below
+        // the labels at the right end (horizontal ones).
+        let mut units_h = 0.0f32;
+        if a.value.is_some()
+            && let Some(text) = a.ax.disp_units.as_ref().and_then(|d| d.label.clone())
+        {
+            let (_, th) = o.measure(&text, font, None);
+            match side {
+                Side::L | Side::R => {
+                    // Level, above the top label (glyphs can't turn on
+                    // screen; Excel turns it beside the labels).
+                    let lh = font.size_pt * PX_PER_PT * 1.2;
+                    let y = plot[1] - lh * 0.6 - th - 2.0;
+                    // From the labels' outer edge, inward (inside the
+                    // chart whichever its width).
+                    let (x, ax) = if side == Side::L {
+                        (label_at - extent, 0.0)
+                    } else {
+                        (label_at + extent, 1.0)
+                    };
+                    o.label_at(&text, font, p(x, y), ax, 0.0);
+                }
+                _ => {
+                    let y = if side == Side::B {
+                        label_at + extent + 2.0
+                    } else {
+                        label_at - extent - 2.0 - th
+                    };
+                    o.label_at(&text, font, p(plot[0] + plot[2], y), 1.0, 0.0);
+                    units_h = th + 4.0;
+                }
+            }
+        }
+        let extent = extent + units_h;
         if let Some(t) = &a.ax.title {
             let tf = o.font(&t.font, base, true);
             let text = t.text.clone().map_or("Axis Title".into(), |l| l.join("\n"));
@@ -1845,6 +1909,7 @@ fn bars(
         min: 0.0,
         max: 1.0,
         unit: 1.0,
+        log: None,
     });
     let clamp = |v: f64| v.clamp(s_scale.min, s_scale.max);
     // The bars' base: zero, or the axis edge nearest to it.
@@ -1966,6 +2031,7 @@ fn lines(
         min: 0.0,
         max: 1.0,
         unit: 1.0,
+        log: None,
     });
     let clamp = |v: f64| v.clamp(sc.min, sc.max);
     let at = |i: usize, v: f64| {

@@ -375,7 +375,7 @@ impl Workbook {
 
     /// Mark a table as made or changed in Kantor (a save writes its part
     /// from the model). `renamed_from`: its previous name.
-    fn touch_table(&mut self, name: &str, renamed_from: Option<&str>) {
+    pub(crate) fn touch_table(&mut self, name: &str, renamed_from: Option<&str>) {
         let name = name.to_lowercase();
         let from = renamed_from.map(str::to_lowercase);
         self.own_edit(|e, _| {

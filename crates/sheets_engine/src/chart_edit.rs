@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 
+use crate::chart_options::{AxisOptions, DataLabels, LabelPos};
 pub use crate::chart_style::SeriesColor;
 use crate::chart_style::{self, NewSeries};
 use crate::drawing::{Anchor, Drawing, DrawingKey, DrawingKind, EditAs, Marker, RefValue};
@@ -128,7 +129,7 @@ impl LegendPos {
 }
 
 /// What a chart shows, as the Chart panel edits it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ChartSpec {
     pub kind: ChartType,
     /// Empty: no title.
@@ -145,6 +146,32 @@ pub struct ChartSpec {
     pub y_title: String,
     /// Each series' colour, in series order (missing: automatic).
     pub colors: Vec<SeriesColor>,
+    /// Each series' data labels, in series order (missing: none).
+    pub labels: Vec<DataLabels>,
+    /// Options of the horizontal and vertical axes.
+    pub x_axis: AxisOptions,
+    pub y_axis: AxisOptions,
+}
+
+impl ChartSpec {
+    /// A spec for an object whose part says what it is (a copied or moved
+    /// chart Kantor can't read into a spec, a picture).
+    pub(crate) fn placeholder() -> ChartSpec {
+        ChartSpec {
+            kind: ChartType::Other,
+            title: String::new(),
+            legend: LegendPos::None,
+            by_rows: false,
+            data: CellRange::from_corners((0, 0), (0, 0)),
+            data_sheet: None,
+            x_title: String::new(),
+            y_title: String::new(),
+            colors: Vec::new(),
+            labels: Vec::new(),
+            x_axis: AxisOptions::default(),
+            y_axis: AxisOptions::default(),
+        }
+    }
 }
 
 /// A chart for the Chart panel: its spec and what can't be changed.
@@ -165,6 +192,13 @@ pub struct ChartInfo {
     pub has_axes: bool,
     /// Series names, in order (for the colours).
     pub series: Vec<String>,
+    /// Data label positions the chart type has (empty: none can be set).
+    pub label_positions: Vec<LabelPos>,
+    /// Percentage labels apply (pie, doughnut).
+    pub percent_labels: bool,
+    /// The horizontal / vertical axis shows values (else categories).
+    pub x_value: bool,
+    pub y_value: bool,
 }
 
 /// A chart made in Kantor.
@@ -174,8 +208,25 @@ pub(crate) struct NewChart {
     pub sheet_id: u32,
     pub spec: ChartSpec,
     pub anchor: Anchor,
-    /// The layout `spec.data` and `anchor` are in.
+    /// The layout `spec.data`, `anchor` and `xml` are in.
     pub layout: Layout,
+    /// The chart's part when it came from somewhere else (Move Chart, a
+    /// copied sheet): restyled in place like a file's chart, its
+    /// references in `layout`'s rows and columns. `None`: made from `spec`.
+    pub xml: Option<Arc<str>>,
+    /// A picture copied with its sheet (not a chart).
+    pub picture: Option<Arc<NewPicture>>,
+}
+
+/// A picture on a worksheet copied with Move or Copy.
+#[derive(Debug)]
+pub(crate) struct NewPicture {
+    pub data: Arc<Vec<u8>>,
+    pub crop: [f32; 4],
+    /// Its media part's extension.
+    pub ext: String,
+    pub name: String,
+    pub descr: String,
 }
 
 /// One series: name cell, category cells, value cells (0-based ranges).
@@ -331,6 +382,9 @@ impl Workbook {
             x_title: String::new(),
             y_title: String::new(),
             colors: Vec::new(),
+            labels: Vec::new(),
+            x_axis: AxisOptions::default(),
+            y_axis: AxisOptions::default(),
         };
         // Beside the data: two columns to its right, 8 columns × 15 rows.
         let col = (data.right + 2).min(MAX_COLS - 9);
@@ -360,6 +414,8 @@ impl Workbook {
                 spec,
                 anchor,
                 layout: layout.clone(),
+                xml: None,
+                picture: None,
             });
         });
         Ok(DrawingKey {
@@ -384,6 +440,14 @@ impl Workbook {
         if key.index < NEW_CHART_BASE {
             return self.file_chart_info(key);
         }
+        if let Some(c) = self.new_chart(key) {
+            if c.picture.is_some() {
+                return None;
+            }
+            if c.xml.is_some() {
+                return self.xml_chart_info(key, &self.new_chart_part(&c));
+            }
+        }
         let spec = self.chart_spec(key)?;
         let sheet = self.sheet_index_of(key.sheet_id)?;
         let style = chart_style::read(&self.chart_xml(sheet, &spec)).ok()?;
@@ -394,6 +458,10 @@ impl Workbook {
             data_unknown: false,
             has_axes: spec.kind != ChartType::Pie,
             series: style.names,
+            label_positions: style.label_positions,
+            percent_labels: style.percent_labels,
+            x_value: style.axes[0].1,
+            y_value: style.axes[1].1,
             spec,
         })
     }
@@ -422,11 +490,42 @@ impl Workbook {
         if key.index < NEW_CHART_BASE {
             return self.set_file_chart(key, spec);
         }
+        if self.new_chart(key).is_some_and(|c| c.picture.is_some()) {
+            bail!("this object isn't a chart");
+        }
+        if let Some(c) = self.new_chart(key)
+            && c.xml.is_some()
+        {
+            let info = self
+                .chart_info(key)
+                .ok_or_else(|| anyhow!("Kantor can't change this chart"))?;
+            if info.spec == spec {
+                return Ok(());
+            }
+            let xml = self.restyled_xml(key, self.new_chart_part(&c), &info, &spec)?;
+            let (_, anchor_now) = self.chart_now(&c);
+            self.own_edit(|e, layout| {
+                if let Some(c) = e.charts.iter_mut().find(|c| c.id == c_id(key)) {
+                    c.spec = spec;
+                    c.anchor = anchor_now;
+                    c.layout = layout.clone();
+                    c.xml = Some(xml.into());
+                }
+            });
+            return Ok(());
+        }
         if self.chart_spec(key).as_ref() == Some(&spec) {
             return Ok(());
         }
         if spec.kind == ChartType::Other {
             bail!("Pick a chart type");
+        }
+        let mut spec = spec;
+        // Positions the new type doesn't have go back to its default.
+        let ok = LabelPos::for_group(group_tag(spec.kind), spec.kind.stacked());
+        for l in &mut spec.labels {
+            l.pos = l.pos.filter(|p| ok.contains(p));
+            l.percent &= spec.kind == ChartType::Pie;
         }
         let sheet = self
             .sheet_index_of(key.sheet_id)
@@ -455,8 +554,32 @@ impl Workbook {
         Ok(())
     }
 
+    /// Chart `key` made in Kantor (or moved here), in the current state.
+    pub(crate) fn new_chart(&self, key: DrawingKey) -> Option<NewChart> {
+        if key.index < NEW_CHART_BASE {
+            return None;
+        }
+        self.edits()
+            .charts
+            .iter()
+            .find(|c| c.id == c_id(key) && c.sheet_id == key.sheet_id)
+            .cloned()
+    }
+
+    /// The part of chart `c` now, its references in the current rows and
+    /// columns.
+    pub(crate) fn new_chart_part(&self, c: &NewChart) -> String {
+        match &c.xml {
+            Some(x) => self.refs_now(x, &c.layout),
+            None => {
+                let sheet = self.sheet_index_of(c.sheet_id).unwrap_or(0);
+                self.chart_xml(sheet, &self.chart_now(c).0)
+            }
+        }
+    }
+
     /// `c`'s spec and anchor in the current rows and columns.
-    fn chart_now(&self, c: &NewChart) -> (ChartSpec, Anchor) {
+    pub(crate) fn chart_now(&self, c: &NewChart) -> (ChartSpec, Anchor) {
         let moves = c.layout.moves_to(&self.history.layout());
         let mut spec = c.spec.clone();
         let data_id = spec.data_sheet.unwrap_or(c.sheet_id);
@@ -495,7 +618,13 @@ impl Workbook {
                 .iter()
                 .find(|c| key.index == NEW_CHART_BASE + c.id as usize)
                 .cloned();
-            c.map(|c| self.chart_now(&c).0)
+            c.map(|c| {
+                let xml = c
+                    .xml
+                    .as_ref()
+                    .map(|_| Arc::<str>::from(self.new_chart_part(&c)));
+                (self.chart_now(&c).0, xml)
+            })
         };
         self.own_edit(|e, layout| match anchor {
             None => e
@@ -508,8 +637,9 @@ impl Workbook {
                     .find(|c| key.index == NEW_CHART_BASE + c.id as usize)
                 {
                     c.anchor = a;
-                    if let Some(spec) = current.clone() {
+                    if let Some((spec, xml)) = current.clone() {
                         c.spec = spec;
+                        c.xml = xml;
                     }
                     c.layout = layout.clone();
                 }
@@ -521,18 +651,35 @@ impl Workbook {
     /// The charts made in Kantor on `sheet_id`, as drawings.
     pub(crate) fn new_chart_drawings(&self, sheet_id: u32) -> Vec<Drawing> {
         let edits = self.edits();
-        let Some(sheet) =
-            (0..self.sheet_names().len() as u32).find(|&s| self.sheet_id(s) == sheet_id)
-        else {
+        if self.sheet_index_of(sheet_id).is_none() {
             return Vec::new();
-        };
+        }
         edits
             .charts
             .iter()
             .filter(|c| c.sheet_id == sheet_id)
             .map(|c| {
-                let (spec, anchor) = self.chart_now(c);
-                let xml = self.chart_xml(sheet, &spec);
+                let anchor = self.chart_now(c).1;
+                if let Some(pic) = &c.picture {
+                    return Drawing {
+                        key: DrawingKey {
+                            sheet_id,
+                            index: NEW_CHART_BASE + c.id as usize,
+                        },
+                        name: pic.name.clone(),
+                        descr: pic.descr.clone(),
+                        anchor,
+                        kind: Arc::new(DrawingKind::Picture {
+                            part: format!("{NEW_CHART_PART}picture/{}", c.id).into(),
+                            data: pic.data.clone(),
+                            crop: pic.crop,
+                        }),
+                        editable: true,
+                        hidden: false,
+                        prints: true,
+                    };
+                }
+                let xml = self.new_chart_part(c);
                 let part = format!("{NEW_CHART_PART}{}/{:x}", c.id, fxhash(&xml));
                 Drawing {
                     key: DrawingKey {
@@ -763,19 +910,30 @@ impl Workbook {
             }
         }
         for c in &edits.charts {
-            let Some(sheet) =
-                (0..self.sheet_names().len() as u32).find(|&s| self.sheet_id(s) == c.sheet_id)
-            else {
+            if self.sheet_index_of(c.sheet_id).is_none() {
                 continue;
-            };
-            let (spec, anchor) = self.chart_now(c);
+            }
+            let anchor = self.chart_now(c).1;
             out.charts.push(crate::preserve::ChartSave {
                 id: c.id,
                 saved: self.saved_charts.get(&c.id).cloned(),
                 sheet_id: c.sheet_id,
-                name: format!("Chart {}", c.id),
+                name: match &c.picture {
+                    Some(p) if !p.name.is_empty() => p.name.clone(),
+                    Some(_) => format!("Picture {}", c.id),
+                    None => format!("Chart {}", c.id),
+                },
                 anchor,
-                xml: self.chart_xml(sheet, &spec),
+                xml: match c.picture {
+                    Some(_) => String::new(),
+                    None => self.new_chart_part(c),
+                },
+                picture: c.picture.as_ref().map(|p| crate::preserve::PictureSave {
+                    data: p.data.clone(),
+                    ext: p.ext.clone(),
+                    crop: p.crop,
+                    descr: p.descr.clone(),
+                }),
             });
         }
     }
@@ -799,7 +957,40 @@ fn styled(xml: String, spec: &ChartSpec) -> String {
             xml = x;
         }
     }
+    for (i, l) in spec.labels.iter().enumerate() {
+        if l.shown()
+            && let Ok(x) = chart_style::set_labels(&xml, i, l)
+        {
+            xml = x;
+        }
+    }
+    if spec.kind != ChartType::Pie {
+        for (horizontal, a) in [(true, &spec.x_axis), (false, &spec.y_axis)] {
+            if let Ok(x) = chart_style::set_axis_options(&xml, horizontal, a) {
+                xml = x;
+            }
+        }
+    }
     xml
+}
+
+/// The plot type element of a chart type.
+fn group_tag(kind: ChartType) -> &'static str {
+    match kind {
+        ChartType::Column | ChartType::StackedColumn | ChartType::Bar | ChartType::StackedBar => {
+            "barChart"
+        }
+        ChartType::Line | ChartType::StackedLine => "lineChart",
+        ChartType::Area | ChartType::StackedArea => "areaChart",
+        ChartType::Pie => "pieChart",
+        ChartType::Scatter => "scatterChart",
+        ChartType::Other => "",
+    }
+}
+
+/// The id of chart `key` made in Kantor.
+pub(crate) fn c_id(key: DrawingKey) -> u32 {
+    key.index.saturating_sub(NEW_CHART_BASE) as u32
 }
 
 pub(crate) fn fxhash(s: &str) -> u64 {

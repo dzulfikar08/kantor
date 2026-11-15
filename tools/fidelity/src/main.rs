@@ -177,6 +177,42 @@ fn main() -> Result<()> {
         wb.save_as(o.join("chart_sheets_edited.xlsx"))?;
         Ok(Some(chart_sheets.clone()))
     });
+    // Data labels and axis options, Move Chart both ways, copies of sheets
+    // with charts, pictures and tables, chart sheet copies and tab colours.
+    let charts = corpus.join("xlsx/20_charts.xlsx");
+    run.scenario("chart_options_moves.xlsx", |o| {
+        let mut wb = Workbook::open(&charts)?;
+        chart_option_edits(&mut wb)?;
+        wb.save_as(o.join("chart_options_moves.xlsx"))?;
+        Ok(Some(charts.clone()))
+    });
+    let images = corpus.join("xlsx/14_charts_images.xlsx");
+    run.scenario("sheet_copies_14_charts_images.xlsx", |o| {
+        let mut wb = Workbook::open(&images)?;
+        wb.copy_sheet(0, wb.tabs().len())?;
+        wb.save_as(o.join("sheet_copies_14_charts_images.xlsx"))?;
+        Ok(Some(images.clone()))
+    });
+    let tables = corpus.join("xlsx/13_tables.xlsx");
+    run.scenario("sheet_copies_13_tables.xlsx", |o| {
+        let mut wb = Workbook::open(&tables)?;
+        wb.copy_sheet(0, 1)?;
+        wb.save_as(o.join("sheet_copies_13_tables.xlsx"))?;
+        Ok(Some(tables.clone()))
+    });
+    run.scenario("chart_sheet_copies.xlsx", |o| {
+        let mut wb = Workbook::open(&chart_sheets)?;
+        if let Some(sheets_engine::Tab::Chart(k)) = wb.tabs().first().copied() {
+            wb.set_chart_sheet_tab_color(k, Some(sheets_engine::TabColor::Rgb(0xC00000)))?;
+            let c = wb.copy_chart_sheet(k, 2)?;
+            wb.set_chart_sheet_tab_color(
+                c,
+                Some(sheets_engine::TabColor::Theme { slot: 5, tint: 0.4 }),
+            )?;
+        }
+        wb.save_as(o.join("chart_sheet_copies.xlsx"))?;
+        Ok(Some(chart_sheets.clone()))
+    });
     let pivots = corpus.join("xlsx/21_pivot_tables.xlsx");
     run.scenario("pivots_21_pivot_tables.xlsx", |o| {
         let mut wb = Workbook::open(&pivots)?;
@@ -722,6 +758,76 @@ fn chart_sheet_edits(wb: &mut Workbook, out: &Path) -> Result<()> {
         wb.undo()?; // the deletion
         wb.set_chart_sheet_hidden(first, true)?;
     }
+    Ok(())
+}
+
+/// Data labels and axis options on every chart of sheet 1, the first moved
+/// to a new chart sheet, the second to a chart sheet and back, and a new
+/// chart moved to a new sheet.
+fn chart_option_edits(wb: &mut Workbook) -> Result<()> {
+    use sheets_engine::{AxisOptions, ChartPlace, DataLabels, DisplayUnits, LabelPos};
+    let keys: Vec<_> = wb.drawings(0).iter().map(|d| d.key).collect();
+    for key in &keys {
+        let Some(info) = wb.chart_info(*key) else {
+            continue;
+        };
+        if info.fixed {
+            continue;
+        }
+        let mut spec = info.spec.clone();
+        let pos = info.label_positions.first().copied();
+        spec.labels = vec![
+            DataLabels {
+                value: true,
+                category: true,
+                percent: info.percent_labels,
+                pos,
+                num_fmt: Some("#,##0.0".into()),
+                ..DataLabels::default()
+            };
+            info.series.len()
+        ];
+        let axis = AxisOptions {
+            min: Some(1.0),
+            max: Some(10000.0),
+            log_base: Some(10.0),
+            reverse: true,
+            num_fmt: Some("0.0".into()),
+            units: DisplayUnits::Thousands,
+            ..AxisOptions::default()
+        };
+        if info.y_value {
+            spec.y_axis = axis;
+        } else if info.x_value {
+            spec.x_axis = axis;
+        }
+        if info.has_axes && !info.x_value {
+            spec.x_axis.reverse = true;
+        }
+        if let Some(LabelPos::OutsideEnd) = pos {
+            spec.y_axis.major = Some(10.0);
+            spec.y_axis.log_base = None;
+        }
+        wb.set_chart(*key, spec)?;
+    }
+    let movable: Vec<_> = keys
+        .iter()
+        .copied()
+        .filter(|k| wb.chart_info(*k).is_some())
+        .collect();
+    if let [first, second, ..] = movable[..] {
+        wb.move_chart(first, ChartPlace::NewSheet(wb.next_chart_sheet_name()))?;
+        if let sheets_engine::MovedChart::ChartSheet(k) =
+            wb.move_chart(second, ChartPlace::NewSheet("Moved twice".into()))?
+            && let Some(d) = wb.chart_sheet_drawings(k).first()
+        {
+            wb.move_chart(d.key, ChartPlace::ObjectIn(0))?;
+        }
+    }
+    let data = CellRange::from_corners((60, 0), (60 + ROWS.len() as u32, 3));
+    add_data(wb, 0, 60)?;
+    let key = wb.insert_chart(0, data, ChartType::Column)?;
+    wb.move_chart(key, ChartPlace::NewSheet("New chart".into()))?;
     Ok(())
 }
 

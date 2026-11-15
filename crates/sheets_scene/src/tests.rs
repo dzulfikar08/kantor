@@ -179,3 +179,50 @@ fn restyled_file_charts_are_drawn() {
     scenes.items(&mut engine, &book, &d, 480.0, 290.0);
     assert_eq!(scenes.take_builds(), 1);
 }
+
+fn strings(items: &[Item]) -> Vec<String> {
+    items
+        .iter()
+        .filter_map(|i| match &i.prim {
+            Prim::Text(t) => Some(t.runs.iter().map(|r| r.sample()).collect::<String>()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Data labels and axis options set in the Chart panel are drawn.
+#[test]
+fn data_labels_and_axis_options_are_drawn() {
+    let (mut book, _dir) = open();
+    let mut engine = Engine::new();
+    let mut scenes = DrawingScenes::default();
+    let key = charts(&book)[0].key;
+    let info = book.chart_info(key).unwrap();
+    let mut spec = info.spec.clone();
+    spec.kind = sheets_engine::ChartType::Column;
+    spec.labels = vec![
+        sheets_engine::DataLabels {
+            value: true,
+            num_fmt: Some("0.0".into()),
+            pos: Some(sheets_engine::LabelPos::InsideEnd),
+            ..Default::default()
+        };
+        info.series.len()
+    ];
+    spec.y_axis = sheets_engine::AxisOptions {
+        units: sheets_engine::DisplayUnits::Hundreds,
+        ..Default::default()
+    };
+    book.set_chart(key, spec).unwrap();
+    let d = charts(&book).into_iter().find(|d| d.key == key).unwrap();
+    let items = scenes.items(&mut engine, &book, &d, 480.0, 290.0);
+    let s = strings(&items);
+    assert!(s.iter().any(|t| t == "Hundreds"), "{s:?}");
+    assert!(
+        s.iter()
+            .filter(|t| t.contains('.') && t.parse::<f64>().is_ok())
+            .count()
+            >= 3,
+        "value labels with one decimal: {s:?}"
+    );
+}

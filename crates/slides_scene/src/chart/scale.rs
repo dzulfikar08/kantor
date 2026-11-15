@@ -7,12 +7,24 @@
 pub struct Scale {
     pub min: f64,
     pub max: f64,
+    /// The step between ticks; on a log axis the factor between them.
     pub unit: f64,
+    /// Logarithmic, with this base (`c:logBase`).
+    pub log: Option<f64>,
 }
 
 impl Scale {
     /// The major tick values, `min` to `max`.
     pub fn ticks(&self) -> Vec<f64> {
+        if self.log.is_some() {
+            let mut out = Vec::new();
+            let mut v = self.min;
+            while v <= self.max * (1.0 + 1e-9) && out.len() < 1000 {
+                out.push(round_sig(v, 12));
+                v *= self.unit.max(1.0 + 1e-9);
+            }
+            return out;
+        }
         let n = ((self.max - self.min) / self.unit)
             .round()
             .clamp(0.0, 1000.0) as usize;
@@ -32,6 +44,14 @@ impl Scale {
 
     /// Where `v` falls, 0 at `min` and 1 at `max`.
     pub fn frac(&self, v: f64) -> f64 {
+        if self.log.is_some() {
+            // Zero and negative values sit at the bottom of a log axis.
+            let (lo, hi) = (self.min.ln(), self.max.ln());
+            if v <= 0.0 || (hi - lo).abs() < f64::EPSILON {
+                return 0.0;
+            }
+            return (v.ln() - lo) / (hi - lo);
+        }
         let span = self.max - self.min;
         if span.abs() < f64::EPSILON {
             0.0
@@ -89,6 +109,7 @@ pub fn auto_scale(lo: f64, hi: f64, fixed: Fixed, intervals: usize) -> Scale {
             min: 0.0,
             max: 1.0,
             unit: nice_unit(1.0 / intervals),
+            log: None,
         };
     } else {
         (0.0, 1.0)
@@ -160,6 +181,48 @@ pub fn auto_scale(lo: f64, hi: f64, fixed: Fixed, intervals: usize) -> Scale {
         min: round_sig(min, 12),
         max: round_sig(max, 12),
         unit,
+        log: None,
+    }
+}
+
+/// A logarithmic axis (base `base`) for positive data between `lo` and
+/// `hi`: like Excel, from the power of the base at or below the smallest
+/// value to the one at or above the largest, a tick at each power (or every
+/// `fixed.unit` times).
+pub fn log_scale(lo: f64, hi: f64, fixed: Fixed, base: f64) -> Scale {
+    let base = if base >= 2.0 { base } else { 10.0 };
+    let pow = |v: f64, up: bool| {
+        let e = v.ln() / base.ln();
+        let e = if up {
+            (e - 1e-9).ceil()
+        } else {
+            (e + 1e-9).floor()
+        };
+        base.powf(e)
+    };
+    let (lo, hi) = if lo > 0.0 && hi >= lo && hi.is_finite() {
+        (lo, hi)
+    } else if hi > 0.0 && hi.is_finite() {
+        (hi.min(1.0), hi)
+    } else {
+        (1.0, base)
+    };
+    let min = fixed
+        .min
+        .filter(|m| *m > 0.0)
+        .unwrap_or_else(|| pow(lo, false));
+    let mut max = fixed
+        .max
+        .filter(|m| *m > min)
+        .unwrap_or_else(|| pow(hi, true));
+    if max <= min {
+        max = min * base;
+    }
+    Scale {
+        min: round_sig(min, 12),
+        max: round_sig(max, 12),
+        unit: fixed.unit.filter(|u| *u > 1.0).unwrap_or(base),
+        log: Some(base),
     }
 }
 
@@ -232,6 +295,22 @@ mod tests {
         let sc = auto_scale(0.0, 0.9, f, 5);
         assert_eq!((sc.min, sc.max, sc.unit), (0.0, 1.0, 0.2));
         assert_eq!(sc.ticks()[3], 0.6);
+    }
+
+    #[test]
+    fn log_axes() {
+        let sc = log_scale(3.0, 4500.0, Fixed::default(), 10.0);
+        assert_eq!((sc.min, sc.max, sc.unit), (1.0, 10000.0, 10.0));
+        assert_eq!(sc.ticks(), vec![1.0, 10.0, 100.0, 1000.0, 10000.0]);
+        assert!((sc.frac(100.0) - 0.5).abs() < 1e-9);
+        assert_eq!(sc.frac(0.0), 0.0);
+        let f = Fixed {
+            min: Some(10.0),
+            max: None,
+            unit: None,
+        };
+        let sc = log_scale(12.0, 70.0, f, 2.0);
+        assert_eq!((sc.min, sc.max), (10.0, 128.0));
     }
 
     #[test]

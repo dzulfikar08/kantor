@@ -46,6 +46,7 @@ mod bench;
 mod calc;
 mod cell_editor;
 mod cf_ui;
+mod chart_options_ui;
 mod chart_sheet_ui;
 mod chart_ui;
 mod cond_paint;
@@ -57,6 +58,7 @@ mod filter_menu;
 mod find;
 mod grid_ops;
 mod look;
+mod move_chart_ui;
 pub mod page_setup;
 pub mod pivot;
 mod point;
@@ -337,6 +339,7 @@ pub fn init(cx: &mut App) {
     calc::bind_keys(cx);
     pivot::bind_keys(cx);
     table_ui::bind_keys(cx);
+    chart_ui::bind_keys(cx);
     data_validation::bind_keys(cx);
     spell_ui::bind_keys(cx);
     notes_ui::bind_keys(cx);
@@ -1224,6 +1227,8 @@ pub struct SheetsView {
     /// A sheet tab dialog (Rename, Delete, Move or Copy, Tab Color,
     /// Unhide; see [`sheet_tab_ui`]).
     tab_dialog: Option<sheet_tab_ui::TabDialog>,
+    /// The Move Chart dialog (see [`move_chart_ui`]).
+    move_chart: Option<move_chart_ui::MoveChartDialog>,
     /// The notes of the cells last copied or cut, with the clipboard text
     /// they go with (Paste brings them while the clipboard holds it).
     note_clip: Option<(String, sheets_engine::NoteClip)>,
@@ -1281,6 +1286,7 @@ impl SheetsView {
             busy_focus: cx.focus_handle(),
             chart_tab: None,
             tab_dialog: None,
+            move_chart: None,
             note_clip: None,
             chart_focus: cx.focus_handle(),
             bench: bench::ScrollBench::from_env(),
@@ -2106,7 +2112,7 @@ impl SheetsView {
 
     /// A sheet tab was clicked. While a formula is pointing, the edit goes on
     /// (see [`point`]); any other edit is committed first.
-    fn select_sheet(&mut self, sheet: u32, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn select_sheet(&mut self, sheet: u32, window: &mut Window, cx: &mut Context<Self>) {
         if self.chart_tab.take().is_some() && self.editing.is_none() {
             self.status = i18n::t("Ready").into();
             self.show_sheet(sheet, cx);
@@ -2129,7 +2135,12 @@ impl SheetsView {
 
     /// Show chart sheet `k` in place of the grid (an edit in progress is
     /// committed first, as when Excel leaves a sheet).
-    fn select_chart_sheet(&mut self, k: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn select_chart_sheet(
+        &mut self,
+        k: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.editing.is_some() {
             self.commit_edit(None, window, cx);
         }
@@ -2440,7 +2451,12 @@ impl SheetsView {
                             .tab_color(i)
                             .map(|c| look::hsla(grid.book.tab_color_rgb(c))),
                     ),
-                    Tab::Chart(k) => (grid.book.chart_sheet_name(k).unwrap_or_default(), None),
+                    Tab::Chart(k) => (
+                        grid.book.chart_sheet_name(k).unwrap_or_default(),
+                        grid.book
+                            .chart_sheet_tab_color(k)
+                            .map(|c| look::hsla(grid.book.tab_color_rgb(c))),
+                    ),
                 };
                 (tab, name, color)
             })
@@ -2791,6 +2807,7 @@ impl Render for SheetsView {
             .children(self.render_spell_dialog(cx))
             .children(self.render_note_editor(cx))
             .children(self.render_tab_dialog(cx))
+            .children(self.render_move_chart(cx))
             .into_any_element()
     }
 }
