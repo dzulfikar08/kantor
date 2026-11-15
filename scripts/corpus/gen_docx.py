@@ -25,6 +25,10 @@ crates/docs_pdf/tests/.
   `mc:AlternateContent` with a VML fallback) at a percentage of the page,
   an ellipse behind the text, an arrow in front of it, one aligned to the
   line's character, and a second section continuing past a page.
+* tracked.docx: tracked changes as Word saves them, beyond text: a run made
+  bold (`w:rPrChange`), a paragraph centred (`w:pPrChange`), a table with a
+  deleted row and an inserted row (`w:trPr/w:del`, `w:trPr/w:ins`), an
+  insertion in the header and a deletion in a footnote.
 * notes.docx: a footnote too long for its page (Word's continuation
   separator and notice), short footnotes, and endnotes placed at the end
   of each section (`w:endnotePr/w:pos w:val="sectEnd"`) in two sections.
@@ -587,4 +591,49 @@ compat = settings.find(qn("w:compat"))
 compat.addprevious(fpr)
 compat.addprevious(epr)
 save(d, "notes.docx")
+
+# ── tracked: formatting, table rows, header and footnote changes by "Citra".
+REV = 'w:author="Citra" w:date="2026-11-10T09:00:00Z"'
+d = Document()
+p = d.add_paragraph()
+add(p, f'<w:r><w:rPr><w:b/><w:rPrChange w:id="1" {REV}><w:rPr/></w:rPrChange></w:rPr><w:t>Budget</w:t></w:r>')
+add(p, '<w:r><w:t xml:space="preserve"> for 2027.</w:t></w:r>')
+p = d.add_paragraph("Approved by the board.")
+p._p.get_or_add_pPr().append(parse_xml(f'<w:jc {W} w:val="center"/>'))
+p._p.get_or_add_pPr().append(parse_xml(f'<w:pPrChange {W} w:id="2" {REV}><w:pPr/></w:pPrChange>'))
+t = d.add_table(rows=3, cols=2)
+for r, (a, b) in enumerate([("Item", "Cost"), ("Venue", "Rp 5.000.000"), ("Catering", "Rp 3.000.000")]):
+    for c, text in enumerate((a, b)):
+        cell = t.cell(r, c)
+        cell.paragraphs[0].text = ""
+        kind = {1: "del", 2: "ins"}.get(r)
+        tag = "delText" if kind == "del" else "t"
+        run = f'<w:r><w:{tag} xml:space="preserve">{text}</w:{tag}></w:r>'
+        add(cell.paragraphs[0], f'<w:{kind} w:id="{10 + r * 2 + c}" {REV}>{run}</w:{kind}>' if kind else run)
+    if r:
+        tr = t.rows[r]._tr
+        trpr = tr.get_or_add_trPr()
+        trpr.append(parse_xml(f'<w:{"del" if r == 1 else "ins"} {W} w:id="{20 + r}" {REV}/>'))
+d.add_paragraph("After the table.")
+hp = d.sections[0].header.paragraphs[0]
+add(hp, f'<w:ins w:id="30" {REV}><w:r><w:t xml:space="preserve">Draft </w:t></w:r></w:ins>')
+hp.add_run("Budget memo")
+par = d.add_paragraph("A sentence with a footnote.")
+footnote_ref(par, "footnote", 1)
+xml = (
+    f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:footnotes {W}>'
+    + sep("footnote").replace('w:id="-1"', 'w:id="-2"').replace('w:id="0"', 'w:id="-1"').replace('w:id="1"', 'w:id="0"')
+    + '<w:footnote w:id="1"><w:p><w:pPr><w:pStyle w:val="FootnoteText"/></w:pPr>'
+    + '<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteRef/></w:r>'
+    + '<w:r><w:t xml:space="preserve"> Prices include tax</w:t></w:r>'
+    + f'<w:del w:id="31" {REV}><w:r><w:delText xml:space="preserve"> and delivery</w:delText></w:r></w:del>'
+    + '<w:r><w:t>.</w:t></w:r></w:p></w:footnote></w:footnotes>'
+)
+part = Part(PackURI("/word/footnotes.xml"), CT.format("footnote"), xml.encode(), d.part.package)
+d.part.relate_to(part, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes")
+settings = d.settings.element
+settings.find(qn("w:compat")).addprevious(
+    parse_xml(f'<w:footnotePr {W}><w:footnote w:id="-2"/><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>')
+)
+save(d, "tracked.docx")
 print("docx ok")

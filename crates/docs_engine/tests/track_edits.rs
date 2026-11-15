@@ -340,3 +340,67 @@ fn write_tracked_samples() {
     );
     d.save_as(&out.join("minutes-tracked.docx")).unwrap();
 }
+
+#[test]
+fn word_tracked_formatting_rows_and_parts_are_read_and_resolved() {
+    let path = corpus("tracked.docx");
+    let doc = Document::open(&path).unwrap();
+    assert!(
+        !doc.has_unsupported_content(),
+        "{:?}",
+        doc.unsupported_content()
+    );
+    let ch = doc.changes();
+    let fmt: Vec<_> = ch.iter().filter(|c| c.kind == RevKind::Format).collect();
+    assert_eq!(fmt.len(), 2, "{ch:?}");
+    assert_eq!(fmt[0].format, [docs_engine::FormatItem::Bold(true)]);
+    assert_eq!(fmt[0].author, "Citra");
+    assert_eq!(
+        fmt[1].format,
+        [docs_engine::FormatItem::Align(docs_engine::Align::Center)]
+    );
+    let rows: Vec<_> = ch.iter().filter(|c| c.row).map(|c| c.kind).collect();
+    assert_eq!(rows, [RevKind::Delete, RevKind::Insert]);
+    assert_eq!(doc.part_changes(), 2, "header insertion, footnote deletion");
+    let table = doc
+        .paragraphs()
+        .iter()
+        .find_map(|p| p.cell)
+        .map(|c| c.table)
+        .unwrap();
+    // Untouched, it saves the tracked rows back as they were.
+    let mut copy = doc.clone();
+    let xml = document_xml(&copy.to_docx_bytes().unwrap());
+    assert!(xml.contains("<w:del w:id=\"21\" w:author=\"Citra\""), "{xml}");
+    // Accept All: bold and centred stay, the deleted row goes, the
+    // inserted one stays, the header keeps "Draft ", the note loses its
+    // deleted words.
+    let mut acc = doc.clone();
+    acc.resolve_all(true, Selection::default());
+    assert!(!acc.has_changes() && acc.part_changes() == 0);
+    assert_eq!(acc.table(table).unwrap().rows.len(), 2);
+    assert_eq!(acc.paragraph(0).runs[0].props.bold, Some(true));
+    assert_eq!(acc.paragraph(1).props.align, Some(docs_engine::Align::Center));
+    let header: String = acc.stories()[0].doc.paragraphs()[0].text.clone();
+    assert_eq!(header, "Draft Budget memo");
+    let back = reopen(&mut acc);
+    assert!(!back.has_changes());
+    // Reject All: the opposite.
+    let mut rej = doc.clone();
+    rej.resolve_all(false, Selection::default());
+    assert!(!rej.has_changes() && rej.part_changes() == 0);
+    assert_eq!(rej.table(table).unwrap().rows.len(), 2);
+    assert_ne!(rej.paragraph(0).runs[0].props.bold, Some(true));
+    assert_eq!(rej.paragraph(1).props.align, None);
+    assert_eq!(
+        rej.stories()[0].doc.paragraphs()[0].text,
+        "Budget memo"
+    );
+    let row_texts: Vec<String> = rej
+        .paragraphs()
+        .iter()
+        .filter(|p| p.cell.is_some())
+        .map(|p| p.text.clone())
+        .collect();
+    assert_eq!(row_texts, ["Item", "Cost", "Venue", "Rp 5.000.000"]);
+}
