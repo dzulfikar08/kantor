@@ -66,6 +66,9 @@ pub struct Marks {
     pub refs: HashMap<(NoteKind, String), String>,
     /// The number of the note being laid out (its own mark at its start).
     pub own: Option<String>,
+    /// Leave floating objects out of the layout (headers, footers and
+    /// notes: their floating objects are placed on the page separately).
+    pub no_floats: bool,
 }
 
 impl Marks {
@@ -79,6 +82,7 @@ impl Marks {
                 .map(|r| ((r.kind, r.id), r.label))
                 .collect(),
             own: None,
+            no_floats: false,
         }
     }
 
@@ -215,6 +219,12 @@ pub fn layout_paragraph(
             label: String::new(),
         };
         let o = match obj {
+            Object::Float(f) => {
+                if !marks.no_floats {
+                    lp.floats.push(float_spec(index, &f.at));
+                }
+                hidden()
+            }
             // A field's start and end take no room; a field with no result
             // shows what Word does (`«Name»` for a mail merge field).
             Object::Field(f) => {
@@ -306,6 +316,68 @@ pub fn layout_paragraph(
     // Empty paragraphs take their height from the paragraph defaults above.
     lp.spans.retain(|s| !s.range.is_empty());
     lp
+}
+
+/// A floating object's placement in layout terms (EMU → px).
+pub fn float_spec(index: usize, at: &docs_engine::Placement) -> docs_layout::FloatSpec {
+    use docs_engine::float::{FloatAlign, Place, RelH, RelV, WrapSide};
+    use docs_layout::{FloatPos, FloatRefH, FloatRefV, FloatSide, FloatWrap};
+    let emu = docs_engine::object::EMU_PER_PX;
+    let pos = |p: Place| match p {
+        Place::Align(FloatAlign::Start) => FloatPos::Start,
+        Place::Align(FloatAlign::Center) => FloatPos::Center,
+        Place::Align(FloatAlign::End) => FloatPos::End,
+        Place::Align(FloatAlign::Inside) => FloatPos::Inside,
+        Place::Align(FloatAlign::Outside) => FloatPos::Outside,
+        Place::Offset(o) => FloatPos::Offset(o as f32 / emu),
+        Place::Pct(p) => FloatPos::Pct(p as f32 / 100_000.0),
+    };
+    let h = match at.h.0 {
+        RelH::Page => FloatRefH::Page,
+        RelH::Margin => FloatRefH::Margin,
+        RelH::Column => FloatRefH::Column,
+        RelH::Character => FloatRefH::Character,
+        RelH::LeftMargin => FloatRefH::LeftMargin,
+        RelH::RightMargin => FloatRefH::RightMargin,
+        RelH::InsideMargin => FloatRefH::InsideMargin,
+        RelH::OutsideMargin => FloatRefH::OutsideMargin,
+    };
+    let v = match at.v.0 {
+        RelV::Page => FloatRefV::Page,
+        RelV::Margin => FloatRefV::Margin,
+        RelV::Paragraph => FloatRefV::Paragraph,
+        RelV::Line => FloatRefV::Line,
+        RelV::TopMargin => FloatRefV::TopMargin,
+        RelV::BottomMargin => FloatRefV::BottomMargin,
+        RelV::InsideMargin => FloatRefV::InsideMargin,
+        RelV::OutsideMargin => FloatRefV::OutsideMargin,
+    };
+    let (width, height) = at.size_px();
+    docs_layout::FloatSpec {
+        index,
+        h: (h, pos(at.h.1)),
+        v: (v, pos(at.v.1)),
+        width,
+        height,
+        dist: at.dist.map(|d| d.max(0) as f32 / emu),
+        // Kantor doesn't follow wrap polygons: Tight and Through wrap
+        // like Square.
+        wrap: match at.wrap {
+            docs_engine::Wrap::None => FloatWrap::None,
+            docs_engine::Wrap::Square | docs_engine::Wrap::Tight | docs_engine::Wrap::Through => {
+                FloatWrap::Square
+            }
+            docs_engine::Wrap::TopAndBottom => FloatWrap::TopAndBottom,
+        },
+        side: match at.side {
+            WrapSide::Both => FloatSide::Both,
+            WrapSide::Left => FloatSide::Left,
+            WrapSide::Right => FloatSide::Right,
+            WrapSide::Largest => FloatSide::Largest,
+        },
+        behind: at.behind,
+        z: at.z,
+    }
 }
 
 fn rule(b: Option<docs_engine::Border>) -> Option<Rule> {

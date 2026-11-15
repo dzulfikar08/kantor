@@ -16,8 +16,16 @@
 //! break) as a hard line break followed by a new page, U+FFFC (an object)
 //! as a zero-width space with the object's box at the same offset.
 
+mod float;
+
 use std::ops::Range;
 use std::sync::Arc;
+
+use float::free_segments;
+pub use float::{
+    AnchorAt, FloatPos, FloatRefH, FloatRefV, FloatSide, FloatSpec, FloatWrap, PlacedFloat,
+    WrapArea, float_rect,
+};
 
 use parley::{
     Affinity, Alignment, AlignmentOptions, BreakReason, Cursor, FontContext, FontData, FontFamily,
@@ -230,6 +238,8 @@ pub struct Paragraph {
     /// each line keeps its natural width, and the alignment places the
     /// lines in the column, overflowing its edges when they're wider.
     pub no_wrap: bool,
+    /// Floating objects anchored here (see [`float`]).
+    pub floats: Vec<FloatSpec>,
 }
 
 /// How text lines up at a tab stop.
@@ -314,6 +324,7 @@ impl Paragraph {
             decimal: '.',
             notes: Vec::new(),
             no_wrap: false,
+            floats: Vec::new(),
         }
     }
 
@@ -336,6 +347,7 @@ impl Paragraph {
 
 /// A shaped paragraph: the text layout plus its marker and placeholder
 /// labels.
+#[derive(Clone)]
 pub struct ParaLayout {
     pub layout: Layout<Rgba>,
     /// x of the layout's origin from the column's left edge (indent).
@@ -350,6 +362,10 @@ pub struct ParaLayout {
     pub tab_fills: Vec<TabFill>,
     /// Bar tabs: x of each line from the column's left edge, px.
     pub bars: Vec<f32>,
+    /// How lines are aligned, and the width they were broken at (from
+    /// `dx`): lines broken again around floating objects use them.
+    pub alignment: Alignment,
+    pub avail: f32,
 }
 
 impl ParaLayout {
@@ -669,6 +685,8 @@ impl Engine {
                 .filter(|t| t.align == TabAlign::Bar)
                 .map(|t| t.pos)
                 .collect(),
+            alignment,
+            avail,
         }
     }
 
@@ -811,6 +829,11 @@ pub struct Page {
     /// Its number within the section's page numbering run: 1-based page
     /// count from the last restart (see [`SectionFlow::restart`]).
     pub number: u32,
+    /// Floating objects anchored on this page, in document order.
+    pub floats: Vec<PlacedFloat>,
+    /// Room taken by its wrapping objects whose position doesn't depend on
+    /// the text (relative to the page or margins), for a second pass.
+    pub fixed: Vec<WrapArea>,
 }
 
 /// How a section starts.
@@ -1077,7 +1100,16 @@ struct Flow<'a> {
     /// The current page's geometry.
     setup: PageSetup,
     paras: &'a [Paragraph],
-    layouts: &'a [Arc<ParaLayout>],
+    layouts: Vec<Arc<ParaLayout>>,
+    /// Room the current page's wrapping objects take from the text.
+    excl: Vec<WrapArea>,
+    /// Per page, from a first pass: wrapping objects fixed to the page,
+    /// known before the text above their anchor is placed.
+    pre: &'a [Vec<WrapArea>],
+    /// Some paragraph has floating objects.
+    has_floats: bool,
+    /// The paragraph whose floating objects are already placed.
+    floats_placed: Option<usize>,
     pages: Vec<Page>,
     line_pages: Vec<Vec<(usize, f32, f32)>>,
     y: f32,
@@ -1134,6 +1166,184 @@ impl Flow<'_> {
         self.number += 1;
         self.section_pages += 1;
         self.y = self.setup.margin_top;
+        self.excl = self
+            .pre
+            .get(self.pages.len() - 1)
+            .cloned()
+            .unwrap_or_default();
+    }
+
+    /// Place paragraph `pi`'s floating objects on the current page, its
+    /// first line's top at `top` in a column starting at `x`.
+    fn place_floats(&mut self, pi: usize, top: f32, x: f32) {
+        self.floats_placed = Some(pi);
+        let para = &self.paras[pi];
+        if para.floats.is_empty() {
+            return;
+        }
+        let layout = self.layouts[pi].clone();
+        let page = self.pages.len() - 1;
+        let number = self.pages[page].number;
+        for spec in &para.floats {
+            let cursor = Cursor::from_byte_index(&layout.layout, spec.index, Affinity::Downstream);
+            let g = cursor.geometry(&layout.layout, 1.0);
+            let at = AnchorAt {
+                para_top: top,
+                line_top: top + g.y0 as f32,
+                char_x: x + layout.dx + g.x0 as f32,
+            };
+            let rect = float_rect(spec, &self.setup, number, at);
+            let key = (pi, spec.index);
+            let fixed = matches!(
+                spec.v.0,
+                FloatRefV::Page
+                    | FloatRefV::Margin
+                    | FloatRefV::TopMargin
+                    | FloatRefV::BottomMargin
+                    | FloatRefV::InsideMargin
+                    | FloatRefV::OutsideMargin
+            );
+            if let Some(e) = WrapArea::of(spec, rect, key) {
+                if !self.excl.iter().any(|x| x.key == key) {
+                    self.excl.push(e);
+                }
+                if fixed {
+                    self.pages[page].fixed.push(e);
+                }
+            }
+            self.pages[page].floats.push(PlacedFloat {
+                para: pi,
+                index: spec.index,
+                rect,
+                z: spec.z,
+                behind: spec.behind,
+                wrap: spec.wrap,
+            });
+        }
+    }
+
+    /// Whether paragraph `pi`, about to be placed, has lines to break
+    /// around floating objects.
+    fn needs_wrap(&self, pi: usize) -> bool {
+        if !self.has_floats {
+            return false;
+        }
+        let para = &self.paras[pi];
+        let text = para.text.trim_end_matches(PAGE_BREAK);
+        if para.no_wrap || text.contains(PAGE_BREAK) {
+            return false;
+        }
+        if para.floats.iter().any(|f| f.wrap != FloatWrap::None) {
+            return true;
+        }
+        let h = self.layouts[pi].layout.height() + para.space_before_pt * PT;
+        let (top, bottom) = (self.y, self.y + h);
+        self.excl
+            .iter()
+            .any(|e| e.area[1] < bottom && e.area[3] > top)
+            || (bottom > self.bottom()
+                && self
+                    .pre
+                    .get(self.pages.len())
+                    .is_some_and(|v| !v.is_empty()))
+    }
+
+    /// A body paragraph whose lines are broken again around floating
+    /// objects: each line gets the free stretches beside the objects at
+    /// its height (one line per stretch), or moves below them. Widow and
+    /// orphan control doesn't apply here.
+    fn place_para_wrapped(&mut self, pi: usize) {
+        let para = &self.paras[pi];
+        let base = self.layouts[pi].clone();
+        if para.page_break_before && !self.at_top() {
+            self.new_page();
+        }
+        if !self.at_top() {
+            self.y += para.space_before_pt * PT;
+        }
+        let first_h = base
+            .layout
+            .get(0)
+            .map_or(para.size_pt * PT * 1.2, |l| l.metrics().line_height);
+        if self.y + first_h > self.bottom() && !self.at_top() {
+            self.new_page();
+        }
+        self.place_floats(pi, self.y, self.setup.margin_left);
+        let mut laid = (*base).clone();
+        // (page, line, top, segment)
+        let mut placed: Vec<(usize, usize, f32, (f32, f32))> = Vec::new();
+        {
+            let mut br = laid.layout.break_lines();
+            br.state_mut().set_layout_max_advance(base.avail.max(1.0));
+            let mut k = 0usize;
+            let mut guard = 0usize;
+            'lines: while !br.is_done() {
+                guard += 1;
+                if guard > 100_000 {
+                    break;
+                }
+                let est = base
+                    .layout
+                    .get(k.min(base.len().saturating_sub(1)))
+                    .map_or(first_h, |l| l.metrics().line_height);
+                let segs = loop {
+                    let x0 = self.setup.margin_left + base.dx;
+                    let area = (x0, x0 + base.avail);
+                    if self.y + est > self.bottom() && !self.at_top() {
+                        self.new_page();
+                        continue;
+                    }
+                    match free_segments(&self.excl, area, self.y, self.y + est) {
+                        Ok(s) => break s,
+                        Err(_) if guard > 50_000 => break vec![area],
+                        Err(y) => {
+                            guard += 1;
+                            self.y = y.max(self.y + 1.0);
+                        }
+                    }
+                };
+                let mut row_h = 0.0f32;
+                for (a, b) in segs {
+                    // Each line starts at its layout's x 0 (parley's carets
+                    // ignore a line's own x): the stretch's left edge goes
+                    // in the placed line's origin instead.
+                    br.state_mut()
+                        .set_line_max_advance((b - a).min(base.avail).max(1.0));
+                    match br.break_next() {
+                        Some(parley::layout::YieldData::LineBreak(d)) => {
+                            let h = d.metrics.line_height;
+                            if row_h == 0.0 && self.y + h > self.bottom() + 0.01 && !self.at_top() {
+                                br.revert();
+                                self.new_page();
+                                continue 'lines;
+                            }
+                            placed.push((self.pages.len() - 1, k, self.y, (a, b)));
+                            row_h = row_h.max(h);
+                            k += 1;
+                        }
+                        Some(_) | None => {}
+                    }
+                    if br.is_done() {
+                        break;
+                    }
+                }
+                self.y += row_h.max(0.5);
+            }
+            br.finish();
+        }
+        laid.layout
+            .align(laid.alignment, AlignmentOptions::default());
+        let laid = Arc::new(laid);
+        self.layouts[pi] = laid.clone();
+        for &(page, k, top, (a, b)) in &placed {
+            self.push_line_on(page, pi, k, top, (a, b - a), a);
+        }
+        if let Some(&(_, k, _, _)) = placed.last()
+            && self.breaks_after(pi, k)
+        {
+            self.new_page();
+        }
+        self.y += para.space_after_pt * PT;
     }
 
     /// Start section `i` (its first block is about to be placed).
@@ -1213,10 +1423,28 @@ impl Flow<'_> {
     }
 
     fn push_line(&mut self, pi: usize, k: usize, top: f32, (x, width): (f32, f32)) {
+        if k == 0 && self.floats_placed != Some(pi) {
+            self.place_floats(pi, top, x);
+        }
+        let page = self.pages.len() - 1;
+        let dx = x + self.layouts[pi].dx;
+        self.push_line_on(page, pi, k, top, (x, width), dx);
+    }
+
+    /// Place line `k` of paragraph `pi` on `page` at `top`, in the column
+    /// `x`/`width`, its layout's origin at `dx`.
+    fn push_line_on(
+        &mut self,
+        page: usize,
+        pi: usize,
+        k: usize,
+        top: f32,
+        (x, width): (f32, f32),
+        dx: f32,
+    ) {
         let layout = &self.layouts[pi];
         let m = *layout.layout.get(k).expect("line exists").metrics();
-        let page = self.pages.len() - 1;
-        let (dy, dx) = (top - m.block_min_coord, x + layout.dx);
+        let dy = top - m.block_min_coord;
         self.pages[page].lines.push(PlacedLine {
             para: pi,
             line: k,
@@ -1266,6 +1494,10 @@ impl Flow<'_> {
 
     /// A body paragraph in the full-width column.
     fn place_para(&mut self, pi: usize) {
+        if self.needs_wrap(pi) {
+            self.place_para_wrapped(pi);
+            return;
+        }
         let para = &self.paras[pi];
         let layout = self.layouts[pi].clone();
         let column = (self.setup.margin_left, self.setup.content_width());
@@ -1641,12 +1873,36 @@ impl PagedDocument {
         } else {
             sections
         };
+        let has_floats = paras.iter().any(|p| !p.floats.is_empty());
+        let first = Self::flow(paras, layouts.clone(), blocks, sections, &[], has_floats);
+        // Wrapping objects fixed to their page also push away the text
+        // above their anchor: lay out again knowing where they are.
+        let fixed: Vec<Vec<WrapArea>> = first.pages.iter().map(|p| p.fixed.clone()).collect();
+        if fixed.iter().any(|f| !f.is_empty()) {
+            return Self::flow(paras, layouts, blocks, sections, &fixed, has_floats);
+        }
+        first
+    }
+
+    fn flow(
+        paras: &[Paragraph],
+        layouts: Vec<Arc<ParaLayout>>,
+        blocks: &[Block],
+        sections: &[SectionFlow],
+        pre: &[Vec<WrapArea>],
+        has_floats: bool,
+    ) -> Self {
+        let n = layouts.len();
         let mut flow = Flow {
             setup: sections[0].setup,
             paras,
-            layouts: &layouts,
+            layouts,
+            excl: Vec::new(),
+            pre,
+            has_floats,
+            floats_placed: None,
             pages: Vec::new(),
-            line_pages: vec![Vec::new(); layouts.len()],
+            line_pages: vec![Vec::new(); n],
             y: 0.0,
             sections,
             section: 0,
@@ -1673,7 +1929,10 @@ impl PagedDocument {
             next += 1;
         }
         let Flow {
-            pages, line_pages, ..
+            pages,
+            line_pages,
+            layouts,
+            ..
         } = flow;
         Self {
             setup: pages.first().map_or(sections[0].setup, |p| p.setup),

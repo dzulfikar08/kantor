@@ -174,7 +174,11 @@ fn lay_story(
     note: Option<usize>,
 ) -> StoryLayout {
     let width_tw = (width * 15.0).round() as u32;
-    let (lps, widths, blocks) = build::build_with(sd, &paras, &|_| width_tw, marks);
+    let marks = Marks {
+        no_floats: true,
+        ..marks.clone()
+    };
+    let (lps, widths, blocks) = build::build_with(sd, &paras, &|_| width_tw, &marks);
     let layouts: Vec<Arc<ParaLayout>> = lps
         .iter()
         .zip(&widths)
@@ -275,6 +279,7 @@ fn body_with_notes(
             .map(|r| ((r.kind, r.id.clone()), r.label.clone()))
             .collect(),
         own: None,
+        no_floats: false,
     };
     let (mut lps, widths, blocks) = build::build_marked(doc, &marks);
     for r in refs.iter().filter(|r| r.kind == NoteKind::Footnote) {
