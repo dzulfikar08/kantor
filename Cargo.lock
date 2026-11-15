@@ -5334,8 +5334,12 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "docs_engine",
+ "docs_pdf",
+ "serde_json",
  "sheets_engine",
+ "sheets_pdf",
  "slides_engine",
+ "slides_pdf",
  "zip 9.4.1",
 ]
 
