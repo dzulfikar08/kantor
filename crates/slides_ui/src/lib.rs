@@ -33,6 +33,7 @@ mod object_editor;
 mod paint_menu;
 mod spell;
 mod toolbar;
+mod turned_text;
 
 use std::cell::Cell;
 use std::ops::Range;

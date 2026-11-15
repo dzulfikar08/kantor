@@ -7225,6 +7225,7 @@ dependencies = [
  "slides_engine",
  "slides_pdf",
  "slides_scene",
+ "swash",
 ]
 
 [[package]]
