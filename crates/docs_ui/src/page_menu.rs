@@ -46,13 +46,13 @@ fn margin_text(s: &str) -> &str {
     }
 }
 
-fn format_cm(tw: u32) -> String {
+pub(crate) fn format_cm(tw: u32) -> String {
     let s = format!("{:.2}", twips_to_cm(tw));
     s.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 /// A cm value typed by the user ("2,5" works too).
-fn parse_cm(s: &str) -> Option<f64> {
+pub(crate) fn parse_cm(s: &str) -> Option<f64> {
     let v: f64 = s
         .trim()
         .trim_end_matches("cm")

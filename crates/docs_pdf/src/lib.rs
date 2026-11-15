@@ -139,12 +139,19 @@ fn add_page(
     doc_key: usize,
 ) {
     let texts: Vec<Arc<str>> = paras.iter().map(|p| Arc::from(p.text.as_str())).collect();
-    out.rules.extend(paged.pages[page].rules.iter().map(|r| {
-        (
-            [r.rect[0] + dx, r.rect[1] + dy, r.rect[2], r.rect[3]],
-            r.color,
-        )
-    }));
+    out.rules.extend(
+        paged.pages[page]
+            .rules
+            .iter()
+            .cloned()
+            .chain(paged.tab_rules(page))
+            .map(|r| {
+                (
+                    [r.rect[0] + dx, r.rect[1] + dy, r.rect[2], r.rect[3]],
+                    r.color,
+                )
+            }),
+    );
     for o in paged.objects(page) {
         if o.kind != ObjectKind::Image {
             continue;

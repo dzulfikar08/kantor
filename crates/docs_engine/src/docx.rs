@@ -178,6 +178,8 @@ pub struct Read {
     pub comments: Vec<crate::review::Comment>,
     /// `w:defaultTabStop` (twips).
     pub default_tab: u32,
+    /// `w:decimalSymbol` (what decimal tab stops line up on).
+    pub decimal: char,
     /// Track Changes is on (`w:trackRevisions`).
     pub track: bool,
     /// Footnotes and endnotes (separators included), in file order.
@@ -1459,9 +1461,19 @@ impl BodyParser<'_> {
                 self.link = None;
             }
             Frame::P => {
-                if self.field.take().is_some() {
+                if let Some(f) = self.field.take() {
                     self.unsupported
                         .insert("fields spanning paragraphs (tables of contents…)".into());
+                    // Keep what Word shows of it here (a table of
+                    // contents' first line) as text.
+                    if f.in_result && !f.result.is_empty() {
+                        self.para.push_tracked(
+                            &f.result,
+                            self.run.clone(),
+                            self.link.clone(),
+                            self.rev.clone(),
+                        );
+                    }
                 }
                 let mut p = std::mem::take(&mut self.para);
                 if p.text.is_empty() {
@@ -1695,15 +1707,18 @@ fn parse_styles(src: &str, sheet: &mut StyleSheet) {
             p.extras.push(xml);
         }
     };
+    // Tab stops aren't modelled either; layout reads them from the extras
+    // (see `Document::tab_stops`).
+    let para = |xml: &str, p: &mut ParaProps| {
+        if matches!(para_prop(xml, p), Prop::Keep) && element_name(xml) == "tabs" {
+            p.extras.push(xml);
+        }
+    };
     let apply = |target: u8, xml: &str, sheet: &mut StyleSheet, style: &mut Style| match target {
         0 => run(xml, &mut sheet.default_run),
-        1 => {
-            para_prop(xml, &mut sheet.default_para);
-        }
+        1 => para(xml, &mut sheet.default_para),
         2 => run(xml, &mut style.run),
-        3 => {
-            para_prop(xml, &mut style.para);
-        }
+        3 => para(xml, &mut style.para),
         _ => {
             // A table style's w:tblPr.
             if let Some(el) = xml::parse(xml) {
@@ -1891,6 +1906,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
     let mut settings = None;
     let mut even_odd = false;
     let mut default_tab = 720;
+    let mut decimal = '.';
     let mut track = false;
     let mut note_settings = NoteKind::ALL.map(NoteProps::default_for);
     if let Some(name) = part("/settings")
@@ -1899,7 +1915,8 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         track = track_changes_on(&src);
         note_settings = crate::notes::settings_note_props(&src);
         even_odd = settings_even_odd(&src);
-        default_tab = crate::section::settings_default_tab(&src).unwrap_or(720);
+        default_tab = crate::tabs::settings_default_tab(&src).unwrap_or(720);
+        decimal = crate::tabs::settings_decimal(&src).unwrap_or('.');
         settings = Some((name, src));
     }
     let mut comments = Vec::new();
@@ -1999,6 +2016,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         even_odd,
         comments,
         default_tab,
+        decimal,
         track,
         notes,
         note_settings,
@@ -2930,10 +2948,20 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
         .settings
         .as_ref()
         .is_some_and(|(_, s)| track_changes_on(s));
-    if (doc.even_odd_headers() != even_odd_was || doc.track_changes() != track_was)
+    let tab_was = pkg
+        .settings
+        .as_ref()
+        .and_then(|(_, s)| crate::tabs::settings_default_tab(s))
+        .unwrap_or(720);
+    if (doc.even_odd_headers() != even_odd_was
+        || doc.track_changes() != track_was
+        || doc.default_tab() != tab_was)
         && let Some((name, src)) = &pkg.settings
     {
         let mut out = src.clone();
+        if doc.default_tab() != tab_was {
+            out = crate::tabs::set_settings_default_tab(&out, doc.default_tab());
+        }
         if doc.even_odd_headers() != even_odd_was {
             out = set_settings_even_odd(&out, doc.even_odd_headers());
         }

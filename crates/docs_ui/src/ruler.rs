@@ -4,14 +4,24 @@
 //! and right at the bottom). Dragging a margin edge or a marker shows a
 //! guide line on the page and applies on release, as one undo step.
 //!
+//! Tab stops, as Word: the caret paragraph's stops sit along the ruler's
+//! bottom edge (default stops as small ticks after them). A click on the
+//! ruler sets a stop of the kind chosen in the selector at the ruler's
+//! left (click it to cycle Left, Center, Right, Decimal, Bar); dragging a
+//! stop moves it, dragging it off the ruler removes it, and double-clicking
+//! one opens the Tabs popover.
+//!
 //! It shares the page canvas's [`Geometry`](crate::Geometry), so it scrolls
 //! and zooms with the page. Visibility is a user setting
 //! (`docs_ruler` in `kantor_core::settings`), on by default.
 
-use docs_engine::Indent;
+use docs_engine::tabs::TabEdit;
+use docs_engine::{Indent, TabKind, TabStop};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_core::settings::Settings;
+use kantor_ui::i18n::{tf, tk};
 use kantor_ui::{metrics::*, tokens};
 
 use crate::DocsView;
@@ -65,6 +75,8 @@ pub(crate) enum Handle {
     /// The left indent; the first line stays where it is (hanging indent).
     Left,
     Right,
+    /// A tab stop, by its position (twips from the left margin).
+    Tab(i32),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -72,7 +84,14 @@ pub(crate) struct Drag {
     pub handle: Handle,
     /// The snapped position, in page px (also the guide line's x).
     pub x: f32,
+    /// Window y where the drag started.
+    pub y0: f32,
+    /// A tab stop dragged off the ruler: released, it's removed.
+    pub off: bool,
 }
+
+/// How far (px) a tab stop must be dragged up or down to come off.
+const OFF_PX: f32 = 28.0;
 
 /// The caret paragraph's indents and the page margins, in page px.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -101,6 +120,10 @@ impl Marks {
             Handle::FirstLine => self.margin_left + i?.left + i?.first,
             Handle::Left => self.margin_left + i?.left,
             Handle::Right => self.page_w - self.margin_right - i?.right,
+            Handle::Tab(pos) => {
+                i?;
+                self.margin_left + pos as f32 / 15.0
+            }
         })
     }
 
@@ -122,6 +145,9 @@ impl Marks {
             Handle::Right => {
                 let edge = self.page_w - self.margin_right;
                 edge - snap(edge - x).clamp(-self.margin_right, self.text_w())
+            }
+            Handle::Tab(_) => {
+                self.margin_left + snap(x - self.margin_left).clamp(0.0, self.text_w())
             }
         }
     }
@@ -150,7 +176,7 @@ impl Marks {
                 right: Some(tw(self.page_w - self.margin_right - x)),
                 ..Indent::default()
             },
-            Handle::MarginLeft | Handle::MarginRight => return None,
+            Handle::MarginLeft | Handle::MarginRight | Handle::Tab(_) => return None,
         })
     }
 }
@@ -160,14 +186,30 @@ fn start_drag(
     hd: Handle,
     cx: &mut Context<DocsView>,
 ) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
-    cx.listener(move |this: &mut DocsView, ev: &MouseDownEvent, _, cx| {
-        cx.stop_propagation();
-        if let Some(x) = this.ruler_marks().x(hd) {
-            this.ruler_drag = Some(Drag { handle: hd, x });
-            this.ruler_move(ev.position.x, cx);
-            cx.notify();
-        }
-    })
+    cx.listener(
+        move |this: &mut DocsView, ev: &MouseDownEvent, window, cx| {
+            cx.stop_propagation();
+            if let Handle::Tab(pos) = hd
+                && ev.click_count >= 2
+            {
+                this.ruler_drag = None;
+                let stop = this.ruler_tabs().into_iter().find(|s| s.pos == pos);
+                let at = point(ev.position.x, ev.position.y + SPACE_5);
+                this.open_tab_menu(Some(at), stop, window, cx);
+                return;
+            }
+            if let Some(x) = this.ruler_marks().x(hd) {
+                this.ruler_drag = Some(Drag {
+                    handle: hd,
+                    x,
+                    y0: f32::from(ev.position.y),
+                    off: false,
+                });
+                this.ruler_move(ev.position, cx);
+                cx.notify();
+            }
+        },
+    )
 }
 
 /// Ticks every half centimetre from the left margin: `(x, whole cm number)`.
@@ -182,7 +224,111 @@ pub(crate) fn ticks(page_w: f32, margin_left: f32) -> Vec<(f32, Option<i32>)> {
     out
 }
 
+/// The tab stop kind after `k` in the ruler's selector.
+pub(crate) fn next_kind(k: TabKind) -> TabKind {
+    let all = TabKind::ALL;
+    let i = all.iter().position(|x| *x == k).unwrap_or(0);
+    all[(i + 1) % all.len()]
+}
+
+/// Twips from the left margin for a ruler x (page px).
+pub(crate) fn tab_pos(marks: &Marks, x: f32) -> i32 {
+    ((x - marks.margin_left) * 15.0).round() as i32
+}
+
+/// The edit a finished tab-stop drag makes (`None`: nothing changes).
+pub(crate) fn tab_drag_edit(marks: &Marks, stops: &[TabStop], d: &Drag) -> Option<TabEdit> {
+    let Handle::Tab(pos) = d.handle else {
+        return None;
+    };
+    let old = stops.iter().find(|s| s.pos == pos)?;
+    if d.off {
+        return Some(TabEdit {
+            clear: vec![pos],
+            ..TabEdit::default()
+        });
+    }
+    let new = tab_pos(marks, d.x);
+    (new != pos).then(|| TabEdit {
+        clear: vec![pos],
+        set: vec![TabStop { pos: new, ..*old }],
+        ..TabEdit::default()
+    })
+}
+
+/// A small tab-stop symbol as Word's ruler draws them (the stop is at its
+/// upright): └ left, ┴ center, ┘ right, ┴ with a dot decimal, │ bar.
+fn tab_glyph(kind: TabKind, color: Hsla) -> Div {
+    let size = px(9.);
+    let stroke = px(2.);
+    let mid = (size - stroke) / 2.;
+    let mut g = div().relative().size(size).flex_none();
+    // The upright through the stop.
+    g = g.child(
+        div()
+            .absolute()
+            .left(mid)
+            .top_0()
+            .w(stroke)
+            .h_full()
+            .bg(color),
+    );
+    let foot = |left: Pixels, w: Pixels| {
+        div()
+            .absolute()
+            .left(left)
+            .bottom_0()
+            .w(w)
+            .h(stroke)
+            .bg(color)
+    };
+    match kind {
+        TabKind::Left => g.child(foot(mid, size - mid)),
+        TabKind::Right => g.child(foot(px(0.), mid + stroke)),
+        TabKind::Center => g.child(foot(px(0.), size)),
+        TabKind::Decimal => g.child(foot(px(0.), size)).child(
+            div()
+                .absolute()
+                .right(px(-1.))
+                .top(px(1.))
+                .size(stroke)
+                .bg(color),
+        ),
+        TabKind::Bar => g,
+    }
+}
+
 impl DocsView {
+    /// The caret paragraph's tab stops (none shown in a table).
+    pub(crate) fn ruler_tabs(&self) -> Vec<TabStop> {
+        if self.in_table() {
+            return Vec::new();
+        }
+        self.doc.tab_stops(self.doc.paragraph(self.sel.head.para))
+    }
+
+    /// A click on the ruler (not on a handle): set a stop there.
+    fn ruler_click(&mut self, x: Pixels, window: &mut Window, cx: &mut Context<Self>) {
+        let marks = self.ruler_marks();
+        if marks.indents.is_none() {
+            return;
+        }
+        let px = self.page_x_at(x);
+        if px < marks.margin_left || px > marks.page_w - marks.margin_right {
+            return;
+        }
+        let x = marks.constrain(Handle::Tab(0), px);
+        let stop = TabStop::new(tab_pos(&marks, x), self.ruler_tab, Default::default());
+        self.edit_tabs_doc(
+            TabEdit {
+                set: vec![stop],
+                ..TabEdit::default()
+            },
+            window,
+            cx,
+        );
+    }
+
     pub(crate) fn ruler_marks(&self) -> Marks {
         let s = docs_pdf::build::geometry_setup(&self.doc.section_page(self.sel.head.para));
         let indents = (!self.in_table()).then(|| {
@@ -209,13 +355,16 @@ impl DocsView {
         f32::from(x - g.origin.x) / g.zoom + g.scroll.x - g.page_x(self.caret_page())
     }
 
-    fn ruler_move(&mut self, x: Pixels, cx: &mut Context<Self>) {
+    fn ruler_move(&mut self, pos: Point<Pixels>, cx: &mut Context<Self>) {
         let marks = self.ruler_marks();
-        let px = self.page_x_at(x);
+        let px = self.page_x_at(pos.x);
         if let Some(d) = &mut self.ruler_drag {
             let x = marks.constrain(d.handle, px);
-            if x != d.x {
+            let off =
+                matches!(d.handle, Handle::Tab(_)) && (f32::from(pos.y) - d.y0).abs() > OFF_PX;
+            if x != d.x || off != d.off {
                 d.x = x;
+                d.off = off;
                 cx.notify();
             }
         }
@@ -226,6 +375,13 @@ impl DocsView {
             return;
         };
         let marks = self.ruler_marks();
+        if let Handle::Tab(_) = d.handle {
+            match tab_drag_edit(&marks, &self.ruler_tabs(), &d) {
+                Some(edit) => self.edit_tabs_doc(edit, window, cx),
+                None => cx.notify(),
+            }
+            return;
+        }
         if marks.x(d.handle).is_some_and(|x| (x - d.x).abs() < 0.01) {
             cx.notify();
             return;
@@ -410,6 +566,90 @@ impl DocsView {
             });
         }
 
+        // Tab stops along the bottom edge; default stops as ticks after
+        // the last one, as Word.
+        if marks.indents.is_some() {
+            let tabs = self.ruler_tabs();
+            let text_end = marks.page_w - marks.margin_right;
+            let last = tabs.iter().map(|s| s.pos).max().unwrap_or(0).max(0) as f32 / 15.0;
+            let step = (self.doc.default_tab() as f32 / 15.0).max(4.0);
+            let mut d = ((last / step).floor() + 1.0) * step;
+            while marks.margin_left + d < text_end {
+                ruler = ruler.child(
+                    div()
+                        .absolute()
+                        .bottom(px(1.))
+                        .h(px(3.))
+                        .w(px(1.))
+                        .left(sx(marks.margin_left + d))
+                        .bg(t.fg_dim),
+                );
+                d += step;
+            }
+            for s in tabs {
+                let hd = Handle::Tab(s.pos);
+                let Some(x) = at(hd) else { continue };
+                let off = drag.is_some_and(|d| d.handle == hd && d.off);
+                let color = if dragging(hd) { t.accent } else { t.fg };
+                ruler = ruler.child(
+                    div()
+                        .id(SharedString::from(format!("docs-ruler-tab-{}", s.pos)))
+                        .absolute()
+                        .bottom(px(2.))
+                        .left(sx(x) - SPACE_3)
+                        .w(SPACE_6)
+                        .h(SPACE_5)
+                        .flex()
+                        .items_end()
+                        .justify_center()
+                        .when(off, |d| d.opacity(0.3))
+                        .cursor(CursorStyle::ResizeLeftRight)
+                        .child(tab_glyph(s.kind, color))
+                        .on_mouse_down(MouseButton::Left, start_drag(hd, cx)),
+                );
+            }
+            // The tab kind selector, at the ruler's left.
+            let kind = self.ruler_tab;
+            ruler = ruler.child(
+                div()
+                    .id("docs-ruler-tab-kind")
+                    .absolute()
+                    .left(SPACE_2)
+                    .top(SPACE_1)
+                    .bottom(SPACE_1)
+                    .w(h - SPACE_2)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(RADIUS_SM)
+                    .bg(t.elevated)
+                    .border_1()
+                    .border_color(t.border)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover))
+                    .child(tab_glyph(kind, t.fg))
+                    .tooltip(move |window, cx| {
+                        let msg = tk("{} tab: click to change, then click the ruler to set one");
+                        Tooltip::new(tf(msg, &[&crate::tab_menu::kind_label(kind)]))
+                            .build(window, cx)
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.ruler_tab = next_kind(this.ruler_tab);
+                            cx.notify();
+                        }),
+                    ),
+            );
+            ruler = ruler.on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, ev: &MouseDownEvent, window, cx| {
+                    this.ruler_click(ev.position.x, window, cx);
+                }),
+            );
+        }
+
         // While dragging, follow the pointer anywhere in the window.
         if drag.is_some() {
             let view = cx.entity().downgrade();
@@ -420,7 +660,7 @@ impl DocsView {
                         let v = view.clone();
                         window.on_mouse_event(move |ev: &MouseMoveEvent, phase, _, cx| {
                             if phase == DispatchPhase::Bubble {
-                                let _ = v.update(cx, |this, cx| this.ruler_move(ev.position.x, cx));
+                                let _ = v.update(cx, |this, cx| this.ruler_move(ev.position, cx));
                             }
                         });
                         let v = view.clone();
@@ -499,5 +739,43 @@ mod tests {
             .unwrap();
         assert_eq!(right.right, Some(567));
         assert!(m.indent_for(Handle::MarginLeft, 0.0).is_none());
+    }
+
+    #[std::prelude::v1::test]
+    fn tab_stops_drag_move_and_come_off() {
+        use docs_engine::TabLeader;
+        let m = a4();
+        let stop = TabStop::new(1417, TabKind::Right, TabLeader::Dot);
+        // Snapped to 0.25 cm from the margin, within the text area.
+        let x = m.constrain(Handle::Tab(0), m.margin_left + 3.1 * CM);
+        assert!((x - m.margin_left - 3.0 * CM).abs() < 0.01);
+        assert_eq!(m.constrain(Handle::Tab(0), 0.0), m.margin_left);
+        let drag = |x: f32, off: bool| Drag {
+            handle: Handle::Tab(1417),
+            x,
+            y0: 0.0,
+            off,
+        };
+        // Moved: cleared at the old place, set at the new one (same kind
+        // and leader).
+        let e = tab_drag_edit(&m, &[stop], &drag(x, false)).unwrap();
+        assert_eq!(e.clear, [1417]);
+        assert_eq!(e.set[0].kind, TabKind::Right);
+        assert_eq!(e.set[0].leader, TabLeader::Dot);
+        assert_eq!(e.set[0].pos, 1701);
+        // Released where it was: nothing.
+        let here = m.x(Handle::Tab(1417)).unwrap();
+        assert!(tab_drag_edit(&m, &[stop], &drag(here, false)).is_none());
+        // Off the ruler: removed.
+        let e = tab_drag_edit(&m, &[stop], &drag(x, true)).unwrap();
+        assert_eq!(e.clear, [1417]);
+        assert!(e.set.is_empty());
+        // The selector cycles through every kind.
+        let mut k = TabKind::Left;
+        for _ in 0..5 {
+            k = next_kind(k);
+        }
+        assert_eq!(k, TabKind::Left);
+        assert_eq!(next_kind(TabKind::Decimal), TabKind::Bar);
     }
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Write the Docs fixtures (CC0, synthetic): tests/corpus/docx/{report,letter,
-invoice,minutes}.docx, read by crates/docs_engine/tests/sections.rs and
+invoice,minutes,toc}.docx, read by crates/docs_engine/tests/sections.rs and
 crates/docs_pdf/tests/.
 
 * report.docx: A4, header, footer "Page {PAGE} of {NUMPAGES}" (complex
@@ -11,6 +11,8 @@ crates/docs_pdf/tests/.
 * invoice.docx: a logo picture in the header, a tab-aligned block and a
   styled table.
 * minutes.docx: a comment and tracked changes (an insertion, a deletion).
+* toc.docx: a table of contents (TOC field result, TOC 1/TOC 2 styles with a
+  right dot-leader tab) and lines with bar, centre, decimal and leader tabs.
 
 Regenerate with
 `uv run --with python-docx==1.2.0 scripts/corpus/gen_docx.py tests/corpus/docx`.
@@ -177,4 +179,76 @@ dl.append(r)
 p3._p.append(dl)
 p3.add_run(".")
 save(d, "minutes.docx")
+
+# ── toc: a table of contents as Word leaves it (a TOC field whose result
+# lines use the TOC 1 / TOC 2 styles: a right tab with dot leaders at the
+# right margin), then lines with centre, decimal, bar and hyphen-leader tabs.
+def tabs_el(*stops):
+    tabs = OxmlElement("w:tabs")
+    for val, pos, leader in stops:
+        t = OxmlElement("w:tab")
+        t.set(qn("w:val"), val)
+        if leader:
+            t.set(qn("w:leader"), leader)
+        t.set(qn("w:pos"), str(pos))
+        tabs.append(t)
+    return tabs
+
+
+def fld(par, kind, instr=None):
+    r = OxmlElement("w:r")
+    if instr:
+        t = OxmlElement("w:instrText")
+        t.set(qn("xml:space"), "preserve")
+        t.text = f" {instr} "
+        r.append(t)
+    else:
+        fc = OxmlElement("w:fldChar")
+        fc.set(qn("w:fldCharType"), kind)
+        r.append(fc)
+    par._p.append(r)
+
+
+d = Document()
+sec = d.sections[0]
+sec.page_width, sec.page_height = Cm(21), Cm(29.7)
+sec.left_margin = sec.right_margin = Cm(2.54)
+right = 9026  # the A4 text width with 2.54 cm margins, in twips
+for level in (1, 2):
+    st = d.styles.add_style(f"TOC {level}", 1)
+    st.base_style = d.styles["Normal"]
+    st.paragraph_format.space_after = Pt(4)
+    st.paragraph_format.left_indent = Cm(0.5 * (level - 1))
+    st.element.get_or_add_pPr().insert(0, tabs_el(("right", right, "dot")))
+d.add_heading("Contents", 1)
+toc = [
+    (1, "1. Introduction", "1"),
+    (2, "1.1 Purpose of this report", "1"),
+    (2, "1.2 Scope", "2"),
+    (1, "2. Findings", "3"),
+    (2, "2.1 Sales by city", "4"),
+    (2, "2.2 Costs", "7"),
+    (1, "3. Recommendations", "11"),
+    (1, "Appendix A. Data sources", "15"),
+]
+for i, (level, title, page) in enumerate(toc):
+    par = d.add_paragraph(style=f"TOC {level}")
+    if i == 0:
+        fld(par, "begin")
+        fld(par, None, 'TOC \\o "1-3" \\h \\z \\u')
+        fld(par, "separate")
+    par.add_run(f"{title}\t{page}")
+    if i == len(toc) - 1:
+        fld(par, "end")
+d.add_heading("Price list", 1)
+for text in ["Item\tUnit\tPrice", "Coffee beans 1 kg\tbag\t185.50", "Paper cups\tbox\t42.75", "Delivery\ttrip\t1250.00"]:
+    par = d.add_paragraph(text)
+    par._p.get_or_add_pPr().append(
+        tabs_el(("bar", 4300, None), ("center", 5200, None), ("decimal", 8000, None))
+    )
+par = d.add_paragraph("Signature\t")
+par._p.get_or_add_pPr().append(tabs_el(("left", 6000, "underscore")))
+par = d.add_paragraph("Chapter one\tpage 3")
+par._p.get_or_add_pPr().append(tabs_el(("right", right, "hyphen")))
+save(d, "toc.docx")
 print("docx ok")

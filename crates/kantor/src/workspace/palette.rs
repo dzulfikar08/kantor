@@ -1249,6 +1249,12 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.toggle_page_menu(None, w, cx)),
     },
     Command {
+        title: tk("Tabs…"),
+        detail: tk("Docs · tab stops: position, alignment, leader, default stops"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.toggle_tab_menu(None, w, cx)),
+    },
+    Command {
         title: tk("Header and Footer…"),
         detail: tk("Docs · text, page numbers, different first page, odd and even pages"),
         keys: "",

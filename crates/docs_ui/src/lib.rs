@@ -30,6 +30,7 @@ mod page_menu;
 mod review;
 mod ruler;
 mod spell;
+mod tab_menu;
 mod toolbar;
 
 use std::cell::{Cell, RefCell};
@@ -472,8 +473,13 @@ pub struct DocsView {
     note_edit: Option<note_menu::NoteEdit>,
     /// The markup column with comment cards.
     comments_visible: bool,
-    /// A margin or indent being dragged on the ruler.
+    /// A margin, indent or tab stop being dragged on the ruler.
     ruler_drag: Option<ruler::Drag>,
+    /// The kind of tab stop a click on the ruler sets (the selector at
+    /// the ruler's left).
+    ruler_tab: docs_engine::TabKind,
+    /// The Tabs popover.
+    tab_menu: Option<tab_menu::TabMenu>,
     engine: Rc<RefCell<Engine>>,
     bridge: Rc<RefCell<FontBridge>>,
     zoom: f32,
@@ -510,6 +516,7 @@ fn layout_key(p: &docs_layout::Paragraph, width: f32) -> u64 {
     }
     format!("{:?}{:?}{:?}", p.marker, p.objects, p.tabs).hash(&mut h);
     p.default_tab.to_bits().hash(&mut h);
+    p.decimal.hash(&mut h);
     for s in &p.spans {
         s.range.hash(&mut h);
         (s.bold, s.italic, s.underline).hash(&mut h);
@@ -579,6 +586,8 @@ impl DocsView {
             note_edit: None,
             comments_visible: true,
             ruler_drag: None,
+            ruler_tab: docs_engine::TabKind::Left,
+            tab_menu: None,
             engine,
             bridge,
             zoom: 1.0,
@@ -2019,6 +2028,13 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                 r[3] = r[3].max(1.0 / z);
                 window.paint_quad(fill(rect(page, r), layout_color(rule.color)));
             }
+            // Tab leaders (dot leaders in a table of contents) and bar tabs.
+            for rule in paged.tab_rules(page) {
+                let mut r = rule.rect;
+                r[2] = r[2].max(1.0 / z);
+                r[3] = r[3].max(1.0 / z);
+                window.paint_quad(fill(rect(page, r), layout_color(rule.color)));
+            }
             // Tracked deletions: struck through in the author's colour.
             if !f.laid.strikes.is_empty() {
                 for rule in paged.strike_rules(page, &f.laid.strikes) {
@@ -2070,7 +2086,8 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                             window.paint_image(b, b, Corners::default(), data.clone(), 0, false);
                     }
                 }
-                for rule in l.paged.pages.first().map_or(&[][..], |p| &p.rules[..]) {
+                let first = l.paged.pages.first().map_or(&[][..], |p| &p.rules[..]);
+                for rule in first.iter().cloned().chain(l.paged.tab_rules(0)) {
                     let mut r = rule.rect;
                     r[0] += placed.x;
                     r[1] += placed.y;
@@ -2211,7 +2228,7 @@ impl Render for DocsView {
             zoom: self.zoom,
             scroll: self.scroll,
             focused: self.focus.is_focused(window),
-            guide: self.ruler_drag.map(|d| d.x),
+            guide: self.ruler_drag.filter(|d| !d.off).map(|d| d.x),
             found: self.found.clone(),
             found_current: self.found_current,
             markup: if self.markup_visible() {
@@ -2307,6 +2324,7 @@ impl Render for DocsView {
             Collapse => |this, _w, cx| {
                 this.table_picker = None;
                 this.page_menu = None;
+                this.tab_menu = None;
                 this.ruler_drag = None;
                 let h = this.sel.head;
                 this.move_to(h, false, cx)
@@ -2385,6 +2403,7 @@ impl Render for DocsView {
             .child(area)
             .children(self.render_table_picker(cx))
             .children(self.render_page_menu(cx))
+            .children(self.render_tab_menu(cx))
             .children(self.render_hf_menu(cx))
             .children(self.render_note_menu(cx))
     }
