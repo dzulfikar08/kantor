@@ -27,6 +27,7 @@ pub(crate) mod util;
 mod xlookup;
 // KANTOR PATCH (functions): functions upstream lacks, see KANTOR_PATCHES.md §10.
 mod kantor_aggregate;
+mod kantor_ets;
 mod kantor_groupby;
 pub(crate) mod kantor_names;
 pub mod kantor_pivot;

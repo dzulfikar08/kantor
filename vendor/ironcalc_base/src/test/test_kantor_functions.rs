@@ -551,3 +551,161 @@ fn pivotby_several_values_and_headers() {
     assert_eq!(row_texts(&model, 4, 'F', 'J'), ["West", "2", "20", "", ""]);
     assert_eq!(model._get_text("F5"), "");
 }
+
+// ── Vectors of functions ─────────────────────────────────────────────────────
+
+fn assert_rows(model: &Model, first: char, last: char, expected: &[&[&str]]) {
+    for (i, row) in expected.iter().enumerate() {
+        assert_eq!(
+            row_texts(model, i as i32 + 1, first, last),
+            *row,
+            "row {}",
+            i + 1
+        );
+    }
+}
+
+#[test]
+fn groupby_hstack_of_functions() {
+    let mut model = sales();
+    // As in Excel: a header row of function names, the key column's blank.
+    model._set("D1", "=GROUPBY(A2:A7,B2:B7,HSTACK(SUM,AVERAGE,PERCENTOF))");
+    model.evaluate();
+    assert_rows(
+        &model,
+        'D',
+        'G',
+        &[
+            &["", "SUM", "AVERAGE", "PERCENTOF"],
+            &["East", "16", "5.333333333", "0.347826087"],
+            &["North", "7", "7", "0.152173913"],
+            &["West", "23", "11.5", "0.5"],
+            &["Total", "46", "7.666666667", "1"],
+            &["", "", "", ""],
+        ],
+    );
+}
+
+#[test]
+fn groupby_hstack_with_headers_and_labels() {
+    let mut model = sales();
+    // Headers shown: the key header, then the function names.
+    model._set("D1", "=GROUPBY(A1:A7,B1:B7,HSTACK(SUM,COUNT),3,0)");
+    // A row of labels under the functions names them instead.
+    model._set(
+        "H1",
+        "=GROUPBY(A2:A7,B2:B7,VSTACK(HSTACK(SUM,LAMBDA(x,MAX(x))),{\"Total\",\"Top\"}),0,0)",
+    );
+    // One label per function, or #VALUE!.
+    model._set(
+        "L1",
+        "=GROUPBY(A2:A7,B2:B7,VSTACK(HSTACK(SUM,MAX),{\"a\",\"b\",\"c\"}))",
+    );
+    model._set(
+        "L2",
+        "=GROUPBY(A2:A7,B2:B7,HSTACK(SUM,LAMBDA(x,MIN(x))),0,0)",
+    );
+    model.evaluate();
+    assert_rows(
+        &model,
+        'D',
+        'F',
+        &[
+            &["Region", "SUM", "COUNT"],
+            &["East", "16", "3"],
+            &["North", "7", "1"],
+            &["West", "23", "2"],
+            &["", "", ""],
+        ],
+    );
+    assert_rows(
+        &model,
+        'H',
+        'J',
+        &[&["", "Total", "Top"], &["East", "16", "10"]],
+    );
+    assert_eq!(model._get_text("L1"), "#VALUE!");
+    assert_eq!(row_texts(&model, 2, 'L', 'N'), ["", "SUM", "LAMBDA"]);
+}
+
+#[test]
+fn groupby_vstack_of_functions() {
+    let mut model = sales();
+    // One row per function, its name after the keys (as in Excel).
+    model._set("D1", "=GROUPBY(A2:A7,B2:B7,VSTACK(SUM,MIN,MAX),,0)");
+    model.evaluate();
+    assert_rows(
+        &model,
+        'D',
+        'F',
+        &[
+            &["East", "SUM", "16"],
+            &["East", "MIN", "1"],
+            &["East", "MAX", "10"],
+            &["North", "SUM", "7"],
+            &["North", "MIN", "7"],
+            &["North", "MAX", "7"],
+            &["West", "SUM", "23"],
+            &["West", "MIN", "3"],
+            &["West", "MAX", "20"],
+            &["", "", ""],
+        ],
+    );
+}
+
+#[test]
+fn groupby_functions_and_several_value_columns() {
+    let mut model = new_empty_model();
+    set_column(&mut model, "A", 1, &["Region", "East", "West", "East"]);
+    set_column(&mut model, "B", 1, &["Qty", "1", "2", "3"]);
+    set_column(&mut model, "C", 1, &["Price", "10", "20", "30"]);
+    model._set("E1", "=GROUPBY(A1:A4,B1:C4,HSTACK(SUM,MAX),3,0)");
+    model.evaluate();
+    // Function names over the value headers.
+    assert_rows(
+        &model,
+        'E',
+        'I',
+        &[
+            &["", "SUM", "", "MAX", ""],
+            &["Region", "Qty", "Price", "Qty", "Price"],
+            &["East", "4", "40", "3", "30"],
+            &["West", "2", "20", "2", "20"],
+        ],
+    );
+}
+
+#[test]
+fn pivotby_vector_of_functions() {
+    let mut model = pivot_data();
+    model._set("E1", "=PIVOTBY(A1:A6,B1:B6,C1:C6,HSTACK(SUM,COUNT),0,0,,0)");
+    model._set(
+        "E10",
+        "=PIVOTBY(A1:A6,B1:B6,C1:C6,VSTACK(SUM,COUNT),0,0,,0)",
+    );
+    model.evaluate();
+    assert_rows(
+        &model,
+        'E',
+        'I',
+        &[
+            &["", "2023", "", "2024", ""],
+            &["", "SUM", "COUNT", "SUM", "COUNT"],
+            &["East", "11", "2", "5", "1"],
+            &["North", "", "", "7", "1"],
+            &["West", "20", "1", "3", "1"],
+        ],
+    );
+    for (i, row) in [
+        ["", "", "2023", "2024"],
+        ["East", "SUM", "11", "5"],
+        ["East", "COUNT", "2", "1"],
+        ["North", "SUM", "", "7"],
+        ["North", "COUNT", "", "1"],
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(row_texts(&model, 10 + i as i32, 'E', 'H'), *row, "row {i}");
+    }
+}

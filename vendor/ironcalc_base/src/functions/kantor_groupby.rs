@@ -14,8 +14,16 @@
 //! the values it is compared with: for GROUPBY all values of the column, for
 //! PIVOTBY what `relative_to` says.
 //!
-//! What differs from Excel: a vector of functions (`HSTACK(SUM,AVERAGE)`)
-//! isn't supported (#VALUE!); a whole-column reference is read down to the
+//! `function` may also be a vector of functions: `HSTACK(SUM,AVERAGE)` puts
+//! each aggregation in its own columns, under a header row of function names
+//! (for several value columns, a row of function names over a row of value
+//! headers); `VSTACK(SUM,AVERAGE)` gives each group one row per function,
+//! the function's name in a column after the keys. A second row (column) of
+//! text, `VSTACK(HSTACK(SUM,AVERAGE),{"Total","Mean"})`, names the functions
+//! instead (one name per function, otherwise #VALUE!). A LAMBDA is labelled
+//! "LAMBDA".
+//!
+//! What differs from Excel: a whole-column reference is read down to the
 //! last used row of its sheet, the empty rows below standing for one blank
 //! row; generated headers are "Field n" and "Value n".
 
@@ -314,6 +322,21 @@ struct Prepared {
     rows: Vec<usize>,
 }
 
+/// One aggregation of GROUPBY/PIVOTBY: the LAMBDA, how many arguments it
+/// takes and its label in a vector of functions.
+struct Agg {
+    function: CalcResult,
+    arity: usize,
+    label: ArrayNode,
+}
+
+/// The aggregations of the `function` argument; `vertical` for a
+/// VSTACK of functions (one row per function).
+struct Aggs {
+    list: Vec<Agg>,
+    vertical: bool,
+}
+
 impl<'a> Model<'a> {
     /// The LAMBDA a function takes as an argument. A bare function name
     /// (`SUM`, from xlsx `_xleta.SUM`) is that function as a LAMBDA of
@@ -388,9 +411,95 @@ impl<'a> Model<'a> {
         }
     }
 
+    /// The label of a function in a vector of functions: its name, or
+    /// "LAMBDA".
+    fn agg_label(node: &Node) -> ArrayNode {
+        match node {
+            Node::NamedVariableKind { name, id: None } if eta_function(name).is_some() => {
+                ArrayNode::String(name.to_uppercase())
+            }
+            _ => ArrayNode::String("LAMBDA".to_string()),
+        }
+    }
+
+    /// The functions of an HSTACK/VSTACK of functions.
+    fn agg_list(
+        &mut self,
+        nodes: &[Node],
+        cell: CellReferenceIndex,
+    ) -> Result<Vec<Agg>, CalcResult> {
+        let mut list = Vec::new();
+        for node in nodes {
+            let (function, arity) = self.aggregation_arg(node, cell)?;
+            list.push(Agg {
+                function,
+                arity,
+                label: Self::agg_label(node),
+            });
+        }
+        Ok(list)
+    }
+
+    /// The `function` argument: one function, or a vector of them
+    /// (`HSTACK(SUM,AVERAGE)`, `VSTACK(...)`), optionally with a row or
+    /// column of labels (`VSTACK(HSTACK(SUM,AVERAGE),{"Sum","Mean"})`).
+    fn aggregations(&mut self, node: &Node, cell: CellReferenceIndex) -> Result<Aggs, CalcResult> {
+        let bad = |message: &str| CalcResult::new_error(Error::VALUE, cell, message.to_string());
+        let stack = |node: &Node| match node {
+            Node::FunctionKind {
+                kind: kind @ (Function::Hstack | Function::Vstack),
+                args,
+            } => Some((kind.clone() == Function::Vstack, args.clone())),
+            _ => None,
+        };
+        let Some((vertical, args)) = stack(node) else {
+            let (function, arity) = self.aggregation_arg(node, cell)?;
+            return Ok(Aggs {
+                list: vec![Agg {
+                    function,
+                    arity,
+                    label: Self::agg_label(node),
+                }],
+                vertical: false,
+            });
+        };
+        // A stack of functions, then labels: VSTACK(HSTACK(f, g), {"a","b"})
+        // or HSTACK(VSTACK(f, g), {"a";"b"}).
+        if args.len() == 2 {
+            if let Some((inner_vertical, inner)) = stack(&args[0]) {
+                if inner_vertical != vertical {
+                    let mut list = self.agg_list(&inner, cell)?;
+                    let labels = self.eval_to_array(&args[1], cell)?;
+                    let labels: Vec<ArrayNode> = labels.into_iter().flatten().collect();
+                    if labels.len() != list.len() {
+                        return Err(bad("One label is needed for each function"));
+                    }
+                    for (agg, label) in list.iter_mut().zip(labels) {
+                        if let ArrayNode::Error(e) = &label {
+                            return Err(CalcResult::new_error(e.clone(), cell, String::new()));
+                        }
+                        agg.label = label;
+                    }
+                    return Ok(Aggs {
+                        list,
+                        vertical: inner_vertical,
+                    });
+                }
+            }
+        }
+        if args.is_empty() {
+            return Err(bad("No function"));
+        }
+        let list = self.agg_list(&args, cell)?;
+        Ok(Aggs {
+            vertical: vertical && list.len() > 1,
+            list,
+        })
+    }
+
     /// A range or array argument; a range is read only down to its sheet's
     /// last used row. Also gives the height the argument has.
-    fn read_grid(
+    pub(crate) fn read_grid(
         &mut self,
         node: &Node,
         cell: CellReferenceIndex,
@@ -582,8 +691,7 @@ impl<'a> Model<'a> {
     #[allow(clippy::too_many_arguments)]
     fn aggregate_group(
         &mut self,
-        function: &CalcResult,
-        arity: usize,
+        agg: &Agg,
         values: &Grid,
         v: usize,
         rows: &[usize],
@@ -598,10 +706,10 @@ impl<'a> Model<'a> {
             CalcResult::Array(rows.iter().map(|&r| vec![values[r][v].clone()]).collect())
         };
         let mut arguments = vec![column(rows)];
-        if arity == 2 {
+        if agg.arity == 2 {
             arguments.push(column(relative));
         }
-        result_to_node(self.call_lambda_with_values(function.clone(), arguments, cell))
+        result_to_node(self.call_lambda_with_values(agg.function.clone(), arguments, cell))
     }
 
     fn headers(grid: &Grid, has_headers: bool, first: usize, generated: &str) -> Vec<ArrayNode> {
@@ -682,7 +790,7 @@ impl<'a> Model<'a> {
         let grids = self.read_fields(&nodes, cell)?;
         let (fields, values) = (&grids[0], &grids[1]);
         let filter = if has_filter { grids.get(2) } else { None };
-        let (function, arity) = self.aggregation_arg(&args[2], cell)?;
+        let aggs = self.aggregations(&args[2], cell)?;
         let field_headers = self.optional_number(args, 3, cell)?;
         let hierarchy = match self.optional_number(args, 7, cell)? {
             None | Some(0.0) => true,
@@ -697,8 +805,12 @@ impl<'a> Model<'a> {
         };
         let k = fields[0].len();
         let nv = values[0].len();
+        let nf = aggs.list.len();
+        // Value columns of the result: per function, per value column (one
+        // function per row when vertical).
+        let columns = if aggs.vertical { nv } else { nf * nv };
         let depth = self.total_depth(args, 4, k, hierarchy, cell)?;
-        let sort = self.sort_spec(args, 5, k, nv, cell)?;
+        let sort = self.sort_spec(args, 5, k, columns, cell)?;
         let prepared = self.prepare(values, field_headers, filter, k, cell)?;
         let rows = prepared.rows.clone();
 
@@ -706,23 +818,73 @@ impl<'a> Model<'a> {
             keys: fields,
             width: k,
         };
-        let mut value_of = |group: &[usize], v: usize| {
-            self.aggregate_group(&function, arity, values, v, group, &rows, cell)
+        let vertical = aggs.vertical;
+        let mut value_of = |group: &[usize], c: usize| {
+            let (f, v) = if vertical { (0, c) } else { (c / nv, c % nv) };
+            self.aggregate_group(&aggs.list[f], values, v, group, &rows, cell)
         };
         let lines = axis.lines(&rows, depth, &sort, hierarchy, &mut value_of);
 
         let mut out: Grid = Vec::new();
-        if prepared.show_headers {
-            let mut header = Self::headers(fields, prepared.has_headers, 1, "Field");
-            header.extend(Self::headers(values, prepared.has_headers, 1, "Value"));
+        let value_headers = Self::headers(values, prepared.has_headers, 1, "Value");
+        let key_headers = |show: bool| {
+            if show {
+                Self::headers(fields, prepared.has_headers, 1, "Field")
+            } else {
+                vec![ArrayNode::Empty; k]
+            }
+        };
+        if vertical {
+            if prepared.show_headers {
+                let mut header = key_headers(true);
+                header.push(ArrayNode::Empty);
+                header.extend(value_headers);
+                out.push(header);
+            }
+            for line in lines {
+                for agg in &aggs.list {
+                    let mut row = line.keys.clone();
+                    row.push(agg.label.clone());
+                    for v in 0..nv {
+                        row.push(self.aggregate_group(agg, values, v, &line.rows, &rows, cell));
+                    }
+                    out.push(row);
+                }
+            }
+            return Ok(Self::finish(out, cell));
+        }
+        if nf > 1 {
+            // Function names; over a row of value headers when there are
+            // several value columns.
+            let mut header = key_headers(prepared.show_headers && nv == 1);
+            for agg in &aggs.list {
+                for v in 0..nv {
+                    header.push(if v == 0 {
+                        agg.label.clone()
+                    } else {
+                        ArrayNode::Empty
+                    });
+                }
+            }
+            out.push(header);
+            if nv > 1 {
+                let mut header = key_headers(prepared.show_headers);
+                for _ in 0..nf {
+                    header.extend(value_headers.iter().cloned());
+                }
+                out.push(header);
+            }
+        } else if prepared.show_headers {
+            let mut header = key_headers(true);
+            header.extend(value_headers);
             out.push(header);
         }
         for line in lines {
             let mut row = line.keys;
-            for v in 0..nv {
-                row.push(
-                    self.aggregate_group(&function, arity, values, v, &line.rows, &rows, cell),
-                );
+            for agg in &aggs.list {
+                for v in 0..nv {
+                    row.push(self.aggregate_group(agg, values, v, &line.rows, &rows, cell));
+                }
             }
             out.push(row);
         }
@@ -751,15 +913,20 @@ impl<'a> Model<'a> {
         let grids = self.read_fields(&nodes, cell)?;
         let (row_fields, col_fields, values) = (&grids[0], &grids[1], &grids[2]);
         let filter = if has_filter { grids.get(3) } else { None };
-        let (function, arity) = self.aggregation_arg(&args[3], cell)?;
+        let aggs = self.aggregations(&args[3], cell)?;
         let field_headers = self.optional_number(args, 4, cell)?;
         let kr = row_fields[0].len();
         let kc = col_fields[0].len();
         let nv = values[0].len();
+        let nf = aggs.list.len();
+        let vertical = aggs.vertical;
+        // Value columns under each column line: per function, per value
+        // column (one function per row when vertical).
+        let per_line = if vertical { nv } else { nf * nv };
         let row_depth = self.total_depth(args, 5, kr, true, cell)?;
-        let row_sort = self.sort_spec(args, 6, kr, nv, cell)?;
+        let row_sort = self.sort_spec(args, 6, kr, per_line, cell)?;
         let col_depth = self.total_depth(args, 7, kc, true, cell)?;
-        let col_sort = self.sort_spec(args, 8, kc, nv, cell)?;
+        let col_sort = self.sort_spec(args, 8, kc, per_line, cell)?;
         let relative_to = match self.optional_number(args, 10, cell)? {
             None => 0,
             Some(r) if (0.0..=4.0).contains(&r) => r as u8,
@@ -782,8 +949,9 @@ impl<'a> Model<'a> {
             keys: col_fields,
             width: kc,
         };
-        let mut value_of = |group: &[usize], v: usize| {
-            self.aggregate_group(&function, arity, values, v, group, &rows, cell)
+        let mut value_of = |group: &[usize], c: usize| {
+            let (f, v) = if vertical { (0, c) } else { (c / nv, c % nv) };
+            self.aggregate_group(&aggs.list[f], values, v, group, &rows, cell)
         };
         let row_lines = row_axis.lines(&rows, row_depth, &row_sort, true, &mut value_of);
         let col_lines = col_axis.lines(&rows, col_depth, &col_sort, true, &mut value_of);
@@ -796,21 +964,44 @@ impl<'a> Model<'a> {
             axis.rows_with_prefix(&line.keys[..line.prefix_len - 1], within)
         };
 
-        let mut out: Grid = Vec::new();
-        // Header rows: one per column field, then the value names if several.
+        // The header cells over the columns of one column line: (function
+        // label, value name) of each.
         let value_names = Self::headers(values, prepared.has_headers, 1, "Value");
-        let show_value_row = nv > 1 || prepared.show_headers;
-        let header_rows = kc + usize::from(show_value_row);
+        let mut sub: Vec<(ArrayNode, ArrayNode)> = Vec::new();
+        if vertical {
+            for name in &value_names {
+                sub.push((ArrayNode::Empty, name.clone()));
+            }
+        } else {
+            for agg in &aggs.list {
+                for (v, name) in value_names.iter().enumerate() {
+                    let label = if v == 0 {
+                        agg.label.clone()
+                    } else {
+                        ArrayNode::Empty
+                    };
+                    sub.push((label, name.clone()));
+                }
+            }
+        }
+        let function_row = !vertical && nf > 1;
+        let value_row = nv > 1 || (prepared.show_headers && !function_row);
+        let header_rows = kc + usize::from(function_row) + usize::from(value_row);
+        let left = kr + usize::from(vertical);
+        let mut out: Grid = Vec::new();
         for level in 0..header_rows {
-            let mut row = vec![ArrayNode::Empty; kr];
+            let mut row = vec![ArrayNode::Empty; left];
             let last = level + 1 == header_rows;
             if prepared.show_headers && last {
                 row = Self::headers(row_fields, prepared.has_headers, 1, "Field");
+                if vertical {
+                    row.push(ArrayNode::Empty);
+                }
             }
             for line in &col_lines {
-                for (v, name) in value_names.iter().enumerate() {
+                for (i, (label, name)) in sub.iter().enumerate() {
                     let node = if level < kc {
-                        if v > 0 {
+                        if i > 0 {
                             ArrayNode::Empty
                         } else if line.prefix_len == 0 {
                             if level == 0 {
@@ -823,6 +1014,8 @@ impl<'a> Model<'a> {
                         } else {
                             ArrayNode::Empty
                         }
+                    } else if function_row && level == kc {
+                        label.clone()
                     } else {
                         name.clone()
                     };
@@ -831,32 +1024,47 @@ impl<'a> Model<'a> {
             }
             out.push(row);
         }
+        let row_aggs: Vec<Option<usize>> = if vertical {
+            (0..nf).map(Some).collect()
+        } else {
+            vec![None]
+        };
         for row_line in &row_lines {
-            let mut row = row_line.keys.clone();
-            for col_line in &col_lines {
-                let group = intersect(&row_line.rows, &col_line.rows);
-                for v in 0..nv {
-                    if group.is_empty() {
-                        row.push(ArrayNode::Empty);
-                        continue;
-                    }
-                    let relative = if arity == 2 {
-                        match relative_to {
-                            0 => col_line.rows.clone(),
-                            1 => row_line.rows.clone(),
-                            2 => rows.clone(),
-                            3 => parent_rows(&row_axis, row_line, &col_line.rows),
-                            _ => parent_rows(&col_axis, col_line, &row_line.rows),
-                        }
-                    } else {
-                        Vec::new()
-                    };
-                    row.push(
-                        self.aggregate_group(&function, arity, values, v, &group, &relative, cell),
-                    );
+            for row_agg in &row_aggs {
+                let mut row = row_line.keys.clone();
+                if let Some(f) = row_agg {
+                    row.push(aggs.list[*f].label.clone());
                 }
+                for col_line in &col_lines {
+                    let group = intersect(&row_line.rows, &col_line.rows);
+                    let functions: Vec<usize> = match row_agg {
+                        Some(f) => vec![*f],
+                        None => (0..nf).collect(),
+                    };
+                    for f in functions {
+                        let agg = &aggs.list[f];
+                        for v in 0..nv {
+                            if group.is_empty() {
+                                row.push(ArrayNode::Empty);
+                                continue;
+                            }
+                            let relative = if agg.arity == 2 {
+                                match relative_to {
+                                    0 => col_line.rows.clone(),
+                                    1 => row_line.rows.clone(),
+                                    2 => rows.clone(),
+                                    3 => parent_rows(&row_axis, row_line, &col_line.rows),
+                                    _ => parent_rows(&col_axis, col_line, &row_line.rows),
+                                }
+                            } else {
+                                Vec::new()
+                            };
+                            row.push(self.aggregate_group(agg, values, v, &group, &relative, cell));
+                        }
+                    }
+                }
+                out.push(row);
             }
-            out.push(row);
         }
         Ok(Self::finish(out, cell))
     }
