@@ -326,6 +326,19 @@ fn clear_mark_revs(p: &mut Paragraph) {
     }
 }
 
+/// Join `right` onto `left` as a removed paragraph mark does: an empty
+/// left paragraph takes the right one's formatting (the mark that's left
+/// is the right one's, as in Word).
+fn join(left: &mut Paragraph, right: Paragraph) {
+    if left.text.is_empty() {
+        let props = right.props.clone();
+        left.append(right);
+        left.props = props;
+    } else {
+        left.append(right);
+    }
+}
+
 /// Remove a resolved change's text: a floating object marked deleted
 /// goes too (deleting text keeps them otherwise).
 fn drop_change(p: &mut Paragraph, r: std::ops::Range<usize>) {
@@ -590,7 +603,7 @@ impl Document {
             clear_mark_revs(&mut new[k]);
             if (del && accept) || (ins && !accept) {
                 let right = new.remove(k + 1);
-                new[k].append(right);
+                join(&mut new[k], right);
             }
         }
         let count = last - first + 1;
@@ -730,7 +743,7 @@ impl Document {
             p.normalize();
             if join_next && let Some(prev) = out.last_mut() {
                 if prev.cell == p.cell {
-                    prev.append(p);
+                    join(prev, p);
                 } else {
                     out.push(p);
                 }

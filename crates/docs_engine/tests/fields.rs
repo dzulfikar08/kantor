@@ -651,3 +651,75 @@ fn f9_updates_fields_in_headers_and_notes() {
             .ends_with("2026")
     );
 }
+
+/// The document's text as shown, paragraph by paragraph.
+fn texts(doc: &Document) -> Vec<String> {
+    (0..doc.len()).map(|i| shown(doc, i)).collect()
+}
+
+#[test]
+fn tracked_updates_are_deletions_and_insertions() {
+    let path = corpus("fields.docx");
+    let original = Document::open(&path).unwrap();
+    // What the update gives without tracking.
+    let mut plain = original.clone();
+    plain.update_fields(all(&plain), &cx(), &mut lay_out);
+    let mut doc = original.clone();
+    doc.set_author("Ani Wijaya");
+    doc.set_track_changes(true, Selection::default());
+    doc.update_fields(all(&doc), &cx(), &mut lay_out);
+    let ch = doc.changes();
+    assert!(
+        ch.iter().any(|c| c.kind == docs_engine::RevKind::Insert),
+        "{ch:?}"
+    );
+    assert!(ch.iter().all(|c| c.author == "Ani Wijaya"), "{ch:?}");
+    // The fields are still fields (struck marks don't count).
+    let kinds = |d: &Document| d.fields().iter().map(|f| f.kind()).collect::<Vec<_>>();
+    assert_eq!(kinds(&doc), kinds(&plain));
+    // Accept All gives the plain update; Reject All the original.
+    let mut accepted = doc.clone();
+    accepted.resolve_all(true, Selection::default());
+    assert_eq!(texts(&accepted), texts(&plain));
+    let mut rejected = doc.clone();
+    rejected.resolve_all(false, Selection::default());
+    assert_eq!(texts(&rejected), texts(&original));
+    // Field marks follow the update (only results are tracked), so a
+    // rejected new table of contents line may leave an empty PAGEREF.
+    assert!(kinds(&rejected).len() >= kinds(&original).len());
+    // Saved and read back: the same changes, the same fields.
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("t.docx");
+    doc.save_as(&out).unwrap();
+    let back = Document::open(&out).unwrap();
+    assert!(
+        back.unsupported_content().is_empty(),
+        "{:?}",
+        back.unsupported_content()
+    );
+    assert_eq!(back.changes().len(), doc.changes().len());
+    assert_eq!(kinds(&back), kinds(&plain));
+    let mut back_acc = back.clone();
+    back_acc.resolve_all(true, Selection::default());
+    assert_eq!(texts(&back_acc), texts(&plain));
+}
+
+#[test]
+fn tracked_table_of_contents_update() {
+    let path = corpus("fields.docx");
+    let original = Document::open(&path).unwrap();
+    let mut plain = original.clone();
+    plain.update_tables_of_contents(Selection::caret(Position::new(1, 0)), &cx(), &mut lay_out);
+    let mut doc = original.clone();
+    doc.set_track_changes(true, Selection::default());
+    doc.update_tables_of_contents(Selection::caret(Position::new(1, 0)), &cx(), &mut lay_out);
+    assert!(doc.has_changes());
+    let mut accepted = doc.clone();
+    accepted.resolve_all(true, Selection::default());
+    assert_eq!(texts(&accepted), texts(&plain));
+    let mut rejected = doc.clone();
+    rejected.resolve_all(false, Selection::default());
+    assert_eq!(texts(&rejected), texts(&original));
+    doc.undo();
+    assert!(!doc.has_changes() || doc.changes() == original.changes());
+}

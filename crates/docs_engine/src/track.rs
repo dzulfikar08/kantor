@@ -406,7 +406,7 @@ fn ins_tag(rev: &Revision) -> String {
 
 /// Whether a paragraph's mark is inserted by `me`, and whether it's
 /// deleted.
-fn mark_state(p: &Paragraph, me: &str) -> (bool, bool) {
+pub(crate) fn mark_state(p: &Paragraph, me: &str) -> (bool, bool) {
     let mut out = (false, false);
     for x in mark_elements(p) {
         let Some(el) = xml::parse(&x) else { continue };
@@ -446,7 +446,7 @@ pub(crate) fn mark_elements(p: &Paragraph) -> Vec<String> {
 }
 
 /// Remove the mark's revision elements named in `names`.
-fn strip_mark(p: &mut Paragraph, names: &[&str]) {
+pub(crate) fn strip_mark(p: &mut Paragraph, names: &[&str]) {
     for n in names {
         p.runs[0].props.extras.remove(n);
     }
@@ -480,6 +480,11 @@ fn strip_mark(p: &mut Paragraph, names: &[&str]) {
 /// Put a revision element (`<w:ins …/>` or `<w:del …/>`) on a paragraph's
 /// mark.
 pub(crate) fn set_mark_rev(p: &mut Paragraph, el: &str) {
+    // A mark is inserted or deleted once.
+    let name = element_name(el);
+    if mark_elements(p).iter().any(|x| element_name(x) == name) {
+        return;
+    }
     if p.text.is_empty() {
         p.runs[0].props.extras.push(el);
     }
@@ -497,6 +502,12 @@ pub(crate) fn set_mark_rev(p: &mut Paragraph, el: &str) {
             if let Some(i) = s.find("/>").filter(|&i| !s[..i].contains('>')) {
                 // `<w:rPr/>`
                 s = format!("{}>{el}</w:rPr>", &s[..i]);
+            } else if element_name(el) == "del"
+                && let Some(i) = s.find("<w:ins ")
+                && let Some(e) = s[i..].find("/>")
+            {
+                // `w:ins` comes before `w:del` (CT_ParaRPr).
+                s.insert_str(i + e + 2, el);
             } else if let Some(i) = s.find('>') {
                 s.insert_str(i + 1, el);
             }

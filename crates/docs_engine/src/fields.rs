@@ -86,6 +86,15 @@ pub fn spans(paras: &[Paragraph]) -> Vec<FieldSpan> {
             let Some(Object::Field(f)) = &run.object else {
                 continue;
             };
+            // A field mark struck through (a tracked update replaced it)
+            // no longer counts: the inserted one does.
+            if run
+                .rev
+                .as_ref()
+                .is_some_and(|v| v.kind == crate::RevKind::Delete)
+            {
+                continue;
+            }
             let pos = Position::new(i, r.start);
             match &**f {
                 FieldMark::Begin { .. } => open.push((pos, f.clone())),
@@ -120,7 +129,12 @@ pub(crate) fn writable(paras: &[Paragraph]) -> Option<Vec<Paragraph>> {
     let mut drop: Vec<Position> = Vec::new();
     for (i, p) in paras.iter().enumerate() {
         for (r, run) in p.run_ranges() {
+            let struck = run
+                .rev
+                .as_ref()
+                .is_some_and(|v| v.kind == crate::RevKind::Delete);
             if matches!(run.object, Some(Object::Field(_)))
+                && !struck
                 && !paired.contains(&Position::new(i, r.start))
             {
                 drop.push(Position::new(i, r.start));
@@ -133,10 +147,48 @@ pub(crate) fn writable(paras: &[Paragraph]) -> Option<Vec<Paragraph>> {
             matches!(&*s.mark, FieldMark::Begin { simple: true, .. }) && !simple_holds(paras, s)
         })
         .collect();
-    if drop.is_empty() && loose.is_empty() {
+    // Struck simple field marks (a tracked update replaced the field):
+    // written as a complex field's, which can be inside a `w:del`.
+    let struck_simple: Vec<(Position, Option<String>)> = paras
+        .iter()
+        .enumerate()
+        .flat_map(|(i, p)| {
+            p.run_ranges().filter_map(move |(r, run)| {
+                let Some(Object::Field(f)) = &run.object else {
+                    return None;
+                };
+                let struck = run
+                    .rev
+                    .as_ref()
+                    .is_some_and(|v| v.kind == crate::RevKind::Delete);
+                match &**f {
+                    FieldMark::Begin {
+                        simple: true,
+                        instr,
+                        ..
+                    } if struck => Some((Position::new(i, r.start), Some(instr.clone()))),
+                    FieldMark::End { simple: true, .. } if struck => {
+                        Some((Position::new(i, r.start), None))
+                    }
+                    _ => None,
+                }
+            })
+        })
+        .collect();
+    if drop.is_empty() && loose.is_empty() && struck_simple.is_empty() {
         return None;
     }
     let mut out = paras.to_vec();
+    for (pos, instr) in struck_simple {
+        let mark = match instr {
+            Some(instr) => complex_begin(&instr, true),
+            None => FieldMark::End {
+                xml: FIELD_END.into(),
+                simple: false,
+            },
+        };
+        replace_mark(&mut out, pos, Object::Field(Arc::new(mark)));
+    }
     for s in loose {
         let instr = s.instr.clone();
         replace_mark(
@@ -172,7 +224,8 @@ fn simple_holds(paras: &[Paragraph], s: &FieldSpan) -> bool {
     let Some((_, first)) = runs.next() else {
         return false;
     };
-    runs.all(|(_, r)| r.link == first.link && r.rev == first.rev)
+    // `w:fldSimple` can't sit inside a `w:ins` / `w:del`.
+    first.rev.is_none() && runs.all(|(_, r)| r.link == first.link && r.rev == first.rev)
 }
 
 /// A complex field's start for `instr` (with a separator when it will
@@ -1824,6 +1877,9 @@ impl Document {
             .count();
         let count = old.len() - start - tail;
         let new: Vec<Paragraph> = paras[start..paras.len() - tail].to_vec();
+        // With Track Changes on, the new results are tracked insertions and
+        // the old ones deletions (Word's behaviour).
+        let new = self.track_rewrite(&self.paragraphs[start..start + count], new);
         let after = Selection::caret(sel.head);
         self.replace(start, count, new, (sel, after), Kind::Other, true);
         self.clamp_selection(after)

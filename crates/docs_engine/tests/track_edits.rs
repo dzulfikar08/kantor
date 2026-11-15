@@ -236,3 +236,107 @@ fn text_box_edits_are_tracked() {
         "{xml}"
     );
 }
+
+/// Files with every kind of tracked change Kantor makes, for the Office
+/// validator: `KANTOR_TRACK_OUT=dir cargo test -p docs_engine --test
+/// track_edits write_tracked_samples -- --ignored`.
+#[test]
+#[ignore]
+fn write_tracked_samples() {
+    use docs_engine::{Align, FieldContext, HfKind, HfType, NoteKind, PageLookup, Toggle};
+    let out = PathBuf::from(std::env::var("KANTOR_TRACK_OUT").expect("KANTOR_TRACK_OUT"));
+    std::fs::create_dir_all(&out).unwrap();
+    let start = |name: &str| {
+        let mut d = Document::open(&corpus(name)).unwrap();
+        d.set_author("Ani Wijaya");
+        d.set_track_changes(true, Selection::default());
+        d
+    };
+    // Formatting, Replace All, tables.
+    let mut d = table_doc();
+    d.insert_text(caret(0, 6), " text and more text", None);
+    d.toggle(
+        Selection {
+            anchor: Position::new(0, 0),
+            head: Position::new(0, 6),
+        },
+        Toggle::Bold,
+    );
+    d.set_align(caret(0, 0), Align::Center);
+    d.edit_table(caret(1, 0), TableEdit::DeleteRow).unwrap();
+    d.edit_table(caret(3, 0), TableEdit::RowBelow).unwrap();
+    d.replace_ranges(&[(0, 0..6)], "After", caret(0, 0));
+    d.save_as(&out.join("tables-format.docx")).unwrap();
+    // Fields updated with tracking.
+    struct NoPages;
+    impl PageLookup for NoPages {
+        fn page_of(&self, _: Position) -> Option<usize> {
+            Some(0)
+        }
+        fn page_number(&self, _: usize) -> u32 {
+            7
+        }
+        fn page_label(&self, _: usize) -> String {
+            "7".into()
+        }
+    }
+    let cx = FieldContext {
+        now: chrono::NaiveDate::from_ymd_opt(2026, 11, 15)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap(),
+        offset: chrono::FixedOffset::east_opt(7 * 3600).unwrap(),
+    };
+    let mut d = start("fields.docx");
+    let all = Selection {
+        anchor: Position::default(),
+        head: d.end(),
+    };
+    d.update_fields(all, &cx, &mut |_| Box::new(NoPages));
+    d.update_tables_of_contents(caret(1, 0), &cx, &mut |_| Box::new(NoPages));
+    d.save_as(&out.join("fields-tracked.docx")).unwrap();
+    // Headers and notes.
+    let mut d = start("notes.docx");
+    let id = d
+        .notes()
+        .iter()
+        .find(|n| n.kind == NoteKind::Footnote && !n.separator)
+        .unwrap()
+        .id
+        .clone();
+    let (e, mut n) = d.edit_note(NoteKind::Footnote, &id).unwrap();
+    let end = n.end();
+    n.insert_text(Selection::caret(end), " Checked.", None);
+    n.delete_selection(Selection {
+        anchor: Position::new(0, 1),
+        head: Position::new(0, 4),
+    });
+    d.finish_part(e, n, Selection::default());
+    let (e, mut h) = d.edit_hf(0, HfKind::Header, HfType::Default).unwrap();
+    h.insert_text(Selection::default(), "Draft", None);
+    d.finish_part(e, h, Selection::default());
+    d.save_as(&out.join("notes-tracked.docx")).unwrap();
+    // Floats and text boxes.
+    let mut d = start("floats.docx");
+    let (p, i, _) = floats(&d)
+        .into_iter()
+        .find(|f| f.2 == "Ellipse behind")
+        .unwrap();
+    d.delete_float(p, i);
+    let (p, i, _) = floats(&d)
+        .into_iter()
+        .find(|f| f.2 == "Text Box 1")
+        .unwrap();
+    d.set_text_box_text(p, i, "Text box\nwith three paragraphs");
+    d.save_as(&out.join("floats-tracked.docx")).unwrap();
+    // Word's own tracked changes, edited further.
+    let mut d = start("minutes.docx");
+    d.toggle(
+        Selection {
+            anchor: Position::new(1, 0),
+            head: Position::new(1, 9),
+        },
+        Toggle::Italic,
+    );
+    d.save_as(&out.join("minutes-tracked.docx")).unwrap();
+}

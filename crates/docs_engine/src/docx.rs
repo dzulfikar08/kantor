@@ -2871,7 +2871,20 @@ fn write_run(out: &mut String, text: &str, run: &Run) {
         },
         Some(Object::Field(f)) => match &**f {
             FieldMark::Begin { code, sep, .. } => {
-                out.push_str(code);
+                let struck = run
+                    .rev
+                    .as_ref()
+                    .is_some_and(|r| r.kind == crate::review::RevKind::Delete);
+                if struck {
+                    // A deleted field's instruction is `w:delInstrText`.
+                    out.push_str(
+                        &code
+                            .replace("<w:instrText", "<w:delInstrText")
+                            .replace("</w:instrText>", "</w:delInstrText>"),
+                    );
+                } else {
+                    out.push_str(code);
+                }
                 if let Some(sep) = sep {
                     out.push_str(sep);
                 }
@@ -3087,7 +3100,61 @@ fn write_table(out: &mut String, t: &Table, id: u32, paras: &[Paragraph], availa
     }
 }
 
+/// Tracked-change ids made unique: a change whose runs are written in
+/// several pieces (around a hyperlink's edge, a text box's own changes)
+/// would repeat its `w:id`; later repeats get fresh ones.
+fn unique_rev_ids(xml: String) -> String {
+    const TAGS: [&str; 4] = ["<w:ins ", "<w:del ", "<w:rPrChange ", "<w:pPrChange "];
+    if !TAGS.iter().any(|t| xml.contains(t)) {
+        return xml;
+    }
+    let id_at = |s: &str| -> Option<(usize, usize, u64)> {
+        let end = s.find('>')?;
+        let i = s[..end].find(" w:id=\"")? + 7;
+        let e = s[i..end].find('"')? + i;
+        Some((i, e, s[i..e].parse().ok()?))
+    };
+    let mut max = 0u64;
+    for t in TAGS {
+        for (at, _) in xml.match_indices(t) {
+            if let Some((_, _, v)) = id_at(&xml[at..]) {
+                max = max.max(v);
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml.as_str();
+    loop {
+        let next = TAGS.iter().filter_map(|t| rest.find(t)).min();
+        let Some(at) = next else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        match id_at(rest) {
+            Some((i, e, v)) if !seen.insert(v) => {
+                max += 1;
+                seen.insert(max);
+                out.push_str(&rest[..i]);
+                out.push_str(&max.to_string());
+                rest = &rest[e..];
+            }
+            _ => {
+                out.push('<');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out
+}
+
 pub(crate) fn body_xml(doc: &Document) -> String {
+    unique_rev_ids(body_xml_raw(doc))
+}
+
+fn body_xml_raw(doc: &Document) -> String {
     let mut out = String::with_capacity(4096);
     let fixed = crate::fields::writable(doc.paragraphs());
     let paras = fixed.as_deref().unwrap_or(doc.paragraphs());

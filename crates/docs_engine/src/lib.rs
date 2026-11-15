@@ -17,6 +17,7 @@ mod document;
 pub mod docx;
 mod edit;
 mod field_edit;
+mod field_track;
 pub mod fields;
 pub mod find;
 pub mod float;

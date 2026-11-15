@@ -28,6 +28,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   are recorded and shown (deletions struck through, on screen and in the PDF), the change at
   the caret is accepted or rejected while editing them, and Accept All / Reject All resolve the
   changes in them too. Spell check works in a header, footer or note being edited.
+- Docs: with Track Changes on, updating fields (`F9`, *Update Table*) and inserting a field are
+  tracked as Word does: the old result is struck through and the new one inserted, so a table
+  of contents or a cross-reference that changed can be reviewed and rejected. Saved files with
+  tracked fields pass the Open XML validator (a deleted field's code is written as Word's
+  `w:delInstrText`, and tracked simple fields as complex ones).
 - Docs: Word 97-2003 (`.doc`) files open with their floating pictures (PNG, JPEG), shapes and
   text boxes, placed, wrapped and drawn as in Word and saved into the new `.docx`. Floating
   objects in headers and footers, grouped shapes and freeform shapes drawn with formulas are

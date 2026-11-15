@@ -105,6 +105,7 @@ impl Document {
             .count();
         let count = old.len() - start - tail;
         let new: Vec<Paragraph> = paras[start..paras.len() - tail].to_vec();
+        let new = self.track_rewrite(&self.paragraphs[start..start + count], new);
         self.replace(start, count, new, (sel, after), Kind::Other, true);
     }
 
@@ -535,6 +536,8 @@ impl Document {
             }
             let mut d = std::mem::take(&mut self.stories[i].doc);
             d.field_props = Some(props.clone());
+            d.track = self.track;
+            d.author = self.author.clone();
             let all = Selection {
                 anchor: Position::default(),
                 head: d.end(),
@@ -542,6 +545,7 @@ impl Document {
             let rev = d.revision();
             d.update_fields(all, cx, &mut none);
             d.field_props = None;
+            d.track = false;
             if d.revision() != rev {
                 d.clear_history();
                 self.stories[i].modified = true;
@@ -555,6 +559,8 @@ impl Document {
             }
             let mut d = std::mem::take(&mut self.notes[i].doc);
             d.field_props = Some(props.clone());
+            d.track = self.track;
+            d.author = self.author.clone();
             let all = Selection {
                 anchor: Position::default(),
                 head: d.end(),
@@ -562,6 +568,7 @@ impl Document {
             let rev = d.revision();
             d.update_fields(all, cx, &mut none);
             d.field_props = None;
+            d.track = false;
             if d.revision() != rev {
                 d.clear_history();
                 self.notes[i].xml = None;
