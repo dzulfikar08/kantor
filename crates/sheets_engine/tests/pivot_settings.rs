@@ -506,3 +506,173 @@ fn show_values_as() {
     let back = Workbook::open(&path).unwrap();
     assert_eq!(back.pivot_layout(s, 2, 0).unwrap().values, layout(&wb, s).values);
 }
+
+fn filter(kind: &str, value_field: Option<usize>, v1: &str, v2: &str) -> PivotFieldFilter {
+    PivotFieldFilter {
+        kind: kind.into(),
+        value_field,
+        value1: v1.into(),
+        value2: v2.into(),
+        top: true,
+    }
+}
+
+#[test]
+fn field_settings_subtotals_and_layout() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = data_book();
+    let s = new_pivot(&mut wb);
+    arrange(&mut wb, s, &["Region", "Product"]);
+    // Custom subtotals for Region: Sum and Count, below its items.
+    let mut l = layout(&wb, s);
+    l.fields[1].settings.subtotals = FieldSubtotals::Custom(vec![PivotFunc::Count, PivotFunc::Sum]);
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(
+        grid(&wb, s, (3, 0, 8, 1)),
+        rows(&[
+            &["East", ""],
+            &["Apples", "228"],
+            &["Pears", "45"],
+            &["Plums", "144"],
+            &["East Sum", "417"],
+            &["East Count", "4"],
+        ])
+    );
+    assert_eq!(
+        layout(&wb, s).fields[1].settings.subtotals,
+        FieldSubtotals::Custom(vec![PivotFunc::Sum, PivotFunc::Count])
+    );
+    // Region in tabular form with its labels repeated and a blank line
+    // after each region.
+    let mut l = layout(&wb, s);
+    l.fields[1].settings.subtotals = FieldSubtotals::None;
+    l.fields[1].settings.form = ReportLayout::Tabular;
+    l.fields[1].settings.repeat_labels = true;
+    l.fields[1].settings.blank_line = true;
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(
+        grid(&wb, s, (2, 0, 7, 2)),
+        rows(&[
+            &["Region", "Product", "Sum of Revenue"],
+            &["East", "Apples", "228"],
+            &["East", "Pears", "45"],
+            &["East", "Plums", "144"],
+            &["", "", ""],
+            &["North", "Apples", "216"],
+        ])
+    );
+    let got = layout(&wb, s).fields[1].settings.clone();
+    assert_eq!(got.form, ReportLayout::Tabular);
+    assert!(got.repeat_labels && got.blank_line);
+    let (path, p) = save(&mut wb, dir.path(), "field-settings.xlsx");
+    let table = &p["xl/pivotTables/pivotTable1.xml"];
+    assert!(table.contains("insertBlankRow=\"1\""), "{table}");
+    assert!(table.contains("fillDownLabels=\"1\""), "{table}");
+    assert!(table.contains("<i t=\"blank\">"), "{table}");
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(grid(&back, s, (2, 0, 7, 2)), grid(&wb, s, (2, 0, 7, 2)));
+    assert_eq!(back.pivot_layout(s, 2, 0).unwrap().fields[1].settings, got);
+    // The report layout still sets every field.
+    let mut l = layout(&wb, s);
+    l.layout = ReportLayout::Outline;
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(layout(&wb, s).fields[1].settings.form, ReportLayout::Outline);
+    // Custom subtotals saved and read back.
+    let mut l = layout(&wb, s);
+    l.fields[1].settings.subtotals = FieldSubtotals::Custom(vec![PivotFunc::Max]);
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    let (path, p) = save(&mut wb, dir.path(), "custom-subtotals.xlsx");
+    let table = &p["xl/pivotTables/pivotTable1.xml"];
+    assert!(table.contains("maxSubtotal=\"1\""), "{table}");
+    assert!(table.contains("<item t=\"max\"/>"), "{table}");
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(back.pivot_layout(s, 2, 0).unwrap().refresh_problem, None);
+    assert_eq!(grid(&back, s, (2, 0, 9, 2)), grid(&wb, s, (2, 0, 9, 2)));
+}
+
+#[test]
+fn sorting_and_filters() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = data_book();
+    let s = new_pivot(&mut wb);
+    arrange(&mut wb, s, &["Region"]);
+    // Z to A.
+    let mut l = layout(&wb, s);
+    l.fields[1].settings.sort = PivotSort::Descending;
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(labels(&wb, s)[1..4], ["West", "North", "East"]);
+    // By value, smallest first.
+    let mut l = layout(&wb, s);
+    l.fields[1].settings.sort = PivotSort::Ascending;
+    l.fields[1].settings.sort_by_value = Some(0);
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(labels(&wb, s)[1..4], ["West", "North", "East"]);
+    let (_, p) = save(&mut wb, dir.path(), "sort-by-value.xlsx");
+    assert!(p["xl/pivotTables/pivotTable1.xml"].contains("<autoSortScope>"));
+    let mut l = layout(&wb, s);
+    l.fields[1].settings.sort_by_value = None;
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(labels(&wb, s)[1..4], ["East", "North", "West"]);
+
+    // Label filters.
+    let mut l = layout(&wb, s);
+    l.fields[1].settings.filter = Some(filter("captionBeginsWith", None, "n", ""));
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(labels(&wb, s), ["Row Labels", "North", "Grand Total"]);
+    assert_eq!(wb.display_value(s, 4, 1), "396");
+    let mut l = layout(&wb, s);
+    l.fields[1].settings.filter = Some(filter("captionNotEqual", None, "west", ""));
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(labels(&wb, s)[1..3], ["East", "North"]);
+    let (path, p) = save(&mut wb, dir.path(), "label-filter.xlsx");
+    assert!(p["xl/pivotTables/pivotTable1.xml"].contains("type=\"captionNotEqual\""));
+    let back = Workbook::open(&path).unwrap();
+    let bl = back.pivot_layout(s, 2, 0).unwrap();
+    assert_eq!(bl.refresh_problem, None);
+    assert_eq!(bl.fields[1].settings.filter, layout(&wb, s).fields[1].settings.filter);
+
+    // Value filters: greater than, between, Top 10.
+    let mut l = layout(&wb, s);
+    l.fields[1].settings.filter = Some(filter("valueGreaterThan", Some(0), "300", ""));
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(labels(&wb, s)[1..4], ["East", "North", "Grand Total"]);
+    let mut l = layout(&wb, s);
+    l.fields[1].settings.filter = Some(filter("valueBetween", Some(0), "250", "400"));
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(labels(&wb, s)[1..4], ["North", "West", "Grand Total"]);
+    let mut l = layout(&wb, s);
+    let mut top = filter("count", Some(0), "1", "");
+    top.top = false;
+    l.fields[1].settings.filter = Some(top);
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(labels(&wb, s)[1..3], ["West", "Grand Total"]);
+    let (path, _) = save(&mut wb, dir.path(), "top10.xlsx");
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(
+        back.pivot_layout(s, 2, 0).unwrap().fields[1].settings.filter,
+        layout(&wb, s).fields[1].settings.filter
+    );
+    // A value filter needs its value field.
+    let mut l = layout(&wb, s);
+    l.fields[1].settings.filter = Some(filter("valueGreaterThan", None, "1", ""));
+    assert!(wb.set_pivot_layout(s, 2, 0, &l).is_err());
+
+    // Date filters on the dates.
+    arrange(&mut wb, s, &["Date"]);
+    let mut l = layout(&wb, s);
+    l.fields[1].settings.filter = None;
+    l.fields[0].settings.filter = Some(filter("dateBetween", None, "2026-01-01", "1/31/2026"));
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(labels(&wb, s).len(), 5, "three January days");
+    let mut l = layout(&wb, s);
+    l.fields[0].settings.filter = Some(filter("Q1", None, "", ""));
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(labels(&wb, s).len(), 12, "January to March");
+    let (path, p) = save(&mut wb, dir.path(), "date-filter.xlsx");
+    assert!(p["xl/pivotTables/pivotTable1.xml"].contains("<dynamicFilter type=\"Q1\"/>"));
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(back.pivot_layout(s, 2, 0).unwrap().refresh_problem, None);
+    // Undo takes the filter away.
+    assert!(wb.undo().unwrap());
+    assert_eq!(labels(&wb, s).len(), 5);
+}
