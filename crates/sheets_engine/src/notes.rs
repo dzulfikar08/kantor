@@ -44,6 +44,27 @@ pub struct CellNote {
     pub shown: bool,
 }
 
+/// The notes on a copied or cut range (see [`Workbook::note_clip`]).
+#[derive(Debug, Clone)]
+pub struct NoteClip {
+    sheet_id: u32,
+    range: crate::CellRange,
+    notes: Vec<CellNote>,
+    cut: bool,
+}
+
+impl NoteClip {
+    /// Whether any copied cell has a note.
+    pub fn is_empty(&self) -> bool {
+        self.notes.is_empty()
+    }
+
+    /// Whether it was cut (the notes move).
+    pub fn is_cut(&self) -> bool {
+        self.cut
+    }
+}
+
 /// A note to write, at its current cell.
 #[derive(Debug, Clone)]
 pub(crate) struct NoteSave {
@@ -205,6 +226,103 @@ impl Workbook {
             self.put_notes(sheet, list);
         }
         Ok(changed)
+    }
+
+    /// The sheets' notes are the lists given (at the cells they are on
+    /// now), in the current history state: for an edit that made its state
+    /// already (sort, fill, paste) and moves or copies notes too, so they
+    /// undo as one step. Sheets whose notes didn't change are left out.
+    pub(crate) fn notes_with_edit(&mut self, lists: Vec<(u32, Vec<CellNote>)>) {
+        let lists: Vec<(u32, Vec<CellNote>)> = lists
+            .into_iter()
+            .map(|(sheet, mut list)| {
+                list.sort_by_key(|n| (n.row, n.col));
+                (self.sheet_id(sheet), list)
+            })
+            .collect();
+        if lists.is_empty() {
+            return;
+        }
+        self.change_edits(|e, layout| {
+            for (id, list) in lists {
+                e.notes.insert(id, (list, layout.clone()));
+            }
+        });
+    }
+
+    /// The notes of `sheet` now, as a list.
+    pub(crate) fn note_list(&self, sheet: u32) -> Vec<CellNote> {
+        self.notes_now(sheet).values().cloned().collect()
+    }
+
+    /// What Copy (or Cut) takes of the notes on `range` of `sheet`, for
+    /// [`Workbook::paste_tsv_with_notes`].
+    pub fn note_clip(&self, sheet: u32, range: crate::CellRange, cut: bool) -> NoteClip {
+        let mut notes: Vec<CellNote> = self
+            .notes_now(sheet)
+            .values()
+            .filter(|n| range.contains(n.row, n.col))
+            .cloned()
+            .collect();
+        notes.sort_by_key(|n| (n.row, n.col));
+        NoteClip {
+            sheet_id: self.sheet_id(sheet),
+            range,
+            notes,
+            cut,
+        }
+    }
+
+    /// Paste (see [`Workbook::paste_tsv`]) with the notes of the copied
+    /// cells, as Excel's Paste: the pasted cells get the copied cells'
+    /// notes (and lose their own); after Cut, the notes leave the cut
+    /// cells. One undo step.
+    pub fn paste_tsv_with_notes(
+        &mut self,
+        sheet: u32,
+        row: u32,
+        col: u32,
+        text: &str,
+        clip: &NoteClip,
+    ) -> Result<Option<crate::CellRange>> {
+        let source = self.sheet_index_of(clip.sheet_id);
+        let mut target_list = self.note_list(sheet);
+        let mut source_list = source.map(|s| self.note_list(s));
+        let Some(range) = self.paste_tsv(sheet, row, col, text)? else {
+            return Ok(None);
+        };
+        let mut lists = Vec::new();
+        // Cut: the notes leave where they were (before landing, so a move
+        // within the sheet keeps them).
+        if clip.cut
+            && let (Some(s), Some(list)) = (source, source_list.as_mut())
+        {
+            let before = list.len();
+            list.retain(|n| !clip.range.contains(n.row, n.col));
+            if s == sheet {
+                target_list.retain(|n| !clip.range.contains(n.row, n.col));
+            } else if list.len() != before {
+                lists.push((s, std::mem::take(list)));
+            }
+        }
+        let before = target_list.clone();
+        target_list.retain(|n| !range.contains(n.row, n.col));
+        for n in &clip.notes {
+            let r = row + (n.row - clip.range.top);
+            let c = col + (n.col - clip.range.left);
+            if range.contains(r, c) {
+                target_list.push(CellNote {
+                    row: r,
+                    col: c,
+                    ..n.clone()
+                });
+            }
+        }
+        if target_list != before || !lists.is_empty() {
+            lists.push((sheet, target_list));
+        }
+        self.notes_with_edit(lists);
+        Ok(Some(range))
     }
 
     fn check_note_cell(&self, sheet: u32, row: u32, col: u32) -> Result<()> {

@@ -622,6 +622,41 @@ Tests: `test/user_model/test_kantor_fast_fill.rs`
 undo/redo rounds each; `fill_records_replay_on_a_remote_copy`), with the
 section 20 tests unchanged.
 
+## 23. Deleting and copying sheets as Excel does
+
+Why: Kantor's sheet tabs (Insert, Delete, Move or Copy). Upstream's
+`delete_sheet` left formulas and defined names naming the deleted sheet
+(a sheet added later under that name took them over, where Excel shows
+`#REF!`), kept the sheet's local names (the writer then panicked looking
+up their `localSheetId`) and tables, and its undo put back only part of
+the sheet (no notes, conditional formats, links or names). Upstream's
+`duplicate_sheet` always names the copy `Name (n)` and puts it right after
+its source.
+
+What (new `src/kantor_sheets.rs`; `src/user_model/{history,undo_redo}.rs`,
+`src/new_empty.rs`, `src/kantor_changes.rs`, `src/lib.rs`):
+
+* `UserModel::kantor_delete_sheet`: references to the sheet in other
+  sheets' formulas and in defined names become `#REF!` (`=Sheet2!A1*2` →
+  `=#REF!*2`), the sheet's local names and its tables go.
+  `Diff::KantorDeleteSheet` keeps the worksheet whole, the formulas and
+  names before and the tables: undo puts all of it back.
+* `UserModel::kantor_insert_sheet(name, index)`: a new sheet with a given
+  name and place (recorded as upstream's `Diff::NewSheet`).
+* `UserModel::kantor_copy_sheet(source, name, index)`: upstream's
+  duplicate (cells, styles, merges, rows and columns, notes, conditional
+  formats, local names) with the name and place chosen
+  (`Model::duplicate_sheet_as`, which `duplicate_sheet` now calls with no
+  name). `Diff::KantorCopySheet` undoes by dropping the copy and its names,
+  redoes by copying again.
+* `KantorChanges` treats both like the other sheet diffs (everything
+  recalculates).
+* `rename_sheet_by_index` also renames the sheet in its tables'
+  `sheet_name` (upstream left the tables on a sheet that no longer
+  existed).
+
+Tests: `test/user_model/test_kantor_sheets.rs`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

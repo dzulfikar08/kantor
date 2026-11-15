@@ -2863,13 +2863,9 @@ impl Workbook {
     /// including the header row.
     pub(crate) fn read_source(&self, cache: &Cache) -> Result<(u32, Area, SourceData)> {
         let model = self.model.get_model();
+        // A sheet renamed since the file was opened is found by its name then.
         let sheet_index = |name: &str| -> Result<u32> {
-            model
-                .workbook
-                .worksheets
-                .iter()
-                .position(|w| w.name.eq_ignore_ascii_case(name))
-                .map(|i| i as u32)
+            self.sheet_index_by_name(name)
                 .ok_or_else(|| anyhow!("its source sheet {name:?} is gone"))
         };
         let (sheet, mut area) = match cache.source.as_ref() {

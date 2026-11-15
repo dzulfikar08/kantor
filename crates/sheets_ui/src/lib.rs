@@ -67,6 +67,7 @@ mod recovery;
 mod row_heights;
 mod row_layout;
 mod saving;
+mod sheet_tab_ui;
 mod spell_ui;
 // Upstream code, kept close to GPUI Kit's so it can be compared.
 #[allow(dead_code, clippy::all)]
@@ -79,7 +80,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui_kit::component::{
-    Sizable as _, h_flex,
+    Sizable as _,
+    button::{Button, ButtonVariants as _},
+    h_flex,
     input::{Input, InputEvent, InputState},
     menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
     v_flex,
@@ -93,6 +96,7 @@ use table::{Column, DataTable, TableDelegate, TableEvent, TableState};
 
 mod notes_ui;
 pub use notes_ui::NoteCommand;
+pub use sheet_tab_ui::TabCommand;
 mod toolbar;
 
 pub use ai::AiTarget;
@@ -1217,8 +1221,12 @@ pub struct SheetsView {
     /// `Workbook::chart_sheet_name`), and what has focus while it shows.
     chart_tab: Option<usize>,
     chart_focus: FocusHandle,
-    /// The Rename prompt of a chart sheet's tab.
-    chart_rename: Option<chart_sheet_ui::ChartRename>,
+    /// A sheet tab dialog (Rename, Delete, Move or Copy, Tab Color,
+    /// Unhide; see [`sheet_tab_ui`]).
+    tab_dialog: Option<sheet_tab_ui::TabDialog>,
+    /// The notes of the cells last copied or cut, with the clipboard text
+    /// they go with (Paste brings them while the clipboard holds it).
+    note_clip: Option<(String, sheets_engine::NoteClip)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1272,7 +1280,8 @@ impl SheetsView {
             opening: None,
             busy_focus: cx.focus_handle(),
             chart_tab: None,
-            chart_rename: None,
+            tab_dialog: None,
+            note_clip: None,
             chart_focus: cx.focus_handle(),
             bench: bench::ScrollBench::from_env(),
             row_resize: None,
@@ -1789,13 +1798,20 @@ impl SheetsView {
         self.paste(&Paste, window, cx);
     }
 
-    /// Put the selected range on the clipboard as tab-separated inputs.
-    fn copy_range(&mut self, cx: &mut Context<Self>) -> CellRange {
+    /// Put the selected range on the clipboard as tab-separated inputs, and
+    /// keep its notes for Paste (`cut`: they move).
+    fn copy_range(&mut self, cut: bool, cx: &mut Context<Self>) -> CellRange {
         let range = self.op_range(cx).unwrap_or_else(|| self.range(cx));
-        let text = {
+        let (text, clip) = {
             let grid = self.table.read(cx).delegate();
-            grid.book.range_tsv(grid.sheet, range)
+            (
+                grid.book.range_tsv(grid.sheet, range),
+                grid.book.note_clip(grid.sheet, range, cut),
+            )
         };
+        // Notes are pasted with the cells while the clipboard still holds
+        // this copy.
+        self.note_clip = Some((text.clone(), clip));
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         range
     }
@@ -1804,7 +1820,7 @@ impl SheetsView {
         if self.editing.is_some() {
             return;
         }
-        let range = self.copy_range(cx);
+        let range = self.copy_range(false, cx);
         self.status = tf("Copied {}", &[&range.name()]).into();
         cx.notify();
     }
@@ -1814,7 +1830,7 @@ impl SheetsView {
         if self.editing.is_some() || self.blocked(cx) {
             return;
         }
-        let range = self.copy_range(cx);
+        let range = self.copy_range(true, cx);
         self.clear_selected(window, cx);
         self.status = tf("Cut {}", &[&range.name()]).into();
         cx.notify();
@@ -1832,10 +1848,23 @@ impl SheetsView {
             return;
         };
         let (row, col) = self.selected;
+        // The notes of the cells copied in Kantor go with them (Excel's
+        // Paste); after Cut they move, once.
+        let clip = self
+            .note_clip
+            .as_ref()
+            .filter(|(copied, _)| *copied == text)
+            .map(|(_, clip)| clip.clone());
+        if clip.as_ref().is_some_and(|c| c.is_cut()) {
+            self.note_clip = None;
+        }
         let result = self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
             let sheet = grid.sheet;
-            let res = grid.book.paste_tsv(sheet, row, col, &text);
+            let res = match &clip {
+                Some(clip) => grid.book.paste_tsv_with_notes(sheet, row, col, &text, clip),
+                None => grid.book.paste_tsv(sheet, row, col, &text),
+            };
             if let Ok(Some(range)) = &res {
                 grid.end = (range.bottom, range.right);
                 grid.span = Span::Cells;
@@ -2015,6 +2044,10 @@ impl SheetsView {
         if self.editing.is_some() || self.blocked(cx) {
             return;
         }
+        let shown = {
+            let grid = self.table.read(cx).delegate();
+            grid.book.sheet_id(grid.sheet)
+        };
         let result = self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
             let res = if redo {
@@ -2027,10 +2060,9 @@ impl SheetsView {
             cx.notify();
             res
         });
-        // Undone or redone away: a chart sheet's deletion or hiding.
-        if self.chart_tab.is_some() && !self.on_chart_sheet(cx) {
-            self.leave_chart_sheet(window, cx);
-        }
+        // Sheets added, removed, moved or hidden by the step: show the
+        // sheet that was shown where it is now, or the workbook's choice.
+        self.follow_sheet(shown, window, cx);
         self.status = match (result, redo) {
             (Ok(true), false) => i18n::t("Undone").into(),
             (Ok(true), true) => i18n::t("Redone").into(),
@@ -2394,17 +2426,23 @@ impl SheetsView {
         let chart = self.shown_chart_sheet(cx).map(|(k, _)| k);
         let grid = self.table.read(cx).delegate();
         let names = grid.book.sheet_names();
-        let hidden = std::rc::Rc::new(grid.book.hidden_chart_sheets());
-        let tabs: Vec<(Tab, String)> = grid
+        let any_hidden =
+            !grid.book.hidden_sheets().is_empty() || !grid.book.hidden_chart_sheets().is_empty();
+        let tabs: Vec<(Tab, String, Option<Hsla>)> = grid
             .book
             .tabs()
             .into_iter()
             .map(|tab| {
-                let name = match tab {
-                    Tab::Sheet(i) => names[i as usize].clone(),
-                    Tab::Chart(k) => grid.book.chart_sheet_name(k).unwrap_or_default().to_owned(),
+                let (name, color) = match tab {
+                    Tab::Sheet(i) => (
+                        names[i as usize].clone(),
+                        grid.book
+                            .tab_color(i)
+                            .map(|c| look::hsla(grid.book.tab_color_rgb(c))),
+                    ),
+                    Tab::Chart(k) => (grid.book.chart_sheet_name(k).unwrap_or_default(), None),
                 };
-                (tab, name)
+                (tab, name, color)
             })
             .collect();
         let active = match chart {
@@ -2412,19 +2450,20 @@ impl SheetsView {
             None => Tab::Sheet(grid.sheet),
         };
         let count = tabs.len();
+        let add_view = cx.entity().downgrade();
         h_flex()
             .gap(SPACE_1)
-            .children(tabs.into_iter().enumerate().map(|(i, (tab, name))| {
+            .children(tabs.into_iter().enumerate().map(|(i, (tab, name, color))| {
                 let view = cx.entity().downgrade();
                 let menu_view = view.clone();
-                let hidden = hidden.clone();
                 let selected = tab == active;
                 let id = match tab {
                     Tab::Sheet(ix) => ElementId::from(("sheet-tab", ix as usize)),
                     Tab::Chart(k) => ElementId::from(("chart-sheet-tab", k)),
                 };
-                let tab_div = div()
+                div()
                     .id(id)
+                    .relative()
                     .h(CONTROL_SM)
                     .px(SPACE_5)
                     .flex()
@@ -2451,34 +2490,57 @@ impl SheetsView {
                         )
                     })
                     .child(name)
-                    .on_click(move |_, window, cx| {
-                        let _ = view.update(cx, |this, cx| match tab {
-                            Tab::Sheet(ix) => this.select_sheet(ix, window, cx),
-                            Tab::Chart(k) => this.select_chart_sheet(k, window, cx),
-                        });
-                    });
-                // Excel's tab menu: chart sheets' (worksheets' only lists
-                // hidden chart sheets to unhide).
-                if matches!(tab, Tab::Chart(_)) || !hidden.is_empty() {
-                    tab_div
-                        .context_menu(move |menu, _, _| match tab {
-                            Tab::Chart(k) => chart_sheet_ui::chart_tab_menu(
-                                menu,
-                                k,
-                                i == 0,
-                                i + 1 == count,
-                                &hidden,
-                                &menu_view,
-                            ),
-                            Tab::Sheet(_) => {
-                                chart_sheet_ui::unhide_items(menu, &hidden, &menu_view)
+                    // Tab Color: a bar along the tab's foot (a full one on
+                    // the tab shown, as Excel underlines it).
+                    .when_some(color, |d, color| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .bottom(px(1.))
+                                .left(if selected { px(2.) } else { SPACE_3 })
+                                .right(if selected { px(2.) } else { SPACE_3 })
+                                .h(px(3.))
+                                .rounded(px(1.5))
+                                .bg(color),
+                        )
+                    })
+                    .on_click(move |e, window, cx| {
+                        let twice = e.click_count() >= 2;
+                        let _ = view.update(cx, |this, cx| {
+                            match tab {
+                                Tab::Sheet(ix) => this.select_sheet(ix, window, cx),
+                                Tab::Chart(k) => this.select_chart_sheet(k, window, cx),
                             }
-                        })
-                        .into_any_element()
-                } else {
-                    tab_div.into_any_element()
-                }
+                            // A double click renames, as in Excel.
+                            if twice {
+                                this.rename_sheet_tab(Some(tab), window, cx);
+                            }
+                        });
+                    })
+                    .context_menu(move |menu, _, _| {
+                        sheet_tab_ui::tab_menu(
+                            menu,
+                            tab,
+                            i == 0,
+                            i + 1 == count,
+                            any_hidden,
+                            &menu_view,
+                        )
+                    })
+                    .into_any_element()
             }))
+            // Insert Worksheet, after the sheet shown (Excel's + button).
+            .child(
+                Button::new("sheet-tab-add")
+                    .ghost()
+                    .xsmall()
+                    .icon(gpui_kit::assets::IconName::Plus)
+                    .tooltip(i18n::t("New Sheet"))
+                    .on_click(move |_, window, cx| {
+                        let _ =
+                            add_view.update(cx, |this, cx| this.insert_sheet_tab(None, window, cx));
+                    }),
+            )
     }
 }
 
@@ -2728,7 +2790,7 @@ impl Render for SheetsView {
             .children(self.render_dv_dialog(cx))
             .children(self.render_spell_dialog(cx))
             .children(self.render_note_editor(cx))
-            .children(self.render_chart_rename(cx))
+            .children(self.render_tab_dialog(cx))
             .into_any_element()
     }
 }

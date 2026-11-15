@@ -179,6 +179,23 @@ impl<'a> UserModel<'a> {
                     self.model.workbook.worksheet_mut(*sheet)?.kantor_auto_filter =
                         old_value.clone()
                 }
+                Diff::KantorDeleteSheet(deleted) => {
+                    needs_evaluation = true;
+                    self.model.kantor_restore_sheet(deleted)?;
+                    self.set_selected_sheet(deleted.index)?;
+                }
+                Diff::KantorCopySheet { source, index, .. } => {
+                    needs_evaluation = true;
+                    let id = self.model.workbook.worksheet(*index)?.sheet_id;
+                    self.model
+                        .workbook
+                        .defined_names
+                        .retain(|dn| dn.sheet_id != Some(id));
+                    self.model.workbook.worksheets.remove(*index as usize);
+                    self.model.reset_parsed_structures();
+                    self.view.sheets.remove(&id);
+                    self.set_selected_sheet(*source)?;
+                }
                 Diff::KantorSetTable {
                     name, old_value, ..
                 } => self
@@ -802,6 +819,22 @@ impl<'a> UserModel<'a> {
                 } => {
                     self.model.workbook.worksheet_mut(*sheet)?.kantor_auto_filter =
                         new_value.clone()
+                }
+                Diff::KantorDeleteSheet(deleted) => {
+                    needs_evaluation = true;
+                    let count = self.model.workbook.worksheets.len() as u32;
+                    self.model.kantor_delete_sheet(deleted.index)?;
+                    self.view.sheets.remove(&deleted.worksheet.sheet_id);
+                    self.set_selected_sheet(deleted.index.min(count.saturating_sub(2)))?;
+                }
+                Diff::KantorCopySheet {
+                    source,
+                    index,
+                    name,
+                } => {
+                    needs_evaluation = true;
+                    self.model.kantor_copy_sheet(*source, name, *index)?;
+                    self.set_selected_sheet(*index)?;
                 }
                 Diff::KantorSetTable {
                     name, new_value, ..

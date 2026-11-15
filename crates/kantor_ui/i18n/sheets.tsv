@@ -782,3 +782,58 @@ This sheet has no notes	Lembar ini tidak memiliki catatan
 Note saved	Catatan disimpan
 Note on {}	Catatan pada {}
 Notes	Catatan
+# Sheet tabs (sheet_tab_ui)
+A sheet name can't be blank	Nama lembar tidak boleh kosong
+A sheet name can have at most 31 characters	Nama lembar paling banyak 31 karakter
+A sheet name can't contain \ / ? * [ ] or :	Nama lembar tidak boleh berisi \ / ? * [ ] atau :
+A sheet name can't begin or end with an apostrophe	Nama lembar tidak boleh diawali atau diakhiri tanda petik
+“History” is a name Excel keeps for itself	“History” adalah nama yang dicadangkan Excel
+That name is already taken. Try a different one.	Nama itu sudah dipakai. Coba nama lain.
+A workbook must contain at least one visible worksheet	Buku kerja harus berisi sekurang-kurangnya satu lembar kerja yang terlihat
+Inserted a sheet	Lembar disisipkan
+Deleted “{}” (Undo brings it back)	“{}” dihapus (Urungkan untuk mengembalikannya)
+Renamed to “{}”	Nama diganti menjadi “{}”
+Copied “{}”	“{}” disalin
+Tab colour set	Warna tab diatur
+Tab colour removed	Warna tab dihapus
+Hid “{}”	“{}” disembunyikan
+No sheet is hidden	Tidak ada lembar yang tersembunyi
+Unhid “{}”	“{}” ditampilkan lagi
+Rename sheet	Ganti nama lembar
+Delete sheet	Hapus lembar
+“{}” will be deleted with everything on it. Formulas that use it will show #REF!.	“{}” akan dihapus beserta seluruh isinya. Rumus yang memakainya akan menampilkan #REF!.
+Undo brings it back.	Urungkan untuk mengembalikannya.
+(move to end)	(pindahkan ke akhir)
+Move or Copy	Pindahkan atau Salin
+Move “{}”	Pindahkan “{}”
+Before sheet:	Sebelum lembar:
+Create a copy	Buat salinan
+Chart sheets can be moved, not copied.	Lembar bagan dapat dipindahkan, tetapi tidak dapat disalin.
+Lighter	Lebih terang
+Darker	Lebih gelap
+Theme Colors	Warna Tema
+Standard Colors	Warna Standar
+No Color	Tanpa Warna
+Tab Color	Warna Tab
+Unhide	Tampilkan
+Unhide sheet:	Tampilkan lembar:
+Background 2	Latar Belakang 2
+Text 2	Teks 2
+Insert	Sisipkan
+Move or Copy…	Pindahkan atau Salin…
+Move Left	Pindahkan ke Kiri
+Move Right	Pindahkan ke Kanan
+Tab Color…	Warna Tab…
+Hide	Sembunyikan
+Unhide…	Tampilkan…
+Chart sheets have no tab colour in Kantor	Lembar bagan tidak memiliki warna tab di Kantor
+New Sheet	Lembar Baru
+Insert Sheet	Sisipkan Lembar
+Sheets · a new worksheet after the sheet shown	Sheets · lembar kerja baru setelah lembar yang ditampilkan
+Delete Sheet	Hapus Lembar
+Sheets · the sheet shown	Sheets · lembar yang ditampilkan
+Rename Sheet	Ganti Nama Lembar
+Move or Copy Sheet…	Pindahkan atau Salin Lembar…
+Hide Sheet	Sembunyikan Lembar
+Unhide Sheet…	Tampilkan Lembar…
+Sheets · hidden sheets	Sheets · lembar tersembunyi

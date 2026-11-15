@@ -16,6 +16,22 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   menu: Rename, Delete, Move Left, Move Right, Hide and Unhide; worksheet tabs offer Unhide for
   hidden chart sheets. Each change is one undo step, and a chart sheet deleted, saved and then
   brought back with Undo is saved again.
+- Sheets: worksheet tabs have Excel's commands, in one right-click menu shared with chart sheets
+  (and in the command palette): Insert, Delete (it asks first when the sheet has something on
+  it), Rename (or double-click the tab; Excel's name rules), Move or Copy… (a "Before sheet"
+  list and "Create a copy"), Move Left and Move Right, Tab Color… (the workbook's theme
+  colours with their tints, Excel's standard colours, No Color; the colour shows under the
+  tab), Hide and Unhide… (hidden chart sheets too; the last visible worksheet can't be hidden
+  or deleted). A + button after the last tab adds a sheet. Renaming a sheet rewrites the
+  formulas, names and charts that refer to it; deleting one turns references to it into
+  `#REF!`, as Excel does; a copy (`Sheet1 (2)`) brings the cells, formats, merged cells,
+  column widths, conditional formatting, data validation, notes, print settings and the sheet's
+  own names. Each command is one undo step, and the order, hidden sheets and tab colours are
+  saved.
+- Sheets: notes follow their cells as in Excel. Sorting moves them with their rows, Paste brings
+  the notes of cells copied in Kantor (and replaces those of the cells pasted over), Cut and
+  Paste moves them, and the fill handle copies them along with the cells. Each is still one undo
+  step.
 
 ### Fixed
 - Sheets: workbooks from other programs that Kantor refused or crashed on now open (found

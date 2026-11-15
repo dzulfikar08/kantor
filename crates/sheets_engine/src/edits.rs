@@ -68,6 +68,14 @@ impl Workbook {
     /// Make a new history state (one undo step, no IronCalc step) whose
     /// edits are the current ones changed by `f`.
     pub(crate) fn own_edit(&mut self, f: impl FnOnce(&mut Edits, &Layout)) {
+        self.history.edited_steps(0);
+        self.change_edits(f);
+    }
+
+    /// Change the current state's edits (`f`) without a new state: for an
+    /// edit that made one already (an IronCalc step) and changes features
+    /// IronCalc doesn't model too.
+    pub(crate) fn change_edits(&mut self, f: impl FnOnce(&mut Edits, &Layout)) {
         let layout = self.history.layout();
         let mut edits = (*self.history.edits()).clone();
         f(&mut edits, &layout);
@@ -80,7 +88,8 @@ impl Workbook {
         t.tables.extend(edits.removed_tables.iter().cloned());
         t.file_charts.extend(edits.file_charts.keys().copied());
         t.notes.extend(edits.notes.keys().copied());
-        self.history.edited_steps(0);
         self.history.set_edits(Arc::new(edits));
+        // Answers cached for this state since its IronCalc step are stale.
+        *self.cache.borrow_mut() = crate::Cache::default();
     }
 }

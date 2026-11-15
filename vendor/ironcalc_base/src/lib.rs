@@ -61,6 +61,8 @@ mod kantor_recalc;
 mod kantor_cf;
 mod kantor_validation;
 pub mod kantor_tables;
+// KANTOR PATCH (sheet tabs): Excel's Delete and Move or Copy.
+mod kantor_sheets;
 /// KANTOR PATCH (pivot): what GETPIVOTDATA reads (`Model::kantor_pivots`).
 pub mod kantor_pivot {
     pub use crate::functions::kantor_pivot::{PivotGrid, PivotValueCell};
