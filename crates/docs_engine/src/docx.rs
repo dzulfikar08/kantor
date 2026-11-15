@@ -1899,7 +1899,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         track = track_changes_on(&src);
         note_settings = crate::notes::settings_note_props(&src);
         even_odd = settings_even_odd(&src);
-        default_tab = crate::section::settings_default_tab(&src).unwrap_or(720);
+        default_tab = crate::tabs::settings_default_tab(&src).unwrap_or(720);
         settings = Some((name, src));
     }
     let mut comments = Vec::new();
@@ -2930,10 +2930,20 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
         .settings
         .as_ref()
         .is_some_and(|(_, s)| track_changes_on(s));
-    if (doc.even_odd_headers() != even_odd_was || doc.track_changes() != track_was)
+    let tab_was = pkg
+        .settings
+        .as_ref()
+        .and_then(|(_, s)| crate::tabs::settings_default_tab(s))
+        .unwrap_or(720);
+    if (doc.even_odd_headers() != even_odd_was
+        || doc.track_changes() != track_was
+        || doc.default_tab() != tab_was)
         && let Some((name, src)) = &pkg.settings
     {
         let mut out = src.clone();
+        if doc.default_tab() != tab_was {
+            out = crate::tabs::set_settings_default_tab(&out, doc.default_tab());
+        }
         if doc.even_odd_headers() != even_odd_was {
             out = set_settings_even_odd(&out, doc.even_odd_headers());
         }

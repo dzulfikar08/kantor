@@ -463,8 +463,12 @@ fn tab_stops_from_paragraph_and_settings() {
     assert_eq!(
         stops,
         [
-            (1440, docs_engine::TabKind::Left),
-            (9026, docs_engine::TabKind::Right)
+            docs_engine::TabStop::new(1440, docs_engine::TabKind::Left, Default::default()),
+            docs_engine::TabStop::new(
+                9026,
+                docs_engine::TabKind::Right,
+                docs_engine::TabLeader::Dot
+            )
         ]
     );
     // Through a save and a reopen (the element is kept verbatim).

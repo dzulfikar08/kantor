@@ -123,14 +123,22 @@ pub fn layout_paragraph(
     lp.tabs = doc
         .tab_stops(p)
         .into_iter()
-        .filter(|(pos, _)| *pos > 0)
-        .map(|(pos, kind)| docs_layout::TabStop {
-            pos: tw(pos as u32),
-            align: match kind {
+        .map(|t| docs_layout::TabStop {
+            pos: t.pos as f32 / 15.0,
+            align: match t.kind {
                 docs_engine::TabKind::Left => docs_layout::TabAlign::Left,
                 docs_engine::TabKind::Center => docs_layout::TabAlign::Center,
                 docs_engine::TabKind::Right => docs_layout::TabAlign::Right,
                 docs_engine::TabKind::Decimal => docs_layout::TabAlign::Decimal,
+                docs_engine::TabKind::Bar => docs_layout::TabAlign::Bar,
+            },
+            leader: match t.leader {
+                docs_engine::TabLeader::None => docs_layout::Leader::None,
+                docs_engine::TabLeader::Dot => docs_layout::Leader::Dot,
+                docs_engine::TabLeader::Hyphen => docs_layout::Leader::Hyphen,
+                docs_engine::TabLeader::Underscore => docs_layout::Leader::Underscore,
+                docs_engine::TabLeader::Heavy => docs_layout::Leader::Heavy,
+                docs_engine::TabLeader::MiddleDot => docs_layout::Leader::MiddleDot,
             },
         })
         .collect();

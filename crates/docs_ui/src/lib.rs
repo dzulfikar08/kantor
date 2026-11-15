@@ -2019,6 +2019,13 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                 r[3] = r[3].max(1.0 / z);
                 window.paint_quad(fill(rect(page, r), layout_color(rule.color)));
             }
+            // Tab leaders (dot leaders in a table of contents) and bar tabs.
+            for rule in paged.tab_rules(page) {
+                let mut r = rule.rect;
+                r[2] = r[2].max(1.0 / z);
+                r[3] = r[3].max(1.0 / z);
+                window.paint_quad(fill(rect(page, r), layout_color(rule.color)));
+            }
             // Tracked deletions: struck through in the author's colour.
             if !f.laid.strikes.is_empty() {
                 for rule in paged.strike_rules(page, &f.laid.strikes) {
@@ -2070,7 +2077,8 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                             window.paint_image(b, b, Corners::default(), data.clone(), 0, false);
                     }
                 }
-                for rule in l.paged.pages.first().map_or(&[][..], |p| &p.rules[..]) {
+                let first = l.paged.pages.first().map_or(&[][..], |p| &p.rules[..]);
+                for rule in first.iter().cloned().chain(l.paged.tab_rules(0)) {
                     let mut r = rule.rect;
                     r[0] += placed.x;
                     r[1] += placed.y;

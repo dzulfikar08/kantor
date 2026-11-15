@@ -194,7 +194,7 @@ impl StyleSheet {
     }
 
     /// The style chain for a paragraph, root first.
-    fn chain(&self, style: Option<&str>) -> Vec<&Style> {
+    pub(crate) fn chain(&self, style: Option<&str>) -> Vec<&Style> {
         let start = match style {
             Some(id) => self.get(id).or_else(|| self.default_para_style()),
             None => self.default_para_style(),

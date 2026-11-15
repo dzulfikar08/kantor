@@ -233,15 +233,54 @@ pub enum TabAlign {
     Left,
     Center,
     Right,
-    /// On the decimal point (laid out as Right up to the number's end).
+    /// The first `.` after the tab sits on the stop (no `.`: as Right).
     Decimal,
+    /// Not a stop for tabs: a vertical line through the paragraph's lines.
+    Bar,
 }
 
-/// A tab stop: position from the column's left edge (px) and alignment.
+/// What fills the space a tab takes (Word's leaders).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Leader {
+    #[default]
+    None,
+    Dot,
+    Hyphen,
+    Underscore,
+    Heavy,
+    MiddleDot,
+}
+
+/// A tab stop: position from the column's left edge (px), alignment and
+/// leader.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TabStop {
     pub pos: f32,
     pub align: TabAlign,
+    pub leader: Leader,
+}
+
+impl TabStop {
+    pub fn new(pos: f32, align: TabAlign) -> Self {
+        Self {
+            pos,
+            align,
+            leader: Leader::None,
+        }
+    }
+
+    pub fn with_leader(self, leader: Leader) -> Self {
+        Self { leader, ..self }
+    }
+}
+
+/// How a tab character is drawn: its leader, in the tab's colour and size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TabFill {
+    pub leader: Leader,
+    pub color: Rgba,
+    /// Font size of the tab character, px.
+    pub size: f32,
 }
 
 impl Paragraph {
@@ -300,6 +339,10 @@ pub struct ParaLayout {
     pub labels: Vec<(usize, Layout<Rgba>, String)>,
     /// Objects by inline-box id: byte index and kind.
     pub objects: Vec<(usize, ObjectKind)>,
+    /// Per tab character (text order): how its space is filled.
+    pub tab_fills: Vec<TabFill>,
+    /// Bar tabs: x of each line from the column's left edge, px.
+    pub bars: Vec<f32>,
 }
 
 impl ParaLayout {
@@ -411,8 +454,26 @@ impl Engine {
             return self.layout_with_tabs(para, width, &[]);
         }
         let first = self.layout_with_tabs(para, width, &vec![0.01; tabs.len()]);
-        let widths = tab_widths(para, &first, &tabs, width);
-        self.layout_with_tabs(para, width, &widths)
+        let plan = tab_widths(para, &first, &tabs, width);
+        let widths: Vec<f32> = plan.iter().map(|p| p.0).collect();
+        let mut laid = self.layout_with_tabs(para, width, &widths);
+        laid.tab_fills = tabs
+            .iter()
+            .zip(&plan)
+            .map(|(&at, &(_, leader))| {
+                let span = para
+                    .spans
+                    .iter()
+                    .rev()
+                    .find(|s| s.range.start <= at && at < s.range.end);
+                TabFill {
+                    leader,
+                    color: span.and_then(|s| s.color).unwrap_or(Rgba::BLACK),
+                    size: span.and_then(|s| s.size_pt).unwrap_or(para.size_pt) * PT,
+                }
+            })
+            .collect();
+        laid
     }
 
     /// [`Self::layout_paragraph`] with the tabs (in text order) `tab_widths`
@@ -587,6 +648,13 @@ impl Engine {
             marker,
             labels,
             objects: para.objects.iter().map(|o| (o.index, o.kind)).collect(),
+            tab_fills: Vec::new(),
+            bars: para
+                .tabs
+                .iter()
+                .filter(|t| t.align == TabAlign::Bar)
+                .map(|t| t.pos)
+                .collect(),
         }
     }
 
@@ -886,20 +954,34 @@ fn on_line_end(layout: &Layout<Rgba>, k: usize, index: usize) -> usize {
 /// Inline box ids of tabs start here (object boxes use their index).
 const TAB_BOX: usize = 1 << 20;
 
-/// How wide each tab must be to reach its stop, from a layout with empty
-/// tabs (`tabs` are their byte offsets).
-fn tab_widths(para: &Paragraph, laid: &ParaLayout, tabs: &[usize], width: f32) -> Vec<f32> {
-    let mut out = vec![0.0f32; tabs.len()];
+/// How wide each tab must be to reach its stop, and its stop's leader,
+/// from a layout with empty tabs (`tabs` are their byte offsets), as Word:
+/// the next custom stop right of the tab (bar tabs aren't stops), the
+/// left indent of a hanging first line when that comes first, else the
+/// next default stop. Stops past the right indent act as if at it.
+fn tab_widths(
+    para: &Paragraph,
+    laid: &ParaLayout,
+    tabs: &[usize],
+    width: f32,
+) -> Vec<(f32, Leader)> {
+    let mut out = vec![(0.0f32, Leader::None); tabs.len()];
     let left = para.indent_left_pt * PT;
+    let right_edge = (width - para.indent_right_pt * PT).max(left + 8.0);
     let default = if para.default_tab > 1.0 {
         para.default_tab
     } else {
         12.7 * MM
     };
-    let mut stops = para.tabs.clone();
+    let mut stops: Vec<TabStop> = para
+        .tabs
+        .iter()
+        .filter(|t| t.align != TabAlign::Bar)
+        .copied()
+        .collect();
     stops.sort_by(|a, b| a.pos.total_cmp(&b.pos));
+    let min_w = para.size_pt * PT * 0.25;
     for line in laid.layout.lines() {
-        let end = line.text_range().end;
         // Tab boxes on this line, in order, with their x (column coords).
         let mut on_line: Vec<(usize, f32)> = Vec::new();
         let mut line_end_x = 0.0f32;
@@ -916,7 +998,7 @@ fn tab_widths(para: &Paragraph, laid: &ParaLayout, tabs: &[usize], width: f32) -
                 }
             }
         }
-        let _ = end;
+        let line_range = line.text_range();
         // Each tab moves what follows it; positions after an earlier tab
         // shift by that tab's width.
         let mut shift = 0.0f32;
@@ -927,33 +1009,46 @@ fn tab_widths(para: &Paragraph, laid: &ParaLayout, tabs: &[usize], width: f32) -
             let seg = (seg_end - x0).max(0.0);
             let custom = stops.iter().find(|t| t.pos > x + 0.5);
             // A hanging indent counts as a stop (Word's list tab).
-            let implicit = (left > x + 0.5).then_some(TabStop {
-                pos: left,
-                align: TabAlign::Left,
-            });
+            let implicit = (left > x + 0.5).then_some(TabStop::new(left, TabAlign::Left));
             let stop = match (custom, implicit) {
                 (Some(c), Some(i)) if i.pos < c.pos => i,
                 (Some(c), _) => *c,
                 (None, Some(i)) => i,
-                (None, None) => TabStop {
-                    pos: ((x / default).floor() + 1.0) * default,
-                    align: TabAlign::Left,
-                },
+                (None, None) => {
+                    TabStop::new(((x / default).floor() + 1.0) * default, TabAlign::Left)
+                }
             };
+            let pos = stop.pos.min(right_edge);
             let w = match stop.align {
-                TabAlign::Left => stop.pos - x,
-                TabAlign::Center => stop.pos - x - seg / 2.0,
-                TabAlign::Right | TabAlign::Decimal => stop.pos - x - seg,
+                TabAlign::Left | TabAlign::Bar => pos - x,
+                TabAlign::Center => pos - x - seg / 2.0,
+                TabAlign::Right => pos - x - seg,
+                TabAlign::Decimal => {
+                    // Up to the first '.' of the segment, if on this line.
+                    let start = tabs.get(k).map_or(0, |t| t + 1);
+                    let end = tabs.get(k + 1).copied().unwrap_or(para.text.len());
+                    let dot = para.text.get(start..end).and_then(|t| t.find('.'));
+                    match dot.map(|d| start + d) {
+                        Some(d) if d < line_range.end => {
+                            let c = Cursor::from_byte_index(&laid.layout, d, Affinity::Downstream);
+                            let dx = laid.dx + c.geometry(&laid.layout, 1.0).x0 as f32;
+                            pos - x - (dx - x0).clamp(0.0, seg)
+                        }
+                        _ => pos - x - seg,
+                    }
+                }
             };
-            // Past the stop already: at least a space's worth.
-            let w = w.clamp(para.size_pt * PT * 0.25, width.max(1.0));
+            // Past the stop already: at least a space's worth; never past
+            // the right indent (a little slack keeps the line from wrapping).
+            let aligned_end = stop.align != TabAlign::Left;
+            let room = right_edge - 0.05 - x - if aligned_end { seg } else { 0.0 };
+            let w = w.min(room).max(min_w).min(width.max(1.0));
             if let Some(slot) = out.get_mut(k) {
-                *slot = w;
+                *slot = (w, stop.leader);
             }
             shift += w;
         }
     }
-    let _ = tabs;
     out
 }
 
@@ -1677,6 +1772,43 @@ impl PagedDocument {
         out
     }
 
+    /// Tab leaders and bar-tab lines on a page, ready to fill. Leaders
+    /// are drawn as shapes (dots, dashes, lines) sized from the tab's font
+    /// size, the dots on a grid from the column's edge so they line up from
+    /// line to line as Word's do.
+    pub fn tab_rules(&self, page: usize) -> Vec<RuleRect> {
+        let mut out = Vec::new();
+        let Some(p) = self.pages.get(page) else {
+            return out;
+        };
+        for pl in &p.lines {
+            let l = &self.layouts[pl.para];
+            for &bx in &l.bars {
+                out.push(RuleRect {
+                    rect: [pl.x + bx - 0.5, pl.top, 1.0, pl.height],
+                    color: Rgba::BLACK,
+                });
+            }
+            if l.tab_fills.iter().all(|f| f.leader == Leader::None) {
+                continue;
+            }
+            let Some(line) = l.layout.get(pl.line) else {
+                continue;
+            };
+            let baseline = pl.dy + line.metrics().baseline;
+            for item in line.items() {
+                if let PositionedLayoutItem::InlineBox(b) = item
+                    && b.id as usize >= TAB_BOX
+                    && let Some(fill) = l.tab_fills.get(b.id as usize - TAB_BOX)
+                {
+                    let x0 = pl.dx + b.x;
+                    leader_rects(&mut out, *fill, pl.x, x0, x0 + b.width, baseline);
+                }
+            }
+        }
+        out
+    }
+
     /// Object boxes on a page.
     pub fn objects(&self, page: usize) -> Vec<PlacedObject> {
         let mut out = Vec::new();
@@ -1919,6 +2051,62 @@ impl PagedDocument {
 }
 
 /// Glyph runs of one layout line, offset to page coordinates.
+/// Shapes for a leader from `x0` to `x1` on `baseline` (`grid` is the
+/// column's left edge, where the dot grid starts).
+fn leader_rects(
+    out: &mut Vec<RuleRect>,
+    fill: TabFill,
+    grid: f32,
+    x0: f32,
+    x1: f32,
+    baseline: f32,
+) {
+    let s = fill.size.max(1.0);
+    let color = fill.color;
+    let mut push = |x: f32, y: f32, w: f32, h: f32| {
+        out.push(RuleRect {
+            rect: [x, y, w, h],
+            color,
+        });
+    };
+    // Repeated marks `mark` wide every `step`, kept off the text at both ends.
+    let mut repeat = |step: f32, mark: f32, y: f32, h: f32| {
+        let start = x0 + s * 0.08;
+        let end = x1 - s * 0.12;
+        let mut x = grid + ((start - grid) / step).ceil() * step;
+        while x + mark <= end {
+            push(x, y, mark, h);
+            x += step;
+        }
+    };
+    match fill.leader {
+        Leader::None => {}
+        Leader::Dot => {
+            let d = (s * 0.09).max(1.0);
+            repeat(s * 0.25, d, baseline - d, d);
+        }
+        Leader::MiddleDot => {
+            let d = (s * 0.09).max(1.0);
+            repeat(s * 0.25, d, baseline - s * 0.3 - d / 2.0, d);
+        }
+        Leader::Hyphen => {
+            let h = (s * 0.06).max(1.0);
+            repeat(s * 0.33, s * 0.2, baseline - s * 0.27 - h / 2.0, h);
+        }
+        Leader::Underscore | Leader::Heavy => {
+            let h = if fill.leader == Leader::Heavy {
+                (s * 0.12).max(1.5)
+            } else {
+                (s * 0.06).max(1.0)
+            };
+            let (a, b) = (x0 + s * 0.04, x1 - s * 0.04);
+            if b > a {
+                push(a, baseline + s * 0.1, b - a, h);
+            }
+        }
+    }
+}
+
 fn emit_runs(
     out: &mut Vec<GlyphRun>,
     line: &parley::Line<'_, Rgba>,
@@ -2788,14 +2976,8 @@ mod tab_tests {
         // A left stop at 5 cm, then a right stop at 15 cm.
         let mut p = Paragraph::new("Total\tQty\t1.000.000");
         p.tabs = vec![
-            TabStop {
-                pos: 50.0 * MM,
-                align: TabAlign::Left,
-            },
-            TabStop {
-                pos: 150.0 * MM,
-                align: TabAlign::Right,
-            },
+            TabStop::new(50.0 * MM, TabAlign::Left),
+            TabStop::new(150.0 * MM, TabAlign::Right),
         ];
         let doc = engine.layout_document(std::slice::from_ref(&p), setup);
         let qty = "Total\t".len();
@@ -2806,5 +2988,160 @@ mod tab_tests {
             "right tab ends at the stop"
         );
         assert_eq!(doc.pages[0].lines.len(), 1);
+    }
+
+    /// One paragraph on an A4 page; returns the layout and the column's left.
+    fn one(p: &Paragraph) -> (PagedDocument, f32) {
+        let mut engine = Engine::new();
+        let setup = PageSetup::a4();
+        let doc = engine.layout_document(std::slice::from_ref(p), setup);
+        (doc, setup.margin_left)
+    }
+
+    #[test]
+    fn center_and_decimal_stops() {
+        // Centre stop at 8 cm: the word after the tab is centred on it.
+        let mut p = Paragraph::new("a\tmid");
+        p.tabs = vec![TabStop::new(80.0 * MM, TabAlign::Center)];
+        let (doc, col) = one(&p);
+        let (a, b) = (x_of(&doc, 2), x_of(&doc, 5));
+        assert!(b > a);
+        assert!(((a + b) / 2.0 - col - 80.0 * MM).abs() < 0.6, "{a} {b}");
+        // Decimal stop at 10 cm: the point sits on it, whatever the digits'
+        // widths; without a point the number ends there.
+        for text in ["x\t12.5", "x\t1234.567", "x\t7"] {
+            let mut p = Paragraph::new(text);
+            p.tabs = vec![TabStop::new(100.0 * MM, TabAlign::Decimal)];
+            let (doc, col) = one(&p);
+            let at = text.find('.').unwrap_or(text.len());
+            assert!(
+                (x_of(&doc, at) - col - 100.0 * MM).abs() < 0.6,
+                "{text}: {}",
+                x_of(&doc, at) - col
+            );
+        }
+    }
+
+    #[test]
+    fn bar_tabs_are_lines_not_stops() {
+        let mut p = Paragraph::new("a\tb");
+        p.tabs = vec![TabStop::new(5.0 * MM, TabAlign::Bar)];
+        let (doc, col) = one(&p);
+        // The tab skips the bar and goes to the default stop.
+        assert!((x_of(&doc, 2) - col - 12.7 * MM).abs() < 0.6);
+        let rules = doc.tab_rules(0);
+        assert_eq!(rules.len(), 1);
+        let r = rules[0].rect;
+        assert!((r[0] + r[2] / 2.0 - col - 5.0 * MM).abs() < 0.01);
+        assert!(r[3] > 5.0, "spans the line");
+    }
+
+    #[test]
+    fn dot_leaders_fill_the_tab_and_line_up() {
+        // A table-of-contents line: right stop with dots at the right
+        // margin; a second line with a different title.
+        let setup = PageSetup::a4();
+        let right = setup.content_width();
+        let paras: Vec<Paragraph> = ["Introduction\t1", "Scope\t12"]
+            .iter()
+            .map(|t| {
+                let mut p = Paragraph::new(*t);
+                p.tabs = vec![TabStop::new(right, TabAlign::Right).with_leader(Leader::Dot)];
+                p
+            })
+            .collect();
+        let mut engine = Engine::new();
+        let doc = engine.layout_document(&paras, setup);
+        let col = setup.margin_left;
+        // Page numbers end at the right margin, on one line each.
+        for (i, p) in paras.iter().enumerate() {
+            let end = doc.caret(i, p.text.len()).unwrap().x;
+            assert!((end - col - right).abs() < 0.6, "{end}");
+        }
+        assert_eq!(doc.pages[0].lines.len(), 2);
+        let rules = doc.tab_rules(0);
+        assert!(rules.len() > 40, "dots: {}", rules.len());
+        // Every dot is between its title and its number, square, on the
+        // baseline area of its line.
+        for (i, p) in paras.iter().enumerate() {
+            let tab = p.text.find('\t').unwrap();
+            let (x0, x1) = (
+                doc.caret(i, tab).unwrap().x,
+                doc.caret(i, p.text.len() - if i == 0 { 1 } else { 2 })
+                    .unwrap()
+                    .x,
+            );
+            let c = doc.caret(i, 0).unwrap();
+            let dots: Vec<_> = rules
+                .iter()
+                .filter(|r| r.rect[1] > c.top && r.rect[1] < c.top + c.height)
+                .collect();
+            assert!(!dots.is_empty());
+            for d in &dots {
+                assert!(
+                    d.rect[0] >= x0 && d.rect[0] + d.rect[2] <= x1,
+                    "{:?}",
+                    d.rect
+                );
+                assert_eq!(d.rect[2], d.rect[3]);
+            }
+        }
+        // Same grid on both lines: the last dots line up.
+        let ends: Vec<f32> = [0usize, 1]
+            .iter()
+            .map(|&i| {
+                let c = doc.caret(i, 0).unwrap();
+                rules
+                    .iter()
+                    .filter(|r| r.rect[1] > c.top && r.rect[1] < c.top + c.height)
+                    .map(|r| r.rect[0])
+                    .fold(f32::MIN, f32::max)
+            })
+            .collect();
+        let step = 11.0 * PT * 0.25;
+        let k = (ends[0] - ends[1]) / step;
+        assert!((k - k.round()).abs() < 0.01, "{ends:?}");
+    }
+
+    #[test]
+    fn other_leaders_and_no_leader() {
+        for (leader, many) in [
+            (Leader::Hyphen, true),
+            (Leader::MiddleDot, true),
+            (Leader::Underscore, false),
+            (Leader::Heavy, false),
+            (Leader::None, false),
+        ] {
+            let mut p = Paragraph::new("a\tb");
+            p.tabs = vec![TabStop::new(100.0 * MM, TabAlign::Left).with_leader(leader)];
+            let (doc, _) = one(&p);
+            let n = doc.tab_rules(0).len();
+            match (leader, many) {
+                (Leader::None, _) => assert_eq!(n, 0),
+                (_, true) => assert!(n > 10, "{leader:?}: {n}"),
+                (_, false) => assert_eq!(n, 1, "{leader:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn stops_past_the_right_indent_and_hanging_indents() {
+        // A right stop beyond the margin acts as one at the margin.
+        let setup = PageSetup::a4();
+        let mut p = Paragraph::new("a\t9");
+        p.tabs = vec![TabStop::new(setup.content_width() + 40.0, TabAlign::Right)];
+        let (doc, col) = one(&p);
+        let end = x_of(&doc, p.text.len());
+        assert!(end <= col + setup.content_width() + 0.01);
+        assert!(end > col + setup.content_width() - 1.0);
+        assert_eq!(doc.pages[0].lines.len(), 1);
+        // Hanging indent: the first tab goes to the left indent, before a
+        // later custom stop and before the default ones.
+        let mut p = Paragraph::new("1.\tItem");
+        p.indent_left_pt = 18.0;
+        p.first_line_pt = -18.0;
+        p.tabs = vec![TabStop::new(60.0 * MM, TabAlign::Left)];
+        let (doc, col) = one(&p);
+        assert!((x_of(&doc, 3) - col - 18.0 * PT).abs() < 0.6);
     }
 }
