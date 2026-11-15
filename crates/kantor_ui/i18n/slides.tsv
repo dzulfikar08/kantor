@@ -49,12 +49,20 @@ Insert a column left of the current cell	Sisipkan kolom di kiri sel saat ini
 Insert a column right of the current cell	Sisipkan kolom di kanan sel saat ini
 − Column	− Kolom
 Delete the current column	Hapus kolom saat ini
-+ Category	+ Kategori
-Add a category at the end	Tambahkan kategori di akhir
-− Last category	− Kategori terakhir
-Remove the last category	Hapus kategori terakhir
-+ Series	+ Seri
-Add a series after the last one	Tambahkan seri setelah yang terakhir
++ Category above	+ Kategori di atas
+Insert a category above the current cell	Sisipkan kategori di atas sel saat ini
++ Category below	+ Kategori di bawah
+Insert a category below the current cell	Sisipkan kategori di bawah sel saat ini
+− Category	− Kategori
+Delete the current category	Hapus kategori saat ini
++ Series left	+ Seri di kiri
+Insert a series left of the current cell	Sisipkan seri di kiri sel saat ini
++ Series right	+ Seri di kanan
+Insert a series right of the current cell	Sisipkan seri di kanan sel saat ini
+◀ Move series	◀ Pindahkan seri
+Move series ▶	Pindahkan seri ▶
+Move the series earlier in the plot order	Pindahkan seri lebih awal dalam urutan plot
+Move the series later in the plot order	Pindahkan seri lebih akhir dalam urutan plot
 − Series	− Seri
 Remove the series of the current cell	Hapus seri dari sel saat ini
 Select a table or a chart to edit its data	Pilih tabel atau bagan untuk mengedit datanya

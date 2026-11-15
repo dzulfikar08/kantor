@@ -178,6 +178,9 @@ pub fn live_chart(base: &Chart, book: &Workbook, current: bool) -> (Chart, u64) 
                     s.fmt = r.format.clone();
                 }
             }
+            if let Some(r) = read(&s.refs.size, &mut h) {
+                s.sizes = Some(numbers(&r));
+            }
             if let Some(r) = read(&s.refs.cat, &mut h) {
                 let any_num = r.values.iter().any(|v| matches!(v, RefValue::Number(_)));
                 let all_num = any_num && r.values.iter().all(|v| !matches!(v, RefValue::Text(_)));

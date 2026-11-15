@@ -215,6 +215,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   from the toolbar's list buttons, like text boxes; Alt+Shift+Right and Alt+Shift+Left move list
   items a level deeper or up (Tab still moves to the next cell). Dragging a table's resize handle
   shows the table scaled live, not only its outline.
+- Slides: chart data can be restructured anywhere, as in PowerPoint's *Edit Data*: insert a
+  category above or below the current one, delete any category, insert a series left or right of
+  the current one and move a series earlier or later in the plot order. The embedded workbook
+  follows (cells move with their series, and emptied cells no longer keep old values).
+- Slides (and Sheets): radar (with markers or filled), bubble and stock charts (high-low lines,
+  up/down bars) are drawn on screen and in the PDF instead of a placeholder; 3-D column, bar,
+  line, area and pie charts are drawn flat.
 
 ### Changed
 - Docs: files with a table of contents or cross-references are saved in place like any other

@@ -597,6 +597,49 @@ fn main() -> Result<()> {
         Ok(Some(src))
     });
 
+    // Table row heights and cell lists, chart categories and series
+    // inserted, removed and reordered anywhere; and the drawn chart types.
+    run.scenario("structure_edits.pptx", |o| {
+        let src = corpus.join("pptx/frames.pptx");
+        let mut p = Presentation::open(&src)?;
+        let named = |p: &Presentation, s: usize, n: &str| {
+            p.slide(s)
+                .shapes
+                .iter()
+                .position(|x| x.name == n)
+                .context(n.to_owned())
+        };
+        let t = named(&p, 0, "Plan")?;
+        let mut hs: Vec<i64> = p
+            .table(0, t)
+            .context("table")?
+            .rows
+            .iter()
+            .map(|r| r.h)
+            .collect();
+        hs[1] += 250_000;
+        p.edit_table(0, t, &[TableOp::RowHeights(hs)])?;
+        let cell = ShapeRef::from((0, t)).cell(3, 1);
+        p.toggle_list(cell, Selection::caret(Position::new(0, 0)), true)?;
+        let chart = named(&p, 1, "Sales")?;
+        p.insert_chart_category(1, chart, 1, "Q1.5")?;
+        p.remove_chart_category(1, chart, 3)?;
+        p.insert_chart_series(1, chart, 0, "West")?;
+        p.move_chart_series(1, chart, 1, false)?;
+        p.save_as(&o.join("structure_edits.pptx"))?;
+        Ok(Some(src))
+    });
+    run.scenario("chart_types.pptx", |o| {
+        let src = corpus.join("pptx/charts.pptx");
+        let mut p = Presentation::open(&src)?;
+        let k = (0..p.slide(0).shapes.len())
+            .find(|&k| p.slide(0).shapes[k].chart_part().is_some())
+            .context("radar")?;
+        p.insert_chart_series(0, k, 1, "Model C")?;
+        p.save_as(&o.join("chart_types.pptx"))?;
+        Ok(Some(src))
+    });
+
     run.scenario("new_deck.pptx", |o| {
         let mut p = Presentation::new();
         let i = p.new_slide(Some(0))?;
@@ -1486,7 +1529,11 @@ fn slide_edits(p: &mut Presentation) -> Result<()> {
     }
     let n = p.new_slide(Some(p.len() - 1))?;
     p.set_notes_text(n, "A new slide's notes")?;
-    p.duplicate_slide(0)?;
+    // The first slide Kantor can duplicate (slides with charts can't be).
+    let dup = (0..p.len())
+        .find(|&i| p.slide(i).shapes.iter().all(|s| s.chart_part().is_none()))
+        .unwrap_or(0);
+    p.duplicate_slide(dup)?;
     Ok(())
 }
 

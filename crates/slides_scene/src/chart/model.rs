@@ -285,6 +285,39 @@ pub enum Kind {
         /// `lineMarker`, `line`, `marker`, `smooth`, `smoothMarker`, `none`.
         style: String,
     },
+    /// Bubbles at (x, y) sized by a third value (`c:bubbleChart`).
+    Bubble {
+        /// `c:bubbleScale`, % of the default size (the largest bubble's
+        /// diameter is a quarter of the plot's smaller side at 100 %).
+        scale: f32,
+        /// `c:sizeRepresents val="w"`: sizes are diameters, not areas.
+        by_width: bool,
+        /// `c:showNegBubbles`.
+        negative: bool,
+    },
+    /// Radar (`c:radarChart`): categories round a circle.
+    Radar {
+        /// `radarStyle val="filled"`.
+        filled: bool,
+        /// `radarStyle val="marker"`: markers on the lines.
+        markers: bool,
+    },
+    /// Stock (`c:stockChart`): high-low-close (or open-high-low-close)
+    /// series drawn as lines (usually only markers) with high-low lines
+    /// and up/down bars.
+    Stock {
+        hi_low: Option<Box<Look>>,
+        up_down: Option<Box<UpDown>>,
+    },
+}
+
+/// Up/down bars of a stock chart (`c:upDownBars`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct UpDown {
+    /// Gap between bars, % of a bar's width.
+    pub gap: f32,
+    pub up: Look,
+    pub down: Look,
 }
 
 /// Marker symbols.
@@ -435,6 +468,8 @@ pub struct SeriesRefs {
     pub cat: Option<String>,
     /// Values (`c:val`) or scatter y values (`c:yVal`).
     pub val: Option<String>,
+    /// Bubble sizes (`c:bubbleSize`).
+    pub size: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -451,6 +486,8 @@ pub struct Series {
     pub vals: Vec<Option<f64>>,
     /// Scatter x values.
     pub xs: Option<Vec<Option<f64>>>,
+    /// Bubble sizes (`c:bubbleSize`).
+    pub sizes: Option<Vec<Option<f64>>>,
     pub fmt: Option<String>,
     pub look: Look,
     pub marker: Option<Marker>,
@@ -676,7 +713,7 @@ pub struct Chart {
     pub rounded: bool,
     /// `c:style` (1..48), for defaults.
     pub style: u32,
-    /// Plot types seen that aren't drawn (radar, bubble, 3-D, stock...).
+    /// Plot types seen that aren't drawn (surface, pie of pie...).
     pub unsupported: Vec<String>,
 }
 
@@ -798,11 +835,19 @@ fn series(s: Node, cx: &ColorCtx) -> Series {
             .map(|f| f.trim().to_owned())
             .filter(|f| !f.is_empty())
     };
+    let size_node = kid(s, "bubbleSize");
     let refs = SeriesRefs {
         name: formula(kid(s, "tx")),
         cat: formula(kid(s, "cat").or(scatter_x)),
         val: formula(vals_node),
+        size: formula(size_node),
     };
+    let sizes = size_node.map(|n| {
+        n.children()
+            .find(|c| c.is_element())
+            .map(|c| num_cache(c).0)
+            .unwrap_or_default()
+    });
     let xs = scatter_x.map(|_| {
         if cat_nums.is_empty() {
             // Text x values: points are numbered 1, 2, 3...
@@ -820,6 +865,7 @@ fn series(s: Node, cx: &ColorCtx) -> Series {
         cat_nums,
         vals,
         xs,
+        sizes,
         fmt,
         look: Look::parse(Some(s), cx),
         marker: Marker::parse(Some(s), cx),
@@ -870,6 +916,51 @@ fn group(g: Node, cx: &ColorCtx) -> Option<Group> {
         "scatterChart" => Kind::Scatter {
             style: val(g, "scatterStyle").unwrap_or("marker").to_owned(),
         },
+        "bubbleChart" => Kind::Bubble {
+            scale: val_f(g, "bubbleScale").unwrap_or(100.0).clamp(0.0, 300.0) as f32,
+            by_width: val(g, "sizeRepresents") == Some("w"),
+            negative: flag(g, "showNegBubbles").unwrap_or(false),
+        },
+        "radarChart" => {
+            let style = val(g, "radarStyle").unwrap_or("standard");
+            Kind::Radar {
+                filled: style == "filled",
+                markers: style == "marker",
+            }
+        }
+        "stockChart" => Kind::Stock {
+            hi_low: kid(g, "hiLowLines").map(|n| Box::new(Look::parse(Some(n), cx))),
+            up_down: kid(g, "upDownBars").map(|n| {
+                Box::new(UpDown {
+                    gap: val_f(n, "gapWidth").unwrap_or(150.0).clamp(0.0, 500.0) as f32,
+                    up: Look::parse(kid(n, "upBars"), cx),
+                    down: Look::parse(kid(n, "downBars"), cx),
+                })
+            }),
+        },
+        // 3-D charts are drawn flat, as their 2-D kinds.
+        "bar3DChart" => Kind::Bar {
+            horizontal: val(g, "barDir") == Some("bar"),
+            grouping: match Grouping::parse(grouping, Grouping::Clustered) {
+                Grouping::Standard => Grouping::Clustered,
+                other => other,
+            },
+            gap: val_f(g, "gapWidth").unwrap_or(150.0).clamp(0.0, 500.0) as f32,
+            overlap: match Grouping::parse(grouping, Grouping::Clustered) {
+                Grouping::Stacked | Grouping::PercentStacked => 100.0,
+                _ => 0.0,
+            },
+        },
+        "line3DChart" => Kind::Line {
+            grouping: Grouping::parse(grouping, Grouping::Standard),
+        },
+        "area3DChart" => Kind::Area {
+            grouping: Grouping::parse(grouping, Grouping::Standard),
+        },
+        "pie3DChart" => Kind::Pie {
+            first_angle: 0.0,
+            hole: None,
+        },
         _ => return None,
     };
     let mut series: Vec<Series> = kids(g, "ser").map(|s| series(s, cx)).collect();
@@ -898,6 +989,7 @@ impl Chart {
         let plot = kid(chart, "plotArea")?;
         let mut groups = Vec::new();
         let mut unsupported = Vec::new();
+
         let mut axes = Vec::new();
         for n in plot.children().filter(|c| c.is_element()) {
             let name = n.tag_name().name();

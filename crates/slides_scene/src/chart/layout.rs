@@ -309,6 +309,13 @@ pub fn layout(chart: &Chart, w: f32, h: f32, d: &Defaults, m: &mut dyn Measure) 
     if chart
         .groups
         .iter()
+        .any(|g| matches!(g.kind, Kind::Radar { .. }))
+    {
+        let plot = manual_rect(chart.plot_layout, w, h).unwrap_or(area);
+        radar(chart, &mut o, plot);
+    } else if chart
+        .groups
+        .iter()
         .any(|g| matches!(g.kind, Kind::Pie { .. }))
     {
         let plot = manual_rect(chart.plot_layout, w, h).unwrap_or(area);
@@ -431,7 +438,7 @@ pub fn legend_entries(chart: &Chart, d: &Defaults) -> Vec<Entry> {
     } else {
         for (g, s) in chart.all_series() {
             let st = series_style(g, s, d);
-            let line_key = matches!(g.kind, Kind::Line { .. } | Kind::Scatter { .. });
+            let line_key = is_line_kind(g);
             out.push(Entry {
                 text: s
                     .name
@@ -667,7 +674,18 @@ struct Style {
 }
 
 fn is_line_kind(g: &Group) -> bool {
-    matches!(g.kind, Kind::Line { .. } | Kind::Scatter { .. })
+    matches!(
+        g.kind,
+        Kind::Line { .. }
+            | Kind::Scatter { .. }
+            | Kind::Stock { .. }
+            | Kind::Radar { filled: false, .. }
+    )
+}
+
+/// Scatter and bubble groups: both axes are value axes.
+fn is_xy(g: &Group) -> bool {
+    matches!(g.kind, Kind::Scatter { .. } | Kind::Bubble { .. })
 }
 
 /// Default line width of line series: 2.25 pt.
@@ -694,6 +712,11 @@ fn series_line(g: &Group, s: &Series, auto: Rgb) -> Option<Stroke> {
     if let Kind::Scatter { style } = &g.kind
         && matches!(style.as_str(), "marker" | "none")
         && s.look.line.as_ref().is_none_or(|l| l.fill.is_none())
+    {
+        return None;
+    }
+    // Stock series show only their markers unless given a line.
+    if matches!(g.kind, Kind::Stock { .. }) && s.look.line.as_ref().is_none_or(|l| l.fill.is_none())
     {
         return None;
     }
@@ -776,6 +799,7 @@ fn marker_style(
     let shows = match &g.kind {
         Kind::Line { .. } => g.markers,
         Kind::Scatter { style } => !matches!(style.as_str(), "line" | "smooth" | "none"),
+        Kind::Radar { markers, .. } => *markers,
         _ => false,
     };
     let sym = match m.as_ref().map(|m| m.symbol) {
@@ -1306,7 +1330,7 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
         axes[ci].vertical = horizontal_bars;
         axes[vi].vertical = !horizontal_bars;
         let grouping = group_grouping(g);
-        if let Kind::Scatter { .. } = g.kind {
+        if is_xy(g) {
             for s in &g.series {
                 for (i, y) in s.vals.iter().enumerate() {
                     let x =
@@ -1385,10 +1409,8 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
         .map(|a| {
             a.ax.kind == AxisKind::Val
                 && chart.groups.iter().any(|g| {
-                    group_axes(chart, g).is_some_and(|(c, v)| {
-                        v.id == a.ax.id
-                            || (c.id == a.ax.id && matches!(g.kind, Kind::Scatter { .. }))
-                    })
+                    group_axes(chart, g)
+                        .is_some_and(|(c, v)| v.id == a.ax.id || (c.id == a.ax.id && is_xy(g)))
                 })
         })
         .collect();
@@ -1601,7 +1623,12 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
                 lines(g, ca, va, plot, grouping, o, &mut labels)
             }
             Kind::Scatter { .. } => scatter(g, ca, va, plot, o, &mut labels),
-            Kind::Pie { .. } => {}
+            Kind::Bubble { .. } => bubbles(g, ca, va, plot, o, &mut labels),
+            Kind::Stock { .. } => {
+                stock_lines(g, ca, va, plot, o);
+                lines(g, ca, va, plot, Grouping::Standard, o, &mut labels)
+            }
+            Kind::Pie { .. } | Kind::Radar { .. } => {}
         }
     }
     // Axis lines, ticks and labels.
@@ -2189,5 +2216,337 @@ fn scatter(
     }
     for ((sym, size, fill, line), q) in markers {
         marker(o, sym, q, size, &fill, line);
+    }
+}
+
+// ── bubble, stock and radar ────────────────────────────────────────────────
+
+fn bubbles(
+    g: &Group,
+    xa: &Ax,
+    ya: &Ax,
+    plot: Rect,
+    o: &mut Out,
+    labels: &mut Vec<(String, TextFont, P, f32, f32)>,
+) {
+    let Kind::Bubble {
+        scale,
+        by_width,
+        negative,
+    } = g.kind
+    else {
+        return;
+    };
+    let (sx, sy) = match (xa.value, ya.value) {
+        (Some(a), Some(b)) => (a, b),
+        _ => return,
+    };
+    let size_of = |s: &Series, i: usize| -> Option<f64> {
+        let v = s.sizes.as_ref()?.get(i).copied().flatten()?;
+        (v > 0.0 || (negative && v < 0.0)).then_some(v.abs())
+    };
+    let biggest = g
+        .series
+        .iter()
+        .flat_map(|s| (0..s.vals.len()).filter_map(move |i| size_of(s, i)))
+        .fold(0.0f64, f64::max);
+    if biggest <= 0.0 {
+        return;
+    }
+    // Office: the largest bubble is a quarter of the plot's smaller side.
+    let dmax = plot[2].min(plot[3]) * 0.25 * scale / 100.0;
+    for s in &g.series {
+        for (i, y) in s.vals.iter().enumerate() {
+            let (Some(y), Some(size)) = (y, size_of(s, i)) else {
+                continue;
+            };
+            let x =
+                s.xs.as_ref()
+                    .and_then(|xs| xs.get(i).copied().flatten())
+                    .unwrap_or(i as f64 + 1.0);
+            let k = size / biggest;
+            let d = dmax * if by_width { k } else { k.sqrt() } as f32;
+            let r = (d / 2.0).max(0.5);
+            let c = p(
+                xa.px(x.clamp(sx.min, sx.max), plot),
+                ya.px(y.clamp(sy.min, sy.max), plot),
+            );
+            let st = point_style(g, s, i, o.d);
+            o.boxed(
+                Path::ellipse(c.x, c.y, r, r),
+                [c.x - r, c.y - r, 2.0 * r, 2.0 * r],
+                &st.fill,
+                st.line,
+            );
+            if let Some(l) = series_labels(g, s, i)
+                && let Some(text) = label_text(&l, s, i, *y, None)
+            {
+                let font = label_font(o, &l);
+                let (pt, ax, ay) = match l.pos.as_deref() {
+                    Some("t") => (p(c.x, c.y - r - 3.0), 0.5, 1.0),
+                    Some("b") => (p(c.x, c.y + r + 3.0), 0.5, 0.0),
+                    Some("l") => (p(c.x - r - 3.0, c.y), 1.0, 0.5),
+                    Some("r") => (p(c.x + r + 3.0, c.y), 0.0, 0.5),
+                    _ => (c, 0.5, 0.5),
+                };
+                labels.push((text, font, moved(&l, pt, o.size), ax, ay));
+            }
+        }
+    }
+}
+
+/// A stock chart's high-low lines and up/down bars (the series' own
+/// markers are drawn by [`lines`]).
+fn stock_lines(g: &Group, ca: &Ax, va: &Ax, plot: Rect, o: &mut Out) {
+    let Kind::Stock { hi_low, up_down } = &g.kind else {
+        return;
+    };
+    let Some(sc) = va.value else { return };
+    let n = g.series.iter().map(|s| s.vals.len()).max().unwrap_or(0);
+    let y = |v: f64| va.px(v.clamp(sc.min, sc.max), plot);
+    let at = |i: usize, v: f64| {
+        let c = ca.px(i as f64 + 0.5, plot);
+        if ca.vertical { p(y(v), c) } else { p(c, y(v)) }
+    };
+    let text = o.d.text;
+    if let Some(look) = hi_low
+        && let Some(st) = stroke_of(look.line.as_ref(), Some((text, 0.75 * PX_PER_PT)))
+    {
+        for i in 0..n {
+            let vs: Vec<f64> = g
+                .series
+                .iter()
+                .filter_map(|s| s.vals.get(i).copied().flatten())
+                .collect();
+            if vs.len() < 2 {
+                continue;
+            }
+            let lo = vs.iter().copied().fold(f64::INFINITY, f64::min);
+            let hi = vs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            o.line(at(i, lo), at(i, hi), &st);
+        }
+    }
+    // Up/down bars run from the first series (open) to the last (close).
+    if let Some(ud) = up_down
+        && g.series.len() >= 2
+    {
+        let band = ca.len(plot) / n.max(1) as f32;
+        let w = band / (1.0 + ud.gap / 100.0);
+        let (first, last) = (&g.series[0], &g.series[g.series.len() - 1]);
+        for i in 0..n {
+            let (Some(open), Some(close)) = (
+                first.vals.get(i).copied().flatten(),
+                last.vals.get(i).copied().flatten(),
+            ) else {
+                continue;
+            };
+            let (look, auto) = if close >= open {
+                (&ud.up, o.d.background)
+            } else {
+                (&ud.down, text)
+            };
+            let fill = fill_of(look.fill.as_ref(), Some(auto));
+            let line = stroke_of(look.line.as_ref(), Some((text, 0.75 * PX_PER_PT)));
+            let (a, b) = (at(i, open), at(i, close));
+            let rect = if ca.vertical {
+                [a.x.min(b.x), a.y - w / 2.0, (a.x - b.x).abs(), w]
+            } else {
+                [a.x - w / 2.0, a.y.min(b.y), w, (a.y - b.y).abs()]
+            };
+            o.boxed(
+                Path::rect(rect[0], rect[1], rect[2], rect[3]),
+                rect,
+                &fill,
+                line,
+            );
+        }
+    }
+}
+
+/// A radar chart: categories round a circle from 12 o'clock clockwise,
+/// values outwards on the value axis' scale, its gridlines as polygons.
+fn radar(chart: &Chart, o: &mut Out, area: Rect) {
+    let groups: Vec<&Group> = chart
+        .groups
+        .iter()
+        .filter(|g| matches!(g.kind, Kind::Radar { .. }))
+        .collect();
+    let Some(first) = groups.first() else { return };
+    let (cat_ax, val_ax) = match group_axes(chart, first) {
+        Some((c, v)) => (Some(c), Some(v)),
+        None => (None, None),
+    };
+    let base = o.base.size_pt.unwrap_or(18.0);
+    let n = groups
+        .iter()
+        .flat_map(|g| &g.series)
+        .map(|s| s.vals.len().max(s.cats.len()).max(s.cat_nums.len()))
+        .max()
+        .unwrap_or(0);
+    if n == 0 {
+        return;
+    }
+    let label_series = groups
+        .iter()
+        .flat_map(|g| &g.series)
+        .find(|s| !s.cats.is_empty() || !s.cat_nums.is_empty());
+    let cat_font = o.font(cat_ax.map_or(&Font::default(), |a| &a.font), base, false);
+    let val_font = o.font(val_ax.map_or(&Font::default(), |a| &a.font), base, false);
+    let show_cats = cat_ax.is_none_or(|a| !a.delete && a.tick_lbl_pos != "none");
+    let show_vals = val_ax.is_none_or(|a| !a.delete && a.tick_lbl_pos != "none");
+    let cats: Vec<String> = (0..n)
+        .map(|i| label_series.map_or_else(|| (i + 1).to_string(), |s| cat_label(s, i, None)))
+        .collect();
+    // Room for the category labels round the circle.
+    let (mut lw, mut lh) = (0.0f32, 0.0f32);
+    if show_cats {
+        for c in &cats {
+            let (w, h) = o.measure(c, &cat_font, None);
+            lw = lw.max(w);
+            lh = lh.max(h);
+        }
+    }
+    let gap = 4.0;
+    let r = ((area[2] - 2.0 * (lw + gap)) / 2.0)
+        .min((area[3] - 2.0 * (lh + gap)) / 2.0)
+        .max(4.0);
+    let c = p(area[0] + area[2] / 2.0, area[1] + area[3] / 2.0);
+    // Value scale.
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for v in groups
+        .iter()
+        .flat_map(|g| &g.series)
+        .flat_map(|s| s.vals.iter().flatten())
+    {
+        lo = lo.min(*v);
+        hi = hi.max(*v);
+    }
+    let fixed = Fixed {
+        min: val_ax.and_then(|a| a.min),
+        max: val_ax.and_then(|a| a.max),
+        unit: val_ax.and_then(|a| a.major_unit),
+    };
+    let line_h = val_font.size_pt * PX_PER_PT * 1.2;
+    let sc = auto_scale(lo, hi, fixed, intervals_for(r, line_h * 1.5));
+    let fmt = val_ax
+        .and_then(|a| a.num_fmt.as_ref())
+        .filter(|(_, linked)| !linked)
+        .map(|f| f.0.clone())
+        .or_else(|| {
+            groups
+                .iter()
+                .flat_map(|g| &g.series)
+                .find_map(|s| s.fmt.clone())
+        });
+    let angle = |i: f64| -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * i as f32 / n as f32;
+    let reversed = val_ax.is_some_and(|a| a.reversed);
+    let at = |i: usize, v: f64| {
+        let mut f = sc.frac(v.clamp(sc.min, sc.max)) as f32;
+        if reversed {
+            f = 1.0 - f;
+        }
+        let a = angle(i as f64);
+        p(c.x + r * f * a.cos(), c.y + r * f * a.sin())
+    };
+    plot_back(chart, o, [c.x - r, c.y - r, 2.0 * r, 2.0 * r]);
+    // Gridlines: one polygon per major tick.
+    if let Some(look) = val_ax.and_then(|a| a.major_grid.as_ref())
+        && let Some(st) = stroke_of(look.line.as_ref(), Some((GRID, 0.75 * PX_PER_PT)))
+    {
+        for t in sc.ticks() {
+            let pts: Vec<P> = (0..n).map(|i| at(i, t)).collect();
+            let mut path = polyline(&pts, false);
+            path.close();
+            o.stroke(path, st.clone());
+        }
+    }
+    // Spokes (the category axis' line).
+    let spoke = cat_ax
+        .filter(|a| !a.delete)
+        .and_then(|a| match &a.look.line {
+            Some(_) => stroke_of(a.look.line.as_ref(), Some((GRID, 0.75 * PX_PER_PT))),
+            None => stroke_of(None, Some((GRID, 0.75 * PX_PER_PT))),
+        });
+    if let Some(st) = &spoke {
+        for i in 0..n {
+            o.line(c, at(i, sc.max), st);
+        }
+    }
+    // Series.
+    let mut markers = Vec::new();
+    for g in &groups {
+        let Kind::Radar { filled, .. } = g.kind else {
+            continue;
+        };
+        for s in &g.series {
+            let pts: Vec<Option<P>> = (0..n)
+                .map(|i| s.vals.get(i).copied().flatten().map(|v| at(i, v)))
+                .collect();
+            if filled {
+                let ps: Vec<P> = pts.iter().map(|q| q.unwrap_or(c)).collect();
+                let mut path = polyline(&ps, false);
+                path.close();
+                let st = series_style(g, s, o.d);
+                let b = path.bounds().unwrap_or(area);
+                o.boxed(
+                    path,
+                    [b[0], b[1], b[2] - b[0], b[3] - b[1]],
+                    &st.fill,
+                    st.line,
+                );
+            } else if let Some(stroke) = series_line(g, s, auto_color(o.d, s.idx)) {
+                let full = pts.iter().all(Option::is_some);
+                let ps: Vec<P> = pts.iter().flatten().copied().collect();
+                if ps.len() >= 2 {
+                    let mut path = polyline(&ps, false);
+                    if full {
+                        path.close();
+                    }
+                    o.stroke(path, stroke);
+                }
+            }
+            for (i, q) in pts.iter().enumerate() {
+                let Some(q) = q else { continue };
+                if !filled && let Some(m) = marker_style(g, s, Some(i), o.d) {
+                    markers.push((m, *q));
+                }
+            }
+        }
+    }
+    for ((sym, size, fill, line), q) in markers {
+        marker(o, sym, q, size, &fill, line);
+    }
+    // Value labels up the first spoke, category labels round the edge.
+    if show_vals {
+        let div = val_ax
+            .and_then(|a| a.disp_units.as_ref())
+            .map_or(1.0, |d| d.div);
+        for t in sc.ticks() {
+            let q = at(0, t);
+            let text = format_number(t / div, fmt.as_deref());
+            o.label_at(&text, &val_font, p(q.x - 3.0, q.y), 1.0, 0.5);
+        }
+    }
+    if show_cats {
+        for (i, text) in cats.iter().enumerate() {
+            let a = angle(i as f64);
+            let (cs, sn) = (a.cos(), a.sin());
+            let q = p(c.x + (r + gap) * cs, c.y + (r + gap) * sn);
+            let ax = if cs > 0.2 {
+                0.0
+            } else if cs < -0.2 {
+                1.0
+            } else {
+                0.5
+            };
+            let ay = if sn > 0.2 {
+                0.0
+            } else if sn < -0.2 {
+                1.0
+            } else {
+                0.5
+            };
+            o.label_at(text, &cat_font, q, ax, ay);
+        }
     }
 }
