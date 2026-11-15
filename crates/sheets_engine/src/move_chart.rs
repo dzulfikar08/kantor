@@ -196,7 +196,7 @@ enum From {
     /// A file's chart on a worksheet.
     File,
     /// A chart made in Kantor (or moved or copied here).
-    New(NewChart),
+    New(Box<NewChart>),
     /// The chart of chart sheet `k`.
     ChartSheet(usize),
 }
@@ -234,10 +234,10 @@ impl Workbook {
             .ok_or_else(|| anyhow!("Kantor can't move this chart"))?;
         let from = match chart_sheet_of_key(key.sheet_id) {
             Some(k) => From::ChartSheet(k),
-            None if key.index >= NEW_CHART_BASE => From::New(
+            None if key.index >= NEW_CHART_BASE => From::New(Box::new(
                 self.new_chart(key)
                     .ok_or_else(|| anyhow!("Kantor can't move this chart"))?,
-            ),
+            )),
             None => From::File,
         };
         let xml = match &from {

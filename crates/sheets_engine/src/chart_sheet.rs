@@ -222,7 +222,7 @@ impl Workbook {
 pub(crate) fn tab_color_attrs(c: TabColor) -> String {
     match c {
         TabColor::Rgb(rgb) => format!("rgb=\"FF{:06X}\"", rgb & 0xFF_FFFF),
-        TabColor::Theme { slot, tint } if tint == 0.0 => format!("theme=\"{slot}\""),
+        TabColor::Theme { slot, tint: 0.0 } => format!("theme=\"{slot}\""),
         TabColor::Theme { slot, tint } => format!("theme=\"{slot}\" tint=\"{tint}\""),
     }
 }

@@ -292,10 +292,10 @@ impl Workbook {
             }
         }
         let style = chart_style::read(&xml)?;
-        for i in 0..style.labels.len() {
+        for (i, now) in style.labels.iter().enumerate() {
             let new = spec.labels.get(i).cloned().unwrap_or_default();
             let was = old.labels.get(i).cloned().unwrap_or_default();
-            if new != was && new != style.labels[i] {
+            if new != was && new != *now {
                 xml = chart_style::set_labels(&xml, i, &new)?;
             }
         }

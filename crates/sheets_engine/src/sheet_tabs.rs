@@ -442,9 +442,8 @@ impl Workbook {
                 if print_set {
                     e.prints.insert(id, (print, layout.clone()));
                 }
-                let mut next = e.charts.iter().map(|c| c.id).max().unwrap_or(0);
-                for (anchor, xml, picture, spec) in objects {
-                    next += 1;
+                let first = e.charts.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+                for (next, (anchor, xml, picture, spec)) in (first..).zip(objects) {
                     e.charts.push(crate::chart_edit::NewChart {
                         id: next,
                         sheet_id: id,

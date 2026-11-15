@@ -336,7 +336,7 @@ pub(crate) enum ObjectKind {
         blip: usize,
         crop: [f32; 4],
     },
-    Chart(Chart),
+    Chart(Box<Chart>),
 }
 
 /// What could not be brought in, for the import notes.
@@ -414,7 +414,7 @@ pub(crate) fn sheet_objects(
             0x05 => match obj.chart.as_deref().map(|c| parse_chart(c, ctx)) {
                 Some(Ok(c)) => {
                     skipped.flat += usize::from(c.three_d);
-                    ObjectKind::Chart(c)
+                    ObjectKind::Chart(Box::new(c))
                 }
                 _ => {
                     skipped.charts += 1;
