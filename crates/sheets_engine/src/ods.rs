@@ -893,6 +893,91 @@ pub(crate) fn part(path: &Path, name: &str) -> Result<Option<String>> {
     Ok(Some(s))
 }
 
+/// The package with whitespace-only text between `content.xml`'s elements
+/// taken out (indentation), except inside paragraphs and their spans
+/// (`text:*` elements), where a space is text. `None` when there is none.
+pub(crate) fn without_indentation(path: &Path) -> Result<Option<Vec<u8>>> {
+    use std::io::Write as _;
+    let Some(content) = part(path, "content.xml")? else {
+        return Ok(None);
+    };
+    let Some(tidy) = strip_indentation(&content) else {
+        return Ok(None);
+    };
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(path)?).map_err(|e| anyhow!("{e}"))?;
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for i in 0..zip.len() {
+        let entry = zip.by_index(i).map_err(|e| anyhow!("{e}"))?;
+        if entry.name().is_ok_and(|n| n == "content.xml") {
+            drop(entry);
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            out.start_file("content.xml", opts)
+                .map_err(|e| anyhow!("{e}"))?;
+            out.write_all(tidy.as_bytes())?;
+        } else {
+            out.raw_copy_file(entry).map_err(|e| anyhow!("{e}"))?;
+        }
+    }
+    Ok(Some(out.finish().map_err(|e| anyhow!("{e}"))?.into_inner()))
+}
+
+/// `xml` without whitespace-only text between elements, except where the
+/// innermost open element is a `text:` one; `None` if nothing goes.
+fn strip_indentation(xml: &str) -> Option<String> {
+    let b = xml.as_bytes();
+    let mut out = String::with_capacity(xml.len());
+    let mut open: Vec<&str> = Vec::new();
+    let mut changed = false;
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'<' {
+            let end = xml[i..].find('<').map_or(b.len(), |n| i + n);
+            let text = &xml[i..end];
+            let in_text = open.last().is_some_and(|n| n.starts_with("text:"));
+            if !in_text && !open.is_empty() && text.bytes().all(|c| c.is_ascii_whitespace()) {
+                changed = true;
+            } else {
+                out.push_str(text);
+            }
+            i = end;
+            continue;
+        }
+        // A tag, comment, CDATA section or declaration.
+        let end = if xml[i..].starts_with("<!--") {
+            xml[i..].find("-->").map(|n| i + n + 3)
+        } else if xml[i..].starts_with("<![CDATA[") {
+            xml[i..].find("]]>").map(|n| i + n + 3)
+        } else {
+            let mut quote = None;
+            let mut j = i + 1;
+            loop {
+                match (b.get(j), quote) {
+                    (None, _) => break None,
+                    (Some(&c), Some(q)) if c == q => quote = None,
+                    (Some(&c), None) if c == b'"' || c == b'\'' => quote = Some(c),
+                    (Some(b'>'), None) => break Some(j + 1),
+                    _ => {}
+                }
+                j += 1;
+            }
+        }
+        .unwrap_or(b.len());
+        let tag = &xml[i..end];
+        if tag.starts_with("</") {
+            open.pop();
+        } else if !tag.starts_with("<?") && !tag.starts_with("<!") && !tag.ends_with("/>") {
+            let name_end = tag[1..]
+                .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+                .map_or(tag.len(), |n| n + 1);
+            open.push(&tag[1..name_end]);
+        }
+        out.push_str(tag);
+        i = end;
+    }
+    changed.then_some(out)
+}
+
 /// Header rows and header columns (0-based, inclusive).
 type Titles = (Option<(u32, u32)>, Option<(u32, u32)>);
 

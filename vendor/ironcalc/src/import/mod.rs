@@ -102,7 +102,7 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
     // stored in x14 `extLst` extensions carry inline `<x14:dxf>` formats that we
     // append to `styles.dxfs`, referencing them back by index from the rule.
     let mut styles = load_styles(&mut archive, &theme)?;
-    let worksheets = load_sheets(
+    let mut worksheets = load_sheets(
         &mut archive,
         &rels,
         &workbook,
@@ -111,6 +111,31 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         &theme,
         &mut styles.dxfs,
     )?;
+    // KANTOR PATCH (§13): a cell, row or column format past the cell
+    // formats there are (LibreOffice test files) is the default one, as
+    // Excel repairs it; kept, it was saved pointing nowhere.
+    let formats = styles.cell_xfs.len() as i32;
+    for ws in &mut worksheets {
+        let bad: Vec<(i32, i32)> = ws
+            .sheet_data
+            .cells()
+            .filter(|(_, _, c)| !(0..formats).contains(&c.get_style()))
+            .map(|(r, c, _)| (r, c))
+            .collect();
+        for (r, c) in bad {
+            ws.sheet_data.set_cell_style(r, c, 0);
+        }
+        for row in &mut ws.rows {
+            if !(0..formats).contains(&row.s) {
+                row.s = 0;
+            }
+        }
+        for col in &mut ws.cols {
+            if col.style.is_some_and(|s| !(0..formats).contains(&s)) {
+                col.style = None;
+            }
+        }
+    }
     // reparse formulas in defined names, since they may refer to sheets and tables that have been loaded
     let worksheet_names = worksheets
         .iter()

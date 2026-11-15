@@ -219,6 +219,21 @@ table's `<sortState>` into the `<autoFilter>` they keep;
 
 Tests: Kantor's `crates/sheets_engine/tests/sort_state.rs`.
 
+## 13. Cell formats past the ones there are
+
+Why: the real-world sweep's second run (2026-11-16) found a LibreOffice test
+workbook (tdf100709) whose cells, written by another tool, point at cell
+formats 336-407 of 100. Excel repairs them to the default format; here they
+were kept and saved pointing nowhere (35 Open XML SDK errors, a file Excel
+offers to repair).
+
+What: `import/mod.rs` `load_xlsx_from_reader`: after the sheets are
+read, a cell's or row's `s` and a column's `style` outside `cellXfs` become
+the default format (0; no style for a column).
+
+Tests: Kantor's `crates/sheets_engine/tests/realworld.rs`
+(`xlsx_cell_formats_past_the_end_are_the_default`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

@@ -2,7 +2,7 @@
 
 424 public Office files, each opened, saved, reopened and exported to PDF by
 Kantor's engines, with the saved files checked by Microsoft's Open XML SDK.
-First run: 2026-11-15.
+First run: 2026-11-15; second run on main: 2026-11-16.
 
 ## What was swept
 
@@ -58,7 +58,10 @@ with each stage's time and error (panics caught) and counts before and after
 slides, shapes and text). `sweep.py` runs it with a 120 s timeout and a 4 GB
 address-space cap, validates every saved Office file and its original with
 the Open XML SDK (errors the original already has don't count), and writes
-`results.csv` and `summary.md`. Each file gets the first matching kind:
+`results.csv` and `summary.md`. For Docs and Slides the probe also lays
+out the saved-and-reopened copy: a page count that differs from the
+original's is listed in the summary ("page count changed by the round
+trip"; `pages_changed` in `results.csv`). Each file gets the first matching kind:
 crash, timeout, panic, open error, save error, reopen error, PDF error,
 invalid save, lost content, ok.
 
@@ -135,24 +138,67 @@ fixtures made from corpus files by `scripts/corpus/gen_strict.py` and compare
 them with their Transitional originals; `tools/fidelity` validates the
 Transitional files saved from them.
 
+## Second run (2026-11-16)
+
+Rerun of all 424 files on main after Strict Open XML, Docs fields,
+floating objects, headers/footers, notes, Track Changes and comment
+threads, Slides groups/frames/turned text, Sheets shapes, charts, pivots,
+notes and new functions, and `.ods`/`.doc` drawings had merged, compared
+file by file with the first run (and its Strict reruns).
+
+| | first run (after fixes) | main, 2026-11-16 | with this run's fixes |
+|---|---:|---:|---:|
+| crash, panic or timeout | 0 | 0 | 0 |
+| refused to open | 19 (11 after Strict) | 11 | 6 |
+| saved file Office would repair | 1 | 1 | 0 |
+| content changed by a save | 0 | 0 | 0 |
+| page count changed by a save (Docs, Slides; new check) | – | 0 of 199 | 0 of 199 |
+| ok | 404 (412 after Strict) | 412 | 418 |
+| slowest file | 9.4 s | 5.1 s | 4.9 s |
+| all files' probe time added up | 156 s | 68 s | 75 s |
+
+No regressions: no new crash, open, save or reopen error, no new Open XML
+SDK error, no file more than twice as slow and over a second (three files
+flagged once were back to their old times when run alone; the sweep shares
+the machine). What changed, and why:
+
+- **Page counts of Docs files went down** for 13 documents (`.docx` and `.doc`) (e.g. 3 → 2
+  pages for files with headers and footers, 63 → 57 for a long manual);
+  each now matches LibreOffice's count or is closer to it (Docs
+  header/footer, floats and page-break fixes).
+- **More text read** in 16 `.docx` and 1 `.doc` (field results, tracked insertions and
+  deletions, comment text), and 99 more paragraphs in one docx4j manual
+  (text boxes): the newer readers see more, and saving keeps all of it.
+- **Sheets printing:** `.ods` page setup is read now, so `.ods` page counts
+  follow the file's margins and print ranges (4752 → 28 pages for one
+  file; LibreOffice prints 19). One LibreOffice test workbook (tdf66668)
+  prints 4 pages instead of 2 because shapes print now: it has a white
+  rectangle anchored over A1:N57, which Excel prints too.
+
+Fixed in this run (each with a synthetic test in
+`crates/sheets_engine/tests/realworld.rs`):
+
+- **Workbooks whose parts aren't where Excel puts them** (3 files):
+  the workbook part at the package root or renamed (`xl/workbook2.xml`),
+  and part names written with backslashes and in another case than the
+  relationships give. `kantor_ooxml::spreadsheet_layout` moves the
+  workbook, styles and shared strings to Excel's part names before
+  IronCalc reads the package (`xlsx_parts_outside_excels_layout_open`).
+- **Indented `.ods`** (2 files): calamine stops on whitespace between
+  cells; such a file is read again from a copy without the indentation
+  (`ods_indented_content_opens`).
+- **Cell formats past the end** (1 file, the saved file Office would
+  repair): cells pointing at format 336 of 100 take the default format, as
+  Excel repairs them (vendor/ironcalc §13,
+  `xlsx_cell_formats_past_the_end_are_the_default`).
+
 ## Left
 
-Refused (11; 19 before Strict Open XML was read):
+Refused (6):
 
 - 3 Word 6/95 `.doc` files (refused by design).
-- 3 `.xlsx` packages laid out unusually: the workbook part not at
-  `xl/workbook.xml` (2), part names with backslashes (1).
-- 2 `.ods` files with pretty-printed XML (whitespace between cells): the
-  `.ods` reader (calamine 0.38) stops on it. LibreOffice itself never writes
-  that.
 - 2 `.docx` from docx4j's tests that aren't valid WordprocessingML.
-- 1 `.xlsb` that calamine can't read (now an error, not a crash).
+- 1 `.xlsb` that calamine can't read (an error, not a crash).
 
-Saved file Office would repair (1): a LibreOffice test workbook whose cells
-refer to formats past the end of its format list (Excel repairs the
-original too); Kantor keeps those references as they were.
-
-Not checked: layout against Office (fonts, line breaks, page breaks), charts
-and pictures beyond "the PDF was written", and what the first open misreads.
-These need a visual comparison with Office or LibreOffice renderings, which
-this sweep doesn't do yet.
+One `.ods` (tdf137216) has a polygon shape that isn't imported (an import
+note says so).

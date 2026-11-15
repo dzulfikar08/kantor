@@ -4,7 +4,9 @@
 //! `OUTDIR/out.pdf`, and prints one JSON object on stdout with each stage's
 //! time and error (a panic is caught and reported as `panic: …`) and what the
 //! model held before and after the round trip (cells, formulas, inputs that
-//! changed; paragraphs and text; slides, shapes and text).
+//! changed; paragraphs and text; slides, shapes and text). For Docs and
+//! Slides it also lays out the reopened copy and reports its page count as
+//! `pages_after`, so the sweep can flag a save that changes pagination.
 //!
 //! The sweep runs it with a timeout and a memory cap, so a hang or an
 //! out-of-memory kill shows up there, not here.
@@ -234,6 +236,12 @@ fn main() -> Result<()> {
                                 "text_chars": after.iter().map(|t| t.chars().count()).sum::<usize>() }),
                     );
                     r.insert("diff".into(), text_diff(&before, &after));
+                    let (pages, s) = stage(|| {
+                        let engine = engine.get_or_insert_with(docs_pdf::Engine::new);
+                        Ok(docs_pdf::lay_out(&doc2, engine).paged.pages.len())
+                    });
+                    r.insert("pdf_after".into(), s);
+                    r.insert("pages_after".into(), json!(pages));
                 }
             }
             let (pages, s) = stage(|| {
@@ -264,6 +272,12 @@ fn main() -> Result<()> {
                     let after = slide_text(&pres2);
                     r.insert("after".into(), slide_counts(&pres2, &after));
                     r.insert("diff".into(), text_diff(&before, &after));
+                    let (pages, s) = stage(|| {
+                        let engine = engine.get_or_insert_with(docs_pdf::Engine::new);
+                        Ok(slides_pdf::export(&pres2, engine)?.1)
+                    });
+                    r.insert("pdf_after".into(), s);
+                    r.insert("pages_after".into(), json!(pages));
                 }
             }
             let (pages, s) = stage(|| {

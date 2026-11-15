@@ -80,7 +80,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
-use std::io::Cursor;
+use std::io::{Cursor, Seek};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -1653,20 +1653,33 @@ pub fn cell_name(row: u32, col: u32) -> String {
     format!("{}{}", column_name(col), row + 1)
 }
 
-/// A Strict Open XML package (ISO/IEC 29500 Strict, its main part related
-/// with a `purl.oclc.org` type) as Transitional, which IronCalc and the
-/// readers here read; `None` for any other file.
+/// The package as IronCalc and the readers here read it, when that isn't
+/// the file as it is: a Strict Open XML package (ISO/IEC 29500 Strict, its
+/// main part related with a `purl.oclc.org` type) as Transitional, and a
+/// package whose workbook, styles or shared strings aren't at Excel's part
+/// names (or whose names use backslashes) moved there. `None` for any other
+/// file.
 fn strict_as_transitional(path: &Path) -> Result<Option<Vec<u8>>> {
     let Ok(file) = fs::File::open(path) else {
         return Ok(None);
     };
-    if !kantor_ooxml::is_strict_package(std::io::BufReader::new(file)) {
+    let mut file = std::io::BufReader::new(file);
+    let strict = kantor_ooxml::is_strict_package(&mut file);
+    let layout = file.rewind().is_ok() && kantor_ooxml::needs_spreadsheet_layout(&mut file);
+    if !strict && !layout {
         return Ok(None);
     }
-    let bytes = fs::read(path).with_context(|| format!("opening {}", path.display()))?;
-    kantor_ooxml::to_transitional(&bytes)
-        .map(Some)
-        .with_context(|| format!("opening {}", path.display()))
+    let read = || -> Result<Option<Vec<u8>>> {
+        let mut bytes = fs::read(path)?;
+        if strict {
+            bytes = kantor_ooxml::to_transitional(&bytes)?;
+        }
+        if layout && let Some(moved) = kantor_ooxml::spreadsheet_layout(&bytes)? {
+            bytes = moved;
+        }
+        Ok(Some(bytes))
+    };
+    read().with_context(|| format!("opening {}", path.display()))
 }
 
 /// Run a file reader, turning a panic in it (a parser that didn't expect

@@ -23,6 +23,10 @@
 //! Values the same in both (booleans `true`/`false`, `start`/`end` sides)
 //! are left alone: Transitional allows them too and the readers take them.
 
+mod layout;
+
+pub use layout::{needs_spreadsheet_layout, spreadsheet_layout};
+
 use std::borrow::Cow;
 use std::io::{Cursor, Read, Seek, Write};
 
