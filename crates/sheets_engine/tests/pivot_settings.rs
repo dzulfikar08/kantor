@@ -390,3 +390,119 @@ fn calculated_fields() {
     l.rows.push(AxisEntry::Field(field(&l, "Price")));
     assert!(wb.set_pivot_layout(s, 2, 0, &l).is_err());
 }
+
+/// Rows Region, columns Product, Sum of Revenue shown as `show`.
+fn show_as(
+    wb: &mut Workbook,
+    s: u32,
+    show: ShowAs,
+    base: Option<&str>,
+    item: PivotBaseItem,
+) -> Vec<Vec<String>> {
+    let mut l = layout(wb, s);
+    l.rows = vec![AxisEntry::Field(1)];
+    l.columns = vec![AxisEntry::Field(2)];
+    l.values.clear();
+    l.add_value(4);
+    l.values[0].show_as = show;
+    l.values[0].base_field = base.map(|b| field(&l, b));
+    l.values[0].base_item = item;
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    // East, North, West by Apples, Pears, Plums, Grand Total.
+    grid(wb, s, (4, 1, 7, 4))
+}
+
+#[test]
+fn show_values_as() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = data_book();
+    let s = new_pivot(&mut wb);
+    let prev = PivotBaseItem::Previous;
+    let g = show_as(&mut wb, s, ShowAs::Normal, None, prev.clone());
+    assert_eq!(g[0], ["228", "45", "144", "417"]);
+    let g = show_as(&mut wb, s, ShowAs::PercentOfTotal, None, prev.clone());
+    assert_eq!(g[0][0], "21.35%");
+    assert_eq!(g[3][3], "100.00%");
+    let g = show_as(&mut wb, s, ShowAs::PercentOfColumn, None, prev.clone());
+    assert_eq!(g[0][0], "38.78%");
+    assert_eq!(g[3][0], "100.00%");
+    let g = show_as(&mut wb, s, ShowAs::PercentOfRow, None, prev.clone());
+    assert_eq!(g[0][0], "54.68%");
+    assert_eq!(g[0][3], "100.00%");
+    let g = show_as(&mut wb, s, ShowAs::PercentOfParentColumn, None, prev.clone());
+    assert_eq!(g[0][0], "54.68%", "the parent of a column is the row's total");
+    let north = PivotBaseItem::Item("North".into());
+    let g = show_as(&mut wb, s, ShowAs::Percent, Some("Region"), north.clone());
+    assert_eq!(g[0][0], "105.56%");
+    assert_eq!(g[1][0], "100.00%");
+    assert_eq!(g[3][0], "", "no Region item in the grand total");
+    let g = show_as(&mut wb, s, ShowAs::Difference, Some("Region"), prev.clone());
+    assert_eq!(g[0][0], "", "East has nothing before it");
+    assert_eq!(g[1][0], "-12");
+    assert_eq!(g[2][1], "-15");
+    let east = PivotBaseItem::Item("East".into());
+    let g = show_as(&mut wb, s, ShowAs::PercentDifference, Some("Region"), east);
+    assert_eq!(g[1][0], "-5.26%");
+    let g = show_as(&mut wb, s, ShowAs::RunningTotal, Some("Region"), prev.clone());
+    assert_eq!(g[2][0], "588");
+    assert_eq!(g[1][1], "135");
+    let g = show_as(&mut wb, s, ShowAs::PercentRunningTotal, Some("Region"), prev.clone());
+    assert_eq!(g[1][0], "75.51%");
+    assert_eq!(g[2][0], "100.00%");
+    let g = show_as(&mut wb, s, ShowAs::RankDescending, Some("Region"), prev.clone());
+    assert_eq!([&g[0][0], &g[1][0], &g[2][0]], ["1", "2", "3"]);
+    let g = show_as(&mut wb, s, ShowAs::RankAscending, Some("Region"), prev.clone());
+    assert_eq!(g[2][0], "1");
+    let g = show_as(&mut wb, s, ShowAs::Index, None, prev.clone());
+    let index: f64 = g[0][0].parse().unwrap();
+    assert!((index - 228.0 * 1068.0 / (417.0 * 588.0)).abs() < 1e-6, "{index}");
+    // A base field is needed.
+    let mut l = layout(&wb, s);
+    l.values[0].show_as = ShowAs::Difference;
+    l.values[0].base_field = None;
+    assert!(wb.set_pivot_layout(s, 2, 0, &l).is_err());
+
+    // Parents with two row fields.
+    let mut l = layout(&wb, s);
+    l.rows = vec![AxisEntry::Field(1), AxisEntry::Field(2)];
+    l.columns.clear();
+    l.values[0].show_as = ShowAs::PercentOfParentRow;
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(
+        grid(&wb, s, (3, 0, 4, 1)),
+        rows(&[&["East", "39.04%"], &["Apples", "54.68%"]])
+    );
+    let mut l = layout(&wb, s);
+    l.values[0].show_as = ShowAs::PercentOfParent;
+    l.values[0].base_field = Some(1);
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(
+        grid(&wb, s, (3, 0, 4, 1)),
+        rows(&[&["East", "100.00%"], &["Apples", "54.68%"]])
+    );
+    assert_eq!(layout(&wb, s).values[0].show_as, ShowAs::PercentOfParent);
+
+    // Saved: the 2010 kinds in an x14 extension; read back the same.
+    let (path, p) = save(&mut wb, dir.path(), "show-as.xlsx");
+    let table = &p["xl/pivotTables/pivotTable1.xml"];
+    assert!(table.contains("pivotShowAs=\"percentOfParent\""), "{table}");
+    let back = Workbook::open(&path).unwrap();
+    let bl = back.pivot_layout(s, 2, 0).unwrap();
+    assert_eq!(bl.values, layout(&wb, s).values);
+    assert_eq!(bl.refresh_problem, None);
+    let mut l = layout(&wb, s);
+    l.values[0].show_as = ShowAs::Difference;
+    l.values[0].base_item = PivotBaseItem::Item("Pears".into());
+    l.values[0].base_field = Some(2);
+    l.values[0].func = PivotFunc::Average;
+    l.values[0].num_fmt = Some("#,##0.00".into());
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    let (path, p) = save(&mut wb, dir.path(), "difference.xlsx");
+    let table = &p["xl/pivotTables/pivotTable1.xml"];
+    assert!(
+        table.contains("subtotal=\"average\" showDataAs=\"difference\" baseField=\"2\" baseItem=\"1\""),
+        "{table}"
+    );
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(back.pivot_layout(s, 2, 0).unwrap().values, layout(&wb, s).values);
+}
