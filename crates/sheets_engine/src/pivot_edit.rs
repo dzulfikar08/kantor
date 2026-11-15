@@ -744,6 +744,8 @@ impl Workbook {
             }
         };
         let k = self.pivots.defs.len() + 1;
+        // A pivot table on the same source shares its cache, as Excel does.
+        let shared = self.shared_cache_for(&src);
         let mut cache = new_cache(src, fields, layout.clone());
         cache.part = format!(
             "{NEW_PREFIX}pivotCacheDefinition{}.xml",
@@ -803,9 +805,18 @@ impl Workbook {
             in_origin: false,
             root_sets: Vec::new(),
         };
-        let ci = self.pivots.caches.len();
+        let mut def = def;
+        let ci = match shared {
+            Some(ci) => {
+                def.cache = ci;
+                ci
+            }
+            None => {
+                self.pivots.caches.push(Arc::new(cache));
+                self.pivots.caches.len() - 1
+            }
+        };
         let di = self.pivots.defs.len();
-        self.pivots.caches.push(Arc::new(cache));
         self.pivots.defs.push(Arc::new(def.clone()));
         let change = Rebuild {
             defs: HashMap::from([(di, def)]),
@@ -816,7 +827,9 @@ impl Workbook {
             Ok(_) => {}
             Err(e) => {
                 self.pivots.defs.pop();
-                self.pivots.caches.pop();
+                if shared.is_none() {
+                    self.pivots.caches.pop();
+                }
                 return Err(e);
             }
         }
@@ -830,6 +843,39 @@ impl Workbook {
                 .position(|w| w.sheet_id == self.pivot_def(&self.pivot_state(), di).sheet_id)
                 .ok_or_else(|| anyhow!("the PivotTable's sheet is missing"))? as u32;
         Ok((sheet, top, left))
+    }
+
+    /// The cache of a pivot table in the workbook on source `src` (the
+    /// same range on the same sheet, or the same table or name), if one can
+    /// be shared.
+    fn shared_cache_for(&self, src: &Source) -> Option<usize> {
+        let state = self.pivot_state();
+        (0..self.pivots.defs.len())
+            .filter(|&i| self.pivot_present(&state, i))
+            .map(|i| self.pivot_def(&state, i).cache)
+            .find(|&ci| {
+                let c = self.pivot_cache(&state, ci);
+                if c.unsupported.is_some() {
+                    return false;
+                }
+                match (&c.source, src) {
+                    (Some(Source::Name(a)), Source::Name(b)) => a.eq_ignore_ascii_case(b),
+                    (
+                        Some(Source::Range { sheet, area }),
+                        Source::Range {
+                            sheet: s2,
+                            area: a2,
+                        },
+                    ) => {
+                        sheet.eq_ignore_ascii_case(s2)
+                            && self
+                                .sheet_index_by_name(sheet)
+                                .and_then(|k| self.now(&c.at, self.sheet_id(k), *area))
+                                == Some(*a2)
+                    }
+                    _ => false,
+                }
+            })
     }
 
     /// `PivotTable1`, `PivotTable2`... the first not taken.

@@ -581,7 +581,8 @@ fn pivots_in_a_workbook_that_has_some_and_from_a_table() {
     assert_eq!(wb.display_value(s, 3, 0), "Apples");
     assert_eq!(wb.display_value(s, 3, 1), "49");
     let (path, p) = save(&mut wb, dir.path(), "a.xlsx");
-    assert_eq!(p["xl/workbook.xml"].matches("<pivotCache ").count(), 4);
+    // The fixture's pivot on the table Sales: the new one shares its cache.
+    assert_eq!(p["xl/workbook.xml"].matches("<pivotCache ").count(), 3);
     let new_table = p
         .iter()
         .find(|(k, v)| k.starts_with("xl/pivotTables/pivotTable") && v.contains("PivotTable5"))

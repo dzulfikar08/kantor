@@ -726,3 +726,57 @@ fn style_picker_options() {
     assert!(wb.undo().unwrap());
     assert_eq!(layout(&wb, s).style.name.as_deref(), Some("PivotStyleDark3"));
 }
+
+#[test]
+fn a_second_pivot_on_the_same_data_shares_its_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = data_book();
+    let s = new_pivot(&mut wb);
+    arrange(&mut wb, s, &["Region"]);
+    let (t, _, _) = wb
+        .insert_pivot(
+            "Sheet1!$A$1:$E$13",
+            0,
+            PivotDestination::Cell {
+                sheet: s,
+                row: 2,
+                col: 5,
+            },
+        )
+        .unwrap();
+    assert_eq!(t, s);
+    let mut l = wb.pivot_layout(s, 2, 5).unwrap();
+    l.rows = vec![AxisEntry::Field(2)];
+    l.add_value(3);
+    wb.set_pivot_layout(s, 2, 5, &l).unwrap();
+    // Grouping the shared cache changes both, as in Excel.
+    wb.group_pivot_items(s, 2, 0, 1, &["East".into(), "West".into()])
+        .unwrap();
+    assert!(
+        wb.pivot_layout(s, 2, 5)
+            .unwrap()
+            .fields
+            .iter()
+            .any(|f| f.name == "Region2")
+    );
+    let (path, p) = save(&mut wb, dir.path(), "shared-cache.xlsx");
+    assert_eq!(p["xl/workbook.xml"].matches("<pivotCache ").count(), 1);
+    assert!(!p.contains_key("xl/pivotCache/pivotCacheDefinition2.xml"));
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(back.pivot_tables(s).len(), 2);
+    // A third one after reopening shares the cache from the file.
+    let mut back = back;
+    back.insert_pivot("Sheet1!$A$1:$E$13", 0, PivotDestination::NewSheet)
+        .unwrap();
+    let (_, p) = save(&mut back, dir.path(), "shared-cache-2.xlsx");
+    assert_eq!(p["xl/workbook.xml"].matches("<pivotCache ").count(), 1);
+    assert_eq!(
+        p.keys().filter(|k| k.starts_with("xl/pivotTables/pivotTable") && k.ends_with(".xml")).count(),
+        3
+    );
+    // Another source: a cache of its own.
+    wb.insert_pivot("Sheet1!$A$1:$D$13", 0, PivotDestination::NewSheet)
+        .unwrap();
+    let (_, p) = save(&mut wb, dir.path(), "two-caches.xlsx");
+    assert_eq!(p["xl/workbook.xml"].matches("<pivotCache ").count(), 2);
+}

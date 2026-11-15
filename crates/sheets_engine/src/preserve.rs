@@ -679,8 +679,36 @@ fn add_pivots(pkg: &mut Package, adds: &[NewPivot]) -> Result<Vec<AddedPivot>, S
             .iter()
             .find(|s| s.sheet_id == a.sheet_id && s.kind == SheetKind::Work)
             .ok_or_else(|| format!("PivotTable sheet {} is missing", a.sheet_id))?;
+        // A cache the package already has (a new pivot table sharing the
+        // cache of one from the file): its cacheId from `<pivotCaches>`.
+        let existing = (!a.cache_part.starts_with(crate::pivot::NEW_PREFIX)
+            && pkg.has(&a.cache_part))
+        .then(|| {
+            let rid = wb_rels
+                .iter()
+                .find(|r| resolve(&wb, &r.target).as_deref() == Some(a.cache_part.as_str()))?
+                .id
+                .clone();
+            list?
+                .children()
+                .filter(|c| is_main(*c, "pivotCache"))
+                .find(|c| c.attribute((NS_R, "id")) == Some(rid.as_str()))?
+                .attribute("cacheId")?
+                .parse::<u32>()
+                .ok()
+        })
+        .flatten();
         let (cache_id, cache_part, records_part) = match caches.get(&a.cache_part) {
             Some(c) => c.clone(),
+            None if existing.is_some() => {
+                let entry = (
+                    existing.unwrap_or_default(),
+                    a.cache_part.clone(),
+                    a.records_part.clone(),
+                );
+                caches.insert(a.cache_part.clone(), entry.clone());
+                entry
+            }
             None => {
                 let cache_part =
                     free_part(pkg, &a.cache_part, "xl/pivotCache/pivotCacheDefinition");
