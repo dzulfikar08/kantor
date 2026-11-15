@@ -18,6 +18,7 @@ use gpui_kit::component::{
     h_flex,
     menu::{DropdownMenu as _, PopupMenuItem},
 };
+use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::components::{IconButtonExt as _, icon_button};
 use kantor_ui::i18n::{self, tk};
@@ -158,8 +159,15 @@ impl RichState {
 /// What the toolbar does with a command.
 pub(crate) type OnRichOp = Rc<dyn Fn(RichOp, &mut Window, &mut App)>;
 
-/// The toolbar over the text box: B, I, U, font, size, colour, alignment.
-pub(crate) fn toolbar(id: &'static str, state: &RichState, on_op: OnRichOp, cx: &App) -> Div {
+/// The toolbar over the text box: B, I, U, font, size, colour, and the
+/// paragraphs' alignment when `align` (notes don't keep one).
+pub(crate) fn toolbar(
+    id: &'static str,
+    state: &RichState,
+    align: bool,
+    on_op: OnRichOp,
+    cx: &App,
+) -> Div {
     let toggle = |n: usize, icon: Lucide, label: &'static str, on: bool, op: RichOp| {
         let f = on_op.clone();
         icon_button((id, n), icon, on, cx)
@@ -244,27 +252,29 @@ pub(crate) fn toolbar(id: &'static str, state: &RichState, on_op: OnRichOp, cx: 
         .child(font)
         .child(size)
         .child(colour)
-        .child(toggle(
-            3,
-            Lucide::TextAlignStart,
-            tk("Align Left"),
-            state.align == Align::Left,
-            RichOp::Align(Align::Left),
-        ))
-        .child(toggle(
-            4,
-            Lucide::TextAlignCenter,
-            tk("Center"),
-            state.align == Align::Center,
-            RichOp::Align(Align::Center),
-        ))
-        .child(toggle(
-            5,
-            Lucide::TextAlignEnd,
-            tk("Align Right"),
-            state.align == Align::Right,
-            RichOp::Align(Align::Right),
-        ))
+        .when(align, |d| {
+            d.child(toggle(
+                3,
+                Lucide::TextAlignStart,
+                tk("Align Left"),
+                state.align == Align::Left,
+                RichOp::Align(Align::Left),
+            ))
+            .child(toggle(
+                4,
+                Lucide::TextAlignCenter,
+                tk("Center"),
+                state.align == Align::Center,
+                RichOp::Align(Align::Center),
+            ))
+            .child(toggle(
+                5,
+                Lucide::TextAlignEnd,
+                tk("Align Right"),
+                state.align == Align::Right,
+                RichOp::Align(Align::Right),
+            ))
+        })
 }
 
 fn id_colour(id: &'static str) -> &'static str {

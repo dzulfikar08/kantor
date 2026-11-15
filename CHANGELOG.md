@@ -76,6 +76,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   size, colour and alignment. The shape shows the formatted text as you type.
 - Sheets: in a dark theme, the dark default text of shapes with no fill is drawn in the theme's
   text colour, as cells' Automatic text already is; text with a colour of its own keeps it.
+- Sheets: notes are drawn in their own box from the file, where Excel puts it, with a line and
+  arrowhead to the cell's corner. A shown note's box is moved and resized by dragging it or its
+  handles, as in Excel (one undo step, saved to the file); double-click it to edit, Delete removes
+  the note.
+- Sheets: notes keep their formatted text (bold, italic, underline, font, size, colour) on screen
+  and when edited, and the note editor has a toolbar to format the selected text. The editor sits
+  on the note's box and follows it when the sheet scrolls. Notes you don't touch are saved exactly
+  as they were.
 - Sheets: frozen rows taller than the window no longer stop the sheet from scrolling. As in
   Excel, the frozen rows keep most of the window (their bottom is cut off) and the rows below
   them still scroll in the strip that's left.

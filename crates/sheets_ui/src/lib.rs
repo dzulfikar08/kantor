@@ -874,25 +874,13 @@ impl TableDelegate for SheetGrid {
             None => content.apply(cell),
         };
         let validation = self.validation_layers(row, col, row_height, cx);
-        // A note: its corner mark, and the note while the pointer is over
-        // the cell or when it is shown (not while the cell or the note is
-        // being edited).
+        // A note: its corner mark and hover target (the drawing layer draws
+        // its box while the pointer is over the cell or when it is shown).
         let note_edited = self.note_editing == Some((sheet, row, col));
         let mut note_layers = self
             .book
             .note_at(sheet, row, col)
-            .map(|note| {
-                let editing = self
-                    .editor
-                    .as_ref()
-                    .is_some_and(|e| e.cell == (row, col) && e.sheet == sheet);
-                let shown = !editing
-                    && !note_edited
-                    && (self.note_hover == Some((sheet, row, col))
-                        || note.shown
-                        || self.show_all_notes);
-                notes_ui::layers(&note, (sheet, row, col), shown, &self.view, &t)
-            })
+            .map(|_| notes_ui::layers((sheet, row, col), &self.view, &t))
             .unwrap_or_default();
         if note_edited {
             note_layers.push(notes_ui::anchor_layer(&self.note_anchor));
@@ -2772,8 +2760,11 @@ impl Render for SheetsView {
                                 // A drag only extends the range if it started on a cell
                                 // (cells set `dragging` after this capture listener runs).
                                 .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
-                                    // A click on the grid ends a shape's text edit.
+                                    // A click on the grid ends a shape's or note's
+                                    // text edit (the editors' menus pop up outside
+                                    // them, so a click outside can't end it).
                                     this.commit_shape_text(false, window, cx);
+                                    this.commit_note(false, window, cx);
                                     this.dragging = false;
                                     this.point_dragging = false;
                                     this.reset_grid_drag(cx);

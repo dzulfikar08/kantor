@@ -272,9 +272,9 @@ impl SheetsView {
         let (at, w) = match rect {
             Some(b) => (
                 point(b.origin.x, b.origin.y + b.size.height + SPACE_2),
-                b.size.width.max(px(300.)),
+                b.size.width.max(px(340.)),
             ),
-            None => (point(SPACE_7 * 4., SPACE_7 * 4.), px(300.)),
+            None => (point(SPACE_7 * 4., SPACE_7 * 4.), px(340.)),
         };
         let bar = ed.paras.as_ref().map(|paras| {
             let sel = rich::selection(paras, ed.input.read(cx).selected_range());
@@ -283,6 +283,7 @@ impl SheetsView {
             rich::toolbar(
                 "shape-rich",
                 &state,
+                true,
                 std::rc::Rc::new(move |op, w, cx| {
                     let _ = view.update(cx, |this, cx| this.shape_rich_op(op, w, cx));
                 }),

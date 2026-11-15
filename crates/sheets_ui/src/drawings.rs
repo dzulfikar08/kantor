@@ -270,6 +270,33 @@ pub(crate) struct DrawLayer {
     /// A shape drawn from this element instead of its own while its text
     /// is being edited (the edit isn't in the workbook until it ends).
     pub(crate) preview: Option<(DrawingKey, Arc<str>)>,
+    /// Where the box of the note being edited is on screen (the note
+    /// editor sits there and follows the scroll).
+    pub(crate) note_edit_rect: Option<Bounds<Pixels>>,
+    /// What last frame's editors were placed from (a change repaints them).
+    placed_sig: u64,
+}
+
+/// Keys of note boxes drawn by the layer (never a drawing's index).
+const NOTE_KEY_BASE: usize = 1 << 40;
+
+/// The key of the box of the note on `(row, col)` of sheet `sheet_id`.
+pub(crate) fn note_key(sheet_id: u32, row: u32, col: u32) -> DrawingKey {
+    DrawingKey {
+        sheet_id,
+        index: NOTE_KEY_BASE + ((row as usize) << 16 | col as usize),
+    }
+}
+
+/// The note cell of a note box's key.
+pub(crate) fn note_of_key(key: DrawingKey) -> Option<(u32, u32)> {
+    let i = key.index.checked_sub(NOTE_KEY_BASE)?;
+    Some(((i >> 16) as u32, (i & 0xFFFF) as u32))
+}
+
+fn rgb32(c: Hsla) -> u32 {
+    let slides_engine::Rgb([r, g, b]) = look::rgb_of(c);
+    (r as u32) << 16 | (g as u32) << 8 | b as u32
 }
 
 impl DrawLayer {
@@ -299,7 +326,7 @@ impl DrawLayer {
         let list = Rc::new(book.drawings(sheet));
         if self
             .selected
-            .is_some_and(|s| !list.iter().any(|d| d.key == s))
+            .is_some_and(|s| note_of_key(s).is_none() && !list.iter().any(|d| d.key == s))
         {
             self.selected = None;
         }
@@ -345,6 +372,8 @@ struct Placed {
 /// What prepaint hands paint.
 pub(crate) struct Frame {
     placed: Vec<Placed>,
+    /// Lines from note boxes to their cells' corners (box end, cell end).
+    arrows: Vec<(Point<Pixels>, Point<Pixels>)>,
     hitboxes: Vec<(usize, Grip, Hitbox)>,
     body: Bounds<Pixels>,
     interactive: bool,
@@ -418,8 +447,29 @@ impl SheetsView {
         };
         match key {
             "delete" | "backspace" => {
-                let res = self.table.update(cx, |table, _| {
-                    table.delegate_mut().book.delete_drawing(selected)
+                let res = self.table.update(cx, |table, cx| {
+                    let grid = table.delegate_mut();
+                    match note_of_key(selected) {
+                        // A selected note box: Delete deletes the note.
+                        Some((row, col)) => {
+                            let sheet = grid.sheet;
+                            let r = grid
+                                .book
+                                .delete_notes(
+                                    sheet,
+                                    sheets_engine::CellRange {
+                                        top: row,
+                                        left: col,
+                                        bottom: row,
+                                        right: col,
+                                    },
+                                )
+                                .map(|_| ());
+                            table.refresh(cx);
+                            r
+                        }
+                        None => grid.book.delete_drawing(selected),
+                    }
                 });
                 self.drawings.borrow_mut().selected = None;
                 self.status = match res {
@@ -440,6 +490,49 @@ impl SheetsView {
         true
     }
 
+    /// The end of a note box's move or resize: its new place (one undo
+    /// step), saved to its VML anchor.
+    fn drop_note_box(
+        &mut self,
+        drag: Drag,
+        row: u32,
+        col: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let res = self.table.update(cx, |table, cx| {
+            let place = {
+                let grid = table.delegate();
+                let Some(note) = grid.book.note_at(grid.sheet, row, col) else {
+                    return Ok(());
+                };
+                let heights = grid.layout.heights.clone();
+                let rows = heights.borrow();
+                let probe = GridGeometry::new(grid, Some(table), &rows, 0);
+                let max = probe.col_at(drag.rect[0] + drag.rect[2]) + 2;
+                let geom = GridGeometry::new(grid, Some(table), &rows, max);
+                let anchor = note
+                    .place_or_default()
+                    .drawing_anchor(row, col)
+                    .with_rect(drag.rect, &geom);
+                sheets_engine::NoteBox::from_drawing_anchor(row, col, &anchor)
+            };
+            let Some(place) = place else { return Ok(()) };
+            let grid = table.delegate_mut();
+            let sheet = grid.sheet;
+            let r = grid.book.set_note_place(sheet, row, col, place);
+            table.refresh(cx);
+            r
+        });
+        self.status = match (res, drag.grip) {
+            (Ok(()), Grip::Move) => i18n::t("Moved").into(),
+            (Ok(()), _) => i18n::t("Resized").into(),
+            (Err(e), _) => format!("{e:#}").into(),
+        };
+        self.update_title(window, cx);
+        cx.notify();
+    }
+
     /// The end of a move or resize: write the new anchor (one undo step).
     fn drop_drawing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(drag) = self.drawings.borrow_mut().drag.take() else {
@@ -447,6 +540,10 @@ impl SheetsView {
         };
         if !drag.changed() {
             cx.notify();
+            return;
+        }
+        if let Some((row, col)) = note_of_key(drag.key) {
+            self.drop_note_box(drag, row, col, window, cx);
             return;
         }
         let res = self.table.update(cx, |table, cx| {
@@ -555,7 +652,9 @@ fn prepaint(
     let table = table.read(cx);
     let grid = table.delegate();
     let drawings = layer.borrow_mut().drawings(&grid.book, grid.sheet);
-    if drawings.is_empty() {
+    let notes = grid.book.notes_now(grid.sheet);
+    if drawings.is_empty() && notes.is_empty() {
+        layer.borrow_mut().note_edit_rect = None;
         return None;
     }
     // Where the body is: the rows' viewport and the scrolling columns.
@@ -571,7 +670,12 @@ fn prepaint(
     }
     let heights = grid.layout.heights.clone();
     let rows = heights.borrow();
-    let geom = GridGeometry::new(grid, Some(table), &rows, max_col(&drawings));
+    let note_cols = notes
+        .values()
+        .map(|n| n.place_or_default().anchor(n.row, n.col)[4] + 1)
+        .max()
+        .unwrap_or(0);
+    let geom = GridGeometry::new(grid, Some(table), &rows, max_col(&drawings).max(note_cols));
     let (frozen_rows, frozen) = grid.book.frozen(grid.sheet);
     let frozen_w = px(geom.col_left(frozen) as f32);
     // The list scrolls the rows below the frozen ones, which the table pins
@@ -628,6 +732,92 @@ fn prepaint(
             shown,
         });
     }
+    // Note boxes: shown notes (and the one under the pointer) over the
+    // objects, at their place, with a line to their cell's corner.
+    let mut arrows = Vec::new();
+    let mut note_edit_rect = None;
+    let t = kantor_ui::tokens(cx);
+    let colors = crate::notes_ui::NoteColors {
+        fill: rgb32(t.elevated),
+        line: rgb32(t.border_strong),
+        text: rgb32(t.fg),
+    };
+    let sheet = grid.sheet;
+    let sid = grid.book.sheet_id(sheet);
+    // A sheet point on screen, in the pane that shows it.
+    let on_screen = |x: f64, y: f64| {
+        panes.iter().find_map(|p| {
+            let s = point(p.origin_x + px(x as f32), p.origin_y + px(y as f32));
+            p.clip.contains(&s).then_some((s, *p))
+        })
+    };
+    let mut cells: Vec<_> = notes.values().collect();
+    cells.sort_by_key(|n| (n.row, n.col));
+    for note in cells {
+        let (row, col) = (note.row, note.col);
+        let cell = (sheet, row, col);
+        let key = note_key(sid, row, col);
+        let place = note.place_or_default();
+        let anchor = place.drawing_anchor(row, col);
+        let rect = match drag {
+            Some(g) if g.key == key => g.rect,
+            _ => anchor.rect(&geom),
+        };
+        let corner = on_screen(geom.col_left(col + 1), geom.row_top(row));
+        if grid.note_editing == Some(cell) {
+            let pane = corner.map_or(panes.last().copied(), |c| Some(c.1));
+            note_edit_rect = pane.map(|p| screen_rect(&p, rect));
+            continue;
+        }
+        let pinned = note.shown || grid.show_all_notes;
+        let editing_cell = grid
+            .editor
+            .as_ref()
+            .is_some_and(|e| e.cell == (row, col) && e.sheet == sheet);
+        if editing_cell || !(pinned || grid.note_hover == Some(cell)) {
+            continue;
+        }
+        if rect[2] < 1.0 || rect[3] < 1.0 {
+            continue;
+        }
+        let shown: Vec<_> = panes
+            .iter()
+            .map(|p| (screen_rect(p, rect), p.clip))
+            .filter(|(r, clip)| r.intersects(clip))
+            .collect();
+        if let Some((c, pane)) = corner {
+            let b = screen_rect(&pane, rect);
+            let from = point(
+                c.x.clamp(b.left(), b.right()),
+                c.y.clamp(b.top(), b.bottom()),
+            );
+            if from != c {
+                arrows.push((from, c));
+            }
+        }
+        if shown.is_empty() {
+            continue;
+        }
+        placed.push(Placed {
+            drawing: Drawing {
+                key,
+                name: "Note".into(),
+                descr: String::new(),
+                anchor,
+                kind: Arc::new(DrawingKind::Shape {
+                    xml: crate::notes_ui::note_shape_xml(note, colors).into(),
+                }),
+                // A hovered note goes when the pointer leaves its cell:
+                // only shown ones are moved and resized.
+                editable: pinned,
+                hidden: false,
+                prints: false,
+            },
+            rect,
+            shown,
+        });
+    }
+    layer.borrow_mut().note_edit_rect = note_edit_rect;
     drop(rows);
     let mut hitboxes = Vec::new();
     if interactive {
@@ -662,6 +852,7 @@ fn prepaint(
     }
     Some(Frame {
         placed,
+        arrows,
         hitboxes,
         body,
         interactive,
@@ -737,11 +928,30 @@ fn paint(
         (l.painter.clone(), l.selected)
     };
     let Some(painter) = painter else { return };
-    layer.borrow_mut().on_screen = frame
-        .placed
-        .iter()
-        .filter_map(|p| Some((p.drawing.key, p.shown.last()?.0)))
-        .collect();
+    {
+        let mut l = layer.borrow_mut();
+        l.on_screen = frame
+            .placed
+            .iter()
+            .filter_map(|p| Some((p.drawing.key, p.shown.last()?.0)))
+            .collect();
+        // The shape and note editors are placed from these: when they
+        // move (scrolling), lay the editors out again.
+        let sig = {
+            use std::hash::{Hash as _, Hasher as _};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            for (k, b) in &l.on_screen {
+                k.hash(&mut h);
+                format!("{b:?}").hash(&mut h);
+            }
+            format!("{:?}", l.note_edit_rect).hash(&mut h);
+            h.finish()
+        };
+        if sig != l.placed_sig {
+            l.placed_sig = sig;
+            window.refresh();
+        }
+    }
     let other = t.fg_muted;
     for (p, painted) in frame.placed.iter().zip(&book_items) {
         let Some(painted) = painted else { continue };
@@ -756,6 +966,38 @@ fn paint(
                 );
             });
         }
+    }
+    // Notes' lines to their cells, ending in a small arrowhead at the
+    // cell's corner, as Excel draws them.
+    if !frame.arrows.is_empty() {
+        window.with_content_mask(Some(ContentMask { bounds: frame.body }), |window| {
+            for (from, to) in &frame.arrows {
+                let mut line = PathBuilder::stroke(px(1.));
+                line.move_to(*from);
+                line.line_to(*to);
+                if let Ok(path) = line.build() {
+                    window.paint_path(path, t.fg_muted);
+                }
+                let (dx, dy) = (f32::from(to.x - from.x), f32::from(to.y - from.y));
+                let len = (dx * dx + dy * dy).sqrt();
+                if len > 8.0 {
+                    let (ux, uy) = (dx / len, dy / len);
+                    let base = point(to.x - px(ux * 7.), to.y - px(uy * 7.));
+                    let mut head = PathBuilder::fill();
+                    head.add_polygon(
+                        &[
+                            *to,
+                            point(base.x - px(uy * 3.5), base.y + px(ux * 3.5)),
+                            point(base.x + px(uy * 3.5), base.y - px(ux * 3.5)),
+                        ],
+                        true,
+                    );
+                    if let Ok(path) = head.build() {
+                        window.paint_path(path, t.fg_muted);
+                    }
+                }
+            }
+        });
     }
     // The selection: an accent outline and handles.
     if let Some(p) = frame
@@ -813,7 +1055,8 @@ fn paint(
                     .iter()
                     .rev()
                     .find(|(_, g, hb)| *g == Grip::Move && hb.is_hovered(window))
-                    .map(|(i, _, _)| keys[*i].0);
+                    .map(|(i, _, _)| keys[*i].0)
+                    .filter(|k| note_of_key(*k).is_none());
                 if let Some(key) = hit {
                     cx.stop_propagation();
                     layer.borrow_mut().selected = Some(key);
@@ -842,7 +1085,15 @@ fn paint(
             if e.click_count >= 2 && grip == Grip::Move {
                 layer.borrow_mut().drag = None;
                 cx.stop_propagation();
-                let _ = view.update(cx, |this, cx| this.open_shape_editor(key, window, cx));
+                let _ = view.update(cx, |this, cx| match note_of_key(key) {
+                    Some((row, col)) => this.note_command_at(
+                        crate::notes_ui::NoteCommand::Edit,
+                        Some((row, col)),
+                        window,
+                        cx,
+                    ),
+                    None => this.open_shape_editor(key, window, cx),
+                });
                 return;
             }
             {
@@ -859,6 +1110,7 @@ fn paint(
             cx.stop_propagation();
             let _ = view.update(cx, |this, cx| {
                 this.commit_shape_text(false, window, cx);
+                this.commit_note(false, window, cx);
                 this.focus_grid(window, cx);
                 cx.notify();
             });

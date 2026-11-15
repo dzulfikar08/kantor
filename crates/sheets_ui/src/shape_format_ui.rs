@@ -671,7 +671,12 @@ impl SheetsView {
             })
             .when_some(anchors, |d, a| {
                 d.child(section(tk("Text Box")))
-                    .child(row(i18n::t("Vertical alignment"), a, cx))
+                    .child(
+                        div()
+                            .text_size(FONT_SMALL)
+                            .child(i18n::t("Vertical alignment")),
+                    )
+                    .child(a)
                     .child(
                         div()
                             .text_size(FONT_SMALL)

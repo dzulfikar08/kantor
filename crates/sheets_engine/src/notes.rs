@@ -27,8 +27,138 @@ use crate::shift::{Layout, parse_range};
 /// A sheet's notes by `(row, col)` (0-based) of the cell they are on now.
 pub type SheetNotes = std::collections::HashMap<(u32, u32), CellNote>;
 
+/// Where a note's box is (its VML `x:Anchor`), relative to the note's
+/// cell so it moves with it: each edge is a column (or row) counted from
+/// the note's cell and an offset into it in Excel px.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NoteBox {
+    pub left: (i64, u32),
+    pub top: (i64, u32),
+    pub right: (i64, u32),
+    pub bottom: (i64, u32),
+}
+
+impl NoteBox {
+    /// The box Excel gives a new note: right of the cell, about two columns
+    /// wide and four rows high, starting a row up.
+    pub fn default_for(row: u32) -> Self {
+        let up = i64::from(row.min(1));
+        NoteBox {
+            left: (1, 15),
+            top: (-up, 10),
+            right: (3, 15),
+            bottom: (3, 4),
+        }
+    }
+
+    /// From an `x:Anchor` (left column, offset, top row, offset, right
+    /// column, offset, bottom row, offset) of the note on `(row, col)`.
+    pub fn from_anchor(row: u32, col: u32, a: [u32; 8]) -> Self {
+        let c = |v: u32| i64::from(v) - i64::from(col);
+        let r = |v: u32| i64::from(v) - i64::from(row);
+        NoteBox {
+            left: (c(a[0]), a[1]),
+            top: (r(a[2]), a[3]),
+            right: (c(a[4]), a[5]),
+            bottom: (r(a[6]), a[7]),
+        }
+    }
+
+    /// The `x:Anchor` numbers for the note on `(row, col)` (clamped to the
+    /// sheet).
+    pub fn anchor(&self, row: u32, col: u32) -> [u32; 8] {
+        let c = |d: i64| (i64::from(col) + d).clamp(0, i64::from(crate::MAX_COLS) - 1) as u32;
+        let r = |d: i64| (i64::from(row) + d).clamp(0, i64::from(crate::MAX_ROWS) - 1) as u32;
+        [
+            c(self.left.0),
+            self.left.1,
+            r(self.top.0),
+            self.top.1,
+            c(self.right.0),
+            self.right.1,
+            r(self.bottom.0),
+            self.bottom.1,
+        ]
+    }
+
+    /// As a drawing anchor (offsets in EMU), to place it with a sheet's
+    /// geometry like a picture.
+    pub fn drawing_anchor(&self, row: u32, col: u32) -> crate::drawing::Anchor {
+        use crate::drawing::{Anchor, EditAs, Marker};
+        let a = self.anchor(row, col);
+        let m = |col: u32, cx: u32, row: u32, ry: u32| Marker {
+            col,
+            col_off: i64::from(cx) * 9525,
+            row,
+            row_off: i64::from(ry) * 9525,
+        };
+        Anchor::TwoCell {
+            from: m(a[0], a[1], a[2], a[3]),
+            to: m(a[4], a[5], a[6], a[7]),
+            edit_as: EditAs::TwoCell,
+        }
+    }
+
+    /// From a drawing anchor (see [`NoteBox::drawing_anchor`]).
+    pub fn from_drawing_anchor(row: u32, col: u32, a: &crate::drawing::Anchor) -> Option<Self> {
+        let crate::drawing::Anchor::TwoCell { from, to, .. } = a else {
+            return None;
+        };
+        let px = |emu: i64| (emu.max(0) as f64 / 9525.0).round() as u32;
+        Some(Self::from_anchor(
+            row,
+            col,
+            [
+                from.col,
+                px(from.col_off),
+                from.row,
+                px(from.row_off),
+                to.col,
+                px(to.col_off),
+                to.row,
+                px(to.row_off),
+            ],
+        ))
+    }
+}
+
+/// A run of a note's formatted text (a comment's `<r>`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct NoteRun {
+    pub text: String,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    /// Hundredths of a point.
+    pub size: Option<u32>,
+    /// `RRGGBB`.
+    pub color: Option<u32>,
+    pub font: Option<String>,
+    /// The other run properties as the file has them (`<family>`,
+    /// `<charset>`, a theme or indexed `<color>` ...), written back as is.
+    pub other: String,
+}
+
+impl NoteRun {
+    /// Whether `runs` are what Kantor writes for a note's plain text
+    /// anyway: the bold `Author:` run (if any), then plain runs, in one
+    /// font and size.
+    pub fn is_default(runs: &[NoteRun], author: &str) -> bool {
+        let head = format!("{author}:");
+        runs.iter().enumerate().all(|(i, r)| {
+            let author_run = i == 0 && !author.is_empty() && r.text == head;
+            r.bold == author_run
+                && !r.italic
+                && !r.underline
+                && r.color.is_none()
+                && r.size == runs[0].size
+                && r.font == runs[0].font
+        })
+    }
+}
+
 /// A note on a cell.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CellNote {
     /// 0-based. From [`Workbook::notes_now`] and [`Workbook::note_at`]: the
     /// cell it is on now; from [`Workbook::notes`]: where the opened file
@@ -42,6 +172,18 @@ pub struct CellNote {
     /// Shown all the time (Show/Hide Note), not only while the pointer is
     /// over its cell.
     pub shown: bool,
+    /// Where its box is (`None`: Excel's default place).
+    pub place: Option<NoteBox>,
+    /// Its text with formatting, when the file has more than Excel's
+    /// default (their texts joined are `text`); `None`: plain text.
+    pub runs: Option<Arc<[NoteRun]>>,
+}
+
+impl CellNote {
+    /// Its box, or Excel's default one.
+    pub fn place_or_default(&self) -> NoteBox {
+        self.place.unwrap_or_else(|| NoteBox::default_for(self.row))
+    }
 }
 
 /// The notes on a copied or cut range (see [`Workbook::note_clip`]).
@@ -65,6 +207,18 @@ impl NoteClip {
     }
 }
 
+/// What a package says of a note besides its text (read at open).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct NoteExtra {
+    /// Shown all the time (`<x:Visible/>`).
+    pub shown: bool,
+    /// Its box's `x:Anchor`.
+    pub anchor: Option<[u32; 8]>,
+    /// Its formatted text, when it has formatting of its own (see
+    /// [`CellNote::runs`]).
+    pub runs: Option<Arc<[NoteRun]>>,
+}
+
 /// A note to write, at its current cell.
 #[derive(Debug, Clone)]
 pub(crate) struct NoteSave {
@@ -73,6 +227,9 @@ pub(crate) struct NoteSave {
     pub author: String,
     pub text: String,
     pub shown: bool,
+    /// The box's `x:Anchor` when it has its own place.
+    pub anchor: Option<[u32; 8]>,
+    pub runs: Option<Arc<[NoteRun]>>,
 }
 
 impl Workbook {
@@ -86,12 +243,20 @@ impl Workbook {
             .iter()
             .filter_map(|c| {
                 let r = parse_range(&c.cell_ref)?.area();
+                let extra = self.note_extras.get(&(id, r.top, r.left));
+                let runs = extra.and_then(|e| e.runs.clone()).filter(|runs| {
+                    runs.iter().map(|r| r.text.as_str()).collect::<String>() == c.text
+                });
                 Some(CellNote {
                     row: r.top,
                     col: r.left,
                     author: c.author_name.clone(),
                     text: c.text.clone(),
-                    shown: self.shown_notes.contains(&(id, r.top, r.left)),
+                    shown: extra.is_some_and(|e| e.shown),
+                    place: extra
+                        .and_then(|e| e.anchor)
+                        .map(|a| NoteBox::from_anchor(r.top, r.left, a)),
+                    runs,
                 })
             })
             .collect()
@@ -174,6 +339,7 @@ impl Workbook {
             Some(n) if n.text == text => return Ok(()),
             Some(n) => CellNote {
                 text: text.to_owned(),
+                runs: None,
                 ..n.clone()
             },
             None => CellNote {
@@ -181,12 +347,70 @@ impl Workbook {
                 col,
                 author: author.to_owned(),
                 text: text.to_owned(),
-                shown: false,
+                ..CellNote::default()
             },
         };
         let mut list: Vec<CellNote> = now.values().cloned().collect();
         list.retain(|n| (n.row, n.col) != (row, col));
         list.push(note);
+        self.put_notes(sheet, list);
+        Ok(())
+    }
+
+    /// New Note / Edit Note with formatted text: the cell's note holds
+    /// `runs` (their texts joined are its text). A new note gets `author`.
+    /// One undo step (none when nothing changes).
+    pub fn set_note_runs(
+        &mut self,
+        sheet: u32,
+        row: u32,
+        col: u32,
+        runs: Vec<NoteRun>,
+        author: &str,
+    ) -> Result<()> {
+        self.check_note_cell(sheet, row, col)?;
+        let text: String = runs.iter().map(|r| r.text.as_str()).collect();
+        let runs: Arc<[NoteRun]> = runs.into();
+        let now = self.notes_now(sheet);
+        let note = match now.get(&(row, col)) {
+            Some(n) if n.text == text && n.runs.as_deref() == Some(&*runs) => return Ok(()),
+            Some(n) => CellNote {
+                text,
+                runs: Some(runs),
+                ..n.clone()
+            },
+            None => CellNote {
+                row,
+                col,
+                author: author.to_owned(),
+                text,
+                runs: Some(runs),
+                ..CellNote::default()
+            },
+        };
+        let mut list: Vec<CellNote> = now.values().cloned().collect();
+        list.retain(|n| (n.row, n.col) != (row, col));
+        list.push(note);
+        self.put_notes(sheet, list);
+        Ok(())
+    }
+
+    /// Move or resize the box of the note on `(row, col)` (dragged as in
+    /// Excel). One undo step; nothing when it's where it was.
+    pub fn set_note_place(&mut self, sheet: u32, row: u32, col: u32, place: NoteBox) -> Result<()> {
+        let now = self.notes_now(sheet);
+        let Some(n) = now.get(&(row, col)) else {
+            bail!("This cell has no note");
+        };
+        if n.place_or_default() == place {
+            return Ok(());
+        }
+        let mut list: Vec<CellNote> = now.values().cloned().collect();
+        for m in &mut list {
+            if (m.row, m.col) == (row, col) {
+                m.place = Some(place);
+            }
+        }
         self.put_notes(sheet, list);
         Ok(())
     }
@@ -368,6 +592,8 @@ impl Workbook {
                     author: n.author.clone(),
                     text: n.text.clone(),
                     shown: n.shown,
+                    anchor: n.place.map(|p| p.anchor(n.row, n.col)),
+                    runs: n.runs.clone(),
                 })
                 .collect();
             list.sort_by_key(|n| (n.row, n.col));
@@ -411,6 +637,102 @@ pub(crate) fn text_xml(author: &str, text: &str) -> String {
     out
 }
 
+/// A `<comment>`'s `<text>` for `n`: its runs when it has them, else
+/// [`text_xml`].
+pub(crate) fn note_text_xml(n: &NoteSave) -> String {
+    let Some(runs) = &n.runs else {
+        return text_xml(&n.author, &n.text);
+    };
+    let mut out = String::from("<text>");
+    for r in runs.iter() {
+        out.push_str("<r><rPr>");
+        if r.bold {
+            out.push_str("<b/>");
+        }
+        if r.italic {
+            out.push_str("<i/>");
+        }
+        if r.underline {
+            out.push_str("<u/>");
+        }
+        out.push_str(&format!("<sz val=\"{}\"/>", fmt_pt(r.size.unwrap_or(900))));
+        match r.color {
+            Some(c) => out.push_str(&format!("<color rgb=\"FF{c:06X}\"/>")),
+            None if !r.other.contains("<color") => out.push_str("<color indexed=\"81\"/>"),
+            None => {}
+        }
+        out.push_str(&format!(
+            "<rFont val=\"{}\"/>",
+            esc(r.font.as_deref().unwrap_or("Tahoma"))
+        ));
+        out.push_str(&r.other);
+        out.push_str(&format!(
+            "</rPr><t xml:space=\"preserve\">{}</t></r>",
+            esc(&r.text)
+        ));
+    }
+    out.push_str("</text>");
+    out
+}
+
+/// Hundredths of a point as `sz` writes them (`9`, `10.5`).
+fn fmt_pt(h: u32) -> String {
+    if h.is_multiple_of(100) {
+        (h / 100).to_string()
+    } else {
+        format!("{}", h as f64 / 100.0)
+    }
+}
+
+/// The runs of a comment's `<text>` (`None`: not runs, e.g. a plain
+/// `<t>`). Properties Kantor doesn't edit go into `other` as written.
+pub(crate) fn read_runs(text: roxmltree::Node, src: &str) -> Option<Vec<NoteRun>> {
+    let mut out = Vec::new();
+    for r in text.children().filter(|c| c.is_element()) {
+        match r.tag_name().name() {
+            "r" => {}
+            "rPh" | "phoneticPr" => continue,
+            _ => return None,
+        }
+        let mut run = NoteRun::default();
+        for c in r.children().filter(|c| c.is_element()) {
+            match c.tag_name().name() {
+                "t" => run.text.push_str(c.text().unwrap_or_default()),
+                "rPr" => {
+                    for p in c.children().filter(|c| c.is_element()) {
+                        let val = p.attribute("val");
+                        let on = val.is_none_or(|v| v != "0" && v != "false");
+                        match p.tag_name().name() {
+                            "b" => run.bold = on,
+                            "i" => run.italic = on,
+                            "u" if val.is_none_or(|v| v == "single") => run.underline = true,
+                            "sz" => {
+                                run.size = val
+                                    .and_then(|v| v.parse::<f64>().ok())
+                                    .map(|v| (v * 100.0).round() as u32)
+                            }
+                            "rFont" => run.font = val.map(str::to_owned),
+                            "color"
+                                if p.attribute("rgb").is_some() && p.attributes().count() == 1 =>
+                            {
+                                let v = p.attribute("rgb").unwrap_or_default();
+                                run.color =
+                                    u32::from_str_radix(&v[v.len().saturating_sub(6)..], 16).ok();
+                            }
+                            // Excel's default note colour is Automatic.
+                            "color" if p.attribute("indexed") == Some("81") => {}
+                            _ => run.other.push_str(&src[p.range()]),
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        out.push(run);
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 /// The `comments` part of `notes`.
 pub(crate) fn comments_xml(notes: &[NoteSave]) -> String {
     let mut authors: Vec<&str> = Vec::new();
@@ -431,7 +753,7 @@ pub(crate) fn comments_xml(notes: &[NoteSave]) -> String {
         out.push_str(&format!(
             "<comment ref=\"{}\" authorId=\"{author}\">{}</comment>",
             crate::cell_name(n.row, n.col),
-            text_xml(&n.author, &n.text)
+            note_text_xml(n)
         ));
     }
     out.push_str("</commentList></comments>");
@@ -445,14 +767,12 @@ pub(crate) const VML_SHAPETYPE: &str = "<v:shapetype id=\"_x0000_t202\" coordsiz
 
 /// The VML note box (`<v:shape>`) of `n`, with shape id `_x0000_s{id}`.
 pub(crate) fn vml_shape(n: &NoteSave, id: usize, z: usize) -> String {
-    // The box: right of the cell, 2 columns wide and 4 rows high.
-    let anchor = format!(
-        "{}, 15, {}, 10, {}, 15, {}, 4",
-        n.col + 1,
-        n.row.saturating_sub(1),
-        n.col + 3,
-        n.row + 3
-    );
+    // The box: its own place, else right of the cell, 2 columns wide and
+    // 4 rows high.
+    let a = n
+        .anchor
+        .unwrap_or_else(|| NoteBox::default_for(n.row).anchor(n.row, n.col));
+    let anchor = anchor_text(a);
     let (visibility, visible) = if n.shown {
         ("visible", "<x:Visible/>")
     } else {
@@ -465,6 +785,11 @@ pub(crate) fn vml_shape(n: &NoteSave, id: usize, z: usize) -> String {
 <x:ClientData ObjectType=\"Note\"><x:MoveWithCells/><x:SizeWithCells/><x:Anchor>{anchor}</x:Anchor><x:AutoFill>False</x:AutoFill><x:Row>{}</x:Row><x:Column>{}</x:Column>{visible}</x:ClientData></v:shape>",
         n.row, n.col
     )
+}
+
+/// An `x:Anchor`'s text.
+pub(crate) fn anchor_text(a: [u32; 8]) -> String {
+    a.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")
 }
 
 /// The VML drawing with a note box per note (Excel shows a note from its
