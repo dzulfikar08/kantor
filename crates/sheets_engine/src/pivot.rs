@@ -1114,16 +1114,48 @@ impl Placed {
             // Excel's placeholder for a pivot with no fields: plain.
             return None;
         }
-        let a = self.area;
+        Some(look_of(
+            s,
+            &Frame {
+                style: &d.style,
+                area: self.area,
+                page: self.page,
+                first_data_row: d.first_data_row,
+                first_data_col: d.first_data_col,
+                rows: &self.rows,
+                cols: &self.cols,
+            },
+            row,
+            col,
+        ))
+    }
+}
+
+/// What a pivot table's style draws on: its area, report filters and the
+/// roles of its rows and columns.
+struct Frame<'a> {
+    style: &'a StyleInfo,
+    area: Area,
+    page: Option<Area>,
+    first_data_row: u32,
+    first_data_col: u32,
+    rows: &'a [Line],
+    cols: &'a [Line],
+}
+
+/// The look style `s` gives cell `(row, col)` of `f`.
+fn look_of(s: &PivotStyleDef, f: &Frame, row: u32, col: u32) -> TableCellLook {
+    {
+        let a = f.area;
         let mut look = TableCellLook::default();
-        if let Some(p) = self.page
+        if let Some(p) = f.page
             && row >= p.top
             && row <= p.bottom
         {
             let label = (col - p.left).is_multiple_of(3);
             let e = if label { &s.page_label } else { &s.page_value };
             look.apply(e, Edges::all());
-            return Some(look);
+            return look;
         }
         let edges = Edges {
             top: row == a.top,
@@ -1132,8 +1164,8 @@ impl Placed {
             right: col == a.right,
         };
         look.apply(&s.whole, edges);
-        let data_top = a.top + d.first_data_row;
-        let data_left = a.left + d.first_data_col;
+        let data_top = a.top + f.first_data_row;
+        let data_left = a.left + f.first_data_col;
         let row_edges = Edges {
             top: true,
             bottom: true,
@@ -1148,27 +1180,27 @@ impl Placed {
         };
         let row_line = row
             .checked_sub(data_top)
-            .and_then(|i| self.rows.get(i as usize))
+            .and_then(|i| f.rows.get(i as usize))
             .copied();
         let col_line = col
             .checked_sub(data_left)
-            .and_then(|i| self.cols.get(i as usize))
+            .and_then(|i| f.cols.get(i as usize))
             .copied();
-        if d.style.row_stripes && row_line == Some(Line::Body) && (row - data_top).is_multiple_of(2)
+        if f.style.row_stripes && row_line == Some(Line::Body) && (row - data_top).is_multiple_of(2)
         {
             look.apply(&s.row_stripe, row_edges);
         }
-        if d.style.col_stripes
+        if f.style.col_stripes
             && col_line == Some(Line::Body)
             && (col - data_left).is_multiple_of(2)
         {
             look.apply(&s.col_stripe, col_edges);
         }
-        if d.style.row_headers && col < data_left && row >= data_top {
+        if f.style.row_headers && col < data_left && row >= data_top {
             look.apply(&s.first_col, col_edges);
         }
         if row < data_top {
-            if d.style.col_headers {
+            if f.style.col_headers {
                 look.apply(&s.header, row_edges);
             }
             if row == a.top && col == a.left {
@@ -1183,13 +1215,13 @@ impl Placed {
             Some(Line::Subtotal(l)) => look.apply(&s.subtotal_row[l as usize], row_edges),
             _ => {}
         }
-        if d.style.last_column && col_line == Some(Line::Grand) {
+        if f.style.last_column && col_line == Some(Line::Grand) {
             look.apply(&s.last_col, col_edges);
         }
         if row_line == Some(Line::Grand) {
             look.apply(&s.total, row_edges);
         }
-        Some(look)
+        look
     }
 }
 
@@ -1366,6 +1398,16 @@ pub(crate) fn builtin(name: &str, t: &ironcalc_base::types::Theme) -> Option<Piv
             s.page_label.font = Some(white);
         }
     }
+    // Banded rows and columns: a tint of the colour (a deeper one on a
+    // filled body, a darker shade for the dark styles).
+    let band = match family {
+        "dark" if k == 0 => theme(t, 1, 0.25),
+        "dark" => accent(-0.35),
+        _ if s.whole.fill.is_some() => accent(0.6),
+        _ => accent(0.8),
+    };
+    s.row_stripe.fill = Some(band);
+    s.col_stripe.fill = Some(band);
     s.first_header_cell = s.header.clone();
     s.last_col.bold = Some(true);
     Some(s)
@@ -3439,6 +3481,55 @@ impl Workbook {
             .iter()
             .find(|p| p.contains(row, col))
             .map(|p| self.pivot_info(p))
+    }
+
+    /// How built-in style `name` draws a small pivot table with `options`
+    /// (a header row, two outer items with two inner ones each and a grand
+    /// total row; a label column, two value columns and a grand total
+    /// column), for a gallery.
+    pub fn pivot_style_preview(
+        &self,
+        name: &str,
+        options: &crate::PivotStyleOptions,
+    ) -> Option<Vec<Vec<TableCellLook>>> {
+        let s = builtin(name, &self.model.get_model().workbook.theme)?;
+        let style = StyleInfo {
+            name: Some(name.to_owned()),
+            row_headers: options.row_headers,
+            col_headers: options.column_headers,
+            row_stripes: options.banded_rows,
+            col_stripes: options.banded_columns,
+            last_column: true,
+        };
+        let rows = [
+            Line::Subheading(0),
+            Line::Body,
+            Line::Body,
+            Line::Subheading(0),
+            Line::Body,
+            Line::Body,
+            Line::Grand,
+        ];
+        let cols = [Line::Body, Line::Body, Line::Grand];
+        let frame = Frame {
+            style: &style,
+            area: Area {
+                top: 0,
+                left: 0,
+                bottom: 7,
+                right: 3,
+            },
+            page: None,
+            first_data_row: 1,
+            first_data_col: 1,
+            rows: &rows,
+            cols: &cols,
+        };
+        Some(
+            (0..8)
+                .map(|r| (0..4).map(|c| look_of(&s, &frame, r, c)).collect())
+                .collect(),
+        )
     }
 
     /// The look the pivot table style gives cell `(row, col)`.

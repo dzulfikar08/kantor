@@ -676,3 +676,53 @@ fn sorting_and_filters() {
     assert!(wb.undo().unwrap());
     assert_eq!(labels(&wb, s).len(), 5);
 }
+
+#[test]
+fn style_picker_options() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = data_book();
+    let s = new_pivot(&mut wb);
+    arrange(&mut wb, s, &["Region", "Product"]);
+    assert_eq!(sheets_engine::pivot_style_names().len(), 84);
+    let l = layout(&wb, s);
+    assert_eq!(l.style.name.as_deref(), Some("PivotStyleLight16"));
+    let opts = l.style.clone();
+    for name in sheets_engine::pivot_style_names() {
+        let p = wb.pivot_style_preview(&name, &opts).unwrap();
+        assert_eq!((p.len(), p[0].len()), (8, 4), "{name}");
+    }
+    // Medium 9 has a filled header; banded rows tint every other row.
+    let plain = wb.pivot_style_preview("PivotStyleMedium9", &opts).unwrap();
+    assert!(plain[0][1].fill.is_some());
+    let mut banded = opts.clone();
+    banded.banded_rows = true;
+    let b = wb.pivot_style_preview("PivotStyleLight8", &banded).unwrap();
+    let p = wb.pivot_style_preview("PivotStyleLight8", &opts).unwrap();
+    assert_ne!(b, p);
+    // Picked: the cells and the saved file follow.
+    let mut l = layout(&wb, s);
+    l.style = sheets_engine::PivotStyleOptions {
+        name: Some("PivotStyleDark3".into()),
+        row_headers: false,
+        column_headers: true,
+        banded_rows: true,
+        banded_columns: false,
+    };
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(layout(&wb, s).style, l.style);
+    let (path, p) = save(&mut wb, dir.path(), "style.xlsx");
+    let table = &p["xl/pivotTables/pivotTable1.xml"];
+    assert!(
+        table.contains("<pivotTableStyleInfo name=\"PivotStyleDark3\" showRowHeaders=\"0\" showColHeaders=\"1\" showRowStripes=\"1\""),
+        "{table}"
+    );
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(back.pivot_layout(s, 2, 0).unwrap().style, l.style);
+    // None.
+    let mut l = layout(&wb, s);
+    l.style.name = None;
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(layout(&wb, s).style.name, None);
+    assert!(wb.undo().unwrap());
+    assert_eq!(layout(&wb, s).style.name.as_deref(), Some("PivotStyleDark3"));
+}
