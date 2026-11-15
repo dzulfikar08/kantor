@@ -196,6 +196,19 @@ Tests: Kantor's `crates/sheets_engine/tests/realworld.rs`
 `xlsx_rows_and_cells_without_references`), synthetic packages built in the
 test.
 
+## 11. Remembered sorts next to the filter
+
+Why: Excel writes a sheet's or a table's remembered sort (`<sortState>`)
+next to its `<autoFilter>`; Kantor keeps it inside the filter element
+(vendor/ironcalc_base §26).
+
+What: `import/worksheets.rs` and `import/tables.rs` put the sheet's or the
+table's `<sortState>` into the `<autoFilter>` they keep;
+`export/worksheets.rs` writes it back after the sheet's `<autoFilter>`
+(Kantor writes table parts itself).
+
+Tests: Kantor's `crates/sheets_engine/tests/sort_state.rs`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

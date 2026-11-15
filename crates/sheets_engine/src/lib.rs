@@ -114,7 +114,7 @@ pub fn set_input_locale(locale: &str) {
 }
 pub use filter::{
     ColumnFilter, ColumnKind, Condition, DateGroup, FilterInfo, FilterKind, FilterOp, FilterScope,
-    FilterValue, checked_values, date_serial, ymd,
+    FilterValue, SortState, checked_values, date_serial, ymd,
 };
 pub use format::{
     AlignDetail, BorderLine, BorderPreset, Borders, CellStyle, HAlign, LineStyle, NumberFormat,

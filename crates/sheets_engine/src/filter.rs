@@ -16,10 +16,10 @@
 use std::collections::{BTreeSet, HashSet};
 
 use anyhow::{Result, anyhow, bail};
-use ironcalc_base::kantor_tables::auto_filter_ref;
+use ironcalc_base::kantor_tables::{auto_filter_ref, split_sort_state, with_sort_state};
 use roxmltree::Node;
 
-use crate::sort::{CellValue, cell_value};
+use crate::sort::{CellValue, SortKey, cell_value};
 use crate::{CalcMode, CellRange, Workbook, cell_name};
 
 /// Whose filter: a table's (by name) or the sheet's own AutoFilter.
@@ -114,12 +114,81 @@ pub struct FilterInfo {
     /// The header row and the data rows under it.
     pub area: CellRange,
     pub columns: Vec<ColumnFilter>,
+    /// The sort it remembers (`<sortState>`), as Excel shows it on the
+    /// filter buttons and Reapply sorts again.
+    pub sort: Option<SortState>,
+}
+
+/// A remembered sort: its levels (absolute columns) and whether all of them
+/// sort by value (Kantor can't sort by colour, icon or a custom list).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SortState {
+    pub keys: Vec<SortKey>,
+    pub by_value: bool,
+}
+
+/// The `<sortState>` remembered in an `<autoFilter>` element.
+pub(crate) fn parse_sort(filter: &str) -> Option<SortState> {
+    let (_, sort) = split_sort_state(filter);
+    let sort = sort?;
+    let doc = roxmltree::Document::parse(&sort).ok()?;
+    let root = doc.root_element();
+    let mut by_value = root
+        .attribute("columnSort")
+        .is_none_or(|v| v == "0" || v == "false");
+    let mut keys = Vec::new();
+    for c in root
+        .children()
+        .filter(|n| n.tag_name().name() == "sortCondition")
+    {
+        let range = crate::shift::parse_range(c.attribute("ref")?)?.area();
+        by_value &= c.attribute("sortBy").is_none_or(|v| v == "value")
+            && c.attribute("customList").is_none();
+        keys.push(SortKey {
+            col: range.left,
+            descending: matches!(c.attribute("descending"), Some("1" | "true")),
+        });
+    }
+    (!keys.is_empty()).then_some(SortState { keys, by_value })
+}
+
+/// A `<sortState>` for `data` (the rows sorted, without the header) sorted
+/// by `keys`, as Excel writes it.
+pub(crate) fn sort_state_xml(data: CellRange, keys: &[SortKey]) -> String {
+    let mut x = format!(
+        "<sortState ref=\"{}:{}\">",
+        cell_name(data.top, data.left),
+        cell_name(data.bottom, data.right)
+    );
+    for k in keys {
+        x.push_str("<sortCondition");
+        if k.descending {
+            x.push_str(" descending=\"1\"");
+        }
+        x.push_str(&format!(
+            " ref=\"{}:{}\"/>",
+            cell_name(data.top, k.col),
+            cell_name(data.bottom, k.col)
+        ));
+    }
+    x.push_str("</sortState>");
+    x
 }
 
 impl FilterInfo {
     /// Whether column `col` (absolute) is filtered.
     pub fn is_filtered(&self, col: u32) -> bool {
         col >= self.area.left && self.columns.iter().any(|c| c.col == col - self.area.left)
+    }
+
+    /// How column `col` (absolute) is sorted: `Some(descending)`.
+    pub fn sorted(&self, col: u32) -> Option<bool> {
+        self.sort
+            .as_ref()?
+            .keys
+            .iter()
+            .find(|k| k.col == col)
+            .map(|k| k.descending)
     }
 
     /// The filter of column `col` (absolute).
@@ -500,6 +569,7 @@ impl Workbook {
                     right: t.area.right,
                 },
                 columns: parse_columns(xml),
+                sort: parse_sort(xml),
             });
         }
         if let Some(info) = self.sheet_filter(sheet) {
@@ -521,6 +591,7 @@ impl Workbook {
                 right: area.right,
             },
             columns: parse_columns(xml),
+            sort: parse_sort(xml),
         })
     }
 
@@ -643,12 +714,97 @@ impl Workbook {
         self.apply_filter(sheet, scope, Vec::new())
     }
 
-    /// Re-apply `scope`'s filter (Excel's Reapply), e.g. after edits.
+    /// Re-apply `scope`'s filter (Excel's Reapply), e.g. after edits, and
+    /// the sort it remembers (by value only).
     pub fn reapply_filter(&mut self, sheet: u32, scope: &FilterScope) -> Result<(usize, usize)> {
         let f = self
             .filter(sheet, scope)
             .ok_or_else(|| anyhow!("no filter here"))?;
-        self.apply_filter(sheet, scope, f.columns)
+        let shown = self.apply_filter(sheet, scope, f.columns)?;
+        if let Some(sort) = f.sort.filter(|s| s.by_value)
+            && let Some(f) = self.filter(sheet, scope)
+        {
+            let data = match scope {
+                FilterScope::Table(name) => self
+                    .tables(sheet)
+                    .into_iter()
+                    .find(|t| &t.name == name)
+                    .map(|t| t.data_range()),
+                FilterScope::Sheet => Some(CellRange {
+                    top: f.area.top + 1,
+                    ..f.area
+                }),
+            };
+            if let Some(data) = data.filter(|d| d.top <= d.bottom) {
+                self.sort_range(sheet, data, &sort.keys, false)?;
+            }
+        }
+        Ok(shown)
+    }
+
+    /// Remember a sort of `data` by `keys` (`<sortState>`) in the filter it
+    /// fills: a table's data rows, or the rows under the sheet's AutoFilter.
+    /// Returns the IronCalc edits made (0 or 1).
+    pub(crate) fn remember_sort(
+        &mut self,
+        sheet: u32,
+        data: CellRange,
+        keys: &[SortKey],
+    ) -> Result<u32> {
+        let sort = sort_state_xml(data, keys);
+        if let Some(t) = self.table_at(sheet, data.top, data.left) {
+            let rows = t.data_range();
+            if rows.top != data.top || rows.left != data.left || rows.right != data.right {
+                return Ok(0);
+            }
+            let Some(mut table) = self.model.get_model().workbook.tables.get(&t.name).cloned()
+            else {
+                return Ok(0);
+            };
+            let Some(filter) = table.kantor_auto_filter.as_deref() else {
+                return Ok(0);
+            };
+            let new = with_sort_state(filter, Some(&sort));
+            if new == filter {
+                return Ok(0);
+            }
+            table.kantor_auto_filter = Some(new);
+            self.model
+                .kantor_set_table(&t.name, Some(table))
+                .map_err(|e| anyhow!("{e}"))?;
+            return Ok(1);
+        }
+        let Some(f) = self.sheet_filter(sheet) else {
+            return Ok(0);
+        };
+        if f.area.top + 1 != data.top || f.area.left != data.left || f.area.right != data.right {
+            return Ok(0);
+        }
+        let Some(filter) = self
+            .model
+            .get_model()
+            .workbook
+            .worksheet(sheet)
+            .ok()
+            .and_then(|w| w.kantor_auto_filter.clone())
+        else {
+            return Ok(0);
+        };
+        // The filter takes in the rows sorted (typed under it since).
+        let reference = format!(
+            "{}:{}",
+            cell_name(f.area.top, f.area.left),
+            cell_name(data.bottom.max(f.area.bottom), f.area.right)
+        );
+        let moved = ironcalc_base::kantor_tables::with_auto_filter_ref(&filter, &reference);
+        let new = with_sort_state(&moved, Some(&sort));
+        if new == filter {
+            return Ok(0);
+        }
+        self.model
+            .kantor_set_sheet_filter(sheet, Some(new))
+            .map_err(|e| anyhow!("{e}"))?;
+        Ok(1)
     }
 
     /// Set the filter columns of `scope` and hide the rows they filter out.
@@ -689,7 +845,30 @@ impl Workbook {
             cell_name(f.area.top, f.area.left),
             cell_name(f.area.bottom, f.area.right)
         );
-        let xml = to_xml(&reference, &columns);
+        let mut xml = to_xml(&reference, &columns);
+        // The sort it remembers stays while the filter covers the same rows.
+        let current = match scope {
+            FilterScope::Sheet => self
+                .model
+                .get_model()
+                .workbook
+                .worksheet(sheet)
+                .ok()
+                .and_then(|w| w.kantor_auto_filter.clone()),
+            FilterScope::Table(name) => self
+                .model
+                .get_model()
+                .workbook
+                .tables
+                .get(name)
+                .and_then(|t| t.kantor_auto_filter.clone()),
+        };
+        if let Some(cur) = current
+            && auto_filter_ref(&cur) == Some(reference.as_str())
+            && let (_, Some(sort)) = split_sort_state(&cur)
+        {
+            xml = with_sort_state(&xml, Some(&sort));
+        }
         let active = !columns.is_empty();
         self.model.pause_evaluation();
         let mut steps = 0;

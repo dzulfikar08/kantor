@@ -549,14 +549,62 @@ pub fn auto_filter_ref(xml: &str) -> Option<&str> {
     Some(&head[at..at + len])
 }
 
-/// The `<autoFilter>` element with another `ref`.
+/// The `<autoFilter>` element with another `ref`. KANTOR PATCH (sort
+/// state): a remembered sort no longer describes a moved or resized range,
+/// so a new `ref` drops it.
 pub fn with_auto_filter_ref(xml: &str, reference: &str) -> String {
     match auto_filter_ref(xml) {
+        Some(old) if old == reference => xml.to_string(),
         Some(old) => {
             let at = old.as_ptr() as usize - xml.as_ptr() as usize;
-            format!("{}{reference}{}", &xml[..at], &xml[at + old.len()..])
+            let moved = format!("{}{reference}{}", &xml[..at], &xml[at + old.len()..]);
+            split_sort_state(&moved).0
         }
         None => xml.to_string(),
+    }
+}
+
+/// KANTOR PATCH (sort state): the `<autoFilter>` element `filter` without
+/// its `<sortState>` child, and that child. Kantor keeps a sheet's or a
+/// table's remembered sort inside its `<autoFilter>` (a place the schema
+/// allows); files have it next to the `<autoFilter>`, where Excel writes it.
+pub fn split_sort_state(filter: &str) -> (String, Option<String>) {
+    let Some(start) = filter.find("<sortState") else {
+        return (filter.to_string(), None);
+    };
+    let end = match filter[start..].find("</sortState>") {
+        Some(e) => start + e + "</sortState>".len(),
+        None => match filter[start..].find("/>") {
+            Some(e) => start + e + 2,
+            None => return (filter.to_string(), None),
+        },
+    };
+    let sort = filter[start..end].to_string();
+    let mut rest = format!("{}{}", &filter[..start], &filter[end..]);
+    // `<autoFilter ref="A1:C9"></autoFilter>` -> `<autoFilter ref="A1:C9"/>`
+    if let Some(open_end) = rest.find('>') {
+        if rest[open_end + 1..] == *"</autoFilter>" && !rest[..open_end].ends_with('/') {
+            rest = format!("{}/>", &rest[..open_end]);
+        }
+    }
+    (rest, Some(sort))
+}
+
+/// KANTOR PATCH (sort state): `filter` with `sort` as its `<sortState>`
+/// child (in place of any it had; `None` removes it).
+pub fn with_sort_state(filter: &str, sort: Option<&str>) -> String {
+    let (filter, _) = split_sort_state(filter);
+    let Some(sort) = sort else {
+        return filter;
+    };
+    if let Some(at) = filter.rfind("</autoFilter>") {
+        // After the filter columns, before an extension list.
+        let at = filter[..at].find("<extLst").unwrap_or(at);
+        return format!("{}{sort}{}", &filter[..at], &filter[at..]);
+    }
+    match filter.trim_end().strip_suffix("/>") {
+        Some(open) => format!("{open}>{sort}</autoFilter>"),
+        None => filter,
     }
 }
 

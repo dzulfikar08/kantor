@@ -3758,6 +3758,15 @@ fn fit_table(xml: &str, sheet: u32, ctx: &Context) -> Result<Option<Vec<u8>>, St
         .auto_filter
         .as_deref()
         .map(|x| ironcalc_base::kantor_tables::with_auto_filter_ref(x, &filter_ref));
+    // The sort the model remembers is kept in its filter; the file has it
+    // next to the filter.
+    let (new_filter, new_sort) = match new_filter {
+        Some(x) => {
+            let (f, sort) = ironcalc_base::kantor_tables::split_sort_state(&x);
+            (Some(f), sort)
+        }
+        None => (None, None),
+    };
     let old_filter = table.children().find(|c| is_main(*c, "autoFilter"));
     match (old_filter, new_filter) {
         (Some(n), Some(x)) => {
@@ -3777,11 +3786,30 @@ fn fit_table(xml: &str, sheet: u32, ctx: &Context) -> Result<Option<Vec<u8>>, St
         }
         (None, None) => {}
     }
-    // A remembered sort no longer describes a moved or resized table.
-    if reference != now.reference
-        && let Some(n) = table.children().find(|c| is_main(*c, "sortState"))
-    {
-        edits.push((n.range(), String::new()));
+    // The remembered sort: the model's (a table without filter buttons
+    // keeps the file's, unless it moved or was resized).
+    let old_sort = table.children().find(|c| is_main(*c, "sortState"));
+    match (old_sort, new_sort) {
+        (Some(n), Some(x)) => {
+            if !same_sort(&xml[n.range()], &x) {
+                edits.push((n.range(), x));
+            }
+        }
+        (Some(n), None) => {
+            if reference != now.reference || now.auto_filter.is_some() {
+                edits.push((n.range(), String::new()));
+            }
+        }
+        (None, Some(x)) => {
+            let at = table
+                .children()
+                .find(|c| is_main(*c, "tableColumns"))
+                .ok_or("no columns")?
+                .range()
+                .start;
+            edits.push((at..at, x));
+        }
+        (None, None) => {}
     }
     // Columns: inserted or deleted ones change the list.
     let cols_node = table
@@ -5617,6 +5645,32 @@ fn put_drawing_element(full: &str, rid: &str) -> Result<String, String> {
 }
 
 const TABLE_CT: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";
+
+/// Whether two `<sortState>` elements sort the same way (prefixed
+/// attributes and namespace declarations aside).
+fn same_sort(a: &str, b: &str) -> bool {
+    /// Each element's name and its sorted unprefixed attributes.
+    type Shape = Vec<(String, Vec<(String, String)>)>;
+    fn shape(x: &str) -> Option<Shape> {
+        let doc = Document::parse(x).ok()?;
+        Some(
+            doc.root_element()
+                .descendants()
+                .filter(|n| n.is_element())
+                .map(|n| {
+                    let mut attrs: Vec<(String, String)> = n
+                        .attributes()
+                        .filter(|a| a.namespace().is_none())
+                        .map(|a| (a.name().to_owned(), a.value().to_owned()))
+                        .collect();
+                    attrs.sort();
+                    (n.tag_name().name().to_owned(), attrs)
+                })
+                .collect(),
+        )
+    }
+    shape(a).is_some_and(|x| Some(x) == shape(b))
+}
 
 /// Whether a table part covers the same range with the same column names
 /// as `t`.

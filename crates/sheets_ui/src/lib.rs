@@ -446,9 +446,13 @@ impl SheetGrid {
         grid
     }
 
-    /// The filter whose button sits in `(row, col)`, and whether that column
-    /// is filtered.
-    fn filter_button(&self, row: u32, col: u32) -> Option<(sheets_engine::FilterScope, bool)> {
+    /// The filter whose button sits in `(row, col)`, whether that column
+    /// is filtered and how it is sorted (`Some(descending)`).
+    fn filter_button(
+        &self,
+        row: u32,
+        col: u32,
+    ) -> Option<(sheets_engine::FilterScope, bool, Option<bool>)> {
         let key = (self.book.revision(), self.sheet);
         let mut memo = self.filters_memo.borrow_mut();
         if memo.as_ref().is_none_or(|(k, _)| *k != key) {
@@ -458,7 +462,7 @@ impl SheetGrid {
         filters
             .iter()
             .find(|f| f.area.top == row && (f.area.left..=f.area.right).contains(&col))
-            .map(|f| (f.scope.clone(), f.is_filtered(col)))
+            .map(|f| (f.scope.clone(), f.is_filtered(col), f.sorted(col)))
     }
 
     /// The selected range; a range of cells includes every merged cell it
@@ -861,8 +865,8 @@ impl TableDelegate for SheetGrid {
             .relative()
             .when_some(style.fill, |d, fill| d.bg(look::hsla(fill)));
         let cell = match filter_button {
-            Some((scope, filtered)) => cell.child(filter_button_element(
-                scope, col, filtered, row_height, &self.view, &t,
+            Some((scope, filtered, sorted)) => cell.child(filter_button_element(
+                scope, col, filtered, sorted, row_height, &self.view, &t,
             )),
             None => cell,
         };
@@ -1040,12 +1044,15 @@ fn table_style(style: &CellStyle, tl: &sheets_engine::TableCellLook) -> CellStyl
     s
 }
 
-/// The filter button in a filter's header cell: a chevron, or a funnel when
-/// the column is filtered.
+/// The filter button in a filter's header cell: a chevron, a funnel when
+/// the column is filtered, or an arrow when the filter remembers a sort by
+/// it (up for ascending, down for descending), as in Excel.
+#[allow(clippy::too_many_arguments)]
 fn filter_button_element(
     scope: sheets_engine::FilterScope,
     col: u32,
     filtered: bool,
+    sorted: Option<bool>,
     row_height: Pixels,
     view: &WeakEntity<SheetsView>,
     t: &kantor_ui::Tokens,
@@ -1069,10 +1076,11 @@ fn filter_button_element(
         .cursor_pointer()
         .hover(|s| s.border_color(t.accent))
         .child(
-            gpui_kit::component::Icon::new(if filtered {
-                gpui_kit::assets::IconName::Funnel
-            } else {
-                gpui_kit::assets::IconName::ChevronDown
+            gpui_kit::component::Icon::new(match (filtered, sorted) {
+                (true, _) => gpui_kit::assets::IconName::Funnel,
+                (false, Some(false)) => gpui_kit::assets::IconName::ArrowUp,
+                (false, Some(true)) => gpui_kit::assets::IconName::ArrowDown,
+                (false, None) => gpui_kit::assets::IconName::ChevronDown,
             })
             .size(size - px(5.)),
         )

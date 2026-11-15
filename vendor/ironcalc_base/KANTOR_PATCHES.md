@@ -703,6 +703,21 @@ input parsing only, formula coercion in `cast.rs` is unchanged):
 
 Tests: `test/test_kantor_input.rs`, unit tests in `kantor_input.rs`.
 
+## 26. Remembered sorts (`sortState`)
+
+Why: Excel remembers the last sort of a table or of the sheet's AutoFilter
+(`<sortState>`), shows it on the filter button and sorts again with
+Reapply. Kantor keeps a filter's state as its `<autoFilter>` element (§13).
+
+What (`src/kantor_tables.rs`): the sort is kept inside the `<autoFilter>`
+element (`split_sort_state`, `with_sort_state`); files have it next to it
+(vendor/ironcalc §11 moves it in and out). `with_auto_filter_ref` drops the
+sort when the filter's range changes (rows inserted or deleted inside it,
+the range moved): it no longer describes those rows.
+
+Tests: `test/test_kantor_tables.rs` (`sort_state_in_the_filter`); Kantor's
+`crates/sheets_engine/tests/sort_state.rs`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

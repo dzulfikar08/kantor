@@ -207,7 +207,15 @@ pub(crate) fn load_table<R: Read + std::io::Seek>(
         style_info,
         has_filters,
         // KANTOR PATCH (tables)
-        kantor_auto_filter: auto_filter.first().map(|f| f.to_xml()),
+        // KANTOR PATCH (sort state): the sort the table remembers, kept in
+        // its filter.
+        kantor_auto_filter: auto_filter.first().map(|f| {
+            let sort = table
+                .children()
+                .find(|n| n.has_tag_name("sortState"))
+                .map(|n| n.to_xml());
+            ironcalc_base::kantor_tables::with_sort_state(&f.to_xml(), sort.as_deref())
+        }),
         sheet_name: sheet_name.to_string(),
     })
 }
