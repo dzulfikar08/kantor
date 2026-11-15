@@ -227,14 +227,56 @@ pub fn shape_items(
     w: f32,
     h: f32,
 ) -> Vec<Item> {
+    shape_items_on(builder, engine, theme, xml, w, h, None)
+}
+
+/// Relative luminance of a colour (0 black, 1 white).
+fn luminance(Rgb([r, g, b]): Rgb) -> f32 {
+    let ch = |c: u8| {
+        let c = c as f32 / 255.0;
+        if c <= 0.039_28 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b)
+}
+
+/// Whether a shape lets the grid show through behind its text (no fill).
+fn unfilled(shape: &slides_engine::Shape) -> bool {
+    shape.look.fill.is_none() && matches!(shape.look.fill_as_read, None | Some(Fill::None))
+}
+
+/// [`shape_items`] on a dark grid: `dark_text` is the theme's text
+/// colour. As cells' Automatic text is, a shape's text in the theme's
+/// default text colour (dark) is drawn in it when the shape has no fill
+/// and the dark text would vanish into the grid; text with a colour of
+/// its own keeps it.
+pub fn shape_items_on(
+    builder: &Builder,
+    engine: &mut Engine,
+    theme: &ChartTheme,
+    xml: &str,
+    w: f32,
+    h: f32,
+    dark_text: Option<Rgb>,
+) -> Vec<Item> {
     let colors = ColorCtx {
         theme: &theme.shape_theme,
         map: &theme.map,
         ph: None,
     };
-    let Some(shape) = slides_engine::sheet_shape::parse(&format!("<r>{xml}</r>"), colors) else {
+    let Some(mut shape) = slides_engine::sheet_shape::parse(&format!("<r>{xml}</r>"), colors)
+    else {
         return placeholder(w, h);
     };
+    if let Some(fg) = dark_text
+        && unfilled(&shape)
+        && shape.look.text_color.is_none_or(|c| luminance(c) < 0.2)
+    {
+        shape.look.text_color = Some(fg);
+    }
     let emu = |v: f32| (v * EMU_PER_PX).round() as i64;
     let mut xfrm = Xfrm::new(0, 0, emu(w), emu(h));
     if let Some(own) = shape.xfrm {
@@ -334,6 +376,8 @@ pub struct DrawingScenes {
     /// Charts built since [`DrawingScenes::take_builds`] (for tests and the
     /// performance log).
     builds: usize,
+    /// The dark theme's text colour (see [`shape_items_on`]).
+    dark_text: Option<Rgb>,
 }
 
 /// Most built sizes kept (a resize drag makes many).
@@ -343,6 +387,15 @@ impl DrawingScenes {
     /// Forget everything (another workbook, or a changed theme).
     pub fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    /// Draw shapes for a dark grid whose text colour is `fg` (`None`: a
+    /// light one, as printed). Shapes built for the other look are dropped.
+    pub fn set_dark_text(&mut self, fg: Option<Rgb>) {
+        if self.dark_text != fg {
+            self.dark_text = fg;
+            self.built.clear();
+        }
     }
 
     /// Charts built since the last call.
@@ -434,7 +487,15 @@ impl DrawingScenes {
                     return items.clone();
                 }
                 let theme = self.theme(book);
-                let items = Arc::new(shape_items(&self.shapes, engine, &theme, xml, w, h));
+                let items = Arc::new(shape_items_on(
+                    &self.shapes,
+                    engine,
+                    &theme,
+                    xml,
+                    w,
+                    h,
+                    self.dark_text,
+                ));
                 if self.built.len() >= MAX_BUILT {
                     self.built.clear();
                 }

@@ -3,13 +3,17 @@
 //!
 //! The toolbar's Shapes menu puts a text box or a shape at the active cell
 //! and selects it (a new text box opens for typing at once). Double-click a
-//! shape or text box to edit its text: a box over the shape with the text,
-//! one paragraph per line; Escape or a click elsewhere keeps it (one undo
-//! step). The box is rendered from the Sheets root, never inside the grid
-//! (the grid's key handler would take the typing).
+//! shape or text box to edit its text: a box below the shape with the text
+//! (one paragraph per line) and a toolbar formatting the selected text
+//! (bold, italic, underline, font, size, colour, alignment; with nothing
+//! selected, all of it). The shape shows the formatted text as you type,
+//! and runs keep their own formatting through edits (see `rich`). Escape
+//! or a click on the grid keeps it (one undo step). The box is rendered
+//! from the Sheets root, never inside the grid (the grid's key handler
+//! would take the typing).
 
 use gpui_kit::component::Sizable as _;
-use gpui_kit::component::input::{self, Position, Textarea, TextareaState};
+use gpui_kit::component::input::{self, InputEvent, Position, Textarea, TextareaState};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::*;
 use kantor_ui::i18n::t;
@@ -17,8 +21,10 @@ use kantor_ui::metrics::*;
 use kantor_ui::tokens::Elevation;
 use sheets_engine::ShapePreset;
 use sheets_engine::drawing::DrawingKey;
+use slides_engine::TextPara;
 
 use crate::SheetsView;
+use crate::rich::{self, RichOp, RichState};
 
 /// The editor's key context (Escape ends the edit).
 const SHAPE_TEXT_CONTEXT: &str = "KantorSheetsShapeText";
@@ -27,6 +33,13 @@ const SHAPE_TEXT_CONTEXT: &str = "KantorSheetsShapeText";
 pub(crate) struct ShapeEditor {
     key: DrawingKey,
     input: Entity<TextareaState>,
+    /// The text's paragraphs with their formatting, following the box
+    /// (`None`: text Kantor edits as plain lines, see `with_text`).
+    paras: Option<Vec<TextPara>>,
+    /// The paragraphs as the edit began (an edit that changes nothing
+    /// leaves the shape alone).
+    orig: Option<Vec<TextPara>>,
+    _sub: Subscription,
 }
 
 /// A preset's name in the menu.
@@ -55,7 +68,12 @@ pub(crate) fn shape_menu(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> 
     for p in ShapePreset::SHAPES {
         menu = menu.item(item(p));
     }
-    menu
+    let v = view.clone();
+    menu.separator().item(
+        PopupMenuItem::new(t("Format Shape…")).on_click(move |_, w, cx| {
+            let _ = v.update(cx, |this, cx| this.format_shape_doc(w, cx));
+        }),
+    )
 }
 
 /// The caret at the end of `text`.
@@ -111,18 +129,36 @@ impl SheetsView {
             return;
         }
         self.commit_shape_text(false, window, cx);
-        let Some(text) = self.table.read(cx).delegate().book.shape_text(key) else {
-            return;
+        let (text, paras) = {
+            let book = &self.table.read(cx).delegate().book;
+            let Some(text) = book.shape_text(key) else {
+                return;
+            };
+            let paras = book
+                .shape_xml(key)
+                .and_then(|x| slides_engine::sheet_shape::text_paras(&x));
+            match paras {
+                Some(p) => (rich::plain(&p), Some(p)),
+                None => (text, None),
+            }
         };
         let input = cx.new(|cx| {
             let mut s = TextareaState::new(window, cx).auto_grow(3, 12);
             s.set_value(text.clone(), window, cx);
             s
         });
+        let sub = cx.subscribe_in(&input, window, |this, _, e: &InputEvent, _, cx| {
+            if let InputEvent::Change = e {
+                this.shape_text_changed(cx);
+            }
+        });
         self.drawings.borrow_mut().selected = Some(key);
         self.shape_edit = Some(ShapeEditor {
             key,
             input: input.clone(),
+            orig: paras.clone(),
+            paras,
+            _sub: sub,
         });
         // After a menu closes or a click ends it gives focus back: focus the
         // editor once that is done.
@@ -143,14 +179,24 @@ impl SheetsView {
         let Some(ed) = self.shape_edit.take() else {
             return;
         };
+        self.drawings.borrow_mut().preview = None;
         let text = ed.input.read(cx).value().to_string();
         let res = self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
             let before = grid.book.revision();
-            let r = grid
-                .book
-                .set_shape_text(ed.key, &text)
-                .map(|()| grid.book.revision() != before);
+            let r = match &ed.paras {
+                Some(p) if ed.orig.as_ref() == Some(p) => Ok(()),
+                Some(p) => match grid
+                    .book
+                    .shape_xml(ed.key)
+                    .and_then(|x| slides_engine::sheet_shape::with_paras(&x, p))
+                {
+                    Some(x) => grid.book.set_shape_xml(ed.key, &x),
+                    None => grid.book.set_shape_text(ed.key, &text),
+                },
+                None => grid.book.set_shape_text(ed.key, &text),
+            }
+            .map(|()| grid.book.revision() != before);
             table.refresh(cx);
             r
         });
@@ -166,15 +212,83 @@ impl SheetsView {
         cx.notify();
     }
 
-    /// The editor box over the shape being edited.
+    /// The box's text changed: the paragraphs follow, the shape redraws.
+    fn shape_text_changed(&mut self, cx: &mut Context<Self>) {
+        let Some(ed) = self.shape_edit.as_mut() else {
+            return;
+        };
+        let Some(paras) = ed.paras.as_mut() else {
+            return;
+        };
+        let text = ed.input.read(cx).value().replace("\r\n", "\n");
+        if rich::plain(paras) != text {
+            slides_engine::text_ops::replace_changed(paras, &text);
+        }
+        self.preview_shape_text(cx);
+    }
+
+    /// Draw the shape with the paragraphs being edited.
+    fn preview_shape_text(&mut self, cx: &mut Context<Self>) {
+        let Some(ed) = self.shape_edit.as_ref() else {
+            return;
+        };
+        let Some(paras) = ed.paras.as_ref() else {
+            return;
+        };
+        let xml = self
+            .table
+            .read(cx)
+            .delegate()
+            .book
+            .shape_xml(ed.key)
+            .and_then(|x| slides_engine::sheet_shape::with_paras(&x, paras));
+        self.drawings.borrow_mut().preview = xml.map(|x| (ed.key, x.into()));
+        cx.notify();
+    }
+
+    /// A toolbar command on the box's selection (all the text without one).
+    fn shape_rich_op(&mut self, op: RichOp, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ed) = self.shape_edit.as_mut() else {
+            return;
+        };
+        let range = ed.input.read(cx).selected_range();
+        let input = ed.input.clone();
+        let Some(paras) = ed.paras.as_mut() else {
+            return;
+        };
+        let sel = rich::selection(paras, range);
+        rich::apply(paras, sel, op);
+        self.preview_shape_text(cx);
+        // Typing goes on in the box.
+        input.update(cx, |s, cx| s.focus(window, cx));
+    }
+
+    /// The editor box below the shape being edited.
     pub(crate) fn render_shape_editor(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let ed = self.shape_edit.as_ref()?;
         let tok = kantor_ui::tokens(cx);
         let rect = self.drawings.borrow().screen_rect(ed.key);
+        // Below the shape, so it shows the text as it's formatted.
         let (at, w) = match rect {
-            Some(b) => (b.origin, b.size.width.max(px(180.))),
-            None => (point(SPACE_7 * 4., SPACE_7 * 4.), px(240.)),
+            Some(b) => (
+                point(b.origin.x, b.origin.y + b.size.height + SPACE_2),
+                b.size.width.max(px(300.)),
+            ),
+            None => (point(SPACE_7 * 4., SPACE_7 * 4.), px(300.)),
         };
+        let bar = ed.paras.as_ref().map(|paras| {
+            let sel = rich::selection(paras, ed.input.read(cx).selected_range());
+            let state = RichState::at(paras, sel);
+            let view = cx.entity().downgrade();
+            rich::toolbar(
+                "shape-rich",
+                &state,
+                std::rc::Rc::new(move |op, w, cx| {
+                    let _ = view.update(cx, |this, cx| this.shape_rich_op(op, w, cx));
+                }),
+                cx,
+            )
+        });
         let panel = div()
             .id("sheets-shape-text")
             .key_context(SHAPE_TEXT_CONTEXT)
@@ -194,10 +308,8 @@ impl SheetsView {
             .on_action(cx.listener(|this, _: &input::Escape, window, cx| {
                 this.commit_shape_text(true, window, cx);
             }))
-            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                this.commit_shape_text(false, window, cx);
-            }))
             .child(div().text_color(tok.fg_muted).child(t("Edit Text")))
+            .children(bar)
             .child(Textarea::new(&ed.input).small());
         Some(
             deferred(

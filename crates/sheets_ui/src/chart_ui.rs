@@ -109,6 +109,7 @@ impl SheetsView {
         if self.chart_panel.is_some() {
             return;
         }
+        self.shape_panel = None;
         let title = cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("No title")));
         let range = cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("e.g. A1:C13")));
         let x_title = cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("No title")));

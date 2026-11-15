@@ -244,7 +244,6 @@ impl Paint {
 /// A toolbar button that opens a swatch popover. The icon carries a bar of
 /// the active cell's colour.
 fn color_button(paint: Paint, current: Option<Hsla>, cx: &mut Context<SheetsView>) -> Popover {
-    let t = tokens(cx);
     let (id, icon, label, none) = match paint {
         Paint::Fill => (
             "fmt-fill",
@@ -260,6 +259,33 @@ fn color_button(paint: Paint, current: Option<Hsla>, cx: &mut Context<SheetsView
         ),
     };
     let view = cx.entity().downgrade();
+    swatch_popover(
+        id,
+        icon,
+        label,
+        Some(none),
+        current,
+        std::rc::Rc::new(move |color, window, cx| apply(&view, paint.format(color), window, cx)),
+        cx,
+    )
+}
+
+/// What a swatch popover does with the picked colour (`None`: its first
+/// entry, such as No Fill or Automatic).
+pub(crate) type PickColor = std::rc::Rc<dyn Fn(Option<Rgb>, &mut Window, &mut App)>;
+
+/// A small button with `icon` over a bar of `current`, opening Excel's
+/// swatches; `none` adds a first entry that picks `None`.
+pub(crate) fn swatch_popover(
+    id: &'static str,
+    icon: Lucide,
+    label: &'static str,
+    none: Option<&'static str>,
+    current: Option<Hsla>,
+    on_pick: PickColor,
+    cx: &App,
+) -> Popover {
+    let t = tokens(cx);
     let trigger = Button::new(id)
         .ghost()
         .xsmall()
@@ -282,13 +308,13 @@ fn color_button(paint: Paint, current: Option<Hsla>, cx: &mut Context<SheetsView
         .content(move |_, _, cx| {
             let t = tokens(cx);
             let popover = cx.entity().downgrade();
-            let view = view.clone();
+            let on_pick = on_pick.clone();
             let pick = move |color: Option<Rgb>| {
-                let view = view.clone();
+                let on_pick = on_pick.clone();
                 let popover = popover.clone();
                 move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                     let _ = popover.update(cx, |p, cx| p.dismiss(window, cx));
-                    apply(&view, paint.format(color), window, cx);
+                    on_pick(color, window, cx);
                 }
             };
             let swatch = |color: Rgb| {
@@ -309,18 +335,20 @@ fn color_button(paint: Paint, current: Option<Hsla>, cx: &mut Context<SheetsView
             v_flex()
                 .gap(SPACE_2)
                 .p(SPACE_1)
-                .child(
-                    div()
-                        .id("swatch-none")
-                        .px(SPACE_3)
-                        .py(SPACE_1)
-                        .rounded(RADIUS_SM)
-                        .text_size(FONT_SMALL)
-                        .cursor_pointer()
-                        .hover(|s| s.bg(t.hover))
-                        .child(none)
-                        .on_click(pick(None)),
-                )
+                .when_some(none, |d, none| {
+                    d.child(
+                        div()
+                            .id("swatch-none")
+                            .px(SPACE_3)
+                            .py(SPACE_1)
+                            .rounded(RADIUS_SM)
+                            .text_size(FONT_SMALL)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover))
+                            .child(none)
+                            .on_click(pick(None)),
+                    )
+                })
                 .children(SWATCHES.iter().map(|row| {
                     h_flex()
                         .gap(SPACE_1)

@@ -66,6 +66,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   drawing and the SmartArt's data, so PowerPoint shows the edit. Adding or removing SmartArt items
   and changing its layout need PowerPoint's layout engine and aren't possible; *Convert to Shapes*
   (right-click menu, palette, or Ungroup) turns SmartArt into a group of ordinary shapes.
+- Sheets: Format Shape for shapes, text boxes and lines (right-click one, the Shapes menu or the
+  command palette), as in Excel: no fill, a solid colour with transparency or a gradient; no line,
+  a line colour, width and dash type, and arrowheads at either end of a line; and where the text
+  sits (top, middle, bottom). Each change is one undo step, and a save rewrites only the shapes you
+  changed.
+- Sheets: a shape's text keeps its mixed formatting when you edit it, and the editor has a
+  toolbar to make the selected text (or all of it) bold, italic or underlined and to set its font,
+  size, colour and alignment. The shape shows the formatted text as you type.
+- Sheets: in a dark theme, the dark default text of shapes with no fill is drawn in the theme's
+  text colour, as cells' Automatic text already is; text with a colour of its own keeps it.
 - Sheets: frozen rows taller than the window no longer stop the sheet from scrolling. As in
   Excel, the frozen rows keep most of the window (their bottom is cut off) and the rows below
   them still scroll in the strip that's left.

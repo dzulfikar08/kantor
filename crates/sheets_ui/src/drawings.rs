@@ -28,7 +28,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::*;
-use sheets_engine::drawing::{Drawing, DrawingKey, SheetGeometry};
+use sheets_engine::drawing::{Drawing, DrawingKey, DrawingKind, SheetGeometry};
 use sheets_engine::{MAX_COLS, Workbook};
 use sheets_scene::DrawingScenes;
 use slides_scene::Item;
@@ -267,6 +267,9 @@ pub(crate) struct DrawLayer {
     drag: Option<Drag>,
     /// Where each object was on screen last frame (for the text editor).
     on_screen: Vec<(DrawingKey, Bounds<Pixels>)>,
+    /// A shape drawn from this element instead of its own while its text
+    /// is being edited (the edit isn't in the workbook until it ends).
+    pub(crate) preview: Option<(DrawingKey, Arc<str>)>,
 }
 
 impl DrawLayer {
@@ -278,6 +281,7 @@ impl DrawLayer {
         self.selected = None;
         self.drag = None;
         self.on_screen.clear();
+        self.preview = None;
     }
 
     /// Where object `key` was on screen last frame (its first pane).
@@ -685,14 +689,31 @@ fn paint(
         let grid = table.read(cx).delegate();
         let mut engine = painter.engine.borrow_mut();
         let started = std::time::Instant::now();
+        // On a dark grid, shapes' default dark text is drawn in the theme's
+        // text colour (as cells' Automatic text is).
+        layer_mut
+            .scenes
+            .set_dark_text(t.dark.then(|| crate::look::rgb_of(t.fg)));
+        let preview = layer_mut.preview.clone();
         let built: Vec<Arc<Vec<Item>>> = frame
             .placed
             .iter()
             .map(|p| {
+                let shown;
+                let drawing = match &preview {
+                    Some((k, xml)) if *k == p.drawing.key => {
+                        shown = Drawing {
+                            kind: Arc::new(DrawingKind::Shape { xml: xml.clone() }),
+                            ..p.drawing.clone()
+                        };
+                        &shown
+                    }
+                    _ => &p.drawing,
+                };
                 layer_mut.scenes.items(
                     &mut engine,
                     &grid.book,
-                    &p.drawing,
+                    drawing,
                     p.rect[2] as f32,
                     p.rect[3] as f32,
                 )
@@ -783,7 +804,24 @@ fn paint(
         let layer = layer.clone();
         let view = view.clone();
         window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
-            if phase != DispatchPhase::Bubble || e.button != MouseButton::Left {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+            // Right-click a shape: select it and show Format Shape.
+            if e.button == MouseButton::Right {
+                let hit = hits
+                    .iter()
+                    .rev()
+                    .find(|(_, g, hb)| *g == Grip::Move && hb.is_hovered(window))
+                    .map(|(i, _, _)| keys[*i].0);
+                if let Some(key) = hit {
+                    cx.stop_propagation();
+                    layer.borrow_mut().selected = Some(key);
+                    let _ = view.update(cx, |this, cx| this.open_shape_panel(key, window, cx));
+                }
+                return;
+            }
+            if e.button != MouseButton::Left {
                 return;
             }
             // Handles first (registered last), then the topmost object.
@@ -820,6 +858,7 @@ fn paint(
             }
             cx.stop_propagation();
             let _ = view.update(cx, |this, cx| {
+                this.commit_shape_text(false, window, cx);
                 this.focus_grid(window, cx);
                 cx.notify();
             });

@@ -277,3 +277,79 @@ fn assert_unique_ids(path: &Path) {
         assert_eq!(ids.len(), all, "{n}: {x}");
     }
 }
+
+#[test]
+fn formatted_shapes_save_in_place() {
+    use sheets_engine::shape_format::{set_fill, set_outline, set_text_anchor};
+    use sheets_engine::{OutlineEdit, ShapeFill, TextAnchor};
+    let mut wb = Workbook::open(corpus("23_shapes.xlsx")).unwrap();
+    let frame = named(&wb, 0, "Dashed frame").key;
+    wb.edit_shape(frame, |x| {
+        set_fill(
+            x,
+            ShapeFill::Solid {
+                rgb: [0xFF, 0xF2, 0xCC],
+                transparency: 30,
+            },
+        )
+    })
+    .unwrap();
+    wb.edit_shape(frame, |x| set_text_anchor(x, TextAnchor::Middle))
+        .unwrap();
+    let line = named(&wb, 0, "Arrow line").key;
+    wb.edit_shape(line, |x| {
+        set_outline(
+            x,
+            &OutlineEdit {
+                color: Some(Some([0xC0, 0, 0])),
+                width: Some(38_100),
+                dash: Some("sysDot"),
+                head: Some("none"),
+                tail: Some("stealth"),
+            },
+        )
+    })
+    .unwrap();
+    // Form controls can't be formatted.
+    let button = named(&wb, 0, "Button 1").key;
+    assert!(
+        wb.edit_shape(button, |x| set_fill(x, ShapeFill::None))
+            .is_err()
+    );
+    let path = scratch("formatted.xlsx");
+    wb.save_as(&path).unwrap();
+    assert!(sheets_engine::package_problems(&std::fs::read(&path).unwrap()).is_empty());
+    let original = parts(&corpus("23_shapes.xlsx"))["xl/drawings/drawing1.xml"].clone();
+    let saved = parts(&path)["xl/drawings/drawing1.xml"].clone();
+    roxmltree::Document::parse(&saved).unwrap();
+    assert!(saved.contains("<a:srgbClr val=\"FFF2CC\"><a:alpha val=\"70000\"/></a:srgbClr>"));
+    assert!(saved.contains("<a:prstDash val=\"sysDot\"/>"));
+    assert!(saved.contains("<a:tailEnd type=\"stealth\"/>"));
+    // Untouched shapes stay byte for byte.
+    for n in [
+        "Revenue box",
+        "Gradient oval",
+        "Turned arrow",
+        "Notes box",
+        "Pair",
+    ] {
+        let el = |x: &str| {
+            let at = x.find(&format!("name=\"{n}\"")).unwrap();
+            let start = x[..at].rfind("<xdr:twoCellAnchor").unwrap();
+            let end = start + x[start..].find("</xdr:twoCellAnchor>").unwrap();
+            x[start..end].to_owned()
+        };
+        assert_eq!(el(&original), el(&saved), "{n}");
+    }
+    let back = Workbook::open(&path).unwrap();
+    let DrawingKind::Shape { xml } = &*named(&back, 0, "Dashed frame").kind else {
+        panic!()
+    };
+    assert!(xml.contains("anchor=\"ctr\""));
+    // One undo step each.
+    assert!(wb.undo().unwrap());
+    let DrawingKind::Shape { xml } = &*named(&wb, 0, "Arrow line").kind else {
+        panic!()
+    };
+    assert!(!xml.contains("stealth"));
+}

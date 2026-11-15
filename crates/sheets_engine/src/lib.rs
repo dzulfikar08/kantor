@@ -38,6 +38,7 @@ mod print;
 mod recovery;
 mod rows;
 mod shape_edit;
+pub mod shape_format;
 mod sheet_tabs;
 mod shift;
 mod sort;
@@ -64,6 +65,7 @@ pub use notes::{CellNote, SheetNotes};
 pub use preserve::package_problems;
 pub use recovery::{SaveJob, Saved, XlsxOutput, XlsxSnapshot, write_file_atomic};
 pub use shape_edit::ShapePreset;
+pub use shape_format::{OutlineEdit, ShapeFill, TextAnchor};
 pub use sheet_tabs::{STANDARD_COLORS, TabColor, theme_tints};
 pub use table_edit::{TableOptions, TotalFunc, table_style_names, valid_table_name};
 pub use validation_edit::{

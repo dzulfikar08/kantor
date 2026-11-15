@@ -929,6 +929,12 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_sheets_any(window, cx, |v, w, cx| v.chart_options_doc(w, cx)),
     },
     Command {
+        title: tk("Format Shape…"),
+        detail: tk("Sheets · fill, outline and text alignment of the selected shape or text box"),
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.format_shape_doc(w, cx)),
+    },
+    Command {
         title: tk("Move Chart…"),
         detail: tk("Sheets · put the selected chart on a new chart sheet or on another sheet"),
         keys: "",

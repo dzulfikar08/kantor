@@ -99,6 +99,13 @@ pub(crate) fn hsla(c: u32) -> Hsla {
     rgb(c).into()
 }
 
+/// A theme colour as the RGB Slides' renderer takes.
+pub(crate) fn rgb_of(c: Hsla) -> slides_engine::Rgb {
+    let c = Rgba::from(c);
+    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    slides_engine::Rgb([b(c.r), b(c.g), b(c.b)])
+}
+
 /// WCAG relative luminance of a colour.
 fn luminance(c: Hsla) -> f32 {
     let c = Rgba::from(c);

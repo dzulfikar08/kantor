@@ -66,9 +66,11 @@ mod popup_list;
 mod print;
 mod print_preview;
 mod recovery;
+mod rich;
 mod row_heights;
 mod row_layout;
 mod saving;
+mod shape_format_ui;
 mod shape_ui;
 mod sheet_tab_ui;
 mod spell_ui;
@@ -1204,6 +1206,8 @@ pub struct SheetsView {
     /// The Chart panel (see [`chart_ui`]) and a "series in rows" choice
     /// waiting for the window.
     chart_panel: Option<chart_ui::ChartPanel>,
+    /// Format Shape, beside the grid.
+    shape_panel: Option<shape_format_ui::ShapePanel>,
     pending_chart_rows: Option<bool>,
     /// The Data Validation card (see [`dv_ui`]).
     dv_dialog: Option<dv_ui::DvDialog>,
@@ -1310,6 +1314,7 @@ impl SheetsView {
             cf_dialog: None,
             dv_dialog: None,
             chart_panel: None,
+            shape_panel: None,
             pending_chart_rows: None,
             cf_manager: None,
             table_panel: None,
@@ -2621,6 +2626,7 @@ impl Render for SheetsView {
         }
         self.apply_pending_chart(window, cx);
         self.sync_chart_panel(window, cx);
+        self.sync_shape_panel(window, cx);
         let root = self.editor_actions(v_flex(), cx);
         let root = self.point_actions(root, cx);
         let root = self.calc_actions(root, cx);
@@ -2739,6 +2745,7 @@ impl Render for SheetsView {
                     let panel = self.render_pivot_panel(cx);
                     let table_panel = self.render_table_panel(cx);
                     let chart_panel = self.render_chart_panel(cx);
+                    let shape_panel = self.render_shape_panel(cx);
                     h_flex()
                         .flex_1()
                         .min_h_0()
@@ -2764,7 +2771,9 @@ impl Render for SheetsView {
                                 .on_action(cx.listener(Self::toggle_underline))
                                 // A drag only extends the range if it started on a cell
                                 // (cells set `dragging` after this capture listener runs).
-                                .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
+                                .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
+                                    // A click on the grid ends a shape's text edit.
+                                    this.commit_shape_text(false, window, cx);
                                     this.dragging = false;
                                     this.point_dragging = false;
                                     this.reset_grid_drag(cx);
@@ -2783,6 +2792,7 @@ impl Render for SheetsView {
                         .children(panel)
                         .children(table_panel)
                         .children(chart_panel)
+                        .children(shape_panel)
                 })
             })
             // Sheet tabs

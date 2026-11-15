@@ -104,7 +104,7 @@ impl ShapePreset {
     }
 
     /// The element Excel writes for a new one (with `cNvPr id="0"`).
-    pub(crate) fn xml(self, name: &str) -> String {
+    pub fn xml(self, name: &str) -> String {
         let name = esc(name);
         let prst = self.prst();
         let ns = format!("xmlns:xdr=\"{NS_XDR}\" xmlns:a=\"{NS_A}\"");
@@ -381,7 +381,7 @@ impl Workbook {
 
     /// The element of shape `key` as it is now (`None`: not a shape on a
     /// sheet).
-    fn shape_now(&self, key: DrawingKey) -> Option<(Arc<str>, bool)> {
+    pub(crate) fn shape_now(&self, key: DrawingKey) -> Option<(Arc<str>, bool)> {
         let sheet = self.sheet_index_of(key.sheet_id)?;
         let d = self.drawings(sheet).into_iter().find(|d| d.key == key)?;
         match &*d.kind {
@@ -412,28 +412,8 @@ impl Workbook {
         if plain_text(&xml).as_deref() == Some(text) {
             return Ok(());
         }
-        let new: Arc<str> = with_text(&xml, text)?.into();
-        if key.index >= NEW_CHART_BASE {
-            let id = (key.index - NEW_CHART_BASE) as u32;
-            self.own_edit(|e, _| {
-                if let Some(c) = e
-                    .charts
-                    .iter_mut()
-                    .find(|c| c.id == id && c.sheet_id == key.sheet_id)
-                    && let Some(s) = &c.shape
-                {
-                    c.shape = Some(Arc::new(NewShape {
-                        xml: new,
-                        name: s.name.clone(),
-                    }));
-                }
-            });
-        } else {
-            self.own_edit(|e, _| {
-                e.shape_texts.insert(key, new);
-            });
-        }
-        Ok(())
+        let new = with_text(&xml, text)?;
+        self.set_shape_xml(key, &new)
     }
 }
 
