@@ -413,6 +413,12 @@ impl Builder {
             }
             Some(FrameContent::Table(t)) => self.table(engine, pres, d, t, xfrm, out),
             Some(FrameContent::Diagram(dg)) => {
+                if let Some(dd) = &dg.drawing {
+                    // Read with the file (and edited in Kantor): drawn in the
+                    // frame's size when read.
+                    self.group(engine, pres, d, &dd.group, &dd.group.child_box, xfrm, out);
+                    return true;
+                }
                 let Some(key) = dg.data.clone() else {
                     return false;
                 };
@@ -478,6 +484,10 @@ impl Builder {
     ) {
         for (i, child) in g.children.iter().enumerate() {
             let Some(own) = child.xfrm else { continue };
+            // Unmodelled content (ink) isn't drawn.
+            if matches!(&child.kind, ShapeKind::Other { frame, .. } if frame.get().is_none()) {
+                continue;
+            }
             let at = compose(xfrm, space, &own);
             match g.text_boxes.get(i).copied().flatten() {
                 Some(tb) => {

@@ -69,7 +69,7 @@ fn title_ref(p: &Presentation, slide: usize) -> ShapeRef {
         .iter()
         .position(|s| s.ph.as_ref().is_some_and(|ph| ph.is_title()))
         .expect("title placeholder");
-    (slide, i)
+    (slide, i).into()
 }
 
 #[test]
@@ -521,10 +521,11 @@ fn body_ref(p: &Presentation, slide: usize) -> ShapeRef {
         .iter()
         .position(|s| s.ph.as_ref().is_some_and(|ph| !ph.is_title()))
         .expect("body placeholder");
-    (slide, i)
+    (slide, i).into()
 }
 
-fn markers(p: &Presentation, r: ShapeRef) -> Vec<Option<String>> {
+fn markers(p: &Presentation, r: impl Into<ShapeRef>) -> Vec<Option<String>> {
+    let r: ShapeRef = r.into();
     let list = p.render_list(r.0, false);
     let shape = list.iter().find(|x| x.layer == Layer::Slide(r.1)).unwrap();
     shape
@@ -537,7 +538,7 @@ fn markers(p: &Presentation, r: ShapeRef) -> Vec<Option<String>> {
         .collect()
 }
 
-fn all(p: &Presentation, r: ShapeRef) -> Selection {
+fn all(p: &Presentation, r: impl Into<ShapeRef>) -> Selection {
     let paras = p.text_paras(r).unwrap();
     Selection {
         anchor: Position::default(),

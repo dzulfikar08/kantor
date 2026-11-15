@@ -101,7 +101,7 @@ pub(crate) fn wrap(ns: &[(String, String)], xml: &str) -> (String, usize) {
 }
 
 impl Presentation {
-    /// Copy shapes of slide `slide` (in z-order). Groups, tables, charts
+    /// Copy shapes of slide `slide` (in z-order). Tables, charts, SmartArt
     /// and other objects Kantor keeps but doesn't model can't be copied yet.
     pub fn copy_shapes(&self, slide: usize, shapes: &[usize]) -> anyhow::Result<ShapeClip> {
         let s = self.slides.get(slide).context("no such slide")?;
@@ -113,7 +113,9 @@ impl Presentation {
         idx.dedup();
         for i in idx {
             let shape = s.shapes.get(i).context("no such shape")?;
-            if let ShapeKind::Other { what, .. } = &shape.kind {
+            if let ShapeKind::Other { what, .. } = &shape.kind
+                && !shape.is_group()
+            {
                 bail!("Copying a {what} isn't supported yet");
             }
             let mut copy = shape.clone();
@@ -250,14 +252,13 @@ impl Presentation {
                 .first_element_child()
                 .context("copied shape")?;
             let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
-            let id = next_id;
-            if let Some(cnv) = el
-                .children()
-                .find(|n| n.is_element() && n.tag_name().name().starts_with("nv"))
-                .and_then(|nv| child(nv, NS_P, "cNvPr"))
-                && let Some(a) = cnv.attributes().find(|a| a.name() == "id")
-            {
-                edits.push((a.range_value(), id.to_string()));
+            // New ids for the shape and, in a group, every shape in it.
+            let mut id = next_id;
+            for cnv in el.descendants().filter(|n| is(*n, NS_P, "cNvPr")) {
+                if let Some(a) = cnv.attributes().find(|a| a.name() == "id") {
+                    edits.push((a.range_value(), id.to_string()));
+                    id += 1;
+                }
             }
             for a in el.descendants().flat_map(|n| n.attributes()) {
                 if a.namespace() == Some(NS_R)
@@ -317,7 +318,8 @@ impl Presentation {
     }
 
     /// Ctrl+D: copy a shape onto its own slide, offset.
-    pub fn duplicate_shape(&mut self, r: ShapeRef) -> anyhow::Result<usize> {
+    pub fn duplicate_shape(&mut self, r: impl Into<ShapeRef>) -> anyhow::Result<usize> {
+        let r: ShapeRef = r.into();
         let clip = self.copy_shapes(r.0, &[r.1])?;
         let added = self.paste_shapes(r.0, &clip)?;
         added.first().copied().context("nothing pasted")

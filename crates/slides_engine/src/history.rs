@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use docs_engine::Selection;
 
+use crate::group::{Inner, ShapeRef};
 use crate::presentation::Slide;
 
 /// Where the user was: the slide, the selected shape and the text selection.
@@ -14,6 +15,8 @@ use crate::presentation::Slide;
 pub struct Focus {
     pub slide: usize,
     pub shape: Option<usize>,
+    /// Inside that shape (a group's child), if so.
+    pub inner: Inner,
     pub sel: Option<Selection>,
 }
 
@@ -26,19 +29,32 @@ impl Focus {
     }
 
     pub fn shape(slide: usize, shape: usize) -> Self {
+        Self::at((slide, shape).into())
+    }
+
+    pub fn text(slide: usize, shape: usize, sel: Selection) -> Self {
+        Self::text_at((slide, shape).into(), sel)
+    }
+
+    pub fn at(r: ShapeRef) -> Self {
         Self {
-            slide,
-            shape: Some(shape),
+            slide: r.0,
+            shape: Some(r.1),
+            inner: r.2,
             sel: None,
         }
     }
 
-    pub fn text(slide: usize, shape: usize, sel: Selection) -> Self {
+    pub fn text_at(r: ShapeRef, sel: Selection) -> Self {
         Self {
-            slide,
-            shape: Some(shape),
             sel: Some(sel),
+            ..Self::at(r)
         }
+    }
+
+    /// The shape, if any.
+    pub fn shape_ref(&self) -> Option<ShapeRef> {
+        Some(ShapeRef(self.slide, self.shape?, self.inner))
     }
 }
 
@@ -62,7 +78,7 @@ pub(crate) struct Command {
     pub focus_after: Focus,
     pub kind: Kind,
     /// The shape a coalescing command edits.
-    pub target: Option<(usize, usize)>,
+    pub target: Option<ShapeRef>,
 }
 
 impl Command {
@@ -72,7 +88,7 @@ impl Command {
         focus_before: Focus,
         focus_after: Focus,
         kind: Kind,
-        target: Option<(usize, usize)>,
+        target: Option<ShapeRef>,
     ) -> Self {
         Self {
             id: 0,

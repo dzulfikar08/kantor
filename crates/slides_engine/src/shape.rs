@@ -119,48 +119,18 @@ pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) ->
             let tag = start_tag(src, sp);
             if tag.ends_with("/>") {
                 let r = sp.range();
-                XfrmAt::Expand(r.start - base..r.end - base, tag_attrs(tag).to_owned())
+                XfrmAt::Expand(
+                    r.start - base..r.end - base,
+                    tag_attrs(tag).to_owned(),
+                    tag_name(tag).to_owned(),
+                )
             } else {
                 XfrmAt::Insert(sp.range().start - base + tag.len())
             }
         }
     });
 
-    let sppr = sp_pr.map(|sp| {
-        let tag = start_tag(src, sp);
-        let rel = |r: Range<usize>| r.start - base..r.end - base;
-        let fill = sp
-            .children()
-            .find(|c| is_in(*c, NS_A, &FILLS))
-            .map(|f| rel(f.range()));
-        let fill_at = sp
-            .children()
-            .filter(|c| is_in(*c, NS_A, &["xfrm", "custGeom", "prstGeom"]))
-            .map(|c| c.range().end)
-            .max()
-            .unwrap_or(sp.range().start + tag.len())
-            - base;
-        let ln = child(sp, NS_A, "ln").map(|l| {
-            let lt = start_tag(src, l);
-            LnAt {
-                range: rel(l.range()),
-                attrs: tag_attrs(lt).to_owned(),
-                inner_at: (!lt.ends_with("/>")).then(|| l.range().start - base + lt.len()),
-                fill: l
-                    .children()
-                    .find(|c| is_in(*c, NS_A, &["noFill", "solidFill", "gradFill", "pattFill"]))
-                    .map(|f| rel(f.range())),
-            }
-        });
-        SpPrAt {
-            range: rel(sp.range()),
-            attrs: tag_attrs(tag).to_owned(),
-            empty: tag.ends_with("/>"),
-            fill,
-            fill_at,
-            ln,
-        }
-    });
+    let sppr = sp_pr.map(|sp| sppr_at(src, sp, base));
 
     let style = child(n, ns, "style");
     let style_color = |name: &str| {
@@ -231,6 +201,8 @@ pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) ->
     let mut text = None;
     let mut paras_at = None;
     let mut chart = None;
+    let mut frame_xfrm_at = None;
+    let mut group_at = None;
     let kind = match (in_p, local) {
         // Connectors are drawn like shapes (lines with arrowheads).
         (true, "sp" | "cxnSp") => {
@@ -276,10 +248,28 @@ pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) ->
             ShapeKind::Picture { rel, part }
         }
         _ => {
-            let xfrm_el = n
-                .descendants()
-                .find(|d| d.is_element() && d.tag_name().name() == "xfrm");
+            let own = (in_p && local == "grpSp")
+                .then_some(xfrm_el)
+                .flatten();
+            let xfrm_el = own.or_else(|| {
+                n.descendants()
+                    .find(|d| d.is_element() && d.tag_name().name() == "xfrm")
+            });
             xfrm = xfrm_el.and_then(xfrm_of);
+            if in_p && local == "graphicFrame"
+                && let Some(x) = child(n, ns, "xfrm")
+            {
+                let r = x.range();
+                frame_xfrm_at = Some(XfrmAt::Frame(
+                    r.start - base..r.end - base,
+                    tag_attrs(start_tag(src, x)).to_owned(),
+                ));
+            }
+            if in_p && local == "grpSp" {
+                group_at = Some(GroupAt {
+                    children: group_children_range(n, src, base),
+                });
+            }
             let frame = match (in_p, local) {
                 (true, "grpSp") => {
                     // The group's own fill is what `a:grpFill` children show.
@@ -315,8 +305,10 @@ pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) ->
         raw: raw(src, n).to_owned(),
         xfrm,
         text: text.as_ref().map(|t: &TextBody| t.paras.clone()),
-        xfrm_at: if matches!(kind, ShapeKind::Other { .. }) {
-            None
+        xfrm_at: if group_at.is_some() {
+            xfrm_at
+        } else if matches!(kind, ShapeKind::Other { .. }) {
+            frame_xfrm_at
         } else {
             xfrm_at
         },
@@ -329,6 +321,11 @@ pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) ->
         max_id,
         chart,
         chart_edit: None,
+        group: group_at,
+        frame: match &kind {
+            ShapeKind::Other { frame, .. } => frame.clone(),
+            _ => Frame::default(),
+        },
     };
     Shape {
         id,
@@ -340,6 +337,44 @@ pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) ->
         text,
         paint: PaintEdit::default(),
         src: Some(Arc::new(src_rec)),
+    }
+}
+
+/// Where an `spPr` element's fill and outline are (offsets relative to `base`).
+pub(crate) fn sppr_at(src: &str, sp: Node, base: usize) -> SpPrAt {
+    let tag = start_tag(src, sp);
+    let rel = |r: Range<usize>| r.start - base..r.end - base;
+    let fill = sp
+        .children()
+        .find(|c| is_in(*c, NS_A, &FILLS))
+        .map(|f| rel(f.range()));
+    let fill_at = sp
+        .children()
+        .filter(|c| is_in(*c, NS_A, &["xfrm", "custGeom", "prstGeom"]))
+        .map(|c| c.range().end)
+        .max()
+        .unwrap_or(sp.range().start + tag.len())
+        - base;
+    let ln = child(sp, NS_A, "ln").map(|l| {
+        let lt = start_tag(src, l);
+        LnAt {
+            range: rel(l.range()),
+            attrs: tag_attrs(lt).to_owned(),
+            inner_at: (!lt.ends_with("/>")).then(|| l.range().start - base + lt.len()),
+            fill: l
+                .children()
+                .find(|c| is_in(*c, NS_A, &["noFill", "solidFill", "gradFill", "pattFill"]))
+                .map(|f| rel(f.range())),
+        }
+    });
+    SpPrAt {
+        range: rel(sp.range()),
+        name: tag_name(tag).to_owned(),
+        attrs: tag_attrs(tag).to_owned(),
+        empty: tag.ends_with("/>"),
+        fill,
+        fill_at,
+        ln,
     }
 }
 
@@ -355,21 +390,46 @@ pub(crate) fn parse_group(
         child_box: crate::frame::child_box(xfrm_el, xfrm),
         ..Group::default()
     };
-    for c in n.children().filter(|c| {
-        c.is_element()
-            && matches!(
-                c.tag_name().name(),
-                "sp" | "cxnSp" | "pic" | "grpSp" | "graphicFrame"
-            )
-    }) {
+    for c in n.children().filter(is_group_child) {
         g.children.push(parse_shape_in(c, cx, fill));
         let tx = c
             .children()
             .find(|k| is(*k, NS_DSP, "txXfrm"))
             .and_then(xfrm_of);
         g.text_boxes.push(tx);
+        g.model_ids.push(
+            c.attribute("modelId")
+                .filter(|_| is(c, NS_DSP, "sp"))
+                .map(str::to_owned),
+        );
     }
     g
+}
+
+/// Shapes of a group or shape tree: every element but the group's own
+/// properties (`nvGrpSpPr`, `grpSpPr`) and `extLst` (unmodelled ones,
+/// such as ink, are kept as they are).
+pub(crate) fn is_group_child(c: &Node) -> bool {
+    c.is_element() && !matches!(c.tag_name().name(), "nvGrpSpPr" | "grpSpPr" | "extLst")
+}
+
+/// Where a group's shapes are in it (relative to `base`): from the first
+/// to the last, else right after its properties.
+fn group_children_range(n: Node, src: &str, base: usize) -> Range<usize> {
+    let kids: Vec<Node> = n.children().filter(is_group_child).collect();
+    let r = match (kids.first(), kids.last()) {
+        (Some(a), Some(b)) => a.range().start..b.range().end,
+        _ => {
+            let at = n
+                .children()
+                .filter(|c| c.is_element() && matches!(c.tag_name().name(), "nvGrpSpPr" | "grpSpPr"))
+                .map(|c| c.range().end)
+                .max()
+                .unwrap_or_else(|| n.range().start + start_tag(src, n).len());
+            at..at
+        }
+    };
+    r.start - base..r.end - base
 }
 
 /// The chart part a `p:graphicFrame` shows (`c:chart/@r:id` in its
@@ -787,7 +847,14 @@ fn write_ppr(out: &mut String, pp: &ParaProps) {
 }
 
 fn write_xfrm(out: &mut String, attrs: &str, x: &Xfrm) {
-    out.push_str("<a:xfrm");
+    write_xfrm_as(out, "a:xfrm", attrs, x, None);
+}
+
+/// An `a:xfrm` (or a graphic frame's `p:xfrm`); `ch` adds a group's child
+/// space (`a:chOff`, `a:chExt`).
+pub(crate) fn write_xfrm_as(out: &mut String, tag: &str, attrs: &str, x: &Xfrm, ch: Option<&Xfrm>) {
+    out.push('<');
+    out.push_str(tag);
     let mut attrs = split_attrs(attrs);
     attrs.retain(|(k, _)| !matches!(k.as_str(), "rot" | "flipH" | "flipV"));
     if x.rot != 0 {
@@ -802,9 +869,17 @@ fn write_xfrm(out: &mut String, attrs: &str, x: &Xfrm) {
     write_attrs(out, &attrs);
     let _ = write!(
         out,
-        "><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm>",
+        "><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/>",
         x.x, x.y, x.cx, x.cy
     );
+    if let Some(c) = ch {
+        let _ = write!(
+            out,
+            "<a:chOff x=\"{}\" y=\"{}\"/><a:chExt cx=\"{}\" cy=\"{}\"/>",
+            c.x, c.y, c.cx, c.cy
+        );
+    }
+    let _ = write!(out, "</{tag}>");
 }
 
 fn write_paras(paras: &[TextPara]) -> String {
@@ -895,6 +970,40 @@ fn paint_edits(at: &SpPrAt, p: &PaintEdit) -> Vec<(Range<usize>, String, u8)> {
     edits
 }
 
+/// Edits for a fill / outline change in an `spPr` (`<p:spPr/>` is
+/// rewritten whole, with `xfrm` if given).
+pub(crate) fn sppr_paint_edits(
+    at: &SpPrAt,
+    p: &PaintEdit,
+    xfrm: Option<&Xfrm>,
+) -> Vec<(Range<usize>, String, u8)> {
+    if !at.empty {
+        return paint_edits(at, p);
+    }
+    let mut buf = format!("<{}", at.name);
+    if !at.attrs.is_empty() {
+        buf.push(' ');
+        buf.push_str(&at.attrs);
+    }
+    buf.push('>');
+    if let Some(x) = xfrm {
+        write_xfrm(&mut buf, "", x);
+    }
+    write_new_paint(&mut buf, p);
+    let _ = write!(buf, "</{}>", at.name);
+    vec![(at.range.clone(), buf, 0)]
+}
+
+/// A new fill and outline for an `spPr` that has none.
+pub(crate) fn write_new_paint(out: &mut String, p: &PaintEdit) {
+    if let Some(f) = &p.fill {
+        write_paint(out, f);
+    }
+    if p.line.is_some() || p.line_w.is_some() {
+        out.push_str(&new_ln("", p));
+    }
+}
+
 /// Write one shape: raw when unchanged, spliced when edited, generated when new.
 pub(crate) fn write_shape(out: &mut String, s: &Shape) {
     let Some(src) = &s.src else {
@@ -905,31 +1014,17 @@ pub(crate) fn write_shape(out: &mut String, s: &Shape) {
         out.push_str(&src.raw);
         return;
     }
+    if let (Some(at), Some(g)) = (&src.group, s.group()) {
+        write_group(out, s, src, at, g);
+        return;
+    }
     let mut edits: Vec<(Range<usize>, String, u8)> = Vec::new();
     // `<p:spPr/>` with a new fill or outline: written whole (with the xfrm).
     let whole_sppr = !s.paint.is_empty() && src.sppr.as_ref().is_some_and(|a| a.empty);
-    if whole_sppr && let Some(at) = &src.sppr {
-        let mut buf = String::from("<p:spPr");
-        if !at.attrs.is_empty() {
-            buf.push(' ');
-            buf.push_str(&at.attrs);
-        }
-        buf.push('>');
-        if let Some(x) = &s.xfrm {
-            write_xfrm(&mut buf, "", x);
-        }
-        if let Some(f) = &s.paint.fill {
-            write_paint(&mut buf, f);
-        }
-        if s.paint.line.is_some() || s.paint.line_w.is_some() {
-            buf.push_str(&new_ln("", &s.paint));
-        }
-        buf.push_str("</p:spPr>");
-        edits.push((at.range.clone(), buf, 0));
-    } else if !s.paint.is_empty()
+    if !s.paint.is_empty()
         && let Some(at) = &src.sppr
     {
-        edits.extend(paint_edits(at, &s.paint));
+        edits.extend(sppr_paint_edits(at, &s.paint, s.xfrm.as_ref()));
     }
     if s.xfrm != src.xfrm
         && !whole_sppr
@@ -945,15 +1040,19 @@ pub(crate) fn write_shape(out: &mut String, s: &Shape) {
                 write_xfrm(&mut buf, "", x);
                 edits.push((*i..*i, buf, 0));
             }
-            XfrmAt::Expand(r, attrs) => {
-                buf.push_str("<p:spPr");
+            XfrmAt::Expand(r, attrs, tag) => {
+                let _ = write!(buf, "<{tag}");
                 if !attrs.is_empty() {
                     buf.push(' ');
                     buf.push_str(attrs);
                 }
                 buf.push('>');
                 write_xfrm(&mut buf, "", x);
-                buf.push_str("</p:spPr>");
+                let _ = write!(buf, "</{tag}>");
+                edits.push((r.clone(), buf, 0));
+            }
+            XfrmAt::Frame(r, attrs) => {
+                write_xfrm_as(&mut buf, "p:xfrm", attrs, x, None);
                 edits.push((r.clone(), buf, 0));
             }
         }
@@ -971,6 +1070,49 @@ pub(crate) fn write_shape(out: &mut String, s: &Shape) {
         raw.replace_range(r, &text);
     }
     out.push_str(&raw);
+}
+
+/// A changed group: its own properties as read (the `a:xfrm` with its
+/// child space rewritten when either changed), then its children.
+fn write_group(out: &mut String, s: &Shape, src: &ShapeSrc, at: &GroupAt, g: &Group) {
+    let mut head = src.raw[..at.children.start].to_owned();
+    let orig_space = match src.frame.get() {
+        Some(FrameContent::Group(o)) => Some(o.child_box),
+        _ => None,
+    };
+    if let Some(x) = &s.xfrm
+        && (s.xfrm != src.xfrm || orig_space != Some(g.child_box))
+        && let Some(xat) = &src.xfrm_at
+    {
+        let mut buf = String::new();
+        match xat {
+            XfrmAt::Replace(r, attrs) => {
+                write_xfrm_as(&mut buf, "a:xfrm", attrs, x, Some(&g.child_box));
+                head.replace_range(r.clone(), &buf);
+            }
+            XfrmAt::Insert(i) => {
+                write_xfrm_as(&mut buf, "a:xfrm", "", x, Some(&g.child_box));
+                head.insert_str(*i, &buf);
+            }
+            XfrmAt::Expand(r, attrs, tag) => {
+                let _ = write!(buf, "<{tag}");
+                if !attrs.is_empty() {
+                    buf.push(' ');
+                    buf.push_str(attrs);
+                }
+                buf.push('>');
+                write_xfrm_as(&mut buf, "a:xfrm", "", x, Some(&g.child_box));
+                let _ = write!(buf, "</{tag}>");
+                head.replace_range(r.clone(), &buf);
+            }
+            XfrmAt::Frame(..) => {}
+        }
+    }
+    out.push_str(&head);
+    for c in &g.children {
+        write_shape(out, c);
+    }
+    out.push_str(&src.raw[at.children.end..]);
 }
 
 fn solid(c: Rgb) -> String {

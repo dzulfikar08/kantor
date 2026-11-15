@@ -91,13 +91,35 @@ pub struct Group {
     /// SmartArt shapes: the text box (`dsp:txXfrm`) of each child, in the
     /// same space (`None` = the shape's own box).
     pub text_boxes: Vec<Option<Xfrm>>,
+    /// SmartArt shapes: the data model point each child draws
+    /// (`dsp:sp/@modelId`).
+    pub model_ids: Vec<Option<String>>,
 }
 
 /// A SmartArt frame: the data part (`r:dm`), whose `dsp:dataModelExt`
-/// names PowerPoint's cached drawing.
+/// names PowerPoint's cached drawing, and that drawing once read
+/// ([`crate::Presentation`] reads it when the file is opened).
 #[derive(Clone, Debug)]
 pub struct DiagramRef {
     pub data: Option<String>,
+    pub drawing: Option<Arc<DiagramDrawing>>,
+}
+
+/// PowerPoint's pre-drawn shapes of a SmartArt frame
+/// (`ppt/diagrams/drawingN.xml`): editable text (and fill and outline);
+/// saved back into the drawing part and the data model.
+#[derive(Clone, Debug)]
+pub struct DiagramDrawing {
+    /// The drawing part.
+    pub part: String,
+    /// The shapes, in the frame's own space (origin at its top left,
+    /// `child_box` the frame's size when read).
+    pub group: Group,
+    /// The drawing part's XML as read, and where each shape is in it.
+    pub(crate) xml: Arc<str>,
+    pub(crate) ranges: Vec<std::ops::Range<usize>>,
+    /// Which data model points each shape's text comes from.
+    pub(crate) links: Vec<crate::smartart::Link>,
 }
 
 /// A chart frame: the chart part (`c:chart r:id`).
@@ -154,6 +176,59 @@ pub fn compose(group: &Xfrm, child_box: &Xfrm, child: &Xfrm) -> Xfrm {
         flip_v: fv,
     };
     out.with_degrees(rot)
+}
+
+/// The inverse of [`compose`]: the box in the group's child space that is
+/// drawn at `placed`.
+pub fn uncompose(group: &Xfrm, child_box: &Xfrm, placed: &Xfrm) -> Xfrm {
+    let k = |a: Emu, b: Emu| {
+        if a == 0 || b == 0 {
+            1.0
+        } else {
+            a as f64 / b as f64
+        }
+    };
+    let (sx, sy) = (k(group.cx, child_box.cx), k(group.cy, child_box.cy));
+    let (gx, gy) = group.center();
+    let (mut px, mut py) = placed.center();
+    let mut rot = placed.rot as f64 / ROT_PER_DEG as f64;
+    if group.rot != 0 {
+        let (s, c) = (-group.angle()).sin_cos();
+        let (dx, dy) = (px - gx, py - gy);
+        px = gx + dx * c - dy * s;
+        py = gy + dx * s + dy * c;
+        rot -= group.rot as f64 / ROT_PER_DEG as f64;
+    }
+    let (mut fh, mut fv) = (placed.flip_h, placed.flip_v);
+    if group.flip_v {
+        py = 2.0 * gy - py;
+        fv = !fv;
+        rot = -rot;
+    }
+    if group.flip_h {
+        px = 2.0 * gx - px;
+        fh = !fh;
+        rot = -rot;
+    }
+    let ccx = (px - group.x as f64) / sx + child_box.x as f64;
+    let ccy = (py - group.y as f64) / sy + child_box.y as f64;
+    let deg = rot.rem_euclid(360.0);
+    let sideways = (45.0..135.0).contains(&deg) || (225.0..315.0).contains(&deg);
+    let (w, h) = if sideways {
+        (placed.cx as f64 / sy, placed.cy as f64 / sx)
+    } else {
+        (placed.cx as f64 / sx, placed.cy as f64 / sy)
+    };
+    Xfrm {
+        x: (ccx - w / 2.0).round() as Emu,
+        y: (ccy - h / 2.0).round() as Emu,
+        cx: (w.round() as Emu).max(1),
+        cy: (h.round() as Emu).max(1),
+        rot: 0,
+        flip_h: fh,
+        flip_v: fv,
+    }
+    .with_degrees(deg)
 }
 
 /// `a:chOff` / `a:chExt` of a group's `a:xfrm` (the box itself if absent).
@@ -815,6 +890,7 @@ pub(crate) fn parse_graphic_frame(
     if let Some(ids) = child(data, NS_DGM, "relIds") {
         return Some(FrameContent::Diagram(DiagramRef {
             data: rel_part(r_attr(ids, "dm")),
+            drawing: None,
         }));
     }
     if let Some(c) = child(data, NS_C, "chart") {

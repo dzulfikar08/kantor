@@ -65,12 +65,9 @@ impl Presentation {
 
     /// Replace all the text of a shape (`\n` starts a paragraph); the
     /// formatting of its first character is kept. One undo step.
-    pub fn set_shape_text(&mut self, r: ShapeRef, text: &str) -> anyhow::Result<()> {
-        let shape = self
-            .slides
-            .get(r.0)
-            .and_then(|s| s.shapes.get(r.1))
-            .context("no such shape")?;
+    pub fn set_shape_text(&mut self, r: impl Into<ShapeRef>, text: &str) -> anyhow::Result<()> {
+        let r: ShapeRef = r.into();
+        let shape = self.shape(r).context("no such shape")?;
         if !shape.text_editable() {
             match shape.text.as_ref().and_then(|t| t.locked.as_deref()) {
                 Some(why) => bail!("the text of \"{}\" can't be edited: {why}", shape.name),
@@ -78,14 +75,14 @@ impl Presentation {
             }
         }
         let text = clean(text);
-        self.transaction(Focus::shape(r.0, r.1), |p| {
+        self.transaction(Focus::at(r), |p| {
             let paras = p.text_paras(r).context("no text")?;
             let all = Selection {
                 anchor: Position::new(0, 0),
                 head: text_ops::end(paras),
             };
             p.insert_text(r, all, &text, None)?;
-            Ok(((), Focus::shape(r.0, r.1)))
+            Ok(((), Focus::at(r)))
         })
     }
 

@@ -9,6 +9,7 @@ use docs_engine::{Position, Selection};
 
 use crate::edit::ShapeRef;
 use crate::history::{Focus, Kind};
+use crate::model::Shape;
 use crate::presentation::Presentation;
 use crate::text_ops;
 
@@ -39,26 +40,33 @@ impl Presentation {
     /// Every shape with text, in reading order (slide by slide, then the
     /// shapes' z-order), with its paragraphs' text.
     pub fn searchable_text(&self) -> Vec<(ShapeRef, Vec<&str>)> {
+        fn walk<'a>(r: ShapeRef, shape: &'a Shape, out: &mut Vec<(ShapeRef, Vec<&'a str>)>) {
+            if let Some(body) = &shape.text {
+                out.push((r, body.paras.iter().map(|p| p.text.as_str()).collect()));
+            }
+            // Shapes in groups and SmartArt, in their order.
+            for (k, c) in shape.inner_shapes().into_iter().flat_map(|g| g.children.iter().enumerate()) {
+                if let Some(cr) = r.child(k) {
+                    walk(cr, c, out);
+                }
+            }
+        }
         let mut out = Vec::new();
         for s in 0..self.len() {
             for (i, shape) in self.slide(s).shapes.iter().enumerate() {
-                if let Some(body) = &shape.text {
-                    out.push(((s, i), body.paras.iter().map(|p| p.text.as_str()).collect()));
-                }
+                walk((s, i).into(), shape, &mut out);
             }
         }
         out
     }
 
     /// Whether the text of shape `r` can be changed (not locked).
-    pub fn text_replaceable(&self, r: ShapeRef) -> bool {
+    pub fn text_replaceable(&self, r: impl Into<ShapeRef>) -> bool {
+        let r: ShapeRef = r.into();
         r.0 < self.len()
             && self.slide(r.0).locked.is_none()
-            && self
-                .slide(r.0)
-                .shapes
-                .get(r.1)
-                .is_some_and(|s| s.text_editable())
+            && self.shape(r).is_some_and(|s| s.text_editable())
+            && self.smartart_text_editable(r)
     }
 
     /// Replace every match with `with` as one undo step. Matches in text
@@ -78,12 +86,14 @@ impl Presentation {
         let Some(last) = todo.last() else {
             return Ok(0);
         };
-        let after = Focus::shape(last.shape.0, last.shape.1);
+        let after = Focus::at(last.shape);
         self.record(Kind::Other, None, before, true, |p| {
             // Back to front, so earlier ranges in the same paragraph stay valid.
             for m in todo.iter().rev() {
                 let slide = p.slide_mut(m.shape.0)?;
-                let shape = slide.shapes.get_mut(m.shape.1).context("no such shape")?;
+                let shape = slide
+                    .shape_at_mut(m.shape.1, m.shape.2)
+                    .context("no such shape")?;
                 let body = shape.text.as_mut().context("This shape has no text")?;
                 let Some(para) = body.paras.get(m.para) else {
                     continue;
@@ -119,7 +129,7 @@ mod tests {
             .shapes
             .iter()
             .position(|s| matches!(s.kind, ShapeKind::Shape { .. }) && s.text.is_some())
-            .map(|i| (0, i))
+            .map(|i| (0, i).into())
     }
 
     #[test]
