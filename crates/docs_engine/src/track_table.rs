@@ -122,7 +122,7 @@ impl Document {
             };
             // Each cell's text struck (cells can't merge, so this keeps
             // every paragraph).
-            for k in a..=b {
+            for (k, slot) in paras.iter_mut().enumerate().take(b + 1).skip(a) {
                 let i = range.start + k;
                 let p = &self.paragraphs[i];
                 if p.text.is_empty() {
@@ -134,7 +134,7 @@ impl Document {
                     &mut ids,
                 );
                 if let Some(c) = cut.into_iter().next() {
-                    paras[k] = c;
+                    *slot = c;
                 }
             }
             ids += 1;

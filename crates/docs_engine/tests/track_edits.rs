@@ -369,9 +369,12 @@ fn word_tracked_formatting_rows_and_parts_are_read_and_resolved() {
         .map(|c| c.table)
         .unwrap();
     // Untouched, it saves the tracked rows back as they were.
-    let mut copy = doc.clone();
+    let copy = doc.clone();
     let xml = document_xml(&copy.to_docx_bytes().unwrap());
-    assert!(xml.contains("<w:del w:id=\"21\" w:author=\"Citra\""), "{xml}");
+    assert!(
+        xml.contains("<w:del w:id=\"21\" w:author=\"Citra\""),
+        "{xml}"
+    );
     // Accept All: bold and centred stay, the deleted row goes, the
     // inserted one stays, the header keeps "Draft ", the note loses its
     // deleted words.
@@ -380,7 +383,10 @@ fn word_tracked_formatting_rows_and_parts_are_read_and_resolved() {
     assert!(!acc.has_changes() && acc.part_changes() == 0);
     assert_eq!(acc.table(table).unwrap().rows.len(), 2);
     assert_eq!(acc.paragraph(0).runs[0].props.bold, Some(true));
-    assert_eq!(acc.paragraph(1).props.align, Some(docs_engine::Align::Center));
+    assert_eq!(
+        acc.paragraph(1).props.align,
+        Some(docs_engine::Align::Center)
+    );
     let header: String = acc.stories()[0].doc.paragraphs()[0].text.clone();
     assert_eq!(header, "Draft Budget memo");
     let back = reopen(&mut acc);
@@ -392,10 +398,7 @@ fn word_tracked_formatting_rows_and_parts_are_read_and_resolved() {
     assert_eq!(rej.table(table).unwrap().rows.len(), 2);
     assert_ne!(rej.paragraph(0).runs[0].props.bold, Some(true));
     assert_eq!(rej.paragraph(1).props.align, None);
-    assert_eq!(
-        rej.stories()[0].doc.paragraphs()[0].text,
-        "Budget memo"
-    );
+    assert_eq!(rej.stories()[0].doc.paragraphs()[0].text, "Budget memo");
     let row_texts: Vec<String> = rej
         .paragraphs()
         .iter()
