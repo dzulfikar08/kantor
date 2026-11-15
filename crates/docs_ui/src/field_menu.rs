@@ -66,6 +66,9 @@ pub(crate) enum FieldMenu {
         begin: Option<Position>,
         input: Entity<InputState>,
         at: Point<Pixels>,
+        /// Opened by a double click: focus the box again on mouse up (the
+        /// page takes focus on mouse down).
+        focus_on_up: bool,
         _sub: Subscription,
     },
     Insert {
@@ -261,9 +264,23 @@ impl DocsView {
             begin,
             input,
             at,
+            focus_on_up: true,
             _sub: sub,
         });
         cx.notify();
+    }
+
+    /// Mouse up after the double click that opened the code box: give it
+    /// the focus back.
+    pub(crate) fn field_mouse_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(FieldMenu::Code {
+            input, focus_on_up, ..
+        }) = &mut self.field_menu
+            && std::mem::take(focus_on_up)
+        {
+            let input = input.clone();
+            input.update(cx, |s, cx| s.focus(window, cx));
+        }
     }
 
     /// Write the code being edited and update the field (one step).
@@ -490,6 +507,8 @@ impl DocsView {
         let panel = |id: &'static str, w: Pixels| {
             v_flex()
                 .id(id)
+                .key_context(crate::POPOVER_CONTEXT)
+                .on_action(|_: &crate::PopoverKey, _, _| {})
                 .occlude()
                 .w(w)
                 .gap(SPACE_3)

@@ -382,6 +382,8 @@ impl DocsView {
         Some(
             h_flex()
                 .id("docs-hf-bar")
+                .key_context(crate::POPOVER_CONTEXT)
+                .on_action(|_: &crate::PopoverKey, _, _| {})
                 .flex_none()
                 .flex_wrap()
                 .items_center()

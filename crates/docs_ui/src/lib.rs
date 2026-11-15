@@ -68,6 +68,9 @@ pub use docs_engine::Toggle as DocsToggle;
 /// Key context of the document view.
 pub const KEY_CONTEXT: &str = "DocsEditor";
 
+/// Key context of the Docs popovers and bars with text boxes.
+pub(crate) const POPOVER_CONTEXT: &str = "DocsPopover";
+
 actions!(
     docs,
     [
@@ -146,6 +149,7 @@ actions!(
         ToggleFieldCodes,
         ToggleFieldCode,
         InsertFieldChars,
+        PopoverKey,
         ZoomIn,
         ZoomOut,
         ZoomReset,
@@ -157,6 +161,11 @@ pub fn init(cx: &mut App) {
     ruler::init(cx);
     kantor_ui::spelling::init(cx);
     kantor_ui::find_bar::bind_app_keys(KEY_CONTEXT, cx);
+    cx.bind_keys(key_bindings());
+}
+
+/// The Docs view's key bindings.
+fn key_bindings() -> Vec<KeyBinding> {
     let c = Some(KEY_CONTEXT);
     let mut keys = vec![
         KeyBinding::new("left", MoveLeft, c),
@@ -214,6 +223,11 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("tab", Tab, c),
         KeyBinding::new("shift-tab", BackTab, c),
         KeyBinding::new("f9", UpdateFields, c),
+        // Keys a popover's text box doesn't use stay out of the page (an
+        // Enter there would also split the paragraph).
+        KeyBinding::new("enter", PopoverKey, Some(POPOVER_CONTEXT)),
+        KeyBinding::new("tab", PopoverKey, Some(POPOVER_CONTEXT)),
+        KeyBinding::new("shift-tab", PopoverKey, Some(POPOVER_CONTEXT)),
         KeyBinding::new("alt-f9", ToggleFieldCodes, c),
         KeyBinding::new("shift-f9", ToggleFieldCode, c),
         KeyBinding::new(kantor_ui::keys::primary("ctrl-f9"), InsertFieldChars, c),
@@ -261,7 +275,7 @@ pub fn init(cx: &mut App) {
         "shift-8" => ToggleBullets,
         "*" => ToggleBullets,
     );
-    cx.bind_keys(keys);
+    keys
 }
 
 /// The parley engine and the font bridge, shared by every Docs view.
@@ -2506,6 +2520,7 @@ impl Render for DocsView {
                 cx.listener(|this, _: &MouseUpEvent, window, cx| {
                     this.dragging = false;
                     this.float_mouse_up(window, cx);
+                    this.field_mouse_up(window, cx);
                 }),
             )
             .on_scroll(cx.listener(Self::on_scroll))
@@ -2682,6 +2697,30 @@ mod tests {
         let (paras, _, _) = blocks::build(doc);
         let paged = docs_pdf::lay_out(doc, &mut engine).paged;
         (paras, paged)
+    }
+
+    /// Enter and Tab in a popover's or the Header & Footer bar's text box
+    /// stay there: they used to split the paragraph at the caret too.
+    #[std::prelude::v1::test]
+    fn popover_keys_stay_out_of_the_page() {
+        let keymap = Keymap::new(key_bindings());
+        let in_popover = [
+            KeyContext::parse(KEY_CONTEXT).unwrap(),
+            KeyContext::parse(POPOVER_CONTEXT).unwrap(),
+        ];
+        let first = |ctx: &[KeyContext], key: &'static str| {
+            let ks = Keystroke::parse(key).unwrap();
+            let (b, _) = keymap.bindings_for_input(&[ks], ctx);
+            b.first().map(|b| b.action().name())
+        };
+        assert_eq!(first(&in_popover, "enter"), Some(PopoverKey.name()));
+        assert_eq!(first(&in_popover, "tab"), Some(PopoverKey.name()));
+        // Esc still closes it (the page's Collapse).
+        assert_eq!(first(&in_popover, "escape"), Some(Collapse.name()));
+        let on_page = [KeyContext::parse(KEY_CONTEXT).unwrap()];
+        assert_eq!(first(&on_page, "enter"), Some(Newline.name()));
+        assert_eq!(first(&on_page, "alt-f9"), Some(ToggleFieldCodes.name()));
+        assert_eq!(first(&on_page, "shift-f9"), Some(ToggleFieldCode.name()));
     }
 
     #[std::prelude::v1::test]
