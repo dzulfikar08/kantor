@@ -163,6 +163,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Docs: `SECTIONPAGES` in a header or footer shows the number of pages in its section.
 
 ### Fixed
+- Sheets: renaming a table that came from a file keeps its calculated column formulas in the
+  saved file, so Excel still fills new rows with the formula.
 - Docs: a `.docx` whose XML parts start with a byte order mark (files written with Microsoft's
   Open XML SDK) was saved damaged, and Kantor couldn't open the saved file again.
 - Docs: a page break at the very end of a paragraph no longer leaves an empty page after it.

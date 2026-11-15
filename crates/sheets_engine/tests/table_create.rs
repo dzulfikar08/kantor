@@ -362,3 +362,57 @@ fn a_file_table_restyled_keeps_its_part_and_markup() {
     let back = Workbook::open(&path).unwrap();
     assert_eq!(back.table_options("Sales"), Some(o));
 }
+
+/// Renaming a table from a file keeps its part's column formats (dxfs) and
+/// calculated column formulas, as Excel does.
+#[test]
+fn a_file_table_renamed_keeps_column_formats_and_formulas() {
+    let src = corpus("13_tables.xlsx");
+    let mut wb = Workbook::open(&src).unwrap();
+    wb.rename_table("Sales", "Revenue").unwrap();
+    let path = scratch("renamed13.xlsx");
+    wb.save_as(&path).unwrap();
+    assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
+    let tables = checked_tables(&path);
+    let names: Vec<&str> = tables.iter().map(|t| t.0.as_str()).collect();
+    let revenue = &tables
+        .iter()
+        .find(|t| t.0 == "Revenue")
+        .unwrap_or_else(|| panic!("{names:?}"))
+        .1;
+    assert!(!names.contains(&"Sales"), "{names:?}");
+    assert!(revenue.contains("<calculatedColumnFormula>"), "{revenue}");
+    assert!(revenue.contains("dataDxfId=\"0\""), "{revenue}");
+    // Saved again unchanged, every part stays the same (the content types
+    // may list the table parts in another order).
+    let twice = scratch("renamed13-twice.xlsx");
+    wb.save_as(&twice).unwrap();
+    let (a, b) = (parts(&path), parts(&twice));
+    let overrides = |x: &str| {
+        let mut v: Vec<String> = x
+            .trim_end_matches("</Types>")
+            .split("<Override ")
+            .map(str::to_owned)
+            .collect();
+        v.sort();
+        v
+    };
+    for (name, text) in &a {
+        if name == "docProps/core.xml" {
+            continue;
+        }
+        if name == "[Content_Types].xml" {
+            assert_eq!(overrides(text), overrides(&b[name]));
+            continue;
+        }
+        assert_eq!(Some(text), b.get(name), "{name} changed");
+    }
+    // Saved again after an undo, Sales comes back with its formula too.
+    wb.undo().unwrap();
+    let again = scratch("renamed13-undone.xlsx");
+    wb.save_as(&again).unwrap();
+    let tables = checked_tables(&again);
+    let sales = &tables.iter().find(|t| t.0 == "Sales").unwrap().1;
+    assert!(sales.contains("<calculatedColumnFormula>"), "{sales}");
+    assert!(sales.contains("dataDxfId=\"0\""), "{sales}");
+}

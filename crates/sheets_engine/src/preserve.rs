@@ -289,6 +289,10 @@ pub(crate) struct Patches {
     /// Lower-case names of tables whose original parts aren't carried
     /// (converted to a range, or renamed: written again under the new name).
     pub removed_tables: HashSet<String>,
+    /// Filled by the save: the original parts of tables not carried, by
+    /// lower-case name, so a renamed table keeps what the model doesn't hold
+    /// (calculated column formulas).
+    pub removed_table_parts: RefCell<HashMap<String, String>>,
     /// Lower-case names of tables changed in Kantor: carried as they are and
     /// rewritten afterwards, without the checks of [`fit_table`].
     pub touched_tables: HashSet<String>,
@@ -3644,10 +3648,16 @@ fn carry_tables(
             .text(&target)
             .and_then(|xml| xml.ok_or_else(|| "missing".to_owned()));
         let name = orig_xml.as_deref().ok().and_then(table_part_name);
-        if name
+        if let Some(n) = name
             .as_ref()
-            .is_some_and(|n| ctx.patches.removed_tables.contains(n))
+            .filter(|n| ctx.patches.removed_tables.contains(*n))
         {
+            if let Ok(xml) = &orig_xml {
+                ctx.patches
+                    .removed_table_parts
+                    .borrow_mut()
+                    .insert(n.clone(), xml.clone());
+            }
             continue;
         }
         let touched = name
@@ -4534,7 +4544,7 @@ fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
         pkg.set(&wb, new.into_bytes());
     }
     if !patches.tables.is_empty() {
-        write_tables(pkg, &sheets, &patches.tables)?;
+        write_tables(pkg, &sheets, &patches.tables, &patches.removed_table_parts)?;
     }
     if !patches.charts.is_empty() || !patches.removed_charts.is_empty() {
         let written = write_charts(pkg, &sheets, &patches.charts, &patches.removed_charts)?;
@@ -5608,6 +5618,24 @@ fn put_drawing_element(full: &str, rid: &str) -> Result<String, String> {
 
 const TABLE_CT: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";
 
+/// Whether a table part covers the same range with the same column names
+/// as `t`.
+fn same_table_shape(xml: &str, t: &ironcalc_base::types::Table) -> bool {
+    let Ok(doc) = Document::parse(xml) else {
+        return false;
+    };
+    let root = doc.root_element();
+    if root.attribute("ref") != Some(t.reference.as_str()) {
+        return false;
+    }
+    let names: Vec<&str> = root
+        .descendants()
+        .filter(|n| is_main(*n, "tableColumn"))
+        .filter_map(|n| n.attribute("name"))
+        .collect();
+    names.len() == t.columns.len() && names.iter().zip(&t.columns).all(|(a, c)| *a == c.name)
+}
+
 /// Write tables made or changed in Kantor: rewrite the package's part of a
 /// table with one of its names, or add a part (with its relationship, a
 /// `<tablePart>` and a content type).
@@ -5615,6 +5643,7 @@ fn write_tables(
     pkg: &mut Package,
     sheets: &[SheetEntry],
     tables: &[TableSave],
+    removed_parts: &RefCell<HashMap<String, String>>,
 ) -> Result<(), String> {
     // Existing table parts: lower-case name -> (part, id).
     let mut existing: HashMap<String, (String, u32)> = HashMap::new();
@@ -5656,6 +5685,21 @@ fn write_tables(
             pkg.set(&part, xml.into_bytes());
             continue;
         }
+        // A renamed table: its original part (dropped from the package)
+        // gives what the model doesn't hold.
+        let removed = removed_parts.borrow();
+        let old = t
+            .names
+            .iter()
+            .find_map(|n| removed.get(&n.to_lowercase()).map(String::as_str))
+            .or_else(|| {
+                // Renamed in an earlier save of the session and back: the
+                // part with the same range and columns.
+                removed
+                    .values()
+                    .find(|xml| same_table_shape(xml, &t.table))
+                    .map(String::as_str)
+            });
         let sheet = sheets
             .iter()
             .find(|s| s.sheet_id == t.sheet_id && s.kind == SheetKind::Work)
@@ -5667,7 +5711,7 @@ fn write_tables(
             .expect("a free name");
         pkg.set(
             &part,
-            crate::table_edit::table_xml(&t.table, max_id, None).into_bytes(),
+            crate::table_edit::table_xml(&t.table, max_id, old).into_bytes(),
         );
         ct.push_str(&format!(
             "<Override PartName=\"/{}\" ContentType=\"{TABLE_CT}\"/>",
