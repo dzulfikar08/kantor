@@ -187,7 +187,10 @@ fn groups_charts_turns_shadows_and_tight_wrap() {
     let tb = by("Turned text box").float(&doc).unwrap();
     assert_eq!(docs_pdf::floats::text_turn(tb), 90.0);
     // Tight wrap: some line beside the triangle reaches past its box's
-    // left edge (under the slanted side).
+    // left edge (under the slanted side). Any line level with the triangle
+    // counts: how many lines fit in a given height depends on the font
+    // (CI's fallback fonts are taller), and Square wrap never crosses the
+    // box's edge, so this still tells Tight from Square.
     let tri = by("Tight triangle");
     let page = laid
         .floats
@@ -196,8 +199,8 @@ fn groups_charts_turns_shadows_and_tight_wrap() {
         .unwrap();
     let r = tri.rect;
     let past = laid.paged.pages[page].lines.iter().any(|l| {
-        l.top > r[1]
-            && l.top + l.height < r[1] + r[3] / 2.0
+        l.top + l.height > r[1]
+            && l.top < r[1] + r[3]
             && l.x + l.width > r[0] + 10.0
             && l.x < r[0]
     });
