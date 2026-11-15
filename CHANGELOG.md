@@ -9,6 +9,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-15
+
+Sheets tabs work like Excel's: insert, delete, rename, move or copy, colour and hide sheets, and
+edit chart sheets in place. Notes move with their cells when you sort, paste or fill. Docs lays
+out and edits tab stops, so a table of contents from Word shows its dotted leaders. And after
+opening 424 public real-world files, the crashes, hangs and most refusals they turned up are
+fixed.
+
 ### Added
 - Docs: tab stops work as in Word. Left, center, right, decimal and bar tabs from a file (and from
   its paragraph styles, including stops a paragraph clears) are laid out, and leaders (dots,
@@ -1071,7 +1079,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/dzulfikar08/kantor/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/dzulfikar08/kantor/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dzulfikar08/kantor/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/dzulfikar08/kantor/compare/v0.3.1...v0.4.0
