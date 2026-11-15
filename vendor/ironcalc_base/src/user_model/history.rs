@@ -137,6 +137,15 @@ pub(crate) enum Diff {
         old_value: Vec<(i32, Option<Row>)>,
         new_value: Vec<(i32, Option<Row>)>,
     },
+    // KANTOR PATCH (sheet tabs): a sheet deleted as Excel does (references
+    // to it became #REF!), with what to put back.
+    KantorDeleteSheet(Box<crate::kantor_sheets::DeletedSheet>),
+    // KANTOR PATCH (sheet tabs): a copy of `source` named `name` at `index`.
+    KantorCopySheet {
+        source: u32,
+        index: u32,
+        name: String,
+    },
     // KANTOR PATCH (tables): a table created, changed or removed.
     KantorSetTable {
         name: String,

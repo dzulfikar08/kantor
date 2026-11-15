@@ -289,6 +289,16 @@ impl<'a> Model<'a> {
     ///
     /// Fails if `source_index` is out of range.
     pub fn duplicate_sheet(&mut self, source_index: u32) -> Result<(String, u32), String> {
+        self.duplicate_sheet_as(source_index, None)
+    }
+
+    /// KANTOR PATCH (sheet tabs): [`Model::duplicate_sheet`] with the copy's
+    /// name chosen by the caller (Excel's Move or Copy names it itself).
+    pub(crate) fn duplicate_sheet_as(
+        &mut self,
+        source_index: u32,
+        chosen: Option<&str>,
+    ) -> Result<(String, u32), String> {
         // Validate the source and capture what we need before mutating anything.
         let source = self.workbook.worksheet(source_index)?;
         let source_name = source.get_name();
@@ -307,27 +317,37 @@ impl<'a> Model<'a> {
             .map(|s| s.to_uppercase())
             .collect();
         const MAX_SHEET_NAME_LEN: usize = 31;
-        let mut index = 1;
-        let new_name = loop {
-            let suffix = format!(" ({index})");
-            let suffix_len = suffix.chars().count();
-            // Truncate the base name (by characters, to avoid splitting a
-            // multi-byte char) so that base + suffix fits within the limit.
-            let base: String = if source_name.chars().count() + suffix_len > MAX_SHEET_NAME_LEN {
-                source_name
-                    .chars()
-                    .take(MAX_SHEET_NAME_LEN.saturating_sub(suffix_len))
-                    .collect()
-            } else {
-                source_name.clone()
-            };
-            let candidate = format!("{base}{suffix}");
-            if is_valid_sheet_name(&candidate)
-                && !existing_names.contains(&candidate.to_uppercase())
-            {
-                break candidate;
+        if let Some(name) = chosen {
+            if !is_valid_sheet_name(name) || existing_names.contains(&name.to_uppercase()) {
+                return Err(format!("Invalid name for a sheet: '{name}'"));
             }
-            index += 1;
+        }
+        let mut index = 1;
+        let new_name = if let Some(name) = chosen {
+            name.to_string()
+        } else {
+            loop {
+                let suffix = format!(" ({index})");
+                let suffix_len = suffix.chars().count();
+                // Truncate the base name (by characters, to avoid splitting a
+                // multi-byte char) so that base + suffix fits within the limit.
+                let base: String = if source_name.chars().count() + suffix_len > MAX_SHEET_NAME_LEN
+                {
+                    source_name
+                        .chars()
+                        .take(MAX_SHEET_NAME_LEN.saturating_sub(suffix_len))
+                        .collect()
+                } else {
+                    source_name.clone()
+                };
+                let candidate = format!("{base}{suffix}");
+                if is_valid_sheet_name(&candidate)
+                    && !existing_names.contains(&candidate.to_uppercase())
+                {
+                    break candidate;
+                }
+                index += 1;
+            }
         };
 
         let new_sheet_id = self.get_new_sheet_id();
@@ -507,6 +527,13 @@ impl<'a> Model<'a> {
             });
         }
         self.workbook.defined_names = defined_names;
+
+        // KANTOR PATCH (sheet tabs): the sheet's tables follow it.
+        for table in self.workbook.tables.values_mut() {
+            if table.sheet_name == old_name {
+                table.sheet_name = new_name.to_string();
+            }
+        }
 
         // Update the name of the worksheet
         self.workbook.worksheet_mut(sheet_index)?.set_name(new_name);

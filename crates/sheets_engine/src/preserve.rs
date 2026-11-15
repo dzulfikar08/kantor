@@ -2473,6 +2473,28 @@ fn merge(
         workbook_sheets(&orig_root, &orig_read)?;
     let new_read = |p: &str| Ok(new.text(p)?.map(str::to_owned));
     let (new_wb, new_wb_rels, new_wb_xml, new_sheets) = workbook_sheets(&new_root, &new_read)?;
+    // Sheets renamed since the original: carried formulas naming them get
+    // the new name.
+    let renames: HashMap<u32, String> = new_sheets
+        .iter()
+        .filter(|n| n.kind == SheetKind::Work)
+        .filter_map(|n| {
+            let o = orig_sheets
+                .iter()
+                .find(|o| o.kind == SheetKind::Work && o.sheet_id == n.sheet_id)?;
+            (o.name != n.name).then(|| (n.sheet_id, n.name.clone()))
+        })
+        .collect();
+    let renamed_moves;
+    let ctx = if renames.is_empty() {
+        ctx
+    } else {
+        renamed_moves = ctx.moves.clone().with_renames(renames);
+        &Context {
+            moves: &renamed_moves,
+            ..*ctx
+        }
+    };
 
     let mut m = Merge {
         orig: &orig,
@@ -5934,6 +5956,11 @@ fn move_part(
                 let Some(&id) = m.sheets.get(&sheet.to_lowercase()) else {
                     continue;
                 };
+                if let Some(now) = moves.renamed(id)
+                    && let Some(a) = src.attributes().find(|a| a.name() == "sheet")
+                {
+                    edits.push((a.range_value(), esc_attr(now)));
+                }
                 match moves.sqref(id, r.value()) {
                     Some(v) if v != r.value() => edits.push((r.range_value(), esc_attr(&v))),
                     Some(_) => {}

@@ -78,7 +78,7 @@ impl Workbook {
             )
             .any(|n| n == lower);
         if taken {
-            bail!("A sheet is already called \u{201c}{name}\u{201d}");
+            bail!("That name is already taken. Try a different one.");
         }
         list[i].name = name.to_owned();
         self.set_chart_sheets(list);
@@ -113,47 +113,7 @@ impl Workbook {
     pub fn move_chart_sheet(&mut self, k: usize, to: usize) -> Result<()> {
         let list = self.chart_sheets_now();
         Self::chart_sheet_index(&list, k)?;
-        let mut shown = self.tabs();
-        let Some(from) = shown.iter().position(|t| *t == Tab::Chart(k)) else {
-            bail!("only a shown chart sheet can be moved");
-        };
-        shown.remove(from);
-        let to = to.min(shown.len());
-        if to == from {
-            return Ok(());
-        }
-        // Hidden chart sheets keep their place among all the tabs.
-        let mut all = self.all_tabs();
-        all.retain(|t| *t != Tab::Chart(k));
-        let at = match shown.get(to) {
-            Some(next) => all.iter().position(|t| t == next).unwrap_or(all.len()),
-            None => all.len(),
-        };
-        all.insert(at, Tab::Chart(k));
-        // Each chart sheet goes after the worksheets before it, nearest
-        // first; chart sheets keep the order of the tabs.
-        let mut out = Vec::with_capacity(list.len());
-        let mut before: Vec<u32> = Vec::new();
-        for t in &all {
-            match *t {
-                Tab::Sheet(i) => before.insert(0, self.sheet_id(i)),
-                Tab::Chart(c) => {
-                    if let Some(mut cs) = list.iter().find(|x| x.k == c).cloned() {
-                        cs.after = before.clone();
-                        out.push(cs);
-                    }
-                }
-            }
-        }
-        // Any left out of the tabs (a worksheet has their name) stay.
-        let rest: Vec<ChartSheetNow> = list
-            .iter()
-            .filter(|c| !out.iter().any(|o| o.k == c.k))
-            .cloned()
-            .collect();
-        out.extend(rest);
-        self.set_chart_sheets(out);
-        Ok(())
+        self.move_tab(Tab::Chart(k), to)
     }
 
     /// Whether `key` is a chart on a chart sheet still there.

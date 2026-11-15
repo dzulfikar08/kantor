@@ -311,7 +311,7 @@ pub(crate) struct Drawings {
     /// The workbook theme's XML.
     pub theme: Option<Arc<str>>,
     /// Sheet names as opened (lower case) -> `sheetId`.
-    names: HashMap<String, u32>,
+    pub(crate) names: HashMap<String, u32>,
     /// Objects ever edited this session: their anchors are written on every
     /// save (a saved edit that is undone must be undone in the next file).
     touched: HashSet<DrawingKey>,
@@ -909,7 +909,7 @@ impl Workbook {
 
     /// The tabs in order: the worksheets, with the file's chart sheets
     /// where saving puts them (after the nearest worksheet before them
-    /// that is still there, as `preserve` does). Hidden chart sheets, and
+    /// that is still there, as `preserve` does). Hidden sheets, and
     /// those a worksheet took the name of (saving drops them), are left
     /// out.
     pub fn tabs(&self) -> Vec<Tab> {
@@ -921,7 +921,10 @@ impl Workbook {
             .collect();
         self.all_tabs()
             .into_iter()
-            .filter(|t| !matches!(t, Tab::Chart(k) if hidden.contains(k)))
+            .filter(|t| match t {
+                Tab::Chart(k) => !hidden.contains(k),
+                Tab::Sheet(i) => !self.sheet_hidden(*i),
+            })
             .collect()
     }
 
@@ -1049,7 +1052,9 @@ impl Workbook {
     /// columns inserted or deleted since then are followed. `None` when it
     /// can't be read (unknown sheet, a name, a deleted range).
     pub fn chart_reference(&self, formula: &str) -> Option<RefData> {
-        let moves = Layout::default().moves_to(&self.history.layout());
+        let moves = Layout::default()
+            .moves_to(&self.history.layout())
+            .with_renames(self.renamed_since_open());
         let moved = moves.formula(formula, None, &self.drawings.names);
         self.chart_reference_now(&moved)
     }

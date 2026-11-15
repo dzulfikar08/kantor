@@ -118,7 +118,7 @@ impl Layout {
         }
         forward.reverse();
         back.extend(forward);
-        Moves(back)
+        Moves(back, HashMap::new())
     }
 }
 
@@ -151,22 +151,40 @@ pub(crate) struct Area {
     pub right: u32,
 }
 
-/// Rows and columns inserted or deleted, in order.
+/// Rows and columns inserted or deleted, in order, and the sheets renamed
+/// (`sheetId` -> name now): formulas naming them get the new name.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct Moves(Vec<Op>);
+pub(crate) struct Moves(Vec<Op>, HashMap<u32, String>);
 
 impl Moves {
     #[cfg(test)]
     pub fn new(ops: Vec<Op>) -> Self {
-        Moves(ops)
+        Moves(ops, HashMap::new())
+    }
+
+    /// These moves with sheets renamed (`sheetId` -> name now).
+    pub fn with_renames(mut self, renames: HashMap<u32, String>) -> Self {
+        self.1 = renames;
+        self
+    }
+
+    /// The name sheet `id` has now, if it was renamed.
+    pub fn renamed(&self, id: u32) -> Option<&str> {
+        self.1.get(&id).map(String::as_str)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.0.is_empty() && self.1.is_empty()
     }
 
-    /// Whether anything moved on the sheet.
+    /// Whether anything moved on the sheet (or any sheet was renamed: its
+    /// formulas may name it).
     pub fn touches(&self, sheet: u32) -> bool {
+        !self.1.is_empty() || self.moved(sheet)
+    }
+
+    /// Whether rows or columns moved on the sheet.
+    fn moved(&self, sheet: u32) -> bool {
         self.0.iter().any(|op| op.sheet() == sheet)
     }
 
@@ -260,7 +278,15 @@ impl Moves {
                 None => home,
             };
             let Some(sheet) = sheet else { continue };
-            if !self.touches(sheet) {
+            if let (Some(span), Some(now)) = (&token.sheet_span, self.renamed(sheet))
+                && token.sheet.as_deref() != Some(now)
+            {
+                out.push_str(&formula[last..span.start]);
+                out.push_str(&crate::quote_sheet_name(now));
+                last = span.end;
+                changed = true;
+            }
+            if !self.moved(sheet) {
                 continue;
             }
             let text = match self.area(sheet, token.range.area()) {
@@ -600,6 +626,8 @@ pub(crate) struct Token {
     pub(crate) range: RangeRef,
     /// Where the reference (without the sheet) is in the formula.
     range_span: std::ops::Range<usize>,
+    /// Where the sheet name (with its quotes, without the `!`) is.
+    sheet_span: Option<std::ops::Range<usize>>,
 }
 
 fn is_name_byte(c: u8) -> bool {
@@ -675,6 +703,7 @@ pub(crate) fn references(formula: &str) -> Vec<Token> {
                             sheet: Some(name),
                             range,
                             range_span: at..at + n,
+                            sheet_span: Some(i..j + 1),
                         });
                         i = at + n;
                         continue;
@@ -700,6 +729,7 @@ pub(crate) fn references(formula: &str) -> Vec<Token> {
                             sheet: Some(formula[start..j].to_owned()),
                             range,
                             range_span: at..at + n,
+                            sheet_span: Some(start..j),
                         });
                         i = at + n;
                         continue;
@@ -718,6 +748,7 @@ pub(crate) fn references(formula: &str) -> Vec<Token> {
                         sheet: None,
                         range,
                         range_span: start..start + n,
+                        sheet_span: None,
                     });
                     i = start + n;
                     continue;

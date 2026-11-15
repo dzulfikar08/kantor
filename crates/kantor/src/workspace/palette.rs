@@ -17,7 +17,9 @@ use super::Workspace;
 use super::doc::CommonFormat;
 use crate::actions::*;
 use crate::theme;
-use sheets_ui::{BorderPreset, CalcMode, Format, GridCommand, NoteCommand, NumberFormat, VAlign};
+use sheets_ui::{
+    BorderPreset, CalcMode, Format, GridCommand, NoteCommand, NumberFormat, TabCommand, VAlign,
+};
 
 /// A palette command.
 pub(super) struct Command {
@@ -581,6 +583,76 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| {
             ws.with_sheets(window, cx, |v, w, cx| {
                 v.grid_command(GridCommand::DeleteRows, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Insert Sheet"),
+        detail: tk("Sheets · a new worksheet after the sheet shown"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets_any(window, cx, |v, w, cx| {
+                v.tab_command(TabCommand::Insert, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Delete Sheet"),
+        detail: tk("Sheets · the sheet shown"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets_any(window, cx, |v, w, cx| {
+                v.tab_command(TabCommand::Delete, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Rename Sheet"),
+        detail: tk("Sheets · the sheet shown"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets_any(window, cx, |v, w, cx| {
+                v.tab_command(TabCommand::Rename, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Move or Copy Sheet…"),
+        detail: tk("Sheets · the sheet shown"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets_any(window, cx, |v, w, cx| {
+                v.tab_command(TabCommand::MoveOrCopy, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Tab Color…"),
+        detail: tk("Sheets · the sheet shown"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets_any(window, cx, |v, w, cx| {
+                v.tab_command(TabCommand::TabColor, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Hide Sheet"),
+        detail: tk("Sheets · the sheet shown"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets_any(window, cx, |v, w, cx| {
+                v.tab_command(TabCommand::Hide, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Unhide Sheet…"),
+        detail: tk("Sheets · hidden sheets"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets_any(window, cx, |v, w, cx| {
+                v.tab_command(TabCommand::Unhide, w, cx)
             })
         },
     },

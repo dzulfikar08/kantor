@@ -197,6 +197,8 @@ impl KantorChanges {
             // Sheets added, removed, moved or renamed; tables (structured
             // references); names, locale, styles, theme.
             Diff::DeleteSheet { .. }
+            | Diff::KantorDeleteSheet(_)
+            | Diff::KantorCopySheet { .. }
             | Diff::NewSheet { .. }
             | Diff::DuplicateSheet { .. }
             | Diff::RenameSheet { .. }

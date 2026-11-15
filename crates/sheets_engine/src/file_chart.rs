@@ -45,13 +45,18 @@ impl Workbook {
             .collect()
     }
 
-    /// A chart part with its references moved from `layout` to now.
+    /// A chart part with its references moved from `layout` to now (and
+    /// sheets renamed since the file was opened named as they are now).
     pub(crate) fn refs_now(&self, xml: &str, layout: &Layout) -> String {
-        let moves = layout.moves_to(&self.history.layout());
+        let moves = layout
+            .moves_to(&self.history.layout())
+            .with_renames(self.renamed_since_open());
         if moves.is_empty() {
             return xml.to_owned();
         }
-        let names = self.sheet_ids_now();
+        // Names now first, then names as opened.
+        let mut names = self.drawings.names.clone();
+        names.extend(self.sheet_ids_now());
         chart_style::map_formulas(xml, |f| moves.formula(f, None, &names).into_owned())
     }
 
