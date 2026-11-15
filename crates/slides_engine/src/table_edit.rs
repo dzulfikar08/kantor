@@ -65,6 +65,9 @@ pub enum TableOp {
     },
     /// New column widths (one per column, EMU); the frame follows.
     ColWidths(Vec<Emu>),
+    /// New row heights (one per row, EMU: `a:tr h`, the least height a
+    /// row has; text still grows it); the frame follows.
+    RowHeights(Vec<Emu>),
     /// A cell's paragraphs, formatting included (typing on the slide).
     Paras {
         row: usize,
@@ -466,7 +469,7 @@ fn grid_cols<'a, 'i>(t: Node<'a, 'i>) -> anyhow::Result<Vec<Node<'a, 'i>>> {
 }
 
 /// `total` shared out in proportion to `parts` (rounded, summing exactly).
-fn share(parts: &[Emu], total: Emu) -> Vec<Emu> {
+pub(crate) fn share(parts: &[Emu], total: Emu) -> Vec<Emu> {
     let sum: Emu = parts.iter().sum();
     if sum <= 0 || parts.is_empty() {
         return parts.to_vec();
@@ -781,6 +784,28 @@ fn apply_op(d: &mut Doc, op: &TableOp) -> anyhow::Result<()> {
                 frame,
                 Some(ws.iter().map(|w| (*w).max(1)).sum()),
                 None,
+            ));
+            e
+        }
+        TableOp::RowHeights(hs) => {
+            if hs.len() != trs.len() {
+                bail!("one height per row");
+            }
+            let mut e = Vec::new();
+            for (n, v) in trs.iter().zip(hs) {
+                let v = (*v).max(1).to_string();
+                match n.attributes().find(|a| a.name() == "h") {
+                    Some(a) => e.push((a.range_value(), v)),
+                    None => {
+                        let at = n.range().start + 1 + prefix_of(src, *n).len() + "tr".len();
+                        e.push((at..at, format!(r#" h="{v}""#)));
+                    }
+                }
+            }
+            e.extend(set_frame_ext(
+                frame,
+                None,
+                Some(hs.iter().map(|h| (*h).max(1)).sum()),
             ));
             e
         }
@@ -1244,6 +1269,19 @@ mod tests {
         assert!(out.contains(r#"<a:gridCol w="500"/><a:gridCol w="2500"/>"#));
         assert!(out.contains(r#"cx="3000""#));
         assert_eq!(share(&[1, 1, 1], 10), vec![3, 3, 4]);
+    }
+
+    #[test]
+    fn row_heights_set_rows_and_frame() {
+        let x = frame(&(row("a", "b") + &row("c", "d")));
+        let out = run(&x, &[TableOp::RowHeights(vec![300, 700])]);
+        assert!(out.contains(r#"<a:tr h="300">"#), "{out}");
+        assert!(out.contains(r#"<a:tr h="700">"#), "{out}");
+        assert!(out.contains(r#"<a:ext cx="2000" cy="1000"/>"#), "{out}");
+        // A row without `h` gets one.
+        let bare = x.replacen(r#"<a:tr h="300">"#, "<a:tr>", 1);
+        let out = run(&bare, &[TableOp::RowHeights(vec![400, 300])]);
+        assert!(out.contains(r#"<a:tr h="400">"#), "{out}");
     }
 
     #[test]

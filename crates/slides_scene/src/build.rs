@@ -411,7 +411,14 @@ impl Builder {
                 self.group(engine, pres, d, g, &g.child_box, xfrm, out);
                 true
             }
-            Some(FrameContent::Table(t)) => self.table(engine, pres, d, t, xfrm, out),
+            Some(FrameContent::Table(t)) => {
+                // Being resized: columns and rows scale with the frame.
+                if (xfrm.cx, xfrm.cy) != (own.cx, own.cy) && own.cx > 0 && own.cy > 0 {
+                    let t = t.scaled(xfrm.cx.max(1), xfrm.cy.max(1));
+                    return self.table(engine, pres, d, &t, xfrm, out);
+                }
+                self.table(engine, pres, d, t, xfrm, out)
+            }
             Some(FrameContent::Diagram(dg)) => {
                 if let Some(dd) = &dg.drawing {
                     // Read with the file (and edited in Kantor): drawn in the

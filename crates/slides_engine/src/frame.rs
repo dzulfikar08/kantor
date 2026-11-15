@@ -676,6 +676,18 @@ pub struct CellLook {
 }
 
 impl Table {
+    /// This table with its columns and rows scaled to `cx` × `cy` (EMU),
+    /// as resizing it does: a live preview while its frame is dragged.
+    pub fn scaled(&self, cx: Emu, cy: Emu) -> Table {
+        let mut t = self.clone();
+        t.cols = crate::table_edit::share(&self.cols, cx);
+        let hs: Vec<Emu> = self.rows.iter().map(|r| r.h).collect();
+        for (r, h) in t.rows.iter_mut().zip(crate::table_edit::share(&hs, cy)) {
+            r.h = h;
+        }
+        t
+    }
+
     /// The anchor cell of every grid position (`(row, col)` of the cell
     /// that shows there).
     pub fn cell(&self, r: usize, c: usize) -> Option<&Cell> {

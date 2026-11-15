@@ -210,6 +210,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   as it was). The toolbar's Shapes menu inserts a text box, rectangle, rounded rectangle, oval,
   line, arrow, right arrow or speech bubble at the active cell, and Move or Copy brings a sheet's
   shapes and text boxes with it.
+- Slides: drag a table's row border to set that row's height, as in PowerPoint (rows still grow
+  to fit their text); the height is saved in the file. Table cells take bullets and numbering
+  from the toolbar's list buttons, like text boxes; Alt+Shift+Right and Alt+Shift+Left move list
+  items a level deeper or up (Tab still moves to the next cell). Dragging a table's resize handle
+  shows the table scaled live, not only its outline.
 
 ### Changed
 - Docs: files with a table of contents or cross-references are saved in place like any other

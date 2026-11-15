@@ -91,6 +91,8 @@ actions!(
         Escape,
         NextShape,
         PrevShape,
+        DemoteList,
+        PromoteList,
         SelectAll,
         Copy,
         Cut,
@@ -166,6 +168,8 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("escape", Escape, c),
         KeyBinding::new("tab", NextShape, c),
         KeyBinding::new("shift-tab", PrevShape, c),
+        KeyBinding::new("alt-shift-right", DemoteList, c),
+        KeyBinding::new("alt-shift-left", PromoteList, c),
         KeyBinding::new("f5", Present, c),
         KeyBinding::new("shift-f5", PresentFromCurrent, c),
         // Presenting.
@@ -312,6 +316,14 @@ enum Drag {
         start: Point<Pixels>,
         widths: Vec<i64>,
     },
+    /// A table's row border (the bottom of row `border - 1`), with the
+    /// row heights as drawn when the drag began.
+    RowBorder {
+        shape: usize,
+        border: usize,
+        start: Point<Pixels>,
+        heights: Vec<i64>,
+    },
     Text,
 }
 
@@ -349,6 +361,8 @@ pub struct SlidesView {
     preview_many: Vec<(usize, Xfrm)>,
     /// Live column widths of a table whose border is being dragged.
     preview_cols: Option<(usize, Vec<i64>)>,
+    /// Live row heights of a table whose row border is being dragged.
+    preview_rows: Option<(usize, Vec<i64>)>,
     /// Thumbnail being dragged to a new place, and where it would land.
     strip_drag: Option<usize>,
     strip_drop: Option<usize>,
@@ -456,6 +470,7 @@ impl SlidesView {
             preview: None,
             preview_many: Vec::new(),
             preview_cols: None,
+            preview_rows: None,
             strip_drag: None,
             strip_drop: None,
             strip_scroll: UniformListScrollHandle::new(),
@@ -678,6 +693,36 @@ impl SlidesView {
         let xs = &cells.layout.xs;
         (1..xs.len().saturating_sub(1))
             .find(|&k| (f32::from(p.x - fb.left()) - xs[k] * s).abs() <= 3.0)
+    }
+
+    /// The row border of table `i` under a screen point (border `k` is
+    /// the bottom of row `k - 1`; the table's bottom edge included).
+    fn row_border_at(&self, i: usize, p: Point<Pixels>) -> Option<usize> {
+        let (frame, cells) = self.table_cells(i)?;
+        let v = self.view();
+        let s = v.px_scale();
+        let fb = v.rect(&frame);
+        let w = cells.layout.xs.last().copied().unwrap_or(0.0) * s;
+        if p.x < fb.left() || p.x > fb.left() + px(w) {
+            return None;
+        }
+        let ys = &cells.layout.ys;
+        (1..ys.len()).find(|&k| (f32::from(p.y - fb.top()) - ys[k] * s).abs() <= 3.0)
+    }
+
+    /// Set table `shape`'s rows to `heights` (as drawn, EMU) in one
+    /// undo step. PowerPoint saves each row's drawn height; rows whose
+    /// height didn't change keep their saved value (no rounding drift).
+    fn row_heights(&mut self, shape: usize, mut heights: Vec<i64>) -> anyhow::Result<()> {
+        if let Some(t) = self.pres.table(self.current, shape) {
+            for (h, row) in heights.iter_mut().zip(&t.rows) {
+                if (*h - row.h).abs() <= 2 {
+                    *h = row.h;
+                }
+            }
+        }
+        self.pres
+            .edit_table(self.current, shape, &[TableOp::RowHeights(heights)])
     }
 
     /// Text position under a screen point, in shape `r`.
@@ -1239,6 +1284,19 @@ impl SlidesView {
             (Some(i), true) => (i + n - 1) % n,
         };
         self.select(Some(next), cx);
+    }
+
+    /// Alt+Shift+Right / Left: the selected paragraphs a list level
+    /// deeper or up, as PowerPoint (also in table cells, where Tab moves
+    /// to the next cell).
+    fn list_level(&mut self, delta: i8, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(e) = self.editing.clone() else {
+            return;
+        };
+        let res = self.pres.change_level(e.at(self.current), e.sel, delta);
+        if self.report(res, cx).is_some() {
+            self.after_edit(window, cx);
+        }
     }
 
     /// Tab / Shift+Tab in a table cell: the next or previous cell, its
@@ -1999,6 +2057,28 @@ impl SlidesView {
             });
             return;
         }
+        // A row border: drag to set the height of the row above it.
+        if let Some(i) = self.shape_at(p)
+            && let Some(border) = self.row_border_at(i, p)
+            && let Some((_, cells)) = self.table_cells(i)
+        {
+            let ys = &cells.layout.ys;
+            let heights = ys
+                .windows(2)
+                .map(|w| ((w[1] - w[0]) * slides_engine::EMU_PER_PX).round() as i64)
+                .collect();
+            if self.editing.take().is_some() {
+                self.pres.seal_history();
+            }
+            self.select(Some(i), cx);
+            self.drag = Some(Drag::RowBorder {
+                shape: i,
+                border,
+                start: p,
+                heights,
+            });
+            return;
+        }
         let (ex, ey) = self.view().to_emu(p);
         if let Some(e) = self.editing.clone()
             && self
@@ -2168,6 +2248,7 @@ impl SlidesView {
             self.drag = None;
             self.preview = None;
             self.preview_cols = None;
+            self.preview_rows = None;
             self.preview_many.clear();
             cx.notify();
             return;
@@ -2273,6 +2354,19 @@ impl SlidesView {
                 w[b] -= d;
                 self.preview_cols = Some((*shape, w));
             }
+            Drag::RowBorder {
+                shape,
+                border,
+                start,
+                heights,
+            } => {
+                let d = (f32::from(ev.position.y - start.y) / scale) as i64;
+                let r = *border - 1;
+                let min = SLIDE_NUDGE_EMU * 4;
+                let mut h = heights.clone();
+                h[r] = (h[r] + d).max(min);
+                self.preview_rows = Some((*shape, h));
+            }
             Drag::Text => {
                 if let Some(e) = self.editing.clone()
                     && let Some(pos) = self.text_hit(e.at(self.current), ev.position)
@@ -2292,6 +2386,13 @@ impl SlidesView {
             let res = self
                 .pres
                 .edit_table(self.current, shape, &[TableOp::ColWidths(widths)]);
+            if self.report(res, cx).is_some() {
+                self.after_edit(window, cx);
+            }
+            return;
+        }
+        if let Some((shape, heights)) = self.preview_rows.take() {
+            let res = self.row_heights(shape, heights);
             if self.report(res, cx).is_some() {
                 self.after_edit(window, cx);
             }
@@ -2362,6 +2463,9 @@ impl SlidesView {
             if self.col_border_at(i, p).is_some() {
                 return CursorStyle::ResizeLeftRight;
             }
+            if self.row_border_at(i, p).is_some() {
+                return CursorStyle::ResizeUpDown;
+            }
             if self.cell_at(i, p).is_some() {
                 return CursorStyle::IBeam;
             }
@@ -2388,6 +2492,7 @@ impl SlidesView {
             Some(Drag::Resize { handle, orig, .. }) => turned_handle_cursor(*handle, orig.rot),
             Some(Drag::Rotate { .. }) => CursorStyle::ClosedHand,
             Some(Drag::ColBorder { .. }) => CursorStyle::ResizeLeftRight,
+            Some(Drag::RowBorder { .. }) => CursorStyle::ResizeUpDown,
             Some(Drag::Text) => CursorStyle::IBeam,
             _ => self.hover_cursor,
         }
@@ -2635,8 +2740,8 @@ struct Frame {
     /// Selected shape's box (screen space is computed at paint time),
     /// whether it has handles, and a rotate handle.
     selected: Option<(Xfrm, bool, bool)>,
-    /// A table column border being dragged: x, top and bottom (EMU).
-    col_guide: Option<(i64, i64, i64)>,
+    /// A table border being dragged: the guide line's ends (EMU).
+    guide: Option<((i64, i64), (i64, i64))>,
     /// The group the selected shape is in (dashed, as PowerPoint).
     group_box: Option<Xfrm>,
     /// Boxes of several selected shapes.
@@ -2701,11 +2806,17 @@ impl Render for SlidesView {
                     handles && self.item_rotatable(r),
                 ))
             });
-        let col_guide = match (&self.drag, &self.preview_cols) {
-            (Some(Drag::ColBorder { shape, border, .. }), Some((_, w))) => {
+        let guide = match (&self.drag, &self.preview_cols, &self.preview_rows) {
+            (Some(Drag::ColBorder { shape, border, .. }), Some((_, w)), _) => {
                 self.shape_xfrm(*shape).map(|f| {
                     let x = f.x + w[..*border].iter().sum::<i64>();
-                    (x, f.y, f.y + f.cy)
+                    ((x, f.y), (x, f.y + f.cy))
+                })
+            }
+            (Some(Drag::RowBorder { shape, border, .. }), _, Some((_, h))) => {
+                self.shape_xfrm(*shape).map(|f| {
+                    let y = f.y + h[..*border].iter().sum::<i64>();
+                    ((f.x, y), (f.x + f.cx, y))
                 })
             }
             _ => None,
@@ -2736,7 +2847,7 @@ impl Render for SlidesView {
             painted,
             painter: self.painter.clone(),
             selected,
-            col_guide,
+            guide,
             group_box,
             others,
             editing,
@@ -2828,6 +2939,8 @@ impl Render for SlidesView {
             Escape => |v, _w, cx| v.escape(cx),
             NextShape => |v, w, cx| v.tab(false, w, cx),
             PrevShape => |v, w, cx| v.tab(true, w, cx),
+            DemoteList => |v, w, cx| v.list_level(1, w, cx),
+            PromoteList => |v, w, cx| v.list_level(-1, w, cx),
             SelectAll => |v, _w, cx| v.select_all(cx),
             Copy => |v, w, cx| v.copy_doc(w, cx),
             Cut => |v, w, cx| v.cut_doc(w, cx),
@@ -2985,9 +3098,9 @@ fn paint_canvas(f: &Frame, view: View, slide_bounds: Bounds<Pixels>, window: &mu
             SLIDE_OUTLINE,
         );
     }
-    if let Some((gx, top, bottom)) = f.col_guide {
-        let a = view.point(gx as f32, top as f32);
-        let b = view.point(gx as f32, bottom as f32);
+    if let Some(((x0, y0), (x1, y1))) = f.guide {
+        let a = view.point(x0 as f32, y0 as f32);
+        let b = view.point(x1 as f32, y1 as f32);
         let mut line = PathBuilder::stroke(SLIDE_OUTLINE);
         line.move_to(a);
         line.line_to(b);
