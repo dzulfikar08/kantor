@@ -24,6 +24,19 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   linking each line to its heading. Each update is one undo step.
 - Docs: Ctrl+click follows a hyperlink. A link to a place in the document jumps there; web and
   e-mail addresses open in your browser, and other kinds of address ask first.
+- Docs: floating pictures, shapes and text boxes from Word are laid out and drawn, on the page and
+  in the PDF, instead of grey placeholders: placed from the page, the margins, the column, the
+  paragraph, the line or the character as Word does, with the text wrapping around them (Square,
+  Tight, Through, Top and Bottom) or with them behind or in front of the text, in their stacking
+  order. Pictures keep their cropping; shapes their outline (every Word shape), colours, dashes
+  and arrowheads. Click one to select it, drag it to move it or a handle to resize it, press
+  Delete to remove it, and choose Layout Options (In Line with Text, Square, Tight, Through, Top
+  and Bottom, Behind Text, In Front of Text) from the button beside it, as in Word. Double-click
+  a text box to edit its text. Each change is one undo step, and objects you didn't touch are
+  saved exactly as they were.
+- Docs: a footnote too long for its page continues at the bottom of the next one, under Word's
+  continuation separator (with the document's "continued" notice, if it has one), and endnotes
+  go at the end of each section when the document says so (Word's "End of section").
 
 ### Changed
 - Docs: files with a table of contents or cross-references are saved in place like any other

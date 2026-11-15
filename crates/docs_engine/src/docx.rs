@@ -24,7 +24,11 @@
 //!    spans, vertical merges, borders), inline pictures (`wp:inline` with an
 //!    embedded blip), footnote and endnote references (run objects whose
 //!    notes are read from `footnotes.xml` / `endnotes.xml`, see
-//!    [`crate::notes`]), and the formatting the editor understands
+//!    [`crate::notes`]), floating pictures, shapes and text boxes
+//!    (`wp:anchor`, in a `w:drawing` or an `mc:AlternateContent`'s choice:
+//!    their placement and text box are read, the XML written back as read
+//!    unless moved or edited, see [`crate::float`]), and the formatting the
+//!    editor understands
 //!    (`w:pStyle`, `w:jc`, `w:spacing`, `w:ind`, `w:rStyle`, `w:b`/`w:i`/
 //!    `w:u`/`w:sz`/`w:color`/`w:rFonts`…).
 //! 2. **Kept verbatim with the model**: property elements Kantor doesn't
@@ -35,8 +39,8 @@
 //! 3. **Opaque objects**: elements that can be carried as one unit without
 //!    understanding them become an [`Opaque`] object, one character in the
 //!    text with a placeholder in the layout, written back byte for byte:
-//!    floating pictures (`wp:anchor`), shapes and text boxes
-//!    (`mc:AlternateContent`, `w:pict`, `w:object`), content controls
+//!    VML shapes and embedded objects (`w:pict`, `w:object`, an
+//!    `mc:AlternateContent` without a drawing anchor), content controls
 //!    (`w:sdt`, inline or block), page number fields (PAGE, NUMPAGES,
 //!    SECTIONPAGES: the whole `begin…end` run sequence, numbered per page)
 //!    and fields whose runs are laid out unusually, equations,
