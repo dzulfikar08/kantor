@@ -883,7 +883,7 @@ pub(crate) fn write_xfrm_as(out: &mut String, tag: &str, attrs: &str, x: &Xfrm, 
     let _ = write!(out, "</{tag}>");
 }
 
-fn write_paras(paras: &[TextPara]) -> String {
+pub(crate) fn write_paras(paras: &[TextPara]) -> String {
     let mut s = String::new();
     for p in paras {
         write_para(&mut s, p);

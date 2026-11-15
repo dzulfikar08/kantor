@@ -26,6 +26,7 @@ pub mod chart;
 pub mod geom;
 pub mod paint;
 pub mod table;
+pub use table::{TableCells, TableLayout};
 pub mod text;
 
 use std::sync::Arc;

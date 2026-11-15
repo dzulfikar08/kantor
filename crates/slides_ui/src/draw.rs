@@ -210,6 +210,17 @@ impl Painter {
         self.builder.place(&mut self.engine.borrow_mut(), t, xfrm)
     }
 
+    /// A table's cells as drawn on slide `slide`.
+    pub fn table_cells(
+        &self,
+        pres: &Presentation,
+        slide: usize,
+        t: &slides_engine::frame::Table,
+    ) -> slides_scene::TableCells {
+        self.builder
+            .table_cells(&mut self.engine.borrow_mut(), pres, slide, t)
+    }
+
     /// The scene of slide `slide` (as the PDF export gets it).
     pub fn scene(&self, pres: &Presentation, slide: usize, opts: &Options) -> SlideScene {
         self.builder

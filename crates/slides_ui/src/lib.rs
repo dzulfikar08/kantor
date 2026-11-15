@@ -50,7 +50,7 @@ use kantor_ui::tokens::Elevation;
 use kantor_ui::{Tokens, metrics::*, tokens};
 use slides_engine::{
     Focus, Geom, Inner, Layer, Position, Presentation, RunProps, Selection, ShapeKind, ShapeRef,
-    SlideSize, Xfrm, text_ops,
+    SlideSize, TableOp, Xfrm, text_ops,
 };
 
 use draw::{
@@ -301,6 +301,14 @@ enum Drag {
         inner: Inner,
         orig: Xfrm,
     },
+    /// A table's column border (between columns `border - 1` and
+    /// `border`), with the widths when the drag began.
+    ColBorder {
+        shape: usize,
+        border: usize,
+        start: Point<Pixels>,
+        widths: Vec<i64>,
+    },
     Text,
 }
 
@@ -336,6 +344,8 @@ pub struct SlidesView {
     preview: Option<(usize, Inner, Xfrm)>,
     /// Live positions of several shapes being dragged together.
     preview_many: Vec<(usize, Xfrm)>,
+    /// Live column widths of a table whose border is being dragged.
+    preview_cols: Option<(usize, Vec<i64>)>,
     /// Thumbnail being dragged to a new place, and where it would land.
     strip_drag: Option<usize>,
     strip_drop: Option<usize>,
@@ -442,6 +452,7 @@ impl SlidesView {
             drag: None,
             preview: None,
             preview_many: Vec::new(),
+            preview_cols: None,
             strip_drag: None,
             strip_drop: None,
             strip_scroll: UniformListScrollHandle::new(),
@@ -583,6 +594,16 @@ impl SlidesView {
         }
     }
 
+    /// Whether shape `r` can be turned (not tables, charts or SmartArt
+    /// frames, as in PowerPoint).
+    fn item_rotatable(&self, r: ShapeRef) -> bool {
+        self.item_movable(r)
+            && self
+                .pres
+                .shape(r)
+                .is_some_and(|s| !r.is_top() || s.rotatable())
+    }
+
     /// The selected slide shapes (several after Shift or Ctrl clicks).
     fn selection(&self) -> Vec<usize> {
         let mut v: Vec<usize> = self.selected.into_iter().chain(self.also.clone()).collect();
@@ -603,6 +624,15 @@ impl SlidesView {
     /// The laid-out text of shape `r` (inside a group or SmartArt too),
     /// with its box.
     fn laid_at(&self, r: ShapeRef) -> Option<(Xfrm, slides_scene::LaidText)> {
+        if let Some((row, col)) = r.cell_at() {
+            let (frame, cells) = self.table_cells(r.1)?;
+            let k = cells.index_of(row, col)?;
+            let [x, y, w, h] = cells.layout.rect(cells.layout.cells[k]);
+            let e = |v: f32| (v * slides_engine::EMU_PER_PX).round() as i64;
+            let bx = Xfrm::new(frame.x + e(x), frame.y + e(y), e(w), e(h));
+            let t = cells.texts[k].as_ref()?;
+            return Some((bx, self.painter.place(t, &bx)));
+        }
         if r.is_top() {
             return self.laid(r.1);
         }
@@ -613,6 +643,38 @@ impl SlidesView {
             .pres
             .shape_text(self.current, shape, &bx, placed.text_box.is_some())?;
         Some((bx, self.painter.place(&t, &bx)))
+    }
+
+    /// Table frame `i`'s box and its cells as drawn.
+    fn table_cells(&self, i: usize) -> Option<(Xfrm, slides_scene::TableCells)> {
+        let t = self.pres.table(self.current, i)?;
+        let frame = self.shape_xfrm(i)?;
+        Some((frame, self.painter.table_cells(&self.pres, self.current, t)))
+    }
+
+    /// The table cell (its top left row and column) under a screen point.
+    fn cell_at(&self, i: usize, p: Point<Pixels>) -> Option<(usize, usize)> {
+        let (frame, cells) = self.table_cells(i)?;
+        let (x, y) = self.view().to_emu(p);
+        let k = |v: i64| v as f32 / slides_engine::EMU_PER_PX;
+        let [r, c, ..] = cells.at(k(x - frame.x), k(y - frame.y))?;
+        Some((r, c))
+    }
+
+    /// The inner column border of table `i` under a screen point (its
+    /// index: border `k` is between columns `k - 1` and `k`).
+    fn col_border_at(&self, i: usize, p: Point<Pixels>) -> Option<usize> {
+        let (frame, cells) = self.table_cells(i)?;
+        let v = self.view();
+        let s = v.px_scale();
+        let fb = v.rect(&frame);
+        let h = cells.layout.ys.last().copied().unwrap_or(0.0) * s;
+        if p.y < fb.top() || p.y > fb.top() + px(h) {
+            return None;
+        }
+        let xs = &cells.layout.xs;
+        (1..xs.len().saturating_sub(1))
+            .find(|&k| (f32::from(p.x - fb.left()) - xs[k] * s).abs() <= 3.0)
     }
 
     /// Text position under a screen point, in shape `r`.
@@ -653,7 +715,7 @@ impl SlidesView {
 
     /// The selected shape if the pointer is on its rotate handle.
     fn rotate_handle_at(&self, p: Point<Pixels>) -> Option<ShapeRef> {
-        let r = self.handles_target()?;
+        let r = self.handles_target().filter(|r| self.item_rotatable(*r))?;
         let xfrm = self.item_xfrm(r)?;
         let c = rotate_handle_point(self.view(), &xfrm);
         Bounds::centered_at(c, size(SLIDE_HANDLE, SLIDE_HANDLE))
@@ -725,7 +787,9 @@ impl SlidesView {
         self.selected = f.shape.filter(|&s| s < shapes);
         self.also.clear();
         self.inner = Inner::TOP;
-        if let Some(r) = f.shape_ref().filter(|r| !r.is_top())
+        if let Some(r) = f
+            .shape_ref()
+            .filter(|r| !r.is_top() || r.cell_at().is_some())
             && self.pres.shape(ShapeRef(self.current, r.1, r.2)).is_some()
         {
             self.inner = r.2;
@@ -785,11 +849,21 @@ impl SlidesView {
             self.set_status(tf("This slide can't be edited: {}", &[&why]), cx);
             return false;
         }
-        if let Some(why) = shape.text.as_ref().and_then(|t| t.locked.clone()) {
+        if let Some((row, col)) = r.cell_at() {
+            // A table cell: typed into on the slide.
+            let ok = self
+                .pres
+                .table(r.0, r.1)
+                .and_then(|t| t.cell(row, col))
+                .is_some_and(|c| !c.covered());
+            if !ok {
+                return false;
+            }
+        } else if let Some(why) = shape.text.as_ref().and_then(|t| t.locked.clone()) {
             self.set_status(tf("This text can't be edited yet: it has {}", &[&why]), cx);
             return false;
         }
-        if !shape.text_editable() {
+        if r.cell_at().is_none() && !shape.text_editable() {
             return false;
         }
         if !self.pres.smartart_text_editable(r) {
@@ -799,7 +873,8 @@ impl SlidesView {
             );
             return false;
         }
-        let paras = self.pres.text_paras(r).unwrap_or_default();
+        let empty = [slides_engine::TextPara::new("")];
+        let paras = self.pres.text_paras(r).unwrap_or(&empty);
         let pos = pos.unwrap_or_else(|| text_ops::end(paras));
         self.selected = Some(r.1);
         self.inner = r.2;
@@ -1061,6 +1136,10 @@ impl SlidesView {
     fn escape(&mut self, cx: &mut Context<Self>) {
         if self.editing.take().is_some() {
             self.pres.seal_history();
+            // Out of a table cell: the table stays selected.
+            if self.inner.cell_at().is_some() {
+                self.inner = Inner::TOP;
+            }
         } else if !self.inner.is_top() {
             self.inner = self.inner.parent();
         } else {
@@ -1126,6 +1205,12 @@ impl SlidesView {
         if self.notes.focused {
             return;
         }
+        if let Some(e) = self.editing.clone()
+            && let Some(cell) = e.inner.cell_at()
+        {
+            self.tab_cell(e.shape, cell, back, window, cx);
+            return;
+        }
         if let Some(e) = self.editing.clone() {
             let r = e.at(self.current);
             let (a, b) = e.sel.ordered();
@@ -1151,6 +1236,57 @@ impl SlidesView {
             (Some(i), true) => (i + n - 1) % n,
         };
         self.select(Some(next), cx);
+    }
+
+    /// Tab / Shift+Tab in a table cell: the next or previous cell, its
+    /// text selected (as PowerPoint); Tab in the last cell adds a row.
+    fn tab_cell(
+        &mut self,
+        shape: usize,
+        (row, col): (usize, usize),
+        back: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(t) = self.pres.table(self.current, shape) else {
+            return;
+        };
+        // Shown cells in reading order.
+        let shown: Vec<(usize, usize)> = (0..t.rows.len())
+            .flat_map(|r| (0..t.cols.len()).map(move |c| (r, c)))
+            .filter(|&(r, c)| t.cell(r, c).is_some_and(|x| !x.covered()))
+            .collect();
+        let Some(i) = shown.iter().position(|&p| p == (row, col)) else {
+            return;
+        };
+        let last_row = t.rows.len() - 1;
+        let next = match back {
+            true if i == 0 => return,
+            true => shown[i - 1],
+            false if i + 1 < shown.len() => shown[i + 1],
+            false => {
+                let op = TableOp::InsertRow {
+                    row: last_row,
+                    below: true,
+                };
+                let res = self.pres.edit_table(self.current, shape, &[op]);
+                if self.report(res, cx).is_none() {
+                    return;
+                }
+                self.after_edit(window, cx);
+                (last_row + 1, 0)
+            }
+        };
+        let r = ShapeRef(self.current, shape, Inner::TOP).cell(next.0, next.1);
+        if self.begin_editing(r, None, cx)
+            && let Some(paras) = self.pres.text_paras(r)
+            && let Some(ed) = &mut self.editing
+        {
+            ed.sel = Selection {
+                anchor: Position::new(0, 0),
+                head: text_ops::end(paras),
+            };
+        }
     }
 
     /// Bulleted (`numbered` false) or numbered list on the paragraphs being
@@ -1842,6 +1978,24 @@ impl SlidesView {
             });
             return;
         }
+        // A table's column border: drag to resize the two columns.
+        if let Some(i) = self.shape_at(p)
+            && let Some(border) = self.col_border_at(i, p)
+            && let Some(t) = self.pres.table(self.current, i)
+        {
+            let widths = t.cols.clone();
+            if self.editing.take().is_some() {
+                self.pres.seal_history();
+            }
+            self.select(Some(i), cx);
+            self.drag = Some(Drag::ColBorder {
+                shape: i,
+                border,
+                start: p,
+                widths,
+            });
+            return;
+        }
         let (ex, ey) = self.view().to_emu(p);
         if let Some(e) = self.editing.clone()
             && self
@@ -1903,6 +2057,28 @@ impl SlidesView {
                 let target = self.click_target(i, ex, ey, ev.click_count);
                 let was_selected = self.sel_ref() == Some(target) && self.also.is_empty();
                 self.select_at(Some(target), cx);
+                if ev.click_count >= 2
+                    && target.is_top()
+                    && let Some(cell) = self.cell_at(i, p)
+                {
+                    // A table: double-click types into the cell (its word
+                    // selected, as in PowerPoint).
+                    let r = target.cell(cell.0, cell.1);
+                    let pos = self.text_hit(r, p);
+                    if self.begin_editing(r, pos, cx)
+                        && let Some(pos) = pos
+                        && let Some(paras) = self.pres.text_paras(r)
+                        && let Some(para) = paras.get(pos.para)
+                        && let Some(ed) = &mut self.editing
+                    {
+                        let w = docs_engine::model::word_at(&para.text, pos.offset);
+                        ed.sel = Selection {
+                            anchor: Position::new(pos.para, w.start),
+                            head: Position::new(pos.para, w.end),
+                        };
+                    }
+                    return;
+                }
                 if ev.click_count >= 2
                     && target.is_top()
                     && let Some((_, kind)) = self.object_target()
@@ -1988,6 +2164,7 @@ impl SlidesView {
         if self.drag.is_some() && ev.pressed_button != Some(MouseButton::Left) {
             self.drag = None;
             self.preview = None;
+            self.preview_cols = None;
             self.preview_many.clear();
             cx.notify();
             return;
@@ -2078,6 +2255,21 @@ impl SlidesView {
                 let deg = pointer_degrees(f32::from(d.x), f32::from(d.y), ev.modifiers.shift);
                 self.preview = Some((*shape, *inner, orig.with_degrees(deg)));
             }
+            Drag::ColBorder {
+                shape,
+                border,
+                start,
+                widths,
+            } => {
+                let d = (f32::from(ev.position.x - start.x) / scale) as i64;
+                let (a, b) = (*border - 1, *border);
+                let min = SLIDE_NUDGE_EMU * 4;
+                let d = d.clamp(min - widths[a], widths[b] - min);
+                let mut w = widths.clone();
+                w[a] += d;
+                w[b] -= d;
+                self.preview_cols = Some((*shape, w));
+            }
             Drag::Text => {
                 if let Some(e) = self.editing.clone()
                     && let Some(pos) = self.text_hit(e.at(self.current), ev.position)
@@ -2093,6 +2285,15 @@ impl SlidesView {
     fn on_mouse_up(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         let drag = self.drag.take();
         self.hover_cursor = self.cursor_at(ev.position);
+        if let Some((shape, widths)) = self.preview_cols.take() {
+            let res = self
+                .pres
+                .edit_table(self.current, shape, &[TableOp::ColWidths(widths)]);
+            if self.report(res, cx).is_some() {
+                self.after_edit(window, cx);
+            }
+            return;
+        }
         if !self.preview_many.is_empty() {
             let moves = std::mem::take(&mut self.preview_many);
             let res = self.pres.set_xfrms(self.current, &moves);
@@ -2108,6 +2309,22 @@ impl SlidesView {
             if self.report(res, cx).is_some() {
                 self.after_edit(window, cx);
             }
+            return;
+        }
+        // A click (no drag) on a table: the caret goes into the cell.
+        if let Some(Drag::Move {
+            shape,
+            inner,
+            moved: false,
+            ..
+        }) = drag
+            && inner.is_top()
+            && let Some((row, col)) = self.cell_at(shape, ev.position)
+        {
+            let r = ShapeRef(self.current, shape, inner).cell(row, col);
+            let pos = self.text_hit(r, ev.position);
+            self.begin_editing(r, pos, cx);
+            cx.notify();
             return;
         }
         if let Some(Drag::Move {
@@ -2138,6 +2355,14 @@ impl SlidesView {
             let rot = self.item_xfrm(r).map_or(0, |x| x.rot);
             return turned_handle_cursor(h, rot);
         }
+        if let Some(i) = self.shape_at(p) {
+            if self.col_border_at(i, p).is_some() {
+                return CursorStyle::ResizeLeftRight;
+            }
+            if self.cell_at(i, p).is_some() {
+                return CursorStyle::IBeam;
+            }
+        }
         let (x, y) = self.view().to_emu(p);
         if let Some(e) = &self.editing
             && self
@@ -2159,6 +2384,7 @@ impl SlidesView {
             Some(Drag::MoveMany { .. }) if !self.preview_many.is_empty() => CursorStyle::ClosedHand,
             Some(Drag::Resize { handle, orig, .. }) => turned_handle_cursor(*handle, orig.rot),
             Some(Drag::Rotate { .. }) => CursorStyle::ClosedHand,
+            Some(Drag::ColBorder { .. }) => CursorStyle::ResizeLeftRight,
             Some(Drag::Text) => CursorStyle::IBeam,
             _ => self.hover_cursor,
         }
@@ -2403,8 +2629,11 @@ struct Frame {
     painted: Option<Rc<Painted>>,
     background: slides_engine::Rgb,
     painter: Rc<Painter>,
-    /// Selected shape's box (screen space is computed at paint time).
-    selected: Option<(Xfrm, bool)>,
+    /// Selected shape's box (screen space is computed at paint time),
+    /// whether it has handles, and a rotate handle.
+    selected: Option<(Xfrm, bool, bool)>,
+    /// A table column border being dragged: x, top and bottom (EMU).
+    col_guide: Option<(i64, i64, i64)>,
     /// The group the selected shape is in (dashed, as PowerPoint).
     group_box: Option<Xfrm>,
     /// Boxes of several selected shapes.
@@ -2461,7 +2690,23 @@ impl Render for SlidesView {
         let selected = self
             .sel_ref()
             .filter(|_| self.also.is_empty())
-            .and_then(|r| Some((self.item_xfrm(r)?, self.handles_target().is_some())));
+            .and_then(|r| {
+                let handles = self.handles_target().is_some();
+                Some((
+                    self.item_xfrm(r)?,
+                    handles,
+                    handles && self.item_rotatable(r),
+                ))
+            });
+        let col_guide = match (&self.drag, &self.preview_cols) {
+            (Some(Drag::ColBorder { shape, border, .. }), Some((_, w))) => {
+                self.shape_xfrm(*shape).map(|f| {
+                    let x = f.x + w[..*border].iter().sum::<i64>();
+                    (x, f.y, f.y + f.cy)
+                })
+            }
+            _ => None,
+        };
         let group_box = self
             .sel_ref()
             .filter(|r| !r.is_top())
@@ -2488,6 +2733,7 @@ impl Render for SlidesView {
             painted,
             painter: self.painter.clone(),
             selected,
+            col_guide,
             group_box,
             others,
             editing,
@@ -2736,7 +2982,17 @@ fn paint_canvas(f: &Frame, view: View, slide_bounds: Bounds<Pixels>, window: &mu
             SLIDE_OUTLINE,
         );
     }
-    if let Some((x, handles)) = f.selected {
+    if let Some((gx, top, bottom)) = f.col_guide {
+        let a = view.point(gx as f32, top as f32);
+        let b = view.point(gx as f32, bottom as f32);
+        let mut line = PathBuilder::stroke(SLIDE_OUTLINE);
+        line.move_to(a);
+        line.line_to(b);
+        if let Ok(path) = line.build() {
+            window.paint_path(path, t.accent);
+        }
+    }
+    if let Some((x, handles, knob_shown)) = f.selected {
         let b = view.rect(&x);
         let turn = Turn::of(&x, view);
         if turn.is_some() {
@@ -2755,7 +3011,7 @@ fn paint_canvas(f: &Frame, view: View, slide_bounds: Bounds<Pixels>, window: &mu
                 },
             ));
         }
-        if handles {
+        if knob_shown {
             // Rotate handle: a round knob on a stem above the top edge.
             let top = handle_point(view, &x, (0, -1));
             let knob = rotate_handle_point(view, &x);
@@ -2775,6 +3031,8 @@ fn paint_canvas(f: &Frame, view: View, slide_bounds: Bounds<Pixels>, window: &mu
                 t.accent,
                 BorderStyle::Solid,
             ));
+        }
+        if handles {
             for h in HANDLES {
                 let hb = Bounds::centered_at(
                     handle_point(view, &x, h),

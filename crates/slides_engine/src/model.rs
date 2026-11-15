@@ -866,10 +866,53 @@ impl Shape {
         ) && self.src.as_ref().is_none_or(|s| s.sppr.is_some())
     }
 
-    /// Whether the shape can be moved and resized (groups can; tables,
-    /// charts and SmartArt frames can't yet).
+    /// Whether the shape can be moved and resized: shapes, pictures,
+    /// groups and graphic frames (tables, charts, SmartArt); not ink or
+    /// other objects Kantor keeps without knowing where they are.
     pub fn movable(&self) -> bool {
-        !matches!(self.kind, ShapeKind::Other { .. }) || self.src.is_none() || self.is_group()
+        !matches!(self.kind, ShapeKind::Other { .. })
+            || self.src.is_none()
+            || self.is_group()
+            || self.is_graphic_frame()
+    }
+
+    /// A graphic frame (`p:graphicFrame`: a table, chart, SmartArt or
+    /// embedded object) with its own position.
+    pub fn is_graphic_frame(&self) -> bool {
+        matches!(self.kind, ShapeKind::Other { .. })
+            && self
+                .src
+                .as_ref()
+                .is_some_and(|s| matches!(s.xfrm_at, Some(XfrmAt::Frame(..))))
+    }
+
+    /// Whether the shape can be turned and flipped (PowerPoint doesn't
+    /// turn tables, charts or SmartArt).
+    pub fn rotatable(&self) -> bool {
+        self.movable() && !self.is_graphic_frame()
+    }
+
+    /// The table a table frame shows.
+    pub fn table(&self) -> Option<&crate::frame::Table> {
+        match &self.kind {
+            ShapeKind::Other { frame, .. } => match frame.get()? {
+                crate::frame::FrameContent::Table(t) => Some(t),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Whether this is a chart frame.
+    pub fn is_chart(&self) -> bool {
+        matches!(&self.kind, ShapeKind::Other { frame, .. }
+            if matches!(frame.get(), Some(crate::frame::FrameContent::Chart(_))))
+    }
+
+    /// Whether this is a SmartArt frame.
+    pub fn is_smartart(&self) -> bool {
+        matches!(&self.kind, ShapeKind::Other { frame, .. }
+            if matches!(frame.get(), Some(crate::frame::FrameContent::Diagram(_))))
     }
 
     /// A group's children (`p:grpSp`).

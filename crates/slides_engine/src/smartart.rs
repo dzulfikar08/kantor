@@ -260,6 +260,32 @@ impl Presentation {
         self
     }
 
+    /// Read the drawing of SmartArt frame `shape` (on `slide`, with its
+    /// relationships) into it.
+    pub(crate) fn attach_drawing(&self, slide: &Slide, shape: &mut Shape, index: usize) {
+        let colors = self.color_ctx(index);
+        let ShapeKind::Other { frame, .. } = &mut shape.kind else {
+            return;
+        };
+        let Some(FrameContent::Diagram(d)) = frame.get() else {
+            return;
+        };
+        let Some(size) = shape.xfrm else { return };
+        let Some(dd) = self.load_drawing(slide, d, &colors, size) else {
+            return;
+        };
+        let new = crate::frame::Frame::new(FrameContent::Diagram(DiagramRef {
+            data: d.data.clone(),
+            drawing: Some(Arc::new(dd)),
+        }));
+        *frame = new.clone();
+        if let Some(src) = &shape.src {
+            let mut src2 = (**src).clone();
+            src2.frame = new;
+            shape.src = Some(Arc::new(src2));
+        }
+    }
+
     fn load_drawing(
         &self,
         slide: &Slide,

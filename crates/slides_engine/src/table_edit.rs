@@ -7,11 +7,16 @@
 //! its neighbour (formatting, height or width) with empty text, a fill
 //! replaces the cell's own fill in `a:tcPr`. The frame grows or shrinks by
 //! the row or column, then the shape is read again from the new XML, so
-//! everything Kantor doesn't touch stays byte for byte. Rows and columns
-//! can't be added or removed in tables with merged cells (Kantor says so).
+//! everything Kantor doesn't touch stays byte for byte.
+//!
+//! Merged cells follow PowerPoint: a row or column added inside a merged
+//! cell widens it (the new grid cells are covered, `vMerge`/`hMerge`); one
+//! added beside it copies its neighbour's merges that start there; removing
+//! a row or column shrinks the merged cells crossing it, and one that held
+//! a merged cell's top left hands its text to the cell taking its place.
+//! Resizing a table scales its columns and rows, as PowerPoint does.
 
 use std::ops::Range;
-use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
 use docs_engine::Rgb;
@@ -52,6 +57,19 @@ pub enum TableOp {
         row: usize,
         col: usize,
         color: Option<Rgb>,
+    },
+    /// Scale the columns and rows so the table is `cx` × `cy` (EMU).
+    Resize {
+        cx: Emu,
+        cy: Emu,
+    },
+    /// New column widths (one per column, EMU); the frame follows.
+    ColWidths(Vec<Emu>),
+    /// A cell's paragraphs, formatting included (typing on the slide).
+    Paras {
+        row: usize,
+        col: usize,
+        paras: Vec<TextPara>,
     },
 }
 
@@ -109,19 +127,6 @@ fn prefix_of(src: &str, n: Node) -> String {
         Some((p, _)) => format!("{p}:"),
         None => String::new(),
     }
-}
-
-/// Whether any cell spans or is covered (rows and columns can't be added
-/// or removed around merges).
-fn has_merges(t: Node) -> bool {
-    t.descendants().filter(|n| is(*n, NS_A, "tc")).any(|tc| {
-        ["gridSpan", "rowSpan"]
-            .iter()
-            .any(|a| tc.attribute(*a).is_some_and(|v| v != "1"))
-            || ["hMerge", "vMerge"]
-                .iter()
-                .any(|a| tc.attribute(*a).is_some_and(|v| v == "1" || v == "true"))
-    })
 }
 
 /// A cell's text as paragraphs in the formatting of its first paragraph
@@ -185,6 +190,36 @@ fn set_text(src: &str, tc: Node, text: &str) -> Vec<(Range<usize>, String)> {
             vec![(
                 at..at,
                 format!("<{a}txBody><{a}bodyPr/><{a}lstStyle/>{paras}</{a}txBody>"),
+            )]
+        }
+    }
+}
+
+/// Edits that put model paragraphs `paras` in cell `tc` (formatting kept
+/// as the model has it; written with the `a:` prefix).
+fn set_paras(src: &str, tc: Node, paras: &[TextPara]) -> Vec<(Range<usize>, String)> {
+    let a = prefix_of(src, tc);
+    if a != "a:" {
+        let text: Vec<String> = paras.iter().map(|p| p.text.clone()).collect();
+        return set_text(src, tc, &text.join("\n"));
+    }
+    let xml = crate::shape::write_paras(paras);
+    match child(tc, NS_A, "txBody") {
+        Some(body) => {
+            let ps: Vec<Node> = body.children().filter(|c| is(*c, NS_A, "p")).collect();
+            match (ps.first(), ps.last()) {
+                (Some(f), Some(l)) => vec![(f.range().start..l.range().end, xml)],
+                _ => {
+                    let at = body.range().end - "</a:txBody>".len();
+                    vec![(at..at, xml)]
+                }
+            }
+        }
+        None => {
+            let at = tc.range().start + tag_end(&src[tc.range()]).unwrap_or(0);
+            vec![(
+                at..at,
+                format!("<a:txBody><a:bodyPr/><a:lstStyle/>{xml}</a:txBody>"),
             )]
         }
     }
@@ -295,6 +330,389 @@ fn set_fill(src: &str, tc: Node, color: Option<Rgb>) -> Vec<(Range<usize>, Strin
     }
 }
 
+/// Which cell shows at each grid position: `owner[r][c]` is the top
+/// left `(row, col)` of the (merged) cell covering it.
+struct Grid<'a, 'i> {
+    trs: Vec<Node<'a, 'i>>,
+    tcs: Vec<Vec<Node<'a, 'i>>>,
+    owner: Vec<Vec<(usize, usize)>>,
+}
+
+fn span(tc: Node, name: &str) -> usize {
+    attr_i64(tc, name).unwrap_or(1).max(1) as usize
+}
+
+fn flag(tc: Node, name: &str) -> bool {
+    tc.attribute(name).is_some_and(|v| v == "1" || v == "true")
+}
+
+impl<'a, 'i> Grid<'a, 'i> {
+    fn new(t: Node<'a, 'i>, nc: usize) -> anyhow::Result<Self> {
+        let trs = rows(t);
+        let tcs: Vec<Vec<Node>> = trs.iter().map(|tr| cells(*tr)).collect();
+        if tcs.iter().any(|r| r.len() != nc) {
+            bail!("This table's rows don't match its columns: it can't be changed");
+        }
+        let nr = trs.len();
+        let mut owner: Vec<Vec<(usize, usize)>> =
+            (0..nr).map(|r| (0..nc).map(|c| (r, c)).collect()).collect();
+        let mut claimed = vec![vec![false; nc]; nr];
+        for r in 0..nr {
+            for c in 0..nc {
+                let tc = tcs[r][c];
+                if flag(tc, "hMerge") || flag(tc, "vMerge") || claimed[r][c] {
+                    continue;
+                }
+                let (rs, cs) = (span(tc, "rowSpan"), span(tc, "gridSpan"));
+                for (rr, row) in owner.iter_mut().enumerate().skip(r).take(rs) {
+                    for (cc, o) in row.iter_mut().enumerate().skip(c).take(cs) {
+                        if (rr, cc) != (r, c) {
+                            *o = (r, c);
+                            claimed[rr][cc] = true;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(Self { trs, tcs, owner })
+    }
+
+    fn rows(&self) -> usize {
+        self.trs.len()
+    }
+
+    /// The merged cell owning `(r, c)` spans more than one grid cell.
+    fn origin(&self, r: usize, c: usize) -> Node<'a, 'i> {
+        let (or, oc) = self.owner[r][c];
+        self.tcs[or][oc]
+    }
+}
+
+/// Byte range of an element's start tag.
+fn start_range(src: &str, n: Node) -> Range<usize> {
+    let s = n.range().start;
+    s..s + tag_end(&src[n.range()]).unwrap_or(0)
+}
+
+/// `xml` (an element, start tag first) with attributes set (`Some`) or
+/// removed (`None`); a span of 1 is written by removing the attribute.
+fn retag(xml: &str, set: &[(&str, Option<String>)]) -> String {
+    let Some(end) = tag_end(xml) else {
+        return xml.to_owned();
+    };
+    let tag = &xml[..end];
+    let empty = tag.ends_with("/>");
+    let name = tag_name(tag).to_owned();
+    let mut attrs = split_attrs(tag_attrs(tag));
+    for (k, v) in set {
+        let v = v.clone().filter(|v| v != "1" || !k.ends_with("Span"));
+        match (attrs.iter().position(|(a, _)| a == k), v) {
+            (Some(i), Some(v)) => attrs[i].1 = v,
+            (Some(i), None) => {
+                attrs.remove(i);
+            }
+            (None, Some(v)) => attrs.push(((*k).to_owned(), v)),
+            (None, None) => {}
+        }
+    }
+    let mut out = format!("<{name}");
+    write_attrs(&mut out, &attrs);
+    out.push_str(if empty { "/>" } else { ">" });
+    out.push_str(&xml[end..]);
+    out
+}
+
+/// A start-tag-only edit of `tc`.
+fn retag_edit(src: &str, tc: Node, set: &[(&str, Option<String>)]) -> (Range<usize>, String) {
+    let r = start_range(src, tc);
+    (r.clone(), retag(&src[r], set))
+}
+
+const NO_MERGE: [(&str, Option<String>); 4] = [
+    ("gridSpan", None),
+    ("rowSpan", None),
+    ("hMerge", None),
+    ("vMerge", None),
+];
+
+fn yes(on: bool) -> Option<String> {
+    on.then(|| "1".to_owned())
+}
+
+/// The frame's size (`p:xfrm/a:ext`) set to `cx`, `cy` (`None` = kept).
+fn set_frame_ext(frame: Node, cx: Option<Emu>, cy: Option<Emu>) -> Vec<(Range<usize>, String)> {
+    let Some(ext) = frame
+        .children()
+        .find(|c| c.is_element() && c.tag_name().name() == "xfrm")
+        .and_then(|x| child(x, NS_A, "ext"))
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (name, v) in [("cx", cx), ("cy", cy)] {
+        if let (Some(v), Some(a)) = (v, ext.attributes().find(|a| a.name() == name)) {
+            out.push((a.range_value(), v.max(1).to_string()));
+        }
+    }
+    out
+}
+
+fn grid_cols<'a, 'i>(t: Node<'a, 'i>) -> anyhow::Result<Vec<Node<'a, 'i>>> {
+    let grid = child(t, NS_A, "tblGrid").context("no column grid")?;
+    Ok(grid
+        .children()
+        .filter(|c| is(*c, NS_A, "gridCol"))
+        .collect())
+}
+
+/// `total` shared out in proportion to `parts` (rounded, summing exactly).
+fn share(parts: &[Emu], total: Emu) -> Vec<Emu> {
+    let sum: Emu = parts.iter().sum();
+    if sum <= 0 || parts.is_empty() {
+        return parts.to_vec();
+    }
+    let mut out = Vec::with_capacity(parts.len());
+    let (mut acc, mut given) = (0i128, 0i64);
+    for p in parts {
+        acc += *p as i128;
+        let upto = (acc * total as i128 / sum as i128) as i64;
+        out.push((upto - given).max(1));
+        given = upto;
+    }
+    out
+}
+
+fn insert_row(
+    src: &str,
+    t: Node,
+    frame: Node,
+    row: usize,
+    below: bool,
+) -> anyhow::Result<Vec<(Range<usize>, String)>> {
+    let nc = grid_cols(t)?.len();
+    let g = Grid::new(t, nc)?;
+    let tr = *g.trs.get(row).context("no such row")?;
+    let k = if below { row + 1 } else { row };
+    let a = prefix_of(src, tr);
+    let mut e = Vec::new();
+    let mut bumped: Vec<(usize, usize)> = Vec::new();
+    let mut new_row = start_tag(src, tr).trim_end_matches("/>").to_owned();
+    if !new_row.ends_with('>') {
+        new_row.push('>');
+    }
+    for c in 0..nc {
+        let crossing = k > 0 && k < g.rows() && g.owner[k - 1][c] == g.owner[k][c];
+        if crossing {
+            let (or, oc) = g.owner[k][c];
+            if !bumped.contains(&(or, oc)) {
+                bumped.push((or, oc));
+                let o = g.tcs[or][oc];
+                let rs = span(o, "rowSpan") + 1;
+                e.push(retag_edit(src, o, &[("rowSpan", Some(rs.to_string()))]));
+            }
+            let copy = blank_copy(src, g.tcs[k][c]);
+            new_row.push_str(&retag(
+                &copy,
+                &[
+                    ("gridSpan", None),
+                    ("rowSpan", None),
+                    ("hMerge", yes(c != oc)),
+                    ("vMerge", yes(true)),
+                ],
+            ));
+            continue;
+        }
+        let tc = g.tcs[row][c];
+        let (or, oc) = g.owner[row][c];
+        let copy = blank_copy(src, tc);
+        let set: Vec<(&str, Option<String>)> = if or == row {
+            // A merge across this row's cells is copied (not down the rows).
+            let gs = span(g.origin(row, c), "gridSpan");
+            vec![
+                ("gridSpan", (c == oc && gs > 1).then(|| gs.to_string())),
+                ("rowSpan", None),
+                ("hMerge", yes(c != oc)),
+                ("vMerge", None),
+            ]
+        } else {
+            NO_MERGE.to_vec()
+        };
+        new_row.push_str(&retag(&copy, &set));
+    }
+    new_row.push_str(&format!("</{a}tr>"));
+    let at = if below {
+        tr.range().end
+    } else {
+        tr.range().start
+    };
+    // Below a merged cell's last row the new row goes after it, not inside.
+    e.push((at..at, new_row));
+    let h = attr_i64(tr, "h").unwrap_or(370_840);
+    e.extend(grow_frame(src, frame, 0, h));
+    Ok(e)
+}
+
+fn delete_row(
+    src: &str,
+    t: Node,
+    frame: Node,
+    row: usize,
+) -> anyhow::Result<Vec<(Range<usize>, String)>> {
+    let nc = grid_cols(t)?.len();
+    let g = Grid::new(t, nc)?;
+    if g.rows() <= 1 {
+        bail!("A table needs at least one row");
+    }
+    let tr = *g.trs.get(row).context("no such row")?;
+    let mut e = Vec::new();
+    let mut done: Vec<(usize, usize)> = Vec::new();
+    for c in 0..nc {
+        let (or, oc) = g.owner[row][c];
+        let o = g.tcs[or][oc];
+        let (rs, gs) = (span(o, "rowSpan"), span(o, "gridSpan"));
+        if done.contains(&(or, oc)) {
+            continue;
+        }
+        done.push((or, oc));
+        if or < row {
+            // Covered from above: the merged cell loses a row.
+            e.push(retag_edit(
+                src,
+                o,
+                &[("rowSpan", Some((rs - 1).to_string()))],
+            ));
+        } else if rs > 1 && row + 1 < g.rows() {
+            // Its top left goes: the cell below takes its text and spans.
+            let next = g.tcs[row + 1][oc];
+            let moved = retag(
+                raw(src, o),
+                &[("rowSpan", Some((rs - 1).to_string())), ("vMerge", None)],
+            );
+            e.push((next.range(), moved));
+            for tc in g.tcs[row + 1].iter().take((oc + gs).min(nc)).skip(oc + 1) {
+                e.push(retag_edit(src, *tc, &[("vMerge", None)]));
+            }
+        }
+    }
+    e.push((tr.range(), String::new()));
+    let h = attr_i64(tr, "h").unwrap_or(0);
+    e.extend(grow_frame(src, frame, 0, -h));
+    Ok(e)
+}
+
+fn insert_col(
+    src: &str,
+    t: Node,
+    frame: Node,
+    col: usize,
+    right: bool,
+) -> anyhow::Result<Vec<(Range<usize>, String)>> {
+    let cols = grid_cols(t)?;
+    let nc = cols.len();
+    let g = Grid::new(t, nc)?;
+    let gc = *cols.get(col).context("no such column")?;
+    let k = if right { col + 1 } else { col };
+    let w = attr_i64(gc, "w").unwrap_or(914_400);
+    let a = prefix_of(src, gc);
+    let at = if right {
+        gc.range().end
+    } else {
+        gc.range().start
+    };
+    let mut e = vec![(at..at, format!("<{a}gridCol w=\"{w}\"/>"))];
+    let mut bumped: Vec<(usize, usize)> = Vec::new();
+    for r in 0..g.rows() {
+        let crossing = k > 0 && k < nc && g.owner[r][k - 1] == g.owner[r][k];
+        let cell = if crossing {
+            let (or, oc) = g.owner[r][k];
+            if !bumped.contains(&(or, oc)) {
+                bumped.push((or, oc));
+                let o = g.tcs[or][oc];
+                let gs = span(o, "gridSpan") + 1;
+                e.push(retag_edit(src, o, &[("gridSpan", Some(gs.to_string()))]));
+            }
+            retag(
+                &blank_copy(src, g.tcs[r][k]),
+                &[
+                    ("gridSpan", None),
+                    ("rowSpan", None),
+                    ("hMerge", yes(true)),
+                    ("vMerge", yes(r != or)),
+                ],
+            )
+        } else {
+            let (or, oc) = g.owner[r][col];
+            let set: Vec<(&str, Option<String>)> = if oc == col {
+                // A merge down this column's cells is copied.
+                let rs = span(g.origin(r, col), "rowSpan");
+                vec![
+                    ("gridSpan", None),
+                    ("rowSpan", (r == or && rs > 1).then(|| rs.to_string())),
+                    ("hMerge", None),
+                    ("vMerge", yes(r != or)),
+                ]
+            } else {
+                NO_MERGE.to_vec()
+            };
+            retag(&blank_copy(src, g.tcs[r][col]), &set)
+        };
+        let at = if k < nc {
+            g.tcs[r][k].range().start
+        } else {
+            g.tcs[r][nc - 1].range().end
+        };
+        e.push((at..at, cell));
+    }
+    e.extend(grow_frame(src, frame, w, 0));
+    Ok(e)
+}
+
+fn delete_col(
+    src: &str,
+    t: Node,
+    frame: Node,
+    col: usize,
+) -> anyhow::Result<Vec<(Range<usize>, String)>> {
+    let cols = grid_cols(t)?;
+    let nc = cols.len();
+    if nc <= 1 {
+        bail!("A table needs at least one column");
+    }
+    let g = Grid::new(t, nc)?;
+    let gc = *cols.get(col).context("no such column")?;
+    let w = attr_i64(gc, "w").unwrap_or(0);
+    let mut e = vec![(gc.range(), String::new())];
+    let mut done: Vec<(usize, usize)> = Vec::new();
+    for r in 0..g.rows() {
+        let (or, oc) = g.owner[r][col];
+        if !done.contains(&(or, oc)) {
+            done.push((or, oc));
+            let o = g.tcs[or][oc];
+            let (rs, gs) = (span(o, "rowSpan"), span(o, "gridSpan"));
+            if oc < col {
+                e.push(retag_edit(
+                    src,
+                    o,
+                    &[("gridSpan", Some((gs - 1).to_string()))],
+                ));
+            } else if gs > 1 && col + 1 < nc {
+                let next = g.tcs[or][col + 1];
+                let moved = retag(
+                    raw(src, o),
+                    &[("gridSpan", Some((gs - 1).to_string())), ("hMerge", None)],
+                );
+                e.push((next.range(), moved));
+                for row in g.tcs.iter().take((or + rs).min(g.rows())).skip(or + 1) {
+                    e.push(retag_edit(src, row[col + 1], &[("hMerge", None)]));
+                }
+            }
+        }
+        e.push((g.tcs[r][col].range(), String::new()));
+    }
+    e.extend(grow_frame(src, frame, -w, 0));
+    Ok(e)
+}
+
 fn apply_op(d: &mut Doc, op: &TableOp) -> anyhow::Result<()> {
     let doc = roxmltree::Document::parse(&d.xml).context("table XML")?;
     let frame = doc
@@ -310,90 +728,60 @@ fn apply_op(d: &mut Doc, op: &TableOp) -> anyhow::Result<()> {
             let tc = *cells(*tr).get(*col).context("no such cell")?;
             set_text(src, tc, text)
         }
+        TableOp::Paras { row, col, paras } => {
+            let tr = trs.get(*row).context("no such row")?;
+            let tc = *cells(*tr).get(*col).context("no such cell")?;
+            set_paras(src, tc, paras)
+        }
         TableOp::Fill { row, col, color } => {
             let tr = trs.get(*row).context("no such row")?;
             let tc = *cells(*tr).get(*col).context("no such cell")?;
             set_fill(src, tc, *color)
         }
-        TableOp::InsertRow { row, below } => {
-            if has_merges(t) {
-                bail!("Rows can't be added to a table with merged cells yet");
-            }
-            let tr = *trs.get(*row).context("no such row")?;
-            let copy = blank_copy(src, tr);
-            let at = if *below {
-                tr.range().end
-            } else {
-                tr.range().start
-            };
-            let h = attr_i64(tr, "h").unwrap_or(370_840);
-            let mut e = vec![(at..at, copy)];
-            e.extend(grow_frame(src, frame, 0, h));
-            e
-        }
-        TableOp::DeleteRow(row) => {
-            if has_merges(t) {
-                bail!("Rows can't be removed from a table with merged cells yet");
-            }
-            if trs.len() <= 1 {
-                bail!("A table needs at least one row");
-            }
-            let tr = *trs.get(*row).context("no such row")?;
-            let h = attr_i64(tr, "h").unwrap_or(0);
-            let mut e = vec![(tr.range(), String::new())];
-            e.extend(grow_frame(src, frame, 0, -h));
-            e
-        }
-        TableOp::InsertCol { col, right } => {
-            if has_merges(t) {
-                bail!("Columns can't be added to a table with merged cells yet");
-            }
-            let grid = child(t, NS_A, "tblGrid").context("no column grid")?;
-            let cols: Vec<Node> = grid
-                .children()
-                .filter(|c| is(*c, NS_A, "gridCol"))
+        TableOp::InsertRow { row, below } => insert_row(src, t, frame, *row, *below)?,
+        TableOp::DeleteRow(row) => delete_row(src, t, frame, *row)?,
+        TableOp::InsertCol { col, right } => insert_col(src, t, frame, *col, *right)?,
+        TableOp::DeleteCol(col) => delete_col(src, t, frame, *col)?,
+        TableOp::Resize { cx, cy } => {
+            let cols = grid_cols(t)?;
+            let ws: Vec<Emu> = cols
+                .iter()
+                .map(|c| attr_i64(*c, "w").unwrap_or(0))
                 .collect();
-            let gc = *cols.get(*col).context("no such column")?;
-            let w = attr_i64(gc, "w").unwrap_or(914_400);
-            let a = prefix_of(src, gc);
-            let place = |n: Node| {
-                if *right {
-                    n.range().end
-                } else {
-                    n.range().start
-                }
-            };
-            let at = place(gc);
-            let mut e = vec![(at..at, format!("<{a}gridCol w=\"{w}\"/>"))];
-            for tr in &trs {
-                let tc = *cells(*tr).get(*col).context("a row is missing a cell")?;
-                let at = place(tc);
-                e.push((at..at, blank_copy(src, tc)));
-            }
-            e.extend(grow_frame(src, frame, w, 0));
-            e
-        }
-        TableOp::DeleteCol(col) => {
-            if has_merges(t) {
-                bail!("Columns can't be removed from a table with merged cells yet");
-            }
-            let grid = child(t, NS_A, "tblGrid").context("no column grid")?;
-            let cols: Vec<Node> = grid
-                .children()
-                .filter(|c| is(*c, NS_A, "gridCol"))
-                .collect();
-            if cols.len() <= 1 {
-                bail!("A table needs at least one column");
-            }
-            let gc = *cols.get(*col).context("no such column")?;
-            let w = attr_i64(gc, "w").unwrap_or(0);
-            let mut e = vec![(gc.range(), String::new())];
-            for tr in &trs {
-                if let Some(tc) = cells(*tr).get(*col) {
-                    e.push((tc.range(), String::new()));
+            let hs: Vec<Emu> = trs.iter().map(|r| attr_i64(*r, "h").unwrap_or(0)).collect();
+            let (nw, nh) = (share(&ws, *cx), share(&hs, *cy));
+            let mut e = Vec::new();
+            for (n, v) in cols.iter().zip(&nw) {
+                if let Some(a) = n.attributes().find(|a| a.name() == "w") {
+                    e.push((a.range_value(), v.to_string()));
                 }
             }
-            e.extend(grow_frame(src, frame, -w, 0));
+            for (n, v) in trs.iter().zip(&nh) {
+                if let Some(a) = n.attributes().find(|a| a.name() == "h") {
+                    e.push((a.range_value(), v.to_string()));
+                }
+            }
+            let sw: Emu = nw.iter().sum();
+            let sh: Emu = nh.iter().sum();
+            e.extend(set_frame_ext(frame, Some(sw), Some(sh)));
+            e
+        }
+        TableOp::ColWidths(ws) => {
+            let cols = grid_cols(t)?;
+            if ws.len() != cols.len() {
+                bail!("one width per column");
+            }
+            let mut e = Vec::new();
+            for (n, v) in cols.iter().zip(ws) {
+                if let Some(a) = n.attributes().find(|a| a.name() == "w") {
+                    e.push((a.range_value(), (*v).max(1).to_string()));
+                }
+            }
+            e.extend(set_frame_ext(
+                frame,
+                Some(ws.iter().map(|w| (*w).max(1)).sum()),
+                None,
+            ));
             e
         }
     };
@@ -446,12 +834,89 @@ impl Presentation {
         if ops.is_empty() {
             return Ok(());
         }
+        let new = self.edited_table(slide, shape, ops, None)?;
+        self.record(Kind::Other, None, Focus::shape(slide, shape), true, |p| {
+            let s = p.slide_mut(slide)?;
+            s.shapes[shape] = new;
+            Ok(((), Focus::shape(slide, shape)))
+        })
+    }
+
+    /// Typing in table cell `cell` of frame `r`: `f` edits a copy of its
+    /// paragraphs, which are written into the table (coalesced as text
+    /// edits in a shape are).
+    pub(crate) fn edit_cell_text(
+        &mut self,
+        r: crate::edit::ShapeRef,
+        (row, col): (usize, usize),
+        kind: Kind,
+        before: Focus,
+        boundary: bool,
+        f: impl FnOnce(&mut Vec<TextPara>) -> docs_engine::Selection,
+    ) -> anyhow::Result<docs_engine::Selection> {
+        let t = self.table(r.0, r.1).context("not a table")?;
+        let cell = t.cell(row, col).context("no such cell")?;
+        if cell.covered() {
+            bail!("This cell is merged into another one");
+        }
+        let mut paras = cell
+            .text
+            .as_ref()
+            .map(|b| b.paras.clone())
+            .unwrap_or_else(|| vec![TextPara::new("")]);
+        let sel = f(&mut paras);
+        let new = self.edited_table(r.0, r.1, &[TableOp::Paras { row, col, paras }], None)?;
+        self.record(kind, Some(r), before, boundary, |p| {
+            let s = p.slide_mut(r.0)?;
+            s.shapes[r.1] = new;
+            Ok((sel, Focus::text_at(r, sel)))
+        })
+    }
+
+    /// Resize a table frame to `xfrm` (its columns and rows scaled), as
+    /// one undo step (`kind`).
+    pub(crate) fn resize_table(
+        &mut self,
+        slide: usize,
+        shape: usize,
+        xfrm: Xfrm,
+        kind: Kind,
+    ) -> anyhow::Result<()> {
+        let op = TableOp::Resize {
+            cx: xfrm.cx.max(1),
+            cy: xfrm.cy.max(1),
+        };
+        let new = self.edited_table(slide, shape, &[op], Some(xfrm))?;
+        let target = Some(crate::edit::ShapeRef::from((slide, shape)));
+        self.record(kind, target, Focus::shape(slide, shape), false, |p| {
+            let s = p.slide_mut(slide)?;
+            s.shapes[shape] = new;
+            Ok(((), Focus::shape(slide, shape)))
+        })
+    }
+
+    /// Table frame `shape` with `ops` applied: its XML as it would be
+    /// saved (moves included, placed at `at`'s offset if given), spliced
+    /// and read again.
+    fn edited_table(
+        &self,
+        slide: usize,
+        shape: usize,
+        ops: &[TableOp],
+        at: Option<Xfrm>,
+    ) -> anyhow::Result<Shape> {
         self.table(slide, shape).context("not a table")?;
         let s = self.slides.get(slide).context("no such slide")?.clone();
-        let old = s.shapes.get(shape).context("no such shape")?.clone();
-        let src = old.src.as_ref().context("a new table")?;
+        let mut old = s.shapes.get(shape).context("no such shape")?.clone();
+        old.src.as_ref().context("a new table")?;
+        if let (Some(at), Some(x)) = (at, old.xfrm.as_mut()) {
+            x.x = at.x;
+            x.y = at.y;
+        }
+        let mut written = String::new();
+        crate::shape::write_shape(&mut written, &old);
         let ns = root_ns(&s.src.prefix);
-        let mut d = Doc::new(ns, &src.raw);
+        let mut d = Doc::new(ns, &written);
         for op in ops {
             apply_op(&mut d, op)?;
         }
@@ -472,17 +937,7 @@ impl Presentation {
             rels: &s.rels,
             colors,
         };
-        let mut new = parse_shape(el, &cx);
-        // Moves made to the frame in Kantor stay.
-        if old.xfrm != src.xfrm {
-            new.xfrm = old.xfrm;
-        }
-        let new = Arc::new(new);
-        self.record(Kind::Other, None, Focus::shape(slide, shape), true, |p| {
-            let s = p.slide_mut(slide)?;
-            s.shapes[shape] = (*new).clone();
-            Ok(((), Focus::shape(slide, shape)))
-        })
+        Ok(parse_shape(el, &cx))
     }
 }
 
@@ -589,31 +1044,226 @@ mod tests {
         assert!(back.contains("<a:tcPr></a:tcPr>") || back == x, "{back}");
     }
 
+    /// A merged-table frame: rows of `[(text, attrs)]`, `n` columns of 1000.
+    fn mframe(n: usize, rows: &[&[&str]]) -> String {
+        let grid: String = (0..n).map(|_| r#"<a:gridCol w="1000"/>"#).collect();
+        let body: String = rows
+            .iter()
+            .map(|r| {
+                let cells: String = r
+                    .iter()
+                    .map(|c| {
+                        let (t, attrs) = c.split_once('|').unwrap_or((c, ""));
+                        let sp = if attrs.is_empty() { "" } else { " " };
+                        format!(r#"<a:tc{sp}{attrs}><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>{t}</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc>"#)
+                    })
+                    .collect();
+                format!(r#"<a:tr h="300">{cells}</a:tr>"#)
+            })
+            .collect();
+        format!(
+            r#"<p:graphicFrame {NS}><p:nvGraphicFramePr><p:cNvPr id="4" name="T"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="0" y="0"/><a:ext cx="{}" cy="{}"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblGrid>{grid}</a:tblGrid>{body}</a:tbl></a:graphicData></a:graphic></p:graphicFrame>"#,
+            n * 1000,
+            rows.len() * 300
+        )
+    }
+
+    /// Each row's cells as `text|attrs` (merge attributes only, in order).
+    fn shape_of(xml: &str) -> Vec<Vec<String>> {
+        let (w, _) = wrap(&[], xml);
+        let doc = roxmltree::Document::parse(&w).unwrap();
+        let t = tbl(&doc).unwrap();
+        rows(t)
+            .into_iter()
+            .map(|tr| {
+                cells(tr)
+                    .into_iter()
+                    .map(|tc| {
+                        let text: String = tc
+                            .descendants()
+                            .filter(|n| is(*n, NS_A, "t"))
+                            .filter_map(|n| n.text())
+                            .collect();
+                        let attrs: Vec<String> = ["gridSpan", "rowSpan", "hMerge", "vMerge"]
+                            .iter()
+                            .filter_map(|a| tc.attribute(*a).map(|v| format!("{a}={v}")))
+                            .collect();
+                        if attrs.is_empty() {
+                            text
+                        } else {
+                            format!("{text}|{}", attrs.join(" "))
+                        }
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn grid(v: &[&[&str]]) -> Vec<Vec<String>> {
+        v.iter()
+            .map(|r| r.iter().map(|c| (*c).to_owned()).collect())
+            .collect()
+    }
+
     #[test]
-    fn merged_tables_refuse_structure_edits() {
-        let merged = r#"<a:tr h="300"><a:tc gridSpan="2"><a:txBody><a:bodyPr/><a:p/></a:txBody></a:tc><a:tc hMerge="1"><a:txBody><a:bodyPr/><a:p/></a:txBody></a:tc></a:tr>"#;
-        let x = frame(merged);
-        let mut d = Doc::new(Vec::new(), &x);
-        assert!(
-            apply_op(
-                &mut d,
-                &TableOp::InsertRow {
-                    row: 0,
-                    below: true
-                }
-            )
-            .is_err()
+    fn merged_rows_grow_and_shrink_as_powerpoint() {
+        // A spans two rows in column 0; B spans two columns in row 0.
+        let x = mframe(
+            3,
+            &[
+                &[r#"A|rowSpan="2""#, r#"B|gridSpan="2""#, r#"|hMerge="1""#],
+                &[r#"|vMerge="1""#, "c", "d"],
+                &["e", "f", "g"],
+            ],
+        );
+        // A row inside A's span widens it; the new cell under it is
+        // covered; B's merge across the row is copied.
+        let out = run(
+            &x,
+            &[TableOp::InsertRow {
+                row: 0,
+                below: true,
+            }],
+        );
+        assert_eq!(
+            shape_of(&out),
+            grid(&[
+                &["A|rowSpan=3", "B|gridSpan=2", "|hMerge=1"],
+                &["|vMerge=1", "|gridSpan=2", "|hMerge=1"],
+                &["|vMerge=1", "c", "d"],
+                &["e", "f", "g"],
+            ])
+        );
+        assert!(out.contains(r#"cy="1200""#));
+        // Above the first row: B's span across the row is copied.
+        let out = run(
+            &x,
+            &[TableOp::InsertRow {
+                row: 0,
+                below: false,
+            }],
+        );
+        assert_eq!(shape_of(&out)[0], vec!["", "|gridSpan=2", "|hMerge=1"]);
+        // Removing A's first row: the cell below takes A's text and span.
+        let out = run(&x, &[TableOp::DeleteRow(0)]);
+        assert_eq!(shape_of(&out), grid(&[&["A", "c", "d"], &["e", "f", "g"]]));
+        // Removing the row A covers shrinks it.
+        let out = run(&x, &[TableOp::DeleteRow(1)]);
+        assert_eq!(
+            shape_of(&out),
+            grid(&[&["A", "B|gridSpan=2", "|hMerge=1"], &["e", "f", "g"],])
+        );
+    }
+
+    #[test]
+    fn merged_columns_grow_and_shrink_as_powerpoint() {
+        let x = mframe(
+            3,
+            &[
+                &[r#"A|rowSpan="2""#, r#"B|gridSpan="2""#, r#"|hMerge="1""#],
+                &[r#"|vMerge="1""#, "c", "d"],
+            ],
+        );
+        // A column inside B widens it.
+        let out = run(
+            &x,
+            &[TableOp::InsertCol {
+                col: 1,
+                right: true,
+            }],
+        );
+        assert_eq!(
+            shape_of(&out),
+            grid(&[
+                &["A|rowSpan=2", "B|gridSpan=3", "|hMerge=1", "|hMerge=1"],
+                &["|vMerge=1", "c", "", "d"],
+            ])
+        );
+        assert_eq!(out.matches("<a:gridCol").count(), 4);
+        // Left of column 0: A's span down the column is copied.
+        let out = run(
+            &x,
+            &[TableOp::InsertCol {
+                col: 0,
+                right: false,
+            }],
+        );
+        assert_eq!(
+            shape_of(&out),
+            grid(&[
+                &["|rowSpan=2", "A|rowSpan=2", "B|gridSpan=2", "|hMerge=1"],
+                &["|vMerge=1", "|vMerge=1", "c", "d"],
+            ])
+        );
+        // Removing B's first column hands B to the next one.
+        let out = run(&x, &[TableOp::DeleteCol(1)]);
+        assert_eq!(
+            shape_of(&out),
+            grid(&[&["A|rowSpan=2", "B"], &["|vMerge=1", "d"]])
+        );
+        // Removing B's covered column shrinks it.
+        let out = run(&x, &[TableOp::DeleteCol(2)]);
+        assert_eq!(
+            shape_of(&out),
+            grid(&[&["A|rowSpan=2", "B"], &["|vMerge=1", "c"]])
+        );
+        // Every result is a table PowerPoint's rules accept: spans
+        // cover exactly the merged cells.
+        for out in [
+            run(
+                &x,
+                &[TableOp::InsertRow {
+                    row: 1,
+                    below: true,
+                }],
+            ),
+            run(
+                &x,
+                &[TableOp::InsertCol {
+                    col: 2,
+                    right: true,
+                }],
+            ),
+        ] {
+            let (w, _) = wrap(&[], &out);
+            let doc = roxmltree::Document::parse(&w).unwrap();
+            let t = tbl(&doc).unwrap();
+            let nc = grid_cols(t).unwrap().len();
+            Grid::new(t, nc).unwrap();
+        }
+    }
+
+    #[test]
+    fn resize_scales_columns_and_rows() {
+        let x = frame(&(row("a", "b") + &row("c", "d")));
+        let out = run(&x, &[TableOp::Resize { cx: 3000, cy: 900 }]);
+        assert_eq!(out.matches(r#"<a:gridCol w="1500"/>"#).count(), 2);
+        assert_eq!(out.matches(r#"<a:tr h="450">"#).count(), 2);
+        assert!(out.contains(r#"<a:ext cx="3000" cy="900"/>"#), "{out}");
+        let out = run(&x, &[TableOp::ColWidths(vec![500, 2500])]);
+        assert!(out.contains(r#"<a:gridCol w="500"/><a:gridCol w="2500"/>"#));
+        assert!(out.contains(r#"cx="3000""#));
+        assert_eq!(share(&[1, 1, 1], 10), vec![3, 3, 4]);
+    }
+
+    #[test]
+    fn cell_paragraphs_keep_their_formatting() {
+        let x = frame(&row("a", "b"));
+        let mut p = TextPara::new("bold");
+        p.runs[0].props.bold = Some(true);
+        let out = run(
+            &x,
+            &[TableOp::Paras {
+                row: 0,
+                col: 1,
+                paras: vec![p, TextPara::new("")],
+            }],
         );
         assert!(
-            apply_op(
-                &mut d,
-                &TableOp::Text {
-                    row: 0,
-                    col: 0,
-                    text: "ok".into()
-                }
-            )
-            .is_ok()
+            out.contains(r#"b="1""#) && out.contains("<a:t>bold</a:t>"),
+            "{out}"
         );
+        assert!(out.contains("<a:t>a</a:t>"));
+        assert!(!out.contains("<a:t>b</a:t>"));
     }
 }
