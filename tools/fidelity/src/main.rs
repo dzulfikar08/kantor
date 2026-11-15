@@ -256,6 +256,13 @@ fn main() -> Result<()> {
         wb.save_as(o.join("pivots_21_pivot_tables.xlsx"))?;
         Ok(Some(pivots.clone()))
     });
+    let settings = corpus.join("xlsx/23_pivot_settings.xlsx");
+    run.scenario("pivots_23_pivot_settings.xlsx", |o| {
+        let mut wb = Workbook::open(&settings)?;
+        pivot_settings_edits(&mut wb)?;
+        wb.save_as(o.join("pivots_23_pivot_settings.xlsx"))?;
+        Ok(Some(settings.clone()))
+    });
 
     for src in files(&corpus.join("docx"), "docx")? {
         let stem = stem(&src);
@@ -962,6 +969,54 @@ fn chart_option_edits(wb: &mut Workbook) -> Result<()> {
     add_data(wb, 0, 60)?;
     let key = wb.insert_chart(0, data, ChartType::Column)?;
     wb.move_chart(key, ChartPlace::NewSheet("New chart".into()))?;
+    Ok(())
+}
+
+/// Grouping, a calculated field, Show Values As, field settings, a style,
+/// a pivot sharing the cache and a sheet copy on the settings fixture.
+fn pivot_settings_edits(wb: &mut Workbook) -> Result<()> {
+    use sheets_engine::{AxisEntry, PivotFieldFilter, PivotSort, ShowAs};
+    wb.refresh_all_pivots()?;
+    let s = wb
+        .sheet_names()
+        .iter()
+        .position(|n| n == "Settings")
+        .context("Settings sheet")? as u32;
+    let data = wb
+        .sheet_names()
+        .iter()
+        .position(|n| n == "Data")
+        .context("Data sheet")? as u32;
+    // A new pivot on the same data shares the cache: Product rows, Price
+    // as % of Grand Total, Units by month and year, banded Medium 9.
+    let (ns, nr, nc) = wb.insert_pivot("Data!$A$1:$E$13", data, PivotDestination::NewSheet)?;
+    let mut l = wb.pivot_layout(ns, nr, nc).context("new pivot layout")?;
+    let field = |l: &sheets_engine::PivotLayout, n: &str| l.fields.iter().position(|f| f.name == n);
+    let product = field(&l, "Product").context("Product")?;
+    let price = field(&l, "Price").context("Price")?;
+    let units = field(&l, "Units").context("Units")?;
+    l.rows = vec![AxisEntry::Field(product)];
+    l.add_value(price);
+    l.add_value(units);
+    l.values[0].show_as = ShowAs::PercentOfTotal;
+    l.values[1].show_as = ShowAs::RankDescending;
+    l.values[1].base_field = Some(product);
+    l.fields[product].settings.sort = PivotSort::Descending;
+    l.fields[product].settings.sort_by_value = Some(1);
+    l.fields[product].settings.filter = Some(PivotFieldFilter {
+        kind: "captionNotBeginsWith".into(),
+        value_field: None,
+        value1: "Pe".into(),
+        value2: String::new(),
+        top: true,
+    });
+    l.style.name = Some("PivotStyleMedium9".into());
+    l.style.banded_rows = true;
+    wb.set_pivot_layout(ns, nr, nc, &l)?;
+    wb.set_pivot_calculated_field(ns, nr, nc, "Double", "=Revenue*2")?;
+    // Group the products by hand, and copy the Settings sheet.
+    wb.group_pivot_items(ns, nr, nc, product, &["Apples".into(), "Plums".into()])?;
+    wb.copy_sheet(s, 99)?;
     Ok(())
 }
 

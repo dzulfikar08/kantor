@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Write the pivot table fixture (CC0, synthetic, deterministic):
-tests/corpus/xlsx/21_pivot_tables.xlsx.
+"""Write the pivot table fixtures (CC0, synthetic, deterministic):
+tests/corpus/xlsx/21_pivot_tables.xlsx and 23_pivot_settings.xlsx.
 
 XlsxWriter can't write pivot tables, so this writes raw SpreadsheetML with the
 Python standard library: a data sheet that is also an Excel table, two pivot
@@ -22,6 +22,21 @@ records, and three pivot tables:
 The cells under each pivot are worked out here the way Excel lays them out,
 so tests can compare Kantor's refresh with them.
 
+`23_pivot_settings.xlsx` has one cache (refreshed on load) over the same
+data with what Excel writes for pivot settings: Date grouped by months with
+a Years grouping field, a manual grouping (`Region2`: Group1 = East + West),
+a calculated field (`Price` = Revenue/Units), and three pivot tables on a
+`Settings` sheet (their cells are left for a refresh to fill):
+
+* `A3`: rows Years, Date (months), Sum of Revenue shown as % of Column
+  Total;
+* `E3`: tabular, rows Region2 (custom subtotals Sum and Count, a blank line
+  after each item, labels repeated) then Region with a label filter (not
+  West), Sum of Price and Sum of Units shown as % of Parent Row Total (the
+  Excel 2010 `x14:dataField`);
+* `L3`: rows Product sorted by Sum of Revenue, largest first, with a Top 2
+  value filter, PivotStyleMedium4 with banded rows.
+
     python3 scripts/corpus/gen_pivot_xlsx.py           # write the fixture
     python3 scripts/corpus/gen_pivot_xlsx.py --check   # CI: it is up to date
 """
@@ -37,6 +52,7 @@ from xml.sax.saxutils import escape, quoteattr
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests/corpus/xlsx/21_pivot_tables.xlsx"
+SETTINGS = ROOT / "tests/corpus/xlsx/23_pivot_settings.xlsx"
 ZIP_TIME = (2026, 1, 1, 0, 0, 0)
 
 MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -651,8 +667,261 @@ def build() -> dict[str, str]:
     return parts
 
 
-def write(path: Path) -> None:
-    parts = build()
+# ------------------------------------------------------------------ settings
+
+
+def build_settings() -> dict[str, str]:
+    """`23_pivot_settings.xlsx`: grouping, a calculated field, Show Values
+    As, custom subtotals, filters and sorting as Excel writes them."""
+    regions = shared(0)
+    products = shared(1)
+    dates = [r[2] for r in ROWS]
+    start = min(dates)
+    end = (dt.date.fromisoformat(max(dates)) + dt.timedelta(days=1)).isoformat()
+
+    def us(iso: str) -> str:
+        d = dt.date.fromisoformat(iso)
+        return f"{d.month}/{d.day}/{d.year}"
+
+    months = [f"&lt;{us(start)}"] + [dt.date(2026, m, 1).strftime("%b") for m in range(1, 13)]
+    months += [f"&gt;{us(end)}"]
+    years = [f"&lt;{us(start)}", "2026", f"&gt;{us(end)}"]
+    group1 = ["Group1", "North"]
+    discrete = [0 if r in ("East", "West") else 1 for r in regions]
+
+    def group_items(items: list[str]) -> str:
+        return f'<groupItems count="{len(items)}">' + "".join(f'<s v="{v}"/>' for v in items) + "</groupItems>"
+
+    def range_pr(by: str) -> str:
+        return f'<rangePr groupBy="{by}" startDate="{start}T00:00:00" endDate="{end}T00:00:00"/>'
+
+    units = [r[3] for r in ROWS]
+    revenue = [r[4] for r in ROWS]
+    fields = (
+        f'<cacheField name="Region" numFmtId="0"><sharedItems count="{len(regions)}">'
+        + "".join(f"<s v={quoteattr(v)}/>" for v in regions)
+        + '</sharedItems><fieldGroup par="6" base="0"/></cacheField>'
+        f'<cacheField name="Product" numFmtId="0"><sharedItems count="{len(products)}">'
+        + "".join(f"<s v={quoteattr(v)}/>" for v in products)
+        + "</sharedItems></cacheField>"
+        '<cacheField name="Date" numFmtId="14"><sharedItems containsSemiMixedTypes="0" '
+        f'containsNonDate="0" containsDate="1" containsString="0" minDate="{start}T00:00:00" '
+        f'maxDate="{max(dates)}T00:00:00"/><fieldGroup par="7" base="2">{range_pr("months")}'
+        f"{group_items(months)}</fieldGroup></cacheField>"
+        '<cacheField name="Units" numFmtId="0"><sharedItems containsSemiMixedTypes="0" '
+        f'containsString="0" containsNumber="1" containsInteger="1" minValue="{min(units)}" '
+        f'maxValue="{max(units)}"/></cacheField>'
+        '<cacheField name="Revenue" numFmtId="0"><sharedItems containsSemiMixedTypes="0" '
+        f'containsString="0" containsNumber="1" containsInteger="1" minValue="{min(revenue)}" '
+        f'maxValue="{max(revenue)}"/></cacheField>'
+        '<cacheField name="Price" numFmtId="0" formula="Revenue/Units" databaseField="0"/>'
+        '<cacheField name="Region2" numFmtId="0" databaseField="0"><fieldGroup base="0">'
+        f'<discretePr count="{len(discrete)}">'
+        + "".join(f'<x v="{k}"/>' for k in discrete)
+        + f"</discretePr>{group_items(group1)}</fieldGroup></cacheField>"
+        '<cacheField name="Years" numFmtId="0" databaseField="0"><fieldGroup base="2">'
+        f"{range_pr('years')}{group_items(years)}</fieldGroup></cacheField>"
+    )
+    definition = (
+        f'{HEAD}<pivotCacheDefinition {NS} r:id="rId1" refreshOnLoad="1" refreshedBy="Kantor corpus" '
+        'refreshedDate="46023.5" createdVersion="6" refreshedVersion="6" '
+        f'minRefreshableVersion="3" recordCount="{len(ROWS)}">'
+        '<cacheSource type="worksheet"><worksheetSource ref="A1:E13" sheet="Data"/></cacheSource>'
+        f'<cacheFields count="8">{fields}</cacheFields></pivotCacheDefinition>'
+    )
+    recs = "".join(
+        f'<r><x v="{regions.index(r[0])}"/><x v="{products.index(r[1])}"/>'
+        f'<d v="{r[2]}T00:00:00"/><n v="{r[3]}"/><n v="{r[4]}"/></r>'
+        for r in ROWS
+    )
+    records_ = f'{HEAD}<pivotCacheRecords {NS} count="{len(ROWS)}">{recs}</pivotCacheRecords>'
+
+    def items(xs: list[int], subtotals: list[str] = ("default",), attrs=lambda x: "") -> str:
+        body = "".join(f'<item{attrs(x)} x="{x}"/>' for x in xs)
+        body += "".join(f'<item t="{t}"/>' for t in subtotals)
+        return f'<items count="{len(xs) + len(subtotals)}">{body}</items>'
+
+    def table(name: str, ref: str, header: tuple, fields_: list[str], rest: str, root: str = "") -> str:
+        return (
+            f'{HEAD}<pivotTableDefinition xmlns="{MAIN}" name="{name}" cacheId="1" '
+            'applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" '
+            'applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" '
+            'dataCaption="Values" updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" '
+            f'itemPrintTitles="1" createdVersion="6" indent="0"{root} multipleFieldFilters="0">'
+            f'<location ref="{ref}" firstHeaderRow="{header[0]}" firstDataRow="{header[1]}" '
+            f'firstDataCol="{header[2]}"/>'
+            f'<pivotFields count="8">{"".join(fields_)}</pivotFields>{rest}</pivotTableDefinition>'
+        )
+
+    plain = '<pivotField showAll="0"/>'
+    style = (
+        '<pivotTableStyleInfo name="{}" showRowHeaders="1" showColHeaders="1" '
+        'showRowStripes="{}" showColStripes="0" showLastColumn="1"/>'
+    )
+    # A3: Years > months, % of column total.
+    t1 = table(
+        "PivotTable1",
+        "A3:B9",
+        (1, 1, 1),
+        [
+            plain,
+            plain,
+            f'<pivotField axis="axisRow" numFmtId="14" showAll="0">{items(list(range(len(months))))}</pivotField>',
+            plain,
+            '<pivotField dataField="1" showAll="0"/>',
+            '<pivotField dataField="0" dragToRow="0" dragToCol="0" dragToPage="0" showAll="0" defaultSubtotal="0"/>',
+            plain,
+            f'<pivotField axis="axisRow" showAll="0">{items(list(range(len(years))))}</pivotField>',
+        ],
+        '<rowFields count="2"><field x="7"/><field x="2"/></rowFields>'
+        '<rowItems count="6"><i><x v="1"/></i><i r="1"><x v="1"/></i><i r="1"><x v="2"/></i>'
+        '<i r="1"><x v="3"/></i><i r="1"><x v="4"/></i><i t="grand"><x/></i></rowItems>'
+        '<colItems count="1"><i/></colItems>'
+        '<dataFields count="1"><dataField name="Sum of Revenue" fld="4" showDataAs="percentOfCol" '
+        'baseField="0" baseItem="0" numFmtId="10"/></dataFields>'
+        + style.format("PivotStyleLight16", 0),
+        ' outline="1" outlineData="1"',
+    )
+    # E3: tabular Region2 (custom subtotals, blank line, repeated labels) > Region.
+    x14_fill = (
+        f'<extLst><ext uri="{{2946ED86-A175-432a-8AC1-64E0C546D7DE}}" xmlns:x14="{X14}">'
+        '<x14:pivotField fillDownLabels="1"/></ext></extLst>'
+    )
+    t2 = table(
+        "PivotTable2",
+        "E3:H12",
+        (1, 1, 2),
+        [
+            '<pivotField axis="axisRow" compact="0" outline="0" showAll="0">'
+            + items(list(range(len(regions))))
+            + "</pivotField>",
+            '<pivotField compact="0" outline="0" showAll="0"/>',
+            '<pivotField compact="0" outline="0" showAll="0"/>',
+            '<pivotField dataField="1" compact="0" outline="0" showAll="0"/>',
+            '<pivotField compact="0" outline="0" showAll="0"/>',
+            '<pivotField dataField="1" compact="0" outline="0" dragToRow="0" dragToCol="0" '
+            'dragToPage="0" showAll="0" defaultSubtotal="0"/>',
+            '<pivotField axis="axisRow" compact="0" outline="0" insertBlankRow="1" showAll="0" '
+            'defaultSubtotal="0" sumSubtotal="1" countASubtotal="1">'
+            + items([0, 1], ["sum", "countA"])
+            + x14_fill
+            + "</pivotField>",
+            '<pivotField compact="0" outline="0" showAll="0"/>',
+        ],
+        '<rowFields count="2"><field x="6"/><field x="0"/></rowFields>'
+        '<rowItems count="9"><i><x/><x/></i><i t="sum"><x/></i><i t="countA"><x/></i>'
+        '<i t="blank"><x/></i><i><x v="1"/><x v="2"/></i><i t="sum"><x v="1"/></i>'
+        '<i t="countA"><x v="1"/></i><i t="blank"><x v="1"/></i><i t="grand"><x/></i></rowItems>'
+        '<colFields count="1"><field x="-2"/></colFields>'
+        '<colItems count="2"><i><x/></i><i i="1"><x v="1"/></i></colItems>'
+        '<dataFields count="2"><dataField name="Sum of Price" fld="5" baseField="0" baseItem="0"/>'
+        '<dataField name="Sum of Units" fld="3" baseField="0" baseItem="0">'
+        f'<extLst><ext uri="{{E15A36E0-9728-4e99-A89B-3F7291B0FE68}}" xmlns:x14="{X14}">'
+        '<x14:dataField pivotShowAs="percentOfParentRow"/></ext></extLst></dataField></dataFields>'
+        + style.format("PivotStyleLight16", 0)
+        + '<filters count="1"><filter fld="0" type="captionNotEqual" evalOrder="-1" id="1" '
+        'stringValue1="West"><autoFilter ref="A1"><filterColumn colId="0"><customFilters>'
+        '<customFilter operator="notEqual" val="West"/></customFilters></filterColumn>'
+        "</autoFilter></filter></filters>",
+        ' compact="0" compactData="0"',
+    )
+    # L3: Product by value, largest first, Top 2.
+    sort_scope = (
+        '<autoSortScope><pivotArea dataOnly="0" outline="0" fieldPosition="0"><references count="1">'
+        '<reference field="4294967294" count="1" selected="0"><x v="0"/></reference></references>'
+        "</pivotArea></autoSortScope>"
+    )
+    t3 = table(
+        "PivotTable3",
+        "L3:M6",
+        (1, 1, 1),
+        [
+            plain,
+            f'<pivotField axis="axisRow" showAll="0" sortType="descending">{items(list(range(len(products))))}{sort_scope}</pivotField>',
+            plain,
+            plain,
+            '<pivotField dataField="1" showAll="0"/>',
+            '<pivotField dragToRow="0" dragToCol="0" dragToPage="0" showAll="0" defaultSubtotal="0"/>',
+            plain,
+            plain,
+        ],
+        '<rowFields count="1"><field x="1"/></rowFields>'
+        '<rowItems count="3"><i><x/></i><i><x v="2"/></i><i t="grand"><x/></i></rowItems>'
+        '<colItems count="1"><i/></colItems>'
+        '<dataFields count="1"><dataField name="Sum of Revenue" fld="4" baseField="0" baseItem="0"/>'
+        "</dataFields>"
+        + style.format("PivotStyleMedium4", 1)
+        + '<filters count="1"><filter fld="1" type="count" evalOrder="-1" id="1" iMeasureFld="0">'
+        '<autoFilter ref="A1"><filterColumn colId="0"><top10 val="2" filterVal="2"/></filterColumn>'
+        "</autoFilter></filter></filters>",
+        ' outline="1" outlineData="1"',
+    )
+
+    sst: dict[str, int] = {}
+    parts: dict[str, str] = {}
+    data_cells: dict = {}
+    for c, h in enumerate(HEADERS, start=1):
+        data_cells[(1, c)] = h
+    for r, row in enumerate(ROWS, start=2):
+        for c, v in enumerate(row, start=1):
+            data_cells[(r, c)] = (serial(v), 1) if c == 3 else v
+    parts["xl/worksheets/sheet1.xml"] = sheet_xml(data_cells, sst, widths={3: 11})
+    parts["xl/worksheets/sheet2.xml"] = sheet_xml({(1, 1): "Pivot settings (refresh to fill)"}, sst)
+    parts["xl/worksheets/_rels/sheet2.xml.rels"] = rels(
+        [(f"rId{k}", "pivotTable", f"../pivotTables/pivotTable{k}.xml") for k in (1, 2, 3)]
+    )
+    for k, t in enumerate((t1, t2, t3), start=1):
+        parts[f"xl/pivotTables/pivotTable{k}.xml"] = t
+        parts[f"xl/pivotTables/_rels/pivotTable{k}.xml.rels"] = rels(
+            [("rId1", "pivotCacheDefinition", "../pivotCache/pivotCacheDefinition1.xml")]
+        )
+    parts["xl/pivotCache/pivotCacheDefinition1.xml"] = definition
+    parts["xl/pivotCache/pivotCacheRecords1.xml"] = records_
+    parts["xl/pivotCache/_rels/pivotCacheDefinition1.xml.rels"] = rels(
+        [("rId1", "pivotCacheRecords", "pivotCacheRecords1.xml")]
+    )
+    strings = "".join(f'<si><t xml:space="preserve">{escape(s)}</t></si>' for s in sst)
+    parts["xl/sharedStrings.xml"] = (
+        f'{HEAD}<sst xmlns="{MAIN}" count="{len(sst)}" uniqueCount="{len(sst)}">{strings}</sst>'
+    )
+    parts["xl/styles.xml"] = build()["xl/styles.xml"]
+    parts["xl/workbook.xml"] = (
+        f"{HEAD}<workbook {NS}><workbookPr defaultThemeVersion=\"166925\"/>"
+        '<bookViews><workbookView activeTab="1"/></bookViews>'
+        '<sheets><sheet name="Data" sheetId="1" r:id="rId1"/><sheet name="Settings" sheetId="2" r:id="rId2"/></sheets>'
+        '<calcPr calcId="191029"/><pivotCaches><pivotCache cacheId="1" r:id="rId5"/></pivotCaches>'
+        "</workbook>"
+    )
+    parts["xl/_rels/workbook.xml.rels"] = rels(
+        [
+            ("rId1", "worksheet", "worksheets/sheet1.xml"),
+            ("rId2", "worksheet", "worksheets/sheet2.xml"),
+            ("rId4", "styles", "styles.xml"),
+            ("rId5", "pivotCacheDefinition", "pivotCache/pivotCacheDefinition1.xml"),
+            ("rId7", "sharedStrings", "sharedStrings.xml"),
+        ]
+    )
+    parts["_rels/.rels"] = rels([("rId1", "officeDocument", "xl/workbook.xml")])
+    over = [("/xl/workbook.xml", f"{CT}.sheet.main+xml")]
+    over += [(f"/xl/worksheets/sheet{i}.xml", f"{CT}.worksheet+xml") for i in (1, 2)]
+    over += [("/xl/styles.xml", f"{CT}.styles+xml"), ("/xl/sharedStrings.xml", f"{CT}.sharedStrings+xml")]
+    over += [(f"/xl/pivotTables/pivotTable{k}.xml", f"{CT}.pivotTable+xml") for k in (1, 2, 3)]
+    over += [
+        ("/xl/pivotCache/pivotCacheDefinition1.xml", f"{CT}.pivotCacheDefinition+xml"),
+        ("/xl/pivotCache/pivotCacheRecords1.xml", f"{CT}.pivotCacheRecords+xml"),
+    ]
+    parts["[Content_Types].xml"] = (
+        f'{HEAD}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        + "".join(f'<Override PartName="{n}" ContentType="{t}"/>' for n, t in over)
+        + "</Types>"
+    )
+    return parts
+
+
+def write(path: Path, parts: dict[str, str] | None = None) -> None:
+    parts = build() if parts is None else parts
     order = ["[Content_Types].xml", "_rels/.rels", "xl/workbook.xml", "xl/_rels/workbook.xml.rels"]
     order += sorted(p for p in parts if p not in order)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -667,16 +936,22 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
     args = ap.parse_args()
+    fixtures = [(FIXTURE, build), (SETTINGS, build_settings)]
     if args.check:
-        tmp = FIXTURE.with_suffix(".check.xlsx")
-        write(tmp)
-        same = FIXTURE.exists() and tmp.read_bytes() == FIXTURE.read_bytes()
-        tmp.unlink()
-        if not same:
-            print(f"{FIXTURE.relative_to(ROOT)} is out of date; run {Path(__file__).name}")
+        stale = False
+        for path, make in fixtures:
+            tmp = path.with_suffix(".check.xlsx")
+            write(tmp, make())
+            same = path.exists() and tmp.read_bytes() == path.read_bytes()
+            tmp.unlink()
+            if not same:
+                print(f"{path.relative_to(ROOT)} is out of date; run {Path(__file__).name}")
+                stale = True
+        if stale:
             sys.exit(1)
         return
-    write(FIXTURE)
+    for path, make in fixtures:
+        write(path, make())
 
 
 if __name__ == "__main__":

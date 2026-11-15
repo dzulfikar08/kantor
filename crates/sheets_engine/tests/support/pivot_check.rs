@@ -134,11 +134,45 @@ pub fn pivot_problems(p: &BTreeMap<String, String>) -> Vec<String> {
         };
         count_ok(fields, "cacheField", part, &mut out);
         let n = els(fields, "cacheField").count();
+        // Fields in the records: not calculated or grouping fields.
+        let in_records = els(fields, "cacheField")
+            .filter(|f| !matches!(f.attribute("databaseField"), Some("0" | "false")))
+            .count();
+        // What records point at: shared items. What pivot field items point
+        // at: a grouped field's group items, else its shared items.
         let shared: Vec<usize> = els(fields, "cacheField")
             .map(|f| {
                 el(f, "sharedItems").map_or(0, |s| s.children().filter(|c| c.is_element()).count())
             })
             .collect();
+        let item_counts: Vec<usize> = els(fields, "cacheField")
+            .zip(&shared)
+            .map(|(f, s)| {
+                el(f, "fieldGroup")
+                    .and_then(|g| el(g, "groupItems"))
+                    .map_or(*s, |g| g.children().filter(|c| c.is_element()).count())
+            })
+            .collect();
+        for f in els(fields, "cacheField") {
+            if let Some(g) = el(f, "fieldGroup") {
+                if let Some(d) = el(g, "discretePr") {
+                    count_ok(d, "x", part, &mut out);
+                }
+                if let Some(gi) = el(g, "groupItems") {
+                    let have = gi.children().filter(|c| c.is_element()).count();
+                    if gi.attribute("count").and_then(|c| c.parse::<usize>().ok()) != Some(have) {
+                        out.push(format!("{part}: groupItems count doesn't match"));
+                    }
+                }
+                for a in ["par", "base"] {
+                    if let Some(v) = g.attribute(a)
+                        && v.parse::<usize>().is_ok_and(|v| v >= n)
+                    {
+                        out.push(format!("{part}: fieldGroup {a}={v} past the fields"));
+                    }
+                }
+            }
+        }
         for f in els(fields, "cacheField") {
             if f.attribute("name").is_none() {
                 out.push(format!("{part}: cacheField without name"));
@@ -153,7 +187,7 @@ pub fn pivot_problems(p: &BTreeMap<String, String>) -> Vec<String> {
             }
         }
         cache_fields.insert(part.clone(), n);
-        shared_items.insert(part.clone(), shared.clone());
+        shared_items.insert(part.clone(), item_counts.clone());
         match el(root, "cacheSource") {
             Some(s) if s.attribute("type").is_some() => {}
             _ => out.push(format!("{part}: cacheSource without type")),
@@ -173,8 +207,10 @@ pub fn pivot_problems(p: &BTreeMap<String, String>) -> Vec<String> {
                     }
                     for r in els(rroot, "r") {
                         let k = r.children().filter(|c| c.is_element()).count();
-                        if k != n {
-                            out.push(format!("{rp}: a record has {k} values for {n} fields"));
+                        if k != in_records {
+                            out.push(format!(
+                                "{rp}: a record has {k} values for {in_records} fields"
+                            ));
                             break;
                         }
                         let bad =

@@ -386,8 +386,9 @@ impl Workbook {
     /// last). Cells, formats, merged cells, column widths, row heights,
     /// conditional formats, the sheet's own names, notes, data validation,
     /// print settings, tables (renamed as Excel does: `Table1` → `Table12`),
-    /// charts (their references to the sheet now to the copy) and pictures
-    /// are copied. One undo step. Returns the copy's index.
+    /// charts (their references to the sheet now to the copy), pictures and
+    /// pivot tables (on the same caches, with new names) are copied. One
+    /// undo step. Returns the copy's index.
     pub fn copy_sheet(&mut self, sheet: u32, at: usize) -> Result<u32> {
         self.check_sheet(sheet)?;
         let mut order = self.slots();
@@ -421,6 +422,9 @@ impl Workbook {
             let id = wb.sheet_id(index);
             order.insert(pos, Slot::Sheet(id));
             wb.sheets_edited(&order);
+            // The source's index once the copy is in.
+            let from = if index <= sheet { sheet + 1 } else { sheet };
+            wb.copy_sheet_pivots(from, id)?;
             let mut renamed = Vec::new();
             for mut t in tables {
                 let new = wb.copy_table_name(&t.name);

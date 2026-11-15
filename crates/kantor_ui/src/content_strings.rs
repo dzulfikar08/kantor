@@ -32,6 +32,8 @@ pub const ENGINE_STRINGS: &[&str] = &[
     tk("Max"),
     tk("Min"),
     tk("Product"),
+    // Grouping (sheets_ui shows the date levels too).
+    tk("Group{}"),
     // Blank headers of a new table.
     tk("Column{}"),
     // Slides placeholder prompts and chart fallbacks.

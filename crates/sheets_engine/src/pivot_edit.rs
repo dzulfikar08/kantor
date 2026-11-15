@@ -19,6 +19,8 @@ use crate::pivot::{
     Cache, CacheField, DataField, Def, Field, Func, NEW_PREFIX, PageField, Rebuild, Source,
     StyleInfo, Val,
 };
+use crate::pivot_calc::{BASE_NEXT, BASE_PREVIOUS, PivotFilter, ShowAs, filter_family};
+use crate::pivot_group::{By, DateLevel, FieldGroup, GroupKind};
 use crate::shift::Area;
 use crate::{CellRange, Workbook, cell_name};
 
@@ -70,7 +72,7 @@ impl PivotFunc {
         }
     }
 
-    fn func(self) -> Func {
+    pub(crate) fn func(self) -> Func {
         match self {
             PivotFunc::Sum => Func::Sum,
             PivotFunc::Count => Func::Count,
@@ -86,7 +88,7 @@ impl PivotFunc {
         }
     }
 
-    fn of(f: Func) -> Self {
+    pub(crate) fn of(f: Func) -> Self {
         match f {
             Func::Sum => PivotFunc::Sum,
             Func::Count => PivotFunc::Count,
@@ -120,6 +122,104 @@ pub struct PivotValueField {
     pub name: Option<String>,
     /// Number format code of the value cells; `None` for General.
     pub num_fmt: Option<String>,
+    /// Show Values As.
+    pub show_as: ShowAs,
+    /// Its base field (for `% Of`, `Difference From`, running totals and
+    /// ranks).
+    pub base_field: Option<usize>,
+    pub base_item: PivotBaseItem,
+}
+
+/// The base item of `% Of` / `Difference From` / `% Difference From`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum PivotBaseItem {
+    #[default]
+    Previous,
+    Next,
+    /// An item, by its label.
+    Item(String),
+}
+
+/// A row or column field's subtotals (Field Settings).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum FieldSubtotals {
+    #[default]
+    Automatic,
+    None,
+    /// The functions picked, in Excel's order.
+    Custom(Vec<PivotFunc>),
+}
+
+/// How a field's items are sorted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum PivotSort {
+    /// In data source order (or as dragged).
+    #[default]
+    Manual,
+    Ascending,
+    Descending,
+}
+
+/// A label, value (Top 10, greater than, between...) or date filter.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PivotFieldFilter {
+    /// Excel's filter type (`captionBeginsWith`, `valueGreaterThan`,
+    /// `count`, `thisMonth`...): see [`crate::PIVOT_FILTER_TYPES`].
+    pub kind: String,
+    /// The value field (by position in [`PivotLayout::values`]) a value
+    /// or Top 10 filter tests.
+    pub value_field: Option<usize>,
+    pub value1: String,
+    pub value2: String,
+    /// Top 10: Top (else Bottom).
+    pub top: bool,
+}
+
+/// Field Settings of a row or column field.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PivotFieldSettings {
+    pub subtotals: FieldSubtotals,
+    pub form: ReportLayout,
+    pub repeat_labels: bool,
+    pub blank_line: bool,
+    pub sort: PivotSort,
+    /// Sort by a value field's values (by position in
+    /// [`PivotLayout::values`]) rather than by label.
+    pub sort_by_value: Option<usize>,
+    pub filter: Option<PivotFieldFilter>,
+}
+
+/// How a field is grouped by ranges (Excel's Grouping dialog).
+#[derive(Debug, Clone, PartialEq)]
+pub enum PivotGrouping {
+    Numbers {
+        start: f64,
+        end: f64,
+        by: f64,
+        auto_start: bool,
+        auto_end: bool,
+    },
+    Dates {
+        start: f64,
+        end: f64,
+        auto_start: bool,
+        auto_end: bool,
+        /// From the finest; at least one.
+        levels: Vec<DateLevel>,
+        /// Number of days, when Days is the only level.
+        days: u32,
+    },
+}
+
+/// The PivotTable Styles options (Design tab).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PivotStyleOptions {
+    /// `PivotStyleLight16`...; `None` for no style.
+    pub name: Option<String>,
+    pub row_headers: bool,
+    pub column_headers: bool,
+    pub banded_rows: bool,
+    pub banded_columns: bool,
 }
 
 /// An item (distinct value) of a source field.
@@ -130,16 +230,31 @@ pub struct PivotItem {
     pub hidden: bool,
 }
 
-/// A column of the source, as the field list shows it.
-#[derive(Debug, Clone, PartialEq)]
+/// A field of the pivot table's cache, as the field list shows it: a
+/// column of the source, a calculated field or a grouping field.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct PivotSourceField {
     pub name: String,
     /// Holds numbers (or dates) only: checking it adds it to Values.
     pub numeric: bool,
     /// The source's number format for its first value, if not General.
     pub num_fmt: Option<String>,
-    /// Its distinct values, sorted.
+    /// Its distinct values, sorted (a grouped field's groups, in order).
     pub items: Vec<PivotItem>,
+    /// Field Settings (as a row or column field).
+    pub settings: PivotFieldSettings,
+    /// A calculated field's formula (with `=`).
+    pub formula: Option<String>,
+    /// Its range grouping (on the field grouped; levels above the finest
+    /// are fields of their own, see `group_base`).
+    pub grouping: Option<PivotGrouping>,
+    /// A grouping field (`Years`, `Region2`): the field it groups.
+    pub group_base: Option<usize>,
+    /// Holds dates.
+    pub dates: bool,
+    /// Its smallest and largest values (numbers and dates).
+    pub min: Option<f64>,
+    pub max: Option<f64>,
 }
 
 /// Excel's Report Layout.
@@ -183,6 +298,7 @@ pub struct PivotLayout {
     pub grand_total_column: bool,
     /// Why it can't be changed or refreshed, if it can't.
     pub refresh_problem: Option<String>,
+    pub style: PivotStyleOptions,
 }
 
 impl PivotLayout {
@@ -239,6 +355,9 @@ impl PivotLayout {
     pub fn add_value(&mut self, f: usize) {
         let numeric = self.fields[f].numeric;
         self.values.push(PivotValueField {
+            show_as: ShowAs::Normal,
+            base_field: None,
+            base_item: PivotBaseItem::Previous,
             field: f,
             func: if numeric {
                 PivotFunc::Sum
@@ -595,11 +714,7 @@ impl Workbook {
         let fields: Vec<CacheField> = check
             .fields
             .iter()
-            .map(|n| CacheField {
-                name: n.clone(),
-                items: Vec::new(),
-                num_fmt_id: 0,
-            })
+            .map(|n| CacheField::source(n.clone()))
             .collect();
         let (sheet_id, new_sheet, top, left) = match dest {
             PivotDestination::NewSheet => {
@@ -629,6 +744,8 @@ impl Workbook {
             }
         };
         let k = self.pivots.defs.len() + 1;
+        // A pivot table on the same source shares its cache, as Excel does.
+        let shared = self.shared_cache_for(&src);
         let mut cache = new_cache(src, fields, layout.clone());
         cache.part = format!(
             "{NEW_PREFIX}pivotCacheDefinition{}.xml",
@@ -663,6 +780,7 @@ impl Workbook {
             col_items: Vec::new(),
             page_fields: Vec::new(),
             data_fields: Vec::new(),
+            filters: Vec::new(),
             row_grand: true,
             col_grand: true,
             style: StyleInfo {
@@ -687,9 +805,18 @@ impl Workbook {
             in_origin: false,
             root_sets: Vec::new(),
         };
-        let ci = self.pivots.caches.len();
+        let mut def = def;
+        let ci = match shared {
+            Some(ci) => {
+                def.cache = ci;
+                ci
+            }
+            None => {
+                self.pivots.caches.push(Arc::new(cache));
+                self.pivots.caches.len() - 1
+            }
+        };
         let di = self.pivots.defs.len();
-        self.pivots.caches.push(Arc::new(cache));
         self.pivots.defs.push(Arc::new(def.clone()));
         let change = Rebuild {
             defs: HashMap::from([(di, def)]),
@@ -700,7 +827,9 @@ impl Workbook {
             Ok(_) => {}
             Err(e) => {
                 self.pivots.defs.pop();
-                self.pivots.caches.pop();
+                if shared.is_none() {
+                    self.pivots.caches.pop();
+                }
                 return Err(e);
             }
         }
@@ -714,6 +843,39 @@ impl Workbook {
                 .position(|w| w.sheet_id == self.pivot_def(&self.pivot_state(), di).sheet_id)
                 .ok_or_else(|| anyhow!("the PivotTable's sheet is missing"))? as u32;
         Ok((sheet, top, left))
+    }
+
+    /// The cache of a pivot table in the workbook on source `src` (the
+    /// same range on the same sheet, or the same table or name), if one can
+    /// be shared.
+    fn shared_cache_for(&self, src: &Source) -> Option<usize> {
+        let state = self.pivot_state();
+        (0..self.pivots.defs.len())
+            .filter(|&i| self.pivot_present(&state, i))
+            .map(|i| self.pivot_def(&state, i).cache)
+            .find(|&ci| {
+                let c = self.pivot_cache(&state, ci);
+                if c.unsupported.is_some() {
+                    return false;
+                }
+                match (&c.source, src) {
+                    (Some(Source::Name(a)), Source::Name(b)) => a.eq_ignore_ascii_case(b),
+                    (
+                        Some(Source::Range { sheet, area }),
+                        Source::Range {
+                            sheet: s2,
+                            area: a2,
+                        },
+                    ) => {
+                        sheet.eq_ignore_ascii_case(s2)
+                            && self
+                                .sheet_index_by_name(sheet)
+                                .and_then(|k| self.now(&c.at, self.sheet_id(k), *area))
+                                == Some(*a2)
+                    }
+                    _ => false,
+                }
+            })
     }
 
     /// `PivotTable1`, `PivotTable2`... the first not taken.
@@ -754,9 +916,16 @@ impl Workbook {
                 .filter(|c| !c.is_empty() && c != "general")
         };
         let mut fields = Vec::with_capacity(cache.fields.len());
+        // Records, for grouped fields' items in use and calculated fields.
+        let records: Option<Vec<Vec<Val>>> = match (&source_data, &cache.records) {
+            (Some((_, _, d)), _) => Some(d.rows.clone()),
+            (None, Some(r)) => Some((**r).clone()),
+            _ => None,
+        };
         for (f, cf) in cache.fields.iter().enumerate() {
             // Distinct values: from the source now, else the cache.
             let column: Vec<Val> = match (&source_data, &cache.records) {
+                _ if !cf.database => Vec::new(),
                 (Some((_, _, d)), _) => match d
                     .names
                     .iter()
@@ -768,30 +937,57 @@ impl Workbook {
                 (None, Some(recs)) => recs.iter().filter_map(|r| r.get(f).cloned()).collect(),
                 (None, None) => cf.items.clone(),
             };
-            let numeric = column.iter().any(|v| v.number().is_some())
-                && column
+            let numeric = cf.formula.is_some()
+                || (cf.group.is_none()
+                    && column.iter().any(|v| v.number().is_some())
+                    && column
+                        .iter()
+                        .all(|v| v.number().is_some() || *v == Val::Missing));
+            let dates = column.iter().any(|v| matches!(v, Val::Date(_)));
+            let nums: Vec<f64> = column.iter().filter_map(Val::number).collect();
+            let (min, max) = if nums.is_empty() {
+                (None, None)
+            } else {
+                (
+                    Some(nums.iter().copied().fold(f64::INFINITY, f64::min)),
+                    Some(nums.iter().copied().fold(f64::NEG_INFINITY, f64::max)),
+                )
+            };
+            let grouped = cf.group.as_ref().is_some_and(|g| g.groups_items());
+            let values: Vec<Val> = if grouped {
+                // Groups in their order, those with data.
+                let used: Option<HashSet<usize>> = records.as_ref().and_then(|r| {
+                    crate::pivot_group::group_positions(&cache.fields, f, r)
+                        .map(|p| p.into_iter().flatten().collect())
+                });
+                cf.item_list()
                     .iter()
-                    .all(|v| v.number().is_some() || *v == Val::Missing);
-            let mut seen = HashSet::new();
-            let mut values: Vec<Val> = column
-                .iter()
-                .filter(|v| seen.insert(v.key()))
-                .cloned()
-                .collect();
-            values.sort_by(|a, b| {
-                a.sort_key()
-                    .partial_cmp(&b.sort_key())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            let hidden: HashSet<String> = def
-                .fields
-                .get(f)
+                    .enumerate()
+                    .filter(|(k, _)| used.as_ref().is_none_or(|u| u.contains(k)))
+                    .map(|(_, v)| v.clone())
+                    .collect()
+            } else {
+                let mut seen = HashSet::new();
+                let mut values: Vec<Val> = column
+                    .iter()
+                    .filter(|v| seen.insert(v.key()))
+                    .cloned()
+                    .collect();
+                values.sort_by(|a, b| {
+                    a.sort_key()
+                        .partial_cmp(&b.sort_key())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                values
+            };
+            let fd = def.fields.get(f);
+            let hidden: HashSet<String> = fd
                 .map(|fd| {
                     fd.items
                         .iter()
                         .filter(|it| it.hidden)
                         .filter_map(|it| it.x)
-                        .filter_map(|x| cf.items.get(x))
+                        .filter_map(|x| cf.item_list().get(x))
                         .map(|v| v.key())
                         .collect()
                 })
@@ -807,6 +1003,10 @@ impl Workbook {
                     .clone();
                 (!code.is_empty() && !code.eq_ignore_ascii_case("general")).then_some(code)
             });
+            let settings = fd
+                .map(|fd| field_settings(fd, f, &def.filters))
+                .unwrap_or_default();
+            let (grouping, group_base) = grouping_of(&cache.fields, f);
             fields.push(PivotSourceField {
                 name: cf.name.clone(),
                 numeric,
@@ -818,6 +1018,13 @@ impl Workbook {
                         hidden: hidden.contains(&v.key()),
                     })
                     .collect(),
+                settings,
+                formula: cf.formula.as_ref().map(|f| format!("={f}")),
+                grouping,
+                group_base,
+                dates,
+                min,
+                max,
             });
         }
         let entry = |x: &i32| match *x {
@@ -850,11 +1057,29 @@ impl Workbook {
                 let default = d
                     .func
                     .default_name(cache.fields.get(d.fld).map_or("", |c| c.name.as_str()));
+                let base_item = match d.base_item {
+                    _ if !d.show_as.needs_item() => PivotBaseItem::Previous,
+                    BASE_PREVIOUS => PivotBaseItem::Previous,
+                    BASE_NEXT => PivotBaseItem::Next,
+                    k => def
+                        .fields
+                        .get(d.base_field)
+                        .filter(|f| (k as usize) < f.items.len())
+                        .map_or(PivotBaseItem::Previous, |_| {
+                            PivotBaseItem::Item(
+                                def.item_label(&cache, d.base_field, k as usize).label(),
+                            )
+                        }),
+                };
                 PivotValueField {
                     field: d.fld,
                     func: PivotFunc::of(d.func),
                     name: d.name.clone().filter(|n| *n != default),
                     num_fmt: fmt_code(d.num_fmt_id),
+                    show_as: d.show_as,
+                    base_field: (d.show_as.needs_field() && d.base_field < cache.fields.len())
+                        .then_some(d.base_field),
+                    base_item,
                 }
             })
             .collect();
@@ -919,6 +1144,13 @@ impl Workbook {
                 .unsupported
                 .clone()
                 .or_else(|| def.unsupported.clone()),
+            style: PivotStyleOptions {
+                name: def.style.name.clone(),
+                row_headers: def.style.row_headers,
+                column_headers: def.style.col_headers,
+                banded_rows: def.style.row_stripes,
+                banded_columns: def.style.col_stripes,
+            },
         })
     }
 
@@ -940,6 +1172,27 @@ impl Workbook {
         }
         let nf = cache.fields.len();
         let ok = |f: usize| f < nf && f < layout.fields.len();
+        // A calculated field can only be summarised (as in Excel).
+        for e in layout.rows.iter().chain(&layout.columns) {
+            if let AxisEntry::Field(f) = e
+                && cache.fields.get(*f).is_some_and(|c| c.formula.is_some())
+            {
+                bail!(
+                    "The field {} is a calculated field: it can only go in Values",
+                    cache.fields[*f].name
+                );
+            }
+        }
+        if let Some(f) = layout
+            .filters
+            .iter()
+            .find(|f| cache.fields.get(**f).is_some_and(|c| c.formula.is_some()))
+        {
+            bail!(
+                "The field {} is a calculated field: it can only go in Values",
+                cache.fields[*f].name
+            );
+        }
         let mut def = (*base).clone();
         let axis = |list: &[AxisEntry]| -> Vec<i32> {
             list.iter()
@@ -999,11 +1252,26 @@ impl Workbook {
                 })?),
                 None => None,
             };
+            if v.show_as.needs_field() && v.base_field.is_none_or(|b| !ok(b)) {
+                bail!(
+                    "choose a base field for {:?} ({})",
+                    layout.value_caption(k),
+                    v.show_as.label()
+                );
+            }
             data_fields.push(DataField {
                 name: Some(name),
                 fld: v.field,
                 func: v.func.func(),
                 num_fmt_id,
+                show_as: v.show_as,
+                // The item is matched once the cache is rebuilt.
+                base_field: v.base_field.filter(|b| ok(*b)).unwrap_or(0),
+                base_item: match v.base_item {
+                    _ if !v.show_as.needs_item() => 0,
+                    PivotBaseItem::Next => BASE_NEXT,
+                    _ => BASE_PREVIOUS,
+                },
                 xml: None,
             });
         }
@@ -1035,22 +1303,112 @@ impl Workbook {
             .chain(layout.filters.iter().copied().filter(|f| ok(*f)))
             .map(|f| cache.fields[f].name.clone())
             .collect();
+        // A changed report layout or subtotal place applies to every
+        // field (as Excel's Design tab does); else each field's settings.
+        let current = self.pivot_layout(sheet, row, col);
+        let all_layout = current.as_ref().is_none_or(|c| c.layout != layout.layout);
+        let all_subtotals = current
+            .as_ref()
+            .is_none_or(|c| c.subtotals != layout.subtotals);
+        // Filters, by field name (one per field, as Excel keeps them).
+        let mut filters: Vec<(String, PivotFieldFilter)> = Vec::new();
+        for (f, sf) in layout.fields.iter().enumerate() {
+            let Some(flt) = &sf.settings.filter else {
+                continue;
+            };
+            if !ok(f) || filter_family(&flt.kind).is_none() {
+                bail!("{:?} is not a filter Kantor knows", flt.kind);
+            }
+            let needs_value = matches!(
+                filter_family(&flt.kind),
+                Some(crate::pivot_calc::FilterFamily::Value | crate::pivot_calc::FilterFamily::Top)
+            );
+            if needs_value && flt.value_field.is_none_or(|v| v >= layout.values.len()) {
+                bail!("choose the value field the filter on {} tests", sf.name);
+            }
+            filters.push((cache.fields[f].name.clone(), flt.clone()));
+        }
         let wanted = layout.clone();
+        let d_values = layout.values.len();
         let adjust = move |d: &mut Def, c: &Cache| {
             let report = wanted.layout;
+            let by_name = |name: &str| {
+                wanted
+                    .fields
+                    .iter()
+                    .position(|w| w.name.eq_ignore_ascii_case(name))
+            };
             for (j, f) in d.fields.iter_mut().enumerate() {
-                f.compact = report == ReportLayout::Compact;
-                f.outline = report != ReportLayout::Tabular;
-                f.default_subtotal = wanted.subtotals != SubtotalPlace::Off;
-                f.subtotal_top = wanted.subtotals == SubtotalPlace::Top;
-                let Some(lf) = c.fields.get(j).and_then(|cf| {
-                    wanted
-                        .fields
-                        .iter()
-                        .find(|w| w.name.eq_ignore_ascii_case(&cf.name))
-                }) else {
+                let lf = c
+                    .fields
+                    .get(j)
+                    .and_then(|cf| by_name(&cf.name))
+                    .map(|k| &wanted.fields[k]);
+                let form = match (all_layout, lf) {
+                    (false, Some(lf)) => lf.settings.form,
+                    _ => report,
+                };
+                f.compact = form == ReportLayout::Compact;
+                f.outline = form != ReportLayout::Tabular;
+                if all_subtotals || lf.is_none() {
+                    f.default_subtotal = wanted.subtotals != SubtotalPlace::Off;
+                    f.subtotal_top = wanted.subtotals == SubtotalPlace::Top;
+                    f.subtotals.clear();
+                } else if let Some(lf) = lf {
+                    match &lf.settings.subtotals {
+                        FieldSubtotals::Automatic => {
+                            f.default_subtotal = true;
+                            f.subtotals.clear();
+                        }
+                        FieldSubtotals::None => {
+                            f.default_subtotal = false;
+                            f.subtotals.clear();
+                        }
+                        FieldSubtotals::Custom(list) => {
+                            f.default_subtotal = false;
+                            f.subtotals = PivotFunc::ALL
+                                .into_iter()
+                                .filter(|x| list.contains(x))
+                                .map(PivotFunc::func)
+                                .collect();
+                        }
+                    }
+                }
+                let Some(lf) = lf else {
                     continue;
                 };
+                f.fill_down = lf.settings.repeat_labels;
+                f.insert_blank = lf.settings.blank_line;
+                f.sort = match lf.settings.sort {
+                    PivotSort::Manual => None,
+                    PivotSort::Ascending => Some("ascending".into()),
+                    PivotSort::Descending => Some("descending".into()),
+                };
+                f.sort_by = lf
+                    .settings
+                    .sort_by_value
+                    .filter(|v| *v < d_values)
+                    .filter(|_| lf.settings.sort != PivotSort::Manual);
+                // Items in label order for a field sorted by label.
+                if f.sort_by.is_none() && lf.settings.sort != PivotSort::Manual {
+                    let grouped = c.fields[j].group.as_ref().is_some_and(|g| g.groups_items());
+                    let list = c.fields[j].item_list();
+                    let desc = lf.settings.sort == PivotSort::Descending;
+                    let (mut items, subs): (Vec<_>, Vec<_>) =
+                        f.items.drain(..).partition(|it| it.x.is_some());
+                    items.sort_by(|a, b| {
+                        let o = if grouped {
+                            a.x.cmp(&b.x)
+                        } else {
+                            let k = |i: &crate::pivot::FieldItem| {
+                                list.get(i.x.unwrap_or(0)).map(|v| v.sort_key())
+                            };
+                            k(a).partial_cmp(&k(b)).unwrap_or(std::cmp::Ordering::Equal)
+                        };
+                        if desc { o.reverse() } else { o }
+                    });
+                    f.items = items.into_iter().chain(subs).collect();
+                }
                 let hidden: HashSet<&str> = lf
                     .items
                     .iter()
@@ -1085,6 +1443,76 @@ impl Workbook {
                     })
                 });
             }
+            // Value fields' base items, by label.
+            let labels: Vec<Vec<(bool, String)>> = (0..d.fields.len())
+                .map(|f| {
+                    (0..d.fields[f].items.len())
+                        .map(|i| {
+                            (
+                                d.fields[f].items[i].x.is_some(),
+                                d.item_label(c, f, i).label(),
+                            )
+                        })
+                        .collect()
+                })
+                .collect();
+            for (k, df) in d.data_fields.iter_mut().enumerate() {
+                let Some(v) = wanted.values.get(k) else {
+                    continue;
+                };
+                let Some(bf) = v
+                    .base_field
+                    .and_then(|b| wanted.fields.get(b))
+                    .and_then(|w| {
+                        c.fields
+                            .iter()
+                            .position(|cf| cf.name.eq_ignore_ascii_case(&w.name))
+                    })
+                else {
+                    continue;
+                };
+                df.base_field = bf;
+                if let PivotBaseItem::Item(label) = &v.base_item {
+                    df.base_item = labels[bf]
+                        .iter()
+                        .position(|(real, l)| *real && l == label)
+                        .map_or(BASE_PREVIOUS, |i| i as u32);
+                }
+            }
+            d.filters = filters
+                .iter()
+                .filter_map(|(name, f)| {
+                    let fld = c
+                        .fields
+                        .iter()
+                        .position(|cf| cf.name.eq_ignore_ascii_case(name))?;
+                    Some(PivotFilter {
+                        fld,
+                        kind: f.kind.clone(),
+                        measure: f.value_field.filter(|v| *v < d.data_fields.len()),
+                        v1: f.value1.clone(),
+                        v2: f.value2.clone(),
+                        top: f.top,
+                    })
+                })
+                .filter(|f| {
+                    !matches!(
+                        filter_family(&f.kind),
+                        Some(
+                            crate::pivot_calc::FilterFamily::Value
+                                | crate::pivot_calc::FilterFamily::Top
+                        )
+                    ) || f.measure.is_some()
+                })
+                .collect();
+            d.style = StyleInfo {
+                name: wanted.style.name.clone(),
+                row_headers: wanted.style.row_headers,
+                col_headers: wanted.style.column_headers,
+                row_stripes: wanted.style.banded_rows,
+                col_stripes: wanted.style.banded_columns,
+                last_column: d.style.last_column,
+            };
             d.root_sets = vec![
                 ("rowGrandTotals", u8::from(d.row_grand).to_string()),
                 ("colGrandTotals", u8::from(d.col_grand).to_string()),
@@ -1114,9 +1542,54 @@ impl Workbook {
             defs: HashMap::from([(i, def)]),
             axis: axis_names,
             adjust: Some(Box::new(adjust)),
-            new_sheet: None,
+            ..Default::default()
         };
         self.rebuild_pivots(&[base.cache], change)?;
+        Ok(())
+    }
+
+    /// Give the copy of sheet `from` (Move or Copy, already made, with
+    /// `sheetId` `to_id`) copies of its pivot tables, on the same caches
+    /// (the cells came with the sheet). Part of the copy's undo step.
+    pub(crate) fn copy_sheet_pivots(&mut self, from: u32, to_id: u32) -> Result<()> {
+        let placed = self.placed_pivots(from);
+        if placed.is_empty() {
+            return Ok(());
+        }
+        self.keep_pivot_records()
+            .map_err(|e| anyhow!("can't copy the PivotTables: {e}"))?;
+        let state = self.pivot_state();
+        let layout = self.history.layout();
+        let mut next = (*state).clone();
+        for p in placed.iter() {
+            let laid = match state.defs.get(&p.index) {
+                Some(l) => (**l).clone(),
+                None => crate::pivot::laid_of(&p.def),
+            };
+            let name = self.next_pivot_name();
+            let k = self.pivots.defs.len() + 1;
+            let mut def = laid.def.clone();
+            def.part = format!("{NEW_PREFIX}pivotTable{k}.xml");
+            def.sheet_id = to_id;
+            def.name = name;
+            def.location = p.area;
+            def.at = layout.clone();
+            def.added = true;
+            def.in_origin = false;
+            let index = self.pivots.defs.len();
+            self.pivots.defs.push(Arc::new(def.clone()));
+            next.defs.insert(
+                index,
+                Arc::new(crate::pivot::LaidXml {
+                    def,
+                    row_items_xml: laid.row_items_xml,
+                    col_items_xml: laid.col_items_xml,
+                }),
+            );
+        }
+        self.history.set_pivot_state(Arc::new(next));
+        self.cache.borrow_mut().pivots.clear();
+        self.sync_pivot_grids(true);
         Ok(())
     }
 
@@ -1176,6 +1649,10 @@ fn new_field() -> Field {
         sort: None,
         name: None,
         subtotal_caption: None,
+        subtotals: Vec::new(),
+        insert_blank: false,
+        fill_down: false,
+        sort_by: None,
         xml: None,
     }
 }
@@ -1249,4 +1726,103 @@ fn def_skeleton(name: &str, captions: &Captions) -> String {
         esc(name),
         captions.attributes()
     )
+}
+
+/// Field Settings of field `f` as the definition has them.
+fn field_settings(fd: &Field, f: usize, filters: &[PivotFilter]) -> PivotFieldSettings {
+    PivotFieldSettings {
+        subtotals: if !fd.subtotals.is_empty() {
+            FieldSubtotals::Custom(fd.subtotals.iter().map(|x| PivotFunc::of(*x)).collect())
+        } else if fd.default_subtotal {
+            FieldSubtotals::Automatic
+        } else {
+            FieldSubtotals::None
+        },
+        form: if !fd.outline {
+            ReportLayout::Tabular
+        } else if !fd.compact {
+            ReportLayout::Outline
+        } else {
+            ReportLayout::Compact
+        },
+        repeat_labels: fd.fill_down,
+        blank_line: fd.insert_blank,
+        sort: match fd.sort.as_deref() {
+            Some("ascending") => PivotSort::Ascending,
+            Some("descending") => PivotSort::Descending,
+            _ => PivotSort::Manual,
+        },
+        sort_by_value: fd.sort_by,
+        filter: filters
+            .iter()
+            .find(|x| x.fld == f)
+            .map(|x| PivotFieldFilter {
+                kind: x.kind.clone(),
+                value_field: x.measure,
+                value1: x.v1.clone(),
+                value2: x.v2.clone(),
+                top: x.top,
+            }),
+    }
+}
+
+/// The range grouping field `f` shows (the finest level, with the levels
+/// above it), and the field a grouping field groups.
+fn grouping_of(fields: &[CacheField], f: usize) -> (Option<PivotGrouping>, Option<usize>) {
+    let Some(g) = fields.get(f).and_then(|c| c.group.as_ref()) else {
+        return (None, None);
+    };
+    let base = g.base.filter(|b| *b != f);
+    let Some(GroupKind::Range(r)) = &g.kind else {
+        return (None, base);
+    };
+    if base.is_some() {
+        return (None, base);
+    }
+    let grouping = match r.by {
+        By::Numbers => PivotGrouping::Numbers {
+            start: r.start,
+            end: r.end,
+            by: r.interval,
+            auto_start: r.auto_start,
+            auto_end: r.auto_end,
+        },
+        By::Date(level) => {
+            let mut levels = vec![level];
+            let mut par = g.par;
+            let mut guard = 0;
+            while let Some(p) = par {
+                guard += 1;
+                let Some(FieldGroup {
+                    kind: Some(GroupKind::Range(pr)),
+                    par: next,
+                    ..
+                }) = fields.get(p).and_then(|c| c.group.as_ref())
+                else {
+                    break;
+                };
+                if let By::Date(l) = pr.by {
+                    levels.push(l);
+                }
+                par = *next;
+                if guard > 10 {
+                    break;
+                }
+            }
+            levels.sort();
+            PivotGrouping::Dates {
+                start: r.start,
+                end: r.end,
+                auto_start: r.auto_start,
+                auto_end: r.auto_end,
+                levels,
+                days: if level == DateLevel::Days {
+                    r.interval.round().max(1.0) as u32
+                } else {
+                    1
+                },
+            }
+        }
+    };
+    (Some(grouping), None)
 }
