@@ -21,6 +21,7 @@ extern crate gpui_kit as gpui;
 
 mod agent;
 mod ai;
+mod field_menu;
 mod fields;
 mod find;
 mod floats;
@@ -142,6 +143,9 @@ actions!(
         InsertEndnote,
         UpdateFields,
         UpdateTable,
+        ToggleFieldCodes,
+        ToggleFieldCode,
+        InsertFieldChars,
         ZoomIn,
         ZoomOut,
         ZoomReset,
@@ -210,6 +214,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("tab", Tab, c),
         KeyBinding::new("shift-tab", BackTab, c),
         KeyBinding::new("f9", UpdateFields, c),
+        KeyBinding::new("alt-f9", ToggleFieldCodes, c),
+        KeyBinding::new("shift-f9", ToggleFieldCode, c),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-f9"), InsertFieldChars, c),
     ];
     // Shortcuts with the primary modifier: Ctrl, and Super as Mac-style Cmd.
     macro_rules! primary {
@@ -517,6 +524,8 @@ pub struct DocsView {
     painter: Rc<docs_pdf::floats::Painter>,
     /// A header, footer or note being edited on the page.
     part: Option<part::PartSession>,
+    /// The field code, Insert Field, Bookmark or Cross-reference popover.
+    field_menu: Option<field_menu::FieldMenu>,
 }
 
 /// Cache key: everything that affects shaping and line breaking.
@@ -531,7 +540,7 @@ fn layout_key(p: &docs_layout::Paragraph, width: f32) -> u64 {
     for v in [p.indent_left_pt, p.indent_right_pt, p.first_line_pt] {
         v.to_bits().hash(&mut h);
     }
-    format!("{:?}{:?}{:?}", p.marker, p.objects, p.tabs).hash(&mut h);
+    format!("{:?}{:?}{:?}{:?}", p.marker, p.objects, p.tabs, p.hidden).hash(&mut h);
     p.default_tab.to_bits().hash(&mut h);
     p.decimal.hash(&mut h);
     for s in &p.spans {
@@ -625,6 +634,7 @@ impl DocsView {
             text_box_edit: None,
             painter: Rc::new(docs_pdf::floats::Painter::new(&doc_for_painter)),
             part: None,
+            field_menu: None,
         };
         this.relayout();
         this.refresh_spelling(cx);
@@ -1441,13 +1451,21 @@ impl DocsView {
     /// the file to the system's PDF viewer afterwards (Print).
     fn write_pdf(&mut self, path: PathBuf, open: bool, cx: &mut Context<Self>) {
         let swapped = self.whole_in();
-        let scene = docs_pdf::scene_of(
-            &self.doc,
-            &self.laid.paged,
-            &self.laid.furniture,
-            &self.laid.floats,
-            &self.laid.strikes,
-        );
+        // Printed with field results, whatever shows on screen (Word).
+        let scene = if self.doc.field_codes().is_some() {
+            let mut doc = self.doc.clone();
+            doc.set_field_codes(None);
+            let laid = docs_pdf::lay_out(&doc, &mut self.engine.borrow_mut());
+            docs_pdf::scene(&doc, &laid)
+        } else {
+            docs_pdf::scene_of(
+                &self.doc,
+                &self.laid.paged,
+                &self.laid.furniture,
+                &self.laid.floats,
+                &self.laid.strikes,
+            )
+        };
         if swapped {
             self.whole_out();
         }
@@ -1600,6 +1618,15 @@ impl DocsView {
         let Some(pos) = self.hit(ev.position) else {
             return;
         };
+        // A double click on a field's code edits it.
+        if ev.click_count == 2
+            && let Some(f) = self.doc.field_at(pos)
+            && self.codes().shows(f.mark_id())
+        {
+            let at = point(ev.position.x, ev.position.y + SPACE_5);
+            self.open_code_edit(Some(f.begin), &f.instr, at, window, cx);
+            return;
+        }
         // Ctrl+click follows a hyperlink (Word's default).
         if ev.click_count == 1
             && ev.modifiers.secondary(cx)
@@ -2530,6 +2557,11 @@ impl Render for DocsView {
                 cx.notify()
             },
             Collapse => |this, w, cx| {
+                if this.field_menu.take().is_some() {
+                    this.focus(w, cx);
+                    cx.notify();
+                    return;
+                }
                 if this.part.is_some() {
                     match this.part_target() {
                         Some(part::PartTarget::Note { .. }) => this.leave_note_to_reference(w, cx),
@@ -2608,6 +2640,9 @@ impl Render for DocsView {
             InsertEndnote => |this, w, cx| this.insert_note_doc(docs_engine::NoteKind::Endnote, w, cx),
             UpdateFields => |this, w, cx| this.update_fields_doc(w, cx),
             UpdateTable => |this, w, cx| this.update_table_doc(w, cx),
+            ToggleFieldCodes => |this, _w, cx| this.toggle_field_codes_doc(cx),
+            ToggleFieldCode => |this, _w, cx| this.toggle_field_code_doc(cx),
+            InsertFieldChars => |this, w, cx| this.new_field_code_doc(w, cx),
             Redo => |this, w, cx| this.redo_doc(w, cx),
             ZoomIn => |this, _w, cx| this.zoom_by(ZOOM_STEP, cx),
             ZoomOut => |this, _w, cx| this.zoom_by(1.0 / ZOOM_STEP, cx),
@@ -2632,6 +2667,7 @@ impl Render for DocsView {
             .children(self.render_page_menu(cx))
             .children(self.render_tab_menu(cx))
             .children(self.render_text_box_menu(cx))
+            .children(self.render_field_menu(cx))
     }
 }
 

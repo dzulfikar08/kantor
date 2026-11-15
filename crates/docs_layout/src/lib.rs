@@ -242,6 +242,10 @@ pub struct Paragraph {
     pub floats: Vec<FloatSpec>,
     /// Footnotes that may continue on the next page: where each may break.
     pub note_splits: Vec<NoteSplit>,
+    /// Byte ranges laid out with no width and drawn in no colour (a
+    /// field's result while its code shows, Word's Alt+F9). Offsets stay
+    /// those of `text`.
+    pub hidden: Vec<Range<usize>>,
 }
 
 /// Where a footnote may break when it's too long for its page.
@@ -372,7 +376,17 @@ impl Paragraph {
             no_wrap: false,
             floats: Vec::new(),
             note_splits: Vec::new(),
+            hidden: Vec::new(),
         }
+    }
+
+    /// Whether byte `at` is in a hidden range.
+    pub fn is_hidden_at(&self, at: usize) -> bool {
+        self.is_hidden(at)
+    }
+
+    fn is_hidden(&self, at: usize) -> bool {
+        self.hidden.iter().any(|r| r.contains(&at))
     }
 
     /// The text as shaped: same byte offsets, layout stand-ins for tabs,
@@ -525,7 +539,12 @@ impl Engine {
         }
         let first = self.layout_with_tabs(para, width, &vec![0.01; tabs.len()]);
         let plan = tab_widths(para, &first, &tabs, width);
-        let widths: Vec<f32> = plan.iter().map(|p| p.0).collect();
+        // Hidden tabs take no room.
+        let widths: Vec<f32> = plan
+            .iter()
+            .zip(&tabs)
+            .map(|(p, &at)| if para.is_hidden(at) { 0.0 } else { p.0 })
+            .collect();
         let mut laid = self.layout_with_tabs(para, width, &widths);
         laid.tab_fills = tabs
             .iter()
@@ -686,6 +705,12 @@ impl Engine {
         }
         for (at, _) in para.text.char_indices().filter(|(_, c)| *c == '\t') {
             b.push(StyleProperty::FontSize(0.01), at..at + 1);
+        }
+        for r in &para.hidden {
+            let r = r.start.min(text.len())..r.end.min(text.len());
+            b.push(StyleProperty::FontSize(0.01), r.clone());
+            b.push(StyleProperty::Brush(Rgba([0, 0, 0, 0])), r.clone());
+            b.push(StyleProperty::Underline(false), r);
         }
         for ib in boxes {
             b.push_inline_box(ib);

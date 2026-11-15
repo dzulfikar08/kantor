@@ -178,6 +178,7 @@ fn story_layout(
     let sd = &doc.stories()[index].doc;
     let marks = Marks {
         pages: Some([page.to_owned(), pages.to_owned(), section_pages.to_owned()]),
+        codes: doc.field_codes().cloned(),
         ..Marks::default()
     };
     lay_story(
@@ -202,6 +203,7 @@ fn note_layout(
     let nd = &doc.notes()[index].doc;
     let marks = Marks {
         own: Some(label.to_owned()),
+        codes: doc.field_codes().cloned(),
         ..Marks::default()
     };
     lay_story(
@@ -335,6 +337,7 @@ fn body_with_notes(
         own: None,
         no_floats: false,
         pages: None,
+        codes: doc.field_codes().cloned(),
     };
     let (mut lps, widths, blocks) = build::build_marked(doc, &marks);
     for r in refs.iter().filter(|r| r.kind == NoteKind::Footnote) {

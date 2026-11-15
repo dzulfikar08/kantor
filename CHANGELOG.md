@@ -81,6 +81,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   pictures, tables). Insert Footnote (Ctrl+Alt+F) and Insert Endnote (Ctrl+Alt+D) put the caret in
   the new note; a double click on a note's number goes to the note, and on the note's own number
   back to the text (Esc too).
+- Docs: field codes, as in Word. Alt+F9 shows every field's code (`{ PAGEREF _Toc123 \h }`)
+  instead of its result and back, Shift+F9 the field at the caret; double-click a code to edit it,
+  and Enter or F9 updates the field and shows its result. Ctrl+F9 starts a new field from its
+  code. Insert Field… (palette) lists common fields: the date and time with a format, page number
+  and page count (1, 2, 3 or i, ii, iii…), author, title, file name, and a bookmark's text or page,
+  showing the code it inserts. Insert Bookmark… adds, goes to and deletes bookmarks, and Insert
+  Cross-reference… points to a heading, bookmark, footnote, endnote or caption (its text, page
+  number, number or "above/below", as a link). F9 also works in headers, footers and notes, and
+  F9 with the whole document selected updates their fields too. Printing and PDF always show the
+  results.
 
 ### Changed
 - Docs: files with a table of contents or cross-references are saved in place like any other

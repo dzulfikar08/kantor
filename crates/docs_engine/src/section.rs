@@ -337,6 +337,20 @@ impl PageField {
         }
     }
 
+    /// A new field object (`w:fldSimple`) with instruction `instr` (its
+    /// switches kept), showing `shown` until laid out.
+    pub fn object_with(self, instr: &str, shown: &str) -> Object {
+        Object::Opaque(Arc::new(Opaque {
+            level: Level::Para,
+            xml: format!(
+                "<w:fldSimple w:instr=\"{}\"><w:r><w:t>{}</w:t></w:r></w:fldSimple>",
+                xml::escape(instr),
+                xml::escape(shown)
+            ),
+            label: shown.to_owned(),
+        }))
+    }
+
     /// A new field object (`w:fldSimple`), showing `shown` until laid out.
     pub fn object(self, shown: &str) -> Object {
         Object::Opaque(Arc::new(Opaque {

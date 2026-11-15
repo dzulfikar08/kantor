@@ -484,7 +484,6 @@ Docs · table	Docs · tabel
 Docs · PNG or JPEG	Docs · PNG atau JPEG
 Docs · paper size, orientation, margins	Docs · ukuran kertas, orientasi, margin
 Docs · tab stops: position, alignment, leader, default stops	Docs · perhentian tab: posisi, perataan, pengisi, perhentian default
-Docs · text, page numbers, different first page, odd and even pages	Docs · teks, nomor halaman, halaman pertama berbeda, halaman ganjil dan genap
 Docs · "Page 1 of 9" centred in the footer	Docs · "Halaman 1 dari 9" di tengah footer
 Docs · the page number at the caret	Docs · nomor halaman di posisi kursor
 Docs · the fields in the selection, or the one at the caret: dates, cross-references, contents	Docs · bidang di pilihan, atau yang di posisi kursor: tanggal, referensi silang, daftar isi
@@ -546,3 +545,14 @@ Next Note	Catatan Berikutnya
 Sheets · go to the next cell with a note	Sheets · ke sel berikutnya yang berisi catatan
 Previous Note	Catatan Sebelumnya
 Sheets · go to the previous cell with a note	Sheets · ke sel sebelumnya yang berisi catatan
+Delete Footnote or Endnote	Hapus Catatan Kaki atau Catatan Akhir
+Docs · date, page number, document properties, references to bookmarks	Docs · tanggal, nomor halaman, properti dokumen, referensi ke penanda
+Docs · edit them on the page: different first page, odd and even pages, link to previous	Docs · edit langsung di halaman: halaman pertama berbeda, halaman ganjil dan genap, tautkan ke sebelumnya
+Docs · every field's code instead of its result, or back (Shift+F9: the one at the caret)	Docs · kode setiap bidang sebagai ganti hasilnya, atau sebaliknya (Shift+F9: bidang di posisi kursor)
+Docs · name the selection to go to it or refer to it	Docs · beri nama pada pilihan untuk membukanya atau merujuknya
+Docs · the note being edited, or the one whose number is at the caret	Docs · catatan yang sedang diedit, atau yang nomornya di posisi kursor
+Docs · to a heading, bookmark, footnote, endnote or caption	Docs · ke judul, penanda, catatan kaki, catatan akhir, atau keterangan
+Insert Bookmark…	Sisipkan Penanda…
+Insert Cross-reference…	Sisipkan Referensi Silang…
+Insert Field…	Sisipkan Bidang…
+Show Field Codes	Tampilkan Kode Bidang

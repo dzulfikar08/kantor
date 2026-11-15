@@ -176,7 +176,7 @@ export const en = {
   limits: [
     "Printing goes through your PDF viewer: Kantor makes the pages and the viewer sends them to the printer.",
     "Word: equations and grouped shapes aren't shown properly yet, and text wraps around a floating picture's box rather than its outline. Kantor keeps them and saves them unchanged.",
-    "Word: fields show their results and F9 updates them (dates, cross-references, captions, tables of contents), but field codes can't be shown or edited yet, and fields Kantor can't work out, such as formulas and IF, keep the result Word saved.",
+    "Word: fields show their results and F9 updates them (dates, cross-references, captions, tables of contents), Alt+F9 shows and edits field codes, and Insert Field, Bookmark and Cross-reference work as in Word, but fields Kantor can't work out, such as formulas and IF, keep the result Word saved.",
     "Word: you can track your own edits, add comments and accept or reject changes, but formatting changes you make aren't tracked yet.",
     "Word 97-2003 (.doc): text boxes, floating pictures and shapes, comments and WMF/EMF pictures aren't brought in, and files from Word 6 or Word 95 and password-protected files don't open.",
     "Excel: conditional formatting rules, tables (Format as Table), data validation and page setup can be made and changed in Kantor; files changed this way haven't been opened in Excel itself yet.",
@@ -368,7 +368,7 @@ export const id = {
   limits: [
     "Pencetakan lewat penampil PDF: Kantor menyiapkan halamannya, lalu penampil PDF mengirimnya ke printer.",
     "Word: persamaan dan bentuk yang dikelompokkan belum tampil dengan benar, dan teks membungkus kotak gambar mengambang, bukan garis bentuknya. Kantor menyimpannya tanpa diubah.",
-    "Word: bidang (field) menampilkan hasilnya dan F9 memperbaruinya (tanggal, referensi silang, keterangan, daftar isi), tetapi kode bidang belum bisa ditampilkan atau diedit, dan bidang yang belum bisa dihitung Kantor, seperti rumus dan IF, tetap memakai hasil yang disimpan Word.",
+    "Word: bidang (field) menampilkan hasilnya dan F9 memperbaruinya (tanggal, referensi silang, keterangan, daftar isi), Alt+F9 menampilkan dan mengedit kode bidang, dan Sisipkan Bidang, Penanda, serta Referensi Silang bekerja seperti di Word, tetapi bidang yang belum bisa dihitung Kantor, seperti rumus dan IF, tetap memakai hasil yang disimpan Word.",
     "Word: Anda bisa melacak suntingan Anda sendiri (track changes), menambah komentar, dan menerima atau menolak perubahan, tetapi perubahan format yang Anda buat belum dilacak.",
     "Word 97-2003 (.doc): kotak teks, gambar dan bentuk mengambang, komentar, serta gambar WMF/EMF tidak ikut terbuka, dan file dari Word 6 atau Word 95 serta file berkata sandi tidak bisa dibuka.",
     "Excel: aturan format bersyarat, tabel (Format as Table), validasi data, dan pengaturan halaman bisa dibuat dan diubah di Kantor; file yang diubah dengan cara ini belum dicoba dibuka di Excel sendiri.",

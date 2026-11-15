@@ -189,3 +189,50 @@ In Front of Text	Di Depan Teks
 Write the text box's text	Tulis teks kotak teks
 Text box updated	Kotak teks diperbarui
 This text box has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet	Kotak teks ini berisi gambar, tabel, atau objek lain; Kantor menampilkannya dan mempertahankannya apa adanya, tetapi belum dapat mengeditnya
+Footnote	Catatan Kaki
+Endnote	Catatan Akhir
+A bookmark's text	Teks penanda
+Above/below	Di atas/di bawah
+Add	Tambah
+Add path to file name	Tambahkan jalur ke nama file
+Bookmark	Penanda
+Bookmark name	Nama penanda
+Bookmark names start with a letter and have only letters, numbers and underscores	Nama penanda diawali huruf dan hanya berisi huruf, angka, dan garis bawah
+Bookmark text	Teks penanda
+Bookmark “{}” added	Penanda “{}” ditambahkan
+Bookmark “{}” deleted	Penanda “{}” dihapus
+Choose what the cross-reference points to	Pilih yang dirujuk referensi silang
+Cross-reference	Referensi Silang
+Endnote number	Nomor catatan akhir
+Enter updates the field; Esc cancels	Enter memperbarui bidang; Esc membatalkan
+Entire caption	Seluruh keterangan
+Equation	Persamaan
+Field	Bidang
+Field code	Kode bidang
+Field codes shown: Alt+F9 shows the results again	Kode bidang ditampilkan: Alt+F9 menampilkan hasilnya lagi
+Field results shown	Hasil bidang ditampilkan
+Figure	Gambar
+Footnote number	Nomor catatan kaki
+Go To	Buka
+Heading	Judul
+Heading number	Nomor judul
+Heading text	Teks judul
+Insert Field	Sisipkan Bidang
+Insert as hyperlink	Sisipkan sebagai hyperlink
+Insert reference to	Sisipkan referensi ke
+New field: its code	Bidang baru: kodenya
+No field at the caret	Tidak ada bidang di posisi kursor
+Nothing of this kind in the document	Tidak ada yang seperti ini di dokumen
+Paragraph number	Nomor paragraf
+Reference type	Jenis referensi
+The document's author	Penulis dokumen
+The document's title	Judul dokumen
+The file's name	Nama file
+The number of pages	Jumlah halaman
+The page a bookmark is on	Halaman tempat penanda berada
+The page number	Nomor halaman
+The time now	Waktu sekarang
+This document has no bookmarks	Dokumen ini tidak memiliki penanda
+Today's date	Tanggal hari ini
+Update	Perbarui
+e.g. DATE \@ "d MMMM yyyy"	mis. DATE \@ "d MMMM yyyy"

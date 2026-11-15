@@ -230,6 +230,11 @@ pub struct Document {
     /// Names pictures inserted into a header, footer or note being edited
     /// (`header1_`), so they never clash with the body's.
     pub(crate) media_stem: String,
+    /// A header, footer or note being edited: the main document's
+    /// properties its fields (`TITLE`, `FILENAME`…) show.
+    pub(crate) field_props: Option<Arc<crate::fields::Props>>,
+    /// Fields showing their codes (a view setting: not saved, not undone).
+    pub(crate) field_codes: Option<Arc<crate::fields::CodeView>>,
 }
 
 /// Where an imported document came from.
@@ -292,6 +297,8 @@ impl Document {
             imported: None,
             history: History::default(),
             media_stem: String::new(),
+            field_props: None,
+            field_codes: None,
         }
     }
 
@@ -415,6 +422,8 @@ impl Document {
             imported: None,
             history: History::default(),
             media_stem: String::new(),
+            field_props: None,
+            field_codes: None,
         };
         let mut paras = std::mem::take(&mut doc.paragraphs);
         crate::float::share_parts(&mut paras, &doc);
@@ -656,6 +665,8 @@ impl Document {
             imported: self.imported.clone(),
             history: History::default(),
             media_stem: self.media_stem.clone(),
+            field_props: self.field_props.clone(),
+            field_codes: None,
         }
     }
 

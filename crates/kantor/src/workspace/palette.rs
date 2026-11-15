@@ -1262,7 +1262,9 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Header and Footer…"),
-        detail: tk("Docs · text, page numbers, different first page, odd and even pages"),
+        detail: tk(
+            "Docs · edit them on the page: different first page, odd and even pages, link to previous",
+        ),
         keys: "",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, w, cx| {
@@ -1289,6 +1291,34 @@ pub(super) const COMMANDS: &[Command] = &[
         ),
         keys: "F9",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.update_fields_doc(w, cx)),
+    },
+    Command {
+        title: tk("Show Field Codes"),
+        detail: tk(
+            "Docs · every field's code instead of its result, or back (Shift+F9: the one at the caret)",
+        ),
+        keys: "Alt F9",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, _, cx| v.toggle_field_codes_doc(cx)),
+    },
+    Command {
+        title: tk("Insert Field…"),
+        detail: tk("Docs · date, page number, document properties, references to bookmarks"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.open_field_dialog_doc(w, cx)),
+    },
+    Command {
+        title: tk("Insert Bookmark…"),
+        detail: tk("Docs · name the selection to go to it or refer to it"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| v.open_bookmark_dialog_doc(w, cx))
+        },
+    },
+    Command {
+        title: tk("Insert Cross-reference…"),
+        detail: tk("Docs · to a heading, bookmark, footnote, endnote or caption"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.open_xref_dialog_doc(w, cx)),
     },
     Command {
         title: tk("Update Table of Contents"),
@@ -1337,6 +1367,12 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: tk("Docs · the note whose number is at the caret"),
         keys: "",
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.edit_note_doc(w, cx)),
+    },
+    Command {
+        title: tk("Delete Footnote or Endnote"),
+        detail: tk("Docs · the note being edited, or the one whose number is at the caret"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.delete_note_doc(w, cx)),
     },
     Command {
         title: tk("New Comment"),

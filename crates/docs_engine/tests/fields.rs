@@ -432,3 +432,222 @@ fn broken_fields_are_saved_as_valid_xml() {
         .unwrap();
     assert_eq!(title.end.para, title.begin.para + 1);
 }
+
+// ── field codes, Insert Field, bookmarks, cross-references ─────────────────
+
+#[test]
+fn field_codes_view_and_editing_a_code() {
+    let mut doc = Document::open(&corpus("fields.docx")).unwrap();
+    // The view setting: per field ids and Alt+F9 for all.
+    let first = doc.fields()[0].clone();
+    let mut view = docs_engine::CodeView::default();
+    assert!(!view.shows(first.mark_id()));
+    view.all = true;
+    assert!(view.shows(first.mark_id()));
+    view.ids.insert(first.mark_id());
+    assert!(!view.shows(first.mark_id()), "toggled back on its own");
+    doc.set_field_codes(Some(view));
+    assert!(doc.field_codes().is_some());
+    doc.set_field_codes(None);
+    assert!(doc.field_codes().is_none());
+
+    // Edit a DATE field's code: its result follows, one undo step.
+    let date = doc
+        .fields()
+        .into_iter()
+        .find(|f| f.kind() == "DATE")
+        .expect("a DATE field");
+    let para = date.begin.para;
+    let before = shown(&doc, para);
+    let sel = Selection::caret(date.begin);
+    assert!(doc.set_field_code(
+        date.begin,
+        "DATE \\@ \"yyyy-MM-dd\"",
+        sel,
+        &cx(),
+        &mut lay_out
+    ));
+    assert!(
+        shown(&doc, para).contains("2026-11-15"),
+        "{}",
+        shown(&doc, para)
+    );
+    let now = doc.field_at(date.begin).unwrap();
+    assert_eq!(now.instr.trim(), "DATE \\@ \"yyyy-MM-dd\"");
+    doc.undo();
+    assert_eq!(shown(&doc, para), before);
+    doc.redo();
+    // Saved as a complex field with the new code.
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("f.docx");
+    doc.save_as(&out).unwrap();
+    let body = &parts(&std::fs::read(&out).unwrap())["word/document.xml"];
+    assert!(
+        body.contains("DATE \\@ &quot;yyyy-MM-dd&quot;")
+            || body.contains("DATE \\@ \"yyyy-MM-dd\""),
+        "{body}"
+    );
+    let back = Document::open(&out).unwrap();
+    assert!(shown(&back, para).contains("2026-11-15"));
+}
+
+#[test]
+fn insert_field_bookmark_and_cross_reference() {
+    let mut doc = Document::new();
+    let c = doc.insert_text(Selection::default(), "Introduction\nSome text.\nSee ", None);
+    doc.set_style(Selection::caret(Position::new(0, 0)), Some("Heading1"));
+    // Insert ▸ Field: DATE with a picture, updated at once (one step).
+    let c = doc.insert_field(c, "DATE \\@ \"d MMMM yyyy\"", &cx(), &mut lay_out);
+    assert_eq!(shown(&doc, 2), "See 15 November 2026");
+    assert_eq!(doc.fields().len(), 1);
+    doc.undo();
+    assert_eq!(shown(&doc, 2), "See ");
+    doc.redo();
+    // A page number field becomes the object headers use.
+    doc.insert_field(c, "PAGE \\* roman", &cx(), &mut lay_out);
+    let p = doc.paragraph(2);
+    assert!(
+        p.objects()
+            .any(|(_, o)| docs_engine::page_field(o).is_some())
+    );
+
+    // Insert ▸ Bookmark on "Some".
+    let sel = Selection {
+        anchor: Position::new(1, 0),
+        head: Position::new(1, 4),
+    };
+    doc.add_bookmark(sel, "Some_text").unwrap();
+    assert_eq!(doc.bookmark_names(false), ["Some_text"]);
+    assert!(doc.add_bookmark(sel, "9bad name").is_err());
+    // Moving it: the same name again elsewhere.
+    let whole = Selection {
+        anchor: Position::new(1, 0),
+        head: Position::new(1, doc.paragraph(1).text.len()),
+    };
+    doc.add_bookmark(whole, "Some_text").unwrap();
+    assert_eq!(doc.bookmark_names(false).len(), 1);
+    assert_eq!(
+        doc.bookmark_position("Some_text"),
+        Some(Position::new(1, 0))
+    );
+
+    // Cross-reference to the heading (text) and to the bookmark (page).
+    let targets = doc.xref_targets(&docs_engine::XrefKind::Heading);
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].label, "Introduction");
+    let end = doc.end();
+    let c = doc.insert_text(Selection::caret(end), " and ", None);
+    let c = doc.insert_cross_reference(
+        c,
+        &docs_engine::XrefKind::Heading,
+        &targets[0],
+        docs_engine::XrefWhat::Text,
+        true,
+        &cx(),
+        &mut lay_out,
+    );
+    assert!(
+        shown(&doc, 2).ends_with(" and Introduction"),
+        "{}",
+        shown(&doc, 2)
+    );
+    // Word's hidden `_Ref` bookmark on the heading.
+    let hidden = doc.bookmark_names(true);
+    assert!(hidden.iter().any(|n| n.starts_with("_Ref")), "{hidden:?}");
+    let f = doc
+        .fields()
+        .into_iter()
+        .find(|f| f.kind() == "REF")
+        .unwrap();
+    assert!(f.instr.contains("\\h"));
+    // One undo step takes the field and the bookmark away.
+    doc.undo();
+    assert!(
+        !doc.bookmark_names(true)
+            .iter()
+            .any(|n| n.starts_with("_Ref"))
+    );
+    doc.redo();
+    let bm = doc.xref_targets(&docs_engine::XrefKind::Bookmark);
+    assert_eq!(bm[0].label, "Some_text");
+    doc.insert_cross_reference(
+        c,
+        &docs_engine::XrefKind::Bookmark,
+        &bm[0],
+        docs_engine::XrefWhat::PageNumber,
+        false,
+        &cx(),
+        &mut lay_out,
+    );
+    assert!(
+        doc.fields()
+            .iter()
+            .any(|f| f.instr.trim() == "PAGEREF Some_text")
+    );
+
+    // Saved and read back: the fields and bookmarks are there.
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("x.docx");
+    doc.save_as(&out).unwrap();
+    let back = Document::open(&out).unwrap();
+    assert_eq!(back.bookmark_names(false), ["Some_text"]);
+    assert!(back.fields().iter().any(|f| f.kind() == "REF"));
+    assert!(shown(&back, 2).contains("Introduction"));
+    // Deleting the bookmark.
+    let mut back = back;
+    assert!(back.delete_bookmark("Some_text", Selection::default()));
+    assert!(back.bookmark_names(false).is_empty());
+}
+
+#[test]
+fn f9_updates_fields_in_headers_and_notes() {
+    let mut doc = Document::new();
+    let c = doc.insert_text(Selection::default(), "Body", None);
+    let (c, id) = doc.insert_note(docs_engine::NoteKind::Footnote, c);
+    // A DATE field in the footnote and in the header, inserted while
+    // editing them (as the view does).
+    let (e, mut note) = doc.edit_note(docs_engine::NoteKind::Footnote, &id).unwrap();
+    let end = note.end();
+    note.insert_field(
+        Selection::caret(end),
+        "DATE \\@ \"yyyy\"",
+        &cx(),
+        &mut lay_out,
+    );
+    assert!(note.paragraph(0).text.replace(OBJECT, "").ends_with("2026"));
+    doc.finish_part(e, note, c);
+    let (e, mut h) = doc
+        .edit_hf(0, docs_engine::HfKind::Header, docs_engine::HfType::Default)
+        .unwrap();
+    h.insert_field(
+        Selection::default(),
+        "DATE \\@ \"yyyy\"",
+        &cx(),
+        &mut lay_out,
+    );
+    doc.finish_part(e, h, c);
+    // A year later, F9 over the whole document updates them too.
+    let later = FieldContext {
+        now: NaiveDate::from_ymd_opt(2027, 1, 2)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap(),
+        offset: cx().offset,
+    };
+    assert!(doc.update_part_fields(all(&doc), &later));
+    assert!(
+        doc.note_text(docs_engine::NoteKind::Footnote, &id)
+            .ends_with("2027")
+    );
+    assert_eq!(
+        doc.hf_text(0, docs_engine::HfKind::Header, docs_engine::HfType::Default)
+            .0,
+        "2027"
+    );
+    // One undo step.
+    doc.undo();
+    assert!(
+        doc.note_text(docs_engine::NoteKind::Footnote, &id)
+            .ends_with("2026")
+    );
+}

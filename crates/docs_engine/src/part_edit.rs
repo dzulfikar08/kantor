@@ -76,8 +76,10 @@ impl Document {
         }) {
             return None;
         }
+        let props = std::sync::Arc::new(crate::fields::Props::of(self));
         let mut doc = std::mem::take(&mut self.stories[index].doc);
         doc.media_stem = media_stem(&self.stories[index].part);
+        doc.field_props = Some(props);
         Some((
             PartEdit {
                 part: PartRef::Story(index),
@@ -93,7 +95,9 @@ impl Document {
     pub fn edit_note(&mut self, kind: NoteKind, id: &str) -> Option<(PartEdit, Document)> {
         let index = self.note_index(kind, id)?;
         let before = self.side_state();
+        let props = std::sync::Arc::new(crate::fields::Props::of(self));
         let mut doc = std::mem::take(&mut self.notes[index].doc);
+        doc.field_props = Some(props);
         doc.media_stem = format!("{}{}_", kind.element(), id.trim_start_matches('-'));
         Some((
             PartEdit {
@@ -141,6 +145,7 @@ impl Document {
         let changed = self.part_changed(&e, &doc);
         doc.clear_history();
         doc.media_stem.clear();
+        doc.field_props = None;
         let empty = doc.paragraphs.iter().all(|p| p.text.is_empty()) && doc.tables.is_empty();
         match e.part {
             PartRef::Story(i) => {
