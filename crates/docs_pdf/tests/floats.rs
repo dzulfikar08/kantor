@@ -111,3 +111,115 @@ fn shapes_take_their_fill_and_outline() {
         docs_layout::Rgba([0xC0, 0x8A, 0x00, 255])
     );
 }
+
+/// `drawings.docx`: groups, a canvas, a chart, turned objects, a shadow
+/// and Tight wrapping.
+#[test]
+fn groups_charts_turns_shadows_and_tight_wrap() {
+    use docs_pdf::floats::{FloatPrim, Painter};
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/docx/drawings.docx");
+    let doc = Document::open(&path).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let painter = Painter::new(&doc);
+    let items: Vec<&docs_pdf::FloatItem> = laid.floats.iter().flatten().collect();
+    let by = |name: &str| {
+        *items
+            .iter()
+            .find(|it| it.float(&doc).unwrap().name == name)
+            .unwrap()
+    };
+    let prims = |name: &str| {
+        let it = by(name);
+        painter.prims(it.float(&doc).unwrap(), it.rect)
+    };
+    // The group: its rectangle (with a shadow), ellipse and picture, the
+    // picture in the group's lower right quarter (child space is twice
+    // the group's size).
+    let g = prims("Group 1");
+    assert!(!g.iter().any(|p| matches!(p, FloatPrim::Placeholder(..))));
+    let rect = by("Group 1").rect;
+    let pic = g
+        .iter()
+        .find_map(|p| match p {
+            FloatPrim::Picture { clip, .. } => Some(*clip),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        (pic[0] - (rect[0] + rect[2] / 2.0)).abs() < 0.01,
+        "{pic:?} in {rect:?}"
+    );
+    assert!((pic[2] - rect[2] / 2.0).abs() < 0.01);
+    // The shadow: translucent black fills drawn before the shape.
+    let shadow = g.iter().position(
+        |p| matches!(p, FloatPrim::Path(d) if d.fill.is_some_and(|c| c.0[3] < 255 && c.0[0] == 0)),
+    );
+    let shape = g.iter().position(|p| {
+        matches!(p, FloatPrim::Path(d) if d.fill.is_some_and(|c| c.0 == [0xBD, 0xD7, 0xEE, 255]))
+    });
+    assert!(shadow.unwrap() < shape.unwrap());
+    // The canvas: background, shape and picture.
+    let c = prims("Canvas 1");
+    assert!(c.iter().any(|p| matches!(p, FloatPrim::Picture { .. })));
+    assert!(c.len() >= 3);
+    // The chart: drawn with its labels.
+    let chart = by("Chart 1").chart.clone().expect("chart drawn");
+    assert!(chart.prims.len() > 6);
+    let shown: Vec<String> = chart.labels.iter().map(|l| l.layout.shown(0)).collect();
+    for want in ["Sales", "Q1", "North", "Units"] {
+        assert!(shown.iter().any(|s| s == want), "{want} in {shown:?}");
+    }
+    // The value axis title is turned.
+    assert!(
+        chart
+            .labels
+            .iter()
+            .any(|l| l.layout.shown(0) == "Units" && l.rot.abs() == 90.0)
+    );
+    // The turned picture and text box.
+    let tp = prims("Turned picture");
+    assert!(
+        tp.iter()
+            .any(|p| matches!(p, FloatPrim::Picture { rot, .. } if (*rot - 30.0).abs() < 0.01))
+    );
+    let tb = by("Turned text box").float(&doc).unwrap();
+    assert_eq!(docs_pdf::floats::text_turn(tb), 90.0);
+    // Tight wrap: some line beside the triangle reaches past its box's
+    // left edge (under the slanted side).
+    let tri = by("Tight triangle");
+    let page = laid
+        .floats
+        .iter()
+        .position(|p| p.iter().any(|it| std::ptr::eq(it, tri)))
+        .unwrap();
+    let r = tri.rect;
+    let past = laid.paged.pages[page].lines.iter().any(|l| {
+        l.top > r[1]
+            && l.top + l.height < r[1] + r[3] / 2.0
+            && l.x + l.width > r[0] + 10.0
+            && l.x < r[0]
+    });
+    assert!(past, "no line under the triangle's slope");
+    // The PDF: chart labels and the turned text box's text are text.
+    let scene = docs_pdf::scene(&doc, &laid);
+    let pdf = docs_pdf::write(&scene).unwrap();
+    assert!(pdf.starts_with(b"%PDF"));
+    let turned = scene
+        .pages
+        .iter()
+        .flat_map(|p| p.front.iter().chain(&p.behind))
+        .filter(|f| f.content_turn.is_some())
+        .count();
+    // The text box and the axis title.
+    assert!(turned >= 2, "{turned}");
+    let pics = scene
+        .pages
+        .iter()
+        .flat_map(|p| p.front.iter().chain(&p.behind))
+        .flat_map(|f| &f.pictures)
+        .filter(|p| (p.turn - 30.0).abs() < 0.01)
+        .count();
+    assert_eq!(pics, 1);
+}

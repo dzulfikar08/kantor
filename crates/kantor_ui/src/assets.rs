@@ -78,6 +78,8 @@ icon_assets!(
         MessageSquarePlus,
         FileDiff,
         CheckCheck,
+        Reply,
+        CircleCheck,
         // Slides: table and chart editing
         SquarePen,
         // Sheets: conditional formatting, data validation, charts

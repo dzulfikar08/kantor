@@ -110,6 +110,15 @@ Rejected: 1 tracked change left	Ditolak: tersisa 1 perubahan terlacak
 Rejected: {} tracked changes left	Ditolak: tersisa {} perubahan terlacak
 Edit comment	Edit komentar
 Delete comment	Hapus komentar
+Delete thread	Hapus utas
+Reply	Balas
+Resolve	Selesaikan
+Reopen	Buka kembali
+Resolved	Diselesaikan
+1 reply	1 balasan
+{} replies	{} balasan
+Comment resolved	Komentar diselesaikan
+Comment reopened	Komentar dibuka kembali
 Review: comments and tracked changes	Tinjau: komentar dan perubahan terlacak
 Review: 1 tracked change	Tinjau: 1 perubahan terlacak
 Review: {} tracked changes	Tinjau: {} perubahan terlacak
@@ -258,3 +267,18 @@ Not a list	Bukan daftar
 Page break before	Hentian halaman sebelumnya
 Tab stops	Tab stop
 Other formatting	Format lain
+- (hyphen)	- (tanda hubung)
+. (period)	. (titik)
+: (colon)	: (titik dua)
+— (em dash)	— (tanda pisah panjang)
+– (en dash)	– (tanda pisah)
+Chapter starts with style: Heading	Bab dimulai dengan gaya: Judul
+Continue from previous section	Lanjutkan dari bagian sebelumnya
+Include chapter number	Sertakan nomor bab
+Number format, chapter numbers, where numbering starts	Format angka, nomor bab, awal penomoran
+Page Number Format	Format Nomor Halaman
+Page numbering	Penomoran halaman
+Start at:	Mulai dari:
+Start at: type a whole number	Mulai dari: ketik bilangan bulat
+Use separator	Gunakan pemisah
+Format Page Numbers…	Format Nomor Halaman…

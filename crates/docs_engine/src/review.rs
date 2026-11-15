@@ -20,14 +20,9 @@
 //! edited ones are generated; the part (with its relationship and content
 //! type) is created when a document gets its first comment.
 
-use std::sync::Arc;
-
 use crate::document::{Document, Kind};
 use crate::fmt_track;
-use crate::model::{
-    OBJECT, Object, Opaque, Paragraph, Position, RunProps, Selection, element_name,
-};
-use crate::object::Level;
+use crate::model::{OBJECT, Object, Paragraph, Position, Selection, element_name};
 use crate::track_table;
 use crate::xml;
 
@@ -112,6 +107,14 @@ pub struct Comment {
     /// The original `<w:comment>` element, written back as is unless the
     /// comment was edited (then `None`).
     pub(crate) xml: Option<String>,
+    /// The comment this one replies to (Word 2013+ threads).
+    pub parent: Option<String>,
+    /// Resolved (`w15:done`); a thread's state is its first comment's.
+    pub done: bool,
+    /// `w14:paraId` of the last paragraph (keys `commentsExtended.xml`).
+    pub(crate) para_id: Option<String>,
+    /// `w16cid:durableId` (keys `commentsExtensible.xml`).
+    pub(crate) durable_id: Option<String>,
 }
 
 /// Where a comment points in the text.
@@ -164,6 +167,10 @@ pub(crate) fn parse_comments(src: &str) -> (Vec<Comment>, String) {
                 date: el.attr("date").unwrap_or_default().to_owned(),
                 text: paras.join("\n"),
                 xml: Some(el_xml.to_owned()),
+                parent: None,
+                done: false,
+                para_id: None,
+                durable_id: None,
             });
         }
         at = end;
@@ -190,8 +197,12 @@ pub(crate) fn write_comments(root_tag: &str, comments: &[Comment], with_styles: 
                     xml::escape(&c.date),
                     xml::escape(&c.initials)
                 ));
+                let n = c.text.split('\n').count();
                 for (k, line) in c.text.split('\n').enumerate() {
-                    out.push_str("<w:p>");
+                    match c.para_id.as_deref().filter(|_| k + 1 == n) {
+                        Some(p) => out.push_str(&format!("<w:p w14:paraId=\"{p}\">")),
+                        None => out.push_str("<w:p>"),
+                    }
                     if with_styles {
                         out.push_str("<w:pPr><w:pStyle w:val=\"CommentText\"/></w:pPr>");
                     }
@@ -218,7 +229,7 @@ pub(crate) fn write_comments(root_tag: &str, comments: &[Comment], with_styles: 
 }
 
 /// The `w:id` of a comment marker or reference object.
-fn comment_id(o: &Object) -> Option<(&'static str, String)> {
+pub(crate) fn comment_id(o: &Object) -> Option<(&'static str, String)> {
     let Object::Opaque(o) = o else { return None };
     let name = element_name(&o.xml);
     let kind = match name {
@@ -832,64 +843,18 @@ impl Document {
             b.offset = w.end;
         }
         let before_comments = self.review_state();
-        let id = (0..)
-            .map(|n: u32| n.to_string())
-            .find(|id| !self.comments.iter().any(|c| c.id == *id) && !self.has_comment_marker(id))
-            .expect("infinite ids");
-        let initials: String = author
-            .split_whitespace()
-            .filter_map(|w| w.chars().next())
-            .flat_map(char::to_uppercase)
-            .take(3)
-            .collect();
-        self.comments.push(Comment {
-            id: id.clone(),
-            author: author.to_owned(),
-            initials,
-            date: now_utc(),
-            text: text.to_owned(),
-            xml: None,
-        });
+        let id = self.fresh_comment_id();
+        let c = self.new_comment(&id, text, author);
+        self.comments.push(c);
         self.comments_modified = true;
-        let marker = |name: &str| {
-            Object::Opaque(Arc::new(Opaque {
-                level: Level::Marker,
-                xml: format!("<w:{name} w:id=\"{id}\"/>"),
-                label: String::new(),
-            }))
-        };
-        let reference = Object::Opaque(Arc::new(Opaque {
-            level: Level::Run,
-            xml: format!("<w:commentReference w:id=\"{id}\"/>"),
-            label: String::new(),
-        }));
-        let ref_props = RunProps {
-            style: self
-                .styles
-                .get("CommentReference")
-                .map(|_| "CommentReference".to_owned()),
-            ..RunProps::default()
-        };
-        let first = a.para;
-        let last = b.para;
-        let mut new: Vec<Paragraph> = self.paragraphs[first..=last].to_vec();
-        let n = new.len();
-        // End first so the start offset stays valid.
-        {
-            let p = &mut new[n - 1];
-            p.insert_object(b.offset, reference, ref_props);
-            p.insert_object(b.offset, marker("commentRangeEnd"), RunProps::default());
-        }
-        new[0].insert_object(a.offset, marker("commentRangeStart"), RunProps::default());
-        let after = sel;
-        self.replace(first, n, new, (sel, after), Kind::Other, true);
+        self.insert_comment_marks(&id, a, b, false, sel);
         // Fold the comment list change into the same undo step.
         let after_comments = self.review_state();
         self.attach_side_state(before_comments, after_comments);
         Some(id)
     }
 
-    fn has_comment_marker(&self, id: &str) -> bool {
+    pub(crate) fn has_comment_marker(&self, id: &str) -> bool {
         self.paragraphs.iter().any(|p| {
             p.objects()
                 .any(|(_, o)| comment_id(o).is_some_and(|(_, i)| i == id))
@@ -944,27 +909,40 @@ impl Document {
         }
     }
 
-    /// Delete a comment and its markers: one undo step.
+    /// Delete a comment, its replies and their markers: one undo step.
     pub fn delete_comment(&mut self, id: &str, sel: Selection) -> bool {
         let Some(i) = self.comments.iter().position(|c| c.id == id) else {
             return false;
         };
         let before = self.review_state();
-        self.comments.remove(i);
+        // The comment and its replies (a thread when it's the first).
+        let mut gone: Vec<String> = vec![self.comments[i].id.clone()];
+        loop {
+            let more: Vec<String> = self
+                .comments
+                .iter()
+                .filter(|c| {
+                    c.parent.as_ref().is_some_and(|p| gone.contains(p)) && !gone.contains(&c.id)
+                })
+                .map(|c| c.id.clone())
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            gone.extend(more);
+        }
+        self.comments.retain(|c| !gone.contains(&c.id));
         self.comments_modified = true;
+        let hit = |o: &Object| comment_id(o).is_some_and(|(_, x)| gone.contains(&x));
         let touched: Vec<usize> = (0..self.paragraphs.len())
-            .filter(|&pi| {
-                self.paragraphs[pi]
-                    .objects()
-                    .any(|(_, o)| comment_id(o).is_some_and(|(_, x)| x == id))
-            })
+            .filter(|&pi| self.paragraphs[pi].objects().any(|(_, o)| hit(o)))
             .collect();
         if let (Some(&first), Some(&last)) = (touched.first(), touched.last()) {
             let mut new: Vec<Paragraph> = self.paragraphs[first..=last].to_vec();
             for p in &mut new {
                 let offs: Vec<usize> = p
                     .objects()
-                    .filter(|(_, o)| comment_id(o).is_some_and(|(_, x)| x == id))
+                    .filter(|(_, o)| hit(o))
                     .map(|(off, _)| off)
                     .collect();
                 for off in offs.into_iter().rev() {

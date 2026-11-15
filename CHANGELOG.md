@@ -11,6 +11,28 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Docs: more floating objects are drawn, on screen and in the PDF: groups of shapes and pictures
+  (moved and sized as one) and drawing canvases; charts (column, bar, line, area, pie, doughnut and
+  scatter, from the values saved in the file, with Slides' chart drawing); outer shadows of shapes
+  and pictures; and turned pictures and text boxes, drawn turned (the text box's text turns with
+  it). Text set to wrap Tight or Through follows the object's wrap polygon instead of its box.
+- Docs: *Next change* and *Previous change* also go through the headers, footers, footnotes and
+  endnotes, as in Word: after the last change in the text, the next one in a header (or note) is
+  opened for editing and selected, and back again.
+- Docs: a tab stop set past the right margin is honoured as in Word 2013 and later: the line runs
+  into the margin up to it (a right-aligned page number or a form line that ends there), instead of
+  the stop acting as if it were at the margin.
+- Docs: *Format Page Numbers…* (palette, and a button on the Header & Footer bar) sets a section's
+  page number format (1, 2, 3 / a, b, c / A, B, C / i, ii, iii / I, II, III), whether page numbers
+  include the chapter number (from numbered headings of a chosen level, with Word's separators,
+  e.g. "2-5") and whether numbering continues from the previous section or starts at a number,
+  saved as Word's `w:pgNumType`.
+- Docs: comments can be replied to, resolved and reopened, as in Word: each comment card shows
+  its thread (the replies under the first comment), a Reply box, and Resolve / Reopen; a
+  resolved thread is dimmed and folded to its first comment. Deleting the first comment deletes
+  the whole thread. Threads are saved the way Word 365 saves them (`commentsExtended`,
+  `commentsIds`, `commentsExtensible` and `people` parts), so replies and resolved comments from
+  Word open as threads and come back to Word unchanged.
 - Docs: with Track Changes on, formatting changes are tracked as in Word (bold, italic,
   underline, fonts, sizes, colours, styles, alignment, indents, spacing, lists and tab stops):
   each shows as a balloon beside the page ("Formatted: Font: Bold", with its author and date) and
@@ -207,6 +229,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Sheets: in a sheet copied with Move or Copy, formulas naming the original sheet's tables now
   name the copy's tables (`Sales` → `Sales2`), as in Excel.
 
+- Docs: after closing the Header & Footer bar, the lines from comments and formatting balloons
+  to their text were drawn too low until the next keystroke or click.
 ## [0.7.0] - 2026-11-15
 
 Sheets tabs work like Excel's: insert, delete, rename, move or copy, colour and hide sheets, and

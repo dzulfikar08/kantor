@@ -29,6 +29,14 @@ crates/docs_pdf/tests/.
   bold (`w:rPrChange`), a paragraph centred (`w:pPrChange`), a table with a
   deleted row and an inserted row (`w:trPr/w:del`, `w:trPr/w:ins`), an
   insertion in the header and a deletion in a footnote.
+* threads.docx: Word 365 threaded comments: a question with a reply (both
+  on the same word), a resolved comment, with commentsExtended,
+  commentsIds, commentsExtensible and people parts.
+* drawings.docx: a group (`wpg:wgp`, a shape with an outer shadow, an
+  ellipse and a picture in scaled child coordinates), a drawing canvas
+  (`wpc:wpc`), a column chart with its values cached, a picture turned 30°,
+  a text box turned 90°, a shape with a shadow, and a triangle with Tight
+  wrapping (`wp:wrapPolygon`).
 * notes.docx: a footnote too long for its page (Word's continuation
   separator and notice), short footnotes, and endnotes placed at the end
   of each section (`w:endnotePr/w:pos w:val="sectEnd"`) in two sections.
@@ -636,4 +644,199 @@ settings.find(qn("w:compat")).addprevious(
     parse_xml(f'<w:footnotePr {W}><w:footnote w:id="-2"/><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>')
 )
 save(d, "tracked.docx")
+
+# ── threads: Word 365 threaded comments (a reply, a resolved thread) with
+# commentsExtended / commentsIds / commentsExtensible / people parts.
+W14 = 'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
+d = Document()
+p = d.add_paragraph()
+threads = [
+    # (id, author, initials, text, paraId, parent paraId, done, durableId)
+    ("0", "Ani Wijaya", "AW", "Is this the final budget?", "1A000001", None, 0, "2B000001"),
+    ("1", "Budi Santoso", "BS", "Yes, approved on Monday.", "1A000002", "1A000001", 0, "2B000002"),
+    ("2", "Citra Dewi", "CD", "Fix the date.", "1A000003", None, 1, "2B000003"),
+]
+add(p, '<w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/>')
+add(p, '<w:r><w:t>Budget</w:t></w:r>')
+add(p, '<w:commentRangeEnd w:id="0"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="0"/></w:r>')
+add(p, '<w:commentRangeEnd w:id="1"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="1"/></w:r>')
+add(p, '<w:r><w:t xml:space="preserve"> for 2027, dated </w:t></w:r>')
+add(p, '<w:commentRangeStart w:id="2"/><w:r><w:t>10 Nov</w:t></w:r><w:commentRangeEnd w:id="2"/>')
+add(p, '<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="2"/></w:r><w:r><w:t>.</w:t></w:r>')
+d.add_paragraph("A second paragraph without comments.")
+DATE = "2026-11-10T09:00:00Z"
+cx = "".join(
+    f'<w:comment w:id="{i}" w:author="{a}" w:date="{DATE}" w:initials="{ini}">'
+    f'<w:p w14:paraId="{pid}" w14:textId="77777777"><w:r><w:annotationRef/></w:r><w:r><w:t>{t}</w:t></w:r></w:p></w:comment>'
+    for i, a, ini, t, pid, _, _, _ in threads
+)
+ex = "".join(
+    f'<w15:commentEx w15:paraId="{pid}"' + (f' w15:paraIdParent="{par}"' if par else "") + f' w15:done="{done}"/>'
+    for _, _, _, _, pid, par, done, _ in threads
+)
+ids = "".join(f'<w16cid:commentId w16cid:paraId="{t[4]}" w16cid:durableId="{t[7]}"/>' for t in threads)
+cex = "".join(f'<w16cex:commentExtensible w16cex:durableId="{t[7]}" w16cex:dateUtc="{DATE}"/>' for t in threads)
+people = "".join(
+    f'<w15:person w15:author="{a}"><w15:presenceInfo w15:providerId="None" w15:userId="{a}"/></w15:person>'
+    for a in ("Ani Wijaya", "Budi Santoso", "Citra Dewi")
+)
+MC = 'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+W15 = 'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"'
+DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+WML = "application/vnd.openxmlformats-officedocument.wordprocessingml."
+extra = [
+    ("comments", WML + "comments+xml", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+     f'<w:comments {W} {W14} {MC} mc:Ignorable="w14">{cx}</w:comments>'),
+    ("commentsExtended", WML + "commentsExtended+xml", "http://schemas.microsoft.com/office/2011/relationships/commentsExtended",
+     f'<w15:commentsEx {W15} {MC} mc:Ignorable="w15">{ex}</w15:commentsEx>'),
+    ("commentsIds", WML + "commentsIds+xml", "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds",
+     f'<w16cid:commentsIds xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid" {MC} mc:Ignorable="w16cid">{ids}</w16cid:commentsIds>'),
+    ("commentsExtensible", WML + "commentsExtensible+xml", "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible",
+     f'<w16cex:commentsExtensible xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex" {MC} mc:Ignorable="w16cex">{cex}</w16cex:commentsExtensible>'),
+    ("people", WML + "people+xml", "http://schemas.microsoft.com/office/2011/relationships/people",
+     f'<w15:people {W15} {MC} mc:Ignorable="w15">{people}</w15:people>'),
+]
+for name, ct, rel, xml in extra:
+    part = Part(PackURI(f"/word/{name}.xml"), ct, (DECL + xml).encode(), d.part.package)
+    d.part.relate_to(part, rel)
+save(d, "threads.docx")
+
+# ── drawings: groups, a canvas, a chart, turned objects, a shadow, Tight
+# wrap following a polygon.
+NS_WPG = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+NS_WPC = "http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
+NS_C = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+NS_DRAW = NS_ALL + f' xmlns:wpg="{NS_WPG}" xmlns:wpc="{NS_WPC}" xmlns:c="{NS_C}"'
+
+
+def add_draw(par, xml):
+    holder = parse_xml(f"<w:p {W} {NS_DRAW}>{xml}</w:p>")
+    for child in list(holder):
+        par._p.append(child)
+
+
+def sp(prst, x, y, cx, cy, fill, line="404040", rot=0, effect=""):
+    return (
+        f'<wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm rot="{rot}"><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        f'<a:prstGeom prst="{prst}"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="{fill}"/></a:solidFill>'
+        f'<a:ln w="12700"><a:solidFill><a:srgbClr val="{line}"/></a:solidFill></a:ln>{effect}</wps:spPr>'
+        f'<wps:bodyPr/></wps:wsp>'
+    )
+
+
+def pic(rid, x, y, cx, cy, rot=0):
+    return (
+        f'<pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="p.png"/><pic:cNvPicPr/></pic:nvPicPr>'
+        f'<pic:blipFill><a:blip r:embed="{rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
+        f'<pic:spPr><a:xfrm rot="{rot}"><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        f'<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>'
+    )
+
+
+SHADOW = ('<a:effectLst><a:outerShdw blurRad="50800" dist="38100" dir="2700000" algn="tl" rotWithShape="0">'
+          '<a:srgbClr val="000000"><a:alpha val="40000"/></a:srgbClr></a:outerShdw></a:effectLst>')
+d = Document()
+rid_red, _ = d.part.get_or_add_image(io.BytesIO(png(80, 40, (200, 60, 50))))
+rid_teal, _ = d.part.get_or_add_image(io.BytesIO(png(60, 60, (30, 150, 150))))
+d.add_heading("Drawings", 1)
+# A group: a rectangle with a shadow, an ellipse and a picture, in child
+# coordinates twice the group's size.
+p = d.add_paragraph()
+G = 200 * EMU
+group = (
+    f'<a:graphic><a:graphicData uri="{NS_WPG}"><wpg:wgp><wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm>'
+    f'<a:off x="0" y="0"/><a:ext cx="{G}" cy="{G // 2}"/><a:chOff x="0" y="0"/><a:chExt cx="{2 * G}" cy="{G}"/>'
+    f'</a:xfrm></wpg:grpSpPr>'
+    + sp("rect", 0, 0, G, G, "BDD7EE", effect=SHADOW)
+    + sp("ellipse", G, 0, G, G // 2, "F8CBAD")
+    + pic(rid_red, G, G // 2, G, G // 2)
+    + '</wpg:wgp></a:graphicData></a:graphic>'
+)
+add_draw(p, drawing(anchor(201, "Group 1", pos("H", "margin", "<wp:align>right</wp:align>"),
+                            pos("V", "paragraph", "<wp:posOffset>0</wp:posOffset>"),
+                            G, G // 2, '<wp:wrapSquare wrapText="bothSides"/>', group, 251660000)))
+p.add_run(LOREM * 3)
+# A drawing canvas with a rounded rectangle and a picture.
+p = d.add_paragraph()
+C = 260 * EMU
+canvas = (
+    f'<a:graphic><a:graphicData uri="{NS_WPC}"><wpc:wpc><wpc:bg><a:solidFill><a:srgbClr val="F2F2F2"/></a:solidFill></wpc:bg>'
+    f'<wpc:whole/>'
+    + sp("roundRect", 20 * EMU, 20 * EMU, 120 * EMU, 60 * EMU, "C6E0B4")
+    + pic(rid_teal, 160 * EMU, 20 * EMU, 60 * EMU, 60 * EMU)
+    + '</wpc:wpc></a:graphicData></a:graphic>'
+)
+add_draw(p, drawing(anchor(202, "Canvas 1", pos("H", "column", "<wp:align>left</wp:align>"),
+                            pos("V", "paragraph", "<wp:posOffset>0</wp:posOffset>"),
+                            C, 100 * EMU, '<wp:wrapTopAndBottom/>', canvas, 251660001)))
+p.add_run(LOREM)
+# A chart (clustered columns, values cached in the part).
+p = d.add_paragraph()
+chart_xml = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    f'<c:chartSpace xmlns:c="{NS_C}" xmlns:a="{NS_A}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    '<c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>Sales</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title>'
+    '<c:autoTitleDeleted val="0"/><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>'
+    '<c:varyColors val="0"/>'
+    + "".join(
+        f'<c:ser><c:idx val="{i}"/><c:order val="{i}"/><c:tx><c:strRef><c:f>Sheet1!${col}$1</c:f><c:strCache><c:ptCount val="1"/>'
+        f'<c:pt idx="0"><c:v>{name}</c:v></c:pt></c:strCache></c:strRef></c:tx>'
+        '<c:cat><c:strRef><c:f>Sheet1!$A$2:$A$4</c:f><c:strCache><c:ptCount val="3"/>'
+        '<c:pt idx="0"><c:v>Q1</c:v></c:pt><c:pt idx="1"><c:v>Q2</c:v></c:pt><c:pt idx="2"><c:v>Q3</c:v></c:pt></c:strCache></c:strRef></c:cat>'
+        f'<c:val><c:numRef><c:f>Sheet1!${col}$2:${col}$4</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/>'
+        + "".join(f'<c:pt idx="{k}"><c:v>{v}</c:v></c:pt>' for k, v in enumerate(vals))
+        + '</c:numCache></c:numRef></c:val></c:ser>'
+        for i, (col, name, vals) in enumerate([("B", "North", (4, 6, 5)), ("C", "South", (3, 5, 7))])
+    )
+    + '<c:gapWidth val="150"/><c:axId val="1001"/><c:axId val="1002"/></c:barChart>'
+    '<c:catAx><c:axId val="1001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/>'
+    '<c:crossAx val="1002"/></c:catAx><c:valAx><c:axId val="1002"/><c:scaling><c:orientation val="minMax"/></c:scaling>'
+    '<c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:title><c:tx><c:rich><a:bodyPr rot="-5400000"/><a:p><a:r><a:t>Units</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title>'
+    '<c:numFmt formatCode="General" sourceLinked="1"/><c:crossAx val="1001"/></c:valAx></c:plotArea>'
+    '<c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend><c:plotVisOnly val="1"/></c:chart></c:chartSpace>'
+)
+chart_part = Part(PackURI("/word/charts/chart1.xml"),
+                  "application/vnd.openxmlformats-officedocument.drawingml.chart+xml",
+                  chart_xml.encode(), d.part.package)
+rid_chart = d.part.relate_to(chart_part, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart")
+CW, CH = 320 * EMU, 200 * EMU
+chart = (f'<a:graphic><a:graphicData uri="{NS_C}"><c:chart r:id="{rid_chart}"/></a:graphicData></a:graphic>')
+add_draw(p, drawing(anchor(203, "Chart 1", pos("H", "column", "<wp:align>center</wp:align>"),
+                            pos("V", "paragraph", "<wp:posOffset>0</wp:posOffset>"),
+                            CW, CH, '<wp:wrapTopAndBottom/>', chart, 251660002)))
+p.add_run(LOREM)
+# A picture turned 30°, a text box turned 90° and a shape with a shadow.
+p = d.add_paragraph()
+turned_pic = (f'<a:graphic><a:graphicData uri="{NS_PIC}">' + pic(rid_red, 0, 0, 120 * EMU, 60 * EMU, rot=1800000)
+              + '</a:graphicData></a:graphic>')
+add_draw(p, drawing(anchor(204, "Turned picture", pos("H", "margin", "<wp:posOffset>0</wp:posOffset>"),
+                            pos("V", "paragraph", f"<wp:posOffset>{10 * EMU}</wp:posOffset>"),
+                            120 * EMU, 60 * EMU, '<wp:wrapSquare wrapText="bothSides"/>', turned_pic, 251660003)))
+tb = (
+    f'<a:graphic><a:graphicData uri="{NS_WPS}"><wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm rot="5400000">'
+    f'<a:off x="0" y="0"/><a:ext cx="{160 * EMU}" cy="{40 * EMU}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
+    '<a:solidFill><a:srgbClr val="FFF2CC"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="BF9000"/></a:solidFill></a:ln></wps:spPr>'
+    '<wps:txbx><w:txbxContent><w:p><w:r><w:t>Turned text box</w:t></w:r></w:p></w:txbxContent></wps:txbx>'
+    '<wps:bodyPr rot="0" vert="horz" lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="t"/></wps:wsp></a:graphicData></a:graphic>'
+)
+add_draw(p, drawing(anchor(205, "Turned text box", pos("H", "margin", "<wp:align>right</wp:align>"),
+                            pos("V", "paragraph", f"<wp:posOffset>{60 * EMU}</wp:posOffset>"),
+                            160 * EMU, 40 * EMU, '<wp:wrapNone/>', tb, 251660004)))
+shadowed = (f'<a:graphic><a:graphicData uri="{NS_WPS}">' + sp("rect", 0, 0, 100 * EMU, 50 * EMU, "DEEBF7", effect=SHADOW)
+            + '</a:graphicData></a:graphic>')
+add_draw(p, drawing(anchor(206, "Shadowed shape", pos("H", "column", "<wp:align>center</wp:align>"),
+                            pos("V", "paragraph", f"<wp:posOffset>{130 * EMU}</wp:posOffset>"),
+                            100 * EMU, 50 * EMU, '<wp:wrapNone/>', shadowed, 251660005)))
+p.add_run(LOREM * 3)
+# Tight wrapping around a triangle's polygon.
+p = d.add_paragraph()
+tri = (f'<a:graphic><a:graphicData uri="{NS_WPS}">' + sp("triangle", 0, 0, 160 * EMU, 160 * EMU, "FFE699")
+       + '</a:graphicData></a:graphic>')
+poly = ('<wp:wrapTight wrapText="bothSides"><wp:wrapPolygon edited="0"><wp:start x="10800" y="0"/>'
+        '<wp:lineTo x="21600" y="21600"/><wp:lineTo x="0" y="21600"/><wp:lineTo x="10800" y="0"/></wp:wrapPolygon></wp:wrapTight>')
+add_draw(p, drawing(anchor(207, "Tight triangle", pos("H", "column", "<wp:align>center</wp:align>"),
+                            pos("V", "paragraph", "<wp:posOffset>0</wp:posOffset>"),
+                            160 * EMU, 160 * EMU, poly, tri, 251660006)))
+p.add_run(LOREM * 5)
+save(d, "drawings.docx")
 print("docx ok")

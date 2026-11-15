@@ -7,9 +7,10 @@
 //! (the page, the margins, the paragraph, the line, the character) as Word
 //! does; text wraps around it per [`FloatWrap`]:
 //!
-//! - `Square` (Word's Square, Tight and Through: Kantor doesn't follow
-//!   wrap polygons): lines next to the object's box (plus its distance
-//!   from text) are shortened to the free stretches beside it.
+//! - `Square` (Word's Square, Tight and Through): lines next to the
+//!   object's box (plus its distance from text) are shortened to the free
+//!   stretches beside it. With a wrap polygon (Tight, Through) the
+//!   polygon's extent at each line's height is used instead of the box.
 //! - `TopAndBottom`: no text beside it; lines continue below.
 //! - `None`: in front of or behind the text, which doesn't move.
 
@@ -94,6 +95,8 @@ pub struct FloatSpec {
     pub behind: bool,
     /// Z-order: higher is drawn on top.
     pub z: u32,
+    /// The wrap polygon (Tight, Through) as fractions of the box.
+    pub polygon: Option<Vec<[f32; 2]>>,
 }
 
 /// A floating object placed on a page.
@@ -108,8 +111,12 @@ pub struct PlacedFloat {
     pub wrap: FloatWrap,
 }
 
+/// A wrap polygon on the page (px) and the distance from text kept left
+/// and right of it.
+pub type WrapPolygon = (std::sync::Arc<[[f32; 2]]>, [f32; 2]);
+
 /// Room a wrapping object takes from the text on its page.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct WrapArea {
     /// The object's box grown by its distance from text: x0, y0, x1, y1.
     pub area: [f32; 4],
@@ -117,6 +124,9 @@ pub struct WrapArea {
     pub side: FloatSide,
     /// The object (paragraph, byte index), to tell repeats apart.
     pub key: (usize, usize),
+    /// Its wrap polygon on the page (px) and the distance from text kept
+    /// left and right of it, when text follows it.
+    pub polygon: Option<WrapPolygon>,
 }
 
 /// Stretches narrower than this (px) get no text.
@@ -193,12 +203,52 @@ impl WrapArea {
         }
         let [x, y, w, h] = rect;
         let [t, b, l, r] = spec.dist;
+        let polygon = spec
+            .polygon
+            .as_ref()
+            .filter(|p| p.len() >= 3 && spec.wrap == FloatWrap::Square)
+            .map(|p| {
+                let pts: std::sync::Arc<[[f32; 2]]> =
+                    p.iter().map(|[px, py]| [x + px * w, y + py * h]).collect();
+                (pts, [l, r])
+            });
         Some(Self {
             area: [x - l, y - t, x + w + r, y + h + b],
             wrap: spec.wrap,
             side: spec.side,
             key,
+            polygon,
         })
+    }
+
+    /// Left and right of what the object takes between `top` and `bottom`
+    /// (its box, or its wrap polygon there grown by the distance from
+    /// text); `None` when the polygon leaves that band free.
+    fn span(&self, top: f32, bottom: f32) -> Option<(f32, f32)> {
+        let Some((pts, [l, r])) = &self.polygon else {
+            return Some((self.area[0], self.area[2]));
+        };
+        let mut lo = f32::INFINITY;
+        let mut hi = f32::NEG_INFINITY;
+        let n = pts.len();
+        for i in 0..n {
+            let (a, b) = (pts[i], pts[(i + 1) % n]);
+            let (y0, y1) = (a[1].min(b[1]), a[1].max(b[1]));
+            if y1 < top || y0 > bottom {
+                continue;
+            }
+            // The edge clipped to the band.
+            for y in [top.max(y0), bottom.min(y1)] {
+                let x = if (b[1] - a[1]).abs() < 1e-6 {
+                    if y == top.max(y0) { a[0] } else { b[0] }
+                } else {
+                    a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1])
+                };
+                lo = lo.min(x);
+                hi = hi.max(x);
+            }
+        }
+        (lo <= hi).then_some((lo - l, hi + r))
     }
 
     fn touches(&self, top: f32, bottom: f32) -> bool {
@@ -218,8 +268,11 @@ pub(crate) fn free_segments(
     let mut blocked_to = f32::INFINITY;
     let mut any = false;
     for e in excl.iter().filter(|e| e.touches(top, bottom)) {
+        let [_, _, _, ey1] = e.area;
+        let Some((ex0, ex1)) = e.span(top, bottom) else {
+            continue;
+        };
         any = true;
-        let [ex0, _, ex1, ey1] = e.area;
         if e.wrap == FloatWrap::TopAndBottom {
             // Only when it's beside the column at all.
             if ex1 > x0 && ex0 < x1 {
@@ -254,7 +307,13 @@ pub(crate) fn free_segments(
         {
             segs = vec![best];
         }
-        blocked_to = blocked_to.min(ey1);
+        // A polygon may free up before its box's bottom: try again a
+        // little lower.
+        blocked_to = blocked_to.min(if e.polygon.is_some() {
+            (top + 2.0).min(ey1)
+        } else {
+            ey1
+        });
     }
     segs.retain(|(a, b)| b - a >= MIN_SEGMENT);
     if segs.is_empty() {
@@ -282,6 +341,7 @@ mod tests {
             side: FloatSide::Both,
             behind: false,
             z: 1,
+            polygon: None,
         }
     }
 
@@ -346,16 +406,22 @@ mod tests {
         assert_eq!(e.area, [188.0, 100.0, 312.0, 150.0]);
         let col = (100.0, 500.0);
         // Above and below: the whole column.
-        assert_eq!(free_segments(&[e], col, 60.0, 90.0), Ok(vec![col]));
-        assert_eq!(free_segments(&[e], col, 150.0, 170.0), Ok(vec![col]));
+        assert_eq!(
+            free_segments(std::slice::from_ref(&e), col, 60.0, 90.0),
+            Ok(vec![col])
+        );
+        assert_eq!(
+            free_segments(std::slice::from_ref(&e), col, 150.0, 170.0),
+            Ok(vec![col])
+        );
         // Beside: both sides.
         assert_eq!(
-            free_segments(&[e], col, 110.0, 130.0),
+            free_segments(std::slice::from_ref(&e), col, 110.0, 130.0),
             Ok(vec![(100.0, 188.0), (312.0, 500.0)])
         );
         let largest = WrapArea {
             side: FloatSide::Largest,
-            ..e
+            ..e.clone()
         };
         assert_eq!(
             free_segments(&[largest], col, 110.0, 130.0),
@@ -363,7 +429,7 @@ mod tests {
         );
         let left = WrapArea {
             side: FloatSide::Left,
-            ..e
+            ..e.clone()
         };
         assert_eq!(
             free_segments(&[left], col, 110.0, 130.0),
@@ -372,15 +438,48 @@ mod tests {
         // Top and bottom: nothing beside it until its bottom.
         let tb = WrapArea {
             wrap: FloatWrap::TopAndBottom,
-            ..e
+            ..e.clone()
         };
         assert_eq!(free_segments(&[tb], col, 110.0, 130.0), Err(150.0));
         // A full-width square object leaves no room either.
         let wide = WrapArea {
             area: [90.0, 100.0, 510.0, 150.0],
-            ..e
+            ..e.clone()
         };
         assert_eq!(free_segments(&[wide], col, 110.0, 130.0), Err(150.0));
+    }
+
+    #[test]
+    fn tight_wrap_follows_the_polygon() {
+        // A triangle pointing down: wide at the top, a point at the bottom.
+        let mut sp = spec(
+            (FloatRefH::Page, FloatPos::Offset(200.0)),
+            (FloatRefV::Page, FloatPos::Offset(100.0)),
+        );
+        sp.width = 100.0;
+        sp.height = 100.0;
+        sp.dist = [0.0, 0.0, 10.0, 10.0];
+        sp.polygon = Some(vec![[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]]);
+        let e = WrapArea::of(&sp, [200.0, 100.0, 100.0, 100.0], (0, 0)).unwrap();
+        let col = (100.0, 500.0);
+        // Near the top: the whole width (plus the distance).
+        assert_eq!(
+            free_segments(std::slice::from_ref(&e), col, 100.0, 110.0),
+            Ok(vec![(100.0, 190.0), (310.0, 500.0)])
+        );
+        // Near the point: text comes close to the middle.
+        let Ok(segs) = free_segments(std::slice::from_ref(&e), col, 180.0, 190.0) else {
+            panic!()
+        };
+        assert_eq!(segs.len(), 2);
+        assert!(segs[0].1 > 220.0 && segs[0].1 < 250.0, "{segs:?}");
+        assert!(segs[1].0 > 250.0 && segs[1].0 < 280.0, "{segs:?}");
+        // Without a polygon, the box.
+        let square = WrapArea { polygon: None, ..e };
+        assert_eq!(
+            free_segments(&[square], col, 180.0, 190.0),
+            Ok(vec![(100.0, 190.0), (310.0, 500.0)])
+        );
     }
 }
 
@@ -417,6 +516,7 @@ mod flow_tests {
             side: FloatSide::Both,
             behind: false,
             z: 1,
+            polygon: None,
         }
     }
 

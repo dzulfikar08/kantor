@@ -555,13 +555,19 @@ impl Document {
         self.tables.get(&id)
     }
 
-    /// Bytes of a picture (PNG or JPEG), by relationship id.
     /// The theme part's XML (colours and line styles of shapes), for a
     /// document read from a file that has one.
     pub fn theme_xml(&self) -> Option<String> {
         self.package.as_ref()?.theme_text()
     }
 
+    /// A part of the package the document was read from, as text (a
+    /// chart's `c:chartSpace`), by zip entry name.
+    pub fn part_xml(&self, name: &str) -> Option<String> {
+        self.package.as_ref()?.part_text(name)
+    }
+
+    /// Bytes of a picture (PNG or JPEG), by relationship id.
     pub fn image_bytes(&self, rel_id: &str) -> Option<Arc<[u8]>> {
         self.media.get(rel_id).and_then(|m| m.bytes.clone())
     }

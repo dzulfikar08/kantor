@@ -639,6 +639,7 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         *in_section.entry(page.section).or_default() += 1;
     }
     let mut cache: HashMap<(usize, String, String, u32), Arc<StoryLayout>> = HashMap::new();
+    let labels = page_labels(doc, &sections, &paged);
     let mut furniture = Vec::with_capacity(paged.pages.len());
     for (pi, page) in paged.pages.iter().enumerate() {
         let si = page.section.min(sections.len() - 1);
@@ -652,7 +653,7 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         } else {
             st.default
         };
-        let number = props.num_format.format(page.number);
+        let number = labels[pi].clone();
         let setup = page.setup;
         let width = setup.content_width();
         let mut placed = Vec::new();
@@ -699,11 +700,44 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
     }
 }
 
+/// Every page's number as its section shows it (format, and the chapter
+/// number before it when the section includes one).
+pub(crate) fn page_labels(
+    doc: &Document,
+    sections: &[docs_engine::Section],
+    paged: &PagedDocument,
+) -> Vec<String> {
+    let mut chapters: HashMap<u8, Vec<Option<String>>> = HashMap::new();
+    let mut last_para = 0;
+    paged
+        .pages
+        .iter()
+        .map(|page| {
+            let Some(s) = sections.get(page.section).or(sections.last()) else {
+                return page.number.to_string();
+            };
+            if let Some(l) = page.lines.iter().find(|l| !l.repeat) {
+                last_para = l.para;
+            }
+            let chapter = s.props.chapter.and_then(|(level, _)| {
+                chapters
+                    .entry(level)
+                    .or_insert_with(|| doc.chapter_numbers(level))
+                    .get(last_para)
+                    .cloned()
+                    .flatten()
+            });
+            s.props.page_label(page.number, chapter.as_deref())
+        })
+        .collect()
+}
+
 /// A floating object's item on a page, its text box laid out.
 fn float_item(
     doc: &Document,
     (story, para, index): (Option<usize>, usize, usize),
     rect: [f32; 4],
+    painter: &floats::Painter,
     layout: &mut LayoutFn,
 ) -> Option<FloatItem> {
     let owner = match story {
@@ -730,6 +764,8 @@ fn float_item(
         };
         (Arc::new(sl), x, y + dy)
     });
+    let chart =
+        crate::chart::chart_draw(doc, f, (story, para, index), rect, painter, layout).map(Arc::new);
     Some(FloatItem {
         para,
         index,
@@ -738,6 +774,7 @@ fn float_item(
         z: f.at.z,
         behind: f.at.behind,
         text,
+        chart,
     })
 }
 
@@ -750,10 +787,12 @@ fn place_floats(
     layout: &mut LayoutFn,
 ) -> Vec<Vec<FloatItem>> {
     let mut out = Vec::with_capacity(paged.pages.len());
+    let painter = floats::Painter::new(doc);
     for (pi, page) in paged.pages.iter().enumerate() {
         let mut items = Vec::new();
         for pf in &page.floats {
-            if let Some(it) = float_item(doc, (None, pf.para, pf.index), pf.rect, layout) {
+            if let Some(it) = float_item(doc, (None, pf.para, pf.index), pf.rect, &painter, layout)
+            {
                 items.push(it);
             }
         }
@@ -782,7 +821,9 @@ fn place_floats(
                         char_x: line.map_or(placed.x, |c| placed.x + c.x),
                     };
                     let rect = floats::place(f, index, &page.setup, page.number, at);
-                    if let Some(it) = float_item(doc, (Some(story), para, index), rect, layout) {
+                    if let Some(it) =
+                        float_item(doc, (Some(story), para, index), rect, &painter, layout)
+                    {
                         items.push(it);
                     }
                 }

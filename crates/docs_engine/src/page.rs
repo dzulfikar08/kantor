@@ -219,14 +219,14 @@ impl PageGeometry {
 // ── save-time rewrite ───────────────────────────────────────────────────────
 
 /// A child start tag of the sectPr: byte range and local name.
-struct Tag {
-    start: usize,
-    end: usize,
-    name: String,
+pub(crate) struct Tag {
+    pub start: usize,
+    pub end: usize,
+    pub name: String,
 }
 
 /// Direct child start tags of the root element of `xml`.
-fn child_tags(xml: &str) -> Vec<Tag> {
+pub(crate) fn child_tags(xml: &str) -> Vec<Tag> {
     let mut out = Vec::new();
     let mut depth = 0usize;
     let mut i = 0;

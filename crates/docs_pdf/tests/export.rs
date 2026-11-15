@@ -399,3 +399,39 @@ fn table_of_contents_has_dot_leaders_and_aligned_page_numbers() {
         assert!(text.contains("Recommendations"), "{text}");
     }
 }
+
+#[test]
+fn page_number_format_with_chapter_numbers() {
+    use docs_engine::{ChapterSep, NumFormat, PageNumbering};
+    let mut doc = Document::new();
+    let c = doc.insert_text(Selection::default(), "Pendahuluan\nIsi bab.", None);
+    let first = Selection::caret(docs_engine::Position::new(0, 0));
+    doc.set_style(first, Some("Heading1"));
+    doc.toggle_list(first, docs_engine::ListKind::Numbered);
+    let _ = c;
+    assert_eq!(doc.chapter_numbers(1), [Some("1".into()), Some("1".into())]);
+    let n = PageNumbering {
+        format: NumFormat::UpperRoman,
+        start: Some(3),
+        chapter: Some((1, ChapterSep::Colon)),
+    };
+    doc.set_page_numbering(0, n, Selection::default());
+    let mut engine = Engine::new();
+    let pages = docs_pdf::field_pages(&doc, &mut engine);
+    assert_eq!(pages.page_label(0), "1:III");
+    // Saved as Word writes it, and read back.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("p.docx");
+    doc.save_as(&path).unwrap();
+    let back = Document::open(&path).unwrap();
+    assert_eq!(back.sections()[0].props.numbering(), n);
+    // Continue from the previous section, plain numbers: no pgNumType.
+    let mut back = back;
+    back.set_page_numbering(0, PageNumbering::default(), Selection::default());
+    assert_eq!(
+        back.sections()[0].props.numbering(),
+        PageNumbering::default()
+    );
+    back.undo();
+    assert_eq!(back.sections()[0].props.numbering(), n);
+}

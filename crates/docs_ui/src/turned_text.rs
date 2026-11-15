@@ -4,12 +4,14 @@
 //! outline (swash) is turned with the shape and filled (zeno) into a
 //! raster at the screen's resolution, which GPUI paints as an image.
 //!
-//! Rasters live with the prepared slide ([`crate::draw::Painted`], one
+//! Shared by Slides (turned shapes, vertical text) and Docs (turned text
+//! boxes). Rasters live with their owner (Slides: the prepared slide, one
 //! per slide revision), a few zoom levels each (the canvas, thumbnails
 //! and the slide show paint the same slide at different sizes). Zoom
 //! levels are rounded up to steps of an eighth of a doubling, so zooming
 //! re-renders now and then, not every frame; rasters that leave a cache
-//! are freed from GPUI's sprite atlas by [`crate::draw::Painter::drop_evicted`].
+//! are handed back by [`take_evicted`] to be freed from GPUI's sprite
+//! atlas.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -31,7 +33,7 @@ thread_local! {
 }
 
 /// Rasters to free from the sprite atlas (see the module docs).
-pub(crate) fn take_evicted() -> Vec<Arc<RenderImage>> {
+pub fn take_evicted() -> Vec<Arc<RenderImage>> {
     EVICTED.with(|e| std::mem::take(&mut *e.borrow_mut()))
 }
 
@@ -47,7 +49,7 @@ struct LRun {
 }
 
 /// Turned text ready to raster (see the module docs).
-pub(crate) struct TurnedText {
+pub struct TurnedText {
     runs: Vec<LRun>,
     /// Own frame → slide px.
     t: Affine,

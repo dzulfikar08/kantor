@@ -23,8 +23,6 @@ lyon_tessellation = "1"
 slides_engine.workspace = true
 slides_pdf.workspace = true
 slides_scene.workspace = true
-# Turned text: glyph outlines and their fill (the versions GPUI uses).
-swash = "0.2.10"
 
 [lints]
 workspace = true

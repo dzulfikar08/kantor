@@ -13,7 +13,9 @@
 //!
 //! Every change is one undo step.
 
-use docs_engine::{CodeView, Position, Selection, XrefKind, XrefWhat};
+use docs_engine::{
+    ChapterSep, CodeView, NumFormat, PageNumbering, Position, Selection, XrefKind, XrefWhat,
+};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
@@ -89,7 +91,37 @@ pub(crate) enum FieldMenu {
         link: bool,
         target: Option<usize>,
     },
+    /// Format Page Numbers…: the section's page numbering.
+    PageNumbers {
+        section: usize,
+        format: NumFormat,
+        chapter: bool,
+        level: u8,
+        sep: ChapterSep,
+        /// Start at the number in `start` (else continue).
+        restart: bool,
+        start: Entity<InputState>,
+        _sub: Subscription,
+    },
 }
+
+/// What each page number format looks like (Word's list).
+const PAGE_FORMATS: [(NumFormat, &str); 5] = [
+    (NumFormat::Decimal, "1, 2, 3, …"),
+    (NumFormat::LowerLetter, "a, b, c, …"),
+    (NumFormat::UpperLetter, "A, B, C, …"),
+    (NumFormat::LowerRoman, "i, ii, iii, …"),
+    (NumFormat::UpperRoman, "I, II, III, …"),
+];
+
+/// Chapter separators with Word's names.
+const CHAPTER_SEPS: [(ChapterSep, &str); 5] = [
+    (ChapterSep::Hyphen, tk("- (hyphen)")),
+    (ChapterSep::Period, tk(". (period)")),
+    (ChapterSep::Colon, tk(": (colon)")),
+    (ChapterSep::EmDash, tk("— (em dash)")),
+    (ChapterSep::EnDash, tk("– (en dash)")),
+];
 
 /// The code Insert Field… makes from its choices.
 pub(crate) fn field_code(
@@ -483,6 +515,106 @@ impl DocsView {
             &mut |d| docs_pdf::field_pages(d, &mut engine.borrow_mut()),
         );
         self.edited(sel, window, cx);
+    }
+
+    /// Format Page Numbers… for the caret's section (or the section of
+    /// the page whose header or footer is being edited).
+    pub fn open_page_numbers_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let section = match &self.part {
+            Some(s) => self.laid.paged.pages.get(s.page).map_or(0, |p| p.section),
+            None => self.doc.section_of(self.sel.head.para),
+        };
+        let sections = self.main_doc().sections();
+        let n = sections
+            .get(section)
+            .map(|s| s.props.numbering())
+            .unwrap_or_default();
+        let start = cx.new(|cx| {
+            let mut s = InputState::new(window, cx);
+            s.set_value(n.start.unwrap_or(1).to_string(), window, cx);
+            s
+        });
+        let sub = cx.subscribe_in(
+            &start,
+            window,
+            |this, _, ev: &InputEvent, window, cx| match ev {
+                InputEvent::PressEnter { .. } => this.apply_page_numbers(window, cx),
+                InputEvent::Change => {
+                    if let Some(FieldMenu::PageNumbers { restart, .. }) = &mut this.field_menu {
+                        *restart = true;
+                    }
+                    cx.notify();
+                }
+                _ => {}
+            },
+        );
+        let (level, sep) = n.chapter.unwrap_or((1, ChapterSep::Hyphen));
+        self.field_menu = Some(FieldMenu::PageNumbers {
+            section,
+            format: n.format,
+            chapter: n.chapter.is_some(),
+            level,
+            sep,
+            restart: n.start.is_some(),
+            start,
+            _sub: sub,
+        });
+        cx.notify();
+    }
+
+    /// The numbering the Format Page Numbers popover describes.
+    fn page_numbering_choice(&self, cx: &App) -> Option<(usize, PageNumbering)> {
+        let Some(FieldMenu::PageNumbers {
+            section,
+            format,
+            chapter,
+            level,
+            sep,
+            restart,
+            start,
+            ..
+        }) = &self.field_menu
+        else {
+            return None;
+        };
+        let start = restart.then(|| start.read(cx).value().trim().parse::<u32>().ok());
+        let start = match start {
+            Some(None) => return None,
+            Some(Some(n)) => Some(n),
+            None => None,
+        };
+        Some((
+            *section,
+            PageNumbering {
+                format: *format,
+                start,
+                chapter: chapter.then_some((*level, *sep)),
+            },
+        ))
+    }
+
+    fn apply_page_numbers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((section, n)) = self.page_numbering_choice(cx) else {
+            self.status = t("Start at: type a whole number").into();
+            cx.notify();
+            return;
+        };
+        self.field_menu = None;
+        // Section properties belong to the main document: leave the
+        // header or footer, change them, and come back to it.
+        let back = match (self.part_target().cloned(), &self.part) {
+            (Some(crate::part::PartTarget::Hf { kind, .. }), Some(s)) => Some((s.page, kind)),
+            _ => None,
+        };
+        self.leave_part(window, cx);
+        let sel = self.sel;
+        self.doc.set_page_numbering(section, n, sel);
+        self.edited(sel, window, cx);
+        if let Some((page, kind)) = back {
+            self.edit_hf_on_page(page, kind, None, window, cx);
+        }
+        self.focus(window, cx);
+        cx.notify();
     }
 
     // ── rendering ──────────────────────────────────────────────────────────
@@ -1023,6 +1155,158 @@ impl DocsView {
                                 .child(div().flex_1())
                                 .child(insert),
                         ),
+                    center,
+                    Anchor::TopCenter,
+                )
+            }
+            FieldMenu::PageNumbers {
+                format,
+                chapter,
+                level,
+                sep,
+                restart,
+                start,
+                ..
+            } => {
+                let set = |f: fn(&mut FieldMenu)| {
+                    let v = view.clone();
+                    move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                        let _ = v.update(cx, |this, cx| {
+                            if let Some(m) = &mut this.field_menu {
+                                f(m);
+                            }
+                            cx.notify();
+                        });
+                    }
+                };
+                let mut formats = list("docs-pgnum-formats");
+                for (k, (f, shown)) in PAGE_FORMATS.iter().enumerate() {
+                    let v = view.clone();
+                    let f = *f;
+                    formats = formats.child(
+                        item(
+                            format!("docs-pgnum-fmt-{k}").into(),
+                            (*shown).to_owned(),
+                            String::new(),
+                            f == *format,
+                        )
+                        .on_click(move |_, _, cx| {
+                            let _ = v.update(cx, |this, cx| {
+                                if let Some(FieldMenu::PageNumbers { format, .. }) =
+                                    &mut this.field_menu
+                                {
+                                    *format = f;
+                                }
+                                cx.notify();
+                            });
+                        }),
+                    );
+                }
+                let chapter_check =
+                    check("docs-pgnum-chapter", tk("Include chapter number"), *chapter).on_click(
+                        set(|m| {
+                            if let FieldMenu::PageNumbers { chapter, .. } = m {
+                                *chapter = !*chapter;
+                            }
+                        }),
+                    );
+                let chapter_rows = chapter.then(|| {
+                    let mut levels = h_flex().flex_wrap().gap(px(2.));
+                    for l in 1..=9u8 {
+                        let v = view.clone();
+                        levels = levels.child(
+                            item(
+                                format!("docs-pgnum-lvl-{l}").into(),
+                                l.to_string(),
+                                String::new(),
+                                l == *level,
+                            )
+                            .on_click(move |_, _, cx| {
+                                let _ = v.update(cx, |this, cx| {
+                                    if let Some(FieldMenu::PageNumbers { level, .. }) =
+                                        &mut this.field_menu
+                                    {
+                                        *level = l;
+                                    }
+                                    cx.notify();
+                                });
+                            }),
+                        );
+                    }
+                    let mut seps = list("docs-pgnum-seps");
+                    for (k, (sp, name)) in CHAPTER_SEPS.iter().enumerate() {
+                        let v = view.clone();
+                        let sp = *sp;
+                        seps = seps.child(
+                            item(
+                                format!("docs-pgnum-sep-{k}").into(),
+                                t_dyn(name).to_owned(),
+                                String::new(),
+                                sp == *sep,
+                            )
+                            .on_click(move |_, _, cx| {
+                                let _ = v.update(cx, |this, cx| {
+                                    if let Some(FieldMenu::PageNumbers { sep, .. }) =
+                                        &mut this.field_menu
+                                    {
+                                        *sep = sp;
+                                    }
+                                    cx.notify();
+                                });
+                            }),
+                        );
+                    }
+                    v_flex()
+                        .gap(SPACE_2)
+                        .pl(SPACE_5)
+                        .child(
+                            div()
+                                .text_color(tok.fg_muted)
+                                .child(t("Chapter starts with style: Heading")),
+                        )
+                        .child(levels)
+                        .child(div().text_color(tok.fg_muted).child(t("Use separator")))
+                        .child(seps)
+                });
+                let cont = check(
+                    "docs-pgnum-continue",
+                    tk("Continue from previous section"),
+                    !*restart,
+                )
+                .on_click(set(|m| {
+                    if let FieldMenu::PageNumbers { restart, .. } = m {
+                        *restart = false;
+                    }
+                }));
+                let start_row = h_flex()
+                    .gap(SPACE_3)
+                    .child(
+                        check("docs-pgnum-start", tk("Start at:"), *restart).on_click(set(|m| {
+                            if let FieldMenu::PageNumbers { restart, .. } = m {
+                                *restart = true;
+                            }
+                        })),
+                    )
+                    .child(div().w(REM * 5.).child(Input::new(start).small()));
+                let ok = {
+                    let v = view.clone();
+                    button("docs-pgnum-ok".into(), t("OK").into(), true).on_click(
+                        move |_, window, cx| {
+                            let _ = v.update(cx, |this, cx| this.apply_page_numbers(window, cx));
+                        },
+                    )
+                };
+                (
+                    panel("docs-pgnum", REM * 22.)
+                        .child(title(t("Page Number Format")))
+                        .child(div().text_color(tok.fg_muted).child(t("Number format")))
+                        .child(formats)
+                        .child(chapter_check)
+                        .children(chapter_rows)
+                        .child(div().text_color(tok.fg_muted).child(t("Page numbering")))
+                        .child(cont)
+                        .child(start_row)
+                        .child(h_flex().child(div().flex_1()).child(ok)),
                     center,
                     Anchor::TopCenter,
                 )

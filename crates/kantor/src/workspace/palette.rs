@@ -1299,6 +1299,12 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.add_page_numbers_doc(w, cx)),
     },
     Command {
+        title: tk("Format Page Numbers…"),
+        detail: tk("Docs · i, ii, iii or A, B, C; chapter numbers; start at a number"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.open_page_numbers_doc(w, cx)),
+    },
+    Command {
         title: tk("Insert Page Number Field"),
         detail: tk("Docs · the page number at the caret"),
         keys: "",
@@ -1434,13 +1440,13 @@ pub(super) const COMMANDS: &[Command] = &[
         title: tk("Next Tracked Change"),
         detail: tk("Docs · select the next insertion or deletion"),
         keys: "",
-        run: |ws, window, cx| ws.with_docs(window, cx, |v, _, cx| v.next_change_doc(true, cx)),
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.next_change_doc(true, w, cx)),
     },
     Command {
         title: tk("Previous Tracked Change"),
         detail: tk("Docs · select the previous insertion or deletion"),
         keys: "",
-        run: |ws, window, cx| ws.with_docs(window, cx, |v, _, cx| v.next_change_doc(false, cx)),
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.next_change_doc(false, w, cx)),
     },
     Command {
         title: tk("Paper Size: A4"),

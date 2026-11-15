@@ -16,6 +16,8 @@ tempfile.workspace = true
 # embeds the glyphs it is given. "raster-images" embeds PNG/JPEG pictures.
 # Floating shapes: DrawingML preset geometry and theme colours, as Slides.
 slides_engine.workspace = true
+# Charts in floating frames: Slides' chart model and layout.
+slides_scene.workspace = true
 roxmltree.workspace = true
 krilla = { version = "0.8", default-features = false, features = ["raster-images"] }
 

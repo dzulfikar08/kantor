@@ -175,9 +175,9 @@ export const en = {
     "Kantor is early software. It has been tried on a few hundred real-world files, but not yet for how pages look next to Office. Keep a copy of anything important, and expect these gaps:",
   limits: [
     "Printing goes through your PDF viewer: Kantor makes the pages and the viewer sends them to the printer.",
-    "Word: equations and grouped shapes aren't shown properly yet, and text wraps around a floating picture's box rather than its outline. Kantor keeps them and saves them unchanged.",
+    "Word: equations and SmartArt aren't shown properly yet, and text in grouped shapes isn't shown. Kantor keeps them and saves them unchanged.",
     "Word: fields show their results and F9 updates them (dates, cross-references, captions, tables of contents), Alt+F9 shows and edits field codes, and Insert Field, Bookmark and Cross-reference work as in Word, but fields Kantor can't work out, such as formulas and IF, keep the result Word saved.",
-    "Word: Track Changes records your edits (text, formatting, table rows, field updates, headers, footers and notes) and you can accept or reject them, but inserted or deleted table columns aren't tracked and comments can't be replied to or resolved yet.",
+    "Word: Track Changes records your edits (text, formatting, table rows, field updates, headers, footers and notes) and you can accept or reject them, but inserted or deleted table columns aren't tracked yet. Comments can be replied to and resolved.",
     "Word 97-2003 (.doc): floating pictures, shapes, text boxes and comments come in, but not floating objects in headers and footers, grouped shapes or WMF/EMF pictures, and files from Word 6 or Word 95 and password-protected files don't open.",
     "Excel: conditional formatting rules, tables (Format as Table), data validation and page setup can be made and changed in Kantor; files changed this way haven't been opened in Excel itself yet.",
     "Excel: macros aren't carried over when you save, and Kantor tells you when that happens. Pivot tables can be created, rearranged, grouped, refreshed and deleted, with calculated fields, Show Values As, filters and styles; calculated items can't be made yet.",
@@ -367,9 +367,9 @@ export const id = {
     "Kantor masih baru. Kantor sudah dicoba dengan beberapa ratus file dari dunia nyata, tetapi tampilan halamannya belum dibandingkan dengan Office. Simpan salinan file penting, dan perhatikan kekurangan berikut:",
   limits: [
     "Pencetakan lewat penampil PDF: Kantor menyiapkan halamannya, lalu penampil PDF mengirimnya ke printer.",
-    "Word: persamaan dan bentuk yang dikelompokkan belum tampil dengan benar, dan teks membungkus kotak gambar mengambang, bukan garis bentuknya. Kantor menyimpannya tanpa diubah.",
+    "Word: persamaan dan SmartArt belum tampil dengan benar, dan teks di dalam bentuk yang dikelompokkan belum ditampilkan. Kantor menyimpannya tanpa diubah.",
     "Word: bidang (field) menampilkan hasilnya dan F9 memperbaruinya (tanggal, referensi silang, keterangan, daftar isi), Alt+F9 menampilkan dan mengedit kode bidang, dan Sisipkan Bidang, Penanda, serta Referensi Silang bekerja seperti di Word, tetapi bidang yang belum bisa dihitung Kantor, seperti rumus dan IF, tetap memakai hasil yang disimpan Word.",
-    "Word: Track Changes mencatat suntingan Anda (teks, format, baris tabel, pembaruan field, header, footer, dan catatan kaki) dan Anda bisa menerima atau menolaknya, tetapi kolom tabel yang disisipkan atau dihapus belum dilacak dan komentar belum bisa dibalas atau ditandai selesai.",
+    "Word: Track Changes mencatat suntingan Anda (teks, format, baris tabel, pembaruan field, header, footer, dan catatan kaki) dan Anda bisa menerima atau menolaknya, tetapi kolom tabel yang disisipkan atau dihapus belum dilacak. Komentar bisa dibalas dan ditandai selesai.",
     "Word 97-2003 (.doc): gambar, bentuk, dan kotak teks mengambang serta komentar ikut terbuka, tetapi objek mengambang di header dan footer, bentuk yang dikelompokkan, serta gambar WMF/EMF belum, dan file dari Word 6 atau Word 95 serta file berkata sandi tidak bisa dibuka.",
     "Excel: aturan format bersyarat, tabel (Format as Table), validasi data, dan pengaturan halaman bisa dibuat dan diubah di Kantor; file yang diubah dengan cara ini belum dicoba dibuka di Excel sendiri.",
     "Excel: makro tidak ikut tersimpan, dan Kantor memberi tahu Anda saat itu terjadi. Pivot table bisa dibuat, disusun ulang, dikelompokkan, di-refresh, dan dihapus, lengkap dengan calculated field, Show Values As, filter, dan gaya; calculated item belum bisa dibuat.",

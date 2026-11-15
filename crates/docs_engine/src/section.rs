@@ -101,6 +101,25 @@ pub enum NumFormat {
 }
 
 impl NumFormat {
+    pub const ALL: [NumFormat; 5] = [
+        Self::Decimal,
+        Self::LowerRoman,
+        Self::UpperRoman,
+        Self::LowerLetter,
+        Self::UpperLetter,
+    ];
+
+    /// `w:fmt`'s value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Decimal => "decimal",
+            Self::LowerRoman => "lowerRoman",
+            Self::UpperRoman => "upperRoman",
+            Self::LowerLetter => "lowerLetter",
+            Self::UpperLetter => "upperLetter",
+        }
+    }
+
     pub(crate) fn parse(s: &str) -> Self {
         match s {
             "lowerRoman" => Self::LowerRoman,
@@ -121,6 +140,70 @@ impl NumFormat {
             Self::UpperLetter => letters(n),
         }
     }
+}
+
+/// What goes between the chapter number and the page number
+/// (`w:pgNumType w:chapSep`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChapterSep {
+    #[default]
+    Hyphen,
+    Period,
+    Colon,
+    EmDash,
+    EnDash,
+}
+
+impl ChapterSep {
+    pub const ALL: [ChapterSep; 5] = [
+        Self::Hyphen,
+        Self::Period,
+        Self::Colon,
+        Self::EmDash,
+        Self::EnDash,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Hyphen => "hyphen",
+            Self::Period => "period",
+            Self::Colon => "colon",
+            Self::EmDash => "emDash",
+            Self::EnDash => "enDash",
+        }
+    }
+
+    fn parse(s: &str) -> Self {
+        match s {
+            "period" => Self::Period,
+            "colon" => Self::Colon,
+            "emDash" => Self::EmDash,
+            "enDash" => Self::EnDash,
+            _ => Self::Hyphen,
+        }
+    }
+
+    /// The character itself.
+    pub fn text(self) -> &'static str {
+        match self {
+            Self::Hyphen => "-",
+            Self::Period => ".",
+            Self::Colon => ":",
+            Self::EmDash => "\u{2014}",
+            Self::EnDash => "\u{2013}",
+        }
+    }
+}
+
+/// A section's page numbering (Word's Page Number Format dialog).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PageNumbering {
+    pub format: NumFormat,
+    /// Start at this number (`None`: continue from the section before).
+    pub start: Option<u32>,
+    /// Include the chapter number: the heading level (1–9) chapters start
+    /// with, and the separator.
+    pub chapter: Option<(u8, ChapterSep)>,
 }
 
 fn roman(mut n: u32) -> String {
@@ -177,6 +260,8 @@ pub struct SectionProps {
     /// Restart page numbering at this number.
     pub page_start: Option<u32>,
     pub num_format: NumFormat,
+    /// Chapter numbers before page numbers: heading level and separator.
+    pub chapter: Option<(u8, ChapterSep)>,
 }
 
 impl SectionProps {
@@ -192,6 +277,7 @@ impl SectionProps {
             refs: Vec::new(),
             page_start: None,
             num_format: NumFormat::Decimal,
+            chapter: None,
         };
         let Some(el) = xml::parse(sect_pr) else {
             return s;
@@ -224,6 +310,15 @@ impl SectionProps {
                 "pgNumType" => {
                     s.page_start = c.num("start");
                     s.num_format = c.attr("fmt").map(NumFormat::parse).unwrap_or_default();
+                    s.chapter = c
+                        .num::<u8>("chapStyle")
+                        .filter(|l| (1..=9).contains(l))
+                        .map(|l| {
+                            (
+                                l,
+                                c.attr("chapSep").map(ChapterSep::parse).unwrap_or_default(),
+                            )
+                        });
                 }
                 "headerReference" | "footerReference" => {
                     let kind = if c.name == "headerReference" {
@@ -242,12 +337,51 @@ impl SectionProps {
         s
     }
 
+    /// Page number `n` as this section shows it, after `chapter` (the
+    /// number of the chapter the page is in, when numbers include it).
+    pub fn page_label(&self, n: u32, chapter: Option<&str>) -> String {
+        let num = self.num_format.format(n);
+        match (self.chapter, chapter) {
+            (Some((_, sep)), Some(c)) if !c.is_empty() => format!("{c}{}{num}", sep.text()),
+            _ => num,
+        }
+    }
+
+    pub fn numbering(&self) -> PageNumbering {
+        PageNumbering {
+            format: self.num_format,
+            start: self.page_start,
+            chapter: self.chapter,
+        }
+    }
+
     pub fn reference(&self, kind: HfKind, ty: HfType) -> Option<&str> {
         self.refs
             .iter()
             .find(|r| r.0 == kind && r.1 == ty)
             .map(|r| r.2.as_str())
     }
+}
+
+/// A start tag's attributes, raw (name with prefix, value as written).
+fn raw_attrs(tag: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let body = tag
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .trim_end_matches('/');
+    let mut rest = body.split_once(char::is_whitespace).map_or("", |(_, r)| r);
+    while let Some(eq) = rest.find('=') {
+        let key = rest[..eq].trim().to_owned();
+        let after = rest[eq + 1..].trim_start();
+        let Some(q) = after.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+            break;
+        };
+        let Some(end) = after[1..].find(q) else { break };
+        out.push((key, after[1..1 + end].to_owned()));
+        rest = &after[end + 2..];
+    }
+    out
 }
 
 /// Where a section's `w:sectPr` lives.
@@ -838,6 +972,74 @@ impl Document {
         let xml = crate::page::set_hf_distances(&xml, &s.props.page, header, footer);
         let para = self.set_sect_xml(&sections, si, xml);
         self.push_hf(before, para, sel);
+    }
+
+    /// Set section `si`'s page numbering (`w:pgNumType`; attributes Kantor
+    /// doesn't set are kept): one undo step.
+    pub fn set_page_numbering(&mut self, si: usize, n: PageNumbering, sel: Selection) {
+        let sections = self.sections();
+        let Some(s) = sections.get(si) else { return };
+        if s.props.numbering() == n {
+            return;
+        }
+        let before = self.hf_state();
+        let xml = self.sect_xml(&sections, si);
+        let p = sect_prefix(&xml).to_owned();
+        let old = crate::page::child_tags(&xml)
+            .into_iter()
+            .find(|t| t.name == "pgNumType")
+            .map(|t| xml[t.start..t.end].to_owned());
+        let mut attrs: Vec<String> = old
+            .as_deref()
+            .map(|tag| {
+                raw_attrs(tag)
+                    .into_iter()
+                    .filter(|(k, _)| {
+                        let local = k.rsplit(':').next().unwrap_or(k);
+                        !matches!(local, "fmt" | "start" | "chapStyle" | "chapSep")
+                    })
+                    .map(|(k, v)| format!(" {k}=\"{v}\""))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if n.format != NumFormat::Decimal {
+            attrs.push(format!(" {p}fmt=\"{}\"", n.format.as_str()));
+        }
+        if let Some(st) = n.start {
+            attrs.push(format!(" {p}start=\"{st}\""));
+        }
+        if let Some((level, sep)) = n.chapter {
+            attrs.push(format!(" {p}chapStyle=\"{level}\""));
+            if sep != ChapterSep::Hyphen {
+                attrs.push(format!(" {p}chapSep=\"{}\"", sep.as_str()));
+            }
+        }
+        let new = (!attrs.is_empty()).then(|| format!("<{p}pgNumType{}/>", attrs.concat()));
+        let xml = set_sect_child(&xml, "pgNumType", |_| true, new);
+        let para = self.set_sect_xml(&sections, si, xml);
+        self.push_hf(before, para, sel);
+    }
+
+    /// Per paragraph: the number of the chapter it's in, chapters being
+    /// numbered headings of `level` (their list number without trailing
+    /// punctuation, as Word shows it in page numbers).
+    pub fn chapter_numbers(&self, level: u8) -> Vec<Option<String>> {
+        let markers = self.list_markers();
+        let mut cur: Option<String> = None;
+        self.paragraphs
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                if p.cell.is_none() && self.heading_level(p) == Some(level) {
+                    cur = markers.get(i).cloned().flatten().map(|m| {
+                        m.trim()
+                            .trim_end_matches(|c: char| !c.is_alphanumeric())
+                            .to_owned()
+                    });
+                }
+                cur.clone()
+            })
+            .collect()
     }
 
     /// Add a line "Page {PAGE} of {PAGES}" (`text`, the tokens becoming
