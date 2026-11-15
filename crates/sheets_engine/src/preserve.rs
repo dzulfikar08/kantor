@@ -300,6 +300,9 @@ pub(crate) struct Patches {
     /// IronCalc's markup from the model is kept for them (and the dxfs it
     /// added are appended to the original's).
     pub cf_sheets: HashSet<u32>,
+    /// For those sheets, the opened file's x14 rules to put back over
+    /// IronCalc's markup (`cf_x14::patch_sheet`), by `sheetId`.
+    pub cf_x14: Vec<(u32, Vec<crate::cf_x14::KeptX14>)>,
     /// Charts made in Kantor, added with their drawing.
     pub charts: Vec<ChartSave>,
     /// Chart sheet parts whose tab colour changed: `<tabColor>`'s
@@ -404,6 +407,7 @@ impl Patches {
             && self.file_charts.is_empty()
             && self.notes.is_empty()
             && self.chart_sheet_tabs.is_empty()
+            && self.cf_x14.is_empty()
     }
 }
 
@@ -4565,6 +4569,17 @@ fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
             .ok_or_else(|| format!("sheet {id} is missing"))?;
         let xml = pkg.take_text(&sheet.part)?.ok_or("sheet part is missing")?;
         let new = patch_sheet(&xml, patch).map_err(|e| format!("{:?}: {e}", sheet.name))?;
+        pkg.set(&sheet.part, new.into_bytes());
+    }
+    for (id, kept) in &patches.cf_x14 {
+        let Some(sheet) = sheets
+            .iter()
+            .find(|s| s.sheet_id == *id && s.kind == SheetKind::Work)
+        else {
+            continue;
+        };
+        let xml = pkg.take_text(&sheet.part)?.ok_or("sheet part is missing")?;
+        let new = crate::cf_x14::patch_sheet(&xml, kept);
         pkg.set(&sheet.part, new.into_bytes());
     }
     if !patches.names.is_empty() {

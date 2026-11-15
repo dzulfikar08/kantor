@@ -86,7 +86,10 @@ fn bar_layers(bar: DataBar) -> Vec<AnyElement> {
             .left(relative(bar.from))
             .w(relative(width))
             .bg(fill)
-            .when(!bar.gradient, |d| d.border_1().border_color(color))
+            // A solid bar's edge, or the border the file gives it.
+            .when(!bar.gradient || bar.border.is_some(), |d| {
+                d.border_1().border_color(bar.border.map_or(color, hsla))
+            })
             .into_any_element(),
     ];
     if let Some(axis) = bar.axis {
@@ -97,7 +100,7 @@ fn bar_layers(bar: DataBar) -> Vec<AnyElement> {
                 .bottom(px(1.))
                 .left(relative(axis))
                 .w(px(1.))
-                .bg(gpui::black().opacity(0.6))
+                .bg(bar.axis_color.map_or(gpui::black().opacity(0.6), hsla))
                 .into_any_element(),
         );
     }

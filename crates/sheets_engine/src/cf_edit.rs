@@ -880,7 +880,7 @@ impl Workbook {
         Ok(sqref_of(&ranges))
     }
 
-    fn mark_cf(&mut self, sheet: u32) {
+    pub(crate) fn mark_cf(&mut self, sheet: u32) {
         let id = self.sheet_id(sheet);
         self.own_edit(|e, _| {
             e.cf_sheets.insert(id);
@@ -1025,6 +1025,17 @@ impl Workbook {
     pub(crate) fn cf_patches(&self, out: &mut crate::preserve::Patches) {
         out.cf_sheets.extend(self.edits().cf_sheets.iter().copied());
         out.cf_sheets.extend(self.touched.cf.iter().copied());
+        // The file's Excel 2010 extras of rules still as opened.
+        let model = self.model.get_model();
+        for ws in &model.workbook.worksheets {
+            if !out.cf_sheets.contains(&ws.sheet_id) {
+                continue;
+            }
+            let kept = self.cf_x14.kept(ws.sheet_id, &ws.conditional_formatting);
+            if !kept.is_empty() {
+                out.cf_x14.push((ws.sheet_id, kept));
+            }
+        }
     }
 }
 

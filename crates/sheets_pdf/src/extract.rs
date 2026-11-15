@@ -577,7 +577,16 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
                 halign,
                 bar: cond.as_ref().and_then(|x| x.bar),
                 icon: cond.as_ref().and_then(|x| x.icon),
-                borders: [top, look.right, look.bottom, left],
+                // Conditional formatting rules' borders over the cell's own.
+                borders: match cond.as_ref().map(|c| c.borders) {
+                    Some(b) => [
+                        b.top.or(top),
+                        b.right.or(look.right),
+                        b.bottom.or(look.bottom),
+                        b.left.or(left),
+                    ],
+                    None => [top, look.right, look.bottom, left],
+                },
                 pattern: book.fill_pattern(sheet, vr, vc),
                 style,
             });

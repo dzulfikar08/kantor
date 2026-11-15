@@ -10,6 +10,7 @@
 
 mod batch;
 mod cf_edit;
+mod cf_x14;
 mod chart_edit;
 mod chart_options;
 mod chart_sheet;
@@ -195,6 +196,8 @@ pub struct Workbook {
     panes: HashMap<u32, (u32, u32)>,
     /// Notes the opened file shows all the time, `(sheetId, row, col)`.
     note_extras: HashMap<(u32, u32, u32), notes::NoteExtra>,
+    /// The opened file's Excel 2010 conditional format extras.
+    cf_x14: cf_x14::CfX14,
 }
 
 /// See [`Workbook::cached`].
@@ -517,6 +520,7 @@ impl Workbook {
             touched: Default::default(),
             panes: HashMap::new(),
             note_extras: Default::default(),
+            cf_x14: Default::default(),
         })
     }
 
@@ -618,6 +622,7 @@ impl Workbook {
             pivots,
             panes,
             note_extras,
+            mut cf_x14,
         } = extras
             .map(|h| h.join().unwrap_or_default())
             .unwrap_or_default();
@@ -675,6 +680,14 @@ impl Workbook {
             validation = validation::Validations::imported(rules);
         }
         let xls_drawings = std::mem::take(&mut imported.drawings);
+        {
+            let wb = &model.get_model().workbook;
+            cf_x14.bind(
+                wb.worksheets
+                    .iter()
+                    .map(|ws| (ws.sheet_id, ws.conditional_formatting.as_slice())),
+            );
+        }
         let mut book = Self {
             calc,
             model,
@@ -699,6 +712,7 @@ impl Workbook {
             touched,
             panes: HashMap::new(),
             note_extras,
+            cf_x14,
         };
         book.apply_read_panes(&panes);
         if !xls_drawings.is_empty() {
@@ -1522,6 +1536,8 @@ struct Extras {
     panes: HashMap<u32, (u32, u32)>,
     /// Notes' shown state, boxes and formatted text (`preserve::note_extras`).
     note_extras: HashMap<(u32, u32, u32), notes::NoteExtra>,
+    /// Excel 2010 conditional format extras (`cf_x14`).
+    cf_x14: cf_x14::CfX14,
 }
 
 impl Extras {
@@ -1535,6 +1551,7 @@ impl Extras {
             pivots: pivot::Pivots::read(bytes),
             panes: grid::read_panes(&skeletons),
             note_extras: preserve::note_extras(bytes),
+            cf_x14: cf_x14::read(&skeletons),
         }
     }
 }

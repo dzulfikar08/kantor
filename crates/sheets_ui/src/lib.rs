@@ -853,6 +853,15 @@ impl TableDelegate for SheetGrid {
             look.grid_right &= look.right.is_none();
             look.grid_bottom &= look.bottom.is_none();
         }
+        // Borders of conditional formatting rules, over the cell's own.
+        if let Some(b) = cond.as_ref().map(|c| c.borders) {
+            look.right = b.right.or(look.right);
+            look.bottom = b.bottom.or(look.bottom);
+            look.top = b.top.or(look.top);
+            look.left = b.left.or(look.left);
+            look.grid_right &= look.right.is_none();
+            look.grid_bottom &= look.bottom.is_none();
+        }
         let filter_button = self.filter_button(row, col);
         let align = self.book.display_align_of(style, sheet, vr, vc);
         let heights = self.layout.heights.clone();

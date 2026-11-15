@@ -312,10 +312,21 @@ fn draw_bar(surface: &mut Surface, b: &crate::Bar) {
             rule: FillRule::NonZero,
         }));
         surface.draw_path(&path);
+        // A gradient bar's border, when it has one.
+        if let Some(bc) = b.bar.border {
+            surface.set_fill(None);
+            surface.set_stroke(Some(Stroke {
+                paint: krgb(bc).into(),
+                width: 0.5,
+                ..Stroke::default()
+            }));
+            surface.draw_path(&path);
+            surface.set_stroke(None);
+        }
     } else {
         surface.set_fill(Some(fill(color(c))));
         surface.set_stroke(Some(Stroke {
-            paint: krgb(c).into(),
+            paint: krgb(b.bar.border.unwrap_or(c)).into(),
             width: 0.5,
             ..Stroke::default()
         }));
@@ -330,7 +341,7 @@ fn draw_bar(surface: &mut Surface, b: &crate::Bar) {
             [ax, y + h - 0.75],
             0.5,
             Some(vec![1.0, 1.0]),
-            0x000000,
+            b.bar.axis_color.unwrap_or(0x000000),
         );
     }
 }

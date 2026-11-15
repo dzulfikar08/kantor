@@ -11,6 +11,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Sheets: conditional formatting draws rules' borders (on screen and in the PDF), data bars
+  follow their minimum and maximum lengths, borders, negative bar colours and axis setting from
+  the file (Excel 2007 bars run from 10 % to 90 % of the cell, as in Excel), and "between" date
+  rules highlight. Changing one rule on a sheet no longer drops the file's Excel 2010 extras of
+  the others (custom icon sets, data bar borders, lengths, negative colours and axis) on save.
 - Sheets printing: *Insert Page Break*, *Remove Page Break* and *Reset All Page Breaks* (the
   toolbar's printer menu or the palette) work as in Excel, show as dashed lines in the sheet and
   are saved in the file. Page Setup edits a different first page and different odd and even
