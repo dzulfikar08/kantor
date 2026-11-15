@@ -380,3 +380,72 @@ fn typing_in_a_cell_is_text_editing() {
     assert_eq!(p.table_text(0, t).unwrap()[3][1], "8");
     assert!(!p.is_dirty());
 }
+
+#[test]
+fn dragging_a_row_border_sets_its_height() {
+    let mut p = Presentation::open(&corpus("frames.pptx")).unwrap();
+    let t = idx(&p, 0, "Plan");
+    let x = p.slide(0).shapes[t].xfrm.unwrap();
+    let mut hs: Vec<i64> = p.table(0, t).unwrap().rows.iter().map(|r| r.h).collect();
+    hs[1] += 200_000;
+    p.edit_table(0, t, &[TableOp::RowHeights(hs.clone())])
+        .unwrap();
+    let tb = p.table(0, t).unwrap();
+    assert_eq!(tb.rows.iter().map(|r| r.h).collect::<Vec<_>>(), hs);
+    assert_eq!(
+        p.slide(0).shapes[t].xfrm.unwrap().cy,
+        hs.iter().sum::<i64>()
+    );
+    let (q, saved) = reopen(&p);
+    assert_eq!(q.table(0, t).unwrap().rows[1].h, hs[1]);
+    let slide = String::from_utf8(saved["ppt/slides/slide1.xml"].clone()).unwrap();
+    assert!(slide.contains(&format!(r#"h="{}""#, hs[1])));
+    p.undo().unwrap();
+    assert_eq!(p.slide(0).shapes[t].xfrm, Some(x));
+}
+
+#[test]
+fn bullets_and_numbering_in_table_cells() {
+    use slides_engine::{Bullet, Position, Selection};
+    let mut p = Presentation::open(&corpus("frames.pptx")).unwrap();
+    let t = idx(&p, 0, "Plan");
+    let r = ShapeRef::from((0, t)).cell(3, 1);
+    let sel = Selection::caret(Position::new(0, 0));
+    assert!(!p.is_list(r, sel, false));
+    p.toggle_list(r, sel, false).unwrap();
+    assert!(p.is_list(r, sel, false));
+    let para = &p.text_paras(r).unwrap()[0];
+    assert_eq!(para.props.style.bullet, Some(Bullet::Char("•".into())));
+    // Numbered, one level deeper, then saved.
+    p.toggle_list(r, sel, true).unwrap();
+    p.change_level(r, sel, 1).unwrap();
+    assert!(p.is_list(r, sel, true));
+    let (q, saved) = reopen(&p);
+    let slide = String::from_utf8(saved["ppt/slides/slide1.xml"].clone()).unwrap();
+    assert!(
+        slide.contains(r#"<a:buAutoNum type="arabicPeriod"/>"#),
+        "{slide}"
+    );
+    let qp = &q.text_paras(r).unwrap()[0];
+    assert_eq!(qp.props.level, 1);
+    assert!(q.is_list(r, sel, true));
+    // The number is drawn: the cell's render text has it.
+    let tb = q.table(0, t).unwrap();
+    let cell = tb.cell(3, 1).unwrap();
+    let rt = q.cell_text(0, cell, &Default::default()).unwrap();
+    assert!(rt.paras[0].marker.is_some(), "{:?}", rt.paras[0]);
+    // And off again.
+    p.toggle_list(r, sel, true).unwrap();
+    assert!(!p.is_list(r, sel, true));
+}
+
+#[test]
+fn a_scaled_table_fills_its_new_box() {
+    let p = Presentation::open(&corpus("frames.pptx")).unwrap();
+    let t = idx(&p, 0, "Plan");
+    let tb = p.table(0, t).unwrap();
+    let s = tb.scaled(3_000_000, 1_500_000);
+    assert_eq!(s.cols.iter().sum::<i64>(), 3_000_000);
+    assert_eq!(s.rows.iter().map(|r| r.h).sum::<i64>(), 1_500_000);
+    assert_eq!(s.rows[0].cells.len(), tb.rows[0].cells.len());
+}

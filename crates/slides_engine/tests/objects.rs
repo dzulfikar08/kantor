@@ -235,3 +235,61 @@ fn add_and_remove_chart_series() {
     p.remove_chart_series(s, k, 0).unwrap();
     assert!(p.remove_chart_series(s, k, 0).is_err());
 }
+
+#[test]
+fn categories_and_series_anywhere_and_reordered() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let (s, k) = find(&p, "chart");
+    let d = p.chart_data(s, k).unwrap();
+    assert_eq!((d.categories.len(), d.series.len()), (4, 2));
+    // A category between the first two, then the third one deleted.
+    p.insert_chart_category(s, k, 1, "New").unwrap();
+    let e = p.chart_data(s, k).unwrap();
+    assert_eq!(e.categories[1], "New");
+    assert_eq!(e.categories[2], d.categories[1]);
+    assert_eq!(e.series[0].values[1], None);
+    assert_eq!(e.series[0].values[2], d.series[0].values[1]);
+    p.remove_chart_category(s, k, 2).unwrap();
+    let e = p.chart_data(s, k).unwrap();
+    assert_eq!(e.categories.len(), 4);
+    assert_eq!(e.categories[2], d.categories[2]);
+    // A series before the first: it takes column B, the others move on.
+    p.insert_chart_series(s, k, 0, "First").unwrap();
+    let f = p.chart_data(s, k).unwrap();
+    assert_eq!(f.series[0].name, "First");
+    assert_eq!(f.series[1], e.series[0]);
+    let part = p.slide(s).shapes[k].chart_part().unwrap().to_owned();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("anywhere.pptx");
+    p.save_as(&out).unwrap();
+    let saved = parts(&std::fs::read(&out).unwrap());
+    let chart = String::from_utf8(saved[&part].clone()).unwrap();
+    let first = chart.find("<c:v>First</c:v>").unwrap();
+    assert!(
+        chart[..first]
+            .ends_with("<c:f>Sheet1!$B$1</c:f><c:strCache><c:ptCount val=\"1\"/><c:pt idx=\"0\">")
+    );
+    assert!(chart.contains("<c:f>Sheet1!$D$2:$D$5</c:f>"), "{chart}");
+    let wb = parts(&saved["ppt/embeddings/Microsoft_Excel_Sheet1.xlsx"]);
+    let sheet = String::from_utf8(wb["xl/worksheets/sheet1.xml"].clone()).unwrap();
+    assert!(
+        sheet.contains(r#"<t xml:space="preserve">First</t>"#),
+        "{sheet}"
+    );
+    assert_eq!(
+        Presentation::open(&out).unwrap().chart_data(s, k).unwrap(),
+        f
+    );
+    // Reordered: the plot order changes, the data stays in its cells.
+    p.move_chart_series(s, k, 0, false).unwrap();
+    let g = p.chart_data(s, k).unwrap();
+    assert_eq!(g.series[1].name, "First");
+    assert!(p.move_chart_series(s, k, 2, false).is_err());
+    p.save_as(&out).unwrap();
+    let back = Presentation::open(&out).unwrap();
+    assert_eq!(back.chart_data(s, k).unwrap(), g);
+    while p.can_undo() {
+        p.undo();
+    }
+    assert_eq!(p.chart_data(s, k).unwrap(), d);
+}

@@ -4,9 +4,10 @@
 //!
 //! - Table: a grid of the cells' text; add or remove rows and columns next
 //!   to the cell last clicked; fill that cell with a theme colour or none.
-//! - Chart: categories down, series across (names in the top row); add a
-//!   category at the end or remove the last one; add a series after the
-//!   last one or remove the series of the current cell.
+//! - Chart: categories down, series across (names in the top row); insert
+//!   a category above or below the current cell's or delete it; insert a
+//!   series left or right of the current cell's, delete it or move it one
+//!   place earlier or later in the plot order.
 //!
 //! *Apply* writes the typed text as one undo step (`Presentation::
 //! edit_table` / `set_chart_data`); structure buttons apply at once.
@@ -33,6 +34,16 @@ use slides_engine::{ChartData, Rgb, TableOp};
 
 use crate::SlidesView;
 use crate::draw::hsla;
+
+/// A chart structure change at the current cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChartOp {
+    Before,
+    After,
+    Delete,
+    Earlier,
+    Later,
+}
 
 /// Key context of the panel (inside the editor's).
 pub(crate) const KEY_CONTEXT: &str = "SlidesObjectEditor";
@@ -394,75 +405,99 @@ impl SlidesView {
         cx.notify();
     }
 
-    /// Add a category at the end (or remove the last one).
-    fn chart_rows(&mut self, add: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// Insert a category above or below the current cell's, or delete it
+    /// (`Above` / `Below` / `Delete`).
+    fn chart_category_op(&mut self, op: ChartOp, window: &mut Window, cx: &mut Context<Self>) {
         if !self.apply_object_editor(true, window, cx) {
             return;
         }
         let Some(e) = &self.object_editor else { return };
-        let (slide, shape) = (e.slide, e.shape);
-        let Some(mut d) = self.pres.chart_data(slide, shape) else {
-            return;
-        };
-        if add {
-            d.categories
-                .push(tf("Category {}", &[&(d.categories.len() + 1)]));
-            for s in &mut d.series {
-                s.values.push(None);
-            }
-        } else {
-            if d.categories.len() <= 1 {
-                return;
-            }
-            d.categories.pop();
-            for s in &mut d.series {
-                s.values.pop();
-            }
-        }
-        match self.pres.set_chart_data(slide, shape, &d) {
-            Ok(()) => {
-                self.after_object_edit(window, cx);
-                self.open_object_editor(shape, Target::Chart, window, cx);
-            }
-            Err(err) => {
-                if let Some(e) = &mut self.object_editor {
-                    e.error = Some(format!("{err:#}").into());
-                }
-                cx.notify();
-            }
-        }
-    }
-
-    /// Add a series after the last one, or remove the series of the
-    /// current cell (the last one when the cell is a category label).
-    fn chart_series_op(&mut self, add: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.apply_object_editor(true, window, cx) {
-            return;
-        }
-        let Some(e) = &self.object_editor else { return };
-        let (slide, shape, (_, col)) = (e.slide, e.shape, e.current);
+        let (slide, shape, (row, col)) = (e.slide, e.shape, e.current);
         let Some(d) = self.pres.chart_data(slide, shape) else {
             return;
         };
-        let res = if add {
-            let name = tf("Series {}", &[&(d.series.len() + 1)]);
-            self.pres.add_chart_series(slide, shape, &name)
+        let n = d.categories.len();
+        // Row 0 holds the series names: as if on the first category.
+        let k = row.saturating_sub(1).min(n.saturating_sub(1));
+        let name = tf("Category {}", &[&(n + 1)]);
+        let (res, next) = match op {
+            ChartOp::Before => (self.pres.insert_chart_category(slide, shape, k, &name), k),
+            ChartOp::After => (
+                self.pres.insert_chart_category(slide, shape, k + 1, &name),
+                k + 1,
+            ),
+            ChartOp::Delete => (
+                self.pres.remove_chart_category(slide, shape, k),
+                k.min(n.saturating_sub(2)),
+            ),
+            ChartOp::Earlier | ChartOp::Later => return,
+        };
+        self.after_chart_op(res, (next + 1, col), window, cx);
+    }
+
+    /// Insert a series left or right of the current cell's, delete it, or
+    /// move it one place earlier or later (the last series when the cell
+    /// is a category label).
+    fn chart_series_op(&mut self, op: ChartOp, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.apply_object_editor(true, window, cx) {
+            return;
+        }
+        let Some(e) = &self.object_editor else { return };
+        let (slide, shape, (row, col)) = (e.slide, e.shape, e.current);
+        let Some(d) = self.pres.chart_data(slide, shape) else {
+            return;
+        };
+        let n = d.series.len();
+        let k = if col >= 1 && col <= n {
+            col - 1
         } else {
-            let k = if col >= 1 && col <= d.series.len() {
-                col - 1
-            } else {
-                d.series.len().saturating_sub(1)
-            };
-            self.pres.remove_chart_series(slide, shape, k)
+            n.saturating_sub(1)
+        };
+        let name = tf("Series {}", &[&(n + 1)]);
+        let (res, next) = match op {
+            ChartOp::Before => (self.pres.insert_chart_series(slide, shape, k, &name), k),
+            ChartOp::After => (
+                self.pres.insert_chart_series(slide, shape, k + 1, &name),
+                k + 1,
+            ),
+            ChartOp::Delete => (
+                self.pres.remove_chart_series(slide, shape, k),
+                k.min(n.saturating_sub(2)),
+            ),
+            ChartOp::Earlier => (
+                self.pres.move_chart_series(slide, shape, k, true),
+                k.saturating_sub(1),
+            ),
+            ChartOp::Later => (
+                self.pres.move_chart_series(slide, shape, k, false),
+                (k + 1).min(n.saturating_sub(1)),
+            ),
+        };
+        self.after_chart_op(res, (row, next + 1), window, cx);
+    }
+
+    /// After a chart structure change: the panel shows the new data with
+    /// `current` as the current cell, or the error.
+    fn after_chart_op(
+        &mut self,
+        res: anyhow::Result<()>,
+        current: (usize, usize),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(shape) = self.object_editor.as_ref().map(|e| e.shape) else {
+            return;
         };
         match res {
             Ok(()) => {
                 self.after_object_edit(window, cx);
                 self.open_object_editor(shape, Target::Chart, window, cx);
                 if let Some(e) = &mut self.object_editor {
-                    let cols = e.cells.first().map_or(1, Vec::len);
-                    e.current = (0, if add { cols - 1 } else { col.min(cols - 1) });
+                    let rows = e.cells.len().max(1);
+                    let cols = e.cells.first().map_or(1, Vec::len).max(1);
+                    e.current = (current.0.min(rows - 1), current.1.min(cols - 1));
                 }
+                cx.notify();
             }
             Err(err) => {
                 if let Some(e) = &mut self.object_editor {
@@ -582,32 +617,60 @@ impl SlidesView {
             Target::Chart => {
                 bar = bar
                     .child(tool(
-                        "chart-row-add",
+                        "chart-cat-above",
                         None,
-                        tk("+ Category"),
-                        tk("Add a category at the end"),
-                        |v, w, cx| v.chart_rows(true, w, cx),
+                        tk("+ Category above"),
+                        tk("Insert a category above the current cell"),
+                        |v, w, cx| v.chart_category_op(ChartOp::Before, w, cx),
                     ))
                     .child(tool(
-                        "chart-row-del",
+                        "chart-cat-below",
                         None,
-                        tk("− Last category"),
-                        tk("Remove the last category"),
-                        |v, w, cx| v.chart_rows(false, w, cx),
+                        tk("+ Category below"),
+                        tk("Insert a category below the current cell"),
+                        |v, w, cx| v.chart_category_op(ChartOp::After, w, cx),
                     ))
                     .child(tool(
-                        "chart-ser-add",
+                        "chart-cat-del",
                         None,
-                        tk("+ Series"),
-                        tk("Add a series after the last one"),
-                        |v, w, cx| v.chart_series_op(true, w, cx),
+                        tk("− Category"),
+                        tk("Delete the current category"),
+                        |v, w, cx| v.chart_category_op(ChartOp::Delete, w, cx),
+                    ))
+                    .child(tool(
+                        "chart-ser-left",
+                        None,
+                        tk("+ Series left"),
+                        tk("Insert a series left of the current cell"),
+                        |v, w, cx| v.chart_series_op(ChartOp::Before, w, cx),
+                    ))
+                    .child(tool(
+                        "chart-ser-right",
+                        None,
+                        tk("+ Series right"),
+                        tk("Insert a series right of the current cell"),
+                        |v, w, cx| v.chart_series_op(ChartOp::After, w, cx),
                     ))
                     .child(tool(
                         "chart-ser-del",
                         None,
                         tk("− Series"),
                         tk("Remove the series of the current cell"),
-                        |v, w, cx| v.chart_series_op(false, w, cx),
+                        |v, w, cx| v.chart_series_op(ChartOp::Delete, w, cx),
+                    ))
+                    .child(tool(
+                        "chart-ser-earlier",
+                        None,
+                        tk("◀ Move series"),
+                        tk("Move the series earlier in the plot order"),
+                        |v, w, cx| v.chart_series_op(ChartOp::Earlier, w, cx),
+                    ))
+                    .child(tool(
+                        "chart-ser-later",
+                        None,
+                        tk("Move series ▶"),
+                        tk("Move the series later in the plot order"),
+                        |v, w, cx| v.chart_series_op(ChartOp::Later, w, cx),
                     ));
             }
         }

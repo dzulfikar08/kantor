@@ -597,6 +597,75 @@ fn main() -> Result<()> {
         Ok(Some(src))
     });
 
+    // Table row heights and cell lists, chart categories and series
+    // inserted, removed and reordered anywhere; and the drawn chart types.
+    run.scenario("structure_edits.pptx", |o| {
+        let src = corpus.join("pptx/frames.pptx");
+        let mut p = Presentation::open(&src)?;
+        let named = |p: &Presentation, s: usize, n: &str| {
+            p.slide(s)
+                .shapes
+                .iter()
+                .position(|x| x.name == n)
+                .context(n.to_owned())
+        };
+        let t = named(&p, 0, "Plan")?;
+        let mut hs: Vec<i64> = p
+            .table(0, t)
+            .context("table")?
+            .rows
+            .iter()
+            .map(|r| r.h)
+            .collect();
+        hs[1] += 250_000;
+        p.edit_table(0, t, &[TableOp::RowHeights(hs)])?;
+        let cell = ShapeRef::from((0, t)).cell(3, 1);
+        p.toggle_list(cell, Selection::caret(Position::new(0, 0)), true)?;
+        let chart = named(&p, 1, "Sales")?;
+        p.insert_chart_category(1, chart, 1, "Q1.5")?;
+        p.remove_chart_category(1, chart, 3)?;
+        p.insert_chart_series(1, chart, 0, "West")?;
+        p.move_chart_series(1, chart, 1, false)?;
+        p.save_as(&o.join("structure_edits.pptx"))?;
+        Ok(Some(src))
+    });
+    // SmartArt shapes moved and resized; SmartArt inside a group typed into.
+    run.scenario("smartart_edits.pptx", |o| {
+        let src = corpus.join("pptx/groups.pptx");
+        let mut p = Presentation::open(&src)?;
+        let d = (0..p.slide(1).shapes.len())
+            .find(|&k| p.slide(1).shapes[k].smartart().is_some())
+            .context("SmartArt")?;
+        let ship = ShapeRef(1, d, Inner::of(&[2]).context("path")?);
+        let x = p.placed(ship).context("placed")?.xfrm;
+        p.set_xfrm(
+            ship,
+            Xfrm {
+                x: x.x + 200_000,
+                cy: x.cy * 2,
+                ..x
+            },
+            false,
+        )?;
+        let g = (0..p.slide(2).shapes.len())
+            .find(|&k| p.slide(2).shapes[k].is_group())
+            .context("group")?;
+        let plan = ShapeRef(2, g, Inner::of(&[0, 0]).context("path")?);
+        p.insert_text(plan, Selection::caret(Position::new(0, 4)), " ahead", None)?;
+        p.save_as(&o.join("smartart_edits.pptx"))?;
+        Ok(Some(src))
+    });
+    run.scenario("chart_types.pptx", |o| {
+        let src = corpus.join("pptx/charts.pptx");
+        let mut p = Presentation::open(&src)?;
+        let k = (0..p.slide(0).shapes.len())
+            .find(|&k| p.slide(0).shapes[k].chart_part().is_some())
+            .context("radar")?;
+        p.insert_chart_series(0, k, 1, "Model C")?;
+        p.save_as(&o.join("chart_types.pptx"))?;
+        Ok(Some(src))
+    });
+
     run.scenario("new_deck.pptx", |o| {
         let mut p = Presentation::new();
         let i = p.new_slide(Some(0))?;
@@ -1380,7 +1449,9 @@ fn group_edits(p: &mut Presentation) -> Result<()> {
                     None,
                 )?;
             }
-            p.set_fill(child, slides_engine::Paint::Rgb(Rgb([0x22, 0x88, 0x44])))?;
+            if p.shape(child).is_some_and(|s| s.paintable()) {
+                p.set_fill(child, slides_engine::Paint::Rgb(Rgb([0x22, 0x88, 0x44])))?;
+            }
             let c = p.placed(child).context("child")?.xfrm;
             p.set_xfrm(
                 child,
@@ -1487,7 +1558,11 @@ fn slide_edits(p: &mut Presentation) -> Result<()> {
     }
     let n = p.new_slide(Some(p.len() - 1))?;
     p.set_notes_text(n, "A new slide's notes")?;
-    p.duplicate_slide(0)?;
+    // The first slide Kantor can duplicate (slides with charts can't be).
+    let dup = (0..p.len())
+        .find(|&i| p.slide(i).shapes.iter().all(|s| s.chart_part().is_none()))
+        .unwrap_or(0);
+    p.duplicate_slide(dup)?;
     Ok(())
 }
 

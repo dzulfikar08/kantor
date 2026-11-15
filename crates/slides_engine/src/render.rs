@@ -759,6 +759,26 @@ impl Presentation {
         })
     }
 
+    /// A table cell paragraph's style: the slide's default text, then the
+    /// cell body's list style (`own`: the paragraph's own on top). The
+    /// table style only styles characters, so it adds nothing here.
+    pub fn cell_para_style(&self, slide: usize, cell: &Cell, para: usize, own: bool) -> ParaStyle {
+        let master = self.master_of(slide);
+        let mut ls = master.other_style.clone();
+        ls.overlay(&self.default_style);
+        let body = cell.text.as_ref();
+        if let Some(b) = body {
+            ls.overlay(&b.list);
+        }
+        let p = body.and_then(|b| b.paras.get(para));
+        let level = p.map_or(0, |p| p.props.level as usize).min(8);
+        let mut st = ls.0[level].para.clone();
+        if own && let Some(p) = p {
+            st.overlay(&p.props.style);
+        }
+        st
+    }
+
     /// Table styles for slide `slide` (its master's theme colours).
     pub fn table_styles(&self, slide: usize) -> &crate::frame::TableStyles {
         &self.master_of(slide).table_styles

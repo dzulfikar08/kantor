@@ -377,10 +377,10 @@ impl Presentation {
             let mut shape = parse_shape(el, &cx);
             debug_assert!(el.range().start >= start);
             // A pasted SmartArt reads its (copied) drawing.
-            if shape.is_smartart() {
+            if shape.is_smartart() || shape.is_group() {
                 let mut tmp = (*s).clone();
                 tmp.rels = Arc::new(rels.clone());
-                self.attach_drawing(&tmp, &mut shape, slide);
+                self.attach_nested(&tmp, &mut shape, slide);
             }
             next_id = shape.max_id() + 1;
             if let Some(mut x) = c.xfrm {

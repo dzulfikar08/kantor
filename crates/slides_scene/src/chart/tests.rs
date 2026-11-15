@@ -468,13 +468,143 @@ fn scatter_area_and_unsupported() {
     );
     let m = marks(&area, 400.0, 300.0);
     assert_eq!(solid_boxes(&m).iter().filter(|b| b.0 == A2).count(), 2);
-    // Radar: not drawn (placeholder).
-    let radar = space(
-        r#"<c:radarChart><c:radarStyle val="marker"/></c:radarChart>"#,
+    // Surface: not drawn (placeholder).
+    let surface = space(
+        r#"<c:surfaceChart><c:wireframe val="0"/></c:surfaceChart>"#,
         "",
     );
-    let c = parse(&radar);
-    assert!(!c.drawable());
+    assert!(!parse(&surface).drawable());
+}
+
+#[test]
+fn radar_charts_go_round_the_circle() {
+    let radar = |style: &str| {
+        space(
+            &format!(
+                r#"<c:radarChart><c:radarStyle val="{style}"/><c:varyColors val="0"/>{}{}<c:axId val="1"/><c:axId val="2"/></c:radarChart>{AXES}"#,
+                ser(0, "First", &CATS, &[10.0, 20.0, 30.0], ""),
+                ser(1, "Second", &CATS, &[30.0, 10.0, 20.0], ""),
+            ),
+            r#"<c:autoTitleDeleted val="1"/>"#,
+        )
+    };
+    let m = marks(&radar("marker"), 400.0, 300.0);
+    let t = texts(&m);
+    for c in CATS {
+        assert!(t.contains(&c.to_owned()), "{t:?}");
+    }
+    assert!(t.contains(&"40".into()) && t.contains(&"0".into()), "{t:?}");
+    // Alpha at 12 o'clock, above Beta and Gamma (lower right and left).
+    let (a, b, g) = (label(&m, "Alpha"), label(&m, "Beta"), label(&m, "Gamma"));
+    assert!(a.y < b.y && a.y < g.y && b.x > g.x, "{a:?} {b:?} {g:?}");
+    // Closed series outlines, gridline polygons and markers (3 per series
+    // and the legend's).
+    let strokes = |c: u8| {
+        m.iter()
+            .filter(|m| matches!(m, Mark::Prim { prim: Prim::Stroke { stroke, .. }, .. } if stroke.color.0[0] == c && stroke.width > 2.0))
+            .count()
+    };
+    assert!(strokes(0x11) >= 1 && strokes(0x22) >= 1);
+    let marks_a1 = solid_boxes(&m).iter().filter(|b| b.0 == A1).count();
+    assert_eq!(marks_a1, 3 + 1, "markers and legend key");
+    // Filled: one shape per series.
+    let m = marks(&radar("filled"), 400.0, 300.0);
+    assert_eq!(drawn(&solid_boxes(&m), A2).len(), 1);
+}
+
+#[test]
+fn bubbles_are_sized_by_their_third_value() {
+    let xs = nums("xVal", &[1.0, 2.0, 3.0], "General");
+    let ys = nums("yVal", &[1.0, 2.0, 3.0], "General");
+    let sz = nums("bubbleSize", &[1.0, 4.0, 16.0], "General");
+    let xml = space(
+        &format!(
+            r#"<c:bubbleChart><c:varyColors val="0"/><c:ser><c:idx val="0"/><c:order val="0"/>{xs}{ys}{sz}<c:bubble3D val="0"/></c:ser><c:bubbleScale val="100"/><c:showNegBubbles val="0"/><c:axId val="5"/><c:axId val="6"/></c:bubbleChart><c:valAx><c:axId val="5"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="6"/></c:valAx><c:valAx><c:axId val="6"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:crossAx val="5"/></c:valAx>"#
+        ),
+        r#"<c:autoTitleDeleted val="1"/>"#,
+    );
+    let chart = parse(&xml);
+    assert_eq!(
+        chart.groups[0].series[0].sizes.as_deref(),
+        Some(&[Some(1.0), Some(4.0), Some(16.0)][..])
+    );
+    let m = marks(&xml, 400.0, 300.0);
+    let b = drawn(&solid_boxes(&m), A1);
+    assert_eq!(b.len(), 3, "{b:?}");
+    let d: Vec<f32> = b.iter().map(|r| r[2] - r[0]).collect();
+    // Sizes are areas: diameters 1 : 2 : 4.
+    assert!(
+        (d[1] / d[0] - 2.0).abs() < 0.05 && (d[2] / d[0] - 4.0).abs() < 0.05,
+        "{d:?}"
+    );
+    // Up and to the right.
+    assert!(b[2][0] > b[0][0] && b[2][1] < b[0][1]);
+}
+
+#[test]
+fn stock_charts_have_high_low_lines_and_up_down_bars() {
+    let dash = r#"<c:spPr><a:ln w="28575"><a:noFill/></a:ln></c:spPr><c:marker><c:symbol val="dash"/><c:size val="7"/></c:marker>"#;
+    let hlc = |extra: &str| {
+        space(
+            &format!(
+                r#"<c:stockChart>{}{}{}{}{extra}<c:axId val="1"/><c:axId val="2"/></c:stockChart>{AXES}"#,
+                ser(0, "Open", &CATS, &[20.0, 25.0, 30.0], dash),
+                ser(1, "High", &CATS, &[30.0, 35.0, 40.0], dash),
+                ser(2, "Low", &CATS, &[10.0, 15.0, 20.0], dash),
+                ser(3, "Close", &CATS, &[25.0, 20.0, 35.0], dash),
+            ),
+            r#"<c:autoTitleDeleted val="1"/>"#,
+        )
+    };
+    let xml = hlc(
+        r#"<c:hiLowLines/><c:upDownBars><c:gapWidth val="150"/><c:upBars/><c:downBars/></c:upDownBars>"#,
+    );
+    let chart = parse(&xml);
+    assert!(matches!(
+        &chart.groups[0].kind,
+        Kind::Stock {
+            hi_low: Some(_),
+            up_down: Some(_)
+        }
+    ));
+    let m = marks(&xml, 400.0, 300.0);
+    // No series lines (noFill), the dash markers instead.
+    assert!(!m.iter().any(
+        |m| matches!(m, Mark::Prim { prim: Prim::Stroke { stroke, .. }, .. } if stroke.width > 2.0)
+    ));
+    // Three high-low lines in the text colour.
+    let hl = m
+        .iter()
+        .filter(|m| matches!(m, Mark::Prim { prim: Prim::Stroke { stroke, path }, .. } if stroke.color.0[..3] == [0, 0, 0] && path.segs.len() == 2))
+        .count();
+    assert!(hl >= 3, "{hl}");
+    // Up bars white (two days up), a down bar black.
+    let boxes = solid_boxes(&m);
+    let white = boxes
+        .iter()
+        .filter(|b| b.0 == Rgb([255, 255, 255]) && b.1[3] - b.1[1] < 250.0)
+        .count();
+    let black = boxes.iter().filter(|b| b.0 == Rgb([0, 0, 0])).count();
+    assert!(white >= 2 && black >= 1, "{white} {black}");
+}
+
+#[test]
+fn three_d_charts_are_drawn_flat() {
+    let xml = bar_chart("clustered", "col", "").replace("barChart", "bar3DChart");
+    let m = marks(&xml, 600.0, 400.0);
+    assert_eq!(drawn(&solid_boxes(&m), A1).len(), 3);
+    let pie = space(
+        &format!(
+            r#"<c:pie3DChart><c:varyColors val="1"/>{}</c:pie3DChart>"#,
+            ser(0, "Share", &CATS, &[1.0, 1.0, 2.0], "")
+        ),
+        r#"<c:view3D><c:rotX val="30"/></c:view3D>"#,
+    );
+    assert!(matches!(
+        parse(&pie).groups[0].kind,
+        Kind::Pie { hole: None, .. }
+    ));
+    marks(&pie, 400.0, 300.0);
 }
 
 #[test]

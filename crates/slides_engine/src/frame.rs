@@ -269,20 +269,77 @@ pub const EDGE_BL_TR: usize = 5;
 pub enum Vert {
     #[default]
     Horz,
-    /// Turned 90° clockwise (`vert`, `eaVert`).
+    /// Turned 90° clockwise (`vert`).
     Down,
     /// Turned 270° (`vert270`): reads upwards.
     Up,
+    /// East Asian vertical (`eaVert`, `mongolianVert`): lines run down,
+    /// CJK characters stand upright, other text is turned 90° clockwise.
+    EaDown,
+    /// Stacked (`wordArtVert`, `wordArtVertRtl`): lines run down, every
+    /// character upright.
+    Stacked,
 }
 
 impl Vert {
     pub fn parse(v: Option<&str>) -> Option<Self> {
         Some(match v? {
-            "vert" | "eaVert" => Self::Down,
+            "vert" => Self::Down,
+            "eaVert" | "mongolianVert" => Self::EaDown,
+            "wordArtVert" | "wordArtVertRtl" => Self::Stacked,
             "vert270" => Self::Up,
             _ => Self::Horz,
         })
     }
+
+    /// Laid out turned 90° clockwise (lines run down the box).
+    pub fn is_down(self) -> bool {
+        matches!(self, Self::Down | Self::EaDown | Self::Stacked)
+    }
+}
+
+/// Whether `c` stands upright in East Asian vertical text (Unicode's
+/// vertical orientation `U`, approximately: CJK ideographs, kana, Hangul,
+/// fullwidth forms), except the brackets, dashes and long vowel mark that
+/// turn with the line.
+pub fn upright_in_vertical(c: char) -> bool {
+    let u = c as u32;
+    let turned = matches!(
+        u,
+        0x3008..=0x3011
+            | 0x3014..=0x301F
+            | 0x30A0
+            | 0x30FC
+            | 0xFF08
+            | 0xFF09
+            | 0xFF0D
+            | 0xFF1A..=0xFF1E
+            | 0xFF3B
+            | 0xFF3D
+            | 0xFF3F
+            | 0xFF5B..=0xFF60
+            | 0xFFE3
+    );
+    !turned
+        && matches!(
+            u,
+            0x1100..=0x11FF
+                | 0x2E80..=0x2FDF
+                | 0x2FF0..=0x2FFF
+                | 0x3000..=0x30FF
+                | 0x3100..=0x31FF
+                | 0x3200..=0x33FF
+                | 0x3400..=0x4DBF
+                | 0x4E00..=0x9FFF
+                | 0xA960..=0xA97F
+                | 0xAC00..=0xD7FF
+                | 0xF900..=0xFAFF
+                | 0xFE10..=0xFE1F
+                | 0xFE30..=0xFE4F
+                | 0xFF00..=0xFFEF
+                | 0x1F000..=0x1FAFF
+                | 0x20000..=0x3FFFF
+        )
 }
 
 #[derive(Clone, Debug, Default)]
@@ -676,6 +733,18 @@ pub struct CellLook {
 }
 
 impl Table {
+    /// This table with its columns and rows scaled to `cx` × `cy` (EMU),
+    /// as resizing it does: a live preview while its frame is dragged.
+    pub fn scaled(&self, cx: Emu, cy: Emu) -> Table {
+        let mut t = self.clone();
+        t.cols = crate::table_edit::share(&self.cols, cx);
+        let hs: Vec<Emu> = self.rows.iter().map(|r| r.h).collect();
+        for (r, h) in t.rows.iter_mut().zip(crate::table_edit::share(&hs, cy)) {
+            r.h = h;
+        }
+        t
+    }
+
     /// The anchor cell of every grid position (`(row, col)` of the cell
     /// that shows there).
     pub fn cell(&self, r: usize, c: usize) -> Option<&Cell> {

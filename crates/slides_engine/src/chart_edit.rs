@@ -342,10 +342,15 @@ fn fmt_num(v: f64) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SeriesChange {
     Same,
-    /// One more after the last.
-    Added,
+    /// A new series at this place (the number of series: after the last).
+    Inserted(usize),
     /// This one is gone.
     Removed(usize),
+    /// Series `from` and `to` swap places in the plot order.
+    Moved {
+        from: usize,
+        to: usize,
+    },
 }
 
 /// A series' name and value references.
@@ -390,18 +395,47 @@ fn data_box(xml: &str) -> Option<Ref> {
     out
 }
 
-/// The chart part with a series added or removed (caches not yet
+/// The chart part with a series added, removed or moved (caches not yet
 /// rewritten), and the cells the change empties.
+///
+/// Series keep their own cells: a new one takes the cells of the series
+/// it goes before (that one and the series after it in the sheet move a
+/// column or row on), and when one is removed the series after it in the
+/// sheet move back into its cells, so the data stays one block. Moving a
+/// series changes the plot order (`c:order`, and its place in the part)
+/// as PowerPoint's *Select Data* does; its cells stay where they are.
 fn restructure(xml: &str, change: SeriesChange) -> anyhow::Result<(String, Vec<CellWrites>)> {
     let doc = roxmltree::Document::parse(xml).context("chart XML")?;
     let sers = sers(&doc);
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     let mut clears: Vec<CellWrites> = Vec::new();
+    let refs: Vec<(Option<Ref>, Option<Ref>)> = sers.iter().map(|s| ser_refs(*s)).collect();
+    // Series in the order of their cells in the sheet.
+    let mut slots: Vec<usize> = (0..sers.len()).collect();
+    slots.sort_by_key(|&i| {
+        let (tx, val) = &refs[i];
+        val.as_ref()
+            .or(tx.as_ref())
+            .map_or((u32::MAX, u32::MAX), |r| (r.c0, r.r0))
+    });
+    let slot_of = |i: usize| slots.iter().position(|&s| s == i).unwrap_or(0);
+    let retarget = |j: usize, (tx, val): &(Option<Ref>, Option<Ref>), edits: &mut Vec<_>| {
+        for (el, r) in [(kid(sers[j], "tx"), tx), (val_el(sers[j]), val)] {
+            if let (Some(t), Some(r)) = (f_text(el), r) {
+                edits.push((t.range(), esc(&r.write())));
+            }
+        }
+    };
     match change {
         SeriesChange::Same => return Ok((xml.to_owned(), clears)),
-        SeriesChange::Added => {
-            let last = *sers.last().context("the chart has no series")?;
-            let p = prefix_of(xml, last);
+        SeriesChange::Inserted(k) => {
+            let n = sers.len();
+            if n == 0 {
+                bail!("the chart has no series");
+            }
+            let k = k.min(n);
+            let template = sers[k.min(n - 1)];
+            let p = prefix_of(xml, template);
             let max = |name: &str| {
                 sers.iter()
                     .filter_map(|s| kid(*s, name).and_then(|n| attr_i64(n, "val")))
@@ -409,24 +443,47 @@ fn restructure(xml: &str, change: SeriesChange) -> anyhow::Result<(String, Vec<C
                     .unwrap_or(-1)
                     + 1
             };
-            let (tx, val) = ser_refs(last);
+            let order_of = |s: Node| kid(s, "order").and_then(|n| attr_i64(n, "val"));
+            let (tx, val) = &refs[template_index(&sers, template)];
             // Series in columns move right, series in rows move down.
-            let (dc, dr) = match &val {
+            let (dc, dr) = match val {
                 Some(v) if v.c0 == v.c1 && v.r0 != v.r1 => (1, 0),
                 Some(v) if v.r0 == v.r1 && v.c0 != v.c1 => (0, 1),
-                _ => match &tx {
+                _ => match tx {
                     Some(t) if t.r0 == 1 || val.as_ref().is_some_and(|v| t.r0 < v.r0) => (1, 0),
                     _ => (0, 1),
                 },
             };
+            let shift = |r: &Option<Ref>| r.as_ref().map(|r| r.shifted(dc, dr));
+            // Where the new series' cells are, and the series that move on.
+            let (new_refs, new_order) = if k == n {
+                let last = slots[n - 1];
+                ((shift(&refs[last].0), shift(&refs[last].1)), max("order"))
+            } else {
+                let from = slot_of(k);
+                for &j in &slots[from..] {
+                    retarget(j, &(shift(&refs[j].0), shift(&refs[j].1)), &mut edits);
+                }
+                // Plot order: the new one takes series k's place.
+                let ok = order_of(sers[k]).unwrap_or(k as i64);
+                for s in &sers {
+                    if let (Some(o), Some(n)) = (order_of(*s), kid(*s, "order"))
+                        && o >= ok
+                        && let Some(a) = n.attributes().find(|a| a.name() == "val")
+                    {
+                        edits.push((a.range_value(), (o + 1).to_string()));
+                    }
+                }
+                (refs[k].clone(), ok)
+            };
             let mut clone = format!("<{p}ser>");
-            for c in last.children().filter(|c| c.is_element()) {
+            for c in template.children().filter(|c| c.is_element()) {
                 let name = c.tag_name().name();
                 match name {
-                    "idx" | "order" => {
-                        clone.push_str(&format!("<{p}{name} val=\"{}\"/>", max(name)))
-                    }
-                    // Its own colours, points and IDs stay with the original.
+                    "idx" => clone.push_str(&format!("<{p}idx val=\"{}\"/>", max("idx"))),
+                    "order" => clone.push_str(&format!("<{p}order val=\"{new_order}\"/>")),
+                    // Its own colours, points, labels and IDs stay with
+                    // the original.
                     "spPr" | "dPt" | "extLst" => {}
                     "marker" => {
                         let mut m = raw(xml, c).to_owned();
@@ -439,15 +496,17 @@ fn restructure(xml: &str, change: SeriesChange) -> anyhow::Result<(String, Vec<C
                     }
                     "tx" | "val" | "yVal" => {
                         let mut t = raw(xml, c).to_owned();
+                        let r = if name == "tx" {
+                            &new_refs.0
+                        } else {
+                            &new_refs.1
+                        };
                         if let Some(f) = f_text(Some(c))
-                            && let Some(r) = Ref::parse(f.text().unwrap_or_default())
+                            && let Some(r) = r
                         {
                             let base = c.range().start;
                             let fr = f.range();
-                            t.replace_range(
-                                fr.start - base..fr.end - base,
-                                &esc(&r.shifted(dc, dr).write()),
-                            );
+                            t.replace_range(fr.start - base..fr.end - base, &esc(&r.write()));
                         }
                         clone.push_str(&t);
                     }
@@ -455,7 +514,11 @@ fn restructure(xml: &str, change: SeriesChange) -> anyhow::Result<(String, Vec<C
                 }
             }
             clone.push_str(&format!("</{p}ser>"));
-            let at = last.range().end;
+            let at = if k == n {
+                template.range().end
+            } else {
+                template.range().start
+            };
             edits.push((at..at, clone));
         }
         SeriesChange::Removed(k) => {
@@ -464,21 +527,43 @@ fn restructure(xml: &str, change: SeriesChange) -> anyhow::Result<(String, Vec<C
             }
             let gone = *sers.get(k).context("no such series")?;
             edits.push((gone.range(), String::new()));
-            let refs: Vec<(Option<Ref>, Option<Ref>)> = sers.iter().map(|s| ser_refs(*s)).collect();
-            // Later series take the cells of the one before them.
-            for j in k + 1..sers.len() {
-                let (tx, val) = &refs[j - 1];
-                for (el, r) in [(kid(sers[j], "tx"), tx), (val_el(sers[j]), val)] {
-                    if let (Some(t), Some(r)) = (f_text(el), r) {
-                        edits.push((t.range(), esc(&r.write())));
-                    }
-                }
+            // Later series in the sheet take the cells of the one before.
+            let from = slot_of(k);
+            for w in from..slots.len() - 1 {
+                retarget(slots[w + 1], &refs[slots[w]], &mut edits);
             }
             // The last cells used are empty now.
-            let (tx, val) = &refs[sers.len() - 1];
+            let (tx, val) = &refs[slots[slots.len() - 1]];
             for r in [tx, val].into_iter().flatten() {
                 clears.push((r.clone(), vec![CellValue::Empty; r.cells().len()]));
             }
+        }
+        SeriesChange::Moved { from, to } => {
+            let (a, b) = (
+                *sers.get(from).context("no such series")?,
+                *sers.get(to).context("no such series")?,
+            );
+            if from == to {
+                return Ok((xml.to_owned(), clears));
+            }
+            if a.parent() != b.parent() {
+                bail!("A series can't be moved into another chart type's series");
+            }
+            let order = |s: Node| kid(s, "order").and_then(|n| attr_i64(n, "val"));
+            let with_order = |s: Node, o: Option<i64>| -> String {
+                let mut t = raw(xml, s).to_owned();
+                if let (Some(o), Some(n)) = (o, kid(s, "order"))
+                    && let Some(at) = n.attributes().find(|x| x.name() == "val")
+                {
+                    let base = s.range().start;
+                    let r = at.range_value();
+                    t.replace_range(r.start - base..r.end - base, &o.to_string());
+                }
+                t
+            };
+            // Each takes the other's place and plot order.
+            edits.push((a.range(), with_order(b, order(a))));
+            edits.push((b.range(), with_order(a, order(b))));
         }
     }
     edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
@@ -487,6 +572,10 @@ fn restructure(xml: &str, change: SeriesChange) -> anyhow::Result<(String, Vec<C
         out.replace_range(r, &t);
     }
     Ok((out, clears))
+}
+
+fn template_index(sers: &[Node], n: Node) -> usize {
+    sers.iter().position(|s| *s == n).unwrap_or(0)
 }
 
 /// The chart part with `data` in its caches; and the workbook cells it
@@ -507,7 +596,7 @@ fn rewrite_chart(xml: &str, data: &ChartData) -> anyhow::Result<(String, Vec<Cel
     }
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     let mut cells: Vec<CellWrites> = Vec::new();
-    let fix_ref = |el: Node, edits: &mut Vec<(Range<usize>, String)>| -> Option<Ref> {
+    let fix_ref = |el: Node, edits: &mut Vec<(Range<usize>, String)>| -> Option<(Ref, Ref)> {
         let f = ["strRef", "numRef"]
             .iter()
             .find_map(|r| kid(el, r))
@@ -518,7 +607,28 @@ fn rewrite_chart(xml: &str, data: &ChartData) -> anyhow::Result<(String, Vec<Cel
             let text = f.first_child()?;
             edits.push((text.range(), esc(&new.write())));
         }
-        Some(new)
+        Some((new, r))
+    };
+    // Cells a shorter range no longer covers are emptied (no stale data
+    // left below or beside the chart's block).
+    let mut stale: Vec<CellWrites> = Vec::new();
+    let mut note_stale = |new: &Ref, old: &Ref| {
+        let keep = new.cells();
+        let gone: Vec<(u32, u32)> = old
+            .cells()
+            .into_iter()
+            .filter(|c| !keep.contains(c))
+            .collect();
+        if let (Some(&(c0, r0)), Some(&(c1, r1))) = (gone.first(), gone.last()) {
+            let r = Ref {
+                sheet: old.sheet.clone(),
+                c0,
+                r0,
+                c1,
+                r1,
+            };
+            stale.push((r, vec![CellValue::Empty; gone.len()]));
+        }
     };
     for (ser, sd) in sers.iter().zip(&data.series) {
         if let Some(tx) = kid(*ser, "tx") {
@@ -548,7 +658,8 @@ fn rewrite_chart(xml: &str, data: &ChartData) -> anyhow::Result<(String, Vec<Cel
                 })
                 .collect();
             edits.push((c.range(), new_cache(xml, c, &vals)));
-            if let Some(r) = fix_ref(cat, &mut edits) {
+            if let Some((r, old)) = fix_ref(cat, &mut edits) {
+                note_stale(&r, &old);
                 let v = data
                     .categories
                     .iter()
@@ -568,7 +679,8 @@ fn rewrite_chart(xml: &str, data: &ChartData) -> anyhow::Result<(String, Vec<Cel
             values.resize(n, None);
             let vals: Vec<Option<String>> = values.iter().map(|v| v.map(fmt_num)).collect();
             edits.push((c.range(), new_cache(xml, c, &vals)));
-            if let Some(r) = fix_ref(val, &mut edits) {
+            if let Some((r, old)) = fix_ref(val, &mut edits) {
+                note_stale(&r, &old);
                 cells.push((
                     r,
                     values
@@ -579,6 +691,9 @@ fn rewrite_chart(xml: &str, data: &ChartData) -> anyhow::Result<(String, Vec<Cel
             }
         }
     }
+    // Emptied first, so a cell another range still uses keeps its value.
+    stale.append(&mut cells);
+    let cells = stale;
     // Overlapping edits (a formula inside a replaced cache) can't happen:
     // `c:f` is a sibling of the cache.
     edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
@@ -1008,15 +1123,118 @@ impl Presentation {
         shape: usize,
         name: &str,
     ) -> anyhow::Result<()> {
+        let n = self
+            .chart_data(slide, shape)
+            .context("not a chart")?
+            .series
+            .len();
+        self.insert_chart_series(slide, shape, n, name)
+    }
+
+    /// Insert a series at `index` (before the series there; the number of
+    /// series puts it after the last), named `name` with empty values. It
+    /// takes that series' cells in the embedded workbook; the series after
+    /// it move a column (or row) on, as inserting a column in PowerPoint's
+    /// *Edit Data* does. One undo step.
+    pub fn insert_chart_series(
+        &mut self,
+        slide: usize,
+        shape: usize,
+        index: usize,
+        name: &str,
+    ) -> anyhow::Result<()> {
         let (part, bytes) = self.chart_bytes(slide, shape).context("not a chart")?;
         let xml = std::str::from_utf8(&bytes).context("chart part isn't text")?;
         let mut data = read_chart_data(xml).context("not a chart")?;
+        let index = index.min(data.series.len());
         let n = data.categories.len();
-        data.series.push(ChartSeries {
-            name: name.to_owned(),
-            values: vec![None; n],
-        });
-        self.change_chart(slide, shape, xml, &part, &data, SeriesChange::Added)
+        data.series.insert(
+            index,
+            ChartSeries {
+                name: name.to_owned(),
+                values: vec![None; n],
+            },
+        );
+        self.change_chart(
+            slide,
+            shape,
+            xml,
+            &part,
+            &data,
+            SeriesChange::Inserted(index),
+        )
+    }
+
+    /// Move series `index` one place up (earlier) or down in the plot
+    /// order, as PowerPoint's *Select Data* does. One undo step.
+    pub fn move_chart_series(
+        &mut self,
+        slide: usize,
+        shape: usize,
+        index: usize,
+        up: bool,
+    ) -> anyhow::Result<()> {
+        let (part, bytes) = self.chart_bytes(slide, shape).context("not a chart")?;
+        let xml = std::str::from_utf8(&bytes).context("chart part isn't text")?;
+        let mut data = read_chart_data(xml).context("not a chart")?;
+        let to = if up {
+            index.checked_sub(1)
+        } else {
+            Some(index + 1)
+        };
+        let Some(to) = to.filter(|&t| t < data.series.len() && index < data.series.len()) else {
+            bail!("That series can't move further");
+        };
+        data.series.swap(index, to);
+        self.change_chart(
+            slide,
+            shape,
+            xml,
+            &part,
+            &data,
+            SeriesChange::Moved { from: index, to },
+        )
+    }
+
+    /// Insert an empty category named `name` at `index` (the number of
+    /// categories: after the last). One undo step.
+    pub fn insert_chart_category(
+        &mut self,
+        slide: usize,
+        shape: usize,
+        index: usize,
+        name: &str,
+    ) -> anyhow::Result<()> {
+        let mut data = self.chart_data(slide, shape).context("not a chart")?;
+        let index = index.min(data.categories.len());
+        data.categories.insert(index, name.to_owned());
+        for s in &mut data.series {
+            s.values.insert(index.min(s.values.len()), None);
+        }
+        self.set_chart_data(slide, shape, &data)
+    }
+
+    /// Remove category `index` (its values in every series). One undo step.
+    pub fn remove_chart_category(
+        &mut self,
+        slide: usize,
+        shape: usize,
+        index: usize,
+    ) -> anyhow::Result<()> {
+        let mut data = self.chart_data(slide, shape).context("not a chart")?;
+        if data.categories.len() <= 1 {
+            bail!("A chart needs at least one category");
+        }
+        if index >= data.categories.len() {
+            bail!("no such category");
+        }
+        data.categories.remove(index);
+        for s in &mut data.series {
+            if index < s.values.len() {
+                s.values.remove(index);
+            }
+        }
+        self.set_chart_data(slide, shape, &data)
     }
 
     /// Remove series `index`. One undo step.
@@ -1174,7 +1392,7 @@ mod tests {
             "</c:tx><c:cat>",
             "</c:tx><c:spPr><a:solidFill xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"/></c:spPr><c:cat>",
         );
-        let (x, clears) = restructure(&colored, SeriesChange::Added).unwrap();
+        let (x, clears) = restructure(&colored, SeriesChange::Inserted(1)).unwrap();
         assert!(clears.is_empty());
         roxmltree::Document::parse(&x).unwrap();
         assert_eq!(x.matches("<c:ser>").count(), 2);
@@ -1186,6 +1404,85 @@ mod tests {
         assert!(y.contains("<c:f>Sheet1!$B$2:$B$3</c:f>"), "{y}");
         assert_eq!(clears.len(), 2);
         assert_eq!(clears[1].0.write(), "Sheet1!$C$2:$C$3");
+    }
+
+    /// CHART with a second series in column C (orders 0 and 1).
+    fn two_series() -> String {
+        let one = CHART.replace(
+            "<c:idx val=\"0\"/>",
+            "<c:idx val=\"0\"/><c:order val=\"0\"/>",
+        );
+        let start = one.find("<c:ser>").unwrap();
+        let end = one.find("</c:ser>").unwrap() + "</c:ser>".len();
+        let second = one[start..end]
+            .replace(
+                "<c:idx val=\"0\"/><c:order val=\"0\"/>",
+                "<c:idx val=\"1\"/><c:order val=\"1\"/>",
+            )
+            .replace("$B$", "$C$")
+            .replace("<c:v>2025</c:v>", "<c:v>2026</c:v>");
+        format!("{}{second}{}", &one[..end], &one[end..])
+    }
+
+    #[test]
+    fn series_inserted_moved_and_removed_anywhere() {
+        let x = two_series();
+        // Before the second: it takes column C, the old second moves to D.
+        let (y, clears) = restructure(&x, SeriesChange::Inserted(1)).unwrap();
+        assert!(clears.is_empty());
+        let doc = roxmltree::Document::parse(&y).unwrap();
+        let s = sers(&doc);
+        assert_eq!(s.len(), 3);
+        let fs: Vec<String> = s
+            .iter()
+            .map(|n| formula(val_el(*n).unwrap()).unwrap())
+            .collect();
+        assert_eq!(
+            fs,
+            ["Sheet1!$B$2:$B$3", "Sheet1!$C$2:$C$3", "Sheet1!$D$2:$D$3"]
+        );
+        let order = |n: Node| kid(n, "order").and_then(|o| attr_i64(o, "val"));
+        assert_eq!(
+            s.iter().map(|n| order(*n)).collect::<Vec<_>>(),
+            [Some(0), Some(1), Some(2)]
+        );
+        assert_eq!(kid(s[1], "idx").and_then(|o| attr_i64(o, "val")), Some(2));
+        // Removing the first: the others move back a column.
+        let (z, clears) = restructure(&y, SeriesChange::Removed(0)).unwrap();
+        let doc = roxmltree::Document::parse(&z).unwrap();
+        let fs: Vec<String> = sers(&doc)
+            .iter()
+            .map(|n| formula(val_el(*n).unwrap()).unwrap())
+            .collect();
+        assert_eq!(fs, ["Sheet1!$B$2:$B$3", "Sheet1!$C$2:$C$3"]);
+        assert_eq!(clears[1].0.write(), "Sheet1!$D$2:$D$3");
+        // Moving swaps the plot order and the places, not the cells.
+        let (m, _) = restructure(&x, SeriesChange::Moved { from: 1, to: 0 }).unwrap();
+        let doc = roxmltree::Document::parse(&m).unwrap();
+        let s = sers(&doc);
+        assert_eq!(formula(val_el(s[0]).unwrap()).unwrap(), "Sheet1!$C$2:$C$3");
+        assert_eq!((order(s[0]), order(s[1])), (Some(0), Some(1)));
+        assert_eq!(read_chart_data(&m).unwrap().series[0].name, "2026");
+    }
+
+    #[test]
+    fn a_removed_category_leaves_no_stale_cells() {
+        let mut d = read_chart_data(CHART).unwrap();
+        d.categories.remove(0);
+        d.series[0].values.remove(0);
+        let (xml, cells) = rewrite_chart(CHART, &d).unwrap();
+        assert!(
+            xml.contains("<c:f>Sheet1!$A$2:$A$2</c:f>") || xml.contains("<c:f>Sheet1!$A$2</c:f>"),
+            "{xml}"
+        );
+        // A3 and B3 emptied before the kept cells are written.
+        let empties: Vec<String> = cells
+            .iter()
+            .filter(|(_, v)| v.iter().all(|c| *c == CellValue::Empty))
+            .map(|(r, _)| r.write())
+            .collect();
+        assert_eq!(empties, ["Sheet1!$A$3", "Sheet1!$B$3"]);
+        assert_eq!(read_chart_data(&xml).unwrap().categories, ["Q2"]);
     }
 
     #[test]

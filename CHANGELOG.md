@@ -231,6 +231,28 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   as it was). The toolbar's Shapes menu inserts a text box, rectangle, rounded rectangle, oval,
   line, arrow, right arrow or speech bubble at the active cell, and Move or Copy brings a sheet's
   shapes and text boxes with it.
+- Slides: drag a table's row border to set that row's height, as in PowerPoint (rows still grow
+  to fit their text); the height is saved in the file. Table cells take bullets and numbering
+  from the toolbar's list buttons, like text boxes; Alt+Shift+Right and Alt+Shift+Left move list
+  items a level deeper or up (Tab still moves to the next cell). Dragging a table's resize handle
+  shows the table scaled live, not only its outline.
+- Slides: chart data can be restructured anywhere, as in PowerPoint's *Edit Data*: insert a
+  category above or below the current one, delete any category, insert a series left or right of
+  the current one and move a series earlier or later in the plot order. The embedded workbook
+  follows (cells move with their series, and emptied cells no longer keep old values).
+- Slides (and Sheets): radar (with markers or filled), bubble and stock charts (high-low lines,
+  up/down bars) are drawn on screen and in the PDF instead of a placeholder; 3-D column, bar,
+  line, area and pie charts are drawn flat.
+- Slides: SmartArt shapes can be moved and resized one by one (select the SmartArt, then click
+  a shape in it), their text box going with them. Saving writes the new place into PowerPoint's
+  drawing and the custom position and size (`custLinFactNeighbor`, `custScale`) into the
+  SmartArt's data, as PowerPoint does. SmartArt inside a group is now shown from its drawing and
+  its text can be edited there too. A resized SmartArt is still scaled, not laid out again.
+- Slides: East Asian vertical text (`eaVert`, also `mongolianVert`) is drawn as PowerPoint draws
+  it, on screen and in the PDF: Chinese, Japanese and Korean characters stand upright down the
+  line while Latin text and numbers are turned, and the ideographic comma and full stop sit at the
+  top right. Stacked WordArt text (`wordArtVert`, `wordArtVertRtl`) stands every character
+  upright.
 
 ### Changed
 - Docs: files with a table of contents or cross-references are saved in place like any other

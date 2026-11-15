@@ -663,14 +663,14 @@ impl Presentation {
     /// or numbered list item, with inheritance.
     pub fn is_list(&self, r: impl Into<ShapeRef>, sel: Selection, numbered: bool) -> bool {
         let r: ShapeRef = r.into();
-        let Some(shape) = self.shape(r) else {
-            return false;
-        };
-        if shape.text.is_none() {
+        if self.text_paras(r).is_none() {
             return false;
         }
         self.sel_paras(r, sel).all(|i| {
-            let b = self.para_style(r.0, shape, i, true).bullet;
+            let Some(b) = self.text_para_style(r, i, true) else {
+                return false;
+            };
+            let b = b.bullet;
             match b {
                 Some(b) if !b.is_none() => b.is_numbered() == numbered,
                 _ => false,
@@ -688,17 +688,14 @@ impl Presentation {
         numbered: bool,
     ) -> anyhow::Result<()> {
         let r: ShapeRef = r.into();
-        if r.cell_at().is_some() {
-            bail!("Lists in table cells aren't supported yet");
-        }
         let on = !self.is_list(r, sel, numbered);
         let range = self.sel_paras(r, sel);
-        let shape = self.shape(r).context("no such shape")?;
         // What each paragraph would have without its own formatting.
         let inherited: Vec<ParaStyle> = range
             .clone()
-            .map(|i| self.para_style(r.0, shape, i, false))
-            .collect();
+            .map(|i| self.text_para_style(r, i, false))
+            .collect::<Option<_>>()
+            .context("no such shape")?;
         self.edit_text(r, Kind::Other, sel, true, |paras| {
             for (p, inh) in paras[range].iter_mut().zip(inherited) {
                 let st = &mut p.props.style;
@@ -741,6 +738,19 @@ impl Presentation {
             sel
         })?;
         Ok(())
+    }
+
+    /// Paragraph `para`'s style in shape or table cell `r`, with
+    /// inheritance (`own`: its own formatting on top).
+    pub fn text_para_style(&self, r: ShapeRef, para: usize, own: bool) -> Option<ParaStyle> {
+        match r.cell_at() {
+            Some((row, col)) => {
+                let t = self.table(r.0, r.1)?;
+                let cell = t.cell(row, col)?;
+                Some(self.cell_para_style(r.0, cell, para, own))
+            }
+            None => Some(self.para_style(r.0, self.shape(r)?, para, own)),
+        }
     }
 
     /// Formatting typed text takes at `pos`.

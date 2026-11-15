@@ -1,6 +1,7 @@
 //! Turned text on screen. GPUI paints glyphs upright only (no transform
 //! on `paint_glyph`), so text in a turned shape, and vertical text
-//! (`vert`, `vert270`, `eaVert`), is drawn on the CPU instead: each glyph's
+//! (`vert`, `vert270`, the turned Latin of `eaVert`; its upright CJK
+//! characters are ordinary upright text), is drawn on the CPU instead: each glyph's
 //! outline (swash) is turned with the shape and filled (zeno) into a
 //! raster at the screen's resolution, which GPUI paints as an image.
 //!
@@ -320,13 +321,11 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // The eaVert box is CJK, which has no glyphs where no CJK font is
-        // installed (CI).
+        // 4 turned boxes, `vert`, `vert270` and 39 small boxes (one isn't
+        // turned). The eaVert box is all CJK, whose characters stand
+        // upright: drawn as ordinary text, not turned.
         let n = turned.len();
-        assert!(
-            n == 46 || n == 47,
-            "every turned and vertical text box: {n}"
-        );
+        assert_eq!(n, 45, "every turned and vertical text box");
         // A 1920-px-wide window shows the 1280-px slide at about 1.2×.
         let start = std::time::Instant::now();
         let mut inked = 0;
