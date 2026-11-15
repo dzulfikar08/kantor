@@ -11,6 +11,22 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Sheets: pivot tables close their remaining gaps with Excel. **Group** a date field by seconds,
+  minutes, hours, days (or a number of days), months, quarters and years (Years and Quarters
+  become fields of their own, as in Excel), a number field by Starting at / Ending at / By, and
+  **Group Selection** makes Group1, Group2… of the items you pick; **Ungroup** undoes either.
+  **Insert Calculated Field** adds a field worked out from the others (`=Revenue/Units`).
+  **Value Field Settings** has Show Values As (% of Grand Total, Column or Row Total, % Of, % of
+  Parent Row / Column / Parent Total, Difference From, % Difference From, Running Total In,
+  % Running Total In, ranks and Index) with its base field and item. **Field Settings** gives each
+  row or column field its own subtotals (Automatic, None or any of the eleven functions), form,
+  Repeat Item Labels, a blank line after each item, sorting (A to Z, Z to A or by a value) and a
+  label, value (Top 10 too) or date filter. **PivotTable Styles…** picks any of the 84 built-in
+  styles with Row / Column Headers and Banded Rows / Columns. Everything is one undo step, kept
+  by Refresh and saved as Excel saves it; files with these settings now refresh and rearrange
+  instead of being refused.
+- Sheets: a new pivot table on the same data as another shares its cache, as Excel does, and
+  Move or Copy brings a sheet's pivot tables to the copy.
 - Strict Open XML files (Office's "Strict Open XML" Save As type, ISO/IEC 29500 Strict) open in
   Sheets, Docs and Slides instead of being refused, date cells included. Save writes them under
   the same name as standard Open XML (Transitional), the format Excel, Word and PowerPoint save by
