@@ -297,3 +297,51 @@ fn chart_made_in_kantor_in_a_new_workbook() {
     assert_eq!(back.chart_sheet_drawings(bk).len(), 1);
     let _ = k;
 }
+
+#[test]
+fn every_chart_moves_after_its_options_change() {
+    use sheets_engine::{AxisOptions, DataLabels, DisplayUnits};
+    let mut wb = Workbook::open(corpus("20_charts.xlsx")).unwrap();
+    let keys = charts(&wb, 0);
+    for key in &keys {
+        let Some(info) = wb.chart_info(*key) else {
+            continue;
+        };
+        if info.fixed {
+            continue;
+        }
+        let mut spec = info.spec.clone();
+        spec.labels = vec![
+            DataLabels {
+                value: true,
+                pos: info.label_positions.first().copied(),
+                ..DataLabels::default()
+            };
+            info.series.len()
+        ];
+        spec.y_axis = AxisOptions {
+            log_base: Some(10.0),
+            units: DisplayUnits::Thousands,
+            ..AxisOptions::default()
+        };
+        wb.set_chart(*key, spec).unwrap();
+    }
+    for (i, key) in keys.iter().enumerate() {
+        if wb.chart_info(*key).is_none() {
+            continue;
+        }
+        let moved = wb
+            .move_chart(*key, ChartPlace::NewSheet(format!("Moved {i}")))
+            .unwrap_or_else(|e| panic!("chart {i}: {e}"));
+        let MovedChart::ChartSheet(k) = moved else {
+            panic!()
+        };
+        let d = wb.chart_sheet_drawings(k)[0].key;
+        assert!(wb.chart_info(d).is_some(), "chart {i} on its sheet");
+        wb.move_chart(d, ChartPlace::ObjectIn(0))
+            .unwrap_or_else(|e| panic!("chart {i} back: {e}"));
+    }
+    let path = scratch("all-moved.xlsx");
+    wb.save_as(&path).unwrap();
+    assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
+}

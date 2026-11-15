@@ -1507,7 +1507,10 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
                 && let Some(text) = a.ax.disp_units.as_ref().and_then(|d| d.label.as_ref())
             {
                 let (_, th) = o.measure(text, &fonts[i], None);
-                if a.ax.title.is_none() || !a.vertical {
+                if a.vertical {
+                    // Above the axis' top label.
+                    room[2] = room[2].max(th * 1.6 + 4.0);
+                } else {
                     need += th + 4.0;
                 }
             }
@@ -1731,31 +1734,27 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
                 }
             }
         }
-        // Display units label: beside the labels at the top (vertical) or
-        // below them at the right end (horizontal), as Excel places it.
+        // Display units label: over the top label (vertical axes) or below
+        // the labels at the right end (horizontal ones).
         let mut units_h = 0.0f32;
         if a.value.is_some()
             && let Some(text) = a.ax.disp_units.as_ref().and_then(|d| d.label.clone())
         {
-            let (tw, th) = o.measure(&text, font, None);
+            let (_, th) = o.measure(&text, font, None);
             match side {
                 Side::L | Side::R => {
-                    let cx = if side == Side::L {
-                        label_at - extent - 2.0 - th / 2.0
+                    // Level, above the top label (glyphs can't turn on
+                    // screen; Excel turns it beside the labels).
+                    let lh = font.size_pt * PX_PER_PT * 1.2;
+                    let y = plot[1] - lh * 0.6 - th - 2.0;
+                    // From the labels' outer edge, inward (inside the
+                    // chart whichever its width).
+                    let (x, ax) = if side == Side::L {
+                        (label_at - extent, 0.0)
                     } else {
-                        label_at + extent + 2.0 + th / 2.0
+                        (label_at + extent, 1.0)
                     };
-                    let cy = plot[1] + tw / 2.0;
-                    o.text(Label {
-                        text,
-                        font: font.clone(),
-                        x: cx - tw / 2.0,
-                        y: cy - th / 2.0,
-                        w: tw,
-                        h: th,
-                        align: HAlign::Center,
-                        rot: if side == Side::L { -90.0 } else { 90.0 },
-                    });
+                    o.label_at(&text, font, p(x, y), ax, 0.0);
                 }
                 _ => {
                     let y = if side == Side::B {

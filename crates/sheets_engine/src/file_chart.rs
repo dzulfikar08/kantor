@@ -303,7 +303,8 @@ impl Workbook {
             (true, &spec.x_axis, &old.x_axis),
             (false, &spec.y_axis, &old.y_axis),
         ] {
-            if new != was {
+            // A pie has no axes: their options don't apply.
+            if new != was && info.has_axes {
                 xml = chart_style::set_axis_options(&xml, horizontal, new)?;
             }
         }
