@@ -1126,6 +1126,27 @@ impl Workbook {
         }
         let nf = cache.fields.len();
         let ok = |f: usize| f < nf && f < layout.fields.len();
+        // A calculated field can only be summarised (as in Excel).
+        for e in layout.rows.iter().chain(&layout.columns) {
+            if let AxisEntry::Field(f) = e
+                && cache.fields.get(*f).is_some_and(|c| c.formula.is_some())
+            {
+                bail!(
+                    "The field {} is a calculated field: it can only go in Values",
+                    cache.fields[*f].name
+                );
+            }
+        }
+        if let Some(f) = layout
+            .filters
+            .iter()
+            .find(|f| cache.fields.get(**f).is_some_and(|c| c.formula.is_some()))
+        {
+            bail!(
+                "The field {} is a calculated field: it can only go in Values",
+                cache.fields[*f].name
+            );
+        }
         let mut def = (*base).clone();
         let axis = |list: &[AxisEntry]| -> Vec<i32> {
             list.iter()

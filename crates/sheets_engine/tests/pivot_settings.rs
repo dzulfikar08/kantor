@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 
 use pivot_check::{parts, pivot_problems};
 use roxmltree::Document;
-use sheets_engine::{AxisEntry, DateLevel, PivotDestination, PivotGrouping, PivotLayout, Workbook};
+use sheets_engine::{
+    AxisEntry, DateLevel, FieldSubtotals, PivotBaseItem, PivotDestination, PivotFieldFilter,
+    PivotFunc, PivotGrouping, PivotLayout, PivotSort, ReportLayout, ShowAs, Workbook,
+};
 
 /// Date, Region, Product, Units, Revenue.
 const ROWS: [(&str, &str, &str, f64, f64); 12] = [
@@ -327,4 +330,63 @@ fn grouping_selected_items() {
     assert_eq!(labels(&wb, s)[1], "East");
     assert!(wb.undo().unwrap());
     assert_eq!(labels(&wb, s)[1], "Group1");
+}
+
+#[test]
+fn calculated_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = data_book();
+    let s = new_pivot(&mut wb);
+    arrange(&mut wb, s, &["Region"]);
+    assert!(wb.check_pivot_formula(s, 2, 0, "=Revenue/Cost").is_err());
+    assert!(
+        wb.set_pivot_calculated_field(s, 2, 0, "Region", "=Units*2")
+            .is_err(),
+        "a source field's name"
+    );
+    wb.set_pivot_calculated_field(s, 2, 0, "Price", "=Revenue/Units")
+        .unwrap();
+    // Added to Values, worked out from the sums (East: 417 / 30).
+    assert_eq!(
+        grid(&wb, s, (2, 0, 6, 2)),
+        rows(&[
+            &["Row Labels", "Sum of Revenue", "Sum of Price"],
+            &["East", "417", "13.9"],
+            &["North", "396", "13.65517241"],
+            &["West", "255", "13.42105263"],
+            &["Grand Total", "1068", "13.69230769"],
+        ])
+    );
+    let l = layout(&wb, s);
+    let price = field(&l, "Price");
+    assert_eq!(l.fields[price].formula.as_deref(), Some("=Revenue/Units"));
+    assert!(l.fields[price].numeric);
+    // Saved as Excel does; read back and refreshed the same.
+    let (path, p) = save(&mut wb, dir.path(), "calculated.xlsx");
+    let cache = &p["xl/pivotCache/pivotCacheDefinition1.xml"];
+    assert!(
+        cache.contains(
+            "<cacheField name=\"Price\" numFmtId=\"0\" formula=\"Revenue/Units\" databaseField=\"0\"/>"
+        ),
+        "{cache}"
+    );
+    let mut back = Workbook::open(&path).unwrap();
+    assert_eq!(back.pivot_layout(s, 2, 0).unwrap().refresh_problem, None);
+    assert_eq!(back.refresh_pivot(s, 2, 0).unwrap(), 1);
+    assert_eq!(grid(&back, s, (2, 0, 6, 2)), grid(&wb, s, (2, 0, 6, 2)));
+    // Modify, then delete; each one undo step.
+    wb.set_pivot_calculated_field(s, 2, 0, "price", "=Revenue*2")
+        .unwrap();
+    assert_eq!(wb.display_value(s, 3, 2), "834");
+    wb.delete_pivot_calculated_field(s, 2, 0, "Price").unwrap();
+    assert_eq!(wb.display_value(s, 2, 2), "");
+    assert!(layout(&wb, s).fields.iter().all(|f| f.name != "Price"));
+    assert!(wb.undo().unwrap());
+    assert_eq!(wb.display_value(s, 3, 2), "834");
+    assert!(wb.undo().unwrap());
+    assert_eq!(wb.display_value(s, 3, 2), "13.9");
+    // A calculated field stays in Values.
+    let mut l = layout(&wb, s);
+    l.rows.push(AxisEntry::Field(field(&l, "Price")));
+    assert!(wb.set_pivot_layout(s, 2, 0, &l).is_err());
 }
