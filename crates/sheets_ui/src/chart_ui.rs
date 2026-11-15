@@ -30,10 +30,14 @@ use sheets_engine::{ChartInfo, ChartSpec, ChartType, LegendPos, SeriesColor};
 use crate::SheetsView;
 use crate::dialog::{self, choices, note, row};
 
-actions!(sheets, [InsertChart, ChartOptions, MoveChart]);
+actions!(
+    sheets,
+    [InsertChart, ChartOptions, MoveChart, InsertWorksheet]
+);
 
 pub(crate) fn bind_keys(cx: &mut App) {
-    let _ = cx;
+    // Excel: Shift+F11 inserts a worksheet (on a chart sheet too).
+    cx.bind_keys([KeyBinding::new("shift-f11", InsertWorksheet, None)]);
 }
 
 const PANEL_WIDTH: Pixels = px(290.);
@@ -586,6 +590,9 @@ impl SheetsView {
         }))
         .on_action(cx.listener(|this, _: &ChartOptions, w, cx| this.chart_options_doc(w, cx)))
         .on_action(cx.listener(|this, _: &MoveChart, w, cx| this.move_chart_doc(w, cx)))
+        .on_action(cx.listener(|this, _: &InsertWorksheet, w, cx| {
+            this.tab_command(crate::sheet_tab_ui::TabCommand::Insert, w, cx)
+        }))
     }
 }
 

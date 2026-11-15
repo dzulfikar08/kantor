@@ -573,10 +573,7 @@ impl SheetsView {
                 "“{}” will be deleted with everything on it. Formulas that use it will show #REF!.",
                 &[&name],
             ),
-            Tab::Chart(_) => tf(
-                "“{}” will be deleted with everything on it. Formulas that use it will show #REF!.",
-                &[&name],
-            ),
+            Tab::Chart(_) => tf("“{}” will be deleted with its chart.", &[&name]),
         };
         let card = dialog::card("tab-delete", t("Delete sheet"), px(380.), cx)
             .child(div().child(text))

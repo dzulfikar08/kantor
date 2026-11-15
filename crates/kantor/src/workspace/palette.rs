@@ -589,7 +589,7 @@ pub(super) const COMMANDS: &[Command] = &[
     Command {
         title: tk("Insert Sheet"),
         detail: tk("Sheets · a new worksheet after the sheet shown"),
-        keys: "",
+        keys: "Shift F11",
         run: |ws, window, cx| {
             ws.with_sheets_any(window, cx, |v, w, cx| {
                 v.tab_command(TabCommand::Insert, w, cx)
