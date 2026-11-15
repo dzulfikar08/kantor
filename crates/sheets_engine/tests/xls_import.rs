@@ -166,6 +166,33 @@ fn page_setup_and_print_names() {
 }
 
 #[test]
+fn ods_page_setup_and_names() {
+    let mut wb = Workbook::open(corpus("formatted.ods")).unwrap();
+    let p = wb.print_settings(0);
+    assert!(p.setup.paper.same_as(&Paper::A4));
+    assert!(p.setup.landscape);
+    assert_eq!(p.setup.fit, Some((1, 0)));
+    assert_eq!(p.margins.left, 0.5);
+    assert_eq!(p.print_area, vec![CellRange::from_corners((0, 0), (15, 5))]);
+    assert_eq!(p.title_rows, Some((0, 1)));
+    assert!(!wb.print_settings(1).setup.landscape);
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("formatted.xlsx");
+    wb.save_as(&out).unwrap();
+    let book = part(&out, "xl/workbook.xml");
+    assert!(book.contains("name=\"Rate\""), "{book}");
+    assert!(book.contains("Report!$F$6"), "{book}");
+    assert!(book.contains("name=\"Local\" localSheetId=\"0\""), "{book}");
+    assert!(book.contains("_xlnm.Print_Area"), "{book}");
+    assert!(book.contains("_xlnm.Print_Titles"), "{book}");
+    let report = part(&out, "xl/worksheets/sheet1.xml");
+    assert!(report.contains("orientation=\"landscape\""), "{report}");
+    assert!(report.contains("paperSize=\"9\""), "{report}");
+    assert!(report.contains("fitToPage=\"1\""), "{report}");
+}
+
+#[test]
 fn names_and_formulas_using_them() {
     let wb = Workbook::open(corpus("formatted.xls")).unwrap();
     // =Rate*100 with Rate = Report!$F$6 (0.375): a live formula.
@@ -280,8 +307,10 @@ fn ods_brings_values_and_formatting() {
     // The ODS copy of the same workbook.
     let mut wb = Workbook::open(corpus("formatted.ods")).unwrap();
     assert_eq!(wb.source_format(), SourceFormat::Ods);
-    // (`=Rate*100` keeps its value: calamine doesn't bring ODS names.)
-    assert_eq!(wb.import_notes(), ["1 formula kept as values"]);
+    // Names come too, so `=Rate*100` stays a live formula.
+    assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
+    assert_eq!(wb.input(1, 2, 1), "=Rate*100");
+    assert_eq!(wb.display_value(1, 2, 1), "37.5");
     assert_eq!(wb.display_value(0, 0, 0), "Quarterly sales, East region");
     assert_eq!(wb.input(0, 5, 1), "=SUM(B3:B5)");
 

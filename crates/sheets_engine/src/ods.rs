@@ -24,7 +24,11 @@
 //!   Formats come from the conditional styles. A rule or validation whose
 //!   condition has no Excel counterpart is left out with an import note.
 //!
-//! Not read: charts and pictures, page setup. Runs of cells repeated beyond
+//! * pictures, charts and shapes ([`crate::ods_drawing`]), page setup and
+//!   print titles ([`crate::ods_print`]); defined names are read before the
+//!   formulas ([`crate::ods_print::defined_names`]).
+//!
+//! Runs of cells repeated beyond
 //! [`MAX_RUN`] (a style given to the rest of a sheet) are left unformatted.
 
 use std::collections::HashMap;
@@ -878,7 +882,7 @@ fn read_settings(xml: &str) -> (HashMap<String, View>, Option<String>) {
     (views, active)
 }
 
-fn part(path: &Path, name: &str) -> Result<Option<String>> {
+pub(crate) fn part(path: &Path, name: &str) -> Result<Option<String>> {
     let file = std::fs::File::open(path)?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| anyhow!("{e}"))?;
     let Ok(mut entry) = zip.by_name(name) else {
@@ -888,6 +892,9 @@ fn part(path: &Path, name: &str) -> Result<Option<String>> {
     entry.read_to_string(&mut s)?;
     Ok(Some(s))
 }
+
+/// Header rows and header columns (0-based, inclusive).
+type Titles = (Option<(u32, u32)>, Option<(u32, u32)>);
 
 /// What applying an `.ods`'s formatting brought.
 #[derive(Default)]
@@ -899,6 +906,14 @@ pub(crate) struct Applied {
     pub validations: Vec<(u32, Vec<Validation>)>,
     skipped_validations: usize,
     skipped_cf: usize,
+    /// Pictures, charts and shapes.
+    pub drawings: crate::ods_drawing::OdsDrawings,
+    /// Page setup by model sheet.
+    pub prints: Vec<crate::print::SheetPrint>,
+    /// Print area and print titles formulas by model sheet.
+    pub print_names: HashMap<u32, (Option<String>, Option<String>)>,
+    /// Header rows and columns (0-based, inclusive) by model sheet.
+    titles: HashMap<u32, Titles>,
 }
 
 impl Applied {
@@ -915,6 +930,7 @@ impl Applied {
                 self.skipped_cf,
             ));
         }
+        notes.extend(self.drawings.skipped.notes());
         notes
     }
 }
@@ -982,6 +998,40 @@ pub(crate) fn apply(path: &Path, model: &mut Model<'_>, names: &[String]) -> Res
                 .collect()
         })
         .unwrap_or_default();
+    let mut found = Vec::new();
+    let pages = crate::ods_print::Pages::read(&docs);
+    let model_names: Vec<String> = model
+        .workbook
+        .worksheets
+        .iter()
+        .map(|w| w.name.clone())
+        .collect();
+    let rename = |n: &str| {
+        names
+            .iter()
+            .position(|x| x == n)
+            .and_then(|i| model_names.get(i).cloned())
+            .unwrap_or_else(|| n.to_owned())
+    };
+    applied.prints = vec![pages.print(None); names.len()];
+    for table in &tables {
+        let Some(sheet) =
+            attr(*table, NS_TABLE, "name").and_then(|n| names.iter().position(|x| x == n))
+        else {
+            continue;
+        };
+        applied.prints[sheet] = pages.print(attr(*table, NS_TABLE, "style-name"));
+        let area = attr(*table, NS_TABLE, "print-ranges").and_then(|r| {
+            let refs: Option<Vec<String>> = r
+                .split_whitespace()
+                .map(|a| crate::ods_drawing::excel_ref(a, &rename))
+                .collect();
+            refs.filter(|r| !r.is_empty()).map(|r| r.join(","))
+        });
+        if let Some(area) = area {
+            applied.print_names.entry(sheet as u32).or_default().0 = Some(area);
+        }
+    }
     for table in tables {
         let Some(name) = attr(table, NS_TABLE, "name") else {
             continue;
@@ -989,6 +1039,7 @@ pub(crate) fn apply(path: &Path, model: &mut Model<'_>, names: &[String]) -> Res
         let Some(sheet) = names.iter().position(|n| n == name) else {
             continue;
         };
+        let mut objects = (Vec::new(), crate::ods_drawing::Spans::default());
         apply_table(
             table,
             sheet as u32,
@@ -997,7 +1048,40 @@ pub(crate) fn apply(path: &Path, model: &mut Model<'_>, names: &[String]) -> Res
             views.get(name),
             &validations,
             &mut applied,
+            &mut objects,
         );
+        if !objects.0.is_empty() {
+            found.push((sheet as u32, objects));
+        }
+    }
+    for (sheet, (rows, cols)) in std::mem::take(&mut applied.titles) {
+        let prefix = model_names
+            .get(sheet as usize)
+            .map(|n| crate::ods_drawing::sheet_prefix(n))
+            .unwrap_or_default();
+        let mut parts = Vec::new();
+        if let Some((a, b)) = cols {
+            parts.push(format!(
+                "{prefix}${}:${}",
+                crate::column_name(a),
+                crate::column_name(b)
+            ));
+        }
+        if let Some((a, b)) = rows {
+            parts.push(format!("{prefix}${}:${}", a + 1, b + 1));
+        }
+        if !parts.is_empty() {
+            applied.print_names.entry(sheet).or_default().1 = Some(parts.join(","));
+        }
+    }
+    if !found.is_empty() {
+        let file = std::fs::File::open(path)?;
+        let zip = zip::ZipArchive::new(file).map_err(|e| anyhow!("{e}"))?;
+        let mut reader = crate::ods_drawing::Reader::new(zip, &docs, &rename);
+        for (sheet, objects) in &found {
+            reader.sheet(*sheet, &objects.0, &objects.1);
+        }
+        applied.drawings = reader.out;
     }
     Ok(applied)
 }
@@ -1023,16 +1107,33 @@ fn repeated(n: Node, what: &str) -> u32 {
         .max(1)
 }
 
-fn apply_table(
-    table: Node,
+#[allow(clippy::too_many_arguments)]
+fn apply_table<'a, 'i>(
+    table: Node<'a, 'i>,
     sheet: u32,
     model: &mut Model<'_>,
     map: &mut StyleMap,
     view: Option<&View>,
     validations: &HashMap<String, DvDef>,
     applied: &mut Applied,
+    objects: &mut (
+        Vec<crate::ods_drawing::Found<'a, 'i>>,
+        crate::ods_drawing::Spans,
+    ),
 ) {
     let styles = map.styles;
+    // Objects anchored to the sheet.
+    for shapes in table
+        .children()
+        .filter(|n| n.has_tag_name((NS_TABLE, "shapes")))
+    {
+        for n in shapes.children().filter(|n| n.is_element()) {
+            objects.0.push(crate::ods_drawing::Found {
+                node: n,
+                cell: None,
+            });
+        }
+    }
     let mut rules = TableRules::default();
     // Columns: widths, visibility, default cell styles.
     let mut cols: Vec<Col> = Vec::new();
@@ -1056,6 +1157,17 @@ fn apply_table(
             attr(col, NS_TABLE, "visibility"),
             Some("collapse" | "filter")
         );
+        if col
+            .parent()
+            .is_some_and(|p| p.has_tag_name((NS_TABLE, "table-header-columns")))
+        {
+            let t = &mut applied.titles.entry(sheet).or_default().1;
+            *t = Some((t.map_or(c, |t| t.0), last));
+        }
+        if let Some(w) = width {
+            let px = if hidden { 0.0 } else { w * 96.0 / 72.0 };
+            objects.1.cols.push((c, n.min(MAX_COLS - c), px));
+        }
         // A column with a default cell style gets it as its column style
         // (below), so its empty cells need no style of their own.
         if ((width.is_some() || hidden) && n <= MAX_LINES) || has_default {
@@ -1101,6 +1213,22 @@ fn apply_table(
         }
         let n = repeated(row, "number-rows-repeated");
         let height = attr(row, NS_TABLE, "style-name").and_then(|s| styles.rows.get(s));
+        if row
+            .parent()
+            .is_some_and(|p| p.has_tag_name((NS_TABLE, "table-header-rows")))
+        {
+            let last = r.saturating_add(n - 1).min(MAX_ROWS - 1);
+            let t = &mut applied.titles.entry(sheet).or_default().0;
+            *t = Some((t.map_or(r, |t| t.0), last));
+        }
+        if let Some(h) = height {
+            let px = if attr(row, NS_TABLE, "visibility").is_some_and(|v| v != "visible") {
+                0.0
+            } else {
+                h.0 * 96.0 / 72.0
+            };
+            objects.1.rows.push((r, n.min(MAX_ROWS - r), px));
+        }
         let hidden = matches!(
             attr(row, NS_TABLE, "visibility"),
             Some("collapse" | "filter")
@@ -1196,6 +1324,14 @@ fn apply_table(
                 && styles.maps.contains_key(name)
             {
                 rules.mapped.push(name, rect);
+            }
+            for n in cell.children().filter(|n| {
+                n.is_element() && n.tag_name().namespace() == Some(crate::ods_drawing::NS_DRAW)
+            }) {
+                objects.0.push(crate::ods_drawing::Found {
+                    node: n,
+                    cell: Some((c, r)),
+                });
             }
             if let Some(a) = child(cell, NS_OFFICE, "annotation") {
                 let author = child(a, NS_DC, "creator")
