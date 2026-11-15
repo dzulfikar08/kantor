@@ -94,6 +94,7 @@ pub mod format;
 pub mod formula;
 pub mod grid;
 pub mod tsv;
+pub mod web;
 
 pub use cond_format::{CfIcon, Conditional, DataBar, IconShape};
 pub use content_text::{Translate, set_content_translator};

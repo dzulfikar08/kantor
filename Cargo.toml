@@ -33,6 +33,7 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 roxmltree = "0.21"
 # Already in GPUI's tree; Slides builds rotated picture rasters with it.
 image = { version = "0.25", default-features = false }
+imagesize = "0.14"
 # Blocking HTTP: no async runtime, one small TLS stack (rustls + ring, Mozilla roots).
 # Shared by kantor_ai and kantor_update.
 ureq = { version = "3", default-features = false, features = ["rustls"] }

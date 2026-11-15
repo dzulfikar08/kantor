@@ -67,6 +67,11 @@ mod kantor_sheets;
 pub mod kantor_pivot {
     pub use crate::functions::kantor_pivot::{PivotGrid, PivotValueCell};
 }
+/// KANTOR PATCH (functions): what IMAGE and WEBSERVICE fetch through the
+/// host (`Model::kantor_web_requests`).
+pub mod kantor_web {
+    pub use crate::functions::kantor_web::{CellImage, KantorWeb, WebKind, WebResult};
+}
 // KANTOR PATCH (row heights)
 pub mod kantor_rows;
 pub mod links;

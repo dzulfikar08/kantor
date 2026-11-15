@@ -3875,6 +3875,7 @@ dependencies = [
  "rand 0.10.3",
  "regex",
  "regex-lite",
+ "roxmltree 0.21.2",
  "ryu",
  "serde",
  "statrs",
@@ -6982,6 +6983,7 @@ dependencies = [
  "cfb",
  "dhat",
  "encoding_rs",
+ "imagesize 0.14.0",
  "ironcalc",
  "ironcalc_base",
  "kantor_mem",
@@ -6991,6 +6993,7 @@ dependencies = [
  "roxmltree 0.21.2",
  "serde_json",
  "tempfile",
+ "ureq",
  "zip 9.4.1",
 ]
 

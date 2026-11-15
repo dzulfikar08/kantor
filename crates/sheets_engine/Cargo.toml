@@ -15,9 +15,13 @@ kantor_ooxml.workspace = true
 calamine.workspace = true
 cfb.workspace = true
 encoding_rs.workspace = true
+# The size of a picture IMAGE downloads (`web`).
+imagesize.workspace = true
 log.workspace = true
 roxmltree.workspace = true
 serde_json.workspace = true
+# IMAGE and WEBSERVICE downloads (`web::fetch`), as in kantor_update.
+ureq.workspace = true
 zip.workspace = true
 
 [dev-dependencies]

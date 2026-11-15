@@ -285,12 +285,17 @@ impl Model<'_> {
             } => (*f, v, *r),
             _ => return None,
         };
-        let node = &self
+        let mut node: &Node = &self
             .parsed_formulas
             .get(cell.sheet as usize)?
             .get(f as usize)?
             .0;
-        if !matches!(&**node, Node::FunctionKind { kind: k, .. } if k == kind) {
+        // An implicit intersection the parser added (or `@`) is not a
+        // formula of its own.
+        while let Node::ImplicitIntersection { child, .. } = node {
+            node = child;
+        }
+        if !matches!(node, Node::FunctionKind { kind: k, .. } if k == kind) {
             return None;
         }
         let first = formula_value(value)?;
@@ -354,6 +359,28 @@ impl Model<'_> {
             cell,
             "This function needs a Microsoft online service".to_string(),
         )
+    }
+}
+
+impl crate::UserModel<'_> {
+    /// See [`Model::kantor_set_web_enabled`].
+    pub fn kantor_set_web_enabled(&mut self, enabled: bool) {
+        self.model.kantor_set_web_enabled(enabled);
+    }
+
+    /// See [`Model::kantor_web_requests`].
+    pub fn kantor_web_requests(&self) -> Vec<(String, WebKind)> {
+        self.model.kantor_web_requests()
+    }
+
+    /// See [`Model::kantor_set_web_result`]. Recalculate afterwards.
+    pub fn kantor_set_web_result(&mut self, url: &str, kind: WebKind, result: WebResult) {
+        self.model.kantor_set_web_result(url, kind, result);
+    }
+
+    /// See [`Model::kantor_cell_image`].
+    pub fn kantor_cell_image(&self, sheet: u32, row: i32, column: i32) -> Option<&CellImage> {
+        self.model.kantor_cell_image(sheet, row, column)
     }
 }
 
