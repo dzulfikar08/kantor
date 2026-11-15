@@ -174,6 +174,74 @@ fn strict_xlsx_opens() {
     assert_eq!(wb.input(0, 0, 1), "32874");
 }
 
+/// Workbooks whose parts aren't where Excel puts them (calamine's
+/// `minimal_package.xlsx` and `renamed_workbook_part.xlsx`, LibreOffice's
+/// tdf131575) were refused with "Zip Error: specified file not found":
+/// the workbook part at the package root or under another name, and part
+/// names written with backslashes and in another case than referenced.
+#[test]
+fn xlsx_parts_outside_excels_layout_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><cellXfs count="1"><xf numFmtId="0" fontId="0"/></cellXfs></styleSheet>"#;
+    let data = sheet(
+        r#"<row r="1"><c r="A1" t="inlineStr"><is><t>Name</t></is></c><c r="B1"><v>42</v></c></row>"#,
+    );
+    let root_rels = |target: &str| ROOT_RELS.replace("xl/workbook.xml", target);
+
+    // Everything at the package root, the workbook's targets next to it.
+    let root = dir.path().join("root.xlsx");
+    let ct = CT.replace("/xl/worksheets/", "/").replace("/xl/", "/");
+    let rels = workbook_rels(true).replace("worksheets/", "");
+    let to_root = root_rels("workbook.xml");
+    write_zip(
+        &root,
+        &[
+            ("[Content_Types].xml", ct.as_bytes()),
+            ("_rels/.rels", to_root.as_bytes()),
+            ("workbook.xml", WORKBOOK.as_bytes()),
+            ("_rels/workbook.xml.rels", rels.as_bytes()),
+            ("sheet1.xml", data.as_bytes()),
+            ("styles.xml", styles.as_bytes()),
+        ],
+    );
+    round_trip(&root, &[(0, 0, "Name"), (0, 1, "42")]);
+    assert!(Workbook::open(&root).unwrap().cell_style(0, 0, 0).bold);
+
+    // The workbook part renamed.
+    let renamed = dir.path().join("renamed.xlsx");
+    let ct = CT.replace("/xl/workbook.xml", "/xl/workbook2.xml");
+    let rels = workbook_rels(false);
+    let to_renamed = root_rels("xl/workbook2.xml");
+    write_zip(
+        &renamed,
+        &[
+            ("[Content_Types].xml", ct.as_bytes()),
+            ("_rels/.rels", to_renamed.as_bytes()),
+            ("xl/workbook2.xml", WORKBOOK.as_bytes()),
+            ("xl/_rels/workbook2.xml.rels", rels.as_bytes()),
+            ("xl/worksheets/sheet1.xml", data.as_bytes()),
+        ],
+    );
+    round_trip(&renamed, &[(0, 0, "Name"), (0, 1, "42")]);
+
+    // Backslashes, and names in another case than the references give.
+    let slashes = dir.path().join("backslashes.xlsx");
+    let rels = workbook_rels(true);
+    write_zip(
+        &slashes,
+        &[
+            ("[content_types].xml", CT.as_bytes()),
+            ("_rels\\.rels", ROOT_RELS.as_bytes()),
+            ("xl\\workbook.xml", WORKBOOK.as_bytes()),
+            ("xl\\_rels\\workbook.xml.rels", rels.as_bytes()),
+            ("xl\\worksheets\\sheet1.xml", data.as_bytes()),
+            ("xl\\Styles.xml", styles.as_bytes()),
+        ],
+    );
+    round_trip(&slashes, &[(0, 0, "Name"), (0, 1, "42")]);
+    assert!(Workbook::open(&slashes).unwrap().cell_style(0, 0, 0).bold);
+}
+
 /// An `.xlsb` whose sheet names a relationship that isn't there panicked in
 /// calamine; the file is refused instead, and Kantor keeps running.
 #[test]
@@ -372,4 +440,62 @@ fn ods_styled_runs_to_the_last_column_are_row_styles() {
     wb.save_as(&out).unwrap();
     let back = Workbook::open(&out).unwrap();
     assert_eq!(back.cell_style(0, 1500, 3000).fill, fill);
+}
+
+/// An `.ods` whose `content.xml` is indented (LibreOffice's tdf137216 and
+/// tdf103092 test files) was refused: calamine stops on the whitespace
+/// between cells ("Expecting 'table-cell', found 'Text'"). Spaces inside a
+/// cell's paragraph are its text and stay.
+#[test]
+fn ods_indented_content_opens() {
+    let body = r#"
+    <table:table table:name="Data">
+     <table:table-column/>
+     <table:table-row>
+      <table:table-cell office:value-type="string">
+       <text:p>two  words <text:span>and</text:span> more</text:p>
+      </table:table-cell>
+      <table:table-cell office:value-type="float" office:value="42">
+       <text:p>42</text:p>
+      </table:table-cell>
+     </table:table-row>
+    </table:table>
+   "#;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("indented.ods");
+    write_ods(&path, body);
+    let wb = Workbook::open(&path).unwrap();
+    assert_eq!(wb.sheet_names(), ["Data"]);
+    assert_eq!(wb.input(0, 0, 0), "two  words and more");
+    assert_eq!(wb.input(0, 0, 1), "42");
+}
+
+/// Cells pointing at a cell format past the ones the styles part has
+/// (LibreOffice's tdf100709: formats 336-407 of 100) take the default
+/// format, as Excel repairs them, so a save doesn't write them pointing
+/// nowhere.
+#[test]
+fn xlsx_cell_formats_past_the_end_are_the_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("past.xlsx");
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><cellXfs count="2"><xf numFmtId="0" fontId="0"/><xf numFmtId="10" fontId="0" applyNumberFormat="1"/></cellXfs></styleSheet>"#;
+    xlsx(
+        &path,
+        r#"<row r="1" s="40" customFormat="1"><c r="A1" s="336"><v>0.5</v></c><c r="B1" s="1"><v>0.25</v></c></row>"#,
+        Some(styles),
+    );
+    round_trip(&path, &[(0, 0, "0.5"), (0, 1, "0.25")]);
+    let wb = Workbook::open(&path).unwrap();
+    assert_eq!(wb.style_index(0, 0, 0), 0);
+    assert_eq!(wb.style_index(0, 0, 1), 1);
+    let saved = path.with_file_name("saved.xlsx");
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(&saved).unwrap()).unwrap();
+    let mut sheet = String::new();
+    std::io::Read::read_to_string(
+        &mut zip.by_name("xl/worksheets/sheet1.xml").unwrap(),
+        &mut sheet,
+    )
+    .unwrap();
+    assert!(!sheet.contains(r#"s="336""#), "{sheet}");
+    assert!(!sheet.contains(r#"s="40""#), "{sheet}");
 }

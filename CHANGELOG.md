@@ -228,6 +228,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   rule past the next rule shown (as Excel does) instead of swapping it with a rule the list hides.
 - Sheets: in a sheet copied with Move or Copy, formulas naming the original sheet's tables now
   name the copy's tables (`Sales` → `Sales2`), as in Excel.
+- Sheets: workbooks whose parts aren't where Excel puts them open now ("specified file not found"
+  before): the workbook part under another name or at the package's root, and part names written
+  with backslashes or in another case, as some non-Microsoft tools write them.
+- Sheets: `.ods` files whose XML is indented (spaces and line breaks between cells) open now.
+- Sheets: cells pointing at a cell format the file doesn't have get the default format, as Excel
+  repairs them, instead of being saved pointing nowhere (Excel offered to repair the saved file).
 
 - Docs: after closing the Header & Footer bar, the lines from comments and formatting balloons
   to their text were drawn too low until the next keystroke or click.

@@ -1,6 +1,6 @@
 [package]
 name = "kantor_ooxml"
-description = "Open XML package helpers shared by Kantor's readers: Strict (ISO/IEC 29500 Strict) to Transitional"
+description = "Open XML package helpers shared by Kantor's readers: Strict (ISO/IEC 29500 Strict) to Transitional, unusual part names to Excel's"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

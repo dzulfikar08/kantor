@@ -311,10 +311,41 @@ pub(crate) struct Imported {
 
 /// Read an `.ods` / `.xls` / `.xlsb` file via calamine (and `.xls`
 /// formatting via [`crate::xls`]). Returns the evaluated model.
+///
+/// An `.ods` whose `content.xml` is indented (whitespace between cells, as
+/// some generators and hand-edited test files have; LibreOffice reads them)
+/// stops calamine's reader; it is read again from a copy without that
+/// whitespace.
 pub(crate) fn read_calamine(
     path: &Path,
     format: SourceFormat,
 ) -> Result<(Model<'static>, Imported)> {
+    let first = read_calamine_file(path, format);
+    let Err(error) = first else {
+        return first;
+    };
+    if format != SourceFormat::Ods {
+        return Err(error);
+    }
+    let Ok(Some(tidy)) = crate::ods::without_indentation(path) else {
+        return Err(error);
+    };
+    let copy = std::env::temp_dir().join(format!(
+        "kantor-ods-{}-{:x}.ods",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    ));
+    if std::fs::write(&copy, tidy).is_err() {
+        return Err(error);
+    }
+    let again = read_calamine_file(&copy, format);
+    let _ = std::fs::remove_file(&copy);
+    again.map_err(|_| error)
+}
+
+fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'static>, Imported)> {
     // The formatting pass reads the file again, meanwhile.
     let reading = (format == SourceFormat::Xls).then(|| {
         let path = path.to_path_buf();
