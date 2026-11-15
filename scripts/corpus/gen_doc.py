@@ -15,6 +15,8 @@ converted to .doc by LibreOffice ("MS Word 97" filter):
 * page.doc: US Letter landscape with custom margins, a header and a footer
   with a PAGE field, then a portrait A4 section.
 * picture.doc: an inline PNG picture between two paragraphs.
+* comments.doc: three comments by two authors: on a word, on a span
+  crossing two runs (with two lines of text) and on a whole paragraph.
 * floats.doc: tests/corpus/docx/floats.docx (floating pictures, shapes and
   text boxes, from gen_docx.py) as LibreOffice saves it in Word 97 format
   (its DrawingML shapes become freeforms drawn with guide formulas).
@@ -247,6 +249,22 @@ SHAPES_FODT = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+def comments_doc():
+    d = Document()
+    p = d.add_paragraph("The ")
+    word = p.add_run("budget")
+    p.add_run(" needs a second look before Friday.")
+    d.add_comment(word, text="Check the totals.", author="Ani Wijaya", initials="AW")
+    p = d.add_paragraph()
+    a = p.add_run("Bold start ")
+    a.bold = True
+    b = p.add_run("and plain end.")
+    d.add_comment([a, b], text="Two runs.\nSecond line.", author="Budi Santoso", initials="BS")
+    p = d.add_paragraph("Last paragraph.")
+    d.add_comment(p.runs[0], text="On a whole paragraph.", author="Ani Wijaya", initials="AW")
+    return d
+
+
 def main():
     out.mkdir(parents=True, exist_ok=True)
     base = Path(os.environ.get("TMPDIR", Path.home() / ".cache/ktmp"))
@@ -259,6 +277,7 @@ def main():
             "lists": lists_doc(),
             "page": page_doc(),
             "picture": picture_doc(tmp),
+            "comments": comments_doc(),
         }
         for name, d in docs.items():
             d.core_properties.created = FIXED

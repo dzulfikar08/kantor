@@ -15,6 +15,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   text boxes, placed, wrapped and drawn as in Word and saved into the new `.docx`. Floating
   objects in headers and footers, grouped shapes and freeform shapes drawn with formulas are
   still left out, and the status bar says so.
+- Docs: comments in Word 97-2003 (`.doc`) files come in with their authors, initials and the text
+  they cover (without their dates).
 
 - Sheets: OpenDocument spreadsheets (`.ods`) open with their pictures (PNG, JPEG), charts
   (column, bar, line, area, pie, doughnut and scatter, with titles, legend, axis titles, series

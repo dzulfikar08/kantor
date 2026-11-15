@@ -157,6 +157,23 @@ pub fn package(doc: &Doc) -> Result<Vec<u8>> {
         w.parts
             .push((format!("word/{file}.xml"), format!("{CT}.{file}+xml"), x));
     }
+    if !doc.comments.is_empty() {
+        let mut x = format!("<w:comments {NS}>");
+        for (i, c) in doc.comments.iter().enumerate() {
+            let _ = write!(
+                x,
+                "<w:comment w:id=\"{i}\" w:author=\"{}\" w:initials=\"{}\">",
+                esc(&c.author),
+                esc(&c.initials)
+            );
+            x.push_str(&w.blocks(&c.blocks));
+            x.push_str("</w:comment>");
+        }
+        x.push_str("</w:comments>");
+        w.rel("comments", "comments.xml", false);
+        w.parts
+            .push(("word/comments.xml".into(), format!("{CT}.comments+xml"), x));
+    }
     // Headers and footers, then each section's properties.
     let mut sect_prs = Vec::new();
     let mut hf_count = 0;
@@ -585,6 +602,19 @@ impl W<'_> {
                 Item::Float(c, f) => {
                     let r = self.floating(c, f, p.pap.istd);
                     x.push_str(&r);
+                }
+                Item::CommentStart(n) => {
+                    let _ = write!(x, "<w:commentRangeStart w:id=\"{n}\"/>");
+                }
+                Item::CommentEnd(n) => {
+                    let _ = write!(x, "<w:commentRangeEnd w:id=\"{n}\"/>");
+                }
+                Item::CommentRef(c, n) => {
+                    let _ = write!(
+                        x,
+                        "<w:r>{}<w:commentReference w:id=\"{n}\"/></w:r>",
+                        wrap("w:rPr", &self.rpr(c, p.pap.istd))
+                    );
                 }
             }
         }

@@ -448,3 +448,41 @@ fn floating_shapes() {
     assert_eq!(frame.at.h.0, RelH::Column);
     save_and_reopen(doc, 5);
 }
+
+#[test]
+fn comments_with_their_ranges() {
+    let doc = open("comments.doc");
+    assert!(doc.import_notes().is_empty(), "{:?}", doc.import_notes());
+    let c = doc.comments();
+    assert_eq!(c.len(), 3, "{c:?}");
+    assert_eq!(
+        (
+            c[0].author.as_str(),
+            c[0].initials.as_str(),
+            c[0].text.as_str()
+        ),
+        ("Ani Wijaya", "AW", "Check the totals.")
+    );
+    assert_eq!(c[1].author, "Budi Santoso");
+    assert_eq!(c[1].text, "Two runs.\nSecond line.");
+    assert_eq!(c[2].text, "On a whole paragraph.");
+    let anchors = doc.comment_anchors();
+    assert_eq!(anchors.len(), 3, "{anchors:?}");
+    // The first covers "budget"; the second crosses two runs.
+    let covered = |i: usize| {
+        let a = anchors[i].1;
+        assert_eq!(a.start.para, a.end.para);
+        doc.paragraphs()[a.start.para].text[a.start.offset..a.end.offset].replace('\u{FFFC}', "")
+    };
+    assert_eq!(covered(0), "budget");
+    assert_eq!(covered(1), "Bold start and plain end.");
+
+    // Saved as .docx: the same comments.
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("comments.docx");
+    let mut doc = doc;
+    doc.save_as(&out).unwrap();
+    let again = Document::open(&out).unwrap();
+    assert_eq!(again.comments().len(), 3);
+    assert_eq!(again.comment_anchors().len(), 3);
+}

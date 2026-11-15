@@ -27,9 +27,13 @@
 //!   SPA anchors, the OfficeArt drawing, the text box story), written as
 //!   `wp:anchor` objects.
 //!
+//! - comments (PlcfandRef / PlcfandTxt, authors from GrpXstAtnOwners) with
+//!   their ranges (the annotation bookmarks PlcfAtnBkf / PlcfAtnBkl, tagged
+//!   in SttbfAtnBkmk); dates aren't read.
+//!
 //! Not imported (listed in [`Imported::notes`]): floating objects in
-//! headers, footers and text boxes, grouped shapes, comments, WMF/EMF
-//! pictures and embedded objects, hidden text. Tracked changes are shown
+//! headers, footers and text boxes, grouped shapes, freeform shapes drawn
+//! with guide formulas, WMF/EMF pictures and embedded objects, hidden text. Tracked changes are shown
 //! accepted.
 //!
 //! Encrypted files and files from Word 6 / Word 95 are refused with a
@@ -123,6 +127,8 @@ struct Fib {
 const STSHF: usize = 1;
 const PLCFFND_REF: usize = 2;
 const PLCFFND_TXT: usize = 3;
+const PLCFAND_REF: usize = 4;
+const PLCFAND_TXT: usize = 5;
 const PLCFSED: usize = 6;
 const PLCFHDD: usize = 11;
 const PLCFBTE_CHPX: usize = 12;
@@ -130,8 +136,12 @@ const PLCFBTE_PAPX: usize = 13;
 const STTBF_FFN: usize = 15;
 const DOP: usize = 31;
 const CLX: usize = 33;
+const GRP_XST_ATN_OWNERS: usize = 36;
+const STTBF_ATN_BKMK: usize = 37;
 const PLC_SPA_MOM: usize = 40;
 const PLC_SPA_HDR: usize = 41;
+const PLCF_ATN_BKF: usize = 42;
+const PLCF_ATN_BKL: usize = 43;
 const DGG_INFO: usize = 50;
 const PLCFTXBX_TXT: usize = 56;
 const PLCFEND_REF: usize = 46;
@@ -214,6 +224,17 @@ pub(crate) enum Item {
     FieldEnd,
     /// A floating object, at its anchor character.
     Float(Chp, Box<Floating>),
+    /// Where comment `n` (0-based) starts and ends, and its reference.
+    CommentStart(usize),
+    CommentEnd(usize),
+    CommentRef(Chp, usize),
+}
+
+/// A comment: author, initials, text.
+pub(crate) struct Comment {
+    pub author: String,
+    pub initials: String,
+    pub blocks: Vec<Block>,
 }
 
 /// A floating picture, shape or text box.
@@ -339,6 +360,7 @@ pub(crate) struct Doc {
     pub sections: Vec<Section>,
     pub footnotes: Vec<Vec<Block>>,
     pub endnotes: Vec<Vec<Block>>,
+    pub comments: Vec<Comment>,
     /// Pictures: extension (`png` / `jpeg`) and bytes.
     pub media: Vec<(&'static str, Vec<u8>)>,
     pub facing_pages: bool,
@@ -401,6 +423,9 @@ struct Reader {
     blip_media: HashMap<usize, usize>,
     /// Text box stories being read (no floating objects in them).
     in_text_box: usize,
+    /// Comments by reference CP, and their ranges' starts and ends by CP.
+    comment_refs: HashMap<u32, usize>,
+    comment_marks: HashMap<u32, Vec<Item>>,
 }
 
 impl Reader {
@@ -424,6 +449,8 @@ impl Reader {
             text_boxes: Vec::new(),
             blip_media: HashMap::new(),
             in_text_box: 0,
+            comment_refs: HashMap::new(),
+            comment_marks: HashMap::new(),
         };
         r.read_text()?;
         r.read_fkps()?;
@@ -599,9 +626,6 @@ impl Reader {
     fn read(&mut self) -> Result<Doc> {
         let ccp = self.fib.ccp;
         let main_end = (ccp[0] as usize).min(self.units.len());
-        if ccp[3] > 0 {
-            self.note("comments not imported");
-        }
         if ccp[6] > 0 || self.tbl(PLC_SPA_HDR).is_some() {
             self.note("floating objects in headers and footers not imported");
         }
@@ -651,7 +675,26 @@ impl Reader {
         let end_base = ccp[0] + ccp[1] + ccp[2] + ccp[3];
         let end_txt = self.note_texts(PLCFEND_REF, PLCFEND_TXT, end_base, NoteKind::End);
 
+        let comment_texts = if ccp[3] > 0 {
+            self.comment_ranges(ccp[0] + ccp[1] + ccp[2])
+        } else {
+            Vec::new()
+        };
         let body = self.story(0, main_end, true);
+        let mut comments = Vec::new();
+        for (author, initials, a, b) in comment_texts {
+            let mut blocks = self.story(a, b, false);
+            if blocks.len() > 1
+                && matches!(blocks.last(), Some(Block::Para(p)) if p.items.is_empty())
+            {
+                blocks.pop();
+            }
+            comments.push(Comment {
+                author,
+                initials,
+                blocks,
+            });
+        }
         let mut footnotes = Vec::new();
         for (a, b) in foot_txt {
             footnotes.push(self.story(a, b, false));
@@ -704,6 +747,7 @@ impl Reader {
             sections,
             footnotes,
             endnotes,
+            comments,
             media: std::mem::take(&mut self.media),
             facing_pages,
             default_tab,
@@ -741,6 +785,102 @@ impl Reader {
                 NoteKind::End => self.end_refs.insert(cp, out.len() + 1),
             };
             out.push((a, b));
+        }
+        out
+    }
+
+    /// The comments: author, initials and text range (CPs in the whole
+    /// text); fills in their references and ranges in the main text.
+    fn comment_ranges(&mut self, base: u32) -> Vec<(String, String, usize, usize)> {
+        let (Some(r), Some(t)) = (
+            self.tbl(PLCFAND_REF).map(<[u8]>::to_vec),
+            self.tbl(PLCFAND_TXT),
+        ) else {
+            self.note("comments not imported");
+            return Vec::new();
+        };
+        let r = &r[..];
+        if r.len() < 4 {
+            return Vec::new();
+        }
+        let n = (r.len() - 4) / 34;
+        let txt: Vec<u32> = (0..t.len() / 4).filter_map(|k| u32_at(t, k * 4)).collect();
+        // Authors: Xst strings one after another.
+        let mut owners = Vec::new();
+        if let Some(o) = self.tbl(GRP_XST_ATN_OWNERS) {
+            let mut at = 0;
+            while let Some(cch) = u16_at(o, at) {
+                let units: Vec<u16> = (0..cch as usize)
+                    .map_while(|k| u16_at(o, at + 2 + k * 2))
+                    .collect();
+                owners.push(String::from_utf16_lossy(&units));
+                at += 2 + cch as usize * 2;
+            }
+        }
+        // Ranges: bookmark k (tagged in SttbfAtnBkmk) from Bkf[k] to
+        // Bkl[ibkl].
+        let mut ranges: HashMap<i32, (u32, u32)> = HashMap::new();
+        if let (Some(names), Some(bkf), Some(bkl)) = (
+            self.tbl(STTBF_ATN_BKMK),
+            self.tbl(PLCF_ATN_BKF),
+            self.tbl(PLCF_ATN_BKL),
+        ) && u16_at(names, 0) == Some(0xFFFF)
+            && bkf.len() >= 4
+        {
+            let count = u16_at(names, 2).unwrap_or(0) as usize;
+            let extra = u16_at(names, 4).unwrap_or(0) as usize;
+            let nb = (bkf.len() - 4) / 8;
+            let mut at = 6;
+            for k in 0..count {
+                let Some(cch) = u16_at(names, at) else { break };
+                at += 2 + cch as usize * 2;
+                let tag = i32_at(names, at + 2);
+                at += extra;
+                let (Some(tag), true) = (tag, k < nb) else {
+                    continue;
+                };
+                let start = u32_at(bkf, k * 4);
+                let ibkl = u16_at(bkf, (nb + 1) * 4 + k * 4).unwrap_or(0) as usize;
+                let end = u32_at(bkl, ibkl * 4);
+                if let (Some(a), Some(b)) = (start, end)
+                    && a <= b
+                {
+                    ranges.insert(tag, (a, b));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for k in 0..n {
+            let (Some(cp), Some(&a), Some(&b)) = (u32_at(r, k * 4), txt.get(k), txt.get(k + 1))
+            else {
+                break;
+            };
+            let at = (n + 1) * 4 + k * 30;
+            let initials: Vec<u16> = (0..u16_at(r, at).unwrap_or(0).min(9) as usize)
+                .map_while(|j| u16_at(r, at + 2 + j * 2))
+                .collect();
+            let ibst = u16_at(r, at + 20).map(|v| v as i16).unwrap_or(-1);
+            let tag = i32_at(r, at + 26).unwrap_or(-1);
+            let (a, b) = ((base + a) as usize, (base + b) as usize);
+            if a > b || b > self.units.len() {
+                break;
+            }
+            let id = out.len();
+            self.comment_refs.insert(cp, id);
+            let (start, end) = ranges.get(&tag).copied().unwrap_or((cp, cp));
+            self.comment_marks
+                .entry(start)
+                .or_default()
+                .push(Item::CommentStart(id));
+            self.comment_marks
+                .entry(end)
+                .or_default()
+                .insert(0, Item::CommentEnd(id));
+            let author = usize::try_from(ibst)
+                .ok()
+                .and_then(|i| owners.get(i).cloned())
+                .unwrap_or_default();
+            out.push((author, String::from_utf16_lossy(&initials), a, b));
         }
         out
     }
@@ -1060,6 +1200,9 @@ impl Reader {
             items.push(Item::Text(chp, s.to_owned()));
         };
         while cp < end {
+            if main && let Some(marks) = self.comment_marks.remove(&(cp as u32)) {
+                items.extend(marks);
+            }
             let u = self.units[cp];
             let chp = self.chp_at(cp);
             let hidden_code = fields.iter().any(|f| !f.result);
@@ -1182,6 +1325,11 @@ impl Reader {
                             NoteKind::End
                         };
                         items.push(Item::NoteMark(vis, kind));
+                    }
+                }
+                0x05 if chp.special && main => {
+                    if let Some(&n) = self.comment_refs.get(&(cp as u32)) {
+                        items.push(Item::CommentRef(vis, n));
                     }
                 }
                 0x08 if chp.special => {
