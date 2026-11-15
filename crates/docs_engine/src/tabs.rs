@@ -261,6 +261,12 @@ impl Document {
         self.default_tab
     }
 
+    /// The character decimal tab stops line up on (`w:decimalSymbol`,
+    /// `.` unless the file says otherwise, e.g. `,` from Indonesian Word).
+    pub fn decimal_symbol(&self) -> char {
+        self.decimal
+    }
+
     /// Stops every paragraph in the selection has (what the Tabs dialog
     /// lists when several paragraphs are selected, as Word).
     pub fn common_tab_stops(&self, sel: Selection) -> Vec<TabStop> {
@@ -334,6 +340,17 @@ pub(crate) fn settings_default_tab(settings: &str) -> Option<u32> {
         .child("defaultTabStop")?
         .num::<u32>("val")
         .filter(|v| *v > 0)
+}
+
+/// `w:decimalSymbol` from settings.xml.
+pub(crate) fn settings_decimal(settings: &str) -> Option<char> {
+    let v = xml::parse(settings)?
+        .child("decimalSymbol")?
+        .attr("val")?
+        .to_owned();
+    let mut c = v.chars();
+    let first = c.next()?;
+    c.next().is_none().then_some(first)
 }
 
 /// Settings children that come after `w:defaultTabStop` (CT_Settings order).
@@ -430,6 +447,13 @@ mod tests {
     fn default_tab_setting_rewrites_in_place() {
         let src = r#"<w:settings xmlns:w="w"><w:zoom w:percent="100"/><w:defaultTabStop w:val="720"/><w:compat/></w:settings>"#;
         assert_eq!(settings_default_tab(src), Some(720));
+        assert_eq!(settings_decimal(src), None);
+        assert_eq!(
+            settings_decimal(
+                r#"<w:settings xmlns:w="w"><w:decimalSymbol w:val=","/></w:settings>"#
+            ),
+            Some(',')
+        );
         let out = set_settings_default_tab(src, 567);
         assert_eq!(
             out,

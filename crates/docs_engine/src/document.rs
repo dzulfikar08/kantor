@@ -213,6 +213,8 @@ pub struct Document {
     pub(crate) comments_modified: bool,
     /// `w:defaultTabStop` (twips).
     pub(crate) default_tab: u32,
+    /// `w:decimalSymbol` from settings.xml.
+    pub(crate) decimal: char,
     /// Track Changes is on (`w:trackRevisions`).
     pub(crate) track: bool,
     /// Who tracked edits are by.
@@ -279,6 +281,7 @@ impl Document {
             comments: Vec::new(),
             comments_modified: false,
             default_tab: 720,
+            decimal: '.',
             track: false,
             author: "Kantor".to_owned(),
             notes: Vec::new(),
@@ -400,6 +403,7 @@ impl Document {
             comments: read.comments,
             comments_modified: false,
             default_tab: read.default_tab,
+            decimal: read.decimal,
             track: read.track,
             author: "Kantor".to_owned(),
             notes: read.notes,

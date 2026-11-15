@@ -10,6 +10,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ## [Unreleased]
 
 ### Added
+- Docs: tab stops work as in Word. Left, center, right, decimal and bar tabs from a file (and from
+  its paragraph styles, including stops a paragraph clears) are laid out, and leaders (dots,
+  hyphens, underscores, heavy and middle dots) are drawn on the page and in the PDF, so a table
+  of contents from Word shows its dotted lines and page numbers lined up at the right margin.
+  Decimal tabs line up on the document's decimal symbol (a comma in Indonesian Word). Tabs…
+  (command palette) sets, clears and clears all stops of the selected paragraphs with a position
+  in cm, an alignment and a leader, and changes the default tab stop interval. On the ruler, the
+  caret paragraph's stops are shown; click the ruler to set one of the kind picked in the
+  selector at its left, drag a stop to move it or off the ruler to remove it, and double-click
+  one to open Tabs…. Each change is one undo step and is saved as Word saves it.
 - Sheets: chart sheets can be edited as in Excel. Showing one selects its chart, and the Chart
   panel (the Chart button over it) changes its type, title, legend, axis titles, series colours
   and data range, saved back into the chart's part. A chart sheet's tab has Excel's right-click
@@ -34,6 +44,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   step.
 
 ### Fixed
+- Docs: in a table of contents from Word, the first line (where the TOC field starts) was blank
+  and lost on save; its text is now shown and kept.
 - Sheets: workbooks from other programs that Kantor refused or crashed on now open (found
   by opening 424 public real-world files, see `docs/realworld-sweep.md`): ones without a
   styles part, with parts of it missing or pointing at fonts that aren't there, and with

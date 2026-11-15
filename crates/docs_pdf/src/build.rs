@@ -118,6 +118,7 @@ pub fn layout_paragraph(
         ResolvedLine::AtLeast(pt) => LineHeight::Absolute(pt.max(first.size_pt * 1.22) * PT),
     });
     lp.default_tab = tw(doc.default_tab());
+    lp.decimal = doc.decimal_symbol();
     // Stops are measured from the column edge in Word; the layout's
     // positions are too.
     lp.tabs = doc

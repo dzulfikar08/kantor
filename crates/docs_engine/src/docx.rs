@@ -178,6 +178,8 @@ pub struct Read {
     pub comments: Vec<crate::review::Comment>,
     /// `w:defaultTabStop` (twips).
     pub default_tab: u32,
+    /// `w:decimalSymbol` (what decimal tab stops line up on).
+    pub decimal: char,
     /// Track Changes is on (`w:trackRevisions`).
     pub track: bool,
     /// Footnotes and endnotes (separators included), in file order.
@@ -1904,6 +1906,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
     let mut settings = None;
     let mut even_odd = false;
     let mut default_tab = 720;
+    let mut decimal = '.';
     let mut track = false;
     let mut note_settings = NoteKind::ALL.map(NoteProps::default_for);
     if let Some(name) = part("/settings")
@@ -1913,6 +1916,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         note_settings = crate::notes::settings_note_props(&src);
         even_odd = settings_even_odd(&src);
         default_tab = crate::tabs::settings_default_tab(&src).unwrap_or(720);
+        decimal = crate::tabs::settings_decimal(&src).unwrap_or('.');
         settings = Some((name, src));
     }
     let mut comments = Vec::new();
@@ -2012,6 +2016,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         even_odd,
         comments,
         default_tab,
+        decimal,
         track,
         notes,
         note_settings,

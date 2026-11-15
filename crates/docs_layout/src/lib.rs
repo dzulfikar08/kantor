@@ -217,6 +217,8 @@ pub struct Paragraph {
     /// Default tab stops every this many px after the custom ones (Word:
     /// `w:defaultTabStop`, 1.27 cm).
     pub default_tab: f32,
+    /// What decimal tab stops line up on (Word's `w:decimalSymbol`).
+    pub decimal: char,
     /// Footnote references: byte index of the reference and the height
     /// (px) its note takes at the bottom of the page. The note goes on the
     /// page that shows the line holding the reference.
@@ -233,7 +235,8 @@ pub enum TabAlign {
     Left,
     Center,
     Right,
-    /// The first `.` after the tab sits on the stop (no `.`: as Right).
+    /// The first decimal symbol after the tab ([`Paragraph::decimal`])
+    /// sits on the stop (none: as Right).
     Decimal,
     /// Not a stop for tabs: a vertical line through the paragraph's lines.
     Bar,
@@ -305,6 +308,7 @@ impl Paragraph {
             strikes: Vec::new(),
             tabs: Vec::new(),
             default_tab: 12.7 * MM,
+            decimal: '.',
             notes: Vec::new(),
             no_wrap: false,
         }
@@ -1027,7 +1031,7 @@ fn tab_widths(
                     // Up to the first '.' of the segment, if on this line.
                     let start = tabs.get(k).map_or(0, |t| t + 1);
                     let end = tabs.get(k + 1).copied().unwrap_or(para.text.len());
-                    let dot = para.text.get(start..end).and_then(|t| t.find('.'));
+                    let dot = para.text.get(start..end).and_then(|t| t.find(para.decimal));
                     match dot.map(|d| start + d) {
                         Some(d) if d < line_range.end => {
                             let c = Cursor::from_byte_index(&laid.layout, d, Affinity::Downstream);
@@ -3020,6 +3024,17 @@ mod tab_tests {
                 x_of(&doc, at) - col
             );
         }
+    }
+
+    #[test]
+    fn decimal_stops_follow_the_documents_decimal_symbol() {
+        // Indonesian Word: "1.250,75" lines up on the comma.
+        let mut p = Paragraph::new("x\t1.250,75");
+        p.decimal = ',';
+        p.tabs = vec![TabStop::new(100.0 * MM, TabAlign::Decimal)];
+        let (doc, col) = one(&p);
+        let at = p.text.find(',').unwrap();
+        assert!((x_of(&doc, at) - col - 100.0 * MM).abs() < 0.6);
     }
 
     #[test]
