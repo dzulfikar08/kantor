@@ -16,6 +16,7 @@ pub mod agent;
 mod document;
 pub mod docx;
 mod edit;
+pub mod fields;
 pub mod find;
 pub mod model;
 mod msdoc;
@@ -37,13 +38,14 @@ pub use document::{
     Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, Toggle, is_import_path,
 };
 pub use edit::TableEdit;
+pub use fields::{FieldContext, FieldSpan, Instr, LinkTarget, PageLookup};
 pub use model::{
     Align, CellRef, Fonts, Indent, LineRule, LineSpacing, NumRef, ParaProps, Paragraph, Position,
     Rgb, Run, RunProps, Selection,
 };
 pub use notes::{Note, NoteKind, NoteProps, NoteRef, NoteRestart};
 pub use numbering::ListKind;
-pub use object::{Image, ImageFormat, Level, OBJECT, Object, Opaque};
+pub use object::{FieldMark, Image, ImageFormat, Level, OBJECT, Object, Opaque};
 pub use page::{MarginPreset, Orientation, PaperSize, cm_to_twips, twips_to_cm};
 pub use review::{Anchor, Change, Comment, RevKind, Revision};
 pub use section::{

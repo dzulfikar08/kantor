@@ -124,6 +124,60 @@ pub fn lay_out(doc: &Document, engine: &mut Engine) -> Layout {
     lay_out_with(doc, &mut |p, w| Arc::new(engine.layout_paragraph(p, w)))
 }
 
+/// Where a laid-out document's text landed, for updating page references
+/// in fields ([`docs_engine::Document::update_fields`]).
+pub struct FieldPages {
+    paged: PagedDocument,
+    /// Per page: its number and that number in its section's format.
+    numbers: Vec<(u32, String)>,
+}
+
+impl FieldPages {
+    pub fn new(doc: &Document, laid: Layout) -> Self {
+        let sections = doc.sections();
+        let numbers = laid
+            .paged
+            .pages
+            .iter()
+            .map(|p| {
+                let format = sections
+                    .get(p.section)
+                    .or(sections.last())
+                    .map(|s| s.props.num_format)
+                    .unwrap_or_default();
+                (p.number, format.format(p.number))
+            })
+            .collect();
+        Self {
+            paged: laid.paged,
+            numbers,
+        }
+    }
+}
+
+impl docs_engine::PageLookup for FieldPages {
+    fn page_of(&self, pos: docs_engine::Position) -> Option<usize> {
+        self.paged
+            .placed_line(pos.para, pos.offset)
+            .map(|(page, _)| page)
+    }
+
+    fn page_number(&self, page: usize) -> u32 {
+        self.numbers.get(page).map_or(1, |n| n.0)
+    }
+
+    fn page_label(&self, page: usize) -> String {
+        self.numbers
+            .get(page)
+            .map_or_else(|| "1".into(), |n| n.1.clone())
+    }
+}
+
+/// [`FieldPages`] for `doc`, laid out with `engine`.
+pub fn field_pages(doc: &Document, engine: &mut Engine) -> Box<dyn docs_engine::PageLookup> {
+    Box::new(FieldPages::new(doc, lay_out(doc, engine)))
+}
+
 /// Add what `paged`'s page `page` draws to `out`, moved by (`dx`, `dy`).
 /// `paras` are the paragraphs `paged` was laid out from; pictures come
 /// from `doc` (the document or the header's own part).

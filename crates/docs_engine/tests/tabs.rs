@@ -242,16 +242,20 @@ fn editing_one_paragraph_leaves_the_others_byte_identical() {
 #[test]
 fn table_of_contents_lines_and_style_stops_from_word() {
     let mut doc = Document::open(&corpus("toc.docx")).unwrap();
-    // The first line holds the TOC field's start: its text is kept.
-    assert_eq!(doc.paragraph(1).text, "1. Introduction\t1");
+    // The first line holds the TOC field's start (a zero-width mark).
+    assert_eq!(shown(&doc.paragraph(1).text), "1. Introduction\t1");
     let dots = stop(9026, TabKind::Right, TabLeader::Dot);
     for i in 1..=8 {
         assert_eq!(doc.tab_stops(doc.paragraph(i)), [dots], "{i}");
     }
-    // Saved under a new name (the field spans paragraphs): lines, styles
-    // and stops survive.
+    // Saved in place: lines, styles and stops survive.
     let (_, again) = saved(&mut doc);
-    assert_eq!(again.paragraph(1).text, "1. Introduction\t1");
+    assert_eq!(shown(&again.paragraph(1).text), "1. Introduction\t1");
     assert_eq!(again.tab_stops(again.paragraph(1)), [dots]);
     assert_eq!(again.tab_stops(again.paragraph(11)).len(), 3);
+}
+
+/// Paragraph text without object characters (field marks).
+fn shown(text: &str) -> String {
+    text.replace('\u{FFFC}', "")
 }

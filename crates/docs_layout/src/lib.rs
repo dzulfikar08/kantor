@@ -167,6 +167,9 @@ pub enum ObjectKind {
     /// Text drawn small and raised, with no box: a footnote or endnote
     /// number (the label).
     Mark,
+    /// The label drawn as text in the paragraph's font, with no box: what
+    /// a field with no result shows (`«Name»` for a mail merge field).
+    Text,
 }
 
 /// An object in the text: a box in place of the object's character.
@@ -538,6 +541,13 @@ impl Engine {
                 // Raised: the box's bottom sits on the baseline.
                 w = l.width();
                 h = l.height() + para.size_pt * PT * MARK_RAISE;
+                labels.push((o.index, l, o.label.clone()));
+            }
+            if o.kind == ObjectKind::Text {
+                let l = self.small_layout(&o.label, &para.family, para.size_pt, None, Rgba::BLACK);
+                // The box's bottom is the label's baseline.
+                w = l.width();
+                h = l.get(0).map_or(l.height(), |line| line.metrics().baseline);
                 labels.push((o.index, l, o.label.clone()));
             }
             if o.kind == ObjectKind::Hidden {
@@ -1167,8 +1177,11 @@ impl Flow<'_> {
         let Some(line) = self.layouts[pi].layout.get(k) else {
             return false;
         };
-        let end = line.text_range().end;
-        end > 0 && self.paras[pi].text.as_bytes().get(end - 1) == Some(&(PAGE_BREAK as u8))
+        // The empty line after a break that ends the paragraph doesn't
+        // break again (its range is empty, right after the break).
+        let r = line.text_range();
+        r.end > r.start
+            && self.paras[pi].text.as_bytes().get(r.end - 1) == Some(&(PAGE_BREAK as u8))
     }
 
     /// Height of the footnotes referenced from line `k` of paragraph `pi`.
@@ -1719,11 +1732,14 @@ impl PagedDocument {
             for item in line.items() {
                 if let PositionedLayoutItem::InlineBox(b) = item
                     && let Some(&(index, kind)) = pl_layout.objects.get(b.id as usize)
-                    && matches!(kind, ObjectKind::Placeholder | ObjectKind::Mark)
+                    && matches!(
+                        kind,
+                        ObjectKind::Placeholder | ObjectKind::Mark | ObjectKind::Text
+                    )
                     && let Some((_, ll, _)) = pl_layout.labels.iter().find(|x| x.0 == index)
                     && let Some(lline) = ll.get(0)
                 {
-                    let (lx, ly, source) = if kind == ObjectKind::Mark {
+                    let (lx, ly, source) = if kind != ObjectKind::Placeholder {
                         (dx + b.x, dy + b.y, RunSource::Mark(index))
                     } else {
                         (
@@ -1828,7 +1844,10 @@ impl PagedDocument {
             for item in line.items() {
                 if let PositionedLayoutItem::InlineBox(b) = item
                     && let Some(&(index, kind)) = l.objects.get(b.id as usize)
-                    && !matches!(kind, ObjectKind::Hidden | ObjectKind::Mark)
+                    && !matches!(
+                        kind,
+                        ObjectKind::Hidden | ObjectKind::Mark | ObjectKind::Text
+                    )
                 {
                     out.push(PlacedObject {
                         para: pl.para,
@@ -2708,6 +2727,21 @@ mod tests {
         assert_eq!(doc.caret(0, 0).unwrap().page, 0);
         assert_eq!(doc.caret(0, 2).unwrap().page, 1);
         assert_eq!(doc.caret(1, 0).unwrap().page, 2);
+    }
+
+    #[test]
+    fn a_page_break_ending_a_paragraph_breaks_once() {
+        // Word: the paragraph mark after the break opens the next page,
+        // and the next paragraph follows on that page.
+        let mut engine = Engine::new();
+        let paras = vec![
+            Paragraph::new(format!("a{PAGE_BREAK}")),
+            Paragraph::new("b"),
+        ];
+        let doc = engine.layout_document(&paras, PageSetup::a4());
+        assert_eq!(doc.pages.len(), 2);
+        assert_eq!(doc.caret(0, 2).unwrap().page, 1);
+        assert_eq!(doc.caret(1, 0).unwrap().page, 1);
     }
 
     fn table(paras: &[Paragraph], setup: PageSetup, rows: usize) -> (Vec<Block>, Vec<f32>) {

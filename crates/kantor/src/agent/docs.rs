@@ -21,7 +21,7 @@ fn shown_text(doc: &Document, i: usize) -> String {
     for (offset, c) in p.text.char_indices() {
         if c != OBJECT {
             out.push(c);
-        } else if !p.object_at(offset).is_some_and(|o| o.is_marker()) {
+        } else if !p.object_at(offset).is_some_and(|o| o.is_zero_width()) {
             out.push_str("[object]");
         }
     }

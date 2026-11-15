@@ -16,7 +16,9 @@ Series{}	Seri{}
 {} formulas kept as values	{} rumus diubah menjadi nilai
 tracked changes	perubahan terlacak
 comments	komentar
-fields that depend on document content (contents, cross-references…)	bidang yang bergantung pada isi dokumen (daftar isi, referensi silang…)
+fields spanning paragraphs	bidang yang kodenya melintasi paragraf
+fields without an end	bidang tanpa akhir
+fields across hyperlinks or other elements	bidang yang melintasi hyperlink atau elemen lain
 content controls around table rows or cells	kontrol konten di sekitar baris atau sel tabel
 charts	bagan
 floating images and shapes	gambar dan bentuk mengambang

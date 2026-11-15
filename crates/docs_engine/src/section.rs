@@ -315,6 +315,8 @@ pub enum PageField {
     Page,
     /// `NUMPAGES`: pages in the document.
     NumPages,
+    /// `SECTIONPAGES`: pages in this page's section.
+    SectionPages,
 }
 
 impl PageField {
@@ -323,6 +325,7 @@ impl PageField {
         match self {
             Self::Page => "{PAGE}",
             Self::NumPages => "{PAGES}",
+            Self::SectionPages => "{SECTIONPAGES}",
         }
     }
 
@@ -330,6 +333,7 @@ impl PageField {
         match self {
             Self::Page => "PAGE",
             Self::NumPages => "NUMPAGES",
+            Self::SectionPages => "SECTIONPAGES",
         }
     }
 
@@ -368,13 +372,20 @@ pub fn page_field(o: &Object) -> Option<PageField> {
     {
         "PAGE" => Some(PageField::Page),
         "NUMPAGES" => Some(PageField::NumPages),
+        "SECTIONPAGES" => Some(PageField::SectionPages),
         _ => None,
     }
 }
 
-/// `paras` with every PAGE / NUMPAGES field replaced by the number as text
-/// (in the field's own formatting); `None` when there are none.
-pub fn with_page_numbers(paras: &[Paragraph], page: &str, pages: &str) -> Option<Vec<Paragraph>> {
+/// `paras` with every PAGE / NUMPAGES / SECTIONPAGES field replaced by the
+/// number as text (in the field's own formatting); `None` when there are
+/// none.
+pub fn with_page_numbers(
+    paras: &[Paragraph],
+    page: &str,
+    pages: &str,
+    section_pages: &str,
+) -> Option<Vec<Paragraph>> {
     let any = paras
         .iter()
         .any(|p| p.objects().any(|(_, o)| page_field(o).is_some()));
@@ -396,6 +407,7 @@ pub fn with_page_numbers(paras: &[Paragraph], page: &str, pages: &str) -> Option
                     let text = match f {
                         PageField::Page => page,
                         PageField::NumPages => pages,
+                        PageField::SectionPages => section_pages,
                     };
                     p.insert(i, text, props);
                 }
@@ -750,10 +762,14 @@ impl Document {
                 p.runs[0].props = run_props.clone();
                 let mut rest = line;
                 while !rest.is_empty() {
-                    let next = [PageField::Page, PageField::NumPages]
-                        .into_iter()
-                        .filter_map(|f| rest.find(f.token()).map(|at| (at, f)))
-                        .min_by_key(|x| x.0);
+                    let next = [
+                        PageField::Page,
+                        PageField::NumPages,
+                        PageField::SectionPages,
+                    ]
+                    .into_iter()
+                    .filter_map(|f| rest.find(f.token()).map(|at| (at, f)))
+                    .min_by_key(|x| x.0);
                     match next {
                         Some((at, f)) => {
                             p.push(&rest[..at], run_props.clone());

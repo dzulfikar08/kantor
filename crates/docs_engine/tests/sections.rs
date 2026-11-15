@@ -77,7 +77,8 @@ fn report_sections_headers_and_page_fields() {
         "Page {PAGE} of {PAGES}"
     );
     let numbered =
-        docs_engine::with_page_numbers(doc.stories()[footer].doc.paragraphs(), "3", "7").unwrap();
+        docs_engine::with_page_numbers(doc.stories()[footer].doc.paragraphs(), "3", "7", "2")
+            .unwrap();
     assert_eq!(numbered[0].text, "Page 3 of 7");
     assert!(
         !doc.preserved_content().iter().any(|p| p.contains("header")),

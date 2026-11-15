@@ -249,7 +249,7 @@ fn new_document_round_trips() {
 
 #[test]
 fn unsupported_content_never_overwrites_the_original() {
-    let body = r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:p><w:r><w:t>item</w:t></w:r><w:ins w:id="1" w:author="a"><w:r><w:t>new</w:t></w:r></w:ins></w:p><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> REF _Ref1 \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Table 1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#;
+    let body = r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:p><w:r><w:t>item</w:t></w:r><w:ins w:id="1" w:author="a"><w:r><w:t>new</w:t></w:r></w:ins></w:p><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> REF _Ref1 \h </w:instrText></w:r></w:p><w:p><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Table 1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#;
     let dir = tempfile::tempdir().unwrap();
     let original = package(body, "<w:trackRevisions/>");
     let path = write_temp(dir.path(), "complex.docx", &original);
@@ -257,7 +257,7 @@ fn unsupported_content_never_overwrites_the_original() {
     let u = doc.unsupported_content().to_vec();
     assert_eq!(
         u,
-        ["fields that depend on document content (contents, cross-references…)"],
+        ["fields spanning paragraphs"],
         "tracked changes and the track changes switch are kept, not unsupported"
     );
     assert!(
@@ -301,7 +301,9 @@ fn unsupported_content_never_overwrites_the_original() {
     assert!(xml.contains(
         r#"<w:ins w:id="1" w:author="a"><w:r><w:t xml:space="preserve">new</w:t></w:r></w:ins>"#
     ));
-    assert!(xml.contains(r#"<w:instrText xml:space="preserve"> REF _Ref1 \h </w:instrText>"#));
+    // A field whose code runs into the next paragraph is lost; its result
+    // stays as text.
+    assert!(xml.contains("Table 1"));
 }
 
 #[test]
@@ -614,7 +616,8 @@ fn opaque_elements_are_kept_byte_for_byte() {
             sdt_block,
             sdt_inline,
             field,
-            simple,
+            r#"<w:fldSimple w:instr=" DATE ">"#,
+            r#"<w:t xml:space="preserve">7/11/2026</w:t></w:r></w:fldSimple>"#,
             math,
             bookmark,
             "<w:bookmarkEnd w:id=\"3\"/>",
@@ -635,16 +638,10 @@ fn opaque_elements_are_kept_byte_for_byte() {
         .collect();
     assert_eq!(
         labels,
-        [
-            "",
-            "Budi",
-            "3",
-            "Floating image",
-            "7/11/2026",
-            "Equation",
-            ""
-        ]
+        ["", "Budi", "3", "Floating image", "", "", "Equation", ""]
     );
+    // The DATE field's result is text between its marks.
+    assert!(doc.paragraph(1).text.contains("7/11/2026"));
     // Deleting text around a bookmark keeps the bookmark.
     let mut doc = doc;
     let end = doc.paragraph(1).text.len();

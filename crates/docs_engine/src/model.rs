@@ -15,7 +15,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-pub use crate::object::{Image, ImageFormat, Level, OBJECT, Object, Opaque};
+pub use crate::object::{FieldMark, Image, ImageFormat, Level, OBJECT, Object, Opaque};
 pub use crate::review::{RevKind, Revision};
 pub use crate::table::CellRef;
 
@@ -588,9 +588,10 @@ impl Paragraph {
         self.normalize();
     }
 
-    /// Whether the character at `offset` is a position marker.
+    /// Whether the character at `offset` is zero-width (a position marker
+    /// or a field's start or end): the caret steps over it.
     pub fn is_marker_at(&self, offset: usize) -> bool {
-        self.object_at(offset).is_some_and(Object::is_marker)
+        self.object_at(offset).is_some_and(Object::is_zero_width)
     }
 
     /// Split at `offset`; `self` keeps the left part, the right part is returned
