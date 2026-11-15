@@ -400,6 +400,7 @@ fn default_text_on_no_fill_reads_on_a_dark_grid() {
         100.0,
     );
     assert!(text_colors(&rev).iter().all(|c| *c == [255, 255, 255]));
+}
 
 fn image(sizing: u8, width: Option<f64>, height: Option<f64>) -> CellImage {
     CellImage {
