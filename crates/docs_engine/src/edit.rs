@@ -117,7 +117,7 @@ impl Document {
         if sel.is_empty() {
             let p = &self.paragraphs[sel.head.para];
             let empty =
-                p.text.chars().all(|c| c == OBJECT) && p.objects().all(|(_, o)| o.is_marker());
+                p.text.chars().all(|c| c == OBJECT) && p.objects().all(|(_, o)| o.is_zero_width());
             if empty && self.styles.effective_num(p).is_some() {
                 self.remove_list_at(sel.head.para, sel);
                 return sel;
@@ -624,6 +624,7 @@ impl Document {
                         }
                     }
                     Object::Opaque(o) => max = max.max(doc_pr_ids(&o.xml)),
+                    Object::Field(_) => {}
                 }
             }
         }

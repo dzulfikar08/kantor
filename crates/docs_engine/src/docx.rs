@@ -138,6 +138,23 @@ pub struct Package {
 }
 
 impl Package {
+    /// A part's text, if the package has it (document properties, for
+    /// fields).
+    pub(crate) fn part_text(&self, name: &str) -> Option<String> {
+        let mut zip = zip::ZipArchive::new(Cursor::new(self.bytes.as_slice())).ok()?;
+        zip_text(&mut zip, name).ok().flatten()
+    }
+
+    /// Where the main document's relationship `id` points (a hyperlink's
+    /// address).
+    pub(crate) fn rel_target(&self, id: &str) -> Option<String> {
+        let rels = self.part_text(&rels_name(&self.document_part))?;
+        parse_rels(&rels)
+            .into_iter()
+            .find(|r| r.id == id)
+            .map(|r| r.target)
+    }
+
     pub fn has_rel(&self, id: &str) -> bool {
         self.rel_ids.contains(id)
     }
@@ -605,36 +622,6 @@ fn is_tracked(local: &str) -> bool {
     category(local) == "tracked changes"
 }
 
-/// Field instructions whose result depends on the document's own content.
-fn content_dependent_field(instr: &str) -> bool {
-    let word = instr
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .trim_start_matches('=')
-        .to_ascii_uppercase();
-    instr.trim_start().starts_with('=')
-        || matches!(
-            word.as_str(),
-            "TOC"
-                | "REF"
-                | "PAGEREF"
-                | "NOTEREF"
-                | "SEQ"
-                | "STYLEREF"
-                | "INDEX"
-                | "TA"
-                | "TC"
-                | "XE"
-                | "TOA"
-                | "IF"
-                | "SECTIONPAGES"
-                | "SECTION"
-                | "RD"
-                | "LISTNUM"
-        )
-}
-
 fn field_label(instr: &str, result: &str) -> String {
     let r = result.trim();
     if !r.is_empty() {
@@ -665,6 +652,11 @@ enum Frame {
     T,
     Instr,
     Hyperlink,
+    /// Inside a simple field (`w:fldSimple`): its result runs.
+    Simple,
+    /// A table of contents' block content control (`w:sdt`) whose
+    /// paragraphs are read as ordinary ones.
+    Wrap,
     /// Inside a tracked insertion or deletion (`w:ins`, `w:del`, moves).
     Rev,
     Tbl,
@@ -693,16 +685,58 @@ enum Cap {
     BodySect,
 }
 
-/// A complex field (`w:fldChar` begin … end) being collected.
+/// How a complex field (`w:fldChar` begin … end) is being read.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FieldMode {
+    /// Between `begin` and `separate`: the code, kept as XML.
+    Code,
+    /// After `separate`: the result is read as ordinary runs between the
+    /// field's start and end marks ([`FieldMark`]).
+    Result,
+    /// The whole field kept as one opaque object (page numbers, which are
+    /// filled in per page, and fields whose runs are laid out unusually).
+    Opaque,
+}
+
+/// A complex field being read.
 struct Field {
+    /// Byte offset of the `begin` run.
     start: usize,
+    /// Nesting of fields inside the code (or inside an opaque field).
     depth: u32,
+    mode: FieldMode,
+    /// For opaque fields: the separator was seen (text is result).
     in_result: bool,
     instr: String,
     result: String,
     /// Stack depth of the paragraph content level where it began.
     level: usize,
-    link: Option<Arc<str>>,
+    /// Where it began: stack depth, hyperlink start, tracked change; the
+    /// separator must be in the same place for the code to be well formed.
+    container: (usize, Option<usize>, Option<*const Revision>),
+    /// Formatting of the `begin` run.
+    props: RunProps,
+    /// The `end` was seen (in the run being read).
+    ended: bool,
+}
+
+/// A `w:fldChar` met in the run being read, acted on when the run closes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RunFld {
+    Begin,
+    /// `separate` of a field read in result mode; the paragraph length then.
+    Separate(usize),
+    /// `end`; the paragraph length then.
+    End(usize),
+}
+
+/// Whether a field instruction is a page number (`PAGE`, `NUMPAGES`,
+/// `SECTIONPAGES`): those stay one object, numbered per page.
+fn page_number_field(instr: &str) -> bool {
+    let word = instr.split_whitespace().next().unwrap_or("");
+    ["PAGE", "NUMPAGES", "SECTIONPAGES"]
+        .iter()
+        .any(|w| word.eq_ignore_ascii_case(w))
 }
 
 struct BodyParser<'a> {
@@ -728,7 +762,15 @@ struct BodyParser<'a> {
     link_runs: usize,
     /// The tracked change being read.
     rev: Option<Arc<Revision>>,
-    field: Option<Field>,
+    /// Complex fields being read, innermost last.
+    fields: Vec<Field>,
+    /// A `w:fldChar` in the run being read.
+    run_fld: Option<RunFld>,
+    /// Text or objects went into the paragraph during the run being read.
+    run_pushed: bool,
+    /// The table of contents content controls being read: where their
+    /// content ends (set when `w:sdtContent` closes).
+    wraps: Vec<usize>,
     caps: Vec<(usize, Cap)>,
     /// Markers met between paragraphs: they go into the next one.
     pending: Vec<Object>,
@@ -754,16 +796,30 @@ impl BodyParser<'_> {
         })
     }
 
+    /// Whether a field's code (or a whole opaque field) is being read:
+    /// its content is kept as XML, not added to the paragraph.
+    fn capturing(&self) -> bool {
+        self.fields
+            .last()
+            .is_some_and(|f| f.mode != FieldMode::Result && f.depth > 0)
+    }
+
     fn push_text(&mut self, s: &str) {
         if s.is_empty() {
             return;
         }
-        if let Some(f) = &mut self.field {
-            if f.in_result && f.depth == 1 {
+        if self.capturing() {
+            if let Some(f) = self.fields.last_mut()
+                && f.mode == FieldMode::Opaque
+                && f.in_result
+                && f.depth == 1
+            {
                 f.result.push_str(s);
             }
             return;
         }
+        self.run_pushed = true;
+        self.link_runs += 1;
         self.para
             .push_tracked(s, self.run.clone(), self.link.clone(), self.rev.clone());
     }
@@ -776,11 +832,12 @@ impl BodyParser<'_> {
     /// Add an object to the current paragraph (unless a field's raw capture
     /// already includes it).
     fn push_object(&mut self, o: Object, props: RunProps) {
-        if self.field.is_some() {
+        if self.capturing() {
             return;
         }
         if !o.is_marker() {
             self.link_runs += 1;
+            self.run_pushed = true;
         }
         self.para
             .push_object_tracked(o, props, self.link.clone(), self.rev.clone());
@@ -941,11 +998,7 @@ impl BodyParser<'_> {
     }
 
     fn field_checks(&mut self, instr: &str) {
-        if content_dependent_field(instr) {
-            self.unsupported.insert(
-                "fields that depend on document content (contents, cross-references…)".into(),
-            );
-        } else {
+        if !page_number_field(instr) {
             self.preserved.insert("fields".into());
         }
     }
@@ -1044,6 +1097,16 @@ impl BodyParser<'_> {
                 Tbl
             }
             (Body, "sectPr") => cap(self, Cap::BodySect),
+            (Body, "sdt") if !empty && self.cell().is_none() => match self.toc_sdt(before) {
+                Some((content_start, _)) => {
+                    let xml = &self.src[before..content_start];
+                    self.pending.push(Self::opaque(Level::Wrap, xml, ""));
+                    Wrap
+                }
+                None => cap(self, Cap::BlockObj),
+            },
+            (Wrap, "sdtContent") => Body,
+            (Wrap, _) => Skip,
             (Body | Tc | Tbl | Tr, "bookmarkStart" | "bookmarkEnd" | "permStart" | "permEnd")
             | (Body | Tc | Tbl | Tr, "moveFromRangeStart" | "moveFromRangeEnd")
             | (Body | Tc | Tbl | Tr, "moveToRangeStart" | "moveToRangeEnd")
@@ -1096,13 +1159,39 @@ impl BodyParser<'_> {
             }
             (PPr, _) => cap(self, Cap::PPrChild),
             (MarkRPr, _) => cap(self, Cap::MarkChild),
-            (P | Hyperlink | Rev, "r") => {
+            (P | Hyperlink | Rev | Simple, "r") => {
                 self.run = RunProps::default();
                 self.run_start = before;
                 self.run_text_start = self.para.text.len();
+                self.run_pushed = false;
+                self.run_fld = None;
                 R
             }
-            (P, "hyperlink") => {
+            (P | Hyperlink | Rev | Simple, "fldSimple") if !self.capturing() => {
+                let instr = attr(e, b"instr").unwrap_or_default();
+                if page_number_field(&instr) {
+                    return cap(self, Cap::ParaObj);
+                }
+                let code = &self.src[before..after];
+                let begin = FieldMark::Begin {
+                    instr,
+                    code: code.into(),
+                    sep: None,
+                    simple: true,
+                };
+                let at = self.para.text.len();
+                self.insert_mark(at, begin, RunProps::default());
+                if empty {
+                    let end = FieldMark::End {
+                        xml: "".into(),
+                        simple: true,
+                    };
+                    self.insert_mark(at + OBJECT.len_utf8(), end, RunProps::default());
+                    return Skip;
+                }
+                Simple
+            }
+            (P | Simple, "hyperlink") => {
                 self.link = Some(self.src[before..after].into());
                 self.link_start = before;
                 self.link_runs = 0;
@@ -1116,7 +1205,7 @@ impl BodyParser<'_> {
                 }
                 Hyperlink
             }
-            (P | Hyperlink, "ins" | "del" | "moveTo" | "moveFrom") if !empty => {
+            (P | Hyperlink | Simple, "ins" | "del" | "moveTo" | "moveFrom") if !empty => {
                 match Revision::parse(&self.src[before..after]) {
                     Some(r) => {
                         self.rev = Some(Arc::new(r));
@@ -1125,11 +1214,14 @@ impl BodyParser<'_> {
                     None => cap(self, Cap::ParaObj),
                 }
             }
-            (P | Hyperlink | Rev, "proofErr") => Skip,
-            (P | Hyperlink | Rev, "bookmarkStart" | "bookmarkEnd" | "permStart" | "permEnd")
-            | (P | Hyperlink | Rev, "commentRangeStart" | "commentRangeEnd")
-            | (P | Hyperlink | Rev, "moveFromRangeStart" | "moveFromRangeEnd")
-            | (P | Hyperlink | Rev, "moveToRangeStart" | "moveToRangeEnd") => {
+            (P | Hyperlink | Rev | Simple, "proofErr") => Skip,
+            (
+                P | Hyperlink | Rev | Simple,
+                "bookmarkStart" | "bookmarkEnd" | "permStart" | "permEnd",
+            )
+            | (P | Hyperlink | Rev | Simple, "commentRangeStart" | "commentRangeEnd")
+            | (P | Hyperlink | Rev | Simple, "moveFromRangeStart" | "moveFromRangeEnd")
+            | (P | Hyperlink | Rev | Simple, "moveToRangeStart" | "moveToRangeEnd") => {
                 if empty {
                     let xml = &self.src[before..after];
                     self.marker(local, e, xml, true);
@@ -1138,7 +1230,7 @@ impl BodyParser<'_> {
                     cap(self, Cap::Marker)
                 }
             }
-            (P | Hyperlink, _) => cap(self, Cap::ParaObj),
+            (P | Hyperlink | Simple, _) => cap(self, Cap::ParaObj),
             (Rev, _) => {
                 // Anything but runs inside a tracked change: kept, but the
                 // change can't be resolved around it.
@@ -1187,41 +1279,252 @@ impl BodyParser<'_> {
         }
     }
 
+    /// A table of contents' content control starting at byte `start`
+    /// (Word's `docPartGallery` "Table of Contents") holding only
+    /// paragraphs: where its content starts and ends.
+    fn toc_sdt(&self, start: usize) -> Option<(usize, usize)> {
+        let src = &self.src[start..];
+        let mut r = quick_xml::Reader::from_str(src);
+        let mut depth = 0usize;
+        let mut content: Option<usize> = None;
+        let mut content_end = None;
+        let end;
+        loop {
+            let before = r.buffer_position() as usize;
+            let ev = r.read_event().ok()?;
+            let after = r.buffer_position() as usize;
+            match ev {
+                Event::Start(ref e) | Event::Empty(ref e) => {
+                    let empty = matches!(ev, Event::Empty(_));
+                    let name = e.local_name();
+                    let name = name.as_ref();
+                    if depth == 1 && name == b"sdtContent" && !empty {
+                        content = Some(start + after);
+                    } else if depth == 2
+                        && content.is_some()
+                        && content_end.is_none()
+                        && !matches!(name, b"p" | b"bookmarkStart" | b"bookmarkEnd")
+                    {
+                        return None;
+                    }
+                    if !empty {
+                        depth += 1;
+                    }
+                }
+                Event::End(ref e) => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 1 && e.local_name().as_ref() == b"sdtContent" {
+                        content_end = Some(start + before);
+                    }
+                    if depth == 0 {
+                        end = after;
+                        break;
+                    }
+                }
+                Event::Eof => return None,
+                _ => {}
+            }
+        }
+        let (content, content_end) = (content?, content_end?);
+        // The control without its content: is it a table of contents?
+        let shell = format!(
+            "{}{}",
+            &self.src[start..content],
+            &self.src[content_end..start + end]
+        );
+        let el = xml::parse(&shell)?;
+        let gallery = find(&el, "docPartGallery")?.attr("val")?;
+        gallery
+            .to_ascii_lowercase()
+            .starts_with("table of contents")
+            .then_some((content, content_end))
+    }
+
+    /// Where the parser is: stack depth, hyperlink, tracked change.
+    fn container(&self, stack_len: usize) -> (usize, Option<usize>, Option<*const Revision>) {
+        (
+            stack_len,
+            self.link.as_ref().map(|_| self.link_start),
+            self.rev.as_ref().map(Arc::as_ptr),
+        )
+    }
+
+    /// Put a field mark into the paragraph at byte `at` (in the current
+    /// hyperlink and tracked change).
+    fn insert_mark(&mut self, at: usize, mark: FieldMark, props: RunProps) {
+        self.link_runs += 1;
+        let run = Run {
+            object: Some(Object::Field(Arc::new(mark))),
+            link: self.link.clone(),
+            rev: self.rev.clone(),
+            ..Run::text(OBJECT.len_utf8(), props)
+        };
+        self.para.insert_runs(at, vec![run]);
+    }
+
     fn fld_char(&mut self, kind: Option<&str>, stack_len: usize) {
         match kind {
-            Some("begin") => match &mut self.field {
-                Some(f) => f.depth += 1,
-                None => {
-                    // Text this run already added goes into the field's XML.
-                    let len = self.para.text.len();
-                    if self.run_text_start < len {
-                        self.para.delete(self.run_text_start..len);
+            Some("begin") => {
+                if self.capturing() {
+                    if let Some(f) = self.fields.last_mut() {
+                        f.depth += 1;
                     }
-                    self.field = Some(Field {
-                        start: self.run_start,
-                        depth: 1,
-                        in_result: false,
-                        instr: String::new(),
-                        result: String::new(),
-                        // The run's parent level (the run frame isn't counted).
-                        level: stack_len.saturating_sub(1),
-                        link: self.link.clone(),
-                    });
+                    return;
                 }
-            },
+                // Text this run already added: the field's XML holds it
+                // (an unusual layout: keep the field whole).
+                let len = self.para.text.len();
+                let mode = if self.run_text_start < len {
+                    self.para.delete(self.run_text_start..len);
+                    FieldMode::Opaque
+                } else {
+                    FieldMode::Code
+                };
+                self.fields.push(Field {
+                    start: self.run_start,
+                    depth: 1,
+                    mode,
+                    in_result: false,
+                    instr: String::new(),
+                    result: String::new(),
+                    // The run's parent level (the run frame isn't counted).
+                    level: stack_len.saturating_sub(1),
+                    container: self.container(stack_len.saturating_sub(1)),
+                    props: self.run.clone(),
+                    ended: false,
+                });
+                self.run_fld = Some(RunFld::Begin);
+            }
             Some("separate") => {
-                if let Some(f) = &mut self.field
-                    && f.depth == 1
-                {
-                    f.in_result = true;
+                let here = self.container(stack_len.saturating_sub(1));
+                let at = self.para.text.len();
+                let pushed = self.run_pushed;
+                let Some(f) = self.fields.last_mut() else {
+                    return;
+                };
+                if f.depth != 1 {
+                    return;
+                }
+                match f.mode {
+                    FieldMode::Code => {
+                        if page_number_field(&f.instr) || f.container != here || pushed {
+                            f.mode = FieldMode::Opaque;
+                            f.in_result = true;
+                        } else {
+                            f.mode = FieldMode::Result;
+                            self.run_fld = Some(RunFld::Separate(at));
+                        }
+                    }
+                    FieldMode::Opaque => f.in_result = true,
+                    FieldMode::Result => {}
                 }
             }
             Some("end") => {
-                if let Some(f) = &mut self.field {
-                    f.depth = f.depth.saturating_sub(1);
+                let at = self.para.text.len();
+                let Some(f) = self.fields.last_mut() else {
+                    return;
+                };
+                match f.mode {
+                    FieldMode::Result => {
+                        f.ended = true;
+                        f.depth = 0;
+                        self.run_fld = Some(RunFld::End(at));
+                    }
+                    FieldMode::Code | FieldMode::Opaque => {
+                        f.depth = f.depth.saturating_sub(1);
+                        if f.depth == 0 {
+                            f.ended = true;
+                            if f.mode == FieldMode::Code && page_number_field(&f.instr) {
+                                f.mode = FieldMode::Opaque;
+                            }
+                            self.run_fld = Some(RunFld::End(at));
+                        }
+                    }
                 }
             }
             _ => {}
+        }
+    }
+
+    /// A run holding a `w:fldChar` closed (`run` is its source range).
+    fn fld_run_closed(&mut self, fld: RunFld, (run_start, after): (usize, usize), stack_len: usize) {
+        let clean = !self.run_pushed;
+        match fld {
+            RunFld::Begin => {}
+            RunFld::Separate(at) => {
+                let Some(f) = self.fields.last() else { return };
+                let (code, sep) = if clean {
+                    (
+                        self.src[f.start..run_start].to_owned(),
+                        self.src[run_start..after].to_owned(),
+                    )
+                } else {
+                    // Result text in the separator's run: write the
+                    // separator on its own.
+                    (
+                        self.src[f.start..run_start].to_owned(),
+                        crate::object::FIELD_SEPARATE.to_owned(),
+                    )
+                };
+                let mark = FieldMark::Begin {
+                    instr: f.instr.clone(),
+                    code: code.into(),
+                    sep: Some(sep.into()),
+                    simple: false,
+                };
+                let props = f.props.clone();
+                self.insert_mark(at, mark, props);
+            }
+            RunFld::End(at) => {
+                let Some(f) = self.fields.pop() else { return };
+                match f.mode {
+                    FieldMode::Result => {
+                        let xml = if clean {
+                            self.src[run_start..after].to_owned()
+                        } else {
+                            crate::object::FIELD_END.to_owned()
+                        };
+                        let mark = FieldMark::End {
+                            xml: xml.into(),
+                            simple: false,
+                        };
+                        self.insert_mark(at, mark, self.run.clone());
+                    }
+                    FieldMode::Code if f.container == self.container(stack_len) => {
+                        // No result: the code, then the end.
+                        let begin = FieldMark::Begin {
+                            instr: f.instr.clone(),
+                            code: self.src[f.start..run_start].into(),
+                            sep: None,
+                            simple: false,
+                        };
+                        let end = FieldMark::End {
+                            xml: if clean {
+                                self.src[run_start..after].into()
+                            } else {
+                                crate::object::FIELD_END.into()
+                            },
+                            simple: false,
+                        };
+                        self.insert_mark(at, end, self.run.clone());
+                        self.insert_mark(at, begin, f.props.clone());
+                    }
+                    FieldMode::Code | FieldMode::Opaque => {
+                        if f.level == stack_len {
+                            let xml = &self.src[f.start..after];
+                            if !page_number_field(&f.instr) {
+                                self.preserved.insert("fields".into());
+                            }
+                            let o =
+                                Self::opaque(Level::Para, xml, field_label(&f.instr, &f.result));
+                            self.push_object(o, RunProps::default());
+                        } else {
+                            self.unsupported
+                                .insert("fields across hyperlinks or other elements".into());
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1257,7 +1560,10 @@ impl BodyParser<'_> {
                     self.unsupported.insert(category(&local));
                 }
                 let o = Self::opaque(Level::Marker, xml, "");
-                if matches!(self.frame_top, Some(Frame::P | Frame::Hyperlink)) {
+                if matches!(
+                    self.frame_top,
+                    Some(Frame::P | Frame::Hyperlink | Frame::Simple)
+                ) {
                     self.push_object(o, RunProps::default());
                 } else {
                     self.pending.push(o);
@@ -1419,7 +1725,7 @@ impl BodyParser<'_> {
         }
     }
 
-    fn close(&mut self, frame: Frame, (_, after): (usize, usize), stack_len: usize) {
+    fn close(&mut self, frame: Frame, (before, after): (usize, usize), stack_len: usize) {
         match frame {
             Frame::Capture => {
                 if let Some((start, cap)) = self.caps.pop() {
@@ -1431,27 +1737,42 @@ impl BodyParser<'_> {
                 self.mark_raw = Some(self.src[self.mark_start..after].to_owned());
             }
             Frame::R => {
-                if let Some(f) = &self.field
-                    && f.depth == 0
-                {
-                    let f = self.field.take().expect("field");
-                    if f.level == stack_len {
-                        let xml = &self.src[f.start..after];
-                        self.field_checks(&f.instr);
-                        let o = Self::opaque(Level::Para, xml, field_label(&f.instr, &f.result));
-                        self.link = f.link;
-                        self.push_object(o, RunProps::default());
-                    } else {
-                        self.unsupported
-                            .insert("fields across hyperlinks or other elements".into());
-                    }
-                } else if self.field.is_none() {
+                if let Some(fld) = self.run_fld.take() {
+                    self.fld_run_closed(fld, (self.run_start, after), stack_len);
+                } else if !self.capturing() {
                     self.link_runs += 1;
+                }
+            }
+            Frame::Simple => {
+                let end = FieldMark::End {
+                    xml: self.src[before..after].into(),
+                    simple: true,
+                };
+                let at = self.para.text.len();
+                self.insert_mark(at, end, RunProps::default());
+            }
+            Frame::Body if self.frame_top == Some(Frame::Wrap) => {
+                self.wraps.push(before);
+            }
+            Frame::Wrap => {
+                let start = self.wraps.pop().unwrap_or(before);
+                let o = Self::opaque(Level::Wrap, &self.src[start..after], "");
+                let pending = std::mem::take(&mut self.pending);
+                match self.paragraphs.last_mut() {
+                    Some(last) => {
+                        for m in pending.into_iter().chain([o]) {
+                            last.push_object(m, RunProps::default(), None);
+                        }
+                    }
+                    None => {
+                        self.pending = pending;
+                        self.pending.push(o);
+                    }
                 }
             }
             Frame::Rev => self.rev = None,
             Frame::Hyperlink => {
-                if self.link_runs == 0 && self.field.is_none() {
+                if self.link_runs == 0 && !self.capturing() {
                     let xml = self.src[self.link_start..after].to_owned();
                     self.link = None;
                     let o =
@@ -1461,11 +1782,12 @@ impl BodyParser<'_> {
                 self.link = None;
             }
             Frame::P => {
-                if let Some(f) = self.field.take() {
+                // A field whose code (or whole opaque field) runs on into
+                // the next paragraph: Kantor can't keep it.
+                while let Some(f) = self.fields.pop_if(|f| f.mode != FieldMode::Result) {
                     self.unsupported
-                        .insert("fields spanning paragraphs (tables of contents…)".into());
-                    // Keep what Word shows of it here (a table of
-                    // contents' first line) as text.
+                        .insert("fields spanning paragraphs".into());
+                    // Keep what Word shows of it here as text.
                     if f.in_result && !f.result.is_empty() {
                         self.para.push_tracked(
                             &f.result,
@@ -1556,7 +1878,10 @@ fn parse_body(src: &str, rels: &HashMap<String, Rel>, document_part: &str) -> an
         link_start: 0,
         link_runs: 0,
         rev: None,
-        field: None,
+        fields: Vec::new(),
+        run_fld: None,
+        run_pushed: false,
+        wraps: Vec::new(),
         caps: Vec::new(),
         pending: Vec::new(),
         go_back: HashSet::new(),
@@ -1645,6 +1970,9 @@ fn parse_body(src: &str, rels: &HashMap<String, Rel>, document_part: &str) -> an
     if st.root_tag.is_none() {
         bail!("empty document part");
     }
+    if !st.fields.is_empty() {
+        st.unsupported.insert("fields without an end".into());
+    }
     // Markers after the last paragraph go to its end.
     if !st.pending.is_empty() {
         if st.paragraphs.is_empty() {
@@ -1669,8 +1997,9 @@ fn parse_body(src: &str, rels: &HashMap<String, Rel>, document_part: &str) -> an
 
 fn text_event(st: &mut BodyParser, instr: bool, s: &str) {
     if instr {
-        if let Some(f) = &mut st.field
+        if let Some(f) = st.fields.last_mut()
             && f.depth == 1
+            && f.mode != FieldMode::Result
         {
             f.instr.push_str(s);
         }
@@ -2396,7 +2725,16 @@ fn write_run(out: &mut String, text: &str, run: &Run) {
                 out.push_str(&o.xml);
                 out.push_str("</w:r>");
             }
-            Level::Para | Level::Marker | Level::Block => out.push_str(&o.xml),
+            Level::Para | Level::Marker | Level::Block | Level::Wrap => out.push_str(&o.xml),
+        },
+        Some(Object::Field(f)) => match &**f {
+            FieldMark::Begin { code, sep, .. } => {
+                out.push_str(code);
+                if let Some(sep) = sep {
+                    out.push_str(sep);
+                }
+            }
+            FieldMark::End { xml, .. } => out.push_str(xml),
         },
         None => {
             if text.is_empty() {
@@ -2465,43 +2803,58 @@ fn write_p(out: &mut String, p: &Paragraph, runs: &[(std::ops::Range<usize>, &Ru
     out.push_str("</w:p>");
 }
 
-/// A paragraph; block objects in it are written between `<w:p>`s.
+/// A paragraph; block objects and the edges of a table of contents'
+/// content control in it are written between `<w:p>`s.
 fn write_paragraph(out: &mut String, p: &Paragraph) {
+    type Seg<'a> = Vec<(std::ops::Range<usize>, &'a Run)>;
     let runs: Vec<_> = p.run_ranges().collect();
-    if !runs
-        .iter()
-        .any(|(_, r)| r.object.as_ref().is_some_and(Object::is_block))
-    {
+    let between = |r: &Run| {
+        r.object
+            .as_ref()
+            .is_some_and(|o| o.is_block() || o.is_wrap())
+    };
+    if !runs.iter().any(|(_, r)| between(r)) {
         write_p(out, p, &runs);
         return;
     }
-    let mut seg = Vec::new();
-    let flush = |out: &mut String, seg: &mut Vec<(std::ops::Range<usize>, &Run)>| {
-        if seg.is_empty() {
-            return;
-        }
-        if seg
-            .iter()
-            .all(|(_, r)| r.object.as_ref().is_some_and(Object::is_marker))
-        {
-            // Markers alone stay at this level, without an extra paragraph.
-            for (_, r) in seg.iter() {
-                write_run(out, "", r);
-            }
-        } else {
-            write_p(out, p, seg);
-        }
-        seg.clear();
-    };
+    // Segments of runs between block objects and wraps.
+    let mut segs: Vec<Seg> = vec![Vec::new()];
+    let mut cuts: Vec<&Run> = Vec::new();
     for (range, run) in runs {
-        if run.object.as_ref().is_some_and(Object::is_block) {
-            flush(out, &mut seg);
-            write_run(out, "", run);
-        } else {
+        if between(run) {
+            cuts.push(run);
+            segs.push(Vec::new());
+        } else if let Some(seg) = segs.last_mut() {
             seg.push((range, run));
         }
     }
-    flush(out, &mut seg);
+    let markers_only = |seg: &Seg| {
+        seg.iter()
+            .all(|(_, r)| r.object.as_ref().is_some_and(Object::is_marker))
+    };
+    // Wraps alone don't make the paragraph go away: one segment is its
+    // `<w:p>` even when empty (the first with text, else the one after the
+    // leading wraps).
+    let has_block = cuts.iter().any(|r| r.object.as_ref().is_some_and(Object::is_block));
+    let main = (!has_block).then(|| {
+        segs.iter().position(|s| !markers_only(s)).unwrap_or_else(|| {
+            let lead = segs.iter().take_while(|s| s.is_empty()).count();
+            lead.min(segs.len() - 1)
+        })
+    });
+    for (k, seg) in segs.iter().enumerate() {
+        if k > 0 {
+            write_run(out, "", cuts[k - 1]);
+        }
+        if Some(k) == main || !markers_only(seg) {
+            write_p(out, p, seg);
+        } else {
+            // Markers alone stay at this level, without an extra paragraph.
+            for (_, r) in seg {
+                write_run(out, "", r);
+            }
+        }
+    }
 }
 
 fn write_table(out: &mut String, t: &Table, id: u32, paras: &[Paragraph], available: u32) {
@@ -2563,7 +2916,8 @@ fn write_table(out: &mut String, t: &Table, id: u32, paras: &[Paragraph], availa
 
 fn body_xml(doc: &Document) -> String {
     let mut out = String::with_capacity(4096);
-    let paras = doc.paragraphs();
+    let fixed = crate::fields::writable(doc.paragraphs());
+    let paras = fixed.as_deref().unwrap_or(doc.paragraphs());
     let mut i = 0;
     while i < paras.len() {
         match paras[i]

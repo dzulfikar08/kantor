@@ -16,6 +16,7 @@ pub mod agent;
 mod document;
 pub mod docx;
 mod edit;
+pub mod fields;
 pub mod find;
 pub mod model;
 mod msdoc;
@@ -43,7 +44,8 @@ pub use model::{
 };
 pub use notes::{Note, NoteKind, NoteProps, NoteRef, NoteRestart};
 pub use numbering::ListKind;
-pub use object::{Image, ImageFormat, Level, OBJECT, Object, Opaque};
+pub use fields::{FieldContext, FieldSpan, Instr, LinkTarget, PageLookup};
+pub use object::{FieldMark, Image, ImageFormat, Level, OBJECT, Object, Opaque};
 pub use page::{MarginPreset, Orientation, PaperSize, cm_to_twips, twips_to_cm};
 pub use review::{Anchor, Change, Comment, RevKind, Revision};
 pub use section::{

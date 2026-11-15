@@ -13,6 +13,12 @@ crates/docs_pdf/tests/.
 * minutes.docx: a comment and tracked changes (an insertion, a deletion).
 * toc.docx: a table of contents (TOC field result, TOC 1/TOC 2 styles with a
   right dot-leader tab) and lines with bar, centre, decimal and leader tabs.
+* fields.docx: fields as Word leaves them, with results that are out of date
+  on purpose: a table of contents in its content control (hyperlinked
+  entries with PAGEREF fields, one heading missing), headings with and
+  without `_Toc` bookmarks across a page break, SEQ captions, REF and
+  PAGEREF cross-references, DATE with a picture, a TITLE simple field, a
+  MERGEFIELD with no result, a HYPERLINK field and an external hyperlink.
 
 Regenerate with
 `uv run --with python-docx==1.2.0 scripts/corpus/gen_docx.py tests/corpus/docx`.
@@ -251,4 +257,108 @@ par._p.get_or_add_pPr().append(tabs_el(("left", 6000, "underscore")))
 par = d.add_paragraph("Chapter one\tpage 3")
 par._p.get_or_add_pPr().append(tabs_el(("right", right, "hyphen")))
 save(d, "toc.docx")
+
+# ── fields: what F9 / Update Table work on (results deliberately stale).
+from docx.oxml import parse_xml
+from docx.oxml.ns import nsdecls
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+W = nsdecls("w")
+
+
+def runs(*parts):
+    """Run XML for ("t", text) / ("tab",) / ("begin", instr) / ("sep",) /
+    ("end",) parts."""
+    out = []
+    for p in parts:
+        if p[0] == "t":
+            out.append(f'<w:r><w:t xml:space="preserve">{p[1]}</w:t></w:r>')
+        elif p[0] == "tab":
+            out.append("<w:r><w:tab/></w:r>")
+        elif p[0] == "begin":
+            out.append('<w:r><w:fldChar w:fldCharType="begin"/></w:r>')
+            out.append(f'<w:r><w:instrText xml:space="preserve"> {p[1]} </w:instrText></w:r>')
+        elif p[0] == "sep":
+            out.append('<w:r><w:fldChar w:fldCharType="separate"/></w:r>')
+        elif p[0] == "end":
+            out.append('<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    return "".join(out)
+
+
+def add(par, xml):
+    """Append paragraph content (several elements) to a paragraph."""
+    holder = parse_xml(f"<w:p {W} {nsdecls('r')}>{xml}</w:p>")
+    for child in list(holder):
+        par._p.append(child)
+
+
+def toc_link(anchor, title, page):
+    inner = runs(("t", title), ("tab",), ("begin", f"PAGEREF {anchor} \\h"), ("sep",), ("t", page), ("end",))
+    return f'<w:hyperlink w:anchor="{anchor}" w:history="1">{inner}</w:hyperlink>'
+
+
+d = Document()
+d.core_properties.title = "Laporan Kuartal"
+sec = d.sections[0]
+sec.page_width, sec.page_height = Cm(21), Cm(29.7)
+sec.left_margin = sec.right_margin = Cm(2.54)
+for level in (1, 2):
+    st = d.styles.add_style(f"TOC {level}", 1)
+    st.base_style = d.styles["Normal"]
+    st.paragraph_format.space_after = Pt(4)
+    st.paragraph_format.left_indent = Cm(0.5 * (level - 1))
+    st.element.get_or_add_pPr().insert(0, tabs_el(("right", right, "dot")))
+toc_instr = 'TOC \\o "1-3" \\h \\z \\u'
+sdt = parse_xml(
+    f'<w:sdt {W}><w:sdtPr><w:docPartObj><w:docPartGallery w:val="Table of Contents"/>'
+    "<w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtEndPr/><w:sdtContent>"
+    "<w:p><w:r><w:t>Contents</w:t></w:r></w:p>"
+    '<w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr>'
+    + runs(("begin", toc_instr), ("sep",))
+    + toc_link("_Toc100000001", "Introduction", "4")
+    + "</w:p>"
+    '<w:p><w:pPr><w:pStyle w:val="TOC2"/></w:pPr>'
+    + toc_link("_Toc100000002", "Scope", "9")
+    + "</w:p>"
+    "<w:p>" + runs(("end",)) + "</w:p>"
+    "</w:sdtContent></w:sdt>"
+)
+d.element.body.insert(0, sdt)
+
+
+def heading(text, level, bookmark=None, bid=None):
+    h = d.add_heading(text, level)
+    if bookmark:
+        h._p.insert(1, parse_xml(f'<w:bookmarkStart {W} w:id="{bid}" w:name="{bookmark}"/>'))
+        h._p.append(parse_xml(f'<w:bookmarkEnd {W} w:id="{bid}"/>'))
+    return h
+
+
+heading("Introduction", 1, "_Toc100000001", 1)
+d.add_paragraph("This report covers the third quarter.")
+heading("Scope", 2, "_Toc100000002", 2)
+p = d.add_paragraph()
+add(p, runs(("t", "Prepared on "), ("begin", 'DATE \\@ "d MMMM yyyy"'), ("sep",), ("t", "1 January 2020"), ("end",), ("t", " for ")))
+add(p, f'<w:fldSimple w:instr=" TITLE \\* MERGEFORMAT "><w:r><w:t>Old title</w:t></w:r></w:fldSimple>')
+add(p, runs(("t", ". Dear "), ("begin", "MERGEFIELD FirstName"), ("end",), ("t", ",")))
+d.add_paragraph("End of part one.").runs[0].add_break(WD_BREAK.PAGE)
+heading("Results", 1)
+p = d.add_paragraph(style="Caption")
+add(p, '<w:bookmarkStart w:id="3" w:name="_Ref1"/>')
+add(p, runs(("t", "Table "), ("begin", "SEQ Table \\* ARABIC"), ("sep",), ("t", "5"), ("end",)))
+add(p, '<w:bookmarkEnd w:id="3"/>')
+add(p, runs(("t", ": Sales by city")))
+p = d.add_paragraph(style="Caption")
+add(p, runs(("t", "Table "), ("begin", "SEQ Table \\* ARABIC"), ("sep",), ("t", "9"), ("end",), ("t", ": Costs")))
+p = d.add_paragraph()
+add(p, runs(
+    ("t", "See "), ("begin", "REF _Ref1 \\h"), ("sep",), ("t", "Table 7"), ("end",),
+    ("t", " on page "), ("begin", "PAGEREF _Ref1 \\h"), ("sep",), ("t", "3"), ("end",),
+    ("t", ", the "), ("begin", 'HYPERLINK "https://kantor.paparanai.id"'), ("sep",), ("t", "Kantor site"), ("end",),
+    ("t", " and the "),
+))
+rid = d.part.relate_to("https://example.com/report", RT.HYPERLINK, is_external=True)
+add(p, f'<w:hyperlink r:id="{rid}" w:history="1"><w:r><w:t>online copy</w:t></w:r></w:hyperlink>')
+add(p, runs(("t", ".")))
+save(d, "fields.docx")
 print("docx ok")

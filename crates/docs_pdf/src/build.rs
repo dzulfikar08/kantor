@@ -205,8 +205,34 @@ pub fn layout_paragraph(
         });
     }
     let text_width = (width - (rp.indent_left_pt + rp.indent_right_pt) * PT).max(16.0);
-    for (index, obj) in p.objects() {
+    let objects: Vec<(usize, &Object)> = p.objects().collect();
+    for (k, &(index, obj)) in objects.iter().enumerate() {
+        let hidden = || InlineObject {
+            index,
+            kind: ObjectKind::Hidden,
+            width: 0.0,
+            height: 0.0,
+            label: String::new(),
+        };
         let o = match obj {
+            // A field's start and end take no room; a field with no result
+            // shows what Word does (`«Name»` for a mail merge field).
+            Object::Field(f) => {
+                let empty = objects.get(k + 1).is_some_and(|&(next, o)| {
+                    next == index + docs_engine::OBJECT.len_utf8()
+                        && o.field().is_some_and(|m| !m.is_begin())
+                });
+                match f.instr().filter(|_| empty).and_then(docs_engine::fields::empty_result_label) {
+                    Some(label) => InlineObject {
+                        index,
+                        kind: ObjectKind::Text,
+                        width: 0.0,
+                        height: 0.0,
+                        label,
+                    },
+                    None => hidden(),
+                }
+            }
             Object::Image(img) => {
                 let (mut w, mut h) = img.size_px();
                 if w > text_width && w > 0.0 {
@@ -231,13 +257,7 @@ pub fn layout_paragraph(
                 }
             }
             Object::Opaque(op) => match op.level {
-                Level::Marker => InlineObject {
-                    index,
-                    kind: ObjectKind::Hidden,
-                    width: 0.0,
-                    height: 0.0,
-                    label: String::new(),
-                },
+                Level::Marker | Level::Wrap => hidden(),
                 Level::Block => InlineObject {
                     index,
                     kind: ObjectKind::Placeholder,

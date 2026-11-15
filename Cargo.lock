@@ -1621,6 +1621,7 @@ name = "docs_engine"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "docx-rs",
  "encoding_rs",
  "kantor_core",

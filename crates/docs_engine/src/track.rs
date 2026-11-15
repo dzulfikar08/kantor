@@ -157,7 +157,7 @@ impl Document {
                 if r.start < lo || r.end > hi || r.is_empty() {
                     continue;
                 }
-                if run.object.as_ref().is_some_and(Object::is_marker) {
+                if run.object.as_ref().is_some_and(Object::is_zero_width) {
                     continue;
                 }
                 match &run.rev {

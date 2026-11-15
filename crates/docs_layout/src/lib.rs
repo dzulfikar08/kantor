@@ -167,6 +167,9 @@ pub enum ObjectKind {
     /// Text drawn small and raised, with no box: a footnote or endnote
     /// number (the label).
     Mark,
+    /// The label drawn as text in the paragraph's font, with no box: what
+    /// a field with no result shows (`«Name»` for a mail merge field).
+    Text,
 }
 
 /// An object in the text: a box in place of the object's character.
@@ -538,6 +541,13 @@ impl Engine {
                 // Raised: the box's bottom sits on the baseline.
                 w = l.width();
                 h = l.height() + para.size_pt * PT * MARK_RAISE;
+                labels.push((o.index, l, o.label.clone()));
+            }
+            if o.kind == ObjectKind::Text {
+                let l = self.small_layout(&o.label, &para.family, para.size_pt, None, Rgba::BLACK);
+                // The box's bottom is the label's baseline.
+                w = l.width();
+                h = l.get(0).map_or(l.height(), |line| line.metrics().baseline);
                 labels.push((o.index, l, o.label.clone()));
             }
             if o.kind == ObjectKind::Hidden {
@@ -1719,11 +1729,14 @@ impl PagedDocument {
             for item in line.items() {
                 if let PositionedLayoutItem::InlineBox(b) = item
                     && let Some(&(index, kind)) = pl_layout.objects.get(b.id as usize)
-                    && matches!(kind, ObjectKind::Placeholder | ObjectKind::Mark)
+                    && matches!(
+                        kind,
+                        ObjectKind::Placeholder | ObjectKind::Mark | ObjectKind::Text
+                    )
                     && let Some((_, ll, _)) = pl_layout.labels.iter().find(|x| x.0 == index)
                     && let Some(lline) = ll.get(0)
                 {
-                    let (lx, ly, source) = if kind == ObjectKind::Mark {
+                    let (lx, ly, source) = if kind != ObjectKind::Placeholder {
                         (dx + b.x, dy + b.y, RunSource::Mark(index))
                     } else {
                         (
@@ -1828,7 +1841,7 @@ impl PagedDocument {
             for item in line.items() {
                 if let PositionedLayoutItem::InlineBox(b) = item
                     && let Some(&(index, kind)) = l.objects.get(b.id as usize)
-                    && !matches!(kind, ObjectKind::Hidden | ObjectKind::Mark)
+                    && !matches!(kind, ObjectKind::Hidden | ObjectKind::Mark | ObjectKind::Text)
                 {
                     out.push(PlacedObject {
                         para: pl.para,

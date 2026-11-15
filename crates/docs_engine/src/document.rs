@@ -603,12 +603,44 @@ impl Document {
 
     /// List marker text ("1.", "a)", "•") of every paragraph.
     pub fn list_markers(&self) -> Vec<Option<String>> {
-        let refs: Vec<_> = self
-            .paragraphs
-            .iter()
-            .map(|p| self.styles.effective_num(p))
-            .collect();
+        self.list_markers_of(&self.paragraphs)
+    }
+
+    /// [`Self::list_markers`] of other paragraphs (an edit being prepared).
+    pub(crate) fn list_markers_of(&self, paras: &[Paragraph]) -> Vec<Option<String>> {
+        let refs: Vec<_> = paras.iter().map(|p| self.styles.effective_num(p)).collect();
         self.numbering.markers(refs, &self.style_num())
+    }
+
+    /// This document with other paragraphs and no undo history (to lay out
+    /// an edit before making it).
+    pub(crate) fn snapshot(&self, paragraphs: Vec<Paragraph>) -> Document {
+        Document {
+            paragraphs,
+            tables: self.tables.clone(),
+            styles: self.styles.clone(),
+            numbering: self.numbering.clone(),
+            page: self.page,
+            path: self.path.clone(),
+            package: self.package.clone(),
+            media: self.media.clone(),
+            new_media: self.new_media.clone(),
+            unsupported: self.unsupported.clone(),
+            preserved: self.preserved.clone(),
+            body_sect: self.body_sect.clone(),
+            stories: self.stories.clone(),
+            even_odd: self.even_odd,
+            comments: self.comments.clone(),
+            comments_modified: self.comments_modified,
+            default_tab: self.default_tab,
+            decimal: self.decimal,
+            track: self.track,
+            author: self.author.clone(),
+            notes: self.notes.clone(),
+            note_settings: self.note_settings.clone(),
+            imported: self.imported.clone(),
+            history: History::default(),
+        }
     }
 
     /// Whether Save must ask for a new file (untitled, or the original has
@@ -1097,7 +1129,7 @@ impl Document {
             && self.paragraphs[pos.para]
                 .run_ranges()
                 .filter(|(r, _)| r.start < pos.offset)
-                .all(|(_, run)| run.object.as_ref().is_some_and(Object::is_marker))
+                .all(|(_, run)| run.object.as_ref().is_some_and(Object::is_zero_width))
     }
 
     /// Take paragraph `i` out of its list (keeps a style's list off with
