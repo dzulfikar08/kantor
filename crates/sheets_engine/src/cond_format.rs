@@ -56,6 +56,8 @@ pub struct Conditional {
     pub icon: Option<CfIcon>,
     /// `false` when a data bar or icon set shows only the bar / icon.
     pub show_value: bool,
+    /// Border edges the rules' formats draw (over the cell's own).
+    pub borders: crate::format::Borders,
 }
 
 /// A data bar, in fractions of the cell's width.
@@ -71,6 +73,34 @@ pub struct DataBar {
     pub axis: Option<f32>,
     /// The bar is for a negative value (it grows to the left of the axis).
     pub negative: bool,
+    /// Its border (Excel 2010's "Solid Border").
+    pub border: Option<Rgb>,
+    /// The axis' colour (black when `None`).
+    pub axis_color: Option<Rgb>,
+}
+
+/// A data bar's look with its colours resolved (see `cf_x14::BarLook`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BarStyle {
+    min_len: f32,
+    max_len: f32,
+    axis: crate::cf_x14::Axis,
+    border: Option<Rgb>,
+    negative_border: Option<Rgb>,
+    negative_fill: Option<Rgb>,
+    axis_color: Option<Rgb>,
+}
+
+impl BarStyle {
+    const KANTOR: BarStyle = BarStyle {
+        min_len: 0.0,
+        max_len: 1.0,
+        axis: crate::cf_x14::Axis::Automatic,
+        border: None,
+        negative_border: None,
+        negative_fill: None,
+        axis_color: None,
+    };
 }
 
 /// An icon of an icon set, drawn as a small vector shape.
@@ -156,7 +186,9 @@ enum Kind {
         op: TextOperator,
         text: String,
     },
-    Period(PeriodType),
+    /// A date occurring in a period; `Between` / `NotBetween` with their
+    /// first and last dates (text for DATEVALUE).
+    Period(PeriodType, Option<String>, Option<String>),
     Duplicate(bool),
     Blanks(bool),
     Errors(bool),
@@ -175,6 +207,7 @@ enum Kind {
         negative: Rgb,
         gradient: bool,
         show_value: bool,
+        style: BarStyle,
     },
     Icons {
         steps: Vec<IconStep>,
@@ -409,6 +442,7 @@ struct Overlay {
     underline: Option<bool>,
     strike: Option<bool>,
     num_fmt: Option<String>,
+    borders: crate::format::Borders,
 }
 
 impl Overlay {
@@ -427,6 +461,19 @@ impl Overlay {
         {
             self.fill = rgb(model, &fill.color);
         }
+        if let Some(b) = &dxf.border {
+            let line = |item: &Option<ironcalc_base::types::BorderItem>| {
+                item.as_ref().map(|i| crate::format::BorderLine {
+                    style: crate::format::LineStyle::from_ironcalc(&i.style),
+                    color: rgb(model, &i.color),
+                })
+            };
+            let o = &mut self.borders;
+            o.left = o.left.or(line(&b.left));
+            o.right = o.right.or(line(&b.right));
+            o.top = o.top.or(line(&b.top));
+            o.bottom = o.bottom.or(line(&b.bottom));
+        }
         if let Some(n) = &dxf.num_fmt
             && self.num_fmt.is_none()
             && !n.format_code.is_empty()
@@ -443,6 +490,7 @@ impl Overlay {
             && self.underline.is_none()
             && self.strike.is_none()
             && self.num_fmt.is_none()
+            && self.borders == crate::format::Borders::default()
     }
 }
 
@@ -556,6 +604,25 @@ impl Workbook {
             }
             let anchor = (bounds.top as i32 + 1, bounds.left as i32 + 1);
             let dxf_of = |id: u32| dxfs.get(id as usize).cloned().map(Arc::new);
+            // A data bar's look from the file while it is as opened.
+            let bar_style = matches!(cf.cf_rule, CfRule::DataBar { .. }).then(|| {
+                let look = self
+                    .cf_x14
+                    .bar_look(self.sheet_id(sheet), &cf.range, &cf.cf_rule);
+                let model = self.model.get_model();
+                let c = |c: &Option<ironcalc_base::types::Color>| {
+                    c.as_ref().and_then(|c| rgb(model, c))
+                };
+                BarStyle {
+                    min_len: look.min_len,
+                    max_len: look.max_len,
+                    axis: look.axis,
+                    border: c(&look.border),
+                    negative_border: c(&look.negative_border),
+                    negative_fill: c(&look.negative_fill),
+                    axis_color: c(&look.axis_color),
+                }
+            });
             let (kind, dxf, stop) = match cf.cf_rule {
                 CfRule::CellIs {
                     operator,
@@ -598,10 +665,15 @@ impl Workbook {
                 ),
                 CfRule::TimePeriod {
                     time_period,
+                    date1,
+                    date2,
                     dxf_id,
                     stop_if_true,
-                    ..
-                } => (Kind::Period(time_period), dxf_of(dxf_id), stop_if_true),
+                } => (
+                    Kind::Period(time_period, date1, date2),
+                    dxf_of(dxf_id),
+                    stop_if_true,
+                ),
                 CfRule::DuplicateValues {
                     dxf_id,
                     stop_if_true,
@@ -708,6 +780,7 @@ impl Workbook {
                             negative,
                             gradient: is_gradient,
                             show_value,
+                            style: bar_style.unwrap_or(BarStyle::KANTOR),
                         },
                         None,
                         false,
@@ -1033,6 +1106,17 @@ impl Workbook {
         })
     }
 
+    /// The days (serial numbers) from `d1` to `d2`, dates as DATEVALUE
+    /// reads them (either order).
+    fn dates_between(&mut self, d1: Option<&str>, d2: Option<&str>) -> Option<(f64, f64)> {
+        let day = |this: &mut Self, d: &str| {
+            this.formula_number(&format!("DATEVALUE(\"{}\")", d.replace('"', "\"\"")))
+        };
+        let a = day(self, d1?)?;
+        let b = day(self, d2?)?;
+        Some((a.min(b), a.max(b)))
+    }
+
     /// First and last day of the month `m` months from this one.
     fn month(&mut self, m: i32) -> Option<(f64, f64)> {
         let start = self.formula_number(&format!("EOMONTH(TODAY(),{})", m - 1))? + 1.0;
@@ -1115,10 +1199,18 @@ impl Workbook {
                         TextOperator::Equals => s == *text,
                     },
                 },
-                Kind::Period(p) => match v {
-                    Value::Number(n) => self
-                        .period(p)
-                        .is_some_and(|(lo, hi)| (lo..=hi).contains(&n.floor())),
+                Kind::Period(p, d1, d2) => match v {
+                    Value::Number(n) => match p {
+                        PeriodType::Between | PeriodType::NotBetween => {
+                            let inside = self
+                                .dates_between(d1.as_deref(), d2.as_deref())
+                                .is_some_and(|(lo, hi)| (lo..=hi).contains(&n.floor()));
+                            inside == (*p == PeriodType::Between)
+                        }
+                        _ => self
+                            .period(p)
+                            .is_some_and(|(lo, hi)| (lo..=hi).contains(&n.floor())),
+                    },
                     _ => false,
                 },
                 Kind::Blanks(blank) => {
@@ -1194,18 +1286,20 @@ impl Workbook {
                     negative,
                     gradient,
                     show_value: show,
+                    style,
                     ..
                 } => match v {
                     Value::Number(n) => {
                         let agg = self.aggregate(sheet, index, rule);
                         if bar.is_none() {
-                            bar = Some(data_bar(
+                            bar = Some(styled_bar(
                                 n,
                                 agg.stops[0],
                                 agg.stops[1],
                                 *color,
                                 *negative,
                                 *gradient,
+                                style,
                             ));
                             show_value &= *show;
                         }
@@ -1262,6 +1356,11 @@ impl Workbook {
             s.italic = overlay.italic.unwrap_or(s.italic);
             s.underline = overlay.underline.unwrap_or(s.underline);
             s.strikethrough = overlay.strike.unwrap_or(s.strikethrough);
+            let b = &overlay.borders;
+            s.borders.left = b.left.or(s.borders.left);
+            s.borders.right = b.right.or(s.borders.right);
+            s.borders.top = b.top.or(s.borders.top);
+            s.borders.bottom = b.bottom.or(s.borders.bottom);
             let display = overlay.num_fmt.as_ref().map(|code| {
                 s.num_fmt = code.clone();
                 let fmt = kantor_numfmt::NumberFormat::parse(code);
@@ -1275,6 +1374,7 @@ impl Workbook {
             bar,
             icon,
             show_value,
+            borders: overlay.borders,
         })
     }
 }
@@ -1302,10 +1402,29 @@ fn scale_color(v: f64, stops: &[f64], colors: &[Rgb]) -> Rgb {
     colors[last]
 }
 
-/// The bar for `v` on a scale from `low` to `high`. With negative and
-/// positive values the axis sits where zero is; otherwise bars start at the
-/// left edge (all negative: at the right edge, growing left).
+/// The bar for `v` with Kantor's look (lengths 0 to 100 %, no border).
+#[cfg(test)]
 fn data_bar(v: f64, low: f64, high: f64, color: Rgb, negative: Rgb, gradient: bool) -> DataBar {
+    styled_bar(v, low, high, color, negative, gradient, &BarStyle::KANTOR)
+}
+
+/// The bar for `v` on a scale from `low` to `high`. With negative and
+/// positive values the axis sits where zero is (in the middle with Excel's
+/// "cell midpoint"; none with "none": every bar starts at the left edge);
+/// otherwise bars start at the left edge (all negative: at the right edge,
+/// growing left). Bar lengths run from the style's minimum to its maximum
+/// length.
+fn styled_bar(
+    v: f64,
+    low: f64,
+    high: f64,
+    color: Rgb,
+    negative: Rgb,
+    gradient: bool,
+    style: &BarStyle,
+) -> DataBar {
+    use crate::cf_x14::Axis;
+    let len = |f: f32| style.min_len + f.clamp(0.0, 1.0) * (style.max_len - style.min_len);
     let span = high - low;
     let frac = |x: f64| -> f32 {
         if span.abs() < f64::EPSILON {
@@ -1314,28 +1433,63 @@ fn data_bar(v: f64, low: f64, high: f64, color: Rgb, negative: Rgb, gradient: bo
             ((x - low) / span).clamp(0.0, 1.0) as f32
         }
     };
-    let (from, to, axis) = if low < 0.0 && high > 0.0 {
-        let zero = frac(0.0);
-        let at = frac(v);
-        (zero.min(at), zero.max(at), Some(zero))
-    } else if high <= 0.0 && low < 0.0 {
-        // All negative: bars grow leftwards from the right edge.
-        let at = if span.abs() < f64::EPSILON {
-            0.0
-        } else {
-            ((v - low) / span).clamp(0.0, 1.0) as f32
-        };
-        (at, 1.0, None)
-    } else {
-        (0.0, frac(v), None)
+    let mixed = low < 0.0 && high > 0.0;
+    let (from, to, axis) = match style.axis {
+        Axis::None if low < 0.0 => (0.0, len(frac(v)), None),
+        Axis::Middle if low < 0.0 || mixed => {
+            let side = |x: f64, edge: f64| {
+                if edge.abs() < f64::EPSILON {
+                    0.0
+                } else {
+                    (x / edge).clamp(0.0, 1.0) as f32
+                }
+            };
+            if v < 0.0 {
+                let l = 0.5 * len(side(v, low));
+                (0.5 - l, 0.5, Some(0.5))
+            } else {
+                (0.5, 0.5 + 0.5 * len(side(v, high.max(0.0))), Some(0.5))
+            }
+        }
+        _ if mixed => {
+            let zero = frac(0.0);
+            if v < 0.0 {
+                let l = zero * len((v / low).clamp(0.0, 1.0) as f32);
+                (zero - l, zero, Some(zero))
+            } else {
+                let l = (1.0 - zero) * len((v / high).clamp(0.0, 1.0) as f32);
+                (zero, zero + l, Some(zero))
+            }
+        }
+        _ if high <= 0.0 && low < 0.0 => {
+            // All negative: bars grow leftwards from the right edge.
+            let at = if span.abs() < f64::EPSILON {
+                0.0
+            } else {
+                ((v - low) / span).clamp(0.0, 1.0) as f32
+            };
+            (1.0 - len(1.0 - at), 1.0, None)
+        }
+        _ => (0.0, len(frac(v)), None),
     };
+    let neg = v < 0.0;
     DataBar {
-        color: if v < 0.0 { negative } else { color },
+        color: if neg {
+            style.negative_fill.unwrap_or(negative)
+        } else {
+            color
+        },
         gradient,
         from,
         to,
         axis,
-        negative: v < 0.0,
+        negative: neg,
+        border: if neg {
+            style.negative_border.or(style.border)
+        } else {
+            style.border
+        },
+        axis_color: style.axis_color,
     }
 }
 
@@ -1382,6 +1536,30 @@ mod tests {
         assert_eq!((b.from, b.to, b.axis), (0.0, 0.5, None));
         let b = data_bar(-5.0, -10.0, 10.0, 1, 2, false);
         assert_eq!((b.from, b.to, b.axis, b.color), (0.25, 0.5, Some(0.5), 2));
+        // Excel 2007's lengths (10 % to 90 %), a border, no axis.
+        let style = BarStyle {
+            min_len: 0.1,
+            max_len: 0.9,
+            border: Some(7),
+            ..BarStyle::KANTOR
+        };
+        let b = styled_bar(0.0, 0.0, 10.0, 1, 2, false, &style);
+        assert_eq!((b.from, b.to, b.border), (0.0, 0.1, Some(7)));
+        let b = styled_bar(10.0, 0.0, 10.0, 1, 2, false, &style);
+        assert!((b.to - 0.9).abs() < 1e-6);
+        let none = BarStyle {
+            axis: crate::cf_x14::Axis::None,
+            negative_fill: Some(9),
+            ..BarStyle::KANTOR
+        };
+        let b = styled_bar(-10.0, -10.0, 10.0, 1, 2, false, &none);
+        assert_eq!((b.from, b.to, b.axis, b.color), (0.0, 0.0, None, 9));
+        let mid = BarStyle {
+            axis: crate::cf_x14::Axis::Middle,
+            ..BarStyle::KANTOR
+        };
+        let b = styled_bar(5.0, -10.0, 20.0, 1, 2, false, &mid);
+        assert_eq!((b.from, b.to, b.axis), (0.5, 0.625, Some(0.5)));
     }
 
     #[test]
@@ -1546,5 +1724,106 @@ mod invalidation {
         check(&mut wb, "a new rule");
         wb.set_frozen(0, 1, 0).unwrap();
         check(&mut wb, "frozen panes");
+    }
+}
+
+#[cfg(test)]
+mod between_tests {
+    use ironcalc_base::cf_types::{CfRuleInput, PeriodType};
+    use ironcalc_base::types::{Dxf, Fill};
+
+    use crate::Workbook;
+
+    /// IronCalc's "between" date periods (A Date Occurring between two
+    /// dates) highlight the dates inside, "not between" the others.
+    #[test]
+    fn between_dates_highlight() {
+        let mut wb = Workbook::new_empty().unwrap();
+        for (r, d) in ["2026-01-05", "2026-02-10", "2026-03-20"]
+            .iter()
+            .enumerate()
+        {
+            wb.set_input(0, r as u32, 0, d).unwrap();
+            wb.set_input(0, r as u32, 1, d).unwrap();
+        }
+        let format = Dxf {
+            fill: Some(Fill {
+                color: ironcalc_base::types::Color::Rgb("#FFFF00".into()),
+            }),
+            ..Dxf::default()
+        };
+        for (range, period) in [
+            ("A1:A3", PeriodType::Between),
+            ("B1:B3", PeriodType::NotBetween),
+        ] {
+            wb.model
+                .add_conditional_formatting(
+                    0,
+                    range,
+                    CfRuleInput::TimePeriod {
+                        time_period: period,
+                        date1: Some("2026-02-01".into()),
+                        date2: Some("2026-02-28".into()),
+                        format: format.clone(),
+                        stop_if_true: false,
+                    },
+                )
+                .unwrap();
+        }
+        wb.history.edited();
+        wb.mark_cf(0);
+        let filled = |wb: &mut Workbook, r: u32, c: u32| {
+            wb.conditional(0, r, c)
+                .and_then(|x| x.style.as_ref().and_then(|s| s.fill))
+                == Some(0xFFFF00)
+        };
+        assert!(!filled(&mut wb, 0, 0));
+        assert!(filled(&mut wb, 1, 0));
+        assert!(!filled(&mut wb, 2, 0));
+        assert!(filled(&mut wb, 0, 1));
+        assert!(!filled(&mut wb, 1, 1));
+        assert!(filled(&mut wb, 2, 1));
+    }
+
+    /// A rule's border is drawn over the cell's own edges.
+    #[test]
+    fn rule_borders() {
+        use ironcalc_base::types::{Border, BorderItem, BorderStyle, Color};
+        let mut wb = Workbook::new_empty().unwrap();
+        wb.set_input(0, 0, 0, "5").unwrap();
+        let red = BorderItem {
+            style: BorderStyle::Thick,
+            color: Color::Rgb("#FF0000".into()),
+        };
+        let format = Dxf {
+            border: Some(Border {
+                bottom: Some(red.clone()),
+                left: Some(red),
+                ..Border::default()
+            }),
+            ..Dxf::default()
+        };
+        wb.model
+            .add_conditional_formatting(
+                0,
+                "A1:A3",
+                CfRuleInput::Formula {
+                    formula: "A1>1".into(),
+                    format,
+                    stop_if_true: false,
+                },
+            )
+            .unwrap();
+        wb.history.edited();
+        wb.mark_cf(0);
+        let c = wb.conditional(0, 0, 0).expect("the rule applies");
+        let b = c.borders;
+        assert_eq!(b.bottom.and_then(|l| l.color), Some(0xFF0000));
+        assert_eq!(
+            b.left.map(|l| l.style),
+            Some(crate::format::LineStyle::Thick)
+        );
+        assert!(b.top.is_none() && b.right.is_none());
+        assert!(wb.conditional(0, 1, 0).is_none(), "an empty cell isn't > 1");
     }
 }

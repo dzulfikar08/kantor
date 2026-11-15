@@ -127,6 +127,9 @@ impl Encoder {
             let [x, y, w, h] = *rect;
             fill_rect(&mut surface, [x, y, w + 0.03, h + 0.03], *c);
         }
+        for (rect, tile, c) in &page.patterns {
+            draw_pattern(&mut surface, *rect, tile, *c);
+        }
         for bar in &page.bars {
             draw_bar(&mut surface, bar);
         }
@@ -143,9 +146,21 @@ impl Encoder {
             let items = overlay_items(o, &mut self.engine, &mut self.charts, pen.shaper);
             draw_overlay(&mut surface, o, &items, &mut self.images, pen.fonts);
         }
+        // Notes as displayed: a pale yellow box with a thin black border.
+        for n in &page.notes {
+            let [x, y, w, h] = n.rect;
+            fill_rect(&mut surface, n.rect, 0xFFFFE1);
+            let t = 0.5;
+            fill_rect(&mut surface, [x, y, w, t], 0);
+            fill_rect(&mut surface, [x, y + h - t, w, t], 0);
+            fill_rect(&mut surface, [x, y, t, h], 0);
+            fill_rect(&mut surface, [x + w - t, y, t, h], 0);
+            pen.cell_text(&mut surface, &n.text);
+        }
         surface.pop();
-        pen.header_footer(&mut surface, &page.header, &page.hf, true, page);
-        pen.header_footer(&mut surface, &page.footer, &page.hf, false, page);
+        let images = &mut self.images;
+        pen.header_footer(&mut surface, &page.header, &page.hf, true, page, images);
+        pen.header_footer(&mut surface, &page.footer, &page.hf, false, page, images);
         surface.finish();
         p.finish();
         self.pages += 1;
@@ -297,10 +312,21 @@ fn draw_bar(surface: &mut Surface, b: &crate::Bar) {
             rule: FillRule::NonZero,
         }));
         surface.draw_path(&path);
+        // A gradient bar's border, when it has one.
+        if let Some(bc) = b.bar.border {
+            surface.set_fill(None);
+            surface.set_stroke(Some(Stroke {
+                paint: krgb(bc).into(),
+                width: 0.5,
+                ..Stroke::default()
+            }));
+            surface.draw_path(&path);
+            surface.set_stroke(None);
+        }
     } else {
         surface.set_fill(Some(fill(color(c))));
         surface.set_stroke(Some(Stroke {
-            paint: krgb(c).into(),
+            paint: krgb(b.bar.border.unwrap_or(c)).into(),
             width: 0.5,
             ..Stroke::default()
         }));
@@ -315,7 +341,7 @@ fn draw_bar(surface: &mut Surface, b: &crate::Bar) {
             [ax, y + h - 0.75],
             0.5,
             Some(vec![1.0, 1.0]),
-            0x000000,
+            b.bar.axis_color.unwrap_or(0x000000),
         );
     }
 }
@@ -742,6 +768,7 @@ impl Pen<'_> {
         lay: &HfLayout,
         header: bool,
         page: &PageContent,
+        images: &mut Images,
     ) {
         if parts.is_empty() {
             return;
@@ -749,10 +776,27 @@ impl Pen<'_> {
         for (which, section) in [(0, &parts.left), (1, &parts.center), (2, &parts.right)] {
             // Shape every run, line by line.
             let mut shaped = Vec::new();
+            // Pictures: (line, x in the line, width, height, picture).
+            let mut pictures = Vec::new();
             for runs in section {
                 let mut items = Vec::new();
                 let (mut asc, mut desc, mut lh, mut width) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
                 for r in runs {
+                    if r.picture {
+                        // `&G`: the section's picture, standing on the line.
+                        let pic = page.hf_pictures[usize::from(!header)][which].as_ref();
+                        if let Some(pic) = pic {
+                            let (w, h) = (
+                                pic.width_pt as f32 * lay.scale,
+                                pic.height_pt as f32 * lay.scale,
+                            );
+                            asc = asc.max(h);
+                            lh = lh.max(h);
+                            pictures.push((shaped.len(), width, w, h, pic));
+                            width += w;
+                        }
+                        continue;
+                    }
                     let base = r.font.size.unwrap_or(lay.size) * lay.scale;
                     let size = if r.font.shift != 0 { base * 0.66 } else { base };
                     let fam = r
@@ -786,12 +830,24 @@ impl Pen<'_> {
             } else {
                 page.height - lay.footer - total
             };
-            for (items, asc, _, lh, width) in shaped {
+            for (n, (items, asc, _, lh, width)) in shaped.into_iter().enumerate() {
                 let x = match which {
                     0 => lay.left,
                     1 => (page.width - width) / 2.0,
                     _ => lay.right - width,
                 };
+                for &(_, dx, w, h, pic) in pictures.iter().filter(|p| p.0 == n) {
+                    let items = sheets_scene::picture_items(
+                        &pic.part,
+                        &pic.data,
+                        [0.0; 4],
+                        w / 0.75,
+                        h / 0.75,
+                    );
+                    surface.push_transform(&Transform::from_translate(x + dx, y + asc - h));
+                    slides_pdf::draw_items(surface, &items, images, self.fonts);
+                    surface.pop();
+                }
                 for (line, dx, shift, r, size) in items {
                     let tr = Transform::from_translate(x + dx, y + asc + shift);
                     let c = r.font.color.unwrap_or(0);
@@ -807,6 +863,36 @@ impl Pen<'_> {
                     );
                 }
                 y += lh;
+            }
+        }
+    }
+}
+
+/// A patterned fill: Excel's 8 × 8 tile of 1 px dots (0.75 pt) repeated
+/// over the cell, each row's dots merged into runs.
+fn draw_pattern(surface: &mut Surface, rect: [f32; 4], tile: &[u8; 8], c: u32) {
+    const DOT: f32 = 0.75;
+    let [x0, y0, w, h] = rect;
+    let (cols, rows) = ((w / DOT).ceil() as usize, (h / DOT).ceil() as usize);
+    for r in 0..rows {
+        let bits = tile[r % 8];
+        if bits == 0 {
+            continue;
+        }
+        let y = y0 + r as f32 * DOT;
+        let dh = DOT.min(y0 + h - y);
+        let mut start: Option<usize> = None;
+        for col in 0..=cols {
+            let on = col < cols && bits & (0x80 >> (col % 8)) != 0;
+            match (on, start) {
+                (true, None) => start = Some(col),
+                (false, Some(s)) => {
+                    let x = x0 + s as f32 * DOT;
+                    let dw = ((col - s) as f32 * DOT).min(x0 + w - x);
+                    fill_rect(surface, [x, y, dw, dh], c);
+                    start = None;
+                }
+                _ => {}
             }
         }
     }

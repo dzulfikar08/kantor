@@ -55,6 +55,27 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   of contents or a cross-reference that changed can be reviewed and rejected. Saved files with
   tracked fields pass the Open XML validator (a deleted field's code is written as Word's
   `w:delInstrText`, and tracked simple fields as complex ones).
+- Sheets: Data Validation… has Excel's *Apply these changes to all other cells with the same
+  settings*: it extends the change to every cell with the active cell's rule.
+- Sheets: conditional formatting draws rules' borders (on screen and in the PDF), data bars
+  follow their minimum and maximum lengths, borders, negative bar colours and axis setting from
+  the file (Excel 2007 bars run from 10 % to 90 % of the cell, as in Excel), and "between" date
+  rules highlight. Changing one rule on a sheet no longer drops the file's Excel 2010 extras of
+  the others (custom icon sets, data bar borders, lengths, negative colours and axis) on save.
+- Sheets printing: *Insert Page Break*, *Remove Page Break* and *Reset All Page Breaks* (the
+  toolbar's printer menu or the palette) work as in Excel, show as dashed lines in the sheet and
+  are saved in the file. Page Setup edits a different first page and different odd and even
+  pages' headers and footers, and prints notes (Sheet ▸ Comments: at the end of the sheet or as
+  displayed on the sheet). Patterned cell fills print as their patterns, and header and footer
+  pictures (`&G`) and theme colours in headers print as in Excel.
+- Sheets: a sort under a filter or in a table is remembered as in Excel: the filter button
+  shows an arrow on the sorted column, *Reapply* sorts again after edits, and the sort is saved
+  in the file (and read from Excel's files).
+- Sheets: a typed time (`9:30`, `9:30 PM`, `14:05:30`, `27:15`) or date and time
+  (`11/16/2026 9:30`) is a time, as in Excel: it shows with an `h:mm`-style format, adds and
+  subtracts, and meets time validation rules; the formula bar shows it as Excel does
+  (`9:30:00 AM`). On Indonesian systems dates are typed day first (`16/11/2026 9:30`) and
+  Indonesian month names work (`16-Agu-2026`).
 - Docs: Word 97-2003 (`.doc`) files open with their floating pictures (PNG, JPEG), shapes and
   text boxes, placed, wrapped and drawn as in Word and saved into the new `.docx`. Floating
   objects in headers and footers, grouped shapes and freeform shapes drawn with formulas are
@@ -217,6 +238,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Docs: `SECTIONPAGES` in a header or footer shows the number of pages in its section.
 
 ### Fixed
+- Sheets: renaming a table that came from a file keeps its calculated column formulas in the
+  saved file, so Excel still fills new rows with the formula.
 - Docs: a `.docx` whose XML parts start with a byte order mark (files written with Microsoft's
   Open XML SDK) was saved damaged, and Kantor couldn't open the saved file again.
 - Docs: a page break at the very end of a paragraph no longer leaves an empty page after it.

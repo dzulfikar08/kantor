@@ -120,6 +120,18 @@ pub struct PageSetup {
     pub first_page_number: Option<i32>,
     /// `blackAndWhite`: print without colours.
     pub black_and_white: bool,
+    /// `cellComments`: whether and where notes are printed.
+    pub comments: PrintComments,
+}
+
+/// Page Setup ▸ Sheet ▸ Comments: notes left out, printed after the sheet
+/// (cell address and text) or printed where they show on the sheet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PrintComments {
+    #[default]
+    None,
+    AtEnd,
+    AsDisplayed,
 }
 
 impl Default for PageSetup {
@@ -133,6 +145,7 @@ impl Default for PageSetup {
             over_then_down: false,
             first_page_number: None,
             black_and_white: false,
+            comments: PrintComments::None,
         }
     }
 }
@@ -232,6 +245,44 @@ pub struct SheetPrint {
     /// inclusive.
     pub title_rows: Option<(u32, u32)>,
     pub title_cols: Option<(u32, u32)>,
+    /// Pictures of the header and footer (`&G`), from the file.
+    pub hf_pictures: Vec<HfPicture>,
+}
+
+/// A header or footer picture (`&G`) from the sheet's `legacyDrawingHF`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HfPicture {
+    /// Where it goes: Excel's shape id, `LH`, `CH`, `RH` (left, centre,
+    /// right header), `LF`, `CF`, `RF` (footer), with `FIRST` or `EVEN`
+    /// after it for the first and even pages' (`CHFIRST`).
+    pub slot: String,
+    /// Its media part and bytes.
+    pub part: std::sync::Arc<str>,
+    pub data: std::sync::Arc<Vec<u8>>,
+    /// Size in points.
+    pub width_pt: f64,
+    pub height_pt: f64,
+}
+
+impl SheetPrint {
+    /// The picture of a header or footer section on page `n` (1-based):
+    /// `section` 0 left, 1 centre, 2 right.
+    pub fn hf_picture(&self, n: usize, header: bool, section: usize) -> Option<&HfPicture> {
+        let hf = &self.header_footer;
+        let suffix = if hf.different_first && n == 1 {
+            "FIRST"
+        } else if hf.different_odd_even && n.is_multiple_of(2) {
+            "EVEN"
+        } else {
+            ""
+        };
+        let slot = format!(
+            "{}{}{suffix}",
+            ["L", "C", "R"][section.min(2)],
+            if header { "H" } else { "F" }
+        );
+        self.hf_pictures.iter().find(|p| p.slot == slot)
+    }
 }
 
 /// Column widths as Excel prints them.
@@ -327,6 +378,11 @@ impl Prints {
                 }
             }
             Err(e) => log::warn!("print settings not read: {e}"),
+        }
+        for (id, pictures) in crate::preserve::hf_pictures(bytes) {
+            if let Some(raw) = sheets.get_mut(&id) {
+                raw.print.hf_pictures = pictures;
+            }
         }
         Prints {
             sheets,
@@ -492,6 +548,11 @@ fn parse_sheet(root: Node) -> Raw {
             setup.first_page_number = num::<i32>(n, "firstPageNumber");
         }
         setup.black_and_white = flag(n, "blackAndWhite", false);
+        setup.comments = match n.attribute("cellComments") {
+            Some("atEnd") => PrintComments::AtEnd,
+            Some("asDisplayed") => PrintComments::AsDisplayed,
+            _ => PrintComments::None,
+        };
     }
     if fit_to_page {
         setup.fit = Some(fit);
@@ -1010,7 +1071,8 @@ pub(crate) struct PrintXml {
 }
 
 /// The `<pageSetup>` attributes Kantor writes (others are kept as they are).
-pub(crate) const PAGE_SETUP_ATTRS: [&str; 12] = [
+pub(crate) const PAGE_SETUP_ATTRS: [&str; 13] = [
+    "cellComments",
     "paperSize",
     "paperWidth",
     "paperHeight",
@@ -1082,6 +1144,11 @@ pub(crate) fn print_xml(p: &SheetPrint) -> PrintXml {
     if s.black_and_white {
         attrs.push(("blackAndWhite", "1".into()));
     }
+    match s.comments {
+        PrintComments::None => {}
+        PrintComments::AtEnd => attrs.push(("cellComments", "atEnd".into())),
+        PrintComments::AsDisplayed => attrs.push(("cellComments", "asDisplayed".into())),
+    }
     if s.first_page_number.is_some() {
         attrs.push(("useFirstPageNumber", "1".into()));
     }
@@ -1117,11 +1184,30 @@ pub(crate) fn print_xml(p: &SheetPrint) -> PrintXml {
         }
         Some(format!("<headerFooter{a}>{body}</headerFooter>"))
     };
+    // Manual page breaks, as Excel writes them.
+    let breaks = |name: &str, ids: &[u32], max: u32| {
+        (!ids.is_empty()).then(|| {
+            let n = ids.len();
+            let body: String = ids
+                .iter()
+                .map(|id| format!("<brk id=\"{id}\" max=\"{max}\" man=\"1\"/>"))
+                .collect();
+            format!("<{name} count=\"{n}\" manualBreakCount=\"{n}\">{body}</{name}>")
+        })
+    };
     PrintXml {
         elements: vec![
             ("printOptions", print_options),
             ("pageMargins", Some(margins)),
             ("headerFooter", header_footer),
+            (
+                "rowBreaks",
+                breaks("rowBreaks", &p.row_breaks, MAX_COLS - 1),
+            ),
+            (
+                "colBreaks",
+                breaks("colBreaks", &p.col_breaks, MAX_ROWS - 1),
+            ),
         ],
         fit_to_page: s.fit.is_some(),
         page_setup: attrs,
@@ -1180,6 +1266,13 @@ pub(crate) fn is_union(formula: &str) -> bool {
 }
 
 impl Workbook {
+    /// A theme colour of the workbook (`slot` as in OOXML: 0 Background 1,
+    /// 1 Text 1, 4-9 accents) with a tint (-1 darker .. +1 lighter), as
+    /// `0xRRGGBB`.
+    pub fn theme_rgb(&self, slot: i32, tint: f64) -> u32 {
+        crate::table::theme(&self.model.get_model().workbook.theme, slot, tint)
+    }
+
     /// Set how `sheet` prints (Page Setup): one undo step. Print area and
     /// titles are in the current rows and columns.
     pub fn set_print_settings(&mut self, sheet: u32, settings: SheetPrint) -> anyhow::Result<()> {
@@ -1194,6 +1287,57 @@ impl Workbook {
             e.prints.insert(sheet_id, (settings, layout.clone()));
         });
         Ok(())
+    }
+
+    /// Insert manual page breaks (Excel's Insert Page Break): a new page
+    /// starts at `row` and/or at `col` (0-based; row or column 0 has none).
+    /// One undo step.
+    pub fn insert_page_break(
+        &mut self,
+        sheet: u32,
+        row: Option<u32>,
+        col: Option<u32>,
+    ) -> anyhow::Result<()> {
+        let mut p = self.print_settings(sheet);
+        let add = |v: &mut Vec<u32>, at: Option<u32>| {
+            if let Some(at) = at.filter(|&a| a > 0)
+                && let Err(i) = v.binary_search(&at)
+            {
+                v.insert(i, at);
+            }
+        };
+        add(&mut p.row_breaks, row);
+        add(&mut p.col_breaks, col);
+        self.set_print_settings(sheet, p)
+    }
+
+    /// The manual page breaks at the cell `(row, col)`: the one above its
+    /// row and the one left of its column (what Remove Page Break takes).
+    pub fn page_breaks_at(&self, sheet: u32, row: u32, col: u32) -> (bool, bool) {
+        let p = self.print_settings(sheet);
+        (p.row_breaks.contains(&row), p.col_breaks.contains(&col))
+    }
+
+    /// Remove the manual page breaks above row `row` and left of column
+    /// `col` (Excel's Remove Page Break). One undo step.
+    pub fn remove_page_break(
+        &mut self,
+        sheet: u32,
+        row: Option<u32>,
+        col: Option<u32>,
+    ) -> anyhow::Result<()> {
+        let mut p = self.print_settings(sheet);
+        p.row_breaks.retain(|&r| Some(r) != row);
+        p.col_breaks.retain(|&c| Some(c) != col);
+        self.set_print_settings(sheet, p)
+    }
+
+    /// Remove every manual page break of `sheet` (Reset All Page Breaks).
+    pub fn reset_page_breaks(&mut self, sheet: u32) -> anyhow::Result<()> {
+        let mut p = self.print_settings(sheet);
+        p.row_breaks.clear();
+        p.col_breaks.clear();
+        self.set_print_settings(sheet, p)
     }
 
     /// Patches a save writes for print settings: sheets whose settings were

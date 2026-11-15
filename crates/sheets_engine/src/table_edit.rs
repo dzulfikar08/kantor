@@ -1036,10 +1036,14 @@ pub(crate) fn table_xml(t: &Table, id: u32, existing: Option<&str>) -> String {
                 crate::cell_name(bottom - 1, right as u32 - 1)
             )
         });
-        match r {
-            Some(r) => x.push_str(&with_auto_filter_ref(f, &r)),
-            None => x.push_str(f),
-        }
+        let f = match r {
+            Some(r) => with_auto_filter_ref(f, &r),
+            None => f.clone(),
+        };
+        // The remembered sort goes next to the filter, where Excel has it.
+        let (f, sort) = ironcalc_base::kantor_tables::split_sort_state(&f);
+        x.push_str(&f);
+        x.push_str(&sort.unwrap_or_default());
     }
     x.push_str(&format!("<tableColumns count=\"{}\">", t.columns.len()));
     for c in &t.columns {

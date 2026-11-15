@@ -102,6 +102,7 @@ use table::{Column, DataTable, TableDelegate, TableEvent, TableState};
 
 mod notes_ui;
 pub use notes_ui::NoteCommand;
+pub use page_setup::PageBreakOp;
 pub use sheet_tab_ui::TabCommand;
 mod toolbar;
 
@@ -268,6 +269,11 @@ fn opened_status(book: &Workbook) -> String {
 pub fn init(cx: &mut App) {
     // Pivot captions and the like in new content follow the interface language.
     sheets_engine::set_content_translator(kantor_ui::i18n::t);
+    // Typed dates follow the system's language as Excel follows the
+    // regional settings: Indonesian reads 16/11/2026 9:30 day first.
+    if kantor_ui::i18n::lang() == kantor_ui::i18n::Lang::Id {
+        sheets_engine::set_input_locale("id");
+    }
     // Chart fallbacks ("Chart Title") come from the renderer shared with Slides.
     slides_engine::display_text::set_display_translator(kantor_ui::i18n::t);
     let ctx = Some(KEY_CONTEXT);
@@ -386,6 +392,8 @@ pub struct SheetGrid {
     /// The sheet's filters, for the state they were read in (the header
     /// cells ask for every frame).
     filters_memo: RefCell<Option<FiltersMemo>>,
+    /// The sheet's manual page breaks (rows, columns), by revision.
+    breaks_memo: RefCell<Option<BreaksMemo>>,
     /// The cell with a note under the pointer, `(sheet, row, col)`: its
     /// note is shown ([`notes_ui`]).
     note_hover: Option<(u32, u32, u32)>,
@@ -399,6 +407,7 @@ pub struct SheetGrid {
 
 /// A sheet's filters for `((revision), sheet)`.
 type FiltersMemo = (((u64, u64), u32), Rc<Vec<sheets_engine::FilterInfo>>);
+type BreaksMemo = (((u64, u64), u32), Rc<(Vec<u32>, Vec<u32>)>);
 
 /// What [`SheetGrid::selection`] depends on.
 type SelectionKey = ((u32, u32), (u32, u32), Span, u32, (u64, u64));
@@ -432,6 +441,7 @@ impl SheetGrid {
             layout: row_layout::RowLayout::default(),
             validation: Default::default(),
             filters_memo: RefCell::new(None),
+            breaks_memo: RefCell::new(None),
             note_hover: None,
             note_editing: None,
             note_anchor: Default::default(),
@@ -441,9 +451,13 @@ impl SheetGrid {
         grid
     }
 
-    /// The filter whose button sits in `(row, col)`, and whether that column
-    /// is filtered.
-    fn filter_button(&self, row: u32, col: u32) -> Option<(sheets_engine::FilterScope, bool)> {
+    /// The filter whose button sits in `(row, col)`, whether that column
+    /// is filtered and how it is sorted (`Some(descending)`).
+    fn filter_button(
+        &self,
+        row: u32,
+        col: u32,
+    ) -> Option<(sheets_engine::FilterScope, bool, Option<bool>)> {
         let key = (self.book.revision(), self.sheet);
         let mut memo = self.filters_memo.borrow_mut();
         if memo.as_ref().is_none_or(|(k, _)| *k != key) {
@@ -453,7 +467,23 @@ impl SheetGrid {
         filters
             .iter()
             .find(|f| f.area.top == row && (f.area.left..=f.area.right).contains(&col))
-            .map(|f| (f.scope.clone(), f.is_filtered(col)))
+            .map(|f| (f.scope.clone(), f.is_filtered(col), f.sorted(col)))
+    }
+
+    /// Whether a manual page break runs above row `row` and left of column
+    /// `col` (Excel draws them as dashed lines in Normal view).
+    fn page_breaks(&self, row: u32, col: u32) -> (bool, bool) {
+        let key = (self.book.revision(), self.sheet);
+        let mut memo = self.breaks_memo.borrow_mut();
+        if memo.as_ref().is_none_or(|(k, _)| *k != key) {
+            let p = self.book.print_settings(self.sheet);
+            *memo = Some((key, Rc::new((p.row_breaks, p.col_breaks))));
+        }
+        let b = &memo.as_ref().expect("set").1;
+        (
+            row > 0 && b.0.binary_search(&row).is_ok(),
+            col > 0 && b.1.binary_search(&col).is_ok(),
+        )
     }
 
     /// The selected range; a range of cells includes every merged cell it
@@ -823,6 +853,15 @@ impl TableDelegate for SheetGrid {
             look.grid_right &= look.right.is_none();
             look.grid_bottom &= look.bottom.is_none();
         }
+        // Borders of conditional formatting rules, over the cell's own.
+        if let Some(b) = cond.as_ref().map(|c| c.borders) {
+            look.right = b.right.or(look.right);
+            look.bottom = b.bottom.or(look.bottom);
+            look.top = b.top.or(look.top);
+            look.left = b.left.or(look.left);
+            look.grid_right &= look.right.is_none();
+            look.grid_bottom &= look.bottom.is_none();
+        }
         let filter_button = self.filter_button(row, col);
         let align = self.book.display_align_of(style, sheet, vr, vc);
         let heights = self.layout.heights.clone();
@@ -856,12 +895,17 @@ impl TableDelegate for SheetGrid {
             .relative()
             .when_some(style.fill, |d, fill| d.bg(look::hsla(fill)));
         let cell = match filter_button {
-            Some((scope, filtered)) => cell.child(filter_button_element(
-                scope, col, filtered, row_height, &self.view, &t,
+            Some((scope, filtered, sorted)) => cell.child(filter_button_element(
+                scope, col, filtered, sorted, row_height, &self.view, &t,
             )),
             None => cell,
         };
         let cell = look::gridlines(cell, &look, &t);
+        // Manual page breaks: a dashed line along the cell's top or left.
+        let (break_above, break_left) = self.page_breaks(row, col);
+        let cell = cell
+            .when(break_above, |d| d.child(page_break_line(false, t.fg_muted)))
+            .when(break_left, |d| d.child(page_break_line(true, t.fg_muted)));
         // Data bars and icons (not drawn across merged cells).
         let cell = match cond.as_ref().filter(|_| look.merge.is_none()) {
             Some(c) => cell.children(cond_paint::layers(c)),
@@ -1035,12 +1079,15 @@ fn table_style(style: &CellStyle, tl: &sheets_engine::TableCellLook) -> CellStyl
     s
 }
 
-/// The filter button in a filter's header cell: a chevron, or a funnel when
-/// the column is filtered.
+/// The filter button in a filter's header cell: a chevron, a funnel when
+/// the column is filtered, or an arrow when the filter remembers a sort by
+/// it (up for ascending, down for descending), as in Excel.
+#[allow(clippy::too_many_arguments)]
 fn filter_button_element(
     scope: sheets_engine::FilterScope,
     col: u32,
     filtered: bool,
+    sorted: Option<bool>,
     row_height: Pixels,
     view: &WeakEntity<SheetsView>,
     t: &kantor_ui::Tokens,
@@ -1064,10 +1111,11 @@ fn filter_button_element(
         .cursor_pointer()
         .hover(|s| s.border_color(t.accent))
         .child(
-            gpui_kit::component::Icon::new(if filtered {
-                gpui_kit::assets::IconName::Funnel
-            } else {
-                gpui_kit::assets::IconName::ChevronDown
+            gpui_kit::component::Icon::new(match (filtered, sorted) {
+                (true, _) => gpui_kit::assets::IconName::Funnel,
+                (false, Some(false)) => gpui_kit::assets::IconName::ArrowUp,
+                (false, Some(true)) => gpui_kit::assets::IconName::ArrowDown,
+                (false, None) => gpui_kit::assets::IconName::ChevronDown,
             })
             .size(size - px(5.)),
         )
@@ -1079,6 +1127,28 @@ fn filter_button_element(
             let _ = view.update(cx, |v, cx| v.open_filter_menu(scope, col, at, window, cx));
         })
         .into_any_element()
+}
+
+/// A manual page break along a cell's top (or left, `vertical`) edge:
+/// dashes of 4 px every 7 px, as Excel draws them in Normal view.
+fn page_break_line(vertical: bool, color: Hsla) -> Div {
+    let dash = |i: usize| {
+        let d = div().absolute().bg(color);
+        let at = px(i as f32 * 7.);
+        if vertical {
+            d.top(at).left_0().w(px(1.)).h(px(4.))
+        } else {
+            d.left(at).top_0().h(px(1.)).w(px(4.))
+        }
+    };
+    let base = div().absolute().top_0().left_0().overflow_hidden();
+    let base = if vertical {
+        base.bottom_0().w(px(1.))
+    } else {
+        base.right_0().h(px(1.))
+    };
+    // Enough dashes for a tall row or wide column; the rest is clipped.
+    base.children((0..60).map(dash))
 }
 
 /// Excel's mark for hidden rows or columns in a header: two lines across

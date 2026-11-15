@@ -716,7 +716,15 @@ pub(crate) fn get_worksheet_xml(
   <sheetData>"
     );
     // KANTOR PATCH (tables): the sheet's AutoFilter, kept by Kantor.
-    let auto_filter = worksheet.kantor_auto_filter.as_deref().unwrap_or("");
+    // KANTOR PATCH (sort state): its remembered sort is written next to it,
+    // where Excel has it.
+    let auto_filter = match worksheet.kantor_auto_filter.as_deref() {
+        Some(f) => {
+            let (filter, sort) = ironcalc_base::kantor_tables::split_sort_state(f);
+            format!("{filter}{}", sort.unwrap_or_default())
+        }
+        None => String::new(),
+    };
     let tail = format!(
         "</sheetData>\
   {auto_filter}\

@@ -4,8 +4,9 @@
 //! `&Z` folder, `&A` sheet name, `&&` an ampersand; `&"Font,Style"` font
 //! and style, `&nn` size in points, `&B` `&I` `&U` `&E` `&S` toggle bold,
 //! italic, underline, double underline and strikethrough, `&X` / `&Y`
-//! superscript / subscript, `&KRRGGBB` colour. `&G` (a picture) and theme
-//! colours (`&KTTSNNN`) are skipped.
+//! superscript / subscript, `&KRRGGBB` colour, `&KTTsNNN` a theme colour
+//! (slot `TT`, lighter `+` or darker `-` by `NNN` percent: see
+//! [`resolve_theme_colors`]), `&G` a picture (see [`Run::picture`]).
 
 /// Values of the fields on one page.
 #[derive(Debug, Clone, Default)]
@@ -39,6 +40,50 @@ pub struct Font {
 pub struct Run {
     pub text: String,
     pub font: Font,
+    /// `&G`: the section's picture, in place of text.
+    pub picture: bool,
+}
+
+/// `s` with its theme colours (`&K01+050`) turned into plain ones
+/// (`&KRRGGBB`): `rgb(slot, tint)` gives a theme slot's colour with a tint
+/// (-1 darker .. +1 lighter).
+pub fn resolve_theme_colors(s: &str, rgb: impl Fn(i32, f64) -> u32) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        let code = &rest[at..];
+        if let Some(next) = code.get(1..2) {
+            if next == "&" {
+                out.push_str("&&");
+                rest = &code[2..];
+                continue;
+            }
+            if next == "K"
+                && let Some(spec) = code.get(2..8)
+                && let [t1, t2, sign, n @ ..] = spec.as_bytes()
+                && t1.is_ascii_digit()
+                && t2.is_ascii_digit()
+                && matches!(sign, b'+' | b'-' | b'S' | b's')
+                && n.iter().all(u8::is_ascii_digit)
+            {
+                let slot = i32::from(t1 - b'0') * 10 + i32::from(t2 - b'0');
+                let pct: f64 = spec[3..].parse().unwrap_or(0.0);
+                let tint = if *sign == b'-' {
+                    -pct / 100.0
+                } else {
+                    pct / 100.0
+                };
+                out.push_str(&format!("&K{:06X}", rgb(slot, tint.clamp(-1.0, 1.0))));
+                rest = &code[8..];
+                continue;
+            }
+        }
+        out.push('&');
+        rest = &code[1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// One section: lines of runs.
@@ -54,9 +99,10 @@ pub struct Parts {
 
 impl Parts {
     pub fn is_empty(&self) -> bool {
-        [&self.left, &self.center, &self.right]
-            .iter()
-            .all(|s| s.iter().all(|l| l.iter().all(|r| r.text.is_empty())))
+        [&self.left, &self.center, &self.right].iter().all(|s| {
+            s.iter()
+                .all(|l| l.iter().all(|r| r.text.is_empty() && !r.picture))
+        })
     }
 }
 
@@ -73,10 +119,11 @@ fn push(section: &mut Section, text: &str, font: &Font) {
         }
         let line = section.last_mut().expect("a line");
         match line.last_mut() {
-            Some(r) if r.font == *font => r.text.push_str(piece),
+            Some(r) if r.font == *font && !r.picture => r.text.push_str(piece),
             _ => line.push(Run {
                 text: piece.to_owned(),
                 font: font.clone(),
+                picture: false,
             }),
         }
     }
@@ -148,7 +195,22 @@ pub fn parse(s: &str, f: &Fields) -> Parts {
             'F' => text.push_str(&f.file),
             'Z' => text.push_str(&f.folder),
             'A' => text.push_str(&f.sheet),
-            'G' => {}
+            'G' => {
+                flush!();
+                let sec = match which {
+                    0 => &mut parts.left,
+                    1 => &mut parts.center,
+                    _ => &mut parts.right,
+                };
+                if sec.is_empty() {
+                    sec.push(Vec::new());
+                }
+                sec.last_mut().expect("a line").push(Run {
+                    text: String::new(),
+                    font: font.clone(),
+                    picture: true,
+                });
+            }
             'B' | 'I' | 'U' | 'E' | 'S' | 'X' | 'Y' => {
                 flush!();
                 match code {

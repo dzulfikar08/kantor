@@ -175,6 +175,11 @@ impl Workbook {
             .enumerate()
             .all(|(i, &r)| r == (range.top + i as u32) as i32 + 1)
         {
+            // Already in order: the sort is still remembered, as in Excel.
+            self.model.pause_evaluation();
+            let r = self.remember_sort(sheet, range, keys);
+            self.end_batch(*r.as_ref().unwrap_or(&0));
+            r?;
             return Ok(count);
         }
         // Notes on the sorted cells go with their rows, as in Excel.
@@ -207,8 +212,14 @@ impl Workbook {
                 &order,
             )
             .map_err(|e| anyhow!("{e}"));
-        self.end_batch(u32::from(r.is_ok()));
+        // The filter it fills remembers it (`<sortState>`).
+        let remembered = match r {
+            Ok(()) => self.remember_sort(sheet, range, keys),
+            Err(_) => Ok(0),
+        };
+        self.end_batch(u32::from(r.is_ok()) + *remembered.as_ref().unwrap_or(&0));
         r?;
+        remembered?;
         if moved != notes {
             self.notes_with_edit(vec![(sheet, moved)]);
         }

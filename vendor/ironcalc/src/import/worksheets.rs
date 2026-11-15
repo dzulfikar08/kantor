@@ -1035,7 +1035,15 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
     let kantor_auto_filter = ws
         .children()
         .find(|n| n.has_tag_name("autoFilter"))
-        .map(|n| n.to_xml());
+        .map(|n| {
+            // KANTOR PATCH (sort state): the sheet's remembered sort, kept
+            // in its filter.
+            let sort = ws
+                .children()
+                .find(|n| n.has_tag_name("sortState"))
+                .map(|n| n.to_xml());
+            ironcalc_base::kantor_tables::with_sort_state(&n.to_xml(), sort.as_deref())
+        });
     // pageSetup
     // <pageSetup orientation="portrait" r:id="rId1"/>
 

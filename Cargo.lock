@@ -7020,6 +7020,7 @@ dependencies = [
  "slides_pdf",
  "slides_scene",
  "tempfile",
+ "zip 9.4.1",
 ]
 
 [[package]]

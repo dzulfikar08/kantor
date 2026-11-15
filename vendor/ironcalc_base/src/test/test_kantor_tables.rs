@@ -288,3 +288,28 @@ fn renaming_table_refs_in_a_copied_sheet() {
         .kantor_rename_table_refs(0, &[("Other".into(), "Other2".into())])
         .unwrap());
 }
+
+// KANTOR PATCH (sort state)
+#[test]
+fn sort_state_in_the_filter() {
+    use crate::kantor_tables::{split_sort_state, with_auto_filter_ref, with_sort_state};
+    let sort = r#"<sortState ref="A2:C9"><sortCondition descending="1" ref="B2:B9"/></sortState>"#;
+    let plain = r#"<autoFilter ref="A1:C9"/>"#;
+    let with = with_sort_state(plain, Some(sort));
+    assert_eq!(
+        with,
+        format!(r#"<autoFilter ref="A1:C9">{sort}</autoFilter>"#)
+    );
+    assert_eq!(split_sort_state(&with), (plain.to_string(), Some(sort.to_string())));
+    let filtered = r#"<autoFilter ref="A1:C9"><filterColumn colId="0"><filters><filter val="x"/></filters></filterColumn></autoFilter>"#;
+    let both = with_sort_state(filtered, Some(sort));
+    assert!(both.ends_with(&format!("</filterColumn>{sort}</autoFilter>")), "{both}");
+    assert_eq!(split_sort_state(&both).0, filtered);
+    // Replaced, removed.
+    let other = r#"<sortState ref="A2:C9"><sortCondition ref="A2:A9"/></sortState>"#;
+    assert_eq!(split_sort_state(&with_sort_state(&both, Some(other))).1.as_deref(), Some(other));
+    assert_eq!(with_sort_state(&both, None), filtered);
+    // The same range keeps the sort, another drops it.
+    assert_eq!(with_auto_filter_ref(&with, "A1:C9"), with);
+    assert_eq!(with_auto_filter_ref(&with, "A1:C12"), r#"<autoFilter ref="A1:C12"/>"#);
+}

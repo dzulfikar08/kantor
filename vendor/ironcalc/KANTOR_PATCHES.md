@@ -206,6 +206,18 @@ What: `export/worksheets.rs` `file_error` writes them as `#VALUE!` in error
 cells, spill cells and formula results.
 
 Tests: Kantor's `crates/sheets_engine/tests/functions.rs`.
+## 12. Remembered sorts next to the filter
+
+Why: Excel writes a sheet's or a table's remembered sort (`<sortState>`)
+next to its `<autoFilter>`; Kantor keeps it inside the filter element
+(vendor/ironcalc_base §27).
+
+What: `import/worksheets.rs` and `import/tables.rs` put the sheet's or the
+table's `<sortState>` into the `<autoFilter>` they keep;
+`export/worksheets.rs` writes it back after the sheet's `<autoFilter>`
+(Kantor writes table parts itself).
+
+Tests: Kantor's `crates/sheets_engine/tests/sort_state.rs`.
 
 ## Updating or dropping
 

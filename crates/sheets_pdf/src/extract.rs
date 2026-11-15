@@ -143,6 +143,8 @@ struct Cell {
     bar: Option<sheets_engine::DataBar>,
     icon: Option<sheets_engine::CfIcon>,
     borders: [Option<BorderLine>; 4],
+    /// A patterned fill from the file (printed as its pattern).
+    pattern: Option<sheets_engine::FillPattern>,
 }
 
 /// Rows without a stored height grow to fit wrapped text and larger fonts,
@@ -221,6 +223,7 @@ pub(crate) fn fit_rows(
 
 /// The page's header and footer (Excel's `&P`, `&N`, `&A`... fields).
 fn header_footer(
+    book: &Workbook,
     out: &mut PageContent,
     plan: &Plan,
     sp: &crate::SheetPlan,
@@ -241,8 +244,15 @@ fn header_footer(
         sheet: sp.name.clone(),
     };
     let (head, foot) = p.header_footer.for_page(pr.nth);
-    out.header = hf::parse(head, &fields);
-    out.footer = hf::parse(foot, &fields);
+    // Theme colours (`&K01+050`) in the workbook's theme.
+    let rgb = |slot: i32, tint: f64| book.theme_rgb(slot, tint);
+    out.header = hf::parse(&hf::resolve_theme_colors(head, rgb), &fields);
+    out.footer = hf::parse(&hf::resolve_theme_colors(foot, rgb), &fields);
+    for (i, header) in [true, false].into_iter().enumerate() {
+        for (section, slot) in out.hf_pictures[i].iter_mut().enumerate() {
+            *slot = p.hf_picture(pr.nth, header, section).cloned();
+        }
+    }
     let side = |margin: f64| {
         if p.header_footer.align_with_margins {
             (margin * INCH) as f32
@@ -263,6 +273,139 @@ fn header_footer(
         family: default_family,
         size: default_size,
     };
+}
+
+/// Text in a note's box or on a notes page: wrapped, top left.
+fn note_text(text: String, font: FontKey, rect: [f32; 4]) -> CellText {
+    CellText {
+        text,
+        font,
+        underline: false,
+        strike: false,
+        color: 0,
+        cell: rect,
+        clip: rect,
+        align: crate::Align::Left,
+        valign: sheets_engine::VAlign::Top,
+        wrap: true,
+        indent: 0.0,
+        rotation: 0,
+        shrink: false,
+        number: false,
+        repeat: None,
+        icon_room: 0.0,
+    }
+}
+
+/// A page of the notes printed at the end of a sheet (Page Setup's
+/// Comments "At end of sheet"), with the sheet's header and footer.
+fn notes_page(
+    book: &Workbook,
+    plan: &Plan,
+    sp: &crate::SheetPlan,
+    pr: crate::PageRef,
+    k: usize,
+) -> PageContent {
+    let m = sp.print.margins;
+    let (pw, ph) = (sp.page.0 as f32, sp.page.1 as f32);
+    let left = (m.left * INCH) as f32;
+    let top = (m.top * INCH) as f32;
+    let w = (pw - left - (m.right * INCH) as f32).max(36.0);
+    let h = (ph - top - (m.bottom * INCH) as f32).max(36.0);
+    let family = family(&book.default_font_name());
+    let font = FontKey::new(family.clone(), crate::NOTES_FONT, false, false);
+    let mut out = PageContent {
+        width: pw,
+        height: ph,
+        origin: [left, top],
+        scale: 1.0,
+        block: [w, h],
+        texts: sp
+            .notes_pages
+            .get(k)
+            .into_iter()
+            .flatten()
+            .map(|(text, y, th)| note_text(text.clone(), font.clone(), [0.0, *y, w, *th]))
+            .collect(),
+        ..PageContent::default()
+    };
+    header_footer(
+        book,
+        &mut out,
+        plan,
+        sp,
+        pr,
+        family,
+        book.default_font_size() as f32,
+    );
+    out
+}
+
+/// The boxes of the notes shown on the sheet whose cells are on this page
+/// (Page Setup's Comments "As displayed on sheet"), placed as on the sheet
+/// from their cell and clipped to the page's cells.
+fn shown_notes(
+    book: &Workbook,
+    sp: &crate::SheetPlan,
+    cols: &[Pos],
+    rows: &[Pos],
+    block: [f32; 2],
+    family: Arc<str>,
+) -> Vec<crate::NoteBoxPrint> {
+    let notes = book.notes_now(sp.sheet);
+    let mut out = Vec::new();
+    // Distance from the start of `from` to the start of `from + n`.
+    let span = |from: u32, n: i64, size: &dyn Fn(u32) -> f64| -> f32 {
+        let mut d = 0.0;
+        if n >= 0 {
+            for i in 0..n {
+                d += size(from.saturating_add(i as u32));
+            }
+        } else {
+            for i in 1..=(-n) {
+                d -= size(from.saturating_sub(i as u32));
+            }
+        }
+        d as f32
+    };
+    let col_w = |c: u32| sp.col_width(c);
+    let row_h = |r: u32| sp.row_height(r);
+    let mut list: Vec<_> = notes.values().filter(|n| n.shown).collect();
+    list.sort_by_key(|n| (n.row, n.col));
+    for n in list {
+        let (Some(c), Some(r)) = (
+            cols.iter().find(|p| p.index == n.col && p.seg == 1),
+            rows.iter().find(|p| p.index == n.row && p.seg == 1),
+        ) else {
+            continue;
+        };
+        let b = n.place_or_default();
+        let x0 = c.start + span(n.col, b.left.0, &col_w) + b.left.1 as f32 * 0.75;
+        let y0 = r.start + span(n.row, b.top.0, &row_h) + b.top.1 as f32 * 0.75;
+        let x1 = c.start + span(n.col, b.right.0, &col_w) + b.right.1 as f32 * 0.75;
+        let y1 = r.start + span(n.row, b.bottom.0, &row_h) + b.bottom.1 as f32 * 0.75;
+        let (x0, y0) = (x0.max(0.0), y0.max(0.0));
+        let (x1, y1) = (x1.min(block[0]), y1.min(block[1]));
+        if x1 - x0 < 2.0 || y1 - y0 < 2.0 {
+            continue;
+        }
+        let rect = [x0, y0, x1 - x0, y1 - y0];
+        let inner = [
+            x0 + 2.0,
+            y0 + 1.5,
+            (x1 - x0 - 4.0).max(1.0),
+            (y1 - y0 - 3.0).max(1.0),
+        ];
+        out.push(crate::NoteBoxPrint {
+            rect,
+            text: note_text(
+                n.text.clone(),
+                FontKey::new(family.clone(), 9.0, false, false),
+                inner,
+            ),
+        });
+    }
+    out
 }
 
 /// A chart sheet's page: its objects over the printable area, with the
@@ -292,6 +435,7 @@ fn chart_sheet_page(
     };
     let family = family(&book.default_font_name());
     header_footer(
+        book,
         &mut out,
         plan,
         sp,
@@ -308,6 +452,9 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
     let sp = &plan.sheets[pr.sheet];
     if sp.chart_sheet.is_some() {
         return chart_sheet_page(book, plan, sp, pr);
+    }
+    if let Some(k) = pr.notes {
+        return notes_page(book, plan, sp, pr, k);
     }
     let (_, grid) = &sp.areas[pr.area];
     let sheet = sp.sheet;
@@ -430,7 +577,17 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
                 halign,
                 bar: cond.as_ref().and_then(|x| x.bar),
                 icon: cond.as_ref().and_then(|x| x.icon),
-                borders: [top, look.right, look.bottom, left],
+                // Conditional formatting rules' borders over the cell's own.
+                borders: match cond.as_ref().map(|c| c.borders) {
+                    Some(b) => [
+                        b.top.or(top),
+                        b.right.or(look.right),
+                        b.bottom.or(look.bottom),
+                        b.left.or(left),
+                    ],
+                    None => [top, look.right, look.bottom, left],
+                },
+                pattern: book.fill_pattern(sheet, vr, vc),
                 style,
             });
         }
@@ -440,6 +597,18 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
             let mut run: Option<([f32; 4], u32)> = None;
             for cell in &cells {
                 let cp = cols[cell.col];
+                // A pattern: its background, then its dots over it.
+                if let Some(p) = &cell.pattern {
+                    if let Some(f) = run.take() {
+                        out.fills.push(f);
+                    }
+                    let rect = [cp.start, rp.start, cp.size, rp.size];
+                    if let Some(bg) = p.bg {
+                        out.fills.push((rect, bg));
+                    }
+                    out.patterns.push((rect, p.tile(), p.fg));
+                    continue;
+                }
                 let Some(fill) = cell.style.fill else {
                     if let Some(f) = run.take() {
                         out.fills.push(f);
@@ -728,7 +897,17 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
         }
     }
 
-    header_footer(&mut out, plan, sp, pr, default_family, default_size);
+    if p.setup.comments == sheets_engine::PrintComments::AsDisplayed {
+        out.notes = shown_notes(
+            book,
+            sp,
+            &cols,
+            &rows,
+            [block_w, block_h],
+            default_family.clone(),
+        );
+    }
+    header_footer(book, &mut out, plan, sp, pr, default_family, default_size);
     out
 }
 

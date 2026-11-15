@@ -895,6 +895,7 @@ fn kantor_features_at(wb: &mut Workbook, sheet: u32, top: u32) -> Result<()> {
                 over_then_down: true,
                 first_page_number: Some(3),
                 black_and_white: false,
+                comments: sheets_engine::PrintComments::AtEnd,
             },
             margins: Margins::NARROW,
             options: PrintOptions {
@@ -914,13 +915,13 @@ fn kantor_features_at(wb: &mut Workbook, sheet: u32, top: u32) -> Result<()> {
                 align_with_margins: true,
                 ..HeaderFooter::default()
             },
-            // Kantor doesn't edit manual page breaks (set_print_settings
-            // keeps the sheet's own).
-            row_breaks: Vec::new(),
-            col_breaks: Vec::new(),
+            // Manual page breaks, written as rowBreaks / colBreaks.
+            row_breaks: vec![top + 4],
+            col_breaks: vec![2],
             print_area: vec![CellRange::from_corners((top, 0), (top + 8, 3))],
             title_rows: Some((top, top)),
             title_cols: Some((0, 0)),
+            hf_pictures: Vec::new(),
         },
     )?;
     wb.set_frozen(sheet, top + 1, 1)?;

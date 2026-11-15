@@ -19,13 +19,22 @@ use gpui_kit::*;
 use kantor_ui::i18n::{self, t_dyn, tf, tk};
 use kantor_ui::metrics::*;
 use sheets_engine::{
-    HEADER_FOOTER_PRESETS, Margins, PAPERS, Paper, SheetPrint, join_sections, split_sections,
+    HEADER_FOOTER_PRESETS, Margins, PAPERS, Paper, PrintComments, SheetPrint, join_sections,
+    split_sections,
 };
 
 use crate::SheetsView;
 use crate::dialog::{self, choices, note, row};
 
 actions!(sheets, [PageSetup, SetPrintArea, ClearPrintArea]);
+
+/// What a page break command does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PageBreakOp {
+    Insert,
+    Remove,
+    Reset,
+}
 
 const CM_PER_INCH: f64 = 2.54;
 
@@ -61,8 +70,15 @@ pub(crate) struct PageSetupDialog {
     margins_shown: [String; 6],
     center_h: bool,
     center_v: bool,
-    header: [Entity<InputState>; 3],
-    footer: [Entity<InputState>; 3],
+    /// Header and footer sections (left, centre, right) of the odd (or
+    /// every) page, the even pages and the first page.
+    header: [[Entity<InputState>; 3]; 3],
+    footer: [[Entity<InputState>; 3]; 3],
+    /// Which of them the Header/Footer tab shows (0 odd, 1 even, 2 first).
+    hf_page: usize,
+    different_odd_even: bool,
+    different_first: bool,
+    comments: PrintComments,
     area: Entity<InputState>,
     rows: Entity<InputState>,
     cols: Entity<InputState>,
@@ -179,13 +195,33 @@ impl PageSetupDialog {
         p.options.vertical_centered = self.center_v;
         p.options.grid_lines = self.grid_lines;
         p.options.headings = self.headings;
-        let h = self.header.each_ref().map(text);
-        let f = self.footer.each_ref().map(text);
-        p.header_footer.odd_header = join_sections(&h[0], &h[1], &h[2]);
-        p.header_footer.odd_footer = join_sections(&f[0], &f[1], &f[2]);
-        if p.header_footer.odd_header.len() > 255 || p.header_footer.odd_footer.len() > 255 {
+        let joined = |set: &[Entity<InputState>; 3]| {
+            let t = set.each_ref().map(text);
+            join_sections(&t[0], &t[1], &t[2])
+        };
+        let hf = &mut p.header_footer;
+        hf.odd_header = joined(&self.header[0]);
+        hf.odd_footer = joined(&self.footer[0]);
+        hf.even_header = joined(&self.header[1]);
+        hf.even_footer = joined(&self.footer[1]);
+        hf.first_header = joined(&self.header[2]);
+        hf.first_footer = joined(&self.footer[2]);
+        hf.different_odd_even = self.different_odd_even;
+        hf.different_first = self.different_first;
+        if [
+            &hf.odd_header,
+            &hf.odd_footer,
+            &hf.even_header,
+            &hf.even_footer,
+            &hf.first_header,
+            &hf.first_footer,
+        ]
+        .iter()
+        .any(|t| t.len() > 255)
+        {
             return Err(i18n::t("Headers and footers hold at most 255 characters").into());
         }
+        p.setup.comments = self.comments;
         p.print_area = dialog::parse_ranges(&text(&self.area))
             .ok_or(i18n::t("Print area: type ranges such as $A$1:$F$40"))?;
         let rows = text(&self.rows);
@@ -242,8 +278,9 @@ impl SheetsView {
         let (w, h) = p.setup.fit.unwrap_or((1, 1));
         let num = |n: u32| if n == 0 { String::new() } else { n.to_string() };
         let m = margins_cm(&p.margins);
-        let hs = split_sections(&p.header_footer.odd_header);
-        let fs = split_sections(&p.header_footer.odd_footer);
+        let hf = &p.header_footer;
+        let hs = [&hf.odd_header, &hf.even_header, &hf.first_header].map(|t| split_sections(t));
+        let fs = [&hf.odd_footer, &hf.even_footer, &hf.first_footer].map(|t| split_sections(t));
         let scale = new(window, cx, p.setup.scale.to_string());
         let fit_w = new(window, cx, num(w));
         let fit_h = new(window, cx, num(h));
@@ -258,8 +295,8 @@ impl SheetsView {
         first_page.update(cx, |i, cx| i.set_placeholder(i18n::t("Auto"), window, cx));
         let margins_shown = m.map(cm_text);
         let margins = margins_shown.clone().map(|v| new(window, cx, v));
-        let header = hs.clone().map(|s| new(window, cx, s));
-        let footer = fs.clone().map(|s| new(window, cx, s));
+        let header = hs.map(|set| set.map(|s| new(window, cx, s)));
+        let footer = fs.map(|set| set.map(|s| new(window, cx, s)));
         let area_text = p
             .print_area
             .iter()
@@ -283,8 +320,8 @@ impl SheetsView {
                 .into_iter()
                 .cloned()
                 .chain(margins.iter().cloned())
-                .chain(header.iter().cloned())
-                .chain(footer.iter().cloned())
+                .chain(header.iter().flatten().cloned())
+                .chain(footer.iter().flatten().cloned())
                 .collect();
         for e in &all {
             subs.push(cx.subscribe_in(e, window, Self::on_page_setup_input));
@@ -309,6 +346,10 @@ impl SheetsView {
             center_v: p.options.vertical_centered,
             header,
             footer,
+            hf_page: 0,
+            different_odd_even: p.header_footer.different_odd_even,
+            different_first: p.header_footer.different_first,
+            comments: p.setup.comments,
             area,
             rows,
             cols,
@@ -411,6 +452,68 @@ impl SheetsView {
             Ok(_) if clear => i18n::t("Print area cleared").into(),
             Ok(sel) => tf("Print area set to {}", &[&sel.name()]).into(),
             Err(e) => format!("{e:#}").into(),
+        };
+        self.update_title(window, cx);
+        cx.notify();
+    }
+
+    /// Insert Page Break, Remove Page Break or Reset All Page Breaks at the
+    /// selection, as Excel does: whole rows selected break above them, whole
+    /// columns left of them, else above and left of the active cell. One
+    /// undo step.
+    pub fn page_break_doc(&mut self, op: PageBreakOp, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_some() || self.blocked(cx) {
+            return;
+        }
+        let res = self.table.update(cx, |table, _| {
+            let grid = table.delegate_mut();
+            let sheet = grid.sheet;
+            let sel = grid.range();
+            let (row, col) = if sel.is_whole_rows() {
+                (Some(sel.top), None)
+            } else if sel.is_whole_columns() {
+                (None, Some(sel.left))
+            } else {
+                (Some(grid.anchor.0), Some(grid.anchor.1))
+            };
+            let book = &mut grid.book;
+            match op {
+                PageBreakOp::Insert => {
+                    if row.unwrap_or(0) == 0 && col.unwrap_or(0) == 0 {
+                        return Ok(false);
+                    }
+                    book.insert_page_break(sheet, row, col).map(|()| true)
+                }
+                PageBreakOp::Remove => {
+                    let (r, c) = book.page_breaks_at(
+                        sheet,
+                        row.unwrap_or(u32::MAX),
+                        col.unwrap_or(u32::MAX),
+                    );
+                    if !r && !c {
+                        return Ok(false);
+                    }
+                    book.remove_page_break(sheet, row.filter(|_| r), col.filter(|_| c))
+                        .map(|()| true)
+                }
+                PageBreakOp::Reset => {
+                    let p = book.print_settings(sheet);
+                    if p.row_breaks.is_empty() && p.col_breaks.is_empty() {
+                        return Ok(false);
+                    }
+                    book.reset_page_breaks(sheet).map(|()| true)
+                }
+            }
+        });
+        self.status = match (res, op) {
+            (Ok(true), PageBreakOp::Insert) => i18n::t("Page break inserted").into(),
+            (Ok(true), PageBreakOp::Remove) => i18n::t("Page break removed").into(),
+            (Ok(true), PageBreakOp::Reset) => i18n::t("All manual page breaks removed").into(),
+            (Ok(false), PageBreakOp::Insert) => {
+                i18n::t("Select a cell below or right of where the page should break").into()
+            }
+            (Ok(false), _) => i18n::t("No manual page break here").into(),
+            (Err(e), _) => format!("{e:#}").into(),
         };
         self.update_title(window, cx);
         cx.notify();
@@ -765,10 +868,81 @@ impl SheetsView {
                     ),
                 )
         };
+        let check = |id: &'static str,
+                     label: &'static str,
+                     on: bool,
+                     set: fn(&mut PageSetupDialog, bool)| {
+            let v = view.clone();
+            Checkbox::new(id)
+                .label(label)
+                .checked(on)
+                .on_click(move |on, _, cx| {
+                    let on = *on;
+                    let _ = v.update(cx, |this, cx| {
+                        if let Some(d) = this.page_setup.as_mut() {
+                            set(d, on);
+                            // Show a set of headers that is in use.
+                            if (d.hf_page == 1 && !d.different_odd_even)
+                                || (d.hf_page == 2 && !d.different_first)
+                            {
+                                d.hf_page = 0;
+                            }
+                        }
+                        cx.notify();
+                    });
+                })
+        };
+        let mut pages = vec![(
+            0usize,
+            if d.different_odd_even {
+                i18n::t("Odd pages")
+            } else {
+                i18n::t("Other pages")
+            },
+        )];
+        if d.different_odd_even {
+            pages.push((1, i18n::t("Even pages")));
+        }
+        if d.different_first {
+            pages.push((2, i18n::t("First page")));
+        }
+        let which = d.hf_page;
         v_flex()
             .gap(SPACE_6)
-            .child(part("ps-header-presets", i18n::t("Header"), &d.header))
-            .child(part("ps-footer-presets", i18n::t("Footer"), &d.footer))
+            .child(
+                h_flex()
+                    .gap(SPACE_6)
+                    .flex_wrap()
+                    .child(check(
+                        "ps-odd-even",
+                        i18n::t("Different odd and even pages"),
+                        d.different_odd_even,
+                        |d, v| d.different_odd_even = v,
+                    ))
+                    .child(check(
+                        "ps-first",
+                        i18n::t("Different first page"),
+                        d.different_first,
+                        |d, v| d.different_first = v,
+                    )),
+            )
+            .when(pages.len() > 1, |el| {
+                el.child(choices("ps-hf-page", &pages, which, view, |this, p| {
+                    if let Some(d) = this.page_setup.as_mut() {
+                        d.hf_page = p;
+                    }
+                }))
+            })
+            .child(part(
+                ["ps-header-presets", "ps-even-header-presets", "ps-first-header-presets"][which],
+                i18n::t("Header"),
+                &d.header[which],
+            ))
+            .child(part(
+                ["ps-footer-presets", "ps-even-footer-presets", "ps-first-footer-presets"][which],
+                i18n::t("Footer"),
+                &d.footer[which],
+            ))
             .child(note(
                 i18n::t("Codes: &P page · &N pages · &D date · &T time · &F file name · &A sheet name · && an ampersand"),
                 false,
@@ -886,6 +1060,25 @@ impl SheetsView {
                         |d, v| d.black_and_white = v,
                     )),
             )
+            .child(row(
+                i18n::t("Comments"),
+                choices(
+                    "ps-comments",
+                    &[
+                        (PrintComments::None, i18n::t("None")),
+                        (PrintComments::AtEnd, i18n::t("At end of sheet")),
+                        (PrintComments::AsDisplayed, i18n::t("As displayed on sheet")),
+                    ],
+                    d.comments,
+                    view,
+                    |this, c| {
+                        if let Some(d) = this.page_setup.as_mut() {
+                            d.comments = c;
+                        }
+                    },
+                ),
+                cx,
+            ))
     }
 
     pub(crate) fn page_setup_actions(&self, root: Div, cx: &mut Context<Self>) -> Div {

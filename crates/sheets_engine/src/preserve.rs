@@ -289,6 +289,10 @@ pub(crate) struct Patches {
     /// Lower-case names of tables whose original parts aren't carried
     /// (converted to a range, or renamed: written again under the new name).
     pub removed_tables: HashSet<String>,
+    /// Filled by the save: the original parts of tables not carried, by
+    /// lower-case name, so a renamed table keeps what the model doesn't hold
+    /// (calculated column formulas).
+    pub removed_table_parts: RefCell<HashMap<String, String>>,
     /// Lower-case names of tables changed in Kantor: carried as they are and
     /// rewritten afterwards, without the checks of [`fit_table`].
     pub touched_tables: HashSet<String>,
@@ -296,6 +300,9 @@ pub(crate) struct Patches {
     /// IronCalc's markup from the model is kept for them (and the dxfs it
     /// added are appended to the original's).
     pub cf_sheets: HashSet<u32>,
+    /// For those sheets, the opened file's x14 rules to put back over
+    /// IronCalc's markup (`cf_x14::patch_sheet`), by `sheetId`.
+    pub cf_x14: Vec<(u32, Vec<crate::cf_x14::KeptX14>)>,
     /// Charts made in Kantor, added with their drawing.
     pub charts: Vec<ChartSave>,
     /// Chart sheet parts whose tab colour changed: `<tabColor>`'s
@@ -400,6 +407,7 @@ impl Patches {
             && self.file_charts.is_empty()
             && self.notes.is_empty()
             && self.chart_sheet_tabs.is_empty()
+            && self.cf_x14.is_empty()
     }
 }
 
@@ -3644,10 +3652,16 @@ fn carry_tables(
             .text(&target)
             .and_then(|xml| xml.ok_or_else(|| "missing".to_owned()));
         let name = orig_xml.as_deref().ok().and_then(table_part_name);
-        if name
+        if let Some(n) = name
             .as_ref()
-            .is_some_and(|n| ctx.patches.removed_tables.contains(n))
+            .filter(|n| ctx.patches.removed_tables.contains(*n))
         {
+            if let Ok(xml) = &orig_xml {
+                ctx.patches
+                    .removed_table_parts
+                    .borrow_mut()
+                    .insert(n.clone(), xml.clone());
+            }
             continue;
         }
         let touched = name
@@ -3748,6 +3762,15 @@ fn fit_table(xml: &str, sheet: u32, ctx: &Context) -> Result<Option<Vec<u8>>, St
         .auto_filter
         .as_deref()
         .map(|x| ironcalc_base::kantor_tables::with_auto_filter_ref(x, &filter_ref));
+    // The sort the model remembers is kept in its filter; the file has it
+    // next to the filter.
+    let (new_filter, new_sort) = match new_filter {
+        Some(x) => {
+            let (f, sort) = ironcalc_base::kantor_tables::split_sort_state(&x);
+            (Some(f), sort)
+        }
+        None => (None, None),
+    };
     let old_filter = table.children().find(|c| is_main(*c, "autoFilter"));
     match (old_filter, new_filter) {
         (Some(n), Some(x)) => {
@@ -3767,11 +3790,30 @@ fn fit_table(xml: &str, sheet: u32, ctx: &Context) -> Result<Option<Vec<u8>>, St
         }
         (None, None) => {}
     }
-    // A remembered sort no longer describes a moved or resized table.
-    if reference != now.reference
-        && let Some(n) = table.children().find(|c| is_main(*c, "sortState"))
-    {
-        edits.push((n.range(), String::new()));
+    // The remembered sort: the model's (a table without filter buttons
+    // keeps the file's, unless it moved or was resized).
+    let old_sort = table.children().find(|c| is_main(*c, "sortState"));
+    match (old_sort, new_sort) {
+        (Some(n), Some(x)) => {
+            if !same_sort(&xml[n.range()], &x) {
+                edits.push((n.range(), x));
+            }
+        }
+        (Some(n), None) => {
+            if reference != now.reference || now.auto_filter.is_some() {
+                edits.push((n.range(), String::new()));
+            }
+        }
+        (None, Some(x)) => {
+            let at = table
+                .children()
+                .find(|c| is_main(*c, "tableColumns"))
+                .ok_or("no columns")?
+                .range()
+                .start;
+            edits.push((at..at, x));
+        }
+        (None, None) => {}
     }
     // Columns: inserted or deleted ones change the list.
     let cols_node = table
@@ -4529,12 +4571,23 @@ fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
         let new = patch_sheet(&xml, patch).map_err(|e| format!("{:?}: {e}", sheet.name))?;
         pkg.set(&sheet.part, new.into_bytes());
     }
+    for (id, kept) in &patches.cf_x14 {
+        let Some(sheet) = sheets
+            .iter()
+            .find(|s| s.sheet_id == *id && s.kind == SheetKind::Work)
+        else {
+            continue;
+        };
+        let xml = pkg.take_text(&sheet.part)?.ok_or("sheet part is missing")?;
+        let new = crate::cf_x14::patch_sheet(&xml, kept);
+        pkg.set(&sheet.part, new.into_bytes());
+    }
     if !patches.names.is_empty() {
         let new = patch_names(&wb_xml, &sheets, &patches.names)?;
         pkg.set(&wb, new.into_bytes());
     }
     if !patches.tables.is_empty() {
-        write_tables(pkg, &sheets, &patches.tables)?;
+        write_tables(pkg, &sheets, &patches.tables, &patches.removed_table_parts)?;
     }
     if !patches.charts.is_empty() || !patches.removed_charts.is_empty() {
         let written = write_charts(pkg, &sheets, &patches.charts, &patches.removed_charts)?;
@@ -5171,6 +5224,129 @@ pub(crate) fn note_extras(bytes: &[u8]) -> HashMap<(u32, u32, u32), crate::notes
     out
 }
 
+/// The header and footer pictures (`&G`) of each worksheet, by `sheetId`:
+/// the shapes of its `legacyDrawingHF` VML part and the images they show.
+pub(crate) fn hf_pictures(bytes: &[u8]) -> HashMap<u32, Vec<crate::print::HfPicture>> {
+    let mut out: HashMap<u32, Vec<crate::print::HfPicture>> = HashMap::new();
+    let Ok(orig) = Original::new(bytes) else {
+        return out;
+    };
+    let Ok(Some(root)) = orig.text("_rels/.rels") else {
+        return out;
+    };
+    let Ok(root_rels) = parse_rels(&root) else {
+        return out;
+    };
+    let Ok((_, _, _, sheets)) = workbook_sheets(&root_rels, &|name| orig.text(name)) else {
+        return out;
+    };
+    for s in sheets.iter().filter(|s| s.kind == SheetKind::Work) {
+        let Ok(Some(sk)) = orig.skeleton(&s.part) else {
+            continue;
+        };
+        let Ok(doc) = Document::parse(&sk.xml) else {
+            continue;
+        };
+        let Some(rid) = doc
+            .root_element()
+            .children()
+            .find(|n| is_main(*n, "legacyDrawingHF"))
+            .and_then(|n| {
+                n.attributes()
+                    .find(|a| a.name() == "id" && a.namespace().is_some())
+                    .map(|a| a.value().to_owned())
+            })
+        else {
+            continue;
+        };
+        let rels = |source: &str| {
+            orig.text(&rels_part(source))
+                .ok()
+                .flatten()
+                .and_then(|x| parse_rels(&x).ok())
+                .unwrap_or_default()
+        };
+        let Some(vml) = rels(&s.part)
+            .into_iter()
+            .find(|r| r.id == rid && !r.external)
+            .and_then(|r| resolve(&s.part, &r.target))
+        else {
+            continue;
+        };
+        let Some(vml_xml) = orig.text(&vml).ok().flatten() else {
+            continue;
+        };
+        let Ok(vdoc) = Document::parse(&vml_xml) else {
+            continue;
+        };
+        let vml_rels = rels(&vml);
+        for shape in vdoc
+            .descendants()
+            .filter(|n| n.is_element() && n.tag_name().name() == "shape")
+        {
+            let Some(slot) = shape.attribute("id") else {
+                continue;
+            };
+            let Some(relid) = shape
+                .descendants()
+                .find(|n| n.is_element() && n.tag_name().name() == "imagedata")
+                .and_then(|n| {
+                    n.attributes()
+                        .find(|a| a.name() == "relid" || a.name() == "id")
+                        .map(|a| a.value().to_owned())
+                })
+            else {
+                continue;
+            };
+            let Some(part) = vml_rels
+                .iter()
+                .find(|r| r.id == relid && !r.external)
+                .and_then(|r| resolve(&vml, &r.target))
+            else {
+                continue;
+            };
+            let Some(data) = orig.get(&part).ok().flatten() else {
+                continue;
+            };
+            let style = shape.attribute("style").unwrap_or_default();
+            let length = |key: &str| -> Option<f64> {
+                let v = style
+                    .split(';')
+                    .find_map(|kv| kv.split_once(':').filter(|(k, _)| k.trim() == key))?
+                    .1
+                    .trim();
+                let (n, k) = if let Some(n) = v.strip_suffix("pt") {
+                    (n, 1.0)
+                } else if let Some(n) = v.strip_suffix("in") {
+                    (n, 72.0)
+                } else if let Some(n) = v.strip_suffix("px") {
+                    (n, 0.75)
+                } else {
+                    (v, 1.0)
+                };
+                n.trim()
+                    .parse::<f64>()
+                    .ok()
+                    .map(|x| x * k)
+                    .filter(|x| *x > 0.0)
+            };
+            let (Some(w), Some(h)) = (length("width"), length("height")) else {
+                continue;
+            };
+            out.entry(s.sheet_id)
+                .or_default()
+                .push(crate::print::HfPicture {
+                    slot: slot.to_ascii_uppercase(),
+                    part: part.into(),
+                    data: std::sync::Arc::new(data),
+                    width_pt: w,
+                    height_pt: h,
+                });
+        }
+    }
+    out
+}
+
 /// An `x:Anchor`'s eight numbers.
 pub(crate) fn parse_anchor(text: &str) -> Option<[u32; 8]> {
     let v: Vec<u32> = text
@@ -5608,6 +5784,50 @@ fn put_drawing_element(full: &str, rid: &str) -> Result<String, String> {
 
 const TABLE_CT: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";
 
+/// Whether two `<sortState>` elements sort the same way (prefixed
+/// attributes and namespace declarations aside).
+fn same_sort(a: &str, b: &str) -> bool {
+    /// Each element's name and its sorted unprefixed attributes.
+    type Shape = Vec<(String, Vec<(String, String)>)>;
+    fn shape(x: &str) -> Option<Shape> {
+        let doc = Document::parse(x).ok()?;
+        Some(
+            doc.root_element()
+                .descendants()
+                .filter(|n| n.is_element())
+                .map(|n| {
+                    let mut attrs: Vec<(String, String)> = n
+                        .attributes()
+                        .filter(|a| a.namespace().is_none())
+                        .map(|a| (a.name().to_owned(), a.value().to_owned()))
+                        .collect();
+                    attrs.sort();
+                    (n.tag_name().name().to_owned(), attrs)
+                })
+                .collect(),
+        )
+    }
+    shape(a).is_some_and(|x| Some(x) == shape(b))
+}
+
+/// Whether a table part covers the same range with the same column names
+/// as `t`.
+fn same_table_shape(xml: &str, t: &ironcalc_base::types::Table) -> bool {
+    let Ok(doc) = Document::parse(xml) else {
+        return false;
+    };
+    let root = doc.root_element();
+    if root.attribute("ref") != Some(t.reference.as_str()) {
+        return false;
+    }
+    let names: Vec<&str> = root
+        .descendants()
+        .filter(|n| is_main(*n, "tableColumn"))
+        .filter_map(|n| n.attribute("name"))
+        .collect();
+    names.len() == t.columns.len() && names.iter().zip(&t.columns).all(|(a, c)| *a == c.name)
+}
+
 /// Write tables made or changed in Kantor: rewrite the package's part of a
 /// table with one of its names, or add a part (with its relationship, a
 /// `<tablePart>` and a content type).
@@ -5615,6 +5835,7 @@ fn write_tables(
     pkg: &mut Package,
     sheets: &[SheetEntry],
     tables: &[TableSave],
+    removed_parts: &RefCell<HashMap<String, String>>,
 ) -> Result<(), String> {
     // Existing table parts: lower-case name -> (part, id).
     let mut existing: HashMap<String, (String, u32)> = HashMap::new();
@@ -5656,6 +5877,21 @@ fn write_tables(
             pkg.set(&part, xml.into_bytes());
             continue;
         }
+        // A renamed table: its original part (dropped from the package)
+        // gives what the model doesn't hold.
+        let removed = removed_parts.borrow();
+        let old = t
+            .names
+            .iter()
+            .find_map(|n| removed.get(&n.to_lowercase()).map(String::as_str))
+            .or_else(|| {
+                // Renamed in an earlier save of the session and back: the
+                // part with the same range and columns.
+                removed
+                    .values()
+                    .find(|xml| same_table_shape(xml, &t.table))
+                    .map(String::as_str)
+            });
         let sheet = sheets
             .iter()
             .find(|s| s.sheet_id == t.sheet_id && s.kind == SheetKind::Work)
@@ -5667,7 +5903,7 @@ fn write_tables(
             .expect("a free name");
         pkg.set(
             &part,
-            crate::table_edit::table_xml(&t.table, max_id, None).into_bytes(),
+            crate::table_edit::table_xml(&t.table, max_id, old).into_bytes(),
         );
         ct.push_str(&format!(
             "<Override PartName=\"/{}\" ContentType=\"{TABLE_CT}\"/>",

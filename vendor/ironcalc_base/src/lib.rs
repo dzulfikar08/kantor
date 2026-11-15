@@ -60,6 +60,8 @@ pub mod kantor_changes;
 mod kantor_recalc;
 mod kantor_cf;
 mod kantor_validation;
+mod kantor_input; // KANTOR PATCH (typed times)
+pub use kantor_input::set_input_locale;
 pub mod kantor_tables;
 // KANTOR PATCH (sheet tabs): Excel's Delete and Move or Copy.
 mod kantor_sheets;

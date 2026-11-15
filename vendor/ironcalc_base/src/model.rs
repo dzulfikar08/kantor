@@ -27,7 +27,7 @@ use crate::{
         utils::{self, is_valid_column_number, is_valid_identifier, is_valid_row},
     },
     formatter::{
-        format::{format_number, parse_formatted_number},
+        format::format_number,
         lexer::is_likely_date_number_format,
     },
     implicit_intersection::implicit_intersection,
@@ -2651,15 +2651,18 @@ impl<'a> Model<'a> {
                 }
 
                 //  We try to parse as number
-                if let Ok((v, number_format)) =
-                    parse_formatted_number(&value, &currencies, self.locale)
-                {
+                // KANTOR PATCH (typed times): times and dates with times too.
+                if let Ok((v, number_format)) = self.kantor_parse_input(&value, &currencies) {
                     if let Some(num_fmt) = number_format {
                         // Should not apply the format in the following cases:
                         // - we assign a date to already date-formatted cell
-                        let should_apply_format = !(is_likely_date_number_format(
-                            &self.workbook.styles.get_style(new_style_index)?.num_fmt,
-                        ) && is_likely_date_number_format(&num_fmt));
+                        //   (a time to a cell that shows times, a date to
+                        //   one that shows dates)
+                        let cell_fmt = &self.workbook.styles.get_style(new_style_index)?.num_fmt;
+                        let should_apply_format = !(is_likely_date_number_format(cell_fmt)
+                            && is_likely_date_number_format(&num_fmt)
+                            && crate::kantor_input::format_shows_time(cell_fmt)
+                                == crate::kantor_input::format_shows_time(&num_fmt));
                         if should_apply_format {
                             new_style_index = self
                                 .workbook

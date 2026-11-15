@@ -148,6 +148,77 @@ pub(crate) struct SheetTables {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CustomStyles {
     pub styles: HashMap<String, TableStyleDef>,
+    /// The file's `<fills>` that are patterns (not solid), by fill index
+    /// (IronCalc keeps one colour per fill).
+    pub patterns: Vec<Option<FillPattern>>,
+}
+
+/// A cell fill drawn as a pattern (`<patternFill patternType="darkDown">`):
+/// pattern dots in `fg` over `bg`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FillPattern {
+    /// Excel's name: `gray125`, `lightGray`, `darkDown`...
+    pub kind: String,
+    pub fg: Rgb,
+    pub bg: Option<Rgb>,
+}
+
+impl FillPattern {
+    /// The 8 × 8 pixel tile Excel draws, a row per byte (top bit left).
+    pub fn tile(&self) -> [u8; 8] {
+        let rep4 = |r: [u8; 4]| [r[0], r[1], r[2], r[3], r[0], r[1], r[2], r[3]];
+        match self.kind.as_str() {
+            "darkGray" => rep4([0x77, 0xDD, 0x77, 0xDD]),
+            "mediumGray" => rep4([0xAA, 0x55, 0xAA, 0x55]),
+            "lightGray" => rep4([0x88, 0x22, 0x88, 0x22]),
+            "gray125" => rep4([0x88, 0x00, 0x22, 0x00]),
+            "gray0625" => [0x88, 0, 0, 0, 0x22, 0, 0, 0],
+            "darkHorizontal" => rep4([0xFF, 0xFF, 0x00, 0x00]),
+            "darkVertical" => [0xCC; 8],
+            "darkDown" => rep4([0xCC, 0x66, 0x33, 0x99]),
+            "darkUp" => rep4([0x33, 0x66, 0xCC, 0x99]),
+            "darkGrid" => rep4([0xFF, 0xFF, 0xCC, 0xCC]),
+            "darkTrellis" => rep4([0xFF, 0x66, 0xFF, 0x99]),
+            "lightHorizontal" => rep4([0xFF, 0x00, 0x00, 0x00]),
+            "lightVertical" => [0x88; 8],
+            "lightDown" => rep4([0x88, 0x44, 0x22, 0x11]),
+            "lightUp" => rep4([0x11, 0x22, 0x44, 0x88]),
+            "lightGrid" => rep4([0xFF, 0x88, 0x88, 0x88]),
+            "lightTrellis" => rep4([0x88, 0x55, 0x22, 0x55]),
+            _ => [0xFF; 8],
+        }
+    }
+}
+
+/// The patterned fills of a `styles.xml`, by fill index.
+fn parse_patterns(root: Node, theme_: &Theme) -> Vec<Option<FillPattern>> {
+    let Some(fills) = root.children().find(|n| n.tag_name().name() == "fills") else {
+        return Vec::new();
+    };
+    fills
+        .children()
+        .filter(|n| n.tag_name().name() == "fill")
+        .map(|f| {
+            let p = f
+                .children()
+                .find(|n| n.tag_name().name() == "patternFill")?;
+            let kind = p.attribute("patternType")?;
+            if matches!(kind, "none" | "solid") {
+                return None;
+            }
+            let color = |name: &str| {
+                p.children()
+                    .find(|n| n.tag_name().name() == name)
+                    .and_then(|n| color_of(n, theme_))
+            };
+            Some(FillPattern {
+                kind: kind.to_owned(),
+                // Automatic: black dots on white.
+                fg: color("fgColor").unwrap_or(0x000000),
+                bg: color("bgColor"),
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn thin(color: Rgb) -> BorderLine {
@@ -455,7 +526,10 @@ pub(crate) fn parse_custom_styles(xml: &str, theme_: &Theme) -> CustomStyles {
             styles.insert(name.to_owned(), def);
         }
     }
-    CustomStyles { styles }
+    CustomStyles {
+        styles,
+        patterns: parse_patterns(root, theme_),
+    }
 }
 
 fn color_of(n: Node, theme_: &Theme) -> Option<Rgb> {
@@ -896,6 +970,25 @@ impl Workbook {
         })();
         self.end_batch(steps);
         r
+    }
+}
+
+impl Workbook {
+    /// The pattern of the cell's fill, when the file gave it a patterned
+    /// fill (Excel prints it as a pattern; IronCalc keeps one colour).
+    pub fn fill_pattern(&self, sheet: u32, row: u32, col: u32) -> Option<FillPattern> {
+        let index = self.style_index(sheet, row, col);
+        let xf = self
+            .model
+            .get_model()
+            .workbook
+            .styles
+            .cell_xfs
+            .get(usize::try_from(index).ok()?)?;
+        self.table_styles
+            .patterns
+            .get(usize::try_from(xf.fill_id).ok()?)?
+            .clone()
     }
 }
 

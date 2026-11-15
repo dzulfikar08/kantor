@@ -10,6 +10,7 @@
 
 mod batch;
 mod cf_edit;
+mod cf_x14;
 mod chart_edit;
 mod chart_options;
 mod chart_sheet;
@@ -100,9 +101,22 @@ pub mod web;
 
 pub use cond_format::{CfIcon, Conditional, DataBar, IconShape};
 pub use content_text::{Translate, set_content_translator};
+
+static INPUT_ID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// How typed dates are read and shown for editing: `"id"` reads
+/// `16/11/2026 9:30` day first, knows Indonesian month names and shows
+/// times on 24 hours; anything else is Excel's en-US. Set once by the app.
+pub fn set_input_locale(locale: &str) {
+    ironcalc_base::set_input_locale(locale);
+    INPUT_ID.store(
+        locale.eq_ignore_ascii_case("id") || locale.to_ascii_lowercase().starts_with("id-"),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
 pub use filter::{
     ColumnFilter, ColumnKind, Condition, DateGroup, FilterInfo, FilterKind, FilterOp, FilterScope,
-    FilterValue, checked_values, date_serial, ymd,
+    FilterValue, SortState, checked_values, date_serial, ymd,
 };
 pub use format::{
     AlignDetail, BorderLine, BorderPreset, Borders, CellStyle, HAlign, LineStyle, NumberFormat,
@@ -127,12 +141,12 @@ pub use pivot_edit::{
 pub use pivot_group::DateLevel;
 pub use pivot_tools::pivot_style_names;
 pub use print::{
-    HEADER_FOOTER_PRESETS, HeaderFooter, Margins, PAPERS, PageSetup, Paper, PrintColumns,
-    PrintOptions, SheetPrint, join_sections, split_sections,
+    HEADER_FOOTER_PRESETS, HeaderFooter, HfPicture, Margins, PAPERS, PageSetup, Paper,
+    PrintColumns, PrintComments, PrintOptions, SheetPrint, join_sections, split_sections,
 };
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 pub use sort::SortKey;
-pub use table::{TableCellLook, TableInfo};
+pub use table::{FillPattern, TableCellLook, TableInfo};
 pub use validation::{
     ErrorStyle, ListItem, Message, Validation, ValidationOperator, ValidationType,
 };
@@ -183,6 +197,8 @@ pub struct Workbook {
     panes: HashMap<u32, (u32, u32)>,
     /// Notes the opened file shows all the time, `(sheetId, row, col)`.
     note_extras: HashMap<(u32, u32, u32), notes::NoteExtra>,
+    /// The opened file's Excel 2010 conditional format extras.
+    cf_x14: cf_x14::CfX14,
 }
 
 /// See [`Workbook::cached`].
@@ -505,6 +521,7 @@ impl Workbook {
             touched: Default::default(),
             panes: HashMap::new(),
             note_extras: Default::default(),
+            cf_x14: Default::default(),
         })
     }
 
@@ -606,6 +623,7 @@ impl Workbook {
             pivots,
             panes,
             note_extras,
+            mut cf_x14,
         } = extras
             .map(|h| h.join().unwrap_or_default())
             .unwrap_or_default();
@@ -663,6 +681,14 @@ impl Workbook {
             validation = validation::Validations::imported(rules);
         }
         let xls_drawings = std::mem::take(&mut imported.drawings);
+        {
+            let wb = &model.get_model().workbook;
+            cf_x14.bind(
+                wb.worksheets
+                    .iter()
+                    .map(|ws| (ws.sheet_id, ws.conditional_formatting.as_slice())),
+            );
+        }
         let mut book = Self {
             calc,
             model,
@@ -687,6 +713,7 @@ impl Workbook {
             touched,
             panes: HashMap::new(),
             note_extras,
+            cf_x14,
         };
         book.apply_read_panes(&panes);
         if !xls_drawings.is_empty() {
@@ -999,9 +1026,51 @@ impl Workbook {
 
     /// What the user typed: the formula (`=SUM(A1:A3)`) or the raw value.
     pub fn input(&self, sheet: u32, row: u32, col: u32) -> String {
+        if let Some(text) = self.time_input(sheet, row as i32 + 1, col as i32 + 1) {
+            return text;
+        }
         self.model
             .get_cell_content(sheet, row as i32 + 1, col as i32 + 1)
             .unwrap_or_default()
+    }
+
+    /// A value whose format shows a time, as Excel's formula bar shows it
+    /// (`9:30:00 AM`, `11/16/2026 2:05:00 PM`; `16/11/2026 14:05:00` in
+    /// Indonesian), so editing and pressing Enter gives the same value.
+    fn time_input(&self, sheet: u32, row: i32, col: i32) -> Option<String> {
+        let model = self.model.get_model();
+        let cell = model.workbook.worksheet(sheet).ok()?.cell(row, col)?;
+        if cell.get_formula().is_some() {
+            return None;
+        }
+        let ironcalc_base::cell::CellValue::Number(n) =
+            cell.value(&model.workbook.shared_strings, numfmt::language())
+        else {
+            return None;
+        };
+        let code = numfmt::compile(model, cell.get_style());
+        if !code.is_date() || n < 0.0 || matches!(code.date_shape(n), Some((_, false))) {
+            return None;
+        }
+        let id = INPUT_ID.load(std::sync::atomic::Ordering::Relaxed);
+        let (date, time) = if id {
+            ("dd/mm/yyyy", "h:mm:ss")
+        } else {
+            ("m/d/yyyy", "h:mm:ss AM/PM")
+        };
+        let shown = |f: &str| {
+            kantor_numfmt::NumberFormat::parse(f)
+                .display_number(n, kantor_numfmt::DateSystem::D1900)
+                .text
+        };
+        let seconds = (n.fract() * 86_400.0).round();
+        Some(if n < 1.0 {
+            shown(time)
+        } else if seconds == 0.0 || seconds == 86_400.0 {
+            shown(date)
+        } else {
+            shown(&format!("{date} {time}"))
+        })
     }
 
     /// Set a cell from user input (value or `=formula`) and recalculate.
@@ -1468,6 +1537,8 @@ struct Extras {
     panes: HashMap<u32, (u32, u32)>,
     /// Notes' shown state, boxes and formatted text (`preserve::note_extras`).
     note_extras: HashMap<(u32, u32, u32), notes::NoteExtra>,
+    /// Excel 2010 conditional format extras (`cf_x14`).
+    cf_x14: cf_x14::CfX14,
 }
 
 impl Extras {
@@ -1481,6 +1552,7 @@ impl Extras {
             pivots: pivot::Pivots::read(bytes),
             panes: grid::read_panes(&skeletons),
             note_extras: preserve::note_extras(bytes),
+            cf_x14: cf_x14::read(&skeletons),
         }
     }
 }

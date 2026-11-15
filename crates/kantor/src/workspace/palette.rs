@@ -987,6 +987,36 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: tk("Insert Page Break"),
+        detail: tk("Sheets · start a new printed page above and left of the active cell"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.page_break_doc(sheets_ui::PageBreakOp::Insert, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Remove Page Break"),
+        detail: tk("Sheets · remove the manual page break above or left of the active cell"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.page_break_doc(sheets_ui::PageBreakOp::Remove, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Reset All Page Breaks"),
+        detail: tk("Sheets · remove every manual page break of this sheet"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| {
+                v.page_break_doc(sheets_ui::PageBreakOp::Reset, w, cx)
+            })
+        },
+    },
+    Command {
         title: tk("Insert PivotTable…"),
         detail: tk("Sheets · summarise the table, selection or data around the active cell"),
         keys: "",

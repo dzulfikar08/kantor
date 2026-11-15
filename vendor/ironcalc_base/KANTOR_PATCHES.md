@@ -749,6 +749,46 @@ vector cases of `test/test_kantor_functions.rs`,
 `expressions/parser/tests/test_kantor_functions_export.rs`, and Kantor's
 `crates/sheets_engine/tests/functions.rs` (xlsx round trips, saved values
 of online functions).
+## 26. Typed times and dates with times
+
+Why: Excel stores a typed `9:30`, `9:30 PM`, `14:05:30` or
+`16/11/2026 9:30` as a number (the time's fraction of a day, plus the date)
+with an `h:mm`-style format, so time validation rules and arithmetic work.
+Upstream stored them as text. Upstream also reads typed dates only in the
+workbook's locale, always `en` in Kantor, so `16/11/2026` was text on
+Indonesian systems.
+
+What (`src/kantor_input.rs`, call sites in `src/model.rs`
+`set_user_input` and `src/kantor_validation.rs` `kantor_input_value`;
+input parsing only, formula coercion in `cast.rs` is unchanged):
+
+* `Model::kantor_parse_input` replaces `parse_formatted_number` for typed
+  values: a time (`h:mm`, `h:mm:ss`, `h:mm AM/PM`, `h AM/PM`, `[h]:mm:ss`
+  for 24 hours and more, `mm:ss.0`), a date then a time (the date's format,
+  a space, the time's), else what upstream did.
+* `set_input_locale("id")` (a process-wide setting the app makes once):
+  typed dates are read day first, with Indonesian month names (`Agu`,
+  `Mei`, `Desember`), through the `en-GB` locale.
+* A typed date keeps a cell's date format only when both show a time or
+  neither does (upstream kept any date format, so a time typed over a date
+  showed as a date).
+
+Tests: `test/test_kantor_input.rs`, unit tests in `kantor_input.rs`.
+
+## 27. Remembered sorts (`sortState`)
+
+Why: Excel remembers the last sort of a table or of the sheet's AutoFilter
+(`<sortState>`), shows it on the filter button and sorts again with
+Reapply. Kantor keeps a filter's state as its `<autoFilter>` element (§13).
+
+What (`src/kantor_tables.rs`): the sort is kept inside the `<autoFilter>`
+element (`split_sort_state`, `with_sort_state`); files have it next to it
+(vendor/ironcalc §12 moves it in and out). `with_auto_filter_ref` drops the
+sort when the filter's range changes (rows inserted or deleted inside it,
+the range moved): it no longer describes those rows.
+
+Tests: `test/test_kantor_tables.rs` (`sort_state_in_the_filter`); Kantor's
+`crates/sheets_engine/tests/sort_state.rs`.
 
 ## Updating or dropping
 

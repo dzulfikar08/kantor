@@ -304,7 +304,7 @@ pub enum LineStyle {
 }
 
 impl LineStyle {
-    fn from_ironcalc(s: &BorderStyle) -> Self {
+    pub(crate) fn from_ironcalc(s: &BorderStyle) -> Self {
         match s {
             BorderStyle::Thin => Self::Thin,
             BorderStyle::Hair => Self::Hair,

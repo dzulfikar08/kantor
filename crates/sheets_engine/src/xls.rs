@@ -410,6 +410,7 @@ impl PrintRaw {
             print_area: Vec::new(),
             title_rows: None,
             title_cols: None,
+            hf_pictures: Vec::new(),
         }
     }
 }
