@@ -704,7 +704,9 @@ impl Paragraph {
 /// mark properties may carry (they belong to the mark, not to text).
 fn text_props(mut p: RunProps) -> RunProps {
     if !p.extras.is_empty() {
-        for name in ["ins", "del", "moveFrom", "moveTo"] {
+        // A formatting change belongs to the text it was made on, not to
+        // text typed next to it.
+        for name in ["ins", "del", "moveFrom", "moveTo", "rPrChange"] {
             p.extras.remove(name);
         }
     }

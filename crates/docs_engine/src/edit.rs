@@ -279,6 +279,13 @@ impl Document {
         let (r, c) = (at.row as usize, at.cell as usize);
         let focus: (usize, usize);
         match edit {
+            TableEdit::DeleteTable if self.track => {
+                let rows: Vec<usize> = (0..t.rows.len()).collect();
+                return Ok(self.tracked_delete_rows(id, &rows, sel));
+            }
+            TableEdit::DeleteRow if self.track => {
+                return Ok(self.tracked_delete_rows(id, &[r], sel));
+            }
             TableEdit::DeleteTable => {
                 return Ok(self.remove_table(id, range, sel));
             }
@@ -319,6 +326,10 @@ impl Document {
                 } else {
                     r + 1
                 };
+                if self.track {
+                    let el = self.row_rev_el(crate::review::RevKind::Insert, self.max_rev_id() + 1);
+                    crate::track_table::set_row_rev(&mut row, &el);
+                }
                 t.rows.insert(ri, row);
                 grid.insert(ri, cells);
                 focus = (ri, 0);

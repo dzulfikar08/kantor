@@ -36,6 +36,7 @@ pub mod style;
 pub mod table;
 pub mod tabs;
 mod track;
+mod track_table;
 mod xml;
 
 pub use document::{

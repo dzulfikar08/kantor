@@ -85,7 +85,7 @@ impl Document {
     }
 
     /// A new revision by the user with id `id`.
-    fn new_rev(&self, kind: RevKind, id: u64) -> Arc<Revision> {
+    pub(crate) fn new_rev(&self, kind: RevKind, id: u64) -> Arc<Revision> {
         let name = match kind {
             RevKind::Insert => "ins",
             RevKind::Delete | RevKind::Format => "del",
@@ -123,7 +123,7 @@ impl Document {
     /// Mark `start..end` deleted (removing the user's own insertions in it)
     /// in a copy of paragraphs `start.para..=end.para`. Returns them and
     /// where `end` is afterwards (relative to the same first paragraph).
-    fn tracked_cut(
+    pub(crate) fn tracked_cut(
         &self,
         start: Position,
         end: Position,
@@ -146,36 +146,10 @@ impl Document {
         for (k, p) in new.iter_mut().enumerate() {
             let lo = if k == 0 { start.offset } else { 0 };
             let hi = if k == n - 1 { end.offset } else { p.text.len() };
-            if lo >= hi {
-                continue;
-            }
-            p.split_run_at(lo);
-            p.split_run_at(hi);
-            let mut drop = Vec::new();
-            let mut at = 0;
-            for run in &mut p.runs {
-                let r = at..at + run.len;
-                at = r.end;
-                if r.start < lo || r.end > hi || r.is_empty() {
-                    continue;
-                }
-                if run.object.as_ref().is_some_and(Object::is_zero_width) {
-                    continue;
-                }
-                match &run.rev {
-                    Some(rev) if rev.kind == RevKind::Insert && rev.author == me => drop.push(r),
-                    Some(rev) if rev.kind == RevKind::Delete => {}
-                    _ => run.rev = Some(del.clone()),
-                }
-            }
-            let dropped: usize = drop.iter().map(|r| r.len()).sum();
-            for r in drop.into_iter().rev() {
-                p.delete(r);
-            }
+            let dropped = strike(p, lo, hi, &del, &me);
             if k == n - 1 {
                 end_off -= dropped;
             }
-            p.normalize();
         }
         // Paragraph marks inside the range, back to front: the user's own
         // inserted marks go (the paragraphs join), others are marked deleted.
@@ -300,6 +274,55 @@ impl Document {
         after
     }
 
+    /// [`Document::replace_ranges`] (Replace All) with Track Changes on:
+    /// each match is struck through and the replacement goes in after it
+    /// as an insertion, one revision pair per match as in Word. `ranges`
+    /// are valid, sorted and don't overlap. One undo step.
+    pub(crate) fn tracked_replace_ranges(
+        &mut self,
+        ranges: &[(usize, std::ops::Range<usize>)],
+        with: &str,
+        sel: Selection,
+    ) -> Selection {
+        let (Some(f), Some(l)) = (ranges.first(), ranges.last()) else {
+            return sel;
+        };
+        let (first, last) = (f.0, l.0);
+        let mut out: Vec<Paragraph> = self.paragraphs[first..=last].to_vec();
+        let mut ids = self.max_rev_id();
+        let me = self.author.clone();
+        let mut caret = Position::new(last, 0);
+        for para in first..=last {
+            let p = &mut out[para - first];
+            let mut delta: isize = 0;
+            for (_, r) in ranges.iter().filter(|(q, _)| *q == para) {
+                let a = (r.start as isize + delta) as usize;
+                let b = (r.end as isize + delta) as usize;
+                let first_char = p.text[a..].chars().next().map_or(0, char::len_utf8);
+                let props = p.props_at(a + first_char.min(b - a));
+                ids += 1;
+                let del = self.new_rev(RevKind::Delete, ids);
+                let dropped = strike(p, a, b, &del, &me);
+                let at = b - dropped;
+                ids += 1;
+                let ins = self.new_rev(RevKind::Insert, ids);
+                insert_tracked(p, at, with, &props, &ins);
+                delta += with.len() as isize - dropped as isize;
+                caret = Position::new(para, at + with.len());
+            }
+        }
+        let after = Selection::caret(caret);
+        self.replace(
+            first,
+            last - first + 1,
+            out,
+            (sel, after),
+            Kind::Other,
+            true,
+        );
+        self.clamp_selection(after)
+    }
+
     /// With Track Changes on, mark the object at `offset` of `p` (a copy
     /// about to replace a paragraph) as a tracked insertion.
     pub(crate) fn track_object(&self, p: &mut Paragraph, offset: usize) {
@@ -316,6 +339,39 @@ impl Document {
         }
         p.normalize();
     }
+}
+
+/// Mark `lo..hi` of `p` deleted as part of `del`, removing `me`'s own
+/// insertions in it. Returns the bytes removed.
+fn strike(p: &mut Paragraph, lo: usize, hi: usize, del: &Arc<Revision>, me: &str) -> usize {
+    if lo >= hi {
+        return 0;
+    }
+    p.split_run_at(lo);
+    p.split_run_at(hi);
+    let mut drop = Vec::new();
+    let mut at = 0;
+    for run in &mut p.runs {
+        let r = at..at + run.len;
+        at = r.end;
+        if r.start < lo || r.end > hi || r.is_empty() {
+            continue;
+        }
+        if run.object.as_ref().is_some_and(Object::is_zero_width) {
+            continue;
+        }
+        match &run.rev {
+            Some(rev) if rev.kind == RevKind::Insert && rev.author == me => drop.push(r),
+            Some(rev) if rev.kind == RevKind::Delete => {}
+            _ => run.rev = Some(del.clone()),
+        }
+    }
+    let dropped: usize = drop.iter().map(|r| r.len()).sum();
+    for r in drop.into_iter().rev() {
+        p.delete(r);
+    }
+    p.normalize();
+    dropped
 }
 
 /// Insert `text` at `offset` as part of the insertion `rev`.

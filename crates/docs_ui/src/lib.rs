@@ -2020,6 +2020,9 @@ struct Frame {
     markup: f32,
     comment_ranges: Vec<(Position, Position, bool)>,
     card_lines: Vec<(Point<Pixels>, Point<Pixels>, bool)>,
+    /// Change bars: lines with tracked changes, `(page, top, height)` in
+    /// page coordinates (drawn in the left margin, as Word does).
+    change_bars: Vec<(usize, f32, f32)>,
     /// Misspelled words on the visible pages: `(paragraph, byte range)`.
     misspelled: Vec<(usize, Range<usize>)>,
     t: Tokens,
@@ -2225,6 +2228,13 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                 r[3] = r[3].max(1.0 / z);
                 window.paint_quad(fill(rect(page, r), layout_color(rule.color)));
             }
+            // Change bars beside lines with tracked changes.
+            for &(_, y, h) in f.change_bars.iter().filter(|b| b.0 == page) {
+                let s = paged.page_setup(page);
+                let x = (s.margin_left - 12.0).max(2.0);
+                let r = [x, y, (1.0f32).max(1.0 / z), h];
+                window.paint_quad(fill(rect(page, r), f.t.paper_ink.opacity(0.55)));
+            }
             // Tracked deletions: struck through in the author's colour.
             if !f.laid.strikes.is_empty() {
                 for rule in paged.strike_rules(page, &f.laid.strikes) {
@@ -2429,6 +2439,7 @@ impl Render for DocsView {
             .map(|c| (c.anchor, point(c.at.x, c.at.y + px(14.)), c.active))
             .collect();
         let card_elements = self.render_cards(&cards, cx);
+        let change_bars = self.change_bars();
         if swapped {
             self.whole_out();
         }
@@ -2483,6 +2494,7 @@ impl Render for DocsView {
             },
             comment_ranges,
             card_lines,
+            change_bars,
             misspelled,
             t,
             bridge: self.bridge.clone(),

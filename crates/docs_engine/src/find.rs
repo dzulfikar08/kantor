@@ -50,6 +50,10 @@ impl Document {
         let (Some(first), Some(last)) = (valid.first(), valid.last()) else {
             return sel;
         };
+        if self.track {
+            let valid: Vec<(usize, Range<usize>)> = valid.into_iter().cloned().collect();
+            return self.tracked_replace_ranges(&valid, with, sel);
+        }
         let (first, last) = (first.0, last.0);
         let mut out: Vec<_> = self.paragraphs[first..=last].to_vec();
         let mut caret = Position::new(last, 0);

@@ -1766,7 +1766,11 @@ impl BodyParser<'_> {
                             }
                             row.header = el.child("tblHeader").is_some_and(El::on);
                             row.cant_split = el.child("cantSplit").is_some_and(El::on);
-                            if el.children.iter().any(|c| is_tracked(&c.name)) {
+                            // Inserted and deleted rows are modelled
+                            // (crate::track_table); other row changes aren't.
+                            if el.children.iter().any(|c| {
+                                is_tracked(&c.name) && !crate::track_table::is_row_mark(&c.name)
+                            }) {
                                 self.unsupported.insert("tracked changes".into());
                             }
                         }

@@ -367,6 +367,34 @@ impl DocsView {
         }
     }
 
+    /// Change bars for the visible pages: every line holding a tracked
+    /// change, `(page, top, height)`.
+    pub(crate) fn change_bars(&self) -> Vec<(usize, f32, f32)> {
+        let changes = self.doc.changes();
+        if changes.is_empty() {
+            return Vec::new();
+        }
+        let visible = self.geometry().visible_pages(self.laid.paged.pages.len());
+        let mut out: Vec<(usize, f32, f32)> = Vec::new();
+        for c in changes {
+            let mut rects: Vec<(usize, f32, f32)> = self
+                .laid
+                .selection_rects((c.start.para, c.start.offset), (c.end.para, c.end.offset))
+                .into_iter()
+                .map(|(p, r)| (p, r[1], r[3]))
+                .collect();
+            if let Some(k) = self.laid.caret(c.start.para, c.start.offset) {
+                rects.push((k.page, k.top, k.height));
+            }
+            for r in rects {
+                if visible.contains(&r.0) && !out.contains(&r) {
+                    out.push(r);
+                }
+            }
+        }
+        out
+    }
+
     // ── cards ──────────────────────────────────────────────────────────────
 
     /// Comment cards for the comments on visible pages, stacked so they

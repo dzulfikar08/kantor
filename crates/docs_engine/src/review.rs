@@ -28,6 +28,7 @@ use crate::model::{
     OBJECT, Object, Opaque, Paragraph, Position, RunProps, Selection, element_name,
 };
 use crate::object::Level;
+use crate::track_table;
 use crate::xml;
 
 /// What a tracked change does.
@@ -94,6 +95,9 @@ pub struct Change {
     /// A paragraph's formatting change (`w:pPrChange`) rather than its
     /// text's.
     pub para: bool,
+    /// An inserted or deleted table row (`w:trPr/w:ins|w:del`), from its
+    /// first cell to its last.
+    pub row: bool,
 }
 
 /// A comment from `comments.xml` (or added in Kantor).
@@ -322,6 +326,16 @@ fn clear_mark_revs(p: &mut Paragraph) {
     }
 }
 
+/// Remove a resolved change's text: a floating object marked deleted
+/// goes too (deleting text keeps them otherwise).
+fn drop_change(p: &mut Paragraph, r: std::ops::Range<usize>) {
+    if r.len() == OBJECT.len_utf8() && matches!(p.object_at(r.start), Some(Object::Float(_))) {
+        p.remove_object(r.start);
+    } else {
+        p.delete(r);
+    }
+}
+
 impl Document {
     /// Tracked changes in document order: insertions and deletions
     /// (consecutive runs of one change merged), paragraph marks that can
@@ -338,6 +352,8 @@ impl Document {
                 && last.format == c.format
                 && !last.para
                 && !c.para
+                && !last.row
+                && !c.row
             {
                 last.end = c.end;
                 last.text.push_str(&c.text);
@@ -347,6 +363,32 @@ impl Document {
         };
         let n = self.paragraphs.len();
         for (pi, p) in self.paragraphs.iter().enumerate() {
+            // A tracked table row, at its first paragraph.
+            if let Some(c) = p.cell
+                && (pi == 0
+                    || self.paragraphs[pi - 1]
+                        .cell
+                        .is_none_or(|q| q.table != c.table || q.row != c.row))
+                && let Some(row) = self
+                    .tables
+                    .get(&c.table)
+                    .and_then(|t| t.rows.get(c.row as usize))
+                && let Some((kind, author, date)) = track_table::row_rev(row)
+                && let Some((_, b)) = Self::row_paras(&self.paragraphs[pi..], c.table, c.row)
+            {
+                let b = pi + b;
+                add(Change {
+                    start: Position::new(pi, 0),
+                    end: Position::new(b, self.paragraphs[b].text.len()),
+                    kind,
+                    author,
+                    date,
+                    text: String::new(),
+                    format: Vec::new(),
+                    para: false,
+                    row: true,
+                });
+            }
             if let Some(ch) = fmt_track::para_change(&p.props) {
                 let (author, date) = fmt_track::who_when(ch);
                 add(Change {
@@ -358,6 +400,7 @@ impl Document {
                     text: p.text.clone(),
                     format: self.para_format_items(&p.props, ch),
                     para: true,
+                    row: false,
                 });
             }
             for (range, run) in p.run_ranges() {
@@ -371,6 +414,7 @@ impl Document {
                         text: p.text[range.clone()].to_owned(),
                         format: Vec::new(),
                         para: false,
+                        row: false,
                     });
                 }
                 if !range.is_empty()
@@ -386,6 +430,7 @@ impl Document {
                         text: p.text[range.clone()].to_owned(),
                         format: self.run_format_items(&run.props, ch),
                         para: false,
+                        row: false,
                     });
                 }
             }
@@ -404,6 +449,7 @@ impl Document {
                     text: "\n".into(),
                     format: Vec::new(),
                     para: false,
+                    row: false,
                 });
             }
         }
@@ -459,11 +505,21 @@ impl Document {
         only: Option<(RevKind, bool)>,
     ) -> Selection {
         let wants = |kind: RevKind, para: bool| only.is_none_or(|o| o == (kind, para));
-        let first = start.para;
-        let last = end.para.min(self.paragraphs.len() - 1);
+        // Whole tables, so their rows can be resolved too.
+        let mut first = start.para;
+        let mut last = end.para.min(self.paragraphs.len() - 1);
+        if let Some(c) = self.paragraphs[first].cell {
+            first = self.table_range(c.table).start;
+        }
+        if let Some(c) = self.paragraphs[last].cell {
+            last = self.table_range(c.table).end - 1;
+        }
         let mut new: Vec<Paragraph> = self.paragraphs[first..=last].to_vec();
         for (k, p) in new.iter_mut().enumerate() {
             let pi = first + k;
+            if pi < start.para || pi > end.para {
+                continue;
+            }
             let lo = if pi == start.para { start.offset } else { 0 };
             let hi = if pi == end.para {
                 end.offset
@@ -507,7 +563,7 @@ impl Document {
             }
             for r in drop.into_iter().rev() {
                 // Markers (bookmarks, comment ranges) survive the removal.
-                p.delete(r);
+                drop_change(p, r);
             }
             p.normalize();
         }
@@ -538,12 +594,60 @@ impl Document {
             }
         }
         let count = last - first + 1;
-        let after = Selection::caret(self.clamp_pos_in(&new, first, start));
-        self.replace(first, count, new, (sel, after), Kind::Other, true);
-        after
+        let mut tables = self.tables.clone();
+        let only_rows = match only {
+            Some((_, true)) | Some((RevKind::Format, _)) => Some(None),
+            Some((k, false)) => Some(Some(k)),
+            None => None,
+        };
+        let rows = match only_rows {
+            Some(None) => false,
+            Some(k) => track_table::resolve_rows(
+                &mut new,
+                &mut tables,
+                first,
+                Some((start, end)),
+                accept,
+                k,
+            ),
+            None => track_table::resolve_rows(
+                &mut new,
+                &mut tables,
+                first,
+                Some((start, end)),
+                accept,
+                None,
+            ),
+        };
+        if new.is_empty() && count == self.paragraphs.len() {
+            new.push(Paragraph::default());
+        }
+        let after = Selection::caret(self.clamp_pos_in(&new, first, start, count));
+        self.replace_with_tables(
+            first,
+            count,
+            new,
+            rows.then_some(tables),
+            (sel, after),
+            Kind::Other,
+            true,
+        );
+        self.clamp_selection(after)
     }
 
-    fn clamp_pos_in(&self, paras: &[Paragraph], first: usize, pos: Position) -> Position {
+    /// `pos` after paragraphs `first..first + count` became `paras`.
+    fn clamp_pos_in(
+        &self,
+        paras: &[Paragraph],
+        first: usize,
+        pos: Position,
+        count: usize,
+    ) -> Position {
+        let total = self.paragraphs.len() - count + paras.len();
+        if pos.para >= first + paras.len() {
+            let para = (first + paras.len()).min(total.saturating_sub(1));
+            return Position::new(para, 0);
+        }
         let p = &paras[pos.para - first];
         Position::new(pos.para, pos.offset.min(p.text.len()))
     }
@@ -600,7 +704,7 @@ impl Document {
                 fmt_track::resolve_run(&mut run.props, accept);
             }
             for r in drop.into_iter().rev() {
-                p.delete(r);
+                drop_change(&mut p, r);
             }
             fmt_track::resolve_para(&mut p.props, accept);
             let (ins, del) = mark_revs(&p);
@@ -618,15 +722,25 @@ impl Document {
             }
             join_next = joins;
         }
+        let mut tables = self.tables.clone();
+        let rows = track_table::resolve_rows(&mut out, &mut tables, 0, None, accept, None);
         if out.is_empty() {
             out.push(Paragraph::default());
         }
-        if out == old {
+        if out == old && !rows {
             return sel;
         }
         let n = old.len();
         let after = self.clamp_selection_in(&out, sel);
-        self.replace(0, n, out, (sel, after), Kind::Other, true);
+        self.replace_with_tables(
+            0,
+            n,
+            out,
+            rows.then_some(tables),
+            (sel, after),
+            Kind::Other,
+            true,
+        );
         after
     }
 
