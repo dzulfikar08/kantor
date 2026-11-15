@@ -13,6 +13,7 @@ cfb = "0.14"
 flate2 = "1"
 # Rgb, Position/Selection, grapheme helpers and the font substitution table.
 docs_engine.workspace = true
+kantor_ooxml.workspace = true
 # Reading: byte ranges of every element, so unmodelled XML is copied verbatim.
 roxmltree.workspace = true
 tempfile.workspace = true

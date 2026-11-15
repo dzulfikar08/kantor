@@ -1624,6 +1624,7 @@ dependencies = [
  "docx-rs",
  "encoding_rs",
  "kantor_core",
+ "kantor_ooxml",
  "log",
  "quick-xml 0.41.0",
  "tempfile",
@@ -4121,6 +4122,15 @@ name = "kantor_numfmt"
 version = "0.7.0"
 dependencies = [
  "chrono",
+]
+
+[[package]]
+name = "kantor_ooxml"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "quick-xml 0.41.0",
+ "zip 9.4.1",
 ]
 
 [[package]]
@@ -6970,6 +6980,7 @@ dependencies = [
  "ironcalc_base",
  "kantor_mem",
  "kantor_numfmt",
+ "kantor_ooxml",
  "log",
  "roxmltree 0.21.2",
  "serde_json",
@@ -7158,6 +7169,7 @@ dependencies = [
  "cfb",
  "docs_engine",
  "flate2",
+ "kantor_ooxml",
  "roxmltree 0.21.2",
  "tempfile",
  "zip 9.4.1",

@@ -13,7 +13,6 @@
 
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::Path;
 
 use ironcalc_base::types::{Color, Table, Theme};
 use roxmltree::Node;
@@ -366,10 +365,12 @@ pub(crate) fn builtin(name: &str, t: &Theme) -> Option<TableStyleDef> {
 // ---------------------------------------------------------------- custom styles
 
 /// The custom table styles of a package's `styles.xml`.
-pub(crate) fn read_custom_styles(path: &Path, theme_: &Theme) -> CustomStyles {
+pub(crate) fn read_custom_styles(
+    package: impl std::io::Read + std::io::Seek,
+    theme_: &Theme,
+) -> CustomStyles {
     let xml = (|| {
-        let file = std::fs::File::open(path).ok()?;
-        let mut zip = zip::ZipArchive::new(file).ok()?;
+        let mut zip = zip::ZipArchive::new(package).ok()?;
         let mut part = zip.by_name("xl/styles.xml").ok()?;
         if part.size() > 64 * 1024 * 1024 {
             return None;

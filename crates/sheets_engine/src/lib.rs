@@ -507,9 +507,16 @@ impl Workbook {
         // What IronCalc doesn't model is read from the package on another
         // thread meanwhile: each of these walks every sheet's XML outside
         // the cells, which took ~0.9 s of a 90k-row file's open.
+        // A Strict Open XML package is read (and later saved) as the
+        // Transitional package it maps to.
+        let strict = match format {
+            SourceFormat::Xlsx => no_panic(path, || strict_as_transitional(path))?,
+            _ => None,
+        };
         let extras = (format == SourceFormat::Xlsx).then(|| {
             let path = path.to_path_buf();
-            std::thread::spawn(move || match fs::read(&path) {
+            let strict = strict.clone();
+            std::thread::spawn(move || match strict.map_or_else(|| fs::read(&path), Ok) {
                 Ok(bytes) => Extras::read(&bytes),
                 Err(e) => {
                     log::warn!("{}: {e}", path.display());
@@ -522,7 +529,8 @@ impl Workbook {
                 // Excel saved every formula's value; show those rather than
                 // recalculating (which can take minutes for big workbooks),
                 // unless the file asks for a recalculation and is small.
-                let (mut model, source, full_calc) = no_panic(path, || open_xlsx(path))?;
+                let (mut model, source, full_calc) =
+                    no_panic(path, || open_xlsx(path, strict.clone()))?;
                 xlsx = Some(source);
                 if full_calc && count_formulas(&model) <= MANUAL_CALC_FORMULAS {
                     model.evaluate();
@@ -552,7 +560,17 @@ impl Workbook {
             calc.fresh = u64::MAX;
         }
         let table_styles = match format {
-            SourceFormat::Xlsx => table::read_custom_styles(path, &model.workbook.theme),
+            SourceFormat::Xlsx => match &strict {
+                Some(bytes) => {
+                    table::read_custom_styles(Cursor::new(&bytes[..]), &model.workbook.theme)
+                }
+                None => fs::File::open(path).map_or_else(
+                    |_| table::CustomStyles::default(),
+                    |f| {
+                        table::read_custom_styles(std::io::BufReader::new(f), &model.workbook.theme)
+                    },
+                ),
+            },
             _ => table::CustomStyles::default(),
         };
         let mut model = UserModel::from_model(model);
@@ -1463,13 +1481,15 @@ fn count_formulas(model: &Model) -> usize {
 /// files (read once, so the model and the kept bytes are the same file), the
 /// path and its size/mtime for large ones. Also says whether the workbook asks
 /// to be recalculated when opened (`fullCalcOnLoad`).
-fn open_xlsx(path: &Path) -> Result<(Model<'static>, XlsxSource, bool)> {
-    if is_strict(path) {
-        bail!("Strict Open XML workbooks aren't supported yet");
-    }
+/// `strict` is the Transitional package of a Strict file (always kept in
+/// memory: it isn't the file on disk).
+fn open_xlsx(path: &Path, strict: Option<Vec<u8>>) -> Result<(Model<'static>, XlsxSource, bool)> {
     let meta = fs::metadata(path).with_context(|| format!("opening {}", path.display()))?;
-    if meta.len() <= KEEP_IN_MEMORY {
-        let bytes = fs::read(path).with_context(|| format!("opening {}", path.display()))?;
+    if strict.is_some() || meta.len() <= KEEP_IN_MEMORY {
+        let bytes = match strict {
+            Some(bytes) => bytes,
+            None => fs::read(path).with_context(|| format!("opening {}", path.display()))?,
+        };
         let name = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -1536,19 +1556,20 @@ pub fn cell_name(row: u32, col: u32) -> String {
     format!("{}{}", column_name(col), row + 1)
 }
 
-/// Whether the package is Strict Open XML (ISO/IEC 29500 Strict, its main
-/// part related with a `purl.oclc.org` type), which IronCalc doesn't read.
-fn is_strict(path: &Path) -> bool {
+/// A Strict Open XML package (ISO/IEC 29500 Strict, its main part related
+/// with a `purl.oclc.org` type) as Transitional, which IronCalc and the
+/// readers here read; `None` for any other file.
+fn strict_as_transitional(path: &Path) -> Result<Option<Vec<u8>>> {
     let Ok(file) = fs::File::open(path) else {
-        return false;
+        return Ok(None);
     };
-    let Ok(mut zip) = zip::ZipArchive::new(std::io::BufReader::new(file)) else {
-        return false;
-    };
-    let mut rels = String::new();
-    zip.by_name("_rels/.rels")
-        .is_ok_and(|mut f| std::io::Read::read_to_string(&mut f, &mut rels).is_ok())
-        && rels.contains("http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument")
+    if !kantor_ooxml::is_strict_package(std::io::BufReader::new(file)) {
+        return Ok(None);
+    }
+    let bytes = fs::read(path).with_context(|| format!("opening {}", path.display()))?;
+    kantor_ooxml::to_transitional(&bytes)
+        .map(Some)
+        .with_context(|| format!("opening {}", path.display()))
 }
 
 /// Run a file reader, turning a panic in it (a parser that didn't expect

@@ -11,6 +11,7 @@ anyhow.workspace = true
 ironcalc.workspace = true
 ironcalc_base.workspace = true
 kantor_numfmt.workspace = true
+kantor_ooxml.workspace = true
 calamine.workspace = true
 cfb.workspace = true
 encoding_rs.workspace = true

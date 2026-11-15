@@ -897,12 +897,41 @@ fn self_closing_section_properties_get_page_setup_inside() {
     assert_eq!(back.len(), doc.len());
 }
 
-/// Strict Open XML isn't read yet; the message says so.
+/// Strict Open XML is read as Transitional (the namespace is mapped).
 #[test]
-fn strict_documents_are_named() {
-    let document = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><w:body><w:p/></w:body></w:document>"#;
+fn strict_documents_open() {
+    let document = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main" w:conformance="strict"><w:body><w:p><w:r><w:t>Strict</w:t></w:r></w:p></w:body></w:document>"#;
+    let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let types = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, data) in [
+        ("[Content_Types].xml", types),
+        ("_rels/.rels", rels),
+        ("word/document.xml", document),
+    ] {
+        w.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        w.write_all(data.as_bytes()).unwrap();
+    }
+    let pkg = w.finish().unwrap().into_inner();
     let dir = tempfile::tempdir().unwrap();
-    let path = write_temp(dir.path(), "strict.docx", &bare_package(document));
-    let err = format!("{:#}", Document::open(&path).err().expect("refused"));
-    assert!(err.contains("Strict Open XML"), "{err}");
+    let path = write_temp(dir.path(), "strict.docx", &pkg);
+    let doc = Document::open(&path).unwrap();
+    assert_eq!(doc.paragraphs()[0].text, "Strict");
+}
+
+/// A part starting with a byte order mark (the Open XML SDK writes one)
+/// saves without a stray `>` and opens again.
+#[test]
+fn byte_order_mark_saves() {
+    let document = format!(
+        "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<w:document {W_NS}><w:body><w:p><w:r><w:t>Marked</w:t></w:r></w:p><w:sectPr/></w:body></w:document>"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_temp(dir.path(), "bom.docx", &bare_package(&document));
+    let mut doc = Document::open(&path).unwrap();
+    let out = dir.path().join("saved.docx");
+    doc.save_as(&out).unwrap();
+    let back = Document::open(&out).unwrap();
+    assert_eq!(back.paragraphs()[0].text, "Marked");
 }

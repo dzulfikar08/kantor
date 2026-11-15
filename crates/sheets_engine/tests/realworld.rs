@@ -136,24 +136,42 @@ fn xlsx_rows_and_cells_without_references() {
     );
 }
 
-/// Strict Open XML isn't read yet: say so instead of a parser error.
+/// Strict Open XML (`SimpleStrict.xlsx` from Apache POI was refused): read
+/// as Transitional, ISO 8601 date cells included.
 #[test]
-fn strict_xlsx_is_named() {
+fn strict_xlsx_opens() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("strict.xlsx");
-    let rels = ROOT_RELS.replace(
-        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument",
-        "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument",
-    );
+    let strict = |xml: &str| {
+        xml.replace(
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+            "http://purl.oclc.org/ooxml/officeDocument/relationships",
+        )
+        .replace(
+            "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+            "http://purl.oclc.org/ooxml/spreadsheetml/main",
+        )
+    };
+    let sheet = strict(&sheet(
+        r#"<row r="1"><c r="A1"><v>1</v></c><c r="B1" t="d"><v>1990-01-01</v></c></row>"#,
+    ));
+    let rels = strict(ROOT_RELS);
+    let workbook = strict(WORKBOOK).replace("<workbook ", r#"<workbook conformance="strict" "#);
+    let workbook_rels = strict(&workbook_rels(false));
     write_zip(
         &path,
         &[
             ("[Content_Types].xml", CT.as_bytes()),
             ("_rels/.rels", rels.as_bytes()),
+            ("xl/workbook.xml", workbook.as_bytes()),
+            ("xl/_rels/workbook.xml.rels", workbook_rels.as_bytes()),
+            ("xl/worksheets/sheet1.xml", sheet.as_bytes()),
         ],
     );
-    let err = Workbook::open(&path).err().expect("refused").to_string();
-    assert!(err.contains("Strict Open XML"), "{err}");
+    let wb = Workbook::open(&path).unwrap();
+    assert_eq!(wb.sheet_names(), ["Data"]);
+    assert_eq!(wb.input(0, 0, 0), "1");
+    assert_eq!(wb.input(0, 0, 1), "32874");
 }
 
 /// An `.xlsb` whose sheet names a relationship that isn't there panicked in
