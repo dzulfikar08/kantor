@@ -139,11 +139,13 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      # fontconfig/freetype: office_fidelity's realworld_probe links the PDF crates.
       - name: Install LibreOffice
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            libreoffice-calc libreoffice-writer libreoffice-impress
+            libreoffice-calc libreoffice-writer libreoffice-impress \
+            libfontconfig1-dev libfreetype-dev
 
       - name: Build the scenarios and the validator
         env:
