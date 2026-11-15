@@ -4,6 +4,7 @@
 //! screen and the page in the PDF are the same layout.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use docs_engine::{Align, Document, Level, NoteKind, Object, ResolvedLine, VMerge, font_stack};
 use docs_layout::parley::LineHeight;
@@ -69,6 +70,11 @@ pub struct Marks {
     /// Leave floating objects out of the layout (headers, footers and
     /// notes: their floating objects are placed on the page separately).
     pub no_floats: bool,
+    /// What `PAGE`, `NUMPAGES` and `SECTIONPAGES` fields show (headers and
+    /// footers: the page they're on). `None`: the field's placeholder.
+    pub pages: Option<[String; 3]>,
+    /// Fields showing their codes (Alt+F9 / Shift+F9).
+    pub codes: Option<Arc<docs_engine::CodeView>>,
 }
 
 impl Marks {
@@ -83,6 +89,8 @@ impl Marks {
                 .collect(),
             own: None,
             no_floats: false,
+            pages: None,
+            codes: doc.field_codes().cloned(),
         }
     }
 
@@ -270,6 +278,23 @@ pub fn layout_paragraph(
                     },
                 }
             }
+            // A page number: the number itself, as text.
+            Object::Opaque(_)
+                if let Some(pages) = &marks.pages
+                    && let Some(f) = docs_engine::page_field(obj) =>
+            {
+                InlineObject {
+                    index,
+                    kind: ObjectKind::Text,
+                    width: 0.0,
+                    height: 0.0,
+                    label: match f {
+                        docs_engine::PageField::Page => pages[0].clone(),
+                        docs_engine::PageField::NumPages => pages[1].clone(),
+                        docs_engine::PageField::SectionPages => pages[2].clone(),
+                    },
+                }
+            }
             Object::Opaque(op) => match op.level {
                 Level::Marker | Level::Wrap => hidden(),
                 Level::Block => InlineObject {
@@ -316,6 +341,74 @@ pub fn layout_paragraph(
     // Empty paragraphs take their height from the paragraph defaults above.
     lp.spans.retain(|s| !s.range.is_empty());
     lp
+}
+
+/// Fields showing their codes: `{ PAGEREF _Toc1 \h }` at the start mark,
+/// the result hidden (Word's Alt+F9 / Shift+F9).
+fn show_codes(
+    paras: &[docs_engine::Paragraph],
+    out: &mut [docs_layout::Paragraph],
+    view: &docs_engine::CodeView,
+) {
+    let code = |instr: &str| format!("{{ {} }}", instr.trim());
+    let spans = docs_engine::fields::spans(paras);
+    let shown: Vec<&docs_engine::FieldSpan> =
+        spans.iter().filter(|s| view.shows(s.mark_id())).collect();
+    for s in &shown {
+        if let Some(o) = out[s.begin.para]
+            .objects
+            .iter_mut()
+            .find(|o| o.index == s.begin.offset)
+        {
+            o.kind = ObjectKind::Text;
+            o.label = code(&s.instr);
+            o.width = 0.0;
+            o.height = 0.0;
+        }
+    }
+    for s in &shown {
+        let (a, b) = s.result();
+        for k in a.para..=b.para.min(out.len().saturating_sub(1)) {
+            let from = if k == a.para { a.offset } else { 0 };
+            let to = if k == b.para {
+                b.offset
+            } else {
+                paras[k].text.len()
+            };
+            if from >= to {
+                continue;
+            }
+            out[k].hidden.push(from..to);
+            for o in &mut out[k].objects {
+                if (from..to).contains(&o.index) {
+                    o.kind = ObjectKind::Hidden;
+                    o.label.clear();
+                }
+            }
+        }
+    }
+    // Page numbers are one object each.
+    if view.all {
+        for (k, p) in paras.iter().enumerate() {
+            for (index, obj) in p.objects() {
+                let docs_engine::Object::Opaque(op) = obj else {
+                    continue;
+                };
+                if docs_engine::page_field(obj).is_none() || out[k].is_hidden_at(index) {
+                    continue;
+                }
+                let Some(instr) = docs_engine::section::field_instr(op) else {
+                    continue;
+                };
+                if let Some(o) = out[k].objects.iter_mut().find(|o| o.index == index) {
+                    o.kind = ObjectKind::Text;
+                    o.label = code(&instr);
+                    o.width = 0.0;
+                    o.height = 0.0;
+                }
+            }
+        }
+    }
 }
 
 /// A floating object's placement in layout terms (EMU → px).
@@ -565,6 +658,9 @@ pub fn build_with(
             layout_paragraph(doc, p, marker, widths[k], marks)
         })
         .collect();
+    if let Some(view) = &marks.codes {
+        show_codes(paras, &mut out, view);
+    }
     // Contextual spacing: no space between paragraphs of the same style.
     for k in 0..paras.len() {
         if !doc.resolve_para(&paras[k]).contextual {

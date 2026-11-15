@@ -1,78 +1,44 @@
-//! Footnotes and endnotes in the Docs view: Insert Footnote (Ctrl+Alt+F)
-//! and Insert Endnote (Ctrl+Alt+D) put a numbered reference at the caret
-//! and open the note's popover; double-clicking a note at the bottom of a
-//! page (or its reference in the text) opens it again. The popover edits
-//! the note's text (plain: a note with pictures or tables is shown and
-//! kept, but not edited here), and Delete removes the note with its
-//! reference. Every change is one undo step.
+//! Footnotes and endnotes in the Docs view, edited where they are (see
+//! [`crate::part`]): Insert Footnote (Ctrl+Alt+F) and Insert Endnote
+//! (Ctrl+Alt+D) put a numbered reference at the caret and the caret in the
+//! new note; a click in a note at the bottom of a page (or at the end)
+//! edits it; a double click on a note's number in the text goes to the
+//! note, and on the note's own number back to the text, as in Word.
 
-use docs_engine::{NoteKind, Position};
-use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
-use gpui_kit::component::{Sizable as _, h_flex, tooltip::Tooltip, v_flex};
-use gpui_kit::prelude::*;
+use docs_engine::{NoteKind, Position, Selection};
 use gpui_kit::*;
-use kantor_ui::i18n::{self, t, t_dyn, tk};
-use kantor_ui::tokens::Elevation;
-use kantor_ui::{metrics::*, tokens};
+use kantor_ui::i18n::t;
 
 use crate::DocsView;
 
-/// "Footnote" / "Endnote" in the interface language.
-pub(crate) fn kind_label(kind: NoteKind) -> &'static str {
-    match kind {
-        NoteKind::Footnote => t("Footnote"),
-        NoteKind::Endnote => t("Endnote"),
-    }
-}
-
-/// Why the engine won't edit a header, footer or note, in the interface
-/// language.
-const LOCK_REASONS: [&str; 4] = [
-    tk(
-        "This header has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet",
-    ),
-    tk(
-        "This footer has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet",
-    ),
-    tk(
-        "This footnote has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet",
-    ),
-    tk(
-        "This endnote has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet",
-    ),
-];
-
-pub(crate) fn lock_reason(why: &str) -> &str {
-    if LOCK_REASONS.contains(&why) {
-        t_dyn(why)
-    } else {
-        why
-    }
-}
-
-/// The note being edited.
-pub(crate) struct NoteEdit {
-    kind: NoteKind,
-    id: String,
-    at: Point<Pixels>,
-    input: Entity<TextareaState>,
-    locked: Option<String>,
-    _sub: Subscription,
-}
+/// A note: its kind and id.
+type NoteId = (NoteKind, String);
+/// A point on a page: page index, x, y.
+type PagePoint = (usize, f32, f32);
 
 impl DocsView {
     /// Insert a footnote or endnote at the caret and start writing it.
     pub fn insert_note_doc(&mut self, kind: NoteKind, window: &mut Window, cx: &mut Context<Self>) {
-        self.apply_note(window, cx);
+        // Notes go in the body text (Word has none in headers or notes).
+        self.leave_part(window, cx);
         let (sel, id) = self.doc.insert_note(kind, self.sel);
         self.edited(sel, window, cx);
-        self.open_note(kind, id, None, window, cx);
+        self.edit_note_in_place(kind, &id, None, window, cx);
     }
 
-    /// Edit the note whose reference is at the caret (palette).
+    /// Edit the note whose reference is at the caret (palette), or go back
+    /// to the text from a note.
     pub fn edit_note_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(
+            self.part_target(),
+            Some(crate::part::PartTarget::Note { .. })
+        ) {
+            self.leave_note_to_reference(window, cx);
+            cx.notify();
+            return;
+        }
         match self.doc.note_at(self.sel.head) {
-            Some((kind, id)) => self.open_note(kind, id, None, window, cx),
+            Some((kind, id)) => self.edit_note_in_place(kind, &id, None, window, cx),
             None => {
                 self.status = t("Put the caret after a footnote or endnote number").into();
                 cx.notify();
@@ -80,226 +46,75 @@ impl DocsView {
         }
     }
 
-    /// The note shown at a window point: a note area at the bottom of a
-    /// page, or a reference in the text.
-    pub(crate) fn note_at_point(&self, p: Point<Pixels>) -> Option<(NoteKind, String)> {
+    /// The note drawn at a window point (at the bottom of a page or at the
+    /// end), with the point in page coordinates.
+    pub(crate) fn note_area_at(&self, p: Point<Pixels>) -> Option<(NoteId, PagePoint)> {
         let g = self.geometry();
-        let paged = &self.laid.paged;
-        let (page, x, y) = g.screen_to_page(p, paged.pages.len());
+        let (page, x, y) = g.screen_to_page(p, self.laid.paged.pages.len());
         for placed in self.laid.furniture.get(page).into_iter().flatten() {
             let Some(note) = &placed.note else { continue };
             let [px, py, w, h] = placed.rect();
-            if x >= px && x <= px + w && y >= py && y <= py + h {
-                return Some(note.clone());
+            if x >= px - 4.0 && x <= px + w + 4.0 && y >= py && y <= py + h {
+                return Some((note.clone(), (page, x, y)));
             }
         }
+        None
+    }
+
+    /// The note whose number in the body text is at a window point.
+    pub(crate) fn note_ref_at(&self, p: Point<Pixels>) -> Option<(NoteKind, String)> {
+        if self.part.is_some() {
+            return None;
+        }
+        let g = self.geometry();
+        let paged = &self.laid.paged;
+        let (page, x, y) = g.screen_to_page(p, paged.pages.len());
         let (para, index) = paged.hit_test(page, x, y)?;
-        let pos = Position::new(para, index);
         let c = paged.caret(para, index)?;
         // Only right next to the number.
         ((c.x - x).abs() < 12.0 && c.page == page)
-            .then(|| self.doc.note_at(pos))
+            .then(|| self.doc.note_at(Position::new(para, index)))
             .flatten()
     }
 
-    /// Open the popover on a note (near the caret, or at `at`).
-    pub(crate) fn open_note(
-        &mut self,
-        kind: NoteKind,
-        id: String,
-        at: Option<Point<Pixels>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let at = at.unwrap_or_else(|| {
-            let g = self.geometry();
-            let h = self.sel.head;
-            match self.laid.paged.caret(h.para, h.offset) {
-                Some(c) => {
-                    let p = g.page_to_screen(c.page, c.x, c.top + c.height);
-                    point(p.x, p.y + SPACE_3)
-                }
-                None => {
-                    let b = self.viewport.get();
-                    point(b.origin.x + SPACE_7, b.origin.y + SPACE_7)
-                }
-            }
-        });
-        let text = self.doc.note_text(kind, &id);
-        let locked = self.doc.note_locked(kind, &id);
-        let input = cx.new(|cx| {
-            let mut s = TextareaState::new(window, cx)
-                .auto_grow(2, 8)
-                .placeholder(match kind {
-                    NoteKind::Footnote => t("Write the footnote"),
-                    NoteKind::Endnote => t("Write the endnote"),
-                });
-            s.set_value(text, window, cx);
-            s
-        });
-        let sub = cx.subscribe_in(&input, window, |this, _, ev: &InputEvent, window, cx| {
-            if let InputEvent::PressEnter {
-                secondary: true, ..
-            } = ev
-            {
-                this.apply_note(window, cx);
-                this.focus(window, cx);
-            }
-        });
-        if locked.is_none() {
-            input.update(cx, |s, cx| s.focus(window, cx));
-        }
-        self.note_edit = Some(NoteEdit {
-            kind,
-            id,
-            at,
-            input,
-            locked,
-            _sub: sub,
-        });
-        cx.notify();
+    /// Whether `pos` in the note being edited is at its own number.
+    pub(crate) fn at_own_note_mark(&self, pos: Position) -> bool {
+        let p = self.doc.paragraph(pos.para);
+        let before = pos.offset.saturating_sub(docs_engine::OBJECT.len_utf8());
+        [pos.offset, before]
+            .into_iter()
+            .filter_map(|o| p.object_at(o))
+            .any(|o| {
+                matches!(o, docs_engine::Object::Opaque(op)
+                    if NoteKind::of_element(docs_engine::model::element_name(&op.xml)).is_some())
+            })
     }
 
-    /// Write the open note's text (one undo step) and close the popover.
-    pub(crate) fn apply_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(edit) = self.note_edit.take() else {
-            return;
+    /// Delete the note being edited, or the one whose number is at the
+    /// caret, with its number in the text (palette).
+    pub fn delete_note_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let note = match self.part_target() {
+            Some(crate::part::PartTarget::Note { kind, id }) => Some((*kind, id.clone())),
+            _ => None,
         };
-        if edit.locked.is_some() {
+        if note.is_some() {
+            self.leave_part(window, cx);
+        }
+        let Some((kind, id)) = note.or_else(|| self.doc.note_at(self.sel.head)) else {
+            self.status = t("Put the caret after a footnote or endnote number").into();
             cx.notify();
             return;
-        }
-        // Ctrl+Enter may have put a line break in before it closes.
-        let value = edit.input.read(cx).value().to_string();
-        let text = value.trim_end_matches(['\n', '\r']);
-        if self.doc.note_text(edit.kind, &edit.id) != text
-            && self.doc.set_note_text(edit.kind, &edit.id, text, self.sel)
-        {
-            let sel = self.sel;
-            self.edited(sel, window, cx);
-            self.status = match edit.kind {
-                NoteKind::Footnote => t("Footnote updated"),
-                NoteKind::Endnote => t("Endnote updated"),
-            }
-            .into();
-        }
-        cx.notify();
-    }
-
-    fn delete_open_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(edit) = self.note_edit.take() else {
-            return;
         };
-        if self.doc.delete_note(edit.kind, &edit.id, self.sel) {
-            let sel = self.sel;
-            self.edited(sel, window, cx);
-            self.status = match edit.kind {
+        let sel = self.sel;
+        if self.doc.delete_note(kind, &id, sel) {
+            let sel = self.doc.clamp_selection(sel);
+            self.edited(Selection::caret(sel.head), window, cx);
+            self.status = match kind {
                 NoteKind::Footnote => t("Footnote deleted"),
                 NoteKind::Endnote => t("Endnote deleted"),
             }
             .into();
         }
-        self.focus(window, cx);
         cx.notify();
-    }
-
-    pub(crate) fn render_note_menu(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement + use<>> {
-        let edit = self.note_edit.as_ref()?;
-        let t = tokens(cx);
-        let view = cx.entity().downgrade();
-        let label = self
-            .doc
-            .note_refs()
-            .into_iter()
-            .find(|r| r.kind == edit.kind && r.id == edit.id)
-            .map(|r| r.label)
-            .unwrap_or_default();
-        let title = format!("{} {label}", kind_label(edit.kind));
-        let button = |id: &'static str, text: &'static str, primary: bool| {
-            div()
-                .id(id)
-                .flex_none()
-                .h(CONTROL_SM)
-                .px(SPACE_5)
-                .flex()
-                .items_center()
-                .rounded(RADIUS_MD)
-                .cursor_pointer()
-                .when(primary, |d| d.bg(t.accent).text_color(t.accent_fg))
-                .when(!primary, |d| {
-                    d.text_color(t.fg_muted)
-                        .hover(|s| s.bg(t.hover).text_color(t.fg))
-                })
-                .child(text)
-        };
-        let body = match &edit.locked {
-            Some(why) => div()
-                .p(SPACE_3)
-                .rounded(RADIUS_MD)
-                .bg(t.surface)
-                .text_color(t.fg_muted)
-                .child(lock_reason(why).to_owned())
-                .into_any_element(),
-            None => Textarea::new(&edit.input).small().into_any_element(),
-        };
-        let delete = {
-            let v = view.clone();
-            button("docs-note-delete", i18n::t("Delete"), false)
-                .tooltip(|window, cx| {
-                    Tooltip::new(i18n::t("Delete the note and its number in the text"))
-                        .build(window, cx)
-                })
-                .on_click(move |_, window, cx| {
-                    let _ = v.update(cx, |this, cx| this.delete_open_note(window, cx));
-                })
-        };
-        let done = {
-            let v = view.clone();
-            button("docs-note-apply", i18n::t("Done"), true)
-                .tooltip(|window, cx| {
-                    Tooltip::new(format!("{}  Ctrl+Enter", i18n::t("Done"))).build(window, cx)
-                })
-                .on_click(move |_, window, cx| {
-                    let _ = v.update(cx, |this, cx| {
-                        this.apply_note(window, cx);
-                        this.focus(window, cx);
-                    });
-                })
-        };
-        let panel = v_flex()
-            .id("docs-note-menu")
-            .occlude()
-            .w(REM * 22.)
-            .gap(SPACE_3)
-            .p(SPACE_4)
-            .bg(t.elevated)
-            .border_1()
-            .border_color(t.border)
-            .rounded(RADIUS_LG)
-            .shadow(t.shadow(Elevation::Popover))
-            .text_size(FONT_SMALL)
-            .text_color(t.fg)
-            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                this.apply_note(window, cx);
-            }))
-            .child(div().text_color(t.fg_muted).child(title))
-            .child(body)
-            .child(
-                h_flex()
-                    .gap(SPACE_2)
-                    .child(delete)
-                    .child(div().flex_1())
-                    .child(done),
-            );
-        Some(deferred(
-            anchored()
-                .position(edit.at)
-                .anchor(Anchor::TopLeft)
-                .snap_to_window_with_margin(SPACE_4)
-                .child(panel),
-        ))
     }
 }

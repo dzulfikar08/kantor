@@ -3366,6 +3366,16 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
             replace.insert(st.part.clone(), part);
         }
     }
+    // Pictures inserted into headers and footers in Kantor.
+    for st in doc.stories().iter().filter(|s| s.modified) {
+        part_media(
+            &mut src,
+            pkg,
+            &st.part,
+            &[&st.doc],
+            (&mut replace, &mut add, &mut defaults),
+        )?;
+    }
     // Comments changed in Kantor.
     if doc.comments_modified {
         let with_styles = doc.styles.get("CommentText").is_some();
@@ -3439,6 +3449,19 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
         };
         let bytes =
             crate::notes::write_notes(&part.root_tag, kind, doc.notes(), &body_xml).into_bytes();
+        let docs: Vec<&Document> = doc
+            .notes()
+            .iter()
+            .filter(|n| n.kind == kind)
+            .map(|n| &n.doc)
+            .collect();
+        part_media(
+            &mut src,
+            pkg,
+            &part.name,
+            &docs,
+            (&mut replace, &mut add, &mut defaults),
+        )?;
         if pkg.notes[k].is_some() {
             replace.insert(part.name.clone(), bytes);
             continue;
@@ -3591,6 +3614,75 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
         out.write_all(&bytes)?;
     }
     Ok(out.finish()?.into_inner())
+}
+
+/// Pictures inserted in Kantor into `docs` (a header, footer or the notes
+/// of a notes part) that they still use: their files, relationships in the
+/// part's own `.rels` (created if missing) and content types.
+#[allow(clippy::type_complexity)]
+fn part_media<'a>(
+    src: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    pkg: &Package,
+    part: &str,
+    docs: &[&'a Document],
+    (replace, add, defaults): (
+        &mut HashMap<String, Vec<u8>>,
+        &mut Vec<(String, Vec<u8>)>,
+        &mut BTreeSet<(&'a str, &'a str)>,
+    ),
+) -> anyhow::Result<()> {
+    let mut rels_add = String::new();
+    let rels_name = rels_name(part);
+    let existing = zip_text(src, &rels_name)?;
+    let has_id = |id: &str| {
+        existing
+            .as_deref()
+            .is_some_and(|r| r.contains(&format!("Id=\"{id}\"")))
+    };
+    let mut seen = HashSet::new();
+    for d in docs {
+        let used: HashSet<&str> = d
+            .paragraphs()
+            .iter()
+            .flat_map(|p| p.objects())
+            .filter_map(|(_, o)| match o {
+                Object::Image(i) => Some(i.rel_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        for m in d.new_media() {
+            if !used.contains(m.rel_id.as_str()) || !seen.insert(m.rel_id.clone()) {
+                continue;
+            }
+            if !pkg.has_part(&m.part) && !add.iter().any(|(n, _)| *n == m.part) {
+                add.push((m.part.clone(), m.bytes.to_vec()));
+            }
+            if !has_id(&m.rel_id) {
+                rels_add.push_str(&format!(
+                    "<Relationship Id=\"{}\" Type=\"{REL_IMAGE}\" Target=\"{}\"/>",
+                    escape(&m.rel_id),
+                    escape(&relative_to(part, &m.part))
+                ));
+            }
+            let f = ImageFormat::from_name(&m.part);
+            defaults.insert((f.extension(), f.content_type()));
+        }
+    }
+    if rels_add.is_empty() {
+        return Ok(());
+    }
+    let base = existing.unwrap_or_else(|| {
+        format!(
+            "{XML_DECL}<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"></Relationships>"
+        )
+    });
+    let out = insert_before_close(&base, "</Relationships>", &rels_add).into_bytes();
+    if src.by_name(&rels_name).is_ok() {
+        replace.insert(rels_name, out);
+    } else {
+        add.push((rels_name, out));
+    }
+    Ok(())
 }
 
 /// A relationship id not used by the document part.

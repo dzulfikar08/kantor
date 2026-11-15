@@ -70,6 +70,11 @@ impl FieldSpan {
     fn id(&self) -> usize {
         Arc::as_ptr(&self.mark) as usize
     }
+
+    /// Tells fields apart across edits (the start mark is shared).
+    pub fn mark_id(&self) -> usize {
+        self.id()
+    }
 }
 
 /// The fields in `paras`, ordered by where they start.
@@ -547,17 +552,25 @@ pub struct FieldContext {
 
 /// The file's document properties (`docProps/core.xml`, `app.xml`,
 /// `custom.xml`).
-#[derive(Default)]
-struct Props {
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Props {
     core: String,
     app: String,
     custom: Vec<(String, String)>,
+    path: Option<std::path::PathBuf>,
 }
 
 impl Props {
-    fn of(doc: &Document) -> Self {
+    pub(crate) fn of(doc: &Document) -> Self {
+        if let Some(p) = &doc.field_props {
+            return (**p).clone();
+        }
+        let path = doc.path().map(|p| p.to_path_buf());
         let Some(pkg) = &doc.package else {
-            return Self::default();
+            return Self {
+                path,
+                ..Self::default()
+            };
         };
         let custom = pkg
             .part_text("docProps/custom.xml")
@@ -567,6 +580,7 @@ impl Props {
             core: pkg.part_text("docProps/core.xml").unwrap_or_default(),
             app: pkg.part_text("docProps/app.xml").unwrap_or_default(),
             custom,
+            path,
         }
     }
 
@@ -725,6 +739,10 @@ fn text_between(paras: &[Paragraph], a: Position, b: Position) -> String {
 impl Document {
     /// A paragraph's outline level from its style (1–9: built-in headings
     /// and styles with `w:outlineLvl`), if it has one.
+    pub(crate) fn heading_level(&self, p: &Paragraph) -> Option<u8> {
+        self.style_level(p)
+    }
+
     fn style_level(&self, p: &Paragraph) -> Option<u8> {
         for st in self
             .styles
@@ -857,7 +875,7 @@ impl<'a> Eval<'a> {
                 Some(v) => text(v),
                 None => Outcome::Keep,
             },
-            "FILENAME" => match self.doc.path() {
+            "FILENAME" => match self.props.path.as_deref() {
                 Some(path) => {
                     let s = if i.has("p") {
                         path.display().to_string()
@@ -918,9 +936,19 @@ impl<'a> Eval<'a> {
         })
     }
 
+    /// A bookmark that isn't there: Word's error, except in a header,
+    /// footer or note (its bookmark may be in the body: keep the result).
+    fn missing(&self) -> Outcome {
+        if self.doc.field_props.is_some() {
+            Outcome::Keep
+        } else {
+            Outcome::Text(NO_BOOKMARK.into())
+        }
+    }
+
     fn reference(&self, i: &Instr, name: Option<&str>) -> Outcome {
         let Some(b) = name.and_then(|n| self.bookmark(n)) else {
-            return Outcome::Text(NO_BOOKMARK.into());
+            return self.missing();
         };
         if i.has("n") || i.has("r") || i.has("w") {
             let markers = self.doc.list_markers_of(self.paras);
@@ -937,7 +965,7 @@ impl<'a> Eval<'a> {
 
     fn note_ref(&self, i: &Instr) -> Outcome {
         let Some(b) = i.args.first().and_then(|n| self.bookmark(n)) else {
-            return Outcome::Text(NO_BOOKMARK.into());
+            return self.missing();
         };
         let end = b.end.unwrap_or(b.start);
         let refs = self.doc.note_refs();
@@ -952,7 +980,7 @@ impl<'a> Eval<'a> {
             return Outcome::Keep;
         };
         let Some(b) = i.args.first().and_then(|n| self.bookmark(n)) else {
-            return Outcome::Text(NO_BOOKMARK.into());
+            return self.missing();
         };
         let Some(page) = pages.page_of(b.start) else {
             return Outcome::Keep;
@@ -1589,6 +1617,24 @@ fn keeps_result(kind: &str) -> bool {
     )
 }
 
+/// Which fields show their codes instead of their results (Word's
+/// Alt+F9 for all of them, Shift+F9 for one): a view setting, not saved.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CodeView {
+    /// Every field (Alt+F9).
+    pub all: bool,
+    /// These fields (by [`FieldSpan::mark_id`]) toggled one by one: with
+    /// `all`, these show their results instead.
+    pub ids: HashSet<usize>,
+}
+
+impl CodeView {
+    /// Whether the field shows its code.
+    pub fn shows(&self, id: usize) -> bool {
+        self.all != self.ids.contains(&id)
+    }
+}
+
 /// Where a hyperlink goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LinkTarget {
@@ -1599,6 +1645,16 @@ pub enum LinkTarget {
 }
 
 impl Document {
+    /// Which fields show their codes (layout reads it).
+    pub fn field_codes(&self) -> Option<&Arc<CodeView>> {
+        self.field_codes.as_ref()
+    }
+
+    /// Show field codes as `view` says (`None`: results everywhere).
+    pub fn set_field_codes(&mut self, view: Option<CodeView>) {
+        self.field_codes = view.filter(|v| v.all || !v.ids.is_empty()).map(Arc::new);
+    }
+
     /// The fields in the body, ordered by where they start.
     pub fn fields(&self) -> Vec<FieldSpan> {
         spans(&self.paragraphs)
@@ -1678,7 +1734,7 @@ impl Document {
         self.fields().iter().any(|s| s.kind() == "TOC")
     }
 
-    fn update_targets(
+    pub(crate) fn update_targets(
         &mut self,
         sel: Selection,
         targets: Vec<usize>,

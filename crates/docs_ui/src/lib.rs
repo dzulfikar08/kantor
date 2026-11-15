@@ -21,6 +21,7 @@ extern crate gpui_kit as gpui;
 
 mod agent;
 mod ai;
+mod field_menu;
 mod fields;
 mod find;
 mod floats;
@@ -29,6 +30,7 @@ mod hf_menu;
 mod input;
 mod note_menu;
 mod page_menu;
+mod part;
 mod review;
 mod ruler;
 mod spell;
@@ -65,6 +67,9 @@ pub use docs_engine::Toggle as DocsToggle;
 
 /// Key context of the document view.
 pub const KEY_CONTEXT: &str = "DocsEditor";
+
+/// Key context of the Docs popovers and bars with text boxes.
+pub(crate) const POPOVER_CONTEXT: &str = "DocsPopover";
 
 actions!(
     docs,
@@ -141,6 +146,10 @@ actions!(
         InsertEndnote,
         UpdateFields,
         UpdateTable,
+        ToggleFieldCodes,
+        ToggleFieldCode,
+        InsertFieldChars,
+        PopoverKey,
         ZoomIn,
         ZoomOut,
         ZoomReset,
@@ -152,6 +161,11 @@ pub fn init(cx: &mut App) {
     ruler::init(cx);
     kantor_ui::spelling::init(cx);
     kantor_ui::find_bar::bind_app_keys(KEY_CONTEXT, cx);
+    cx.bind_keys(key_bindings());
+}
+
+/// The Docs view's key bindings.
+fn key_bindings() -> Vec<KeyBinding> {
     let c = Some(KEY_CONTEXT);
     let mut keys = vec![
         KeyBinding::new("left", MoveLeft, c),
@@ -209,6 +223,14 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("tab", Tab, c),
         KeyBinding::new("shift-tab", BackTab, c),
         KeyBinding::new("f9", UpdateFields, c),
+        // Keys a popover's text box doesn't use stay out of the page (an
+        // Enter there would also split the paragraph).
+        KeyBinding::new("enter", PopoverKey, Some(POPOVER_CONTEXT)),
+        KeyBinding::new("tab", PopoverKey, Some(POPOVER_CONTEXT)),
+        KeyBinding::new("shift-tab", PopoverKey, Some(POPOVER_CONTEXT)),
+        KeyBinding::new("alt-f9", ToggleFieldCodes, c),
+        KeyBinding::new("shift-f9", ToggleFieldCode, c),
+        KeyBinding::new(kantor_ui::keys::primary("ctrl-f9"), InsertFieldChars, c),
     ];
     // Shortcuts with the primary modifier: Ctrl, and Super as Mac-style Cmd.
     macro_rules! primary {
@@ -253,7 +275,7 @@ pub fn init(cx: &mut App) {
         "shift-8" => ToggleBullets,
         "*" => ToggleBullets,
     );
-    cx.bind_keys(keys);
+    keys
 }
 
 /// The parley engine and the font bridge, shared by every Docs view.
@@ -312,6 +334,9 @@ struct Laid {
     /// Layout paragraphs when some text is struck through (else empty).
     strikes: Arc<Vec<docs_layout::Paragraph>>,
     boxes: Rc<PageBoxes>,
+    /// Where the header, footer or note being edited is drawn (`None`:
+    /// the body is edited). See [`part`].
+    part: Option<Vec<part::Piece>>,
 }
 
 /// Page sizes and their stacking: page `i`'s top is `tops[i]` in document
@@ -472,12 +497,10 @@ pub struct DocsView {
     /// (so that click on the toolbar control doesn't reopen it).
     page_menu: Option<page_menu::PageMenu>,
     page_menu_closed: Option<std::time::Instant>,
-    /// The header/footer popover, as the Page one.
+    /// The Header & Footer bar's fields (while one is edited).
     hf_menu: Option<hf_menu::HfMenu>,
-    hf_menu_closed: Option<std::time::Instant>,
     /// A comment being written or edited in its card.
     comment_edit: Option<review::CommentEdit>,
-    note_edit: Option<note_menu::NoteEdit>,
     /// The markup column with comment cards.
     comments_visible: bool,
     /// A margin, indent or tab stop being dragged on the ruler.
@@ -513,6 +536,10 @@ pub struct DocsView {
     float_drag: Option<floats::FloatDrag>,
     text_box_edit: Option<floats::TextBoxEdit>,
     painter: Rc<docs_pdf::floats::Painter>,
+    /// A header, footer or note being edited on the page.
+    part: Option<part::PartSession>,
+    /// The field code, Insert Field, Bookmark or Cross-reference popover.
+    field_menu: Option<field_menu::FieldMenu>,
 }
 
 /// Cache key: everything that affects shaping and line breaking.
@@ -527,7 +554,7 @@ fn layout_key(p: &docs_layout::Paragraph, width: f32) -> u64 {
     for v in [p.indent_left_pt, p.indent_right_pt, p.first_line_pt] {
         v.to_bits().hash(&mut h);
     }
-    format!("{:?}{:?}{:?}", p.marker, p.objects, p.tabs).hash(&mut h);
+    format!("{:?}{:?}{:?}{:?}", p.marker, p.objects, p.tabs, p.hidden).hash(&mut h);
     p.default_tab.to_bits().hash(&mut h);
     p.decimal.hash(&mut h);
     for s in &p.spans {
@@ -589,6 +616,7 @@ impl DocsView {
                 floats: Vec::new(),
                 strikes: Arc::default(),
                 boxes: Rc::default(),
+                part: None,
             }),
             cache: HashMap::new(),
             images: HashMap::new(),
@@ -596,9 +624,7 @@ impl DocsView {
             page_menu: None,
             page_menu_closed: None,
             hf_menu: None,
-            hf_menu_closed: None,
             comment_edit: None,
-            note_edit: None,
             comments_visible: true,
             ruler_drag: None,
             ruler_tab: docs_engine::TabKind::Left,
@@ -621,6 +647,8 @@ impl DocsView {
             float_drag: None,
             text_box_edit: None,
             painter: Rc::new(docs_pdf::floats::Painter::new(&doc_for_painter)),
+            part: None,
+            field_menu: None,
         };
         this.relayout();
         this.refresh_spelling(cx);
@@ -634,23 +662,43 @@ impl DocsView {
         let mut engine = self.engine.borrow_mut();
         let mut fresh = HashMap::with_capacity(self.doc.len());
         let cache = &self.cache;
-        let laid = docs_pdf::lay_out_with(&self.doc, &mut |p, width| {
-            let key = layout_key(p, width);
-            let layout = match cache.get(&key).or_else(|| fresh.get(&key)) {
-                Some(l) => l.clone(),
-                None => Arc::new(engine.layout_paragraph(p, width)),
-            };
-            fresh.insert(key, layout.clone());
-            layout
-        });
+        let mut lay = |doc: &Document| {
+            docs_pdf::lay_out_with(doc, &mut |p, width| {
+                let key = layout_key(p, width);
+                let layout = match cache.get(&key).or_else(|| fresh.get(&key)) {
+                    Some(l) => l.clone(),
+                    None => Arc::new(engine.layout_paragraph(p, width)),
+                };
+                fresh.insert(key, layout.clone());
+                layout
+            })
+        };
+        // A part being edited goes back into the main document while it
+        // is laid out.
+        let (laid, texts) = match &mut self.part {
+            Some(s) => {
+                s.main.swap_part(&s.edit, &mut self.doc);
+                let laid = lay(&s.main);
+                s.main.swap_part(&s.edit, &mut self.doc);
+                let texts = s.main.paragraphs().iter().map(|p| p.text.clone()).collect();
+                (laid, texts)
+            }
+            None => {
+                let laid = lay(&self.doc);
+                let texts = self
+                    .doc
+                    .paragraphs()
+                    .iter()
+                    .map(|p| p.text.clone())
+                    .collect();
+                (laid, texts)
+            }
+        };
+        drop(lay);
         self.cache = fresh;
-        let texts = self
-            .doc
-            .paragraphs()
-            .iter()
-            .map(|p| p.text.clone())
-            .collect();
+        drop(engine);
         let boxes = Rc::new(PageBoxes::of(&laid.paged));
+        let part = self.part_pieces(&laid.furniture);
         self.laid = Rc::new(Laid {
             paged: laid.paged,
             texts,
@@ -658,6 +706,7 @@ impl DocsView {
             floats: laid.floats,
             strikes: laid.strikes,
             boxes,
+            part,
         });
     }
 
@@ -691,11 +740,7 @@ impl DocsView {
         if g.size.height <= px(0.) {
             return;
         }
-        let Some(c) = self
-            .laid
-            .paged
-            .caret(self.sel.head.para, self.sel.head.offset)
-        else {
+        let Some(c) = self.laid.caret(self.sel.head.para, self.sel.head.offset) else {
             return;
         };
         let top = g.page_top(c.page) + c.top - PAGE_GAP;
@@ -768,15 +813,15 @@ impl DocsView {
 
     fn vertical(&mut self, down: bool, extend: bool, cx: &mut Context<Self>) {
         let head = self.sel.head;
-        let paged = &self.laid.paged;
+        let laid = &self.laid;
         let x = match self.goal_x {
             Some(x) => x,
-            None => match paged.caret(head.para, head.offset) {
+            None => match laid.caret(head.para, head.offset) {
                 Some(c) => c.x,
                 None => return,
             },
         };
-        let pos = match paged.vertical(head.para, head.offset, x, down) {
+        let pos = match laid.vertical(head.para, head.offset, x, down) {
             Some((para, offset)) => Position::new(para, offset),
             None if down => self.doc.end(),
             None => Position::default(),
@@ -788,7 +833,7 @@ impl DocsView {
     fn line_edge(&mut self, end: bool, extend: bool, cx: &mut Context<Self>) {
         self.goal_x = None;
         let head = self.sel.head;
-        let Some((range, soft)) = self.laid.paged.line_range(head.para, head.offset) else {
+        let Some((range, soft)) = self.laid.line_range(head.para, head.offset) else {
             return;
         };
         let text = &self.doc.paragraph(head.para).text;
@@ -816,6 +861,15 @@ impl DocsView {
     }
 
     fn page_move(&mut self, down: bool, extend: bool, cx: &mut Context<Self>) {
+        if self.laid.editing_part() {
+            let pos = if down {
+                self.doc.end()
+            } else {
+                Position::default()
+            };
+            self.move_to(pos, extend, cx);
+            return;
+        }
         let g = self.geometry();
         let head = self.sel.head;
         let paged = &self.laid.paged;
@@ -902,7 +956,6 @@ impl DocsView {
     /// The page showing the caret.
     pub(crate) fn caret_page(&self) -> usize {
         self.laid
-            .paged
             .caret(self.sel.head.para, self.sel.head.offset)
             .map_or(0, |c| c.page)
     }
@@ -1119,42 +1172,52 @@ impl DocsView {
 
     /// The file name, or the shell-given name while there is no file.
     fn name(&self) -> String {
+        let doc = self.main_doc();
         match &self.untitled_name {
-            Some(name) if self.doc.source_path().is_none() => name.clone(),
-            _ => self.doc.title(),
+            Some(name) if doc.source_path().is_none() => name.clone(),
+            _ => doc.title(),
         }
     }
 
     /// The file this document shows (an imported `.rtf` or `.doc` too,
     /// though Save never writes there).
     pub fn path(&self, _: &App) -> Option<PathBuf> {
-        self.doc.source_path().map(|p| p.to_path_buf())
+        self.main_doc().source_path().map(|p| p.to_path_buf())
     }
 
     pub fn is_dirty(&self, _: &App) -> bool {
-        self.doc.is_dirty()
+        self.dirty()
+    }
+
+    /// Unsaved changes (a header, footer or note being edited included).
+    fn dirty(&self) -> bool {
+        match &self.part {
+            Some(s) => s.main.is_dirty() || s.main.part_changed(&s.edit, &self.doc),
+            None => self.doc.is_dirty(),
+        }
     }
 
     /// Changes with every edit, undo and redo.
     pub fn revision(&self, _: &App) -> Option<u64> {
-        Some(self.doc.revision())
+        Some(match &self.part {
+            Some(s) => s.main.revision().wrapping_add(self.doc.revision()),
+            None => self.doc.revision(),
+        })
     }
 
     /// The document as Save would write it (for a recovery copy), what the
     /// original has that Kantor can't keep.
     pub fn recovery_bytes(&self, _: &App) -> (anyhow::Result<Vec<u8>>, Vec<String>) {
-        (
-            self.doc.to_docx_bytes(),
-            self.doc.unsupported_content().to_vec(),
-        )
+        let doc = self.whole_doc();
+        (doc.to_docx_bytes(), doc.unsupported_content().to_vec())
     }
 
     /// Whether autosave may save it: it has a file it can be saved to
     /// as is, unchanged on disk by others.
     pub fn can_autosave(&self, _: &App) -> bool {
-        !self.doc.needs_save_as()
-            && !self
-                .doc
+        let doc = self.main_doc();
+        !doc.needs_save_as()
+            && !doc
                 .path()
                 .is_some_and(|p| self.disk_guard.as_ref().is_some_and(|g| g.changed(p)))
     }
@@ -1165,7 +1228,7 @@ impl DocsView {
     }
 
     pub fn title(&self, _: &App) -> String {
-        let dirty = if self.doc.is_dirty() { "• " } else { "" };
+        let dirty = if self.dirty() { "• " } else { "" };
         format!("{dirty}{} — Kantor Docs", self.name())
     }
 
@@ -1194,10 +1257,10 @@ impl DocsView {
         let pages = self.laid.paged.pages.len();
         let page = self
             .laid
-            .paged
             .caret(self.sel.head.para, self.sel.head.offset)
             .map_or(1, |c| c.page + 1);
-        let total = (self.doc.word_count(), self.doc.char_count());
+        let main = self.main_doc();
+        let total = (main.word_count(), main.char_count());
         let (start, end) = self.sel.ordered();
         let selected = (start != end).then(|| self.doc.stats_in(start, end));
         let counts = count_text(total, selected);
@@ -1205,6 +1268,7 @@ impl DocsView {
     }
 
     pub fn info(&self) -> DocInfo {
+        let main = self.main_doc();
         let p = self.doc.paragraph(self.sel.head.para);
         let style = p
             .props
@@ -1215,16 +1279,16 @@ impl DocsView {
         let r = self.doc.resolved_at(self.sel.head);
         DocInfo {
             name: self.name(),
-            path: self.doc.source_path().map(|p| p.to_path_buf()),
-            dirty: self.doc.is_dirty(),
+            path: main.source_path().map(|p| p.to_path_buf()),
+            dirty: self.dirty(),
             pages: self.laid.paged.pages.len(),
-            words: self.doc.word_count(),
-            chars: self.doc.char_count(),
-            paragraphs: self.doc.len(),
+            words: main.word_count(),
+            chars: main.char_count(),
+            paragraphs: main.len(),
             style,
             font: format!("{} {} pt", r.font, r.size_pt),
-            unsupported: self.doc.unsupported_content().to_vec(),
-            preserved: self.doc.preserved_content().to_vec(),
+            unsupported: main.unsupported_content().to_vec(),
+            preserved: main.preserved_content().to_vec(),
         }
     }
 
@@ -1239,11 +1303,11 @@ impl DocsView {
     }
 
     fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
-        if self.doc.needs_save_as() {
+        if self.main_doc().needs_save_as() {
             self.save_as_task(window, cx).detach();
             return;
         }
-        if let Some(target) = self.doc.path().map(|p| p.to_path_buf())
+        if let Some(target) = self.main_doc().path().map(|p| p.to_path_buf())
             && self.disk_guard.as_ref().is_some_and(|g| g.changed(&target))
         {
             let view = cx.entity().downgrade();
@@ -1265,8 +1329,25 @@ impl DocsView {
             );
             return;
         }
-        let result = self.doc.save();
+        let result = self.save_whole(window, cx, |doc| doc.save());
         self.after_save(result, window, cx);
+    }
+
+    /// Run a save on the whole document: a header, footer or note being
+    /// edited is committed (one undo step) and goes on being edited.
+    pub(crate) fn save_whole(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut Document) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        self.commit_part(window, cx);
+        let swapped = self.whole_in();
+        let result = f(&mut self.doc);
+        if swapped {
+            self.whole_out();
+        }
+        result
     }
 
     fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
@@ -1276,6 +1357,7 @@ impl DocsView {
     /// Save before the document closes. Resolves to `true` once saved;
     /// `false` if Save As was cancelled or saving failed.
     pub fn save_for_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        self.leave_part(window, cx);
         if self.doc.needs_save_as() {
             return self.save_as_task(window, cx);
         }
@@ -1285,6 +1367,7 @@ impl DocsView {
 
     /// Ask for a path and save there; resolves to whether the document is saved.
     fn save_as_task(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        self.leave_part(window, cx);
         if self.doc.has_unsupported_content() {
             let msg = t(
                 "{} has content Kantor can't keep ({}), so it's saved as a new file; the original stays as it is",
@@ -1322,9 +1405,9 @@ impl DocsView {
                 path.set_extension("docx");
             }
             this.update_in(cx, |this, window, cx| {
-                let result = this.doc.save_as(&path);
+                let result = this.save_whole(window, cx, |doc| doc.save_as(&path));
                 this.after_save(result, window, cx);
-                !this.doc.is_dirty()
+                !this.dirty()
             })
             .unwrap_or(false)
         })
@@ -1339,7 +1422,7 @@ impl DocsView {
     /// subsetting, pictures) and writing run in the background.
     fn export_pdf(&mut self, _: &ExportPdf, window: &mut Window, cx: &mut Context<Self>) {
         let dir = self
-            .doc
+            .main_doc()
             .source_path()
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf())
@@ -1381,13 +1464,25 @@ impl DocsView {
     /// Write the laid-out pages to `path` in the background; `open` hands
     /// the file to the system's PDF viewer afterwards (Print).
     fn write_pdf(&mut self, path: PathBuf, open: bool, cx: &mut Context<Self>) {
-        let scene = docs_pdf::scene_of(
-            &self.doc,
-            &self.laid.paged,
-            &self.laid.furniture,
-            &self.laid.floats,
-            &self.laid.strikes,
-        );
+        let swapped = self.whole_in();
+        // Printed with field results, whatever shows on screen (Word).
+        let scene = if self.doc.field_codes().is_some() {
+            let mut doc = self.doc.clone();
+            doc.set_field_codes(None);
+            let laid = docs_pdf::lay_out(&doc, &mut self.engine.borrow_mut());
+            docs_pdf::scene(&doc, &laid)
+        } else {
+            docs_pdf::scene_of(
+                &self.doc,
+                &self.laid.paged,
+                &self.laid.furniture,
+                &self.laid.floats,
+                &self.laid.strikes,
+            )
+        };
+        if swapped {
+            self.whole_out();
+        }
         let pages = scene.pages.len().max(1);
         self.status = if open {
             tf("Preparing to print {}…", &[&display_name(&path)])
@@ -1437,7 +1532,7 @@ impl DocsView {
             self.disk_guard = None;
         }
         self.status = match result {
-            Ok(()) => tf("Saved {}", &[&self.doc.title()]).into(),
+            Ok(()) => tf("Saved {}", &[&self.main_doc().title()]).into(),
             Err(err) => tf("Save failed: {}", &[&format!("{err:#}")]).into(),
         };
         self.update_title(window, cx);
@@ -1448,9 +1543,8 @@ impl DocsView {
 
     fn hit(&self, p: Point<Pixels>) -> Option<Position> {
         let g = self.geometry();
-        let paged = &self.laid.paged;
-        let (page, x, y) = g.screen_to_page(p, paged.pages.len());
-        let (para, offset) = paged.hit_test(page, x, y)?;
+        let (page, x, y) = g.screen_to_page(p, self.laid.paged.pages.len());
+        let (para, offset) = self.laid.hit_test(page, x, y)?;
         Some(self.doc.clamp(Position::new(para, offset)))
     }
 
@@ -1476,9 +1570,8 @@ impl DocsView {
     /// The object box under a window point.
     fn object_at(&self, p: Point<Pixels>) -> Option<PlacedObject> {
         let g = self.geometry();
-        let paged = &self.laid.paged;
-        let (page, x, y) = g.screen_to_page(p, paged.pages.len());
-        paged.objects(page).into_iter().find(|o| {
+        let (page, x, y) = g.screen_to_page(p, self.laid.paged.pages.len());
+        self.laid.objects(page).into_iter().find(|o| {
             let [ox, oy, w, h] = o.rect;
             x >= ox && x <= ox + w && y >= oy && y <= oy + h
         })
@@ -1488,25 +1581,38 @@ impl DocsView {
         window.focus(&self.focus, cx);
         self.table_picker = None;
         self.spell.typing = false;
-        if self.float_mouse_down(ev, window, cx) {
-            return;
-        }
-        // A double click on a footnote or endnote (or its number) edits it.
-        if ev.click_count == 2
-            && let Some((kind, id)) = self.note_at_point(ev.position)
-        {
-            let at = point(ev.position.x + SPACE_3, ev.position.y + SPACE_3);
-            self.open_note(kind, id, Some(at), window, cx);
-            return;
-        }
-        // A double click in a page's top or bottom margin edits its header
-        // or footer (as in Word).
-        if ev.click_count == 2
-            && let Some(kind) = self.margin_at(ev.position)
-        {
-            let at = point(ev.position.x + SPACE_7, ev.position.y + SPACE_3);
-            self.open_hf_menu(kind, Some(at), window, cx);
-            return;
+        let inside = match self.part_mouse_down(ev, window, cx) {
+            Some(true) => return,
+            Some(false) => true,
+            None => false,
+        };
+        if !inside {
+            if self.float_mouse_down(ev, window, cx) {
+                return;
+            }
+            // A click in a footnote or endnote edits it there.
+            if let Some(((kind, id), at)) = self.note_area_at(ev.position) {
+                self.edit_note_in_place(kind, &id, Some(at), window, cx);
+                self.dragging = ev.click_count <= 1;
+                return;
+            }
+            // A double click on a note's number in the text goes to the note.
+            if ev.click_count == 2
+                && let Some((kind, id)) = self.note_ref_at(ev.position)
+            {
+                self.edit_note_in_place(kind, &id, None, window, cx);
+                return;
+            }
+            // A double click in a page's top or bottom margin edits its
+            // header or footer there (as in Word).
+            if ev.click_count == 2
+                && let Some(kind) = self.margin_at(ev.position)
+            {
+                let g = self.geometry();
+                let (page, x, y) = g.screen_to_page(ev.position, self.laid.paged.pages.len());
+                self.edit_hf_on_page(page, kind, Some((x, y)), window, cx);
+                return;
+            }
         }
         // A click on a picture or placeholder selects it as one character.
         if !ev.modifiers.shift
@@ -1526,6 +1632,15 @@ impl DocsView {
         let Some(pos) = self.hit(ev.position) else {
             return;
         };
+        // A double click on a field's code edits it.
+        if ev.click_count == 2
+            && let Some(f) = self.doc.field_at(pos)
+            && self.codes().shows(f.mark_id())
+        {
+            let at = point(ev.position.x, ev.position.y + SPACE_5);
+            self.open_code_edit(Some(f.begin), &f.instr, at, window, cx);
+            return;
+        }
         // Ctrl+click follows a hyperlink (Word's default).
         if ev.click_count == 1
             && ev.modifiers.secondary(cx)
@@ -1771,7 +1886,7 @@ impl DocsView {
     }
 
     fn render_banner(&self, t: &Tokens) -> Option<Div> {
-        let what = self.doc.unsupported_content();
+        let what = self.main_doc().unsupported_content();
         if what.is_empty() {
             return None;
         }
@@ -1889,6 +2004,8 @@ struct Frame {
     float_drag: Option<floats::FloatDrag>,
     sel: Selection,
     marked: Option<Range<usize>>,
+    /// A header or footer is being edited (the body dims).
+    editing_hf: Option<docs_engine::HfKind>,
     zoom: f32,
     scroll: Point<f32>,
     focused: bool,
@@ -2006,11 +2123,15 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
     };
     window.paint_quad(fill(bounds, f.t.desk));
     let (start, end) = f.sel.ordered();
+    let laid = &f.laid;
     let selection = if start != end {
-        paged.selection_rects((start.para, start.offset), (end.para, end.offset))
+        laid.selection_rects((start.para, start.offset), (end.para, end.offset))
     } else {
         Vec::new()
     };
+    // Editing a header or footer dims the body, as in Word.
+    let editing_hf = f.editing_hf;
+    let body_ink = if editing_hf.is_some() { 0.45 } else { 1.0 };
     // Find matches: all of them light, the current one stronger.
     let visible = g.visible_pages(paged.pages.len());
     let found: Vec<(usize, [f32; 4], bool)> = f
@@ -2018,8 +2139,7 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
         .iter()
         .enumerate()
         .flat_map(|(i, (p, r))| {
-            paged
-                .selection_rects((*p, r.start), (*p, r.end))
+            laid.selection_rects((*p, r.start), (*p, r.end))
                 .into_iter()
                 .map(move |(page, rect)| (page, rect, Some(i) == f.found_current))
         })
@@ -2027,7 +2147,7 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
         .collect();
     let marked = f.marked.as_ref().map(|m| {
         let p = f.sel.head.para;
-        paged.selection_rects((p, m.start), (p, m.end))
+        laid.selection_rects((p, m.start), (p, m.end))
     });
     let shadow = f.t.shadow(Elevation::Popover);
     let ts = window.text_system().clone();
@@ -2133,12 +2253,34 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                         ));
                     }
                 }
+                if body_ink < 1.0 {
+                    window.paint_quad(fill(b, f.t.paper.opacity(1.0 - body_ink)));
+                }
+            }
+            // The selected picture of the text being edited.
+            for o in laid.objects(page) {
                 let selected = start != end
                     && (start.para, start.offset) <= (o.para, o.index)
                     && (end.para, end.offset) >= (o.para, o.index + OBJECT.len_utf8());
                 if selected {
+                    let b = rect(page, o.rect);
                     window.paint_quad(fill(b, f.t.paper_selection.opacity(0.6)));
                     window.paint_quad(outline(b, f.t.accent, BorderStyle::Solid));
+                }
+            }
+            // The header or footer area's edge while editing it.
+            if let Some(kind) = editing_hf {
+                let s = paged.page_setup(page);
+                let y = match kind {
+                    docs_engine::HfKind::Header => s.margin_top,
+                    docs_engine::HfKind::Footer => s.height - s.margin_bottom,
+                };
+                let dash: f32 = 4.0;
+                let mut x = 0.0;
+                while x < page_w {
+                    let r = [x, y, dash.min(page_w - x), 1.0 / z];
+                    window.paint_quad(fill(rect(page, r), f.t.accent.opacity(0.7)));
+                    x += dash * 2.0;
                 }
             }
             let mut bridge = f.bridge.borrow_mut();
@@ -2146,8 +2288,15 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             // what's being edited); the PDF prints them in their colours.
             for placed in f.laid.furniture.get(page).into_iter().flatten() {
                 let l = &placed.layout;
-                // Notes are part of the text: full ink.
-                let ink = if placed.note.is_some() { 1.0 } else { 0.7 };
+                // Notes are part of the text: full ink; a header or footer
+                // being edited too, and the body dims instead.
+                let ink = if placed.note.is_some() {
+                    body_ink
+                } else if editing_hf.is_some() {
+                    if laid.is_part(placed) { 1.0 } else { 0.85 }
+                } else {
+                    0.7
+                };
                 for o in l.paged.objects(0) {
                     if let Some(data) = f.hf_images.get(&(l.key(), o.para, o.index)) {
                         let [x, y, w, h] = o.rect;
@@ -2187,7 +2336,7 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                 &runs,
                 &|i| f.laid.texts.get(i).map_or("", String::as_str),
                 (0.0, 0.0),
-                1.0,
+                body_ink,
                 (&mut bridge, &ts, &f.t),
             );
             drop(bridge);
@@ -2229,7 +2378,7 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
         }
         if f.focused
             && start == end
-            && let Some(c) = paged.caret(f.sel.head.para, f.sel.head.offset)
+            && let Some(c) = laid.caret(f.sel.head.para, f.sel.head.offset)
         {
             let top = g.page_to_screen(c.page, c.x, c.top);
             let caret = Bounds::new(top, size(CARET_WIDTH, px(c.height * z)));
@@ -2250,6 +2399,9 @@ impl Render for DocsView {
             self.reveal_caret.set(false);
             self.scroll_to_caret();
         }
+        // Pictures, floating objects and comments come from the whole
+        // document (a part being edited put back for a moment).
+        let swapped = self.whole_in();
         let images = self.visible_images(window, cx);
         let float_images = self.visible_float_images(window, cx);
         let float_paint = floats::float_paint(
@@ -2262,7 +2414,7 @@ impl Render for DocsView {
         let layout_button = self.render_layout_button(cx);
         let hf_images = self.visible_hf_images(window, cx);
         let cards = self.comment_cards();
-        let (sa, sb) = self.sel.ordered();
+        let (sa, sb) = self.body_sel().ordered();
         let comment_ranges = if self.markup_visible() {
             self.doc
                 .comment_anchors()
@@ -2277,12 +2429,16 @@ impl Render for DocsView {
             .map(|c| (c.anchor, point(c.at.x, c.at.y + px(14.)), c.active))
             .collect();
         let card_elements = self.render_cards(&cards, cx);
-        if kantor_ui::spelling::enabled(cx) != self.spell.is_on()
-            || (self.spell.is_on() && self.spell.flags.len() != self.doc.len())
+        if swapped {
+            self.whole_out();
+        }
+        if self.part.is_none()
+            && (kantor_ui::spelling::enabled(cx) != self.spell.is_on()
+                || (self.spell.is_on() && self.spell.flags.len() != self.doc.len()))
         {
             self.refresh_spelling(cx);
         }
-        let misspelled = if self.spell.is_on() {
+        let misspelled = if self.spell.is_on() && self.part.is_none() {
             let paged = &self.laid.paged;
             let visible = self.geometry().visible_pages(paged.pages.len());
             let mut paras = paged.pages[visible]
@@ -2310,6 +2466,10 @@ impl Render for DocsView {
             float_drag: self.float_drag,
             sel: self.sel,
             marked: self.marked.clone(),
+            editing_hf: match self.part_target() {
+                Some(part::PartTarget::Hf { kind, .. }) => Some(*kind),
+                _ => None,
+            },
             zoom: self.zoom,
             scroll: self.scroll,
             focused: self.focus.is_focused(window),
@@ -2360,6 +2520,7 @@ impl Render for DocsView {
                 cx.listener(|this, _: &MouseUpEvent, window, cx| {
                     this.dragging = false;
                     this.float_mouse_up(window, cx);
+                    this.field_mouse_up(window, cx);
                 }),
             )
             .on_scroll(cx.listener(Self::on_scroll))
@@ -2410,7 +2571,19 @@ impl Render for DocsView {
                 this.sel = Selection { anchor: Position::default(), head: this.doc.end() };
                 cx.notify()
             },
-            Collapse => |this, _w, cx| {
+            Collapse => |this, w, cx| {
+                if this.field_menu.take().is_some() {
+                    this.focus(w, cx);
+                    cx.notify();
+                    return;
+                }
+                if this.part.is_some() {
+                    match this.part_target() {
+                        Some(part::PartTarget::Note { .. }) => this.leave_note_to_reference(w, cx),
+                        _ => { this.leave_part(w, cx); }
+                    }
+                    return;
+                }
                 this.table_picker = None;
                 this.page_menu = None;
                 this.tab_menu = None;
@@ -2482,6 +2655,9 @@ impl Render for DocsView {
             InsertEndnote => |this, w, cx| this.insert_note_doc(docs_engine::NoteKind::Endnote, w, cx),
             UpdateFields => |this, w, cx| this.update_fields_doc(w, cx),
             UpdateTable => |this, w, cx| this.update_table_doc(w, cx),
+            ToggleFieldCodes => |this, _w, cx| this.toggle_field_codes_doc(cx),
+            ToggleFieldCode => |this, _w, cx| this.toggle_field_code_doc(cx),
+            InsertFieldChars => |this, w, cx| this.new_field_code_doc(w, cx),
             Redo => |this, w, cx| this.redo_doc(w, cx),
             ZoomIn => |this, _w, cx| this.zoom_by(ZOOM_STEP, cx),
             ZoomOut => |this, _w, cx| this.zoom_by(1.0 / ZOOM_STEP, cx),
@@ -2499,14 +2675,14 @@ impl Render for DocsView {
             )
             .child(toolbar::render(self, cx))
             .children(self.render_banner(&t))
+            .children(self.render_hf_menu(cx))
             .children(self.render_ruler(cx))
             .child(area)
             .children(self.render_table_picker(cx))
             .children(self.render_page_menu(cx))
             .children(self.render_tab_menu(cx))
-            .children(self.render_hf_menu(cx))
-            .children(self.render_note_menu(cx))
             .children(self.render_text_box_menu(cx))
+            .children(self.render_field_menu(cx))
     }
 }
 
@@ -2521,6 +2697,30 @@ mod tests {
         let (paras, _, _) = blocks::build(doc);
         let paged = docs_pdf::lay_out(doc, &mut engine).paged;
         (paras, paged)
+    }
+
+    /// Enter and Tab in a popover's or the Header & Footer bar's text box
+    /// stay there: they used to split the paragraph at the caret too.
+    #[std::prelude::v1::test]
+    fn popover_keys_stay_out_of_the_page() {
+        let keymap = Keymap::new(key_bindings());
+        let in_popover = [
+            KeyContext::parse(KEY_CONTEXT).unwrap(),
+            KeyContext::parse(POPOVER_CONTEXT).unwrap(),
+        ];
+        let first = |ctx: &[KeyContext], key: &'static str| {
+            let ks = Keystroke::parse(key).unwrap();
+            let (b, _) = keymap.bindings_for_input(&[ks], ctx);
+            b.first().map(|b| b.action().name())
+        };
+        assert_eq!(first(&in_popover, "enter"), Some(PopoverKey.name()));
+        assert_eq!(first(&in_popover, "tab"), Some(PopoverKey.name()));
+        // Esc still closes it (the page's Collapse).
+        assert_eq!(first(&in_popover, "escape"), Some(Collapse.name()));
+        let on_page = [KeyContext::parse(KEY_CONTEXT).unwrap()];
+        assert_eq!(first(&on_page, "enter"), Some(Newline.name()));
+        assert_eq!(first(&on_page, "alt-f9"), Some(ToggleFieldCodes.name()));
+        assert_eq!(first(&on_page, "shift-f9"), Some(ToggleFieldCode.name()));
     }
 
     #[std::prelude::v1::test]

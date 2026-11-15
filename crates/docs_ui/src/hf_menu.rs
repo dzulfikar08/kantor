@@ -1,254 +1,227 @@
-//! Headers and footers: the toolbar's header/footer button and its popover
-//! (the caret's section): "Different first page", "Different odd and even
-//! pages", and the text of each header or footer the section uses, with
-//! buttons that insert the page number (`{PAGE}`) and page count
-//! (`{PAGES}`) and alignment. Apply writes each changed one as one undo
-//! step. Double-clicking in a page's top or bottom margin opens it too.
-//!
-//! The text is plain: a header with pictures, tables or other objects is
-//! shown on the page and kept as it is, but can't be edited here yet.
+//! Headers and footers: the toolbar's header/footer button, and the
+//! Header & Footer bar shown while one is edited on the page (Word's
+//! Header & Footer tab): Different First Page, Different Odd & Even
+//! Pages, Link to Previous, the header's distance from the top edge and
+//! the footer's from the bottom, Page Number and Page Count fields, going
+//! to the footer (header) and Close. Every option is one undo step.
 
-use std::time::{Duration, Instant};
-
-use docs_engine::{Align, HfKind, HfType};
+use docs_engine::{HfKind, HfType, PageField};
 use gpui_kit::assets::IconName as Lucide;
-use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
-use gpui_kit::component::{Icon, Sizable as _, h_flex, tooltip::Tooltip, v_flex};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::{Icon, Sizable as _, h_flex, tooltip::Tooltip};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::i18n::{self, t, tf, tk};
-use kantor_ui::tokens::Elevation;
-use kantor_ui::{components::section_label, metrics::*, tokens};
+use kantor_ui::{metrics::*, tokens};
 
 use crate::DocsView;
+use crate::page_menu::{format_cm, parse_cm};
+use crate::part::PartTarget;
 
-/// One header or footer being edited.
-struct Field {
-    ty: HfType,
-    input: Entity<TextareaState>,
-    align: Option<Align>,
-    /// Why it can't be edited, if so.
-    locked: Option<String>,
-}
-
-/// The open popover.
+/// The Header & Footer bar's distance fields.
 pub(crate) struct HfMenu {
-    at: Point<Pixels>,
-    kind: HfKind,
-    section: usize,
-    fields: Vec<Field>,
+    header: Entity<InputState>,
+    footer: Entity<InputState>,
     _subs: Vec<Subscription>,
 }
 
-fn type_label(ty: HfType, first: bool, even: bool) -> &'static str {
-    match ty {
-        HfType::First => t("First page"),
-        HfType::Even => t("Even pages"),
-        HfType::Default if even => t("Odd pages"),
-        HfType::Default if first => t("Other pages"),
-        HfType::Default => t("Every page"),
-    }
-}
-
-/// "Header" / "Footer" in the interface language.
-pub(crate) fn kind_label(kind: HfKind) -> &'static str {
-    match kind {
-        HfKind::Header => t("Header"),
-        HfKind::Footer => t("Footer"),
+/// Word's name for the header or footer being edited, e.g. "First Page
+/// Header".
+pub(crate) fn part_label(kind: HfKind, ty: HfType, even_odd: bool) -> &'static str {
+    match (kind, ty) {
+        (HfKind::Header, HfType::First) => t("First Page Header"),
+        (HfKind::Footer, HfType::First) => t("First Page Footer"),
+        (HfKind::Header, HfType::Even) => t("Even Page Header"),
+        (HfKind::Footer, HfType::Even) => t("Even Page Footer"),
+        (HfKind::Header, HfType::Default) if even_odd => t("Odd Page Header"),
+        (HfKind::Footer, HfType::Default) if even_odd => t("Odd Page Footer"),
+        (HfKind::Header, HfType::Default) => t("Header"),
+        (HfKind::Footer, HfType::Default) => t("Footer"),
     }
 }
 
 impl DocsView {
-    /// Open the header/footer popover (or close it when open).
+    /// Edit the header (or footer) of the caret's page, or stop editing it
+    /// (toolbar button, palette).
     pub fn toggle_hf_menu(
         &mut self,
         kind: HfKind,
-        at: Option<Point<Pixels>>,
+        _at: Option<Point<Pixels>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.hf_menu.take().is_some()
-            || self
-                .hf_menu_closed
-                .is_some_and(|t| t.elapsed() < Duration::from_millis(250))
-        {
-            self.hf_menu_closed = None;
-            cx.notify();
+        if matches!(self.part_target(), Some(PartTarget::Hf { .. })) {
+            self.leave_part(window, cx);
             return;
         }
-        self.open_hf_menu(kind, at, window, cx);
+        self.open_hf_menu(kind, None, window, cx);
     }
 
-    /// Open the popover on `kind` for the caret's section.
+    /// Start editing the caret page's header or footer.
     pub fn open_hf_menu(
         &mut self,
         kind: HfKind,
-        at: Option<Point<Pixels>>,
+        _at: Option<Point<Pixels>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let at = at
-            .or(self.hf_menu.as_ref().map(|m| m.at))
-            .unwrap_or_else(|| {
-                let b = self.viewport.get();
-                point(b.origin.x + b.size.width - SPACE_4, b.origin.y + SPACE_2)
-            });
-        let section = self.doc.section_of(self.sel.head.para);
-        let props = &self.doc.sections()[section].props;
-        let mut types = Vec::new();
-        if props.title_page {
-            types.push(HfType::First);
-        }
-        types.push(HfType::Default);
-        if self.doc.even_odd_headers() {
-            types.push(HfType::Even);
-        }
-        let mut subs = Vec::new();
-        let fields = types
-            .into_iter()
-            .map(|ty| {
-                let (text, align) = self.doc.hf_text(section, kind, ty);
-                let locked = self.doc.hf_locked(section, kind, ty);
-                let input = cx.new(|cx| {
-                    let mut s =
-                        TextareaState::new(window, cx)
-                            .auto_grow(1, 4)
-                            .placeholder(match kind {
-                                HfKind::Header => t("No header"),
-                                HfKind::Footer => t("No footer"),
-                            });
-                    s.set_value(text, window, cx);
-                    s
-                });
-                subs.push(cx.subscribe_in(
-                    &input,
-                    window,
-                    |this, _, ev: &InputEvent, window, cx| {
-                        if let InputEvent::PressEnter {
-                            secondary: true, ..
-                        } = ev
-                        {
-                            this.apply_hf(window, cx);
-                        }
-                    },
-                ));
-                Field {
-                    ty,
-                    input,
-                    align,
-                    locked,
-                }
-            })
-            .collect();
-        self.hf_menu = Some(HfMenu {
-            at,
-            kind,
-            section,
-            fields,
-            _subs: subs,
-        });
-        cx.notify();
+        let page = match &self.part {
+            Some(s) => s.page,
+            None => self.caret_page(),
+        };
+        self.edit_hf_on_page(page, kind, None, window, cx);
+        self.focus(window, cx);
     }
 
-    /// Write every changed field (one undo step each).
-    fn apply_hf(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(menu) = &self.hf_menu else { return };
-        let (kind, section) = (menu.kind, menu.section);
-        let edits: Vec<(HfType, String, Option<Align>)> = menu
-            .fields
-            .iter()
-            .filter(|f| f.locked.is_none())
-            .map(|f| (f.ty, f.input.read(cx).value().to_string(), f.align))
-            .collect();
-        let mut changed = false;
-        for (ty, text, align) in edits {
-            let (old, old_align) = self.doc.hf_text(section, kind, ty);
-            if old == text && (align.is_none() || align == old_align) {
-                continue;
-            }
-            changed |= self
-                .doc
-                .set_hf_text(section, kind, ty, &text, align, self.sel);
+    /// The Header & Footer bar's fields, filled with the section's
+    /// distances (made when editing starts).
+    pub(crate) fn fill_hf_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(PartTarget::Hf { section, .. }) = self.part_target().cloned() else {
+            self.hf_menu = None;
+            return;
+        };
+        if self.hf_menu.is_none() {
+            let header = cx.new(|cx| InputState::new(window, cx));
+            let footer = cx.new(|cx| InputState::new(window, cx));
+            let subs = [&header, &footer]
+                .into_iter()
+                .map(|i| {
+                    cx.subscribe_in(i, window, |this, _, ev: &InputEvent, window, cx| match ev {
+                        InputEvent::PressEnter { .. } => {
+                            this.apply_hf_distances(window, cx);
+                            this.focus(window, cx);
+                        }
+                        InputEvent::Blur => this.apply_hf_distances(window, cx),
+                        _ => {}
+                    })
+                })
+                .collect();
+            self.hf_menu = Some(HfMenu {
+                header,
+                footer,
+                _subs: subs,
+            });
         }
-        if changed {
-            let sel = self.sel;
-            self.edited(sel, window, cx);
-            self.status = match kind {
-                HfKind::Header => t("Header updated"),
-                HfKind::Footer => t("Footer updated"),
-            }
-            .into();
+        let props = self.main_doc().sections()[section].props.clone();
+        if let Some(m) = &self.hf_menu {
+            let (h, f) = (m.header.clone(), m.footer.clone());
+            h.update(cx, |i, cx| {
+                i.set_value(format_cm(props.header_dist), window, cx)
+            });
+            f.update(cx, |i, cx| {
+                i.set_value(format_cm(props.footer_dist), window, cx)
+            });
         }
-        self.hf_menu = None;
-        cx.notify();
+    }
+
+    /// Change a header/footer setting of the section being edited: leave
+    /// the part (its edits become their own step), apply `f` to the main
+    /// document, then edit the header or footer the page shows now.
+    fn hf_option(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut docs_engine::Document, usize, HfKind, HfType, docs_engine::Selection),
+    ) {
+        let Some(PartTarget::Hf { section, kind, ty }) = self.part_target().cloned() else {
+            return;
+        };
+        let page = self.part.as_ref().map_or(0, |s| s.page);
+        self.leave_part(window, cx);
+        let sel = self.sel;
+        f(&mut self.doc, section, kind, ty, sel);
+        self.edited(sel, window, cx);
+        self.edit_hf_on_page(page, kind, None, window, cx);
+        self.focus(window, cx);
     }
 
     fn set_title_page_doc(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(menu) = &self.hf_menu else { return };
-        let (kind, section) = (menu.kind, menu.section);
-        self.doc.set_title_page(section, on, self.sel);
-        let sel = self.sel;
-        self.edited(sel, window, cx);
-        self.hf_menu = None;
-        self.open_hf_menu(kind, None, window, cx);
+        self.hf_option(window, cx, |doc, si, _, _, sel| {
+            doc.set_title_page(si, on, sel)
+        });
     }
 
     fn set_even_odd_doc(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let kind = self.hf_menu.as_ref().map_or(HfKind::Header, |m| m.kind);
-        self.doc.set_even_odd_headers(on, self.sel);
-        let sel = self.sel;
-        self.edited(sel, window, cx);
-        self.hf_menu = None;
-        self.open_hf_menu(kind, None, window, cx);
+        self.hf_option(window, cx, |doc, _, _, _, sel| {
+            doc.set_even_odd_headers(on, sel)
+        });
+    }
+
+    fn set_linked_doc(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.hf_option(window, cx, |doc, si, kind, ty, sel| {
+            doc.set_hf_linked(si, kind, ty, on, sel)
+        });
+    }
+
+    fn apply_hf_distances(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(m), Some(PartTarget::Hf { section, .. })) = (&self.hf_menu, self.part_target())
+        else {
+            return;
+        };
+        let props = self.main_doc().sections()[*section].props.clone();
+        let read = |i: &Entity<InputState>, old: u32| {
+            parse_cm(&i.read(cx).value()).map_or(old, |cm| docs_engine::cm_to_twips(cm.min(20.0)))
+        };
+        let (h, f) = (
+            read(&m.header, props.header_dist),
+            read(&m.footer, props.footer_dist),
+        );
+        if (h, f) == (props.header_dist, props.footer_dist) {
+            return;
+        }
+        self.hf_option(window, cx, |doc, si, _, _, sel| {
+            doc.set_hf_distances(si, h, f, sel)
+        });
+    }
+
+    /// Edit the footer of the same page (from the header), or the header.
+    fn switch_hf_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(PartTarget::Hf { kind, .. }) = self.part_target().cloned() else {
+            return;
+        };
+        let page = self.part.as_ref().map_or(0, |s| s.page);
+        let other = match kind {
+            HfKind::Header => HfKind::Footer,
+            HfKind::Footer => HfKind::Header,
+        };
+        self.edit_hf_on_page(page, other, None, window, cx);
+        self.focus(window, cx);
     }
 
     /// Footer "Page N of M", centred, on every page of the caret's
     /// section (palette: Add Page Numbers).
     pub fn add_page_numbers_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.leave_part(window, cx);
         let section = self.doc.section_of(self.sel.head.para);
-        let (text, _) = self.doc.hf_text(section, HfKind::Footer, HfType::Default);
-        if text.contains("{PAGE}") {
-            self.status = t("This section's footer already has page numbers").into();
-            cx.notify();
-            return;
-        }
-        let new = if text.trim().is_empty() {
-            t("Page {PAGE} of {PAGES}").to_owned()
-        } else {
-            format!("{text}\n{}", t("Page {PAGE} of {PAGES}"))
-        };
-        if self.doc.set_hf_text(
-            section,
-            HfKind::Footer,
-            HfType::Default,
-            &new,
-            Some(Align::Center),
-            self.sel,
-        ) {
+        let text = t("Page {PAGE} of {PAGES}");
+        if self.doc.add_page_numbers(section, text, self.sel) {
             let sel = self.sel;
             self.edited(sel, window, cx);
             self.status = t("Page numbers added to the footer").into();
         } else {
-            self.status = self
-                .doc
-                .hf_locked(section, HfKind::Footer, HfType::Default)
-                .map(|why| crate::note_menu::lock_reason(&why).to_owned())
-                .unwrap_or_default()
-                .into();
+            self.status = t("This section's footer already has page numbers").into();
         }
         cx.notify();
     }
 
-    /// A page number field at the caret (body text).
+    /// A page number field at the caret (body, header or footer).
     pub fn insert_page_number_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let sel = self
-            .doc
-            .insert_page_field(self.sel, docs_engine::PageField::Page);
+        self.insert_page_field_doc(PageField::Page, window, cx);
+    }
+
+    pub(crate) fn insert_page_field_doc(
+        &mut self,
+        field: PageField,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let sel = self.doc.insert_page_field(self.sel, field);
         self.edited(sel, window, cx);
     }
 
     /// Section break (next page) at the caret.
     pub fn insert_section_break_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.leave_part(window, cx);
         match self.doc.insert_section_break(self.sel) {
             Some(sel) => {
                 self.edited(sel, window, cx);
@@ -260,241 +233,214 @@ impl DocsView {
         cx.notify();
     }
 
+    /// The Header & Footer bar, while a header or footer is edited.
     pub(crate) fn render_hf_menu(
         &self,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
+        let Some(PartTarget::Hf { section, kind, ty }) = self.part_target().cloned() else {
+            return None;
+        };
         let menu = self.hf_menu.as_ref()?;
         let t = tokens(cx);
         let view = cx.entity().downgrade();
-        let sections = self.doc.sections();
-        let props = &sections[menu.section.min(sections.len() - 1)].props;
-        let (first, even) = (props.title_page, self.doc.even_odd_headers());
+        let main = self.main_doc();
+        let sections = main.sections();
+        let props = &sections[section.min(sections.len() - 1)].props;
+        let (first, even) = (props.title_page, main.even_odd_headers());
+        let linked = main.hf_linked(section, kind, ty);
 
         let check =
             |id: &'static str,
              label: &'static str,
              on: bool,
+             enabled: bool,
              apply: fn(&mut DocsView, bool, &mut Window, &mut Context<DocsView>)| {
                 let v = view.clone();
                 h_flex()
                     .id(id)
-                    .h(CONTROL_MD)
-                    .px(SPACE_4)
-                    .gap(SPACE_4)
+                    .flex_none()
+                    .h(CONTROL_SM)
+                    .px(SPACE_3)
+                    .gap(SPACE_2)
                     .rounded(RADIUS_MD)
-                    .cursor_pointer()
-                    .hover(|s| s.bg(t.hover))
+                    .when(enabled, |d| d.cursor_pointer().hover(|s| s.bg(t.hover)))
+                    .when(!enabled, |d| d.opacity(0.5))
                     .child(
                         div()
                             .flex_none()
                             .size(ICON_MD)
-                            .when(on, |d| d.child(Icon::new(Lucide::Check).with_size(ICON_MD))),
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(RADIUS_SM)
+                            .border_1()
+                            .border_color(t.border_strong)
+                            .when(on, |d| {
+                                d.bg(t.accent)
+                                    .border_color(t.accent)
+                                    .text_color(t.accent_fg)
+                                    .child(Icon::new(Lucide::Check).with_size(ICON_SM))
+                            }),
                     )
                     .child(div().text_color(t.fg).child(label))
-                    .on_click(move |_, window, cx| {
-                        let _ = v.update(cx, |this, cx| apply(this, !on, window, cx));
-                    })
-            };
-        let kind_tab = |k: HfKind| {
-            let v = view.clone();
-            let on = menu.kind == k;
-            div()
-                .id(k.label())
-                .flex_1()
-                .h(CONTROL_SM)
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(RADIUS_SM)
-                .cursor_pointer()
-                .when(on, |d| d.bg(t.selected).text_color(t.fg))
-                .when(!on, |d| d.text_color(t.fg_muted).hover(|s| s.bg(t.hover)))
-                .child(kind_label(k))
-                .on_click(move |_, window, cx| {
-                    let _ = v.update(cx, |this, cx| {
-                        this.hf_menu = None;
-                        this.open_hf_menu(k, None, window, cx);
-                    });
-                })
-        };
-        let tabs = h_flex()
-            .mx(SPACE_4)
-            .p(SPACE_1)
-            .gap(SPACE_1)
-            .rounded(RADIUS_MD)
-            .bg(t.surface)
-            .border_1()
-            .border_color(t.border)
-            .child(kind_tab(HfKind::Header))
-            .child(kind_tab(HfKind::Footer));
-
-        let mut fields = v_flex().gap(SPACE_3).px(SPACE_4);
-        for (i, f) in menu.fields.iter().enumerate() {
-            let label = type_label(f.ty, first, even);
-            let mut col = v_flex()
-                .gap(SPACE_1)
-                .child(div().text_color(t.fg_muted).child(label));
-            if let Some(why) = &f.locked {
-                col = col.child(
-                    div()
-                        .p(SPACE_3)
-                        .rounded(RADIUS_MD)
-                        .bg(t.surface)
-                        .text_color(t.fg_muted)
-                        .child(crate::note_menu::lock_reason(why).to_owned()),
-                );
-                fields = fields.child(col);
-                continue;
-            }
-            let token =
-                |id: SharedString, text: &'static str, tip: &'static str, insert: &'static str| {
-                    let input = f.input.clone();
-                    div()
-                        .id(id)
-                        .h(CONTROL_SM)
-                        .px(SPACE_3)
-                        .flex()
-                        .items_center()
-                        .rounded(RADIUS_SM)
-                        .border_1()
-                        .border_color(t.border)
-                        .text_color(t.fg_muted)
-                        .cursor_pointer()
-                        .hover(|s| s.bg(t.hover).text_color(t.fg))
-                        .child(i18n::t(text))
-                        .tooltip(move |window, cx| Tooltip::new(i18n::t(tip)).build(window, cx))
-                        .on_click(move |_, window, cx| {
-                            input.update(cx, |s, cx| s.insert(insert, window, cx));
+                    .when(enabled, |d| {
+                        d.on_click(move |_, window, cx| {
+                            let _ = v.update(cx, |this, cx| apply(this, !on, window, cx));
                         })
-                };
-            let align_btn = |a: Align, icon: Lucide, tip: &'static str| {
-                let v = view.clone();
-                let on = f.align.unwrap_or(Align::Left) == a;
-                div()
-                    .id(SharedString::from(format!("hf-align-{i}-{tip}")))
-                    .size(CONTROL_SM)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(RADIUS_SM)
-                    .cursor_pointer()
-                    .when(on, |d| d.bg(t.selected).text_color(t.fg))
-                    .when(!on, |d| d.text_color(t.fg_muted).hover(|s| s.bg(t.hover)))
-                    .child(Icon::new(icon).with_size(ICON_SM))
-                    .tooltip(move |window, cx| Tooltip::new(i18n::t(tip)).build(window, cx))
-                    .on_click(move |_, _, cx| {
-                        let _ = v.update(cx, |this, cx| {
-                            if let Some(m) = &mut this.hf_menu
-                                && let Some(field) = m.fields.get_mut(i)
-                            {
-                                field.align = Some(a);
-                            }
-                            cx.notify();
-                        });
                     })
             };
-            col = col.child(Textarea::new(&f.input).small()).child(
-                h_flex()
-                    .gap(SPACE_2)
-                    .child(token(
-                        format!("hf-page-{i}").into(),
-                        tk("Page number"),
-                        tk("Insert the page number: {PAGE}"),
-                        "{PAGE}",
-                    ))
-                    .child(token(
-                        format!("hf-pages-{i}").into(),
-                        tk("Page count"),
-                        tk("Insert the number of pages: {PAGES}"),
-                        "{PAGES}",
-                    ))
-                    .child(div().flex_1())
-                    .child(align_btn(Align::Left, Lucide::TextAlignStart, tk("Left")))
-                    .child(align_btn(
-                        Align::Center,
-                        Lucide::TextAlignCenter,
-                        tk("Centre"),
-                    ))
-                    .child(align_btn(Align::Right, Lucide::TextAlignEnd, tk("Right"))),
-            );
-            fields = fields.child(col);
-        }
-        let apply = {
-            let v = view.clone();
+        let button = |id: &'static str, label: &'static str, tip: &'static str| {
             div()
-                .id("docs-hf-apply")
+                .id(id)
                 .flex_none()
                 .h(CONTROL_SM)
-                .px(SPACE_5)
+                .px(SPACE_3)
                 .flex()
                 .items_center()
+                .rounded(RADIUS_MD)
+                .border_1()
+                .border_color(t.border)
+                .text_color(t.fg)
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover))
+                .child(label)
+                .tooltip(move |window, cx| Tooltip::new(i18n::t(tip)).build(window, cx))
+        };
+        let field_btn = |id: &'static str, label: &'static str, tip: &'static str, f: PageField| {
+            let v = view.clone();
+            button(id, label, tip).on_click(move |_, window, cx| {
+                let _ = v.update(cx, |this, cx| {
+                    this.insert_page_field_doc(f, window, cx);
+                    this.focus(window, cx);
+                });
+            })
+        };
+        let distance = |label: &'static str, input: &Entity<InputState>| {
+            h_flex()
+                .flex_none()
+                .gap(SPACE_2)
+                .child(div().text_color(t.fg_muted).child(label))
+                .child(div().w(REM * 4.5).child(Input::new(input).small()))
+                .child(div().text_color(t.fg_muted).child("cm"))
+        };
+        let switch = {
+            let v = view.clone();
+            let label = match kind {
+                HfKind::Header => i18n::t("Go to Footer"),
+                HfKind::Footer => i18n::t("Go to Header"),
+            };
+            button(
+                "docs-hf-switch",
+                label,
+                tk("Edit the other one on this page"),
+            )
+            .on_click(move |_, window, cx| {
+                let _ = v.update(cx, |this, cx| this.switch_hf_doc(window, cx));
+            })
+        };
+        let close = {
+            let v = view.clone();
+            div()
+                .id("docs-hf-close")
+                .flex_none()
+                .h(CONTROL_SM)
+                .px(SPACE_4)
+                .flex()
+                .items_center()
+                .gap(SPACE_2)
                 .rounded(RADIUS_MD)
                 .bg(t.accent)
                 .text_color(t.accent_fg)
                 .cursor_pointer()
-                .child(i18n::t("Apply"))
+                .child(Icon::new(Lucide::X).with_size(ICON_SM))
+                .child(i18n::t("Close Header and Footer"))
                 .tooltip(|window, cx| {
-                    Tooltip::new(format!("{}  Ctrl+Enter", i18n::t("Apply"))).build(window, cx)
+                    Tooltip::new(format!(
+                        "{}  Esc",
+                        i18n::t("Back to the document text (or double-click it)")
+                    ))
+                    .build(window, cx)
                 })
                 .on_click(move |_, window, cx| {
-                    let _ = v.update(cx, |this, cx| this.apply_hf(window, cx));
+                    let _ = v.update(cx, |this, cx| {
+                        this.leave_part(window, cx);
+                        this.focus(window, cx);
+                    });
                 })
         };
-        let note = (sections.len() > 1).then(|| {
-            let msg = tk("Section {} of {}; sections without their own use the one before");
-            div()
-                .px(SPACE_4)
-                .text_color(t.fg_muted)
-                .child(tf(msg, &[&(menu.section + 1), &sections.len()]))
-        });
-
-        let panel = v_flex()
-            .id("docs-hf-menu")
-            .occlude()
-            .w(REM * 24.)
-            .gap(SPACE_3)
-            .p(SPACE_4)
-            .bg(t.elevated)
-            .border_1()
-            .border_color(t.border)
-            .rounded(RADIUS_LG)
-            .shadow(t.shadow(Elevation::Popover))
-            .text_size(FONT_SMALL)
-            .text_color(t.fg)
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                this.hf_menu = None;
-                this.hf_menu_closed = Some(Instant::now());
-                cx.notify();
-            }))
-            .child(tabs)
-            .children(note)
-            .child(fields)
-            .child(
-                section_label(i18n::t("Options"), cx)
-                    .px(SPACE_4)
-                    .pt(SPACE_2),
-            )
-            .child(check(
-                "hf-first",
-                i18n::t("Different first page"),
-                first,
-                DocsView::set_title_page_doc,
-            ))
-            .child(check(
-                "hf-even",
-                i18n::t("Different odd and even pages"),
-                even,
-                DocsView::set_even_odd_doc,
-            ))
-            .child(h_flex().px(SPACE_4).child(div().flex_1()).child(apply));
-        Some(deferred(
-            anchored()
-                .position(menu.at)
-                .anchor(Anchor::TopRight)
-                .snap_to_window_with_margin(SPACE_4)
-                .child(panel),
-        ))
+        let title = {
+            let mut s = part_label(kind, ty, even).to_owned();
+            if sections.len() > 1 {
+                s = format!("{s} · {}", tf("Section {}", &[&(section + 1)]));
+            }
+            if linked {
+                s = format!("{s} · {}", i18n::t("Same as Previous"));
+            }
+            s
+        };
+        Some(
+            h_flex()
+                .id("docs-hf-bar")
+                .key_context(crate::POPOVER_CONTEXT)
+                .on_action(|_: &crate::PopoverKey, _, _| {})
+                .flex_none()
+                .flex_wrap()
+                .items_center()
+                .gap(SPACE_3)
+                .px(SPACE_6)
+                .py(SPACE_2)
+                .bg(t.chrome)
+                .border_b_1()
+                .border_color(t.border)
+                .text_size(FONT_SMALL)
+                .text_color(t.fg)
+                .child(
+                    div()
+                        .flex_none()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(t.accent)
+                        .child(title),
+                )
+                .child(check(
+                    "hf-first",
+                    i18n::t("Different first page"),
+                    first,
+                    true,
+                    DocsView::set_title_page_doc,
+                ))
+                .child(check(
+                    "hf-even",
+                    i18n::t("Different odd and even pages"),
+                    even,
+                    true,
+                    DocsView::set_even_odd_doc,
+                ))
+                .child(check(
+                    "hf-link",
+                    i18n::t("Link to Previous"),
+                    linked,
+                    section > 0,
+                    DocsView::set_linked_doc,
+                ))
+                .child(field_btn(
+                    "hf-page",
+                    i18n::t("Page number"),
+                    tk("Insert the page number"),
+                    PageField::Page,
+                ))
+                .child(field_btn(
+                    "hf-pages",
+                    i18n::t("Page count"),
+                    tk("Insert the number of pages"),
+                    PageField::NumPages,
+                ))
+                .child(distance(i18n::t("Header from top"), &menu.header))
+                .child(distance(i18n::t("Footer from bottom"), &menu.footer))
+                .child(div().flex_1())
+                .child(switch)
+                .child(close),
+        )
     }
 }
 
@@ -502,7 +448,7 @@ impl DocsView {
 pub(crate) fn hf_button(view: &DocsView, cx: &mut Context<DocsView>) -> Stateful<Div> {
     let t = tokens(cx);
     let v = cx.entity().downgrade();
-    let open = view.hf_menu.is_some();
+    let open = matches!(view.part_target(), Some(PartTarget::Hf { .. }));
     div()
         .id("docs-hf")
         .flex_none()
@@ -518,14 +464,10 @@ pub(crate) fn hf_button(view: &DocsView, cx: &mut Context<DocsView>) -> Stateful
                 .hover(|s| s.bg(t.hover).text_color(t.fg))
         })
         .child(Icon::new(Lucide::PanelTop).with_size(ICON_MD))
-        .tooltip(|window, cx| {
-            Tooltip::new(i18n::t("Header and footer, page numbers")).build(window, cx)
-        })
-        .on_click(move |ev, window, cx| {
-            let p = ev.position();
-            let at = point(p.x + SPACE_7, p.y + SPACE_7);
+        .tooltip(|window, cx| Tooltip::new(i18n::t("Edit the header and footer")).build(window, cx))
+        .on_click(move |_, window, cx| {
             let _ = v.update(cx, |this, cx| {
-                this.toggle_hf_menu(HfKind::Header, Some(at), window, cx)
+                this.toggle_hf_menu(HfKind::Header, None, window, cx)
             });
         })
 }
@@ -536,9 +478,18 @@ mod tests {
 
     #[std::prelude::v1::test]
     fn labels_follow_the_options() {
-        assert_eq!(type_label(HfType::Default, false, false), "Every page");
-        assert_eq!(type_label(HfType::Default, true, false), "Other pages");
-        assert_eq!(type_label(HfType::Default, true, true), "Odd pages");
-        assert_eq!(type_label(HfType::Even, false, true), "Even pages");
+        assert_eq!(part_label(HfKind::Header, HfType::Default, false), "Header");
+        assert_eq!(
+            part_label(HfKind::Header, HfType::Default, true),
+            "Odd Page Header"
+        );
+        assert_eq!(
+            part_label(HfKind::Footer, HfType::First, false),
+            "First Page Footer"
+        );
+        assert_eq!(
+            part_label(HfKind::Footer, HfType::Even, true),
+            "Even Page Footer"
+        );
     }
 }

@@ -1,44 +1,41 @@
 # English<TAB>Indonesian, one string per line (see kantor_ui/src/i18n.rs).
-First page	Halaman pertama
-Even pages	Halaman genap
-Odd pages	Halaman ganjil
-Other pages	Halaman lainnya
-Every page	Setiap halaman
-No header	Tanpa header
-No footer	Tanpa footer
-Header updated	Header diperbarui
-Footer updated	Footer diperbarui
 This section's footer already has page numbers	Footer bagian ini sudah memiliki nomor halaman
 Page {PAGE} of {PAGES}	Halaman {PAGE} dari {PAGES}
 Page numbers added to the footer	Nomor halaman ditambahkan ke footer
+Back to the document text (or double-click it)	Kembali ke teks dokumen (atau klik ganda teksnya)
+Close Header and Footer	Tutup Header dan Footer
+Edit the header and footer	Edit header dan footer
+Edit the other one on this page	Edit yang lain di halaman ini
+Editing the footer: double-click the text or press Esc to go back	Mengedit footer: klik ganda teks atau tekan Esc untuk kembali
+Editing the header: double-click the text or press Esc to go back	Mengedit header: klik ganda teks atau tekan Esc untuk kembali
+Even Page Footer	Footer Halaman Genap
+Even Page Header	Header Halaman Genap
+First Page Footer	Footer Halaman Pertama
+First Page Header	Header Halaman Pertama
+Odd Page Footer	Footer Halaman Ganjil
+Odd Page Header	Header Halaman Ganjil
+Footer from bottom	Footer dari bawah
+Header from top	Header dari atas
+Go to Footer	Buka Footer
+Go to Header	Buka Header
+Insert the number of pages	Sisipkan jumlah halaman
+Insert the page number	Sisipkan nomor halaman
+Kantor can't edit this header or footer	Kantor tidak dapat mengedit header atau footer ini
+Link to Previous	Tautkan ke Sebelumnya
+Same as Previous	Sama dengan Sebelumnya
+Section {}	Bagian {}
 Section break inserted: Page setup now changes this section only	Pemisah bagian disisipkan: Pengaturan Halaman kini hanya mengubah bagian ini
 A section break can't go inside a table	Pemisah bagian tidak dapat ditempatkan di dalam tabel
 Page number	Nomor halaman
-Insert the page number: {PAGE}	Sisipkan nomor halaman: {PAGE}
 Page count	Jumlah halaman
-Insert the number of pages: {PAGES}	Sisipkan jumlah halaman: {PAGES}
 Left	Kiri
 Centre	Tengah
 Right	Kanan
-Section {} of {}; sections without their own use the one before	Bagian {} dari {}; bagian tanpa header/footer sendiri memakai milik bagian sebelumnya
-Options	Opsi
 Different first page	Halaman pertama berbeda
 Different odd and even pages	Halaman ganjil dan genap berbeda
-Header and footer, page numbers	Header dan footer, nomor halaman
-Footnote	Catatan Kaki
-Endnote	Catatan Akhir
-This header has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet	Header ini berisi gambar, tabel, atau objek lain; Kantor menampilkannya dan mempertahankannya apa adanya, tetapi belum dapat mengeditnya
-This footer has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet	Footer ini berisi gambar, tabel, atau objek lain; Kantor menampilkannya dan mempertahankannya apa adanya, tetapi belum dapat mengeditnya
-This footnote has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet	Catatan kaki ini berisi gambar, tabel, atau objek lain; Kantor menampilkannya dan mempertahankannya apa adanya, tetapi belum dapat mengeditnya
-This endnote has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet	Catatan akhir ini berisi gambar, tabel, atau objek lain; Kantor menampilkannya dan mempertahankannya apa adanya, tetapi belum dapat mengeditnya
 Put the caret after a footnote or endnote number	Letakkan kursor setelah nomor catatan kaki atau catatan akhir
-Write the footnote	Tulis catatan kaki
-Write the endnote	Tulis catatan akhir
-Footnote updated	Catatan kaki diperbarui
-Endnote updated	Catatan akhir diperbarui
 Footnote deleted	Catatan kaki dihapus
 Endnote deleted	Catatan akhir dihapus
-Delete the note and its number in the text	Hapus catatan dan nomornya di dalam teks
 Bold · Ctrl+B	Tebal · Ctrl+B
 Italic · Ctrl+I	Miring · Ctrl+I
 Underline · Ctrl+U	Garis Bawah · Ctrl+U
@@ -192,3 +189,50 @@ In Front of Text	Di Depan Teks
 Write the text box's text	Tulis teks kotak teks
 Text box updated	Kotak teks diperbarui
 This text box has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet	Kotak teks ini berisi gambar, tabel, atau objek lain; Kantor menampilkannya dan mempertahankannya apa adanya, tetapi belum dapat mengeditnya
+Footnote	Catatan Kaki
+Endnote	Catatan Akhir
+A bookmark's text	Teks penanda
+Above/below	Di atas/di bawah
+Add	Tambah
+Add path to file name	Tambahkan jalur ke nama file
+Bookmark	Penanda
+Bookmark name	Nama penanda
+Bookmark names start with a letter and have only letters, numbers and underscores	Nama penanda diawali huruf dan hanya berisi huruf, angka, dan garis bawah
+Bookmark text	Teks penanda
+Bookmark “{}” added	Penanda “{}” ditambahkan
+Bookmark “{}” deleted	Penanda “{}” dihapus
+Choose what the cross-reference points to	Pilih yang dirujuk referensi silang
+Cross-reference	Referensi Silang
+Endnote number	Nomor catatan akhir
+Enter updates the field; Esc cancels	Enter memperbarui bidang; Esc membatalkan
+Entire caption	Seluruh keterangan
+Equation	Persamaan
+Field	Bidang
+Field code	Kode bidang
+Field codes shown: Alt+F9 shows the results again	Kode bidang ditampilkan: Alt+F9 menampilkan hasilnya lagi
+Field results shown	Hasil bidang ditampilkan
+Figure	Gambar
+Footnote number	Nomor catatan kaki
+Go To	Buka
+Heading	Judul
+Heading number	Nomor judul
+Heading text	Teks judul
+Insert Field	Sisipkan Bidang
+Insert as hyperlink	Sisipkan sebagai hyperlink
+Insert reference to	Sisipkan referensi ke
+New field: its code	Bidang baru: kodenya
+No field at the caret	Tidak ada bidang di posisi kursor
+Nothing of this kind in the document	Tidak ada yang seperti ini di dokumen
+Paragraph number	Nomor paragraf
+Reference type	Jenis referensi
+The document's author	Penulis dokumen
+The document's title	Judul dokumen
+The file's name	Nama file
+The number of pages	Jumlah halaman
+The page a bookmark is on	Halaman tempat penanda berada
+The page number	Nomor halaman
+The time now	Waktu sekarang
+This document has no bookmarks	Dokumen ini tidak memiliki penanda
+Today's date	Tanggal hari ini
+Update	Perbarui
+e.g. DATE \@ "d MMMM yyyy"	mis. DATE \@ "d MMMM yyyy"

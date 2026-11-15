@@ -14,7 +14,7 @@ use kantor_ui::i18n::{t, tf};
 use crate::DocsView;
 
 /// The clock and time zone fields are updated with.
-fn now() -> FieldContext {
+pub(crate) fn now() -> FieldContext {
     let now = chrono::Local::now();
     FieldContext {
         now: now.naive_local(),
@@ -35,11 +35,31 @@ impl DocsView {
     /// (Word's F9), as one undo step.
     pub fn update_fields_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let rev = self.doc.revision();
+        let sel = self.sel;
+        // The fields updated show their results again (Word).
+        let (a, b) = sel.ordered();
+        let touched: Vec<usize> = self
+            .doc
+            .fields()
+            .iter()
+            .filter(|f| {
+                if sel.is_empty() {
+                    f.contains(a)
+                } else {
+                    f.begin < b && f.end >= a
+                }
+            })
+            .map(|f| f.mark_id())
+            .collect();
         let engine = self.engine.clone();
         let sel = self.doc.update_fields(self.sel, &now(), &mut |d| {
             docs_pdf::field_pages(d, &mut engine.borrow_mut())
         });
-        if self.doc.revision() != rev {
+        // The whole document selected: headers, footers and notes too.
+        let whole = a == Position::default() && b == self.doc.end() && !self.sel.is_empty();
+        let parts = whole && self.part.is_none() && self.doc.update_part_fields(sel, &now());
+        self.show_results_of(&touched, cx);
+        if self.doc.revision() != rev || parts {
             self.edited(sel, window, cx);
         } else {
             let here = if self.sel.is_empty() {
@@ -60,6 +80,7 @@ impl DocsView {
     /// Rebuild the table of contents at the caret, or every one in the
     /// document (Word's Update Table), as one undo step.
     pub fn update_table_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.leave_part(window, cx);
         if !self.doc.has_table_of_contents() {
             self.status = t("This document has no table of contents").into();
             cx.notify();

@@ -227,6 +227,14 @@ pub struct Document {
     /// while it has no file of its own.
     imported: Option<Imported>,
     history: History,
+    /// Names pictures inserted into a header, footer or note being edited
+    /// (`header1_`), so they never clash with the body's.
+    pub(crate) media_stem: String,
+    /// A header, footer or note being edited: the main document's
+    /// properties its fields (`TITLE`, `FILENAME`…) show.
+    pub(crate) field_props: Option<Arc<crate::fields::Props>>,
+    /// Fields showing their codes (a view setting: not saved, not undone).
+    pub(crate) field_codes: Option<Arc<crate::fields::CodeView>>,
 }
 
 /// Where an imported document came from.
@@ -288,6 +296,9 @@ impl Document {
             note_settings: crate::notes::NoteKind::ALL.map(crate::notes::NoteProps::default_for),
             imported: None,
             history: History::default(),
+            media_stem: String::new(),
+            field_props: None,
+            field_codes: None,
         }
     }
 
@@ -410,6 +421,9 @@ impl Document {
             note_settings: read.note_settings,
             imported: None,
             history: History::default(),
+            media_stem: String::new(),
+            field_props: None,
+            field_codes: None,
         };
         let mut paras = std::mem::take(&mut doc.paragraphs);
         crate::float::share_parts(&mut paras, &doc);
@@ -650,6 +664,9 @@ impl Document {
             note_settings: self.note_settings,
             imported: self.imported.clone(),
             history: History::default(),
+            media_stem: self.media_stem.clone(),
+            field_props: self.field_props.clone(),
+            field_codes: None,
         }
     }
 
@@ -1297,6 +1314,12 @@ impl Document {
             p.indent.first = Some(indent.first.unwrap_or(tw(r.first_line_pt)));
             p.extras.remove("ind");
         });
+    }
+
+    /// Forget the undo history (a header, footer or note going back into
+    /// its document: the main document's step holds the change).
+    pub(crate) fn clear_history(&mut self) {
+        self.history = History::default();
     }
 
     /// Undo the last step; returns the selection to restore.

@@ -355,6 +355,117 @@ fn main() -> Result<()> {
         doc.save_as(&o.join("floats_edited.docx"))?;
         Ok(Some(floats_src.clone()))
     });
+    // Headers, footers and notes edited in place with formatting, a table
+    // and a picture; a new footer in a later section, Link to Previous
+    // off, distances; Insert Field, a bookmark, a cross-reference and an
+    // edited field code.
+    let report_src = corpus.join("docx/report.docx");
+    run.scenario("parts_fields_edited.docx", |o| {
+        use docs_engine::{HfKind, HfType, NoteKind, Toggle, XrefKind, XrefWhat};
+        let mut doc = Document::open(&report_src)?;
+        let cx = docs_engine::FieldContext {
+            now: chrono::NaiveDate::from_ymd_opt(2026, 11, 16)
+                .and_then(|d| d.and_hms_opt(9, 0, 0))
+                .context("date")?,
+            offset: chrono::FixedOffset::east_opt(7 * 3600).context("offset")?,
+        };
+        let mut engine = docs_pdf::Engine::new();
+        let caret = Selection::caret(Position::new(1, 0));
+        let (e, mut h) = doc
+            .edit_hf(0, HfKind::Header, HfType::Default)
+            .context("header")?;
+        let c = h.insert_text(Selection::default(), "Draft ", None);
+        h.toggle(
+            Selection {
+                anchor: Position::new(0, 0),
+                head: Position::new(0, 5),
+            },
+            Toggle::Bold,
+        );
+        let end = h.end();
+        let c2 = h.newline(Selection::caret(end), None);
+        let c2 = h.insert_image(c2, png_2x1(), "logo.png")?;
+        h.insert_table(c2, 1, 2).context("table")?;
+        let _ = c;
+        doc.finish_part(e, h, caret);
+        let last = doc.sections().len() - 1;
+        doc.set_hf_linked(last, HfKind::Footer, HfType::Default, false, caret);
+        let (e, mut f) = doc
+            .edit_hf(last, HfKind::Footer, HfType::Default)
+            .context("footer")?;
+        let end = f.end();
+        f.insert_field(
+            Selection::caret(end),
+            "DATE \\@ \"d MMMM yyyy\"",
+            &cx,
+            &mut |d| docs_pdf::field_pages(d, &mut engine),
+        );
+        doc.finish_part(e, f, caret);
+        doc.set_hf_distances(0, 600, 500, caret);
+        let (c, id) = doc.insert_note(NoteKind::Footnote, Selection::caret(Position::new(2, 4)));
+        let (e, mut n) = doc.edit_note(NoteKind::Footnote, &id).context("note")?;
+        let end = n.end();
+        let a = n.insert_text(Selection::caret(end), "Source: board survey.", None);
+        n.toggle(
+            Selection {
+                anchor: end,
+                head: a.head,
+            },
+            Toggle::Italic,
+        );
+        let a = n.newline(a, None);
+        n.insert_image(a, png_2x1(), "chart.png")?;
+        doc.finish_part(e, n, c);
+        let end = doc.end();
+        let c = doc.insert_text(Selection::caret(end), "\nSee ", None);
+        let headings = doc.xref_targets(&XrefKind::Heading);
+        let target = headings.first().context("heading")?;
+        let c = doc.insert_cross_reference(
+            c,
+            &XrefKind::Heading,
+            target,
+            XrefWhat::Text,
+            true,
+            &cx,
+            &mut |d| docs_pdf::field_pages(d, &mut engine),
+        );
+        let c = doc.insert_cross_reference(
+            c,
+            &XrefKind::Heading,
+            target,
+            XrefWhat::PageNumber,
+            true,
+            &cx,
+            &mut |d| docs_pdf::field_pages(d, &mut engine),
+        );
+        let c = doc.insert_field(c, "TITLE", &cx, &mut |d| {
+            docs_pdf::field_pages(d, &mut engine)
+        });
+        doc.add_bookmark(
+            Selection {
+                anchor: Position::new(1, 0),
+                head: Position::new(1, 5),
+            },
+            "Board",
+        )
+        .map_err(anyhow::Error::msg)?;
+        let r = doc.insert_field(c, "REF Board \\h", &cx, &mut |d| {
+            docs_pdf::field_pages(d, &mut engine)
+        });
+        let _ = r;
+        let begin = doc
+            .fields()
+            .into_iter()
+            .find(|f| f.kind() == "TITLE")
+            .context("title field")?
+            .begin;
+        doc.set_field_code(begin, "AUTHOR", caret, &cx, &mut |d| {
+            docs_pdf::field_pages(d, &mut engine)
+        });
+        doc.update_part_fields(caret, &cx);
+        doc.save_as(&o.join("parts_fields_edited.docx"))?;
+        Ok(Some(report_src.clone()))
+    });
     run.scenario("new_doc.docx", |o| {
         let mut doc = Document::new();
         let end = doc.end();
@@ -1377,4 +1488,49 @@ fn slide_edits(p: &mut Presentation) -> Result<()> {
     p.set_notes_text(n, "A new slide's notes")?;
     p.duplicate_slide(0)?;
     Ok(())
+}
+
+/// A valid 2×1 RGB PNG (synthetic): stored deflate blocks, no zlib crate.
+fn png_2x1() -> Vec<u8> {
+    fn crc32(data: &[u8]) -> u32 {
+        let mut c = 0xFFFF_FFFFu32;
+        for &b in data {
+            c ^= u32::from(b);
+            for _ in 0..8 {
+                c = if c & 1 != 0 {
+                    0xEDB8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
+            }
+        }
+        !c
+    }
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        out.extend((data.len() as u32).to_be_bytes());
+        let mut body = kind.to_vec();
+        body.extend(data);
+        out.extend(&body);
+        out.extend(crc32(&body).to_be_bytes());
+    }
+    let raw = [0u8, 200, 40, 40, 40, 90, 200];
+    let (mut a, mut b) = (1u32, 0u32);
+    for &x in &raw {
+        a = (a + u32::from(x)) % 65521;
+        b = (b + a) % 65521;
+    }
+    let mut z = vec![0x78, 0x01, 1];
+    z.extend((raw.len() as u16).to_le_bytes());
+    z.extend((!(raw.len() as u16)).to_le_bytes());
+    z.extend(raw);
+    z.extend(((b << 16) | a).to_be_bytes());
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut ihdr = Vec::new();
+    ihdr.extend(2u32.to_be_bytes());
+    ihdr.extend(1u32.to_be_bytes());
+    ihdr.extend([8, 2, 0, 0, 0]);
+    chunk(&mut out, b"IHDR", &ihdr);
+    chunk(&mut out, b"IDAT", &z);
+    chunk(&mut out, b"IEND", &[]);
+    out
 }

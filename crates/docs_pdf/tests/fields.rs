@@ -71,3 +71,50 @@ fn field_results_are_laid_out_and_page_references_follow_the_layout() {
     let pdf = docs_pdf::export(&doc, &mut engine).unwrap();
     assert!(pdf.starts_with(b"%PDF"));
 }
+
+/// Alt+F9: a field's code takes the place of its result in the layout
+/// (the result stays in the text, hidden), page numbers too.
+#[test]
+fn field_codes_replace_results_in_the_layout() {
+    let mut doc = docs_engine::Document::open(&corpus("fields.docx")).unwrap();
+    let date = doc
+        .fields()
+        .into_iter()
+        .find(|f| f.kind() == "DATE")
+        .unwrap();
+    let (paras, _, _) = docs_pdf::build::build(&doc);
+    let lp = &paras[date.begin.para];
+    assert!(lp.hidden.is_empty());
+    assert!(!lp.objects.iter().any(|o| o.label.starts_with("{ DATE")));
+    doc.set_field_codes(Some(docs_engine::CodeView {
+        all: true,
+        ids: Default::default(),
+    }));
+    let (paras, _, _) = docs_pdf::build::build(&doc);
+    let lp = &paras[date.begin.para];
+    let code = lp
+        .objects
+        .iter()
+        .find(|o| o.index == date.begin.offset)
+        .unwrap();
+    assert_eq!(code.kind, docs_layout::ObjectKind::Text);
+    assert!(code.label.starts_with("{ DATE"), "{}", code.label);
+    assert!(code.label.ends_with(" }"));
+    let (a, b) = date.result();
+    assert!(lp.hidden.contains(&(a.offset..b.offset)), "{:?}", lp.hidden);
+    // Only the field at the caret (Shift+F9).
+    let mut one = docs_engine::CodeView::default();
+    one.ids.insert(date.mark_id());
+    doc.set_field_codes(Some(one));
+    let (paras, _, _) = docs_pdf::build::build(&doc);
+    let shown_codes = paras
+        .iter()
+        .flat_map(|p| p.objects.iter())
+        .filter(|o| o.label.starts_with("{ "))
+        .count();
+    assert_eq!(shown_codes, 1);
+    // Laid out, the hidden result takes (almost) no room.
+    let mut engine = docs_layout::Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    assert!(!laid.paged.pages.is_empty());
+}

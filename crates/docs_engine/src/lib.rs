@@ -16,6 +16,7 @@ pub mod agent;
 mod document;
 pub mod docx;
 mod edit;
+mod field_edit;
 pub mod fields;
 pub mod find;
 pub mod float;
@@ -25,6 +26,7 @@ pub mod notes;
 pub mod numbering;
 pub mod object;
 pub mod page;
+pub mod part_edit;
 pub mod review;
 mod rewrite;
 pub mod rtf;
@@ -39,7 +41,8 @@ pub use document::{
     Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, Toggle, is_import_path,
 };
 pub use edit::TableEdit;
-pub use fields::{FieldContext, FieldSpan, Instr, LinkTarget, PageLookup};
+pub use field_edit::{XrefKind, XrefTarget, XrefWhat, valid_bookmark_name};
+pub use fields::{CodeView, FieldContext, FieldSpan, Instr, LinkTarget, PageLookup};
 pub use float::{Float, FloatKind, LayoutOption, Placement, Wrap};
 pub use model::{
     Align, CellRef, Fonts, Indent, LineRule, LineSpacing, NumRef, ParaProps, Paragraph, Position,
@@ -49,6 +52,7 @@ pub use notes::{Note, NoteKind, NoteProps, NoteRef, NoteRestart};
 pub use numbering::ListKind;
 pub use object::{FieldMark, Image, ImageFormat, Level, OBJECT, Object, Opaque};
 pub use page::{MarginPreset, Orientation, PaperSize, cm_to_twips, twips_to_cm};
+pub use part_edit::{PartEdit, PartRef};
 pub use review::{Anchor, Change, Comment, RevKind, Revision};
 pub use section::{
     HfKind, HfType, NumFormat, PageField, Section, SectionProps, SectionStart, Story, page_field,

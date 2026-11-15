@@ -337,6 +337,20 @@ impl PageField {
         }
     }
 
+    /// A new field object (`w:fldSimple`) with instruction `instr` (its
+    /// switches kept), showing `shown` until laid out.
+    pub fn object_with(self, instr: &str, shown: &str) -> Object {
+        Object::Opaque(Arc::new(Opaque {
+            level: Level::Para,
+            xml: format!(
+                "<w:fldSimple w:instr=\"{}\"><w:r><w:t>{}</w:t></w:r></w:fldSimple>",
+                xml::escape(instr),
+                xml::escape(shown)
+            ),
+            label: shown.to_owned(),
+        }))
+    }
+
     /// A new field object (`w:fldSimple`), showing `shown` until laid out.
     pub fn object(self, shown: &str) -> Object {
         Object::Opaque(Arc::new(Opaque {
@@ -608,7 +622,12 @@ impl Document {
 
     /// Record a header/footer change made since `before` (and the
     /// paragraph `para` changing from `old`, for a section's own sectPr).
-    fn push_hf(&mut self, before: HfState, para: Option<(usize, Paragraph)>, sel: Selection) {
+    pub(crate) fn push_hf(
+        &mut self,
+        before: HfState,
+        para: Option<(usize, Paragraph)>,
+        sel: Selection,
+    ) {
         let after = self.hf_state();
         let (start, old, new) = match para {
             Some((i, old)) => (i, vec![old], vec![self.paragraphs[i].clone()]),
@@ -635,7 +654,7 @@ impl Document {
 
     /// Replace section `si`'s sectPr; returns the paragraph's old value when
     /// the sectPr is a paragraph's.
-    fn set_sect_xml(
+    pub(crate) fn set_sect_xml(
         &mut self,
         sections: &[Section],
         si: usize,
@@ -717,19 +736,7 @@ impl Document {
                 let id = story.rel_id.clone();
                 self.stories.push(story);
                 let xml = self.sect_xml(&sections, si);
-                let p = sect_prefix(&xml).to_owned();
-                let r_decl = if self.root_declares_r() {
-                    String::new()
-                } else {
-                    format!(" xmlns:r=\"{R_NS}\"")
-                };
-                let el = format!(
-                    "<{p}{}{r_decl} {p}type=\"{}\" r:id=\"{id}\"/>",
-                    kind.element(),
-                    ty.attr()
-                );
-                // Next to the other references (they share a slot).
-                let xml = insert_reference(&xml, &el);
+                let xml = insert_reference_el(self, &xml, kind, ty, &id);
                 para = self.set_sect_xml(&sections, si, xml);
                 self.stories.len() - 1
             }
@@ -753,42 +760,7 @@ impl Document {
         });
         let mut paras: Vec<Paragraph> = text
             .split('\n')
-            .map(|line| {
-                let mut p = Paragraph {
-                    props: para_props.clone(),
-                    ..Paragraph::default()
-                };
-                p.props.extras.remove("sectPr");
-                p.runs[0].props = run_props.clone();
-                let mut rest = line;
-                while !rest.is_empty() {
-                    let next = [
-                        PageField::Page,
-                        PageField::NumPages,
-                        PageField::SectionPages,
-                    ]
-                    .into_iter()
-                    .filter_map(|f| rest.find(f.token()).map(|at| (at, f)))
-                    .min_by_key(|x| x.0);
-                    match next {
-                        Some((at, f)) => {
-                            p.push(&rest[..at], run_props.clone());
-                            p.push_object(f.object("1"), run_props.clone(), None);
-                            rest = &rest[at + f.token().len()..];
-                        }
-                        None => {
-                            p.push(rest, run_props.clone());
-                            rest = "";
-                        }
-                    }
-                }
-                if let Some(a) = align {
-                    p.props.align = Some(a);
-                    p.props.extras.remove("jc");
-                }
-                p.normalize();
-                p
-            })
+            .map(|line| hf_line(line, &run_props, &para_props, align))
             .collect();
         if paras.is_empty() {
             paras.push(Paragraph::default());
@@ -801,6 +773,108 @@ impl Document {
         true
     }
 
+    /// Whether section `si` uses the previous section's `ty` header or
+    /// footer (Word's Link to Previous: it has none of its own). The first
+    /// section never links.
+    pub fn hf_linked(&self, si: usize, kind: HfKind, ty: HfType) -> bool {
+        let sections = self.sections();
+        si > 0
+            && sections
+                .get(si)
+                .is_some_and(|s| s.props.reference(kind, ty).is_none())
+    }
+
+    /// Link to Previous on or off for section `si`'s `ty` header or footer:
+    /// one undo step. Unlinking gives the section its own copy of the
+    /// previous section's (Word copies it), linking drops the section's
+    /// own reference (the part stays in the file, unused).
+    pub fn set_hf_linked(&mut self, si: usize, kind: HfKind, ty: HfType, on: bool, sel: Selection) {
+        let sections = self.sections();
+        if si == 0 || si >= sections.len() || self.hf_linked(si, kind, ty) == on {
+            return;
+        }
+        let before = self.hf_state();
+        let xml = self.sect_xml(&sections, si);
+        let xml = if on {
+            set_sect_child(
+                &xml,
+                kind.element(),
+                |tag| {
+                    xml::parse(tag)
+                        .and_then(|e| e.attr("type").map(HfType::parse))
+                        .unwrap_or(HfType::Default)
+                        == ty
+                },
+                None,
+            )
+        } else {
+            let mut story = self.new_story(kind);
+            if let Some(prev) = self.story_index_for(&sections, si - 1, kind, ty) {
+                let src = &self.stories[prev];
+                if src.locked.is_none() {
+                    let mut doc = src.doc.clone();
+                    doc.clear_history();
+                    story.doc = doc;
+                }
+            }
+            let id = story.rel_id.clone();
+            self.stories.push(story);
+            insert_reference_el(self, &xml, kind, ty, &id)
+        };
+        let para = self.set_sect_xml(&sections, si, xml);
+        self.push_hf(before, para, sel);
+    }
+
+    /// Set section `si`'s header distance from the top edge and footer
+    /// distance from the bottom edge (twips): one undo step.
+    pub fn set_hf_distances(&mut self, si: usize, header: u32, footer: u32, sel: Selection) {
+        let sections = self.sections();
+        let Some(s) = sections.get(si) else { return };
+        if s.props.header_dist == header && s.props.footer_dist == footer {
+            return;
+        }
+        let before = self.hf_state();
+        let xml = self.sect_xml(&sections, si);
+        let xml = crate::page::set_hf_distances(&xml, &s.props.page, header, footer);
+        let para = self.set_sect_xml(&sections, si, xml);
+        self.push_hf(before, para, sel);
+    }
+
+    /// Add a line "Page {PAGE} of {PAGES}" (`text`, the tokens becoming
+    /// fields), centred, to the footer on every page of section `si`
+    /// (created if it has none; what it has stays): one undo step. `false`
+    /// when that footer already has a page number or can't be edited.
+    pub fn add_page_numbers(&mut self, si: usize, text: &str, sel: Selection) -> bool {
+        let Some((edit, mut part)) = self.edit_hf(si, HfKind::Footer, HfType::Default) else {
+            return false;
+        };
+        let has = part
+            .paragraphs
+            .iter()
+            .flat_map(|p| p.objects())
+            .any(|(_, o)| page_field(o) == Some(PageField::Page));
+        let locked = matches!(edit.part, crate::part_edit::PartRef::Story(i)
+            if self.stories[i].locked.is_some());
+        if has || locked {
+            self.finish_part(edit, part, sel);
+            return false;
+        }
+        let mut pp = crate::model::ParaProps::default();
+        if self.styles.get("Footer").is_some() {
+            pp.style = Some("Footer".to_owned());
+        }
+        let line = hf_line(text, &RunProps::default(), &pp, Some(Align::Center));
+        let empty = part.paragraphs.len() == 1
+            && part.paragraphs[0].text.is_empty()
+            && part.tables.is_empty();
+        if empty {
+            part.paragraphs = vec![line];
+        } else {
+            part.paragraphs.push(line);
+        }
+        self.finish_part(edit, part, sel)
+    }
+
     /// Whether the main part's root declares the `r:` prefix (new
     /// documents get docx-rs's root, which does).
     fn root_declares_r(&self) -> bool {
@@ -810,7 +884,7 @@ impl Document {
     }
 
     /// A new, empty header or footer part with an unused name and id.
-    fn new_story(&self, kind: HfKind) -> Story {
+    pub(crate) fn new_story(&self, kind: HfKind) -> Story {
         let (stem, root) = match kind {
             HfKind::Header => ("header", "hdr"),
             HfKind::Footer => ("footer", "ftr"),
@@ -947,6 +1021,73 @@ impl Document {
     pub fn insert_page_field(&mut self, sel: Selection, field: PageField) -> Selection {
         self.insert_object(sel, field.object("1"))
     }
+}
+
+/// A header or footer paragraph holding `line` (`{PAGE}`, `{PAGES}` and
+/// `{SECTIONPAGES}` become page number fields).
+fn hf_line(
+    line: &str,
+    run_props: &RunProps,
+    para_props: &crate::model::ParaProps,
+    align: Option<Align>,
+) -> Paragraph {
+    let mut p = Paragraph {
+        props: para_props.clone(),
+        ..Paragraph::default()
+    };
+    p.props.extras.remove("sectPr");
+    p.runs[0].props = run_props.clone();
+    let mut rest = line;
+    while !rest.is_empty() {
+        let next = [
+            PageField::Page,
+            PageField::NumPages,
+            PageField::SectionPages,
+        ]
+        .into_iter()
+        .filter_map(|f| rest.find(f.token()).map(|at| (at, f)))
+        .min_by_key(|x| x.0);
+        match next {
+            Some((at, f)) => {
+                p.push(&rest[..at], run_props.clone());
+                p.push_object(f.object("1"), run_props.clone(), None);
+                rest = &rest[at + f.token().len()..];
+            }
+            None => {
+                p.push(rest, run_props.clone());
+                rest = "";
+            }
+        }
+    }
+    if let Some(a) = align {
+        p.props.align = Some(a);
+        p.props.extras.remove("jc");
+    }
+    p.normalize();
+    p
+}
+
+/// `sect_pr` with a reference to the header or footer `id` for `ty` pages,
+/// next to the other references (they share a slot).
+pub(crate) fn insert_reference_el(
+    doc: &Document,
+    sect_pr: &str,
+    kind: HfKind,
+    ty: HfType,
+    id: &str,
+) -> String {
+    let p = sect_prefix(sect_pr).to_owned();
+    let r_decl = if doc.root_declares_r() {
+        String::new()
+    } else {
+        format!(" xmlns:r=\"{R_NS}\"")
+    };
+    let el = format!(
+        "<{p}{}{r_decl} {p}type=\"{}\" r:id=\"{id}\"/>",
+        kind.element(),
+        ty.attr()
+    );
+    insert_reference(sect_pr, &el)
 }
 
 /// Insert a header/footer reference element with the others (first slot).
