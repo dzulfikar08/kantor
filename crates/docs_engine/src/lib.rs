@@ -18,6 +18,7 @@ pub mod docx;
 mod edit;
 pub mod fields;
 pub mod find;
+pub mod float;
 pub mod model;
 mod msdoc;
 pub mod notes;
@@ -39,6 +40,7 @@ pub use document::{
 };
 pub use edit::TableEdit;
 pub use fields::{FieldContext, FieldSpan, Instr, LinkTarget, PageLookup};
+pub use float::{Float, FloatKind, LayoutOption, Placement, Wrap};
 pub use model::{
     Align, CellRef, Fonts, Indent, LineRule, LineSpacing, NumRef, ParaProps, Paragraph, Position,
     Rgb, Run, RunProps, Selection,

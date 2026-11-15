@@ -636,13 +636,11 @@ fn opaque_elements_are_kept_byte_for_byte() {
         .objects()
         .map(|(_, o)| o.label().to_owned())
         .collect();
-    assert_eq!(
-        labels,
-        ["", "Budi", "3", "Floating image", "", "", "Equation", ""]
-    );
+    assert_eq!(labels, ["", "Budi", "3", "Drawing", "", "", "Equation", ""]);
     // The DATE field's result is text between its marks.
     assert!(doc.paragraph(1).text.contains("7/11/2026"));
-    // Deleting text around a bookmark keeps the bookmark.
+    // Deleting text around a bookmark keeps the bookmark (and the
+    // floating object anchored there).
     let mut doc = doc;
     let end = doc.paragraph(1).text.len();
     doc.delete_selection(Selection {
@@ -654,7 +652,7 @@ fn opaque_elements_are_kept_byte_for_byte() {
         .objects()
         .map(|(_, o)| o.is_marker())
         .collect();
-    assert_eq!(left, [true, true]);
+    assert_eq!(left, [true, false, true]);
     assert_eq!(
         doc.text_in(
             Position::new(1, 0),

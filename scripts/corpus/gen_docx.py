@@ -19,6 +19,15 @@ crates/docs_pdf/tests/.
   without `_Toc` bookmarks across a page break, SEQ captions, REF and
   PAGEREF cross-references, DATE with a picture, a TITLE simple field, a
   MERGEFIELD with no result, a HYPERLINK field and an external hyperlink.
+* floats.docx: floating objects (`wp:anchor`): a picture with square
+  wrapping at the right of the column, a cropped picture placed from the
+  page with top-and-bottom wrapping, a rounded-rectangle text box (Word's
+  `mc:AlternateContent` with a VML fallback) at a percentage of the page,
+  an ellipse behind the text, an arrow in front of it, one aligned to the
+  line's character, and a second section continuing past a page.
+* notes.docx: a footnote too long for its page (Word's continuation
+  separator and notice), short footnotes, and endnotes placed at the end
+  of each section (`w:endnotePr/w:pos w:val="sectEnd"`) in two sections.
 
 Regenerate with
 `uv run --with python-docx==1.2.0 scripts/corpus/gen_docx.py tests/corpus/docx`.
@@ -361,4 +370,221 @@ rid = d.part.relate_to("https://example.com/report", RT.HYPERLINK, is_external=T
 add(p, f'<w:hyperlink r:id="{rid}" w:history="1"><w:r><w:t>online copy</w:t></w:r></w:hyperlink>')
 add(p, runs(("t", ".")))
 save(d, "fields.docx")
+
+# ── floats: wp:anchor pictures, shapes and text boxes.
+NS_WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+NS_A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+NS_PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+NS_WPS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+NS_MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+NS_V = "urn:schemas-microsoft-com:vml"
+NS_WP14 = "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
+EMU = 9525  # per px
+NS_ALL = (
+    f'xmlns:wp="{NS_WP}" xmlns:a="{NS_A}" xmlns:pic="{NS_PIC}" xmlns:wps="{NS_WPS}" '
+    f'xmlns:mc="{NS_MC}" xmlns:v="{NS_V}" xmlns:wp14="{NS_WP14}" '
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+)
+
+
+def anchor(doc_id, name, pos_h, pos_v, cx, cy, wrap, graphic, z, behind=0, dist=(0, 0, 114300, 114300)):
+    t, b, l, r = dist
+    return (
+        f'<wp:anchor distT="{t}" distB="{b}" distL="{l}" distR="{r}" simplePos="0" '
+        f'relativeHeight="{z}" behindDoc="{behind}" locked="0" layoutInCell="1" allowOverlap="1">'
+        f'<wp:simplePos x="0" y="0"/>{pos_h}{pos_v}<wp:extent cx="{cx}" cy="{cy}"/>'
+        f'<wp:effectExtent l="0" t="0" r="0" b="0"/>{wrap}<wp:docPr id="{doc_id}" name="{name}"/>'
+        f'<wp:cNvGraphicFramePr/>{graphic}</wp:anchor>'
+    )
+
+
+def pos(axis, rel, inner):
+    return f'<wp:position{axis} relativeFrom="{rel}">{inner}</wp:position{axis}>'
+
+
+def picture(rid, cx, cy, crop=""):
+    return (
+        f'<a:graphic><a:graphicData uri="{NS_PIC}"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="p.png"/>'
+        f'<pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="{rid}"/>{crop}<a:stretch><a:fillRect/>'
+        f'</a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/>'
+        f'</a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>'
+    )
+
+
+def shape(prst, cx, cy, fill, line, text=None, extra=""):
+    body = ""
+    if text:
+        paras = "".join(f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in text)
+        body = f'<wps:txbx><w:txbxContent>{paras}</w:txbxContent></wps:txbx>'
+    fill_xml = f'<a:solidFill><a:srgbClr val="{fill}"/></a:solidFill>' if fill else "<a:noFill/>"
+    return (
+        f'<a:graphic><a:graphicData uri="{NS_WPS}"><wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm>'
+        f'<a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="{prst}"><a:avLst/>'
+        f'</a:prstGeom>{fill_xml}<a:ln w="19050"><a:solidFill><a:srgbClr val="{line}"/></a:solidFill>{extra}</a:ln>'
+        f'</wps:spPr>{body}<wps:bodyPr rot="0" vert="horz" lIns="91440" tIns="45720" rIns="91440" bIns="45720" '
+        f'anchor="t"/></wps:wsp></a:graphicData></a:graphic>'
+    )
+
+
+def drawing(inner):
+    return f'<w:r><w:drawing>{inner}</w:drawing></w:r>'
+
+
+def alternate(inner, fallback):
+    return (
+        f'<w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing>{inner}</w:drawing>'
+        f'</mc:Choice><mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent></w:r>'
+    )
+
+
+def add_ns(par, xml):
+    holder = parse_xml(f"<w:p {W} {NS_ALL}>{xml}</w:p>")
+    for child in list(holder):
+        par._p.append(child)
+
+
+LOREM = (
+    "Kantor lays out floating objects the way Word does: pictures, shapes and text boxes "
+    "anchored to a paragraph, positioned from the page, the margins or the paragraph, with "
+    "the text wrapping around them. "
+)
+d = Document()
+sec = d.sections[0]
+sec.page_width, sec.page_height = Cm(21), Cm(29.7)
+sec.left_margin = sec.right_margin = Cm(2.54)
+sec.top_margin = sec.bottom_margin = Cm(2.54)
+# Pictures: python-docx adds the parts; their relationship ids go in the anchors.
+rid_blue, _ = d.part.get_or_add_image(io.BytesIO(png(80, 60, (40, 110, 200))))
+rid_green, _ = d.part.get_or_add_image(io.BytesIO(png(60, 60, (60, 170, 90))))
+d.add_heading("Floating objects", 1)
+p = d.add_paragraph()
+add_ns(p, drawing(anchor(
+    101, "Square picture",
+    pos("H", "margin", "<wp:align>right</wp:align>"),
+    pos("V", "paragraph", "<wp:posOffset>0</wp:posOffset>"),
+    160 * EMU, 120 * EMU, '<wp:wrapSquare wrapText="bothSides"/>',
+    picture(rid_blue, 160 * EMU, 120 * EMU), 251659264,
+)))
+p.add_run(LOREM * 4)
+p = d.add_paragraph()
+add_ns(p, drawing(anchor(
+    102, "Cropped picture",
+    pos("H", "page", "<wp:posOffset>1143000</wp:posOffset>"),
+    pos("V", "page", f"<wp:posOffset>{600 * EMU}</wp:posOffset>"),
+    120 * EMU, 80 * EMU, "<wp:wrapTopAndBottom/>",
+    picture(rid_green, 120 * EMU, 80 * EMU, '<a:srcRect l="25000" t="0" r="25000" b="0"/>'), 251659265,
+)))
+p.add_run(LOREM * 2)
+p = d.add_paragraph()
+fallback = '<w:pict><v:roundrect style="width:180pt;height:72pt" arcsize="10923f"><v:textbox><w:txbxContent><w:p><w:r><w:t>Text box</w:t></w:r></w:p></w:txbxContent></v:textbox></v:roundrect></w:pict>'
+add_ns(p, alternate(anchor(
+    103, "Text Box 1",
+    '<mc:AlternateContent><mc:Choice Requires="wp14"><wp:positionH relativeFrom="page">'
+    '<wp14:pctPosHOffset>55000</wp14:pctPosHOffset></wp:positionH></mc:Choice><mc:Fallback>'
+    '<wp:positionH relativeFrom="page"><wp:posOffset>4157345</wp:posOffset></wp:positionH>'
+    '</mc:Fallback></mc:AlternateContent>',
+    pos("V", "paragraph", f"<wp:posOffset>{20 * EMU}</wp:posOffset>"),
+    240 * EMU, 96 * EMU, '<wp:wrapSquare wrapText="largest"/>',
+    shape("roundRect", 240 * EMU, 96 * EMU, "FFF4D6", "C08A00", ["Text box", "with two paragraphs"]),
+    251659266,
+), fallback))
+p.add_run(LOREM * 3)
+p = d.add_paragraph()
+add_ns(p, drawing(anchor(
+    104, "Ellipse behind",
+    pos("H", "column", "<wp:align>center</wp:align>"),
+    pos("V", "line", "<wp:posOffset>0</wp:posOffset>"),
+    300 * EMU, 60 * EMU, "<wp:wrapNone/>",
+    shape("ellipse", 300 * EMU, 60 * EMU, "DDEBFF", "4472C4"), 251659200, behind=1,
+)))
+add_ns(p, drawing(anchor(
+    105, "Arrow",
+    pos("H", "character", "<wp:posOffset>0</wp:posOffset>"),
+    pos("V", "line", f"<wp:posOffset>{30 * EMU}</wp:posOffset>"),
+    150 * EMU, 0, "<wp:wrapNone/>",
+    shape("straightConnector1", 150 * EMU, 0, None, "C00000", extra='<a:tailEnd type="triangle"/>'),
+    251659300,
+)))
+p.add_run(LOREM * 2)
+for _ in range(8):
+    d.add_paragraph(LOREM * 2)
+save(d, "floats.docx")
+
+# ── notes: a long footnote that continues, endnotes at each section's end.
+d = Document()
+sec = d.sections[0]
+sec.page_width, sec.page_height = Cm(21), Cm(29.7)
+sec.left_margin = sec.right_margin = Cm(2.54)
+fn_part_xml = None
+
+
+def footnote_ref(par, kind, nid):
+    add(par, f'<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:{kind}Reference w:id="{nid}"/></w:r>')
+
+
+notes = {"footnote": [], "endnote": []}
+
+
+def note(kind, nid, paras):
+    body = "".join(
+        f'<w:p><w:pPr><w:pStyle w:val="{kind.capitalize()}Text"/></w:pPr>'
+        + (f'<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:{kind}Ref/></w:r>' if i == 0 else "")
+        + f'<w:r><w:t xml:space="preserve"> {t}</w:t></w:r></w:p>'
+        for i, t in enumerate(paras)
+    )
+    notes[kind].append(f'<w:{kind} w:id="{nid}">{body}</w:{kind}>')
+
+
+d.add_heading("Notes", 1)
+for i in range(30):
+    par = d.add_paragraph("Body text before the long note. " * 6)
+par = d.add_paragraph("This sentence has a long footnote.")
+footnote_ref(par, "footnote", 1)
+note("footnote", 1, [f"Line {k + 1} of a footnote that is much too long for the rest of its page, so Word carries it on." for k in range(40)])
+par = d.add_paragraph("A short footnote follows.")
+footnote_ref(par, "footnote", 2)
+note("footnote", 2, ["A short footnote."])
+par = d.add_paragraph("And an endnote in the first section.")
+footnote_ref(par, "endnote", 1)
+note("endnote", 1, ["The first section's endnote."])
+d.add_section(WD_SECTION.NEW_PAGE)
+d.add_heading("Second section", 1)
+par = d.add_paragraph("An endnote in the second section.")
+footnote_ref(par, "endnote", 2)
+note("endnote", 2, ["The second section's endnote."])
+
+
+def sep(kind):
+    return (
+        f'<w:{kind} w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>'
+        f'<w:r><w:separator/></w:r></w:p></w:{kind}>'
+        f'<w:{kind} w:type="continuationSeparator" w:id="0"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>'
+        f'<w:r><w:continuationSeparator/></w:r></w:p></w:{kind}>'
+        f'<w:{kind} w:type="continuationNotice" w:id="1"><w:p><w:pPr><w:jc w:val="right"/></w:pPr>'
+        f'<w:r><w:t>Continued on the next page</w:t></w:r></w:p></w:{kind}>'
+    )
+
+
+from docx.opc.part import Part
+from docx.opc.packuri import PackURI
+
+CT = "application/vnd.openxmlformats-officedocument.wordprocessingml.{}s+xml"
+for kind in ("footnote", "endnote"):
+    # Notes ids 1.. are content; the special ones get -1, 0, 1 → renumber.
+    xml = (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:{kind}s {W}>'
+        + sep(kind).replace('w:id="-1"', 'w:id="-2"').replace('w:id="0"', 'w:id="-1"').replace('w:id="1"', 'w:id="0"')
+        + "".join(notes[kind])
+        + f"</w:{kind}s>"
+    )
+    part = Part(PackURI(f"/word/{kind}s.xml"), CT.format(kind), xml.encode(), d.part.package)
+    d.part.relate_to(part, f"http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}s")
+# Settings: the special notes, and endnotes at each section's end.
+settings = d.settings.element
+fpr = parse_xml(f'<w:footnotePr {W}><w:footnote w:id="-2"/><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>')
+epr = parse_xml(f'<w:endnotePr {W}><w:pos w:val="sectEnd"/><w:endnote w:id="-2"/><w:endnote w:id="-1"/><w:endnote w:id="0"/></w:endnotePr>')
+compat = settings.find(qn("w:compat"))
+compat.addprevious(fpr)
+compat.addprevious(epr)
+save(d, "notes.docx")
 print("docx ok")

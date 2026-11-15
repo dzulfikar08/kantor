@@ -624,6 +624,7 @@ impl Document {
                         }
                     }
                     Object::Opaque(o) => max = max.max(doc_pr_ids(&o.xml)),
+                    Object::Float(f) => max = max.max(doc_pr_ids(&f.xml)),
                     Object::Field(_) => {}
                 }
             }
