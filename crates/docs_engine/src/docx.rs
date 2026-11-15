@@ -80,6 +80,9 @@ use crate::table::{Border, Borders, Cell, CellMargins, Row, Table, Tables, VMerg
 use crate::xml::{self, El, PPR_ORDER, RPR_ORDER, escape, ordered};
 
 const W: &[u8] = b"http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+/// The same namespace in Strict Open XML (ISO/IEC 29500 Strict), which Kantor
+/// doesn't read yet.
+const W_STRICT: &[u8] = b"http://purl.oclc.org/ooxml/wordprocessingml/main";
 const W_DECL: &str = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"";
 const XML_DECL: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n";
 const REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -1566,6 +1569,9 @@ fn parse_body(src: &str, rels: &HashMap<String, Rel>, document_part: &str) -> an
                     None => {
                         let story = is_w && (local == "hdr" || local == "ftr");
                         if !(is_w && local == "document") && !story {
+                            if matches!(ns, ResolveResult::Bound(Namespace(n)) if n == W_STRICT) {
+                                bail!("Strict Open XML documents aren't supported yet");
+                            }
                             bail!("not a WordprocessingML document");
                         }
                         let tag = &src[before..after];

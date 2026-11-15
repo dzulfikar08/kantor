@@ -89,7 +89,13 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
     archive: &mut zip::read::ZipArchive<R>,
     theme: &Theme,
 ) -> Result<Styles, XlsxError> {
-    let file = archive.by_name("xl/styles.xml")?;
+    // KANTOR PATCH (§10): the styles part is optional (OPC); a workbook
+    // without one opens with a new workbook's styles, as in Excel.
+    let file = match archive.by_name("xl/styles.xml") {
+        Ok(file) => file,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(Styles::default()),
+        Err(e) => return Err(e.into()),
+    };
     let doc = XmlNode::parse(BufReader::new(file))?;
     let style_sheet = &doc;
 
@@ -115,11 +121,9 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
     }
 
     let mut fonts = Vec::new();
-    let font_nodes = style_sheet
-        .children()
-        .filter(|n| n.has_tag_name("fonts"))
-        .collect::<Vec<&XmlNode>>()[0];
-    for font in font_nodes.children() {
+    let font_nodes = style_sheet.children().find(|n| n.has_tag_name("fonts"));
+    // KANTOR PATCH (§10): a missing section is empty, not a panic.
+    for font in font_nodes.into_iter().flat_map(|n| n.children()) {
         let mut sz = 11;
         let mut name = "Inter".to_string();
         // NOTE: In Excel you can have simple underline or double underline
@@ -201,11 +205,9 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
     }
 
     let mut fills = Vec::new();
-    let fill_nodes = style_sheet
-        .children()
-        .filter(|n| n.has_tag_name("fills"))
-        .collect::<Vec<&XmlNode>>()[0];
-    for fill in fill_nodes.children() {
+    let fill_nodes = style_sheet.children().find(|n| n.has_tag_name("fills"));
+    // KANTOR PATCH (§10): a missing section is empty, not a panic.
+    for fill in fill_nodes.into_iter().flat_map(|n| n.children()) {
         let pattern_fill = fill
             .children()
             .filter(|n| n.has_tag_name("patternFill"))
@@ -245,11 +247,9 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
     }
 
     let mut borders = Vec::new();
-    let border_nodes = style_sheet
-        .children()
-        .filter(|n| n.has_tag_name("borders"))
-        .collect::<Vec<&XmlNode>>()[0];
-    for border in border_nodes.children() {
+    let border_nodes = style_sheet.children().find(|n| n.has_tag_name("borders"));
+    // KANTOR PATCH (§10): a missing section is empty, not a panic.
+    for border in border_nodes.into_iter().flat_map(|n| n.children()) {
         // KANTOR PATCH (fidelity): the attributes are diagonalUp/diagonalDown.
         let diagonal_up = get_bool_false(border, "diagonalUp");
         let diagonal_down = get_bool_false(border, "diagonalDown");
@@ -272,9 +272,9 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
     let mut cell_style_xfs = Vec::new();
     let cell_style_xfs_nodes = style_sheet
         .children()
-        .filter(|n| n.has_tag_name("cellStyleXfs"))
-        .collect::<Vec<&XmlNode>>()[0];
-    for xfs in cell_style_xfs_nodes.children() {
+        .find(|n| n.has_tag_name("cellStyleXfs"));
+    // KANTOR PATCH (§10): a missing section is empty, not a panic.
+    for xfs in cell_style_xfs_nodes.into_iter().flat_map(|n| n.children()) {
         let num_fmt_id = get_number(xfs, "numFmtId");
         let font_id = get_number(xfs, "fontId");
         let fill_id = get_number(xfs, "fillId");
@@ -304,9 +304,9 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
     let mut style_names = HashMap::new();
     let cell_style_nodes = style_sheet
         .children()
-        .filter(|n| n.has_tag_name("cellStyles"))
-        .collect::<Vec<&XmlNode>>()[0];
-    for cell_style in cell_style_nodes.children() {
+        .find(|n| n.has_tag_name("cellStyles"));
+    // KANTOR PATCH (§10): a missing section is empty, not a panic.
+    for cell_style in cell_style_nodes.into_iter().flat_map(|n| n.children()) {
         let name = get_attribute(cell_style, "name")?.to_string();
         let xf_id = get_number(cell_style, "xfId");
         let builtin_id = get_number(cell_style, "builtinId");
@@ -325,11 +325,9 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
     }
 
     let mut cell_xfs = Vec::new();
-    let cell_xfs_nodes = style_sheet
-        .children()
-        .filter(|n| n.has_tag_name("cellXfs"))
-        .collect::<Vec<&XmlNode>>()[0];
-    for xfs in cell_xfs_nodes.children() {
+    let cell_xfs_nodes = style_sheet.children().find(|n| n.has_tag_name("cellXfs"));
+    // KANTOR PATCH (§10): a missing section is empty, not a panic.
+    for xfs in cell_xfs_nodes.into_iter().flat_map(|n| n.children()) {
         // `xfId` is optional on a cellXfs <xf> (it references cellStyleXfs;
         // many Excel/LibreOffice files omit it). Default to 0 when absent.
         let xf_id = xfs
@@ -432,6 +430,44 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
     }
 
     let dxfs = load_dxfs(style_sheet, theme, indexed)?;
+
+    // KANTOR PATCH (§10): files from other writers can leave out whole
+    // sections (no <fills>, no <cellStyleXfs>…); take a new workbook's
+    // defaults for those so every index 0 exists.
+    let base = Styles::default();
+    fn or_default<T>(v: Vec<T>, d: Vec<T>) -> Vec<T> {
+        if v.is_empty() {
+            d
+        } else {
+            v
+        }
+    }
+    let fonts = or_default(fonts, base.fonts);
+    let fills = or_default(fills, base.fills);
+    let borders = or_default(borders, base.borders);
+    let cell_style_xfs = or_default(cell_style_xfs, base.cell_style_xfs);
+    let cell_xfs = or_default(cell_xfs, base.cell_xfs);
+    let cell_styles = or_default(cell_styles, base.cell_styles);
+    // KANTOR PATCH (§10): formats that point past the fonts, fills or
+    // borders there are (Excel repairs those files) use the first one.
+    let mut cell_xfs = cell_xfs;
+    let mut cell_style_xfs = cell_style_xfs;
+    let fix = |id: &mut i32, len: usize| {
+        if *id < 0 || *id as usize >= len {
+            *id = 0;
+        }
+    };
+    for xf in &mut cell_xfs {
+        fix(&mut xf.font_id, fonts.len());
+        fix(&mut xf.fill_id, fills.len());
+        fix(&mut xf.border_id, borders.len());
+        fix(&mut xf.xf_id, cell_style_xfs.len());
+    }
+    for xf in &mut cell_style_xfs {
+        fix(&mut xf.font_id, fonts.len());
+        fix(&mut xf.fill_id, fills.len());
+        fix(&mut xf.border_id, borders.len());
+    }
 
     Ok(Styles {
         num_fmts,

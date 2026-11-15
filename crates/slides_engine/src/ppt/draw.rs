@@ -389,6 +389,20 @@ pub(super) fn ph_attrs(ph: u8, idx: u32) -> Option<(String, u32)> {
     })
 }
 
+/// The factor for a group's own coordinate space `[left, top, right,
+/// bottom]` (master units): chOff/chExt and the children's anchors are
+/// ST_Coordinate / ST_PositiveCoordinate (32-bit), so a space whose EMU
+/// values wouldn't fit is scaled down (PowerPoint 97 groups can use
+/// coordinates in the millions).
+fn group_scale([l, t, r, b]: [f64; 4]) -> f64 {
+    let far = [l, t, r, b, r - l, b - t]
+        .into_iter()
+        .map(|v| (v * MU_EMU).abs())
+        .fold(0.0, f64::max);
+    let limit = f64::from(i32::MAX) / 2.0;
+    if far > limit { limit / far } else { 1.0 }
+}
+
 fn emu(v: f64) -> i64 {
     (v * MU_EMU).round() as i64
 }
@@ -407,6 +421,10 @@ pub(super) struct Part<'d, 'a> {
     /// Placeholder text bodies use the master's list styles (else each
     /// gets its own).
     pub ph_inherit: bool,
+    /// Factor for coordinates inside the group being written: a group's
+    /// own coordinate space can be so large that it doesn't fit Office
+    /// XML's 32-bit EMU values once converted, and is then scaled down.
+    pub child_scale: f64,
 }
 
 impl<'d, 'a> Part<'d, 'a> {
@@ -623,7 +641,8 @@ impl<'d, 'a> Part<'d, 'a> {
         if s.flags & F_FLIP_V != 0 {
             attrs.push_str(" flipV=\"1\"");
         }
-        let v = [emu(x), emu(y), emu(w), emu(h)];
+        let k = if top { 1.0 } else { self.child_scale };
+        let v = [emu(x * k), emu(y * k), emu(w * k), emu(h * k)];
         Some((attrs, v))
     }
 
@@ -818,12 +837,24 @@ impl<'d, 'a> Part<'d, 'a> {
         let p = g.props.clone();
         let (attrs, [x, y, w, h]) = self.xfrm(g, &p, top).unwrap_or_default();
         let [cl, ct, cr, cb] = g.group.unwrap_or([0, 0, 0, 0]).map(|v| v as f64);
-        let (cx, cy, cw, ch) = if cr > cl && cb > ct {
-            (emu(cl), emu(ct), emu(cr - cl), emu(cb - ct))
+        let outer = self.child_scale;
+        let own = cr > cl && cb > ct;
+        if own {
+            self.child_scale = group_scale([cl, ct, cr, cb]);
+        }
+        let k = self.child_scale;
+        let (cx, cy, cw, ch) = if own {
+            (
+                emu(cl * k),
+                emu(ct * k),
+                emu((cr - cl) * k),
+                emu((cb - ct) * k),
+            )
         } else {
             (x, y, w, h)
         };
         let kids: String = g.kids.iter().map(|k| self.shape(k, false)).collect();
+        self.child_scale = outer;
         format!(
             "<p:grpSp><p:nvGrpSpPr><p:cNvPr id=\"{id}\" name=\"Group {}\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>\
              <p:grpSpPr><a:xfrm{attrs}><a:off x=\"{x}\" y=\"{y}\"/><a:ext cx=\"{w}\" cy=\"{h}\"/>\
@@ -1002,4 +1033,21 @@ fn custom_geometry(p: &Props) -> Option<String> {
         "<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l=\"l\" t=\"t\" r=\"r\" b=\"b\"/>\
          <a:pathLst><a:path w=\"{w}\" h=\"{h}\"{fill_attr}>{path}</a:path></a:pathLst></a:custGeom>"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn huge_group_spaces_fit_32_bit_coordinates() {
+        assert_eq!(group_scale([0.0, 0.0, 5760.0, 4320.0]), 1.0);
+        // A group space from a real deck: millions of units wide.
+        let space = [-1_000_000.0, 0.0, 6_000_000.0, 900_000.0];
+        let k = group_scale(space);
+        assert!(k < 1.0);
+        for v in [space[0], space[2], space[2] - space[0]] {
+            assert!(emu(v * k).abs() <= i64::from(i32::MAX), "{v}");
+        }
+    }
 }

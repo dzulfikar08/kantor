@@ -390,6 +390,16 @@ fn same_twips(_: &str, old: &str, new: &str) -> bool {
 /// other byte is kept.
 pub fn update_sect_pr(sect_pr: &str, page: &PageGeometry) -> String {
     let p = root_prefix(sect_pr).to_owned();
+    // An empty `<w:sectPr/>` gets an end tag first, so what is inserted
+    // lands inside it (it was written after it, into the body).
+    let expanded;
+    let sect_pr = match sect_pr.trim_end().strip_suffix("/>") {
+        Some(head) if !sect_pr.contains("</") => {
+            expanded = format!("{}></{p}sectPr>", head.trim_end());
+            expanded.as_str()
+        }
+        _ => sect_pr,
+    };
     let tags = child_tags(sect_pr);
     let landscape = page.orientation() == Orientation::Landscape;
     let mut out = sect_pr.to_owned();
@@ -657,6 +667,15 @@ mod tests {
         );
         let empty = update_sect_pr("<w:sectPr></w:sectPr>", &PageGeometry::default());
         assert!(empty.starts_with("<w:sectPr><w:pgSz "), "{empty}");
+        // Self-closing, as some writers leave it: pgSz and pgMar go inside.
+        let bare = update_sect_pr("<w:sectPr/>", &PageGeometry::default());
+        assert!(bare.starts_with("<w:sectPr><w:pgSz "), "{bare}");
+        assert!(bare.ends_with("/></w:sectPr>"), "{bare}");
+        let attrs = update_sect_pr(r#"<w:sectPr w:rsidR="1" />"#, &PageGeometry::default());
+        assert!(
+            attrs.starts_with(r#"<w:sectPr w:rsidR="1"><w:pgSz "#),
+            "{attrs}"
+        );
         assert!(empty.ends_with("w:gutter=\"0\"/></w:sectPr>"), "{empty}");
     }
 

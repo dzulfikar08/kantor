@@ -519,7 +519,7 @@ impl Workbook {
                 // Excel saved every formula's value; show those rather than
                 // recalculating (which can take minutes for big workbooks),
                 // unless the file asks for a recalculation and is small.
-                let (mut model, source, full_calc) = open_xlsx(path)?;
+                let (mut model, source, full_calc) = no_panic(path, || open_xlsx(path))?;
                 xlsx = Some(source);
                 if full_calc && count_formulas(&model) <= MANUAL_CALC_FORMULAS {
                     model.evaluate();
@@ -537,7 +537,7 @@ impl Workbook {
             }
             _ => {
                 // Evaluated by the import, which compares with the file's values.
-                let (model, i) = import::read_calamine(path, format)?;
+                let (model, i) = no_panic(path, || import::read_calamine(path, format))?;
                 imported = i;
                 (model, format)
             }
@@ -1461,6 +1461,9 @@ fn count_formulas(model: &Model) -> usize {
 /// path and its size/mtime for large ones. Also says whether the workbook asks
 /// to be recalculated when opened (`fullCalcOnLoad`).
 fn open_xlsx(path: &Path) -> Result<(Model<'static>, XlsxSource, bool)> {
+    if is_strict(path) {
+        bail!("Strict Open XML workbooks aren't supported yet");
+    }
     let meta = fs::metadata(path).with_context(|| format!("opening {}", path.display()))?;
     if meta.len() <= KEEP_IN_MEMORY {
         let bytes = fs::read(path).with_context(|| format!("opening {}", path.display()))?;
@@ -1528,6 +1531,38 @@ pub fn column_name(col: u32) -> String {
 /// `(0, 0) -> "A1"`.
 pub fn cell_name(row: u32, col: u32) -> String {
     format!("{}{}", column_name(col), row + 1)
+}
+
+/// Whether the package is Strict Open XML (ISO/IEC 29500 Strict, its main
+/// part related with a `purl.oclc.org` type), which IronCalc doesn't read.
+fn is_strict(path: &Path) -> bool {
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+    let Ok(mut zip) = zip::ZipArchive::new(std::io::BufReader::new(file)) else {
+        return false;
+    };
+    let mut rels = String::new();
+    zip.by_name("_rels/.rels")
+        .is_ok_and(|mut f| std::io::Read::read_to_string(&mut f, &mut rels).is_ok())
+        && rels.contains("http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument")
+}
+
+/// Run a file reader, turning a panic in it (a parser that didn't expect
+/// what a damaged or unusual file holds) into an error: the file can't be
+/// opened, and Kantor keeps running.
+fn no_panic<T>(path: &Path, read: impl FnOnce() -> Result<T>) -> Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)).unwrap_or_else(|p| {
+        let msg = p
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| p.downcast_ref::<&str>().copied())
+            .unwrap_or("unknown error");
+        Err(anyhow!(
+            "{} could not be read (the reader stopped: {msg})",
+            path.display()
+        ))
+    })
 }
 
 #[cfg(test)]

@@ -244,6 +244,11 @@ fn opened_status(book: &Workbook) -> String {
                 tk("{} shapes, text boxes or controls not imported"),
             ),
             N::DrawingsNotImported => kantor_ui::i18n::t("charts and pictures not imported").to_owned(),
+            N::SheetsRenamed(n) => plural(
+                n,
+                tk("1 sheet renamed (name not allowed in Excel)"),
+                tk("{} sheets renamed (names not allowed in Excel)"),
+            ),
         });
     }
     s

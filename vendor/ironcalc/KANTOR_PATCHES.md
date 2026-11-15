@@ -174,6 +174,28 @@ Tests: `import::util::rel_target_tests`,
 `tests/test_kantor_fidelity.rs` `comments_with_an_absolute_rel_target_open`
 (fixture `tests/openpyxl_comments.xlsx` from `tests/gen_openpyxl_comments.py`).
 
+## 10. Files from other writers: optional styles and cell references
+
+Why: the real-world sweep (docs/realworld-sweep.md) found workbooks Excel
+opens that panicked or failed here: a styles part without `<fills>`,
+`<borders>`, `<cellStyleXfs>` or `<cellStyles>` (index out of bounds), formats
+pointing at a font, fill or border that isn't there (Excel repairs those; a
+panic later in `get_style`), no `xl/styles.xml` at all ("Zip Error: specified
+file not found"), and rows or cells without the optional `r` attribute
+("Missing \"r\" XML attribute").
+
+What: `import/styles.rs` `load_styles` returns `Styles::default()` when the
+part is missing, treats a missing section as empty and fills empty ones from
+`Styles::default()`, and sets out-of-range font, fill, border and `xfId`
+references to 0. `import/sheet_data.rs` gives a row without `r` the number
+after the last row, and a cell without `r` the column after the previous cell
+in its row (ECMA-376 §18.3.1.73, §18.3.1.4).
+
+Tests: Kantor's `crates/sheets_engine/tests/realworld.rs`
+(`xlsx_without_styles_part_opens`, `xlsx_with_partial_styles_opens`,
+`xlsx_rows_and_cells_without_references`), synthetic packages built in the
+test.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

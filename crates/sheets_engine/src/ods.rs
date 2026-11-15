@@ -1044,22 +1044,27 @@ fn apply_table(
             break;
         }
         let last = c.saturating_add(n - 1).min(MAX_COLS - 1);
+        let mut has_default = false;
         if let Some(d) = attr(col, NS_TABLE, "default-cell-style-name")
             && d != "Default"
         {
             col_defaults.push((c, last, d.to_owned()));
+            has_default = true;
         }
         let width = attr(col, NS_TABLE, "style-name").and_then(|s| styles.columns.get(s));
         let hidden = matches!(
             attr(col, NS_TABLE, "visibility"),
             Some("collapse" | "filter")
         );
-        if (width.is_some() || hidden) && n <= MAX_LINES {
+        // A column with a default cell style gets it as its column style
+        // (below), so its empty cells need no style of their own.
+        if ((width.is_some() || hidden) && n <= MAX_LINES) || has_default {
             cols.push(Col {
                 min: c as i32 + 1,
                 max: last as i32 + 1,
-                width: width.map_or(8.43, |w| width_chars(*w)),
-                custom_width: true,
+                // Excel's widest column is 255 characters.
+                width: width.map_or(8.43, |w| width_chars(*w).min(255.0)),
+                custom_width: width.is_some() || hidden,
                 hidden,
                 style: None,
                 outline_level: 0,
@@ -1120,6 +1125,9 @@ fn apply_table(
             }
         }
         let mut c = 0u32;
+        // Every cell so far has a style of its own (so a row style, which
+        // only shows in cells without one, changes nothing to their left).
+        let mut all_styled = true;
         for cell in row.children().filter(|n| {
             n.has_tag_name((NS_TABLE, "table-cell"))
                 || n.has_tag_name((NS_TABLE, "covered-table-cell"))
@@ -1128,9 +1136,52 @@ fn apply_table(
             if c >= MAX_COLS {
                 break;
             }
-            let style = attr(cell, NS_TABLE, "style-name")
-                .or(row_default)
-                .or_else(|| col_default(c));
+            let own = attr(cell, NS_TABLE, "style-name").or(row_default);
+            let style = own.or_else(|| col_default(c));
+            // Empty cells that only inherit their column's default style
+            // have it from the column (LibreOffice ends every row with one
+            // run of thousands of them).
+            let empty = attr(cell, NS_OFFICE, "value-type").is_none()
+                && !cell.children().any(|n| n.is_element());
+            let inherits_column = own.is_none() && empty;
+            // A styled empty run to the last column (LibreOffice's whole-row
+            // formatting): the rows' style, as Excel keeps it, not thousands
+            // of cells each.
+            let row_style = style.filter(|name| *name != "Default").filter(|_| {
+                own.is_some() && empty && all_styled && c + m >= MAX_COLS && n <= MAX_LINES
+            });
+            if own.is_none() {
+                all_styled = false;
+            }
+            if let Some(name) = row_style {
+                let s = map.get(model, name);
+                if s != 0 {
+                    for at in r..r.saturating_add(n).min(MAX_ROWS) {
+                        // Rows are added in order: this run's entries are
+                        // the last `n` at most.
+                        let from = rows.len().saturating_sub(n as usize);
+                        let found = rows[from..].iter().position(|x| x.r == at as i32 + 1);
+                        let i = match found {
+                            Some(i) => from + i,
+                            None => {
+                                rows.push(Row {
+                                    r: at as i32 + 1,
+                                    height: crate::rows::DEFAULT_ROW_POINTS,
+                                    custom_format: false,
+                                    custom_height: false,
+                                    s: 0,
+                                    hidden: false,
+                                    outline_level: 0,
+                                    collapsed: false,
+                                });
+                                rows.len() - 1
+                            }
+                        };
+                        rows[i].s = s;
+                        rows[i].custom_format = true;
+                    }
+                }
+            }
             let rect = CellRange::from_corners(
                 (r, c),
                 (
@@ -1156,6 +1207,8 @@ fn apply_table(
             }
             if let Some(name) = style
                 && name != "Default"
+                && !inherits_column
+                && row_style.is_none()
                 && u64::from(n) * u64::from(m) <= MAX_RUN
             {
                 let s = map.get(model, name);
