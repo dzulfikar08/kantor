@@ -429,8 +429,17 @@ fn show_values_as() {
     let g = show_as(&mut wb, s, ShowAs::PercentOfRow, None, prev.clone());
     assert_eq!(g[0][0], "54.68%");
     assert_eq!(g[0][3], "100.00%");
-    let g = show_as(&mut wb, s, ShowAs::PercentOfParentColumn, None, prev.clone());
-    assert_eq!(g[0][0], "54.68%", "the parent of a column is the row's total");
+    let g = show_as(
+        &mut wb,
+        s,
+        ShowAs::PercentOfParentColumn,
+        None,
+        prev.clone(),
+    );
+    assert_eq!(
+        g[0][0], "54.68%",
+        "the parent of a column is the row's total"
+    );
     let north = PivotBaseItem::Item("North".into());
     let g = show_as(&mut wb, s, ShowAs::Percent, Some("Region"), north.clone());
     assert_eq!(g[0][0], "105.56%");
@@ -443,19 +452,46 @@ fn show_values_as() {
     let east = PivotBaseItem::Item("East".into());
     let g = show_as(&mut wb, s, ShowAs::PercentDifference, Some("Region"), east);
     assert_eq!(g[1][0], "-5.26%");
-    let g = show_as(&mut wb, s, ShowAs::RunningTotal, Some("Region"), prev.clone());
+    let g = show_as(
+        &mut wb,
+        s,
+        ShowAs::RunningTotal,
+        Some("Region"),
+        prev.clone(),
+    );
     assert_eq!(g[2][0], "588");
     assert_eq!(g[1][1], "135");
-    let g = show_as(&mut wb, s, ShowAs::PercentRunningTotal, Some("Region"), prev.clone());
+    let g = show_as(
+        &mut wb,
+        s,
+        ShowAs::PercentRunningTotal,
+        Some("Region"),
+        prev.clone(),
+    );
     assert_eq!(g[1][0], "75.51%");
     assert_eq!(g[2][0], "100.00%");
-    let g = show_as(&mut wb, s, ShowAs::RankDescending, Some("Region"), prev.clone());
+    let g = show_as(
+        &mut wb,
+        s,
+        ShowAs::RankDescending,
+        Some("Region"),
+        prev.clone(),
+    );
     assert_eq!([&g[0][0], &g[1][0], &g[2][0]], ["1", "2", "3"]);
-    let g = show_as(&mut wb, s, ShowAs::RankAscending, Some("Region"), prev.clone());
+    let g = show_as(
+        &mut wb,
+        s,
+        ShowAs::RankAscending,
+        Some("Region"),
+        prev.clone(),
+    );
     assert_eq!(g[2][0], "1");
     let g = show_as(&mut wb, s, ShowAs::Index, None, prev.clone());
     let index: f64 = g[0][0].parse().unwrap();
-    assert!((index - 228.0 * 1068.0 / (417.0 * 588.0)).abs() < 1e-6, "{index}");
+    assert!(
+        (index - 228.0 * 1068.0 / (417.0 * 588.0)).abs() < 1e-6,
+        "{index}"
+    );
     // A base field is needed.
     let mut l = layout(&wb, s);
     l.values[0].show_as = ShowAs::Difference;
@@ -500,11 +536,16 @@ fn show_values_as() {
     let (path, p) = save(&mut wb, dir.path(), "difference.xlsx");
     let table = &p["xl/pivotTables/pivotTable1.xml"];
     assert!(
-        table.contains("subtotal=\"average\" showDataAs=\"difference\" baseField=\"2\" baseItem=\"1\""),
+        table.contains(
+            "subtotal=\"average\" showDataAs=\"difference\" baseField=\"2\" baseItem=\"1\""
+        ),
         "{table}"
     );
     let back = Workbook::open(&path).unwrap();
-    assert_eq!(back.pivot_layout(s, 2, 0).unwrap().values, layout(&wb, s).values);
+    assert_eq!(
+        back.pivot_layout(s, 2, 0).unwrap().values,
+        layout(&wb, s).values
+    );
 }
 
 fn filter(kind: &str, value_field: Option<usize>, v1: &str, v2: &str) -> PivotFieldFilter {
@@ -576,7 +617,10 @@ fn field_settings_subtotals_and_layout() {
     let mut l = layout(&wb, s);
     l.layout = ReportLayout::Outline;
     wb.set_pivot_layout(s, 2, 0, &l).unwrap();
-    assert_eq!(layout(&wb, s).fields[1].settings.form, ReportLayout::Outline);
+    assert_eq!(
+        layout(&wb, s).fields[1].settings.form,
+        ReportLayout::Outline
+    );
     // Custom subtotals saved and read back.
     let mut l = layout(&wb, s);
     l.fields[1].settings.subtotals = FieldSubtotals::Custom(vec![PivotFunc::Max]);
@@ -629,7 +673,10 @@ fn sorting_and_filters() {
     let back = Workbook::open(&path).unwrap();
     let bl = back.pivot_layout(s, 2, 0).unwrap();
     assert_eq!(bl.refresh_problem, None);
-    assert_eq!(bl.fields[1].settings.filter, layout(&wb, s).fields[1].settings.filter);
+    assert_eq!(
+        bl.fields[1].settings.filter,
+        layout(&wb, s).fields[1].settings.filter
+    );
 
     // Value filters: greater than, between, Top 10.
     let mut l = layout(&wb, s);
@@ -649,7 +696,9 @@ fn sorting_and_filters() {
     let (path, _) = save(&mut wb, dir.path(), "top10.xlsx");
     let back = Workbook::open(&path).unwrap();
     assert_eq!(
-        back.pivot_layout(s, 2, 0).unwrap().fields[1].settings.filter,
+        back.pivot_layout(s, 2, 0).unwrap().fields[1]
+            .settings
+            .filter,
         layout(&wb, s).fields[1].settings.filter
     );
     // A value filter needs its value field.
@@ -724,7 +773,10 @@ fn style_picker_options() {
     wb.set_pivot_layout(s, 2, 0, &l).unwrap();
     assert_eq!(layout(&wb, s).style.name, None);
     assert!(wb.undo().unwrap());
-    assert_eq!(layout(&wb, s).style.name.as_deref(), Some("PivotStyleDark3"));
+    assert_eq!(
+        layout(&wb, s).style.name.as_deref(),
+        Some("PivotStyleDark3")
+    );
 }
 
 #[test]
@@ -771,7 +823,9 @@ fn a_second_pivot_on_the_same_data_shares_its_cache() {
     let (_, p) = save(&mut back, dir.path(), "shared-cache-2.xlsx");
     assert_eq!(p["xl/workbook.xml"].matches("<pivotCache ").count(), 1);
     assert_eq!(
-        p.keys().filter(|k| k.starts_with("xl/pivotTables/pivotTable") && k.ends_with(".xml")).count(),
+        p.keys()
+            .filter(|k| k.starts_with("xl/pivotTables/pivotTable") && k.ends_with(".xml"))
+            .count(),
         3
     );
     // Another source: a cache of its own.
@@ -815,5 +869,75 @@ fn copying_a_sheet_brings_its_pivots() {
     let again = Workbook::open(&path).unwrap();
     assert_eq!(again.pivot_tables(c2).len(), 1);
     let mut again = again;
-    assert_eq!(again.refresh_pivot(c2, 2, 0).unwrap(), 3, "all three share the cache");
+    assert_eq!(
+        again.refresh_pivot(c2, 2, 0).unwrap(),
+        3,
+        "all three share the cache"
+    );
+}
+
+/// Settings as Excel writes them (scripts/corpus/gen_pivot_xlsx.py):
+/// grouping, a calculated field, Show Values As, custom subtotals,
+/// filters and sorting by value, all refreshed and saved.
+#[test]
+fn settings_written_by_excel_refresh() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/xlsx/23_pivot_settings.xlsx");
+    let mut wb = Workbook::open(&path).unwrap();
+    let s = wb
+        .sheet_names()
+        .iter()
+        .position(|n| n == "Settings")
+        .unwrap() as u32;
+    let pivots = wb.pivot_tables(s);
+    assert_eq!(pivots.len(), 3);
+    for p in &pivots {
+        assert_eq!(p.refresh_problem, None, "{}", p.name);
+    }
+    assert_eq!(wb.refresh_all_pivots().unwrap(), 3);
+    // Years > months, % of column total.
+    assert_eq!(
+        grid(&wb, s, (2, 0, 8, 1)),
+        rows(&[
+            &["Row Labels", "Sum of Revenue"],
+            &["2026", "100.00%"],
+            &["Jan", "16.85%"],
+            &["Feb", "25.56%"],
+            &["Mar", "33.71%"],
+            &["Apr", "23.88%"],
+            &["Grand Total", "100.00%"],
+        ])
+    );
+    // Tabular with custom subtotals, a blank line, the West filtered out.
+    assert_eq!(
+        grid(&wb, s, (3, 4, 7, 7)),
+        rows(&[
+            &["Group1", "East", "13.9", "100.00%"],
+            &["Group1 Sum", "", "13.9", "50.85%"],
+            &["Group1 Count", "", "13.9", "50.00%"],
+            &["", "", "", ""],
+            &["North", "North", "13.65517241", "100.00%"],
+        ])
+    );
+    // Top 2 products by revenue, largest first.
+    assert_eq!(
+        grid(&wb, s, (2, 11, 5, 12)),
+        rows(&[
+            &["Row Labels", "Sum of Revenue"],
+            &["Apples", "588"],
+            &["Plums", "270"],
+            &["Grand Total", "858"],
+        ])
+    );
+    let l = wb.pivot_layout(s, 2, 11).unwrap();
+    assert_eq!(l.fields[1].settings.sort, PivotSort::Descending);
+    assert_eq!(l.fields[1].settings.sort_by_value, Some(0));
+    assert!(l.style.banded_rows);
+    let before = grid(&wb, s, (2, 0, 12, 12));
+    let (saved, _) = save(&mut wb, dir.path(), "excel-settings.xlsx");
+    let mut back = Workbook::open(&saved).unwrap();
+    assert_eq!(grid(&back, s, (2, 0, 12, 12)), before);
+    assert_eq!(back.refresh_all_pivots().unwrap(), 3);
+    assert_eq!(grid(&back, s, (2, 0, 12, 12)), before);
 }
