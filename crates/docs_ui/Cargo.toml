@@ -8,6 +8,8 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+# The clock for DATE / TIME fields.
+chrono = { workspace = true, features = ["clock"] }
 docs_engine.workspace = true
 docs_layout.workspace = true
 docs_pdf.workspace = true

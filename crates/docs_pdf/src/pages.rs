@@ -123,17 +123,18 @@ fn twips(t: u32) -> f32 {
     t as f32 / 15.0
 }
 
-/// A story laid out at `width` px with `page` / `pages` as its numbers.
+/// A story laid out at `width` px with `page` / `pages` / section pages
+/// as its numbers.
 fn story_layout(
     doc: &Document,
     index: usize,
     width: f32,
-    (page, pages): (&str, &str),
+    (page, pages, section_pages): (&str, &str, &str),
     layout: &mut LayoutFn,
 ) -> StoryLayout {
     let sd = &doc.stories()[index].doc;
-    let paras =
-        with_page_numbers(sd.paragraphs(), page, pages).unwrap_or_else(|| sd.paragraphs().to_vec());
+    let paras = with_page_numbers(sd.paragraphs(), page, pages, section_pages)
+        .unwrap_or_else(|| sd.paragraphs().to_vec());
     lay_story(sd, paras, width, &Marks::default(), layout, index, None)
 }
 
@@ -347,7 +348,7 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         let Some(i) = story else { return 0.0 };
         *heights
             .entry((i, width.to_bits()))
-            .or_insert_with(|| story_layout(doc, i, width, ("1", "1"), layout).height)
+            .or_insert_with(|| story_layout(doc, i, width, ("1", "1", "1"), layout).height)
     };
     let mut flows = Vec::with_capacity(sections.len());
     let mut stories = Vec::with_capacity(sections.len());
@@ -421,7 +422,11 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
 
     // Each page's header and footer, numbers filled in.
     let total = paged.pages.len().to_string();
-    let mut cache: HashMap<(usize, String, u32), Arc<StoryLayout>> = HashMap::new();
+    let mut in_section: HashMap<usize, usize> = HashMap::new();
+    for page in &paged.pages {
+        *in_section.entry(page.section).or_default() += 1;
+    }
+    let mut cache: HashMap<(usize, String, String, u32), Arc<StoryLayout>> = HashMap::new();
     let mut furniture = Vec::with_capacity(paged.pages.len());
     for (pi, page) in paged.pages.iter().enumerate() {
         let si = page.section.min(sections.len() - 1);
@@ -441,9 +446,18 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         let mut placed = Vec::new();
         for (kind, story) in [(HfKind::Header, h), (HfKind::Footer, f)] {
             let Some(i) = story else { continue };
+            let section_pages = in_section.get(&page.section).copied().unwrap_or(1).to_string();
             let l = cache
-                .entry((i, number.clone(), width.to_bits()))
-                .or_insert_with(|| Arc::new(story_layout(doc, i, width, (&number, &total), layout)))
+                .entry((i, number.clone(), section_pages.clone(), width.to_bits()))
+                .or_insert_with(|| {
+                    Arc::new(story_layout(
+                        doc,
+                        i,
+                        width,
+                        (&number, &total, &section_pages),
+                        layout,
+                    ))
+                })
                 .clone();
             let y = match kind {
                 HfKind::Header => twips(props.header_dist),

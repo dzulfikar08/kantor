@@ -47,7 +47,9 @@ pub const ENGINE_STRINGS: &[&str] = &[
 pub const CONTENT_ITEMS: &[&str] = &[
     tk("tracked changes"),
     tk("comments"),
-    tk("fields that depend on document content (contents, cross-references…)"),
+    tk("fields spanning paragraphs"),
+    tk("fields without an end"),
+    tk("fields across hyperlinks or other elements"),
     tk("content controls around table rows or cells"),
     tk("charts"),
     tk("floating images and shapes"),

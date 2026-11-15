@@ -21,6 +21,8 @@ krilla = { version = "0.8", default-features = false, features = ["raster-images
 flate2 = "1"
 # Builds .docx fixtures.
 zip.workspace = true
+# Fixed dates for updating fields.
+chrono.workspace = true
 
 [lints]
 workspace = true

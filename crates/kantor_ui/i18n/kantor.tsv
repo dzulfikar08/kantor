@@ -329,6 +329,8 @@ Header and Footer…	Header dan Footer…
 Tabs…	Tab…
 Add Page Numbers	Tambahkan Nomor Halaman
 Insert Page Number Field	Sisipkan Bidang Nomor Halaman
+Update Field	Perbarui Bidang
+Update Table of Contents	Perbarui Daftar Isi
 Insert Section Break (Next Page)	Sisipkan Pemisah Bagian (Halaman Berikutnya)
 Track Changes	Lacak Perubahan
 Insert Footnote	Sisipkan Catatan Kaki
@@ -484,6 +486,8 @@ Docs · tab stops: position, alignment, leader, default stops	Docs · perhentian
 Docs · text, page numbers, different first page, odd and even pages	Docs · teks, nomor halaman, halaman pertama berbeda, halaman ganjil dan genap
 Docs · "Page 1 of 9" centred in the footer	Docs · "Halaman 1 dari 9" di tengah footer
 Docs · the page number at the caret	Docs · nomor halaman di posisi kursor
+Docs · the fields in the selection, or the one at the caret: dates, cross-references, contents	Docs · bidang di pilihan, atau yang di posisi kursor: tanggal, referensi silang, daftar isi
+Docs · rebuild it from the headings, with page numbers	Docs · susun ulang dari judul, dengan nomor halaman
 Docs · a new section with its own page setup, headers and footers	Docs · bagian baru dengan pengaturan halaman, header dan footer sendiri
 Docs · turn on or off: your typing and deletions are marked for review	Docs · aktifkan atau nonaktifkan: ketikan dan penghapusan Anda ditandai untuk ditinjau
 Docs · a numbered note at the bottom of the page	Docs · catatan bernomor di bagian bawah halaman

@@ -21,6 +21,7 @@ extern crate gpui_kit as gpui;
 
 mod agent;
 mod ai;
+mod fields;
 mod find;
 pub mod font_bridge;
 mod hf_menu;
@@ -137,6 +138,8 @@ actions!(
         ToggleTrackChanges,
         InsertFootnote,
         InsertEndnote,
+        UpdateFields,
+        UpdateTable,
         ZoomIn,
         ZoomOut,
         ZoomReset,
@@ -204,6 +207,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("shift-enter", LineBreak, c),
         KeyBinding::new("tab", Tab, c),
         KeyBinding::new("shift-tab", BackTab, c),
+        KeyBinding::new("f9", UpdateFields, c),
     ];
     // Shortcuts with the primary modifier: Ctrl, and Super as Mac-style Cmd.
     macro_rules! primary {
@@ -1500,6 +1504,15 @@ impl DocsView {
         let Some(pos) = self.hit(ev.position) else {
             return;
         };
+        // Ctrl+click follows a hyperlink (Word's default).
+        if ev.click_count == 1
+            && ev.modifiers.secondary(cx)
+            && !ev.modifiers.shift
+            && self.follow_link(pos, window, cx)
+        {
+            self.dragging = false;
+            return;
+        }
         self.goal_x = None;
         self.typing_props = None;
         self.marked = None;
@@ -2382,6 +2395,8 @@ impl Render for DocsView {
             ToggleTrackChanges => |this, w, cx| this.toggle_track_changes_doc(w, cx),
             InsertFootnote => |this, w, cx| this.insert_note_doc(docs_engine::NoteKind::Footnote, w, cx),
             InsertEndnote => |this, w, cx| this.insert_note_doc(docs_engine::NoteKind::Endnote, w, cx),
+            UpdateFields => |this, w, cx| this.update_fields_doc(w, cx),
+            UpdateTable => |this, w, cx| this.update_table_doc(w, cx),
             Redo => |this, w, cx| this.redo_doc(w, cx),
             ZoomIn => |this, _w, cx| this.zoom_by(ZOOM_STEP, cx),
             ZoomOut => |this, _w, cx| this.zoom_by(1.0 / ZOOM_STEP, cx),

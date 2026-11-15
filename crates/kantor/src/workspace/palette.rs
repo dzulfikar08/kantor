@@ -1277,6 +1277,18 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.insert_page_number_doc(w, cx)),
     },
     Command {
+        title: tk("Update Field"),
+        detail: tk("Docs · the fields in the selection, or the one at the caret: dates, cross-references, contents"),
+        keys: "F9",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.update_fields_doc(w, cx)),
+    },
+    Command {
+        title: tk("Update Table of Contents"),
+        detail: tk("Docs · rebuild it from the headings, with page numbers"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.update_table_doc(w, cx)),
+    },
+    Command {
         title: tk("Insert Section Break (Next Page)"),
         detail: tk("Docs · a new section with its own page setup, headers and footers"),
         keys: "",

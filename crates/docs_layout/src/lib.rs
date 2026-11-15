@@ -1177,8 +1177,10 @@ impl Flow<'_> {
         let Some(line) = self.layouts[pi].layout.get(k) else {
             return false;
         };
-        let end = line.text_range().end;
-        end > 0 && self.paras[pi].text.as_bytes().get(end - 1) == Some(&(PAGE_BREAK as u8))
+        // The empty line after a break that ends the paragraph doesn't
+        // break again (its range is empty, right after the break).
+        let r = line.text_range();
+        r.end > r.start && self.paras[pi].text.as_bytes().get(r.end - 1) == Some(&(PAGE_BREAK as u8))
     }
 
     /// Height of the footnotes referenced from line `k` of paragraph `pi`.
@@ -2721,6 +2723,21 @@ mod tests {
         assert_eq!(doc.caret(0, 0).unwrap().page, 0);
         assert_eq!(doc.caret(0, 2).unwrap().page, 1);
         assert_eq!(doc.caret(1, 0).unwrap().page, 2);
+    }
+
+    #[test]
+    fn a_page_break_ending_a_paragraph_breaks_once() {
+        // Word: the paragraph mark after the break opens the next page,
+        // and the next paragraph follows on that page.
+        let mut engine = Engine::new();
+        let paras = vec![
+            Paragraph::new(format!("a{PAGE_BREAK}")),
+            Paragraph::new("b"),
+        ];
+        let doc = engine.layout_document(&paras, PageSetup::a4());
+        assert_eq!(doc.pages.len(), 2);
+        assert_eq!(doc.caret(0, 2).unwrap().page, 1);
+        assert_eq!(doc.caret(1, 0).unwrap().page, 1);
     }
 
     fn table(paras: &[Paragraph], setup: PageSetup, rows: usize) -> (Vec<Block>, Vec<f32>) {
