@@ -126,6 +126,11 @@ pub(crate) struct DvDialog {
     prompt_text: Entity<InputState>,
     error_title: Entity<InputState>,
     error_text: Entity<InputState>,
+    /// When the active cell has a rule: "Applies to" for the selection, and
+    /// for every cell with the same settings plus the selection (Excel's
+    /// "Apply these changes to all other cells with the same settings").
+    same: Option<(String, String)>,
+    apply_same: bool,
     error: Option<String>,
     _subs: Vec<Subscription>,
 }
@@ -172,6 +177,19 @@ impl SheetsView {
         let is_list = v.kind == ValidationType::List;
         let is_custom = v.kind == ValidationType::Custom;
         let applies = mk(window, cx, sqref_of(&[sel]), t("e.g. A2:A20"));
+        let same = (!v.ranges.is_empty()).then(|| {
+            let mut all = v.ranges.clone();
+            let covered = all.iter().any(|r| {
+                r.top <= sel.top
+                    && r.left <= sel.left
+                    && r.bottom >= sel.bottom
+                    && r.right >= sel.right
+            });
+            if !covered {
+                all.push(sel);
+            }
+            (sqref_of(&[sel]), sqref_of(&all))
+        });
         let value1 = mk(
             window,
             cx,
@@ -272,6 +290,8 @@ impl SheetsView {
             prompt_text,
             error_title,
             error_text,
+            same,
+            apply_same: false,
             error: None,
             _subs: subs,
         });
@@ -550,8 +570,29 @@ impl SheetsView {
                         |d, v| d.dropdown = v,
                     ));
                 }
+                let same = d.same.clone().map(|(only, all)| {
+                    let v = view.clone();
+                    let applies = d.applies.clone();
+                    Checkbox::new("dv-same")
+                        .label(t(
+                            "Apply these changes to all other cells with the same settings",
+                        ))
+                        .checked(d.apply_same)
+                        .on_click(move |on, window, cx| {
+                            let on = *on;
+                            let text = if on { all.clone() } else { only.clone() };
+                            let _ = v.update(cx, |this, cx| {
+                                if let Some(d) = this.dv_dialog.as_mut() {
+                                    d.apply_same = on;
+                                }
+                                applies.update(cx, |i, cx| i.set_value(text, window, cx));
+                                cx.notify();
+                            });
+                        })
+                });
                 b.child(opts)
                     .child(row(t("Applies to"), Input::new(&d.applies).small(), cx))
+                    .children(same)
             }
             Tab::Input => v_flex()
                 .gap(SPACE_4)

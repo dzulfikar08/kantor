@@ -259,3 +259,24 @@ fn typed_time_formula_bar_text() {
         assert_eq!(wb.display(0, row, 0).text, shown);
     }
 }
+
+/// What "Apply these changes to all other cells with the same settings"
+/// relies on: a cell's rule knows every range it covers, and setting a rule
+/// over them changes it everywhere at once.
+#[test]
+fn a_rule_changed_for_all_cells_with_the_same_settings() {
+    let mut wb = Workbook::new_empty().unwrap();
+    let a = CellRange::from_corners((0, 0), (9, 0));
+    let c = CellRange::from_corners((0, 2), (4, 2));
+    wb.set_validation(0, &[a, c], whole_1_to_10()).unwrap();
+    let rule = wb.validation(0, 3, 0).expect("a rule");
+    assert_eq!(rule.ranges, vec![a, c]);
+    let mut changed = (*rule).clone();
+    changed.formula2 = Some(validation_operand(ValidationType::Whole, "20").unwrap());
+    wb.set_validation(0, &rule.ranges, changed).unwrap();
+    wb.set_input(0, 1, 2, "15").unwrap();
+    assert!(wb.validate_cell(0, 1, 2).is_none(), "C2 follows the change");
+    wb.set_input(0, 8, 0, "15").unwrap();
+    assert!(wb.validate_cell(0, 8, 0).is_none(), "so does A9");
+    assert_eq!(wb.validation(0, 0, 0).unwrap().ranges, vec![a, c]);
+}

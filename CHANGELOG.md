@@ -11,6 +11,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Sheets: Data Validation… has Excel's *Apply these changes to all other cells with the same
+  settings*: it extends the change to every cell with the active cell's rule.
 - Sheets: conditional formatting draws rules' borders (on screen and in the PDF), data bars
   follow their minimum and maximum lengths, borders, negative bar colours and axis setting from
   the file (Excel 2007 bars run from 10 % to 90 % of the cell, as in Excel), and "between" date
