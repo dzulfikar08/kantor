@@ -9,6 +9,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-16
+
+Kantor now edits the parts of Office files it used to only show. In Docs: headers, footers and
+footnotes on the page, Word fields (tables of contents, cross-references, F9), floating pictures
+and shapes with text wrapping around them, threaded comments, and Track Changes for formatting,
+tables and fields. In Slides: groups, SmartArt text, tables typed into on the slide, and more chart
+types. In Sheets: shapes and text boxes, chart data labels and Move Chart, pivot grouping,
+calculated fields and Show Values As, and `FORECAST.ETS` with Excel's exact results. Strict Open
+XML files open too, and 418 of 424 public real-world files open, save and print without a problem.
+
 ### Added
 
 - Docs: more floating objects are drawn, on screen and in the PDF: groups of shapes and pictures
@@ -1352,7 +1362,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/dzulfikar08/kantor/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/dzulfikar08/kantor/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/dzulfikar08/kantor/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dzulfikar08/kantor/compare/v0.4.0...v0.5.0
