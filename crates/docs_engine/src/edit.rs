@@ -43,7 +43,7 @@ impl Document {
         let (start, end) = sel.ordered();
         let range = start.para..=end.para;
         if range.clone().all(|i| self.list_kind(i) == Some(kind)) {
-            let out: Vec<Paragraph> = range
+            let mut out: Vec<Paragraph> = range
                 .clone()
                 .map(|i| {
                     let mut p = self.paragraphs[i].clone();
@@ -57,6 +57,7 @@ impl Document {
                     p
                 })
                 .collect();
+            self.track_formats(start.para, &mut out);
             self.replace(start.para, out.len(), out, (sel, sel), Kind::Other, true);
             return;
         }
@@ -73,7 +74,7 @@ impl Document {
             .or_else(|| neighbour(end.para + 1))
             .map(|r| r.id)
             .unwrap_or_else(|| self.numbering.new_list(kind));
-        let out: Vec<Paragraph> = range
+        let mut out: Vec<Paragraph> = range
             .map(|i| {
                 let mut p = self.paragraphs[i].clone();
                 let level = self.styles.effective_num(&p).map_or(0, |r| r.level);
@@ -82,6 +83,7 @@ impl Document {
                 p
             })
             .collect();
+        self.track_formats(start.para, &mut out);
         self.replace(start.para, out.len(), out, (sel, sel), Kind::Other, true);
     }
 
@@ -91,7 +93,7 @@ impl Document {
         let sel = self.clamp_selection(sel);
         let (start, end) = sel.ordered();
         let mut changed = false;
-        let out: Vec<Paragraph> = (start.para..=end.para)
+        let mut out: Vec<Paragraph> = (start.para..=end.para)
             .map(|i| {
                 let mut p = self.paragraphs[i].clone();
                 if let Some(r) = self.styles.effective_num(&p) {
@@ -105,6 +107,7 @@ impl Document {
             })
             .collect();
         if changed {
+            self.track_formats(start.para, &mut out);
             self.replace(start.para, out.len(), out, (sel, sel), Kind::Other, true);
         }
         changed

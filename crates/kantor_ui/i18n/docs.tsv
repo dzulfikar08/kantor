@@ -236,3 +236,25 @@ This document has no bookmarks	Dokumen ini tidak memiliki penanda
 Today's date	Tanggal hari ini
 Update	Perbarui
 e.g. DATE \@ "d MMMM yyyy"	mis. DATE \@ "d MMMM yyyy"
+# Tracked formatting changes (balloons in the markup column)
+Formatted: {}	Diformat: {}
+Font: Bold	Font: Tebal
+Font: Not Bold	Font: Tidak Tebal
+Font: Italic	Font: Miring
+Font: Not Italic	Font: Tidak Miring
+No underline	Tanpa garis bawah
+Font: (Default)	Font: (Bawaan)
+Font: {} pt	Font: {} pt
+Font size: (Default)	Ukuran font: (Bawaan)
+Font color	Warna font
+Style: {}	Gaya: {}
+Centered	Rata tengah
+Justified	Rata kiri-kanan
+Indent	Inden
+Spacing	Spasi
+Line spacing	Spasi baris
+Bulleted or numbered	Berpoin atau bernomor
+Not a list	Bukan daftar
+Page break before	Hentian halaman sebelumnya
+Tab stops	Tab stop
+Other formatting	Format lain

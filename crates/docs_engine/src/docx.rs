@@ -2628,7 +2628,7 @@ fn on_off(name: &str, v: bool) -> String {
 }
 
 /// `<w:rPr>…</w:rPr>` for run properties (empty string if none).
-fn rpr_xml(p: &RunProps) -> String {
+pub(crate) fn rpr_xml(p: &RunProps) -> String {
     let mut els: Vec<String> = Vec::new();
     let has = |name: &str| p.extras.iter().any(|x| element_name(x) == name);
     if let Some(s) = &p.style
@@ -2691,7 +2691,7 @@ fn rpr_xml(p: &RunProps) -> String {
     format!("<w:rPr>{}</w:rPr>", ordered(RPR_ORDER, els))
 }
 
-fn ppr_xml(p: &Paragraph) -> String {
+pub(crate) fn ppr_xml(p: &Paragraph) -> String {
     let props = &p.props;
     let has = |name: &str| props.extras.iter().any(|x| element_name(x) == name);
     let empty = p.text.is_empty();

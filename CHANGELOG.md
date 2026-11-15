@@ -11,6 +11,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Docs: with Track Changes on, formatting changes are tracked as in Word (bold, italic,
+  underline, fonts, sizes, colours, styles, alignment, indents, spacing, lists and tab stops):
+  each shows as a balloon beside the page ("Formatted: Font: Bold", with its author and date) and
+  is accepted (the formatting stays) or rejected (the old formatting comes back) on its own, from
+  the balloon, the Review menu or the palette. Formatting changes in files from Word are no longer
+  resolved only by Accept All / Reject All.
 - Docs: Word 97-2003 (`.doc`) files open with their floating pictures (PNG, JPEG), shapes and
   text boxes, placed, wrapped and drawn as in Word and saved into the new `.docx`. Floating
   objects in headers and footers, grouped shapes and freeform shapes drawn with formulas are

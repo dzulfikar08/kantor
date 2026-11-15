@@ -48,34 +48,36 @@ impl Document {
         );
     }
 
-    /// The largest `w:id` of a tracked change in the text.
-    fn max_rev_id(&self) -> u64 {
+    /// The largest `w:id` of a tracked change (or other annotation) in the
+    /// text.
+    pub(crate) fn max_rev_id(&self) -> u64 {
         let mut max = 0u64;
-        let id_of = |x: &str| {
-            xml::parse(&format!(
-                "{}/>",
-                x.trim_end().trim_end_matches("/>").trim_end_matches('>')
-            ))
-            .and_then(|e| e.attr("id").and_then(|v| v.parse::<u64>().ok()))
+        let mut scan = |mut s: &str| {
+            while let Some(i) = s.find(" w:id=\"") {
+                let rest = &s[i + 7..];
+                if let Some(e) = rest.find('"')
+                    && let Ok(v) = rest[..e].parse::<u64>()
+                {
+                    max = max.max(v);
+                }
+                s = rest;
+            }
         };
         for p in &self.paragraphs {
-            for r in &p.runs {
-                if let Some(rev) = &r.rev
-                    && let Some(id) = id_of(&rev.tag)
-                {
-                    max = max.max(id);
-                }
+            for x in p.props.extras.iter() {
+                scan(x);
             }
-            for x in p.props.extras.iter().chain(p.runs[0].props.extras.iter()) {
-                let mut s = x;
-                while let Some(i) = s.find(" w:id=\"") {
-                    let rest = &s[i + 7..];
-                    if let Some(e) = rest.find('"')
-                        && let Ok(v) = rest[..e].parse::<u64>()
-                    {
-                        max = max.max(v);
-                    }
-                    s = rest;
+            for r in &p.runs {
+                if let Some(rev) = &r.rev {
+                    scan(&rev.tag);
+                }
+                for x in r.props.extras.iter() {
+                    scan(x);
+                }
+                if let Some(Object::Opaque(o)) = &r.object
+                    && o.level == crate::object::Level::Marker
+                {
+                    scan(&o.xml);
                 }
             }
         }
@@ -86,7 +88,7 @@ impl Document {
     fn new_rev(&self, kind: RevKind, id: u64) -> Arc<Revision> {
         let name = match kind {
             RevKind::Insert => "ins",
-            RevKind::Delete => "del",
+            RevKind::Delete | RevKind::Format => "del",
         };
         let date = now_utc();
         Arc::new(Revision {

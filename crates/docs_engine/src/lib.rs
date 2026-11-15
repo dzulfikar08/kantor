@@ -20,6 +20,7 @@ mod field_edit;
 pub mod fields;
 pub mod find;
 pub mod float;
+pub mod fmt_track;
 pub mod model;
 mod msdoc;
 pub mod notes;
@@ -44,6 +45,7 @@ pub use edit::TableEdit;
 pub use field_edit::{XrefKind, XrefTarget, XrefWhat, valid_bookmark_name};
 pub use fields::{CodeView, FieldContext, FieldSpan, Instr, LinkTarget, PageLookup};
 pub use float::{Float, FloatKind, LayoutOption, Placement, Wrap};
+pub use fmt_track::FormatItem;
 pub use model::{
     Align, CellRef, Fonts, Indent, LineRule, LineSpacing, NumRef, ParaProps, Paragraph, Position,
     Rgb, Run, RunProps, Selection,
