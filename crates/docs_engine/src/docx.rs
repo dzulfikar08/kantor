@@ -961,7 +961,10 @@ impl BodyParser<'_> {
             }
             _ => {}
         }
-        if let Some((inner, insets, v_align)) = crate::float::text_box_xml(xml) {
+        // A shape's own text box (a group's shapes' text isn't shown).
+        if f.kind == FloatKind::Shape
+            && let Some((inner, insets, v_align)) = crate::float::text_box_xml(xml)
+        {
             let doc = self.text_box_doc(inner);
             f.text = Some(Arc::new(TextBox {
                 doc,

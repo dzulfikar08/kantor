@@ -662,8 +662,7 @@ fn float_item(
     };
     let f = owner.float_at(para, index)?;
     let text = f.text.as_ref().map(|tb| {
-        let [l, t, r, b] = floats::insets(f);
-        let width = (rect[2] - l - r).max(8.0);
+        let [x, y, width, room] = floats::text_area(f, rect);
         let mut sl = lay_story(
             &tb.doc,
             tb.doc.paragraphs().to_vec(),
@@ -674,13 +673,12 @@ fn float_item(
             None,
         );
         sl.text_box = Some((story, para, index));
-        let room = rect[3] - t - b;
         let dy = match tb.v_align {
             docs_engine::float::FloatAlign::Center => ((room - sl.height) / 2.0).max(0.0),
             docs_engine::float::FloatAlign::End => (room - sl.height).max(0.0),
             _ => 0.0,
         };
-        (Arc::new(sl), rect[0] + l, rect[1] + t + dy)
+        (Arc::new(sl), x, y + dy)
     });
     Some(FloatItem {
         para,

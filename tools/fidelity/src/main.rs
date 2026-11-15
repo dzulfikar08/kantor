@@ -241,6 +241,41 @@ fn main() -> Result<()> {
         doc.save_as(&o.join("fields_updated.docx"))?;
         Ok(Some(fields_src.clone()))
     });
+    // Floating objects edited: one moved, resized and rewrapped, an inline
+    // picture made floating, a floating one put in line, a text box's text
+    // replaced, one deleted.
+    let floats_src = corpus.join("docx/floats.docx");
+    run.scenario("floats_edited.docx", |o| {
+        let mut doc = Document::open(&floats_src)?;
+        let floats: Vec<(usize, usize, String)> = doc
+            .paragraphs()
+            .iter()
+            .enumerate()
+            .flat_map(|(i, p)| {
+                p.objects()
+                    .filter_map(move |(at, o)| o.float().map(|f| (i, at, f.name.clone())))
+            })
+            .collect();
+        let find = |n: &str| floats.iter().find(|f| f.2 == n).context("float");
+        let (p, i, _) = find("Square picture")?;
+        let mut at = doc.float_at(*p, *i).context("float")?.at;
+        at.h = (
+            docs_engine::float::RelH::Column,
+            docs_engine::float::Place::Offset(190_500),
+        );
+        at.cx += 95_250;
+        doc.set_float_placement(*p, *i, at);
+        doc.set_layout_option(*p, *i, docs_engine::LayoutOption::Through);
+        let (p, i, _) = find("Cropped picture")?;
+        doc.set_layout_option(*p, *i, docs_engine::LayoutOption::Inline);
+        doc.set_layout_option(*p, *i, docs_engine::LayoutOption::Behind);
+        let (p, i, _) = find("Text Box 1")?;
+        doc.set_text_box_text(*p, *i, "Edited\nin Kantor");
+        let (p, i, _) = find("Arrow")?;
+        doc.delete_float(*p, *i);
+        doc.save_as(&o.join("floats_edited.docx"))?;
+        Ok(Some(floats_src.clone()))
+    });
     run.scenario("new_doc.docx", |o| {
         let mut doc = Document::new();
         let end = doc.end();

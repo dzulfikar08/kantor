@@ -384,6 +384,30 @@ pub fn place(f: &Float, index: usize, setup: &PageSetup, number: u32, at: Anchor
     docs_layout::float_rect(&crate::build::float_spec(index, &f.at), setup, number, at)
 }
 
+/// Where a shape's text goes: its geometry's text rectangle (an
+/// ellipse's is inside the curve) less the text box's inner margins,
+/// `[x, y, w, h]` on the page.
+pub fn text_area(f: &Float, rect: [f32; 4]) -> [f32; 4] {
+    let src = f.geometry_xml().map(wrap);
+    let doc = src
+        .as_deref()
+        .and_then(|x| roxmltree::Document::parse(x).ok());
+    let geometry = doc
+        .as_ref()
+        .and_then(|d| d.root_element().first_element_child())
+        .and_then(Geometry::from_xml)
+        .unwrap_or_else(|| Geometry::preset("rect"));
+    let (cx, cy) = (f.at.cx.max(0) as f64, f.at.cy.max(0) as f64);
+    let tr = outline(&geometry, cx, cy).text_rect;
+    let px = |v: f64| v as f32 / EMU_PER_PX;
+    let [l, t, r, b] = insets(f);
+    let x = rect[0] + px(tr.l) + l;
+    let y = rect[1] + px(tr.t) + t;
+    let w = (px(tr.r - tr.l) - l - r).max(8.0);
+    let h = (px(tr.b - tr.t) - t - b).max(0.0);
+    [x, y, w, h]
+}
+
 /// Inner margins of a text box, px: left, top, right, bottom.
 pub fn insets(f: &Float) -> [f32; 4] {
     f.text
