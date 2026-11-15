@@ -152,6 +152,14 @@ impl Presentation {
         }
         let kind = if nudge { Kind::Nudge } else { Kind::Other };
         let focus = Focus::shape(r.0, r.1);
+        // A table resized: its columns and rows scale (as PowerPoint).
+        if let Some(shape) = self.slides.get(r.0).and_then(|s| s.shapes.get(r.1))
+            && shape.table().is_some()
+            && let Some(old) = shape.xfrm
+            && (old.cx, old.cy) != (xfrm.cx, xfrm.cy)
+        {
+            return self.resize_table(r.0, r.1, xfrm, kind);
+        }
         self.record(kind, Some(r), focus.clone(), false, |p| {
             let s = p.slide_mut(r.0)?;
             let shape = s.shapes.get_mut(r.1).context("no such shape")?;
@@ -176,6 +184,11 @@ impl Presentation {
                 let shape = s.shapes.get_mut(i).context("no such shape")?;
                 if !shape.movable() {
                     bail!("This object can't be moved yet");
+                }
+                if shape.table().is_some()
+                    && shape.xfrm.is_some_and(|o| (o.cx, o.cy) != (x.cx, x.cy))
+                {
+                    bail!("Resize one table at a time");
                 }
                 shape.xfrm = Some(Xfrm {
                     cx: x.cx.max(1),
@@ -455,6 +468,9 @@ impl Presentation {
         f: impl FnOnce(&mut Vec<TextPara>) -> Selection,
     ) -> anyhow::Result<Selection> {
         let before = Focus::text_at(r, sel);
+        if let Some((row, col)) = r.cell_at() {
+            return self.edit_cell_text(r, (row, col), kind, before, boundary, f);
+        }
         // SmartArt text that comes from several data model items keeps
         // its paragraph count (adding items needs PowerPoint's layouts).
         let fixed_paras = self.smartart_fixed_paras(r)?;
@@ -476,6 +492,11 @@ impl Presentation {
     }
 
     pub fn text_paras(&self, r: impl Into<ShapeRef>) -> Option<&[TextPara]> {
+        let r: ShapeRef = r.into();
+        if let Some((row, col)) = r.cell_at() {
+            let cell = self.table(r.0, r.1)?.cell(row, col)?;
+            return Some(&cell.text.as_ref()?.paras);
+        }
         Some(&self.shape(r)?.text.as_ref()?.paras)
     }
 
@@ -542,11 +563,21 @@ impl Presentation {
         let Some(shape) = self.shape(r) else {
             return false;
         };
-        let Some(body) = &shape.text else {
+        let Some(paras) = self.text_paras(r) else {
             return false;
         };
+        let cell = r.cell_at().is_some();
         let (a, b) = sel.ordered();
         let flag = |props: &RunProps, para: usize| {
+            if cell {
+                // A cell's own formatting (its table style's isn't resolved here).
+                let on = |v: Option<bool>| v.unwrap_or(false);
+                return match toggle {
+                    Toggle::Bold => on(props.bold),
+                    Toggle::Italic => on(props.italic),
+                    Toggle::Underline => on(props.underline),
+                };
+            }
             let run = self.resolve_run(r.0, shape, para, props);
             match toggle {
                 Toggle::Bold => run.bold,
@@ -554,12 +585,15 @@ impl Presentation {
                 Toggle::Underline => run.underline,
             }
         };
+        if paras.is_empty() {
+            return false;
+        }
         if a == b {
-            let p = text_ops::clamp(&body.paras, a);
-            return flag(&body.paras[p.para].props_at(p.offset), p.para);
+            let p = text_ops::clamp(paras, a);
+            return flag(&paras[p.para].props_at(p.offset), p.para);
         }
         let mut any = false;
-        for (i, p) in body.paras.iter().enumerate().take(b.para + 1).skip(a.para) {
+        for (i, p) in paras.iter().enumerate().take(b.para + 1).skip(a.para) {
             let from = if i == a.para { a.offset } else { 0 };
             let to = if i == b.para { b.offset } else { p.text.len() };
             for (range, run) in p.run_ranges() {
@@ -654,6 +688,9 @@ impl Presentation {
         numbered: bool,
     ) -> anyhow::Result<()> {
         let r: ShapeRef = r.into();
+        if r.cell_at().is_some() {
+            bail!("Lists in table cells aren't supported yet");
+        }
         let on = !self.is_list(r, sel, numbered);
         let range = self.sel_paras(r, sel);
         let shape = self.shape(r).context("no such shape")?;

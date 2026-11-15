@@ -345,6 +345,69 @@ fn main() -> Result<()> {
         Ok(Some(src))
     });
 
+    // Graphic frames on the slide: moved, resized, typed into, copied
+    // (charts and SmartArt with their parts), grouped.
+    run.scenario("frames_edits.pptx", |o| {
+        let src = corpus.join("pptx/frames.pptx");
+        let mut p = Presentation::open(&src)?;
+        let named = |p: &Presentation, s: usize, n: &str| {
+            p.slide(s)
+                .shapes
+                .iter()
+                .position(|x| x.name == n)
+                .context(n.to_owned())
+        };
+        let t = named(&p, 0, "Plan")?;
+        let x = p.slide(0).shapes[t].xfrm.context("table box")?;
+        p.set_xfrm(
+            (0, t),
+            Xfrm {
+                x: x.x + 100_000,
+                cx: x.cx * 4 / 5,
+                cy: x.cy * 6 / 5,
+                ..x
+            },
+            false,
+        )?;
+        let cell = ShapeRef::from((0, t)).cell(2, 0);
+        p.insert_text(cell, Selection::caret(Position::new(0, 5)), " & co", None)?;
+        p.edit_table(
+            0,
+            t,
+            &[
+                TableOp::InsertCol {
+                    col: 1,
+                    right: true,
+                },
+                TableOp::DeleteRow(0),
+            ],
+        )?;
+        let chart = named(&p, 1, "Sales")?;
+        let note = named(&p, 1, "Note")?;
+        let c = p.slide(1).shapes[chart].xfrm.context("chart box")?;
+        p.set_xfrm(
+            (1, chart),
+            Xfrm {
+                x: c.x + 50_000,
+                cx: c.cx / 2,
+                ..c
+            },
+            false,
+        )?;
+        let clip = p.copy_shapes(1, &[chart])?;
+        p.paste_shapes(0, &clip)?;
+        p.duplicate_shape((0, t))?;
+        let groups = Presentation::open(&corpus.join("pptx/groups.pptx"))?;
+        let d = (0..groups.slide(1).shapes.len())
+            .find(|&k| groups.slide(1).shapes[k].smartart().is_some())
+            .context("SmartArt")?;
+        let clip = groups.copy_shapes(1, &[d])?;
+        p.paste_shapes(2, &clip)?;
+        p.group_shapes(1, &[chart, note])?;
+        p.save_as(&o.join("frames_edits.pptx"))?;
+        Ok(Some(src))
+    });
+
     run.scenario("new_deck.pptx", |o| {
         let mut p = Presentation::new();
         let i = p.new_slide(Some(0))?;

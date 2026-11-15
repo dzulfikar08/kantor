@@ -320,11 +320,11 @@ fn unmodelled_slide_content_is_kept_verbatim() {
         p.slide(0).shapes[table].xfrm,
         Some(Xfrm::new(10, 20, 30, 40))
     );
-    assert!(
-        p.set_xfrm((0, table), Xfrm::new(0, 0, 1, 1), false)
-            .is_err(),
-        "tables don't move yet"
-    );
+    // Graphic frames move (and the move is undone again here).
+    p.set_xfrm((0, table), Xfrm::new(5, 6, 30, 40), false)
+        .unwrap();
+    assert_eq!(p.slide(0).shapes[table].xfrm, Some(Xfrm::new(5, 6, 30, 40)));
+    p.undo().unwrap();
     let t = title_ref(&p, 0);
     p.insert_text(t, Selection::default(), "Hello & welcome", None)
         .unwrap();
@@ -857,10 +857,11 @@ fn copy_paste_and_duplicate_shapes() {
     b.undo().unwrap();
     assert_eq!(b.slide(s).shapes.len(), before);
 
-    // Tables, charts and groups aren't copied yet.
-    let c = Presentation::from_bytes(rich_deck()).unwrap();
+    // Tables are copied too.
+    let mut c = Presentation::from_bytes(rich_deck()).unwrap();
     let table = c.slide(0).shapes.len() - 1;
-    assert!(c.copy_shapes(0, &[table]).is_err());
+    let clip = c.copy_shapes(0, &[table]).unwrap();
+    assert_eq!(c.paste_shapes(0, &clip).unwrap(), [table + 1]);
 }
 
 /// Adjusted presets, custom geometry and connectors are read for display

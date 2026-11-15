@@ -184,7 +184,7 @@ export const en = {
     "Excel: macros aren't carried over when you save, and Kantor tells you when that happens. Pivot tables can be created, rearranged, refreshed and deleted, but not grouped by date or number, and calculated fields aren't supported yet.",
     "OpenDocument (.ods): charts and pictures aren't brought in.",
     "Excel: charts can be inserted (column, bar, line, pie, area, scatter) and changed in a Chart panel, including charts that came with the file (combo and 3-D charts keep their type and data range); chart sheets are shown, printed and edited (their chart in the Chart panel; Rename, Delete, Move or Copy, Tab Color, Hide and Unhide from the tab), and Move Chart puts a chart on its own chart sheet and back; shapes and text boxes aren't shown yet.",
-    "PowerPoint: table cells and chart data (with series and categories added or removed) are edited in a panel, not on the slide; SmartArt text can be edited, but items can't be added or removed and the layout can't be changed (some SmartArt shows as a plain box).",
+    "PowerPoint: chart data (with series and categories added or removed) is edited in a panel, not on the slide; SmartArt text can be edited, but items can't be added or removed and the layout can't be changed (some SmartArt shows as a plain box).",
   ],
   reportH3: "Found a file that Kantor gets wrong?",
   reportText:
@@ -377,7 +377,7 @@ export const id = {
     "Excel: makro tidak ikut tersimpan, dan Kantor memberi tahu Anda saat itu terjadi. Pivot table bisa dibuat, disusun ulang, di-refresh, dan dihapus, tetapi belum bisa dikelompokkan per tanggal atau angka, dan calculated field belum didukung.",
     "OpenDocument (.ods): grafik dan gambar tidak ikut terbuka.",
     "Excel: grafik bisa disisipkan (kolom, batang, garis, pai, area, sebar) dan diubah lewat panel Grafik, termasuk grafik bawaan file (grafik kombinasi dan 3-D tetap dengan jenis dan rentang datanya); chart sheet sudah ditampilkan, dicetak, dan bisa diubah (grafiknya lewat panel Grafik; Ganti Nama, Hapus, Pindah atau Salin, Warna Tab, Sembunyikan, dan Tampilkan dari tabnya), dan Pindahkan Grafik memindahkan grafik ke chart sheet sendiri dan sebaliknya; bentuk (shape) serta kotak teks belum ditampilkan.",
-    "PowerPoint: isi tabel dan data grafik (termasuk menambah atau menghapus seri dan kategori) diedit lewat panel, bukan langsung di slide; teks SmartArt bisa diedit, tetapi item belum bisa ditambah atau dihapus dan tata letaknya belum bisa diubah (sebagian SmartArt tampil sebagai kotak polos).",
+    "PowerPoint: data grafik (termasuk menambah atau menghapus seri dan kategori) diedit lewat panel, bukan langsung di slide; teks SmartArt bisa diedit, tetapi item belum bisa ditambah atau dihapus dan tata letaknya belum bisa diubah (sebagian SmartArt tampil sebagai kotak polos).",
   ],
   reportH3: "Menemukan file yang salah tampil di Kantor?",
   reportText:

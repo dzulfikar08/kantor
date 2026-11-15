@@ -27,6 +27,8 @@ use crate::theme::ColorCtx;
 pub struct Inner {
     len: u8,
     at: [u16; Inner::MAX],
+    /// A table frame's cell (row, column), for typing into it.
+    cell: Option<(u16, u16)>,
 }
 
 impl Inner {
@@ -34,10 +36,28 @@ impl Inner {
     pub const TOP: Self = Self {
         len: 0,
         at: [0; Self::MAX],
+        cell: None,
     };
 
+    /// The slide shape itself (a table cell of it counts as the shape).
     pub fn is_top(&self) -> bool {
         self.len == 0
+    }
+
+    /// Cell `(row, col)` of a table frame (on the slide).
+    pub fn cell(row: usize, col: usize) -> Self {
+        Self {
+            cell: Some((
+                row.min(u16::MAX as usize) as u16,
+                col.min(u16::MAX as usize) as u16,
+            )),
+            ..Self::TOP
+        }
+    }
+
+    /// The table cell this addresses, if any.
+    pub fn cell_at(&self) -> Option<(usize, usize)> {
+        self.cell.map(|(r, c)| (r as usize, c as usize))
     }
 
     pub fn depth(&self) -> usize {
@@ -54,6 +74,7 @@ impl Inner {
             return None;
         }
         let mut out = self;
+        out.cell = None;
         out.at[out.len as usize] = i as u16;
         out.len += 1;
         Some(out)
@@ -122,6 +143,16 @@ impl ShapeRef {
 
     pub fn child(self, i: usize) -> Option<Self> {
         Some(Self(self.0, self.1, self.2.child(i)?))
+    }
+
+    /// Cell `(row, col)` of table frame `self` (a slide shape).
+    pub fn cell(self, row: usize, col: usize) -> Self {
+        Self(self.0, self.1, Inner::cell(row, col))
+    }
+
+    /// The table cell this addresses, if any.
+    pub fn cell_at(&self) -> Option<(usize, usize)> {
+        self.2.cell_at()
     }
 }
 
@@ -432,9 +463,11 @@ impl Presentation {
             if sh.ph.is_some() {
                 bail!("Placeholders can't be grouped");
             }
-            if matches!(&sh.kind, ShapeKind::Other { frame, .. } if matches!(frame.get(), Some(FrameContent::Table(_))))
-            {
+            if sh.table().is_some() {
                 bail!("Tables can't be grouped");
+            }
+            if sh.is_graphic_frame() && !sh.is_chart() && !sh.is_smartart() {
+                bail!("Embedded objects can't be grouped");
             }
             if sh.xfrm.is_none() {
                 bail!("This shape can't be grouped");

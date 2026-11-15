@@ -88,10 +88,85 @@ fn border_stroke(b: &Border) -> Option<Stroke> {
     })
 }
 
+/// A table's layout and the text of each shown cell (in the order of
+/// [`TableLayout::cells`]).
+#[derive(Clone, Debug)]
+pub struct TableCells {
+    pub layout: TableLayout,
+    pub texts: Vec<Option<RenderText>>,
+}
+
+impl TableCells {
+    /// The shown cell at `(x, y)` px from the frame's top left.
+    pub fn at(&self, x: f32, y: f32) -> Option<[usize; 4]> {
+        self.layout.cells.iter().copied().find(|&c| {
+            let [cx, cy, w, h] = self.layout.rect(c);
+            x >= cx && x < cx + w && y >= cy && y < cy + h
+        })
+    }
+
+    /// The shown cell whose top left is `(row, col)`.
+    pub fn index_of(&self, row: usize, col: usize) -> Option<usize> {
+        self.layout
+            .cells
+            .iter()
+            .position(|c| c[0] == row && c[1] == col)
+    }
+}
+
 /// A shown cell's look and text.
 type Shown = (CellLook, Option<RenderText>);
 
 impl Builder {
+    /// A table's layout and each shown cell's look and text.
+    fn lay_table(
+        &self,
+        engine: &mut Engine,
+        pres: &Presentation,
+        slide: usize,
+        t: &Table,
+    ) -> (TableLayout, Vec<Vec<Option<Shown>>>) {
+        let style = t
+            .style_id
+            .as_deref()
+            .and_then(|id| pres.table_styles(slide).get(id));
+        let mut looks: Vec<Vec<Option<Shown>>> = vec![vec![None; t.cols.len()]; t.rows.len()];
+        let lay = layout_table(t, &mut |r, c, w| {
+            let look = t.cell_look(style, r, c);
+            let text = t
+                .cell(r, c)
+                .and_then(|cell| pres.cell_text(slide, cell, &look.text));
+            let need = match &text {
+                Some(tx) if tx.vert == Vert::Horz => {
+                    let l = self.texts.layout(engine, tx, &Xfrm::new(0, 0, w, 0));
+                    (l.height * EMU_PER_PX) as Emu + tx.insets[1] + tx.insets[3]
+                }
+                _ => 0,
+            };
+            looks[r][c] = Some((look, text));
+            need
+        });
+        (lay, looks)
+    }
+
+    /// Where a table's cells are, as drawn (rows grown to fit their
+    /// text), and each shown cell's text: for typing into cells.
+    pub fn table_cells(
+        &self,
+        engine: &mut Engine,
+        pres: &Presentation,
+        slide: usize,
+        t: &Table,
+    ) -> TableCells {
+        let (layout, looks) = self.lay_table(engine, pres, slide, t);
+        let texts = layout
+            .cells
+            .iter()
+            .map(|&[r, c, ..]| looks[r][c].as_ref().and_then(|(_, t)| t.clone()))
+            .collect();
+        TableCells { layout, texts }
+    }
+
     /// A table drawn at `xfrm` (grows downwards when rows grow).
     pub(crate) fn table(
         &self,
@@ -105,26 +180,7 @@ impl Builder {
         if t.cols.is_empty() || t.rows.is_empty() || t.cols.iter().sum::<Emu>() <= 0 {
             return false;
         }
-        let style = t
-            .style_id
-            .as_deref()
-            .and_then(|id| pres.table_styles(d.slide).get(id));
-        let mut looks: Vec<Vec<Option<Shown>>> = vec![vec![None; t.cols.len()]; t.rows.len()];
-        let lay = layout_table(t, &mut |r, c, w| {
-            let look = t.cell_look(style, r, c);
-            let text = t
-                .cell(r, c)
-                .and_then(|cell| pres.cell_text(d.slide, cell, &look.text));
-            let need = match &text {
-                Some(tx) if tx.vert == Vert::Horz => {
-                    let l = self.texts.layout(engine, tx, &Xfrm::new(0, 0, w, 0));
-                    (l.height * EMU_PER_PX) as Emu + tx.insets[1] + tx.insets[3]
-                }
-                _ => 0,
-            };
-            looks[r][c] = Some((look, text));
-            need
-        });
+        let (lay, looks) = self.lay_table(engine, pres, d.slide, t);
         let base = shape_transform(xfrm);
         let tt = text_transform(xfrm);
         let push = |out: &mut Vec<Item>, transform: Affine, prim: Prim| {

@@ -7,9 +7,10 @@
 //!
 //! Where GPUI falls short of the scene (the PDF has none of these limits):
 //! - Glyphs and pictures can't be turned at paint time. Text in a turned
-//!   shape is placed along the turn with upright glyphs; turned, flipped,
-//!   translucent or cropped-and-turned pictures are pre-turned rasters
-//!   (nearest pixel, cached).
+//!   shape (and vertical text) is rasterised on the CPU at the screen's
+//!   resolution ([`crate::turned_text`]); turned, flipped, translucent or
+//!   cropped-and-turned pictures are pre-turned rasters (nearest pixel,
+//!   cached).
 //! - Gradients: GPUI paths take two-stop linear gradients only. A linear
 //!   gradient with more stops is cut into one band per stop pair (the
 //!   outline clipped to each band on the CPU), each band painted with its
@@ -148,6 +149,8 @@ pub(crate) enum GPrim {
         img: Arc<RenderImage>,
     },
     Text(Vec<GRun>),
+    /// Turned text, drawn as a raster (see [`crate::turned_text`]).
+    TurnedText(Box<crate::turned_text::TurnedText>),
     /// An object Kantor can't draw: a chrome box.
     Other([P; 4]),
     /// The editor's dashed outline of an empty placeholder; `upright` is
@@ -203,11 +206,25 @@ impl Painter {
         for img in self.evicted.borrow_mut().drain(..) {
             let _ = window.drop_image(img);
         }
+        for img in crate::turned_text::take_evicted() {
+            let _ = window.drop_image(img);
+        }
     }
 
     /// Text placement of a resolved body inside `xfrm`.
     pub fn place(&self, t: &RenderText, xfrm: &Xfrm) -> LaidText {
         self.builder.place(&mut self.engine.borrow_mut(), t, xfrm)
+    }
+
+    /// A table's cells as drawn on slide `slide`.
+    pub fn table_cells(
+        &self,
+        pres: &Presentation,
+        slide: usize,
+        t: &slides_engine::frame::Table,
+    ) -> slides_scene::TableCells {
+        self.builder
+            .table_cells(&mut self.engine.borrow_mut(), pres, slide, t)
     }
 
     /// The scene of slide `slide` (as the PDF export gets it).
@@ -389,6 +406,11 @@ impl Painter {
                             image: bb,
                             img: self.turned_image(pic, &img, t),
                         });
+                    }
+                }
+                Prim::Text(text) if !t.is_upright() => {
+                    if let Some(tt) = crate::turned_text::TurnedText::new(text, t) {
+                        prims.push(GPrim::TurnedText(Box::new(tt)));
                     }
                 }
                 Prim::Text(text) => {
@@ -886,6 +908,13 @@ fn paint_prims(
                 );
             }
             GPrim::Text(runs) => paint_runs(runs, view, bridge, window),
+            GPrim::TurnedText(tt) => {
+                let device = k * window.scale_factor();
+                if let Some(img) = tt.image(device) {
+                    let b = view.slide_rect(tt.bounds);
+                    let _ = window.paint_image(b, b, Corners::default(), img, 0, false);
+                }
+            }
             GPrim::Other(c) => {
                 let pts = screen(c);
                 fill_polygon(window, &pts, other.opacity(0.12));

@@ -286,6 +286,9 @@ pub struct Presentation {
     pub(crate) pkg: Package,
     /// Media added in this session (part name → bytes).
     pub(crate) media: HashMap<String, Arc<Vec<u8>>>,
+    /// Parts pasted with a chart or SmartArt (and their relationships),
+    /// saved while a slide uses their root part.
+    pub(crate) parts: HashMap<String, crate::clip::AddedPart>,
     pub(crate) path: Option<PathBuf>,
     /// The file this presentation was opened from or last saved to,
     /// including an imported `.ppt` (unlike `path`, where Save writes).
@@ -623,6 +626,7 @@ impl Presentation {
                 has_custom_shows,
             },
             media: HashMap::new(),
+            parts: HashMap::new(),
             path: None,
             source: None,
             import_notes: Vec::new(),
@@ -769,6 +773,9 @@ impl Presentation {
     pub fn part_bytes(&self, part: &str) -> Option<Arc<Vec<u8>>> {
         if let Some(b) = self.media.get(part) {
             return Some(b.clone());
+        }
+        if let Some(b) = self.parts.get(part) {
+            return Some(b.bytes.clone());
         }
         if let Some(b) = self.edited_part(part) {
             return Some(b);
@@ -955,6 +962,23 @@ impl Presentation {
                 }
                 out_parts.push((part.clone(), bytes.as_ref().clone()));
             }
+        }
+        // Charts and SmartArt pasted in this session, while a slide uses them.
+        let mut added: Vec<_> = self.parts.iter().collect();
+        added.sort_by(|a, b| a.0.cmp(b.0));
+        for (part, a) in added {
+            if !kept_targets.contains(&a.root) {
+                continue;
+            }
+            if let Some(ty) = &a.ct {
+                let ext = part.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+                let by_default = ct.defaults.iter().any(|(e, t)| *e == ext && t == ty);
+                if !by_default {
+                    ct.set_override(part, ty);
+                }
+            }
+            let bytes = self.edited_part(part).unwrap_or_else(|| a.bytes.clone());
+            out_parts.push((part.clone(), bytes.as_ref().clone()));
         }
         // SmartArt edited in Kantor: its drawing and data model.
         for (part, bytes) in self.smartart_parts() {

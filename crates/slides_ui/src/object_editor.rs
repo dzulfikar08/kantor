@@ -1,6 +1,6 @@
 //! Editing a table's cells or a chart's data in a panel over the canvas
-//! (double-click the table or chart, the toolbar's edit button, or the
-//! palette).
+//! (the toolbar's edit button or the palette; a double-click opens it for
+//! a chart, while a table's cells are typed into on the slide).
 //!
 //! - Table: a grid of the cells' text; add or remove rows and columns next
 //!   to the cell last clicked; fill that cell with a theme colour or none.
