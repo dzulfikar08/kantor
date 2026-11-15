@@ -166,3 +166,10 @@ The text changed since it was sent; run the rewrite again.	Teks telah berubah se
 Rewritten (Undo restores the original)	Ditulis ulang (Urungkan mengembalikan teks asli)
 Agent: {}	Agen: {}
 Opened {} (imported; Save creates a .docx copy)	{} dibuka (diimpor; Simpan membuat salinan .docx)
+Center	Tengah
+Set	Atur
+Leader	Pengisi
+Tab stop position (cm)	Posisi perhentian tab (cm)
+Default tab stops (cm)	Perhentian tab default (cm)
+No tab stops: default stops apply	Tidak ada perhentian tab: perhentian default berlaku
+{} tab: click to change, then click the ruler to set one	Tab {}: klik untuk mengganti, lalu klik penggaris untuk memasangnya

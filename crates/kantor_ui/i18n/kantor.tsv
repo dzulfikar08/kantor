@@ -326,6 +326,7 @@ Delete Column	Hapus Kolom
 Delete Table	Hapus Tabel
 Insert Picture…	Sisipkan Gambar…
 Header and Footer…	Header dan Footer…
+Tabs…	Tab…
 Add Page Numbers	Tambahkan Nomor Halaman
 Insert Page Number Field	Sisipkan Bidang Nomor Halaman
 Insert Section Break (Next Page)	Sisipkan Pemisah Bagian (Halaman Berikutnya)
@@ -479,6 +480,7 @@ Docs · 3 × 3 (toolbar grid for other sizes)	Docs · 3 × 3 (kisi bilah alat un
 Docs · table	Docs · tabel
 Docs · PNG or JPEG	Docs · PNG atau JPEG
 Docs · paper size, orientation, margins	Docs · ukuran kertas, orientasi, margin
+Docs · tab stops: position, alignment, leader, default stops	Docs · perhentian tab: posisi, perataan, pengisi, perhentian default
 Docs · text, page numbers, different first page, odd and even pages	Docs · teks, nomor halaman, halaman pertama berbeda, halaman ganjil dan genap
 Docs · "Page 1 of 9" centred in the footer	Docs · "Halaman 1 dari 9" di tengah footer
 Docs · the page number at the caret	Docs · nomor halaman di posisi kursor
