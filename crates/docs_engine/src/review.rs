@@ -679,8 +679,25 @@ impl Document {
     }
 
     /// Accept (or reject) every tracked change: insertions, deletions,
-    /// paragraph marks and formatting. One undo step.
+    /// paragraph marks, formatting and table rows, in the text and in the
+    /// headers, footers and notes. One undo step.
     pub fn resolve_all(&mut self, accept: bool, sel: Selection) -> Selection {
+        let before = self.side_state();
+        let rev = self.revision();
+        let after = self.resolve_body(accept, sel);
+        let body = self.revision() != rev;
+        if self.resolve_parts(accept) {
+            if body {
+                let now = self.side_state();
+                self.set_last_side(before, now);
+            } else {
+                self.push_hf(before, None, sel);
+            }
+        }
+        after
+    }
+
+    fn resolve_body(&mut self, accept: bool, sel: Selection) -> Selection {
         let old = self.paragraphs.clone();
         let mut out: Vec<Paragraph> = Vec::with_capacity(old.len());
         // Paragraphs whose mark is removed join the next one.

@@ -379,3 +379,65 @@ fn note_edited_with_formatting_and_picture() {
     doc.undo();
     assert_eq!(doc.note_text(NoteKind::Footnote, &id), "");
 }
+
+#[test]
+fn edits_in_headers_and_notes_are_tracked() {
+    let mut doc = Document::open(&corpus("notes.docx")).unwrap();
+    doc.set_author("Ani Wijaya");
+    doc.set_track_changes(true, Selection::default());
+    // A footnote: typing is an insertion by the user.
+    let id = doc
+        .notes()
+        .iter()
+        .find(|n| n.kind == NoteKind::Footnote && !n.separator)
+        .unwrap()
+        .id
+        .clone();
+    let (edit, mut n) = doc.edit_note(NoteKind::Footnote, &id).unwrap();
+    assert!(n.track_changes());
+    let end = n.end();
+    n.insert_text(Selection::caret(end), " Checked.", None);
+    let ch = n.changes();
+    assert_eq!(ch.len(), 1);
+    assert_eq!(ch[0].kind, docs_engine::RevKind::Insert);
+    assert_eq!(ch[0].author, "Ani Wijaya");
+    doc.finish_part(edit, n, Selection::default());
+    assert_eq!(doc.part_changes(), 1);
+    // A new header: typing tracked too.
+    let (edit, mut h) = doc.edit_hf(0, HfKind::Header, HfType::Default).unwrap();
+    h.insert_text(Selection::default(), "Draft", None);
+    doc.finish_part(edit, h, Selection::default());
+    assert_eq!(doc.part_changes(), 2);
+    // Saved as w:ins in the parts and read back.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("n.docx");
+    doc.save_as(&path).unwrap();
+    let saved = parts(&std::fs::read(&path).unwrap());
+    let notes = text(&saved, "word/footnotes.xml");
+    assert!(notes.contains("w:author=\"Ani Wijaya\""), "{notes}");
+    let back = Document::open(&path).unwrap();
+    assert_eq!(back.part_changes(), 2);
+    // Reject All covers them: one undo step.
+    let mut rejected = back.clone();
+    rejected.resolve_all(false, Selection::default());
+    assert_eq!(rejected.part_changes(), 0);
+    let note = |d: &Document| {
+        d.notes()
+            .iter()
+            .find(|n| n.id == id && n.kind == NoteKind::Footnote)
+            .unwrap()
+            .doc
+            .paragraphs()
+            .iter()
+            .map(|p| p.text.clone())
+            .collect::<String>()
+    };
+    assert!(!note(&rejected).contains("Checked."));
+    rejected.undo();
+    assert_eq!(rejected.part_changes(), 2);
+    // Accept All keeps the text, unmarked.
+    let mut accepted = back;
+    accepted.resolve_all(true, Selection::default());
+    assert_eq!(accepted.part_changes(), 0);
+    assert!(note(&accepted).contains("Checked."));
+}

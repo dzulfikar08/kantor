@@ -280,8 +280,19 @@ impl DocsView {
         self.resolve_change(false, window, cx);
     }
 
+    /// Tracked changes in the whole document: text, headers, footers and
+    /// notes (the one being edited included).
+    pub(crate) fn change_count(&self) -> usize {
+        let count = |d: &docs_engine::Document| d.changes().len() + d.other_changes();
+        match &self.part {
+            Some(s) => count(&s.main) + s.main.part_changes() + count(&self.doc),
+            None => count(&self.doc) + self.doc.part_changes(),
+        }
+    }
+
+    /// Accept or reject the change at the caret: in the text, or in the
+    /// header, footer or note being edited.
     fn resolve_change(&mut self, accept: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.leave_part(window, cx);
         let done = if accept {
             self.doc.accept_change(self.sel)
         } else {
@@ -301,7 +312,7 @@ impl DocsView {
 
     pub fn resolve_all_doc(&mut self, accept: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.leave_part(window, cx);
-        let n = self.doc.changes().len() + self.doc.other_changes();
+        let n = self.change_count();
         if n == 0 {
             self.status = t("This document has no tracked changes").into();
             cx.notify();
@@ -319,7 +330,7 @@ impl DocsView {
     }
 
     fn changes_status(&self, accept: bool) -> SharedString {
-        let left = self.doc.changes().len() + self.doc.other_changes();
+        let left = self.change_count();
         match (accept, left) {
             (true, 0) => t("Accepted: no tracked changes left").into(),
             (true, 1) => t("Accepted: 1 tracked change left").into(),
@@ -443,8 +454,15 @@ impl DocsView {
                 h,
             ));
         }
-        // Formatting changes: a balloon each, as Word shows them.
-        for c in self.doc.changes() {
+        // Formatting changes: a balloon each, as Word shows them (the
+        // text's; a header, footer or note being edited shows its changes
+        // on the page only).
+        let body_changes = if self.part.is_none() {
+            self.doc.changes()
+        } else {
+            Vec::new()
+        };
+        for c in body_changes {
             if c.kind != docs_engine::RevKind::Format {
                 continue;
             }
@@ -741,8 +759,8 @@ fn change_card(
 /// The toolbar's Review menu.
 pub(crate) fn review_button(view: &DocsView, cx: &mut Context<DocsView>) -> impl IntoElement {
     let v = cx.entity().downgrade();
-    let changes = view.doc.changes().len() + view.doc.other_changes();
-    let comments = view.doc.comments().len();
+    let changes = view.change_count();
+    let comments = view.main_doc().comments().len();
     let track = view.doc.track_changes();
     let tip = match (changes, comments) {
         (0, 0) => t("Review: comments and tracked changes").to_owned(),

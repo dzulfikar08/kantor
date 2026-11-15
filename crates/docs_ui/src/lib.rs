@@ -2025,6 +2025,9 @@ struct Frame {
     change_bars: Vec<(usize, f32, f32)>,
     /// Misspelled words on the visible pages: `(paragraph, byte range)`.
     misspelled: Vec<(usize, Range<usize>)>,
+    /// Misspelled words of the header, footer or note being edited:
+    /// `(page, rect)` in page coordinates.
+    part_misspelled: Vec<(usize, [f32; 4])>,
     t: Tokens,
     bridge: Rc<RefCell<FontBridge>>,
     focus: FocusHandle,
@@ -2171,7 +2174,12 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                 |window: &mut Window, l: &docs_pdf::StoryLayout, (x, y): (f32, f32)| {
                     let mut bridge = f.bridge.borrow_mut();
                     let first = l.paged.pages.first().map_or(&[][..], |p| &p.rules[..]);
-                    for rule in first.iter().cloned().chain(l.paged.tab_rules(0)) {
+                    for rule in first
+                        .iter()
+                        .cloned()
+                        .chain(l.paged.tab_rules(0))
+                        .chain(l.strike_rules())
+                    {
                         let mut r = rule.rect;
                         r[0] += x;
                         r[1] += y;
@@ -2316,7 +2324,12 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                     }
                 }
                 let first = l.paged.pages.first().map_or(&[][..], |p| &p.rules[..]);
-                for rule in first.iter().cloned().chain(l.paged.tab_rules(0)) {
+                for rule in first
+                    .iter()
+                    .cloned()
+                    .chain(l.paged.tab_rules(0))
+                    .chain(l.strike_rules())
+                {
                     let mut r = rule.rect;
                     r[0] += placed.x;
                     r[1] += placed.y;
@@ -2353,6 +2366,10 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             floats::paint_floats(f, &g, page, false, window, &mut text_box);
             floats::paint_float_selection(f, &g, page, window);
             paint_misspelled(window, &g, page, paged, &runs, &f.misspelled, cx);
+            for (_, [x, y, w, h]) in f.part_misspelled.iter().filter(|m| m.0 == page) {
+                let origin = g.page_to_screen(page, *x, y + h - 3.0);
+                kantor_ui::spelling::paint_squiggle(window, origin, px(w * g.zoom), g.zoom, cx);
+            }
             if let Some(x) = f.guide {
                 let line = [x - 0.5 / z, 0., 1. / z, page_h];
                 window.paint_quad(fill(rect(page, line), f.t.accent));
@@ -2443,12 +2460,21 @@ impl Render for DocsView {
         if swapped {
             self.whole_out();
         }
-        if self.part.is_none()
-            && (kantor_ui::spelling::enabled(cx) != self.spell.is_on()
-                || (self.spell.is_on() && self.spell.flags.len() != self.doc.len()))
+        if kantor_ui::spelling::enabled(cx) != self.spell.is_on()
+            || (self.spell.is_on() && self.spell.flags.len() != self.doc.len())
         {
             self.refresh_spelling(cx);
         }
+        // In a header, footer or note being edited: where its flagged
+        // words are drawn on the pages.
+        let part_misspelled: Vec<(usize, [f32; 4])> = if self.spell.is_on() && self.part.is_some() {
+            self.spell_ranges_in(0..self.doc.len())
+                .into_iter()
+                .flat_map(|(p, r)| self.laid.selection_rects((p, r.start), (p, r.end)))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let misspelled = if self.spell.is_on() && self.part.is_none() {
             let paged = &self.laid.paged;
             let visible = self.geometry().visible_pages(paged.pages.len());
@@ -2496,6 +2522,7 @@ impl Render for DocsView {
             card_lines,
             change_bars,
             misspelled,
+            part_misspelled,
             t,
             bridge: self.bridge.clone(),
             focus: self.focus.clone(),
