@@ -323,3 +323,42 @@ fn shapes_and_text_boxes_print_with_their_text() {
     let all = texts(&export(&mut book, &opts)).join("\n");
     assert!(all.contains("Turnover"), "{all}");
 }
+
+#[test]
+fn image_formulas_print_their_picture_in_the_cell() {
+    use sheets_engine::web::{WebKind, WebResult};
+    use sheets_pdf::OverlayKind;
+    let mut book = Workbook::new_empty().unwrap();
+    book.set_input(0, 1, 1, "=IMAGE(\"https://example.com/a.png\",\"Logo\")")
+        .unwrap();
+    book.set_web_enabled(true);
+    book.recalculate();
+    book.set_web_result(
+        "https://example.com/a.png",
+        WebKind::Image,
+        WebResult::Image {
+            data: std::sync::Arc::new(vec![0; 8]),
+            width: 200,
+            height: 100,
+        },
+    );
+    book.recalculate();
+    let opts = Options {
+        date: "11/11/2026".into(),
+        time: "9:00 AM".into(),
+        ..Options::default()
+    };
+    let plan = Plan::new(&book, &opts, &mut Shaper::new());
+    let page = sheets_pdf::extract(&mut book, &plan, 0);
+    let pictures: Vec<_> = page
+        .overlays
+        .iter()
+        .filter(|o| matches!(o.kind, OverlayKind::Picture { .. }))
+        .collect();
+    assert_eq!(pictures.len(), 1, "{:?}", page.overlays);
+    // Fitted in B2, keeping the 2:1 aspect ratio: as tall as the row.
+    let [_, _, w, h] = pictures[0].rect;
+    assert!((w - 2.0 * h).abs() < 0.01, "{:?}", pictures[0].rect);
+    // The alt text isn't printed under it.
+    assert!(page.texts.iter().all(|t| t.text != "Logo"));
+}

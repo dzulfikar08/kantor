@@ -1,7 +1,7 @@
 mod arabic_roman;
 pub(crate) mod array_size;
 mod gcd_lcm;
-mod mathematical;
+pub(crate) mod mathematical;
 mod matrix;
 mod mmult;
 mod multinomial;

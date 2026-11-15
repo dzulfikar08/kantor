@@ -239,6 +239,9 @@ pub struct Model<'a> {
     /// KANTOR PATCH (partial recalculation): how many formulas the last
     /// evaluation ran if it was partial.
     pub(crate) kantor_last_partial: Option<usize>,
+    /// KANTOR PATCH (functions): what IMAGE and WEBSERVICE fetched and wait
+    /// for (see `functions/kantor_web.rs`).
+    pub kantor_web: crate::functions::kantor_web::KantorWeb,
 }
 
 /// Formula text to index in `Worksheet::shared_formulas`, for one sheet.
@@ -1930,6 +1933,7 @@ impl<'a> Model<'a> {
             kantor_pivots: Vec::new(),
             kantor_evaluations: 0,
             kantor_last_partial: None,
+            kantor_web: Default::default(),
             shared_strings,
             parsed_defined_names: HashMap::new(),
             parser,

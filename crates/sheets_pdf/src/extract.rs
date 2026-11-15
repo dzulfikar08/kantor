@@ -556,6 +556,13 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
                     (rect, rect)
                 }
             };
+            // An IMAGE formula's picture instead of its value (the alt text).
+            if cell.merge.is_none()
+                && let Some(image) = book.cell_image(sheet, rp.index, cp.index)
+            {
+                out.overlays.extend(image_overlay(image, rect, clip));
+                continue;
+            }
             if cell.text.is_empty() {
                 continue;
             }
@@ -716,12 +723,41 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
                 (xseg[1].1 - xseg[1].0).max(0.0),
                 (yseg[1].1 - yseg[1].0).max(0.0),
             ];
-            out.overlays = sp.drawings.overlays(book, bc, br, [cx, ry], clip);
+            out.overlays
+                .extend(sp.drawings.overlays(book, bc, br, [cx, ry], clip));
         }
     }
 
     header_footer(&mut out, plan, sp, pr, default_family, default_size);
     out
+}
+
+/// The picture of an IMAGE formula in a cell at `rect` (points), cut to the
+/// cell and to `clip`.
+fn image_overlay(
+    image: &sheets_engine::web::CellImage,
+    rect: [f32; 4],
+    clip: [f32; 4],
+) -> Option<crate::Overlay> {
+    // The scene works in px, 0.75 pt each.
+    let items = sheets_scene::cell_image_items(image, rect[2] / 0.75, rect[3] / 0.75);
+    let slides_scene::Prim::Picture(p) = &items.first()?.prim else {
+        return None;
+    };
+    Some(crate::Overlay {
+        rect: [
+            rect[0] + p.rect[0] * 0.75,
+            rect[1] + p.rect[1] * 0.75,
+            p.rect[2] * 0.75,
+            p.rect[3] * 0.75,
+        ],
+        clip: intersect(clip, rect),
+        kind: crate::OverlayKind::Picture {
+            part: p.part.clone(),
+            data: p.data.clone(),
+            crop: p.crop,
+        },
+    })
 }
 
 /// Side of an icon in a cell `height` points tall.

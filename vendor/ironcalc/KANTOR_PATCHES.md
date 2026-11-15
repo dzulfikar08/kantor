@@ -196,6 +196,17 @@ Tests: Kantor's `crates/sheets_engine/tests/realworld.rs`
 `xlsx_rows_and_cells_without_references`), synthetic packages built in the
 test.
 
+## 11. Network errors written as #VALUE!
+
+Why: `#CONNECT!`, `#BLOCKED!` and `#BUSY!` (ironcalc_base §25) aren't error
+values of the file format; Excel writes them as `#VALUE!` (with rich-value
+metadata).
+
+What: `export/worksheets.rs` `file_error` writes them as `#VALUE!` in error
+cells, spill cells and formula results.
+
+Tests: Kantor's `crates/sheets_engine/tests/functions.rs`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

@@ -400,4 +400,57 @@ fn default_text_on_no_fill_reads_on_a_dark_grid() {
         100.0,
     );
     assert!(text_colors(&rev).iter().all(|c| *c == [255, 255, 255]));
+
+fn image(sizing: u8, width: Option<f64>, height: Option<f64>) -> CellImage {
+    CellImage {
+        source: "https://example.com/a.png".to_string(),
+        alt_text: String::new(),
+        sizing,
+        height,
+        width,
+        data: Arc::new(vec![1, 2, 3]),
+        pixel_width: 200,
+        pixel_height: 100,
+    }
+}
+
+#[test]
+fn image_formula_sizing_modes() {
+    // A 64 × 20 px cell, a 200 × 100 px picture.
+    // 0: fit, keeping the aspect ratio (40 × 20, centred).
+    assert_eq!(
+        cell_image_rect(&image(0, None, None), 64.0, 20.0),
+        [12.0, 0.0, 40.0, 20.0]
+    );
+    // 1: fill.
+    assert_eq!(
+        cell_image_rect(&image(1, None, None), 64.0, 20.0),
+        [0.0, 0.0, 64.0, 20.0]
+    );
+    // 2: its own size, centred, cut to the cell.
+    assert_eq!(
+        cell_image_rect(&image(2, None, None), 64.0, 20.0),
+        [-68.0, -40.0, 200.0, 100.0]
+    );
+    // 3: width and height; one alone keeps the aspect ratio.
+    assert_eq!(
+        cell_image_rect(&image(3, Some(30.0), Some(10.0)), 64.0, 20.0),
+        [17.0, 5.0, 30.0, 10.0]
+    );
+    assert_eq!(
+        cell_image_rect(&image(3, None, Some(10.0)), 64.0, 20.0),
+        [22.0, 5.0, 20.0, 10.0]
+    );
+
+    let items = cell_image_items(&image(2, None, None), 64.0, 20.0);
+    let Prim::Picture(p) = &items[0].prim else {
+        panic!("not a picture");
+    };
+    assert_eq!(p.rect, [0.0, 0.0, 64.0, 20.0]);
+    assert_eq!(p.crop, [0.34, 0.4, 0.34, 0.4]);
+    // The whole picture still lands where it should.
+    let whole = p.image_rect();
+    for (a, b) in whole.iter().zip([-68.0, -40.0, 200.0, 100.0]) {
+        assert!((a - b).abs() < 1e-3, "{whole:?}");
+    }
 }

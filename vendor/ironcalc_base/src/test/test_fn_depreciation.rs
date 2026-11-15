@@ -126,7 +126,9 @@ fn fn_amorlinc_errors() {
 }
 
 #[test]
-fn fn_forecast_ets_family_not_implemented() {
+fn fn_forecast_ets_family() {
+    // KANTOR PATCH (functions): implemented (test/test_kantor_ets.rs has
+    // Excel's results); a straight line forecasts exactly.
     let mut model = new_empty_model();
     model._set("A1", "=FORECAST.ETS(5, {1,2,3}, {1,2,3})");
     model._set("A2", "=FORECAST.ETS.CONFINT(5, {1,2,3}, {1,2,3})");
@@ -134,8 +136,8 @@ fn fn_forecast_ets_family_not_implemented() {
     model._set("A4", "=FORECAST.ETS.STAT({1,2,3}, {1,2,3}, 1)");
     model.evaluate();
 
-    assert_eq!(model._get_text("A1"), *"#N/IMPL!");
-    assert_eq!(model._get_text("A2"), *"#N/IMPL!");
-    assert_eq!(model._get_text("A3"), *"#N/IMPL!");
-    assert_eq!(model._get_text("A4"), *"#N/IMPL!");
+    assert_eq!(model._get_text("A1"), *"5");
+    assert_eq!(model._get_text("A2"), *"0");
+    assert_eq!(model._get_text("A3"), *"0");
+    assert_eq!(model._get_text("A4"), *"0.9");
 }

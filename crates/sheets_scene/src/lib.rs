@@ -18,6 +18,8 @@
 //!   their text (Excel's 11 pt default, the theme's fonts and colours).
 //! - Anything else (chart types Kantor can't draw, OLE objects) is a
 //!   [`Prim::Unsupported`] box, which the screen shows as a placeholder.
+//! - **IMAGE formulas** put a picture in their cell ([`cell_image_items`])
+//!   with Excel's four sizing modes.
 //!
 //! Items are in the object's own px (`0..w`, `0..h`); [`translated`]
 //! places them. [`DrawingScenes`] caches built charts per object, size and
@@ -31,6 +33,7 @@ use std::sync::Arc;
 use docs_layout::Engine;
 use sheets_engine::Workbook;
 use sheets_engine::drawing::{Drawing, DrawingKey, DrawingKind, RefData, RefValue};
+use sheets_engine::web::CellImage;
 use slides_engine::theme::{ClrMap, ColorCtx, ListStyle, Theme};
 use slides_engine::{EMU_PER_PX, Fill, Rgb, Xfrm};
 use slides_scene::chart::model::Line;
@@ -333,6 +336,63 @@ pub fn picture_items(
             part: part.clone(),
             data: data.clone(),
             rect: [0.0, 0.0, w, h],
+            crop,
+            alpha: 1.0,
+            clip: None,
+        }),
+    }]
+}
+
+/// Where an IMAGE formula's picture goes in its `w` × `h` cell (px), as
+/// `[x, y, w, h]` of the whole picture, centred: sizing 0 fits it keeping
+/// its aspect ratio, 1 fills the cell, 2 keeps the picture's own size, 3 is
+/// the formula's width and height in pixels (one of them alone keeps the
+/// aspect ratio). Sizes 2 and 3 may overflow the cell.
+pub fn cell_image_rect(image: &CellImage, w: f32, h: f32) -> [f32; 4] {
+    let pw = image.pixel_width.max(1) as f32;
+    let ph = image.pixel_height.max(1) as f32;
+    let (iw, ih) = match image.sizing {
+        1 => return [0.0, 0.0, w, h],
+        2 => (pw, ph),
+        3 => match (image.width, image.height) {
+            (Some(iw), Some(ih)) => (iw as f32, ih as f32),
+            (Some(iw), None) => (iw as f32, ph * iw as f32 / pw),
+            (None, Some(ih)) => (pw * ih as f32 / ph, ih as f32),
+            (None, None) => (pw, ph),
+        },
+        _ => {
+            let k = (w / pw).min(h / ph);
+            (pw * k, ph * k)
+        }
+    };
+    [(w - iw) / 2.0, (h - ih) / 2.0, iw, ih]
+}
+
+/// The items of an IMAGE formula's picture in its `w` × `h` cell, cut to
+/// the cell; none when nothing of it shows.
+pub fn cell_image_items(image: &CellImage, w: f32, h: f32) -> Vec<Item> {
+    let [x, y, iw, ih] = cell_image_rect(image, w, h);
+    if iw <= 0.0 || ih <= 0.0 {
+        return Vec::new();
+    }
+    let (x0, y0) = (x.max(0.0), y.max(0.0));
+    let (x1, y1) = ((x + iw).min(w), (y + ih).min(h));
+    if x1 <= x0 || y1 <= y0 {
+        return Vec::new();
+    }
+    let crop = [
+        (x0 - x) / iw,
+        (y0 - y) / ih,
+        (x + iw - x1) / iw,
+        (y + ih - y1) / ih,
+    ];
+    vec![Item {
+        layer: None,
+        transform: Affine::translate(0.0, 0.0),
+        prim: Prim::Picture(Picture {
+            part: Arc::from(format!("image:{}", image.source)),
+            data: image.data.clone(),
+            rect: [x0, y0, x1 - x0, y1 - y0],
             crop,
             alpha: 1.0,
             clip: None,
