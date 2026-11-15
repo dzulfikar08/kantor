@@ -10,6 +10,9 @@ tests/corpus/pptx/groups.pptx. Read by crates/slides_engine/tests/groups.rs.
   colours and PowerPoint's cached drawing): items "Plan", an empty
   placeholder item, "Ship", and "Steps" with the sub-items "One" and "Two"
   drawn as one shape with two paragraphs.
+- Slide 3 "SmartArt in a group": group "Diagram group" holding a copy of
+  that SmartArt ("Diagram 21", its own parts data2.xml...drawing2.xml) and
+  the rectangle "Caption".
 
 Regenerate with
 `uv run --with python-pptx==1.0.2 scripts/corpus/gen_pptx_groups.py tests/corpus/pptx`.
@@ -66,6 +69,8 @@ box(s.shapes, MSO_SHAPE.ROUNDED_RECTANGLE, "Loose B", 10, 5, 1.5, 1, "B", "63636
 
 s2 = prs.slides.add_slide(TITLE_ONLY)
 s2.shapes.title.text = "SmartArt"
+s3 = prs.slides.add_slide(TITLE_ONLY)
+s3.shapes.title.text = "SmartArt in a group"
 
 FIXED_DT = datetime.datetime(2026, 11, 15, 0, 0, 0)
 prs.core_properties.created = FIXED_DT
@@ -216,6 +221,32 @@ parts["ppt/diagrams/layout1.xml"] = layout.encode()
 parts["ppt/diagrams/quickStyle1.xml"] = style.encode()
 parts["ppt/diagrams/colors1.xml"] = colors.encode()
 parts["ppt/diagrams/drawing1.xml"] = drawing.encode()
+
+# Slide 3: the same SmartArt (own parts) in a group with a caption.
+fy, fh = FRAME[1], FRAME[3]
+group = (
+    '<p:grpSp><p:nvGrpSpPr><p:cNvPr id="20" name="Diagram group"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>'
+    f'<p:grpSpPr><a:xfrm><a:off x="{FRAME[0]}" y="{fy}"/><a:ext cx="{FRAME[2]}" cy="{fh + EMU}"/>'
+    f'<a:chOff x="{FRAME[0]}" y="{fy}"/><a:chExt cx="{FRAME[2]}" cy="{fh + EMU}"/></a:xfrm></p:grpSpPr>'
+    + frame.replace('id="10" name="Diagram 9"', 'id="21" name="Diagram 21"')
+    + '<p:sp><p:nvSpPr><p:cNvPr id="22" name="Caption"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr>'
+    f'<a:xfrm><a:off x="{FRAME[0]}" y="{fy + fh + EMU // 4}"/><a:ext cx="{FRAME[2]}" cy="{EMU // 2}"/></a:xfrm>'
+    '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/>'
+    '<a:p><a:r><a:rPr lang="en-US"/><a:t>Caption</a:t></a:r></a:p></p:txBody></p:sp></p:grpSp>'
+)
+parts["ppt/slides/slide3.xml"] = (
+    parts["ppt/slides/slide3.xml"].decode().replace("</p:spTree>", group + "</p:spTree>").encode()
+)
+parts["ppt/slides/_rels/slide3.xml.rels"] = (
+    parts["ppt/slides/_rels/slide3.xml.rels"].decode()
+    .replace("</Relationships>", rels.replace("1.xml", "2.xml") + "</Relationships>").encode()
+)
+parts["[Content_Types].xml"] = (
+    parts["[Content_Types].xml"].decode()
+    .replace("</Types>", overrides.replace("1.xml", "2.xml") + "</Types>").encode()
+)
+for k in ["data", "layout", "quickStyle", "colors", "drawing"]:
+    parts[f"ppt/diagrams/{k}2.xml"] = parts[f"ppt/diagrams/{k}1.xml"]
 
 with zipfile.ZipFile(out / "groups.pptx", "w", zipfile.ZIP_DEFLATED) as z:
     for name in ["[Content_Types].xml"] + sorted(n for n in parts if n != "[Content_Types].xml"):

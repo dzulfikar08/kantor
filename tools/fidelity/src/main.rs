@@ -629,6 +629,32 @@ fn main() -> Result<()> {
         p.save_as(&o.join("structure_edits.pptx"))?;
         Ok(Some(src))
     });
+    // SmartArt shapes moved and resized; SmartArt inside a group typed into.
+    run.scenario("smartart_edits.pptx", |o| {
+        let src = corpus.join("pptx/groups.pptx");
+        let mut p = Presentation::open(&src)?;
+        let d = (0..p.slide(1).shapes.len())
+            .find(|&k| p.slide(1).shapes[k].smartart().is_some())
+            .context("SmartArt")?;
+        let ship = ShapeRef(1, d, Inner::of(&[2]).context("path")?);
+        let x = p.placed(ship).context("placed")?.xfrm;
+        p.set_xfrm(
+            ship,
+            Xfrm {
+                x: x.x + 200_000,
+                cy: x.cy * 2,
+                ..x
+            },
+            false,
+        )?;
+        let g = (0..p.slide(2).shapes.len())
+            .find(|&k| p.slide(2).shapes[k].is_group())
+            .context("group")?;
+        let plan = ShapeRef(2, g, Inner::of(&[0, 0]).context("path")?);
+        p.insert_text(plan, Selection::caret(Position::new(0, 4)), " ahead", None)?;
+        p.save_as(&o.join("smartart_edits.pptx"))?;
+        Ok(Some(src))
+    });
     run.scenario("chart_types.pptx", |o| {
         let src = corpus.join("pptx/charts.pptx");
         let mut p = Presentation::open(&src)?;
@@ -1422,7 +1448,9 @@ fn group_edits(p: &mut Presentation) -> Result<()> {
                     None,
                 )?;
             }
-            p.set_fill(child, slides_engine::Paint::Rgb(Rgb([0x22, 0x88, 0x44])))?;
+            if p.shape(child).is_some_and(|s| s.paintable()) {
+                p.set_fill(child, slides_engine::Paint::Rgb(Rgb([0x22, 0x88, 0x44])))?;
+            }
             let c = p.placed(child).context("child")?.xfrm;
             p.set_xfrm(
                 child,

@@ -344,10 +344,8 @@ fn smartart_text_is_saved_to_the_drawing_and_the_data_model() {
             .len(),
         5
     );
-    // SmartArt shapes can't be moved or deleted (that needs PowerPoint's layouts).
+    // SmartArt shapes can't be deleted (that needs PowerPoint's layouts).
     let plan = inner(1, d, &[0]);
-    let x = p.placed(plan).unwrap().xfrm;
-    assert!(p.set_xfrm(plan, Xfrm { x: x.x + 10, ..x }, false).is_err());
     assert!(p.delete_shape(plan).is_err());
     type_at_end(&mut p, plan, " 2027");
     // The empty placeholder item gets text.
@@ -447,15 +445,18 @@ fn smartart_converts_to_a_group_of_shapes() {
             .plain_text(),
         "One\nTwo"
     );
-    // The SmartArt parts and relationships are gone.
+    // The SmartArt parts and relationships are gone (slide 3's SmartArt
+    // keeps its own).
     assert!(
-        !saved.keys().any(|k| k.starts_with("ppt/diagrams/")),
+        !saved
+            .keys()
+            .any(|k| k.starts_with("ppt/diagrams/") && k.contains("1.xml")),
         "{:?}",
         saved.keys()
     );
     let rels = text(&saved, "ppt/slides/_rels/slide2.xml.rels");
     assert!(!rels.contains("diagram"), "{rels}");
-    assert!(!text(&saved, "[Content_Types].xml").contains("diagrams"));
+    assert!(!text(&saved, "[Content_Types].xml").contains("diagrams/data1.xml"));
     // Ids are unique on the slide.
     let mut ids: Vec<u32> = bs.group().unwrap().children.iter().map(|c| c.id).collect();
     ids.extend(back.slide(1).shapes.iter().map(|s| s.id));
@@ -468,4 +469,91 @@ fn smartart_converts_to_a_group_of_shapes() {
     assert!(p.slide(1).shapes[d].smartart().is_some());
     let r = p.ungroup((1, d)).unwrap();
     assert!(p.slide(1).shapes[r[0].1].is_group());
+}
+
+#[test]
+fn smartart_shapes_move_and_resize_with_their_text_boxes() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let d = smartart(&p);
+    let ship = inner(1, d, &[2]);
+    let x = p.placed(ship).unwrap().xfrm;
+    let tb = p.placed(ship).unwrap().text_box.unwrap();
+    let frame = p.slide(1).shapes[d].xfrm.unwrap();
+    // Down 0.5 in and half as wide again.
+    let to = Xfrm {
+        y: x.y + 457_200,
+        cx: x.cx * 3 / 2,
+        ..x
+    };
+    p.set_xfrm(ship, to, false).unwrap();
+    close(p.placed(ship).unwrap().xfrm, to);
+    let tb2 = p.placed(ship).unwrap().text_box.unwrap();
+    assert_eq!(tb2.y - tb.y, 457_200);
+    assert!((tb2.cx - tb.cx * 3 / 2).abs() <= 2, "{tb:?} {tb2:?}");
+    // The frame stays put; the other shapes too.
+    assert_eq!(p.slide(1).shapes[d].xfrm.unwrap(), frame);
+    let (back, saved) = reopen(&mut p);
+    let drawing = text(&saved, "ppt/diagrams/drawing1.xml");
+    let data = text(&saved, "ppt/diagrams/data1.xml");
+    let local = back.slide(1).shapes[smartart(&back)]
+        .smartart()
+        .unwrap()
+        .group
+        .children[2]
+        .xfrm
+        .unwrap();
+    assert_eq!(local.cx, x.cx * 3 / 2);
+    assert!(
+        drawing.contains(&format!(r#"<a:ext cx="{}" cy="{}"/>"#, local.cx, local.cy)),
+        "{drawing}"
+    );
+    close(back.placed(ship).unwrap().text_box.unwrap(), tb2);
+    // PowerPoint's custom position and size on the presentation item.
+    let at = data
+        .find(r#"modelId="{B0000000-0000-0000-0000-000000000003}""#)
+        .unwrap();
+    let pt = &data[at..at + data[at..].find("</dgm:pt>").unwrap()];
+    assert!(pt.contains(r#"custScaleX="150000""#), "{pt}");
+    assert!(pt.contains(r#"custScaleY="100000""#), "{pt}");
+    assert!(
+        pt.contains("custLinFactNeighborX=") && pt.contains("custLinFactNeighborY="),
+        "{pt}"
+    );
+    // Undo puts it back.
+    p.undo();
+    close(p.placed(ship).unwrap().xfrm, x);
+    assert_eq!(p.placed(ship).unwrap().text_box.unwrap(), tb);
+}
+
+#[test]
+fn smartart_in_a_group_is_read_and_its_text_edited() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let g = idx(&p, 2, "Diagram group");
+    let group = p.slide(2).shapes[g].group().unwrap();
+    let k = group
+        .children
+        .iter()
+        .position(|c| c.smartart().is_some())
+        .expect("the SmartArt's drawing is read inside the group");
+    let plan = inner(2, g, &[k, 0]);
+    assert!(p.in_smartart(plan));
+    assert!(p.smartart_text_editable(plan));
+    // Unedited, it saves byte for byte.
+    let orig = parts(&std::fs::read(corpus()).unwrap());
+    let (_, saved) = reopen(&mut p);
+    for (key, v) in &orig {
+        assert_eq!(&saved[key], v, "{key}");
+    }
+    type_at_end(&mut p, plan, " ahead");
+    let (back, saved) = reopen(&mut p);
+    let drawing = text(&saved, "ppt/diagrams/drawing2.xml");
+    let data = text(&saved, "ppt/diagrams/data2.xml");
+    assert!(drawing.contains("<a:t>Plan ahead</a:t>"), "{drawing}");
+    assert!(data.contains("<a:t>Plan ahead</a:t>"), "{data}");
+    // The slide-2 SmartArt's parts stay as they were.
+    assert_eq!(
+        saved["ppt/diagrams/data1.xml"],
+        orig["ppt/diagrams/data1.xml"]
+    );
+    assert_eq!(back.text_paras(plan).unwrap()[0].text, "Plan ahead");
 }

@@ -603,19 +603,20 @@ impl SlidesView {
         Some(ShapeRef(self.current, self.selected?, self.inner))
     }
 
-    /// Whether shape `r` can be moved, resized and turned.
+    /// Whether shape `r` can be moved and resized (SmartArt shapes too).
     fn item_movable(&self, r: ShapeRef) -> bool {
         match self.pres.shape(r) {
             Some(s) if r.is_top() => s.movable(),
-            Some(_) => !self.pres.in_smartart(r),
+            Some(_) => true,
             None => false,
         }
     }
 
     /// Whether shape `r` can be turned (not tables, charts or SmartArt
-    /// frames, as in PowerPoint).
+    /// frames, as in PowerPoint; SmartArt shapes keep their turn).
     fn item_rotatable(&self, r: ShapeRef) -> bool {
         self.item_movable(r)
+            && !self.pres.in_smartart(r)
             && self
                 .pres
                 .shape(r)

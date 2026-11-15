@@ -200,26 +200,20 @@ pub(crate) fn drawing_source(
 }
 
 impl Presentation {
-    /// Read every SmartArt drawing on the slides into the model.
+    /// Read every SmartArt drawing on the slides into the model (SmartArt
+    /// inside groups too).
     pub(crate) fn with_smartart(mut self) -> Self {
         for i in 0..self.slides.len() {
             let slide = self.slides[i].clone();
             if slide.locked.is_some() {
                 continue;
             }
-            let colors = self.color_ctx(i);
-            let loaded: Vec<Option<Arc<DiagramDrawing>>> = slide
+            let loaded: Vec<Option<Shape>> = slide
                 .shapes
                 .iter()
                 .map(|sh| {
-                    let ShapeKind::Other { frame, .. } = &sh.kind else {
-                        return None;
-                    };
-                    let Some(FrameContent::Diagram(d)) = frame.get() else {
-                        return None;
-                    };
-                    let size = sh.xfrm?;
-                    self.load_drawing(&slide, d, &colors, size).map(Arc::new)
+                    let mut sh = sh.clone();
+                    self.attach_nested(&slide, &mut sh, i).then_some(sh)
                 })
                 .collect();
             if loaded.iter().all(Option::is_none) {
@@ -227,28 +221,12 @@ impl Presentation {
             }
             let s = Arc::make_mut(&mut self.slides[i]);
             let mut src_shapes = s.src.shapes.clone();
-            for (k, dd) in loaded.into_iter().enumerate() {
-                let Some(dd) = dd else { continue };
-                let sh = &mut s.shapes[k];
-                let ShapeKind::Other { frame, .. } = &mut sh.kind else {
-                    continue;
-                };
-                let Some(FrameContent::Diagram(d)) = frame.get() else {
-                    continue;
-                };
-                let new = crate::frame::Frame::new(FrameContent::Diagram(DiagramRef {
-                    data: d.data.clone(),
-                    drawing: Some(dd),
-                }));
-                *frame = new.clone();
-                if let Some(src) = &sh.src {
-                    let mut src2 = (**src).clone();
-                    src2.frame = new;
-                    sh.src = Some(Arc::new(src2));
-                }
+            for (k, sh) in loaded.into_iter().enumerate() {
+                let Some(sh) = sh else { continue };
                 if let Some(o) = src_shapes.get_mut(k) {
                     *o = sh.clone();
                 }
+                s.shapes[k] = sh;
             }
             s.src = Arc::new(crate::presentation::SlideSrc {
                 prefix: s.src.prefix.clone(),
@@ -258,6 +236,35 @@ impl Presentation {
             });
         }
         self
+    }
+
+    /// Read the drawings of SmartArt frame `shape`, or of the SmartArt in
+    /// group `shape` (at any depth). Loading isn't an edit: the groups'
+    /// originals take the loaded frames too. Whether anything was read.
+    pub(crate) fn attach_nested(&self, slide: &Slide, shape: &mut Shape, index: usize) -> bool {
+        if shape.is_smartart() {
+            self.attach_drawing(slide, shape, index);
+            return shape.smartart().is_some();
+        }
+        if !shape.is_group() {
+            return false;
+        }
+        let Some(g) = crate::group::inner_shapes_mut(shape) else {
+            return false;
+        };
+        let mut any = false;
+        for c in &mut g.children {
+            any |= self.attach_nested(slide, c, index);
+        }
+        if any
+            && let ShapeKind::Other { frame, .. } = &shape.kind
+            && let Some(src) = &shape.src
+        {
+            let mut src2 = (**src).clone();
+            src2.frame = frame.clone();
+            shape.src = Some(Arc::new(src2));
+        }
+        any
     }
 
     /// Read the drawing of SmartArt frame `shape` (on `slide`, with its
@@ -381,7 +388,13 @@ impl Presentation {
     pub(crate) fn smartart_parts(&self) -> Vec<(String, Vec<u8>)> {
         let mut out = Vec::new();
         for (i, s) in self.slides.iter().enumerate() {
-            for sh in &s.shapes {
+            // SmartArt on the slide and inside groups.
+            let mut stack: Vec<&Shape> = s.shapes.iter().collect();
+            while let Some(sh) = stack.pop() {
+                if let Some(g) = sh.group() {
+                    stack.extend(g.children.iter());
+                    continue;
+                }
                 let ShapeKind::Other { frame, .. } = &sh.kind else {
                     continue;
                 };
@@ -400,7 +413,14 @@ impl Presentation {
                 for &k in changed.iter().rev() {
                     let Some(r) = dd.ranges.get(k) else { continue };
                     let mut buf = String::new();
-                    write_shape(&mut buf, &dd.group.children[k]);
+                    let c = &dd.group.children[k];
+                    write_shape(&mut buf, c);
+                    // A moved or resized shape's text box went with it.
+                    if c.src.as_ref().is_some_and(|o| o.xfrm != c.xfrm)
+                        && let Some(Some(tb)) = dd.group.text_boxes.get(k)
+                    {
+                        set_tx_xfrm(&mut buf, tb);
+                    }
                     xml.replace_range(r.clone(), &buf);
                 }
                 out.push((dd.part.clone(), xml.into_bytes()));
@@ -465,6 +485,15 @@ impl Presentation {
                         }
                     }
                 }
+            }
+            // A move or resize: PowerPoint's custom position and size on the
+            // presentation item, so its layout puts the shape there too.
+            if let (Some(new), Some(old)) = (c.xfrm, c.src.as_ref().and_then(|o| o.xfrm))
+                && new != old
+                && let Some(id) = dd.group.model_ids.get(k).cloned().flatten()
+                && let Some(p) = model.points.get(id.as_str())
+            {
+                edits.extend(point_layout_edits(xml, p.node, &old, &new));
             }
             // Fill and outline go on the presentation item the shape draws.
             if !c.paint.is_empty()
@@ -849,6 +878,98 @@ fn point_text_edits(
         edits.push((r.start..r.start + tag.len(), st));
     }
     edits
+}
+
+/// Give the `dsp:txXfrm` of a written drawing shape the box `tb`.
+fn set_tx_xfrm(shape: &mut String, tb: &Xfrm) {
+    let Some(open) = shape.find(":txXfrm").and_then(|i| shape[..i].rfind('<')) else {
+        return;
+    };
+    let Some(open_end) = tag_end(&shape[open..]).map(|e| open + e) else {
+        return;
+    };
+    if shape[..open_end].ends_with("/>") {
+        return;
+    }
+    let Some(close) = shape[open_end..].find("txXfrm>").and_then(|i| {
+        let at = open_end + i;
+        shape[..at].rfind("</")
+    }) else {
+        return;
+    };
+    // The drawingml prefix the box is written with (`a:`).
+    let inner = &shape[open_end..close];
+    let a = inner
+        .find("off ")
+        .map(|i| inner[..i].trim_start_matches('<').to_owned())
+        .unwrap_or_else(|| "a:".into());
+    let body = format!(
+        r#"<{a}off x="{}" y="{}"/><{a}ext cx="{}" cy="{}"/>"#,
+        tb.x, tb.y, tb.cx, tb.cy
+    );
+    shape.replace_range(open_end..close, &body);
+}
+
+/// Edits recording on presentation item `pt` (`dgm:prSet`) that its shape
+/// moved from `old` to `new` (drawing space), as PowerPoint does when a
+/// SmartArt shape is dragged or resized: `custLinFactNeighborX/Y` (the
+/// offset of its centre in 100 000ths of its width and height) and
+/// `custScaleX/Y` (its size, 100 000 = the layout's).
+fn point_layout_edits(xml: &str, pt: Node, old: &Xfrm, new: &Xfrm) -> Vec<(Range<usize>, String)> {
+    let pr = child(pt, NS_DGM, "prSet");
+    let mut attrs = pr
+        .map(|n| split_attrs(tag_attrs(start_tag(xml, n))))
+        .unwrap_or_default();
+    let get = |attrs: &[(String, String)], k: &str| {
+        attrs
+            .iter()
+            .find(|(n, _)| n == k)
+            .and_then(|(_, v)| v.parse::<i64>().ok())
+    };
+    let ratio = |a: Emu, b: Emu| if b == 0 { 1.0 } else { a as f64 / b as f64 };
+    let (ocx, ocy) = old.center();
+    let (ncx, ncy) = new.center();
+    let set = |attrs: &mut Vec<(String, String)>, k: &str, v: i64| match attrs
+        .iter_mut()
+        .find(|(n, _)| n == k)
+    {
+        Some(a) => a.1 = v.to_string(),
+        None => attrs.push((k.to_owned(), v.to_string())),
+    };
+    if new.cx != old.cx || new.cy != old.cy {
+        let sx = get(&attrs, "custScaleX").unwrap_or(100_000) as f64 * ratio(new.cx, old.cx);
+        let sy = get(&attrs, "custScaleY").unwrap_or(100_000) as f64 * ratio(new.cy, old.cy);
+        set(&mut attrs, "custScaleX", sx.round() as i64);
+        set(&mut attrs, "custScaleY", sy.round() as i64);
+    }
+    if (ncx - ocx).abs() > 0.5 || (ncy - ocy).abs() > 0.5 {
+        let fx = get(&attrs, "custLinFactNeighborX").unwrap_or(0) as f64
+            + (ncx - ocx) / old.cx.max(1) as f64 * 100_000.0;
+        let fy = get(&attrs, "custLinFactNeighborY").unwrap_or(0) as f64
+            + (ncy - ocy) / old.cy.max(1) as f64 * 100_000.0;
+        set(&mut attrs, "custLinFactNeighborX", fx.round() as i64);
+        set(&mut attrs, "custLinFactNeighborY", fy.round() as i64);
+    }
+    let dgm = prefix_of(xml, pt);
+    let mut tag = format!("<{dgm}prSet");
+    write_attrs(&mut tag, &attrs);
+    match pr {
+        Some(n) => {
+            let old_tag = start_tag(xml, n);
+            tag.push_str(if old_tag.ends_with("/>") { "/>" } else { ">" });
+            let st = n.range().start;
+            vec![(st..st + old_tag.len(), tag)]
+        }
+        None => {
+            let pt_tag = start_tag(xml, pt);
+            if pt_tag.ends_with("/>") {
+                return Vec::new();
+            }
+            tag.push_str("/>");
+            let at = pt.range().start + pt_tag.len();
+            vec![(at..at, tag)]
+        }
+    }
 }
 
 /// Edits that put a fill / outline change on data model item `pt`'s

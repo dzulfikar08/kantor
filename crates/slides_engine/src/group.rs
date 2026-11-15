@@ -260,6 +260,20 @@ pub(crate) fn refit(g: &mut Group, xfrm: &mut Xfrm) {
     g.child_box = u;
 }
 
+/// Box `b` (inside or beside box `from`) where it goes when `from` moves
+/// and resizes to `to`: a SmartArt shape's text box.
+pub(crate) fn follow(from: &Xfrm, to: &Xfrm, b: &Xfrm) -> Xfrm {
+    let k = |a: Emu, b: Emu| if b == 0 { 1.0 } else { a as f64 / b as f64 };
+    let (sx, sy) = (k(to.cx, from.cx), k(to.cy, from.cy));
+    Xfrm {
+        x: to.x + ((b.x - from.x) as f64 * sx).round() as Emu,
+        y: to.y + ((b.y - from.y) as f64 * sy).round() as Emu,
+        cx: ((b.cx as f64 * sx).round() as Emu).max(1),
+        cy: ((b.cy as f64 * sy).round() as Emu).max(1),
+        ..*b
+    }
+}
+
 /// Fit the group `s` (if it is one) to its children.
 fn refit_shape(s: &mut Shape) {
     if !s.is_group() {
@@ -372,18 +386,41 @@ impl Presentation {
         nudge: bool,
     ) -> anyhow::Result<()> {
         let placed = self.placed(r).context("no such shape")?;
-        if placed.smartart {
-            bail!("SmartArt shapes can't be moved or resized yet");
-        }
         let (gx, space) = placed.parent.context("no such shape")?;
         let xfrm = Xfrm {
             cx: xfrm.cx.max(1),
             cy: xfrm.cy.max(1),
             ..xfrm
         };
-        let local = uncompose(&gx, &space, &xfrm);
+        let mut local = uncompose(&gx, &space, &xfrm);
         let kind = if nudge { Kind::Nudge } else { Kind::Other };
         let focus = Focus::at(r);
+        if placed.smartart {
+            // SmartArt shapes keep their turn; the frame doesn't refit (its
+            // child space is the frame), and the text box follows the shape.
+            let old = self
+                .shape(r)
+                .and_then(|s| s.xfrm)
+                .context("no such shape")?;
+            local.rot = old.rot;
+            local.flip_h = old.flip_h;
+            local.flip_v = old.flip_v;
+            let i = r.2.last().context("no such shape")?;
+            let parent = r.parent();
+            return self.record(kind, Some(r), focus.clone(), false, |p| {
+                let s = p.slide_mut(r.0)?;
+                let g = s
+                    .shape_at_mut(parent.1, parent.2)
+                    .and_then(inner_shapes_mut)
+                    .context("no such shape")?;
+                let c = g.children.get_mut(i).context("no such shape")?;
+                c.xfrm = Some(local);
+                if let Some(Some(tb)) = g.text_boxes.get_mut(i) {
+                    *tb = follow(&old, &local, tb);
+                }
+                Ok(((), focus))
+            });
+        }
         self.record(kind, Some(r), focus.clone(), false, |p| {
             let s = p.slide_mut(r.0)?;
             let shape = s.shape_at_mut(r.1, r.2).context("no such shape")?;

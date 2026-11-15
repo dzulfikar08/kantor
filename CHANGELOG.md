@@ -222,6 +222,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Slides (and Sheets): radar (with markers or filled), bubble and stock charts (high-low lines,
   up/down bars) are drawn on screen and in the PDF instead of a placeholder; 3-D column, bar,
   line, area and pie charts are drawn flat.
+- Slides: SmartArt shapes can be moved and resized one by one (select the SmartArt, then click
+  a shape in it), their text box going with them. Saving writes the new place into PowerPoint's
+  drawing and the custom position and size (`custLinFactNeighbor`, `custScale`) into the
+  SmartArt's data, as PowerPoint does. SmartArt inside a group is now shown from its drawing and
+  its text can be edited there too. A resized SmartArt is still scaled, not laid out again.
 
 ### Changed
 - Docs: files with a table of contents or cross-references are saved in place like any other
