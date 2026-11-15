@@ -741,6 +741,41 @@ fn doc_edits(doc: &mut Document) -> Result<()> {
     let end = doc.end();
     let s = doc.insert_text(Selection::caret(end), "Page ", None);
     doc.insert_page_field(s, PageField::Page);
+    // Tab stops (Tabs dialog / ruler) and the default interval.
+    let end = doc.end();
+    let s = doc.newline(Selection::caret(end), None);
+    let s = doc.insert_text(s, "Contents\t12", None);
+    doc.edit_tab_stops(
+        s,
+        &docs_engine::tabs::TabEdit {
+            set: vec![
+                docs_engine::TabStop::new(
+                    9000,
+                    docs_engine::TabKind::Right,
+                    docs_engine::TabLeader::Dot,
+                ),
+                docs_engine::TabStop::new(
+                    1000,
+                    docs_engine::TabKind::Bar,
+                    docs_engine::TabLeader::None,
+                ),
+            ],
+            ..Default::default()
+        },
+    );
+    doc.edit_tab_stops(
+        Selection::caret(Position::new(0, 0)),
+        &docs_engine::tabs::TabEdit {
+            clear_all: true,
+            set: vec![docs_engine::TabStop::new(
+                2000,
+                docs_engine::TabKind::Decimal,
+                docs_engine::TabLeader::Hyphen,
+            )],
+            ..Default::default()
+        },
+    );
+    doc.set_default_tab(567, caret);
     Ok(())
 }
 
