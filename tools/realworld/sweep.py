@@ -17,7 +17,9 @@ has don't count.
 Writes OUT/results.csv (one row per file) and OUT/summary.md (counts by
 failure kind, then every failure with its message). Each file gets one
 `kind`, the first of: crash, timeout, panic, open_error, save_error,
-reopen_error, pdf_error, invalid_save, lost_content, ok.
+reopen_error, pdf_error, invalid_save, lost_content, ok. Docs and Slides
+files whose reopened copy lays out to another page count than the original
+get `pages_changed` (listed in the summary; it doesn't change `kind`).
 """
 
 import argparse
@@ -86,7 +88,8 @@ def classify(rep):
     if "kind" in rep:
         return rep["kind"], rep.get("error", "")
     for stage, kind in [("open", "open_error"), ("save", "save_error"),
-                        ("reopen", "reopen_error"), ("pdf", "pdf_error")]:
+                        ("reopen", "reopen_error"), ("pdf", "pdf_error"),
+                        ("pdf_after", "pdf_error")]:
         st = rep.get(stage)
         if st and st.get("error"):
             e = st["error"]
@@ -111,6 +114,13 @@ def lost(rep):
     if rep.get("sheet_names_changed"):
         bits.append("sheet names changed")
     return "; ".join(bits)
+
+
+def pages_changed(rep):
+    """True when the saved-and-reopened copy lays out to another page count
+    (Docs and Slides; the probe doesn't print the reopened workbook)."""
+    a, b = rep.get("pages"), rep.get("pages_after")
+    return a is not None and b is not None and a != b
 
 
 def validate(validator, files):
@@ -221,6 +231,8 @@ def main():
             "save_ms": (rep.get("save") or {}).get("ms"),
             "pdf_ms": (rep.get("pdf") or {}).get("ms"),
             "pages": rep.get("pages"),
+            "pages_after": rep.get("pages_after"),
+            "pages_changed": pages_changed(rep),
             "new_validator_errors": len(new_errors),
             "validator_timeout": bool(v and v.get("timeout")),
             "lost": loss[:300],
@@ -256,6 +268,11 @@ def write_summary(path, table):
     slow = sorted((t for t in table if t["ms"]), key=lambda t: -t["ms"])[:10]
     lines += ["", "## Slowest", ""]
     lines += [f"- {t['ms']} ms {t['format']} {t['file']} ({int(t['bytes']) // 1024} KB)" for t in slow]
+    moved = [t for t in table if t["pages_changed"]]
+    if moved:
+        lines += ["", f"## Page count changed by the round trip ({len(moved)})", ""]
+        lines += [f"- `{t['format']}` {t['file']} ({t['site']}): {t['pages']} -> {t['pages_after']} pages"
+                  for t in moved]
     for kind in KINDS[:-1]:
         group = [t for t in table if t["kind"] == kind]
         if not group:
