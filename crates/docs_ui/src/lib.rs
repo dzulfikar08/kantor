@@ -2019,6 +2019,7 @@ struct Frame {
     /// cards' anchor → card lines (window coordinates).
     markup: f32,
     comment_ranges: Vec<(Position, Position, bool)>,
+    /// Comment card connectors, from the view's origin.
     card_lines: Vec<(Point<Pixels>, Point<Pixels>, bool)>,
     /// Change bars: lines with tracked changes, `(page, top, height)` in
     /// page coordinates (drawn in the left margin, as Word does).
@@ -2381,8 +2382,9 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             }
         }
         // Lines from commented text to its card.
-        for (a, b, active) in &f.card_lines {
-            let color = if *active {
+        for &(a, b, active) in &f.card_lines {
+            let (a, b) = (a + bounds.origin, b + bounds.origin);
+            let color = if active {
                 f.t.accent
             } else {
                 f.t.border_strong
@@ -2451,9 +2453,19 @@ impl Render for DocsView {
         } else {
             Vec::new()
         };
+        // Relative to the view (as the cards are placed): the viewport
+        // known here can be a frame old (the Header & Footer bar just
+        // closed moves it), the one painted is current.
+        let origin = self.viewport.get().origin;
         let card_lines = cards
             .iter()
-            .map(|c| (c.anchor, point(c.at.x, c.at.y + px(14.)), c.active))
+            .map(|c| {
+                (
+                    c.anchor - origin,
+                    point(c.at.x, c.at.y + px(14.)) - origin,
+                    c.active,
+                )
+            })
             .collect();
         let card_elements = self.render_cards(&cards, cx);
         let change_bars = self.change_bars();

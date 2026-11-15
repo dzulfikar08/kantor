@@ -11,6 +11,9 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Docs: *Next change* and *Previous change* also go through the headers, footers, footnotes and
+  endnotes, as in Word: after the last change in the text, the next one in a header (or note) is
+  opened for editing and selected, and back again.
 - Docs: a tab stop set past the right margin is honoured as in Word 2013 and later: the line runs
   into the margin up to it (a right-aligned page number or a form line that ends there), instead of
   the stop acting as if it were at the margin.
@@ -206,6 +209,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Sheets: in a sheet copied with Move or Copy, formulas naming the original sheet's tables now
   name the copy's tables (`Sales` → `Sales2`), as in Excel.
 
+- Docs: after closing the Header & Footer bar, the lines from comments and formatting balloons
+  to their text were drawn too low until the next keystroke or click.
 ## [0.7.0] - 2026-11-15
 
 Sheets tabs work like Excel's: insert, delete, rename, move or copy, colour and hide sheets, and

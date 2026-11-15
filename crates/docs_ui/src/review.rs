@@ -28,6 +28,24 @@ pub(crate) const MARKUP_W: f32 = 264.0;
 /// Card width inside it.
 const CARD_W: f32 = 232.0;
 
+/// A story tracked changes can be in (see `change_stories`).
+#[derive(Clone, Debug, PartialEq)]
+enum ChangeStory {
+    Body,
+    /// A header or footer: the first page showing it, and its index in
+    /// the main document's stories.
+    Hf {
+        page: usize,
+        kind: docs_engine::HfKind,
+        story: usize,
+    },
+    Note {
+        kind: docs_engine::NoteKind,
+        id: String,
+        index: usize,
+    },
+}
+
 /// A comment being written or edited.
 pub(crate) struct CommentEdit {
     id: String,
@@ -336,7 +354,7 @@ impl DocsView {
             Some(sel) => {
                 self.edited(sel, window, cx);
                 // Move on to the next change, as Word does.
-                self.go_to_change(true, cx);
+                self.go_to_change(true, window, cx);
                 self.status = self.changes_status(accept);
             }
             None => self.status = t("No tracked change at the caret").into(),
@@ -375,38 +393,145 @@ impl DocsView {
         }
     }
 
-    /// Select the next (or previous) tracked change after the caret.
-    pub fn go_to_change(&mut self, forward: bool, cx: &mut Context<Self>) -> bool {
-        let changes = self.doc.changes();
-        let (a, b) = self.sel.ordered();
-        let found = if forward {
-            changes
-                .iter()
-                .find(|c| c.start > a || (c.start == a && c.end > b))
-                .or(changes.first())
-        } else {
-            changes
-                .iter()
-                .rev()
-                .find(|c| c.start < a)
-                .or(changes.last())
-        };
-        match found {
-            Some(c) => {
-                self.sel = Selection {
-                    anchor: c.start,
-                    head: c.end,
+    /// The stories tracked changes can be in, in the order Next change
+    /// visits them (Word's): the text, then each header and footer in page
+    /// order, then the notes in the order of their references.
+    fn change_stories(&self) -> Vec<ChangeStory> {
+        let main = self.main_doc();
+        let sections = main.sections();
+        let mut out = vec![ChangeStory::Body];
+        let mut seen: Vec<usize> = Vec::new();
+        for page in 0..self.laid.paged.pages.len() {
+            let (si, ty) = self.hf_type_on_page(page);
+            for kind in [docs_engine::HfKind::Header, docs_engine::HfKind::Footer] {
+                let Some(story) = main.story_index_for(&sections, si, kind, ty) else {
+                    continue;
                 };
-                self.reveal_caret.set(true);
-                cx.notify();
-                true
+                if seen.contains(&story) || main.stories()[story].locked.is_some() {
+                    continue;
+                }
+                seen.push(story);
+                out.push(ChangeStory::Hf { page, kind, story });
             }
-            None => false,
+        }
+        let notes = main.notes();
+        for r in main.note_refs() {
+            if let Some(i) = notes.iter().position(|n| n.kind == r.kind && n.id == r.id)
+                && !out
+                    .iter()
+                    .any(|s| matches!(s, ChangeStory::Note { index, .. } if *index == i))
+            {
+                out.push(ChangeStory::Note {
+                    kind: r.kind,
+                    id: r.id.clone(),
+                    index: i,
+                });
+            }
+        }
+        out
+    }
+
+    /// The story being edited now.
+    fn current_story(&self, stories: &[ChangeStory]) -> usize {
+        let Some(s) = &self.part else { return 0 };
+        stories
+            .iter()
+            .position(|st| match (st, &s.edit.part) {
+                (ChangeStory::Hf { story, .. }, docs_engine::PartRef::Story(i)) => story == i,
+                (ChangeStory::Note { index, .. }, docs_engine::PartRef::Note(i)) => index == i,
+                _ => false,
+            })
+            .unwrap_or(0)
+    }
+
+    /// A story's tracked changes (the one being edited is the view's
+    /// document).
+    fn story_changes(
+        &self,
+        k: usize,
+        current: usize,
+        st: &ChangeStory,
+    ) -> Vec<docs_engine::Change> {
+        if k == current {
+            return self.doc.changes();
+        }
+        let main = self.main_doc();
+        match st {
+            ChangeStory::Body => main.changes(),
+            ChangeStory::Hf { story, .. } => main
+                .stories()
+                .get(*story)
+                .map(|s| s.doc.changes())
+                .unwrap_or_default(),
+            ChangeStory::Note { index, .. } => main
+                .notes()
+                .get(*index)
+                .map(|n| n.doc.changes())
+                .unwrap_or_default(),
         }
     }
 
-    pub fn next_change_doc(&mut self, forward: bool, cx: &mut Context<Self>) {
-        if !self.go_to_change(forward, cx) {
+    /// Select the next (or previous) tracked change after the caret: in
+    /// the text, or in a header, footer or note (opened for editing), as
+    /// Word's Next goes through every story.
+    pub fn go_to_change(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let stories = self.change_stories();
+        let current = self.current_story(&stories);
+        let (a, b) = self.sel.ordered();
+        // Every change as (story, start, end), in visiting order.
+        let mut all: Vec<(usize, docs_engine::Position, docs_engine::Position)> = Vec::new();
+        for (k, st) in stories.iter().enumerate() {
+            for c in self.story_changes(k, current, st) {
+                all.push((k, c.start, c.end));
+            }
+        }
+        let found = if forward {
+            all.iter()
+                .find(|(k, s, e)| {
+                    *k > current || (*k == current && (*s > a || (*s == a && *e > b)))
+                })
+                .or(all.first())
+        } else {
+            all.iter()
+                .rev()
+                .find(|(k, s, _)| *k < current || (*k == current && *s < a))
+                .or(all.last())
+        };
+        let Some(&(k, start, end)) = found else {
+            return false;
+        };
+        if k != current {
+            match stories[k].clone() {
+                ChangeStory::Body => {
+                    self.leave_part(window, cx);
+                }
+                ChangeStory::Hf { page, kind, .. } => {
+                    self.edit_hf_on_page(page, kind, None, window, cx);
+                }
+                ChangeStory::Note { kind, id, .. } => {
+                    self.edit_note_in_place(kind, &id, None, window, cx);
+                }
+            }
+            if self.current_story(&stories) != k {
+                return false;
+            }
+        }
+        self.sel = Selection {
+            anchor: self.doc.clamp(start),
+            head: self.doc.clamp(end),
+        };
+        self.reveal_caret.set(true);
+        cx.notify();
+        true
+    }
+
+    pub fn next_change_doc(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.go_to_change(forward, window, cx) {
             self.status = t("This document has no tracked changes").into();
             cx.notify();
         }
@@ -1003,13 +1128,13 @@ fn review_items(menu: PopupMenu, view: &WeakEntity<DocsView>, track: bool) -> Po
         menu,
         tk("Next change"),
         Some(Lucide::ChevronDown),
-        |v, _, cx| v.next_change_doc(true, cx),
+        |v, w, cx| v.next_change_doc(true, w, cx),
     );
     let menu = item(
         menu,
         tk("Previous change"),
         Some(Lucide::ChevronUp),
-        |v, _, cx| v.next_change_doc(false, cx),
+        |v, w, cx| v.next_change_doc(false, w, cx),
     )
     .separator();
     let menu = item(
