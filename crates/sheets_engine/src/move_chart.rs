@@ -326,6 +326,7 @@ impl Workbook {
                     anchor,
                     layout,
                     xml: Some(xml.into()),
+                    picture: None,
                 };
                 match from {
                     From::File => {
@@ -354,5 +355,62 @@ impl Workbook {
                 })
             }
         }
+    }
+}
+
+/// Formula `f` with references to sheet `old` (`old!`, `'old'!`, any
+/// case) made references to sheet `new`.
+pub(crate) fn rename_sheet_in(f: &str, old: &str, new: &str) -> String {
+    let quoted = format!("'{}'!", old.replace('\'', "''")).to_lowercase();
+    let plain = format!("{old}!").to_lowercase();
+    let to = format!("{}!", crate::print::quote_sheet(new));
+    let lower = f.to_lowercase();
+    let mut out = String::with_capacity(f.len());
+    let mut i = 0;
+    let mut in_quote = false;
+    while i < f.len() {
+        let boundary = i == 0
+            || f[..i]
+                .chars()
+                .next_back()
+                .is_some_and(|c| "(,;= +-*/&:".contains(c));
+        if !in_quote && boundary {
+            if lower[i..].starts_with(&quoted) {
+                out.push_str(&to);
+                i += quoted.len();
+                continue;
+            }
+            if lower[i..].starts_with(&plain) {
+                out.push_str(&to);
+                i += plain.len();
+                continue;
+            }
+        }
+        let c = f[i..].chars().next().expect("in range");
+        if c == '\'' {
+            in_quote = !in_quote;
+        }
+        out.push(c);
+        i += c.len_utf8();
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sheet_references_renamed() {
+        assert_eq!(
+            rename_sheet_in("Data!$B$2:$B$5", "Data", "Data (2)"),
+            "'Data (2)'!$B$2:$B$5"
+        );
+        assert_eq!(
+            rename_sheet_in("('My data'!$A$1,MyData!$B$1)", "My data", "X"),
+            "(X!$A$1,MyData!$B$1)"
+        );
+        assert_eq!(rename_sheet_in("Other!$A$1", "Data", "X"), "Other!$A$1");
+        assert!(without_links("<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:r=\"r\"><c:chart/><c:externalData r:id=\"rId1\"/></c:chartSpace>").ends_with("<c:chart/></c:chartSpace>"));
     }
 }

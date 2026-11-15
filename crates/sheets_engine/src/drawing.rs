@@ -322,6 +322,10 @@ pub(crate) struct Drawings {
     /// How many of `chart_sheets` the file had (the others were made in
     /// Kantor this session: Move Chart, a copied chart sheet).
     opened_chart_sheets: usize,
+    /// Chart sheets whose tab colour was changed this session: every save
+    /// writes their colour (a change saved, then undone, is undone in the
+    /// next file too).
+    pub(crate) tab_touched: HashSet<usize>,
 }
 
 /// A chart sheet as opened.
@@ -685,6 +689,7 @@ impl Drawings {
             .collect();
         Drawings {
             opened_chart_sheets: chart_sheets.len(),
+            tab_touched: HashSet::new(),
             sheets,
             theme: src.theme.map(Into::into),
             names: src

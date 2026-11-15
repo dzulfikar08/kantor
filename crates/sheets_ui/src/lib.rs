@@ -2451,7 +2451,12 @@ impl SheetsView {
                             .tab_color(i)
                             .map(|c| look::hsla(grid.book.tab_color_rgb(c))),
                     ),
-                    Tab::Chart(k) => (grid.book.chart_sheet_name(k).unwrap_or_default(), None),
+                    Tab::Chart(k) => (
+                        grid.book.chart_sheet_name(k).unwrap_or_default(),
+                        grid.book
+                            .chart_sheet_tab_color(k)
+                            .map(|c| look::hsla(grid.book.tab_color_rgb(c))),
+                    ),
                 };
                 (tab, name, color)
             })

@@ -1329,6 +1329,7 @@ impl Workbook {
                 self.chart_patches(&mut p);
                 self.file_chart_patches(&mut p);
                 self.note_patches(&mut p);
+                self.chart_sheet_tab_patches(&mut p);
                 p
             },
             chart_sheets: self.chart_sheet_plans(),

@@ -153,6 +153,27 @@ pub struct ChartSpec {
     pub y_axis: AxisOptions,
 }
 
+impl ChartSpec {
+    /// A spec for an object whose part says what it is (a copied or moved
+    /// chart Kantor can't read into a spec, a picture).
+    pub(crate) fn placeholder() -> ChartSpec {
+        ChartSpec {
+            kind: ChartType::Other,
+            title: String::new(),
+            legend: LegendPos::None,
+            by_rows: false,
+            data: CellRange::from_corners((0, 0), (0, 0)),
+            data_sheet: None,
+            x_title: String::new(),
+            y_title: String::new(),
+            colors: Vec::new(),
+            labels: Vec::new(),
+            x_axis: AxisOptions::default(),
+            y_axis: AxisOptions::default(),
+        }
+    }
+}
+
 /// A chart for the Chart panel: its spec and what can't be changed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChartInfo {
@@ -193,6 +214,19 @@ pub(crate) struct NewChart {
     /// copied sheet): restyled in place like a file's chart, its
     /// references in `layout`'s rows and columns. `None`: made from `spec`.
     pub xml: Option<Arc<str>>,
+    /// A picture copied with its sheet (not a chart).
+    pub picture: Option<Arc<NewPicture>>,
+}
+
+/// A picture on a worksheet copied with Move or Copy.
+#[derive(Debug)]
+pub(crate) struct NewPicture {
+    pub data: Arc<Vec<u8>>,
+    pub crop: [f32; 4],
+    /// Its media part's extension.
+    pub ext: String,
+    pub name: String,
+    pub descr: String,
 }
 
 /// One series: name cell, category cells, value cells (0-based ranges).
@@ -381,6 +415,7 @@ impl Workbook {
                 anchor,
                 layout: layout.clone(),
                 xml: None,
+                picture: None,
             });
         });
         Ok(DrawingKey {
@@ -405,10 +440,13 @@ impl Workbook {
         if key.index < NEW_CHART_BASE {
             return self.file_chart_info(key);
         }
-        if let Some(c) = self.new_chart(key)
-            && c.xml.is_some()
-        {
-            return self.xml_chart_info(key, &self.new_chart_part(&c));
+        if let Some(c) = self.new_chart(key) {
+            if c.picture.is_some() {
+                return None;
+            }
+            if c.xml.is_some() {
+                return self.xml_chart_info(key, &self.new_chart_part(&c));
+            }
         }
         let spec = self.chart_spec(key)?;
         let sheet = self.sheet_index_of(key.sheet_id)?;
@@ -451,6 +489,9 @@ impl Workbook {
     pub fn set_chart(&mut self, key: DrawingKey, spec: ChartSpec) -> Result<()> {
         if key.index < NEW_CHART_BASE {
             return self.set_file_chart(key, spec);
+        }
+        if self.new_chart(key).is_some_and(|c| c.picture.is_some()) {
+            bail!("this object isn't a chart");
         }
         if let Some(c) = self.new_chart(key)
             && c.xml.is_some()
@@ -619,6 +660,25 @@ impl Workbook {
             .filter(|c| c.sheet_id == sheet_id)
             .map(|c| {
                 let anchor = self.chart_now(c).1;
+                if let Some(pic) = &c.picture {
+                    return Drawing {
+                        key: DrawingKey {
+                            sheet_id,
+                            index: NEW_CHART_BASE + c.id as usize,
+                        },
+                        name: pic.name.clone(),
+                        descr: pic.descr.clone(),
+                        anchor,
+                        kind: Arc::new(DrawingKind::Picture {
+                            part: format!("{NEW_CHART_PART}picture/{}", c.id).into(),
+                            data: pic.data.clone(),
+                            crop: pic.crop,
+                        }),
+                        editable: true,
+                        hidden: false,
+                        prints: true,
+                    };
+                }
                 let xml = self.new_chart_part(c);
                 let part = format!("{NEW_CHART_PART}{}/{:x}", c.id, fxhash(&xml));
                 Drawing {
@@ -858,9 +918,22 @@ impl Workbook {
                 id: c.id,
                 saved: self.saved_charts.get(&c.id).cloned(),
                 sheet_id: c.sheet_id,
-                name: format!("Chart {}", c.id),
+                name: match &c.picture {
+                    Some(p) if !p.name.is_empty() => p.name.clone(),
+                    Some(_) => format!("Picture {}", c.id),
+                    None => format!("Chart {}", c.id),
+                },
                 anchor,
-                xml: self.new_chart_part(c),
+                xml: match c.picture {
+                    Some(_) => String::new(),
+                    None => self.new_chart_part(c),
+                },
+                picture: c.picture.as_ref().map(|p| crate::preserve::PictureSave {
+                    data: p.data.clone(),
+                    ext: p.ext.clone(),
+                    crop: p.crop,
+                    descr: p.descr.clone(),
+                }),
             });
         }
     }

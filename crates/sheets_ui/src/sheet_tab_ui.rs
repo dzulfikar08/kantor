@@ -1,7 +1,7 @@
 //! The sheet tabs' commands, as Excel's tab menu has them: Insert, Delete,
 //! Rename, Move or Copy…, Move Left / Right, Tab Color…, Hide and
-//! Unhide…, for worksheets and chart sheets alike (one menu; what a chart
-//! sheet can't do is greyed out). Each is one undo step
+//! Unhide…, for worksheets and chart sheets alike (one menu). Each is one
+//! undo step
 //! (`sheets_engine::sheet_tabs`, `sheets_engine::chart_sheet`).
 //!
 //! The dialogs (Rename, Delete's question, Move or Copy, Tab Color,
@@ -67,7 +67,7 @@ pub(crate) enum TabDialog {
         copy: bool,
     },
     Color {
-        sheet: u32,
+        tab: Tab,
     },
     /// Unhide: the hidden sheets and the one chosen.
     Unhide {
@@ -218,14 +218,7 @@ impl SheetsView {
             TabCommand::Delete => self.delete_sheet_tab(None, window, cx),
             TabCommand::Rename => self.rename_sheet_tab(None, window, cx),
             TabCommand::MoveOrCopy => self.move_copy_tab(None, window, cx),
-            TabCommand::TabColor => {
-                if matches!(self.active_tab(cx), Tab::Chart(_)) {
-                    self.status = t("Chart sheets have no tab colour in Kantor").into();
-                    cx.notify();
-                } else {
-                    self.tab_color_tab(None, cx);
-                }
-            }
+            TabCommand::TabColor => self.tab_color_tab(None, cx),
             TabCommand::Hide => self.hide_sheet_tab(None, window, cx),
             TabCommand::Unhide => self.unhide_sheet_tab(cx),
         }
@@ -387,9 +380,9 @@ impl SheetsView {
         let tabs = self.table.read(cx).delegate().book.tabs();
         let name = self.tab_name(tab, cx);
         let _ = if copy {
-            let Tab::Sheet(i) = tab else { return };
-            self.tab_edit(tf("Copied “{}”", &[&name]), window, cx, |b| {
-                b.copy_sheet(i, before).map(|_| ())
+            self.tab_edit(tf("Copied “{}”", &[&name]), window, cx, |b| match tab {
+                Tab::Sheet(i) => b.copy_sheet(i, before).map(|_| ()),
+                Tab::Chart(k) => b.copy_chart_sheet(k, before).map(|_| ()),
             })
         } else {
             let from = tabs.iter().position(|t| *t == tab).unwrap_or(0);
@@ -421,10 +414,9 @@ impl SheetsView {
 
     /// Tab Color…
     pub(crate) fn tab_color_tab(&mut self, tab: Option<Tab>, cx: &mut Context<Self>) {
-        if let Tab::Sheet(sheet) = self.sheet_of(tab, cx) {
-            self.tab_dialog = Some(TabDialog::Color { sheet });
-            cx.notify();
-        }
+        let tab = self.sheet_of(tab, cx);
+        self.tab_dialog = Some(TabDialog::Color { tab });
+        cx.notify();
     }
 
     fn pick_tab_color(
@@ -433,14 +425,17 @@ impl SheetsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(TabDialog::Color { sheet }) = self.tab_dialog.take() else {
+        let Some(TabDialog::Color { tab }) = self.tab_dialog.take() else {
             return;
         };
         let done = match color {
             Some(_) => t("Tab colour set"),
             None => t("Tab colour removed"),
         };
-        let _ = self.tab_edit(done.into(), window, cx, |b| b.set_tab_color(sheet, color));
+        let _ = self.tab_edit(done.into(), window, cx, |b| match tab {
+            Tab::Sheet(sheet) => b.set_tab_color(sheet, color),
+            Tab::Chart(k) => b.set_chart_sheet_tab_color(k, color),
+        });
         self.refocus(window, cx);
     }
 
@@ -515,7 +510,7 @@ impl SheetsView {
             TabDialog::MoveCopy { tab, before, copy } => {
                 self.render_move_copy(*tab, *before, *copy, cx)
             }
-            TabDialog::Color { sheet } => self.render_tab_colors(*sheet, cx),
+            TabDialog::Color { tab } => self.render_tab_colors(*tab, cx),
             TabDialog::Unhide { chosen } => self.render_unhide(*chosen, cx),
         })
     }
@@ -645,7 +640,6 @@ impl SheetsView {
                     })
             }));
         let cv = view.clone();
-        let can_copy = matches!(tab, Tab::Sheet(_));
         let card = dialog::card("tab-move", t("Move or Copy"), px(360.), cx)
             .child(div().child(tf("Move “{}”", &[&name])))
             .child(
@@ -659,7 +653,6 @@ impl SheetsView {
                 Checkbox::new("tab-move-copy")
                     .label(t("Create a copy"))
                     .checked(copy)
-                    .disabled(!can_copy)
                     .on_click(move |on, _, cx| {
                         let on = *on;
                         let _ = cv.update(cx, |this, cx| {
@@ -671,9 +664,6 @@ impl SheetsView {
                         });
                     }),
             )
-            .when(!can_copy, |c| {
-                c.child(note(t("Chart sheets can be moved, not copied."), false, cx))
-            })
             .child(dialog::buttons(
                 "tab-move-buttons",
                 t("OK"),
@@ -685,11 +675,14 @@ impl SheetsView {
         dialog::place(card).into_any_element()
     }
 
-    fn render_tab_colors(&self, sheet: u32, cx: &mut Context<Self>) -> AnyElement {
+    fn render_tab_colors(&self, tab: Tab, cx: &mut Context<Self>) -> AnyElement {
         let t_ = tokens(cx);
         let view = cx.entity().downgrade();
         let book = &self.table.read(cx).delegate().book;
-        let current = book.tab_color(sheet);
+        let current = match tab {
+            Tab::Sheet(sheet) => book.tab_color(sheet),
+            Tab::Chart(k) => book.chart_sheet_tab_color(k),
+        };
         let swatch = |id: usize, color: TabColor, tip: String| {
             let v = view.clone();
             let rgb = book.tab_color_rgb(color);
@@ -853,7 +846,7 @@ fn theme_name(slot: u8) -> String {
 }
 
 /// The right-click menu of a tab, as Excel's: worksheets and chart sheets
-/// (what a chart sheet can't have, Tab Color, is greyed out).
+/// alike.
 pub(crate) fn tab_menu(
     menu: PopupMenu,
     tab: Tab,
@@ -895,12 +888,9 @@ pub(crate) fn tab_menu(
         .disabled(last),
     )
     .separator()
-    .item(
-        item(tk("Tab Color…"), |v, tab, _, cx| {
-            v.tab_color_tab(Some(tab), cx)
-        })
-        .disabled(matches!(tab, Tab::Chart(_))),
-    )
+    .item(item(tk("Tab Color…"), |v, tab, _, cx| {
+        v.tab_color_tab(Some(tab), cx)
+    }))
     .separator()
     .item(item(tk("Hide"), |v, tab, w, cx| {
         v.hide_sheet_tab(Some(tab), w, cx)

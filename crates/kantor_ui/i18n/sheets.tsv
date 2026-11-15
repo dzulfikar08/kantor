@@ -843,7 +843,6 @@ Move or Copy	Pindahkan atau Salin
 Move “{}”	Pindahkan “{}”
 Before sheet:	Sebelum lembar:
 Create a copy	Buat salinan
-Chart sheets can be moved, not copied.	Lembar bagan dapat dipindahkan, tetapi tidak dapat disalin.
 Lighter	Lebih terang
 Darker	Lebih gelap
 Theme Colors	Warna Tema
@@ -861,7 +860,6 @@ Move Right	Pindahkan ke Kanan
 Tab Color…	Warna Tab…
 Hide	Sembunyikan
 Unhide…	Tampilkan…
-Chart sheets have no tab colour in Kantor	Lembar bagan tidak memiliki warna tab di Kantor
 New Sheet	Lembar Baru
 Insert Sheet	Sisipkan Lembar
 Sheets · a new worksheet after the sheet shown	Sheets · lembar kerja baru setelah lembar yang ditampilkan

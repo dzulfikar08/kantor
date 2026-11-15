@@ -16,10 +16,10 @@ use std::sync::Arc;
 
 use anyhow::{Result, bail};
 
-use crate::Workbook;
 use crate::drawing::{ChartSheetNow, DrawingKey, Tab};
 use crate::preserve::{BundlePart, ChartSheetPlan};
 use crate::shift::Layout;
+use crate::{TabColor, Workbook};
 
 /// Why `name` can't be a sheet name (Excel's rules), if it can't.
 pub fn sheet_name_problem(name: &str) -> Option<&'static str> {
@@ -116,6 +116,43 @@ impl Workbook {
         self.move_tab(Tab::Chart(k), to)
     }
 
+    /// Chart sheet `k`'s tab colour (`None`: no colour, or one Kantor
+    /// doesn't read, such as an indexed colour).
+    pub fn chart_sheet_tab_color(&self, k: usize) -> Option<TabColor> {
+        let c = self.chart_sheets_now().into_iter().find(|c| c.k == k)?;
+        tab_color_of(c.tab.as_deref()?)
+    }
+
+    /// Tab Color for chart sheet `k` (one undo step).
+    pub fn set_chart_sheet_tab_color(&mut self, k: usize, color: Option<TabColor>) -> Result<()> {
+        let mut list = self.chart_sheets_now();
+        let i = Self::chart_sheet_index(&list, k)?;
+        let attrs = color.map(tab_color_attrs);
+        if list[i].tab == attrs {
+            return Ok(());
+        }
+        list[i].tab = attrs;
+        self.drawings.tab_touched.insert(k);
+        self.set_chart_sheets(list);
+        Ok(())
+    }
+
+    /// Chart sheets' tab colours a save writes (those changed this session).
+    pub(crate) fn chart_sheet_tab_patches(&self, out: &mut crate::preserve::Patches) {
+        let now = self.chart_sheets_now();
+        let mut ks: Vec<&usize> = self.drawings.tab_touched.iter().collect();
+        ks.sort();
+        for k in ks {
+            let (Some(c), Some(parts)) = (
+                now.iter().find(|c| c.k == *k),
+                self.drawings.chart_sheet_parts(*k),
+            ) else {
+                continue;
+            };
+            out.chart_sheet_tabs.push((parts.part, c.tab.clone()));
+        }
+    }
+
     /// Whether `key` is a chart on a chart sheet still there.
     pub(crate) fn chart_sheet_chart_shown(&self, key: DrawingKey) -> bool {
         crate::drawing::chart_sheet_of_key(key.sheet_id).is_some_and(|k| {
@@ -179,4 +216,30 @@ impl Workbook {
                 .collect(),
         )
     }
+}
+
+/// `<tabColor>` attributes for `c`, as Excel writes them.
+pub(crate) fn tab_color_attrs(c: TabColor) -> String {
+    match c {
+        TabColor::Rgb(rgb) => format!("rgb=\"FF{:06X}\"", rgb & 0xFF_FFFF),
+        TabColor::Theme { slot, tint } if tint == 0.0 => format!("theme=\"{slot}\""),
+        TabColor::Theme { slot, tint } => format!("theme=\"{slot}\" tint=\"{tint}\""),
+    }
+}
+
+/// The colour `<tabColor>` attributes give (`rgb`, or `theme` with `tint`).
+pub(crate) fn tab_color_of(attrs: &str) -> Option<TabColor> {
+    let text = format!("<t {attrs}/>");
+    let doc = roxmltree::Document::parse(&text).ok()?;
+    let t = doc.root_element();
+    if let Some(rgb) = t.attribute("rgb") {
+        let h = if rgb.len() == 8 { &rgb[2..] } else { rgb };
+        return u32::from_str_radix(h, 16).ok().map(TabColor::Rgb);
+    }
+    let slot = t.attribute("theme")?.parse::<u8>().ok()?;
+    let tint = t
+        .attribute("tint")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    Some(TabColor::Theme { slot, tint })
 }

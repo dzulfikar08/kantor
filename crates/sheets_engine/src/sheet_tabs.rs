@@ -235,6 +235,12 @@ impl Workbook {
             return None;
         }
         let list = self.chart_sheets_now();
+        let out = self.place_chart_sheets(order, &list);
+        (out != list).then_some(out)
+    }
+
+    /// Chart sheets `list` placed as in `order`.
+    fn place_chart_sheets(&self, order: &[Slot], list: &[ChartSheetNow]) -> Vec<ChartSheetNow> {
         let mut out = Vec::with_capacity(list.len());
         let mut before: Vec<u32> = Vec::new();
         for s in order {
@@ -255,7 +261,7 @@ impl Workbook {
                 .cloned()
                 .collect::<Vec<_>>(),
         );
-        (out != list).then_some(out)
+        out
     }
 
     /// Record an IronCalc step that changed the sheets, with the chart
@@ -378,9 +384,10 @@ impl Workbook {
     /// Move or Copy… with "Create a copy": a copy of worksheet `sheet`
     /// (`Name (2)`) so it is tab `at` of [`Workbook::tabs`] (past the end:
     /// last). Cells, formats, merged cells, column widths, row heights,
-    /// conditional formats, the sheet's own names, notes, data validation
-    /// and print settings are copied; charts and pictures are not. One undo
-    /// step. Returns the copy's index.
+    /// conditional formats, the sheet's own names, notes, data validation,
+    /// print settings, tables (renamed as Excel does: `Table1` → `Table12`),
+    /// charts (their references to the sheet now to the copy) and pictures
+    /// are copied. One undo step. Returns the copy's index.
     pub fn copy_sheet(&mut self, sheet: u32, at: usize) -> Result<u32> {
         self.check_sheet(sheet)?;
         let mut order = self.slots();
@@ -389,30 +396,210 @@ impl Workbook {
             .iter()
             .filter(|s| matches!(s, Slot::Sheet(_)))
             .count() as u32;
-        let name = self.copy_name(&self.sheet_names()[sheet as usize]);
+        let source = self.sheet_names()[sheet as usize].clone();
+        let name = self.copy_name(&source);
         // What Kantor keeps of the source, read before the sheets shift.
         let notes: Vec<crate::CellNote> = self.notes_now(sheet).values().cloned().collect();
         let validations = self.sheet_validations(sheet);
         let print = self.print_settings(sheet);
         let print_set = print != crate::SheetPrint::default();
-        self.model
-            .kantor_copy_sheet(sheet, &name, index)
-            .map_err(|e| anyhow!("{e}"))?;
-        let id = self.sheet_id(index);
-        order.insert(pos, Slot::Sheet(id));
-        self.sheets_edited(&order);
-        self.change_edits(|e, layout| {
-            if !notes.is_empty() {
-                e.notes.insert(id, (notes, layout.clone()));
+        let objects = self.copied_objects(sheet, &source, &name);
+        let mut tables: Vec<ironcalc_base::types::Table> = self
+            .model
+            .get_model()
+            .workbook
+            .tables
+            .values()
+            .filter(|t| t.sheet_name.eq_ignore_ascii_case(&source))
+            .cloned()
+            .collect();
+        tables.sort_by(|a, b| a.name.cmp(&b.name));
+        self.batch(|wb| {
+            wb.model
+                .kantor_copy_sheet(sheet, &name, index)
+                .map_err(|e| anyhow!("{e}"))?;
+            let id = wb.sheet_id(index);
+            order.insert(pos, Slot::Sheet(id));
+            wb.sheets_edited(&order);
+            for mut t in tables {
+                let new = wb.copy_table_name(&t.name);
+                t.name = new.clone();
+                t.display_name = new.clone();
+                t.sheet_name = name.clone();
+                wb.model
+                    .kantor_set_table(&new, Some(t))
+                    .map_err(|e| anyhow!("{e}"))?;
+                wb.history.edited();
+                wb.touch_table(&new, None);
             }
-            if !validations.is_empty() {
-                e.validations.insert(id, (validations, layout.clone()));
+            wb.change_edits(|e, layout| {
+                if !notes.is_empty() {
+                    e.notes.insert(id, (notes, layout.clone()));
+                }
+                if !validations.is_empty() {
+                    e.validations.insert(id, (validations, layout.clone()));
+                }
+                if print_set {
+                    e.prints.insert(id, (print, layout.clone()));
+                }
+                let mut next = e.charts.iter().map(|c| c.id).max().unwrap_or(0);
+                for (anchor, xml, picture, spec) in objects {
+                    next += 1;
+                    e.charts.push(crate::chart_edit::NewChart {
+                        id: next,
+                        sheet_id: id,
+                        spec,
+                        anchor,
+                        layout: layout.clone(),
+                        xml,
+                        picture,
+                    });
+                }
+            });
+            Ok(index)
+        })
+    }
+
+    /// The name Excel gives a copy of table `name` on a copied sheet: the
+    /// name with the first number from 2 that no table or name has.
+    fn copy_table_name(&self, name: &str) -> String {
+        let model = self.model.get_model();
+        let taken = |n: &str| {
+            model
+                .workbook
+                .tables
+                .keys()
+                .any(|t| t.eq_ignore_ascii_case(n))
+                || model
+                    .workbook
+                    .defined_names
+                    .iter()
+                    .any(|d| d.name.eq_ignore_ascii_case(n))
+        };
+        (2..)
+            .map(|k| format!("{name}{k}"))
+            .find(|n| !taken(n))
+            .unwrap_or_default()
+    }
+
+    /// The charts and pictures of `sheet` as objects of a copy named
+    /// `copy`: anchor, chart part (references to `source` now to the copy)
+    /// or picture, and the chart's spec. Hidden objects and shapes Kantor
+    /// doesn't draw aren't copied.
+    #[allow(clippy::type_complexity)]
+    fn copied_objects(
+        &self,
+        sheet: u32,
+        source: &str,
+        copy: &str,
+    ) -> Vec<(
+        crate::drawing::Anchor,
+        Option<Arc<str>>,
+        Option<Arc<crate::chart_edit::NewPicture>>,
+        crate::ChartSpec,
+    )> {
+        use crate::drawing::DrawingKind;
+        let mut out = Vec::new();
+        for d in self.drawings(sheet) {
+            if d.hidden {
+                continue;
             }
-            if print_set {
-                e.prints.insert(id, (print, layout.clone()));
+            match &*d.kind {
+                DrawingKind::Chart {
+                    xml, current_refs, ..
+                } => {
+                    let now = if *current_refs {
+                        xml.to_string()
+                    } else {
+                        self.refs_now(xml, &crate::shift::Layout::default())
+                    };
+                    let now = crate::chart_style::map_formulas(&now, |f| {
+                        crate::move_chart::rename_sheet_in(f, source, copy)
+                    });
+                    let spec = self
+                        .chart_info(d.key)
+                        .map_or_else(crate::ChartSpec::placeholder, |i| i.spec);
+                    out.push((
+                        d.anchor,
+                        Some(crate::move_chart::without_links(&now).into()),
+                        None,
+                        spec,
+                    ));
+                }
+                DrawingKind::Picture { part, data, crop } => {
+                    let ext = part
+                        .rsplit_once('.')
+                        .map(|(_, e)| e.to_owned())
+                        .filter(|e| e.len() <= 4 && !e.contains('/'))
+                        .unwrap_or_else(|| "png".into());
+                    out.push((
+                        d.anchor,
+                        None,
+                        Some(Arc::new(crate::chart_edit::NewPicture {
+                            data: data.clone(),
+                            crop: *crop,
+                            ext,
+                            name: d.name.clone(),
+                            descr: d.descr.clone(),
+                        })),
+                        crate::ChartSpec::placeholder(),
+                    ));
+                }
+                DrawingKind::Other(_) => {}
             }
+        }
+        out
+    }
+
+    /// Move or Copy… with "Create a copy" on chart sheet `k`: a copy of it
+    /// (`Name (2)`, with its chart and tab colour) so it is tab `at` of
+    /// [`Workbook::tabs`]. One undo step. Returns the copy's `k`.
+    pub fn copy_chart_sheet(&mut self, k: usize, at: usize) -> Result<usize> {
+        let list = self.chart_sheets_now();
+        let i = list
+            .iter()
+            .position(|c| c.k == k)
+            .ok_or_else(|| anyhow!("there's no such chart sheet"))?;
+        let key = self
+            .chart_sheet_drawings(k)
+            .into_iter()
+            .find(|d| d.editable && matches!(*d.kind, crate::drawing::DrawingKind::Chart { .. }))
+            .map(|d| d.key)
+            .ok_or_else(|| anyhow!("Kantor can't copy this chart sheet"))?;
+        let (xml, _) = self
+            .file_chart_now(key)
+            .ok_or_else(|| anyhow!("Kantor can't copy this chart sheet"))?;
+        let xml = crate::move_chart::without_links(&xml);
+        let name = self.copy_name(&list[i].name);
+        let tab = list[i].tab.clone();
+        let mut order = self.slots();
+        let pos = self.slot_at(&order, at);
+        let parts = crate::move_chart::chart_sheet_parts(
+            &name,
+            self.drawings.chart_sheet_count(),
+            xml.clone(),
+            tab.as_deref(),
+        );
+        let new = self.drawings.add_chart_sheet(parts);
+        order.insert(pos, Slot::Chart(new));
+        let mut with = list.clone();
+        with.push(ChartSheetNow {
+            k: new,
+            name,
+            state: None,
+            after: Vec::new(),
+            tab,
         });
-        Ok(index)
+        let placed = self.place_chart_sheets(&order, &with);
+        let cs_key = crate::drawing::DrawingKey {
+            sheet_id: crate::drawing::chart_sheet_key_id(new),
+            index: 0,
+        };
+        self.own_edit(|e, layout| {
+            e.chart_sheets = Some(Arc::new(placed));
+            e.file_charts.insert(cs_key, (xml.into(), layout.clone()));
+        });
+        Ok(new)
     }
 
     /// Hide or unhide worksheet `sheet` (one undo step). At least one
