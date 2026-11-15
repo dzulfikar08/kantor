@@ -61,6 +61,7 @@ mod look;
 mod move_chart_ui;
 pub mod page_setup;
 pub mod pivot;
+mod pivot_cards;
 mod point;
 mod popup_list;
 mod print;

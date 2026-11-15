@@ -36,8 +36,8 @@ use gpui_kit::*;
 use kantor_ui::i18n::{self, t_dyn, tf, tk};
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{
-    AreaEntry, AxisEntry, PivotDestination, PivotFunc, PivotLayout, ReportLayout, SubtotalPlace,
-    cell_name,
+    AreaEntry, AxisEntry, PivotBaseItem, PivotDestination, PivotFunc, PivotLayout, PivotSort,
+    ReportLayout, ShowAs, SubtotalPlace, cell_name,
 };
 
 use crate::{KEY_CONTEXT, SheetsView};
@@ -105,25 +105,36 @@ pub(crate) struct FieldPanel {
     /// The pivot shown (names are unique in a workbook).
     name: String,
     /// Its layout, read at `revision`.
-    layout: Option<PivotLayout>,
+    pub(crate) layout: Option<PivotLayout>,
     revision: Option<(u64, u64)>,
-    settings: Option<ValueSettings>,
-    picker: Option<FilterPicker>,
+    pub(crate) settings: Option<ValueSettings>,
+    pub(crate) picker: Option<FilterPicker>,
+    pub(crate) field_card: Option<crate::pivot_cards::FieldCard>,
+    pub(crate) group_card: Option<crate::pivot_cards::GroupCard>,
+    pub(crate) calc_card: Option<crate::pivot_cards::CalcCard>,
+    /// The style gallery is open.
+    pub(crate) styles_open: bool,
 }
 
 /// Value Field Settings for the k-th value field.
-struct ValueSettings {
+pub(crate) struct ValueSettings {
     k: usize,
     name: Entity<InputState>,
     func: PivotFunc,
     num_fmt: Option<String>,
+    show_as: ShowAs,
+    base_field: Option<usize>,
+    base_item: PivotBaseItem,
     _sub: Subscription,
 }
 
-/// The item picker of a report filter (or any field's item filter).
-struct FilterPicker {
+/// The item picker of a report filter (or any field's item filter), or
+/// of Group Selection.
+pub(crate) struct FilterPicker {
     field: usize,
     checked: Vec<bool>,
+    /// Group Selection: the items checked become a group.
+    group: bool,
 }
 
 /// What is dragged in the field list.
@@ -227,7 +238,7 @@ impl SheetsView {
         self.after_pivot_edit(window, cx);
     }
 
-    fn after_pivot_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn after_pivot_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(p) = self.pivot_panel.as_mut() {
             p.revision = None;
         }
@@ -568,6 +579,10 @@ impl SheetsView {
             revision: None,
             settings: None,
             picker: None,
+            field_card: None,
+            group_card: None,
+            calc_card: None,
+            styles_open: false,
         });
     }
 
@@ -600,8 +615,53 @@ impl SheetsView {
         cx.notify();
     }
 
+    /// Open the panel of the pivot table at the active cell with its style
+    /// gallery (PivotTable Styles), or the Insert Calculated Field card.
+    pub fn pivot_styles_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_panel_with(window, cx, |this, _, cx| {
+            this.close_pivot_cards();
+            if let Some(p) = this.pivot_panel.as_mut() {
+                p.styles_open = true;
+            }
+            cx.notify();
+        });
+    }
+
+    /// See [`Self::pivot_styles_doc`].
+    pub fn pivot_calculated_field_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_panel_with(window, cx, |this, w, cx| this.open_calc_card(None, w, cx));
+    }
+
+    fn open_panel_with(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>),
+    ) {
+        if self.blocked(cx) {
+            return;
+        }
+        let (row, col) = self.selected;
+        let found = {
+            let grid = self.table.read(cx).delegate();
+            grid.book
+                .pivot_at(grid.sheet, row, col)
+                .map(|p| (grid.sheet, p.name))
+        };
+        let Some((sheet, name)) = found else {
+            self.status = i18n::t("Select a cell in a PivotTable to see its fields").into();
+            cx.notify();
+            return;
+        };
+        if self.pivot_panel.as_ref().is_none_or(|p| p.name != name) {
+            self.open_panel(sheet, name);
+        }
+        self.sync_panel(cx);
+        then(self, window, cx);
+    }
+
     /// The pivot the panel shows: `(sheet, top, left)` of its body now.
-    fn panel_anchor(&self, cx: &App) -> Option<(u32, u32, u32)> {
+    pub(crate) fn panel_anchor(&self, cx: &App) -> Option<(u32, u32, u32)> {
         let p = self.pivot_panel.as_ref()?;
         let grid = self.table.read(cx).delegate();
         let sheets = grid.book.sheet_names().len() as u32;
@@ -656,17 +716,26 @@ impl SheetsView {
             if p.layout.is_none() {
                 p.settings = None;
                 p.picker = None;
+                p.field_card = None;
+                p.group_card = None;
+                p.calc_card = None;
             }
         }
     }
 
     /// Apply a changed layout to the panel's pivot (one undo step).
-    fn apply_layout(&mut self, layout: PivotLayout, window: &mut Window, cx: &mut Context<Self>) {
+    /// Returns whether it was applied.
+    pub(crate) fn apply_layout(
+        &mut self,
+        layout: PivotLayout,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if self.editing.is_some() || self.blocked(cx) {
-            return;
+            return false;
         }
         let Some((sheet, row, col)) = self.panel_anchor(cx) else {
-            return;
+            return false;
         };
         let result = self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
@@ -675,15 +744,17 @@ impl SheetsView {
             table.refresh(cx);
             res
         });
+        let ok = result.is_ok();
         self.status = match result {
             Ok(()) => tf("{} updated", &[&layout.name]).into(),
             Err(e) => format!("{e:#}").into(),
         };
         self.after_pivot_edit(window, cx);
+        ok
     }
 
     /// Change the panel's layout with `f` and apply it.
-    fn edit_layout(
+    pub(crate) fn edit_layout(
         &mut self,
         f: impl FnOnce(&mut PivotLayout),
         window: &mut Window,
@@ -747,13 +818,17 @@ impl SheetsView {
             }
         });
         let (func, num_fmt) = (v.func, v.num_fmt.clone());
+        let (show_as, base_field, base_item) = (v.show_as, v.base_field, v.base_item.clone());
+        self.close_pivot_cards();
         if let Some(p) = self.pivot_panel.as_mut() {
-            p.picker = None;
             p.settings = Some(ValueSettings {
                 k,
                 name,
                 func,
                 num_fmt,
+                show_as,
+                base_field,
+                base_item,
                 _sub: sub,
             });
         }
@@ -781,6 +856,9 @@ impl SheetsView {
                 let v = &mut l.values[s.k];
                 v.func = s.func;
                 v.num_fmt = s.num_fmt.clone();
+                v.show_as = s.show_as;
+                v.base_field = s.base_field;
+                v.base_item = s.base_item.clone();
                 // An untouched default name follows the function.
                 v.name = if typed.is_empty() || typed == default || typed == old_default {
                     None
@@ -794,7 +872,7 @@ impl SheetsView {
         self.focus_grid(window, cx);
     }
 
-    fn open_picker(&mut self, field: usize, cx: &mut Context<Self>) {
+    pub(crate) fn open_picker(&mut self, field: usize, group: bool, cx: &mut Context<Self>) {
         let Some(p) = self.pivot_panel.as_mut() else {
             return;
         };
@@ -809,12 +887,20 @@ impl SheetsView {
             .items
             .iter()
             .map(|it| match &chosen {
+                _ if group => false,
                 Some(c) => &it.label == c,
                 None => !it.hidden,
             })
             .collect();
         p.settings = None;
-        p.picker = Some(FilterPicker { field, checked });
+        p.field_card = None;
+        p.group_card = None;
+        p.calc_card = None;
+        p.picker = Some(FilterPicker {
+            field,
+            checked,
+            group,
+        });
         cx.notify();
     }
 
@@ -828,6 +914,24 @@ impl SheetsView {
                 p.picker = Some(pick);
             }
             cx.notify();
+            return;
+        }
+        if pick.group {
+            let labels: Vec<String> = self
+                .pivot_panel
+                .as_ref()
+                .and_then(|p| p.layout.as_ref())
+                .and_then(|l| l.fields.get(pick.field))
+                .map(|f| {
+                    f.items
+                        .iter()
+                        .zip(&pick.checked)
+                        .filter(|(_, c)| **c)
+                        .map(|(it, _)| it.label.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.apply_group_selection(pick.field, labels, window, cx);
             return;
         }
         self.edit_layout(
@@ -916,10 +1020,7 @@ impl SheetsView {
                 .text_color(t.fg)
                 .overflow_y_scroll()
                 .on_action(cx.listener(|this, _: &input::Escape, w, cx| {
-                    if let Some(p) = this.pivot_panel.as_mut() {
-                        p.settings = None;
-                        p.picker = None;
-                    }
+                    this.close_pivot_cards();
                     this.focus_grid(w, cx);
                     cx.notify();
                 }))
@@ -944,6 +1045,26 @@ impl SheetsView {
                 SharedString::from(tf("Can't be rearranged here: {}", &[why])),
             ));
         }
+        // An open card goes at the top, where it is seen (the panel only
+        // scrolls by the wheel).
+        if let Some(s) = &p.settings {
+            out = out.child(self.render_value_settings(l, s, cx));
+        }
+        if let Some(pick) = &p.picker {
+            out = out.child(self.render_picker(l, pick, cx));
+        }
+        if let Some(c) = &p.field_card {
+            out = out.child(self.render_field_card(l, c, cx));
+        }
+        if let Some(c) = &p.group_card {
+            out = out.child(self.render_group_card(l, c, cx));
+        }
+        if let Some(c) = &p.calc_card {
+            out = out.child(self.render_calc_card(l, c, cx));
+        }
+        if p.styles_open && !locked {
+            out = out.child(self.render_style_gallery(l, cx));
+        }
         // The source's fields.
         let mut list = v_flex()
             .id("pivot-field-list")
@@ -955,6 +1076,7 @@ impl SheetsView {
             .bg(t.surface)
             .py(SPACE_2);
         for (f, field) in l.fields.iter().enumerate() {
+            let kind = FieldKind::of(l, f);
             let checked = l.area_of(f).is_some();
             let v = view.clone();
             let menu_view = view.clone();
@@ -1005,6 +1127,9 @@ impl SheetsView {
                             .tooltip(i18n::t("Add to an area"))
                             .dropdown_menu(move |mut m, _, _| {
                                 for area in AREAS {
+                                    if kind.calculated && area != "Values" {
+                                        continue;
+                                    }
                                     let v = menu_view.clone();
                                     m = m.item(PopupMenuItem::new(add_to_label(area)).on_click(
                                         move |_, w, cx| {
@@ -1018,17 +1143,32 @@ impl SheetsView {
                                         },
                                     ));
                                 }
-                                m
+                                field_menu(m, &menu_view, f, kind)
                             }),
                     ),
             );
         }
+        let calc_view = view.clone();
         out = out
             .child(kantor_ui::components::section_label(
                 i18n::t("Fields · check, or drag to an area"),
                 cx,
             ))
-            .child(list);
+            .child(list)
+            .child(
+                h_flex().child(
+                    Button::new("pivot-calc-open")
+                        .ghost()
+                        .xsmall()
+                        .icon(Lucide::Plus)
+                        .label(i18n::t("Calculated Field…"))
+                        .disabled(locked)
+                        .on_click(move |_, w, cx| {
+                            let _ =
+                                calc_view.update(cx, |this, cx| this.open_calc_card(None, w, cx));
+                        }),
+                ),
+            );
         // The four areas, two by two as in Excel.
         let mut boxes = AREAS
             .iter()
@@ -1043,13 +1183,8 @@ impl SheetsView {
                 .children(boxes.next())
         };
         out = out.child(pair()).child(pair());
-        if let Some(s) = &p.settings {
-            out = out.child(self.render_value_settings(l, s, cx));
-        }
-        if let Some(pick) = &p.picker {
-            out = out.child(self.render_picker(l, pick, cx));
-        }
         out.child(self.render_options(l, locked, cx))
+            .child(self.render_pivot_styles(l, locked, cx))
     }
 
     fn render_area(
@@ -1122,6 +1257,10 @@ impl SheetsView {
             };
             let chip_drop = view.clone();
             let menu_view = view.clone();
+            let kinds = match entry {
+                AreaEntry::Field(f) => Some(FieldKind::of(l, f)),
+                _ => None,
+            };
             b = b.child(
                 h_flex()
                     .id(SharedString::from(format!("pivot-chip-{area}-{k}")))
@@ -1152,7 +1291,7 @@ impl SheetsView {
                             .icon(IconName::ChevronDown)
                             .disabled(locked)
                             .dropdown_menu(move |m, _, _| {
-                                chip_menu(m, &menu_view, entry, area, k, n)
+                                chip_menu(m, &menu_view, entry, area, k, n, kinds)
                             }),
                     ),
             );
@@ -1223,6 +1362,11 @@ impl SheetsView {
                         m
                     }),
             )
+            .child(kantor_ui::components::section_label(
+                i18n::t("Show values as"),
+                cx,
+            ))
+            .child(self.render_show_as(l, s, cx))
             .child(kantor_ui::components::section_label(
                 i18n::t("Number format"),
                 cx,
@@ -1296,7 +1440,135 @@ impl SheetsView {
             )
     }
 
+    /// Show Values As, with its base field and item where needed.
+    fn render_show_as(&self, l: &PivotLayout, s: &ValueSettings, cx: &mut Context<Self>) -> Div {
+        let view = cx.entity().downgrade();
+        let set = move |f: Box<dyn Fn(&mut ValueSettings)>| {
+            let v = view.clone();
+            move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                let _ = v.update(cx, |this, cx| {
+                    if let Some(s) = this.pivot_panel.as_mut().and_then(|p| p.settings.as_mut()) {
+                        f(s);
+                    }
+                    cx.notify();
+                });
+            }
+        };
+        let show = s.show_as;
+        // Base fields: those on the rows and columns (as Excel lists).
+        let axis: Vec<usize> = l
+            .rows
+            .iter()
+            .chain(&l.columns)
+            .filter_map(|e| match e {
+                AxisEntry::Field(f) => Some(*f),
+                AxisEntry::Values => None,
+            })
+            .collect();
+        let base = s.base_field;
+        let base_name = base
+            .and_then(|b| l.fields.get(b))
+            .map(|f| f.name.clone())
+            .unwrap_or_else(|| i18n::t("Choose a base field").to_owned());
+        let items: Vec<String> = base
+            .and_then(|b| l.fields.get(b))
+            .map(|f| f.items.iter().map(|i| i.label.clone()).collect())
+            .unwrap_or_default();
+        let item = s.base_item.clone();
+        let item_label = |i: &PivotBaseItem| match i {
+            PivotBaseItem::Previous => i18n::t("(previous)").to_owned(),
+            PivotBaseItem::Next => i18n::t("(next)").to_owned(),
+            PivotBaseItem::Item(x) => x.clone(),
+        };
+        let names: Vec<(usize, String)> = axis
+            .iter()
+            .filter_map(|f| Some((*f, l.fields.get(*f)?.name.clone())))
+            .collect();
+        let show_menu = {
+            let set = set.clone();
+            move |mut m: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
+                for k in ShowAs::ALL {
+                    m = m.item(
+                        PopupMenuItem::new(t_dyn(k.label()))
+                            .checked(k == show)
+                            .on_click(set(Box::new(move |s| s.show_as = k))),
+                    );
+                }
+                m
+            }
+        };
+        let base_menu = {
+            let set = set.clone();
+            move |mut m: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
+                for (f, n) in &names {
+                    let f = *f;
+                    m = m.item(
+                        PopupMenuItem::new(n.clone())
+                            .checked(Some(f) == base)
+                            .on_click(set(Box::new(move |s| {
+                                s.base_field = Some(f);
+                                s.base_item = PivotBaseItem::Previous;
+                            }))),
+                    );
+                }
+                m
+            }
+        };
+        let item_now = item_label(&item);
+        let item_menu = move |mut m: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
+            let choices = [PivotBaseItem::Previous, PivotBaseItem::Next]
+                .into_iter()
+                .chain(items.iter().cloned().map(PivotBaseItem::Item));
+            for c in choices {
+                let label = item_label(&c);
+                let on = c == item;
+                m = m.item(
+                    PopupMenuItem::new(label)
+                        .checked(on)
+                        .on_click(set(Box::new(move |s| s.base_item = c.clone()))),
+                );
+            }
+            m
+        };
+        v_flex()
+            .gap(SPACE_2)
+            .child(
+                Button::new("pivot-show-as")
+                    .outline()
+                    .small()
+                    .label(t_dyn(show.label()))
+                    .dropdown_caret(true)
+                    .dropdown_menu(show_menu),
+            )
+            .when(show.needs_field(), |d| {
+                d.child(
+                    h_flex()
+                        .gap(SPACE_2)
+                        .flex_wrap()
+                        .child(
+                            Button::new("pivot-base-field")
+                                .outline()
+                                .small()
+                                .label(SharedString::from(base_name.clone()))
+                                .dropdown_caret(true)
+                                .dropdown_menu(base_menu),
+                        )
+                        .when(show.needs_item() && base.is_some(), |d| {
+                            d.child(
+                                Button::new("pivot-base-item")
+                                    .outline()
+                                    .small()
+                                    .label(SharedString::from(item_now.clone()))
+                                    .dropdown_caret(true)
+                                    .dropdown_menu(item_menu),
+                            )
+                        }),
+                )
+            })
+    }
+
     fn render_picker(&self, l: &PivotLayout, pick: &FilterPicker, cx: &mut Context<Self>) -> Div {
+        let grouping = pick.group;
         let view = cx.entity().downgrade();
         let Some(field) = l.fields.get(pick.field) else {
             return div();
@@ -1334,7 +1606,11 @@ impl SheetsView {
             .child(
                 div()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(SharedString::from(tf("Show items of {}", &[&field.name]))),
+                    .child(SharedString::from(if grouping {
+                        tf("Group items of {}", &[&field.name])
+                    } else {
+                        tf("Show items of {}", &[&field.name])
+                    })),
             )
             .child(
                 Checkbox::new("pivot-pick-all")
@@ -1375,7 +1651,11 @@ impl SheetsView {
                         Button::new("pivot-pick-ok")
                             .primary()
                             .small()
-                            .label(i18n::t("Apply"))
+                            .label(if grouping {
+                                i18n::t("Group")
+                            } else {
+                                i18n::t("Apply")
+                            })
                             .on_click(move |_, w, cx| {
                                 let _ = ok.update(cx, |this, cx| this.apply_picker(w, cx));
                             }),
@@ -1487,7 +1767,7 @@ impl SheetsView {
 }
 
 /// A small card inside the panel.
-fn card(cx: &App) -> Div {
+pub(crate) fn card(cx: &App) -> Div {
     let t = tokens(cx);
     v_flex()
         .gap(SPACE_3)
@@ -1499,6 +1779,96 @@ fn card(cx: &App) -> Div {
 }
 
 /// The menu of a chip in an area.
+/// What a field is, for its menus.
+#[derive(Clone, Copy)]
+struct FieldKind {
+    calculated: bool,
+    /// Grouped by ranges, or a grouping field.
+    grouped: bool,
+    /// Holds numbers or dates (Group… by ranges).
+    ranges: bool,
+    /// Has items to pick (Group Selection).
+    items: bool,
+    /// On the rows or columns.
+    on_axis: bool,
+}
+
+impl FieldKind {
+    fn of(l: &PivotLayout, f: usize) -> Self {
+        let field = &l.fields[f];
+        let on = |list: &[AxisEntry]| list.contains(&AxisEntry::Field(f));
+        FieldKind {
+            calculated: field.formula.is_some(),
+            grouped: field.grouping.is_some() || field.group_base.is_some(),
+            ranges: field.formula.is_none()
+                && field.group_base.is_none()
+                && (field.min.is_some() || field.grouping.is_some()),
+            items: field.formula.is_none()
+                && field.grouping.is_none()
+                && field.group_base.is_none()
+                && field.min.is_none()
+                && !field.items.is_empty(),
+            on_axis: on(&l.rows) || on(&l.columns),
+        }
+    }
+}
+
+/// The field list's menu entries past "Add to …": Field Settings, Group,
+/// Group Selection, Ungroup, and a calculated field's Modify / Delete.
+fn field_menu(
+    mut m: PopupMenu,
+    view: &WeakEntity<SheetsView>,
+    f: usize,
+    kind: FieldKind,
+) -> PopupMenu {
+    let act = |m: PopupMenu, label: &'static str, run: ChipAction| {
+        let v = view.clone();
+        m.item(PopupMenuItem::new(label).on_click(move |_, w, cx| {
+            let _ = v.update(cx, |this, cx| run(this, w, cx));
+        }))
+    };
+    m = m.separator();
+    if kind.calculated {
+        m = act(
+            m,
+            i18n::t("Modify Calculated Field…"),
+            Box::new(move |this, w, cx| this.open_calc_card(Some(f), w, cx)),
+        );
+        return act(
+            m,
+            i18n::t("Delete Calculated Field"),
+            Box::new(move |this, w, cx| this.delete_calc_field(f, w, cx)),
+        );
+    }
+    m = act(
+        m,
+        i18n::t("Field Settings…"),
+        Box::new(move |this, w, cx| this.open_field_card(f, w, cx)),
+    );
+    if kind.ranges {
+        m = act(
+            m,
+            i18n::t("Group…"),
+            Box::new(move |this, w, cx| this.open_group_card(f, w, cx)),
+        );
+    }
+    if kind.items {
+        m = act(
+            m,
+            i18n::t("Group Selection…"),
+            Box::new(move |this, _, cx| this.open_picker(f, true, cx)),
+        );
+    }
+    if kind.grouped {
+        m = act(
+            m,
+            i18n::t("Ungroup"),
+            Box::new(move |this, w, cx| this.ungroup_field(f, w, cx)),
+        );
+    }
+    m
+}
+
 fn chip_menu(
     mut m: PopupMenu,
     view: &WeakEntity<SheetsView>,
@@ -1506,6 +1876,7 @@ fn chip_menu(
     area: &'static str,
     k: usize,
     n: usize,
+    kind: Option<FieldKind>,
 ) -> PopupMenu {
     let act = |m: PopupMenu, label: String, f: ChipAction| {
         let v = view.clone();
@@ -1562,6 +1933,29 @@ fn chip_menu(
             );
         }
         AreaEntry::Field(f) => {
+            if kind.is_some_and(|k| k.on_axis) {
+                for (label, sort) in [
+                    (i18n::t("Sort A to Z"), PivotSort::Ascending),
+                    (i18n::t("Sort Z to A"), PivotSort::Descending),
+                ] {
+                    m = act(
+                        m,
+                        label.into(),
+                        Box::new(move |this, w, cx| {
+                            this.edit_layout(
+                                |l| {
+                                    if let Some(x) = l.fields.get_mut(f) {
+                                        x.settings.sort = sort;
+                                        x.settings.sort_by_value = None;
+                                    }
+                                },
+                                w,
+                                cx,
+                            )
+                        }),
+                    );
+                }
+            }
             m = act(
                 m.separator(),
                 if area == "Filters" {
@@ -1569,8 +1963,11 @@ fn chip_menu(
                 } else {
                     i18n::t("Filter Items…").into()
                 },
-                Box::new(move |this, _, cx| this.open_picker(f, cx)),
+                Box::new(move |this, _, cx| this.open_picker(f, false, cx)),
             );
+            if let Some(kind) = kind {
+                m = field_menu(m, view, f, kind);
+            }
             m = act(
                 m,
                 i18n::t("Remove").into(),

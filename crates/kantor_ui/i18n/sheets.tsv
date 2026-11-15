@@ -600,6 +600,114 @@ Max	Maks
 Min	Min
 Product	Hasil Kali
 Count Numbers	Hitungan Angka
+# sheets_ui: pivot settings (pivot_cards.rs)
+PivotTable Styles…	Gaya PivotTable…
+Insert Calculated Field…	Sisipkan Bidang Terhitung…
+Sheets · pick a style and style options for the PivotTable at the active cell	Sheets · pilih gaya dan opsi gaya untuk PivotTable di sel aktif
+Sheets · add a field worked out from the PivotTable's other fields	Sheets · tambahkan bidang yang dihitung dari bidang lain PivotTable
+(next)	(berikutnya)
+(previous)	(sebelumnya)
+Ascending (A to Z)	Naik (A ke Z)
+By	Menurut
+By must be a number	Menurut harus berupa angka
+Calculated Field…	Bidang Terhitung…
+Choose a base field	Pilih bidang dasar
+Choose a value field	Pilih bidang nilai
+Column Headers	Header Kolom
+Date Filter	Filter Tanggal
+Dates such as 2026-01-31 or 1/31/2026	Tanggal seperti 2026-01-31 atau 1/31/2026
+Seconds	Detik
+Minutes	Menit
+Hours	Jam
+Days	Hari
+Months	Bulan
+Quarters	Kuartal
+Years	Tahun
+Delete Calculated Field	Hapus Bidang Terhitung
+Descending (Z to A)	Turun (Z ke A)
+Ending at	Berakhir pada
+Field	Bidang
+Field Settings · {}	Pengaturan Bidang · {}
+Field Settings…	Pengaturan Bidang…
+Fields · click to insert into the formula	Bidang · klik untuk menyisipkan ke rumus
+Group Selection…	Kelompokkan Pilihan…
+Group items of {}	Kelompokkan item {}
+Grouping · {}	Pengelompokan · {}
+Group…	Kelompokkan…
+Insert Calculated Field	Sisipkan Bidang Terhitung
+Insert blank line after each item label	Sisipkan baris kosong setelah setiap label item
+Label Filter	Filter Label
+Manual (data source order)	Manual (urutan sumber data)
+Modify Calculated Field…	Ubah Bidang Terhitung…
+No filter	Tanpa filter
+Number of days	Jumlah hari
+PivotTable Style	Gaya PivotTable
+Repeat item labels	Ulangi label item
+Row Headers	Header Baris
+Show item labels in compact form	Tampilkan label item dalam bentuk ringkas
+Show item labels in outline form	Tampilkan label item dalam bentuk kerangka
+Show item labels in tabular form	Tampilkan label item dalam bentuk tabel
+Show values as	Tampilkan nilai sebagai
+Starting at	Dimulai pada
+Starting at and Ending at must be numbers	Dimulai pada dan Berakhir pada harus berupa angka
+Subtotals	Subtotal
+Top 10	10 Teratas
+Type the dates such as 2026-01-31	Ketik tanggal seperti 2026-01-31
+Value Filter	Filter Nilai
+by {}	menurut {}
+{} (labels)	{} (label)
+{} grouped	{} dikelompokkan
+{} made	{} dibuat
+{} saved	{} disimpan
+{} ungrouped	{} tidak lagi dikelompokkan
+No Calculation	Tanpa Perhitungan
+% of Grand Total	% dari Total Keseluruhan
+% of Column Total	% dari Total Kolom
+% of Row Total	% dari Total Baris
+% Of	% Dari
+% of Parent Row Total	% dari Total Baris Induk
+% of Parent Column Total	% dari Total Kolom Induk
+% of Parent Total	% dari Total Induk
+Difference From	Selisih Dari
+% Difference From	% Selisih Dari
+Running Total In	Total Berjalan Dalam
+% Running Total In	% Total Berjalan Dalam
+Rank Smallest to Largest	Peringkat Terkecil ke Terbesar
+Rank Largest to Smallest	Peringkat Terbesar ke Terkecil
+Index	Indeks
+Does Not Equal	Tidak sama dengan
+Begins With	Dimulai dengan
+Does Not Begin With	Tidak dimulai dengan
+Ends With	Diakhiri dengan
+Does Not End With	Tidak diakhiri dengan
+Does Not Contain	Tidak berisi
+Greater Than	Lebih besar dari
+Greater Than Or Equal To	Lebih besar dari atau sama dengan
+Less Than	Kurang dari
+Less Than Or Equal To	Kurang dari atau sama dengan
+Not Between	Tidak di antara
+Top 10 (Items)	10 Teratas (Item)
+Top 10 (Percent)	10 Teratas (Persen)
+Top 10 (Sum)	10 Teratas (Jumlah)
+Before Or Equal To	Sebelum atau sama dengan
+After Or Equal To	Sesudah atau sama dengan
+Next Week	Minggu Depan
+This Week	Minggu Ini
+Last Week	Minggu Lalu
+Next Month	Bulan Depan
+This Month	Bulan Ini
+Last Month	Bulan Lalu
+Next Quarter	Kuartal Depan
+This Quarter	Kuartal Ini
+Last Quarter	Kuartal Lalu
+Next Year	Tahun Depan
+This Year	Tahun Ini
+Last Year	Tahun Lalu
+Year to Date	Tahun Hingga Hari Ini
+Quarter 1	Kuartal 1
+Quarter 2	Kuartal 2
+Quarter 3	Kuartal 3
+Quarter 4	Kuartal 4
 # sheets_ui: data validation, filter and sort, tables
 Any value	Nilai apa pun
 Decimal	Desimal

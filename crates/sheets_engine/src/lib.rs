@@ -108,7 +108,9 @@ pub use look::CellLook;
 pub use notes::NoteClip;
 pub use numfmt::Display;
 pub use pivot::PivotInfo;
-pub use pivot_calc::{FILTER_TYPES as PIVOT_FILTER_TYPES, FilterFamily, ShowAs, filter_arity};
+pub use pivot_calc::{
+    FILTER_TYPES as PIVOT_FILTER_TYPES, FilterFamily, ShowAs, filter_arity, filter_family,
+};
 pub use pivot_edit::{
     AreaEntry, AxisEntry, FieldSubtotals, PivotBaseItem, PivotDestination, PivotFieldFilter,
     PivotFieldSettings, PivotFunc, PivotGrouping, PivotItem, PivotLayout, PivotSort,

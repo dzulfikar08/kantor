@@ -6,7 +6,7 @@
 use anyhow::{Result, anyhow, bail};
 
 use crate::Workbook;
-use crate::content_text::tr;
+use crate::content_text::{tr, trf};
 use crate::pivot::{Cache, CacheField, Def, Rebuild, Val};
 use crate::pivot_calc::Formula;
 use crate::pivot_edit::PivotGrouping;
@@ -385,7 +385,7 @@ impl Workbook {
             .map(|g| g.items.iter().map(Val::label).collect())
             .unwrap_or_default();
         let group_name = (1..)
-            .map(|k| format!("{}{k}", tr("Group")))
+            .map(|k| trf("Group{}", &[&k]))
             .find(|n| !taken.iter().any(|t| t.eq_ignore_ascii_case(n)))
             .expect("a free name");
         let wanted: Vec<String> = items.to_vec();

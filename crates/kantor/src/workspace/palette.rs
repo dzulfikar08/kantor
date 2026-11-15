@@ -993,6 +993,20 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.pivot_fields_doc(w, cx)),
     },
     Command {
+        title: tk("PivotTable Styles…"),
+        detail: tk("Sheets · pick a style and style options for the PivotTable at the active cell"),
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.pivot_styles_doc(w, cx)),
+    },
+    Command {
+        title: tk("Insert Calculated Field…"),
+        detail: tk("Sheets · add a field worked out from the PivotTable's other fields"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.pivot_calculated_field_doc(w, cx))
+        },
+    },
+    Command {
         title: tk("Delete PivotTable"),
         detail: tk("Sheets · remove the PivotTable at the active cell"),
         keys: "",

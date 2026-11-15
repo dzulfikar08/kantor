@@ -659,12 +659,18 @@ fn table_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu 
 /// The PivotTable menu: insert, fields, refresh, delete.
 fn pivot_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
     type Run = fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>);
-    let items: [(&str, &str, Run); 5] = [
+    let items: [(&str, &str, Run); 7] = [
         (tk("Insert PivotTable…"), "", |v, w, cx| {
             v.insert_pivot_doc(w, cx)
         }),
         (tk("PivotTable Fields"), "", |v, w, cx| {
             v.pivot_fields_doc(w, cx)
+        }),
+        (tk("PivotTable Styles…"), "", |v, w, cx| {
+            v.pivot_styles_doc(w, cx)
+        }),
+        (tk("Insert Calculated Field…"), "", |v, w, cx| {
+            v.pivot_calculated_field_doc(w, cx)
         }),
         (tk("Refresh PivotTable"), "Alt+F5", |v, w, cx| {
             v.refresh_pivots_doc(false, w, cx)
@@ -677,7 +683,7 @@ fn pivot_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu 
         }),
     ];
     for (i, (label, keys, run)) in items.into_iter().enumerate() {
-        if i == 2 || i == 4 {
+        if i == 4 || i == 6 {
             menu = menu.separator();
         }
         let view = view.clone();
