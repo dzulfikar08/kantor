@@ -484,3 +484,160 @@ fn tab_stops_from_paragraph_and_settings() {
     assert_eq!(again.tab_stops(again.paragraph(0)).len(), 2);
     assert!(again.default_tab() > 0);
 }
+
+#[test]
+fn reply_resolve_and_delete_threads() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("t.docx");
+    let mut doc = Document::new();
+    doc.insert_text(Selection::default(), "Budget approved for Q4.", None);
+    let sel = Selection {
+        anchor: Position::new(0, 0),
+        head: Position::new(0, 6),
+    };
+    let root = doc
+        .add_comment(sel, "Which budget?", "Dewi Lestari")
+        .unwrap();
+    let reply = doc
+        .reply_comment(&root, "The marketing one.", "Budi Santoso")
+        .unwrap();
+    // A reply to a reply joins the same thread.
+    let reply2 = doc
+        .reply_comment(&reply, "Thanks.", "Dewi Lestari")
+        .unwrap();
+    assert_eq!(doc.comments().len(), 3);
+    assert_eq!(doc.thread_root(&reply2).as_deref(), Some(root.as_str()));
+    let replies: Vec<&str> = doc
+        .thread_replies(&root)
+        .iter()
+        .map(|c| c.id.as_str())
+        .collect();
+    assert_eq!(replies, [reply.as_str(), reply2.as_str()]);
+    // Every reply points at the same text as the thread.
+    let anchors = doc.comment_anchors();
+    let at = |id: &str| anchors.iter().find(|(i, _)| i == id).unwrap().1;
+    assert_eq!(
+        doc.paragraph(0).text[at(&reply).start.offset..at(&reply).end.offset]
+            .replace(docs_engine::OBJECT, ""),
+        "Budget"
+    );
+    assert_eq!(
+        doc.paragraph(0).text.replace(docs_engine::OBJECT, ""),
+        "Budget approved for Q4."
+    );
+    // Undo takes the reply back.
+    doc.undo();
+    assert_eq!(doc.comments().len(), 2);
+    doc.redo();
+    assert!(doc.set_comment_done(&reply2, true, Selection::default()));
+    assert!(doc.comments().iter().find(|c| c.id == root).unwrap().done);
+    doc.save_as(&out).unwrap();
+    if let Ok(dir) = std::env::var("KANTOR_COMMENTS_OUT") {
+        std::fs::copy(&out, std::path::Path::new(&dir).join("threads-new.docx")).unwrap();
+    }
+    let p = parts(&std::fs::read(&out).unwrap());
+    let ex = text(&p, "word/commentsExtended.xml");
+    assert!(ex.contains("w15:paraIdParent="), "{ex}");
+    assert!(ex.contains("w15:done=\"1\""), "{ex}");
+    assert!(text(&p, "word/commentsIds.xml").contains("w16cid:durableId="));
+    assert!(text(&p, "word/commentsExtensible.xml").contains("w16cex:dateUtc="));
+    let people = text(&p, "word/people.xml");
+    assert!(people.contains("Budi Santoso") && people.contains("Dewi Lestari"));
+    let ct = text(&p, "[Content_Types].xml");
+    for part in [
+        "commentsExtended+xml",
+        "commentsIds+xml",
+        "commentsExtensible+xml",
+        "people+xml",
+    ] {
+        assert!(ct.contains(part), "{part} in {ct}");
+    }
+    let rels = text(&p, "word/_rels/document.xml.rels");
+    assert!(rels.contains("relationships/commentsExtended\""));
+    assert!(rels.contains("relationships/people\""));
+    let comments = text(&p, "word/comments.xml");
+    assert!(comments.contains("w14:paraId="), "{comments}");
+    assert!(comments.contains("mc:Ignorable=\"w14\""), "{comments}");
+
+    // Read back: the same threads.
+    let mut again = Document::open(&out).unwrap();
+    let r = again.comments().iter().find(|c| c.id == reply2).unwrap();
+    assert_eq!(r.parent.as_deref(), Some(root.as_str()));
+    assert!(again.comments().iter().find(|c| c.id == root).unwrap().done);
+    // Saving again without changes keeps the ids.
+    assert!(again.set_comment_done(&root, false, Selection::default()));
+    assert!(again.set_comment_done(&root, true, Selection::default()));
+    let out2 = dir.path().join("t2.docx");
+    again.save_as(&out2).unwrap();
+    let p2 = parts(&std::fs::read(&out2).unwrap());
+    assert_eq!(
+        text(&p2, "word/commentsIds.xml"),
+        text(&p, "word/commentsIds.xml")
+    );
+    assert_eq!(text(&p2, "word/people.xml"), people);
+    // Deleting a reply keeps the thread; deleting the first comment
+    // deletes the whole thread.
+    assert!(again.delete_comment(&reply2, Selection::default()));
+    assert_eq!(again.comments().len(), 2);
+    assert!(again.delete_comment(&root, Selection::default()));
+    assert!(again.comments().is_empty());
+    assert!(again.comment_anchors().is_empty());
+    assert_eq!(again.paragraph(0).text, "Budget approved for Q4.");
+    again.undo();
+    assert_eq!(again.comments().len(), 2);
+}
+
+#[test]
+fn word_365_threads_round_trip() {
+    let path = corpus("threads.docx");
+    let mut doc = Document::open(&path).unwrap();
+    assert!(
+        doc.unsupported_content().is_empty(),
+        "{:?}",
+        doc.unsupported_content()
+    );
+    let cs = doc.comments();
+    assert_eq!(cs.len(), 3);
+    assert_eq!(cs[1].parent.as_deref(), Some("0"));
+    assert!(!cs[0].done && cs[2].done);
+    assert_eq!(doc.thread_replies("0").len(), 1);
+    let src = parts(&std::fs::read(&path).unwrap());
+    // Reply, then save: the parts Word wrote are kept, the reply added.
+    let r = doc.reply_comment("2", "Done.", "Dewi").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("t.docx");
+    doc.save_as(&out).unwrap();
+    let p = parts(&std::fs::read(&out).unwrap());
+    let cex = text(&p, "word/commentsExtensible.xml");
+    for keep in [
+        r#"<w16cex:commentExtensible w16cex:durableId="2B000001" w16cex:dateUtc="2026-11-10T09:00:00Z"/>"#,
+        r#"mc:Ignorable="w16cex""#,
+    ] {
+        assert!(cex.contains(keep), "{keep} in {cex}");
+    }
+    let ex = text(&p, "word/commentsExtended.xml");
+    assert!(
+        ex.contains(
+            r#"<w15:commentEx w15:paraId="1A000002" w15:paraIdParent="1A000001" w15:done="0"/>"#
+        ),
+        "{ex}"
+    );
+    assert!(ex.contains(r#"w15:paraIdParent="1A000003""#), "{ex}");
+    let people = text(&p, "word/people.xml");
+    assert!(people.starts_with(&text(&src, "word/people.xml")[..60]));
+    assert!(people.contains("w15:author=\"Dewi\"") && people.contains("Citra Dewi"));
+    // Word's own comment elements stay byte for byte.
+    let c = text(&p, "word/comments.xml");
+    assert!(c.contains(r#"<w:comment w:id="0" w:author="Ani Wijaya" w:date="2026-11-10T09:00:00Z" w:initials="AW"><w:p w14:paraId="1A000001" w14:textId="77777777">"#));
+    // No duplicate rels or content types.
+    let rels = text(&p, "word/_rels/document.xml.rels");
+    assert_eq!(rels.matches("relationships/people\"").count(), 1);
+    // For the Open XML validator.
+    if let Ok(dir) = std::env::var("KANTOR_COMMENTS_OUT") {
+        std::fs::copy(&out, std::path::Path::new(&dir).join("threads-reply.docx")).unwrap();
+    }
+    let again = Document::open(&out).unwrap();
+    let back = again.comments().iter().find(|c| c.id == r).unwrap();
+    assert_eq!(back.parent.as_deref(), Some("2"));
+    assert!(again.comments().iter().find(|c| c.id == "2").unwrap().done);
+}

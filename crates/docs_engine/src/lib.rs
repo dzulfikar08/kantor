@@ -13,6 +13,7 @@
 //! - [`rtf`]: importing `.rtf` files (read-only; Save writes `.docx`).
 
 pub mod agent;
+mod comment_thread;
 mod document;
 pub mod docx;
 mod edit;

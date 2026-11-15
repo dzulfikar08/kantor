@@ -137,6 +137,9 @@ pub struct Package {
     settings: Option<(String, String)>,
     /// The comments part, if the package has one.
     comments: Option<crate::review::CommentsPart>,
+    /// The threaded comment parts (commentsExtended, commentsIds,
+    /// commentsExtensible, people), as read.
+    comment_threads: crate::comment_thread::ThreadParts,
     /// The footnotes and endnotes parts, if the package has them.
     pub(crate) notes: [Option<NotesPart>; 2],
     /// The notes as read (kind, id, element): a part is written again only
@@ -2393,6 +2396,15 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
             root_tag: root,
         });
     }
+    let mut thread_srcs = Vec::new();
+    for kind in crate::comment_thread::Extra::ALL {
+        if let Some(name) = part(kind.rel_suffix())
+            && let Some(src) = zip_text(&mut zip, &name)?
+        {
+            thread_srcs.push((kind, name, src));
+        }
+    }
+    let comment_threads = crate::comment_thread::read(&mut comments, thread_srcs);
     let mut notes = Vec::new();
     let mut notes_parts: [Option<NotesPart>; 2] = [None, None];
     for (k, kind) in NoteKind::ALL.into_iter().enumerate() {
@@ -2450,6 +2462,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         numbering: numbering_part,
         settings,
         comments: comments_part,
+        comment_threads,
         notes: notes_parts,
         notes_read: notes
             .iter()
@@ -3447,27 +3460,31 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
             (&mut replace, &mut add, &mut defaults),
         )?;
     }
-    // Comments changed in Kantor.
-    if doc.comments_modified {
+    // Comments changed in Kantor (with the threaded comment parts Word
+    // 2013+ and 365 keep beside them).
+    if doc.comments_modified && (pkg.comments.is_some() || !doc.comments().is_empty()) {
+        use crate::comment_thread::{self as ct, Extra};
         let with_styles = doc.styles.get("CommentText").is_some();
+        let threads = ct::write(doc.comments(), &pkg.comment_threads);
+        let dir = match pkg.document_part.rsplit_once('/') {
+            Some((dir, _)) => format!("{dir}/"),
+            None => String::new(),
+        };
+        let root = match &pkg.comments {
+            Some(part) => part.root_tag.clone(),
+            None => format!(
+                "<w:comments xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"{REL_NS}\">"
+            ),
+        };
+        let root = ct::ensure_ns(&root, "w14", ct::W14_NS, true);
+        let bytes =
+            crate::review::write_comments(&root, &threads.comments, with_styles).into_bytes();
         match &pkg.comments {
             Some(part) => {
-                replace.insert(
-                    part.name.clone(),
-                    crate::review::write_comments(&part.root_tag, doc.comments(), with_styles)
-                        .into_bytes(),
-                );
+                replace.insert(part.name.clone(), bytes);
             }
-            None if !doc.comments().is_empty() => {
-                let name = match pkg.document_part.rsplit_once('/') {
-                    Some((dir, _)) => format!("{dir}/comments.xml"),
-                    None => "comments.xml".into(),
-                };
-                let root = format!(
-                    "<w:comments xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"{REL_NS}\">"
-                );
-                let bytes =
-                    crate::review::write_comments(&root, doc.comments(), with_styles).into_bytes();
+            None => {
+                let name = format!("{dir}comments.xml");
                 if pkg.has_part(&name) {
                     replace.insert(name.clone(), bytes);
                 } else {
@@ -3483,7 +3500,38 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
                     escape(&name)
                 ));
             }
-            None => {}
+        }
+        for (kind, existing, bytes) in threads.parts {
+            match existing {
+                Some(name) => {
+                    replace.insert(name, bytes);
+                }
+                None => {
+                    let name = format!("{dir}{}", kind.file());
+                    if pkg.has_part(&name) {
+                        replace.insert(name.clone(), bytes);
+                    } else {
+                        add.push((name.clone(), bytes));
+                    }
+                    let base = match kind {
+                        Extra::Extended => "rIdKantorCommentsEx",
+                        Extra::Ids => "rIdKantorCommentsIds",
+                        Extra::Extensible => "rIdKantorCommentsCex",
+                        Extra::People => "rIdKantorPeople",
+                    };
+                    let id = fresh_rel_id(pkg, base);
+                    new_rels.push_str(&format!(
+                        "<Relationship Id=\"{id}\" Type=\"{}\" Target=\"{}\"/>",
+                        kind.rel_type(),
+                        escape(&relative_to(&pkg.document_part, &name))
+                    ));
+                    overrides.push_str(&format!(
+                        "<Override PartName=\"/{}\" ContentType=\"{}\"/>",
+                        escape(&name),
+                        kind.content_type()
+                    ));
+                }
+            }
         }
     }
     // Footnotes and endnotes changed or added in Kantor.

@@ -29,6 +29,9 @@ crates/docs_pdf/tests/.
   bold (`w:rPrChange`), a paragraph centred (`w:pPrChange`), a table with a
   deleted row and an inserted row (`w:trPr/w:del`, `w:trPr/w:ins`), an
   insertion in the header and a deletion in a footnote.
+* threads.docx: Word 365 threaded comments: a question with a reply (both
+  on the same word), a resolved comment, with commentsExtended,
+  commentsIds, commentsExtensible and people parts.
 * notes.docx: a footnote too long for its page (Word's continuation
   separator and notice), short footnotes, and endnotes placed at the end
   of each section (`w:endnotePr/w:pos w:val="sectEnd"`) in two sections.
@@ -636,4 +639,60 @@ settings.find(qn("w:compat")).addprevious(
     parse_xml(f'<w:footnotePr {W}><w:footnote w:id="-2"/><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>')
 )
 save(d, "tracked.docx")
+
+# ── threads: Word 365 threaded comments (a reply, a resolved thread) with
+# commentsExtended / commentsIds / commentsExtensible / people parts.
+W14 = 'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
+d = Document()
+p = d.add_paragraph()
+threads = [
+    # (id, author, initials, text, paraId, parent paraId, done, durableId)
+    ("0", "Ani Wijaya", "AW", "Is this the final budget?", "1A000001", None, 0, "2B000001"),
+    ("1", "Budi Santoso", "BS", "Yes, approved on Monday.", "1A000002", "1A000001", 0, "2B000002"),
+    ("2", "Citra Dewi", "CD", "Fix the date.", "1A000003", None, 1, "2B000003"),
+]
+add(p, '<w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/>')
+add(p, '<w:r><w:t>Budget</w:t></w:r>')
+add(p, '<w:commentRangeEnd w:id="0"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="0"/></w:r>')
+add(p, '<w:commentRangeEnd w:id="1"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="1"/></w:r>')
+add(p, '<w:r><w:t xml:space="preserve"> for 2027, dated </w:t></w:r>')
+add(p, '<w:commentRangeStart w:id="2"/><w:r><w:t>10 Nov</w:t></w:r><w:commentRangeEnd w:id="2"/>')
+add(p, '<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="2"/></w:r><w:r><w:t>.</w:t></w:r>')
+d.add_paragraph("A second paragraph without comments.")
+DATE = "2026-11-10T09:00:00Z"
+cx = "".join(
+    f'<w:comment w:id="{i}" w:author="{a}" w:date="{DATE}" w:initials="{ini}">'
+    f'<w:p w14:paraId="{pid}" w14:textId="77777777"><w:r><w:annotationRef/></w:r><w:r><w:t>{t}</w:t></w:r></w:p></w:comment>'
+    for i, a, ini, t, pid, _, _, _ in threads
+)
+ex = "".join(
+    f'<w15:commentEx w15:paraId="{pid}"' + (f' w15:paraIdParent="{par}"' if par else "") + f' w15:done="{done}"/>'
+    for _, _, _, _, pid, par, done, _ in threads
+)
+ids = "".join(f'<w16cid:commentId w16cid:paraId="{t[4]}" w16cid:durableId="{t[7]}"/>' for t in threads)
+cex = "".join(f'<w16cex:commentExtensible w16cex:durableId="{t[7]}" w16cex:dateUtc="{DATE}"/>' for t in threads)
+people = "".join(
+    f'<w15:person w15:author="{a}"><w15:presenceInfo w15:providerId="None" w15:userId="{a}"/></w15:person>'
+    for a in ("Ani Wijaya", "Budi Santoso", "Citra Dewi")
+)
+MC = 'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+W15 = 'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"'
+DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+WML = "application/vnd.openxmlformats-officedocument.wordprocessingml."
+extra = [
+    ("comments", WML + "comments+xml", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+     f'<w:comments {W} {W14} {MC} mc:Ignorable="w14">{cx}</w:comments>'),
+    ("commentsExtended", WML + "commentsExtended+xml", "http://schemas.microsoft.com/office/2011/relationships/commentsExtended",
+     f'<w15:commentsEx {W15} {MC} mc:Ignorable="w15">{ex}</w15:commentsEx>'),
+    ("commentsIds", WML + "commentsIds+xml", "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds",
+     f'<w16cid:commentsIds xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid" {MC} mc:Ignorable="w16cid">{ids}</w16cid:commentsIds>'),
+    ("commentsExtensible", WML + "commentsExtensible+xml", "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible",
+     f'<w16cex:commentsExtensible xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex" {MC} mc:Ignorable="w16cex">{cex}</w16cex:commentsExtensible>'),
+    ("people", WML + "people+xml", "http://schemas.microsoft.com/office/2011/relationships/people",
+     f'<w15:people {W15} {MC} mc:Ignorable="w15">{people}</w15:people>'),
+]
+for name, ct, rel, xml in extra:
+    part = Part(PackURI(f"/word/{name}.xml"), ct, (DECL + xml).encode(), d.part.package)
+    d.part.relate_to(part, rel)
+save(d, "threads.docx")
 print("docx ok")

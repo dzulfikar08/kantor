@@ -9,7 +9,7 @@ use docs_engine::Selection;
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::{
-    Sizable as _,
+    Icon, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
@@ -225,6 +225,40 @@ impl DocsView {
         cx.notify();
     }
 
+    /// Reply to the thread `id` is in and start writing the reply.
+    fn reply_comment_doc(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_comment_edit(window, cx);
+        let author = kantor_core::settings::Settings::load().author_name();
+        let Some(new) = self.doc.reply_comment(id, "", &author) else {
+            return;
+        };
+        let sel = self.sel;
+        self.edited(sel, window, cx);
+        self.edit_comment(new, true, window, cx);
+    }
+
+    /// Resolve or reopen the thread `id` is in.
+    fn resolve_comment_doc(
+        &mut self,
+        id: &str,
+        done: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.save_comment_edit(window, cx);
+        if self.doc.set_comment_done(id, done, self.sel) {
+            let sel = self.sel;
+            self.edited(sel, window, cx);
+            self.status = if done {
+                t("Comment resolved")
+            } else {
+                t("Comment reopened")
+            }
+            .into();
+        }
+        cx.notify();
+    }
+
     fn delete_comment_doc(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.comment_edit = None;
         if self.doc.delete_comment(id, self.sel) {
@@ -419,7 +453,16 @@ impl DocsView {
         let visible = g.visible_pages(paged.pages.len());
         let (sa, sb) = self.sel.ordered();
         let mut cards: Vec<(f32, Card, f32)> = Vec::new();
-        for (id, a) in self.doc.comment_anchors() {
+        let anchors = self.doc.comment_anchors();
+        for (id, a) in &anchors {
+            // Replies show in their thread's card.
+            let Some(root) = self.doc.thread_root(id) else {
+                continue;
+            };
+            if root != *id {
+                continue;
+            }
+            let (id, a) = (id.clone(), *a);
             let Some(c) = paged.caret(a.start.para, a.start.offset) else {
                 continue;
             };
@@ -430,18 +473,31 @@ impl DocsView {
             let (pw, _) = g.page_size(c.page);
             let right = g.page_to_screen(c.page, pw, c.top);
             let at = point(right.x + px(16.), g.page_to_screen(c.page, 0., c.top).y);
+            let replies = self.doc.thread_replies(&id);
+            let in_thread = |x: &str| x == id || replies.iter().any(|r| r.id == x);
             let active = (a.start <= sb && a.end >= sa)
-                || self.comment_edit.as_ref().is_some_and(|e| e.id == id);
-            let text = self
+                || self.comment_edit.as_ref().is_some_and(|e| in_thread(&e.id));
+            let done = self
                 .doc
                 .comments()
                 .iter()
                 .find(|x| x.id == id)
-                .map_or(0, |x| x.text.chars().count());
-            let editing = self.comment_edit.as_ref().is_some_and(|e| e.id == id);
-            // Rough height: header, ~32 characters a line, padding.
-            let lines = (text as f32 / 32.0).ceil().max(1.0);
-            let h = if editing { 150.0 } else { 46.0 + lines * 18.0 };
+                .is_some_and(|x| x.done);
+            // Rough height: per comment a header, ~32 characters a line;
+            // a resolved thread shows its first comment only.
+            // Padding and the Reply / Resolve row, the Resolved label.
+            let mut h = 64.0 + if done { 22.0 } else { 0.0 };
+            let shown: Vec<&docs_engine::Comment> = self
+                .doc
+                .comments()
+                .iter()
+                .filter(|x| x.id == id || (!done && replies.iter().any(|r| r.id == x.id)))
+                .collect();
+            for x in shown {
+                let editing = self.comment_edit.as_ref().is_some_and(|e| e.id == x.id);
+                let lines = (x.text.chars().count() as f32 / 32.0).ceil().max(1.0);
+                h += if editing { 130.0 } else { 58.0 + lines * 20.0 };
+            }
             cards.push((
                 f32::from(at.y),
                 Card {
@@ -523,113 +579,82 @@ impl DocsView {
                 }
                 let c = self.doc.comments().iter().find(|c| c.id == card.id)?;
                 let id = card.id.clone();
-                let editing = self.comment_edit.as_ref().filter(|e| e.id == card.id);
-                let header = h_flex()
-                    .gap(SPACE_2)
-                    .child(
-                        div()
-                            .flex_none()
-                            .size(px(20.))
-                            .rounded_full()
-                            .bg(t.accent_soft)
-                            .text_color(t.accent)
-                            .flex()
-                            .items_center()
-                            .justify_center()
+                let replies = self.doc.thread_replies(&id);
+                let editing_here = self
+                    .comment_edit
+                    .as_ref()
+                    .is_some_and(|e| e.id == id || replies.iter().any(|r| r.id == e.id));
+                let mut col = v_flex().gap(SPACE_2);
+                if c.done {
+                    col = col.child(
+                        h_flex()
+                            .gap(SPACE_1)
                             .text_size(FONT_SMALL)
-                            .child(if c.initials.is_empty() {
-                                c.author
-                                    .chars()
-                                    .next()
-                                    .map(String::from)
-                                    .unwrap_or_default()
-                            } else {
-                                c.initials.clone()
-                            }),
-                    )
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .child(div().text_color(t.fg).truncate().child(c.author.clone()))
-                            .child(
-                                div()
-                                    .text_size(FONT_SMALL)
-                                    .text_color(t.fg_dim)
-                                    .child(short_date(&c.date)),
-                            ),
-                    )
-                    .when(editing.is_none(), |h| {
-                        let (v1, v2, i1, i2) = (view.clone(), view.clone(), id.clone(), id.clone());
-                        h.child(
-                            Button::new(SharedString::from(format!("comment-edit-{id}")))
-                                .ghost()
-                                .xsmall()
-                                .icon(Lucide::SquarePen)
-                                .tooltip(i18n::t("Edit comment"))
-                                .on_click(move |_, window, cx| {
-                                    let _ = v1.update(cx, |this, cx| {
-                                        this.save_comment_edit(window, cx);
-                                        this.edit_comment(i1.clone(), false, window, cx)
-                                    });
-                                }),
-                        )
-                        .child(
-                            Button::new(SharedString::from(format!("comment-delete-{id}")))
-                                .ghost()
-                                .xsmall()
-                                .icon(Lucide::Trash)
-                                .tooltip(i18n::t("Delete comment"))
-                                .on_click(move |_, window, cx| {
-                                    let _ = v2.update(cx, |this, cx| {
-                                        this.delete_comment_doc(&i2, window, cx)
-                                    });
-                                }),
-                        )
-                    });
-                let body: AnyElement = match editing {
-                    Some(e) => {
-                        let (v1, v2) = (view.clone(), view.clone());
-                        v_flex()
-                            .gap(SPACE_2)
-                            .child(Textarea::new(&e.input).small())
-                            .child(
-                                h_flex()
-                                    .gap(SPACE_2)
-                                    .child(div().flex_1())
-                                    .child(
-                                        Button::new("comment-cancel")
-                                            .ghost()
-                                            .xsmall()
-                                            .label(i18n::t("Cancel"))
-                                            .on_click(move |_, window, cx| {
-                                                let _ = v1.update(cx, |this, cx| {
-                                                    this.cancel_comment_edit(window, cx)
-                                                });
-                                            }),
-                                    )
-                                    .child(
-                                        Button::new("comment-save")
-                                            .primary()
-                                            .xsmall()
-                                            .label(i18n::t("Comment"))
-                                            .tooltip("Ctrl+Enter")
-                                            .on_click(move |_, window, cx| {
-                                                let _ = v2.update(cx, |this, cx| {
-                                                    this.save_comment_edit(window, cx);
-                                                    this.focus(window, cx);
-                                                });
-                                            }),
-                                    ),
-                            )
-                            .into_any_element()
+                            .text_color(t.fg_dim)
+                            .child(Icon::new(Lucide::CircleCheck).xsmall().text_color(t.fg_dim))
+                            .child(i18n::t("Resolved")),
+                    );
+                }
+                col = col.child(self.comment_block(c, true, &view, &t));
+                if !c.done {
+                    for r in &replies {
+                        col = col.child(
+                            div()
+                                .pl(SPACE_3)
+                                .border_l_2()
+                                .border_color(t.border)
+                                .child(self.comment_block(r, false, &view, &t)),
+                        );
                     }
-                    None => div()
-                        .text_color(t.fg)
-                        .whitespace_normal()
-                        .child(c.text.clone())
-                        .into_any_element(),
-                };
+                } else if !replies.is_empty() {
+                    let n = replies.len();
+                    col = col.child(div().text_size(FONT_SMALL).text_color(t.fg_dim).child(
+                        if n == 1 {
+                            i18n::t("1 reply").to_owned()
+                        } else {
+                            tf("{} replies", &[&n])
+                        },
+                    ));
+                }
+                if !editing_here {
+                    let (v1, v2, i1, i2) = (view.clone(), view.clone(), id.clone(), id.clone());
+                    let done = c.done;
+                    col = col.child(
+                        h_flex()
+                            .gap(SPACE_2)
+                            .when(!done, |h| {
+                                h.child(
+                                    Button::new(SharedString::from(format!("comment-reply-{id}")))
+                                        .ghost()
+                                        .xsmall()
+                                        .icon(Lucide::Reply)
+                                        .label(i18n::t("Reply"))
+                                        .on_click(move |_, window, cx| {
+                                            let _ = v1.update(cx, |this, cx| {
+                                                this.reply_comment_doc(&i1, window, cx)
+                                            });
+                                        }),
+                                )
+                            })
+                            .child(div().flex_1())
+                            .child(
+                                Button::new(SharedString::from(format!("comment-resolve-{id}")))
+                                    .ghost()
+                                    .xsmall()
+                                    .when(!done, |b| b.icon(Lucide::CircleCheck))
+                                    .label(if done {
+                                        i18n::t("Reopen")
+                                    } else {
+                                        i18n::t("Resolve")
+                                    })
+                                    .on_click(move |_, window, cx| {
+                                        let _ = v2.update(cx, |this, cx| {
+                                            this.resolve_comment_doc(&i2, !done, window, cx)
+                                        });
+                                    }),
+                            ),
+                    );
+                }
                 let v = view.clone();
                 let go = id.clone();
                 Some(
@@ -639,13 +664,13 @@ impl DocsView {
                         .left(card.at.x - origin.x)
                         .top(card.at.y - origin.y)
                         .w(px(CARD_W))
-                        .gap(SPACE_2)
                         .p(SPACE_3)
                         .rounded(RADIUS_LG)
                         .bg(t.elevated)
                         .border_1()
                         .border_color(if card.active { t.accent } else { t.border })
                         .when(card.active, |d| d.shadow(t.shadow(Elevation::Popover)))
+                        .when(c.done && !card.active, |d| d.opacity(0.7))
                         .text_size(FONT_SMALL)
                         .cursor_pointer()
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -656,12 +681,143 @@ impl DocsView {
                                 }
                             });
                         })
-                        .child(header)
-                        .child(body)
+                        .child(col)
                         .into_any_element(),
                 )
             })
             .collect()
+    }
+
+    /// One comment of a thread: who wrote it when, its text (or its
+    /// editor), and Edit / Delete buttons (Delete on the first comment
+    /// deletes the thread, as in Word).
+    fn comment_block(
+        &self,
+        c: &docs_engine::Comment,
+        root: bool,
+        view: &WeakEntity<DocsView>,
+        t: &kantor_ui::tokens::Tokens,
+    ) -> AnyElement {
+        let id = c.id.clone();
+        let editing = self.comment_edit.as_ref().filter(|e| e.id == c.id);
+        let header = h_flex()
+            .gap(SPACE_2)
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(20.))
+                    .rounded_full()
+                    .bg(t.accent_soft)
+                    .text_color(t.accent)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(FONT_SMALL)
+                    .child(if c.initials.is_empty() {
+                        c.author
+                            .chars()
+                            .next()
+                            .map(String::from)
+                            .unwrap_or_default()
+                    } else {
+                        c.initials.clone()
+                    }),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(div().text_color(t.fg).truncate().child(c.author.clone()))
+                    .child(
+                        div()
+                            .text_size(FONT_SMALL)
+                            .text_color(t.fg_dim)
+                            .child(short_date(&c.date)),
+                    ),
+            )
+            .when(editing.is_none(), |h| {
+                let (v1, v2, i1, i2) = (view.clone(), view.clone(), id.clone(), id.clone());
+                h.child(
+                    Button::new(SharedString::from(format!("comment-edit-{id}")))
+                        .ghost()
+                        .xsmall()
+                        .icon(Lucide::SquarePen)
+                        .tooltip(i18n::t("Edit comment"))
+                        .on_click(move |_, window, cx| {
+                            let _ = v1.update(cx, |this, cx| {
+                                this.save_comment_edit(window, cx);
+                                this.edit_comment(i1.clone(), false, window, cx)
+                            });
+                        }),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("comment-delete-{id}")))
+                        .ghost()
+                        .xsmall()
+                        .icon(Lucide::Trash)
+                        .tooltip(if root {
+                            i18n::t("Delete thread")
+                        } else {
+                            i18n::t("Delete comment")
+                        })
+                        .on_click(move |_, window, cx| {
+                            let _ =
+                                v2.update(cx, |this, cx| this.delete_comment_doc(&i2, window, cx));
+                        }),
+                )
+            });
+        let body: AnyElement = match editing {
+            Some(e) => {
+                let (v1, v2) = (view.clone(), view.clone());
+                v_flex()
+                    .gap(SPACE_2)
+                    .child(Textarea::new(&e.input).small())
+                    .child(
+                        h_flex()
+                            .gap(SPACE_2)
+                            .child(div().flex_1())
+                            .child(
+                                Button::new("comment-cancel")
+                                    .ghost()
+                                    .xsmall()
+                                    .label(i18n::t("Cancel"))
+                                    .on_click(move |_, window, cx| {
+                                        let _ = v1.update(cx, |this, cx| {
+                                            this.cancel_comment_edit(window, cx)
+                                        });
+                                    }),
+                            )
+                            .child(
+                                Button::new("comment-save")
+                                    .primary()
+                                    .xsmall()
+                                    .label(if root {
+                                        i18n::t("Comment")
+                                    } else {
+                                        i18n::t("Reply")
+                                    })
+                                    .tooltip("Ctrl+Enter")
+                                    .on_click(move |_, window, cx| {
+                                        let _ = v2.update(cx, |this, cx| {
+                                            this.save_comment_edit(window, cx);
+                                            this.focus(window, cx);
+                                        });
+                                    }),
+                            ),
+                    )
+                    .into_any_element()
+            }
+            None => div()
+                .text_color(t.fg)
+                .whitespace_normal()
+                .child(c.text.clone())
+                .into_any_element(),
+        };
+        v_flex()
+            .gap(SPACE_2)
+            .child(header)
+            .child(body)
+            .into_any_element()
     }
 }
 

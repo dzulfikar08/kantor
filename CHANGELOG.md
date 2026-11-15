@@ -11,6 +11,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Docs: comments can be replied to, resolved and reopened, as in Word: each comment card shows
+  its thread (the replies under the first comment), a Reply box, and Resolve / Reopen; a
+  resolved thread is dimmed and folded to its first comment. Deleting the first comment deletes
+  the whole thread. Threads are saved the way Word 365 saves them (`commentsExtended`,
+  `commentsIds`, `commentsExtensible` and `people` parts), so replies and resolved comments from
+  Word open as threads and come back to Word unchanged.
 - Docs: with Track Changes on, formatting changes are tracked as in Word (bold, italic,
   underline, fonts, sizes, colours, styles, alignment, indents, spacing, lists and tab stops):
   each shows as a balloon beside the page ("Formatted: Font: Bold", with its author and date) and
