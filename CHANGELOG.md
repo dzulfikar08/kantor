@@ -39,6 +39,21 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   styles with Row / Column Headers and Banded Rows / Columns. Everything is one undo step, kept
   by Refresh and saved as Excel saves it; files with these settings now refresh and rearrange
   instead of being refused.
+- Sheets: `FORECAST.ETS`, `FORECAST.ETS.CONFINT`, `FORECAST.ETS.SEASONALITY` and
+  `FORECAST.ETS.STAT` calculate, with Excel's exponential triple smoothing. Results match
+  Excel's to the last digit, including seasonality detection, missing points (filled in or
+  zero) and repeated dates (averaged, or any of the seven aggregations).
+- Sheets: `GROUPBY` and `PIVOTBY` take several functions at once: `HSTACK(SUM,AVERAGE)` puts
+  each in its own columns under the function names, `VSTACK(SUM,AVERAGE)` gives each group one
+  row per function, and `VSTACK(HSTACK(SUM,AVERAGE),{"Total","Mean"})` names them yourself.
+- Sheets: `EUROCONVERT` converts between the euro and the currencies it replaced, with
+  Excel's rates and rounding, and `FILTERXML` picks values out of XML with an XPath
+  expression (several matches spill down the column).
+- Sheets: `IMAGE` and `WEBSERVICE` are recognised. They show `#BLOCKED!` for now, because
+  Kantor doesn't download from formulas yet. `CUBEVALUE` and the other cube functions, `RTD`,
+  `STOCKHISTORY`, `TRANSLATE`, `DETECTLANGUAGE`, `COPILOT` and `PY` keep the results Excel
+  saved in the file instead of showing `#NAME?`. Typed in Kantor, they give the error Excel
+  gives without a connection.
 - Sheets: a new pivot table on the same data as another shares its cache, as Excel does, and
   Move or Copy brings a sheet's pivot tables to the copy.
 - Strict Open XML files (Office's "Strict Open XML" Save As type, ISO/IEC 29500 Strict) open in

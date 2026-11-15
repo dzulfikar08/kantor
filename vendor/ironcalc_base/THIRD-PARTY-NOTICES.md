@@ -1,5 +1,16 @@
 # Third-party notices
 
+## formulon (FORECAST.ETS)
+
+`src/functions/kantor_ets/` is a Rust port of parts of formulon
+(https://github.com/libraz/formulon): `src/eval/forecast_ets_lazy.cpp`,
+`src/eval/holt_winters.cpp`, `src/eval/ets_series.cpp` and the normal
+quantile of `src/eval/stats/special_functions.cpp`. Copyright libraz and the
+formulon contributors. Licensed under the Apache License, Version 2.0
+(http://www.apache.org/licenses/LICENSE-2.0, the same text as
+`LICENSE-Apache-2.0` in this directory). Changes: translated to Rust and
+adapted to IronCalc's values and errors (KANTOR_PATCHES.md §25).
+
 ## Unicode CLDR locale data
 
 `src/locale/locales.bin` (and its human-readable form,

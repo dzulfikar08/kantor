@@ -16,6 +16,10 @@ Kantor includes code from these projects, under their own licences:
   texts, notices and changes are in that directory (LICENSE-MIT, LICENSE-Apache-2.0,
   THIRD-PARTY-NOTICES.md, KANTOR_PATCHES.md).
 
+* formulon (https://github.com/libraz/formulon), Apache-2.0. The FORECAST.ETS functions in
+  vendor/ironcalc_base/src/functions/kantor_ets are a Rust port of its implementation; see
+  vendor/ironcalc_base/THIRD-PARTY-NOTICES.md.
+
 * GPUI (https://github.com/zed-industries/zed), Apache-2.0. vendor/gpui-pre-wgpu is a patched
   copy; see that directory.
 

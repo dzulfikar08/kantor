@@ -210,8 +210,7 @@ GridCraft's, which has the same ones), upstream 0.9.1 lacks only AGGREGATE,
 GROUPBY, PIVOTBY, BAHTTEXT, USDOLLAR, DBCS, JIS, PHONETIC, EUROCONVERT,
 FILTERXML, WEBSERVICE, the CUBE* functions, GETPIVOTDATA (added later, section
 14) and the server/online ones (RTD, STOCKHISTORY, IMAGE, TRANSLATE, ...). The first eight are
-added; the rest need data Kantor doesn't have (OLAP cubes, pivot caches, the
-network). Marked `KANTOR PATCH (functions)`.
+added here; the rest in section 25. Marked `KANTOR PATCH (functions)`.
 
 What:
 
@@ -233,8 +232,8 @@ What:
   hierarchy; filter array; `field_relationship` 1; `relative_to` 0–4 for a
   two-argument function (PERCENTOF or `LAMBDA(part,all,...)`). Text keys group
   regardless of case; blanks in the result are written as empty text, since a
-  spilled blank shows as 0. A vector of functions is not supported (#VALUE!). A
-  whole-column reference is read to the last used row plus one blank row.
+  spilled blank shows as 0. A vector of functions (HSTACK/VSTACK) is section
+  25. A whole-column reference is read to the last used row plus one blank row.
 * Eta LAMBDAs (a function passed by name, `GROUPBY(...,SUM)`): the parser drops
   `_xleta.` (the result is an unbound `NamedVariableKind`, as a bare `SUM` was
   already); `Model::lambda_arg` turns such a name into a LAMBDA of the arity the
@@ -677,6 +676,80 @@ What (`src/kantor_sheets.rs`, `src/user_model/{history,undo_redo}.rs`,
 
 Tests: `test/test_kantor_tables.rs` (`renaming_table_refs_in_a_copied_sheet`).
 
+## 25. FORECAST.ETS, functions vectors, EUROCONVERT, FILTERXML, IMAGE, WEBSERVICE, online functions
+
+Why: the last functions of Excel's list that gave `#NAME?` or `#N/IMPL`.
+Marked `KANTOR PATCH (functions)`.
+
+What:
+
+* `functions/kantor_ets/`: FORECAST.ETS, .CONFINT, .SEASONALITY and .STAT,
+  replacing upstream's `#N/IMPL` stubs in `statistical/forecast.rs`. A port
+  of formulon's reverse-engineered implementation
+  (https://github.com/libraz/formulon, `src/eval/{forecast_ets_lazy,
+  holt_winters,ets_series}.cpp` and the normal quantile of
+  `src/eval/stats/special_functions.cpp`, Apache-2.0, see
+  THIRD-PARTY-NOTICES.md): the timeline read onto a regular grid (step
+  histogram, calendar months, gaps filled by interpolation or zeros, the
+  seven aggregations of repeated timestamps, at most 30 % missing),
+  seasonality detection (periodograms and autocorrelation), the ETS AAA fit
+  (alpha/beta/gamma from a fixed candidate table scored by a holdout SSE,
+  least-squares initial trend, short series extended), statistics and
+  prediction intervals. Floating-point operations keep formulon's order and
+  its flushing of subnormal results (`num.rs`), since results are compared to
+  the last bit. Tolerance achieved: 0 (bit-exact) on all 62 values formulon
+  recorded from Excel 365 (Mac 16.114.1, Windows the same) and on Lewis
+  Walsh's `Forecast_ETS.xlsx` (alpha, beta, gamma, MASE, SMAPE, MAE, RMSE,
+  four forecasts, two interval bounds); 11 of 13 results in the `formulas`
+  Python package's tests agree to their 10 digits (the two others are a
+  seasonality formulon detects differently and an interpolated seasonal
+  target, formulon gives the same as Kantor). LibreOffice's FORECAST.ETS.ADD
+  is a different algorithm (Walsh data: 171.36 for Excel's 172.835).
+* `functions/kantor_groupby.rs`: GROUPBY and PIVOTBY take a vector of
+  functions. `HSTACK(f, g)`: each function's columns side by side under a
+  row of function names (`SUM`, `AVERAGE`; a LAMBDA is `LAMBDA`), over a row
+  of value headers when there are several value columns; the key header
+  shows in the function row when headers are shown and there is one value
+  column (as Excel). `VSTACK(f, g)`: one row per function, its name in a
+  column after the keys. `VSTACK(HSTACK(f, g), {"a","b"})` (or
+  `HSTACK(VSTACK(...), {"a";"b"})`) labels them; a label count that
+  differs is `#VALUE!`. Sorting by a value column counts the function
+  columns.
+* `functions/kantor_euro.rs`: EUROCONVERT with Microsoft's table (14 codes,
+  rates, calculation precision), `full_precision`, `triangulation_precision`
+  (significant digits of the euro amount, also for a conversion to EUR).
+* `functions/kantor_xml.rs`: FILTERXML over `roxmltree` (new dependency,
+  MIT/Apache-2.0) with an XPath 1.0 evaluator (paths, all axes but
+  namespace, predicates, unions, operators, the core functions). Numeric
+  text is a number; several matches spill down. No match, malformed input,
+  a non-node-set result or a namespace prefix is `#VALUE!`; an unprefixed
+  name doesn't match an element in a namespace (Excel can't declare one).
+* `functions/kantor_web.rs`: IMAGE and WEBSERVICE read `Model::kantor_web`,
+  filled by the host (`kantor_web_requests`, `kantor_set_web_result`;
+  `UserModel` has the same). Off by default (`kantor_set_web_enabled`):
+  `#BLOCKED!`. Waiting: `#BUSY!`. An IMAGE cell's value is its alt text and
+  `kantor_cell_image` gives what to draw (kept per evaluation). Both are in
+  the always-recalculated list of `kantor_recalc.rs`. The CUBE functions,
+  RTD, STOCKHISTORY, TRANSLATE, DETECTLANGUAGE, COPILOT and PY return the
+  value saved in their cell (the whole spill of a dynamic array) when the
+  formula is that function call (through an implicit intersection), so a
+  file's results round-trip; otherwise Excel's error without a connection
+  (`#NAME?` for CUBE*, `#N/A` for RTD, `#CONNECT!` for the rest).
+* New errors `Error::CONNECT`, `BLOCKED`, `BUSY` (`#CONNECT!`, `#BLOCKED!`,
+  `#BUSY!`) at the end of the enum: English names in every language
+  (`token.rs`, the lexer), ERROR.TYPE 10 and 11 (`#BUSY!` is `#N/A`). The
+  xlsx writer writes them as `#VALUE!` (vendor/ironcalc §11).
+* Names in `kantor_names.rs`; xlsx names `_xlfn.FILTERXML`,
+  `_xlfn.WEBSERVICE`, `_xlfn.IMAGE`, `_xlfn.STOCKHISTORY`, `_xlfn.TRANSLATE`,
+  `_xlfn.DETECTLANGUAGE`, `_xlfn._xlws.PY`; EUROCONVERT, CUBE*, RTD and
+  COPILOT without a prefix. `round_to_digits` (ROUND) is `pub(crate)`.
+
+Tests: `test/test_kantor_ets.rs`, `test/test_kantor_web.rs`, the function
+vector cases of `test/test_kantor_functions.rs`,
+`expressions/parser/tests/test_kantor_functions_export.rs`, and Kantor's
+`crates/sheets_engine/tests/functions.rs` (xlsx round trips, saved values
+of online functions).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the
@@ -696,7 +769,7 @@ saved,test}.rs`, `worksheet.rs`, `test/dynamic_evaluation/test_range_reads.rs`; 
 section 7 `types.rs`, `styles.rs`, `builtin_styles.rs`, `worksheet.rs`,
 `user_model/common.rs` and test literals; for section 8 `actions.rs`,
 `user_model/common.rs`, `test/user_model/{mod,test_kantor_defined_names_move}.rs`;
-for section 12 the new files `kantor_tables.rs`, `test/test_kantor_tables.rs` and hunks in `expressions/{token,lexer/mod,lexer/structured_references,parser/mod,parser/stringify,parser/move_formula,parser/static_analysis}.rs`, `model.rs`, `units.rs`, `actions.rs`, `types.rs`, `new_empty.rs`, `functions/subtotal.rs`, `user_model/{history,undo_redo,common}.rs`; for section 10 the new files `functions/kantor_*.rs` and the two test files, plus
+for section 12 the new files `kantor_tables.rs`, `test/test_kantor_tables.rs` and hunks in `expressions/{token,lexer/mod,lexer/structured_references,parser/mod,parser/stringify,parser/move_formula,parser/static_analysis}.rs`, `model.rs`, `units.rs`, `actions.rs`, `types.rs`, `new_empty.rs`, `functions/subtotal.rs`, `user_model/{history,undo_redo,common}.rs`; for sections 10 and 25 the new files `functions/kantor_*.rs` (and the directory `functions/kantor_ets/`) and their test files, plus
 `functions/{mod,subtotal}.rs`, `functions/logical/{bycol_byrow,map_reduce,scan}.rs`,
 `functions/statistical/count_and_average.rs`, `expressions/parser/{mod,stringify,static_analysis}.rs`,
 `lib.rs`, `test/mod.rs`, `expressions/parser/tests/mod.rs`)
