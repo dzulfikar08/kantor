@@ -140,6 +140,10 @@ pub struct SheetPlan {
     /// A chart sheet (its index in `Workbook::chart_sheet_name`): one page,
     /// its chart filling the printable area; `sheet` is then unused.
     pub chart_sheet: Option<usize>,
+    /// Page Setup's Comments "At end of sheet": the pages listing its notes
+    /// after its cells, each a list of (text, top, height) in points from
+    /// the top margin.
+    pub notes_pages: Vec<Vec<(String, f32, f32)>>,
 }
 
 impl SheetPlan {
@@ -168,6 +172,9 @@ pub struct PageRef {
     pub number: i64,
     /// 1-based position within its sheet (for "different first page").
     pub nth: usize,
+    /// A page of the sheet's notes printed at its end (an index into
+    /// [`SheetPlan::notes_pages`]) instead of cells.
+    pub notes: Option<usize>,
 }
 
 /// Every page of a print job.
@@ -224,8 +231,28 @@ impl Plan {
                         rows: r,
                         number,
                         nth,
+                        notes: None,
                     });
                 }
+            }
+            let mut plan = plan;
+            if let sheets_engine::Tab::Sheet(sheet) = tab
+                && plan.print.setup.comments == sheets_engine::PrintComments::AtEnd
+            {
+                plan.notes_pages = notes_pages(book, sheet, &plan, shaper);
+            }
+            for k in 0..plan.notes_pages.len() {
+                nth += 1;
+                number += 1;
+                pages.push(PageRef {
+                    sheet: ix,
+                    area: 0,
+                    cols: 0,
+                    rows: 0,
+                    number,
+                    nth,
+                    notes: Some(k),
+                });
             }
             plans.push(plan);
         }
@@ -236,6 +263,52 @@ impl Plan {
             options: opts.clone(),
         }
     }
+}
+
+/// Size of the notes printed at the end of a sheet, points.
+pub(crate) const NOTES_FONT: f32 = 10.0;
+
+/// The notes of `sheet` as Excel prints them at the end of the sheet
+/// ("Cell: B3", then "Comment: " and the note), in row then column order,
+/// split into pages of the printable height.
+fn notes_pages(
+    book: &Workbook,
+    sheet: u32,
+    plan: &SheetPlan,
+    shaper: &mut Shaper,
+) -> Vec<Vec<(String, f32, f32)>> {
+    let notes = book.notes_now(sheet);
+    let mut list: Vec<_> = notes.values().collect();
+    list.sort_by_key(|n| (n.row, n.col));
+    let m = plan.print.margins;
+    let w = (plan.page.0 - (m.left + m.right) * INCH).max(36.0) as f32;
+    let h = (plan.page.1 - (m.top + m.bottom) * INCH).max(36.0) as f32;
+    let font = FontKey::new(
+        extract::family(&book.default_font_name()),
+        NOTES_FONT,
+        false,
+        false,
+    );
+    let gap = shaper.line(" ", &font).height;
+    let mut pages: Vec<Vec<(String, f32, f32)>> = Vec::new();
+    let mut y = f32::INFINITY;
+    for n in list {
+        let text = format!(
+            "Cell: {}\nComment: {}",
+            sheets_engine::cell_name(n.row, n.col),
+            n.text
+        );
+        let need = shaper.wrapped(&text, &font, w, false).height;
+        if y + need > h && y > 0.0 {
+            pages.push(Vec::new());
+            y = 0.0;
+        }
+        if let Some(page) = pages.last_mut() {
+            page.push((text, y, need));
+        }
+        y += need + gap;
+    }
+    pages
 }
 
 /// A chart sheet's one page: its print settings (with `opts`' overrides)
@@ -287,6 +360,7 @@ fn chart_sheet_plan(book: &Workbook, k: usize, opts: &Options) -> SheetPlan {
         )],
         drawings,
         chart_sheet: Some(k),
+        notes_pages: Vec::new(),
     }
 }
 
@@ -389,6 +463,7 @@ fn sheet_plan(
         areas: Vec::new(),
         drawings: Default::default(),
         chart_sheet: None,
+        notes_pages: Vec::new(),
     };
     let mut grids = Vec::new();
     for area in areas {
@@ -481,6 +556,9 @@ pub struct PageContent {
     /// Size of the block (unscaled).
     pub block: [f32; 2],
     pub fills: Vec<([f32; 4], u32)>,
+    /// Patterned fills: the cell, Excel's 8 × 8 tile and the dots' colour
+    /// (over their background in `fills`).
+    pub patterns: Vec<([f32; 4], [u8; 8], u32)>,
     /// Data bars and icons, under the text.
     pub bars: Vec<Bar>,
     pub icons: Vec<Icon>,
@@ -488,8 +566,14 @@ pub struct PageContent {
     /// Gridlines and borders, over the text.
     pub lines: Vec<Line>,
     pub overlays: Vec<Overlay>,
+    /// Notes printed where they show on the sheet (Page Setup's Comments
+    /// "As displayed on sheet"): their boxes over everything else.
+    pub notes: Vec<NoteBoxPrint>,
     pub header: hf::Parts,
     pub footer: hf::Parts,
+    /// The pictures of `&G` codes: header then footer, left, centre and
+    /// right sections.
+    pub hf_pictures: [[Option<sheets_engine::HfPicture>; 3]; 2],
     /// Header and footer placement and their default font.
     pub hf: HfLayout,
 }
@@ -580,6 +664,14 @@ pub struct CellText {
 }
 
 pub use text::FontKey;
+
+/// A note's box on a printed page: its rectangle (points, like the cells)
+/// and its text.
+#[derive(Debug, Clone)]
+pub struct NoteBoxPrint {
+    pub rect: [f32; 4],
+    pub text: CellText,
+}
 
 /// Print `opts.sheets` of a workbook to PDF. Returns the PDF and its page
 /// count.

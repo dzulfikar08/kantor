@@ -28,6 +28,9 @@ hayro = { version = "0.9", default-features = false }
 [dev-dependencies]
 lopdf = { version = "0.47", default-features = false }
 tempfile.workspace = true
+# Fixtures: packages patched with what Kantor can't make (patterned fills,
+# header pictures).
+zip.workspace = true
 
 [lints]
 workspace = true

@@ -11,6 +11,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Sheets printing: *Insert Page Break*, *Remove Page Break* and *Reset All Page Breaks* (the
+  toolbar's printer menu or the palette) work as in Excel, show as dashed lines in the sheet and
+  are saved in the file. Page Setup edits a different first page and different odd and even
+  pages' headers and footers, and prints notes (Sheet ▸ Comments: at the end of the sheet or as
+  displayed on the sheet). Patterned cell fills print as their patterns, and header and footer
+  pictures (`&G`) and theme colours in headers print as in Excel.
 - Sheets: a sort under a filter or in a table is remembered as in Excel: the filter button
   shows an arrow on the sorted column, *Reapply* sorts again after edits, and the sort is saved
   in the file (and read from Excel's files).

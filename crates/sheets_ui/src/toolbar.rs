@@ -600,6 +600,9 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
                 let setup = print_view.clone();
                 let area = print_view.clone();
                 let clear = print_view.clone();
+                let insert_break = print_view.clone();
+                let remove_break = print_view.clone();
+                let reset_breaks = print_view.clone();
                 menu.separator()
                     .item(PopupMenuItem::new(i18n::t("Page Setup…")).on_click(
                         move |_, window, cx| {
@@ -618,6 +621,34 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
                                 clear.update(cx, |v, cx| v.set_print_area_doc(true, window, cx));
                         },
                     ))
+                    .separator()
+                    .item(PopupMenuItem::new(i18n::t("Insert Page Break")).on_click(
+                        move |_, window, cx| {
+                            let _ = insert_break.update(cx, |v, cx| {
+                                v.page_break_doc(crate::page_setup::PageBreakOp::Insert, window, cx)
+                            });
+                        },
+                    ))
+                    .item(PopupMenuItem::new(i18n::t("Remove Page Break")).on_click(
+                        move |_, window, cx| {
+                            let _ = remove_break.update(cx, |v, cx| {
+                                v.page_break_doc(crate::page_setup::PageBreakOp::Remove, window, cx)
+                            });
+                        },
+                    ))
+                    .item(
+                        PopupMenuItem::new(i18n::t("Reset All Page Breaks")).on_click(
+                            move |_, window, cx| {
+                                let _ = reset_breaks.update(cx, |v, cx| {
+                                    v.page_break_doc(
+                                        crate::page_setup::PageBreakOp::Reset,
+                                        window,
+                                        cx,
+                                    )
+                                });
+                            },
+                        ),
+                    )
                     .separator()
                     .item(
                         PopupMenuItem::new(i18n::t("Print…"))

@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use pivot_check::{el, parts};
 use roxmltree::Document;
 use sheets_engine::{
-    CellRange, HeaderFooter, Margins, PageSetup, Paper, PrintOptions, SheetPrint, Workbook,
+    CellRange, HeaderFooter, Margins, PageSetup, Paper, PrintComments, PrintOptions, SheetPrint,
+    Workbook,
 };
 
 /// Children of `<worksheet>` in schema order (CT_Worksheet), the part the
@@ -74,6 +75,7 @@ fn settings() -> SheetPrint {
             over_then_down: true,
             first_page_number: Some(3),
             black_and_white: false,
+            comments: PrintComments::AtEnd,
         },
         margins: Margins::NARROW,
         options: PrintOptions {
@@ -89,11 +91,12 @@ fn settings() -> SheetPrint {
             align_with_margins: true,
             ..HeaderFooter::default()
         },
-        row_breaks: Vec::new(),
-        col_breaks: Vec::new(),
+        row_breaks: vec![5],
+        col_breaks: vec![2],
         print_area: vec![CellRange::from_corners((1, 1), (9, 3))],
         title_rows: Some((0, 1)),
         title_cols: Some((0, 0)),
+        hf_pictures: Vec::new(),
     }
 }
 
@@ -134,6 +137,12 @@ fn page_setup_undoes_saves_and_reads_back() {
     assert_eq!(setup.attribute("pageOrder"), Some("overThenDown"));
     assert_eq!(setup.attribute("firstPageNumber"), Some("3"));
     assert_eq!(setup.attribute("useFirstPageNumber"), Some("1"));
+    assert_eq!(setup.attribute("cellComments"), Some("atEnd"));
+    let rb = el(root, "rowBreaks").expect("rowBreaks");
+    assert_eq!(rb.attribute("manualBreakCount"), Some("1"));
+    assert_eq!(el(rb, "brk").unwrap().attribute("id"), Some("5"));
+    let cb = el(root, "colBreaks").expect("colBreaks");
+    assert_eq!(el(cb, "brk").unwrap().attribute("id"), Some("2"));
     let fit = el(el(root, "sheetPr").unwrap(), "pageSetUpPr").unwrap();
     assert_eq!(fit.attribute("fitToPage"), Some("1"));
     let m = el(root, "pageMargins").unwrap();
@@ -297,4 +306,41 @@ fn header_sections_split_and_join() {
     assert_eq!(split_sections("Plain")[1], "Plain");
     assert_eq!(Paper::FOLIO.code(), Some(14));
     assert_eq!(Paper::mm(100.0, 100.0).code(), None);
+}
+
+/// Insert Page Break, Remove Page Break and Reset All Page Breaks, each one
+/// undo step, saved as Excel's manual breaks.
+#[test]
+fn manual_page_breaks() {
+    let mut wb = data_book();
+    wb.insert_page_break(0, Some(4), Some(2)).unwrap();
+    wb.insert_page_break(0, Some(8), None).unwrap();
+    let p = wb.print_settings(0);
+    assert_eq!((p.row_breaks, p.col_breaks), (vec![4, 8], vec![2]));
+    assert_eq!(wb.page_breaks_at(0, 4, 2), (true, true));
+    assert_eq!(wb.page_breaks_at(0, 5, 2), (false, true));
+    wb.remove_page_break(0, Some(4), None).unwrap();
+    assert_eq!(wb.print_settings(0).row_breaks, vec![8]);
+    assert!(wb.undo().unwrap());
+    assert_eq!(wb.print_settings(0).row_breaks, vec![4, 8]);
+    let path = scratch("breaks.xlsx");
+    wb.save_as(&path).unwrap();
+    let back = Workbook::open(&path).unwrap();
+    let p = back.print_settings(0);
+    assert_eq!((p.row_breaks, p.col_breaks), (vec![4, 8], vec![2]));
+    assert_schema_order(&parts(&path)["xl/worksheets/sheet1.xml"]);
+    // Saved again unchanged: the same sheet.
+    let again = scratch("breaks-again.xlsx");
+    wb.save_as(&again).unwrap();
+    assert_eq!(
+        parts(&path)["xl/worksheets/sheet1.xml"],
+        parts(&again)["xl/worksheets/sheet1.xml"]
+    );
+    wb.reset_page_breaks(0).unwrap();
+    let p = wb.print_settings(0);
+    assert!(p.row_breaks.is_empty() && p.col_breaks.is_empty());
+    let reset = scratch("breaks-reset.xlsx");
+    wb.save_as(&reset).unwrap();
+    let sheet = &parts(&reset)["xl/worksheets/sheet1.xml"];
+    assert!(!sheet.contains("Breaks"), "{sheet}");
 }

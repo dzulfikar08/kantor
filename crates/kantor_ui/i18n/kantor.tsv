@@ -557,3 +557,9 @@ Insert Cross-reference…	Sisipkan Referensi Silang…
 Insert Field…	Sisipkan Bidang…
 Show Field Codes	Tampilkan Kode Bidang
 Sheets · fill, outline and text alignment of the selected shape or text box	Sheets · isian, garis tepi, dan perataan teks bentuk atau kotak teks yang dipilih
+Insert Page Break	Sisipkan Hentian Halaman
+Sheets · start a new printed page above and left of the active cell	Sheets · mulai halaman cetak baru di atas dan di kiri sel aktif
+Remove Page Break	Hapus Hentian Halaman
+Sheets · remove the manual page break above or left of the active cell	Sheets · hapus hentian halaman manual di atas atau di kiri sel aktif
+Reset All Page Breaks	Reset Semua Hentian Halaman
+Sheets · remove every manual page break of this sheet	Sheets · hapus semua hentian halaman manual di lembar ini

@@ -5209,6 +5209,129 @@ pub(crate) fn note_extras(bytes: &[u8]) -> HashMap<(u32, u32, u32), crate::notes
     out
 }
 
+/// The header and footer pictures (`&G`) of each worksheet, by `sheetId`:
+/// the shapes of its `legacyDrawingHF` VML part and the images they show.
+pub(crate) fn hf_pictures(bytes: &[u8]) -> HashMap<u32, Vec<crate::print::HfPicture>> {
+    let mut out: HashMap<u32, Vec<crate::print::HfPicture>> = HashMap::new();
+    let Ok(orig) = Original::new(bytes) else {
+        return out;
+    };
+    let Ok(Some(root)) = orig.text("_rels/.rels") else {
+        return out;
+    };
+    let Ok(root_rels) = parse_rels(&root) else {
+        return out;
+    };
+    let Ok((_, _, _, sheets)) = workbook_sheets(&root_rels, &|name| orig.text(name)) else {
+        return out;
+    };
+    for s in sheets.iter().filter(|s| s.kind == SheetKind::Work) {
+        let Ok(Some(sk)) = orig.skeleton(&s.part) else {
+            continue;
+        };
+        let Ok(doc) = Document::parse(&sk.xml) else {
+            continue;
+        };
+        let Some(rid) = doc
+            .root_element()
+            .children()
+            .find(|n| is_main(*n, "legacyDrawingHF"))
+            .and_then(|n| {
+                n.attributes()
+                    .find(|a| a.name() == "id" && a.namespace().is_some())
+                    .map(|a| a.value().to_owned())
+            })
+        else {
+            continue;
+        };
+        let rels = |source: &str| {
+            orig.text(&rels_part(source))
+                .ok()
+                .flatten()
+                .and_then(|x| parse_rels(&x).ok())
+                .unwrap_or_default()
+        };
+        let Some(vml) = rels(&s.part)
+            .into_iter()
+            .find(|r| r.id == rid && !r.external)
+            .and_then(|r| resolve(&s.part, &r.target))
+        else {
+            continue;
+        };
+        let Some(vml_xml) = orig.text(&vml).ok().flatten() else {
+            continue;
+        };
+        let Ok(vdoc) = Document::parse(&vml_xml) else {
+            continue;
+        };
+        let vml_rels = rels(&vml);
+        for shape in vdoc
+            .descendants()
+            .filter(|n| n.is_element() && n.tag_name().name() == "shape")
+        {
+            let Some(slot) = shape.attribute("id") else {
+                continue;
+            };
+            let Some(relid) = shape
+                .descendants()
+                .find(|n| n.is_element() && n.tag_name().name() == "imagedata")
+                .and_then(|n| {
+                    n.attributes()
+                        .find(|a| a.name() == "relid" || a.name() == "id")
+                        .map(|a| a.value().to_owned())
+                })
+            else {
+                continue;
+            };
+            let Some(part) = vml_rels
+                .iter()
+                .find(|r| r.id == relid && !r.external)
+                .and_then(|r| resolve(&vml, &r.target))
+            else {
+                continue;
+            };
+            let Some(data) = orig.get(&part).ok().flatten() else {
+                continue;
+            };
+            let style = shape.attribute("style").unwrap_or_default();
+            let length = |key: &str| -> Option<f64> {
+                let v = style
+                    .split(';')
+                    .find_map(|kv| kv.split_once(':').filter(|(k, _)| k.trim() == key))?
+                    .1
+                    .trim();
+                let (n, k) = if let Some(n) = v.strip_suffix("pt") {
+                    (n, 1.0)
+                } else if let Some(n) = v.strip_suffix("in") {
+                    (n, 72.0)
+                } else if let Some(n) = v.strip_suffix("px") {
+                    (n, 0.75)
+                } else {
+                    (v, 1.0)
+                };
+                n.trim()
+                    .parse::<f64>()
+                    .ok()
+                    .map(|x| x * k)
+                    .filter(|x| *x > 0.0)
+            };
+            let (Some(w), Some(h)) = (length("width"), length("height")) else {
+                continue;
+            };
+            out.entry(s.sheet_id)
+                .or_default()
+                .push(crate::print::HfPicture {
+                    slot: slot.to_ascii_uppercase(),
+                    part: part.into(),
+                    data: std::sync::Arc::new(data),
+                    width_pt: w,
+                    height_pt: h,
+                });
+        }
+    }
+    out
+}
+
 /// An `x:Anchor`'s eight numbers.
 pub(crate) fn parse_anchor(text: &str) -> Option<[u32; 8]> {
     let v: Vec<u32> = text

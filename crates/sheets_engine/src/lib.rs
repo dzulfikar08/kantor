@@ -139,12 +139,12 @@ pub use pivot_edit::{
 pub use pivot_group::DateLevel;
 pub use pivot_tools::pivot_style_names;
 pub use print::{
-    HEADER_FOOTER_PRESETS, HeaderFooter, Margins, PAPERS, PageSetup, Paper, PrintColumns,
-    PrintOptions, SheetPrint, join_sections, split_sections,
+    HEADER_FOOTER_PRESETS, HeaderFooter, HfPicture, Margins, PAPERS, PageSetup, Paper,
+    PrintColumns, PrintComments, PrintOptions, SheetPrint, join_sections, split_sections,
 };
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 pub use sort::SortKey;
-pub use table::{TableCellLook, TableInfo};
+pub use table::{FillPattern, TableCellLook, TableInfo};
 pub use validation::{
     ErrorStyle, ListItem, Message, Validation, ValidationOperator, ValidationType,
 };
