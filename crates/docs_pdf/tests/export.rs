@@ -227,7 +227,7 @@ fn headers_footers_and_sections_are_in_the_pdf() {
     // Page 2: header and footer with its number.
     assert_eq!(kinds(1).len(), 2);
     let footer = &laid.furniture[1][1].layout;
-    assert_eq!(footer.text(0), format!("Page 2 of {n}"));
+    assert_eq!(footer.shown(0), format!("Page 2 of {n}"));
     // Body text starts below the header.
     let top = laid.paged.pages[1].lines[0].top;
     let header = &laid.furniture[1][0];

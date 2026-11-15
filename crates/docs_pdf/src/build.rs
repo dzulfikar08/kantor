@@ -69,6 +69,9 @@ pub struct Marks {
     /// Leave floating objects out of the layout (headers, footers and
     /// notes: their floating objects are placed on the page separately).
     pub no_floats: bool,
+    /// What `PAGE`, `NUMPAGES` and `SECTIONPAGES` fields show (headers and
+    /// footers: the page they're on). `None`: the field's placeholder.
+    pub pages: Option<[String; 3]>,
 }
 
 impl Marks {
@@ -83,6 +86,7 @@ impl Marks {
                 .collect(),
             own: None,
             no_floats: false,
+            pages: None,
         }
     }
 
@@ -267,6 +271,23 @@ pub fn layout_paragraph(
                         String::new()
                     } else {
                         format!("Picture ({})", img.part.rsplit('.').next().unwrap_or("?"))
+                    },
+                }
+            }
+            // A page number: the number itself, as text.
+            Object::Opaque(_)
+                if let Some(pages) = &marks.pages
+                    && let Some(f) = docs_engine::page_field(obj) =>
+            {
+                InlineObject {
+                    index,
+                    kind: ObjectKind::Text,
+                    width: 0.0,
+                    height: 0.0,
+                    label: match f {
+                        docs_engine::PageField::Page => pages[0].clone(),
+                        docs_engine::PageField::NumPages => pages[1].clone(),
+                        docs_engine::PageField::SectionPages => pages[2].clone(),
                     },
                 }
             }

@@ -227,6 +227,9 @@ pub struct Document {
     /// while it has no file of its own.
     imported: Option<Imported>,
     history: History,
+    /// Names pictures inserted into a header, footer or note being edited
+    /// (`header1_`), so they never clash with the body's.
+    pub(crate) media_stem: String,
 }
 
 /// Where an imported document came from.
@@ -288,6 +291,7 @@ impl Document {
             note_settings: crate::notes::NoteKind::ALL.map(crate::notes::NoteProps::default_for),
             imported: None,
             history: History::default(),
+            media_stem: String::new(),
         }
     }
 
@@ -410,6 +414,7 @@ impl Document {
             note_settings: read.note_settings,
             imported: None,
             history: History::default(),
+            media_stem: String::new(),
         };
         let mut paras = std::mem::take(&mut doc.paragraphs);
         crate::float::share_parts(&mut paras, &doc);
@@ -650,6 +655,7 @@ impl Document {
             note_settings: self.note_settings,
             imported: self.imported.clone(),
             history: History::default(),
+            media_stem: self.media_stem.clone(),
         }
     }
 
@@ -1297,6 +1303,12 @@ impl Document {
             p.indent.first = Some(indent.first.unwrap_or(tw(r.first_line_pt)));
             p.extras.remove("ind");
         });
+    }
+
+    /// Forget the undo history (a header, footer or note going back into
+    /// its document: the main document's step holds the change).
+    pub(crate) fn clear_history(&mut self) {
+        self.history = History::default();
     }
 
     /// Undo the last step; returns the selection to restore.

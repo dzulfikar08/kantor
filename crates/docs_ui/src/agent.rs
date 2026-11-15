@@ -13,7 +13,7 @@ use crate::DocsView;
 impl DocsView {
     /// Read the document; `f` also gets the user's selection.
     pub fn agent_read<R>(&self, f: impl FnOnce(&Document, Selection) -> R) -> R {
-        f(&self.doc, self.sel)
+        f(&self.whole_doc(), self.body_sel())
     }
 
     /// Edit the document. `f` gets the user's selection (to restore on
@@ -30,6 +30,7 @@ impl DocsView {
         if self.marked.is_some() {
             bail!("the user is composing text in this document; try again in a moment");
         }
+        self.leave_part(window, cx);
         let (r, sel) = f(&mut self.doc, self.sel)?;
         self.typing_props = None;
         self.edited(sel, window, cx);
@@ -45,6 +46,7 @@ impl DocsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<String> {
+        self.leave_part(window, cx);
         let result = match path {
             Some(path) => self.doc.save_as(path),
             None if self.doc.needs_save_as() => {

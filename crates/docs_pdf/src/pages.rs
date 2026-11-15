@@ -29,7 +29,6 @@ use std::sync::Arc;
 
 use docs_engine::{
     Document, HfKind, HfType, NoteKind, NoteRef, NoteRestart, Section, SectionStart,
-    with_page_numbers,
 };
 use docs_layout::{
     Block, NOTE_SEPARATOR, PageSetup, PagedDocument, ParaLayout, Rgba, RuleRect, SectionBreak,
@@ -63,6 +62,26 @@ pub struct StoryLayout {
 impl StoryLayout {
     pub fn text(&self, para: usize) -> &str {
         self.paras.get(para).map_or("", |p| p.text.as_str())
+    }
+
+    /// A paragraph's text as shown: page numbers and note numbers in
+    /// place of their objects, other objects left out.
+    pub fn shown(&self, para: usize) -> String {
+        let text = self.text(para);
+        let labels = self
+            .paged
+            .layouts
+            .get(para)
+            .map_or(&[][..], |l| &l.labels[..]);
+        let mut out = String::with_capacity(text.len());
+        for (i, c) in text.char_indices() {
+            if c != docs_engine::OBJECT {
+                out.push(c);
+            } else if let Some((_, _, label)) = labels.iter().find(|x| x.0 == i) {
+                out.push_str(label);
+            }
+        }
+        out
     }
 
     /// The small document laid out (for its pictures).
@@ -157,9 +176,19 @@ fn story_layout(
     layout: &mut LayoutFn,
 ) -> StoryLayout {
     let sd = &doc.stories()[index].doc;
-    let paras = with_page_numbers(sd.paragraphs(), page, pages, section_pages)
-        .unwrap_or_else(|| sd.paragraphs().to_vec());
-    lay_story(sd, paras, width, &Marks::default(), layout, index, None)
+    let marks = Marks {
+        pages: Some([page.to_owned(), pages.to_owned(), section_pages.to_owned()]),
+        ..Marks::default()
+    };
+    lay_story(
+        sd,
+        sd.paragraphs().to_vec(),
+        width,
+        &marks,
+        layout,
+        index,
+        None,
+    )
 }
 
 /// A footnote or endnote laid out at `width` px, numbered `label`.
@@ -305,6 +334,7 @@ fn body_with_notes(
             .collect(),
         own: None,
         no_floats: false,
+        pages: None,
     };
     let (mut lps, widths, blocks) = build::build_marked(doc, &marks);
     for r in refs.iter().filter(|r| r.kind == NoteKind::Footnote) {

@@ -330,7 +330,7 @@ impl DocsView {
     }
 
     pub(crate) fn ruler_marks(&self) -> Marks {
-        let s = docs_pdf::build::geometry_setup(&self.doc.section_page(self.sel.head.para));
+        let s = docs_pdf::build::geometry_setup(&self.page_geometry());
         let indents = (!self.in_table()).then(|| {
             let p = self.doc.paragraph(self.sel.head.para);
             let r = self.doc.resolve_para(p);

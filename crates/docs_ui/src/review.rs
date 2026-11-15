@@ -80,7 +80,8 @@ fn short_date(iso: &str) -> String {
 impl DocsView {
     /// Whether the markup column shows (the document has comments).
     pub(crate) fn markup_visible(&self) -> bool {
-        self.comments_visible && (!self.doc.comments().is_empty() || self.comment_edit.is_some())
+        self.comments_visible
+            && (!self.main_doc().comments().is_empty() || self.comment_edit.is_some())
     }
 
     pub fn toggle_comments_doc(&mut self, cx: &mut Context<Self>) {
@@ -92,6 +93,7 @@ impl DocsView {
     /// Comment on the selection (or the word at the caret) and start
     /// writing it.
     pub fn new_comment_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.leave_part(window, cx);
         self.save_comment_edit(window, cx);
         let author = kantor_core::settings::Settings::load().author_name();
         let Some(id) = self.doc.add_comment(self.sel, "", &author) else {
@@ -202,6 +204,7 @@ impl DocsView {
     /// Review > Track Changes: record the user's own edits as insertions
     /// and deletions (Word's Ctrl+Shift+E).
     pub fn toggle_track_changes_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.leave_part(window, cx);
         let author = kantor_core::settings::Settings::load().author_name();
         self.doc.set_author(&author);
         let on = !self.doc.track_changes();
@@ -225,6 +228,7 @@ impl DocsView {
     }
 
     fn resolve_change(&mut self, accept: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.leave_part(window, cx);
         let done = if accept {
             self.doc.accept_change(self.sel)
         } else {
@@ -243,6 +247,7 @@ impl DocsView {
     }
 
     pub fn resolve_all_doc(&mut self, accept: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.leave_part(window, cx);
         let n = self.doc.changes().len() + self.doc.other_changes();
         if n == 0 {
             self.status = t("This document has no tracked changes").into();

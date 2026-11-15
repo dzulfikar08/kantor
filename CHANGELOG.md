@@ -70,6 +70,17 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Docs: a footnote too long for its page continues at the bottom of the next one, under Word's
   continuation separator (with the document's "continued" notice, if it has one), and endnotes
   go at the end of each section when the document says so (Word's "End of section").
+- Docs: headers and footers are edited on the page, as in Word. Double-click the top or bottom
+  margin and type there with the same editor as the body text (formatting, styles, alignment, tab
+  stops, pictures, tables and fields); the body text dims, and a double click on it or Esc goes
+  back. A Header & Footer bar sets Different First Page, Different Odd & Even Pages, Link to
+  Previous (per section), the header's distance from the top edge and the footer's from the
+  bottom, inserts the page number or page count, and goes to the footer (header). The changes are
+  one undo step, and Save writes only that header or footer part (a new one gets its own part).
+- Docs: footnotes and endnotes are edited where they are, with the normal editor (formatting,
+  pictures, tables). Insert Footnote (Ctrl+Alt+F) and Insert Endnote (Ctrl+Alt+D) put the caret in
+  the new note; a double click on a note's number goes to the note, and on the note's own number
+  back to the text (Esc too).
 
 ### Changed
 - Docs: files with a table of contents or cross-references are saved in place like any other

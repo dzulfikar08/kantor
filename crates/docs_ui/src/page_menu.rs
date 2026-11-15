@@ -82,7 +82,7 @@ pub(crate) fn page_label(p: &PageGeometry) -> String {
 impl DocsView {
     /// Page setup of the caret's section.
     pub fn page_geometry(&self) -> PageGeometry {
-        self.doc.section_page(self.sel.head.para)
+        self.main_doc().section_page(self.body_sel().head.para)
     }
 
     /// Replace the page setup (one undo step) and repaginate.
@@ -92,6 +92,7 @@ impl DocsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.leave_part(window, cx);
         self.doc
             .set_section_page(self.sel.head.para, page, self.sel);
         let sel = self.sel;

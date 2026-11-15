@@ -612,6 +612,39 @@ pub(crate) fn set_sect_child(
     out
 }
 
+/// `sect_pr` with the header and footer distances (`w:pgMar`'s `header`
+/// and `footer`, twips) set; `page` fills in a missing `w:pgMar`. Every
+/// other byte is kept.
+pub(crate) fn set_hf_distances(
+    sect_pr: &str,
+    page: &PageGeometry,
+    header: u32,
+    footer: u32,
+) -> String {
+    let sect_pr = if child_tags(sect_pr).iter().any(|t| t.name == "pgMar") {
+        sect_pr.to_owned()
+    } else {
+        update_sect_pr(sect_pr, page)
+    };
+    let p = root_prefix(&sect_pr).to_owned();
+    let Some(t) = child_tags(&sect_pr).into_iter().find(|t| t.name == "pgMar") else {
+        return sect_pr;
+    };
+    let tag = &sect_pr[t.start..t.end];
+    let new = set_attrs(
+        tag,
+        &p,
+        &[
+            ("header", Some(header.to_string())),
+            ("footer", Some(footer.to_string())),
+        ],
+        same_twips,
+    );
+    let mut out = sect_pr.clone();
+    out.replace_range(t.start..t.end, &new);
+    out
+}
+
 /// The prefix (`w:`) a sectPr's elements are written with.
 pub(crate) fn sect_prefix(sect_pr: &str) -> &str {
     root_prefix(sect_pr)

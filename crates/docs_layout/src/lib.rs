@@ -607,7 +607,24 @@ impl Engine {
                 labels.push((o.index, l, o.label.clone()));
             }
             if o.kind == ObjectKind::Text {
-                let l = self.small_layout(&o.label, &para.family, para.size_pt, None, Rgba::BLACK);
+                // In the formatting of the text it sits in (a page number
+                // in a footer's font).
+                let span = para
+                    .spans
+                    .iter()
+                    .rev()
+                    .find(|s| s.range.start <= o.index && o.index < s.range.end)
+                    .cloned();
+                let family = span
+                    .as_ref()
+                    .and_then(|s| s.family.clone())
+                    .unwrap_or_else(|| para.family.clone());
+                let size = span
+                    .as_ref()
+                    .and_then(|s| s.size_pt)
+                    .unwrap_or(para.size_pt);
+                let color = span.as_ref().and_then(|s| s.color).unwrap_or(Rgba::BLACK);
+                let l = self.small_layout(&o.label, &family, size, span.as_ref(), color);
                 // The box's bottom is the label's baseline.
                 w = l.width();
                 h = l.get(0).map_or(l.height(), |line| line.metrics().baseline);

@@ -60,6 +60,7 @@ impl DocsView {
     /// Rebuild the table of contents at the caret, or every one in the
     /// document (Word's Update Table), as one undo step.
     pub fn update_table_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.leave_part(window, cx);
         if !self.doc.has_table_of_contents() {
             self.status = t("This document has no table of contents").into();
             cx.notify();

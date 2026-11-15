@@ -551,13 +551,17 @@ impl Document {
         let (wpx, hpx) = (w as f32 * scale, h as f32 * scale);
         let n = (1..)
             .find(|n| {
-                let id = format!("rIdKantorImage{n}");
+                let id = format!("rIdKantor{}Image{n}", self.media_stem);
                 !self.media.contains_key(&id)
                     && !self.package.as_ref().is_some_and(|p| p.has_rel(&id))
             })
             .expect("infinite ids");
-        let rel_id = format!("rIdKantorImage{n}");
-        let part = format!("word/media/kantor_image{n}.{}", format.extension());
+        let rel_id = format!("rIdKantor{}Image{n}", self.media_stem);
+        let part = format!(
+            "word/media/kantor_{}image{n}.{}",
+            self.media_stem,
+            format.extension()
+        );
         let doc_pr = self.max_doc_pr() + 1;
         let bytes: Arc<[u8]> = bytes.into();
         let image = Image {

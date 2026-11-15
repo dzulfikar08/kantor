@@ -191,6 +191,7 @@ impl DocsView {
         if tw == 0 {
             return;
         }
+        self.leave_part(window, cx);
         self.doc.set_default_tab(tw, self.sel);
         let sel = self.sel;
         self.edited(sel, window, cx);
