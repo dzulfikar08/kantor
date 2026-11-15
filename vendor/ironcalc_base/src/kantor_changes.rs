@@ -199,6 +199,7 @@ impl KantorChanges {
             Diff::DeleteSheet { .. }
             | Diff::KantorDeleteSheet(_)
             | Diff::KantorCopySheet { .. }
+            | Diff::KantorSheetFormulas { .. }
             | Diff::NewSheet { .. }
             | Diff::DuplicateSheet { .. }
             | Diff::RenameSheet { .. }

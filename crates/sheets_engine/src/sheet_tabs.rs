@@ -421,8 +421,10 @@ impl Workbook {
             let id = wb.sheet_id(index);
             order.insert(pos, Slot::Sheet(id));
             wb.sheets_edited(&order);
+            let mut renamed = Vec::new();
             for mut t in tables {
                 let new = wb.copy_table_name(&t.name);
+                renamed.push((t.name.clone(), new.clone()));
                 t.name = new.clone();
                 t.display_name = new.clone();
                 t.sheet_name = name.clone();
@@ -431,6 +433,16 @@ impl Workbook {
                     .map_err(|e| anyhow!("{e}"))?;
                 wb.history.edited();
                 wb.touch_table(&new, None);
+            }
+            // The copy's formulas naming the source's tables name the
+            // copies (Excel).
+            if !renamed.is_empty()
+                && wb
+                    .model
+                    .kantor_rename_table_refs(index, &renamed)
+                    .map_err(|e| anyhow!("{e}"))?
+            {
+                wb.history.edited();
             }
             wb.change_edits(|e, layout| {
                 if !notes.is_empty() {

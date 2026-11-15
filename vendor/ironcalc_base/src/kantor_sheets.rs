@@ -212,6 +212,63 @@ impl Model<'_> {
         Ok(())
     }
 
+    /// Set sheet `sheet`'s formulas (`shared_formulas`) and parse them.
+    pub(crate) fn kantor_set_sheet_formulas(
+        &mut self,
+        sheet: u32,
+        formulas: Vec<String>,
+    ) -> Result<(), String> {
+        self.workbook.worksheet_mut(sheet)?.shared_formulas = formulas;
+        self.reset_parsed_structures();
+        Ok(())
+    }
+
+    /// Sheet `sheet`'s formulas with references to the tables in `names`
+    /// (lower-case old name → new name) renamed, or `None` if none refers
+    /// to them.
+    fn kantor_renamed_table_refs(
+        &mut self,
+        sheet: u32,
+        names: &[(String, String)],
+    ) -> Result<Option<Vec<String>>, String> {
+        let ws = self.workbook.worksheet(sheet)?;
+        let context = CellReferenceRC {
+            sheet: ws.get_name(),
+            row: 1,
+            column: 1,
+        };
+        let formulas = ws.shared_formulas.clone();
+        if !formulas.iter().any(|f| f.contains('[')) {
+            return Ok(None);
+        }
+        self.parser.set_lexer_mode(LexerMode::R1C1);
+        let mut changed = false;
+        let mut out = Vec::with_capacity(formulas.len());
+        for f in formulas {
+            if !f.contains('[') {
+                out.push(f);
+                continue;
+            }
+            let mut node = self.parser.parse(&f, &context);
+            let mut hit = false;
+            crate::kantor_tables::for_each_table_ref(&mut node, &mut |r| {
+                let lower = r.table.to_lowercase();
+                if let Some((_, new)) = names.iter().find(|(old, _)| *old == lower) {
+                    r.table = new.clone();
+                    hit = true;
+                }
+            });
+            if hit {
+                changed = true;
+                out.push(to_rc_format(&node));
+            } else {
+                out.push(f);
+            }
+        }
+        self.parser.set_lexer_mode(LexerMode::A1);
+        Ok(changed.then_some(out))
+    }
+
     /// A copy of sheet `source` named `name`, at `index` (counted once the
     /// copy is in). Returns the copy's index.
     pub(crate) fn kantor_copy_sheet(
@@ -241,6 +298,39 @@ impl UserModel<'_> {
         self.view.sheets.remove(&sheet_id);
         self.push_diff_list(vec![Diff::KantorDeleteSheet(Box::new(deleted))]);
         Ok(())
+    }
+
+    /// In sheet `sheet`'s formulas, references to the tables named in
+    /// `names` (old → new) now name the new tables, as Excel does in a
+    /// copied sheet whose tables were copied under new names. The new
+    /// tables must exist. One history entry if anything changed (returns
+    /// whether it did).
+    pub fn kantor_rename_table_refs(
+        &mut self,
+        sheet: u32,
+        names: &[(String, String)],
+    ) -> Result<bool, String> {
+        let lower: Vec<(String, String)> = names
+            .iter()
+            .map(|(o, n)| (o.to_lowercase(), n.clone()))
+            .collect();
+        let Some(new) = self.model.kantor_renamed_table_refs(sheet, &lower)? else {
+            return Ok(false);
+        };
+        let old = self
+            .model
+            .workbook
+            .worksheet(sheet)?
+            .shared_formulas
+            .clone();
+        self.model.kantor_set_sheet_formulas(sheet, new.clone())?;
+        self.push_diff_list(vec![Diff::KantorSheetFormulas {
+            sheet,
+            old_value: old,
+            new_value: new,
+        }]);
+        self.evaluate_if_not_paused();
+        Ok(true)
     }
 
     /// A new empty sheet named `name` at `index`, selected. One history

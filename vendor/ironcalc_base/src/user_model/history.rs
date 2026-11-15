@@ -146,6 +146,13 @@ pub(crate) enum Diff {
         index: u32,
         name: String,
     },
+    // KANTOR PATCH (sheet tabs): a sheet's formulas rewritten (a copied
+    // sheet's references to its source's tables, now to the copies).
+    KantorSheetFormulas {
+        sheet: u32,
+        old_value: Vec<String>,
+        new_value: Vec<String>,
+    },
     // KANTOR PATCH (tables): a table created, changed or removed.
     KantorSetTable {
         name: String,

@@ -1035,11 +1035,11 @@ impl SheetsView {
         let m = self.cf_manager.as_ref()?;
         let tok = tokens(cx);
         let view = cx.entity().downgrade();
-        let (rules, sel) = {
+        let (rules, sel, within) = {
             let grid = self.table.read(cx).delegate();
             let sel = grid.range();
             let within = (!m.whole_sheet).then_some(sel);
-            (grid.book.cf_rules(m.sheet, within), sel)
+            (grid.book.cf_rules(m.sheet, within), sel, within)
         };
         let mut list = v_flex()
             .id("cf-list")
@@ -1120,7 +1120,9 @@ impl SheetsView {
                             .disabled(k == 0)
                             .on_click(move |_, w, cx| {
                                 let _ = uv.update(cx, |this, cx| {
-                                    this.manage_cf(w, cx, |b, s| b.move_cf_rule(s, idx, true))
+                                    this.manage_cf(w, cx, |b, s| {
+                                        b.move_cf_rule_within(s, idx, true, within)
+                                    })
                                 });
                             }),
                     )
@@ -1133,7 +1135,9 @@ impl SheetsView {
                             .disabled(k + 1 == n)
                             .on_click(move |_, w, cx| {
                                 let _ = wv.update(cx, |this, cx| {
-                                    this.manage_cf(w, cx, |b, s| b.move_cf_rule(s, idx, false))
+                                    this.manage_cf(w, cx, |b, s| {
+                                        b.move_cf_rule_within(s, idx, false, within)
+                                    })
                                 });
                             }),
                     )

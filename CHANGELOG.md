@@ -52,6 +52,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   Open XML SDK) was saved damaged, and Kantor couldn't open the saved file again.
 - Docs: a page break at the very end of a paragraph no longer leaves an empty page after it.
 - Sheets: deleting a chart sheet no longer warns that formulas will show #REF! (no formula can refer to a chart sheet).
+- Sheets: a spelling check started partway down the sheet asks "Do you want to continue checking
+  at the beginning of the sheet?" when it reaches the end, as Excel does, instead of going on from
+  the top by itself.
+- Sheets: in Manage Rules showing the rules of the current selection, Move Up and Move Down move a
+  rule past the next rule shown (as Excel does) instead of swapping it with a rule the list hides.
+- Sheets: in a sheet copied with Move or Copy, formulas naming the original sheet's tables now
+  name the copy's tables (`Sales` → `Sales2`), as in Excel.
 
 ## [0.7.0] - 2026-11-15
 

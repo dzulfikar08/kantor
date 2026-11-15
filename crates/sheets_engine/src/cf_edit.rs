@@ -938,24 +938,56 @@ impl Workbook {
     /// Move the rule stored at `index` one place up (sooner) or down in the
     /// priority list. One undo step; nothing at either end.
     pub fn move_cf_rule(&mut self, sheet: u32, index: usize, up: bool) -> Result<()> {
-        let list = self.cf_rules(sheet, None);
-        let at = list
+        self.move_cf_rule_within(sheet, index, up, None)
+    }
+
+    /// Move the rule stored at `index` past the next rule shown when only
+    /// the rules touching `within` are listed (Manage Rules showing the
+    /// current selection), as Excel does: rules not shown in between keep
+    /// their order and end up on its other side. `None`: every rule is
+    /// shown. One undo step; nothing at either end of the shown list.
+    pub fn move_cf_rule_within(
+        &mut self,
+        sheet: u32,
+        index: usize,
+        up: bool,
+        within: Option<CellRange>,
+    ) -> Result<()> {
+        let all = self.cf_rules(sheet, None);
+        let shown: Vec<usize> = self
+            .cf_rules(sheet, within)
+            .iter()
+            .map(|r| r.index)
+            .collect();
+        let at = all
             .iter()
             .position(|r| r.index == index)
             .ok_or_else(|| anyhow!("no rule {index}"))?;
-        if (up && at == 0) || (!up && at + 1 == list.len()) {
+        let is_shown = |i: usize| shown.contains(&all[i].index);
+        // The neighbour in the shown list, and how many places that is.
+        let target = if up {
+            (0..at).rev().find(|&i| is_shown(i))
+        } else {
+            (at + 1..all.len()).find(|&i| is_shown(i))
+        };
+        let Some(target) = target else {
             return Ok(());
-        }
+        };
+        let steps = target.abs_diff(at);
         self.batch(|wb| {
-            let r = if up {
-                wb.model
-                    .raise_conditional_formatting_priority(sheet, index as u32)
-            } else {
-                wb.model
-                    .lower_conditional_formatting_priority(sheet, index as u32)
-            };
-            r.map_err(|e| anyhow!("{e}"))?;
-            wb.history.edited();
+            // Each step swaps priorities with the next rule; stored
+            // positions (indexes) don't change.
+            for _ in 0..steps {
+                let r = if up {
+                    wb.model
+                        .raise_conditional_formatting_priority(sheet, index as u32)
+                } else {
+                    wb.model
+                        .lower_conditional_formatting_priority(sheet, index as u32)
+                };
+                r.map_err(|e| anyhow!("{e}"))?;
+                wb.history.edited();
+            }
             wb.mark_cf(sheet);
             Ok(())
         })
