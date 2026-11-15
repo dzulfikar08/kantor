@@ -17,6 +17,24 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   hidden chart sheets. Each change is one undo step, and a chart sheet deleted, saved and then
   brought back with Undo is saved again.
 
+### Fixed
+- Sheets: workbooks from other programs that Kantor refused or crashed on now open (found
+  by opening 424 public real-world files, see `docs/realworld-sweep.md`): ones without a
+  styles part, with parts of it missing or pointing at fonts that aren't there, and with
+  rows or cells that have no cell reference.
+- Sheets: a file the reader can't cope with says it can't be opened instead of closing
+  Kantor.
+- Sheets: `.ods` files from LibreOffice with whole-row or whole-column formatting open in
+  seconds instead of minutes.
+- Sheets: `.ods` files with a sheet name Excel doesn't allow (a sheet linked from another
+  file) open, with that sheet renamed and an import note.
+- Docs: saving a document whose section settings were empty (`<w:sectPr/>`) no longer
+  writes a file Word reports as damaged.
+- Slides: `.ppt` decks with groups drawn at a very large internal scale are saved as
+  `.pptx` PowerPoint opens without repairs.
+- Strict Open XML workbooks and documents, and Word 6/95 documents, are named as such
+  when refused, instead of a parser error or "not a Word document".
+
 ## [0.6.0] - 2026-11-14
 
 Kantor works with a shared cloud drive and speaks Indonesian. Open from Cloud and Save work

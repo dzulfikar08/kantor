@@ -764,6 +764,8 @@ formatting not imported (not an Excel 97-2003 file)	pemformatan tidak diimpor (b
 {} charts not imported (radar, surface, bubble, bar of pie or combination charts)	{} bagan tidak diimpor (bagan radar, permukaan, gelembung, batang dari pai, atau kombinasi)
 1 3-D chart shown flat	1 bagan 3-D ditampilkan datar
 {} 3-D charts shown flat	{} bagan 3-D ditampilkan datar
+1 sheet renamed (name not allowed in Excel)	1 lembar diganti namanya (nama tidak diizinkan di Excel)
+{} sheets renamed (names not allowed in Excel)	{} lembar diganti namanya (nama tidak diizinkan di Excel)
 1 shape, text box or control not imported	1 bentuk, kotak teks, atau kontrol tidak diimpor
 {} shapes, text boxes or controls not imported	{} bentuk, kotak teks, atau kontrol tidak diimpor
 charts and pictures not imported	bagan dan gambar tidak diimpor

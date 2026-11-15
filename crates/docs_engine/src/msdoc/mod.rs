@@ -133,8 +133,14 @@ const PLF_LFO: usize = 74;
 
 impl Fib {
     fn read(w: &[u8]) -> Result<Self> {
-        if u16_at(w, 0) != Some(0xA5EC) {
-            bail!("it is not a Word document");
+        match u16_at(w, 0) {
+            Some(0xA5EC) => {}
+            // Word 6 and Word 95 files have their own wIdent (and nFib
+            // 101-105); they were refused as "not a Word document".
+            Some(0xA5DC) => bail!(
+                "it was saved by Word 6 or Word 95, which Kantor can't read; save it as .docx in Word or LibreOffice first"
+            ),
+            _ => bail!("it is not a Word document"),
         }
         let nfib = u16_at(w, 2).ok_or_else(damaged)?;
         let flags = u16_at(w, 0x0A).ok_or_else(damaged)?;

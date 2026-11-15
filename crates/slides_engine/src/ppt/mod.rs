@@ -809,6 +809,7 @@ impl<'a> Package<'_, 'a> {
                 next_id: 1,
                 outline: &[],
                 ph_inherit: true,
+                child_scale: 1.0,
             };
             for l in 0..OutMaster::LAYOUTS {
                 part.rel(
@@ -893,6 +894,7 @@ impl<'a> Package<'_, 'a> {
                     next_id: 1,
                     outline: &[],
                     ph_inherit: true,
+                    child_scale: 1.0,
                 };
                 let (name, ty, body, show_master, bg) = match l {
                     0 => {
@@ -1022,6 +1024,7 @@ impl<'a> Package<'_, 'a> {
                 next_id: 1,
                 outline: &s.texts,
                 ph_inherit: true,
+                child_scale: 1.0,
             };
             let (shapes, bg) = draw::read_drawing(&s.rec);
             let bg_xml = if s.flags & 0x4 == 0 {

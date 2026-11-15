@@ -266,6 +266,13 @@ fn refuses_encrypted_old_and_foreign_files() {
     old[fib + 2..fib + 4].copy_from_slice(&104u16.to_le_bytes()); // Word 95
     let e = format!("{:#}", import(&old).err().unwrap());
     assert!(e.contains("Word 6 or Word 95"), "{e}");
+    // Word 6/95 files also have their own wIdent (0xA5DC): same message,
+    // not "not a Word document" (found by the real-world sweep).
+    let mut ident = good.clone();
+    ident[fib..fib + 2].copy_from_slice(&0xA5DCu16.to_le_bytes());
+    ident[fib + 2..fib + 4].copy_from_slice(&101u16.to_le_bytes());
+    let e = format!("{:#}", import(&ident).err().unwrap());
+    assert!(e.contains("Word 6 or Word 95"), "{e}");
 
     let e = format!("{:#}", import(b"{\\rtf1 hello}").err().unwrap());
     assert!(e.contains("not a Word 97-2003 document"), "{e}");

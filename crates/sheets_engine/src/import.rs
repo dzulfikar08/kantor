@@ -71,6 +71,8 @@ pub enum ImportNote {
     ShapesSkipped(usize),
     /// The `.xls` pictures and charts couldn't be brought over at all.
     DrawingsNotImported,
+    /// Sheets whose names Excel doesn't allow, renamed.
+    SheetsRenamed(usize),
 }
 
 impl std::fmt::Display for ImportNote {
@@ -119,6 +121,10 @@ impl std::fmt::Display for ImportNote {
                 write!(f, "{n} shapes, text boxes or controls not imported")
             }
             Self::DrawingsNotImported => f.write_str("charts and pictures not imported"),
+            Self::SheetsRenamed(1) => f.write_str("1 sheet renamed (name not allowed in Excel)"),
+            Self::SheetsRenamed(n) => {
+                write!(f, "{n} sheets renamed (names not allowed in Excel)")
+            }
         }
     }
 }
@@ -351,7 +357,14 @@ pub(crate) fn read_calamine(
     let mut formulas: Vec<(u32, i32, i32, Data, bool)> = Vec::new();
     let mut kept_values = 0;
 
-    for (ix, name) in names.iter().enumerate() {
+    // Sheets keep their names, except names Excel doesn't allow (an
+    // `.ods` link to another file's sheet is named after its URL).
+    let titles = sheet_titles(&names);
+    let renamed = titles.iter().zip(&names).filter(|(t, n)| t != n).count();
+    if renamed > 0 {
+        imported.notes.push(ImportNote::SheetsRenamed(renamed));
+    }
+    for (ix, name) in titles.iter().enumerate() {
         if ix == 0 {
             model
                 .rename_sheet("Sheet1", name)
@@ -474,6 +487,48 @@ pub(crate) fn read_calamine(
             .push(ImportNote::FormulasKeptAsValues(kept_values));
     }
     Ok((model, imported))
+}
+
+/// Sheet names as Excel allows them: at most 31 characters, none of
+/// `\ / * ? : [ ]`, no apostrophe at either end, not empty, and no two the
+/// same (ignoring case). Allowed names are kept as they are.
+pub(crate) fn sheet_titles(names: &[String]) -> Vec<String> {
+    const BAD: [char; 7] = ['\\', '/', '*', '?', ':', '[', ']'];
+    let ok = |n: &str| {
+        !n.is_empty()
+            && n.chars().count() <= 31
+            && !n.contains(&BAD[..])
+            && !n.starts_with('\'')
+            && !n.ends_with('\'')
+    };
+    let mut out: Vec<String> = Vec::with_capacity(names.len());
+    let taken = |out: &[String], n: &str| out.iter().any(|o| o.to_lowercase() == n.to_lowercase());
+    for (i, name) in names.iter().enumerate() {
+        if ok(name) && !taken(&out, name) {
+            out.push(name.clone());
+            continue;
+        }
+        let clean: String = name
+            .chars()
+            .map(|c| if BAD.contains(&c) { '_' } else { c })
+            .collect();
+        let clean = clean.trim_matches('\'').trim();
+        let base: String = if clean.is_empty() {
+            format!("Sheet{}", i + 1)
+        } else {
+            clean.chars().take(31).collect()
+        };
+        let mut title = base.clone();
+        let mut n = 2;
+        while taken(&out, &title) {
+            let suffix = format!(" ({n})");
+            let keep = 31 - suffix.chars().count();
+            title = format!("{}{suffix}", base.chars().take(keep).collect::<String>());
+            n += 1;
+        }
+        out.push(title);
+    }
+    out
 }
 
 /// The file's defined names: calamine decodes their formulas, the `LBL`
@@ -988,6 +1043,29 @@ mod tests {
         for (ods, excel) in cases {
             assert_eq!(open_formula_to_excel(ods), excel, "{ods}");
         }
+    }
+
+    #[test]
+    fn sheet_titles_follow_excel_rules() {
+        let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            sheet_titles(&names(&["Data", "Q1 2024"])),
+            ["Data", "Q1 2024"]
+        );
+        let t = sheet_titles(&names(&[
+            "'file:///G:/a/b.xlsm'#Cover",
+            "",
+            "a[1]",
+            "DATA",
+            "data",
+            "x".repeat(40).as_str(),
+        ]));
+        assert_eq!(t[0], "file____G__a_b.xlsm'#Cover");
+        assert_eq!(t[1], "Sheet2");
+        assert_eq!(t[2], "a_1_");
+        assert_eq!(t[3], "DATA");
+        assert_eq!(t[4], "data (2)");
+        assert_eq!(t[5], "x".repeat(31));
     }
 
     #[test]

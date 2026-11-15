@@ -852,3 +852,57 @@ fn proofing_spans_follow_run_languages() {
         ]
     );
 }
+
+/// The smallest package: content types, the root relationship and this
+/// `word/document.xml`.
+fn bare_package(document: &str) -> Vec<u8> {
+    let types = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default();
+    for (name, data) in [
+        ("[Content_Types].xml", types),
+        ("_rels/.rels", rels),
+        ("word/document.xml", document),
+    ] {
+        zip.start_file(name, opts).unwrap();
+        zip.write_all(data.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+/// An empty `<w:sectPr/>` (LibreOffice's test files, other writers) got
+/// the page size and margins written after it, straight into the body:
+/// Word can't open the saved file.
+#[test]
+fn self_closing_section_properties_get_page_setup_inside() {
+    let document = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {W_NS}><w:body><w:p><w:r><w:t>Foo</w:t></w:r></w:p><w:sectPr/></w:body></w:document>"#
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_temp(dir.path(), "bare.docx", &bare_package(&document));
+    let mut doc = Document::open(&path).unwrap();
+    let out = dir.path().join("saved.docx");
+    doc.save_as(&out).unwrap();
+    let saved = String::from_utf8(zip_entry(
+        &std::fs::read(&out).unwrap(),
+        "word/document.xml",
+    ))
+    .unwrap();
+    let body_end = saved.find("</w:body>").unwrap();
+    let sect = &saved[saved.find("<w:sectPr").unwrap()..body_end];
+    assert!(sect.starts_with("<w:sectPr><w:pgSz "), "{saved}");
+    assert!(sect.ends_with("</w:sectPr>"), "{saved}");
+    let back = Document::open(&out).unwrap();
+    assert_eq!(back.len(), doc.len());
+}
+
+/// Strict Open XML isn't read yet; the message says so.
+#[test]
+fn strict_documents_are_named() {
+    let document = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><w:body><w:p/></w:body></w:document>"#;
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_temp(dir.path(), "strict.docx", &bare_package(document));
+    let err = format!("{:#}", Document::open(&path).err().expect("refused"));
+    assert!(err.contains("Strict Open XML"), "{err}");
+}

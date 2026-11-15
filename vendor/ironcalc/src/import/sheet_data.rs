@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::io::BufRead;
 
 use ironcalc_base::expressions::parser::Parser;
+use ironcalc_base::expressions::utils::number_to_column;
 use ironcalc_base::types::{Cell, Row, SheetData};
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 
@@ -156,6 +157,10 @@ struct SheetDataReader<'a, 'p> {
     row_buffer: Vec<(i32, Cell)>,
     reference_buffer: String,
     value_buffer: String,
+    /// KANTOR PATCH (§10): the last row and column read, for rows and cells
+    /// without an `r` attribute (optional in ECMA-376: the next one along).
+    last_row: i32,
+    last_column: i32,
 }
 
 /// The `t` attribute of a cell. The types there are need no string of their own.
@@ -336,6 +341,7 @@ impl SheetDataReader<'_, '_> {
                 });
             }
         }
+        self.last_column = 0;
         self.row = Some(RowXml {
             index,
             cells: std::mem::take(&mut self.row_buffer),
@@ -347,16 +353,13 @@ impl SheetDataReader<'_, '_> {
         let Some(mut row) = self.row.take() else {
             return Ok(());
         };
-        match row.index {
-            Some(index) => {
-                self.sheet_data.set_row(index, row.cells.drain(..));
-                self.row_buffer = row.cells;
-                Ok(())
-            }
-            None => Err(XlsxError::Xml(
-                "Row without a row index (r attribute)".to_string(),
-            )),
-        }
+        // KANTOR PATCH (§10): a row without `r` (and no cells to tell) is
+        // the one after the last.
+        let index = row.index.unwrap_or(self.last_row + 1);
+        self.last_row = index;
+        self.sheet_data.set_row(index, row.cells.drain(..));
+        self.row_buffer = row.cells;
+        Ok(())
     }
 
     fn start_cell(&mut self, element: &BytesStart) -> Result<(), XlsxError> {
@@ -377,13 +380,11 @@ impl SheetDataReader<'_, '_> {
             ..Default::default()
         };
         cell.reference.clear();
-        let mut has_reference = false;
         for attribute in element.attributes() {
             let attribute = attribute?;
             let value = attribute_value_of(&attribute)?;
             match attribute.key.as_ref() {
                 "r" => {
-                    has_reference = true;
                     cell.reference.clear();
                     cell.reference.push_str(&value);
                 }
@@ -394,9 +395,8 @@ impl SheetDataReader<'_, '_> {
                 _ => {}
             }
         }
-        if !has_reference {
-            return Err(XlsxError::Xml("Missing \"r\" XML attribute".to_string()));
-        }
+        // KANTOR PATCH (§10): `r` is optional; a cell without one (empty
+        // `reference`) is the next column along, see `end_cell`.
         self.cell = Some(cell);
         Ok(())
     }
@@ -408,8 +408,16 @@ impl SheetDataReader<'_, '_> {
         let Some(row) = self.row.as_mut() else {
             return Err(XlsxError::Xml("Cell outside of a row".to_string()));
         };
+        let mut cell = cell;
+        if cell.reference.is_empty() {
+            let row_index = row.index.unwrap_or(self.last_row + 1);
+            let column = number_to_column(self.last_column + 1)
+                .ok_or_else(|| XlsxError::Xml("Too many cells in a row".to_string()))?;
+            cell.reference = format!("{column}{row_index}");
+        }
         let (r_index, column_index) =
             parse_cell_reference(&cell.reference).map_err(XlsxError::Xml)?;
+        self.last_column = column_index;
         // A row without an `r` attribute takes its index from its first cell
         if row.index.is_none() {
             row.index = Some(r_index);
@@ -675,6 +683,8 @@ pub(super) fn read_sheet_data<R: BufRead>(
         row_buffer: Vec::new(),
         reference_buffer: String::new(),
         value_buffer: String::new(),
+        last_row: 0,
+        last_column: 0,
     };
     loop {
         let event = reader.read_event_into(&mut buffer)?;
