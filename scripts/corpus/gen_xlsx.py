@@ -932,7 +932,7 @@ FILES = [
 
 # Written by the other generators, which check them themselves (fidelity.yml runs each --check):
 # gen_features_xlsx.py (13–18), gen_validation_xlsx.py (19), gen_charts_xlsx.py (20),
-# gen_pivot_xlsx.py (21), gen_chartsheets_xlsx.py (22).
+# gen_pivot_xlsx.py (21, 23_pivot_settings), gen_chartsheets_xlsx.py (22), gen_shapes_xlsx.py (23_shapes).
 FEATURE_FILES = [
     "13_tables.xlsx",
     "14_charts_images.xlsx",
@@ -944,6 +944,8 @@ FEATURE_FILES = [
     "20_charts.xlsx",
     "21_pivot_tables.xlsx",
     "22_chart_sheets.xlsx",
+    "23_pivot_settings.xlsx",
+    "23_shapes.xlsx",
 ]
 
 
