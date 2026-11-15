@@ -17,10 +17,10 @@
 
 use docs_engine::tabs::TabEdit;
 use docs_engine::{Indent, TabKind, TabStop};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_core::settings::Settings;
-use gpui_kit::component::tooltip::Tooltip;
 use kantor_ui::i18n::{tf, tk};
 use kantor_ui::{metrics::*, tokens};
 
@@ -146,7 +146,9 @@ impl Marks {
                 let edge = self.page_w - self.margin_right;
                 edge - snap(edge - x).clamp(-self.margin_right, self.text_w())
             }
-            Handle::Tab(_) => self.margin_left + snap(x - self.margin_left).clamp(0.0, self.text_w()),
+            Handle::Tab(_) => {
+                self.margin_left + snap(x - self.margin_left).clamp(0.0, self.text_w())
+            }
         }
     }
 
@@ -184,28 +186,30 @@ fn start_drag(
     hd: Handle,
     cx: &mut Context<DocsView>,
 ) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
-    cx.listener(move |this: &mut DocsView, ev: &MouseDownEvent, window, cx| {
-        cx.stop_propagation();
-        if let Handle::Tab(pos) = hd
-            && ev.click_count >= 2
-        {
-            this.ruler_drag = None;
-            let stop = this.ruler_tabs().into_iter().find(|s| s.pos == pos);
-            let at = point(ev.position.x, ev.position.y + SPACE_5);
-            this.open_tab_menu(Some(at), stop, window, cx);
-            return;
-        }
-        if let Some(x) = this.ruler_marks().x(hd) {
-            this.ruler_drag = Some(Drag {
-                handle: hd,
-                x,
-                y0: f32::from(ev.position.y),
-                off: false,
-            });
-            this.ruler_move(ev.position, cx);
-            cx.notify();
-        }
-    })
+    cx.listener(
+        move |this: &mut DocsView, ev: &MouseDownEvent, window, cx| {
+            cx.stop_propagation();
+            if let Handle::Tab(pos) = hd
+                && ev.click_count >= 2
+            {
+                this.ruler_drag = None;
+                let stop = this.ruler_tabs().into_iter().find(|s| s.pos == pos);
+                let at = point(ev.position.x, ev.position.y + SPACE_5);
+                this.open_tab_menu(Some(at), stop, window, cx);
+                return;
+            }
+            if let Some(x) = this.ruler_marks().x(hd) {
+                this.ruler_drag = Some(Drag {
+                    handle: hd,
+                    x,
+                    y0: f32::from(ev.position.y),
+                    off: false,
+                });
+                this.ruler_move(ev.position, cx);
+                cx.notify();
+            }
+        },
+    )
 }
 
 /// Ticks every half centimetre from the left margin: `(x, whole cm number)`.
@@ -356,8 +360,8 @@ impl DocsView {
         let px = self.page_x_at(pos.x);
         if let Some(d) = &mut self.ruler_drag {
             let x = marks.constrain(d.handle, px);
-            let off = matches!(d.handle, Handle::Tab(_))
-                && (f32::from(pos.y) - d.y0).abs() > OFF_PX;
+            let off =
+                matches!(d.handle, Handle::Tab(_)) && (f32::from(pos.y) - d.y0).abs() > OFF_PX;
             if x != d.x || off != d.off {
                 d.x = x;
                 d.off = off;

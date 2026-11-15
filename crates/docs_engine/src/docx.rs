@@ -1459,9 +1459,19 @@ impl BodyParser<'_> {
                 self.link = None;
             }
             Frame::P => {
-                if self.field.take().is_some() {
+                if let Some(f) = self.field.take() {
                     self.unsupported
                         .insert("fields spanning paragraphs (tables of contents…)".into());
+                    // Keep what Word shows of it here (a table of
+                    // contents' first line) as text.
+                    if f.in_result && !f.result.is_empty() {
+                        self.para.push_tracked(
+                            &f.result,
+                            self.run.clone(),
+                            self.link.clone(),
+                            self.rev.clone(),
+                        );
+                    }
                 }
                 let mut p = std::mem::take(&mut self.para);
                 if p.text.is_empty() {
@@ -1695,15 +1705,18 @@ fn parse_styles(src: &str, sheet: &mut StyleSheet) {
             p.extras.push(xml);
         }
     };
+    // Tab stops aren't modelled either; layout reads them from the extras
+    // (see `Document::tab_stops`).
+    let para = |xml: &str, p: &mut ParaProps| {
+        if matches!(para_prop(xml, p), Prop::Keep) && element_name(xml) == "tabs" {
+            p.extras.push(xml);
+        }
+    };
     let apply = |target: u8, xml: &str, sheet: &mut StyleSheet, style: &mut Style| match target {
         0 => run(xml, &mut sheet.default_run),
-        1 => {
-            para_prop(xml, &mut sheet.default_para);
-        }
+        1 => para(xml, &mut sheet.default_para),
         2 => run(xml, &mut style.run),
-        3 => {
-            para_prop(xml, &mut style.para);
-        }
+        3 => para(xml, &mut style.para),
         _ => {
             // A table style's w:tblPr.
             if let Some(el) = xml::parse(xml) {

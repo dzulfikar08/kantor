@@ -326,3 +326,76 @@ fn tracked_changes_print_with_markup() {
     let laid = docs_pdf::lay_out(&doc, &mut engine);
     assert!(laid.strike_rules(0).is_empty());
 }
+
+#[test]
+fn table_of_contents_has_dot_leaders_and_aligned_page_numbers() {
+    let doc = Document::open(&corpus("toc.docx")).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let paged = &laid.paged;
+    let col = paged.page_setup(0).margin_left;
+    let at = |pos: i32| col + pos as f32 / 15.0;
+    let paras = doc.paragraphs();
+    let toc: Vec<usize> = (0..paras.len())
+        .filter(|&i| {
+            paras[i]
+                .props
+                .style
+                .as_deref()
+                .is_some_and(|s| s.starts_with("TOC"))
+        })
+        .collect();
+    assert_eq!(toc.len(), 8);
+    for &i in &toc {
+        // The stop comes from the style; the page number ends on it.
+        let stops = doc.tab_stops(&paras[i]);
+        assert_eq!(stops.len(), 1);
+        assert_eq!(stops[0].leader, docs_engine::TabLeader::Dot);
+        let end = paged.caret(i, paras[i].text.len()).unwrap();
+        assert!(
+            (end.x - at(9026)).abs() < 0.6,
+            "{}: {}",
+            paras[i].text,
+            end.x
+        );
+        assert_eq!(
+            paged.caret(i, 0).unwrap().top,
+            end.top,
+            "one line: {}",
+            paras[i].text
+        );
+    }
+    // Decimal stop at 8000: the points line up on it.
+    for (i, p) in paras.iter().enumerate() {
+        if let Some(d) = p
+            .text
+            .find('.')
+            .filter(|_| p.text.matches('\t').count() == 2)
+        {
+            let x = paged.caret(i, d).unwrap().x;
+            assert!((x - at(8000)).abs() < 0.6, "{}: {x}", p.text);
+        }
+    }
+    let rules = paged.tab_rules(0);
+    // A bar line at 4300 on each of the four price-list lines.
+    let bars = rules
+        .iter()
+        .filter(|r| r.rect[3] > 5.0 && (r.rect[0] + r.rect[2] / 2.0 - at(4300)).abs() < 0.01)
+        .count();
+    assert_eq!(bars, 4);
+    // Many dots, all left of the right margin; and they reach the PDF.
+    assert!(rules.len() > 200, "{}", rules.len());
+    assert!(
+        rules
+            .iter()
+            .all(|r| r.rect[0] + r.rect[2] <= at(9026) + 0.01)
+    );
+    let scene = docs_pdf::scene(&doc, &laid);
+    assert!(scene.pages[0].rules.len() >= rules.len());
+    let pdf = docs_pdf::write(&scene).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    if let Some(text) = pdftotext(&pdf, dir.path()) {
+        assert!(text.contains("Introduction"), "{text}");
+        assert!(text.contains("Recommendations"), "{text}");
+    }
+}

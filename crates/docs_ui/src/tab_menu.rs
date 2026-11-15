@@ -256,7 +256,12 @@ impl DocsView {
                             .text_color(t.fg)
                             .child(format!("{} cm", stop_cm(s.pos))),
                     )
-                    .child(div().flex_1().text_color(t.fg_muted).child(kind_label(s.kind)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(t.fg_muted)
+                            .child(kind_label(s.kind)),
+                    )
                     .child(
                         div()
                             .text_color(t.fg_dim)
