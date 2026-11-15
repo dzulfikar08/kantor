@@ -120,6 +120,15 @@ pub fn tag_end(s: &str) -> Option<usize> {
     None
 }
 
+/// The qualified name of a start tag (`p:spPr` in `<p:spPr a="1"/>`).
+pub fn tag_name(tag: &str) -> &str {
+    let inner = tag.trim_start_matches('<');
+    let end = inner
+        .find(|c: char| c.is_whitespace() || c == '/' || c == '>')
+        .unwrap_or(inner.len());
+    &inner[..end]
+}
+
 /// Raw attributes of a start tag (between the name and `>` / `/>`).
 pub fn tag_attrs(tag: &str) -> &str {
     let inner = tag.trim_start_matches('<');

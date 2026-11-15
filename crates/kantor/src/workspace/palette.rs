@@ -1639,6 +1639,30 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.duplicate_doc(w, cx)),
     },
     Command {
+        title: tk("Group"),
+        detail: tk("Slides · the selected shapes"),
+        keys: "Ctrl G",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.group_doc(w, cx)),
+    },
+    Command {
+        title: tk("Ungroup"),
+        detail: tk("Slides · the selected group"),
+        keys: "Ctrl Shift G",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.ungroup_doc(w, cx)),
+    },
+    Command {
+        title: tk("Regroup"),
+        detail: tk("Slides · the last ungrouped group"),
+        keys: "",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.regroup_doc(w, cx)),
+    },
+    Command {
+        title: tk("Convert to Shapes"),
+        detail: tk("Slides · the selected SmartArt"),
+        keys: "",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.convert_to_shapes_doc(w, cx)),
+    },
+    Command {
         title: tk("Bulleted List"),
         detail: tk("Slides · Tab / Shift Tab change the level"),
         keys: "",

@@ -294,6 +294,8 @@ pub struct Presentation {
     pub(crate) import_notes: Vec<String>,
     pub(crate) history: History,
     pub(crate) unsupported: Vec<String>,
+    /// The last ungrouped group, for Regroup.
+    pub(crate) regroup: Option<crate::group::Regroup>,
     pub(crate) next_slide_num: u32,
     pub(crate) next_sld_id: u32,
 }
@@ -626,9 +628,11 @@ impl Presentation {
             import_notes: Vec::new(),
             history: History::default(),
             unsupported,
+            regroup: None,
             next_slide_num,
             next_sld_id: max_sld_id + 1,
-        })
+        }
+        .with_smartart())
     }
 
     // ── facts ──────────────────────────────────────────────────────────────
@@ -950,6 +954,25 @@ impl Presentation {
                     ct.ensure_default(ext, media_type(ext));
                 }
                 out_parts.push((part.clone(), bytes.as_ref().clone()));
+            }
+        }
+        // SmartArt edited in Kantor: its drawing and data model.
+        for (part, bytes) in self.smartart_parts() {
+            out_parts.retain(|(p, _)| *p != part);
+            out_parts.push((part, bytes));
+        }
+        // SmartArt parts no slide uses any more (converted to shapes).
+        for (part, rels) in &pkg.orig_slides {
+            for r in rels {
+                if crate::smartart::is_diagram_rel(r.kind())
+                    && let Some(t) = r.part(part)
+                    && !kept_targets.contains(&t)
+                    && !drop.contains(&t)
+                {
+                    drop.insert(rels_name(&t));
+                    ct.remove_override(&t);
+                    drop.insert(t);
+                }
             }
         }
         // Charts (and their workbooks) edited in Kantor.

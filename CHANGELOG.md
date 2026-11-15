@@ -24,6 +24,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   linking each line to its heading. Each update is one undo step.
 - Docs: Ctrl+click follows a hyperlink. A link to a place in the document jumps there; web and
   e-mail addresses open in your browser, and other kinds of address ask first.
+- Slides: groups can be edited as in PowerPoint. Click a group to select it, click again (or
+  double-click) to select a shape inside it, Esc goes back to the group. Moving, resizing or
+  turning a group moves its shapes with it; a shape inside can be moved, resized, turned,
+  recoloured, given new text or deleted (a group left with one shape is ungrouped). Group
+  (`Ctrl G`), Ungroup (`Ctrl Shift G`) and Regroup are in the right-click menu and the command
+  palette; Shift or Ctrl click selects several shapes, which then move, nudge, copy and delete
+  together. Groups inside groups work too, groups can be copied, and every step can be undone.
+- Slides: the text of SmartArt can be edited in place: click the SmartArt, then the shape, and
+  type. The fill and outline of its shapes can be changed too. Saving updates both PowerPoint's
+  drawing and the SmartArt's data, so PowerPoint shows the edit. Adding or removing SmartArt items
+  and changing its layout need PowerPoint's layout engine and aren't possible; *Convert to Shapes*
+  (right-click menu, palette, or Ungroup) turns SmartArt into a group of ordinary shapes.
 
 ### Changed
 - Docs: files with a table of contents or cross-references are saved in place like any other

@@ -88,17 +88,17 @@ impl SlidesView {
     }
 
     /// The selected shape, if its fill and outline can be changed.
-    fn paint_target(&self) -> Option<usize> {
-        let i = self.selected?;
-        let s = self.pres.slide(self.current).shapes.get(i)?;
-        s.paintable().then_some(i)
+    fn paint_target(&self) -> Option<slides_engine::ShapeRef> {
+        let r = self.sel_ref().filter(|_| self.also.is_empty())?;
+        let s = self.pres.shape(r)?;
+        s.paintable().then_some(r)
     }
 
     pub fn set_fill_doc(&mut self, fill: Paint, window: &mut Window, cx: &mut Context<Self>) {
         let Some(i) = self.paint_target() else {
             return;
         };
-        let res = self.pres.set_fill((self.current, i), fill);
+        let res = self.pres.set_fill(i, fill);
         if self.report(res, cx).is_some() {
             self.after_edit(window, cx);
         }
@@ -114,7 +114,7 @@ impl SlidesView {
         let Some(i) = self.paint_target() else {
             return;
         };
-        let res = self.pres.set_line((self.current, i), color, width);
+        let res = self.pres.set_line(i, color, width);
         if self.report(res, cx).is_some() {
             self.after_edit(window, cx);
         }
@@ -129,7 +129,7 @@ impl SlidesView {
         let t = tokens(cx);
         let view = cx.entity().downgrade();
         let kind = menu.kind;
-        let look = self.pres.slide(self.current).shapes[i].look.clone();
+        let look = self.pres.shape(i)?.look.clone();
         let current = match kind {
             PaintKind::Fill => look.fill,
             PaintKind::Line => look.line.map(|l| l.0),

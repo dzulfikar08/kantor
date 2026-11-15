@@ -24,7 +24,7 @@ use sheets_engine::{
     PrintOptions, RowHeight, SheetPrint, Validation, ValidationOperator, ValidationType, Workbook,
     list_source, validation_operand,
 };
-use slides_engine::{ChartData, Presentation, Rgb, TableOp};
+use slides_engine::{ChartData, Inner, Presentation, Rgb, ShapeRef, TableOp, Xfrm};
 
 struct Run {
     out: PathBuf,
@@ -288,6 +288,25 @@ fn main() -> Result<()> {
         slide_edits(&mut p)?;
         p.save_as(&o.join("strict_deck.pptx"))?;
         Ok(Some(corpus.join("pptx/deck.pptx")))
+    });
+
+    run.scenario("convert_groups.pptx", |o| {
+        let src = corpus.join("pptx/groups.pptx");
+        let mut p = Presentation::open(&src)?;
+        for i in 0..p.len() {
+            if let Some(d) =
+                (0..p.slide(i).shapes.len()).find(|&k| p.slide(i).shapes[k].smartart().is_some())
+            {
+                p.convert_to_shapes((i, d))?;
+            }
+            if let Some(g) = (0..p.slide(i).shapes.len()).find(|&k| p.slide(i).shapes[k].is_group())
+            {
+                let inner = ShapeRef(i, g, Inner::of(&[0]).context("path")?);
+                p.delete_shape(inner)?;
+            }
+        }
+        p.save_as(&o.join("convert_groups.pptx"))?;
+        Ok(Some(src))
     });
 
     run.scenario("new_deck.pptx", |o| {
@@ -927,6 +946,76 @@ fn zip_parts(parts: &[(&str, &str)]) -> Result<Vec<u8>> {
 // ---------------------------------------------------------------- Slides
 
 /// Table cell edits, chart data edits, notes, new and duplicated slides.
+/// Groups and SmartArt: move a group, edit text and fill inside it, group
+/// two loose shapes, edit SmartArt text and fill (none if the file has none).
+fn group_edits(p: &mut Presentation) -> Result<()> {
+    for i in 0..p.len() {
+        let groups: Vec<usize> = (0..p.slide(i).shapes.len())
+            .filter(|&k| p.slide(i).shapes[k].is_group())
+            .collect();
+        if let Some(&g) = groups.first() {
+            let x = p.slide(i).shapes[g].xfrm.context("group box")?;
+            p.set_xfrm(
+                (i, g),
+                Xfrm {
+                    x: x.x + 100_000,
+                    ..x
+                }
+                .with_degrees(15.0),
+                false,
+            )?;
+            let child = ShapeRef(i, g, Inner::of(&[0]).context("path")?);
+            if p.text_paras(child).is_some() {
+                p.insert_text(
+                    child,
+                    Selection::caret(Position::new(0, 0)),
+                    "In a group: ",
+                    None,
+                )?;
+            }
+            p.set_fill(child, slides_engine::Paint::Rgb(Rgb([0x22, 0x88, 0x44])))?;
+            let c = p.placed(child).context("child")?.xfrm;
+            p.set_xfrm(
+                child,
+                Xfrm {
+                    y: c.y + 200_000,
+                    ..c
+                },
+                false,
+            )?;
+        }
+        if let Some(&g) = groups.get(1) {
+            p.ungroup((i, g))?;
+            p.regroup(i)?;
+        }
+        let loose: Vec<usize> = (0..p.slide(i).shapes.len())
+            .filter(|&k| {
+                let s = &p.slide(i).shapes[k];
+                s.ph.is_none() && !s.is_group() && s.movable() && s.xfrm.is_some()
+            })
+            .collect();
+        if loose.len() >= 2 {
+            p.group_shapes(i, &loose[..2])?;
+        }
+        if let Some(d) =
+            (0..p.slide(i).shapes.len()).find(|&k| p.slide(i).shapes[k].smartart().is_some())
+        {
+            let n = p.slide(i).shapes[d]
+                .smartart()
+                .map_or(0, |dd| dd.group.children.len());
+            for k in 0..n {
+                let r = ShapeRef(i, d, Inner::of(&[k]).context("path")?);
+                if p.smartart_text_editable(r) && p.text_paras(r).is_some() {
+                    p.insert_text(r, Selection::caret(Position::new(0, 0)), "Edited ", None)?;
+                    p.set_fill(r, slides_engine::Paint::Scheme("accent2".into()))?;
+                    break;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn slide_edits(p: &mut Presentation) -> Result<()> {
     let mut table = None;
     let mut chart = None;
@@ -985,6 +1074,7 @@ fn slide_edits(p: &mut Presentation) -> Result<()> {
         }
         p.set_chart_data(s, k, &e)?;
     }
+    group_edits(p)?;
     for i in 0..p.len() {
         p.set_notes_text(i, &format!("Notes for slide {} <&>", i + 1))?;
     }

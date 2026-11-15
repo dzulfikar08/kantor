@@ -18,8 +18,7 @@ const LEVEL_STEP: Emu = 457_200;
 /// Hanging indent of a new bullet (0.375 in, as PowerPoint's text boxes).
 const HANGING: Emu = 342_900;
 
-/// A shape on a slide: `(slide index, shape index)`.
-pub type ShapeRef = (usize, usize);
+pub use crate::group::{Inner, ShapeRef};
 
 /// Relationship kinds a duplicated slide may share with its original.
 const SHAREABLE_RELS: [&str; 7] = [
@@ -141,7 +140,16 @@ impl Presentation {
     // ── shapes ─────────────────────────────────────────────────────────────
 
     /// Move / resize a shape. `nudge` merges repeated arrow-key moves.
-    pub fn set_xfrm(&mut self, r: ShapeRef, xfrm: Xfrm, nudge: bool) -> anyhow::Result<()> {
+    pub fn set_xfrm(
+        &mut self,
+        r: impl Into<ShapeRef>,
+        xfrm: Xfrm,
+        nudge: bool,
+    ) -> anyhow::Result<()> {
+        let r = r.into();
+        if !r.is_top() {
+            return self.set_inner_xfrm(r, xfrm, nudge);
+        }
         let kind = if nudge { Kind::Nudge } else { Kind::Other };
         let focus = Focus::shape(r.0, r.1);
         self.record(kind, Some(r), focus.clone(), false, |p| {
@@ -157,6 +165,42 @@ impl Presentation {
             };
             shape.xfrm = Some(xfrm);
             Ok(((), focus))
+        })
+    }
+
+    /// Move several shapes of slide `slide` as one undo step.
+    pub fn set_xfrms(&mut self, slide: usize, moves: &[(usize, Xfrm)]) -> anyhow::Result<()> {
+        self.record(Kind::Other, None, Focus::slide(slide), false, |p| {
+            let s = p.slide_mut(slide)?;
+            for &(i, x) in moves {
+                let shape = s.shapes.get_mut(i).context("no such shape")?;
+                if !shape.movable() {
+                    bail!("This object can't be moved yet");
+                }
+                shape.xfrm = Some(Xfrm {
+                    cx: x.cx.max(1),
+                    cy: x.cy.max(1),
+                    ..x
+                });
+            }
+            Ok(((), Focus::slide(slide)))
+        })
+    }
+
+    /// Delete several shapes of slide `slide` as one undo step.
+    pub fn delete_shapes(&mut self, slide: usize, shapes: &[usize]) -> anyhow::Result<()> {
+        let mut idx = shapes.to_vec();
+        idx.sort_unstable();
+        idx.dedup();
+        self.record(Kind::Other, None, Focus::slide(slide), false, |p| {
+            let s = p.slide_mut(slide)?;
+            for &i in idx.iter().rev() {
+                if i >= s.shapes.len() {
+                    bail!("no such shape");
+                }
+                s.shapes.remove(i);
+            }
+            Ok(((), Focus::slide(slide)))
         })
     }
 
@@ -325,12 +369,8 @@ impl Presentation {
         r: ShapeRef,
         f: impl FnOnce(&mut Shape, &dyn Fn(&Paint) -> Option<Rgb>),
     ) -> anyhow::Result<()> {
-        let focus = Focus::shape(r.0, r.1);
-        let shape = self
-            .slides
-            .get(r.0)
-            .and_then(|s| s.shapes.get(r.1))
-            .context("no such shape")?;
+        let focus = Focus::at(r);
+        let shape = self.shape(r).context("no such shape")?;
         if !shape.paintable() {
             bail!("This object's fill and outline can't be changed yet");
         }
@@ -343,14 +383,14 @@ impl Presentation {
         };
         self.record(Kind::Other, None, focus.clone(), false, |p| {
             let s = p.slide_mut(r.0)?;
-            f(&mut s.shapes[r.1], &lookup);
+            f(s.shape_at_mut(r.1, r.2).context("no such shape")?, &lookup);
             Ok(((), focus))
         })
     }
 
     /// Set a shape's fill (`Paint::None` = no fill).
-    pub fn set_fill(&mut self, r: ShapeRef, fill: Paint) -> anyhow::Result<()> {
-        self.paint_shape(r, |shape, rgb| {
+    pub fn set_fill(&mut self, r: impl Into<ShapeRef>, fill: Paint) -> anyhow::Result<()> {
+        self.paint_shape(r.into(), |shape, rgb| {
             shape.look.fill = rgb(&fill);
             shape.paint.fill = Some(fill);
         })
@@ -360,11 +400,11 @@ impl Presentation {
     /// without an outline gives it one in the text colour.
     pub fn set_line(
         &mut self,
-        r: ShapeRef,
+        r: impl Into<ShapeRef>,
         color: Option<Paint>,
         width: Option<Emu>,
     ) -> anyhow::Result<()> {
-        self.paint_shape(r, |shape, rgb| {
+        self.paint_shape(r.into(), |shape, rgb| {
             let color = match (color, shape.look.line) {
                 (Some(c), _) => Some(c),
                 (None, None) => Some(Paint::Scheme("tx1".into())),
@@ -389,7 +429,11 @@ impl Presentation {
         })
     }
 
-    pub fn delete_shape(&mut self, r: ShapeRef) -> anyhow::Result<()> {
+    pub fn delete_shape(&mut self, r: impl Into<ShapeRef>) -> anyhow::Result<()> {
+        let r = r.into();
+        if !r.is_top() {
+            return self.delete_inner(r);
+        }
         self.record(Kind::Other, None, Focus::shape(r.0, r.1), false, |p| {
             let s = p.slide_mut(r.0)?;
             if r.1 >= s.shapes.len() {
@@ -410,31 +454,40 @@ impl Presentation {
         boundary: bool,
         f: impl FnOnce(&mut Vec<TextPara>) -> Selection,
     ) -> anyhow::Result<Selection> {
-        let before = Focus::text(r.0, r.1, sel);
+        let before = Focus::text_at(r, sel);
+        // SmartArt text that comes from several data model items keeps
+        // its paragraph count (adding items needs PowerPoint's layouts).
+        let fixed_paras = self.smartart_fixed_paras(r)?;
         self.record(kind, Some(r), before, boundary, |p| {
             let s = p.slide_mut(r.0)?;
-            let shape = s.shapes.get_mut(r.1).context("no such shape")?;
+            let shape = s.shape_at_mut(r.1, r.2).context("no such shape")?;
             let body = shape.text.as_mut().context("This shape has no text")?;
             if let Some(why) = &body.locked {
                 bail!("This text can't be edited yet: it has {why}");
             }
             let sel = f(&mut body.paras);
-            Ok((sel, Focus::text(r.0, r.1, sel)))
+            if fixed_paras.is_some_and(|n| n != body.paras.len()) {
+                bail!(
+                    "This SmartArt shape shows several items: paragraphs can't be added or removed in it"
+                );
+            }
+            Ok((sel, Focus::text_at(r, sel)))
         })
     }
 
-    pub fn text_paras(&self, r: ShapeRef) -> Option<&[TextPara]> {
-        Some(&self.slides.get(r.0)?.shapes.get(r.1)?.text.as_ref()?.paras)
+    pub fn text_paras(&self, r: impl Into<ShapeRef>) -> Option<&[TextPara]> {
+        Some(&self.shape(r)?.text.as_ref()?.paras)
     }
 
     /// Replace the selection with `text`; `props` overrides the formatting.
     pub fn insert_text(
         &mut self,
-        r: ShapeRef,
+        r: impl Into<ShapeRef>,
         sel: Selection,
         text: &str,
         props: Option<RunProps>,
     ) -> anyhow::Result<Selection> {
+        let r: ShapeRef = r.into();
         let boundary = text.chars().any(|c| c.is_whitespace()) || !sel.is_empty();
         let kind = if text.contains('\n') {
             Kind::Other
@@ -449,23 +502,34 @@ impl Presentation {
     /// IME composition: every update and the commit are one undo step.
     pub fn compose(
         &mut self,
-        r: ShapeRef,
+        r: impl Into<ShapeRef>,
         sel: Selection,
         text: &str,
         props: Option<RunProps>,
     ) -> anyhow::Result<Selection> {
+        let r: ShapeRef = r.into();
         self.edit_text(r, Kind::Composing, sel, false, |paras| {
             text_ops::insert_text(paras, sel, text, props)
         })
     }
 
-    pub fn backspace(&mut self, r: ShapeRef, sel: Selection) -> anyhow::Result<Selection> {
+    pub fn backspace(
+        &mut self,
+        r: impl Into<ShapeRef>,
+        sel: Selection,
+    ) -> anyhow::Result<Selection> {
+        let r: ShapeRef = r.into();
         self.edit_text(r, Kind::Deleting, sel, !sel.is_empty(), |paras| {
             text_ops::backspace(paras, sel)
         })
     }
 
-    pub fn delete_forward(&mut self, r: ShapeRef, sel: Selection) -> anyhow::Result<Selection> {
+    pub fn delete_forward(
+        &mut self,
+        r: impl Into<ShapeRef>,
+        sel: Selection,
+    ) -> anyhow::Result<Selection> {
+        let r: ShapeRef = r.into();
         self.edit_text(r, Kind::Deleting, sel, !sel.is_empty(), |paras| {
             text_ops::delete_forward(paras, sel)
         })
@@ -473,8 +537,9 @@ impl Presentation {
 
     /// Whether `toggle` is on for the whole selection (resolved through
     /// the layout and master).
-    pub fn is_on(&self, r: ShapeRef, sel: Selection, toggle: Toggle) -> bool {
-        let Some(shape) = self.slides.get(r.0).and_then(|s| s.shapes.get(r.1)) else {
+    pub fn is_on(&self, r: impl Into<ShapeRef>, sel: Selection, toggle: Toggle) -> bool {
+        let r: ShapeRef = r.into();
+        let Some(shape) = self.shape(r) else {
             return false;
         };
         let Some(body) = &shape.text else {
@@ -510,7 +575,13 @@ impl Presentation {
     }
 
     /// Ctrl+B/I/U on a selection.
-    pub fn toggle(&mut self, r: ShapeRef, sel: Selection, toggle: Toggle) -> anyhow::Result<()> {
+    pub fn toggle(
+        &mut self,
+        r: impl Into<ShapeRef>,
+        sel: Selection,
+        toggle: Toggle,
+    ) -> anyhow::Result<()> {
+        let r: ShapeRef = r.into();
         let on = !self.is_on(r, sel, toggle);
         self.edit_text(r, Kind::Other, sel, true, |paras| {
             text_ops::format(paras, sel, &|p| set_toggle(p, toggle, on));
@@ -520,7 +591,8 @@ impl Presentation {
     }
 
     /// Paragraph indices a selection touches (clamped to the body).
-    fn sel_paras(&self, r: ShapeRef, sel: Selection) -> std::ops::RangeInclusive<usize> {
+    fn sel_paras(&self, r: impl Into<ShapeRef>, sel: Selection) -> std::ops::RangeInclusive<usize> {
+        let r: ShapeRef = r.into();
         let n = self.text_paras(r).map_or(1, |p| p.len().max(1));
         let (a, b) = sel.ordered();
         a.para.min(n - 1)..=b.para.min(n - 1)
@@ -528,7 +600,13 @@ impl Presentation {
 
     /// Tab / Shift+Tab: move the selected paragraphs `delta` outline levels
     /// (0–8). A paragraph with its own left margin moves it by half an inch.
-    pub fn change_level(&mut self, r: ShapeRef, sel: Selection, delta: i8) -> anyhow::Result<()> {
+    pub fn change_level(
+        &mut self,
+        r: impl Into<ShapeRef>,
+        sel: Selection,
+        delta: i8,
+    ) -> anyhow::Result<()> {
+        let r: ShapeRef = r.into();
         let range = self.sel_paras(r, sel);
         self.edit_text(r, Kind::Other, sel, true, |paras| {
             for p in &mut paras[range] {
@@ -549,8 +627,9 @@ impl Presentation {
 
     /// Whether every selected paragraph is a bulleted (`numbered` false)
     /// or numbered list item, with inheritance.
-    pub fn is_list(&self, r: ShapeRef, sel: Selection, numbered: bool) -> bool {
-        let Some(shape) = self.slides.get(r.0).and_then(|s| s.shapes.get(r.1)) else {
+    pub fn is_list(&self, r: impl Into<ShapeRef>, sel: Selection, numbered: bool) -> bool {
+        let r: ShapeRef = r.into();
+        let Some(shape) = self.shape(r) else {
             return false;
         };
         if shape.text.is_none() {
@@ -570,17 +649,14 @@ impl Presentation {
     /// are used when they are of the kind asked for.
     pub fn toggle_list(
         &mut self,
-        r: ShapeRef,
+        r: impl Into<ShapeRef>,
         sel: Selection,
         numbered: bool,
     ) -> anyhow::Result<()> {
+        let r: ShapeRef = r.into();
         let on = !self.is_list(r, sel, numbered);
         let range = self.sel_paras(r, sel);
-        let shape = self
-            .slides
-            .get(r.0)
-            .and_then(|s| s.shapes.get(r.1))
-            .context("no such shape")?;
+        let shape = self.shape(r).context("no such shape")?;
         // What each paragraph would have without its own formatting.
         let inherited: Vec<ParaStyle> = range
             .clone()
@@ -631,7 +707,8 @@ impl Presentation {
     }
 
     /// Formatting typed text takes at `pos`.
-    pub fn run_props_at(&self, r: ShapeRef, pos: docs_engine::Position) -> RunProps {
+    pub fn run_props_at(&self, r: impl Into<ShapeRef>, pos: docs_engine::Position) -> RunProps {
+        let r: ShapeRef = r.into();
         self.text_paras(r)
             .map(|paras| {
                 let p = text_ops::clamp(paras, pos);
@@ -705,7 +782,7 @@ impl Presentation {
         let focus = Focus::slide(slide);
         self.record(
             Kind::Notes,
-            Some((slide, usize::MAX)),
+            Some((slide, usize::MAX).into()),
             focus.clone(),
             false,
             |p| {

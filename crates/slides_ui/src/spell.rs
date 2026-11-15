@@ -13,7 +13,7 @@ use std::sync::Arc;
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::*;
 use kantor_spell::{Lang, SpellItem, SpellMenu, Speller};
-use slides_engine::{Position, Selection, TextPara};
+use slides_engine::{Position, Selection, ShapeRef, TextPara};
 
 use crate::SlidesView;
 
@@ -24,7 +24,7 @@ pub(crate) struct SpellState {
     /// The caret is where the user is typing (don't flag that word yet).
     pub typing: bool,
     /// The flagged word under the last right-click: `(shape, paragraph, menu)`.
-    pub menu: Option<(usize, usize, SpellMenu)>,
+    pub menu: Option<(ShapeRef, usize, SpellMenu)>,
 }
 
 /// Which dictionary checks each run: its `lang`, else `default`. PowerPoint
@@ -136,9 +136,10 @@ impl SlidesView {
         window.focus(&self.focus, cx);
         self.spell.menu = None;
         let Some(e) = self.editing.clone() else {
+            self.right_click_select(ev.position, cx);
             return;
         };
-        let Some(pos) = self.text_hit(e.shape, ev.position) else {
+        let Some(pos) = self.text_hit(e.at(self.current), ev.position) else {
             return;
         };
         let (a, b) = e.sel.ordered();
@@ -158,14 +159,14 @@ impl SlidesView {
             .collect();
         if let Some(p) = self
             .pres
-            .text_paras((self.current, e.shape))
+            .text_paras(e.at(self.current))
             .and_then(|ps| ps.get(pos.para))
             && let Some(r) = kantor_spell::flagged_at(&flagged, pos.offset)
         {
             let spans = dictionaries(p, kantor_ui::spelling::default_lang(cx));
             if let Some(lang) = kantor_spell::lang_at(&spans, r.start) {
                 self.spell.menu = SpellMenu::at(&p.text, pos.offset, &flagged, lang)
-                    .map(|m| (e.shape, pos.para, m));
+                    .map(|m| (e.at(self.current), pos.para, m));
             }
         }
         cx.notify();
@@ -173,7 +174,7 @@ impl SlidesView {
 
     fn apply_spell_item(
         &mut self,
-        shape: usize,
+        shape: ShapeRef,
         para: usize,
         menu: &SpellMenu,
         item: &SpellItem,
@@ -182,10 +183,13 @@ impl SlidesView {
     ) {
         match item {
             SpellItem::Replace(with) => {
-                let same = self.editing.as_ref().is_some_and(|e| e.shape == shape)
+                let same = self
+                    .editing
+                    .as_ref()
+                    .is_some_and(|e| e.at(self.current) == shape)
                     && self
                         .pres
-                        .text_paras((self.current, shape))
+                        .text_paras(shape)
                         .and_then(|ps| ps.get(para))
                         .and_then(|p| p.text.get(menu.range.clone()))
                         == Some(menu.word.as_str());
@@ -263,7 +267,7 @@ pub(crate) fn context_menu(
             },
         ));
     }
-    menu
+    crate::groups::menu_items(menu, view, cx)
 }
 
 #[cfg(test)]

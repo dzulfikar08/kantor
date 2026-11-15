@@ -131,14 +131,20 @@ impl SlidesView {
 
     /// Where the search continues from, as a [`TextMatch::key`]: the text
     /// selection's end (`end`) or start, else the selected shape or slide.
-    fn find_cursor(&self, end: bool) -> (usize, usize, usize, usize) {
+    fn find_cursor(&self, end: bool) -> (usize, usize, u64, usize, usize) {
         match &self.editing {
             Some(e) => {
                 let (a, b) = e.sel.ordered();
                 let p = if end { b } else { a };
-                (self.current, e.shape, p.para, p.offset)
+                (self.current, e.shape, e.inner.order(), p.para, p.offset)
             }
-            None => (self.current, self.selected.unwrap_or(0), 0, 0),
+            None => (
+                self.current,
+                self.selected.unwrap_or(0),
+                self.inner.order(),
+                0,
+                0,
+            ),
         }
     }
 
@@ -149,7 +155,12 @@ impl SlidesView {
     }
 
     /// Go to the match at or after `at` (forward) or the last one before.
-    fn find_go(&mut self, at: (usize, usize, usize, usize), forward: bool, cx: &mut Context<Self>) {
+    fn find_go(
+        &mut self,
+        at: (usize, usize, u64, usize, usize),
+        forward: bool,
+        cx: &mut Context<Self>,
+    ) {
         let keys: Vec<_> = self.find.found.iter().map(TextMatch::key).collect();
         let Some(ix) = pick(&keys, &at, forward, false) else {
             self.find.current = None;
@@ -164,19 +175,19 @@ impl SlidesView {
 
     /// Go to the match's slide, select its shape and the matched text.
     fn show_match(&mut self, m: &TextMatch, cx: &mut Context<Self>) {
-        let (slide, shape) = m.shape;
+        let slide = m.shape.0;
         if slide != self.current {
             self.go_to(slide, cx);
         }
         let sel = m.selection();
         let editable = self.pres.text_replaceable(m.shape);
-        if editable && self.begin_editing(shape, Some(sel.head), cx) {
+        if editable && self.begin_editing(m.shape, Some(sel.head), cx) {
             if let Some(e) = &mut self.editing {
                 e.sel = sel;
             }
         } else {
             self.editing = None;
-            self.selected = Some(shape);
+            self.select_at(Some(m.shape), cx);
         }
         cx.notify();
     }
@@ -197,7 +208,7 @@ impl SlidesView {
             }
         };
         let before = match &self.editing {
-            Some(e) => Focus::text(self.current, e.shape, e.sel),
+            Some(e) => Focus::text_at(e.at(self.current), e.sel),
             None => Focus::slide(self.current),
         };
         let caret = targets.last().map(|m| {
@@ -215,10 +226,10 @@ impl SlidesView {
                     (n, true) => tf("Replaced {} matches", &[&n]).into(),
                     _ => SharedString::default(),
                 };
-                if !all && let Some(((slide, shape), para, offset)) = caret {
+                if !all && let Some((r, para, offset)) = caret {
                     // Continue after the replacement.
                     self.find_search(cx);
-                    let at = (slide, shape, para, offset);
+                    let at = (r.0, r.1, r.2.order(), para, offset);
                     self.find_go(at, true, cx);
                 } else {
                     self.find_search(cx);

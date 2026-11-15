@@ -10,7 +10,9 @@
 //! or Ctrl+wheel zoom, Ctrl+0 fits again). On the canvas: click selects a shape, drag
 //! moves it, the handles resize it, a second click (or typing, or Enter)
 //! edits its text, the round handle above it rotates it (Shift snaps to
-//! 15°). Under the canvas, a resizable speaker-notes pane ([`notes`]).
+//! 15°). A second click on a group (or SmartArt) selects the shape inside
+//! it under the pointer, Esc goes back to the group; Shift or Ctrl click
+//! selects several shapes ([`groups`]: Group, Ungroup, Regroup). Under the canvas, a resizable speaker-notes pane ([`notes`]).
 //! F5 presents in the pane, with the notes under the slide (S hides them).
 //!
 //! Text input, including IME composition, goes through GPUI's
@@ -24,6 +26,7 @@ mod draw;
 pub use draw::{Painted, Painter, View as SceneView, paint_items};
 mod find;
 mod fit;
+mod groups;
 mod input;
 mod notes;
 mod object_editor;
@@ -46,8 +49,8 @@ use kantor_ui::i18n::{self, tf, tk};
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{Tokens, metrics::*, tokens};
 use slides_engine::{
-    Focus, Geom, Layer, Position, Presentation, RunProps, Selection, ShapeKind, SlideSize, Xfrm,
-    text_ops,
+    Focus, Geom, Inner, Layer, Position, Presentation, RunProps, Selection, ShapeKind, ShapeRef,
+    SlideSize, Xfrm, text_ops,
 };
 
 use draw::{
@@ -119,6 +122,10 @@ actions!(
         PresentExit,
         PresentToggleNotes,
         ToggleNotes,
+        GroupShapes,
+        UngroupShapes,
+        RegroupShapes,
+        ConvertToShapes,
     ]
 );
 
@@ -198,6 +205,8 @@ fn key_bindings() -> Vec<KeyBinding> {
         "y" => Redo,
         "s" => Save,
         "shift-s" => SaveAs,
+        "g" => GroupShapes,
+        "shift-g" => UngroupShapes,
         "=" => ZoomIn,
         "+" => ZoomIn,
         "shift-=" => ZoomIn,
@@ -235,12 +244,20 @@ pub struct SlidesInfo {
 #[derive(Clone, Debug)]
 struct Editing {
     shape: usize,
+    /// Inside that shape (a group's or SmartArt's shape), if so.
+    inner: Inner,
     sel: Selection,
     /// IME composition range in the caret's paragraph.
     marked: Option<Range<usize>>,
     /// Formatting for the next typed text (Ctrl+B with no selection).
     typing_props: Option<RunProps>,
     goal_x: Option<f32>,
+}
+
+impl Editing {
+    fn at(&self, slide: usize) -> ShapeRef {
+        ShapeRef(slide, self.shape, self.inner)
+    }
 }
 
 /// Which edges a resize handle moves: -1 left/top, 1 right/bottom, 0 none.
@@ -260,19 +277,28 @@ const HANDLES: [Handle; 8] = [
 enum Drag {
     Move {
         shape: usize,
+        inner: Inner,
         start: Point<Pixels>,
         orig: Xfrm,
         moved: bool,
         was_selected: bool,
     },
+    /// Several selected shapes moved together.
+    MoveMany {
+        start: Point<Pixels>,
+        origs: Vec<(usize, Xfrm)>,
+        moved: bool,
+    },
     Resize {
         shape: usize,
+        inner: Inner,
         handle: Handle,
         start: Point<Pixels>,
         orig: Xfrm,
     },
     Rotate {
         shape: usize,
+        inner: Inner,
         orig: Xfrm,
     },
     Text,
@@ -294,14 +320,22 @@ pub struct SlidesView {
     /// by the shell so new documents are numbered across the session.
     untitled_name: Option<String>,
     current: usize,
+    /// The selected slide shape (or the group the selected shape is in).
     selected: Option<usize>,
+    /// The selected shape inside `selected` (a group's or SmartArt's
+    /// shape: PowerPoint's second click), empty for `selected` itself.
+    inner: Inner,
+    /// More slide shapes selected with `selected` (Shift or Ctrl click).
+    also: Vec<usize>,
     editing: Option<Editing>,
     painter: Rc<Painter>,
     /// Canvas bounds from the last paint.
     viewport: Rc<Cell<Bounds<Pixels>>>,
     drag: Option<Drag>,
     /// Live position of a shape being dragged (committed on mouse up).
-    preview: Option<(usize, Xfrm)>,
+    preview: Option<(usize, Inner, Xfrm)>,
+    /// Live positions of several shapes being dragged together.
+    preview_many: Vec<(usize, Xfrm)>,
     /// Thumbnail being dragged to a new place, and where it would land.
     strip_drag: Option<usize>,
     strip_drop: Option<usize>,
@@ -400,11 +434,14 @@ impl SlidesView {
             untitled_name: None,
             current: 0,
             selected: None,
+            inner: Inner::TOP,
+            also: Vec::new(),
             editing: None,
             painter: Rc::new(Painter::new(engine, bridge)),
             viewport: Rc::default(),
             drag: None,
             preview: None,
+            preview_many: Vec::new(),
             strip_drag: None,
             strip_drop: None,
             strip_scroll: UniformListScrollHandle::new(),
@@ -505,13 +542,53 @@ impl SlidesView {
     }
 
     fn shape_xfrm(&self, i: usize) -> Option<Xfrm> {
-        if let Some((j, x)) = self.preview
+        if let Some((j, inner, x)) = self.preview
             && i == j
+            && inner.is_top()
         {
             return Some(x);
         }
+        if let Some((_, x)) = self.preview_many.iter().find(|(j, _)| *j == i) {
+            return Some(*x);
+        }
         let shape = self.pres.slide(self.current).shapes.get(i)?;
         self.pres.effective_xfrm(self.current, shape)
+    }
+
+    /// Where shape `r` (on the current slide, maybe inside a group) is
+    /// drawn, with a drag's live position.
+    fn item_xfrm(&self, r: ShapeRef) -> Option<Xfrm> {
+        if r.is_top() {
+            return self.shape_xfrm(r.1);
+        }
+        if let Some((j, inner, x)) = self.preview
+            && (j, inner) == (r.1, r.2)
+        {
+            return Some(x);
+        }
+        self.pres.placed(r).map(|p| p.xfrm)
+    }
+
+    /// The selected shape (inside its group, if so).
+    fn sel_ref(&self) -> Option<ShapeRef> {
+        Some(ShapeRef(self.current, self.selected?, self.inner))
+    }
+
+    /// Whether shape `r` can be moved, resized and turned.
+    fn item_movable(&self, r: ShapeRef) -> bool {
+        match self.pres.shape(r) {
+            Some(s) if r.is_top() => s.movable(),
+            Some(_) => !self.pres.in_smartart(r),
+            None => false,
+        }
+    }
+
+    /// The selected slide shapes (several after Shift or Ctrl clicks).
+    fn selection(&self) -> Vec<usize> {
+        let mut v: Vec<usize> = self.selected.into_iter().chain(self.also.clone()).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
     }
 
     /// The laid-out text of shape `i` (no prompt), with its box.
@@ -523,9 +600,24 @@ impl SlidesView {
         Some((xfrm, self.painter.place(t, &xfrm)))
     }
 
-    /// Text position under a screen point, in shape `i`.
-    fn text_hit(&self, i: usize, p: Point<Pixels>) -> Option<Position> {
-        let (xfrm, t) = self.laid(i)?;
+    /// The laid-out text of shape `r` (inside a group or SmartArt too),
+    /// with its box.
+    fn laid_at(&self, r: ShapeRef) -> Option<(Xfrm, slides_scene::LaidText)> {
+        if r.is_top() {
+            return self.laid(r.1);
+        }
+        let placed = self.pres.placed(r)?;
+        let shape = self.pres.shape(r)?;
+        let bx = placed.text_box.unwrap_or(placed.xfrm);
+        let t = self
+            .pres
+            .shape_text(self.current, shape, &bx, placed.text_box.is_some())?;
+        Some((bx, self.painter.place(&t, &bx)))
+    }
+
+    /// Text position under a screen point, in shape `r`.
+    fn text_hit(&self, r: ShapeRef, p: Point<Pixels>) -> Option<Position> {
+        let (xfrm, t) = self.laid_at(r)?;
         let v = self.view();
         // Rotated text: measure in the shape's own frame.
         let p = Turn::of(&xfrm, v).map_or(p, |t| t.unapply(p));
@@ -534,7 +626,7 @@ impl SlidesView {
         let x = f32::from(p.x - o.x) / s;
         let y = f32::from(p.y - o.y) / s;
         let (para, offset) = t.layout.paged.hit_test(0, x, y)?;
-        let paras = self.pres.text_paras((self.current, i))?;
+        let paras = self.pres.text_paras(r)?;
         Some(text_ops::clamp(paras, Position::new(para, offset)))
     }
 
@@ -552,31 +644,31 @@ impl SlidesView {
         Bounds::centered_at(handle_point(v, xfrm, h), size(SLIDE_HANDLE, SLIDE_HANDLE))
     }
 
+    /// The selected shape if it has handles (one shape selected, movable,
+    /// its text not being edited).
+    fn handles_target(&self) -> Option<ShapeRef> {
+        let r = self.sel_ref()?;
+        (self.editing.is_none() && self.also.is_empty() && self.item_movable(r)).then_some(r)
+    }
+
     /// The selected shape if the pointer is on its rotate handle.
-    fn rotate_handle_at(&self, p: Point<Pixels>) -> Option<usize> {
-        let i = self.selected?;
-        let shape = self.pres.slide(self.current).shapes.get(i)?;
-        if self.editing.is_some() || !shape.movable() {
-            return None;
-        }
-        let xfrm = self.shape_xfrm(i)?;
+    fn rotate_handle_at(&self, p: Point<Pixels>) -> Option<ShapeRef> {
+        let r = self.handles_target()?;
+        let xfrm = self.item_xfrm(r)?;
         let c = rotate_handle_point(self.view(), &xfrm);
         Bounds::centered_at(c, size(SLIDE_HANDLE, SLIDE_HANDLE))
             .dilate(px(4.))
             .contains(&p)
-            .then_some(i)
+            .then_some(r)
     }
 
-    fn handle_at(&self, p: Point<Pixels>) -> Option<(usize, Handle)> {
-        let i = self.selected?;
-        if self.editing.is_some() || !self.pres.slide(self.current).shapes.get(i)?.movable() {
-            return None;
-        }
-        let xfrm = self.shape_xfrm(i)?;
+    fn handle_at(&self, p: Point<Pixels>) -> Option<(ShapeRef, Handle)> {
+        let r = self.handles_target()?;
+        let xfrm = self.item_xfrm(r)?;
         HANDLES
             .iter()
             .find(|h| self.handle_bounds(&xfrm, **h).dilate(px(3.)).contains(&p))
-            .map(|h| (i, *h))
+            .map(|h| (r, *h))
     }
 
     // ── state changes ──────────────────────────────────────────────────────
@@ -614,8 +706,11 @@ impl SlidesView {
         }
         self.current = slide;
         self.selected = None;
+        self.inner = Inner::TOP;
+        self.also.clear();
         self.editing = None;
         self.preview = None;
+        self.preview_many.clear();
         self.drag = None;
         self.strip_scroll
             .scroll_to_item(slide, ScrollStrategy::Center);
@@ -628,11 +723,20 @@ impl SlidesView {
         self.current = f.slide.min(n.saturating_sub(1));
         let shapes = self.pres.slide(self.current).shapes.len();
         self.selected = f.shape.filter(|&s| s < shapes);
+        self.also.clear();
+        self.inner = Inner::TOP;
+        if let Some(r) = f.shape_ref().filter(|r| !r.is_top())
+            && self.pres.shape(ShapeRef(self.current, r.1, r.2)).is_some()
+        {
+            self.inner = r.2;
+        }
+        let inner = self.inner;
         self.editing = match (self.selected, f.sel) {
             (Some(shape), Some(sel)) => {
-                let paras = self.pres.text_paras((self.current, shape));
+                let paras = self.pres.text_paras(ShapeRef(self.current, shape, inner));
                 paras.map(|p| Editing {
                     shape,
+                    inner,
                     sel: Selection {
                         anchor: text_ops::clamp(p, sel.anchor),
                         head: text_ops::clamp(p, sel.head),
@@ -650,20 +754,31 @@ impl SlidesView {
     }
 
     fn select(&mut self, shape: Option<usize>, cx: &mut Context<Self>) {
-        if self.editing.as_ref().map(|e| e.shape) != shape {
+        self.select_at(shape.map(|i| ShapeRef(self.current, i, Inner::TOP)), cx);
+    }
+
+    /// Select shape `r` (a slide shape, or one inside a group), alone.
+    fn select_at(&mut self, r: Option<ShapeRef>, cx: &mut Context<Self>) {
+        if self.editing.as_ref().map(|e| e.at(self.current)) != r {
             self.editing = None;
             self.pres.seal_history();
         }
-        self.selected = shape;
+        self.selected = r.map(|r| r.1);
+        self.inner = r.map_or(Inner::TOP, |r| r.2);
+        self.also.clear();
         self.strip_focused = false;
         cx.notify();
     }
 
-    /// Start editing shape `i`'s text with the caret at `pos` (end if `None`).
-    fn begin_editing(&mut self, i: usize, pos: Option<Position>, cx: &mut Context<Self>) -> bool {
-        let r = (self.current, i);
+    /// Start editing shape `r`'s text with the caret at `pos` (end if `None`).
+    fn begin_editing(
+        &mut self,
+        r: ShapeRef,
+        pos: Option<Position>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let slide = self.pres.slide(self.current);
-        let Some(shape) = slide.shapes.get(i) else {
+        let Some(shape) = self.pres.shape(r) else {
             return false;
         };
         if let Some(why) = &slide.locked {
@@ -677,11 +792,21 @@ impl SlidesView {
         if !shape.text_editable() {
             return false;
         }
+        if !self.pres.smartart_text_editable(r) {
+            self.set_status(
+                i18n::t("This SmartArt text can't be edited: Kantor can't tell which item it belongs to"),
+                cx,
+            );
+            return false;
+        }
         let paras = self.pres.text_paras(r).unwrap_or_default();
         let pos = pos.unwrap_or_else(|| text_ops::end(paras));
-        self.selected = Some(i);
+        self.selected = Some(r.1);
+        self.inner = r.2;
+        self.also.clear();
         self.editing = Some(Editing {
-            shape: i,
+            shape: r.1,
+            inner: r.2,
             sel: Selection::caret(pos),
             marked: None,
             typing_props: None,
@@ -698,12 +823,12 @@ impl SlidesView {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-        f: impl FnOnce(&mut Presentation, (usize, usize), &mut Editing) -> anyhow::Result<Selection>,
+        f: impl FnOnce(&mut Presentation, ShapeRef, &mut Editing) -> anyhow::Result<Selection>,
     ) {
         let Some(mut e) = self.editing.clone() else {
             return;
         };
-        let r = (self.current, e.shape);
+        let r = e.at(self.current);
         let result = f(&mut self.pres, r, &mut e);
         if let Some(sel) = self.report(result, cx) {
             e.sel = sel;
@@ -715,10 +840,10 @@ impl SlidesView {
 
     fn insert(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         if self.editing.is_none() {
-            let Some(i) = self.selected else {
+            let Some(r) = self.sel_ref() else {
                 return;
             };
-            if !self.begin_editing(i, None, cx) {
+            if !self.begin_editing(r, None, cx) {
                 return;
             }
         }
@@ -735,7 +860,7 @@ impl SlidesView {
             self.set_status(i18n::t("Select text to format it"), cx);
             return;
         };
-        let r = (self.current, e.shape);
+        let r = e.at(self.current);
         if e.sel.is_empty() {
             let mut props = e
                 .typing_props
@@ -760,11 +885,13 @@ impl SlidesView {
         let Some(e) = &self.editing else {
             return false;
         };
-        let r = (self.current, e.shape);
+        let r = e.at(self.current);
         if e.sel.is_empty()
             && let Some(props) = &e.typing_props
         {
-            let shape = &self.pres.slide(self.current).shapes[e.shape];
+            let Some(shape) = self.pres.shape(r) else {
+                return false;
+            };
             let run = self
                 .pres
                 .resolve_run(self.current, shape, e.sel.head.para, props);
@@ -796,7 +923,7 @@ impl SlidesView {
         let Some(e) = self.editing.clone() else {
             return;
         };
-        let Some(paras) = self.pres.text_paras((self.current, e.shape)) else {
+        let Some(paras) = self.pres.text_paras(e.at(self.current)) else {
             return;
         };
         if !extend && !e.sel.is_empty() {
@@ -828,7 +955,7 @@ impl SlidesView {
         let Some(e) = self.editing.clone() else {
             return;
         };
-        let Some((_, t)) = self.laid(e.shape) else {
+        let Some((_, t)) = self.laid_at(e.at(self.current)) else {
             return;
         };
         let paged = &t.layout.paged;
@@ -840,10 +967,7 @@ impl SlidesView {
                 None => return,
             },
         };
-        let paras = self
-            .pres
-            .text_paras((self.current, e.shape))
-            .unwrap_or_default();
+        let paras = self.pres.text_paras(e.at(self.current)).unwrap_or_default();
         let pos = match paged.vertical(h.para, h.offset, x, down) {
             Some((para, offset)) => Position::new(para, offset),
             None if down => text_ops::end(paras),
@@ -859,14 +983,14 @@ impl SlidesView {
         let Some(e) = self.editing.clone() else {
             return;
         };
-        let Some((_, t)) = self.laid(e.shape) else {
+        let Some((_, t)) = self.laid_at(e.at(self.current)) else {
             return;
         };
         let h = e.sel.head;
         let Some((range, soft)) = t.layout.paged.line_range(h.para, h.offset) else {
             return;
         };
-        let Some(paras) = self.pres.text_paras((self.current, e.shape)) else {
+        let Some(paras) = self.pres.text_paras(e.at(self.current)) else {
             return;
         };
         let text = &paras[h.para].text;
@@ -896,17 +1020,29 @@ impl SlidesView {
             }
             return;
         }
-        if let Some(i) = self.selected {
-            let Some(x) = self.shape_xfrm(i) else {
+        let step = SLIDE_NUDGE_EMU * if shift { 10 } else { 1 };
+        let nudged = |x: Xfrm| Xfrm {
+            x: x.x + dx as i64 * step,
+            y: x.y + dy as i64 * step,
+            ..x
+        };
+        if !self.also.is_empty() {
+            let moves: Vec<(usize, Xfrm)> = self
+                .selection()
+                .into_iter()
+                .filter_map(|i| Some((i, nudged(self.shape_xfrm(i)?))))
+                .collect();
+            let res = self.pres.set_xfrms(self.current, &moves);
+            if self.report(res, cx).is_some() {
+                self.after_edit(window, cx);
+            }
+            return;
+        }
+        if let Some(r) = self.sel_ref() {
+            let Some(x) = self.item_xfrm(r) else {
                 return;
             };
-            let step = SLIDE_NUDGE_EMU * if shift { 10 } else { 1 };
-            let moved = Xfrm {
-                x: x.x + dx as i64 * step,
-                y: x.y + dy as i64 * step,
-                ..x
-            };
-            let res = self.pres.set_xfrm((self.current, i), moved, true);
+            let res = self.pres.set_xfrm(r, nudged(x), true);
             if self.report(res, cx).is_some() {
                 self.after_edit(window, cx);
             }
@@ -920,11 +1056,16 @@ impl SlidesView {
         self.go_to(next, cx);
     }
 
+    /// Escape: stop editing text; from a shape inside a group, select the
+    /// group (as PowerPoint); else select nothing.
     fn escape(&mut self, cx: &mut Context<Self>) {
         if self.editing.take().is_some() {
             self.pres.seal_history();
+        } else if !self.inner.is_top() {
+            self.inner = self.inner.parent();
         } else {
             self.selected = None;
+            self.also.clear();
         }
         cx.notify();
     }
@@ -941,10 +1082,21 @@ impl SlidesView {
             });
             return;
         }
-        if let Some(i) = self.selected {
-            let res = self.pres.delete_shape((self.current, i));
+        if !self.also.is_empty() {
+            let res = self.pres.delete_shapes(self.current, &self.selection());
             if self.report(res, cx).is_some() {
-                self.selected = None;
+                self.select(None, cx);
+                self.after_edit(window, cx);
+            }
+            return;
+        }
+        if let Some(r) = self.sel_ref() {
+            let res = self.pres.delete_shape(r);
+            if self.report(res, cx).is_some() {
+                // Inside a group: the group (or what's left of it) stays selected.
+                let up = ShapeRef(r.0, r.1, r.2.parent());
+                let keep = !r.is_top() && self.pres.shape(up).is_some();
+                self.select_at(keep.then_some(up), cx);
                 self.after_edit(window, cx);
             }
             return;
@@ -962,8 +1114,8 @@ impl SlidesView {
                 "\n".into()
             };
             self.insert(&text, window, cx);
-        } else if let Some(i) = self.selected {
-            self.begin_editing(i, None, cx);
+        } else if let Some(r) = self.sel_ref() {
+            self.begin_editing(r, None, cx);
         }
     }
 
@@ -975,7 +1127,7 @@ impl SlidesView {
             return;
         }
         if let Some(e) = self.editing.clone() {
-            let r = (self.current, e.shape);
+            let r = e.at(self.current);
             let (a, b) = e.sel.ordered();
             let in_list = self.pres.is_list(r, e.sel, false) || self.pres.is_list(r, e.sel, true);
             if !back && a.para == b.para && a.offset > 0 && !in_list {
@@ -1017,13 +1169,12 @@ impl SlidesView {
 
     /// The text a list toggle applies to: the edited selection, or the
     /// whole text of the selected shape.
-    fn list_target(&self) -> Option<((usize, usize), Selection)> {
+    fn list_target(&self) -> Option<(ShapeRef, Selection)> {
         if let Some(e) = &self.editing {
-            return Some(((self.current, e.shape), e.sel));
+            return Some((e.at(self.current), e.sel));
         }
-        let i = self.selected?;
-        let r = (self.current, i);
-        let shape = self.pres.slide(self.current).shapes.get(i)?;
+        let r = self.sel_ref().filter(|_| self.also.is_empty())?;
+        let shape = self.pres.shape(r)?;
         if !shape.text_editable() {
             return None;
         }
@@ -1045,7 +1196,7 @@ impl SlidesView {
 
     fn select_all(&mut self, cx: &mut Context<Self>) {
         if let Some(e) = &mut self.editing
-            && let Some(paras) = self.pres.text_paras((self.current, e.shape))
+            && let Some(paras) = self.pres.text_paras(e.at(self.current))
         {
             e.sel = Selection {
                 anchor: Position::default(),
@@ -1058,7 +1209,7 @@ impl SlidesView {
     fn selected_text(&self) -> Option<String> {
         let e = self.editing.as_ref()?;
         let (a, b) = e.sel.ordered();
-        let paras = self.pres.text_paras((self.current, e.shape))?;
+        let paras = self.pres.text_paras(e.at(self.current))?;
         (a != b).then(|| text_ops::text_in(paras, a, b))
     }
 
@@ -1076,10 +1227,14 @@ impl SlidesView {
 
     /// Copy the selected shape (as shapes for Kantor, as text elsewhere).
     fn copy_shape(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(i) = self.selected else {
+        if self.selected.is_none() {
             return false;
-        };
-        let res = self.pres.copy_shapes(self.current, &[i]);
+        }
+        if !self.inner.is_top() {
+            self.set_status(i18n::t("Select the whole group to copy it"), cx);
+            return false;
+        }
+        let res = self.pres.copy_shapes(self.current, &self.selection());
         let Some(clip) = self.report(res, cx) else {
             return false;
         };
@@ -1130,7 +1285,8 @@ impl SlidesView {
         if let Some(clip) = shapes {
             let res = self.pres.paste_shapes(self.current, &clip);
             if let Some(added) = self.report(res, cx) {
-                self.select(added.last().copied(), cx);
+                self.select(added.first().copied(), cx);
+                self.also = added.iter().skip(1).copied().collect();
                 self.after_edit(window, cx);
             }
             return;
@@ -1145,7 +1301,7 @@ impl SlidesView {
         if self.notes.focused {
             return;
         }
-        match (self.selected, &self.editing) {
+        match (self.selected.filter(|_| self.inner.is_top()), &self.editing) {
             (Some(i), None) => {
                 let res = self.pres.duplicate_shape((self.current, i));
                 if let Some(j) = self.report(res, cx) {
@@ -1238,7 +1394,7 @@ impl SlidesView {
         if let Some(i) = self.report(res, cx) {
             self.select(Some(i), cx);
             if edit {
-                self.begin_editing(i, None, cx);
+                self.begin_editing((self.current, i).into(), None, cx);
             }
             self.after_edit(window, cx);
         }
@@ -1398,8 +1554,8 @@ impl SlidesView {
     }
 
     pub fn info(&self) -> SlidesInfo {
-        let shape = self.selected.and_then(|i| {
-            let s = self.pres.slide(self.current).shapes.get(i)?;
+        let shape = self.sel_ref().and_then(|r| {
+            let s = self.pres.shape(r)?;
             let kind = match &s.kind {
                 ShapeKind::Shape { text_box: true, .. } => i18n::t("Text box").to_owned(),
                 ShapeKind::Shape { .. } if s.ph.is_some() => i18n::t("Placeholder").to_owned(),
@@ -1411,9 +1567,11 @@ impl SlidesView {
                     Geom::Other(o) => tf("Shape ({})", &[&o]),
                 },
                 ShapeKind::Picture { .. } => i18n::t("Picture").into(),
+                ShapeKind::Other { .. } if s.is_group() => i18n::t("Group").into(),
+                ShapeKind::Other { .. } if s.smartart().is_some() => i18n::t("SmartArt").into(),
                 ShapeKind::Other { what, .. } => what.clone(),
             };
-            Some((s.name.clone(), kind, self.shape_xfrm(i)?))
+            Some((s.name.clone(), kind, self.item_xfrm(r)?))
         });
         SlidesInfo {
             name: self.name(),
@@ -1661,35 +1819,39 @@ impl SlidesView {
             return;
         }
         let p = ev.position;
-        if let Some(shape) = self.rotate_handle_at(p)
-            && let Some(orig) = self.shape_xfrm(shape)
+        if let Some(r) = self.rotate_handle_at(p)
+            && let Some(orig) = self.item_xfrm(r)
         {
-            self.drag = Some(Drag::Rotate { shape, orig });
+            self.drag = Some(Drag::Rotate {
+                shape: r.1,
+                inner: r.2,
+                orig,
+            });
             return;
         }
-        if let Some((shape, handle)) = self.handle_at(p) {
-            let Some(orig) = self.shape_xfrm(shape) else {
+        if let Some((r, handle)) = self.handle_at(p) {
+            let Some(orig) = self.item_xfrm(r) else {
                 return;
             };
             self.drag = Some(Drag::Resize {
-                shape,
+                shape: r.1,
+                inner: r.2,
                 handle,
                 start: p,
                 orig,
             });
             return;
         }
+        let (ex, ey) = self.view().to_emu(p);
         if let Some(e) = self.editing.clone()
-            && self.shape_xfrm(e.shape).is_some_and(|x| {
-                let (ex, ey) = self.view().to_emu(p);
-                x.contains(ex, ey)
-            })
+            && self
+                .laid_at(e.at(self.current))
+                .map(|l| l.0)
+                .or_else(|| self.item_xfrm(e.at(self.current)))
+                .is_some_and(|x| x.contains(ex, ey))
         {
-            if let Some(pos) = self.text_hit(e.shape, p) {
-                let paras = self
-                    .pres
-                    .text_paras((self.current, e.shape))
-                    .unwrap_or_default();
+            if let Some(pos) = self.text_hit(e.at(self.current), p) {
+                let paras = self.pres.text_paras(e.at(self.current)).unwrap_or_default();
                 let sel = match ev.click_count {
                     2 => {
                         let w = docs_engine::model::word_at(&paras[pos.para].text, pos.offset);
@@ -1720,24 +1882,43 @@ impl SlidesView {
             }
             return;
         }
+        let extend = ev.modifiers.shift || ev.modifiers.control || ev.modifiers.platform;
         match self.shape_at(p) {
+            Some(i) if extend => self.toggle_selected(i, cx),
             Some(i) => {
-                let was_selected = self.selected == Some(i);
-                self.select(Some(i), cx);
+                // One of several selected shapes: drag them all.
+                if !self.also.is_empty() && self.selection().contains(&i) && ev.click_count == 1 {
+                    let origs: Vec<(usize, Xfrm)> = self
+                        .selection()
+                        .into_iter()
+                        .filter_map(|k| Some((k, self.shape_xfrm(k)?)))
+                        .collect();
+                    self.drag = Some(Drag::MoveMany {
+                        start: p,
+                        origs,
+                        moved: false,
+                    });
+                    return;
+                }
+                let target = self.click_target(i, ex, ey, ev.click_count);
+                let was_selected = self.sel_ref() == Some(target) && self.also.is_empty();
+                self.select_at(Some(target), cx);
                 if ev.click_count >= 2
-                    && let Some((_, target)) = self.object_target()
+                    && target.is_top()
+                    && let Some((_, kind)) = self.object_target()
                 {
-                    self.open_object_editor(i, target, window, cx);
+                    self.open_object_editor(i, kind, window, cx);
                     return;
                 }
                 if ev.click_count >= 2 {
-                    let pos = self.text_hit(i, p);
-                    self.begin_editing(i, pos, cx);
+                    let pos = self.text_hit(target, p);
+                    self.begin_editing(target, pos, cx);
                     return;
                 }
-                if let Some(orig) = self.shape_xfrm(i) {
+                if let Some(orig) = self.item_xfrm(target) {
                     self.drag = Some(Drag::Move {
                         shape: i,
+                        inner: target.2,
                         start: p,
                         orig,
                         moved: false,
@@ -1745,8 +1926,60 @@ impl SlidesView {
                     });
                 }
             }
+            None if extend => {}
             None => self.select(None, cx),
         }
+    }
+
+    /// What a click at `(x, y)` on slide shape `i` selects, as PowerPoint:
+    /// the shape; once it (or a shape in it) is selected, the shape inside
+    /// it under the pointer (a group's or SmartArt's); a double click goes
+    /// straight to the innermost shape there.
+    fn click_target(&self, i: usize, x: i64, y: i64, clicks: usize) -> ShapeRef {
+        let top = ShapeRef(self.current, i, Inner::TOP);
+        let innermost = |mut r: ShapeRef| {
+            while let Some(c) = self.pres.inner_at(r, x, y) {
+                r = c;
+            }
+            r
+        };
+        if clicks >= 2 {
+            return innermost(top);
+        }
+        let Some(cur) = self.sel_ref().filter(|r| r.1 == i && self.also.is_empty()) else {
+            return top;
+        };
+        if let Some(c) = self.pres.inner_at(cur, x, y) {
+            return c;
+        }
+        // A shape next to the selected one in its group (or further up).
+        let mut up = cur;
+        while !up.is_top() {
+            up = up.parent();
+            if let Some(c) = self.pres.inner_at(up, x, y) {
+                return c;
+            }
+        }
+        if cur.is_top() { cur } else { top }
+    }
+
+    /// Shift / Ctrl click: add slide shape `i` to the selection, or take it out.
+    fn toggle_selected(&mut self, i: usize, cx: &mut Context<Self>) {
+        if self.editing.take().is_some() {
+            self.pres.seal_history();
+        }
+        self.inner = Inner::TOP;
+        if self.selected == Some(i) {
+            self.selected = (!self.also.is_empty()).then(|| self.also.remove(0));
+        } else if let Some(k) = self.also.iter().position(|&a| a == i) {
+            self.also.remove(k);
+        } else if self.selected.is_none() {
+            self.selected = Some(i);
+        } else {
+            self.also.push(i);
+        }
+        self.strip_focused = false;
+        cx.notify();
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -1755,6 +1988,7 @@ impl SlidesView {
         if self.drag.is_some() && ev.pressed_button != Some(MouseButton::Left) {
             self.drag = None;
             self.preview = None;
+            self.preview_many.clear();
             cx.notify();
             return;
         }
@@ -1769,6 +2003,7 @@ impl SlidesView {
         match drag {
             Drag::Move {
                 shape,
+                inner,
                 start,
                 orig,
                 moved,
@@ -1784,12 +2019,49 @@ impl SlidesView {
                     y: orig.y + (f32::from(d.y) / scale) as i64,
                     ..*orig
                 };
-                if self.pres.slide(self.current).shapes[*shape].movable() {
-                    self.preview = Some((*shape, x));
+                let (shape, inner) = (*shape, *inner);
+                if self.item_movable(ShapeRef(self.current, shape, inner)) {
+                    self.preview = Some((shape, inner, x));
+                }
+            }
+            Drag::MoveMany {
+                start,
+                origs,
+                moved,
+            } => {
+                let d = ev.position - *start;
+                if !*moved && f32::from(d.x).abs() + f32::from(d.y).abs() < 3.0 {
+                    return;
+                }
+                *moved = true;
+                let (dx, dy) = (
+                    (f32::from(d.x) / scale) as i64,
+                    (f32::from(d.y) / scale) as i64,
+                );
+                let next: Vec<(usize, Xfrm)> = origs
+                    .iter()
+                    .map(|(i, o)| {
+                        (
+                            *i,
+                            Xfrm {
+                                x: o.x + dx,
+                                y: o.y + dy,
+                                ..*o
+                            },
+                        )
+                    })
+                    .collect();
+                let slide = self.pres.slide(self.current);
+                if next
+                    .iter()
+                    .all(|(i, _)| slide.shapes.get(*i).is_some_and(|s| s.movable()))
+                {
+                    self.preview_many = next;
                 }
             }
             Drag::Resize {
                 shape,
+                inner,
                 handle,
                 start,
                 orig,
@@ -1798,17 +2070,17 @@ impl SlidesView {
                 let (dx, dy) = (f32::from(d.x) / scale, f32::from(d.y) / scale);
                 let min = SLIDE_NUDGE_EMU * 4;
                 let x = resize_box(orig, *handle, dx as f64, dy as f64, min);
-                self.preview = Some((*shape, x));
+                self.preview = Some((*shape, *inner, x));
             }
-            Drag::Rotate { shape, orig } => {
+            Drag::Rotate { shape, inner, orig } => {
                 let c = view.rect(orig).center();
                 let d = ev.position - c;
                 let deg = pointer_degrees(f32::from(d.x), f32::from(d.y), ev.modifiers.shift);
-                self.preview = Some((*shape, orig.with_degrees(deg)));
+                self.preview = Some((*shape, *inner, orig.with_degrees(deg)));
             }
             Drag::Text => {
                 if let Some(e) = self.editing.clone()
-                    && let Some(pos) = self.text_hit(e.shape, ev.position)
+                    && let Some(pos) = self.text_hit(e.at(self.current), ev.position)
                     && let Some(ed) = &mut self.editing
                 {
                     ed.sel.head = pos;
@@ -1821,8 +2093,18 @@ impl SlidesView {
     fn on_mouse_up(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         let drag = self.drag.take();
         self.hover_cursor = self.cursor_at(ev.position);
-        if let Some((shape, x)) = self.preview.take() {
-            let res = self.pres.set_xfrm((self.current, shape), x, false);
+        if !self.preview_many.is_empty() {
+            let moves = std::mem::take(&mut self.preview_many);
+            let res = self.pres.set_xfrms(self.current, &moves);
+            if self.report(res, cx).is_some() {
+                self.after_edit(window, cx);
+            }
+            return;
+        }
+        if let Some((shape, inner, x)) = self.preview.take() {
+            let res = self
+                .pres
+                .set_xfrm(ShapeRef(self.current, shape, inner), x, false);
             if self.report(res, cx).is_some() {
                 self.after_edit(window, cx);
             }
@@ -1830,13 +2112,15 @@ impl SlidesView {
         }
         if let Some(Drag::Move {
             shape,
+            inner,
             moved: false,
             was_selected: true,
             ..
         }) = drag
         {
-            let pos = self.text_hit(shape, ev.position);
-            self.begin_editing(shape, pos, cx);
+            let r = ShapeRef(self.current, shape, inner);
+            let pos = self.text_hit(r, ev.position);
+            self.begin_editing(r, pos, cx);
         }
         cx.notify();
     }
@@ -1850,13 +2134,15 @@ impl SlidesView {
         if self.rotate_handle_at(p).is_some() {
             return CursorStyle::PointingHand;
         }
-        if let Some((i, h)) = self.handle_at(p) {
-            let rot = self.shape_xfrm(i).map_or(0, |x| x.rot);
+        if let Some((r, h)) = self.handle_at(p) {
+            let rot = self.item_xfrm(r).map_or(0, |x| x.rot);
             return turned_handle_cursor(h, rot);
         }
         let (x, y) = self.view().to_emu(p);
         if let Some(e) = &self.editing
-            && self.shape_xfrm(e.shape).is_some_and(|b| b.contains(x, y))
+            && self
+                .item_xfrm(e.at(self.current))
+                .is_some_and(|b| b.contains(x, y))
         {
             return CursorStyle::IBeam;
         }
@@ -1870,6 +2156,7 @@ impl SlidesView {
     fn canvas_cursor(&self) -> CursorStyle {
         match &self.drag {
             Some(Drag::Move { .. }) if self.preview.is_some() => CursorStyle::ClosedHand,
+            Some(Drag::MoveMany { .. }) if !self.preview_many.is_empty() => CursorStyle::ClosedHand,
             Some(Drag::Resize { handle, orig, .. }) => turned_handle_cursor(*handle, orig.rot),
             Some(Drag::Rotate { .. }) => CursorStyle::ClosedHand,
             Some(Drag::Text) => CursorStyle::IBeam,
@@ -2118,6 +2405,10 @@ struct Frame {
     painter: Rc<Painter>,
     /// Selected shape's box (screen space is computed at paint time).
     selected: Option<(Xfrm, bool)>,
+    /// The group the selected shape is in (dashed, as PowerPoint).
+    group_box: Option<Xfrm>,
+    /// Boxes of several selected shapes.
+    others: Vec<Xfrm>,
     /// Editing: text layout placement, selection, composition, caret visible.
     editing: Option<(
         Xfrm,
@@ -2150,22 +2441,41 @@ impl Render for SlidesView {
             self.current = self.pres.len().saturating_sub(1);
         }
         self.sync_notes(window, cx);
-        let editing_shape = self.editing.as_ref().map(|e| e.shape);
+        let editing_shape = self
+            .editing
+            .as_ref()
+            .filter(|e| e.inner.is_top())
+            .map(|e| e.shape);
         // The edited placeholder shows its (possibly empty) text, not the prompt.
         let painted = (!self.pres.is_empty()).then(|| {
             let opts = slides_scene::Options {
                 prompts: true,
-                preview: self.preview,
+                preview: self
+                    .preview
+                    .filter(|p| p.1.is_top())
+                    .map(|(i, _, x)| (i, x)),
                 editing: editing_shape,
             };
             self.painter.painted(&self.pres, self.current, opts, cx)
         });
-        let selected = self.selected.and_then(|i| {
-            let movable = self.pres.slide(self.current).shapes.get(i)?.movable();
-            Some((self.shape_xfrm(i)?, movable && self.editing.is_none()))
-        });
+        let selected = self
+            .sel_ref()
+            .filter(|_| self.also.is_empty())
+            .and_then(|r| Some((self.item_xfrm(r)?, self.handles_target().is_some())));
+        let group_box = self
+            .sel_ref()
+            .filter(|r| !r.is_top())
+            .and_then(|r| self.item_xfrm(r.parent()));
+        let others: Vec<Xfrm> = if self.also.is_empty() {
+            Vec::new()
+        } else {
+            self.selection()
+                .into_iter()
+                .filter_map(|i| self.shape_xfrm(i))
+                .collect()
+        };
         let editing = self.editing.as_ref().and_then(|e| {
-            let (x, laid) = self.laid(e.shape)?;
+            let (x, laid) = self.laid_at(e.at(self.current))?;
             Some((x, laid, e.sel, e.marked.clone()))
         });
         let misspelled = self.misspelled_in_edit(cx);
@@ -2178,6 +2488,8 @@ impl Render for SlidesView {
             painted,
             painter: self.painter.clone(),
             selected,
+            group_box,
+            others,
             editing,
             misspelled,
             t,
@@ -2299,6 +2611,10 @@ impl Render for SlidesView {
             FindNext => |v, w, cx| v.find_next_doc(true, w, cx),
             FindPrev => |v, w, cx| v.find_next_doc(false, w, cx),
             ToggleNotes => |v, w, cx| v.toggle_notes_doc(w, cx),
+            GroupShapes => |v, w, cx| v.group_doc(w, cx),
+            UngroupShapes => |v, w, cx| v.ungroup_doc(w, cx),
+            RegroupShapes => |v, w, cx| v.regroup_doc(w, cx),
+            ConvertToShapes => |v, w, cx| v.convert_to_shapes_doc(w, cx),
         ]);
         let notes_pane = self.render_notes(cx);
         let root = root
@@ -2392,6 +2708,34 @@ fn paint_canvas(f: &Frame, view: View, slide_bounds: Bounds<Pixels>, window: &mu
         BorderStyle::Solid,
     ));
 
+    if let Some(x) = f.group_box {
+        let b = view.rect(&x);
+        match Turn::of(&x, view) {
+            Some(turn) => stroke_polygon(
+                window,
+                &turned_rect(b, Some(turn)),
+                t.accent.opacity(0.6),
+                SLIDE_OUTLINE,
+            ),
+            None => window.paint_quad(quad(
+                b,
+                Corners::default(),
+                transparent_black(),
+                Edges::all(SLIDE_OUTLINE),
+                t.accent.opacity(0.6),
+                BorderStyle::Dashed,
+            )),
+        }
+    }
+    for x in &f.others {
+        let b = view.rect(x);
+        stroke_polygon(
+            window,
+            &turned_rect(b, Turn::of(x, view)),
+            t.accent,
+            SLIDE_OUTLINE,
+        );
+    }
     if let Some((x, handles)) = f.selected {
         let b = view.rect(&x);
         let turn = Turn::of(&x, view);

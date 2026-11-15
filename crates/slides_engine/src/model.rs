@@ -739,8 +739,18 @@ pub(crate) enum XfrmAt {
     Replace(Range<usize>, String),
     /// No `a:xfrm`: insert one here (right after `<p:spPr>`).
     Insert(usize),
-    /// `<p:spPr/>`: replace it, keeping its attributes.
-    Expand(Range<usize>, String),
+    /// `<p:spPr/>` (or `<p:grpSpPr/>`, the tag name last): replace it,
+    /// keeping its attributes.
+    Expand(Range<usize>, String, String),
+    /// A graphic frame's `p:xfrm`, with its raw attributes.
+    Frame(Range<usize>, String),
+}
+
+/// Where a group's children are in its source element (`p:grpSp`).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GroupAt {
+    /// Byte range of the child shapes inside `raw`.
+    pub children: Range<usize>,
 }
 
 /// Where `a:ln` sits in a shape's `p:spPr` (offsets into the raw XML).
@@ -759,6 +769,8 @@ pub(crate) struct LnAt {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SpPrAt {
     pub range: Range<usize>,
+    /// Its qualified name (`p:spPr`, `dsp:spPr`).
+    pub name: String,
     /// Raw attributes of `p:spPr`.
     pub attrs: String,
     /// `<p:spPr/>`: rewritten whole when edited.
@@ -790,6 +802,10 @@ pub(crate) struct ShapeSrc {
     /// The chart's data as edited in Kantor (written over the chart part
     /// and its workbook on save).
     pub chart_edit: Option<Arc<crate::chart_edit::ChartEdit>>,
+    /// A group's children (written from the model when they change).
+    pub group: Option<GroupAt>,
+    /// What a group or graphic frame held as read (compared by identity).
+    pub frame: crate::frame::Frame,
 }
 
 impl ShapeSrc {
@@ -850,9 +866,42 @@ impl Shape {
         ) && self.src.as_ref().is_none_or(|s| s.sppr.is_some())
     }
 
-    /// Whether the shape can be moved and resized.
+    /// Whether the shape can be moved and resized (groups can; tables,
+    /// charts and SmartArt frames can't yet).
     pub fn movable(&self) -> bool {
-        !matches!(self.kind, ShapeKind::Other { .. }) || self.src.is_none()
+        !matches!(self.kind, ShapeKind::Other { .. }) || self.src.is_none() || self.is_group()
+    }
+
+    /// A group's children (`p:grpSp`).
+    pub fn group(&self) -> Option<&crate::frame::Group> {
+        match &self.kind {
+            ShapeKind::Other { frame, .. } => match frame.get()? {
+                crate::frame::FrameContent::Group(g) => Some(g),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn is_group(&self) -> bool {
+        self.group().is_some()
+    }
+
+    /// A SmartArt frame's drawing (PowerPoint's pre-drawn shapes).
+    pub fn smartart(&self) -> Option<&crate::frame::DiagramDrawing> {
+        match &self.kind {
+            ShapeKind::Other { frame, .. } => match frame.get()? {
+                crate::frame::FrameContent::Diagram(d) => d.drawing.as_deref(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Shapes inside this one that can be selected: a group's children or
+    /// a SmartArt drawing's shapes.
+    pub fn inner_shapes(&self) -> Option<&crate::frame::Group> {
+        self.group().or_else(|| self.smartart().map(|d| &d.group))
     }
 
     /// The chart part a chart frame shows (read-only: the frame and the
@@ -866,14 +915,24 @@ impl Shape {
     }
 
     pub(crate) fn max_id(&self) -> u32 {
-        self.src.as_ref().map_or(self.id, |s| s.max_id.max(self.id))
+        let own = self.src.as_ref().map_or(self.id, |s| s.max_id.max(self.id));
+        // A group's children may have changed since it was read.
+        self.group()
+            .map(|g| g.children.iter().map(Shape::max_id).max().unwrap_or(0))
+            .unwrap_or(0)
+            .max(own)
     }
 
     /// Whether the shape is exactly as read (so its raw XML is written).
     pub(crate) fn unchanged(&self) -> bool {
         self.paint.is_empty()
             && self.src.as_ref().is_some_and(|s| {
-                s.xfrm == self.xfrm && s.text.as_ref() == self.text.as_ref().map(|t| &t.paras)
+                s.xfrm == self.xfrm
+                    && s.text.as_ref() == self.text.as_ref().map(|t| &t.paras)
+                    && match &self.kind {
+                        ShapeKind::Other { frame, .. } => *frame == s.frame,
+                        _ => true,
+                    }
             })
     }
 }

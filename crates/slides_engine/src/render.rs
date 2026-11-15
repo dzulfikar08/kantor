@@ -12,7 +12,7 @@ use crate::frame::{Cell, DiagramRef, FrameContent, Group, Vert};
 use crate::model::*;
 use crate::presentation::{Layout, Master, Presentation, Slide};
 use crate::theme::{LevelStyle, ListStyle};
-use crate::xml::{is, parse_rels, rels_name};
+use crate::xml::is;
 
 /// Paragraph numbering through a text body: one counter per outline
 /// level; a shallower paragraph restarts the deeper ones, a paragraph at
@@ -709,7 +709,9 @@ impl Presentation {
     pub fn drawable(&self, slide: usize, frame: &crate::frame::Frame) -> bool {
         match frame.get() {
             Some(FrameContent::Group(_) | FrameContent::Table(_)) => true,
-            Some(FrameContent::Diagram(d)) => self.diagram_drawing(slide, d).is_some(),
+            Some(FrameContent::Diagram(d)) => {
+                d.drawing.is_some() || self.diagram_drawing(slide, d).is_some()
+            }
             Some(FrameContent::Chart(_)) | None => false,
         }
     }
@@ -718,42 +720,21 @@ impl Presentation {
     /// (`ppt/diagrams/drawingN.xml`), in the frame's own space (origin at
     /// its top left). `None` if the file has no drawing for it.
     pub fn diagram_drawing(&self, slide: usize, d: &DiagramRef) -> Option<Group> {
+        if let Some(dd) = &d.drawing {
+            return Some(dd.group.clone());
+        }
         let s = self.slides.get(slide)?;
-        let data = d.data.as_deref()?;
-        let bytes = self.part_bytes(data)?;
-        let xml = std::str::from_utf8(&bytes).ok()?;
-        let doc = roxmltree::Document::parse(xml).ok()?;
-        let rel = doc
-            .descendants()
-            .find(|n| is(*n, crate::frame::NS_DSP, "dataModelExt"))
-            .and_then(|n| n.attribute("relId"))?;
-        let drawing = s
-            .rels
-            .iter()
-            .find(|r| r.id == rel && r.ty.ends_with("/diagramDrawing"))
-            .and_then(|r| r.part(&s.part))?;
-        let dbytes = self.part_bytes(&drawing)?;
-        let dxml = std::str::from_utf8(&dbytes).ok()?;
-        let ddoc = roxmltree::Document::parse(dxml).ok()?;
+        let (drawing, dxml, rels) = crate::smartart::drawing_source(self, s, d)?;
+        let ddoc = roxmltree::Document::parse(&dxml).ok()?;
         let tree = ddoc
             .root_element()
             .children()
             .find(|n| is(*n, crate::frame::NS_DSP, "spTree"))?;
-        let rels = self
-            .part_bytes(&rels_name(&drawing))
-            .and_then(|b| String::from_utf8(b.to_vec()).ok())
-            .map(|x| parse_rels(&x))
-            .unwrap_or_default();
-        let master = self.master_of(slide);
         let cx = crate::shape::ParseCtx {
-            src: dxml,
+            src: &dxml,
             part: &drawing,
             rels: &rels,
-            colors: crate::theme::ColorCtx {
-                theme: &master.theme,
-                map: &master.clr_map,
-                ph: None,
-            },
+            colors: self.color_ctx(slide),
         };
         Some(crate::shape::parse_group(tree, &cx, None, None, None))
     }

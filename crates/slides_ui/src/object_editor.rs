@@ -125,7 +125,9 @@ fn fmt_num(v: Option<f64>) -> String {
 impl SlidesView {
     /// What the selected shape is, if it can be edited here.
     pub(crate) fn object_target(&self) -> Option<(usize, Target)> {
-        let i = self.selected?;
+        let i = self
+            .selected
+            .filter(|_| self.inner.is_top() && self.also.is_empty())?;
         if self.pres.table(self.current, i).is_some() {
             return Some((i, Target::Table));
         }
