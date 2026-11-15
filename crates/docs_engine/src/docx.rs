@@ -24,7 +24,11 @@
 //!    spans, vertical merges, borders), inline pictures (`wp:inline` with an
 //!    embedded blip), footnote and endnote references (run objects whose
 //!    notes are read from `footnotes.xml` / `endnotes.xml`, see
-//!    [`crate::notes`]), and the formatting the editor understands
+//!    [`crate::notes`]), floating pictures, shapes and text boxes
+//!    (`wp:anchor`, in a `w:drawing` or an `mc:AlternateContent`'s choice:
+//!    their placement and text box are read, the XML written back as read
+//!    unless moved or edited, see [`crate::float`]), and the formatting the
+//!    editor understands
 //!    (`w:pStyle`, `w:jc`, `w:spacing`, `w:ind`, `w:rStyle`, `w:b`/`w:i`/
 //!    `w:u`/`w:sz`/`w:color`/`w:rFonts`…).
 //! 2. **Kept verbatim with the model**: property elements Kantor doesn't
@@ -35,8 +39,8 @@
 //! 3. **Opaque objects**: elements that can be carried as one unit without
 //!    understanding them become an [`Opaque`] object, one character in the
 //!    text with a placeholder in the layout, written back byte for byte:
-//!    floating pictures (`wp:anchor`), shapes and text boxes
-//!    (`mc:AlternateContent`, `w:pict`, `w:object`), content controls
+//!    VML shapes and embedded objects (`w:pict`, `w:object`, an
+//!    `mc:AlternateContent` without a drawing anchor), content controls
 //!    (`w:sdt`, inline or block), page number fields (PAGE, NUMPAGES,
 //!    SECTIONPAGES: the whole `begin…end` run sequence, numbered per page)
 //!    and fields whose runs are laid out unusually, equations,
@@ -79,6 +83,7 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::{Namespace, ResolveResult};
 
 use crate::document::{Document, LINE_BREAK, PAGE_BREAK, PageGeometry};
+use crate::float::{FloatKind, TextBox};
 use crate::model::*;
 use crate::notes::{Note, NoteKind, NoteProps, NotesPart};
 use crate::numbering::{Numbering, parse_ind};
@@ -149,6 +154,17 @@ impl Package {
     pub(crate) fn part_text(&self, name: &str) -> Option<String> {
         let mut zip = zip::ZipArchive::new(Cursor::new(self.bytes.as_slice())).ok()?;
         zip_text(&mut zip, name).ok().flatten()
+    }
+
+    /// The theme part's text (colours of shapes), if the package has one.
+    pub(crate) fn theme_text(&self) -> Option<String> {
+        let mut names: Vec<&String> = self
+            .parts
+            .iter()
+            .filter(|p| p.starts_with("word/theme/") && p.ends_with(".xml"))
+            .collect();
+        names.sort();
+        self.part_text(names.first()?)
     }
 
     /// Where the main document's relationship `id` points (a hyperlink's
@@ -795,6 +811,8 @@ struct BodyParser<'a> {
     image_rels: BTreeSet<String>,
     /// The frame an element opens or closes under.
     frame_top: Option<Frame>,
+    /// Namespace declarations on the current `<w:r>` start tag.
+    run_ns: String,
 }
 
 impl BodyParser<'_> {
@@ -919,6 +937,63 @@ impl BodyParser<'_> {
             doc_pr: doc_pr.and_then(|d| d.num("id")).unwrap_or(0),
             part,
         })))
+    }
+
+    /// A floating picture, shape or text box (`wp:anchor` in a
+    /// `w:drawing`, or in an `mc:AlternateContent`'s choice).
+    fn float(&mut self, xml: &str) -> Option<Object> {
+        let (rels, part) = (self.rels, self.document_part);
+        let mut f = crate::float::read(xml, &|id| {
+            rels.get(id)
+                .filter(|r| !r.external)
+                .map(|r| resolve(part, &r.target))
+        })?;
+        match &f.kind {
+            FloatKind::Picture { rel_id, part, .. } if !part.is_empty() => {
+                self.image_rels.insert(rel_id.clone());
+            }
+            FloatKind::Other(what) => {
+                self.preserved.insert(match what.as_str() {
+                    "Chart" => "charts".into(),
+                    "SmartArt" => "SmartArt".into(),
+                    _ => "grouped shapes and drawing canvases".into(),
+                });
+            }
+            _ => {}
+        }
+        // A shape's own text box (a group's shapes' text isn't shown).
+        if f.kind == FloatKind::Shape
+            && let Some((inner, insets, v_align)) = crate::float::text_box_xml(xml)
+        {
+            let doc = self.text_box_doc(inner);
+            f.text = Some(Arc::new(TextBox {
+                doc,
+                insets,
+                v_align,
+            }));
+        }
+        Some(Object::Float(Arc::new(f)))
+    }
+
+    /// A text box's block content read into its own small document (styles
+    /// are the main document's: see [`crate::float::share_styles`]).
+    fn text_box_doc(&mut self, inner: &str) -> Document {
+        let mut doc = Document::new();
+        let Some(root) = self.root_tag.as_deref() else {
+            return doc;
+        };
+        let Some(name_end) = root.find(|c: char| c.is_whitespace() || c == '>') else {
+            return doc;
+        };
+        let src = format!("<w:hdr{}{inner}</w:hdr>", &root[name_end..]);
+        if let Ok(body) = parse_body(&src, self.rels, self.document_part) {
+            self.image_rels.extend(body.image_rels);
+            if !body.paragraphs.is_empty() {
+                doc.paragraphs = body.paragraphs;
+            }
+            doc.tables = body.tables;
+        }
+        doc
     }
 
     /// Label for an opaque run element.
@@ -1173,6 +1248,20 @@ impl BodyParser<'_> {
             (PPr, _) => cap(self, Cap::PPrChild),
             (MarkRPr, _) => cap(self, Cap::MarkChild),
             (P | Hyperlink | Rev | Simple, "r") => {
+                // Namespaces declared on the run itself: its objects need
+                // them (Kantor writes a plain `<w:r>`).
+                self.run_ns = e
+                    .attributes()
+                    .flatten()
+                    .filter(|a| a.key.as_ref().starts_with(b"xmlns"))
+                    .map(|a| {
+                        format!(
+                            " {}=\"{}\"",
+                            String::from_utf8_lossy(a.key.as_ref()),
+                            String::from_utf8_lossy(&a.value)
+                        )
+                    })
+                    .collect();
                 self.run = RunProps::default();
                 self.run_start = before;
                 self.run_text_start = self.para.text.len();
@@ -1550,14 +1639,16 @@ impl BodyParser<'_> {
     fn captured(&mut self, cap: Cap, xml: &str) {
         match cap {
             Cap::RunObj => {
+                let with_ns = with_namespaces(xml, &self.run_ns);
+                let xml = with_ns.as_str();
                 let local = xml::parse(xml).map(|e| e.name).unwrap_or_default();
                 if is_tracked(&local) {
                     self.unsupported.insert(category(&local));
                 }
-                let obj = if local == "drawing" {
-                    self.image(xml)
-                } else {
-                    None
+                let obj = match local.as_str() {
+                    "drawing" => self.image(xml).or_else(|| self.float(xml)),
+                    "AlternateContent" => self.float(xml),
+                    _ => None,
                 };
                 let obj = obj.unwrap_or_else(|| {
                     let label = self.run_label(&local, xml);
@@ -1846,6 +1937,28 @@ impl BodyParser<'_> {
     }
 }
 
+/// `xml` with namespace declarations `ns` (` xmlns:a="…"`…) added to its
+/// first start tag, skipping prefixes it declares itself.
+fn with_namespaces(xml: &str, ns: &str) -> String {
+    if ns.is_empty() {
+        return xml.to_owned();
+    }
+    let Some(name_end) = xml.find(|c: char| c.is_whitespace() || c == '>' || c == '/') else {
+        return xml.to_owned();
+    };
+    let tag_end = xml.find('>').unwrap_or(xml.len());
+    let tag = &xml[..tag_end];
+    let mut add = String::new();
+    for decl in ns.split(" xmlns").filter(|d| !d.trim().is_empty()) {
+        let key = decl.split('=').next().unwrap_or("");
+        if !tag.contains(&format!(" xmlns{key}=")) {
+            add.push_str(" xmlns");
+            add.push_str(decl.trim_end());
+        }
+    }
+    format!("{}{}{}", &xml[..name_end], add, &xml[name_end..])
+}
+
 /// First descendant with local name `name`.
 fn find<'e>(el: &'e El, name: &str) -> Option<&'e El> {
     for c in &el.children {
@@ -1907,6 +2020,7 @@ fn parse_body(src: &str, rels: &HashMap<String, Rel>, document_part: &str) -> an
         cell_paras: 0,
         image_rels: BTreeSet::new(),
         frame_top: None,
+        run_ns: String::new(),
     };
     let mut stack: Vec<Frame> = Vec::new();
     loop {
@@ -2488,6 +2602,9 @@ fn read_story(
     doc.styles = styles.clone();
     doc.numbering = numbering.clone();
     doc.media = media;
+    let mut paras = std::mem::take(&mut doc.paragraphs);
+    crate::float::share_parts(&mut paras, &doc);
+    doc.paragraphs = paras;
     Ok(Story {
         kind,
         rel_id: rel_id.to_owned(),
@@ -2696,7 +2813,7 @@ fn text_content(out: &mut String, text: &str, deleted: bool) {
 }
 
 /// Generated `<w:drawing>` for a picture inserted in Kantor.
-fn image_xml(img: &Image) -> String {
+pub(crate) fn image_xml(img: &Image) -> String {
     let name = img.part.rsplit('/').next().unwrap_or("image");
     format!(
         "<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" \
@@ -2731,6 +2848,12 @@ fn write_run(out: &mut String, text: &str, run: &Run) {
                 Some(x) => out.push_str(x),
                 None => out.push_str(&image_xml(img)),
             }
+            out.push_str("</w:r>");
+        }
+        Some(Object::Float(f)) => {
+            out.push_str("<w:r>");
+            out.push_str(&rpr_xml(&run.props));
+            out.push_str(&f.write_xml());
             out.push_str("</w:r>");
         }
         Some(Object::Opaque(o)) => match o.level {
@@ -2960,7 +3083,7 @@ fn write_table(out: &mut String, t: &Table, id: u32, paras: &[Paragraph], availa
     }
 }
 
-fn body_xml(doc: &Document) -> String {
+pub(crate) fn body_xml(doc: &Document) -> String {
     let mut out = String::with_capacity(4096);
     let fixed = crate::fields::writable(doc.paragraphs());
     let paras = fixed.as_deref().unwrap_or(doc.paragraphs());

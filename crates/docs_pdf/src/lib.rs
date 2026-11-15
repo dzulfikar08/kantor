@@ -20,8 +20,10 @@
 //! unsupported picture formats: the space stays empty).
 
 pub mod build;
+pub mod floats;
 pub mod pages;
 
+pub use floats::FloatItem;
 pub use pages::{Layout, Placed, StoryLayout, lay_out_with};
 
 pub use docs_layout::Engine;
@@ -61,12 +63,27 @@ pub struct PageScene {
     pub rules: Vec<([f32; 4], Rgba)>,
     pub pictures: Vec<Picture>,
     pub runs: Vec<TextRun>,
+    /// Floating objects behind the text and in front of it, back to
+    /// front.
+    pub behind: Vec<FloatScene>,
+    pub front: Vec<FloatScene>,
+}
+
+/// A floating object: its outline paths and picture, then its text box's
+/// content.
+#[derive(Clone, Debug, Default)]
+pub struct FloatScene {
+    pub paths: Vec<floats::DrawPath>,
+    pub pictures: Vec<Picture>,
+    pub content: PageScene,
 }
 
 /// A picture placed on a page.
 #[derive(Clone, Debug)]
 pub struct Picture {
     pub rect: [f32; 4],
+    /// Drawn only inside this box (cropped pictures).
+    pub clip: Option<[f32; 4]>,
     pub format: ImageFormat,
     pub bytes: Arc<[u8]>,
 }
@@ -226,6 +243,7 @@ fn add_page(
             let [x, y, w, h] = o.rect;
             out.pictures.push(Picture {
                 rect: [x + dx, y + dy, w, h],
+                clip: None,
                 format: *format,
                 bytes: bytes.clone(),
             });
@@ -268,7 +286,68 @@ fn add_page(
 /// Collect what every page draws. `laid` must be `doc` laid out (as
 /// [`lay_out`] or the Docs view does).
 pub fn scene(doc: &Document, laid: &Layout) -> Scene {
-    scene_of(doc, &laid.paged, &laid.furniture, &laid.strikes)
+    scene_of(
+        doc,
+        &laid.paged,
+        &laid.furniture,
+        &laid.floats,
+        &laid.strikes,
+    )
+}
+
+/// What a floating object draws in the PDF (placeholders are left out).
+fn float_scene(
+    doc: &Document,
+    it: &FloatItem,
+    painter: &floats::Painter,
+    pictures: &mut HashMap<(usize, String), Option<PictureData>>,
+) -> FloatScene {
+    let mut out = FloatScene::default();
+    let owner = it.doc(doc);
+    let Some(f) = it.float(doc) else {
+        return out;
+    };
+    for prim in painter.prims(f, it.rect) {
+        match prim {
+            floats::FloatPrim::Path(p) => out.paths.push(p),
+            floats::FloatPrim::Picture {
+                rel_id,
+                image,
+                clip,
+            } => {
+                let key = (it.story.map_or(0, |s| s + 1), rel_id.clone());
+                let found = pictures.entry(key).or_insert_with(|| {
+                    let bytes = owner.image_bytes(&rel_id)?;
+                    match ImageFormat::sniff(&bytes) {
+                        ImageFormat::Other => None,
+                        format => Some((format, bytes)),
+                    }
+                });
+                if let Some((format, bytes)) = found {
+                    out.pictures.push(Picture {
+                        rect: image,
+                        clip: Some(clip),
+                        format: *format,
+                        bytes: bytes.clone(),
+                    });
+                }
+            }
+            floats::FloatPrim::Placeholder(..) => {}
+        }
+    }
+    if let Some((l, x, y)) = &it.text {
+        add_page(
+            &mut out.content,
+            l.doc(doc),
+            &l.paras,
+            &l.paged,
+            0,
+            (*x, *y),
+            pictures,
+            l.key() + 1,
+        );
+    }
+    out
 }
 
 /// [`scene`] from a layout's parts.
@@ -276,9 +355,11 @@ pub fn scene_of(
     doc: &Document,
     paged: &PagedDocument,
     furniture: &[Vec<Placed>],
+    float_items: &[Vec<FloatItem>],
     strikes: &[docs_layout::Paragraph],
 ) -> Scene {
     let mut pictures = HashMap::new();
+    let painter = floats::Painter::new(doc);
     let pages = (0..paged.pages.len())
         .map(|page| {
             let setup = paged.page_setup(page);
@@ -316,6 +397,14 @@ pub fn scene_of(
                         .into_iter()
                         .map(|r| (r.rect, r.color)),
                 );
+            }
+            for it in float_items.get(page).into_iter().flatten() {
+                let fs = float_scene(doc, it, &painter, &mut pictures);
+                if it.behind {
+                    out.behind.push(fs);
+                } else {
+                    out.front.push(fs);
+                }
             }
             out
         })
@@ -515,30 +604,120 @@ fn encode(scene: &Scene, images: &mut Images) -> Result<Vec<u8>, KrillaError> {
     for content in pages {
         let mut page = pdf.start_page_with(settings(content));
         let mut surface = page.surface();
-        for (rect, color) in &content.rules {
-            fill_rect(&mut surface, *rect, *color);
+        for f in &content.behind {
+            draw_float(&mut surface, f, images, &mut fonts);
         }
-        for pic in &content.pictures {
-            let data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(pic.bytes.clone());
-            let image = images.get(data);
-            let [x, y, w, h] = pic.rect;
-            let (Some(image), Some(size)) = (image, Size::from_wh(w * TO_PT, h * TO_PT)) else {
-                continue;
-            };
-            surface.push_transform(&Transform::from_translate(x * TO_PT, y * TO_PT));
-            surface.draw_image(image, size);
-            surface.pop();
-        }
-        for run in &content.runs {
-            let Some(font) = fonts.get(&run.font) else {
-                continue;
-            };
-            draw_run(&mut surface, run, font);
+        draw_content(&mut surface, content, images, &mut fonts);
+        for f in &content.front {
+            draw_float(&mut surface, f, images, &mut fonts);
         }
         surface.finish();
         page.finish();
     }
     pdf.finish()
+}
+
+/// A page's (or text box's) rules, pictures and text.
+fn draw_content(
+    surface: &mut Surface,
+    content: &PageScene,
+    images: &mut Images,
+    fonts: &mut Fonts,
+) {
+    for (rect, color) in &content.rules {
+        fill_rect(surface, *rect, *color);
+    }
+    for pic in &content.pictures {
+        draw_picture(surface, pic, images);
+    }
+    for run in &content.runs {
+        let Some(font) = fonts.get(&run.font) else {
+            continue;
+        };
+        draw_run(surface, run, font);
+    }
+}
+
+fn draw_picture(surface: &mut Surface, pic: &Picture, images: &mut Images) {
+    let data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(pic.bytes.clone());
+    let image = images.get(data);
+    let [x, y, w, h] = pic.rect;
+    let (Some(image), Some(size)) = (image, Size::from_wh(w * TO_PT, h * TO_PT)) else {
+        return;
+    };
+    let clip = pic.clip.and_then(|[cx, cy, cw, ch]| {
+        let rect = Rect::from_xywh(cx * TO_PT, cy * TO_PT, cw * TO_PT, ch * TO_PT)?;
+        let mut pb = PathBuilder::new();
+        pb.push_rect(rect);
+        pb.finish()
+    });
+    if let Some(c) = &clip {
+        surface.push_clip_path(c, &krilla::paint::FillRule::NonZero);
+    }
+    surface.push_transform(&Transform::from_translate(x * TO_PT, y * TO_PT));
+    surface.draw_image(image, size);
+    surface.pop();
+    if clip.is_some() {
+        surface.pop();
+    }
+}
+
+/// A floating object: its outline's fill and stroke, its picture, its
+/// text box's content.
+fn draw_float(surface: &mut Surface, f: &FloatScene, images: &mut Images, fonts: &mut Fonts) {
+    for pic in &f.pictures {
+        draw_picture(surface, pic, images);
+    }
+    for p in &f.paths {
+        let Some(path) = krilla_path(&p.segs) else {
+            continue;
+        };
+        surface.set_fill(p.fill.map(fill));
+        surface.set_stroke(p.stroke.as_ref().map(|(c, w, dash)| {
+            let [r, g, b, a] = c.0;
+            Stroke {
+                paint: rgb::Color::new(r, g, b).into(),
+                width: w * TO_PT,
+                opacity: NormalizedF32::new(a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
+                dash: dash.as_ref().map(|d| krilla::paint::StrokeDash {
+                    array: d.iter().map(|v| v * TO_PT).collect(),
+                    offset: 0.0,
+                }),
+                ..Stroke::default()
+            }
+        }));
+        surface.draw_path(&path);
+        surface.set_fill(None);
+        surface.set_stroke(None);
+    }
+    draw_content(surface, &f.content, images, fonts);
+}
+
+fn krilla_path(segs: &[floats::Seg]) -> Option<krilla::geom::Path> {
+    let mut pb = PathBuilder::new();
+    let p = |q: [f32; 2]| (q[0] * TO_PT, q[1] * TO_PT);
+    for s in segs {
+        match *s {
+            floats::Seg::Move(a) => {
+                let (x, y) = p(a);
+                pb.move_to(x, y);
+            }
+            floats::Seg::Line(a) => {
+                let (x, y) = p(a);
+                pb.line_to(x, y);
+            }
+            floats::Seg::Quad(c, a) => {
+                let ((cx, cy), (x, y)) = (p(c), p(a));
+                pb.quad_to(cx, cy, x, y);
+            }
+            floats::Seg::Cubic(c1, c2, a) => {
+                let ((ax, ay), (bx, by), (x, y)) = (p(c1), p(c2), p(a));
+                pb.cubic_to(ax, ay, bx, by, x, y);
+            }
+            floats::Seg::Close => pb.close(),
+        }
+    }
+    pb.finish()
 }
 
 /// Document metadata: title, and Kantor as creator and producer.

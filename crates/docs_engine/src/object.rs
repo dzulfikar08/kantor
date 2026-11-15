@@ -21,6 +21,10 @@ pub enum Object {
     /// The start (code) or end of a field whose result is ordinary text
     /// between the two (see [`crate::fields`]).
     Field(Arc<FieldMark>),
+    /// A floating picture, shape or text box (`wp:anchor`): zero width in
+    /// the text, placed on the page by its own position (see
+    /// [`crate::float`]).
+    Float(Arc<crate::float::Float>),
 }
 
 impl Object {
@@ -31,10 +35,24 @@ impl Object {
         matches!(self, Self::Opaque(o) if matches!(o.level, Level::Marker | Level::Wrap))
     }
 
+    /// Objects deleting text around them never removes: markers, and
+    /// floating objects (deleted on their own, when selected).
+    pub fn stays_on_delete(&self) -> bool {
+        self.is_marker() || matches!(self, Self::Float(_))
+    }
+
     /// Zero-size objects: markers and field starts and ends. The caret
     /// steps over them; unlike markers, field marks go with deleted text.
     pub fn is_zero_width(&self) -> bool {
-        self.is_marker() || matches!(self, Self::Field(_))
+        self.is_marker() || matches!(self, Self::Field(_) | Self::Float(_))
+    }
+
+    /// The floating object, if this is one.
+    pub fn float(&self) -> Option<&crate::float::Float> {
+        match self {
+            Self::Float(f) => Some(f),
+            _ => None,
+        }
     }
 
     /// The start or end of a block-level wrapper, written between paragraphs.
@@ -61,6 +79,7 @@ impl Object {
             Self::Image(i) => &i.descr,
             Self::Opaque(o) => &o.label,
             Self::Field(_) => "",
+            Self::Float(f) => f.label(),
         }
     }
 }

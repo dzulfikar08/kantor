@@ -557,7 +557,7 @@ impl Paragraph {
             .filter(|(r, run)| {
                 r.start >= range.start
                     && r.end <= range.end
-                    && run.object.as_ref().is_some_and(Object::is_marker)
+                    && run.object.as_ref().is_some_and(Object::stays_on_delete)
             })
             .map(|(_, run)| run.clone())
             .collect()

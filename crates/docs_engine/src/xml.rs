@@ -9,6 +9,9 @@ pub struct El {
     pub name: String,
     pub attrs: Vec<(String, String)>,
     pub children: Vec<El>,
+    /// Text directly inside the element (unescaped), e.g. a
+    /// `wp:posOffset`'s number.
+    pub text: String,
 }
 
 impl El {
@@ -73,6 +76,7 @@ pub fn parse(xml: &str) -> Option<El> {
                         })
                         .collect(),
                     children: Vec::new(),
+                    text: String::new(),
                 };
                 if empty {
                     match stack.last_mut() {
@@ -88,6 +92,11 @@ pub fn parse(xml: &str) -> Option<El> {
                 match stack.last_mut() {
                     Some(parent) => parent.children.push(el),
                     None => return Some(el),
+                }
+            }
+            Event::Text(t) => {
+                if let (Some(top), Ok(s)) = (stack.last_mut(), t.xml10_content()) {
+                    top.text.push_str(&s);
                 }
             }
             Event::Eof => return None,

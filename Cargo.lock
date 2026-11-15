@@ -1655,6 +1655,8 @@ dependencies = [
  "flate2",
  "krilla",
  "log",
+ "roxmltree 0.21.2",
+ "slides_engine",
  "tempfile",
  "zip 9.4.1",
 ]

@@ -381,7 +381,7 @@ impl Document {
     /// A document from read `.docx` contents.
     pub fn from_read(read: docx::Read, path: Option<PathBuf>) -> Self {
         let body_sect = read.package.sect_pr.clone();
-        Self {
+        let mut doc = Self {
             paragraphs: if read.paragraphs.is_empty() {
                 vec![Paragraph::default()]
             } else {
@@ -410,7 +410,11 @@ impl Document {
             note_settings: read.note_settings,
             imported: None,
             history: History::default(),
-        }
+        };
+        let mut paras = std::mem::take(&mut doc.paragraphs);
+        crate::float::share_parts(&mut paras, &doc);
+        doc.paragraphs = paras;
+        doc
     }
 
     // ── queries ────────────────────────────────────────────────────────────
@@ -538,6 +542,12 @@ impl Document {
     }
 
     /// Bytes of a picture (PNG or JPEG), by relationship id.
+    /// The theme part's XML (colours and line styles of shapes), for a
+    /// document read from a file that has one.
+    pub fn theme_xml(&self) -> Option<String> {
+        self.package.as_ref()?.theme_text()
+    }
+
     pub fn image_bytes(&self, rel_id: &str) -> Option<Arc<[u8]>> {
         self.media.get(rel_id).and_then(|m| m.bytes.clone())
     }
