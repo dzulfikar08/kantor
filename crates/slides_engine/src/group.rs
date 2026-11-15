@@ -80,6 +80,15 @@ impl Inner {
         out
     }
 
+    /// A number that sorts paths in reading order (the first four steps).
+    pub fn order(&self) -> u64 {
+        self.path()
+            .take(4)
+            .enumerate()
+            .map(|(k, i)| ((i as u64 + 1).min(0xFFFF)) << (48 - 16 * k))
+            .sum()
+    }
+
     pub fn of(path: &[usize]) -> Option<Self> {
         path.iter().try_fold(Self::TOP, |p, &i| p.child(i))
     }
@@ -378,7 +387,9 @@ impl Presentation {
                 return Ok(((), Focus::at(parent)));
             }
             // Replace the group with what's left of it.
-            let gs = s.shape_at_mut(parent.1, parent.2).context("no such shape")?;
+            let gs = s
+                .shape_at_mut(parent.1, parent.2)
+                .context("no such shape")?;
             let gx = gs.xfrm;
             let g = gs.group().cloned().context("no such shape")?;
             let rest: Vec<Shape> = g
@@ -462,7 +473,10 @@ impl Presentation {
         if self.in_smartart(r) {
             bail!("Shapes inside SmartArt can't be ungrouped");
         }
-        let g = shape.group().cloned().context("Select a group to ungroup it")?;
+        let g = shape
+            .group()
+            .cloned()
+            .context("Select a group to ungroup it")?;
         let gx = shape.xfrm.context("This group has no position")?;
         let memo = Regroup {
             slide: self.slides[r.0].part.clone(),
@@ -689,7 +703,11 @@ mod tests {
     #[test]
     fn uncompose_inverts_compose() {
         let space = Xfrm::new(-500, 300, 1000, 2000);
-        for (rot, fh, fv) in [(0.0, false, false), (45.0, true, false), (120.0, false, true)] {
+        for (rot, fh, fv) in [
+            (0.0, false, false),
+            (45.0, true, false),
+            (120.0, false, true),
+        ] {
             let mut gx = Xfrm::new(100, 200, 3000, 1500).with_degrees(rot);
             gx.flip_h = fh;
             gx.flip_v = fv;

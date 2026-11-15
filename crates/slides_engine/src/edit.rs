@@ -168,6 +168,42 @@ impl Presentation {
         })
     }
 
+    /// Move several shapes of slide `slide` as one undo step.
+    pub fn set_xfrms(&mut self, slide: usize, moves: &[(usize, Xfrm)]) -> anyhow::Result<()> {
+        self.record(Kind::Other, None, Focus::slide(slide), false, |p| {
+            let s = p.slide_mut(slide)?;
+            for &(i, x) in moves {
+                let shape = s.shapes.get_mut(i).context("no such shape")?;
+                if !shape.movable() {
+                    bail!("This object can't be moved yet");
+                }
+                shape.xfrm = Some(Xfrm {
+                    cx: x.cx.max(1),
+                    cy: x.cy.max(1),
+                    ..x
+                });
+            }
+            Ok(((), Focus::slide(slide)))
+        })
+    }
+
+    /// Delete several shapes of slide `slide` as one undo step.
+    pub fn delete_shapes(&mut self, slide: usize, shapes: &[usize]) -> anyhow::Result<()> {
+        let mut idx = shapes.to_vec();
+        idx.sort_unstable();
+        idx.dedup();
+        self.record(Kind::Other, None, Focus::slide(slide), false, |p| {
+            let s = p.slide_mut(slide)?;
+            for &i in idx.iter().rev() {
+                if i >= s.shapes.len() {
+                    bail!("no such shape");
+                }
+                s.shapes.remove(i);
+            }
+            Ok(((), Focus::slide(slide)))
+        })
+    }
+
     fn add_shape(&mut self, slide: usize, mut shape: Shape) -> anyhow::Result<usize> {
         self.record(Kind::Other, None, Focus::slide(slide), false, |p| {
             let s = p.slide_mut(slide)?;
@@ -477,14 +513,22 @@ impl Presentation {
         })
     }
 
-    pub fn backspace(&mut self, r: impl Into<ShapeRef>, sel: Selection) -> anyhow::Result<Selection> {
+    pub fn backspace(
+        &mut self,
+        r: impl Into<ShapeRef>,
+        sel: Selection,
+    ) -> anyhow::Result<Selection> {
         let r: ShapeRef = r.into();
         self.edit_text(r, Kind::Deleting, sel, !sel.is_empty(), |paras| {
             text_ops::backspace(paras, sel)
         })
     }
 
-    pub fn delete_forward(&mut self, r: impl Into<ShapeRef>, sel: Selection) -> anyhow::Result<Selection> {
+    pub fn delete_forward(
+        &mut self,
+        r: impl Into<ShapeRef>,
+        sel: Selection,
+    ) -> anyhow::Result<Selection> {
         let r: ShapeRef = r.into();
         self.edit_text(r, Kind::Deleting, sel, !sel.is_empty(), |paras| {
             text_ops::delete_forward(paras, sel)
@@ -531,7 +575,12 @@ impl Presentation {
     }
 
     /// Ctrl+B/I/U on a selection.
-    pub fn toggle(&mut self, r: impl Into<ShapeRef>, sel: Selection, toggle: Toggle) -> anyhow::Result<()> {
+    pub fn toggle(
+        &mut self,
+        r: impl Into<ShapeRef>,
+        sel: Selection,
+        toggle: Toggle,
+    ) -> anyhow::Result<()> {
         let r: ShapeRef = r.into();
         let on = !self.is_on(r, sel, toggle);
         self.edit_text(r, Kind::Other, sel, true, |paras| {
@@ -551,7 +600,12 @@ impl Presentation {
 
     /// Tab / Shift+Tab: move the selected paragraphs `delta` outline levels
     /// (0–8). A paragraph with its own left margin moves it by half an inch.
-    pub fn change_level(&mut self, r: impl Into<ShapeRef>, sel: Selection, delta: i8) -> anyhow::Result<()> {
+    pub fn change_level(
+        &mut self,
+        r: impl Into<ShapeRef>,
+        sel: Selection,
+        delta: i8,
+    ) -> anyhow::Result<()> {
         let r: ShapeRef = r.into();
         let range = self.sel_paras(r, sel);
         self.edit_text(r, Kind::Other, sel, true, |paras| {

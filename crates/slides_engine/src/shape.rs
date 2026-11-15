@@ -248,15 +248,14 @@ pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) ->
             ShapeKind::Picture { rel, part }
         }
         _ => {
-            let own = (in_p && local == "grpSp")
-                .then_some(xfrm_el)
-                .flatten();
+            let own = (in_p && local == "grpSp").then_some(xfrm_el).flatten();
             let xfrm_el = own.or_else(|| {
                 n.descendants()
                     .find(|d| d.is_element() && d.tag_name().name() == "xfrm")
             });
             xfrm = xfrm_el.and_then(xfrm_of);
-            if in_p && local == "graphicFrame"
+            if in_p
+                && local == "graphicFrame"
                 && let Some(x) = child(n, ns, "xfrm")
             {
                 let r = x.range();
@@ -422,7 +421,9 @@ fn group_children_range(n: Node, src: &str, base: usize) -> Range<usize> {
         _ => {
             let at = n
                 .children()
-                .filter(|c| c.is_element() && matches!(c.tag_name().name(), "nvGrpSpPr" | "grpSpPr"))
+                .filter(|c| {
+                    c.is_element() && matches!(c.tag_name().name(), "nvGrpSpPr" | "grpSpPr")
+                })
                 .map(|c| c.range().end)
                 .max()
                 .unwrap_or_else(|| n.range().start + start_tag(src, n).len());

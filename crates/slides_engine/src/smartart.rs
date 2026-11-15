@@ -94,7 +94,14 @@ impl<'a> Model<'a> {
                             .collect()
                     })
                     .unwrap_or_default();
-                points.insert(id, Point { node: n, assoc, paras });
+                points.insert(
+                    id,
+                    Point {
+                        node: n,
+                        assoc,
+                        paras,
+                    },
+                );
             }
             if is(n, NS_DGM, "cxn")
                 && n.attribute("type").is_none_or(|t| t == "parOf")
@@ -143,7 +150,9 @@ impl<'a> Model<'a> {
         let mut at = 0;
         let mut out = Vec::new();
         for id in order {
-            let Some(p) = self.points.get(id) else { continue };
+            let Some(p) = self.points.get(id) else {
+                continue;
+            };
             if p.paras.is_empty() || p.paras.iter().all(String::is_empty) {
                 continue;
             }
@@ -268,7 +277,7 @@ impl Presentation {
             src: &xml,
             part: &part,
             rels: &rels,
-            colors: colors.clone(),
+            colors: *colors,
         };
         let mut group = parse_group(tree, &cx, None, None, None);
         group.child_box = Xfrm::new(0, 0, frame.cx, frame.cy);
@@ -285,7 +294,7 @@ impl Presentation {
             src: data_xml,
             part: d.data.as_deref()?,
             rels: &[],
-            colors: colors.clone(),
+            colors: *colors,
         };
         let model = Model::read(&data_doc, &dcx);
         let links = group
@@ -405,7 +414,9 @@ impl Presentation {
             if let Some(t) = &c.text {
                 let parts: Vec<(&str, &[TextPara])> = match dd.links.get(k) {
                     Some(Link::One(id)) => vec![(id.as_str(), &t.paras[..])],
-                    Some(Link::Many(v)) if v.iter().map(|x| x.1).sum::<usize>() == t.paras.len() => {
+                    Some(Link::Many(v))
+                        if v.iter().map(|x| x.1).sum::<usize>() == t.paras.len() =>
+                    {
                         let mut at = 0;
                         v.iter()
                             .map(|(id, n)| {
@@ -477,7 +488,12 @@ impl Presentation {
             .root_element()
             .namespaces()
             .filter(|n| n.name().is_some_and(|p| p != "xml"))
-            .map(|n| (format!("xmlns:{}", n.name().unwrap_or_default()), n.uri().to_owned()))
+            .map(|n| {
+                (
+                    format!("xmlns:{}", n.name().unwrap_or_default()),
+                    n.uri().to_owned(),
+                )
+            })
             .collect();
         let drawing_rels = self
             .part_bytes(&rels_name(&dd.part))
@@ -534,7 +550,11 @@ impl Presentation {
                 .iter()
                 .enumerate()
                 .filter(|(k, _)| *k != r.1)
-                .any(|(_, o)| o.src.as_ref().is_some_and(|x| x.raw.contains(&format!("\"{id}\""))))
+                .any(|(_, o)| {
+                    o.src
+                        .as_ref()
+                        .is_some_and(|x| x.raw.contains(&format!("\"{id}\"")))
+                })
         };
         rels.retain(|x| !(drop_ids.contains(&x.id) && is_diagram_rel(x.kind()) && !users(&x.id)));
         self.record(Kind::Other, None, Focus::at(r), false, |p| {
@@ -574,7 +594,10 @@ fn to_slide_shape(
 ) -> anyhow::Result<String> {
     let (wrapped, start) = wrap(ns, raw);
     let doc = roxmltree::Document::parse(&wrapped).context("SmartArt shape XML")?;
-    let el = doc.root_element().first_element_child().context("SmartArt shape")?;
+    let el = doc
+        .root_element()
+        .first_element_child()
+        .context("SmartArt shape")?;
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     for n in el.descendants().filter(|n| n.is_element()) {
         let r = n.range();
@@ -650,7 +673,10 @@ fn to_slide_shape(
                 .find(|x| x.id == a.value())
                 .context("A SmartArt picture is missing")?;
             if rel.kind() != "image" {
-                bail!("This SmartArt has content Kantor can't convert ({})", rel.kind());
+                bail!(
+                    "This SmartArt has content Kantor can't convert ({})",
+                    rel.kind()
+                );
             }
             let target = match rel.part(drawing_part) {
                 Some(p) => relative(slide_part, &p),

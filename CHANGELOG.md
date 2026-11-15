@@ -15,6 +15,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   Sheets, Docs and Slides instead of being refused, date cells included. Save writes them under
   the same name as standard Open XML (Transitional), the format Excel, Word and PowerPoint save by
   default and every Office version and LibreOffice opens.
+- Slides: groups can be edited as in PowerPoint. Click a group to select it, click again (or
+  double-click) to select a shape inside it, Esc goes back to the group. Moving, resizing or
+  turning a group moves its shapes with it; a shape inside can be moved, resized, turned,
+  recoloured, given new text or deleted (a group left with one shape is ungrouped). Group
+  (`Ctrl G`), Ungroup (`Ctrl Shift G`) and Regroup are in the right-click menu and the command
+  palette; Shift or Ctrl click selects several shapes, which then move, nudge, copy and delete
+  together. Groups inside groups work too, groups can be copied, and every step can be undone.
+- Slides: the text of SmartArt can be edited in place: click the SmartArt, then the shape, and
+  type. The fill and outline of its shapes can be changed too. Saving updates both PowerPoint's
+  drawing and the SmartArt's data, so PowerPoint shows the edit. Adding or removing SmartArt items
+  and changing its layout need PowerPoint's layout engine and aren't possible; *Convert to Shapes*
+  (right-click menu, palette, or Ungroup) turns SmartArt into a group of ordinary shapes.
 
 ### Fixed
 

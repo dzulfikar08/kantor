@@ -54,7 +54,10 @@ fn close(a: Xfrm, b: Xfrm) {
 
 fn reopen(p: &mut Presentation) -> (Presentation, BTreeMap<String, Vec<u8>>) {
     let bytes = p.to_bytes().unwrap();
-    (Presentation::from_bytes(bytes.clone()).unwrap(), parts(&bytes))
+    (
+        Presentation::from_bytes(bytes.clone()).unwrap(),
+        parts(&bytes),
+    )
 }
 
 fn type_at_end(p: &mut Presentation, r: ShapeRef, s: &str) {
@@ -113,8 +116,12 @@ fn moving_a_group_moves_its_children_and_saves_the_child_space() {
     assert_eq!(after.x - before.x, 914_400);
     assert_eq!(after.cy, before.cy * 2);
     // Turned: the children turn with it.
-    p.set_xfrm((0, pair), moved.with_degrees(90.0), false).unwrap();
-    assert_eq!(p.placed(inner(0, pair, &[0])).unwrap().xfrm.rot, 90 * 60_000);
+    p.set_xfrm((0, pair), moved.with_degrees(90.0), false)
+        .unwrap();
+    assert_eq!(
+        p.placed(inner(0, pair, &[0])).unwrap().xfrm.rot,
+        90 * 60_000
+    );
     let (back, saved) = reopen(&mut p);
     let xml = text(&saved, "ppt/slides/slide1.xml");
     assert!(
@@ -124,7 +131,10 @@ fn moving_a_group_moves_its_children_and_saves_the_child_space() {
         )),
         "{xml}"
     );
-    assert_eq!(back.slide(0).shapes[pair].xfrm, Some(moved.with_degrees(90.0)));
+    assert_eq!(
+        back.slide(0).shapes[pair].xfrm,
+        Some(moved.with_degrees(90.0))
+    );
     close(
         back.placed(inner(0, pair, &[0])).unwrap().xfrm,
         p.placed(inner(0, pair, &[0])).unwrap().xfrm,
@@ -144,11 +154,15 @@ fn text_and_fill_of_shapes_inside_groups() {
     type_at_end(&mut p, left, " side");
     assert_eq!(p.text_paras(left).unwrap()[0].text, "Left side");
     let dot = inner(0, outer, &[1, 0]);
-    p.set_fill(dot, Paint::Rgb(Rgb([0x12, 0x34, 0x56]))).unwrap();
+    p.set_fill(dot, Paint::Rgb(Rgb([0x12, 0x34, 0x56])))
+        .unwrap();
     let orig = parts(&std::fs::read(corpus()).unwrap());
     let (back, saved) = reopen(&mut p);
     assert_eq!(back.text_paras(left).unwrap()[0].text, "Left side");
-    assert_eq!(back.shape(dot).unwrap().look.fill, Some(Rgb([0x12, 0x34, 0x56])));
+    assert_eq!(
+        back.shape(dot).unwrap().look.fill,
+        Some(Rgb([0x12, 0x34, 0x56]))
+    );
     // Only the edited slide changed.
     for (k, v) in &orig {
         if k != "ppt/slides/slide1.xml" {
@@ -214,7 +228,10 @@ fn deleting_from_a_two_shape_group_ungroups_the_other() {
     assert_eq!(g.children[1].name, "Dot B");
     let (back, _) = reopen(&mut p);
     assert_eq!(back.slide(0).shapes[pair].name, "Right");
-    assert_eq!(back.slide(0).shapes[outer].group().unwrap().children.len(), 2);
+    assert_eq!(
+        back.slide(0).shapes[outer].group().unwrap().children.len(),
+        2
+    );
     p.undo();
     p.undo();
     assert!(p.slide(0).shapes[pair].is_group());
@@ -318,7 +335,15 @@ fn smartart(p: &Presentation) -> usize {
 fn smartart_text_is_saved_to_the_drawing_and_the_data_model() {
     let mut p = Presentation::open(&corpus()).unwrap();
     let d = smartart(&p);
-    assert_eq!(p.slide(1).shapes[d].smartart().unwrap().group.children.len(), 5);
+    assert_eq!(
+        p.slide(1).shapes[d]
+            .smartart()
+            .unwrap()
+            .group
+            .children
+            .len(),
+        5
+    );
     // SmartArt shapes can't be moved or deleted (that needs PowerPoint's layouts).
     let plan = inner(1, d, &[0]);
     let x = p.placed(plan).unwrap().xfrm;
@@ -332,11 +357,17 @@ fn smartart_text_is_saved_to_the_drawing_and_the_data_model() {
     let both = inner(1, d, &[4]);
     type_at_end(&mut p, both, "!");
     assert!(
-        p.insert_text(both, Selection::caret(text_ops::end(p.text_paras(both).unwrap())), "\nThree", None)
-            .is_err()
+        p.insert_text(
+            both,
+            Selection::caret(text_ops::end(p.text_paras(both).unwrap())),
+            "\nThree",
+            None
+        )
+        .is_err()
     );
     // Fill of a node goes on its presentation item too.
-    p.set_fill(inner(1, d, &[2]), Paint::Rgb(Rgb([0xAA, 0x00, 0x11]))).unwrap();
+    p.set_fill(inner(1, d, &[2]), Paint::Rgb(Rgb([0xAA, 0x00, 0x11])))
+        .unwrap();
 
     let orig = parts(&std::fs::read(corpus()).unwrap());
     let (back, saved) = reopen(&mut p);
@@ -366,8 +397,14 @@ fn smartart_text_is_saved_to_the_drawing_and_the_data_model() {
     }
     let bd = smartart(&back);
     let g = &back.slide(1).shapes[bd].smartart().unwrap().group;
-    assert_eq!(g.children[0].text.as_ref().unwrap().plain_text(), "Plan 2027");
-    assert_eq!(g.children[4].text.as_ref().unwrap().plain_text(), "One\nTwo!");
+    assert_eq!(
+        g.children[0].text.as_ref().unwrap().plain_text(),
+        "Plan 2027"
+    );
+    assert_eq!(
+        g.children[4].text.as_ref().unwrap().plain_text(),
+        "One\nTwo!"
+    );
     // Undo.
     for _ in 0..4 {
         p.undo();
@@ -388,7 +425,10 @@ fn smartart_converts_to_a_group_of_shapes() {
     assert!(s.is_group());
     let kids = &s.group().unwrap().children;
     assert_eq!(kids.len(), 5);
-    assert!(kids.iter().all(|k| matches!(k.kind, ShapeKind::Shape { .. })));
+    assert!(
+        kids.iter()
+            .all(|k| matches!(k.kind, ShapeKind::Shape { .. }))
+    );
     assert_eq!(kids[0].text.as_ref().unwrap().plain_text(), "Plan!");
     for (k, x) in placed.iter().enumerate() {
         close(p.placed(inner(1, g, &[k])).unwrap().xfrm, *x);
@@ -400,11 +440,19 @@ fn smartart_converts_to_a_group_of_shapes() {
     let bs = &back.slide(1).shapes[g];
     assert_eq!(bs.group().unwrap().children.len(), 5);
     assert_eq!(
-        bs.group().unwrap().children[4].text.as_ref().unwrap().plain_text(),
+        bs.group().unwrap().children[4]
+            .text
+            .as_ref()
+            .unwrap()
+            .plain_text(),
         "One\nTwo"
     );
     // The SmartArt parts and relationships are gone.
-    assert!(!saved.keys().any(|k| k.starts_with("ppt/diagrams/")), "{:?}", saved.keys());
+    assert!(
+        !saved.keys().any(|k| k.starts_with("ppt/diagrams/")),
+        "{:?}",
+        saved.keys()
+    );
     let rels = text(&saved, "ppt/slides/_rels/slide2.xml.rels");
     assert!(!rels.contains("diagram"), "{rels}");
     assert!(!text(&saved, "[Content_Types].xml").contains("diagrams"));

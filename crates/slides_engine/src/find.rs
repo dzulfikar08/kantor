@@ -23,8 +23,14 @@ pub struct TextMatch {
 
 impl TextMatch {
     /// Sort key: reading order.
-    pub fn key(&self) -> (usize, usize, usize, usize) {
-        (self.shape.0, self.shape.1, self.para, self.range.start)
+    pub fn key(&self) -> (usize, usize, u64, usize, usize) {
+        (
+            self.shape.0,
+            self.shape.1,
+            self.shape.2.order(),
+            self.para,
+            self.range.start,
+        )
     }
 
     /// The match as a text selection in its shape.
@@ -45,7 +51,11 @@ impl Presentation {
                 out.push((r, body.paras.iter().map(|p| p.text.as_str()).collect()));
             }
             // Shapes in groups and SmartArt, in their order.
-            for (k, c) in shape.inner_shapes().into_iter().flat_map(|g| g.children.iter().enumerate()) {
+            for (k, c) in shape
+                .inner_shapes()
+                .into_iter()
+                .flat_map(|g| g.children.iter().enumerate())
+            {
                 if let Some(cr) = r.child(k) {
                     walk(cr, c, out);
                 }
