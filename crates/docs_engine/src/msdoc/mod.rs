@@ -22,16 +22,21 @@
 //! - sections: page size, orientation, margins, header distances, title
 //!   page, page number restarts;
 //! - inline PNG and JPEG pictures (PICF + OfficeArt blips in the Data
-//!   stream).
+//!   stream);
+//! - floating pictures, shapes and text boxes of the main text ([`art`]:
+//!   SPA anchors, the OfficeArt drawing, the text box story), written as
+//!   `wp:anchor` objects.
 //!
-//! Not imported (listed in [`Imported::notes`]): floating pictures and
-//! shapes, text boxes, comments, WMF/EMF pictures and embedded objects,
-//! hidden text. Tracked changes are shown accepted.
+//! Not imported (listed in [`Imported::notes`]): floating objects in
+//! headers, footers and text boxes, grouped shapes, comments, WMF/EMF
+//! pictures and embedded objects, hidden text. Tracked changes are shown
+//! accepted.
 //!
 //! Encrypted files and files from Word 6 / Word 95 are refused with a
 //! message. A damaged file is an error, never a panic: every offset is
 //! checked.
 
+mod art;
 mod cfb;
 mod emit;
 mod sprm;
@@ -126,6 +131,9 @@ const STTBF_FFN: usize = 15;
 const DOP: usize = 31;
 const CLX: usize = 33;
 const PLC_SPA_MOM: usize = 40;
+const PLC_SPA_HDR: usize = 41;
+const DGG_INFO: usize = 50;
+const PLCFTXBX_TXT: usize = 56;
 const PLCFEND_REF: usize = 46;
 const PLCFEND_TXT: usize = 47;
 const PLF_LST: usize = 73;
@@ -204,6 +212,56 @@ pub(crate) enum Item {
     LinkEnd,
     FieldStart(String),
     FieldEnd,
+    /// A floating object, at its anchor character.
+    Float(Chp, Box<Floating>),
+}
+
+/// A floating picture, shape or text box.
+#[derive(Clone, Debug)]
+pub(crate) struct Floating {
+    pub spa: art::Spa,
+    /// Drawing order (higher in front).
+    pub z: usize,
+    pub name: Option<String>,
+    pub descr: Option<String>,
+    pub body: FloatBody,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum FloatBody {
+    /// Media index and crop (left, top, right, bottom in 1/1000 %).
+    Picture {
+        media: usize,
+        crop: [i64; 4],
+    },
+    Shape(Box<FloatShape>),
+}
+
+/// A shape's outline.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FloatLine {
+    pub color: u32,
+    /// EMU.
+    pub width: i64,
+    pub dash: bool,
+    pub head: Option<&'static str>,
+    pub tail: Option<&'static str>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FloatShape {
+    /// `a:prstGeom` or `a:custGeom`.
+    pub geom: String,
+    pub fill: Option<u32>,
+    pub line: Option<FloatLine>,
+    pub flip: (bool, bool),
+    /// 60000ths of a degree.
+    pub rot: i64,
+    pub text_box: bool,
+    pub text: Option<Vec<Block>>,
+    /// Text insets (EMU): left, top, right, bottom.
+    pub insets: [i64; 4],
+    pub anchor: &'static str,
 }
 
 #[derive(Clone, Debug)]
@@ -216,11 +274,13 @@ pub(crate) struct Para {
     pub section_end: Option<usize>,
 }
 
+#[derive(Clone, Debug)]
 pub(crate) struct Row {
     pub tap: Tap,
     pub cells: Vec<Vec<Para>>,
 }
 
+#[derive(Clone, Debug)]
 pub(crate) enum Block {
     Para(Box<Para>),
     Table(Vec<Row>),
@@ -332,6 +392,15 @@ struct Reader {
     end_refs: HashMap<u32, usize>,
     media: Vec<(&'static str, Vec<u8>)>,
     notes: BTreeSet<String>,
+    /// Floating objects of the main text by anchor CP, their shapes and
+    /// the text box ranges.
+    spas: HashMap<u32, art::Spa>,
+    drawing: art::Drawing,
+    text_boxes: Vec<(u32, u32, u32)>,
+    /// Media index of each BLIP store picture already added.
+    blip_media: HashMap<usize, usize>,
+    /// Text box stories being read (no floating objects in them).
+    in_text_box: usize,
 }
 
 impl Reader {
@@ -350,6 +419,11 @@ impl Reader {
             end_refs: HashMap::new(),
             media: Vec::new(),
             notes: BTreeSet::new(),
+            spas: HashMap::new(),
+            drawing: art::Drawing::default(),
+            text_boxes: Vec::new(),
+            blip_media: HashMap::new(),
+            in_text_box: 0,
         };
         r.read_text()?;
         r.read_fkps()?;
@@ -528,11 +602,19 @@ impl Reader {
         if ccp[3] > 0 {
             self.note("comments not imported");
         }
-        if ccp[5] > 0 || ccp[6] > 0 {
-            self.note("text boxes not imported");
+        if ccp[6] > 0 || self.tbl(PLC_SPA_HDR).is_some() {
+            self.note("floating objects in headers and footers not imported");
         }
-        if self.tbl(PLC_SPA_MOM).is_some() {
-            self.note("floating pictures and shapes not imported");
+        self.spas = self.tbl(PLC_SPA_MOM).map(art::spas).unwrap_or_default();
+        if !self.spas.is_empty() {
+            self.drawing = self
+                .tbl(DGG_INFO)
+                .map(|d| art::drawing(d, &self.word))
+                .unwrap_or_default();
+            self.text_boxes = self
+                .tbl(PLCFTXBX_TXT)
+                .map(art::text_boxes)
+                .unwrap_or_default();
         }
         let fonts = self.fonts();
         let (styles, default_fonts) = self.styles();
@@ -828,6 +910,126 @@ impl Reader {
         Some(Item::Picture(chp.visible(), self.media.len() - 1, w, h))
     }
 
+    /// The floating object of `spa`; `None` (with a note) when it can't be
+    /// brought in.
+    fn floating(&mut self, spa: art::Spa) -> Option<Floating> {
+        let Some(shape) = self.drawing.shapes.get(&spa.spid).cloned() else {
+            self.note("floating pictures and shapes not imported");
+            return None;
+        };
+        if shape.group() {
+            self.note("grouped shapes not imported");
+            return None;
+        }
+        let z = shape.order;
+        let name = shape.text(0x380);
+        let descr = shape.text(0x381);
+        let fixed = |v: u32| (f64::from(v as i32) / 65536.0 * 100_000.0).round() as i64;
+        let body = if let Some(pib) = shape.prop(0x104).filter(|_| shape.typ != 202) {
+            let i = (pib as usize).checked_sub(1)?;
+            match self.drawing.blips.get(i) {
+                Some(art::Blip::Image(ext, bytes)) => {
+                    let media = match self.blip_media.get(&i) {
+                        Some(m) => *m,
+                        None => {
+                            self.media.push((ext, bytes.clone()));
+                            self.blip_media.insert(i, self.media.len() - 1);
+                            self.media.len() - 1
+                        }
+                    };
+                    let c = |id: u16| shape.prop(id).map_or(0, fixed);
+                    FloatBody::Picture {
+                        media,
+                        crop: [c(0x102), c(0x100), c(0x103), c(0x101)],
+                    }
+                }
+                _ => {
+                    self.note("pictures in formats other than PNG and JPEG not imported");
+                    return None;
+                }
+            }
+        } else {
+            let geom = match art::preset(shape.typ) {
+                Some(p) => format!("<a:prstGeom prst=\"{p}\"><a:avLst/></a:prstGeom>"),
+                None => match art::cust_geom(&shape) {
+                    Some(g) => g,
+                    None if shape.typ == 0 || shape.typ == 4095 => {
+                        self.note("freeform shapes not imported");
+                        return None;
+                    }
+                    None => "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>".to_owned(),
+                },
+            };
+            let is_line = matches!(shape.typ, 20 | 32);
+            let text_box = shape.typ == 202;
+            let filled = shape.flag(0x1BF, 4).unwrap_or(!is_line);
+            let fill = filled.then(|| shape.prop(0x181).and_then(art::color).unwrap_or(0xFFFFFF));
+            let lined = shape.flag(0x1FF, 3).unwrap_or(true);
+            let line = lined.then(|| FloatLine {
+                color: shape.prop(0x1C0).and_then(art::color).unwrap_or(0),
+                width: shape.prop(0x1CB).map_or(9525, i64::from),
+                dash: shape.prop(0x1CE).is_some_and(|d| d != 0),
+                head: shape.prop(0x1D0).and_then(art::arrowhead),
+                tail: shape.prop(0x1D1).and_then(art::arrowhead),
+            });
+            // The text box story: by shape id, or by the id's index.
+            let range = self
+                .text_boxes
+                .iter()
+                .find(|t| t.2 == spa.spid)
+                .or_else(|| {
+                    let i = (shape.txid? >> 16) as usize;
+                    self.text_boxes.get(i.checked_sub(1)?)
+                })
+                .copied()
+                .filter(|_| shape.txid.is_some() || text_box);
+            let text = range.map(|(a, b, _)| {
+                let c = self.fib.ccp;
+                let base = (c[0] + c[1] + c[2] + c[3] + c[4]) as usize;
+                self.in_text_box += 1;
+                let mut blocks = self.story(base + a as usize, base + b as usize, false);
+                self.in_text_box -= 1;
+                // An empty last paragraph (LibreOffice writes one).
+                if blocks.len() > 1
+                    && matches!(blocks.last(), Some(Block::Para(p)) if p.items.is_empty())
+                {
+                    blocks.pop();
+                }
+                blocks
+            });
+            let ins = |id: u16, d: i64| shape.prop(id).map_or(d, |v| i64::from(v as i32));
+            FloatBody::Shape(Box::new(FloatShape {
+                geom,
+                fill,
+                line,
+                flip: shape.flip(),
+                rot: shape.prop(0x04).map_or(0, |v| {
+                    (f64::from(v as i32) / 65536.0 * 60_000.0).round() as i64
+                }),
+                text_box,
+                text,
+                insets: [
+                    ins(0x81, 91440),
+                    ins(0x82, 45720),
+                    ins(0x83, 91440),
+                    ins(0x84, 45720),
+                ],
+                anchor: match shape.prop(0x87) {
+                    Some(1 | 4 | 7) => "ctr",
+                    Some(2 | 5 | 8) => "b",
+                    _ => "t",
+                },
+            }))
+        };
+        Some(Floating {
+            spa,
+            z,
+            name,
+            descr,
+            body,
+        })
+    }
+
     /// The blocks of the text `start..end`.
     fn story(&mut self, start: usize, end: usize, main: bool) -> Vec<Block> {
         let paras = self.paragraphs(start, end, main);
@@ -983,7 +1185,15 @@ impl Reader {
                     }
                 }
                 0x08 if chp.special => {
-                    self.note("floating pictures and shapes not imported");
+                    let spa = self.spas.get(&(cp as u32)).copied();
+                    match spa {
+                        Some(spa) if main && self.in_text_box == 0 => {
+                            if let Some(f) = self.floating(spa) {
+                                items.push(Item::Float(vis, Box::new(f)));
+                            }
+                        }
+                        _ => self.note("floating objects in headers and footers not imported"),
+                    }
                 }
                 0x28 if chp.special && chp.symbol.is_some() => {
                     let (f, c) = chp.symbol.expect("checked");

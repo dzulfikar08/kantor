@@ -327,3 +327,124 @@ fn corrupt_bytes_never_panic() {
         }
     }
 }
+
+/// Every floating object of the document.
+fn floats(doc: &Document) -> Vec<docs_engine::Float> {
+    doc.paragraphs()
+        .iter()
+        .flat_map(|p| p.objects())
+        .filter_map(|(_, o)| match o {
+            Object::Float(f) => Some((**f).clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn floating_pictures_and_text_boxes() {
+    use docs_engine::float::{Place, RelH, RelV};
+    use docs_engine::{FloatKind, Wrap};
+    // floats.docx as LibreOffice saves it in Word 97 format: two pictures,
+    // a text box, and shapes as freeforms drawn with guide formulas (left
+    // out with a note).
+    let doc = open("floats.doc");
+    assert_eq!(doc.import_notes(), ["freeform shapes not imported"]);
+    let f = floats(&doc);
+    assert_eq!(f.len(), 3, "{f:?}");
+    let pictures: Vec<_> = f
+        .iter()
+        .filter(|x| matches!(x.kind, FloatKind::Picture { .. }))
+        .collect();
+    assert_eq!(pictures.len(), 2);
+    let square = pictures[0];
+    assert_eq!(square.at.wrap, Wrap::Square);
+    assert_eq!(square.at.h.0, RelH::Column);
+    assert_eq!(square.at.v.0, RelV::Paragraph);
+    // 160 x 120 px.
+    let (w, h) = square.at.size_px();
+    assert!(
+        (w - 160.0).abs() < 1.0 && (h - 120.0).abs() < 1.0,
+        "{w} x {h}"
+    );
+    let FloatKind::Picture { crop, rel_id, .. } = &pictures[1].kind else {
+        unreachable!()
+    };
+    assert_eq!(crop[0], 25000);
+    assert!(doc.image_bytes(rel_id).unwrap().starts_with(b"\x89PNG"));
+    assert_eq!(pictures[1].at.wrap, Wrap::TopAndBottom);
+    assert!(matches!(pictures[1].at.v.1, Place::Offset(_)));
+    let text_box = f
+        .iter()
+        .find(|x| x.kind == FloatKind::Shape)
+        .expect("the text box");
+    assert_eq!(float_texts(text_box), ["Text box", "with two paragraphs"]);
+    save_and_reopen(doc, 3);
+}
+
+fn float_texts(f: &docs_engine::Float) -> Vec<String> {
+    f.text
+        .as_ref()
+        .map(|t| t.doc.paragraphs().iter().map(|p| p.text.clone()).collect())
+        .unwrap_or_default()
+}
+
+/// Saved as .docx and opened again: the same objects in the same places.
+fn save_and_reopen(mut doc: Document, n: usize) {
+    let before = floats(&doc);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.docx");
+    doc.save_as(&out).unwrap();
+    let again = Document::open(&out).unwrap();
+    let after = floats(&again);
+    assert_eq!(after.len(), n);
+    assert_eq!(
+        after.iter().map(|x| x.at).collect::<Vec<_>>(),
+        before.iter().map(|x| x.at).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        after.iter().map(float_texts).collect::<Vec<_>>(),
+        before.iter().map(float_texts).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn floating_shapes() {
+    use docs_engine::float::RelH;
+    use docs_engine::{FloatKind, LayoutOption, Wrap};
+    // LibreOffice's own shapes, saved as Word's preset types.
+    let doc = open("shapes.doc");
+    assert!(doc.import_notes().is_empty(), "{:?}", doc.import_notes());
+    let f = floats(&doc);
+    assert_eq!(f.len(), 5, "{f:?}");
+    assert!(f.iter().all(|x| x.kind == FloatKind::Shape));
+    let geom = |x: &docs_engine::Float| x.geometry_xml().unwrap_or_default().to_owned();
+    let by_geom = |g: &str| {
+        f.iter()
+            .find(|x| geom(x).contains(&format!("prst=\"{g}\"")))
+            .unwrap_or_else(|| panic!("{g}"))
+    };
+    let rect = by_geom("rect");
+    assert_eq!(float_texts(rect), ["Revenue"]);
+    assert!(rect.shape_xml().0.unwrap().contains("4472C4"));
+    assert_eq!(rect.at.wrap, Wrap::Square);
+    let ellipse = by_geom("ellipse");
+    assert_eq!(ellipse.at.layout_option(), LayoutOption::Behind);
+    assert!(ellipse.shape_xml().0.unwrap().contains("DDEBFF"));
+    let round = by_geom("roundRect");
+    assert_eq!(float_texts(round), ["Rounded"]);
+    let line = by_geom("line");
+    assert!(
+        line.shape_xml()
+            .0
+            .unwrap()
+            .contains("<a:tailEnd type=\"triangle\"/>")
+    );
+    assert_eq!(line.at.layout_option(), LayoutOption::InFront);
+    let frame = f
+        .iter()
+        .find(|x| float_texts(x).len() == 2)
+        .expect("the text frame");
+    assert_eq!(float_texts(frame), ["A text frame", "with two lines"]);
+    assert_eq!(frame.at.h.0, RelH::Column);
+    save_and_reopen(doc, 5);
+}

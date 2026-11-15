@@ -7,14 +7,15 @@ use std::io::{Cursor, Write as _};
 use anyhow::Result;
 
 use super::sprm::{Brd, Chp, Color, Pap, Tab, Tap};
-use super::{Block, Doc, Item, NoteKind, Para, Row};
+use super::{Block, Doc, FloatBody, Floating, Item, NoteKind, Para, Row};
 use crate::{LINE_BREAK, PAGE_BREAK};
 
 const NS: &str = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
     xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
     xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
     xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
-    xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"";
+    xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\" \
+    xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\"";
 const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml";
 
@@ -581,6 +582,10 @@ impl W<'_> {
                     open = None;
                 }
                 Item::LinkEnd | Item::FieldEnd => {}
+                Item::Float(c, f) => {
+                    let r = self.floating(c, f, p.pap.istd);
+                    x.push_str(&r);
+                }
             }
         }
         x.push_str("</w:p>");
@@ -642,6 +647,160 @@ impl W<'_> {
              <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
              </a:graphicData></a:graphic></wp:inline></w:drawing></w:r>",
             wrap("w:rPr", &self.rpr(c, istd))
+        )
+    }
+
+    /// The media part's relationship id.
+    fn media_rel(&mut self, m: usize) -> Option<String> {
+        let (ext, _) = self.doc.media.get(m)?;
+        Some(match &self.media_rels[m] {
+            Some(id) => id.clone(),
+            None => {
+                let id = self.rel("image", &format!("media/image{}.{ext}", m + 1), false);
+                self.media_rels[m] = Some(id.clone());
+                id
+            }
+        })
+    }
+
+    /// A floating object's run: `w:drawing/wp:anchor`.
+    fn floating(&mut self, c: &Chp, f: &Floating, istd: u16) -> String {
+        let [l, t, r, b] = f.spa.rect;
+        let (cx, cy) = (
+            i64::from(r.saturating_sub(l).max(0)) * 635,
+            i64::from(b.saturating_sub(t).max(0)) * 635,
+        );
+        let rel_h = match f.spa.bx {
+            0 => "margin",
+            1 => "page",
+            _ => "column",
+        };
+        let rel_v = match f.spa.by {
+            0 => "margin",
+            1 => "page",
+            _ => "paragraph",
+        };
+        let side = match f.spa.wrk {
+            1 => "left",
+            2 => "right",
+            3 => "largest",
+            _ => "bothSides",
+        };
+        let polygon = "<wp:wrapPolygon edited=\"0\"><wp:start x=\"0\" y=\"0\"/><wp:lineTo x=\"0\" y=\"21600\"/><wp:lineTo x=\"21600\" y=\"21600\"/><wp:lineTo x=\"21600\" y=\"0\"/><wp:lineTo x=\"0\" y=\"0\"/></wp:wrapPolygon>";
+        let wrap_el = match f.spa.wr {
+            1 => "<wp:wrapTopAndBottom/>".to_owned(),
+            3 => "<wp:wrapNone/>".to_owned(),
+            4 => format!("<wp:wrapTight wrapText=\"{side}\">{polygon}</wp:wrapTight>"),
+            5 => format!("<wp:wrapThrough wrapText=\"{side}\">{polygon}</wp:wrapThrough>"),
+            _ => format!("<wp:wrapSquare wrapText=\"{side}\"/>"),
+        };
+        self.pictures += 1;
+        let n = self.pictures;
+        let (graphic, default_name) = match &f.body {
+            FloatBody::Picture { media, crop } => {
+                let Some(id) = self.media_rel(*media) else {
+                    return String::new();
+                };
+                let src = if crop.iter().any(|v| *v != 0) {
+                    format!(
+                        "<a:srcRect l=\"{}\" t=\"{}\" r=\"{}\" b=\"{}\"/>",
+                        crop[0], crop[1], crop[2], crop[3]
+                    )
+                } else {
+                    String::new()
+                };
+                (
+                    format!(
+                        "<a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+                         <pic:pic><pic:nvPicPr><pic:cNvPr id=\"{n}\" name=\"Picture {n}\"/><pic:cNvPicPr/></pic:nvPicPr>\
+                         <pic:blipFill><a:blip r:embed=\"{id}\"/>{src}<a:stretch><a:fillRect/></a:stretch></pic:blipFill>\
+                         <pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>\
+                         <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData>"
+                    ),
+                    format!("Picture {n}"),
+                )
+            }
+            FloatBody::Shape(s) => {
+                let rot = if s.rot != 0 {
+                    format!(" rot=\"{}\"", s.rot)
+                } else {
+                    String::new()
+                };
+                let flips = format!(
+                    "{}{}",
+                    if s.flip.0 { " flipH=\"1\"" } else { "" },
+                    if s.flip.1 { " flipV=\"1\"" } else { "" }
+                );
+                let fill = match s.fill {
+                    Some(c) => format!("<a:solidFill><a:srgbClr val=\"{c:06X}\"/></a:solidFill>"),
+                    None => "<a:noFill/>".to_owned(),
+                };
+                let ln = match s.line {
+                    Some(super::FloatLine {
+                        color: c,
+                        width: w,
+                        dash,
+                        head,
+                        tail,
+                    }) => format!(
+                        "<a:ln w=\"{}\"><a:solidFill><a:srgbClr val=\"{c:06X}\"/></a:solidFill>{}{}{}</a:ln>",
+                        w.max(0),
+                        if dash {
+                            "<a:prstDash val=\"dash\"/>"
+                        } else {
+                            ""
+                        },
+                        head.map(|h| format!("<a:headEnd type=\"{h}\"/>"))
+                            .unwrap_or_default(),
+                        tail.map(|t| format!("<a:tailEnd type=\"{t}\"/>"))
+                            .unwrap_or_default(),
+                    ),
+                    None => "<a:ln><a:noFill/></a:ln>".to_owned(),
+                };
+                let text = match &s.text {
+                    Some(blocks) => format!(
+                        "<wps:txbx><w:txbxContent>{}</w:txbxContent></wps:txbx>",
+                        self.blocks(blocks)
+                    ),
+                    None => String::new(),
+                };
+                let [il, it, ir, ib] = s.insets;
+                (
+                    format!(
+                        "<a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                         <wps:wsp><wps:cNvSpPr{}/><wps:spPr><a:xfrm{rot}{flips}><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>\
+                         {}{fill}{ln}</wps:spPr>{text}<wps:bodyPr rot=\"0\" vert=\"horz\" wrap=\"square\" lIns=\"{il}\" tIns=\"{it}\" rIns=\"{ir}\" bIns=\"{ib}\" anchor=\"{}\"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData>",
+                        if s.text_box { " txBox=\"1\"" } else { "" },
+                        s.geom,
+                        s.anchor
+                    ),
+                    if s.text_box {
+                        format!("Text Box {n}")
+                    } else {
+                        format!("Shape {n}")
+                    },
+                )
+            }
+        };
+        let name = f.name.clone().unwrap_or(default_name);
+        let descr = f
+            .descr
+            .as_deref()
+            .map(|d| format!(" descr=\"{}\"", esc(d)))
+            .unwrap_or_default();
+        format!(
+            "<w:r>{}<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+             relativeHeight=\"{}\" behindDoc=\"{}\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+             <wp:simplePos x=\"0\" y=\"0\"/><wp:positionH relativeFrom=\"{rel_h}\"><wp:posOffset>{}</wp:posOffset></wp:positionH>\
+             <wp:positionV relativeFrom=\"{rel_v}\"><wp:posOffset>{}</wp:posOffset></wp:positionV>\
+             <wp:extent cx=\"{cx}\" cy=\"{cy}\"/><wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>{wrap_el}\
+             <wp:docPr id=\"{n}\" name=\"{}\"{descr}/><wp:cNvGraphicFramePr/><a:graphic>{graphic}</a:graphic></wp:anchor></w:drawing></w:r>",
+            wrap("w:rPr", &self.rpr(c, istd)),
+            251_658_240 + f.z * 1024,
+            u8::from(f.spa.below && f.spa.wr == 3),
+            i64::from(l) * 635,
+            i64::from(t) * 635,
+            esc(&name),
         )
     }
 

@@ -11,6 +11,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Docs: Word 97-2003 (`.doc`) files open with their floating pictures (PNG, JPEG), shapes and
+  text boxes, placed, wrapped and drawn as in Word and saved into the new `.docx`. Floating
+  objects in headers and footers, grouped shapes and freeform shapes drawn with formulas are
+  still left out, and the status bar says so.
+
 - Sheets: OpenDocument spreadsheets (`.ods`) open with their pictures (PNG, JPEG), charts
   (column, bar, line, area, pie, doughnut and scatter, with titles, legend, axis titles, series
   colours and data labels), shapes, lines and text boxes, defined names (so formulas using them

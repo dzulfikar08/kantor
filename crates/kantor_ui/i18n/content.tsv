@@ -42,6 +42,9 @@ pictures in formats other than PNG and JPEG were left out	gambar berformat selai
 comments not imported	komentar tidak diimpor
 text boxes not imported	kotak teks tidak diimpor
 floating pictures and shapes not imported	gambar dan bentuk mengambang tidak diimpor
+floating objects in headers and footers not imported	objek mengambang di header dan footer tidak diimpor
+grouped shapes not imported	bentuk yang dikelompokkan tidak diimpor
+freeform shapes not imported	bentuk bebas tidak diimpor
 pictures in formats other than PNG and JPEG not imported	gambar berformat selain PNG dan JPEG tidak diimpor
 hidden text left out	teks tersembunyi tidak disertakan
 embedded objects not imported	objek tersemat tidak diimpor
