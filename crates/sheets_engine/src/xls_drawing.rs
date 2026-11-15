@@ -337,6 +337,8 @@ pub(crate) enum ObjectKind {
         crop: [f32; 4],
     },
     Chart(Box<Chart>),
+    /// A shape, line or text box (`.ods`).
+    Shape(Box<crate::ods_drawing::Shape>),
 }
 
 /// What could not be brought in, for the import notes.
@@ -997,7 +999,7 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
     Ok(chart)
 }
 
-fn esc(s: &str) -> String {
+pub(crate) fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -1446,6 +1448,10 @@ impl Parts {
                     ));
                     let name = o.name.clone().unwrap_or_else(|| format!("Chart {}", i + 1));
                     frame(id, &name, &descr, hidden, &rid)
+                }
+                ObjectKind::Shape(shape) => {
+                    let name = o.name.clone().unwrap_or_else(|| format!("Shape {}", i + 1));
+                    shape.xml(id, &name, &descr, hidden)
                 }
             };
             xml.push_str(&format!(

@@ -40,6 +40,11 @@ Files:
   as worksheets holding a chart, so the generator rewrites it as a BIFF
   chart sheet: BOUNDSHEET type 2 and the chart substream in place of the
   worksheet's).
+* drawings.ods: the same workbook as drawings.xls as LibreOffice saves it
+  in OpenDocument (charts as embedded chart objects, pictures in
+  Pictures/; "Overview" stays a worksheet holding one chart).
+* shapes.ods: tests/corpus/xlsx/23_shapes.xlsx (shapes, text boxes, a
+  connector, a group) as LibreOffice saves it in OpenDocument.
 * dates1904.xls: a workbook in the 1904 date system.
 * xlwt.xls: written directly as BIFF8 by xlwt (headless LibreOffice drops
   view settings): frozen rows and columns, the second sheet active, pattern
@@ -544,6 +549,10 @@ def main() -> None:
         shutil.copy(convert(lo, src, "calc8", "ods", src.parent), OUT / "features.ods")
         src = tmp / "drawings.xlsx"
         drawings(src)
+        shutil.copy(convert(lo, src, "calc8", "ods", tmp), OUT / "drawings.ods")
+        shapes = tmp / "shapes.xlsx"
+        shutil.copy(ROOT / "tests" / "corpus" / "xlsx" / "23_shapes.xlsx", shapes)
+        shutil.copy(convert(lo, shapes, "calc8", "ods", tmp), OUT / "shapes.ods")
         out = convert(lo, src, "MS Excel 97", "xls", tmp)
         make_chart_sheet(out, "Overview")
         shutil.copy(out, OUT / "drawings.xls")

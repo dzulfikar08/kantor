@@ -29,6 +29,8 @@ mod move_chart;
 mod notes;
 mod numfmt;
 mod ods;
+mod ods_drawing;
+mod ods_print;
 mod pivot;
 mod pivot_edit;
 mod preserve;

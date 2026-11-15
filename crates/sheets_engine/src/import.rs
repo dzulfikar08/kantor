@@ -61,13 +61,13 @@ pub enum ImportNote {
     OdsValidationsSkipped(usize),
     /// `.ods` conditional formats with a condition Kantor can't express.
     OdsConditionalFormatsSkipped(usize),
-    /// `.xls` pictures in a format Kantor doesn't read (EMF, WMF, PICT, BMP, TIFF).
+    /// `.xls`/`.ods` pictures in a format Kantor doesn't read (EMF, WMF, PICT, BMP, TIFF).
     PicturesSkipped(usize),
-    /// `.xls` charts of a type Kantor doesn't draw.
+    /// `.xls`/`.ods` charts of a type Kantor doesn't draw.
     ChartsSkipped(usize),
-    /// `.xls` 3-D charts, shown flat.
+    /// `.xls`/`.ods` 3-D charts, shown flat.
     ChartsShownFlat(usize),
-    /// `.xls` shapes, text boxes and controls.
+    /// `.xls` shapes, text boxes and controls; `.ods` freehand shapes and controls.
     ShapesSkipped(usize),
     /// The `.xls` pictures and charts couldn't be brought over at all.
     DrawingsNotImported,
@@ -305,7 +305,7 @@ pub(crate) struct Imported {
     pub active_sheet: Option<u32>,
     /// Data validation (`.xls`, `.ods`), by sheet index.
     pub validations: Vec<(u32, Vec<crate::Validation>)>,
-    /// Pictures and charts (`.xls`).
+    /// Pictures and charts (`.xls`, `.ods`).
     pub drawings: crate::xls_drawing::XlsDrawings,
 }
 
@@ -378,6 +378,23 @@ pub(crate) fn read_calamine(
     // Names before formulas: a formula using an unknown name doesn't parse.
     if let Some(x) = &xls {
         add_xls_names(&mut model, &book, x, &names, &mut imported);
+    }
+    if format == SourceFormat::Ods {
+        let rename = |n: &str| {
+            names
+                .iter()
+                .position(|x| x == n)
+                .and_then(|i| titles.get(i).cloned())
+                .unwrap_or_else(|| n.to_owned())
+        };
+        if let Ok(Some(content)) = crate::ods::part(path, "content.xml") {
+            for (name, sheet, formula) in crate::ods_print::defined_names(&content, &names, &rename)
+            {
+                if let Err(e) = model.new_defined_name(&name, sheet, &formula) {
+                    log::info!("name {name} = {formula}: {e}");
+                }
+            }
+        }
     }
     for (ix, name) in names.iter().enumerate() {
         let sheet = ix as u32;
@@ -471,6 +488,25 @@ pub(crate) fn read_calamine(
                 imported.active_sheet = a.active;
                 imported.notes.extend(a.notes());
                 imported.validations = a.validations;
+                imported.prints = a.prints;
+                imported.print_names = a.print_names;
+                let sheet_names: Vec<String> = model
+                    .workbook
+                    .worksheets
+                    .iter()
+                    .map(|w| w.name.clone())
+                    .collect();
+                let d = a.drawings;
+                imported.drawings = crate::xls_drawing::XlsDrawings {
+                    sheets: d
+                        .sheets
+                        .into_iter()
+                        .filter_map(|(i, o)| Some((sheet_names.get(i as usize)?.clone(), o)))
+                        .collect(),
+                    chart_sheets: Vec::new(),
+                    order: sheet_names.into_iter().map(|n| (n, false)).collect(),
+                    blips: d.blips,
+                };
             }
             Err(e) => {
                 log::warn!("{}: formatting not read: {e}", path.display());

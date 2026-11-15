@@ -11,6 +11,20 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Docs: Word 97-2003 (`.doc`) files open with their floating pictures (PNG, JPEG), shapes and
+  text boxes, placed, wrapped and drawn as in Word and saved into the new `.docx`. Floating
+  objects in headers and footers, grouped shapes and freeform shapes drawn with formulas are
+  still left out, and the status bar says so.
+- Docs: comments in Word 97-2003 (`.doc`) files come in with their authors, initials and the text
+  they cover (without their dates).
+
+- Sheets: OpenDocument spreadsheets (`.ods`) open with their pictures (PNG, JPEG), charts
+  (column, bar, line, area, pie, doughnut and scatter, with titles, legend, axis titles, series
+  colours and data labels), shapes, lines and text boxes, defined names (so formulas using them
+  stay live) and page setup (paper, orientation, margins, scaling, header and footer, print area
+  and print titles), all saved into the new `.xlsx`. Radar, bubble and stock charts, other picture
+  formats, freehand shapes and form controls are left out with an import note.
+
 - Strict Open XML files (Office's "Strict Open XML" Save As type, ISO/IEC 29500 Strict) open in
   Sheets, Docs and Slides instead of being refused, date cells included. Save writes them under
   the same name as standard Open XML (Transitional), the format Excel, Word and PowerPoint save by
