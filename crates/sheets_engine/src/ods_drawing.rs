@@ -568,7 +568,10 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
             }
             "object" => {
                 let href = first.attribute((NS_XLINK, "href")).unwrap_or_default();
-                let path = format!("{}/content.xml", href.trim_start_matches("./"));
+                let path = format!(
+                    "{}/content.xml",
+                    href.trim_start_matches("./").trim_end_matches('/')
+                );
                 let xml = self.bytes(&path).and_then(|b| String::from_utf8(b).ok());
                 let parsed = xml.as_deref().and_then(|x| {
                     let doc = Document::parse(x).ok()?;

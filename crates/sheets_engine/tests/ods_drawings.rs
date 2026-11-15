@@ -186,6 +186,36 @@ fn ods_shapes_are_imported() {
     assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
 }
 
+/// A copy of `drawings.ods` whose chart links end with `/`, as some
+/// producers write them (`xlink:href="Object 1/"`).
+#[test]
+fn chart_links_with_a_trailing_slash() {
+    let src = std::fs::read(corpus("drawings.ods")).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(src)).unwrap();
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for i in 0..zip.len() {
+        let mut f = zip.by_index(i).unwrap();
+        let name = f.name().unwrap().into_owned();
+        let mut b = Vec::new();
+        f.read_to_end(&mut b).unwrap();
+        if name == "content.xml" {
+            let s = String::from_utf8(b).unwrap();
+            b = s
+                .replace("xlink:href=\"./Object 1\"", "xlink:href=\"Object 1/\"")
+                .into_bytes();
+        }
+        out.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut out, &b).unwrap();
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("slash.ods");
+    std::fs::write(&path, out.finish().unwrap().into_inner()).unwrap();
+    let wb = Workbook::open(&path).unwrap();
+    let info = wb.chart_info(wb.drawings(0)[0].key).unwrap();
+    assert_eq!(info.spec.title, "Sales by quarter");
+}
+
 #[test]
 fn ods_drawings_save_to_xlsx_and_reopen() {
     for file in ["drawings.ods", "shapes.ods"] {
