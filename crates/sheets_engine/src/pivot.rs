@@ -68,6 +68,11 @@ use roxmltree::{Document, Node};
 
 use crate::content_text::{tr, trf};
 use crate::format::LineStyle;
+use crate::pivot_calc::{
+    BASE_NEXT, BASE_PREVIOUS, FilterFamily, Formula, NS_X14, PivotFilter, ShowAs,
+    URI_X14_DATA_FIELD, URI_X14_PIVOT_FIELD, filter_family,
+};
+use crate::pivot_group::{FieldGroup, GroupKind};
 use crate::shift::{Area, Layout};
 use crate::table::{Edges, Elem, TableCellLook, line, theme, thin};
 use crate::{CellRange, Workbook, cell_name};
@@ -169,7 +174,7 @@ impl Val {
     }
 }
 
-fn format_number(n: f64) -> String {
+pub(crate) fn format_number(n: f64) -> String {
     if n.is_finite() && n.fract() == 0.0 && n.abs() < 1e15 {
         format!("{}", n as i64)
     } else {
@@ -195,7 +200,7 @@ fn esc(s: &str) -> String {
 }
 
 /// Days from 1970-01-01 of a civil date (Howard Hinnant's algorithm).
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+pub(crate) fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = y - era * 400;
@@ -204,7 +209,7 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
-fn civil_from_days(z: i64) -> (i64, i64, i64) {
+pub(crate) fn civil_from_days(z: i64) -> (i64, i64, i64) {
     let z = z + 719468;
     let era = if z >= 0 { z } else { z - 146096 } / 146097;
     let doe = z - era * 146097;
@@ -221,7 +226,7 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
 /// non-existent 1900-02-29).
 const SERIAL_EPOCH: i64 = -25569;
 
-fn serial_of_iso(s: &str) -> Option<f64> {
+pub(crate) fn serial_of_iso(s: &str) -> Option<f64> {
     let (date, time) = s.split_once('T').unwrap_or((s, ""));
     let mut p = date.split('-');
     let y: i64 = p.next()?.parse().ok()?;
@@ -237,7 +242,7 @@ fn serial_of_iso(s: &str) -> Option<f64> {
     Some(serial)
 }
 
-fn iso_of_serial(serial: f64) -> String {
+pub(crate) fn iso_of_serial(serial: f64) -> String {
     let days = serial.floor();
     let (y, m, d) = civil_from_days(days as i64 + SERIAL_EPOCH);
     let secs = ((serial - days) * 86400.0).round() as i64;
@@ -263,9 +268,48 @@ pub(crate) enum Source {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CacheField {
     pub name: String,
-    /// Shared items (what pivot fields' `x` index), if the cache lists them.
+    /// Shared items (what records' `x` index), if the cache lists them.
     pub items: Vec<Val>,
     pub num_fmt_id: u32,
+    /// A column of the source (else a calculated or grouping field, which
+    /// records don't hold; those come after the source's).
+    pub database: bool,
+    /// A calculated field's formula (without `=`).
+    pub formula: Option<String>,
+    pub group: Option<FieldGroup>,
+}
+
+impl CacheField {
+    pub(crate) fn source(name: String) -> Self {
+        CacheField {
+            name,
+            items: Vec::new(),
+            num_fmt_id: 0,
+            database: true,
+            formula: None,
+            group: None,
+        }
+    }
+
+    /// What pivot fields' items point at: a grouped field's group items,
+    /// else the shared items.
+    pub(crate) fn item_list(&self) -> &[Val] {
+        match &self.group {
+            Some(g) if g.groups_items() => &g.items,
+            _ => &self.items,
+        }
+    }
+
+    /// Grouped by ranges (it lists no shared items).
+    pub(crate) fn range_grouped(&self) -> bool {
+        matches!(
+            &self.group,
+            Some(FieldGroup {
+                kind: Some(GroupKind::Range(_)),
+                ..
+            })
+        )
+    }
 }
 
 /// A pivot cache as the workbook has it now.
@@ -318,6 +362,16 @@ pub(crate) struct Field {
     /// `subtotalCaption`: the label of each of its subtotals, `?` standing
     /// for the item.
     pub subtotal_caption: Option<String>,
+    /// Custom subtotals (Field Settings: Custom), in Excel's order; empty
+    /// for none or the automatic one (`default_subtotal`).
+    pub subtotals: Vec<Func>,
+    /// `insertBlankRow`: a blank line after each item.
+    pub insert_blank: bool,
+    /// Excel 2010 `fillDownLabels`: repeat item labels.
+    pub fill_down: bool,
+    /// `autoSortScope`: items sorted by this data field's values (in the
+    /// `sort` direction).
+    pub sort_by: Option<usize>,
     /// The `<pivotField>` element as read (its other attributes are kept).
     pub xml: Option<String>,
 }
@@ -366,6 +420,63 @@ impl Func {
             "varp" => Func::Varp,
             _ => return None,
         })
+    }
+
+    pub(crate) const ALL: [Func; 11] = [
+        Func::Sum,
+        Func::Count,
+        Func::Average,
+        Func::Max,
+        Func::Min,
+        Func::Product,
+        Func::CountNums,
+        Func::StdDev,
+        Func::StdDevp,
+        Func::Var,
+        Func::Varp,
+    ];
+
+    /// The `subtotal` attribute value.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Func::Sum => "sum",
+            Func::Count => "count",
+            Func::Average => "average",
+            Func::Max => "max",
+            Func::Min => "min",
+            Func::Product => "product",
+            Func::CountNums => "countNums",
+            Func::StdDev => "stdDev",
+            Func::StdDevp => "stdDevp",
+            Func::Var => "var",
+            Func::Varp => "varp",
+        }
+    }
+
+    /// A field's custom subtotal: its item type (`ST_ItemType`) and the
+    /// `pivotField` attribute that turns it on.
+    pub(crate) fn subtotal_xml(self) -> (&'static str, &'static str) {
+        match self {
+            Func::Sum => ("sum", "sumSubtotal"),
+            Func::Count => ("countA", "countASubtotal"),
+            Func::Average => ("avg", "avgSubtotal"),
+            Func::Max => ("max", "maxSubtotal"),
+            Func::Min => ("min", "minSubtotal"),
+            Func::Product => ("product", "productSubtotal"),
+            Func::CountNums => ("count", "countSubtotal"),
+            Func::StdDev => ("stdDev", "stdDevSubtotal"),
+            Func::StdDevp => ("stdDevP", "stdDevPSubtotal"),
+            Func::Var => ("var", "varSubtotal"),
+            Func::Varp => ("varP", "varPSubtotal"),
+        }
+    }
+
+    /// What a custom subtotal's label says after the item (`East Sum`).
+    pub(crate) fn subtotal_label(self) -> &'static str {
+        match self {
+            Func::CountNums => "Count Numbers",
+            f => f.caption(),
+        }
     }
 
     /// What Excel calls it in a data field's default name.
@@ -435,6 +546,12 @@ pub(crate) struct DataField {
     pub fld: usize,
     pub func: Func,
     pub num_fmt_id: Option<u32>,
+    /// Show Values As.
+    pub show_as: ShowAs,
+    pub base_field: usize,
+    /// An index into the base field's items, or [`BASE_PREVIOUS`] /
+    /// [`BASE_NEXT`].
+    pub base_item: u32,
     /// The `<dataField>` element as read.
     pub xml: Option<String>,
 }
@@ -480,6 +597,8 @@ pub(crate) struct Def {
     pub col_items: Vec<AxisItem>,
     pub page_fields: Vec<PageField>,
     pub data_fields: Vec<DataField>,
+    /// Label, value and date filters.
+    pub filters: Vec<PivotFilter>,
     pub row_grand: bool,
     pub col_grand: bool,
     pub style: StyleInfo,
@@ -569,15 +688,25 @@ fn parse_cache(part: &str, records_part: Option<String>, xml: &str) -> Result<Ca
     }
     let mut fields = Vec::new();
     if let Some(cf) = child(root, "cacheFields") {
-        for f in children(cf, "cacheField") {
-            if f.attribute("formula").is_some() || f.attribute("databaseField") == Some("0") {
-                unsupported.get_or_insert_with(|| "it has a calculated field".to_owned());
+        for (k, f) in children(cf, "cacheField").enumerate() {
+            let database = attr_bool(f, "databaseField", true);
+            let formula = f.attribute("formula").map(|x| x.trim().to_owned());
+            if !database && formula.is_none() && child(f, "fieldGroup").is_none() {
+                unsupported.get_or_insert_with(|| "it has a field Kantor can't read".to_owned());
             }
-            if child(f, "fieldGroup").is_some() {
+            if database && fields.iter().any(|x: &CacheField| !x.database) {
                 unsupported.get_or_insert_with(|| {
-                    "it has grouped items (dates by month, number ranges...)".to_owned()
+                    "its calculated or grouping fields come before its source fields".to_owned()
                 });
             }
+            let group = match child(f, "fieldGroup").map(|g| FieldGroup::parse(g, k)) {
+                None => None,
+                Some(Ok(g)) => Some(g),
+                Some(Err(why)) => {
+                    unsupported.get_or_insert_with(|| format!("it has {why}"));
+                    None
+                }
+            };
             let items = child(f, "sharedItems")
                 .map(|s| {
                     s.children()
@@ -590,6 +719,9 @@ fn parse_cache(part: &str, records_part: Option<String>, xml: &str) -> Result<Ca
                 name: f.attribute("name").unwrap_or_default().to_owned(),
                 items,
                 num_fmt_id: attr_u32(f, "numFmtId").unwrap_or(0),
+                database,
+                formula,
+                group,
             });
         }
     }
@@ -637,23 +769,27 @@ fn parse_def(part: &str, sheet_id: u32, cache: usize, xml: &str) -> Result<Def, 
     let mut fields = Vec::new();
     if let Some(pf) = child(root, "pivotFields") {
         for f in children(pf, "pivotField") {
-            for sub in [
-                "sumSubtotal",
-                "countASubtotal",
-                "avgSubtotal",
-                "maxSubtotal",
-                "minSubtotal",
-                "productSubtotal",
-                "countSubtotal",
-                "stdDevSubtotal",
-                "stdDevPSubtotal",
-                "varSubtotal",
-                "varPSubtotal",
-            ] {
-                if attr_bool(f, sub, false) {
-                    unsupported.get_or_insert_with(|| "a field has custom subtotals".to_owned());
-                }
-            }
+            let subtotals: Vec<Func> = Func::ALL
+                .into_iter()
+                .filter(|func| attr_bool(f, func.subtotal_xml().1, false))
+                .collect();
+            let fill_down = f
+                .descendants()
+                .find(|n| {
+                    n.is_element()
+                        && n.tag_name().name() == "pivotField"
+                        && n.tag_name().namespace() == Some(NS_X14)
+                })
+                .is_some_and(|n| attr_bool(n, "fillDownLabels", false));
+            // Sorted by a data field's values: a reference to the Σ Values
+            // field (4294967294) naming the data field.
+            let sort_by = child(f, "autoSortScope").and_then(|a| {
+                a.descendants()
+                    .filter(|n| n.is_element() && n.tag_name().name() == "reference")
+                    .find(|r| r.attribute("field") == Some("4294967294"))
+                    .and_then(|r| children(r, "x").next())
+                    .map(|x| attr_u32(x, "v").unwrap_or(0) as usize)
+            });
             let items: Vec<FieldItem> = child(f, "items")
                 .map(|its| {
                     children(its, "item")
@@ -687,6 +823,10 @@ fn parse_def(part: &str, sheet_id: u32, cache: usize, xml: &str) -> Result<Def, 
                 sort: f.attribute("sortType").map(str::to_owned),
                 name: f.attribute("name").map(str::to_owned),
                 subtotal_caption: f.attribute("subtotalCaption").map(str::to_owned),
+                subtotals,
+                insert_blank: attr_bool(f, "insertBlankRow", false),
+                fill_down,
+                sort_by,
                 xml: Some(xml[f.range()].to_owned()),
             });
         }
@@ -716,9 +856,10 @@ fn parse_def(part: &str, sheet_id: u32, cache: usize, xml: &str) -> Result<Def, 
     let mut data_fields = Vec::new();
     if let Some(l) = child(root, "dataFields") {
         for d in children(l, "dataField") {
-            if d.attribute("showDataAs").is_some_and(|s| s != "normal") {
+            let Some(show_as) = ShowAs::parse(d) else {
                 unsupported.get_or_insert_with(|| "a value is shown as a calculation".to_owned());
-            }
+                continue;
+            };
             let func = d.attribute("subtotal").unwrap_or("sum");
             let Some(func) = Func::parse(func) else {
                 unsupported.get_or_insert_with(|| format!("it summarises by {func}"));
@@ -732,12 +873,23 @@ fn parse_def(part: &str, sheet_id: u32, cache: usize, xml: &str) -> Result<Def, 
                 fld: fld as usize,
                 func,
                 num_fmt_id: attr_u32(d, "numFmtId"),
+                show_as,
+                base_field: attr_u32(d, "baseField").unwrap_or(0) as usize,
+                base_item: attr_u32(d, "baseItem").unwrap_or(0),
                 xml: Some(xml[d.range()].to_owned()),
             });
         }
     }
-    if child(root, "filters").is_some() {
-        unsupported.get_or_insert_with(|| "it has label or value filters".to_owned());
+    let mut filters = Vec::new();
+    if let Some(l) = child(root, "filters") {
+        for f in children(l, "filter") {
+            match PivotFilter::parse(f) {
+                Ok(f) => filters.push(f),
+                Err(why) => {
+                    unsupported.get_or_insert_with(|| format!("it has {why}"));
+                }
+            }
+        }
     }
     if child(root, "pivotHierarchies").is_some() {
         unsupported.get_or_insert_with(|| "it is an OLAP PivotTable".to_owned());
@@ -770,6 +922,7 @@ fn parse_def(part: &str, sheet_id: u32, cache: usize, xml: &str) -> Result<Def, 
         col_items: parse_items(child(root, "colItems")),
         page_fields,
         data_fields,
+        filters,
         row_grand: attr_bool(root, "rowGrandTotals", true),
         col_grand: attr_bool(root, "colGrandTotals", true),
         style,
@@ -1243,6 +1396,8 @@ enum Kind {
     Data,
     Sub,
     Grand,
+    /// A blank line after an item (`insertBlankRow`).
+    Blank,
 }
 
 /// A row or column of the body.
@@ -1259,139 +1414,306 @@ struct Entry {
     /// The data field, if a Values level is on the path (or a grand total
     /// per data field).
     data: Option<usize>,
+    /// A custom subtotal's function (instead of the data field's).
+    func: Option<Func>,
 }
 
-/// Rows or columns of an axis, in order.
-fn entries(
-    def: &Def,
-    lv: &[Level],
-    pos: &[Vec<Option<usize>>],
-    recs: &[usize],
-    grand: bool,
-) -> Vec<Entry> {
-    let mut out = Vec::new();
-    if lv.is_empty() {
-        out.push(Entry {
-            kind: Kind::Data,
-            path: Vec::new(),
-            recs: recs.to_vec(),
-            values: true,
-            data: None,
-        });
-        return out;
+impl Entry {
+    fn new(kind: Kind, path: Vec<usize>, recs: Vec<usize>, data: Option<usize>) -> Self {
+        Entry {
+            kind,
+            path,
+            recs,
+            values: kind != Kind::Blank,
+            data,
+            func: None,
+        }
     }
-    walk(def, lv, pos, recs, 0, &mut Vec::new(), None, &mut out);
-    let real = lv.iter().any(|l| matches!(l, Level::Field(_)));
-    if grand && real {
-        if lv.contains(&Level::Values) {
-            for d in 0..def.data_fields.len() {
-                out.push(Entry {
-                    kind: Kind::Grand,
-                    path: Vec::new(),
-                    recs: recs.to_vec(),
-                    values: true,
-                    data: Some(d),
+}
+
+/// What a layout works from: the definition matched to its cache, the
+/// records and each record's item in each field.
+struct Ctx<'a> {
+    def: &'a Def,
+    cache: &'a Cache,
+    records: &'a [Vec<Val>],
+    /// Each record's item position (in the definition's item list) in each
+    /// field.
+    pos: Vec<Vec<Option<usize>>>,
+    /// Calculated fields' formulas, by cache field.
+    formulas: Vec<Option<std::result::Result<Formula, String>>>,
+}
+
+type Agg = Option<std::result::Result<f64, &'static str>>;
+
+/// An item of an axis level: its position, records, data field and field.
+type Group<'a> = (usize, Vec<usize>, Option<usize>, &'a Field);
+
+impl Ctx<'_> {
+    /// Data field `d` over records `recs` (by `func` for a custom
+    /// subtotal). A calculated field is its formula over the sums of the
+    /// fields it names, as in Excel.
+    fn summarise(&self, d: usize, func: Option<Func>, recs: &[usize]) -> Agg {
+        let df = &self.def.data_fields[d];
+        if let Some(f) = self.formulas.get(df.fld).and_then(|f| f.as_ref()) {
+            if recs.is_empty() {
+                return None;
+            }
+            let Ok(f) = f else {
+                return Some(Err("#NAME?"));
+            };
+            return Some(f.eval(&|k| {
+                recs.iter()
+                    .filter_map(|&r| self.records[r].get(k)?.number())
+                    .sum()
+            }));
+        }
+        let vals: Vec<&Val> = recs
+            .iter()
+            .filter_map(|&r| self.records[r].get(df.fld))
+            .collect();
+        func.unwrap_or(df.func).apply(&vals)
+    }
+
+    /// The cache value behind item `k` of field `f` (not its caption).
+    fn item_value(&self, f: usize, k: usize) -> Val {
+        self.def.fields[f].items[k]
+            .x
+            .and_then(|x| self.cache.fields.get(f)?.item_list().get(x).cloned())
+            .unwrap_or(Val::Missing)
+    }
+
+    /// `recs` without what the label, date, value and top 10 filters of
+    /// the axis fields leave out. Value filters on an inner field apply
+    /// within each item of the fields outside it, as in Excel.
+    fn filtered(&self, row_lv: &[Level], col_lv: &[Level], mut recs: Vec<usize>) -> Vec<usize> {
+        let def = self.def;
+        let on_axis =
+            |f: usize| row_lv.contains(&Level::Field(f)) || col_lv.contains(&Level::Field(f));
+        let today = crate::pivot_calc::today();
+        for flt in &def.filters {
+            let f = flt.fld;
+            if f >= def.fields.len() || !on_axis(f) {
+                continue;
+            }
+            let pass: Vec<bool> = match filter_family(&flt.kind) {
+                Some(FilterFamily::Label) => (0..def.fields[f].items.len())
+                    .map(|k| {
+                        let label = def.item_label(self.cache, f, k).label();
+                        crate::pivot_calc::label_matches(&flt.kind, &label, &flt.v1, &flt.v2)
+                    })
+                    .collect(),
+                Some(FilterFamily::Date) => (0..def.fields[f].items.len())
+                    .map(|k| match self.item_value(f, k) {
+                        Val::Date(d) | Val::Num(d) => {
+                            crate::pivot_calc::date_matches(&flt.kind, d, &flt.v1, &flt.v2, today)
+                        }
+                        _ => false,
+                    })
+                    .collect(),
+                _ => continue,
+            };
+            recs.retain(|&r| self.pos[f][r].is_some_and(|k| pass[k]));
+        }
+        for lv in [row_lv, col_lv] {
+            for (l, level) in lv.iter().enumerate() {
+                let Level::Field(f) = *level else { continue };
+                let Some(flt) = def.filters.iter().find(|x| {
+                    x.fld == f
+                        && matches!(
+                            filter_family(&x.kind),
+                            Some(FilterFamily::Value | FilterFamily::Top)
+                        )
+                }) else {
+                    continue;
+                };
+                let Some(d) = flt.measure.filter(|d| *d < def.data_fields.len()) else {
+                    continue;
+                };
+                let outer: Vec<usize> = lv[..l]
+                    .iter()
+                    .filter_map(|x| match x {
+                        Level::Field(o) => Some(*o),
+                        Level::Values => None,
+                    })
+                    .collect();
+                // Records by the items outside, then by this field's item.
+                let mut groups: HashMap<Vec<Option<usize>>, HashMap<usize, Vec<usize>>> =
+                    HashMap::new();
+                for &r in &recs {
+                    let key: Vec<Option<usize>> = outer.iter().map(|&o| self.pos[o][r]).collect();
+                    if let Some(k) = self.pos[f][r] {
+                        groups.entry(key).or_default().entry(k).or_default().push(r);
+                    }
+                }
+                let mut keep: std::collections::HashSet<(Vec<Option<usize>>, usize)> =
+                    std::collections::HashSet::new();
+                for (key, items) in &groups {
+                    let values: Vec<(usize, f64)> = items
+                        .iter()
+                        .filter_map(|(k, rs)| match self.summarise(d, None, rs) {
+                            Some(Ok(x)) => Some((*k, x)),
+                            _ => None,
+                        })
+                        .collect();
+                    let kept: Vec<usize> = if filter_family(&flt.kind) == Some(FilterFamily::Top) {
+                        let n: f64 = flt.v1.trim().parse().unwrap_or(10.0);
+                        crate::pivot_calc::top_items(&flt.kind, n, flt.top, &values)
+                    } else {
+                        values
+                            .iter()
+                            .filter(|(_, x)| {
+                                crate::pivot_calc::value_matches(&flt.kind, *x, &flt.v1, &flt.v2)
+                            })
+                            .map(|(k, _)| *k)
+                            .collect()
+                    };
+                    for k in kept {
+                        keep.insert((key.clone(), k));
+                    }
+                }
+                recs.retain(|&r| {
+                    let key: Vec<Option<usize>> = outer.iter().map(|&o| self.pos[o][r]).collect();
+                    self.pos[f][r].is_some_and(|k| keep.contains(&(key, k)))
                 });
             }
-        } else {
-            out.push(Entry {
-                kind: Kind::Grand,
-                path: Vec::new(),
-                recs: recs.to_vec(),
-                values: true,
-                data: None,
-            });
         }
+        recs
     }
-    out
-}
 
-#[allow(clippy::too_many_arguments)]
-fn walk(
-    def: &Def,
-    lv: &[Level],
-    pos: &[Vec<Option<usize>>],
-    recs: &[usize],
-    level: usize,
-    path: &mut Vec<usize>,
-    data: Option<usize>,
-    out: &mut Vec<Entry>,
-) {
-    let leaf = level + 1 == lv.len();
-    let groups: Vec<(usize, Vec<usize>, Option<usize>, &Field)> = match lv[level] {
-        Level::Values => {
-            static PLAIN: std::sync::OnceLock<Field> = std::sync::OnceLock::new();
-            let plain = PLAIN.get_or_init(|| Field {
-                compact: true,
-                outline: true,
-                subtotal_top: true,
-                default_subtotal: false,
-                ..Default::default()
-            });
-            (0..def.data_fields.len())
-                .map(|d| (d, recs.to_vec(), Some(d), plain))
-                .collect()
+    /// Rows or columns of an axis, in order.
+    fn entries(&self, lv: &[Level], recs: &[usize], grand: bool, rows: bool) -> Vec<Entry> {
+        let def = self.def;
+        let mut out = Vec::new();
+        if lv.is_empty() {
+            out.push(Entry::new(Kind::Data, Vec::new(), recs.to_vec(), None));
+            return out;
         }
-        Level::Field(f) => {
-            let field = &def.fields[f];
-            let mut by_item: Vec<Vec<usize>> = vec![Vec::new(); field.items.len()];
-            for &r in recs {
-                if let Some(p) = pos[f][r] {
-                    by_item[p].push(r);
+        self.walk(lv, rows, recs, 0, &mut Vec::new(), None, &mut out);
+        let real = lv.iter().any(|l| matches!(l, Level::Field(_)));
+        if grand && real {
+            if lv.contains(&Level::Values) {
+                for d in 0..def.data_fields.len() {
+                    out.push(Entry::new(Kind::Grand, Vec::new(), recs.to_vec(), Some(d)));
+                }
+            } else {
+                out.push(Entry::new(Kind::Grand, Vec::new(), recs.to_vec(), None));
+            }
+        }
+        out
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn walk(
+        &self,
+        lv: &[Level],
+        rows: bool,
+        recs: &[usize],
+        level: usize,
+        path: &mut Vec<usize>,
+        data: Option<usize>,
+        out: &mut Vec<Entry>,
+    ) {
+        let def = self.def;
+        let leaf = level + 1 == lv.len();
+        let mut groups: Vec<Group> = match lv[level] {
+            Level::Values => {
+                static PLAIN: std::sync::OnceLock<Field> = std::sync::OnceLock::new();
+                let plain = PLAIN.get_or_init(|| Field {
+                    compact: true,
+                    outline: true,
+                    subtotal_top: true,
+                    default_subtotal: false,
+                    ..Default::default()
+                });
+                (0..def.data_fields.len())
+                    .map(|d| (d, recs.to_vec(), Some(d), plain))
+                    .collect()
+            }
+            Level::Field(f) => {
+                let field = &def.fields[f];
+                let mut by_item: Vec<Vec<usize>> = vec![Vec::new(); field.items.len()];
+                for &r in recs {
+                    if let Some(p) = self.pos[f][r] {
+                        by_item[p].push(r);
+                    }
+                }
+                field
+                    .items
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, it)| it.t.is_none() && !it.hidden)
+                    .map(|(k, _)| (k, std::mem::take(&mut by_item[k]), data, field))
+                    .filter(|(_, sub, _, _)| field.show_all || !sub.is_empty())
+                    .collect()
+            }
+        };
+        // Sorted by a value field's values.
+        if let Level::Field(f) = lv[level]
+            && let Some(d) = def.fields[f].sort_by.filter(|d| *d < def.data_fields.len())
+        {
+            let desc = def.fields[f].sort.as_deref() == Some("descending");
+            let key = |sub: &[usize]| match self.summarise(d, None, sub) {
+                Some(Ok(x)) => x,
+                _ => f64::NAN,
+            };
+            let mut keyed: Vec<(f64, Group)> = groups.into_iter().map(|g| (key(&g.1), g)).collect();
+            keyed.sort_by(|a, b| match (a.0.is_nan(), b.0.is_nan()) {
+                (true, true) => std::cmp::Ordering::Equal,
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                _ => {
+                    let o = a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal);
+                    if desc { o.reverse() } else { o }
+                }
+            });
+            groups = keyed.into_iter().map(|(_, g)| g).collect();
+        }
+        for (k, sub, d, field) in groups {
+            path.push(k);
+            let expanded = match lv[level] {
+                Level::Field(_) => field.items[k].expanded,
+                Level::Values => true,
+            };
+            if leaf || !expanded {
+                out.push(Entry::new(Kind::Data, path.clone(), sub, d));
+            } else {
+                let tabular = !field.outline;
+                // With the Σ Values field further down, a total across value
+                // fields means nothing: no values on the item's own row and no
+                // subtotal (as Excel shows it).
+                let mixed = d.is_none() && lv[level + 1..].contains(&Level::Values);
+                let funcs: Vec<Option<Func>> = if !field.subtotals.is_empty() {
+                    field.subtotals.iter().map(|f| Some(*f)).collect()
+                } else if field.default_subtotal {
+                    vec![None]
+                } else {
+                    Vec::new()
+                };
+                let has_sub = !funcs.is_empty() && !mixed;
+                // One subtotal can go on the item's own row; several go
+                // below its items.
+                let top = has_sub && field.subtotal_top && funcs.len() == 1 && !tabular;
+                if !tabular {
+                    let mut e = Entry::new(Kind::Data, path.clone(), sub.clone(), d);
+                    e.values = top;
+                    e.func = if top { funcs[0] } else { None };
+                    out.push(e);
+                }
+                self.walk(lv, rows, &sub, level + 1, path, d, out);
+                if has_sub && !top {
+                    for func in funcs {
+                        let mut e = Entry::new(Kind::Sub, path.clone(), sub.clone(), d);
+                        e.func = func;
+                        out.push(e);
+                    }
+                }
+                if rows && field.insert_blank {
+                    out.push(Entry::new(Kind::Blank, path.clone(), Vec::new(), d));
                 }
             }
-            field
-                .items
-                .iter()
-                .enumerate()
-                .filter(|(_, it)| it.t.is_none() && !it.hidden)
-                .map(|(k, _)| (k, std::mem::take(&mut by_item[k]), data, field))
-                .filter(|(_, sub, _, _)| field.show_all || !sub.is_empty())
-                .collect()
+            path.pop();
         }
-    };
-    for (k, sub, d, field) in groups {
-        path.push(k);
-        let expanded = match lv[level] {
-            Level::Field(_) => field.items[k].expanded,
-            Level::Values => true,
-        };
-        if leaf || !expanded {
-            out.push(Entry {
-                kind: Kind::Data,
-                path: path.clone(),
-                recs: sub,
-                values: true,
-                data: d,
-            });
-        } else {
-            let tabular = !field.outline;
-            // With the Σ Values field further down, a total across value
-            // fields means nothing: no values on the item's own row and no
-            // subtotal (as Excel shows it).
-            let mixed = d.is_none() && lv[level + 1..].contains(&Level::Values);
-            let top = field.subtotal_top && field.default_subtotal && !mixed;
-            if !tabular {
-                out.push(Entry {
-                    kind: Kind::Data,
-                    path: path.clone(),
-                    recs: sub.clone(),
-                    values: top,
-                    data: d,
-                });
-            }
-            walk(def, lv, pos, &sub, level + 1, path, d, out);
-            if field.default_subtotal && !mixed && (tabular || !field.subtotal_top) {
-                out.push(Entry {
-                    kind: Kind::Sub,
-                    path: path.clone(),
-                    recs: sub,
-                    values: true,
-                    data: d,
-                });
-            }
-        }
-        path.pop();
     }
 }
 
@@ -1421,8 +1743,13 @@ fn items_xml(entries: &[Entry], lv: &[Level]) -> (String, Vec<AxisItem>) {
                 prev = Some(e);
                 ("data", r, e.path[r..].to_vec())
             }
-            Kind::Sub => ("default", 0, e.path.clone()),
+            Kind::Sub => (
+                e.func.map_or("default", |f| f.subtotal_xml().0),
+                0,
+                e.path.clone(),
+            ),
             Kind::Grand => ("grand", 0, vec![0]),
+            Kind::Blank => ("blank", 0, e.path.clone()),
         };
         let x = if lv.is_empty() { Vec::new() } else { x };
         let i = e.data.unwrap_or(0);
@@ -1496,43 +1823,63 @@ impl Def {
         if let Some(n) = &it.n {
             return Val::Str(n.clone());
         }
-        it.x.and_then(|x| cache.fields[f].items.get(x).cloned())
+        it.x.and_then(|x| cache.fields[f].item_list().get(x).cloned())
             .unwrap_or(Val::Missing)
     }
+}
+
+/// Each record's item position (in `def`'s item list) in each field.
+fn positions(def: &Def, cache: &Cache, records: &[Vec<Val>]) -> Vec<Vec<Option<usize>>> {
+    cache
+        .fields
+        .iter()
+        .enumerate()
+        .map(|(f, cache_field)| {
+            let mut by_x: HashMap<usize, usize> = HashMap::new();
+            if let Some(field) = def.fields.get(f) {
+                for (k, it) in field.items.iter().enumerate() {
+                    if let Some(x) = it.x {
+                        by_x.insert(x, k);
+                    }
+                }
+            }
+            if let Some(groups) = crate::pivot_group::group_positions(&cache.fields, f, records) {
+                return groups
+                    .into_iter()
+                    .map(|g| g.and_then(|g| by_x.get(&g).copied()))
+                    .collect();
+            }
+            let key_index: HashMap<String, usize> = cache_field
+                .items
+                .iter()
+                .enumerate()
+                .filter_map(|(x, v)| Some((v.key(), *by_x.get(&x)?)))
+                .collect();
+            records
+                .iter()
+                .map(|r| r.get(f).and_then(|v| key_index.get(&v.key()).copied()))
+                .collect()
+        })
+        .collect()
 }
 
 /// Lay out `def` (already matched to `cache`) with its top-left corner at
 /// `(top, left)`.
 pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, left: u32) -> Laid {
     let nf = cache.fields.len();
-    // Each record's item position in each field.
-    let mut key_index: Vec<HashMap<String, usize>> = Vec::with_capacity(nf);
-    for (f, cache_field) in cache.fields.iter().enumerate() {
-        let mut by_x: HashMap<usize, usize> = HashMap::new();
-        if let Some(field) = def.fields.get(f) {
-            for (k, it) in field.items.iter().enumerate() {
-                if let Some(x) = it.x {
-                    by_x.insert(x, k);
-                }
-            }
-        }
-        key_index.push(
-            cache_field
-                .items
-                .iter()
-                .enumerate()
-                .filter_map(|(x, v)| Some((v.key(), *by_x.get(&x)?)))
-                .collect(),
-        );
-    }
-    let pos: Vec<Vec<Option<usize>>> = (0..nf)
-        .map(|f| {
-            records
-                .iter()
-                .map(|r| r.get(f).and_then(|v| key_index[f].get(&v.key()).copied()))
-                .collect()
-        })
-        .collect();
+    let names: Vec<String> = cache.fields.iter().map(|c| c.name.clone()).collect();
+    let ctx = Ctx {
+        def,
+        cache,
+        records,
+        pos: positions(def, cache, records),
+        formulas: cache
+            .fields
+            .iter()
+            .map(|c| c.formula.as_ref().map(|f| Formula::compile(f, &names)))
+            .collect(),
+    };
+    let pos = &ctx.pos;
     let row_lv = levels(&def.row_fields, nf);
     let col_lv = levels(&def.col_fields, nf);
     // Records the filters let through.
@@ -1556,10 +1903,11 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
             })
         })
         .collect();
+    let recs = ctx.filtered(&row_lv, &col_lv, recs);
     // `colGrandTotals` totals each column (a row at the bottom),
     // `rowGrandTotals` each row (a column at the right).
-    let rows = entries(def, &row_lv, &pos, &recs, def.col_grand);
-    let cols = entries(def, &col_lv, &pos, &recs, def.row_grand);
+    let rows = ctx.entries(&row_lv, &recs, def.col_grand, true);
+    let cols = ctx.entries(&col_lv, &recs, def.row_grand, false);
 
     // Columns of the row labels: a compact field shares its parent's.
     let mut label_col = Vec::with_capacity(row_lv.len());
@@ -1617,9 +1965,13 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
         Val::Missing => text_input(local("(blank)")),
         v => v.input(),
     };
-    // A subtotal's label: the field's `subtotalCaption`, else `East Total`.
-    let sub_label = |lv: &Level, k: usize| {
+    // A subtotal's label: the field's `subtotalCaption`, else `East Total`
+    // (`East Sum` for a custom subtotal).
+    let sub_label = |lv: &Level, k: usize, func: Option<Func>| {
         let v = label(lv, k).label();
+        if let Some(func) = func {
+            return format!("{v} {}", local(func.subtotal_label()));
+        }
         match lv {
             Level::Field(f) => match &def.fields[*f].subtotal_caption {
                 Some(c) => c.replace('?', &v),
@@ -1678,9 +2030,10 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
                 Kind::Grand => put(top + 1, c, text_input(&grand_label(e))),
                 Kind::Sub => {
                     let l = e.path.len() - 1;
-                    let s = sub_label(&col_lv[l], e.path[l]);
+                    let s = sub_label(&col_lv[l], e.path[l], e.func);
                     put(top + 1 + l as u32, c, text_input(&s));
                 }
+                Kind::Blank => {}
                 Kind::Data => {
                     let r = repeats(prev, e);
                     prev = Some(e);
@@ -1711,21 +2064,26 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
             Kind::Grand => put(r, left, text_input(&grand_label(e))),
             Kind::Sub => {
                 let l = e.path.len() - 1;
-                let s = sub_label(&row_lv[l], e.path[l]);
+                let s = sub_label(&row_lv[l], e.path[l], e.func);
                 put(r, left + label_col[l], text_input(&s));
             }
+            Kind::Blank => {}
             Kind::Data => {
                 let rep = repeats(prev, e);
                 prev = Some(e);
                 let last = e.path.len().saturating_sub(1);
-                for (l, k) in e.path.iter().enumerate().skip(rep) {
+                for (l, k) in e.path.iter().enumerate() {
                     // An outer level shows here only when its field is in
-                    // tabular form (else it has its own row above).
-                    let own_row = match row_lv[l] {
-                        Level::Field(f) => def.fields[f].outline,
-                        Level::Values => true,
+                    // tabular form (else it has its own row above), and
+                    // once, unless its labels repeat (not in compact form).
+                    let (own_row, fill_down) = match row_lv[l] {
+                        Level::Field(f) => {
+                            let fd = &def.fields[f];
+                            (fd.outline, fd.fill_down && !(fd.compact && fd.outline))
+                        }
+                        Level::Values => (true, false),
                     };
-                    if l < last && own_row {
+                    if (l < rep || (l < last && own_row)) && !fill_down {
                         continue;
                     }
                     put(r, left + label_col[l], shown(label(&row_lv[l], *k)));
@@ -1735,14 +2093,16 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
     }
 
     // Values.
-    let matches = |e: &Entry, lv: &[Level], r: usize| {
-        e.path.iter().enumerate().all(|(l, k)| match lv[l] {
-            Level::Field(f) => pos[f][r] == Some(*k),
-            Level::Values => true,
-        })
-    };
     let mut num_fmts: Vec<(Area, u32)> = Vec::new();
     if !def.data_fields.is_empty() {
+        let shows = ShowCtx {
+            ctx: &ctx,
+            recs: &recs,
+            row_lv: &row_lv,
+            col_lv: &col_lv,
+            rows: &rows,
+            cols: &cols,
+        };
         for (i, re) in rows.iter().enumerate() {
             if !re.values {
                 continue;
@@ -1752,15 +2112,8 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
                     continue;
                 }
                 let d = re.data.or(ce.data).unwrap_or(0);
-                let df = &def.data_fields[d];
-                let vals: Vec<&Val> = re
-                    .recs
-                    .iter()
-                    .filter(|&&r| ce.kind == Kind::Grand || matches(ce, &col_lv, r))
-                    .filter_map(|&r| records[r].get(df.fld))
-                    .collect();
                 let v = match (
-                    df.func.apply(&vals),
+                    shows.value(d, re, ce),
                     &def.missing_caption,
                     &def.error_caption,
                 ) {
@@ -1776,7 +2129,14 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
         // Number formats, by column (or row) of each data field.
         let bottom = data_top + rows.len() as u32 - 1;
         let right = data_left + cols.len() as u32 - 1;
-        let fmt = |d: usize| def.data_fields[d].num_fmt_id.filter(|&n| n != 0);
+        // "Show values as" a percentage: 0.00% unless the field has a
+        // format of its own.
+        let fmt = |d: usize| {
+            let df = &def.data_fields[d];
+            df.num_fmt_id
+                .filter(|&n| n != 0)
+                .or(df.show_as.is_percent().then_some(10))
+        };
         if def.data_fields.len() == 1 {
             if let Some(n) = fmt(0) {
                 num_fmts.push((
@@ -1869,6 +2229,235 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
     }
 }
 
+/// What "show values as" works from: a layout's records and axes.
+struct ShowCtx<'a> {
+    ctx: &'a Ctx<'a>,
+    /// The records the filters let through.
+    recs: &'a [usize],
+    row_lv: &'a [Level],
+    col_lv: &'a [Level],
+    rows: &'a [Entry],
+    cols: &'a [Entry],
+}
+
+/// Which items each field must have: `(field, allowed items)`.
+type Spec = Vec<(usize, Vec<usize>)>;
+
+fn spec_of(lv: &[Level], e: &Entry) -> Spec {
+    if e.kind == Kind::Grand {
+        return Vec::new();
+    }
+    e.path
+        .iter()
+        .enumerate()
+        .filter_map(|(l, k)| match lv.get(l)? {
+            Level::Field(f) => Some((*f, vec![*k])),
+            Level::Values => None,
+        })
+        .collect()
+}
+
+impl ShowCtx<'_> {
+    fn agg(&self, d: usize, func: Option<Func>, rows: &Spec, cols: &Spec) -> Agg {
+        let pos = &self.ctx.pos;
+        let recs: Vec<usize> = self
+            .recs
+            .iter()
+            .copied()
+            .filter(|&r| {
+                rows.iter()
+                    .chain(cols)
+                    .all(|(f, ks)| pos[*f][r].is_some_and(|k| ks.contains(&k)))
+            })
+            .collect();
+        self.ctx.summarise(d, func, &recs)
+    }
+
+    /// The items of field `f` in the order an axis shows them.
+    fn order(&self, rows_axis: bool, level: usize) -> Vec<usize> {
+        let entries = if rows_axis { self.rows } else { self.cols };
+        let mut out = Vec::new();
+        for e in entries {
+            if e.kind == Kind::Data
+                && let Some(k) = e.path.get(level)
+                && !out.contains(k)
+            {
+                out.push(*k);
+            }
+        }
+        out
+    }
+
+    /// The value cell of data field `d` at row `re`, column `ce`.
+    fn value(&self, d: usize, re: &Entry, ce: &Entry) -> Agg {
+        let def = self.ctx.def;
+        let df = &def.data_fields[d];
+        let func = re.func.or(ce.func);
+        let rs = spec_of(self.row_lv, re);
+        let cs = spec_of(self.col_lv, ce);
+        // The cell's records: the row's, in the column.
+        let pos = &self.ctx.pos;
+        let cell: Vec<usize> = re
+            .recs
+            .iter()
+            .copied()
+            .filter(|&r| {
+                cs.iter()
+                    .all(|(f, ks)| pos[*f][r].is_some_and(|k| ks.contains(&k)))
+            })
+            .collect();
+        let raw = self.ctx.summarise(d, func, &cell);
+        if df.show_as == ShowAs::Normal {
+            return raw;
+        }
+        let Some(Ok(v)) = raw else { return raw };
+        let ratio = |a: f64, b: Agg| -> Agg {
+            match b {
+                Some(Ok(b)) if b != 0.0 => Some(Ok(a / b)),
+                Some(Ok(_)) => Some(Err("#DIV/0!")),
+                Some(Err(e)) => Some(Err(e)),
+                None => Some(Err("#NULL!")),
+            }
+        };
+        let total = || self.agg(d, func, &Vec::new(), &Vec::new());
+        let row_total = || self.agg(d, func, &rs, &Vec::new());
+        let col_total = || self.agg(d, func, &Vec::new(), &cs);
+        let parent = |s: &Spec| {
+            let mut p = s.clone();
+            p.pop();
+            p
+        };
+        match df.show_as {
+            ShowAs::Normal => raw,
+            ShowAs::PercentOfTotal => ratio(v, total()),
+            ShowAs::PercentOfColumn => ratio(v, col_total()),
+            ShowAs::PercentOfRow => ratio(v, row_total()),
+            ShowAs::PercentOfParentRow if re.kind == Kind::Grand => Some(Ok(1.0)),
+            ShowAs::PercentOfParentRow => ratio(v, self.agg(d, func, &parent(&rs), &cs)),
+            ShowAs::PercentOfParentColumn if ce.kind == Kind::Grand => Some(Ok(1.0)),
+            ShowAs::PercentOfParentColumn => ratio(v, self.agg(d, func, &rs, &parent(&cs))),
+            ShowAs::Index => {
+                let (Some(Ok(t)), Some(Ok(r)), Some(Ok(c))) = (total(), row_total(), col_total())
+                else {
+                    return Some(Err("#DIV/0!"));
+                };
+                if r == 0.0 || c == 0.0 {
+                    Some(Err("#DIV/0!"))
+                } else {
+                    Some(Ok(v * t / (r * c)))
+                }
+            }
+            kind => {
+                // The base field: where it is, and the cell's item in it.
+                let bf = df.base_field;
+                let at = |lv: &[Level]| lv.iter().position(|l| *l == Level::Field(bf));
+                let (rows_axis, level) = match (at(self.row_lv), at(self.col_lv)) {
+                    (Some(l), _) => (true, l),
+                    (None, Some(l)) => (false, l),
+                    _ => return Some(Err("#N/A")),
+                };
+                let (e, own, other) = if rows_axis {
+                    (re, &rs, &cs)
+                } else {
+                    (ce, &cs, &rs)
+                };
+                let with = |items: Vec<usize>| -> Spec {
+                    own.iter()
+                        .map(|(f, ks)| (*f, if *f == bf { items.clone() } else { ks.clone() }))
+                        .collect()
+                };
+                let agg_own = |s: &Spec| {
+                    if rows_axis {
+                        self.agg(d, func, s, other)
+                    } else {
+                        self.agg(d, func, other, s)
+                    }
+                };
+                if e.kind == Kind::Grand || e.path.len() <= level {
+                    return None;
+                }
+                let k = e.path[level];
+                let order = self.order(rows_axis, level);
+                let idx = order.iter().position(|x| *x == k).unwrap_or(0);
+                match kind {
+                    ShowAs::Percent | ShowAs::Difference | ShowAs::PercentDifference => {
+                        let base = match df.base_item {
+                            BASE_PREVIOUS => idx.checked_sub(1).map(|i| order[i]),
+                            BASE_NEXT => order.get(idx + 1).copied(),
+                            b => Some(b as usize),
+                        };
+                        let base = base.unwrap_or(k);
+                        if base == k {
+                            return match kind {
+                                ShowAs::Percent => Some(Ok(1.0)),
+                                _ => None,
+                            };
+                        }
+                        let b = agg_own(&with(vec![base]));
+                        match kind {
+                            ShowAs::Percent => ratio(v, b),
+                            ShowAs::Difference => match b {
+                                Some(Ok(b)) => Some(Ok(v - b)),
+                                None => Some(Ok(v)),
+                                e => e,
+                            },
+                            _ => match b {
+                                Some(Ok(b)) if b != 0.0 => Some(Ok((v - b) / b)),
+                                Some(Ok(_)) => Some(Err("#DIV/0!")),
+                                None => Some(Err("#NULL!")),
+                                e => e,
+                            },
+                        }
+                    }
+                    ShowAs::RunningTotal | ShowAs::PercentRunningTotal => {
+                        let run = agg_own(&with(order[..=idx].to_vec()));
+                        if kind == ShowAs::RunningTotal {
+                            return run;
+                        }
+                        match run {
+                            Some(Ok(x)) => ratio(x, agg_own(&with(order.clone()))),
+                            other => other,
+                        }
+                    }
+                    ShowAs::RankAscending | ShowAs::RankDescending => {
+                        let values: Vec<f64> = order
+                            .iter()
+                            .filter_map(|x| match agg_own(&with(vec![*x])) {
+                                Some(Ok(y)) => Some(y),
+                                _ => None,
+                            })
+                            .collect();
+                        let better = values
+                            .iter()
+                            .filter(|y| {
+                                if kind == ShowAs::RankAscending {
+                                    **y < v
+                                } else {
+                                    **y > v
+                                }
+                            })
+                            .count();
+                        Some(Ok((better + 1) as f64))
+                    }
+                    ShowAs::PercentOfParent => {
+                        if e.path.len() == level + 1 {
+                            return Some(Ok(1.0));
+                        }
+                        let cut: Spec = own
+                            .iter()
+                            .take_while(|(f, _)| *f != bf)
+                            .cloned()
+                            .chain(own.iter().find(|(f, _)| *f == bf).cloned())
+                            .collect();
+                        ratio(v, agg_own(&cut))
+                    }
+                    _ => raw,
+                }
+            }
+        }
+    }
+}
+
 fn compact_all(def: &Def, lv: &[Level]) -> bool {
     lv.iter().all(|l| match l {
         Level::Field(f) => def.fields[*f].compact && def.fields[*f].outline,
@@ -1894,16 +2483,25 @@ pub(crate) fn rebuild_cache(old: &Cache, data: SourceData, axis: &[String]) -> C
         let prev = old
             .fields
             .iter()
-            .find(|c| c.name.eq_ignore_ascii_case(name));
+            .find(|c| c.database && c.name.eq_ignore_ascii_case(name));
+        // A field grouped by ranges lists no items (records hold values);
+        // the base of a manual grouping must.
+        let ranged = prev.is_some_and(|p| p.range_grouped());
+        let discrete_base = old.fields.iter().any(|c| {
+            matches!(&c.group, Some(g) if matches!(g.kind, Some(GroupKind::Discrete(_)))
+                && g.base.and_then(|b| old.fields.get(b)).is_some_and(|b| b.name.eq_ignore_ascii_case(name)))
+        });
         let mut items: Vec<Val> = Vec::new();
         let mut seen: HashMap<String, ()> = HashMap::new();
         let column = data.rows.iter().map(|r| &r[f]);
-        let needs_items = prev.is_some_and(|p| !p.items.is_empty())
-            || axis.iter().any(|a| a.eq_ignore_ascii_case(name))
-            || data
-                .rows
-                .iter()
-                .any(|r| matches!(r[f], Val::Str(_) | Val::Bool(_) | Val::Err(_)));
+        let needs_items = discrete_base
+            || (!ranged
+                && (prev.is_some_and(|p| !p.items.is_empty())
+                    || axis.iter().any(|a| a.eq_ignore_ascii_case(name))
+                    || data
+                        .rows
+                        .iter()
+                        .any(|r| matches!(r[f], Val::Str(_) | Val::Bool(_) | Val::Err(_)))));
         if needs_items {
             let present: HashMap<String, ()> = column.clone().map(|v| (v.key(), ())).collect();
             if let Some(p) = prev {
@@ -1920,11 +2518,12 @@ pub(crate) fn rebuild_cache(old: &Cache, data: SourceData, axis: &[String]) -> C
             }
         }
         fields.push(CacheField {
-            name: name.clone(),
             items,
             num_fmt_id: prev.map_or(0, |p| p.num_fmt_id),
+            ..CacheField::source(name.clone())
         });
     }
+    crate::pivot_group::regroup(&old.fields, &mut fields, &data.rows);
     Cache {
         fields,
         records: Some(Arc::new(data.rows)),
@@ -1965,7 +2564,7 @@ pub(crate) fn rematch(def: &Def, old: &Cache, new: &Cache) -> Def {
         };
         let mut f = f.clone();
         let on_axis = f.axis.is_some();
-        let new_items = &new.fields[j].items;
+        let new_items = new.fields[j].item_list();
         let index: HashMap<String, usize> = new_items
             .iter()
             .enumerate()
@@ -1979,7 +2578,7 @@ pub(crate) fn rematch(def: &Def, old: &Cache, new: &Cache) -> Def {
                 None => subtotals.push(it.clone()),
                 Some(x) => {
                     let nx = old.fields[i]
-                        .items
+                        .item_list()
                         .get(x)
                         .and_then(|v| index.get(&v.key()).copied());
                     match nx {
@@ -1999,11 +2598,21 @@ pub(crate) fn rematch(def: &Def, old: &Cache, new: &Cache) -> Def {
             }
         }
         if on_axis || !f.items.is_empty() {
+            // Group items keep their order (`<1/1/2026`, `Jan`, `Feb`...).
+            let grouped = new.fields[j]
+                .group
+                .as_ref()
+                .is_some_and(|g| g.groups_items());
+            let order = |a: usize, b: usize| {
+                if grouped {
+                    a.cmp(&b)
+                } else {
+                    let (ka, kb) = (new_items[a].sort_key(), new_items[b].sort_key());
+                    ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal)
+                }
+            };
             let mut fresh: Vec<usize> = (0..new_items.len()).filter(|x| !used[*x]).collect();
-            fresh.sort_by(|a, b| {
-                let (ka, kb) = (new_items[*a].sort_key(), new_items[*b].sort_key());
-                ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal)
-            });
+            fresh.sort_by(|a, b| order(*a, *b));
             if !fresh.is_empty() {
                 reindexed = true;
             }
@@ -2025,20 +2634,37 @@ pub(crate) fn rematch(def: &Def, old: &Cache, new: &Cache) -> Def {
             if let Some(dir @ ("ascending" | "descending")) = f.sort.as_deref() {
                 {
                     kept.sort_by(|a, b| {
-                        let k = |i: &FieldItem| new_items[i.x.unwrap_or(0)].sort_key();
-                        let o = k(a).partial_cmp(&k(b)).unwrap_or(std::cmp::Ordering::Equal);
+                        let o = order(a.x.unwrap_or(0), b.x.unwrap_or(0));
                         if dir == "descending" { o.reverse() } else { o }
                     });
                 }
             }
-            if on_axis && f.default_subtotal && subtotals.is_empty() {
-                subtotals.push(FieldItem {
-                    x: None,
-                    hidden: false,
-                    t: Some("default".into()),
-                    expanded: true,
-                    n: None,
+            let sub_item = |t: &str| FieldItem {
+                x: None,
+                hidden: false,
+                t: Some(t.into()),
+                expanded: true,
+                n: None,
+            };
+            if !f.subtotals.is_empty() {
+                // Custom subtotals: one item each, in Excel's order.
+                subtotals = f
+                    .subtotals
+                    .iter()
+                    .map(|func| sub_item(func.subtotal_xml().0))
+                    .collect();
+            } else if !f.default_subtotal {
+                subtotals.retain(|it| it.t.as_deref() != Some("default"));
+                subtotals.retain(|it| {
+                    !Func::ALL
+                        .iter()
+                        .any(|func| it.t.as_deref() == Some(func.subtotal_xml().0))
                 });
+            } else {
+                subtotals.retain(|it| it.t.as_deref() == Some("default"));
+                if on_axis && subtotals.is_empty() {
+                    subtotals.push(sub_item("default"));
+                }
             }
             kept.extend(subtotals);
         }
@@ -2060,11 +2686,10 @@ pub(crate) fn rematch(def: &Def, old: &Cache, new: &Cache) -> Def {
             let j = map.get(p.fld).copied().flatten()?;
             let item = p.item.and_then(|k| {
                 let x = def.fields.get(p.fld)?.items.get(k)?.x?;
-                let key = old.fields[p.fld].items.get(x)?.key();
-                fields[j]
-                    .items
-                    .iter()
-                    .position(|it| it.x.is_some_and(|nx| new.fields[j].items[nx].key() == key))
+                let key = old.fields[p.fld].item_list().get(x)?.key();
+                fields[j].items.iter().position(|it| {
+                    it.x.is_some_and(|nx| new.fields[j].item_list()[nx].key() == key)
+                })
             });
             Some(PageField {
                 fld: j,
@@ -2073,15 +2698,37 @@ pub(crate) fn rematch(def: &Def, old: &Cache, new: &Cache) -> Def {
             })
         })
         .collect();
-    out.data_fields = def
-        .data_fields
+    let mut data_map: Vec<Option<usize>> = Vec::with_capacity(def.data_fields.len());
+    out.data_fields = Vec::new();
+    for d in &def.data_fields {
+        let Some(j) = map.get(d.fld).copied().flatten() else {
+            data_map.push(None);
+            continue;
+        };
+        data_map.push(Some(out.data_fields.len()));
+        out.data_fields.push(DataField {
+            fld: j,
+            base_field: map.get(d.base_field).copied().flatten().unwrap_or(0),
+            xml: None,
+            ..d.clone()
+        });
+    }
+    for f in fields.iter_mut() {
+        f.sort_by = f.sort_by.and_then(|d| data_map.get(d).copied().flatten());
+    }
+    out.filters = def
+        .filters
         .iter()
-        .filter_map(|d| {
-            let j = map.get(d.fld).copied().flatten()?;
-            Some(DataField {
-                fld: j,
-                xml: None,
-                ..d.clone()
+        .filter_map(|flt| {
+            let fld = map.get(flt.fld).copied().flatten()?;
+            let measure = match flt.measure {
+                Some(m) => Some(data_map.get(m).copied().flatten()?),
+                None => None,
+            };
+            Some(PivotFilter {
+                fld,
+                measure,
+                ..flt.clone()
             })
         })
         .collect();
@@ -2175,7 +2822,7 @@ const XML_HEAD: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"ye
 /// besides what the model has (axis, data flag, layout flags and items).
 fn field_xml(f: &Field) -> String {
     /// Attributes written from the model, with their defaults.
-    const MODELLED: [&str; 8] = [
+    const MODELLED: [&str; 21] = [
         "axis",
         "dataField",
         "compact",
@@ -2184,6 +2831,19 @@ fn field_xml(f: &Field) -> String {
         "defaultSubtotal",
         "showAll",
         "multipleItemSelectionAllowed",
+        "sortType",
+        "insertBlankRow",
+        "sumSubtotal",
+        "countASubtotal",
+        "avgSubtotal",
+        "maxSubtotal",
+        "minSubtotal",
+        "productSubtotal",
+        "countSubtotal",
+        "stdDevSubtotal",
+        "stdDevPSubtotal",
+        "varSubtotal",
+        "varPSubtotal",
     ];
     let mut attrs = String::new();
     let mut rest = String::new();
@@ -2204,12 +2864,17 @@ fn field_xml(f: &Field) -> String {
             }
             a.push_str(&format!(" {}=\"{}\"", at.name(), esc(at.value())));
         }
+        // Other extensions than the x14 one (written from the model).
         let mut r = String::new();
         for c in el.children().filter(|c| c.is_element()) {
-            if c.tag_name().name() == "items" {
-                continue;
+            if c.tag_name().name() == "extLst" {
+                for e in c.children().filter(|e| e.is_element()) {
+                    let x14 = e.attribute("uri") == Some(URI_X14_PIVOT_FIELD);
+                    if !x14 {
+                        r.push_str(&wrapped[e.range()]);
+                    }
+                }
             }
-            r.push_str(&wrapped[c.range()]);
         }
         Some((a, r, seen))
     });
@@ -2227,20 +2892,39 @@ fn field_xml(f: &Field) -> String {
     }
     let multi = had.contains(&"multipleItemSelectionAllowed")
         || (f.axis.as_deref() == Some("axisPage") && f.items.iter().any(|i| i.hidden));
+    let custom = !f.subtotals.is_empty();
     for (name, value, default) in [
         ("compact", f.compact, true),
         ("outline", f.outline, true),
         ("subtotalTop", f.subtotal_top, true),
         ("showAll", f.show_all, true),
-        ("defaultSubtotal", f.default_subtotal, true),
+        ("insertBlankRow", f.insert_blank, false),
+        ("defaultSubtotal", f.default_subtotal && !custom, true),
         ("multipleItemSelectionAllowed", multi, false),
     ] {
         if value != default || had.contains(&name) {
             out.push_str(&format!(" {name}=\"{}\"", u8::from(value)));
         }
     }
+    if let Some(dir @ ("ascending" | "descending")) = f.sort.as_deref() {
+        out.push_str(&format!(" sortType=\"{dir}\""));
+    }
+    for func in &f.subtotals {
+        out.push_str(&format!(" {}=\"1\"", func.subtotal_xml().1));
+    }
     out.push_str(&attrs);
-    if f.items.is_empty() && rest.is_empty() {
+    let mut ext = rest;
+    if f.fill_down {
+        ext.push_str(&format!(
+            "<ext uri=\"{URI_X14_PIVOT_FIELD}\" xmlns:x14=\"{NS_X14}\"><x14:pivotField fillDownLabels=\"1\"/></ext>"
+        ));
+    }
+    let sort_scope = f.sort_by.map(|d| {
+        format!(
+            "<autoSortScope><pivotArea dataOnly=\"0\" outline=\"0\" fieldPosition=\"0\"><references count=\"1\"><reference field=\"4294967294\" count=\"1\" selected=\"0\"><x v=\"{d}\"/></reference></references></pivotArea></autoSortScope>"
+        )
+    });
+    if f.items.is_empty() && ext.is_empty() && sort_scope.is_none() {
         out.push_str("/>");
         return out;
     }
@@ -2268,7 +2952,12 @@ fn field_xml(f: &Field) -> String {
         }
         out.push_str("</items>");
     }
-    out.push_str(&rest);
+    if let Some(s) = sort_scope {
+        out.push_str(&s);
+    }
+    if !ext.is_empty() {
+        out.push_str(&format!("<extLst>{ext}</extLst>"));
+    }
     out.push_str("</pivotField>");
     out
 }
@@ -2348,26 +3037,25 @@ pub(crate) fn def_xml(laid: &LaidXml, location: Area) -> Option<String> {
                 out.push_str(&format!(" name=\"{}\"", esc(n)));
             }
             if d.func != Func::Sum {
-                let f = match d.func {
-                    Func::Sum => "sum",
-                    Func::Count => "count",
-                    Func::Average => "average",
-                    Func::Max => "max",
-                    Func::Min => "min",
-                    Func::Product => "product",
-                    Func::CountNums => "countNums",
-                    Func::StdDev => "stdDev",
-                    Func::StdDevp => "stdDevp",
-                    Func::Var => "var",
-                    Func::Varp => "varp",
-                };
-                out.push_str(&format!(" subtotal=\"{f}\""));
+                out.push_str(&format!(" subtotal=\"{}\"", d.func.name()));
             }
-            out.push_str(" baseField=\"0\" baseItem=\"0\"");
+            let (show, x14) = d.show_as.xml();
+            if let Some(show) = show {
+                out.push_str(&format!(" showDataAs=\"{show}\""));
+            }
+            out.push_str(&format!(
+                " baseField=\"{}\" baseItem=\"{}\"",
+                d.base_field, d.base_item
+            ));
             if let Some(n) = d.num_fmt_id {
                 out.push_str(&format!(" numFmtId=\"{n}\""));
             }
-            out.push_str("/>");
+            match x14 {
+                Some(kind) => out.push_str(&format!(
+                    "><extLst><ext uri=\"{URI_X14_DATA_FIELD}\" xmlns:x14=\"{NS_X14}\"><x14:dataField pivotShowAs=\"{kind}\"/></ext></extLst></dataField>"
+                )),
+                None => out.push_str("/>"),
+            }
         }
         out.push_str("</dataFields>");
     }
@@ -2382,15 +3070,61 @@ pub(crate) fn def_xml(laid: &LaidXml, location: Area) -> Option<String> {
         "dataFields",
     ];
     const BY_INDEX: [&str; 3] = ["formats", "conditionalFormats", "chartFormats"];
+    // The style and the filters are written from the model, where the
+    // schema puts them (after `pivotHierarchies`, before the hierarchy
+    // usages and `extLst`).
+    const AFTER: [&str; 3] = ["rowHierarchiesUsage", "colHierarchiesUsage", "extLst"];
+    let mut tail_done = false;
+    let had_style = child(root, "pivotTableStyleInfo").is_some();
+    let tail = |out: &mut String| {
+        if had_style || def.style.name.is_some() {
+            out.push_str(&style_info_xml(&def.style));
+        }
+        if !def.filters.is_empty() {
+            out.push_str(&format!("<filters count=\"{}\">", def.filters.len()));
+            for (k, f) in def.filters.iter().enumerate() {
+                out.push_str(&f.xml(k + 1));
+            }
+            out.push_str("</filters>");
+        }
+    };
     for c in root.children().filter(|c| c.is_element()) {
         let n = c.tag_name().name();
-        if REWRITTEN.contains(&n) || (def.reindexed && BY_INDEX.contains(&n)) {
+        if REWRITTEN.contains(&n)
+            || (def.reindexed && BY_INDEX.contains(&n))
+            || n == "pivotTableStyleInfo"
+            || n == "filters"
+        {
             continue;
+        }
+        if !tail_done && AFTER.contains(&n) {
+            tail(&mut out);
+            tail_done = true;
         }
         out.push_str(&xml[c.range()]);
     }
+    if !tail_done {
+        tail(&mut out);
+    }
     out.push_str(&format!("</{name}>"));
     Some(out)
+}
+
+/// `<pivotTableStyleInfo>` for `s`.
+fn style_info_xml(s: &StyleInfo) -> String {
+    let mut out = String::from("<pivotTableStyleInfo");
+    if let Some(n) = &s.name {
+        out.push_str(&format!(" name=\"{}\"", esc(n)));
+    }
+    out.push_str(&format!(
+        " showRowHeaders=\"{}\" showColHeaders=\"{}\" showRowStripes=\"{}\" showColStripes=\"{}\" showLastColumn=\"{}\"/>",
+        u8::from(s.row_headers),
+        u8::from(s.col_headers),
+        u8::from(s.row_stripes),
+        u8::from(s.col_stripes),
+        u8::from(s.last_column)
+    ));
+    out
 }
 
 /// What [`def_xml`] needs.
@@ -2441,11 +3175,28 @@ pub(crate) fn cache_xml(cache: &Cache, source: Option<Area>) -> Option<(String, 
                 out.push_str(&format!("<cacheFields count=\"{}\">", cache.fields.len()));
                 for (f, cf) in cache.fields.iter().enumerate() {
                     out.push_str(&format!(
-                        "<cacheField name=\"{}\" numFmtId=\"{}\">",
+                        "<cacheField name=\"{}\" numFmtId=\"{}\"",
                         esc(&cf.name),
                         cf.num_fmt_id
                     ));
-                    shared_items_xml(cf, records.iter().map(|r| &r[f]), &mut out);
+                    if let Some(formula) = &cf.formula {
+                        out.push_str(&format!(" formula=\"{}\"", esc(formula)));
+                    }
+                    if !cf.database {
+                        out.push_str(" databaseField=\"0\"");
+                    }
+                    if cf.database {
+                        out.push('>');
+                        shared_items_xml(cf, records.iter().filter_map(|r| r.get(f)), &mut out);
+                    } else if cf.group.is_none() {
+                        out.push_str("/>");
+                        continue;
+                    } else {
+                        out.push('>');
+                    }
+                    if let Some(g) = &cf.group {
+                        g.xml(&mut out);
+                    }
                     out.push_str("</cacheField>");
                 }
                 out.push_str("</cacheFields>");
@@ -3090,7 +3841,13 @@ impl Workbook {
                 })
                 .chain(change.axis.iter().cloned())
                 .collect();
-            let mut cache = rebuild_cache(&old, data, &axis);
+            // Fields added, grouped or removed first (by name: the
+            // definitions are matched to the rebuilt cache by name).
+            let mut base = (*old).clone();
+            if let Some(cc) = &change.cache_change {
+                cc(&mut base)?;
+            }
+            let mut cache = rebuild_cache(&base, data, &axis);
             cache.at = layout.clone();
             if let Some(Source::Range { sheet, .. }) = &cache.source {
                 cache.source = Some(Source::Range {
@@ -3113,6 +3870,8 @@ impl Workbook {
                 let mut matched = rematch(&d, &old, &cache);
                 if let Some(adjust) = &change.adjust {
                     adjust(&mut matched, &cache);
+                    // Items for fields the change put on an axis.
+                    matched = rematch(&matched, &cache, &cache);
                 }
                 // Room above for the report filters.
                 let pages = matched.page_fields.len() as u32;
@@ -3401,6 +4160,8 @@ impl Workbook {
                 let c = Arc::make_mut(c);
                 c.part = a.cache.clone();
                 c.records_part = a.records.clone();
+                // In the package now: the next save rewrites it in place.
+                c.added = false;
             }
         }
     }
@@ -3423,6 +4184,10 @@ pub(crate) struct Rebuild {
     pub adjust: Option<Box<dyn Fn(&mut Def, &Cache)>>,
     /// A sheet to add first, with this `sheetId` (a new pivot goes there).
     pub new_sheet: Option<u32>,
+    /// Applied to the cache before it is rebuilt (calculated fields,
+    /// grouping).
+    #[allow(clippy::type_complexity)]
+    pub cache_change: Option<Box<dyn Fn(&mut Cache) -> Result<()>>>,
 }
 
 /// [`lay_out`], with Excel's placeholder for a pivot with no fields yet:

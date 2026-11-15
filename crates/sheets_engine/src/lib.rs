@@ -30,7 +30,10 @@ mod notes;
 mod numfmt;
 mod ods;
 mod pivot;
+mod pivot_calc;
 mod pivot_edit;
+mod pivot_group;
+mod pivot_tools;
 mod preserve;
 mod print;
 mod recovery;
@@ -105,10 +108,15 @@ pub use look::CellLook;
 pub use notes::NoteClip;
 pub use numfmt::Display;
 pub use pivot::PivotInfo;
+pub use pivot_calc::{FILTER_TYPES as PIVOT_FILTER_TYPES, FilterFamily, ShowAs, filter_arity};
 pub use pivot_edit::{
-    AreaEntry, AxisEntry, PivotDestination, PivotFunc, PivotItem, PivotLayout, PivotSourceCheck,
-    PivotSourceField, PivotValueField, ReportLayout, SubtotalPlace,
+    AreaEntry, AxisEntry, FieldSubtotals, PivotBaseItem, PivotDestination, PivotFieldFilter,
+    PivotFieldSettings, PivotFunc, PivotGrouping, PivotItem, PivotLayout, PivotSort,
+    PivotSourceCheck, PivotSourceField, PivotStyleOptions, PivotValueField, ReportLayout,
+    SubtotalPlace,
 };
+pub use pivot_group::DateLevel;
+pub use pivot_tools::pivot_style_names;
 pub use print::{
     HEADER_FOOTER_PRESETS, HeaderFooter, Margins, PAPERS, PageSetup, Paper, PrintColumns,
     PrintOptions, SheetPrint, join_sections, split_sections,
