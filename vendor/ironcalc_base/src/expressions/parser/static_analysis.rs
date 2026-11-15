@@ -1716,6 +1716,23 @@ fn get_function_args_signature(kind: &Function, arg_count: usize) -> Vec<Signatu
             }
             result
         }
+        Function::Euroconvert => args_signature_scalars(arg_count, 3, 2),
+        Function::Filterxml => args_signature_scalars(arg_count, 2, 0),
+        Function::Webservice => args_signature_scalars(arg_count, 1, 0),
+        Function::Image => args_signature_scalars(arg_count, 1, 4),
+        Function::Cubekpimember
+        | Function::Cubemember
+        | Function::Cubememberproperty
+        | Function::Cuberankedmember
+        | Function::Cubeset
+        | Function::Cubesetcount
+        | Function::Cubevalue
+        | Function::Rtd
+        | Function::Stockhistory
+        | Function::Translate
+        | Function::Detectlanguage
+        | Function::Copilot
+        | Function::Py => vec![Signature::Vector; arg_count],
         Function::Bahttext | Function::Dbcs | Function::Jis => {
             args_signature_scalars(arg_count, 1, 0)
         }
@@ -2243,6 +2260,21 @@ fn static_analysis_on_function(kind: &Function, args: &[Node]) -> StaticResult {
         // KANTOR PATCH (functions)
         Function::Aggregate | Function::Phonetic | Function::Getpivotdata => StaticResult::Scalar,
         Function::Groupby | Function::Pivotby => StaticResult::Unknown,
+        Function::Euroconvert | Function::Webservice | Function::Image => StaticResult::Scalar,
+        Function::Filterxml
+        | Function::Cubekpimember
+        | Function::Cubemember
+        | Function::Cubememberproperty
+        | Function::Cuberankedmember
+        | Function::Cubeset
+        | Function::Cubesetcount
+        | Function::Cubevalue
+        | Function::Rtd
+        | Function::Stockhistory
+        | Function::Translate
+        | Function::Detectlanguage
+        | Function::Copilot
+        | Function::Py => StaticResult::Unknown,
         Function::Bahttext | Function::Usdollar | Function::Dbcs | Function::Jis => {
             not_implemented(args)
         }

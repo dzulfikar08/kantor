@@ -48,6 +48,17 @@ fn get_range_str(row: i32, column: i32, width: i32, height: i32) -> Option<Strin
     Some(format!("{}{}:{}{}", column1, row, column2, row2))
 }
 
+/// KANTOR PATCH (network errors): how an error value is written. #CONNECT!,
+/// #BLOCKED! and #BUSY! are not error values of the file format; Excel
+/// writes them as #VALUE! (with rich-value metadata Kantor doesn't write).
+fn file_error(ei: &ironcalc_base::expressions::token::Error) -> String {
+    use ironcalc_base::expressions::token::Error;
+    match ei {
+        Error::CONNECT | Error::BLOCKED | Error::BUSY => Error::VALUE.to_string(),
+        other => other.to_string(),
+    }
+}
+
 fn get_cell_style_attribute(s: i32) -> String {
     if s == 0 {
         "".to_string()
@@ -285,7 +296,8 @@ pub(crate) fn get_worksheet_xml(
                 } => {
                     let style = get_cell_style_attribute(*s);
                     row_data_str.push(format!(
-                        "<c r=\"{cell_name}\" t=\"e\"{style}><v>{ei}</v></c>"
+                        "<c r=\"{cell_name}\" t=\"e\"{style}><v>{}</v></c>",
+                        file_error(ei)
                     ));
                 }
                 Cell::SharedString { si, s } => {
@@ -391,7 +403,8 @@ pub(crate) fn get_worksheet_xml(
                     );
                     let style = get_cell_style_attribute(*s);
                     row_data_str.push(format!(
-                        "<c r=\"{cell_name}\" t=\"e\"{style}><f>{formula}</f><v>{ei}</v></c>"
+                        "<c r=\"{cell_name}\" t=\"e\"{style}><f>{formula}</f><v>{}</v></c>",
+                        file_error(ei)
                     ));
                 }
                 Cell::SpillCell {
@@ -565,7 +578,8 @@ pub(crate) fn get_worksheet_xml(
                         ""
                     };
                     row_data_str.push(format!(
-                        r#"<c r="{cell_name}"{style} t="e"{cm}><f t="array" ref="{range}">{formula}</f><v>{ei}</v></c>"#
+                        r#"<c r="{cell_name}"{style} t="e"{cm}><f t="array" ref="{range}">{formula}</f><v>{ei}</v></c>"#,
+                        ei = file_error(ei)
                     ));
                 }
             }

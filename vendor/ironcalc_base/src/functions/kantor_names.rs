@@ -10,7 +10,7 @@ use crate::language::get_default_language;
 
 use super::Function;
 
-const NAMES: [(Function, &str); 9] = [
+const NAMES: [(Function, &str); 26] = [
     (Function::Aggregate, "AGGREGATE"),
     (Function::Groupby, "GROUPBY"),
     (Function::Pivotby, "PIVOTBY"),
@@ -20,6 +20,23 @@ const NAMES: [(Function, &str); 9] = [
     (Function::Jis, "JIS"),
     (Function::Phonetic, "PHONETIC"),
     (Function::Getpivotdata, "GETPIVOTDATA"),
+    (Function::Euroconvert, "EUROCONVERT"),
+    (Function::Filterxml, "FILTERXML"),
+    (Function::Webservice, "WEBSERVICE"),
+    (Function::Image, "IMAGE"),
+    (Function::Cubekpimember, "CUBEKPIMEMBER"),
+    (Function::Cubemember, "CUBEMEMBER"),
+    (Function::Cubememberproperty, "CUBEMEMBERPROPERTY"),
+    (Function::Cuberankedmember, "CUBERANKEDMEMBER"),
+    (Function::Cubeset, "CUBESET"),
+    (Function::Cubesetcount, "CUBESETCOUNT"),
+    (Function::Cubevalue, "CUBEVALUE"),
+    (Function::Rtd, "RTD"),
+    (Function::Stockhistory, "STOCKHISTORY"),
+    (Function::Translate, "TRANSLATE"),
+    (Function::Detectlanguage, "DETECTLANGUAGE"),
+    (Function::Copilot, "COPILOT"),
+    (Function::Py, "PY"),
 ];
 
 /// The function called `key` (upper case), if it is one of Kantor's.

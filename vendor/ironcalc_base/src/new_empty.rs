@@ -689,6 +689,7 @@ impl<'a> Model<'a> {
             kantor_pivots: Vec::new(),
             kantor_evaluations: 0,
             kantor_last_partial: None,
+            kantor_web: Default::default(),
             parsed_defined_names: HashMap::new(),
             parser,
             locale,

@@ -792,6 +792,14 @@ impl<'a> Lexer<'a> {
             self.position += errors.circ.chars().count() - 1;
             return TokenType::Error(Error::CIRC);
         }
+        // KANTOR PATCH (functions): the network errors (English only).
+        for error in [Error::CONNECT, Error::BLOCKED, Error::BUSY] {
+            let name = error.to_string();
+            if rest_of_formula.starts_with(&name) {
+                self.position += name.chars().count() - 1;
+                return TokenType::Error(error);
+            }
+        }
         // If it is not an error it _might_ be a spill operator.
         TokenType::Spill
     }

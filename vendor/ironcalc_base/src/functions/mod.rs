@@ -18,7 +18,7 @@ mod logical;
 mod lookup_and_reference;
 pub(crate) mod lookup_cache;
 mod macros;
-mod math_and_trigonometry;
+pub(crate) mod math_and_trigonometry;
 mod spill_functions;
 mod statistical;
 mod subtotal;
@@ -27,11 +27,14 @@ pub(crate) mod util;
 mod xlookup;
 // KANTOR PATCH (functions): functions upstream lacks, see KANTOR_PATCHES.md §10.
 mod kantor_aggregate;
+mod kantor_euro;
 mod kantor_ets;
 mod kantor_groupby;
 pub(crate) mod kantor_names;
 pub mod kantor_pivot;
 mod kantor_text;
+mod kantor_xml;
+pub mod kantor_web;
 
 /// List of all implemented functions
 #[derive(PartialEq, Clone, Debug)]
@@ -581,6 +584,23 @@ pub enum Function {
     Jis,
     Phonetic,
     Getpivotdata,
+    Euroconvert,
+    Filterxml,
+    Webservice,
+    Image,
+    Cubekpimember,
+    Cubemember,
+    Cubememberproperty,
+    Cuberankedmember,
+    Cubeset,
+    Cubesetcount,
+    Cubevalue,
+    Rtd,
+    Stockhistory,
+    Translate,
+    Detectlanguage,
+    Copilot,
+    Py,
 }
 
 macro_rules! impl_function_lookup {
@@ -1622,7 +1642,24 @@ impl Function {
             | Function::Dbcs
             | Function::Jis
             | Function::Phonetic
-            | Function::Getpivotdata => kantor_names::name(self).to_string(),
+            | Function::Getpivotdata
+            | Function::Euroconvert
+            | Function::Filterxml
+            | Function::Webservice
+            | Function::Image
+            | Function::Cubekpimember
+            | Function::Cubemember
+            | Function::Cubememberproperty
+            | Function::Cuberankedmember
+            | Function::Cubeset
+            | Function::Cubesetcount
+            | Function::Cubevalue
+            | Function::Rtd
+            | Function::Stockhistory
+            | Function::Translate
+            | Function::Detectlanguage
+            | Function::Copilot
+            | Function::Py => kantor_names::name(self).to_string(),
             Function::Forecast => functions.forecast.clone(),
             Function::ForecastLinear => functions.forecastlinear.clone(),
             Function::ForecastEts => functions.forecastets.clone(),
@@ -1649,7 +1686,7 @@ impl Function {
         }
     }
 
-    pub fn into_iter() -> IntoIter<Function, 506> {
+    pub fn into_iter() -> IntoIter<Function, 523> {
         [
             Function::And,
             Function::False,
@@ -2123,6 +2160,23 @@ impl Function {
             Function::Jis,
             Function::Phonetic,
             Function::Getpivotdata,
+            Function::Euroconvert,
+            Function::Filterxml,
+            Function::Webservice,
+            Function::Image,
+            Function::Cubekpimember,
+            Function::Cubemember,
+            Function::Cubememberproperty,
+            Function::Cuberankedmember,
+            Function::Cubeset,
+            Function::Cubesetcount,
+            Function::Cubevalue,
+            Function::Rtd,
+            Function::Stockhistory,
+            Function::Translate,
+            Function::Detectlanguage,
+            Function::Copilot,
+            Function::Py,
             Function::Forecast,
             Function::ForecastLinear,
             Function::ForecastEts,
@@ -2343,6 +2397,13 @@ impl Function {
             Function::Groupby => "_xlfn.GROUPBY".to_string(),
             Function::Pivotby => "_xlfn.PIVOTBY".to_string(),
             Function::Dbcs => "_xlfn.DBCS".to_string(),
+            Function::Filterxml => "_xlfn.FILTERXML".to_string(),
+            Function::Webservice => "_xlfn.WEBSERVICE".to_string(),
+            Function::Image => "_xlfn.IMAGE".to_string(),
+            Function::Stockhistory => "_xlfn.STOCKHISTORY".to_string(),
+            Function::Translate => "_xlfn.TRANSLATE".to_string(),
+            Function::Detectlanguage => "_xlfn.DETECTLANGUAGE".to_string(),
+            Function::Py => "_xlfn._xlws.PY".to_string(),
 
             _ => {
                 let language = get_default_language();
@@ -2835,6 +2896,23 @@ impl<'a> Model<'a> {
             Function::Dbcs | Function::Jis => self.fn_dbcs(args, cell),
             Function::Phonetic => self.fn_phonetic(args, cell),
             Function::Getpivotdata => self.fn_getpivotdata(args, cell),
+            Function::Euroconvert => self.fn_euroconvert(args, cell),
+            Function::Filterxml => self.fn_filterxml(args, cell),
+            Function::Webservice => self.fn_webservice(args, cell),
+            Function::Image => self.fn_image(args, cell),
+            Function::Cubekpimember
+            | Function::Cubemember
+            | Function::Cubememberproperty
+            | Function::Cuberankedmember
+            | Function::Cubeset
+            | Function::Cubesetcount
+            | Function::Cubevalue
+            | Function::Rtd
+            | Function::Stockhistory
+            | Function::Translate
+            | Function::Detectlanguage
+            | Function::Copilot
+            | Function::Py => self.fn_online(kind, args, cell),
             Function::Forecast => self.fn_forecast(args, cell),
             Function::ForecastLinear => self.fn_forecast_linear(args, cell),
             Function::ForecastEts => self.fn_forecast_ets(args, cell),

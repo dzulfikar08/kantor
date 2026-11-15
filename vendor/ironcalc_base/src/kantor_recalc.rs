@@ -216,6 +216,9 @@ fn reads_of(node: &Node, reads: &mut Reads) {
                     | Function::Aggregate
                     | Function::Getpivotdata
                     | Function::Hyperlink
+                    // KANTOR PATCH (functions): they pick up what was fetched.
+                    | Function::Image
+                    | Function::Webservice
             ) {
                 reads.unknown = true;
             }

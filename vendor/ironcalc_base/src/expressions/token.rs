@@ -94,6 +94,12 @@ pub enum Error {
     CALC,
     CIRC,
     NULL,
+    // KANTOR PATCH (functions): Excel's errors for functions that reach the
+    // network (IMAGE, WEBSERVICE, online functions). Not localized: the
+    // language file has no names for them.
+    CONNECT,
+    BLOCKED,
+    BUSY,
 }
 
 impl fmt::Display for Error {
@@ -111,6 +117,9 @@ impl fmt::Display for Error {
             Error::SPILL => write!(fmt, "#SPILL!"),
             Error::CALC => write!(fmt, "#CALC!"),
             Error::CIRC => write!(fmt, "#CIRC!"),
+            Error::CONNECT => write!(fmt, "#CONNECT!"),
+            Error::BLOCKED => write!(fmt, "#BLOCKED!"),
+            Error::BUSY => write!(fmt, "#BUSY!"),
         }
     }
 }
@@ -129,6 +138,7 @@ impl Error {
             Error::SPILL => language.errors.spill.to_string(),
             Error::CALC => language.errors.calc.to_string(),
             Error::CIRC => language.errors.circ.to_string(),
+            Error::CONNECT | Error::BLOCKED | Error::BUSY => self.to_string(),
         }
     }
 }
@@ -160,7 +170,17 @@ pub fn get_error_by_name(name: &str, language: &Language) -> Option<Error> {
     } else if name == errors.null {
         return Some(Error::NULL);
     }
-    None
+    kantor_error(name)
+}
+
+/// KANTOR PATCH (functions): the network errors, by their English name.
+fn kantor_error(name: &str) -> Option<Error> {
+    match name {
+        "#CONNECT!" => Some(Error::CONNECT),
+        "#BLOCKED!" => Some(Error::BLOCKED),
+        "#BUSY!" => Some(Error::BUSY),
+        _ => None,
+    }
 }
 
 pub fn get_error_by_english_name(name: &str) -> Option<Error> {
@@ -189,13 +209,13 @@ pub fn get_error_by_english_name(name: &str) -> Option<Error> {
     } else if name == "#NULL!" {
         return Some(Error::NULL);
     }
-    None
+    kantor_error(name)
 }
 
 pub fn is_english_error_string(name: &str) -> bool {
     let names = [
         "#REF!", "#NAME?", "#VALUE!", "#DIV/0!", "#N/A", "#NUM!", "#ERROR!", "#N/IMPL!", "#SPILL!",
-        "#CALC!", "#CIRC!", "#NULL!",
+        "#CALC!", "#CIRC!", "#NULL!", "#CONNECT!", "#BLOCKED!", "#BUSY!",
     ];
     names.contains(&name)
 }

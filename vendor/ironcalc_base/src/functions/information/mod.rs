@@ -232,10 +232,12 @@ impl<'a> Model<'a> {
                     Error::ERROR => CalcResult::Number(101.0),
                     Error::NIMPL => CalcResult::Number(102.0),
                     Error::CIRC => CalcResult::Number(104.0),
+                    // KANTOR PATCH (functions)
+                    Error::CONNECT => CalcResult::Number(10.0),
+                    Error::BLOCKED => CalcResult::Number(11.0),
+                    Error::BUSY => CalcResult::new_error(Error::NA, cell, String::new()),
                     // Missing from Excel
                     // #GETTING_DATA => 8
-                    // #CONNECT => 10
-                    // #BLOCKED => 11
                     // #UNKNOWN => 12
                     // #FIELD => 13
                     // #EXTERNAL => 19
