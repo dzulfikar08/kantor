@@ -42,8 +42,27 @@ pub(crate) struct ChartPanel {
     range: Entity<InputState>,
     x_title: Entity<InputState>,
     y_title: Entity<InputState>,
+    /// Data labels' number format; the axis' bounds, major unit and number
+    /// format (see `chart_options_ui`).
+    pub(crate) label_fmt: Entity<InputState>,
+    pub(crate) ax_min: Entity<InputState>,
+    pub(crate) ax_max: Entity<InputState>,
+    pub(crate) ax_major: Entity<InputState>,
+    pub(crate) ax_fmt: Entity<InputState>,
+    /// The series the data label options apply to (`None`: all).
+    pub(crate) label_target: Option<usize>,
+    /// The axis the axis options apply to: horizontal (else vertical).
+    pub(crate) horizontal_axis: bool,
+    /// The targets the option inputs were filled for.
+    pub(crate) loaded_targets: (Option<usize>, bool),
     error: Option<String>,
     _subs: Vec<Subscription>,
+}
+
+impl ChartPanel {
+    pub(crate) fn loaded_key(&self) -> Option<DrawingKey> {
+        self.loaded
+    }
 }
 
 impl SheetsView {
@@ -86,8 +105,21 @@ impl SheetsView {
         let range = cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("e.g. A1:C13")));
         let x_title = cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("No title")));
         let y_title = cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("No title")));
+        let linked = |window: &mut Window, cx: &mut Context<Self>| {
+            cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("Linked to source")))
+        };
+        let label_fmt = linked(window, cx);
+        let ax_fmt = linked(window, cx);
+        let auto = |window: &mut Window, cx: &mut Context<Self>| {
+            cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("Auto")))
+        };
+        let ax_min = auto(window, cx);
+        let ax_max = auto(window, cx);
+        let ax_major = auto(window, cx);
         let mut subs = Vec::new();
-        for input in [&title, &x_title, &y_title] {
+        for input in [
+            &title, &x_title, &y_title, &label_fmt, &ax_min, &ax_max, &ax_major, &ax_fmt,
+        ] {
             subs.push(
                 cx.subscribe_in(input, window, |this, _, e: &InputEvent, w, cx| {
                     if let InputEvent::PressEnter { .. } | InputEvent::Blur = e {
@@ -109,6 +141,14 @@ impl SheetsView {
             range,
             x_title,
             y_title,
+            label_fmt,
+            ax_min,
+            ax_max,
+            ax_major,
+            ax_fmt,
+            label_target: None,
+            horizontal_axis: false,
+            loaded_targets: (None, false),
             error: None,
             _subs: subs,
         });
@@ -162,7 +202,18 @@ impl SheetsView {
         };
         let sel = self.selected_chart(cx);
         let key = sel.as_ref().map(|s| s.0);
+        let targets = (p.label_target, p.horizontal_axis);
+        if p.loaded == key && p.loaded_targets == targets {
+            return;
+        }
         if p.loaded == key {
+            // Another series or axis picked: only the option boxes change.
+            if let Some((_, info)) = sel {
+                self.fill_option_inputs(&info, window, cx);
+            }
+            if let Some(p) = self.chart_panel.as_mut() {
+                p.loaded_targets = targets;
+            }
             return;
         }
         let (title, range, xt, yt) = (
@@ -178,14 +229,21 @@ impl SheetsView {
             range.update(cx, |i, cx| i.set_value(data, window, cx));
             xt.update(cx, |i, cx| i.set_value(spec.x_title.clone(), window, cx));
             yt.update(cx, |i, cx| i.set_value(spec.y_title.clone(), window, cx));
+            if let Some(p) = self.chart_panel.as_mut() {
+                // A new chart: all series, its value axis.
+                p.label_target = None;
+                p.horizontal_axis = !info.y_value && info.x_value;
+            }
+            self.fill_option_inputs(&info, window, cx);
         }
         if let Some(p) = self.chart_panel.as_mut() {
             p.loaded = key;
+            p.loaded_targets = (p.label_target, p.horizontal_axis);
             p.error = None;
         }
     }
 
-    fn edit_chart(
+    pub(crate) fn edit_chart(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -220,6 +278,16 @@ impl SheetsView {
         let Some((key, info)) = self.selected_chart(cx) else {
             return;
         };
+        let options = match self.read_option_inputs(&info, cx) {
+            Ok(o) => o,
+            Err(e) => {
+                if let Some(p) = self.chart_panel.as_mut() {
+                    p.error = Some(e);
+                }
+                cx.notify();
+                return;
+            }
+        };
         // An unchanged range stays as the chart has it (a file's chart whose
         // series Kantor can't read back as one block keeps them).
         let range_changed = range.trim() != self.data_text(key, &info.spec, cx);
@@ -241,6 +309,7 @@ impl SheetsView {
             s.title = title;
             s.x_title = x_title;
             s.y_title = y_title;
+            options(s);
             if let Some(sheet) = sheet {
                 s.data_sheet = sheet;
                 s.data = dialog::parse_cells(&range)
@@ -390,6 +459,10 @@ impl SheetsView {
                             .child(row(i18n::t("Vertical axis"), Input::new(&p.y_title).small(), cx))
                     })
                     .child(colours)
+                    .child(self.render_label_options(&info, &view, cx))
+                    .when(info.has_axes, |d| {
+                        d.child(self.render_axis_options(&info, &view, cx))
+                    })
                     .when(!info.fixed, |d| {
                         d.child(row(
                             i18n::t("Series in"),

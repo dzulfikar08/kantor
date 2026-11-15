@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 
+use crate::chart_options::{AxisOptions, DataLabels, LabelPos};
 pub use crate::chart_style::SeriesColor;
 use crate::chart_style::{self, NewSeries};
 use crate::drawing::{Anchor, Drawing, DrawingKey, DrawingKind, EditAs, Marker, RefValue};
@@ -128,7 +129,7 @@ impl LegendPos {
 }
 
 /// What a chart shows, as the Chart panel edits it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ChartSpec {
     pub kind: ChartType,
     /// Empty: no title.
@@ -145,6 +146,11 @@ pub struct ChartSpec {
     pub y_title: String,
     /// Each series' colour, in series order (missing: automatic).
     pub colors: Vec<SeriesColor>,
+    /// Each series' data labels, in series order (missing: none).
+    pub labels: Vec<DataLabels>,
+    /// Options of the horizontal and vertical axes.
+    pub x_axis: AxisOptions,
+    pub y_axis: AxisOptions,
 }
 
 /// A chart for the Chart panel: its spec and what can't be changed.
@@ -165,6 +171,13 @@ pub struct ChartInfo {
     pub has_axes: bool,
     /// Series names, in order (for the colours).
     pub series: Vec<String>,
+    /// Data label positions the chart type has (empty: none can be set).
+    pub label_positions: Vec<LabelPos>,
+    /// Percentage labels apply (pie, doughnut).
+    pub percent_labels: bool,
+    /// The horizontal / vertical axis shows values (else categories).
+    pub x_value: bool,
+    pub y_value: bool,
 }
 
 /// A chart made in Kantor.
@@ -331,6 +344,9 @@ impl Workbook {
             x_title: String::new(),
             y_title: String::new(),
             colors: Vec::new(),
+            labels: Vec::new(),
+            x_axis: AxisOptions::default(),
+            y_axis: AxisOptions::default(),
         };
         // Beside the data: two columns to its right, 8 columns × 15 rows.
         let col = (data.right + 2).min(MAX_COLS - 9);
@@ -394,6 +410,10 @@ impl Workbook {
             data_unknown: false,
             has_axes: spec.kind != ChartType::Pie,
             series: style.names,
+            label_positions: style.label_positions,
+            percent_labels: style.percent_labels,
+            x_value: style.axes[0].1,
+            y_value: style.axes[1].1,
             spec,
         })
     }
@@ -427,6 +447,13 @@ impl Workbook {
         }
         if spec.kind == ChartType::Other {
             bail!("Pick a chart type");
+        }
+        let mut spec = spec;
+        // Positions the new type doesn't have go back to its default.
+        let ok = LabelPos::for_group(group_tag(spec.kind), spec.kind.stacked());
+        for l in &mut spec.labels {
+            l.pos = l.pos.filter(|p| ok.contains(p));
+            l.percent &= spec.kind == ChartType::Pie;
         }
         let sheet = self
             .sheet_index_of(key.sheet_id)
@@ -799,7 +826,35 @@ fn styled(xml: String, spec: &ChartSpec) -> String {
             xml = x;
         }
     }
+    for (i, l) in spec.labels.iter().enumerate() {
+        if l.shown()
+            && let Ok(x) = chart_style::set_labels(&xml, i, l)
+        {
+            xml = x;
+        }
+    }
+    if spec.kind != ChartType::Pie {
+        for (horizontal, a) in [(true, &spec.x_axis), (false, &spec.y_axis)] {
+            if let Ok(x) = chart_style::set_axis_options(&xml, horizontal, a) {
+                xml = x;
+            }
+        }
+    }
     xml
+}
+
+/// The plot type element of a chart type.
+fn group_tag(kind: ChartType) -> &'static str {
+    match kind {
+        ChartType::Column | ChartType::StackedColumn | ChartType::Bar | ChartType::StackedBar => {
+            "barChart"
+        }
+        ChartType::Line | ChartType::StackedLine => "lineChart",
+        ChartType::Area | ChartType::StackedArea => "areaChart",
+        ChartType::Pie => "pieChart",
+        ChartType::Scatter => "scatterChart",
+        ChartType::Other => "",
+    }
 }
 
 pub(crate) fn fxhash(s: &str) -> u64 {

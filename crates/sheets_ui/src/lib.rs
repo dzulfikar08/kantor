@@ -46,6 +46,7 @@ mod bench;
 mod calc;
 mod cell_editor;
 mod cf_ui;
+mod chart_options_ui;
 mod chart_sheet_ui;
 mod chart_ui;
 mod cond_paint;

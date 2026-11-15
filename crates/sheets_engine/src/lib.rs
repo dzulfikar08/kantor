@@ -11,6 +11,7 @@
 mod batch;
 mod cf_edit;
 mod chart_edit;
+mod chart_options;
 mod chart_sheet;
 mod chart_style;
 mod cond_format;
@@ -50,6 +51,7 @@ pub use cf_edit::{
     DATA_BAR_COLORS, ICON_SETS, sqref_of,
 };
 pub use chart_edit::{ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor};
+pub use chart_options::{AxisOptions, DataLabels, DisplayUnits, LabelPos};
 pub use chart_sheet::sheet_name_problem;
 pub use drawing::Tab;
 pub use import::{ImportNote, SourceFormat};

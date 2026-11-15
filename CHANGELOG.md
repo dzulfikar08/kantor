@@ -9,6 +9,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Sheets: the Chart panel sets data labels (value, category name, series name, percentage on pies; label position and number format, for all series or one) and axis options (minimum, maximum, major unit, logarithmic scale, reverse order, number format, display units), drawn on screen and in PDFs. Charts from `.xlsx` and `.xls` files keep theirs, and a chart you don't change is saved exactly as it was.
+
 ## [0.7.0] - 2026-11-15
 
 Sheets tabs work like Excel's: insert, delete, rename, move or copy, colour and hide sheets, and

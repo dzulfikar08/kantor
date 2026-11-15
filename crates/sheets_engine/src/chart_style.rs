@@ -16,6 +16,7 @@ use anyhow::{Result, anyhow, bail};
 use roxmltree::{Document, Node};
 
 use crate::chart_edit::{ChartType, LegendPos};
+use crate::chart_options::{AxisOptions, DataLabels, DisplayUnits, LabelPos, num_text};
 
 pub(crate) const NS_C: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
 const NS_A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -549,6 +550,15 @@ pub(crate) struct Style {
     pub names: Vec<String>,
     /// Every series' references: name, categories, values.
     pub refs: Vec<[Option<String>; 3]>,
+    /// Every series' data labels.
+    pub labels: Vec<DataLabels>,
+    /// Label positions the (first) plot type has.
+    pub label_positions: Vec<LabelPos>,
+    /// Percentage labels apply (pie, doughnut).
+    pub percent_labels: bool,
+    /// The horizontal and vertical primary axes' options, and whether each
+    /// is a value axis.
+    pub axes: [(AxisOptions, bool); 2],
 }
 
 fn grouping(g: Node) -> &'static str {
@@ -785,6 +795,20 @@ pub(crate) fn read(xml: &str) -> Result<Style> {
                 ]
             })
             .collect(),
+        labels: sers
+            .iter()
+            .map(|(s, _)| {
+                group_of(*s)
+                    .map(|g| series_labels(g, *s))
+                    .unwrap_or_default()
+            })
+            .collect(),
+        label_positions: gs
+            .first()
+            .map(|g| positions(*g).to_vec())
+            .unwrap_or_default(),
+        percent_labels: gs.iter().any(|g| is_pie(g.tag_name().name())),
+        axes: primary_axis_options(plot),
     })
 }
 
@@ -1732,6 +1756,380 @@ pub(crate) fn set_series(xml: &str, series: &[NewSeries]) -> Result<String> {
     // Legend entries of series that are gone point nowhere: Excel keys
     // them by index, so they stay valid; nothing else refers to series.
     Ok(splice(xml, vec![edit]))
+}
+
+// ------------------------------------------------------------------ data labels
+
+const DLBLS_ORDER: &[&str] = &[
+    "dLbl",
+    "delete",
+    "numFmt",
+    "spPr",
+    "txPr",
+    "dLblPos",
+    "showLegendKey",
+    "showVal",
+    "showCatName",
+    "showSerName",
+    "showPercent",
+    "showBubbleSize",
+    "separator",
+    "showLeaderLines",
+    "leaderLines",
+    "extLst",
+];
+
+fn on(n: Node, name: &str) -> bool {
+    matches!(val(n, name), Some("1" | "true"))
+}
+
+fn is_pie(tag: &str) -> bool {
+    matches!(
+        tag,
+        "pieChart" | "pie3DChart" | "doughnutChart" | "ofPieChart"
+    )
+}
+
+/// Label positions allowed for group `g`.
+fn positions(g: Node) -> &'static [LabelPos] {
+    LabelPos::for_group(g.tag_name().name(), !grouping(g).is_empty())
+}
+
+/// `c:dLbls` as the panel shows it (`None`: deleted or nothing shown).
+fn labels_of(d: Node) -> Option<DataLabels> {
+    if on(d, "delete") {
+        return None;
+    }
+    let l = DataLabels {
+        value: on(d, "showVal"),
+        category: on(d, "showCatName"),
+        series: on(d, "showSerName"),
+        percent: on(d, "showPercent"),
+        pos: val(d, "dLblPos").and_then(LabelPos::from_code),
+        num_fmt: kid(d, "numFmt")
+            .filter(|f| !matches!(f.attribute("sourceLinked"), Some("1" | "true")))
+            .and_then(|f| f.attribute("formatCode"))
+            .map(str::to_owned),
+    };
+    l.shown().then_some(l)
+}
+
+/// The labels series `ser` of group `g` shows.
+fn series_labels(g: Node, ser: Node) -> DataLabels {
+    match kid(ser, "dLbls") {
+        Some(d) => labels_of(d),
+        None => kid(g, "dLbls").and_then(labels_of),
+    }
+    .unwrap_or_default()
+}
+
+/// The group of series `ser`.
+fn group_of<'a, 'i>(ser: Node<'a, 'i>) -> Option<Node<'a, 'i>> {
+    ser.parent_element()
+}
+
+/// Series `index`'s data labels: Excel's Label Contains, Label Position
+/// and Number. Other formatting (text, fill, per-point labels, leader
+/// lines) stays. Positions the chart type doesn't have are left out.
+pub(crate) fn set_labels(xml: &str, index: usize, labels: &DataLabels) -> Result<String> {
+    let doc = Document::parse(xml)?;
+    let (_, plot) = plot_area(&doc)?;
+    let sers = all_series(plot);
+    let Some((ser, tag)) = sers.get(index).copied() else {
+        bail!("no series {}", index + 1);
+    };
+    let g = group_of(ser).ok_or_else(|| anyhow!("no group"))?;
+    let old = kid(ser, "dLbls");
+    let p = prefix_of(xml, ser);
+    let group_shows = kid(g, "dLbls").and_then(labels_of).is_some();
+    if !labels.shown() {
+        let edit = match (old, group_shows) {
+            (Some(o), false) => (o.range(), String::new()),
+            (Some(o), true) => (
+                o.range(),
+                format!("<{p}dLbls><{p}delete val=\"1\"/></{p}dLbls>"),
+            ),
+            (None, true) => insert_ordered(
+                xml,
+                ser,
+                "dLbls",
+                SER_ORDER,
+                &format!("<{p}dLbls><{p}delete val=\"1\"/></{p}dLbls>"),
+            ),
+            (None, false) => return Ok(xml.to_owned()),
+        };
+        return Ok(splice(xml, vec![edit]));
+    }
+    let pos = labels.pos.filter(|l| positions(g).contains(l));
+    let percent = labels.percent && is_pie(tag);
+    // Unset flags and parts come from the series' own labels, else the
+    // group's (Excel copies them down when one series changes).
+    let base = old
+        .filter(|o| !on(*o, "delete"))
+        .or_else(|| kid(g, "dLbls").filter(|o| !on(*o, "delete")));
+    let flag = |name: &str, v: bool| format!("<{p}{name} val=\"{}\"/>", u8::from(v));
+    let over = |slot: &str| -> Option<Option<String>> {
+        Some(match slot {
+            "delete" => None,
+            "numFmt" => match &labels.num_fmt {
+                Some(code) => {
+                    let keep = base.and_then(|b| kid(b, "numFmt")).filter(|f| {
+                        f.attribute("formatCode") == Some(code.as_str())
+                            && !matches!(f.attribute("sourceLinked"), Some("1" | "true"))
+                    });
+                    Some(match keep {
+                        Some(f) => raw(xml, f).to_owned(),
+                        None => format!(
+                            "<{p}numFmt formatCode=\"{}\" sourceLinked=\"0\"/>",
+                            esc(code)
+                        ),
+                    })
+                }
+                None => base
+                    .and_then(|b| kid(b, "numFmt"))
+                    .filter(|f| matches!(f.attribute("sourceLinked"), Some("1" | "true")))
+                    .map(|f| raw(xml, f).to_owned()),
+            },
+            "dLblPos" => pos.map(|l| format!("<{p}dLblPos val=\"{}\"/>", l.code())),
+            "showLegendKey" => Some(
+                base.and_then(|b| kid(b, "showLegendKey"))
+                    .map(|n| raw(xml, n).to_owned())
+                    .unwrap_or_else(|| flag("showLegendKey", false)),
+            ),
+            "showVal" => Some(flag("showVal", labels.value)),
+            "showCatName" => Some(flag("showCatName", labels.category)),
+            "showSerName" => Some(flag("showSerName", labels.series)),
+            "showPercent" => Some(flag("showPercent", percent)),
+            "showBubbleSize" => Some(
+                base.and_then(|b| kid(b, "showBubbleSize"))
+                    .map(|n| raw(xml, n).to_owned())
+                    .unwrap_or_else(|| flag("showBubbleSize", false)),
+            ),
+            "dLbl" | "spPr" | "txPr" | "separator" | "showLeaderLines" | "leaderLines"
+            | "extLst" => {
+                // Copied from the series' own labels, else from the group's.
+                let src = old.filter(|o| !on(*o, "delete")).or(base)?;
+                let t: String = kids_named(src, slot)
+                    .map(|n| raw(xml, n).to_owned())
+                    .collect();
+                if t.is_empty() { None } else { Some(t) }
+            }
+            _ => return None,
+        })
+    };
+    let mut text = format!("<{p}dLbls>");
+    for slot in DLBLS_ORDER {
+        if let Some(Some(t)) = over(slot) {
+            text.push_str(&t);
+        }
+    }
+    text.push_str(&format!("</{p}dLbls>"));
+    let edit = match old {
+        Some(o) => (o.range(), text),
+        None => insert_ordered(xml, ser, "dLbls", SER_ORDER, &text),
+    };
+    Ok(splice(xml, vec![edit]))
+}
+
+fn kids_named<'a, 'i>(n: Node<'a, 'i>, name: &str) -> impl Iterator<Item = Node<'a, 'i>> {
+    let name = name.to_owned();
+    n.children().filter(move |c| is(*c, NS_C, &name))
+}
+
+/// `xml` without label positions its plot types don't have (after a type
+/// change: a stacked column has no Outside End).
+pub(crate) fn drop_bad_positions(xml: &str) -> String {
+    let Ok(doc) = Document::parse(xml) else {
+        return xml.to_owned();
+    };
+    let Ok((_, plot)) = plot_area(&doc) else {
+        return xml.to_owned();
+    };
+    let mut edits = Vec::new();
+    for g in groups(plot) {
+        let ok = positions(g);
+        for d in g.descendants().filter(|d| is(*d, NS_C, "dLblPos")) {
+            let bad = d
+                .attribute("val")
+                .and_then(LabelPos::from_code)
+                .is_none_or(|l| !ok.contains(&l));
+            if bad {
+                edits.push((d.range(), String::new()));
+            }
+        }
+    }
+    if edits.is_empty() {
+        xml.to_owned()
+    } else {
+        splice(xml, edits)
+    }
+}
+
+// ------------------------------------------------------------------ axis options
+
+const SCALING_ORDER: &[&str] = &["logBase", "orientation", "max", "min", "extLst"];
+const DISP_UNITS_ORDER: &[&str] = &["custUnit", "builtInUnit", "dispUnitsLbl", "extLst"];
+
+fn is_value_axis(ax: Node) -> bool {
+    ax.tag_name().name() == "valAx"
+}
+
+/// What the panel shows for an axis.
+fn axis_options(ax: Node) -> AxisOptions {
+    let scaling = kid(ax, "scaling");
+    let f = |n: Option<Node>, name: &str| -> Option<f64> {
+        n.and_then(|n| val(n, name))
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite())
+    };
+    let value = is_value_axis(ax);
+    AxisOptions {
+        min: f(scaling, "min").filter(|_| value),
+        max: f(scaling, "max").filter(|_| value),
+        major: f(Some(ax), "majorUnit").filter(|u| value && *u > 0.0),
+        log_base: f(scaling, "logBase").filter(|b| value && *b >= 2.0),
+        reverse: scaling.and_then(|s| val(s, "orientation")) == Some("maxMin"),
+        num_fmt: kid(ax, "numFmt")
+            .filter(|f| !matches!(f.attribute("sourceLinked"), Some("1" | "true")))
+            .and_then(|f| f.attribute("formatCode"))
+            .map(str::to_owned),
+        units: match kid(ax, "dispUnits").filter(|_| value) {
+            None => DisplayUnits::None,
+            Some(d) => val(d, "builtInUnit").map_or(DisplayUnits::Custom, DisplayUnits::from_code),
+        },
+    }
+}
+
+/// The primary axes' options: (horizontal, vertical), and whether each is
+/// a value axis.
+fn primary_axis_options(plot: Node) -> [(AxisOptions, bool); 2] {
+    let (h, v) = primary_axes(plot);
+    [h, v].map(|a| {
+        a.map(|a| (axis_options(a), is_value_axis(a)))
+            .unwrap_or_default()
+    })
+}
+
+/// Set the options of the horizontal or vertical primary axis. Only the
+/// parts that change are rewritten.
+pub(crate) fn set_axis_options(xml: &str, horizontal: bool, new: &AxisOptions) -> Result<String> {
+    let doc = Document::parse(xml)?;
+    let (_, plot) = plot_area(&doc)?;
+    let (h, v) = primary_axes(plot);
+    let Some(ax) = (if horizontal { h } else { v }) else {
+        bail!("This chart has no axes");
+    };
+    let old = axis_options(ax);
+    if old == *new {
+        return Ok(xml.to_owned());
+    }
+    let value = is_value_axis(ax);
+    let order: &[&str] = match ax.tag_name().name() {
+        "valAx" => VAL_AX,
+        "catAx" => CAT_AX,
+        _ => AX_ORDER,
+    };
+    let p = prefix_of(xml, ax);
+    let mut edits = Vec::new();
+    // c:scaling: orientation for every axis; bounds and log for values.
+    let scaling_changed = old.reverse != new.reverse
+        || (value && (old.min != new.min || old.max != new.max || old.log_base != new.log_base));
+    if scaling_changed {
+        let sc = kid(ax, "scaling");
+        let mut text = format!("<{p}scaling>");
+        for slot in SCALING_ORDER {
+            let own = |name: &str| {
+                sc.map(|s| {
+                    kids_named(s, name)
+                        .map(|n| raw(xml, n).to_owned())
+                        .collect::<String>()
+                })
+                .unwrap_or_default()
+            };
+            let num = |name: &str, v: Option<f64>| {
+                v.map(|v| format!("<{p}{name} val=\"{}\"/>", num_text(v)))
+                    .unwrap_or_default()
+            };
+            text.push_str(&match *slot {
+                "orientation" => format!(
+                    "<{p}orientation val=\"{}\"/>",
+                    if new.reverse { "maxMin" } else { "minMax" }
+                ),
+                "logBase" if value => num("logBase", new.log_base),
+                "max" if value => num("max", new.max),
+                "min" if value => num("min", new.min),
+                other => own(other),
+            });
+        }
+        text.push_str(&format!("</{p}scaling>"));
+        edits.push(match sc {
+            Some(s) => (s.range(), text),
+            None => insert_ordered(xml, ax, "scaling", order, &text),
+        });
+    }
+    if old.num_fmt != new.num_fmt {
+        let text = match &new.num_fmt {
+            Some(code) => format!(
+                "<{p}numFmt formatCode=\"{}\" sourceLinked=\"0\"/>",
+                esc(code)
+            ),
+            None => format!("<{p}numFmt formatCode=\"General\" sourceLinked=\"1\"/>"),
+        };
+        edits.push(match kid(ax, "numFmt") {
+            Some(n) => (n.range(), text),
+            None => insert_ordered(xml, ax, "numFmt", order, &text),
+        });
+    }
+    if value && old.major != new.major {
+        let unit = kid(ax, "majorUnit");
+        match new.major {
+            Some(u) => edits.push(set_val(xml, ax, "majorUnit", order, &num_text(u))),
+            None => {
+                if let Some(n) = unit {
+                    edits.push((n.range(), String::new()));
+                }
+            }
+        }
+    }
+    if value && old.units != new.units {
+        let du = kid(ax, "dispUnits");
+        match new.units.code() {
+            None if new.units == DisplayUnits::Custom => {}
+            None => {
+                if let Some(n) = du {
+                    edits.push((n.range(), String::new()));
+                }
+            }
+            Some(code) => {
+                let unit = format!("<{p}builtInUnit val=\"{code}\"/>");
+                let text = match du {
+                    // Keep the units label (and its formatting).
+                    Some(d) => {
+                        let mut t = format!("<{p}dispUnits>");
+                        for slot in DISP_UNITS_ORDER {
+                            match *slot {
+                                "custUnit" => {}
+                                "builtInUnit" => t.push_str(&unit),
+                                other => {
+                                    for n in kids_named(d, other) {
+                                        t.push_str(raw(xml, n));
+                                    }
+                                }
+                            }
+                        }
+                        t.push_str(&format!("</{p}dispUnits>"));
+                        t
+                    }
+                    None => format!("<{p}dispUnits>{unit}<{p}dispUnitsLbl/></{p}dispUnits>"),
+                };
+                edits.push(match du {
+                    Some(d) => (d.range(), text),
+                    None => insert_ordered(xml, ax, "dispUnits", order, &text),
+                });
+            }
+        }
+    }
+    Ok(splice(xml, edits))
 }
 
 #[cfg(test)]

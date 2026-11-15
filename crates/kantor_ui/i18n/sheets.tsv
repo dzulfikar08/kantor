@@ -376,6 +376,41 @@ Delete Chart	Hapus Bagan
 Kantor can't change this object: select a chart.	Kantor tidak dapat mengubah objek ini: pilih sebuah bagan.
 Select a chart to change it.	Pilih bagan untuk mengubahnya.
 Series colours	Warna seri
+Linked to source	Tertaut ke sumber
+{}: type a number, or leave it empty for Auto	{}: ketik angka, atau kosongkan untuk Otomatis
+The minimum must be less than the maximum.	Minimum harus lebih kecil dari maksimum.
+The major unit must be more than 0.	Unit utama harus lebih dari 0.
+Negative or zero values can't be plotted on a logarithmic scale.	Nilai negatif atau nol tidak dapat diplot pada skala logaritmik.
+All Series	Semua Seri
+Default	Bawaan
+Data Labels	Label Data
+Series	Seri
+Category Name	Nama Kategori
+Series Name	Nama Seri
+Percentage	Persentase
+Label Position	Posisi Label
+Values in reverse order	Nilai dalam urutan terbalik
+Categories in reverse order	Kategori dalam urutan terbalik
+Logarithmic scale	Skala logaritmik
+Axis Options	Opsi Sumbu
+Axis	Sumbu
+Major unit	Unit utama
+Display units	Unit tampilan
+Inside End	Ujung Dalam
+Inside Base	Dasar Dalam
+Outside End	Ujung Luar
+Above	Atas
+Below	Bawah
+Best Fit	Paling Pas
+Hundreds	Ratusan
+Thousands	Ribuan
+10000	10000
+100000	100000
+Millions	Jutaan
+10000000	10000000
+100000000	100000000
+Billions	Miliaran
+Trillions	Triliunan
 Colour	Warna
 Automatic	Otomatis
 Series {}	Seri {}

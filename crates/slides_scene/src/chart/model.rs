@@ -525,6 +525,57 @@ pub struct Axis {
     pub crosses_at: Option<f64>,
     /// `between` (categories in bands) or `midCat` (on the ticks).
     pub cross_between: Option<String>,
+    /// Display units (`c:dispUnits`): values shown divided by this.
+    pub disp_units: Option<DispUnits>,
+}
+
+/// A value axis' display units.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DispUnits {
+    pub div: f64,
+    /// The units label shown on the chart (`c:dispUnitsLbl`), if any.
+    pub label: Option<String>,
+}
+
+/// Excel's built-in display units (`c:builtInUnit`): divisor and label.
+pub fn built_in_unit(code: &str) -> Option<(f64, &'static str)> {
+    Some(match code {
+        "hundreds" => (1e2, "Hundreds"),
+        "thousands" => (1e3, "Thousands"),
+        "tenThousands" => (1e4, "x 10000"),
+        "hundredThousands" => (1e5, "x 100000"),
+        "millions" => (1e6, "Millions"),
+        "tenMillions" => (1e7, "x 10000000"),
+        "hundredMillions" => (1e8, "x 100000000"),
+        "billions" => (1e9, "Billions"),
+        "trillions" => (1e12, "Trillions"),
+        _ => return None,
+    })
+}
+
+impl DispUnits {
+    fn parse(n: Node) -> Option<Self> {
+        let (div, name) = match val(n, "builtInUnit") {
+            Some(c) => {
+                let (d, l) = built_in_unit(c)?;
+                (d, l.to_owned())
+            }
+            None => {
+                let d = val_f(n, "custUnit").filter(|d| *d > 0.0)?;
+                (d, format!("x {d}"))
+            }
+        };
+        let label = kid(n, "dispUnitsLbl").map(|l| {
+            let own = kid(l, "tx").map(|tx| {
+                tx.descendants()
+                    .filter(|d| d.is_element() && matches!(d.tag_name().name(), "t" | "v"))
+                    .filter_map(|d| d.text())
+                    .collect::<String>()
+            });
+            own.filter(|t| !t.is_empty()).unwrap_or(name)
+        });
+        Some(DispUnits { div, label })
+    }
 }
 
 impl Axis {
@@ -583,6 +634,7 @@ impl Axis {
             crosses: val(n, "crosses").map(str::to_owned),
             crosses_at: val_f(n, "crossesAt"),
             cross_between: val(n, "crossBetween").map(str::to_owned),
+            disp_units: kid(n, "dispUnits").and_then(DispUnits::parse),
         })
     }
 }

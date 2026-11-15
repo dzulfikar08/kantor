@@ -158,6 +158,9 @@ impl Workbook {
             x_title: style.x_title.clone(),
             y_title: style.y_title.clone(),
             colors: style.colors.clone(),
+            labels: style.labels.clone(),
+            x_axis: style.axes[0].0.clone(),
+            y_axis: style.axes[1].0.clone(),
         };
         // Can the range give these series back? (Else a new range replaces
         // them, and the panel says so.)
@@ -192,6 +195,10 @@ impl Workbook {
             data_unknown: unknown,
             has_axes: style.has_axes,
             series: style.names,
+            label_positions: style.label_positions,
+            percent_labels: style.percent_labels,
+            x_value: style.axes[0].1,
+            y_value: style.axes[1].1,
             spec,
         })
     }
@@ -239,7 +246,7 @@ impl Workbook {
                     info.kind_label
                 );
             }
-            xml = chart_style::set_kind(&xml, spec.kind)?;
+            xml = chart_style::drop_bad_positions(&chart_style::set_kind(&xml, spec.kind)?);
         }
         if spec.title != old.title {
             xml = chart_style::set_title(&xml, &spec.title)?;
@@ -259,6 +266,22 @@ impl Workbook {
             let was = old.colors.get(i).copied().unwrap_or_default();
             if new != was {
                 xml = chart_style::set_color(&xml, i, new)?;
+            }
+        }
+        let style = chart_style::read(&xml)?;
+        for i in 0..style.labels.len() {
+            let new = spec.labels.get(i).cloned().unwrap_or_default();
+            let was = old.labels.get(i).cloned().unwrap_or_default();
+            if new != was && new != style.labels[i] {
+                xml = chart_style::set_labels(&xml, i, &new)?;
+            }
+        }
+        for (horizontal, new, was) in [
+            (true, &spec.x_axis, &old.x_axis),
+            (false, &spec.y_axis, &old.y_axis),
+        ] {
+            if new != was {
+                xml = chart_style::set_axis_options(&xml, horizontal, new)?;
             }
         }
         self.own_edit(|e, layout| {

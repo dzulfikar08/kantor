@@ -474,6 +474,29 @@ pub(crate) struct Chart {
     /// Major gridlines on the category and value axes.
     pub gridlines: [bool; 2],
     pub three_d: bool,
+    /// Scaling of the category (or X) axis and the value axis.
+    pub scales: [Scale; 2],
+}
+
+/// An axis' scaling (`VALUERANGE`, `CATSERRANGE`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct Scale {
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub major: Option<f64>,
+    pub log: bool,
+    pub reverse: bool,
+}
+
+/// A series' data labels (`ATTACHEDLABEL` flags, `TEXT` `dlp`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct Labels {
+    pub value: bool,
+    pub percent: bool,
+    pub category: bool,
+    pub series: bool,
+    /// `c:dLblPos` code.
+    pub pos: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -517,6 +540,7 @@ pub(crate) struct Series {
     pub line: Option<u32>,
     pub no_line: bool,
     pub no_marker: bool,
+    pub labels: Option<Labels>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -543,6 +567,28 @@ struct RawSeries {
 struct TextBlock {
     literal: Option<String>,
     link: u16,
+    /// `ObjectLink` series index (data labels).
+    series: u16,
+    /// `ObjectLink` point index (0xFFFF: the whole series).
+    point: u16,
+    /// Data label position (`Text.dlp`).
+    dlp: u16,
+}
+
+/// `c:dLblPos` for a `Text.dlp` value.
+fn dlp_code(dlp: u16) -> Option<&'static str> {
+    Some(match dlp {
+        1 => "outEnd",
+        2 => "inEnd",
+        3 => "ctr",
+        4 => "inBase",
+        5 => "t",
+        6 => "b",
+        7 => "l",
+        8 => "r",
+        9 => "bestFit",
+        _ => return None,
+    })
 }
 
 /// Why a chart isn't brought in.
@@ -639,7 +685,12 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
         legend: None,
         gridlines: [false; 2],
         three_d: false,
+        scales: [Scale::default(); 2],
     };
+    // Label positions by series index, from TEXT blocks linked to them.
+    let mut label_pos: Vec<(u16, &'static str)> = Vec::new();
+    // The primary axes come first; a secondary axis group's are skipped.
+    let mut scaled = [false; 2];
     let mut in_chart = false;
     for (typ, d) in recs {
         let mut b = Bytes::new(d);
@@ -659,6 +710,11 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
                                 1 => chart.title = lit,
                                 2 => chart.val_title = lit,
                                 3 => chart.cat_title = lit,
+                                4 if t.point == 0xFFFF => {
+                                    if let Some(c) = dlp_code(t.dlp) {
+                                        label_pos.push((t.series, c));
+                                    }
+                                }
                                 _ => {}
                             }
                         }
@@ -718,10 +774,60 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
                     s.s.name = Some(Text::Literal(t));
                 }
             }
-            TEXT => text = Some(TextBlock::default()),
+            TEXT => {
+                // at, vat, wBkgMode, rgbText, x, y, dx, dy, grbit, icvText,
+                // then grbit2 whose low 4 bits are `dlp`.
+                let dlp = b.skip(28).and_then(|_| b.u16()).map_or(0, |g| g & 0xF);
+                text = Some(TextBlock {
+                    dlp,
+                    ..TextBlock::default()
+                });
+            }
             0x1027 => {
-                if let (Some(tb), Some(link)) = (text.as_mut(), b.u16()) {
+                if let Some(tb) = text.as_mut()
+                    && let Some(link) = b.u16()
+                {
                     tb.link = link;
+                    tb.series = b.u16().unwrap_or(0);
+                    tb.point = b.u16().unwrap_or(0xFFFF);
+                }
+            }
+            // ATTACHEDLABEL of a whole series.
+            0x100C if top == Some(DATAFORMAT) && in_series => {
+                if let (Some(s), Some(f)) = (series.last_mut().filter(|s| s.whole), b.u16()) {
+                    s.s.labels = Some(Labels {
+                        value: f & 0x01 != 0,
+                        percent: f & 0x06 != 0,
+                        category: f & 0x14 != 0,
+                        series: f & 0x40 != 0,
+                        pos: None,
+                    });
+                }
+            }
+            // VALUERANGE: min, max, major, minor, cross, flags.
+            0x101F if top == Some(AXIS) => {
+                let r = (|| Some((b.f64()?, b.f64()?, b.f64()?, b.skip(16)?, b.u16()?)))();
+                if let (Some((min, max, major, _, f)), Some(a @ 0..=1)) = (r, axis)
+                    && !std::mem::replace(&mut scaled[a as usize], true)
+                {
+                    let log = f & 0x20 != 0;
+                    // A log axis stores powers of ten.
+                    let v = |x: f64| if log { 10f64.powf(x) } else { x };
+                    chart.scales[a as usize] = Scale {
+                        min: (f & 0x01 == 0).then(|| v(min)),
+                        max: (f & 0x02 == 0).then(|| v(max)),
+                        major: (f & 0x04 == 0 && major > 0.0).then(|| v(major)),
+                        log,
+                        reverse: f & 0x40 != 0,
+                    };
+                }
+            }
+            // CATSERRANGE: catCross, catLabel, catMark, flags.
+            0x1020 if top == Some(AXIS) => {
+                if let (Some(f), Some(a @ 0..=1)) = (b.skip(6).and_then(|_| b.u16()), axis)
+                    && !std::mem::replace(&mut scaled[a as usize], true)
+                {
+                    chart.scales[a as usize].reverse = f & 0x04 != 0;
                 }
             }
             0x1045 if in_series => {
@@ -846,6 +952,11 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
     }
     if !in_chart || groups.is_empty() {
         return Err(Unsupported);
+    }
+    for (i, pos) in label_pos {
+        if let Some(l) = series.get_mut(i as usize).and_then(|s| s.s.labels.as_mut()) {
+            l.pos = Some(pos);
+        }
     }
     groups.sort_by_key(|g| g.0);
     for (icrt, kind, varied) in &groups {
@@ -985,8 +1096,14 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
             if lines && s.no_marker {
                 sers.push_str("<c:marker><c:symbol val=\"none\"/></c:marker>");
             }
+            let dlbls = s
+                .labels
+                .filter(|l| l.value || l.percent || l.category || l.series)
+                .map(|l| dlbls(&l, p.kind))
+                .unwrap_or_default();
             match p.kind {
                 PlotKind::Scatter => {
+                    sers.push_str(&dlbls);
                     if let Some(x) = &s.cats {
                         sers.push_str(&format!("<c:xVal>{}</c:xVal>", num_ref(x, data)));
                     }
@@ -999,6 +1116,7 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
                     if matches!(p.kind, PlotKind::Bar { .. }) {
                         sers.push_str("<c:invertIfNegative val=\"0\"/>");
                     }
+                    sers.push_str(&dlbls);
                     if let Some(c) = &s.cats {
                         let numeric = data(c).is_some_and(|d| {
                             d.values.iter().any(|v| matches!(v, RefValue::Number(_)))
@@ -1076,17 +1194,34 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
     let (cat_pos, val_pos) = if horizontal { ("l", "b") } else { ("b", "l") };
     let (cat_title, val_title) = (title(&chart.cat_title), title(&chart.val_title));
     let (cat_grid, val_grid) = (grid(chart.gridlines[0]), grid(chart.gridlines[1]));
+    let (cat_scaling, val_scaling) = (
+        scaling(&chart.scales[0], scatter),
+        scaling(&chart.scales[1], true),
+    );
+    let unit = |s: &Scale| {
+        s.major
+            .map(|u| format!("<c:majorUnit val=\"{u}\"/>"))
+            .unwrap_or_default()
+    };
+    let (cat_unit, val_unit) = (
+        if scatter {
+            unit(&chart.scales[0])
+        } else {
+            String::new()
+        },
+        unit(&chart.scales[1]),
+    );
     let axes = if pie {
         String::new()
     } else if scatter {
         format!(
-            "<c:valAx><c:axId val=\"500000001\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"b\"/>{cat_grid}{cat_title}{tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/></c:valAx>\
-<c:valAx><c:axId val=\"500000002\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"l\"/>{val_grid}{val_title}{tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/></c:valAx>"
+            "<c:valAx><c:axId val=\"500000001\"/>{cat_scaling}<c:delete val=\"0\"/><c:axPos val=\"b\"/>{cat_grid}{cat_title}{tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/>{cat_unit}</c:valAx>\
+<c:valAx><c:axId val=\"500000002\"/>{val_scaling}<c:delete val=\"0\"/><c:axPos val=\"l\"/>{val_grid}{val_title}{tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/>{val_unit}</c:valAx>"
         )
     } else {
         format!(
-            "<c:catAx><c:axId val=\"500000001\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"{cat_pos}\"/>{cat_grid}{cat_title}{tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>\
-<c:valAx><c:axId val=\"500000002\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"{val_pos}\"/>{val_grid}{val_title}{tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"between\"/></c:valAx>"
+            "<c:catAx><c:axId val=\"500000001\"/>{cat_scaling}<c:delete val=\"0\"/><c:axPos val=\"{cat_pos}\"/>{cat_grid}{cat_title}{tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>\
+<c:valAx><c:axId val=\"500000002\"/>{val_scaling}<c:delete val=\"0\"/><c:axPos val=\"{val_pos}\"/>{val_grid}{val_title}{tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"between\"/>{val_unit}</c:valAx>"
         )
     };
     let title = match &chart.title {
@@ -1104,6 +1239,58 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
 <c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
 <c:roundedCorners val=\"0\"/><c:chart>{title}<c:plotArea><c:layout/>{plots}{axes}</c:plotArea>{legend}<c:plotVisOnly val=\"1\"/><c:dispBlanksAs val=\"gap\"/></c:chart></c:chartSpace>"
+    )
+}
+
+/// `c:scaling` of an axis (bounds and log scale for value axes).
+fn scaling(s: &Scale, value: bool) -> String {
+    let orient = if s.reverse { "maxMin" } else { "minMax" };
+    if !value {
+        return format!("<c:scaling><c:orientation val=\"{orient}\"/></c:scaling>");
+    }
+    let num = |name: &str, v: Option<f64>| {
+        v.map(|v| format!("<c:{name} val=\"{v}\"/>"))
+            .unwrap_or_default()
+    };
+    format!(
+        "<c:scaling>{}<c:orientation val=\"{orient}\"/>{}{}</c:scaling>",
+        if s.log { "<c:logBase val=\"10\"/>" } else { "" },
+        num("max", s.max),
+        num("min", s.min)
+    )
+}
+
+/// A series' `c:dLbls` (positions the plot type doesn't have left out).
+fn dlbls(l: &Labels, kind: PlotKind) -> String {
+    let (tag, stacked, pie) = match kind {
+        PlotKind::Bar { grouping, .. } => ("barChart", grouping != "clustered", false),
+        PlotKind::Line { grouping } => ("lineChart", grouping != "standard", false),
+        PlotKind::Area { .. } => ("areaChart", false, false),
+        PlotKind::Pie { hole, .. } => (
+            if hole > 0 {
+                "doughnutChart"
+            } else {
+                "pieChart"
+            },
+            false,
+            true,
+        ),
+        PlotKind::Scatter => ("scatterChart", false, false),
+    };
+    let ok = crate::chart_options::LabelPos::for_group(tag, stacked);
+    let pos = l
+        .pos
+        .and_then(crate::chart_options::LabelPos::from_code)
+        .filter(|p| ok.contains(p))
+        .map(|p| format!("<c:dLblPos val=\"{}\"/>", p.code()))
+        .unwrap_or_default();
+    let f = |v: bool| u8::from(v);
+    format!(
+        "<c:dLbls>{pos}<c:showLegendKey val=\"0\"/><c:showVal val=\"{}\"/><c:showCatName val=\"{}\"/><c:showSerName val=\"{}\"/><c:showPercent val=\"{}\"/><c:showBubbleSize val=\"0\"/></c:dLbls>",
+        f(l.value),
+        f(l.category),
+        f(l.series),
+        f(l.percent && pie)
     )
 }
 
@@ -1498,6 +1685,80 @@ mod tests {
         let mut f = vec![11, 0];
         f.extend(rgce);
         assert_eq!(chart_ref(&f, &ctx).as_deref(), Some("Data!$B$2:$B$5"));
+    }
+
+    #[test]
+    fn chart_labels_and_scaling() {
+        let sheets = ["Data".to_owned()];
+        let xti = [Some((0, 0))];
+        let ctx = Context {
+            base: (0, 0),
+            sheets: &sheets,
+            xti: &xti,
+            names: &[],
+        };
+        let u16s = |v: &[u16]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        let mut ai = vec![1u8, 2, 0, 0, 0, 0, 11, 0];
+        ai.extend([0x3B, 0, 0, 1, 0, 4, 0, 0x01, 0xC0, 0x01, 0xC0]);
+        let mut text = vec![0u8; 28];
+        text.extend(u16s(&[1, 0])); // dlp 1: outside end
+        let mut range = Vec::new();
+        // Log axis from 10^1 to 10^3, reversed; major and minor automatic.
+        for v in [1.0f64, 3.0, 0.0, 0.0, 0.0] {
+            range.extend(v.to_le_bytes());
+        }
+        range.extend(u16s(&[0x04 | 0x08 | 0x10 | 0x20 | 0x40]));
+        let mut cf = vec![0u8; 16];
+        cf.extend(u16s(&[0, 0]));
+        let recs: Vec<(u16, Vec<u8>)> = vec![
+            (0x1002, vec![0; 16]),
+            (BEGIN, vec![]),
+            (SERIES, vec![0; 12]),
+            (BEGIN, vec![]),
+            (0x1051, ai),
+            (DATAFORMAT, u16s(&[0xFFFF, 0, 0, 0])),
+            (BEGIN, vec![]),
+            (0x100C, u16s(&[0x01 | 0x10])),
+            (END, vec![]),
+            (END, vec![]),
+            (TEXT, text),
+            (BEGIN, vec![]),
+            (0x1027, u16s(&[4, 0, 0xFFFF])),
+            (END, vec![]),
+            (AXIS, u16s(&[1])),
+            (BEGIN, vec![]),
+            (0x101F, range),
+            (END, vec![]),
+            (AXIS, u16s(&[0])),
+            (BEGIN, vec![]),
+            (0x1020, u16s(&[1, 1, 1, 0x05])),
+            (END, vec![]),
+            (CHARTFORMAT, cf),
+            (BEGIN, vec![]),
+            (0x1017, u16s(&[0, 150, 0])),
+            (END, vec![]),
+            (END, vec![]),
+        ];
+        let chart = parse_chart(&recs, &ctx).unwrap();
+        let l = chart.plots[0].series[0].labels.unwrap();
+        assert!(l.value && l.category && !l.series && !l.percent);
+        assert_eq!(l.pos, Some("outEnd"));
+        assert_eq!(chart.scales[1].min, Some(10.0));
+        assert_eq!(chart.scales[1].max, Some(1000.0));
+        assert!(chart.scales[1].log && chart.scales[1].reverse);
+        assert!(chart.scales[0].reverse);
+        let xml = chart_xml(&chart, &|_| None);
+        for want in [
+            "<c:dLbls><c:dLblPos val=\"outEnd\"/><c:showLegendKey val=\"0\"/><c:showVal val=\"1\"/><c:showCatName val=\"1\"/>",
+            "<c:scaling><c:logBase val=\"10\"/><c:orientation val=\"maxMin\"/><c:max val=\"1000\"/><c:min val=\"10\"/></c:scaling>",
+            "<c:catAx><c:axId val=\"500000001\"/><c:scaling><c:orientation val=\"maxMin\"/></c:scaling>",
+        ] {
+            assert!(xml.contains(want), "{want} in {xml}");
+        }
+        // The panel reads them back.
+        let style = crate::chart_style::read(&xml).unwrap();
+        assert!(style.labels[0].value);
+        assert_eq!(style.axes[1].0.log_base, Some(10.0));
     }
 
     #[test]
