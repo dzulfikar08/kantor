@@ -247,7 +247,8 @@ fn run_of(text: String, p: &RunProps) -> NoteRun {
         bold: p.bold == Some(true),
         italic: p.italic == Some(true),
         underline: p.underline == Some(true),
-        size: p.size,
+        // 9 pt is what an unset size is written as.
+        size: p.size.filter(|&s| s != 900),
         color: p
             .color
             .map(|Rgb([r, g, b])| (r as u32) << 16 | (g as u32) << 8 | b as u32),
