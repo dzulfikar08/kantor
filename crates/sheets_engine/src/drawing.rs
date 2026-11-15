@@ -319,6 +319,9 @@ pub(crate) struct Drawings {
     /// their parts through save; renamed, moved, hidden or deleted ones
     /// follow [`crate::edits::Edits::chart_sheets`]).
     chart_sheets: Vec<ChartSheet>,
+    /// How many of `chart_sheets` the file had (the others were made in
+    /// Kantor this session: Move Chart, a copied chart sheet).
+    opened_chart_sheets: usize,
 }
 
 /// A chart sheet as opened.
@@ -337,6 +340,23 @@ struct ChartSheet {
     bundle: Arc<Vec<crate::preserve::BundlePart>>,
     objects: Vec<Object>,
     print: crate::SheetPrint,
+    /// Its tab colour as opened (see [`ChartSheetNow::tab`]).
+    tab: Option<String>,
+}
+
+/// The attributes of a chart sheet part's `<sheetPr><tabColor>`.
+pub(crate) fn chart_sheet_tab(xml: &str) -> Option<String> {
+    let doc = Document::parse(xml).ok()?;
+    let t = doc
+        .descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == "sheetPr")?
+        .children()
+        .find(|n| n.is_element() && n.tag_name().name() == "tabColor")?;
+    let attrs: Vec<String> = t
+        .attributes()
+        .map(|a| format!("{}=\"{}\"", a.name(), esc(a.value())))
+        .collect();
+    (!attrs.is_empty()).then(|| attrs.join(" "))
 }
 
 /// See [`Drawings::chart_sheet_parts`].
@@ -361,6 +381,8 @@ pub(crate) struct ChartSheetNow {
     /// `sheetId`s of worksheets it goes after, nearest first: its tab
     /// follows the first of them still there (none: the first tabs).
     pub after: Vec<u32>,
+    /// Its tab colour: `<tabColor>`'s attributes (`rgb="FF4472C4"`).
+    pub tab: Option<String>,
 }
 
 /// A sheet tab: a worksheet (its index) or a chart sheet (its index among
@@ -643,7 +665,7 @@ impl Drawings {
                 sheets.insert(d.sheet_id, objects);
             }
         }
-        let chart_sheets = src
+        let chart_sheets: Vec<ChartSheet> = src
             .chart_sheets
             .into_iter()
             .map(|c| ChartSheet {
@@ -658,9 +680,11 @@ impl Drawings {
                     .map(|d| read_objects(&d.xml, &d.targets, d.parts))
                     .unwrap_or_default(),
                 print: crate::print::chart_sheet_print(c.xml.as_deref().unwrap_or_default()),
+                tab: c.xml.as_deref().and_then(chart_sheet_tab),
             })
             .collect();
         Drawings {
+            opened_chart_sheets: chart_sheets.len(),
             sheets,
             theme: src.theme.map(Into::into),
             names: src
@@ -675,6 +699,33 @@ impl Drawings {
 
     pub(crate) fn chart_sheet_count(&self) -> usize {
         self.chart_sheets.len()
+    }
+
+    /// Add a chart sheet made in Kantor (it is in no history state until
+    /// one lists it): its parts, a drawing with chart `chart_xml`. Returns
+    /// its index `k`.
+    pub(crate) fn add_chart_sheet(&mut self, new: crate::move_chart::NewChartSheet) -> usize {
+        let k = self.chart_sheets.len();
+        let mut targets = HashMap::new();
+        targets.insert(
+            "rId1".to_owned(),
+            ("chart".to_owned(), new.chart_part.clone()),
+        );
+        let mut parts = HashMap::new();
+        parts.insert(new.chart_part.clone(), new.chart_xml.clone().into_bytes());
+        let objects = read_objects(&new.drawing_xml, &targets, parts);
+        self.chart_sheets.push(ChartSheet {
+            name: new.name,
+            state: None,
+            before: Vec::new(),
+            part: new.part,
+            rel_kind: crate::move_chart::CHARTSHEET_REL.to_owned(),
+            print: crate::print::chart_sheet_print(&new.sheet_xml),
+            tab: chart_sheet_tab(&new.sheet_xml),
+            bundle: Arc::new(new.bundle),
+            objects,
+        });
+        k
     }
 
     /// Chart sheet `k`'s parts as opened, for a save.
@@ -863,12 +914,14 @@ impl Workbook {
         self.drawings
             .chart_sheets
             .iter()
+            .take(self.drawings.opened_chart_sheets)
             .enumerate()
             .map(|(k, c)| ChartSheetNow {
                 k,
                 name: c.name.clone(),
                 state: c.state.clone(),
                 after: c.before.clone(),
+                tab: c.tab.clone(),
             })
             .collect()
     }

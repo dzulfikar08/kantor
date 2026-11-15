@@ -507,6 +507,17 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
             pivots: PivotsSaved { added, tables },
         }
     };
+    // Chart sheets made in Kantor in a workbook with no original: merged
+    // into IronCalc's own package (they are put back from their parts).
+    let own: Vec<u8>;
+    let original = match original {
+        Some(o) => Some(o),
+        None if ctx.chart_sheets.is_some_and(|p| !p.is_empty()) => {
+            own = ironcalc.clone();
+            Some(&own[..])
+        }
+        None => None,
+    };
     let Some(original) = original else {
         drop(new);
         let (bytes, added) = baseline(&mut notes);

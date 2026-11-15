@@ -511,7 +511,7 @@ impl SheetsView {
         let d = self.tab_dialog.as_ref()?;
         Some(match d {
             TabDialog::Rename { input, error, .. } => self.render_rename(input, error, cx),
-            TabDialog::Delete { name, .. } => self.render_delete(name, cx),
+            TabDialog::Delete { tab, name } => self.render_delete(*tab, name, cx),
             TabDialog::MoveCopy { tab, before, copy } => {
                 self.render_move_copy(*tab, *before, *copy, cx)
             }
@@ -565,13 +565,21 @@ impl SheetsView {
             .into_any_element()
     }
 
-    fn render_delete(&self, name: &str, cx: &mut Context<Self>) -> AnyElement {
+    fn render_delete(&self, tab: Tab, name: &str, cx: &mut Context<Self>) -> AnyElement {
         let view = cx.entity().downgrade();
-        let card = dialog::card("tab-delete", t("Delete sheet"), px(380.), cx)
-            .child(div().child(tf(
+        // Formulas can't refer to a chart sheet: no #REF! to warn about.
+        let text = match tab {
+            Tab::Sheet(_) => tf(
                 "“{}” will be deleted with everything on it. Formulas that use it will show #REF!.",
                 &[&name],
-            )))
+            ),
+            Tab::Chart(_) => tf(
+                "“{}” will be deleted with everything on it. Formulas that use it will show #REF!.",
+                &[&name],
+            ),
+        };
+        let card = dialog::card("tab-delete", t("Delete sheet"), px(380.), cx)
+            .child(div().child(text))
             .child(note(t("Undo brings it back."), false, cx))
             .child(dialog::buttons(
                 "tab-delete-buttons",

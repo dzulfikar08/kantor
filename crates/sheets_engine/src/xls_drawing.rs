@@ -1323,9 +1323,9 @@ const NS_MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main
 const NS_R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const NS_PKG: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-const XDR: &str = "xmlns:xdr=\"http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"";
+pub(crate) const XDR: &str = "xmlns:xdr=\"http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"";
 
-fn rels(list: &[(String, &str, String)]) -> String {
+pub(crate) fn rels(list: &[(String, &str, String)]) -> String {
     let mut x = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"{NS_PKG}\">"
     );
@@ -1475,7 +1475,7 @@ impl Parts {
     }
 }
 
-fn frame(id: usize, name: &str, descr: &str, hidden: &str, rid: &str) -> String {
+pub(crate) fn frame(id: usize, name: &str, descr: &str, hidden: &str, rid: &str) -> String {
     format!(
         "<xdr:graphicFrame macro=\"\"><xdr:nvGraphicFramePr><xdr:cNvPr id=\"{id}\" name=\"{}\"{descr}{hidden}/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/></xdr:xfrm><a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"><c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:r=\"{NS_R}\" r:id=\"{rid}\"/></a:graphicData></a:graphic></xdr:graphicFrame>",
         esc(name)
@@ -1483,7 +1483,7 @@ fn frame(id: usize, name: &str, descr: &str, hidden: &str, rid: &str) -> String 
 }
 
 /// The size of a chart sheet's chart (Excel's for a letter page), EMU.
-const CHART_SHEET_SIZE: (i64, i64) = (8_670_925, 6_292_850);
+pub(crate) const CHART_SHEET_SIZE: (i64, i64) = (8_670_925, 6_292_850);
 
 /// The `.xlsx` package of `d`: a workbook listing every worksheet (by the
 /// `sheetId` `sheet_id` gives its name; sheets it doesn't know are left

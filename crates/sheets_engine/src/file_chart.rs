@@ -97,7 +97,13 @@ impl Workbook {
             return None;
         }
         let (xml, _) = self.file_chart_now(key)?;
-        let style = chart_style::read(&xml).ok()?;
+        self.xml_chart_info(key, &xml)
+    }
+
+    /// What the Chart panel shows for chart `key` whose part is `xml` (its
+    /// references in the current rows and columns).
+    pub(crate) fn xml_chart_info(&self, key: DrawingKey, xml: &str) -> Option<ChartInfo> {
+        let style = chart_style::read(xml).ok()?;
         // The data: the block every reference lies in, on one sheet.
         let mut sheet: Option<String> = None;
         let mut area: Option<CellRange> = None;
@@ -209,13 +215,30 @@ impl Workbook {
         let info = self
             .file_chart_info(key)
             .ok_or_else(|| anyhow!("Kantor can't change this chart"))?;
-        let old = &info.spec;
-        if *old == spec {
+        if info.spec == spec {
             return Ok(());
         }
-        let (mut xml, _) = self
+        let (xml, _) = self
             .file_chart_now(key)
             .ok_or_else(|| anyhow!("Kantor can't change this chart"))?;
+        let xml = self.restyled_xml(key, xml, &info, &spec)?;
+        self.own_edit(|e, layout| {
+            e.file_charts.insert(key, (xml.into(), layout.clone()));
+        });
+        Ok(())
+    }
+
+    /// Chart part `xml` (shown in the panel as `info`) changed to `spec`.
+    pub(crate) fn restyled_xml(
+        &self,
+        key: DrawingKey,
+        xml: String,
+        info: &ChartInfo,
+        spec: &ChartSpec,
+    ) -> Result<String> {
+        let mut xml = xml;
+        let old = &info.spec;
+        let spec = spec.clone();
         let sheet = self.chart_home(key).ok_or_else(|| anyhow!("no sheet"))?;
         let data_changed = old.data != spec.data
             || old.by_rows != spec.by_rows
@@ -284,10 +307,7 @@ impl Workbook {
                 xml = chart_style::set_axis_options(&xml, horizontal, new)?;
             }
         }
-        self.own_edit(|e, layout| {
-            e.file_charts.insert(key, (xml.into(), layout.clone()));
-        });
-        Ok(())
+        Ok(xml)
     }
 
     /// File charts edited this session, for a save: their current parts.

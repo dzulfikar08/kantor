@@ -923,10 +923,16 @@ pub(super) const COMMANDS: &[Command] = &[
     Command {
         title: tk("Chart Panel"),
         detail: tk(
-            "Sheets · type, title, legend, axis titles, series colours and data of the selected chart",
+            "Sheets · type, title, legend, axis titles, series colours, data labels, axis options and data of the selected chart",
         ),
         keys: "",
         run: |ws, window, cx| ws.with_sheets_any(window, cx, |v, w, cx| v.chart_options_doc(w, cx)),
+    },
+    Command {
+        title: tk("Move Chart…"),
+        detail: tk("Sheets · put the selected chart on a new chart sheet or on another sheet"),
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets_any(window, cx, |v, w, cx| v.move_chart_doc(w, cx)),
     },
     Command {
         title: tk("Format as Table…"),

@@ -30,7 +30,11 @@ use sheets_engine::{ChartInfo, ChartSpec, ChartType, LegendPos, SeriesColor};
 use crate::SheetsView;
 use crate::dialog::{self, choices, note, row};
 
-actions!(sheets, [InsertChart, ChartOptions]);
+actions!(sheets, [InsertChart, ChartOptions, MoveChart]);
+
+pub(crate) fn bind_keys(cx: &mut App) {
+    let _ = cx;
+}
 
 const PANEL_WIDTH: Pixels = px(290.);
 
@@ -449,6 +453,7 @@ impl SheetsView {
                     sheets_engine::drawing::chart_sheet_of_key(key.sheet_id).is_some();
                 let dv = view.clone();
                 let av = view.clone();
+                let mv = view.clone();
                 v_flex()
                     .gap(SPACE_4)
                     .child(row(i18n::t("Type"), kind, cx))
@@ -504,6 +509,15 @@ impl SheetsView {
                                     .label(i18n::t("Apply"))
                                     .on_click(move |_, w, cx| {
                                         let _ = av.update(cx, |this, cx| this.apply_chart_inputs(w, cx));
+                                    }),
+                            )
+                            .child(
+                                Button::new("chart-move")
+                                    .small()
+                                    .outline()
+                                    .label(i18n::t("Move Chart…"))
+                                    .on_click(move |_, w, cx| {
+                                        let _ = mv.update(cx, |this, cx| this.move_chart_doc(w, cx));
                                     }),
                             )
                             .when(!on_chart_sheet, |d| d.child(
@@ -571,6 +585,7 @@ impl SheetsView {
             this.insert_chart_doc(ChartType::Column, w, cx)
         }))
         .on_action(cx.listener(|this, _: &ChartOptions, w, cx| this.chart_options_doc(w, cx)))
+        .on_action(cx.listener(|this, _: &MoveChart, w, cx| this.move_chart_doc(w, cx)))
     }
 }
 
