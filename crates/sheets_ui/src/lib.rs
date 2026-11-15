@@ -69,6 +69,7 @@ mod recovery;
 mod row_heights;
 mod row_layout;
 mod saving;
+mod shape_ui;
 mod sheet_tab_ui;
 mod spell_ui;
 // Upstream code, kept close to GPUI Kit's so it can be compared.
@@ -1212,6 +1213,8 @@ pub struct SheetsView {
     spell_dialog: Option<spell_ui::SpellDialog>,
     /// The note being written (see [`notes_ui`]).
     note_edit: Option<notes_ui::NoteEditor>,
+    /// The shape whose text is being written (see [`shape_ui`]).
+    shape_edit: Option<shape_ui::ShapeEditor>,
     /// A restored recovery copy's original: Save asks before overwriting it
     /// if it changed on disk (see [`recovery`]).
     disk_guard: Option<kantor_ui::disk_guard::DiskGuard>,
@@ -1302,6 +1305,7 @@ impl SheetsView {
             page_setup: None,
             spell_dialog: None,
             note_edit: None,
+            shape_edit: None,
             table_dialog: None,
             cf_dialog: None,
             dv_dialog: None,
@@ -2806,6 +2810,7 @@ impl Render for SheetsView {
             .children(self.render_dv_dialog(cx))
             .children(self.render_spell_dialog(cx))
             .children(self.render_note_editor(cx))
+            .children(self.render_shape_editor(cx))
             .children(self.render_tab_dialog(cx))
             .children(self.render_move_chart(cx))
             .into_any_element()

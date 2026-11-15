@@ -48,7 +48,7 @@ fn objects(wb: &Workbook, sheet: u32) -> (usize, usize, Vec<String>) {
                 xml.push(x.to_string());
             }
             DrawingKind::Picture { .. } => pictures += 1,
-            DrawingKind::Other(_) => {}
+            _ => {}
         }
     }
     (charts, pictures, xml)
@@ -243,4 +243,39 @@ fn chart_sheets_copy_and_take_tab_colours() {
             assert_eq!(p.get(n), Some(x), "{n} as it was");
         }
     }
+}
+
+/// Formulas in the copy naming the source sheet's tables name the copies'
+/// (Excel); references to other sheets' tables stay. One undo step.
+#[test]
+fn copied_formulas_follow_the_renamed_tables() {
+    let mut wb = Workbook::open(corpus("13_tables.xlsx")).unwrap();
+    let sales = sheet(&wb, "Sales");
+    wb.set_input(sales, 0, 6, "=MAX(Sales[Amount])").unwrap();
+    wb.set_input(sales, 1, 6, "=SUM(Regions[Rate])").unwrap();
+    let copy = wb.copy_sheet(sales, 1).unwrap();
+    assert_eq!(wb.input(copy, 0, 6), "=MAX(Sales2[Amount])");
+    assert_eq!(wb.input(copy, 1, 6), "=SUM(Regions[Rate])");
+    // The source keeps its own.
+    assert_eq!(wb.input(sales, 0, 6), "=MAX(Sales[Amount])");
+    assert_eq!(wb.display_value(copy, 0, 6), wb.display_value(sales, 0, 6));
+    // The totals row still adds up the copy's own table.
+    for c in 0..4 {
+        assert_eq!(wb.display_value(copy, 7, c), wb.display_value(sales, 7, c));
+    }
+    // Changing the copy's data moves only the copy's result.
+    wb.set_input(copy, 1, 1, "1000").unwrap();
+    assert_ne!(wb.display_value(copy, 0, 6), wb.display_value(sales, 0, 6));
+    wb.undo().unwrap();
+    let path = scratch("table_refs.xlsx");
+    wb.save_as(&path).unwrap();
+    let back = Workbook::open(&path).unwrap();
+    let c = sheet(&back, "Sales (2)");
+    assert_eq!(back.input(c, 0, 6), "=MAX(Sales2[Amount])");
+    // One undo step takes the whole copy away; redo brings it back renamed.
+    assert!(wb.undo().unwrap());
+    assert!(!wb.sheet_names().contains(&"Sales (2)".to_owned()));
+    assert!(wb.redo().unwrap());
+    let copy = sheet(&wb, "Sales (2)");
+    assert_eq!(wb.input(copy, 0, 6), "=MAX(Sales2[Amount])");
 }

@@ -767,6 +767,7 @@ Sort by {}	Urutkan menurut {}
 Count: {}	Hitungan: {}
 Average: {}   Count: {}   Sum: {}	Rata-rata: {}   Hitungan: {}   Jumlah: {}
 Spell check complete. You're good to go!	Pemeriksaan ejaan selesai. Semuanya sudah beres!
+Do you want to continue checking at the beginning of the sheet?	Apakah Anda ingin melanjutkan pemeriksaan dari awal lembar?
 Spelling: 1 change	Ejaan: 1 perubahan
 Spelling: {} changes	Ejaan: {} perubahan
 English (United States)	Inggris (Amerika Serikat)
@@ -878,3 +879,14 @@ Object in:	Objek di:
 Chart moved	Bagan dipindahkan
 Select a chart to move it.	Pilih bagan untuk memindahkannya.
 “{}” will be deleted with its chart.	“{}” akan dihapus beserta bagannya.
+# Shapes and text boxes
+Shapes	Bentuk
+Text Box	Kotak Teks
+Rectangle: Rounded Corners	Persegi Panjang: Sudut Membulat
+Oval	Oval
+Line Arrow	Panah Garis
+Arrow: Right	Panah: Kanan
+Speech Bubble: Rectangle	Balon Ucapan: Persegi Panjang
+Inserted	Disisipkan
+Text changed	Teks diubah
+Edit Text	Edit Teks

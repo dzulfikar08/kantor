@@ -216,6 +216,18 @@ pub(crate) struct NewChart {
     pub xml: Option<Arc<str>>,
     /// A picture copied with its sheet (not a chart).
     pub picture: Option<Arc<NewPicture>>,
+    /// A shape or text box (inserted, or copied with its sheet), not a
+    /// chart.
+    pub shape: Option<Arc<NewShape>>,
+}
+
+/// A shape or text box made in Kantor (Insert ▸ Shapes, a copied sheet's).
+#[derive(Debug)]
+pub(crate) struct NewShape {
+    /// Its element (`xdr:sp`...), declaring its namespaces; `cNvPr id` is
+    /// set when saved.
+    pub xml: Arc<str>,
+    pub name: String,
 }
 
 /// A picture on a worksheet copied with Move or Copy.
@@ -416,6 +428,7 @@ impl Workbook {
                 layout: layout.clone(),
                 xml: None,
                 picture: None,
+                shape: None,
             });
         });
         Ok(DrawingKey {
@@ -441,7 +454,7 @@ impl Workbook {
             return self.file_chart_info(key);
         }
         if let Some(c) = self.new_chart(key) {
-            if c.picture.is_some() {
+            if c.picture.is_some() || c.shape.is_some() {
                 return None;
             }
             if c.xml.is_some() {
@@ -490,7 +503,10 @@ impl Workbook {
         if key.index < NEW_CHART_BASE {
             return self.set_file_chart(key, spec);
         }
-        if self.new_chart(key).is_some_and(|c| c.picture.is_some()) {
+        if self
+            .new_chart(key)
+            .is_some_and(|c| c.picture.is_some() || c.shape.is_some())
+        {
             bail!("this object isn't a chart");
         }
         if let Some(c) = self.new_chart(key)
@@ -660,6 +676,23 @@ impl Workbook {
             .filter(|c| c.sheet_id == sheet_id)
             .map(|c| {
                 let anchor = self.chart_now(c).1;
+                if let Some(sh) = &c.shape {
+                    return Drawing {
+                        key: DrawingKey {
+                            sheet_id,
+                            index: NEW_CHART_BASE + c.id as usize,
+                        },
+                        name: sh.name.clone(),
+                        descr: String::new(),
+                        anchor,
+                        kind: Arc::new(DrawingKind::Shape {
+                            xml: sh.xml.clone(),
+                        }),
+                        editable: true,
+                        hidden: false,
+                        prints: true,
+                    };
+                }
                 if let Some(pic) = &c.picture {
                     return Drawing {
                         key: DrawingKey {
@@ -918,16 +951,18 @@ impl Workbook {
                 id: c.id,
                 saved: self.saved_charts.get(&c.id).cloned(),
                 sheet_id: c.sheet_id,
-                name: match &c.picture {
-                    Some(p) if !p.name.is_empty() => p.name.clone(),
-                    Some(_) => format!("Picture {}", c.id),
-                    None => format!("Chart {}", c.id),
+                name: match (&c.picture, &c.shape) {
+                    (_, Some(s)) => s.name.clone(),
+                    (Some(p), _) if !p.name.is_empty() => p.name.clone(),
+                    (Some(_), _) => format!("Picture {}", c.id),
+                    _ => format!("Chart {}", c.id),
                 },
                 anchor,
-                xml: match c.picture {
-                    Some(_) => String::new(),
-                    None => self.new_chart_part(c),
+                xml: match (&c.picture, &c.shape) {
+                    (None, None) => self.new_chart_part(c),
+                    _ => String::new(),
                 },
+                shape: c.shape.as_ref().map(|s| s.xml.to_string()),
                 picture: c.picture.as_ref().map(|p| crate::preserve::PictureSave {
                     data: p.data.clone(),
                     ext: p.ext.clone(),

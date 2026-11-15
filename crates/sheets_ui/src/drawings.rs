@@ -16,10 +16,11 @@
 //! Interaction: clicking an object selects it (accent outline and eight
 //! handles), dragging moves it, a handle resizes it, Delete or Backspace
 //! removes it and Escape lets go. Each move, resize or delete is one undo
-//! step, written back to the anchor on save. Objects Kantor can't draw
-//! (shapes, text boxes, unusual chart types) show as a placeholder box and
-//! can be moved too. While a cell is being edited, objects don't take
-//! clicks (so pointing at cells under them works).
+//! step, written back to the anchor on save. Double-clicking a shape or
+//! text box edits its text (`shape_ui`). Objects Kantor can't draw (unusual
+//! chart types, OLE objects) show as a placeholder box and can be moved
+//! too. While a cell is being edited, objects don't take clicks (so
+//! pointing at cells under them works).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -264,6 +265,8 @@ pub(crate) struct DrawLayer {
     list: Option<(ListKey, Rc<Vec<Drawing>>)>,
     pub(crate) selected: Option<DrawingKey>,
     drag: Option<Drag>,
+    /// Where each object was on screen last frame (for the text editor).
+    on_screen: Vec<(DrawingKey, Bounds<Pixels>)>,
 }
 
 impl DrawLayer {
@@ -274,6 +277,12 @@ impl DrawLayer {
         self.list = None;
         self.selected = None;
         self.drag = None;
+        self.on_screen.clear();
+    }
+
+    /// Where object `key` was on screen last frame (its first pane).
+    pub(crate) fn screen_rect(&self, key: DrawingKey) -> Option<Bounds<Pixels>> {
+        self.on_screen.iter().find(|(k, _)| *k == key).map(|r| r.1)
     }
 
     fn drawings(&mut self, book: &Workbook, sheet: u32) -> Rc<Vec<Drawing>> {
@@ -590,6 +599,10 @@ fn prepaint(
     let selected = layer.borrow().selected;
     let mut placed = Vec::new();
     for d in drawings.iter() {
+        // Hidden objects (`cNvPr hidden`) aren't shown, as in Excel.
+        if d.hidden {
+            continue;
+        }
         let rect = match drag {
             Some(g) if g.key == d.key => g.rect,
             _ => d.anchor.rect(&geom),
@@ -703,6 +716,11 @@ fn paint(
         (l.painter.clone(), l.selected)
     };
     let Some(painter) = painter else { return };
+    layer.borrow_mut().on_screen = frame
+        .placed
+        .iter()
+        .filter_map(|p| Some((p.drawing.key, p.shown.last()?.0)))
+        .collect();
     let other = t.fg_muted;
     for (p, painted) in frame.placed.iter().zip(&book_items) {
         let Some(painted) = painted else { continue };
@@ -782,6 +800,13 @@ fn paint(
                 return;
             };
             let (key, rect) = keys[i];
+            // Double-click a shape: edit its text.
+            if e.click_count >= 2 && grip == Grip::Move {
+                layer.borrow_mut().drag = None;
+                cx.stop_propagation();
+                let _ = view.update(cx, |this, cx| this.open_shape_editor(key, window, cx));
+                return;
+            }
             {
                 let mut l = layer.borrow_mut();
                 l.selected = Some(key);

@@ -456,6 +456,14 @@ pub enum OverlayKind {
         chart: Arc<slides_scene::chart::Chart>,
         defaults: Arc<slides_scene::chart::Defaults>,
     },
+    /// A shape, text box, connector or group (its element's XML), drawn
+    /// with the workbook's theme; `hash` identifies it.
+    Shape {
+        key: sheets_engine::drawing::DrawingKey,
+        hash: u64,
+        xml: Arc<str>,
+        theme: Option<Arc<str>>,
+    },
 }
 
 /// One page's content, ready to encode (plain data, `Send`). Content

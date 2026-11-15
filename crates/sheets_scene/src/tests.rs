@@ -226,3 +226,123 @@ fn data_labels_and_axis_options_are_drawn() {
         "value labels with one decimal: {s:?}"
     );
 }
+
+/// `23_shapes.xlsx`'s shapes, by name, built into 200 × 100 px.
+fn shape_scenes() -> Vec<(String, Arc<Vec<Item>>)> {
+    let book = Workbook::open(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/xlsx/23_shapes.xlsx"),
+    )
+    .unwrap();
+    let mut engine = Engine::new();
+    let mut scenes = DrawingScenes::default();
+    book.drawings(0)
+        .into_iter()
+        .filter(|d| matches!(*d.kind, DrawingKind::Shape { .. }))
+        .map(|d| {
+            let items = scenes.items(&mut engine, &book, &d, 200.0, 100.0);
+            (d.name.clone(), items)
+        })
+        .collect()
+}
+
+fn count(items: &[Item], f: impl Fn(&Prim) -> bool) -> usize {
+    items.iter().filter(|i| f(&i.prim)).count()
+}
+
+#[test]
+fn shapes_draw_fills_lines_arrowheads_and_text() {
+    let all = shape_scenes();
+    let get = |n: &str| all.iter().find(|(m, _)| m == n).unwrap().1.clone();
+    for (name, items) in &all {
+        assert!(
+            !items
+                .iter()
+                .any(|i| matches!(i.prim, Prim::Unsupported { .. })),
+            "{name} is a placeholder"
+        );
+    }
+    // Solid blue fill, dark blue 2 pt outline (2.67 px), white text.
+    let rev = get("Revenue box");
+    assert!(rev.iter().any(|i| matches!(
+        &i.prim,
+        Prim::Fill { paint: slides_scene::Paint::Solid(c), .. } if c.0[..3] == [0x44, 0x72, 0xC4]
+    )));
+    assert!(rev.iter().any(|i| matches!(
+        &i.prim,
+        Prim::Stroke { stroke, .. } if (stroke.width - 25400.0 / 9525.0).abs() < 0.01
+    )));
+    let Some(Prim::Text(t)) = rev
+        .iter()
+        .map(|i| &i.prim)
+        .find(|p| matches!(p, Prim::Text(_)))
+    else {
+        panic!("no text")
+    };
+    let run = &t.runs[0].run;
+    assert_eq!(run.color.0[..3], [255, 255, 255]);
+    // Centred: the text starts well right of the left edge.
+    assert!(t.origin.x + run.origin_x > 50.0, "{:?}", t.origin);
+    // A gradient, no outline.
+    let oval = get("Gradient oval");
+    assert!(oval.iter().any(|i| matches!(
+        &i.prim,
+        Prim::Fill {
+            paint: slides_scene::Paint::Linear { .. },
+            ..
+        }
+    )));
+    assert_eq!(count(&oval, |p| matches!(p, Prim::Stroke { .. })), 0);
+    // No fill, a dashed outline, two paragraphs.
+    let frame = get("Dashed frame");
+    assert_eq!(count(&frame, |p| matches!(p, Prim::Fill { .. })), 0);
+    assert!(frame.iter().any(|i| matches!(
+        &i.prim,
+        Prim::Stroke { stroke, .. } if stroke.dash.is_some()
+    )));
+    // A line with an oval head and a triangle tail: two filled heads.
+    let line = get("Arrow line");
+    assert_eq!(count(&line, |p| matches!(p, Prim::Stroke { .. })), 1);
+    assert_eq!(count(&line, |p| matches!(p, Prim::Fill { .. })), 2);
+    // Filled by the theme's accent 2 (orange in Office's theme).
+    let arrow = get("Turned arrow");
+    assert!(arrow.iter().any(|i| matches!(&i.prim, Prim::Fill { .. })));
+    let turned = arrow
+        .iter()
+        .find(|i| matches!(i.prim, Prim::Fill { .. }))
+        .unwrap();
+    assert!(!turned.transform.is_upright());
+    // The group's two shapes.
+    let pair = get("Pair");
+    assert_eq!(count(&pair, |p| matches!(p, Prim::Fill { .. })), 2);
+    // Text boxes and the form button show their text.
+    for n in ["Notes box", "Button 1", "Note callout"] {
+        assert!(count(&get(n), |p| matches!(p, Prim::Text(_))) > 0, "{n}");
+    }
+}
+
+#[test]
+fn shapes_are_built_once_per_size_and_text() {
+    let book = Workbook::open(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/xlsx/23_shapes.xlsx"),
+    )
+    .unwrap();
+    let mut book = book;
+    let mut engine = Engine::new();
+    let mut scenes = DrawingScenes::default();
+    let d = book
+        .drawings(0)
+        .into_iter()
+        .find(|d| d.name == "Revenue box")
+        .unwrap();
+    let a = scenes.items(&mut engine, &book, &d, 200.0, 100.0);
+    let b = scenes.items(&mut engine, &book, &d, 200.0, 100.0);
+    assert!(Arc::ptr_eq(&a, &b));
+    book.set_shape_text(d.key, "Changed").unwrap();
+    let d = book
+        .drawings(0)
+        .into_iter()
+        .find(|d| d.name == "Revenue box")
+        .unwrap();
+    let c = scenes.items(&mut engine, &book, &d, 200.0, 100.0);
+    assert!(!Arc::ptr_eq(&a, &c));
+}

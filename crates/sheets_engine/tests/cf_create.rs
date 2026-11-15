@@ -362,3 +362,47 @@ fn untouched_sheets_and_dxfs_stay_byte_identical() {
     let doc = Document::parse(&b["xl/worksheets/sheet2.xml"]).unwrap();
     assert!(el(doc.root_element(), "conditionalFormatting").is_some());
 }
+
+/// Manage Rules showing the selection's rules: Move Up/Down passes the
+/// rules that aren't shown (Excel), which keep their own order.
+#[test]
+fn moving_a_shown_rule_skips_rules_not_shown() {
+    let mut wb = data_book();
+    let gt = |v: &str| {
+        rule(CfSpec::CellValue {
+            op: CfCompare::GreaterThan,
+            value: v.into(),
+            value2: String::new(),
+        })
+    };
+    // Added last = first in the list: D (A1:A10), C (C1:C3), B (C1:C3), A (A1:A10).
+    wb.add_cf_rule(0, "A1:A10", &gt("1")).unwrap();
+    wb.add_cf_rule(0, "C1:C3", &gt("2")).unwrap();
+    wb.add_cf_rule(0, "C1:C3", &gt("3")).unwrap();
+    wb.add_cf_rule(0, "A1:A10", &gt("4")).unwrap();
+    let order = |wb: &Workbook| -> Vec<String> {
+        wb.cf_rules(0, None)
+            .iter()
+            .map(|r| r.summary.rsplit(' ').next().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(order(&wb), ["4", "3", "2", "1"]);
+    let sel = Some(sheets_engine::CellRange::from_corners((0, 0), (9, 0)));
+    let shown = wb.cf_rules(0, sel);
+    assert_eq!(shown.len(), 2);
+    // "1" up: past the hidden "2" and "3" and above the shown "4".
+    let one = shown[1].index;
+    wb.move_cf_rule_within(0, one, true, sel).unwrap();
+    assert_eq!(order(&wb), ["1", "4", "3", "2"]);
+    // One undo step puts it back.
+    wb.undo().unwrap();
+    assert_eq!(order(&wb), ["4", "3", "2", "1"]);
+    // "4" down: below "1", hidden ones keep their order above it.
+    let four = wb.cf_rules(0, sel)[0].index;
+    wb.move_cf_rule_within(0, four, false, sel).unwrap();
+    assert_eq!(order(&wb), ["3", "2", "1", "4"]);
+    // Already last of the shown rules: nothing.
+    let four = wb.cf_rules(0, sel)[1].index;
+    wb.move_cf_rule_within(0, four, false, sel).unwrap();
+    assert_eq!(order(&wb), ["3", "2", "1", "4"]);
+}

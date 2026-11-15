@@ -71,6 +71,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   continuation separator (with the document's "continued" notice, if it has one), and endnotes
   go at the end of each section when the document says so (Word's "End of section").
 
+- Sheets: shapes, text boxes, lines and arrows, groups and form-control buttons on a sheet are
+  drawn as in Excel instead of grey boxes: their geometry (all of Excel's preset shapes and
+  freeforms), solid and gradient fills, outlines with dashes and arrowheads, turns and flips, and
+  their text with its alignment, margins and fonts. They print with the sheet and in the PDF.
+  Double-click a shape or text box to edit its text (one undo step; the rest of the file is saved
+  as it was). The toolbar's Shapes menu inserts a text box, rectangle, rounded rectangle, oval,
+  line, arrow, right arrow or speech bubble at the active cell, and Move or Copy brings a sheet's
+  shapes and text boxes with it.
+
 ### Changed
 - Docs: files with a table of contents or cross-references are saved in place like any other
   file (they used to need a new name). Their fields are written back as they were.
@@ -81,6 +90,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   Open XML SDK) was saved damaged, and Kantor couldn't open the saved file again.
 - Docs: a page break at the very end of a paragraph no longer leaves an empty page after it.
 - Sheets: deleting a chart sheet no longer warns that formulas will show #REF! (no formula can refer to a chart sheet).
+- Sheets: a spelling check started partway down the sheet asks "Do you want to continue checking
+  at the beginning of the sheet?" when it reaches the end, as Excel does, instead of going on from
+  the top by itself.
+- Sheets: in Manage Rules showing the rules of the current selection, Move Up and Move Down move a
+  rule past the next rule shown (as Excel does) instead of swapping it with a rule the list hides.
+- Sheets: in a sheet copied with Move or Copy, formulas naming the original sheet's tables now
+  name the copy's tables (`Sales` → `Sales2`), as in Excel.
 
 ## [0.7.0] - 2026-11-15
 

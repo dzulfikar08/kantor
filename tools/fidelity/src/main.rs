@@ -200,6 +200,42 @@ fn main() -> Result<()> {
         wb.save_as(o.join("sheet_copies_13_tables.xlsx"))?;
         Ok(Some(tables.clone()))
     });
+    // Shapes: text edited (saved, undone, saved again), every preset
+    // inserted on a sheet with a drawing and on one without, a copied
+    // sheet's shapes.
+    let shapes = corpus.join("xlsx/23_shapes.xlsx");
+    run.scenario("shapes_edited.xlsx", |o| {
+        let mut wb = Workbook::open(&shapes)?;
+        let key = |wb: &Workbook, name: &str| {
+            wb.drawings(0)
+                .into_iter()
+                .find(|d| d.name == name)
+                .map(|d| d.key)
+        };
+        if let Some(k) = key(&wb, "Revenue box") {
+            wb.set_shape_text(k, "Sales & costs\nUp <5%>")?;
+        }
+        if let Some(k) = key(&wb, "Notes box") {
+            wb.set_shape_text(k, "")?;
+        }
+        wb.save_as(o.join("shapes_edited.xlsx"))?;
+        if let Some(k) = key(&wb, "Dashed frame") {
+            wb.set_shape_text(k, "One\n\nThree")?;
+        }
+        for (i, p) in std::iter::once(sheets_engine::ShapePreset::TextBox)
+            .chain(sheets_engine::ShapePreset::SHAPES)
+            .enumerate()
+        {
+            let k = wb.insert_shape(1, p, 2 + 6 * i as u32, 1)?;
+            if wb.shape_text(k).is_some() {
+                wb.set_shape_text(k, "Inserted")?;
+            }
+            wb.insert_shape(0, p, 30 + 6 * i as u32, 2)?;
+        }
+        wb.copy_sheet(0, 1)?;
+        wb.save_as(o.join("shapes_edited.xlsx"))?;
+        Ok(Some(shapes.clone()))
+    });
     run.scenario("chart_sheet_copies.xlsx", |o| {
         let mut wb = Workbook::open(&chart_sheets)?;
         if let Some(sheets_engine::Tab::Chart(k)) = wb.tabs().first().copied() {

@@ -207,6 +207,125 @@ fn apply_para_style(
     });
 }
 
+/// A run's formatting from its level style and own properties; `minor`:
+/// the theme's body font.
+pub(crate) fn resolve_with(
+    minor: Option<&str>,
+    level: &LevelStyle,
+    props: &RunProps,
+    scale: f32,
+) -> RenderRun {
+    let mut s = level.clone();
+    let explicit = LevelStyle {
+        align: None,
+        size: props.size,
+        bold: props.bold,
+        italic: props.italic,
+        underline: props.underline.or(props.shown_underline.then_some(true)),
+        color: props.color.or(props.shown_color),
+        font: props.shown_font.clone(),
+        para: ParaStyle::default(),
+    };
+    s.overlay(&explicit);
+    RenderRun {
+        range: 0..0,
+        size_pt: s.size.unwrap_or(1800) as f32 / 100.0 * scale,
+        bold: s.bold.unwrap_or(false),
+        italic: s.italic.unwrap_or(false),
+        underline: s.underline.unwrap_or(false),
+        color: s.color.unwrap_or(Rgb([0, 0, 0])),
+        font: s
+            .font
+            .or_else(|| minor.map(str::to_owned))
+            .unwrap_or_else(|| "Calibri".into()),
+    }
+}
+
+/// The paragraphs of a text body with list style `ls` (`minor`: the
+/// theme's body font).
+pub(crate) fn render_paras_with(
+    minor: Option<&str>,
+    body: &TextBody,
+    ls: &ListStyle,
+    scale: f32,
+    line_reduction: Option<u32>,
+    prompts: bool,
+) -> Vec<RenderPara> {
+    let mut numbers = Numbering::default();
+    body.paras
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let level = &ls.0[p.props.level.min(8) as usize];
+            let mut st = level.para.clone();
+            st.overlay(&p.props.style);
+            let runs: Vec<RenderRun> = p
+                .run_ranges()
+                .filter(|(r, _)| !r.is_empty())
+                .map(|(range, run)| RenderRun {
+                    range,
+                    ..resolve_with(minor, level, &run.props, scale)
+                })
+                .collect();
+            // The bullet takes the first character's formatting.
+            let first = p.runs.iter().find(|r| r.len > 0).unwrap_or(&p.runs[0]);
+            let has_text = !p.text.is_empty();
+            let shown = numbers.next(p.props.level, st.bullet.as_ref(), has_text);
+            let mut para = RenderPara {
+                text: p.text.clone(),
+                align: p.props.align.or(level.align).unwrap_or_default(),
+                level: p.props.level,
+                base: resolve_with(minor, level, &first.props, scale),
+                runs,
+                marker: None,
+                indent_pt: 0.0,
+                first_line_pt: 0.0,
+                space_before_pt: 0.0,
+                space_after_pt: 0.0,
+                line: None,
+            };
+            // Empty paragraphs show their bullet only while editing.
+            let shown = shown.filter(|_| has_text || prompts);
+            apply_para_style(&mut para, &st, shown, i == 0, scale, line_reduction);
+            para
+        })
+        .collect()
+}
+
+/// The text of a shape outside any presentation (a worksheet's shape or
+/// text box) drawn in `xfrm`: its own list style and body properties over
+/// `base`, `minor` the theme's body font; the geometry's text rectangle
+/// applies.
+pub fn free_shape_text(
+    shape: &Shape,
+    base: &ListStyle,
+    minor: Option<&str>,
+    xfrm: &Xfrm,
+) -> Option<RenderText> {
+    let body = shape.text.as_ref().filter(|t| !t.is_empty())?;
+    let mut ls = base.clone();
+    if let Some(c) = shape.look.text_color {
+        for lvl in &mut ls.0 {
+            lvl.color = Some(c);
+        }
+    }
+    ls.overlay(&body.list);
+    let bp = &body.body;
+    let scale = bp.font_scale.map_or(1.0, |s| s as f32 / 100_000.0);
+    let paras = render_paras_with(minor, body, &ls, scale, bp.line_reduction, false);
+    let d = [91_440, 45_720, 91_440, 45_720];
+    let mut t = RenderText {
+        paras,
+        insets: std::array::from_fn(|i| bp.insets[i].unwrap_or(d[i])),
+        anchor: bp.anchor.unwrap_or_default(),
+        wrap: bp.no_wrap != Some(true),
+        prompt: false,
+        vert: bp.vert.unwrap_or_default(),
+    };
+    apply_text_rect(&mut t, shape, xfrm);
+    Some(t)
+}
+
 /// Which part a drawn shape belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layer {
@@ -483,31 +602,8 @@ impl Presentation {
     }
 
     fn resolve(&self, slide: usize, level: &LevelStyle, props: &RunProps, scale: f32) -> RenderRun {
-        let master = self.master_of(slide);
-        let mut s = level.clone();
-        let explicit = LevelStyle {
-            align: None,
-            size: props.size,
-            bold: props.bold,
-            italic: props.italic,
-            underline: props.underline.or(props.shown_underline.then_some(true)),
-            color: props.color.or(props.shown_color),
-            font: props.shown_font.clone(),
-            para: ParaStyle::default(),
-        };
-        s.overlay(&explicit);
-        RenderRun {
-            range: 0..0,
-            size_pt: s.size.unwrap_or(1800) as f32 / 100.0 * scale,
-            bold: s.bold.unwrap_or(false),
-            italic: s.italic.unwrap_or(false),
-            underline: s.underline.unwrap_or(false),
-            color: s.color.unwrap_or(Rgb([0, 0, 0])),
-            font: s
-                .font
-                .or_else(|| master.theme.minor_font.clone())
-                .unwrap_or_else(|| "Calibri".into()),
-        }
+        let minor = self.master_of(slide).theme.minor_font.as_deref();
+        resolve_with(minor, level, props, scale)
     }
 
     /// Resolved formatting of `props` in paragraph `para` of a slide shape.
@@ -610,45 +706,8 @@ impl Presentation {
         line_reduction: Option<u32>,
         prompts: bool,
     ) -> Vec<RenderPara> {
-        let mut numbers = Numbering::default();
-        body.paras
-            .iter()
-            .enumerate()
-            .map(|(i, p)| {
-                let level = &ls.0[p.props.level.min(8) as usize];
-                let mut st = level.para.clone();
-                st.overlay(&p.props.style);
-                let runs: Vec<RenderRun> = p
-                    .run_ranges()
-                    .filter(|(r, _)| !r.is_empty())
-                    .map(|(range, run)| RenderRun {
-                        range,
-                        ..self.resolve(slide, level, &run.props, scale)
-                    })
-                    .collect();
-                // The bullet takes the first character's formatting.
-                let first = p.runs.iter().find(|r| r.len > 0).unwrap_or(&p.runs[0]);
-                let has_text = !p.text.is_empty();
-                let shown = numbers.next(p.props.level, st.bullet.as_ref(), has_text);
-                let mut para = RenderPara {
-                    text: p.text.clone(),
-                    align: p.props.align.or(level.align).unwrap_or_default(),
-                    level: p.props.level,
-                    base: self.resolve(slide, level, &first.props, scale),
-                    runs,
-                    marker: None,
-                    indent_pt: 0.0,
-                    first_line_pt: 0.0,
-                    space_before_pt: 0.0,
-                    space_after_pt: 0.0,
-                    line: None,
-                };
-                // Empty paragraphs show their bullet only while editing.
-                let shown = shown.filter(|_| has_text || prompts);
-                apply_para_style(&mut para, &st, shown, i == 0, scale, line_reduction);
-                para
-            })
-            .collect()
+        let minor = self.master_of(slide).theme.minor_font.clone();
+        render_paras_with(minor.as_deref(), body, ls, scale, line_reduction, prompts)
     }
 
     /// The text of a shape inside a group or SmartArt drawing, drawn in

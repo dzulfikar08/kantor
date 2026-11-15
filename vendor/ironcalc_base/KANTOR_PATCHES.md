@@ -657,6 +657,26 @@ What (new `src/kantor_sheets.rs`; `src/user_model/{history,undo_redo}.rs`,
 
 Tests: `test/user_model/test_kantor_sheets.rs`.
 
+## 24. Table references in a copied sheet
+
+Why: Excel's Move or Copy gives a copied sheet's tables new names
+(`Sales` → `Sales2`) and makes the copy's formulas that named the source's
+tables name the copies. Upstream has no way to rewrite one sheet's
+structured references.
+
+What (`src/kantor_sheets.rs`, `src/user_model/{history,undo_redo}.rs`,
+`src/kantor_changes.rs`):
+
+* `UserModel::kantor_rename_table_refs(sheet, &[(old, new)])`: parses the
+  sheet's formulas with the old names, renames the tables of their
+  structured references and writes them back (the new tables must exist
+  already). One `Diff::KantorSheetFormulas` (the sheet's formula list
+  before and after) when anything changed; returns whether it did.
+* `KantorChanges` recalculates everything after it, as for the other
+  sheet diffs.
+
+Tests: `test/test_kantor_tables.rs` (`renaming_table_refs_in_a_copied_sheet`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

@@ -184,6 +184,13 @@ impl<'a> UserModel<'a> {
                     self.model.kantor_restore_sheet(deleted)?;
                     self.set_selected_sheet(deleted.index)?;
                 }
+                Diff::KantorSheetFormulas {
+                    sheet, old_value, ..
+                } => {
+                    needs_evaluation = true;
+                    self.model
+                        .kantor_set_sheet_formulas(*sheet, old_value.clone())?;
+                }
                 Diff::KantorCopySheet { source, index, .. } => {
                     needs_evaluation = true;
                     let id = self.model.workbook.worksheet(*index)?.sheet_id;
@@ -826,6 +833,13 @@ impl<'a> UserModel<'a> {
                     self.model.kantor_delete_sheet(deleted.index)?;
                     self.view.sheets.remove(&deleted.worksheet.sheet_id);
                     self.set_selected_sheet(deleted.index.min(count.saturating_sub(2)))?;
+                }
+                Diff::KantorSheetFormulas {
+                    sheet, new_value, ..
+                } => {
+                    needs_evaluation = true;
+                    self.model
+                        .kantor_set_sheet_formulas(*sheet, new_value.clone())?;
                 }
                 Diff::KantorCopySheet {
                     source,

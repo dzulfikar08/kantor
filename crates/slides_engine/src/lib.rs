@@ -28,6 +28,7 @@ pub mod ppt;
 pub mod presentation;
 pub mod render;
 mod shape;
+pub mod sheet_shape;
 pub mod smartart;
 pub mod table_edit;
 mod template;

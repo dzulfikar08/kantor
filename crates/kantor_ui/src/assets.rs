@@ -58,6 +58,7 @@ icon_assets!(
         Grid3x3,
         Square,
         SquareDashed,
+        Shapes,
         TextWrap,
         TableCellsMerge,
         Funnel,

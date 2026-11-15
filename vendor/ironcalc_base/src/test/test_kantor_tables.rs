@@ -255,3 +255,36 @@ fn unqualified_references_inside_a_table() {
     assert!(m.set_user_input(0, 9, 9, "=[@Units]").is_ok());
     assert_eq!(text(&m, (9, 9)), "#ERROR!");
 }
+
+/// KANTOR PATCH (sheet tabs, §24): a copied sheet's references to its
+/// source's tables renamed to the copies, one undo step.
+#[test]
+fn renaming_table_refs_in_a_copied_sheet() {
+    let mut m = sales();
+    m.set_user_input(0, 7, 1, "=SUM(Sales[Units])").unwrap();
+    m.set_user_input(0, 8, 1, "=Sales[@Units]").unwrap();
+    m.kantor_copy_sheet(0, "Copy", 1).unwrap();
+    let mut t = table("Sales2", "A1:C5", &["Region", "Units", "Unit Price"], 1);
+    t.sheet_name = "Copy".to_string();
+    m.kantor_set_table("Sales2", Some(t)).unwrap();
+    let names = [("Sales".to_string(), "Sales2".to_string())];
+    assert!(m.kantor_rename_table_refs(1, &names).unwrap());
+    assert_eq!(m.get_cell_content(1, 7, 1).unwrap(), "=SUM(Sales2[Units])");
+    assert_eq!(
+        m.get_cell_content(1, 5, 2).unwrap(),
+        "=SUBTOTAL(109,Sales2[Units])"
+    );
+    assert_eq!(m.get_cell_content(0, 7, 1).unwrap(), "=SUM(Sales[Units])");
+    m.set_user_input(1, 2, 2, "100").unwrap();
+    assert_eq!(m.get_formatted_cell_value(1, 7, 1).unwrap(), "125");
+    assert_eq!(m.get_formatted_cell_value(0, 7, 1).unwrap(), "35");
+    m.undo().unwrap();
+    m.undo().unwrap();
+    assert_eq!(m.get_cell_content(1, 7, 1).unwrap(), "=SUM(Sales[Units])");
+    m.redo().unwrap();
+    assert_eq!(m.get_cell_content(1, 7, 1).unwrap(), "=SUM(Sales2[Units])");
+    // Nothing to rename: no step.
+    assert!(!m
+        .kantor_rename_table_refs(0, &[("Other".into(), "Other2".into())])
+        .unwrap());
+}

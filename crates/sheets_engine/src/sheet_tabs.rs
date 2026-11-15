@@ -421,8 +421,10 @@ impl Workbook {
             let id = wb.sheet_id(index);
             order.insert(pos, Slot::Sheet(id));
             wb.sheets_edited(&order);
+            let mut renamed = Vec::new();
             for mut t in tables {
                 let new = wb.copy_table_name(&t.name);
+                renamed.push((t.name.clone(), new.clone()));
                 t.name = new.clone();
                 t.display_name = new.clone();
                 t.sheet_name = name.clone();
@@ -431,6 +433,16 @@ impl Workbook {
                     .map_err(|e| anyhow!("{e}"))?;
                 wb.history.edited();
                 wb.touch_table(&new, None);
+            }
+            // The copy's formulas naming the source's tables name the
+            // copies (Excel).
+            if !renamed.is_empty()
+                && wb
+                    .model
+                    .kantor_rename_table_refs(index, &renamed)
+                    .map_err(|e| anyhow!("{e}"))?
+            {
+                wb.history.edited();
             }
             wb.change_edits(|e, layout| {
                 if !notes.is_empty() {
@@ -443,15 +455,16 @@ impl Workbook {
                     e.prints.insert(id, (print, layout.clone()));
                 }
                 let first = e.charts.iter().map(|c| c.id).max().unwrap_or(0) + 1;
-                for (next, (anchor, xml, picture, spec)) in (first..).zip(objects) {
+                for (next, o) in (first..).zip(objects) {
                     e.charts.push(crate::chart_edit::NewChart {
                         id: next,
                         sheet_id: id,
-                        spec,
-                        anchor,
+                        spec: o.spec,
+                        anchor: o.anchor,
                         layout: layout.clone(),
-                        xml,
-                        picture,
+                        xml: o.xml,
+                        picture: o.picture,
+                        shape: o.shape,
                     });
                 }
             });
@@ -481,28 +494,24 @@ impl Workbook {
             .unwrap_or_default()
     }
 
-    /// The charts and pictures of `sheet` as objects of a copy named
-    /// `copy`: anchor, chart part (references to `source` now to the copy)
-    /// or picture, and the chart's spec. Hidden objects and shapes Kantor
-    /// doesn't draw aren't copied.
-    #[allow(clippy::type_complexity)]
-    fn copied_objects(
-        &self,
-        sheet: u32,
-        source: &str,
-        copy: &str,
-    ) -> Vec<(
-        crate::drawing::Anchor,
-        Option<Arc<str>>,
-        Option<Arc<crate::chart_edit::NewPicture>>,
-        crate::ChartSpec,
-    )> {
+    /// The charts, pictures and shapes of `sheet` as objects of a copy
+    /// named `copy`: anchor, chart part (references to `source` now to the
+    /// copy), picture or shape, and the chart's spec. Hidden objects and
+    /// those Kantor doesn't draw aren't copied.
+    fn copied_objects(&self, sheet: u32, source: &str, copy: &str) -> Vec<CopiedObject> {
         use crate::drawing::DrawingKind;
         let mut out = Vec::new();
         for d in self.drawings(sheet) {
             if d.hidden {
                 continue;
             }
+            let mut o = CopiedObject {
+                anchor: d.anchor,
+                xml: None,
+                picture: None,
+                shape: None,
+                spec: crate::ChartSpec::placeholder(),
+            };
             match &*d.kind {
                 DrawingKind::Chart {
                     xml, current_refs, ..
@@ -515,15 +524,10 @@ impl Workbook {
                     let now = crate::chart_style::map_formulas(&now, |f| {
                         crate::move_chart::rename_sheet_in(f, source, copy)
                     });
-                    let spec = self
-                        .chart_info(d.key)
-                        .map_or_else(crate::ChartSpec::placeholder, |i| i.spec);
-                    out.push((
-                        d.anchor,
-                        Some(crate::move_chart::without_links(&now).into()),
-                        None,
-                        spec,
-                    ));
+                    if let Some(i) = self.chart_info(d.key) {
+                        o.spec = i.spec;
+                    }
+                    o.xml = Some(crate::move_chart::without_links(&now).into());
                 }
                 DrawingKind::Picture { part, data, crop } => {
                     let ext = part
@@ -531,21 +535,27 @@ impl Workbook {
                         .map(|(_, e)| e.to_owned())
                         .filter(|e| e.len() <= 4 && !e.contains('/'))
                         .unwrap_or_else(|| "png".into());
-                    out.push((
-                        d.anchor,
-                        None,
-                        Some(Arc::new(crate::chart_edit::NewPicture {
-                            data: data.clone(),
-                            crop: *crop,
-                            ext,
-                            name: d.name.clone(),
-                            descr: d.descr.clone(),
-                        })),
-                        crate::ChartSpec::placeholder(),
-                    ));
+                    o.picture = Some(Arc::new(crate::chart_edit::NewPicture {
+                        data: data.clone(),
+                        crop: *crop,
+                        ext,
+                        name: d.name.clone(),
+                        descr: d.descr.clone(),
+                    }));
                 }
-                DrawingKind::Other(_) => {}
+                DrawingKind::Shape { xml } => {
+                    // Pictures inside a group would need their media parts.
+                    if xml.contains(":pic>") || xml.contains(":pic ") || xml.contains("<pic") {
+                        continue;
+                    }
+                    o.shape = Some(Arc::new(crate::chart_edit::NewShape {
+                        xml: xml.clone(),
+                        name: d.name.clone(),
+                    }));
+                }
+                DrawingKind::Other(_) => continue,
             }
+            out.push(o);
         }
         out
     }
@@ -663,4 +673,13 @@ impl Workbook {
         self.history.edited();
         Ok(())
     }
+}
+
+/// An object of a sheet being copied (see `copied_objects`).
+struct CopiedObject {
+    anchor: crate::drawing::Anchor,
+    xml: Option<Arc<str>>,
+    picture: Option<Arc<crate::chart_edit::NewPicture>>,
+    shape: Option<Arc<crate::chart_edit::NewShape>>,
+    spec: crate::ChartSpec,
 }

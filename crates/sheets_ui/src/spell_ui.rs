@@ -63,8 +63,14 @@ enum Step {
     /// Looking for the next word (or loading the dictionary).
     Checking,
     Found(Found),
+    /// The check began mid-sheet and reached its end: go on from the top?
+    Wrap,
     Done,
 }
+
+/// Excel's question when a check begun mid-sheet reaches the end.
+pub(crate) const CONTINUE: &str =
+    tk("Do you want to continue checking at the beginning of the sheet?");
 
 pub(crate) struct SpellDialog {
     sheet: u32,
@@ -73,6 +79,9 @@ pub(crate) struct SpellDialog {
     cells: Arc<Vec<TextCell>>,
     /// Where to look next: cell index and byte offset in its text.
     at: (usize, usize),
+    /// Cells up to the end of the sheet, when the check began mid-sheet
+    /// (the rest, from the top, are checked only if the user says so).
+    wrap_at: Option<usize>,
     step: Step,
     /// The selected suggestion.
     pick: Option<usize>,
@@ -88,11 +97,17 @@ pub(crate) struct SpellDialog {
 
 /// The text cells in `scope`, starting at the first cell at or after
 /// `from` in reading order and wrapping round to the start, as Excel
-/// continues "at the beginning of the sheet".
-fn ordered(mut cells: Vec<TextCell>, from: (u32, u32)) -> Vec<TextCell> {
-    let start = cells.iter().position(|c| (c.0, c.1) >= from).unwrap_or(0);
-    cells.rotate_left(start);
-    cells
+/// continues "at the beginning of the sheet"; and how many come before
+/// the wrap, when some cells are above `from` (`None`: no wrap).
+fn ordered(mut cells: Vec<TextCell>, from: (u32, u32)) -> (Vec<TextCell>, Option<usize>) {
+    let start = cells
+        .iter()
+        .position(|c| (c.0, c.1) >= from)
+        .unwrap_or(cells.len());
+    let wrap = (start > 0).then_some(cells.len() - start);
+    let n = cells.len().max(1);
+    cells.rotate_left(start % n);
+    (cells, wrap)
 }
 
 /// The dictionary's name in the interface language.
@@ -170,15 +185,16 @@ impl SheetsView {
             .spell_dialog
             .as_ref()
             .map_or_else(|| kantor_ui::spelling::default_lang(cx), |d| d.lang);
-        let (sheet, cells) = {
+        let (sheet, (cells, wrap_at)) = {
             let grid = self.table.read(cx).delegate();
             let sel = grid.range();
             let mut cells = grid.book.text_cells(grid.sheet);
             let from = if sel.is_single() {
                 self.selected
             } else {
+                // A selection is checked on its own, without the question.
                 cells.retain(|c| sel.contains(c.0, c.1));
-                (sel.top, sel.left)
+                (0, 0)
             };
             (grid.sheet, ordered(cells, from))
         };
@@ -195,6 +211,7 @@ impl SheetsView {
             lang,
             cells: Arc::new(cells),
             at: (0, 0),
+            wrap_at,
             step: Step::Checking,
             pick: None,
             word,
@@ -214,13 +231,14 @@ impl SheetsView {
         };
         d.step = Step::Checking;
         d.pick = None;
-        let (cells, lang, at) = (d.cells.clone(), d.lang, d.at);
+        let (cells, lang, at, end) = (d.cells.clone(), d.lang, d.at, d.wrap_at);
         let task = cx.spawn_in(window, async move |this, cx| {
             let found = cx
                 .background_spawn(async move {
                     let speller = Speller::global();
                     speller.load(lang);
-                    next_misspelling(speller, lang, &cells, at).map(|(i, r)| {
+                    let upto = &cells[..end.unwrap_or(cells.len()).min(cells.len())];
+                    next_misspelling(speller, lang, upto, at).map(|(i, r)| {
                         let word = cells[i].2[r.clone()].to_owned();
                         let suggestions = speller
                             .suggest(lang, &word)
@@ -248,6 +266,13 @@ impl SheetsView {
         };
         d._task = None;
         let Some(f) = found else {
+            if d.wrap_at.is_some() {
+                d.step = Step::Wrap;
+                let focus = d.focus.clone();
+                window.focus(&focus, cx);
+                cx.notify();
+                return;
+            }
             d.step = Step::Done;
             if d.changes > 0 {
                 self.status = if d.changes == 1 {
@@ -272,6 +297,24 @@ impl SheetsView {
             self.selected = (row, col);
         }
         cx.notify();
+    }
+
+    /// The answer to "continue at the beginning of the sheet?": Yes checks
+    /// the cells above where the check began; No ends it.
+    fn spell_wrap(&mut self, go_on: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(d) = self.spell_dialog.as_mut() else {
+            return;
+        };
+        if !matches!(d.step, Step::Wrap) {
+            return;
+        }
+        if !go_on {
+            self.close_spelling(window, cx);
+            return;
+        }
+        let end = d.wrap_at.take().unwrap_or(0);
+        d.at = (end, 0);
+        self.spell_next(window, cx);
     }
 
     fn close_spelling(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -414,7 +457,7 @@ impl SheetsView {
         if let Step::Found(f) = &d.step {
             d.at = (f.cell, f.range.start);
         }
-        if !matches!(d.step, Step::Done) {
+        if !matches!(d.step, Step::Done | Step::Wrap) {
             self.spell_next(window, cx);
         }
     }
@@ -469,6 +512,41 @@ impl SheetsView {
         };
 
         let body = match &d.step {
+            Step::Wrap => v_flex()
+                .gap(SPACE_5)
+                .child(div().child(i18n::t(CONTINUE)))
+                .child(
+                    h_flex()
+                        .justify_end()
+                        .gap(SPACE_3)
+                        .child(
+                            Button::new("spell-wrap-yes")
+                                .small()
+                                .primary()
+                                .label(i18n::t("Yes"))
+                                .on_click({
+                                    let v = view.clone();
+                                    move |_, w, cx| {
+                                        let _ =
+                                            v.update(cx, |this, cx| this.spell_wrap(true, w, cx));
+                                    }
+                                }),
+                        )
+                        .child(
+                            Button::new("spell-wrap-no")
+                                .small()
+                                .outline()
+                                .label(i18n::t("No"))
+                                .on_click({
+                                    let v = view.clone();
+                                    move |_, w, cx| {
+                                        let _ =
+                                            v.update(cx, |this, cx| this.spell_wrap(false, w, cx));
+                                    }
+                                }),
+                        ),
+                )
+                .into_any_element(),
             Step::Done => v_flex()
                 .gap(SPACE_5)
                 .child(div().child(i18n::t(COMPLETE)))
@@ -641,13 +719,11 @@ impl SheetsView {
             .on_action(cx.listener(|this, _: &SpellCancel, w, cx| this.close_spelling(w, cx)))
             .on_action(cx.listener(|this, _: &input::Escape, w, cx| this.close_spelling(w, cx)))
             .on_action(cx.listener(|this, _: &SpellChange, w, cx| {
-                if matches!(
-                    this.spell_dialog.as_ref().map(|d| &d.step),
-                    Some(Step::Done)
-                ) {
-                    this.close_spelling(w, cx);
-                } else {
-                    this.spell_change(false, w, cx);
+                match this.spell_dialog.as_ref().map(|d| &d.step) {
+                    Some(Step::Done) => this.close_spelling(w, cx),
+                    // Enter takes the default answer, Yes.
+                    Some(Step::Wrap) => this.spell_wrap(true, w, cx),
+                    _ => this.spell_change(false, w, cx),
                 }
             }))
             .child(body);
@@ -684,7 +760,7 @@ mod tests {
     fn walks_the_misspelled_words_from_the_active_cell_and_wraps() {
         let s = speller();
         s.load(Lang::EnUs);
-        let list = ordered(
+        let (list, wrap) = ordered(
             cells(&[
                 (0, 0, "Teh header"),
                 (1, 0, "fine words"),
@@ -695,15 +771,24 @@ mod tests {
         );
         assert_eq!(list[0].2, "a recieve and mesage");
         assert_eq!(list[3].2, "fine words");
-        let mut at = (0, 0);
-        let mut seen = Vec::new();
-        while let Some((i, r)) = next_misspelling(s, Lang::EnUs, &list, at) {
-            seen.push(list[i].2[r.clone()].to_owned());
-            at = (i, r.end);
-        }
-        assert_eq!(seen, ["recieve", "mesage", "wrld", "Teh"]);
-        // A selection after every text cell starts from the first one.
-        assert_eq!(ordered(cells(&[(0, 0, "x")]), (9, 9))[0].0, 0);
+        // Two cells to the end of the sheet, then the question.
+        assert_eq!(wrap, Some(2));
+        let walk = |cells: &[TextCell], mut at: (usize, usize)| {
+            let mut seen = Vec::new();
+            while let Some((i, r)) = next_misspelling(s, Lang::EnUs, cells, at) {
+                seen.push(cells[i].2[r.clone()].to_owned());
+                at = (i, r.end);
+            }
+            seen
+        };
+        assert_eq!(walk(&list[..2], (0, 0)), ["recieve", "mesage", "wrld"]);
+        // Yes: the cells above where it began.
+        assert_eq!(walk(&list, (2, 0)), ["Teh"]);
+        // From the first cell there's nothing to wrap to.
+        assert_eq!(ordered(cells(&[(0, 0, "x"), (2, 0, "y")]), (0, 0)).1, None);
+        // From below every text cell: all of them come after the wrap.
+        let (list, wrap) = ordered(cells(&[(0, 0, "x")]), (9, 9));
+        assert_eq!((list[0].0, wrap), (0, Some(0)));
     }
 
     #[std::prelude::v1::test]

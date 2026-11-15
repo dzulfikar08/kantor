@@ -35,6 +35,7 @@ mod preserve;
 mod print;
 mod recovery;
 mod rows;
+mod shape_edit;
 mod sheet_tabs;
 mod shift;
 mod sort;
@@ -60,6 +61,7 @@ pub use move_chart::{ChartPlace, MovedChart};
 pub use notes::{CellNote, SheetNotes};
 pub use preserve::package_problems;
 pub use recovery::{SaveJob, Saved, XlsxOutput, XlsxSnapshot, write_file_atomic};
+pub use shape_edit::ShapePreset;
 pub use sheet_tabs::{STANDARD_COLORS, TabColor, theme_tints};
 pub use table_edit::{TableOptions, TotalFunc, table_style_names, valid_table_name};
 pub use validation_edit::{
@@ -1334,9 +1336,12 @@ impl Workbook {
             // Values left stale by manual calculation: Excel recalculates.
             full_calc: self.needs_recalc() || pending,
             moves: self.origin.xlsx_layout.moves_to(&layout),
-            drawings: self
-                .drawings
-                .save_edits(&self.history.drawing_edits(), &layout),
+            drawings: self.drawings.save_edits(
+                &self.history.drawing_edits(),
+                &layout,
+                &self.edits().shape_texts,
+                &self.touched.shape_texts,
+            ),
             patches: {
                 let mut p = preserve::Patches::default();
                 self.print_patches(&mut p);

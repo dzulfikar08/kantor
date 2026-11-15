@@ -327,6 +327,7 @@ impl Workbook {
                     layout,
                     xml: Some(xml.into()),
                     picture: None,
+                    shape: None,
                 };
                 match from {
                     From::File => {
