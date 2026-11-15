@@ -955,6 +955,19 @@ where
         cx.notify();
     }
 
+    /// KANTOR PATCH (frozen rows taller than the window): the most height
+    /// the pinned rows may take, leaving room for the rows that scroll.
+    fn pinned_rows_cap(&self) -> f64 {
+        let total = self.bounds.size.height;
+        if total <= px(0.) {
+            // Before the first layout: no cap yet.
+            return f64::INFINITY;
+        }
+        pinned_cap(f64::from(f32::from(
+            (total - self.header_band_height()).max(px(0.)),
+        )))
+    }
+
     /// KANTOR PATCH (frozen rows): how many rows sit pinned above the
     /// scrolling list (the delegate's frozen rows, at most every row).
     fn pinned_rows(&self, cx: &App) -> usize {
@@ -2954,6 +2967,11 @@ where
             let h = heights.borrow();
             (h.top(pinned), h.shown_in(0, h.top_dp(pinned)))
         };
+        // KANTOR PATCH (frozen rows taller than the window): as in Excel,
+        // the frozen rows never take the whole body; past
+        // `pinned_rows_cap` their bottom is cut off and the rows below
+        // them still scroll in what is left.
+        let pinned_height = pinned_height.min(self.pinned_rows_cap());
         let pinned_view = (pinned_height > 0.0).then(|| {
             let col_sizes: Rc<Vec<gpui::Size<Pixels>>> = Rc::new(
                 self.col_groups
@@ -3155,5 +3173,26 @@ where
                         ),
                 )
             })
+    }
+}
+
+/// KANTOR PATCH (frozen rows taller than the window): the height frozen rows
+/// may take in a body `body` px high: all of it but a quarter (at most
+/// 96 px), so the scrolling rows always keep a strip to show in.
+pub(crate) fn pinned_cap(body: f64) -> f64 {
+    (body - (body * 0.25).min(96.0)).max(0.0)
+}
+
+#[cfg(test)]
+mod pinned_tests {
+    use super::pinned_cap;
+
+    #[std::prelude::v1::test]
+    fn frozen_rows_leave_room_to_scroll() {
+        // A tall body keeps 96 px for the scrolling rows.
+        assert_eq!(pinned_cap(800.0), 704.0);
+        // A short one keeps a quarter.
+        assert_eq!(pinned_cap(200.0), 150.0);
+        assert_eq!(pinned_cap(0.0), 0.0);
     }
 }

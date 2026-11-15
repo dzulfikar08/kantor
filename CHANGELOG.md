@@ -66,6 +66,9 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   drawing and the SmartArt's data, so PowerPoint shows the edit. Adding or removing SmartArt items
   and changing its layout need PowerPoint's layout engine and aren't possible; *Convert to Shapes*
   (right-click menu, palette, or Ungroup) turns SmartArt into a group of ordinary shapes.
+- Sheets: frozen rows taller than the window no longer stop the sheet from scrolling. As in
+  Excel, the frozen rows keep most of the window (their bottom is cut off) and the rows below
+  them still scroll in the strip that's left.
 - Sheets: Move Chart (Chart panel, command palette), as Excel's dialog: "New sheet" puts a chart on a chart sheet of its own, "Object in" puts it on a worksheet (a chart sheet's chart too). One undo step, saved as a real chart sheet.
 - Sheets: Shift+F11 inserts a worksheet, as in Excel.
 - Sheets: Move or Copy with "Create a copy" brings a worksheet's charts, pictures and tables (a table gets a new name as in Excel: `Sales` becomes `Sales2`); the copy's charts read the copy's cells.
