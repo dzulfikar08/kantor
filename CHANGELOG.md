@@ -11,6 +11,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Docs: more floating objects are drawn, on screen and in the PDF: groups of shapes and pictures
+  (moved and sized as one) and drawing canvases; charts (column, bar, line, area, pie, doughnut and
+  scatter, from the values saved in the file, with Slides' chart drawing); outer shadows of shapes
+  and pictures; and turned pictures and text boxes, drawn turned (the text box's text turns with
+  it). Text set to wrap Tight or Through follows the object's wrap polygon instead of its box.
 - Docs: *Next change* and *Previous change* also go through the headers, footers, footnotes and
   endnotes, as in Word: after the last change in the text, the next one in a header (or note) is
   opened for editing and selected, and back again.

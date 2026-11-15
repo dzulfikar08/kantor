@@ -627,30 +627,37 @@ impl DocsView {
         ))
     }
 
-    /// Decoded pictures of the floating objects on the visible pages, by
-    /// (header or footer story + 1, or 0; relationship id).
+    /// Decoded pictures of the floating objects about to be painted, by
+    /// (header or footer story + 1, or 0; [`picture_key`]): turned and
+    /// flipped ones turned on the CPU (GPUI paints pictures upright).
     pub(crate) fn visible_float_images(
         &mut self,
+        paint: &[FloatPaint],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> HashMap<(usize, String), Arc<RenderImage>> {
         let mut out = HashMap::new();
-        let laid = self.laid.clone();
-        let g = self.geometry();
-        for page in g.visible_pages(laid.paged.pages.len()) {
-            for it in laid.floats.get(page).into_iter().flatten() {
-                let Some(f) = it.float(&self.doc) else {
+        for fp in paint {
+            let owner = match fp.story {
+                Some(s) => self.doc.stories().get(s).map_or(&self.doc, |st| &st.doc),
+                None => &self.doc,
+            };
+            for prim in &fp.prims {
+                let FloatPrim::Picture {
+                    rel_id,
+                    image,
+                    clip,
+                    rot,
+                    flip,
+                } = prim
+                else {
                     continue;
                 };
-                let docs_engine::FloatKind::Picture { rel_id, .. } = &f.kind else {
-                    continue;
-                };
-                let key = (it.story.map_or(0, |s| s + 1), rel_id.clone());
-                let cache_key = format!("float{}:{}", key.0, key.1);
-                let image = match self.images.get(&cache_key) {
+                let base_key = format!("float{}:{}", fp.story.map_or(0, |s| s + 1), rel_id);
+                let img = match self.images.get(&base_key) {
                     Some(i) => i.clone(),
                     None => {
-                        let Some(bytes) = it.doc(&self.doc).image_bytes(rel_id) else {
+                        let Some(bytes) = owner.image_bytes(rel_id) else {
                             continue;
                         };
                         let format = match docs_engine::ImageFormat::sniff(&bytes) {
@@ -659,17 +666,140 @@ impl DocsView {
                             docs_engine::ImageFormat::Other => continue,
                         };
                         let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes.to_vec()));
-                        self.images.insert(cache_key, i.clone());
+                        self.images.insert(base_key, i.clone());
                         i
                     }
                 };
-                if let Some(data) = image.use_render_image(window, cx) {
-                    out.insert(key, data);
+                let Some(data) = img.use_render_image(window, cx) else {
+                    continue;
+                };
+                let key = picture_key(rel_id, *rot, *flip, *image, *clip);
+                let story = fp.story.map_or(0, |s| s + 1);
+                if key == *rel_id {
+                    out.insert((story, key), data);
+                    continue;
                 }
+                let turned = match self.turned_images.get(&key) {
+                    Some(t) => t.clone(),
+                    None => {
+                        let Some(t) = turn_image(&data, *rot, *flip, *image, *clip) else {
+                            continue;
+                        };
+                        if self.turned_images.len() >= 24 {
+                            for (_, old) in self.turned_images.drain() {
+                                window.drop_image(old).ok();
+                            }
+                        }
+                        self.turned_images.insert(key.clone(), t.clone());
+                        t
+                    }
+                };
+                out.insert((story, key), turned);
             }
         }
         out
     }
+}
+
+/// How a floating picture is looked up: its relationship id, plus its
+/// turn, flips, crop and shape when it's drawn turned.
+pub(crate) fn picture_key(
+    rel_id: &str,
+    rot: f32,
+    flip: (bool, bool),
+    image: [f32; 4],
+    clip: [f32; 4],
+) -> String {
+    let deg = (rot.round() as i32).rem_euclid(360);
+    if deg == 0 && !flip.0 && !flip.1 {
+        return rel_id.to_owned();
+    }
+    let crop = crop_of(image, clip).map(|c| (c * 10_000.0) as i32);
+    let aspect = (clip[2] / clip[3].max(1e-3) * 1000.0) as i64;
+    format!(
+        "{rel_id}@{deg}:{}{}:{crop:?}:{aspect}",
+        flip.0 as u8, flip.1 as u8
+    )
+}
+
+/// The crop (left, top, right, bottom fractions of the picture) that shows
+/// `clip` of a picture drawn into `image`.
+fn crop_of(image: [f32; 4], clip: [f32; 4]) -> [f32; 4] {
+    let (iw, ih) = (image[2].max(1e-3), image[3].max(1e-3));
+    [
+        (clip[0] - image[0]) / iw,
+        (clip[1] - image[1]) / ih,
+        (image[0] + iw - clip[0] - clip[2]) / iw,
+        (image[1] + ih - clip[1] - clip[3]) / ih,
+    ]
+}
+
+/// The bounding box of `clip` turned `rot` degrees about its centre.
+pub(crate) fn turned_box(clip: [f32; 4], rot: f32) -> [f32; 4] {
+    let (s, c) = rot.to_radians().sin_cos();
+    let [x, y, w, h] = clip;
+    let bw = w * c.abs() + h * s.abs();
+    let bh = w * s.abs() + h * c.abs();
+    [x + w / 2.0 - bw / 2.0, y + h / 2.0 - bh / 2.0, bw, bh]
+}
+
+/// Most pixels on the longer side of a turned picture.
+const TURNED_MAX: f32 = 2048.0;
+
+/// A picture's shown part (`clip` of it drawn into `image`) flipped, then
+/// turned `rot` degrees clockwise, into the box around the turned one
+/// (nearest pixel; the corners stay transparent).
+fn turn_image(
+    img: &RenderImage,
+    rot: f32,
+    (flip_h, flip_v): (bool, bool),
+    image: [f32; 4],
+    clip: [f32; 4],
+) -> Option<Arc<RenderImage>> {
+    let size = img.size(0);
+    let (sw, sh) = (size.width.0.max(1) as u32, size.height.0.max(1) as u32);
+    let src = img
+        .as_bytes(0)
+        .filter(|b| b.len() >= (sw * sh * 4) as usize)?;
+    let [cl, ct, cr, cb] = crop_of(image, clip);
+    let (kw, kh) = (1.0 - cl - cr, 1.0 - ct - cb);
+    let (w0, h0) = (clip[2].max(1e-3), clip[3].max(1e-3));
+    // As many pixels as the picture has, at most TURNED_MAX on a side.
+    let k = (TURNED_MAX.min((sw as f32 * kw).max(sh as f32 * kh)) / w0.max(h0)).max(1e-3);
+    let (w, h) = ((w0 * k).max(1.0), (h0 * k).max(1.0));
+    let (sin, cos) = rot.to_radians().sin_cos();
+    let bw = (w * cos.abs() + h * sin.abs() - 1e-3).ceil().max(1.0) as u32;
+    let bh = (w * sin.abs() + h * cos.abs() - 1e-3).ceil().max(1.0) as u32;
+    let mut out = vec![0u8; (bw * bh * 4) as usize];
+    for j in 0..bh {
+        for i in 0..bw {
+            let u = i as f32 + 0.5 - bw as f32 / 2.0;
+            let v = j as f32 + 0.5 - bh as f32 / 2.0;
+            let mut lx = u * cos + v * sin + w / 2.0;
+            let mut ly = -u * sin + v * cos + h / 2.0;
+            if lx < 0.0 || ly < 0.0 || lx >= w || ly >= h {
+                continue;
+            }
+            if flip_h {
+                lx = w - lx;
+            }
+            if flip_v {
+                ly = h - ly;
+            }
+            let fx = cl + lx / w * kw;
+            let fy = ct + ly / h * kh;
+            if !(0.0..1.0).contains(&fx) || !(0.0..1.0).contains(&fy) {
+                continue;
+            }
+            let sx = ((fx * sw as f32) as u32).min(sw - 1);
+            let sy = ((fy * sh as f32) as u32).min(sh - 1);
+            let s = ((sy * sw + sx) * 4) as usize;
+            let d = ((j * bw + i) * 4) as usize;
+            out[d..d + 4].copy_from_slice(&src[s..s + 4]);
+        }
+    }
+    let buf = image::RgbaImage::from_raw(bw, bh, out)?;
+    Some(Arc::new(RenderImage::new(vec![image::Frame::new(buf)])))
 }
 
 /// What the visible pages' floating objects draw, for the paint pass.
@@ -679,6 +809,53 @@ pub(crate) struct FloatPaint {
     pub prims: Vec<FloatPrim>,
     pub story: Option<usize>,
     pub text: Option<(Arc<docs_pdf::StoryLayout>, f32, f32)>,
+    /// A chart's upright labels: layout and where its (0, 0) goes.
+    pub labels: Vec<(Arc<docs_pdf::StoryLayout>, f32, f32)>,
+    /// Turned text (a turned text box's, a chart's turned labels), drawn
+    /// as rasters.
+    pub turned: Vec<std::rc::Rc<crate::turned_text::TurnedText>>,
+}
+
+/// Turned text boxes' text, kept while their layout stays the same.
+pub(crate) type TurnedCache =
+    HashMap<(usize, usize, u32, u32, u32), std::rc::Rc<crate::turned_text::TurnedText>>;
+
+/// A turned text box's text as a raster source: its layout's (0, 0) at
+/// `(x, y)`, turned `deg` about the centre of `rect` (page px).
+fn turned_text(
+    l: &docs_pdf::StoryLayout,
+    (x, y): (f32, f32),
+    rect: [f32; 4],
+    deg: f32,
+) -> Option<crate::turned_text::TurnedText> {
+    use slides_scene::{Affine, Text, TextRun, p};
+    // The text runs (the text the clusters index, for the font bridge).
+    let runs: Vec<TextRun> = l
+        .paged
+        .glyph_runs(0)
+        .into_iter()
+        .filter(|r| !r.glyphs.is_empty())
+        .map(|run| {
+            let text: Arc<str> = match run.source {
+                docs_layout::RunSource::Text => {
+                    Arc::from(l.paras.get(run.para).map_or("", |p| p.text.as_str()))
+                }
+                _ => Arc::from(l.paged.run_text(&run, "")),
+            };
+            TextRun { run, text }
+        })
+        .collect();
+    let (cx, cy) = (rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0);
+    let t = Affine::translate(-cx, -cy)
+        .then(Affine::rotate(deg.to_radians()))
+        .then(Affine::translate(cx, cy));
+    crate::turned_text::TurnedText::new(
+        &Text {
+            origin: p(x, y),
+            runs,
+        },
+        &t,
+    )
 }
 
 /// The floating objects of the visible pages, back to front per page.
@@ -687,20 +864,63 @@ pub(crate) fn float_paint(
     laid: &crate::Laid,
     painter: &docs_pdf::floats::Painter,
     pages: std::ops::Range<usize>,
+    cache: &mut TurnedCache,
 ) -> Vec<FloatPaint> {
     let mut out = Vec::new();
+    let mut used = Vec::new();
     for page in pages {
         for it in laid.floats.get(page).into_iter().flatten() {
             let Some(f) = it.float(doc) else { continue };
+            let deg = docs_pdf::floats::text_turn(f);
+            let mut turned = Vec::new();
+            let mut get =
+                |l: &Arc<docs_pdf::StoryLayout>, at: (f32, f32), rect: [f32; 4], deg: f32| {
+                    let key = (
+                        Arc::as_ptr(l) as usize,
+                        page,
+                        deg.to_bits(),
+                        rect[0].to_bits(),
+                        rect[1].to_bits(),
+                    );
+                    used.push(key);
+                    let t = match cache.get(&key) {
+                        Some(t) => Some(t.clone()),
+                        None => turned_text(l, at, rect, deg).map(|t| {
+                            let t = std::rc::Rc::new(t);
+                            cache.insert(key, t.clone());
+                            t
+                        }),
+                    };
+                    turned.extend(t);
+                };
+            if let Some((l, x, y)) = &it.text
+                && deg != 0.0
+            {
+                get(l, (*x, *y), it.rect, deg);
+            }
+            let mut labels = Vec::new();
+            for l in it.chart.iter().flat_map(|c| &c.labels) {
+                if l.rot != 0.0 {
+                    get(&l.layout, (l.x, l.y), l.rect, l.rot);
+                } else {
+                    labels.push((l.layout.clone(), l.x, l.y));
+                }
+            }
             out.push(FloatPaint {
                 page,
                 behind: it.behind,
-                prims: painter.prims(f, it.rect),
+                prims: match &it.chart {
+                    Some(c) => c.prims.clone(),
+                    None => painter.prims(f, it.rect),
+                },
                 story: it.story,
-                text: it.text.clone(),
+                text: it.text.clone().filter(|_| deg == 0.0),
+                labels,
+                turned,
             });
         }
     }
+    cache.retain(|k, _| used.contains(k));
     out
 }
 
@@ -768,19 +988,30 @@ pub(crate) fn paint_floats(
                     rel_id,
                     image,
                     clip,
+                    rot,
+                    flip,
                 } => {
-                    let key = (fp.story.map_or(0, |s| s + 1), rel_id.clone());
+                    let pk = picture_key(rel_id, *rot, *flip, *image, *clip);
+                    let turned = pk != *rel_id;
+                    let key = (fp.story.map_or(0, |s| s + 1), pk);
                     let rect = |r: [f32; 4]| {
                         Bounds::from_corners(
                             g.page_to_screen(page, r[0], r[1]),
                             g.page_to_screen(page, r[0] + r[2], r[1] + r[3]),
                         )
                     };
+                    // A turned picture is its own image of the turned box.
+                    let (into, whole) = if turned {
+                        let b = turned_box(*clip, *rot);
+                        (b, b)
+                    } else {
+                        (*clip, *image)
+                    };
                     match f.float_images.get(&key) {
                         Some(data) => {
                             let _ = window.paint_image(
-                                rect(*clip),
-                                rect(*image),
+                                rect(into),
+                                rect(whole),
                                 Corners::default(),
                                 data.clone(),
                                 0,
@@ -804,6 +1035,20 @@ pub(crate) fn paint_floats(
         }
         if let Some((l, x, y)) = &fp.text {
             paint_text(window, l, (*x, *y));
+        }
+        for (l, x, y) in &fp.labels {
+            paint_text(window, l, (*x, *y));
+        }
+        for tt in &fp.turned {
+            let Some(img) = tt.image(z * window.scale_factor()) else {
+                continue;
+            };
+            let [x, y, w, h] = tt.bounds;
+            let b = Bounds::from_corners(
+                g.page_to_screen(page, x, y),
+                g.page_to_screen(page, x + w, y + h),
+            );
+            let _ = window.paint_image(b, b, Corners::default(), img, 0, false);
         }
     }
 }

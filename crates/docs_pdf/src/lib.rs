@@ -20,6 +20,7 @@
 //! unsupported picture formats: the space stays empty).
 
 pub mod build;
+pub mod chart;
 pub mod floats;
 pub mod pages;
 
@@ -75,7 +76,12 @@ pub struct PageScene {
 pub struct FloatScene {
     pub paths: Vec<floats::DrawPath>,
     pub pictures: Vec<Picture>,
+    /// Drawing order: `(true, i)` is `pictures[i]`, `(false, i)` `paths[i]`.
+    pub order: Vec<(bool, usize)>,
     pub content: PageScene,
+    /// The text box's content is turned by this many degrees about this
+    /// point (a rotated text box).
+    pub content_turn: Option<(f32, [f32; 2])>,
 }
 
 /// A picture placed on a page.
@@ -84,6 +90,10 @@ pub struct Picture {
     pub rect: [f32; 4],
     /// Drawn only inside this box (cropped pictures).
     pub clip: Option<[f32; 4]>,
+    /// Turned clockwise (degrees) about the clip box's centre, flipped
+    /// first (horizontally, vertically).
+    pub turn: f32,
+    pub flip: (bool, bool),
     pub format: ImageFormat,
     pub bytes: Arc<[u8]>,
 }
@@ -239,6 +249,8 @@ fn add_page(
             out.pictures.push(Picture {
                 rect: [x + dx, y + dy, w, h],
                 clip: None,
+                turn: 0.0,
+                flip: (false, false),
                 format: *format,
                 bytes: bytes.clone(),
             });
@@ -302,13 +314,22 @@ fn float_scene(
     let Some(f) = it.float(doc) else {
         return out;
     };
-    for prim in painter.prims(f, it.rect) {
+    let prims = match &it.chart {
+        Some(c) => c.prims.clone(),
+        None => painter.prims(f, it.rect),
+    };
+    for prim in prims {
         match prim {
-            floats::FloatPrim::Path(p) => out.paths.push(p),
+            floats::FloatPrim::Path(p) => {
+                out.order.push((false, out.paths.len()));
+                out.paths.push(p);
+            }
             floats::FloatPrim::Picture {
                 rel_id,
                 image,
                 clip,
+                rot,
+                flip,
             } => {
                 let key = (it.story.map_or(0, |s| s + 1), rel_id.clone());
                 let found = pictures.entry(key).or_insert_with(|| {
@@ -319,9 +340,12 @@ fn float_scene(
                     }
                 });
                 if let Some((format, bytes)) = found {
+                    out.order.push((true, out.pictures.len()));
                     out.pictures.push(Picture {
                         rect: image,
                         clip: Some(clip),
+                        turn: rot,
+                        flip,
                         format: *format,
                         bytes: bytes.clone(),
                     });
@@ -331,6 +355,11 @@ fn float_scene(
         }
     }
     if let Some((l, x, y)) = &it.text {
+        let turn = floats::text_turn(f);
+        if turn != 0.0 {
+            let [rx, ry, rw, rh] = it.rect;
+            out.content_turn = Some((turn, [rx + rw / 2.0, ry + rh / 2.0]));
+        }
         add_page(
             &mut out.content,
             l.doc(doc),
@@ -405,11 +434,30 @@ pub fn scene_of(
                 );
             }
             for it in float_items.get(page).into_iter().flatten() {
-                let fs = float_scene(doc, it, &painter, &mut pictures);
+                let mut scenes = vec![float_scene(doc, it, &painter, &mut pictures)];
+                // A chart's labels, each turned on its own.
+                for l in it.chart.iter().flat_map(|c| &c.labels) {
+                    let mut fs = FloatScene::default();
+                    add_page(
+                        &mut fs.content,
+                        l.layout.doc(doc),
+                        &l.layout.paras,
+                        &l.layout.paged,
+                        0,
+                        (l.x, l.y),
+                        &mut pictures,
+                        l.layout.key() + 1,
+                    );
+                    if l.rot != 0.0 {
+                        let [x, y, w, h] = l.rect;
+                        fs.content_turn = Some((l.rot, [x + w / 2.0, y + h / 2.0]));
+                    }
+                    scenes.push(fs);
+                }
                 if it.behind {
-                    out.behind.push(fs);
+                    out.behind.extend(scenes);
                 } else {
-                    out.front.push(fs);
+                    out.front.extend(scenes);
                 }
             }
             out
@@ -644,6 +692,14 @@ fn draw_content(
     }
 }
 
+/// Scale by `(sx, sy)` then turn `deg` clockwise, both about `m` (pt).
+fn turn_about(deg: f32, (sx, sy): (f32, f32), (mx, my): (f32, f32)) -> Transform {
+    let (sin, cos) = deg.to_radians().sin_cos();
+    let (a, c) = (cos * sx, -sin * sy);
+    let (b, d) = (sin * sx, cos * sy);
+    Transform::from_row(a, b, c, d, mx - (a * mx + c * my), my - (b * mx + d * my))
+}
+
 fn draw_picture(surface: &mut Surface, pic: &Picture, images: &mut Images) {
     let data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(pic.bytes.clone());
     let image = images.get(data);
@@ -657,6 +713,17 @@ fn draw_picture(surface: &mut Surface, pic: &Picture, images: &mut Images) {
         pb.push_rect(rect);
         pb.finish()
     });
+    // Turned and flipped about the box's centre.
+    let turned = pic.turn != 0.0 || pic.flip.0 || pic.flip.1;
+    if turned {
+        let [cx, cy, cw, ch] = pic.clip.unwrap_or(pic.rect);
+        let (mx, my) = ((cx + cw / 2.0) * TO_PT, (cy + ch / 2.0) * TO_PT);
+        let (sx, sy) = (
+            if pic.flip.0 { -1.0 } else { 1.0 },
+            if pic.flip.1 { -1.0 } else { 1.0 },
+        );
+        surface.push_transform(&turn_about(pic.turn, (sx, sy), (mx, my)));
+    }
     if let Some(c) = &clip {
         surface.push_clip_path(c, &krilla::paint::FillRule::NonZero);
     }
@@ -666,15 +733,22 @@ fn draw_picture(surface: &mut Surface, pic: &Picture, images: &mut Images) {
     if clip.is_some() {
         surface.pop();
     }
+    if turned {
+        surface.pop();
+    }
 }
 
 /// A floating object: its outline's fill and stroke, its picture, its
 /// text box's content.
 fn draw_float(surface: &mut Surface, f: &FloatScene, images: &mut Images, fonts: &mut Fonts) {
-    for pic in &f.pictures {
-        draw_picture(surface, pic, images);
-    }
-    for p in &f.paths {
+    for &(is_pic, i) in &f.order {
+        if is_pic {
+            if let Some(pic) = f.pictures.get(i) {
+                draw_picture(surface, pic, images);
+            }
+            continue;
+        }
+        let Some(p) = f.paths.get(i) else { continue };
         let Some(path) = krilla_path(&p.segs) else {
             continue;
         };
@@ -696,7 +770,14 @@ fn draw_float(surface: &mut Surface, f: &FloatScene, images: &mut Images, fonts:
         surface.set_fill(None);
         surface.set_stroke(None);
     }
-    draw_content(surface, &f.content, images, fonts);
+    if let Some((deg, [cx, cy])) = f.content_turn {
+        let (mx, my) = (cx * TO_PT, cy * TO_PT);
+        surface.push_transform(&turn_about(deg, (1.0, 1.0), (mx, my)));
+        draw_content(surface, &f.content, images, fonts);
+        surface.pop();
+    } else {
+        draw_content(surface, &f.content, images, fonts);
+    }
 }
 
 fn krilla_path(segs: &[floats::Seg]) -> Option<krilla::geom::Path> {

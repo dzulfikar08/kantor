@@ -274,3 +274,55 @@ fn text_box_text_is_edited_and_saved() {
     );
     assert!(!f.is_modified());
 }
+
+#[test]
+fn groups_canvases_charts_and_wrap_polygons_are_read() {
+    let path = corpus("drawings.docx");
+    let doc = Document::open(&path).unwrap();
+    assert!(
+        doc.unsupported_content().is_empty(),
+        "{:?}",
+        doc.unsupported_content()
+    );
+    let fs = floats(&doc);
+    let by = |name: &str| fs.iter().find(|f| f.2.name == name).unwrap().2.clone();
+    let group = by("Group 1");
+    assert_eq!(group.kind, FloatKind::Group { canvas: false });
+    assert_eq!(group.picture_rels().len(), 1);
+    // Its picture is loaded with the document.
+    assert!(doc.image_bytes(&group.picture_rels()[0]).is_some());
+    let canvas = by("Canvas 1");
+    assert_eq!(canvas.kind, FloatKind::Group { canvas: true });
+    let FloatKind::Chart { part, .. } = &by("Chart 1").kind else {
+        panic!()
+    };
+    assert_eq!(part, "word/charts/chart1.xml");
+    assert!(doc.part_xml(part).unwrap().contains("c:barChart"));
+    let tri = by("Tight triangle");
+    assert_eq!(tri.at.wrap, Wrap::Tight);
+    let poly = tri.wrap_polygon().unwrap();
+    assert_eq!(poly.len(), 4);
+    assert_eq!(poly[0], (0.5, 0.0));
+    // Switched to Square, the polygon no longer applies.
+    let mut square = tri.clone();
+    square.at.set_layout_option(LayoutOption::Square);
+    assert!(square.wrap_polygon().is_none());
+    // Saved untouched: every drawing byte for byte, the chart part kept.
+    let mut doc = doc;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("d.docx");
+    let end = doc.end();
+    let c = doc.insert_text(docs_engine::Selection::caret(end), "!", None);
+    doc.backspace(c);
+    doc.save_as(&out).unwrap();
+    let saved = std::fs::read(&out).unwrap();
+    let xml = document_xml(&saved);
+    for f in &fs {
+        assert!(xml.contains(&*f.2.xml), "{} rewritten", f.2.name);
+    }
+    let p = parts(&saved);
+    assert_eq!(
+        p["word/charts/chart1.xml"],
+        parts(&std::fs::read(&path).unwrap())["word/charts/chart1.xml"]
+    );
+}

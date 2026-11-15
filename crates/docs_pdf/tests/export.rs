@@ -402,7 +402,7 @@ fn table_of_contents_has_dot_leaders_and_aligned_page_numbers() {
 
 #[test]
 fn page_number_format_with_chapter_numbers() {
-    use docs_engine::{ChapterSep, NumFormat, PageLookup as _, PageNumbering};
+    use docs_engine::{ChapterSep, NumFormat, PageNumbering};
     let mut doc = Document::new();
     let c = doc.insert_text(Selection::default(), "Pendahuluan\nIsi bab.", None);
     let first = Selection::caret(docs_engine::Position::new(0, 0));

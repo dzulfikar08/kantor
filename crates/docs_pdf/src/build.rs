@@ -229,7 +229,7 @@ pub fn layout_paragraph(
         let o = match obj {
             Object::Float(f) => {
                 if !marks.no_floats {
-                    lp.floats.push(float_spec(index, &f.at));
+                    lp.floats.push(float_spec(index, f));
                 }
                 hidden()
             }
@@ -412,7 +412,8 @@ fn show_codes(
 }
 
 /// A floating object's placement in layout terms (EMU → px).
-pub fn float_spec(index: usize, at: &docs_engine::Placement) -> docs_layout::FloatSpec {
+pub fn float_spec(index: usize, f: &docs_engine::Float) -> docs_layout::FloatSpec {
+    let at = &f.at;
     use docs_engine::float::{FloatAlign, Place, RelH, RelV, WrapSide};
     use docs_layout::{FloatPos, FloatRefH, FloatRefV, FloatSide, FloatWrap};
     let emu = docs_engine::object::EMU_PER_PX;
@@ -453,8 +454,10 @@ pub fn float_spec(index: usize, at: &docs_engine::Placement) -> docs_layout::Flo
         width,
         height,
         dist: at.dist.map(|d| d.max(0) as f32 / emu),
-        // Kantor doesn't follow wrap polygons: Tight and Through wrap
-        // like Square.
+        // Tight and Through follow the wrap polygon when there is one.
+        polygon: f
+            .wrap_polygon()
+            .map(|p| p.into_iter().map(|(x, y)| [x, y]).collect()),
         wrap: match at.wrap {
             docs_engine::Wrap::None => FloatWrap::None,
             docs_engine::Wrap::Square | docs_engine::Wrap::Tight | docs_engine::Wrap::Through => {

@@ -737,6 +737,7 @@ fn float_item(
     doc: &Document,
     (story, para, index): (Option<usize>, usize, usize),
     rect: [f32; 4],
+    painter: &floats::Painter,
     layout: &mut LayoutFn,
 ) -> Option<FloatItem> {
     let owner = match story {
@@ -763,6 +764,8 @@ fn float_item(
         };
         (Arc::new(sl), x, y + dy)
     });
+    let chart =
+        crate::chart::chart_draw(doc, f, (story, para, index), rect, painter, layout).map(Arc::new);
     Some(FloatItem {
         para,
         index,
@@ -771,6 +774,7 @@ fn float_item(
         z: f.at.z,
         behind: f.at.behind,
         text,
+        chart,
     })
 }
 
@@ -783,10 +787,12 @@ fn place_floats(
     layout: &mut LayoutFn,
 ) -> Vec<Vec<FloatItem>> {
     let mut out = Vec::with_capacity(paged.pages.len());
+    let painter = floats::Painter::new(doc);
     for (pi, page) in paged.pages.iter().enumerate() {
         let mut items = Vec::new();
         for pf in &page.floats {
-            if let Some(it) = float_item(doc, (None, pf.para, pf.index), pf.rect, layout) {
+            if let Some(it) = float_item(doc, (None, pf.para, pf.index), pf.rect, &painter, layout)
+            {
                 items.push(it);
             }
         }
@@ -815,7 +821,9 @@ fn place_floats(
                         char_x: line.map_or(placed.x, |c| placed.x + c.x),
                     };
                     let rect = floats::place(f, index, &page.setup, page.number, at);
-                    if let Some(it) = float_item(doc, (Some(story), para, index), rect, layout) {
+                    if let Some(it) =
+                        float_item(doc, (Some(story), para, index), rect, &painter, layout)
+                    {
                         items.push(it);
                     }
                 }

@@ -955,11 +955,22 @@ impl BodyParser<'_> {
             FloatKind::Picture { rel_id, part, .. } if !part.is_empty() => {
                 self.image_rels.insert(rel_id.clone());
             }
+            FloatKind::Group { .. } => {
+                // Pictures in the group; text in its shapes isn't shown.
+                for id in f.picture_rels() {
+                    if rels.get(&id).is_some_and(|r| !r.external) {
+                        self.image_rels.insert(id);
+                    }
+                }
+            }
+            FloatKind::Chart { part, .. } if !part.is_empty() => {}
+            FloatKind::Chart { .. } => {
+                self.preserved.insert("charts".into());
+            }
             FloatKind::Other(what) => {
                 self.preserved.insert(match what.as_str() {
-                    "Chart" => "charts".into(),
                     "SmartArt" => "SmartArt".into(),
-                    _ => "grouped shapes and drawing canvases".into(),
+                    _ => "drawings".into(),
                 });
             }
             _ => {}

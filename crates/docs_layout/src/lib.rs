@@ -1499,11 +1499,11 @@ impl Flow<'_> {
                     | FloatRefV::OutsideMargin
             );
             if let Some(e) = WrapArea::of(spec, rect, key) {
+                if fixed {
+                    self.pages[page].fixed.push(e.clone());
+                }
                 if !self.excl.iter().any(|x| x.key == key) {
                     self.excl.push(e);
-                }
-                if fixed {
-                    self.pages[page].fixed.push(e);
                 }
             }
             self.pages[page].floats.push(PlacedFloat {

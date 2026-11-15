@@ -1657,6 +1657,7 @@ dependencies = [
  "log",
  "roxmltree 0.21.2",
  "slides_engine",
+ "slides_scene",
  "tempfile",
  "zip 9.4.1",
 ]
@@ -1673,11 +1674,15 @@ dependencies = [
  "foldhash",
  "gpui-kit",
  "gpui-pre-wgpu",
+ "image",
  "kantor_core",
  "kantor_spell",
  "kantor_ui",
  "log",
  "skrifa 0.44.0",
+ "slides_engine",
+ "slides_scene",
+ "swash",
 ]
 
 [[package]]
@@ -7227,7 +7232,6 @@ dependencies = [
  "slides_engine",
  "slides_pdf",
  "slides_scene",
- "swash",
 ]
 
 [[package]]

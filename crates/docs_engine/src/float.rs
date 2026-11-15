@@ -159,9 +159,10 @@ pub enum Wrap {
     /// [`Placement::behind`].
     None,
     Square,
-    /// Laid out like [`Wrap::Square`] (the wrap polygon isn't followed).
+    /// Text follows the wrap polygon ([`Float::wrap_polygon`]).
     Tight,
-    /// Laid out like [`Wrap::Square`].
+    /// As [`Wrap::Tight`] (Kantor doesn't let text into the polygon's
+    /// hollows).
     Through,
     TopAndBottom,
 }
@@ -303,8 +304,13 @@ pub enum FloatKind {
     },
     /// A shape (`wps:wsp`), possibly holding a text box.
     Shape,
-    /// A group of shapes or pictures (`wpg:wgp`), a drawing canvas, a
-    /// chart, SmartArt…: placed, shown as a box.
+    /// A group of shapes and pictures (`wpg:wgp`) or a drawing canvas
+    /// (`wpc:wpc`): drawn from the XML, moved and sized as one.
+    Group { canvas: bool },
+    /// A chart (`c:chart` in the graphic frame): relationship id and the
+    /// chart part's name.
+    Chart { rel_id: String, part: String },
+    /// SmartArt or other content: placed, shown as a box.
     Other(String),
 }
 
@@ -384,6 +390,9 @@ impl Float {
             FloatKind::Picture { .. } => "Floating picture",
             FloatKind::Shape if self.text.is_some() => "Text box",
             FloatKind::Shape => "Shape",
+            FloatKind::Group { canvas: false } => "Group",
+            FloatKind::Group { canvas: true } => "Drawing canvas",
+            FloatKind::Chart { .. } => "Chart",
             FloatKind::Other(what) => what,
         }
     }
@@ -448,6 +457,41 @@ impl Float {
             .map(|p| p.text.replace(crate::OBJECT, ""))
             .collect();
         Some(lines.join("\n"))
+    }
+
+    /// The wrap polygon of a Tight or Through object (`wp:wrapPolygon`),
+    /// as fractions of its box (Word writes it in a 21600 × 21600 space),
+    /// when the XML has one for the wrap it has now.
+    pub fn wrap_polygon(&self) -> Option<Vec<(f32, f32)>> {
+        if !matches!(self.at.wrap, Wrap::Tight | Wrap::Through) || self.at.wrap != self.read.wrap {
+            return None;
+        }
+        let choice = choice_part(&self.xml);
+        let r = element_range(choice, "wrapPolygon")?;
+        let el = xml::parse(&choice[r])?;
+        let pts: Vec<(f32, f32)> = el
+            .children
+            .iter()
+            .filter(|c| c.name == "start" || c.name == "lineTo")
+            .filter_map(|c| Some((c.num::<f32>("x")? / 21_600.0, c.num::<f32>("y")? / 21_600.0)))
+            .collect();
+        (pts.len() >= 3).then_some(pts)
+    }
+
+    /// The pictures (`a:blip/@r:embed`) a picture or group draws.
+    pub fn picture_rels(&self) -> Vec<String> {
+        match &self.kind {
+            FloatKind::Picture { rel_id, .. } => vec![rel_id.clone()],
+            FloatKind::Group { .. } => blip_rels(choice_part(&self.xml)),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The graphic's content (`a:graphicData`'s child, e.g. `wpg:wgp`), as
+    /// written, for drawing groups and canvases.
+    pub fn graphic_xml(&self) -> Option<&str> {
+        let choice = choice_part(&self.xml);
+        element_range(choice, "graphicData").map(|r| &choice[r])
     }
 
     /// The `a:prstGeom` / `a:custGeom` element of a shape or picture, as
@@ -926,6 +970,28 @@ fn anchor_picture_xml(img: &crate::Image, at: &Placement) -> String {
 
 /// The part of an `mc:AlternateContent` Word reads (its first choice),
 /// or the whole XML.
+/// Every `r:embed` of an `a:blip` in a fragment.
+pub(crate) fn blip_rels(src: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(i) = src[at..].find(":blip ") {
+        let s = at + i;
+        let e = src[s..].find('>').map_or(src.len(), |e| s + e);
+        let tag = &src[s..e];
+        if let Some(k) = tag.find("r:embed=\"") {
+            let v = k + "r:embed=\"".len();
+            if let Some(q) = tag[v..].find('"') {
+                let id = tag[v..v + q].to_owned();
+                if !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        }
+        at = e;
+    }
+    out
+}
+
 fn choice_part(xml: &str) -> &str {
     match element_range(xml, "Choice") {
         Some(r) => &xml[r],
@@ -1114,11 +1180,20 @@ pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> 
     } else if data.and_then(|d| d.child("wsp")).is_some() {
         FloatKind::Shape
     } else if uri.ends_with("/chart") {
-        FloatKind::Other("Chart".into())
+        match data
+            .and_then(|d| find(d, "chart"))
+            .and_then(|c| c.attr("id"))
+        {
+            Some(rel) => FloatKind::Chart {
+                rel_id: rel.to_owned(),
+                part: rel_part(rel).unwrap_or_default(),
+            },
+            None => FloatKind::Other("Chart".into()),
+        }
     } else if uri.contains("wordprocessingGroup") {
-        FloatKind::Other("Group".into())
+        FloatKind::Group { canvas: false }
     } else if uri.contains("wordprocessingCanvas") {
-        FloatKind::Other("Drawing canvas".into())
+        FloatKind::Group { canvas: true }
     } else if uri.contains("diagram") {
         FloatKind::Other("SmartArt".into())
     } else {

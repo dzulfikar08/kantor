@@ -33,7 +33,9 @@ mod object_editor;
 mod paint_menu;
 mod spell;
 mod toolbar;
-mod turned_text;
+// Turned text is drawn by Docs' shared rasteriser (also used for turned
+// text boxes in Docs).
+use docs_ui::turned_text;
 
 use std::cell::Cell;
 use std::ops::Range;

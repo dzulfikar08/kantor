@@ -36,6 +36,7 @@ mod ruler;
 mod spell;
 mod tab_menu;
 mod toolbar;
+pub mod turned_text;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -490,6 +491,10 @@ pub struct DocsView {
     cache: HashMap<u64, Arc<ParaLayout>>,
     /// Decoded-on-demand pictures by relationship id.
     images: HashMap<String, Arc<gpui_kit::Image>>,
+    /// Turned floating pictures, by [`floats::picture_key`].
+    turned_images: HashMap<String, Arc<RenderImage>>,
+    /// Turned text boxes' text (see [`floats::TurnedCache`]).
+    turned_texts: floats::TurnedCache,
     /// The insert-table grid: where it opened (window coordinates) and the
     /// size under the pointer.
     table_picker: Option<(Point<Pixels>, (usize, usize))>,
@@ -620,6 +625,8 @@ impl DocsView {
             }),
             cache: HashMap::new(),
             images: HashMap::new(),
+            turned_images: HashMap::new(),
+            turned_texts: HashMap::new(),
             table_picker: None,
             page_menu: None,
             page_menu_closed: None,
@@ -2432,13 +2439,19 @@ impl Render for DocsView {
         // document (a part being edited put back for a moment).
         let swapped = self.whole_in();
         let images = self.visible_images(window, cx);
-        let float_images = self.visible_float_images(window, cx);
+        let mut turned = std::mem::take(&mut self.turned_texts);
         let float_paint = floats::float_paint(
             &self.doc,
             &self.laid,
             &self.painter,
             self.geometry().visible_pages(self.laid.paged.pages.len()),
+            &mut turned,
         );
+        self.turned_texts = turned;
+        for img in turned_text::take_evicted() {
+            window.drop_image(img).ok();
+        }
+        let float_images = self.visible_float_images(&float_paint, window, cx);
         let float_sel = self.float_sel_rect();
         let layout_button = self.render_layout_button(cx);
         let hf_images = self.visible_hf_images(window, cx);
