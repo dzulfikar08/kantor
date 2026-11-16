@@ -793,8 +793,15 @@ fn float_item(
             });
         }
     }
-    let chart =
+    let mut chart =
         crate::chart::chart_draw(doc, f, (story, para, index), rect, painter, layout).map(Arc::new);
+    if let Some(sa) = crate::smartart::draw(doc, f, (story, para, index), rect, painter, layout) {
+        chart = Some(Arc::new(crate::chart::ChartDraw {
+            prims: sa.prims,
+            labels: Vec::new(),
+        }));
+        boxes.extend(sa.texts);
+    }
     Some(FloatItem {
         para,
         index,

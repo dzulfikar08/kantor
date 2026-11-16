@@ -310,7 +310,15 @@ pub enum FloatKind {
     /// A chart (`c:chart` in the graphic frame): relationship id and the
     /// chart part's name.
     Chart { rel_id: String, part: String },
-    /// SmartArt or other content: placed, shown as a box.
+    /// SmartArt (`dgm:relIds`): its data model part, and the drawing
+    /// parts its anchor's part relates to (relationship id, part name;
+    /// the data model's `dsp:dataModelExt/@relId` picks one). Drawn from
+    /// Word's pre-drawn shapes (the drawing part).
+    SmartArt {
+        data: String,
+        drawings: Vec<(String, String)>,
+    },
+    /// Other content: placed, shown as a box.
     Other(String),
 }
 
@@ -355,6 +363,10 @@ pub struct Float {
     /// A group's or canvas's shapes' text boxes, in the order their
     /// `w:txbxContent`s are written ([`Float::text_box_in`]).
     pub boxes: Vec<GroupBox>,
+    /// Parts of the package changed with this object (SmartArt text
+    /// edited in Kantor: its drawing and data model), by name: written in
+    /// place of the originals on save.
+    pub parts: Vec<(String, Arc<str>)>,
 }
 
 /// The text box of one shape in a group.
@@ -382,6 +394,7 @@ impl PartialEq for Float {
             && (!self.text_edited
                 || self.text.as_ref().map(|t| t.doc.paragraphs())
                     == o.text.as_ref().map(|t| t.doc.paragraphs()))
+            && self.parts == o.parts
             && self.boxes.len() == o.boxes.len()
             && self
                 .boxes
@@ -406,6 +419,7 @@ impl Hash for Float {
         for b in &self.boxes {
             b.edited_paras().hash(h);
         }
+        self.parts.hash(h);
     }
 }
 
@@ -419,6 +433,7 @@ impl Float {
             FloatKind::Group { canvas: false } => "Group",
             FloatKind::Group { canvas: true } => "Drawing canvas",
             FloatKind::Chart { .. } => "Chart",
+            FloatKind::SmartArt { .. } => "SmartArt",
             FloatKind::Other(what) => what,
         }
     }
@@ -907,6 +922,57 @@ impl Document {
         true
     }
 
+    /// Give the object at `para`/`index` edited package parts
+    /// ([`Float::parts`]; a part already there is replaced): one undo step.
+    pub fn set_float_parts(
+        &mut self,
+        para: usize,
+        index: usize,
+        parts: Vec<(String, Arc<str>)>,
+    ) -> bool {
+        let Some(f) = self.float_at(para, index) else {
+            return false;
+        };
+        let mut nf = f.clone();
+        for (name, xml) in parts {
+            match nf.parts.iter_mut().find(|p| p.0 == name) {
+                Some(p) => p.1 = xml,
+                None => nf.parts.push((name, xml)),
+            }
+        }
+        if nf.parts == f.parts {
+            return false;
+        }
+        self.swap_object(para, index, Some(crate::Object::Float(Arc::new(nf))))
+    }
+
+    /// A part's XML as the document has it now: edited with a floating
+    /// object ([`Float::parts`], body, headers and footers), else as read.
+    pub fn current_part_xml(&self, name: &str) -> Option<String> {
+        self.edited_parts()
+            .into_iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, x)| x.to_string())
+            .or_else(|| self.part_xml(name))
+    }
+
+    /// Every package part edited with a floating object (the body's
+    /// first, then headers' and footers').
+    pub(crate) fn edited_parts(&self) -> Vec<(String, Arc<str>)> {
+        let mut out = Vec::new();
+        let docs = std::iter::once(self).chain(self.stories().iter().map(|s| &s.doc));
+        for d in docs {
+            for p in d.paragraphs() {
+                for (_, o) in p.objects() {
+                    if let crate::Object::Float(f) = o {
+                        out.extend(f.parts.iter().cloned());
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Move, resize or rewrap a floating object (one undo step).
     pub fn set_float_placement(&mut self, para: usize, index: usize, at: Placement) -> bool {
         let Some(f) = self.float_at(para, index) else {
@@ -1338,7 +1404,17 @@ pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> 
     } else if uri.contains("wordprocessingCanvas") {
         FloatKind::Group { canvas: true }
     } else if uri.contains("diagram") {
-        FloatKind::Other("SmartArt".into())
+        match data
+            .and_then(|d| find(d, "relIds"))
+            .and_then(|c| c.attr("dm"))
+            .and_then(rel_part)
+        {
+            Some(part) => FloatKind::SmartArt {
+                data: part,
+                drawings: Vec::new(),
+            },
+            None => FloatKind::Other("SmartArt".into()),
+        }
     } else {
         FloatKind::Other("Drawing".into())
     };
@@ -1358,6 +1434,7 @@ pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> 
         text: None,
         text_edited: false,
         boxes: Vec::new(),
+        parts: Vec::new(),
     })
 }
 

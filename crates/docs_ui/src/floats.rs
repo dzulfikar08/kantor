@@ -285,7 +285,8 @@ impl DocsView {
         if f.text.is_some() {
             return Some(None);
         }
-        if f.boxes.is_empty() {
+        let smartart = matches!(f.kind, docs_engine::FloatKind::SmartArt { .. });
+        if f.boxes.is_empty() && !smartart {
             return None;
         }
         let (_, x, y) = self.geometry().screen_to_page(p, self.laid.paged.pages.len());
@@ -546,8 +547,18 @@ impl DocsView {
         let Some(f) = self.doc.float_at(sel.para, sel.index) else {
             return;
         };
-        let text = f.text_box_text_in(which).unwrap_or_default();
-        let locked = f.text_locked_in(which).map(str::to_owned);
+        let (text, locked) = match (&f.kind, which) {
+            (docs_engine::FloatKind::SmartArt { .. }, Some(k)) => {
+                let Some((text, locked)) = docs_pdf::smartart::shape_text(&self.doc, f, k) else {
+                    return;
+                };
+                (text, locked.map(|l| t_dyn(l).to_owned()))
+            }
+            _ => (
+                f.text_box_text_in(which).unwrap_or_default(),
+                f.text_locked_in(which).map(str::to_owned),
+            ),
+        };
         let input = cx.new(|cx| {
             let mut s = TextareaState::new(window, cx)
                 .auto_grow(2, 8)
@@ -586,12 +597,30 @@ impl DocsView {
         if edit.locked.is_none() {
             let value = edit.input.read(cx).value().to_string();
             let text = value.trim_end_matches(['\n', '\r']);
-            if self
+            let (para, index) = (edit.sel.para, edit.sel.index);
+            let smartart = self
                 .doc
-                .set_text_box_text_in(edit.sel.para, edit.sel.index, edit.which, text)
-            {
-                self.float_edited(window, cx);
-                self.status = t("Text box updated").into();
+                .float_at(para, index)
+                .filter(|f| matches!(f.kind, docs_engine::FloatKind::SmartArt { .. }));
+            match (smartart, edit.which) {
+                (Some(f), Some(k)) => {
+                    match docs_pdf::smartart::set_shape_text(&self.doc, f, k, text) {
+                        Ok(Some(parts)) => {
+                            if self.doc.set_float_parts(para, index, parts) {
+                                self.float_edited(window, cx);
+                                self.status = t("SmartArt text updated").into();
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(why) => self.status = t_dyn(why).into(),
+                    }
+                }
+                _ => {
+                    if self.doc.set_text_box_text_in(para, index, edit.which, text) {
+                        self.float_edited(window, cx);
+                        self.status = t("Text box updated").into();
+                    }
+                }
             }
         }
         cx.notify();

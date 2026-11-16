@@ -36,9 +36,11 @@ pub struct FloatItem {
     pub behind: bool,
     /// Its text box laid out, with where the layout's (0, 0) goes.
     pub text: Option<(Arc<StoryLayout>, f32, f32)>,
-    /// A chart's drawing (drawn instead of the object's placeholder).
+    /// A chart's or SmartArt's drawing (drawn instead of the object's
+    /// placeholder; SmartArt's text is in `boxes`).
     pub chart: Option<Arc<crate::chart::ChartDraw>>,
-    /// The text of a group's shapes ([`Float::boxes`]), in their order.
+    /// The text of a group's shapes ([`Float::boxes`]), in their order, or
+    /// of a SmartArt's shapes (`which`: the shape in its drawing).
     pub boxes: Vec<BoxText>,
 }
 
@@ -192,7 +194,7 @@ impl Painter {
                     None => out.push(FloatPrim::Placeholder(rect, f.label().to_owned())),
                 }
             }
-            FloatKind::Chart { .. } | FloatKind::Other(_) => {
+            FloatKind::Chart { .. } | FloatKind::SmartArt { .. } | FloatKind::Other(_) => {
                 out.push(FloatPrim::Placeholder(rect, f.label().to_owned()))
             }
         }
@@ -333,7 +335,8 @@ impl Painter {
         }
         for c in g.children().filter(|c| c.is_element()) {
             match c.tag_name().name() {
-                "wsp" => {
+                // Word's shapes; SmartArt drawings' (`dsp:sp`).
+                "wsp" | "sp" | "cxnSp" => {
                     let sp = child(c, "spPr");
                     let Some((r, size)) = map.child_rect(sp) else {
                         continue;
@@ -377,6 +380,30 @@ impl Painter {
                 _ => {}
             }
         }
+    }
+
+    /// The shapes of a SmartArt drawing part (`dsp:drawing`, positions in
+    /// EMU from the frame's corner) drawn into `rect`, `k` px per EMU.
+    pub(crate) fn smartart_prims(&self, xml: &str, rect: [f32; 4], k: (f32, f32)) -> Vec<FloatPrim> {
+        let mut out = Vec::new();
+        let Ok(doc) = roxmltree::Document::parse(xml) else {
+            return out;
+        };
+        let Some(tree) = child(doc.root_element(), "spTree") else {
+            return out;
+        };
+        let map = ChildMap {
+            off: (0.0, 0.0),
+            k,
+            at: (rect[0], rect[1]),
+        };
+        self.children(tree, &map, 0, &mut out);
+        out
+    }
+
+    /// The theme's body font.
+    pub(crate) fn minor_font(&self) -> Option<&str> {
+        self.theme.minor_font.as_deref()
     }
 
     /// An outer shadow (`a:effectLst/a:outerShdw`) under `outlines`: the

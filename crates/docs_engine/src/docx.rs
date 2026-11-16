@@ -964,6 +964,7 @@ impl BodyParser<'_> {
                 }
             }
             FloatKind::Chart { part, .. } if !part.is_empty() => {}
+            FloatKind::SmartArt { .. } => {}
             FloatKind::Chart { .. } => {
                 self.preserved.insert("charts".into());
             }
@@ -974,6 +975,14 @@ impl BodyParser<'_> {
                 });
             }
             _ => {}
+        }
+        if let FloatKind::SmartArt { drawings, .. } = &mut f.kind {
+            for (id, r) in rels.iter() {
+                if r.ty.ends_with("/diagramDrawing") && !r.external {
+                    drawings.push((id.clone(), resolve(part, &r.target)));
+                }
+            }
+            drawings.sort();
         }
         if matches!(f.kind, FloatKind::Group { .. }) {
             let boxes: Vec<_> = crate::float::group_text_boxes(xml)
@@ -3659,6 +3668,13 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
             out = crate::section::set_settings_track(&out, doc.track_changes());
         }
         replace.insert(name.clone(), out.into_bytes());
+    }
+
+    // Parts edited with floating objects (SmartArt text).
+    for (name, xml) in doc.edited_parts().into_iter().rev() {
+        if pkg.has_part(&name) {
+            replace.insert(name, xml.as_bytes().to_vec());
+        }
     }
 
     // Pictures inserted in Kantor that the body still uses.

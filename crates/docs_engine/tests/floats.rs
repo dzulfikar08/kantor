@@ -370,3 +370,45 @@ fn grouped_shapes_text_is_read_edited_and_saved() {
     assert_eq!(f.text_box_text_in(Some(1)).as_deref(), Some("Do"));
     assert!(!f.is_modified());
 }
+
+/// `diagrams.docx`: SmartArt is read with its data model and drawing
+/// parts; parts edited with it are saved in place of the originals.
+#[test]
+fn smartart_parts_are_read_and_edited_parts_saved() {
+    let path = corpus("diagrams.docx");
+    let mut doc = Document::open(&path).unwrap();
+    assert!(
+        !doc.preserved_content().iter().any(|p| p == "SmartArt"),
+        "{:?}",
+        doc.preserved_content()
+    );
+    let (para, index, f) = floats(&doc)
+        .into_iter()
+        .find(|f| f.2.name == "Diagram 1")
+        .unwrap();
+    let FloatKind::SmartArt { data, drawings } = &f.kind else {
+        panic!("{:?}", f.kind)
+    };
+    assert_eq!(data, "word/diagrams/data1.xml");
+    assert_eq!(drawings.len(), 1);
+    assert_eq!(drawings[0].1, "word/diagrams/drawing1.xml");
+    let edited: std::sync::Arc<str> = "<dsp:drawing/>".into();
+    assert!(doc.set_float_parts(
+        para,
+        index,
+        vec![("word/diagrams/drawing1.xml".into(), edited.clone())]
+    ));
+    assert_eq!(
+        doc.current_part_xml("word/diagrams/drawing1.xml").as_deref(),
+        Some("<dsp:drawing/>")
+    );
+    let saved = parts(&doc.to_docx_bytes().unwrap());
+    assert_eq!(saved["word/diagrams/drawing1.xml"], b"<dsp:drawing/>");
+    doc.undo();
+    let saved = parts(&doc.to_docx_bytes().unwrap());
+    let original = parts(&std::fs::read(&path).unwrap());
+    assert_eq!(
+        saved["word/diagrams/drawing1.xml"],
+        original["word/diagrams/drawing1.xml"]
+    );
+}

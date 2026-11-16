@@ -22,6 +22,7 @@
 pub mod build;
 pub mod chart;
 pub mod floats;
+pub mod smartart;
 pub mod pages;
 
 pub use floats::FloatItem;

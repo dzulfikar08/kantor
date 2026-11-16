@@ -302,6 +302,18 @@ pub fn free_shape_text(
     minor: Option<&str>,
     xfrm: &Xfrm,
 ) -> Option<RenderText> {
+    let mut t = free_shape_text_boxed(shape, base, minor)?;
+    apply_text_rect(&mut t, shape, xfrm);
+    Some(t)
+}
+
+/// [`free_shape_text`] for text with a box of its own (SmartArt's
+/// `dsp:txXfrm`): the geometry's text rectangle doesn't apply.
+pub fn free_shape_text_boxed(
+    shape: &Shape,
+    base: &ListStyle,
+    minor: Option<&str>,
+) -> Option<RenderText> {
     let body = shape.text.as_ref().filter(|t| !t.is_empty())?;
     let mut ls = base.clone();
     if let Some(c) = shape.look.text_color {
@@ -314,16 +326,14 @@ pub fn free_shape_text(
     let scale = bp.font_scale.map_or(1.0, |s| s as f32 / 100_000.0);
     let paras = render_paras_with(minor, body, &ls, scale, bp.line_reduction, false);
     let d = [91_440, 45_720, 91_440, 45_720];
-    let mut t = RenderText {
+    Some(RenderText {
         paras,
         insets: std::array::from_fn(|i| bp.insets[i].unwrap_or(d[i])),
         anchor: bp.anchor.unwrap_or_default(),
         wrap: bp.no_wrap != Some(true),
         prompt: false,
         vert: bp.vert.unwrap_or_default(),
-    };
-    apply_text_rect(&mut t, shape, xfrm);
-    Some(t)
+    })
 }
 
 /// Which part a drawn shape belongs to.

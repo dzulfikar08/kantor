@@ -14,6 +14,9 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Docs: text in grouped shapes (and in shapes on a drawing canvas) is shown, wrapped inside its
   shape and turned with it, on screen and in the PDF. Double-click a shape in the group to edit its
   text, as with a text box.
+- Docs: SmartArt is drawn, on screen and in the PDF, from the shapes Word saved for it (with
+  Slides' SmartArt code). Double-click a SmartArt shape to edit its text; it's saved to both the
+  drawing and the SmartArt's data, so Word shows the edit too. Items can't be added or removed.
 
 ## [0.8.0] - 2026-11-16
 

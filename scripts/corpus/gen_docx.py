@@ -38,7 +38,8 @@ crates/docs_pdf/tests/.
   a text box turned 90°, a shape with a shadow, and a triangle with Tight
   wrapping (`wp:wrapPolygon`).
 * diagrams.docx: a group whose shapes hold text (`wps:txbx` inside
-  `wpg:wgp`, one shape turned 90°).
+  `wpg:wgp`, one shape turned 90°); SmartArt (data model, layout, style,
+  colours and Word's drawing part), one shape showing two items.
 * notes.docx: a footnote too long for its page (Word's continuation
   separator and notice), short footnotes, and endnotes placed at the end
   of each section (`w:endnotePr/w:pos w:val="sectEnd"`) in two sections.
@@ -872,6 +873,132 @@ group = (
 add_draw(p, drawing(anchor(301, "Labelled group", pos("H", "column", "<wp:align>left</wp:align>"),
                             pos("V", "paragraph", "<wp:posOffset>0</wp:posOffset>"),
                             G, G // 3, '<wp:wrapTopAndBottom/>', group, 251661000)))
+p.add_run(LOREM)
+
+# SmartArt, by hand (as gen_pptx_groups.py): a data model, layout, style,
+# colours and Word's pre-drawn shapes: three boxes, the middle one an
+# empty placeholder item, and a list shape showing two items.
+DGM = "http://schemas.openxmlformats.org/drawingml/2006/diagram"
+DSP = "http://schemas.microsoft.com/office/drawing/2008/diagram"
+FW, FH = 400 * EMU, 160 * EMU
+doc_id = "{00000000-0000-0000-0000-000000000001}"
+items = [  # (id, text, parent, placeholder)
+    ("{A0000000-0000-0000-0000-000000000001}", "Plan", doc_id, False),
+    ("{A0000000-0000-0000-0000-000000000002}", "", doc_id, True),
+    ("{A0000000-0000-0000-0000-000000000003}", "Ship", doc_id, False),
+    ("{A0000000-0000-0000-0000-000000000004}", "Steps", doc_id, False),
+    ("{A0000000-0000-0000-0000-000000000005}", "One", "{A0000000-0000-0000-0000-000000000004}", False),
+    ("{A0000000-0000-0000-0000-000000000006}", "Two", "{A0000000-0000-0000-0000-000000000004}", False),
+]
+bw = FW // 5
+drawn = [  # (presentation item, data item it shows, paragraphs, box)
+    ("{B0000000-0000-0000-0000-000000000001}", items[0][0], ["Plan"], (0, 0, bw, FH // 2)),
+    ("{B0000000-0000-0000-0000-000000000002}", items[1][0], [""], (int(bw * 1.25), 0, bw, FH // 2)),
+    ("{B0000000-0000-0000-0000-000000000003}", items[2][0], ["Ship"], (int(bw * 2.5), 0, bw, FH // 2)),
+    ("{B0000000-0000-0000-0000-000000000004}", items[3][0], ["Steps"], (int(bw * 3.75), 0, bw, FH // 4)),
+    ("{B0000000-0000-0000-0000-000000000005}", items[3][0], ["One", "Two"], (int(bw * 3.75), FH // 4, bw, FH // 2)),
+]
+
+
+def dgm_paras(texts, extra=""):
+    out = ""
+    for t in texts:
+        if t:
+            out += f'<a:p><a:r><a:rPr lang="en-US"{extra}/><a:t>{t}</a:t></a:r></a:p>'
+        else:
+            out += '<a:p><a:endParaRPr lang="en-US"/></a:p>'
+    return out
+
+
+pts = (
+    f'<dgm:pt modelId="{doc_id}" type="doc"><dgm:prSet loTypeId="urn:microsoft.com/office/officeart/2005/8/layout/default" '
+    'loCatId="list" qsTypeId="urn:microsoft.com/office/officeart/2005/8/quickstyle/simple1" qsCatId="simple" '
+    'csTypeId="urn:microsoft.com/office/officeart/2005/8/colors/accent1_2" csCatId="accent1"/><dgm:spPr/>'
+    f'<dgm:t><a:bodyPr/><a:lstStyle/>{dgm_paras([""])}</dgm:t></dgm:pt>'
+)
+for mid, text, _, ph in items:
+    pr = '<dgm:prSet phldrT="[Text]" phldr="1"/>' if ph else '<dgm:prSet phldrT="[Text]"/>'
+    pts += f'<dgm:pt modelId="{mid}">{pr}<dgm:spPr/><dgm:t><a:bodyPr/><a:lstStyle/>{dgm_paras([text])}</dgm:t></dgm:pt>'
+for i, (pid, assoc, _, _) in enumerate(drawn):
+    pts += (
+        f'<dgm:pt modelId="{pid}" type="pres"><dgm:prSet presAssocID="{assoc}" presName="node" '
+        f'presStyleLbl="node1" presStyleIdx="{i}" presStyleCnt="{len(drawn)}"/><dgm:spPr/></dgm:pt>'
+    )
+cxns = ""
+order = {}
+for n, (mid, _, parent, _) in enumerate(items):
+    k = order.get(parent, 0)
+    order[parent] = k + 1
+    cxns += f'<dgm:cxn modelId="{{C0000000-0000-0000-0000-00000000000{n}}}" srcId="{parent}" destId="{mid}" srcOrd="{k}" destOrd="0"/>'
+for n, (pid, assoc, _, _) in enumerate(drawn):
+    cxns += (
+        f'<dgm:cxn modelId="{{D0000000-0000-0000-0000-00000000000{n}}}" type="presOf" srcId="{assoc}" '
+        f'destId="{pid}" srcOrd="0" destOrd="0"/>'
+    )
+sps = ""
+for pid, _, texts, (x, y, cx, cy) in drawn:
+    ins = 40000
+    sps += (
+        f'<dsp:sp modelId="{pid}"><dsp:nvSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvSpPr/></dsp:nvSpPr>'
+        f'<dsp:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:schemeClr val="accent1"/></a:solidFill>'
+        '<a:ln w="12700"><a:solidFill><a:schemeClr val="lt1"/></a:solidFill></a:ln></dsp:spPr>'
+        '<dsp:style><a:lnRef idx="2"><a:scrgbClr r="0" g="0" b="0"/></a:lnRef><a:fillRef idx="1"><a:scrgbClr r="0" g="0" b="0"/></a:fillRef>'
+        '<a:effectRef idx="0"><a:scrgbClr r="0" g="0" b="0"/></a:effectRef><a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></dsp:style>'
+        '<dsp:txBody><a:bodyPr spcFirstLastPara="0" vert="horz" wrap="square" lIns="38100" tIns="38100" rIns="38100" bIns="38100" '
+        'numCol="1" spcCol="1270" anchor="ctr" anchorCtr="0"><a:noAutofit/></a:bodyPr><a:lstStyle/>'
+        + dgm_paras(texts, ' sz="1400" kern="1200"').replace("<a:p>", '<a:p><a:pPr algn="ctr"/>')
+        + f'</dsp:txBody><dsp:txXfrm><a:off x="{x + ins}" y="{y + ins}"/><a:ext cx="{cx - 2 * ins}" cy="{cy - 2 * ins}"/></dsp:txXfrm></dsp:sp>'
+    )
+dgm_drawing = (
+    f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<dsp:drawing xmlns:dgm="{DGM}" xmlns:dsp="{DSP}" xmlns:a="{NS_A}">'
+    '<dsp:spTree><dsp:nvGrpSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvGrpSpPr/></dsp:nvGrpSpPr><dsp:grpSpPr/>'
+    f"{sps}</dsp:spTree></dsp:drawing>"
+)
+dgm_layout = (
+    f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<dgm:layoutDef xmlns:dgm="{DGM}" xmlns:a="{NS_A}" '
+    'uniqueId="urn:microsoft.com/office/officeart/2005/8/layout/default"><dgm:title val=""/><dgm:desc val=""/>'
+    '<dgm:catLst><dgm:cat type="list" pri="400"/></dgm:catLst><dgm:layoutNode name="diagram"><dgm:alg type="snake"/>'
+    '<dgm:shape/><dgm:presOf/></dgm:layoutNode></dgm:layoutDef>'
+)
+dgm_style = (
+    f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<dgm:styleDef xmlns:dgm="{DGM}" xmlns:a="{NS_A}" '
+    'uniqueId="urn:microsoft.com/office/officeart/2005/8/quickstyle/simple1"><dgm:title val=""/><dgm:desc val=""/>'
+    '<dgm:styleLbl name="node1"/></dgm:styleDef>'
+)
+dgm_colors = (
+    f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<dgm:colorsDef xmlns:dgm="{DGM}" xmlns:a="{NS_A}" '
+    'uniqueId="urn:microsoft.com/office/officeart/2005/8/colors/accent1_2"><dgm:title val=""/><dgm:desc val=""/></dgm:colorsDef>'
+)
+CT_DGM = "application/vnd.openxmlformats-officedocument.drawingml."
+REL_DGM = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+
+
+def dgm_part(name, ct, xml, rel):
+    part = Part(PackURI(f"/word/diagrams/{name}"), ct, xml.encode(), d.part.package)
+    return d.part.relate_to(part, rel)
+
+
+rid_dr = dgm_part("drawing1.xml", "application/vnd.ms-office.drawingml.diagramDrawing+xml", dgm_drawing,
+                  "http://schemas.microsoft.com/office/2007/relationships/diagramDrawing")
+dgm_data = (
+    f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<dgm:dataModel xmlns:dgm="{DGM}" xmlns:a="{NS_A}">'
+    f"<dgm:ptLst>{pts}</dgm:ptLst><dgm:cxnLst>{cxns}</dgm:cxnLst><dgm:bg/><dgm:whole/>"
+    f'<dgm:extLst><a:ext uri="http://schemas.microsoft.com/office/drawing/2008/diagram"><dsp:dataModelExt xmlns:dsp="{DSP}" '
+    f'relId="{rid_dr}" minVer="http://schemas.openxmlformats.org/drawingml/2006/diagram"/></a:ext></dgm:extLst></dgm:dataModel>'
+)
+rid_dm = dgm_part("data1.xml", CT_DGM + "diagramData+xml", dgm_data, REL_DGM + "diagramData")
+rid_lo = dgm_part("layout1.xml", CT_DGM + "diagramLayout+xml", dgm_layout, REL_DGM + "diagramLayout")
+rid_qs = dgm_part("quickStyle1.xml", CT_DGM + "diagramStyle+xml", dgm_style, REL_DGM + "diagramQuickStyle")
+rid_cs = dgm_part("colors1.xml", CT_DGM + "diagramColors+xml", dgm_colors, REL_DGM + "diagramColors")
+p = d.add_paragraph()
+smartart = (
+    f'<a:graphic><a:graphicData uri="{DGM}"><dgm:relIds xmlns:dgm="{DGM}" r:dm="{rid_dm}" r:lo="{rid_lo}" '
+    f'r:qs="{rid_qs}" r:cs="{rid_cs}"/></a:graphicData></a:graphic>'
+)
+add_draw(p, drawing(anchor(302, "Diagram 1", pos("H", "column", "<wp:align>center</wp:align>"),
+                            pos("V", "paragraph", "<wp:posOffset>0</wp:posOffset>"),
+                            FW, FH, '<wp:wrapTopAndBottom/>', smartart, 251661001)))
 p.add_run(LOREM)
 save(d, "diagrams.docx")
 print("docx ok")
