@@ -752,10 +752,22 @@ fn nested_field_codes_are_shown_and_typed() {
     doc.save_as(&out).unwrap();
     let body = &parts(&std::fs::read(&out).unwrap())["word/document.xml"];
     // Two field starts for the IF and the nested DATE.
-    let at = body.find("> IF </w:instrText>").or_else(|| body.find(">IF ")).unwrap_or(0);
-    assert!(body[at.saturating_sub(400)..].matches("fldCharType=\"begin\"").count() >= 2);
+    let at = body
+        .find("> IF </w:instrText>")
+        .or_else(|| body.find(">IF "))
+        .unwrap_or(0);
+    assert!(
+        body[at.saturating_sub(400)..]
+            .matches("fldCharType=\"begin\"")
+            .count()
+            >= 2
+    );
     let back = Document::open(&out).unwrap();
-    assert!(back.unsupported_content().is_empty(), "{:?}", back.unsupported_content());
+    assert!(
+        back.unsupported_content().is_empty(),
+        "{:?}",
+        back.unsupported_content()
+    );
     let f = back.field_at(date.begin).unwrap();
     assert_eq!(f.shown_code(), code);
     assert_eq!(f.kind(), "IF");

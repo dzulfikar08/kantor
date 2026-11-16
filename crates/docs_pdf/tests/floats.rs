@@ -268,7 +268,11 @@ fn grouped_shapes_text_is_laid_out_and_exported() {
         })
         .count();
     assert_eq!(with_text, 2);
-    assert!(scenes.iter().any(|f| f.content_turn.is_some_and(|t| t.0 == 90.0)));
+    assert!(
+        scenes
+            .iter()
+            .any(|f| f.content_turn.is_some_and(|t| t.0 == 90.0))
+    );
     assert!(docs_pdf::write(&scene).unwrap().starts_with(b"%PDF"));
 }
 
@@ -337,9 +341,16 @@ fn turned_pictures_wrap_around_their_turned_bounds() {
         .collect();
     assert!(!beside.is_empty());
     for l in &beside {
-        assert!(l.x >= bounds[0] + bounds[2] + 12.0 - 0.01, "{l:?} into {bounds:?}");
+        assert!(
+            l.x >= bounds[0] + bounds[2] + 12.0 - 0.01,
+            "{l:?} into {bounds:?}"
+        );
     }
     // Some of them are above or below the unturned box: only the turned
     // bounds keep them away.
-    assert!(beside.iter().any(|l| l.top + l.height <= y || l.top >= y + h));
+    assert!(
+        beside
+            .iter()
+            .any(|l| l.top + l.height <= y || l.top >= y + h)
+    );
 }

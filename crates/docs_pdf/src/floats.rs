@@ -384,7 +384,12 @@ impl Painter {
 
     /// The shapes of a SmartArt drawing part (`dsp:drawing`, positions in
     /// EMU from the frame's corner) drawn into `rect`, `k` px per EMU.
-    pub(crate) fn smartart_prims(&self, xml: &str, rect: [f32; 4], k: (f32, f32)) -> Vec<FloatPrim> {
+    pub(crate) fn smartart_prims(
+        &self,
+        xml: &str,
+        rect: [f32; 4],
+        k: (f32, f32),
+    ) -> Vec<FloatPrim> {
         let mut out = Vec::new();
         let Ok(doc) = roxmltree::Document::parse(xml) else {
             return out;
@@ -856,10 +861,9 @@ fn box_areas(f: &Float, g: Node, map: &ChildMap, depth: usize, out: &mut Vec<Opt
                     .unwrap_or_else(|| Geometry::preset("rect"));
                 let tr = outline(&geometry, cx, cy).text_rect;
                 let k = map.k;
-                let [l, t, rr, b] = f
-                    .boxes
-                    .get(out.len())
-                    .map_or([0.0; 4], |b| b.text.insets.map(|v| v.max(0) as f32 / EMU_PER_PX));
+                let [l, t, rr, b] = f.boxes.get(out.len()).map_or([0.0; 4], |b| {
+                    b.text.insets.map(|v| v.max(0) as f32 / EMU_PER_PX)
+                });
                 let x = r[0] + tr.l as f32 * k.0 + l;
                 let y = r[1] + tr.t as f32 * k.1 + t;
                 let w = ((tr.r - tr.l) as f32 * k.0 - l - rr).max(8.0);

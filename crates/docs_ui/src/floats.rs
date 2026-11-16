@@ -275,12 +275,7 @@ impl DocsView {
     /// The text a double click at `p` on object `sel` edits: its own text
     /// box (`Some(None)`), the text of the group's shape under the
     /// pointer (or nearest to it), or nothing.
-    fn text_target(
-        &self,
-        page: usize,
-        sel: FloatSel,
-        p: Point<Pixels>,
-    ) -> Option<Option<usize>> {
+    fn text_target(&self, page: usize, sel: FloatSel, p: Point<Pixels>) -> Option<Option<usize>> {
         let f = self.doc.float_at(sel.para, sel.index)?;
         if f.text.is_some() {
             return Some(None);
@@ -289,7 +284,9 @@ impl DocsView {
         if f.boxes.is_empty() && !smartart {
             return None;
         }
-        let (_, x, y) = self.geometry().screen_to_page(p, self.laid.paged.pages.len());
+        let (_, x, y) = self
+            .geometry()
+            .screen_to_page(p, self.laid.paged.pages.len());
         let it = self
             .laid
             .floats

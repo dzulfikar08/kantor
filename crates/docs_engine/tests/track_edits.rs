@@ -458,14 +458,22 @@ fn inserted_columns_are_marked_cells_and_widths() {
         .collect();
     assert_eq!(props.len(), 1);
     assert_eq!(props[0].kind, RevKind::Format);
-    assert!(props[0].format.contains(&docs_engine::FormatItem::CellProps));
+    assert!(
+        props[0]
+            .format
+            .contains(&docs_engine::FormatItem::CellProps)
+    );
     // Saved as Word writes it, and read back the same.
     let mut copy = d.clone();
     let xml = document_xml(&copy.to_docx_bytes().unwrap());
     assert_eq!(xml.matches("<w:cellIns w:id=").count(), 2, "{xml}");
     assert!(xml.contains("<w:tcPrChange w:id=") && xml.contains("<w:tblGridChange w:id="));
     let back = reopen(&mut copy);
-    assert!(!back.has_unsupported_content(), "{:?}", back.unsupported_content());
+    assert!(
+        !back.has_unsupported_content(),
+        "{:?}",
+        back.unsupported_content()
+    );
     assert_eq!(cell_changes(&back), [RevKind::Insert, RevKind::Insert]);
     // Reject one inserted cell at the caret: only it goes.
     let mut one = d.clone();
@@ -535,10 +543,19 @@ fn deleted_columns_stay_struck_until_accepted() {
 #[test]
 fn word_tracked_cells_and_properties_are_read_and_resolved() {
     let doc = Document::open(&corpus("tracked_cells.docx")).unwrap();
-    assert!(!doc.has_unsupported_content(), "{:?}", doc.unsupported_content());
+    assert!(
+        !doc.has_unsupported_content(),
+        "{:?}",
+        doc.unsupported_content()
+    );
     assert_eq!(
         cell_changes(&doc),
-        [RevKind::Delete, RevKind::Insert, RevKind::Delete, RevKind::Insert]
+        [
+            RevKind::Delete,
+            RevKind::Insert,
+            RevKind::Delete,
+            RevKind::Insert
+        ]
     );
     let props: Vec<_> = doc
         .changes()
@@ -552,7 +569,13 @@ fn word_tracked_cells_and_properties_are_read_and_resolved() {
     let id = doc.paragraphs().iter().find_map(|p| p.cell).unwrap().table;
     // Untouched: saved back with its marks.
     let xml = document_xml(&doc.clone().to_docx_bytes().unwrap());
-    for want in ["<w:tblPrChange w:id=\"98\"", "<w:tblGridChange w:id=\"99\"", "<w:trPrChange", "<w:cellDel", "<w:cellIns"] {
+    for want in [
+        "<w:tblPrChange w:id=\"98\"",
+        "<w:tblGridChange w:id=\"99\"",
+        "<w:trPrChange",
+        "<w:cellDel",
+        "<w:cellIns",
+    ] {
         assert!(xml.contains(want), "{want}");
     }
     // Accept All: the inserted column stays, the deleted one goes; the
@@ -560,17 +583,28 @@ fn word_tracked_cells_and_properties_are_read_and_resolved() {
     let mut acc = doc.clone();
     acc.resolve_all(true, Selection::default());
     assert!(!acc.has_changes(), "{:?}", acc.changes());
-    assert_eq!(cell_texts(&acc), ["Item", "Qty", "Shop", "Rice", "2", "Pasar"]);
+    assert_eq!(
+        cell_texts(&acc),
+        ["Item", "Qty", "Shop", "Rice", "2", "Pasar"]
+    );
     let t = acc.table(id).unwrap();
     assert_eq!(t.grid, [2000, 2000, 2000]);
-    assert!(t.tbl_pr.as_deref().unwrap().contains("<w:jc w:val=\"center\"/>"));
+    assert!(
+        t.tbl_pr
+            .as_deref()
+            .unwrap()
+            .contains("<w:jc w:val=\"center\"/>")
+    );
     assert_eq!(t.rows[1].height, Some((500, false)));
     // Reject All: the old widths, no inserted column, not centred, the
     // row's own height.
     let mut rej = doc.clone();
     rej.resolve_all(false, Selection::default());
     assert!(!rej.has_changes(), "{:?}", rej.changes());
-    assert_eq!(cell_texts(&rej), ["Item", "Qty", "Note", "Rice", "2", "old"]);
+    assert_eq!(
+        cell_texts(&rej),
+        ["Item", "Qty", "Note", "Rice", "2", "old"]
+    );
     let t = rej.table(id).unwrap();
     assert_eq!(t.grid, [3000, 3000, 2000]);
     assert!(!t.tbl_pr.as_deref().unwrap().contains("<w:jc "));
@@ -579,8 +613,16 @@ fn word_tracked_cells_and_properties_are_read_and_resolved() {
     // The table's formatting alone, at the caret in a cell without a
     // change of its own.
     let mut one = doc.clone();
-    let first = one.paragraphs().iter().position(|p| p.cell.is_some()).unwrap();
+    let first = one
+        .paragraphs()
+        .iter()
+        .position(|p| p.cell.is_some())
+        .unwrap();
     one.accept_change(caret(first, 0)).unwrap();
-    assert!(one.changes().iter().all(|c| c.table != Some(docs_engine::TableChange::Props)));
+    assert!(
+        one.changes()
+            .iter()
+            .all(|c| c.table != Some(docs_engine::TableChange::Props))
+    );
     assert_eq!(cell_changes(&one).len(), 4);
 }

@@ -395,7 +395,10 @@ impl Document {
         for (pi, p) in self.paragraphs.iter().enumerate() {
             // A table's property changes, at its first paragraph.
             if let Some(c) = p.cell
-                && (pi == 0 || self.paragraphs[pi - 1].cell.is_none_or(|q| q.table != c.table))
+                && (pi == 0
+                    || self.paragraphs[pi - 1]
+                        .cell
+                        .is_none_or(|q| q.table != c.table))
                 && let Some(t) = self.tables.get(&c.table)
                 && let Some((author, date)) = track_table::props_changed(t)
             {

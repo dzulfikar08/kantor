@@ -432,9 +432,11 @@ pub(crate) fn props_items(t: &Table) -> Vec<crate::fmt_track::FormatItem> {
     {
         out.push(F::RowProps);
     }
-    if t.rows.iter().flat_map(|r| &r.cells).any(|c| {
-        prop_change(c.tc_pr.as_deref(), "tcPrChange").is_some()
-    }) {
+    if t.rows
+        .iter()
+        .flat_map(|r| &r.cells)
+        .any(|c| prop_change(c.tc_pr.as_deref(), "tcPrChange").is_some())
+    {
         out.push(F::CellProps);
     }
     out
@@ -494,7 +496,12 @@ pub(crate) fn resolve_props(t: &mut Table, accept: bool) -> bool {
 
 /// The paragraph range `[first, last]` of cell `cell` of row `row` of
 /// table `id` in `paras`.
-pub(crate) fn cell_paras(paras: &[Paragraph], id: u32, row: u32, cell: u32) -> Option<(usize, usize)> {
+pub(crate) fn cell_paras(
+    paras: &[Paragraph],
+    id: u32,
+    row: u32,
+    cell: u32,
+) -> Option<(usize, usize)> {
     let want = Some(CellRef {
         table: id,
         row,
@@ -559,7 +566,12 @@ pub(crate) fn remove_cells(
     let widest = t
         .rows
         .iter()
-        .map(|r| r.cells.iter().map(|c| c.span.max(1) as usize).sum::<usize>())
+        .map(|r| {
+            r.cells
+                .iter()
+                .map(|c| c.span.max(1) as usize)
+                .sum::<usize>()
+        })
         .max()
         .unwrap_or(0);
     for &g in dead.iter().rev() {
@@ -650,8 +662,12 @@ pub(crate) fn resolve_table_props(
     let mut changed = false;
     for id in ids {
         if let Some((s, e)) = span {
-            let a = paras.iter().position(|p| p.cell.is_some_and(|c| c.table == id));
-            let b = paras.iter().rposition(|p| p.cell.is_some_and(|c| c.table == id));
+            let a = paras
+                .iter()
+                .position(|p| p.cell.is_some_and(|c| c.table == id));
+            let b = paras
+                .iter()
+                .rposition(|p| p.cell.is_some_and(|c| c.table == id));
             let (Some(a), Some(b)) = (a, b) else { continue };
             let ts = Position::new(first + a, 0);
             let te = Position::new(first + b, paras[b].text.len());
@@ -685,7 +701,12 @@ impl Document {
     /// of `old`) that a column insertion added (`added`: row, cell) as
     /// inserted, and record the widths it changed (the old cell and grid
     /// properties) as property changes, as Word does.
-    pub(crate) fn track_inserted_cells(&self, old: &Table, t: &mut Table, added: &[(usize, usize)]) {
+    pub(crate) fn track_inserted_cells(
+        &self,
+        old: &Table,
+        t: &mut Table,
+        added: &[(usize, usize)],
+    ) {
         let mut id = self.max_rev_id();
         let date = now_utc();
         let tag = |id: u64| {
@@ -709,7 +730,11 @@ impl Document {
                     continue;
                 }
                 id += 1;
-                let new = cell.tc_pr.as_deref().unwrap_or("<w:tcPr></w:tcPr>").to_owned();
+                let new = cell
+                    .tc_pr
+                    .as_deref()
+                    .unwrap_or("<w:tcPr></w:tcPr>")
+                    .to_owned();
                 cell.tc_pr = Some(
                     record_prop(was.tc_pr.as_deref(), &new, "tcPr", "tcPrChange", &tag(id)).into(),
                 );
@@ -722,8 +747,12 @@ impl Document {
                 .iter()
                 .map(|w| format!("<w:gridCol w:w=\"{w}\"/>"))
                 .collect();
-            t.grid_change =
-                Some(format!("<w:tblGridChange w:id=\"{id}\"><w:tblGrid>{cols}</w:tblGrid></w:tblGridChange>").into());
+            t.grid_change = Some(
+                format!(
+                    "<w:tblGridChange w:id=\"{id}\"><w:tblGrid>{cols}</w:tblGrid></w:tblGridChange>"
+                )
+                .into(),
+            );
         }
     }
 
@@ -731,7 +760,12 @@ impl Document {
     /// cell in it is marked deleted (`w:cellDel`) and its text struck
     /// through; cells the user inserted go at once. Returns the selection
     /// afterwards.
-    pub(crate) fn tracked_delete_column(&mut self, id: u32, col: usize, sel: Selection) -> Selection {
+    pub(crate) fn tracked_delete_column(
+        &mut self,
+        id: u32,
+        col: usize,
+        sel: Selection,
+    ) -> Selection {
         let range = self.table_range(id);
         let mut t = self.tables[&id].clone();
         let mut ids = self.max_rev_id();
@@ -779,7 +813,10 @@ impl Document {
             paras.push(Paragraph::default());
         }
         let total = self.paragraphs.len() - range.len() + paras.len();
-        let caret = sel.head.para.clamp(range.start, range.start + paras.len().max(1) - 1);
+        let caret = sel
+            .head
+            .para
+            .clamp(range.start, range.start + paras.len().max(1) - 1);
         let after = Selection::caret(Position::new(caret.min(total - 1), 0));
         let n = range.len();
         self.replace_with_tables(

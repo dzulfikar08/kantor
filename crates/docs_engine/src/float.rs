@@ -710,7 +710,11 @@ fn replace_nth_text_box(src: &str, n: usize, body: &str) -> String {
     }
     let fallback = next_start_tag(src, "Fallback").unwrap_or(src.len());
     let (choice, fb): (Vec<usize>, Vec<usize>) = starts.iter().partition(|&&s| s < fallback);
-    let mut targets: Vec<usize> = [choice.get(n), fb.get(n)].into_iter().flatten().copied().collect();
+    let mut targets: Vec<usize> = [choice.get(n), fb.get(n)]
+        .into_iter()
+        .flatten()
+        .copied()
+        .collect();
     targets.sort_unstable();
     let mut out = String::with_capacity(src.len() + body.len());
     let mut done = 0;

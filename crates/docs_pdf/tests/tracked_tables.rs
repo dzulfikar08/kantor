@@ -9,8 +9,9 @@ use docs_layout::Engine;
 #[test]
 fn tracked_cells_and_rows_are_shaded() {
     for name in ["tracked_cells.docx", "tracked.docx"] {
-        let path =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/docx").join(name);
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/corpus/docx")
+            .join(name);
         let doc = Document::open(&path).unwrap();
         let mut engine = Engine::new();
         let laid = docs_pdf::lay_out(&doc, &mut engine);

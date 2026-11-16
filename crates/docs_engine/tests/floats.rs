@@ -399,7 +399,8 @@ fn smartart_parts_are_read_and_edited_parts_saved() {
         vec![("word/diagrams/drawing1.xml".into(), edited.clone())]
     ));
     assert_eq!(
-        doc.current_part_xml("word/diagrams/drawing1.xml").as_deref(),
+        doc.current_part_xml("word/diagrams/drawing1.xml")
+            .as_deref(),
         Some("<dsp:drawing/>")
     );
     let saved = parts(&doc.to_docx_bytes().unwrap());

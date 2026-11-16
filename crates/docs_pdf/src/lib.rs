@@ -22,8 +22,8 @@
 pub mod build;
 pub mod chart;
 pub mod floats;
-pub mod smartart;
 pub mod pages;
+pub mod smartart;
 
 pub use floats::FloatItem;
 pub use pages::{Layout, Placed, StoryLayout, lay_out_with};

@@ -263,7 +263,10 @@ impl FieldMark {
     /// (`IF { MERGEFIELD Amount } > 100 "Big"`), trimmed. `None` for an end.
     pub fn shown_code(&self) -> Option<String> {
         let Self::Begin {
-            instr, code, simple, ..
+            instr,
+            code,
+            simple,
+            ..
         } = self
         else {
             return None;
@@ -318,7 +321,9 @@ impl FieldMark {
                         _ => {}
                     }
                 }
-                Ok(quick_xml::events::Event::Start(e)) if e.local_name().as_ref() == b"instrText" => {
+                Ok(quick_xml::events::Event::Start(e))
+                    if e.local_name().as_ref() == b"instrText" =>
+                {
                     in_instr = true;
                 }
                 Ok(quick_xml::events::Event::End(e)) if e.local_name().as_ref() == b"instrText" => {

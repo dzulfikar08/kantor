@@ -304,7 +304,15 @@ impl Presentation {
         let data_part = d.data.as_deref()?;
         let data_bytes = self.part_bytes(data_part)?;
         let data_xml = std::str::from_utf8(&data_bytes).ok()?;
-        read_drawing(&part, &xml, &rels, data_part, data_xml, colors, (frame.cx, frame.cy))
+        read_drawing(
+            &part,
+            &xml,
+            &rels,
+            data_part,
+            data_xml,
+            colors,
+            (frame.cx, frame.cy),
+        )
     }
 
     /// The SmartArt drawing `r` is in, and the shape's index in it.
@@ -357,12 +365,14 @@ impl Presentation {
                 if changed.is_empty() {
                     continue;
                 }
-                out.push((dd.part.clone(), dd.drawing_with_edits(&changed).into_bytes()));
+                out.push((
+                    dd.part.clone(),
+                    dd.drawing_with_edits(&changed).into_bytes(),
+                ));
                 if let Some(data) = &d.data
                     && let Some(bytes) = self.part_bytes(data)
                     && let Ok(text) = std::str::from_utf8(&bytes)
-                    && let Some(new) =
-                        data_with_edits(&self.color_ctx(i), data, text, dd, &changed)
+                    && let Some(new) = data_with_edits(&self.color_ctx(i), data, text, dd, &changed)
                 {
                     out.push((data.clone(), new.into_bytes()));
                 }
@@ -495,9 +505,7 @@ fn data_with_edits(
         if let Some(t) = &c.text {
             let parts: Vec<(&str, &[TextPara])> = match dd.links.get(k) {
                 Some(Link::One(id)) => vec![(id.as_str(), &t.paras[..])],
-                Some(Link::Many(v))
-                    if v.iter().map(|x| x.1).sum::<usize>() == t.paras.len() =>
-                {
+                Some(Link::Many(v)) if v.iter().map(|x| x.1).sum::<usize>() == t.paras.len() => {
                     let mut at = 0;
                     v.iter()
                         .map(|(id, n)| {
@@ -631,8 +639,7 @@ pub fn drawing_rel_id(data_xml: &str) -> Option<String> {
 
 /// Why a SmartArt shape showing several items can't take text with
 /// another number of lines.
-pub const SMARTART_LINES: &str =
-    "This SmartArt shape shows several items: keep one line per item";
+pub const SMARTART_LINES: &str = "This SmartArt shape shows several items: keep one line per item";
 
 impl DiagramDrawing {
     /// Whether shape `k`'s text can be edited: an error when Kantor can't
@@ -642,7 +649,9 @@ impl DiagramDrawing {
         match self.links.get(k) {
             Some(Link::One(_)) => Ok(None),
             Some(Link::Many(v)) => Ok(Some(v.iter().map(|x| x.1).sum())),
-            _ => Err("This SmartArt text can't be edited: Kantor can't tell which item it belongs to"),
+            _ => Err(
+                "This SmartArt text can't be edited: Kantor can't tell which item it belongs to",
+            ),
         }
     }
 
@@ -698,7 +707,9 @@ impl DiagramDrawing {
     pub fn drawing_with_edits(&self, changed: &[usize]) -> String {
         let mut xml = self.xml.to_string();
         for &k in changed.iter().rev() {
-            let Some(r) = self.ranges.get(k) else { continue };
+            let Some(r) = self.ranges.get(k) else {
+                continue;
+            };
             let mut buf = String::new();
             let c = &self.group.children[k];
             write_shape(&mut buf, c);
