@@ -499,7 +499,6 @@ fn chartex_charts_are_drawn_from_live_cells() {
     assert!(s.iter().any(|x| x == "777"), "{s:?}");
 }
 
-
 #[test]
 fn slicers_and_timelines_are_drawn_with_their_items() {
     let mut book = Workbook::open(
