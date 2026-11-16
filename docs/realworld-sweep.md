@@ -2,7 +2,8 @@
 
 424 public Office files, each opened, saved, reopened and exported to PDF by
 Kantor's engines, with the saved files checked by Microsoft's Open XML SDK.
-First run: 2026-11-15; second, third and fourth runs on main: 2026-11-16.
+First run: 2026-11-15; second, third and fourth runs on main: 2026-11-16;
+fifth run, before v0.11.0: 2026-11-17.
 
 ## What was swept
 
@@ -292,6 +293,41 @@ assumptions, not on Kantor's output, and were fixed:
   Kantor can't copy.
 
 Results: `~/.cache/realworld-out/pre0100-2026-11-16/`.
+
+## Fifth run, before v0.11.0 (2026-11-17)
+
+Rerun of all 424 files on main at `0e49fbb` (after Docs text boxes edited
+in place, SmartArt text that shrinks to fit and the Labeled Hierarchy
+layout, Insert Timeline and Timeline Settings, and editing the data of
+waterfall, funnel, treemap, sunburst, histogram and box charts in Slides
+and their data range in Sheets had merged), release build, compared file
+by file with the fourth run.
+
+| | fourth run | main, `0e49fbb` |
+|---|---:|---:|
+| crash, panic or timeout | 0 | 0 |
+| refused to open | 6 | 6 |
+| saved file Office would repair | 0 | 0 |
+| content changed by a save | 0 | 0 |
+| page count changed by a save (Docs, Slides) | 0 of 199 | 0 of 199 |
+| ok | 418 | 418 |
+| slowest file | 6.6 s | 4.4 s |
+| all files' probe time added up | 110 s | 64 s |
+
+No regressions: every file has the same kind, error, counts of cells,
+formulas, paragraphs, slides and shapes, page counts and import notes as
+in the fourth run, and no new Open XML SDK error. No file was more than
+twice as slow (the machine was less loaded than in the fourth run, hence
+the lower times).
+
+The Office validation scenarios (`tools/fidelity/office_check.py`): 165
+saved files, 0 new Open XML SDK errors, all converted to PDF by
+LibreOffice. One scenario was added: `timeline_inserted_25_slicers.xlsx`
+inserts a timeline on the pivot table's date field, changes its caption,
+style, scrollbar and selection label, filters it to February–March and
+deletes the file's own timeline.
+
+Results: `~/.cache/realworld-out/pre0110-2026-11-17/`.
 
 ## Left
 

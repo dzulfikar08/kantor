@@ -341,6 +341,40 @@ fn main() -> Result<()> {
         wb.save_as(o.join("slicers_inserted_25_slicers.xlsx"))?;
         Ok(Some(slicers.clone()))
     });
+    run.scenario("timeline_inserted_25_slicers.xlsx", |o| {
+        let mut wb = Workbook::open(&slicers)?;
+        // A second timeline on the pivot table's Date field, its settings
+        // changed and Feb–Mar selected, then the file's own timeline deleted.
+        let (sheet, at) = wb.timeline_place(1, "PivotTable1").unwrap_or((1, (2, 10)));
+        let keys = wb.insert_timelines(sheet, "PivotTable1", &["Date".into()], at)?;
+        let key = *keys
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("no timeline inserted"))?;
+        let name = wb
+            .timeline_of(key)
+            .ok_or_else(|| anyhow::anyhow!("inserted timeline not found"))?;
+        let id = wb.sheet_id(sheet);
+        let mut s = wb
+            .timeline_settings(id, &name)
+            .ok_or_else(|| anyhow::anyhow!("no {name} timeline"))?;
+        s.caption = "Order date".into();
+        s.style = "TimeSlicerStyleDark3".into();
+        s.show_scrollbar = false;
+        s.show_selection_label = false;
+        wb.set_timeline_settings(id, &name, &s)?;
+        wb.timeline_select(id, &name, Some((46054.0, 46112.0)))?;
+        if let Some(d) = wb.drawings(sheet).into_iter().find(|d| {
+            d.key != key
+                && matches!(
+                    &*d.kind,
+                    sheets_engine::drawing::DrawingKind::Timeline { .. }
+                )
+        }) {
+            wb.delete_drawing(d.key)?;
+        }
+        wb.save_as(o.join("timeline_inserted_25_slicers.xlsx"))?;
+        Ok(Some(slicers.clone()))
+    });
 
     for src in files(&corpus.join("docx"), "docx")? {
         let stem = stem(&src);
