@@ -829,6 +829,7 @@ impl DocsView {
                     this.focus(window, cx);
                 });
             });
+        let buttons = self.item_buttons(edit, cx);
         let panel = v_flex()
             .id("docs-text-box-menu")
             .occlude()
@@ -847,13 +848,10 @@ impl DocsView {
             }))
             .child(section_label(edit.owner.title(), cx))
             .child(body)
-            .child(
-                h_flex()
-                    .gap(SPACE_2)
-                    .children(self.item_buttons(edit, cx))
-                    .child(div().flex_1())
-                    .child(done),
-            );
+            .when(!buttons.is_empty(), |p| {
+                p.child(h_flex().flex_wrap().gap(SPACE_2).children(buttons))
+            })
+            .child(h_flex().child(div().flex_1()).child(done));
         Some(deferred(
             anchored()
                 .position(edit.at)
@@ -897,7 +895,7 @@ impl DocsView {
                 .id(id)
                 .flex_none()
                 .h(CONTROL_SM)
-                .px(SPACE_3)
+                .px(SPACE_2)
                 .flex()
                 .items_center()
                 .rounded(RADIUS_MD)

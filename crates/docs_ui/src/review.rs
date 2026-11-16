@@ -159,16 +159,17 @@ fn short_date(iso: &str) -> String {
 }
 
 impl DocsView {
-    /// Whether the markup column shows (the document has comments).
+    /// Whether the markup column shows (the document has comments or
+    /// changes shown in balloons).
     pub(crate) fn markup_visible(&self) -> bool {
         self.comments_visible
             && (!self.main_doc().comments().is_empty()
                 || self.comment_edit.is_some()
-                || self
-                    .main_doc()
-                    .changes()
-                    .iter()
-                    .any(|c| c.kind == docs_engine::RevKind::Format))
+                || self.main_doc().changes().iter().any(|c| {
+                    c.kind == docs_engine::RevKind::Format
+                        || (c.kind == docs_engine::RevKind::Insert
+                            && self.main_doc().tracked_field_code(c.start).is_some())
+                }))
     }
 
     pub fn toggle_comments_doc(&mut self, cx: &mut Context<Self>) {
@@ -660,7 +661,12 @@ impl DocsView {
             Vec::new()
         };
         for c in body_changes {
-            if c.kind != docs_engine::RevKind::Format {
+            // A field code edited with Track Changes on: one balloon (on
+            // its insertion; the codes are in the field's start mark).
+            let code = (c.kind == docs_engine::RevKind::Insert)
+                .then(|| self.doc.tracked_field_code(c.start))
+                .flatten();
+            if c.kind != docs_engine::RevKind::Format && code.is_none() {
                 continue;
             }
             let Some(pc) = paged.caret(c.start.para, c.start.offset) else {
@@ -674,7 +680,10 @@ impl DocsView {
             let right = g.page_to_screen(pc.page, pw, pc.top);
             let at = point(right.x + px(16.), g.page_to_screen(pc.page, 0., pc.top).y);
             let active = c.start <= sb && c.end >= sa;
-            let label = format_label(&c.format);
+            let label = match &code {
+                Some((old, new)) => tf("Field code: {} (was {})", &[new, old]),
+                None => format_label(&c.format),
+            };
             let lines = (label.chars().count() as f32 / 32.0).ceil().max(1.0);
             cards.push((
                 f32::from(at.y),

@@ -642,6 +642,16 @@ impl PageLookup for NoPages {
 
 /// Swap the object at `pos` (same run formatting).
 impl Document {
+    /// The tracked code edit of the field starting at `pos`: its old and
+    /// new code (as the codes view shows them).
+    pub fn tracked_field_code(&self, pos: Position) -> Option<(String, String)> {
+        let (mark, rev) = self.begin_run(pos)?;
+        if rev.is_some() {
+            return None;
+        }
+        crate::code_track::change(&mark).map(|(old, new, _, _)| (old, new))
+    }
+
     /// The field start at `pos` and its run's tracked change.
     fn begin_run(&self, pos: Position) -> Option<(FieldMark, Option<crate::review::RevKind>)> {
         let p = self.paragraphs.get(pos.para)?;
