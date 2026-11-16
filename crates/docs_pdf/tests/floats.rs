@@ -266,3 +266,31 @@ fn grouped_shapes_text_is_laid_out_and_exported() {
     assert!(scenes.iter().any(|f| f.content_turn.is_some_and(|t| t.0 == 90.0)));
     assert!(docs_pdf::write(&scene).unwrap().starts_with(b"%PDF"));
 }
+
+/// `diagrams.docx`: radar, bubble, stock and 3-D column charts are drawn
+/// with Slides' chart code (not boxes), their titles as text.
+#[test]
+fn more_chart_types_are_drawn() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/docx/diagrams.docx");
+    let doc = Document::open(&path).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    for (name, title) in [
+        ("Radar chart", "Radar"),
+        ("Bubble chart", "Bubbles"),
+        ("Stock chart", "Prices"),
+        ("3-D column chart", "Output"),
+    ] {
+        let it = laid
+            .floats
+            .iter()
+            .flatten()
+            .find(|it| it.float(&doc).unwrap().name == name)
+            .unwrap_or_else(|| panic!("{name}"));
+        let chart = it.chart.as_ref().unwrap_or_else(|| panic!("{name} drawn"));
+        assert!(chart.prims.len() > 4, "{name}: {}", chart.prims.len());
+        let shown: Vec<String> = chart.labels.iter().map(|l| l.layout.shown(0)).collect();
+        assert!(shown.iter().any(|s| s == title), "{name}: {shown:?}");
+    }
+}

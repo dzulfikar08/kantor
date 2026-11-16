@@ -39,7 +39,8 @@ crates/docs_pdf/tests/.
   wrapping (`wp:wrapPolygon`).
 * diagrams.docx: a group whose shapes hold text (`wps:txbx` inside
   `wpg:wgp`, one shape turned 90°); SmartArt (data model, layout, style,
-  colours and Word's drawing part), one shape showing two items.
+  colours and Word's drawing part), one shape showing two items; radar,
+  bubble, stock and 3-D column charts.
 * notes.docx: a footnote too long for its page (Word's continuation
   separator and notice), short footnotes, and endnotes placed at the end
   of each section (`w:endnotePr/w:pos w:val="sectEnd"`) in two sections.
@@ -1000,5 +1001,65 @@ add_draw(p, drawing(anchor(302, "Diagram 1", pos("H", "column", "<wp:align>cente
                             pos("V", "paragraph", "<wp:posOffset>0</wp:posOffset>"),
                             FW, FH, '<wp:wrapTopAndBottom/>', smartart, 251661001)))
 p.add_run(LOREM)
+
+
+# More chart types: radar, bubble, stock (high-low-close) and 3-D columns.
+def cat_ser(i, name, vals, extra=""):
+    cats = "".join(f'<c:pt idx="{k}"><c:v>{c}</c:v></c:pt>' for k, c in enumerate(["Mon", "Tue", "Wed", "Thu"][:len(vals)]))
+    pts = "".join(f'<c:pt idx="{k}"><c:v>{v}</c:v></c:pt>' for k, v in enumerate(vals))
+    return (
+        f'<c:ser><c:idx val="{i}"/><c:order val="{i}"/><c:tx><c:v>{name}</c:v></c:tx>{extra}'
+        f'<c:cat><c:strLit><c:ptCount val="{len(vals)}"/>{cats}</c:strLit></c:cat>'
+        f'<c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="{len(vals)}"/>{pts}</c:numLit></c:val></c:ser>'
+    )
+
+
+def bubble_ser(i, name, xs, ys, sizes):
+    lit = lambda vs: "".join(f'<c:pt idx="{k}"><c:v>{v}</c:v></c:pt>' for k, v in enumerate(vs))
+    n = len(xs)
+    return (
+        f'<c:ser><c:idx val="{i}"/><c:order val="{i}"/><c:tx><c:v>{name}</c:v></c:tx><c:invertIfNegative val="0"/>'
+        f'<c:xVal><c:numLit><c:ptCount val="{n}"/>{lit(xs)}</c:numLit></c:xVal>'
+        f'<c:yVal><c:numLit><c:ptCount val="{n}"/>{lit(ys)}</c:numLit></c:yVal>'
+        f'<c:bubbleSize><c:numLit><c:ptCount val="{n}"/>{lit(sizes)}</c:numLit></c:bubbleSize><c:bubble3D val="0"/></c:ser>'
+    )
+
+
+AXES = ('<c:catAx><c:axId val="2001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/>'
+        '<c:crossAx val="2002"/></c:catAx><c:valAx><c:axId val="2002"/><c:scaling><c:orientation val="minMax"/></c:scaling>'
+        '<c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:numFmt formatCode="General" sourceLinked="0"/><c:crossAx val="2001"/></c:valAx>')
+VAL_AXES = ('<c:valAx><c:axId val="2001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/>'
+            '<c:crossAx val="2002"/></c:valAx><c:valAx><c:axId val="2002"/><c:scaling><c:orientation val="minMax"/></c:scaling>'
+            '<c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:crossAx val="2001"/></c:valAx>')
+AX_IDS = '<c:axId val="2001"/><c:axId val="2002"/>'
+more_charts = [
+    ("Radar chart", "Radar", '<c:radarChart><c:radarStyle val="marker"/><c:varyColors val="0"/>'
+     + cat_ser(0, "Team A", (4, 3, 5, 2)) + cat_ser(1, "Team B", (2, 5, 3, 4)) + AX_IDS + '</c:radarChart>' + AXES),
+    ("Bubble chart", "Bubbles", '<c:bubbleChart><c:varyColors val="0"/>'
+     + bubble_ser(0, "Plants", (1, 2, 3), (3, 1, 2), (5, 10, 3)) + '<c:bubbleScale val="100"/>' + AX_IDS + '</c:bubbleChart>' + VAL_AXES),
+    ("Stock chart", "Prices", '<c:stockChart>'
+     + cat_ser(0, "High", (12, 14, 13, 15)) + cat_ser(1, "Low", (8, 9, 10, 11)) + cat_ser(2, "Close", (10, 13, 11, 14))
+     + '<c:hiLowLines/>' + AX_IDS + '</c:stockChart>' + AXES),
+    ("3-D column chart", "Output", '<c:bar3DChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>'
+     + cat_ser(0, "Line 1", (5, 7, 6)) + '<c:gapWidth val="150"/><c:shape val="box"/>' + AX_IDS + '<c:axId val="0"/></c:bar3DChart>' + AXES),
+]
+for n, (name, title, plot) in enumerate(more_charts):
+    view3d = '<c:view3D><c:rotX val="15"/><c:rotY val="20"/><c:rAngAx val="1"/></c:view3D>' if "3D" in plot else ""
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        f'<c:chartSpace xmlns:c="{NS_C}" xmlns:a="{NS_A}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        f'<c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>{title}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title>'
+        f'<c:autoTitleDeleted val="0"/>{view3d}<c:plotArea><c:layout/>{plot}</c:plotArea>'
+        '<c:legend><c:legendPos val="r"/><c:overlay val="0"/></c:legend><c:plotVisOnly val="1"/></c:chart></c:chartSpace>'
+    )
+    part = Part(PackURI(f"/word/charts/chart{n + 1}.xml"),
+                "application/vnd.openxmlformats-officedocument.drawingml.chart+xml", xml.encode(), d.part.package)
+    rid = d.part.relate_to(part, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart")
+    p = d.add_paragraph()
+    frame = f'<a:graphic><a:graphicData uri="{NS_C}"><c:chart r:id="{rid}"/></a:graphicData></a:graphic>'
+    add_draw(p, drawing(anchor(310 + n, name, pos("H", "column", "<wp:align>center</wp:align>"),
+                                pos("V", "paragraph", "<wp:posOffset>0</wp:posOffset>"),
+                                300 * EMU, 180 * EMU, '<wp:wrapTopAndBottom/>', frame, 251661010 + n)))
+    p.add_run(f"{name}.")
 save(d, "diagrams.docx")
 print("docx ok")

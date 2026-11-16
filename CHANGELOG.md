@@ -17,6 +17,9 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Docs: SmartArt is drawn, on screen and in the PDF, from the shapes Word saved for it (with
   Slides' SmartArt code). Double-click a SmartArt shape to edit its text; it's saved to both the
   drawing and the SmartArt's data, so Word shows the edit too. Items can't be added or removed.
+- Docs: radar, bubble, stock and 3-D charts (drawn flat) are drawn too, as in Slides; only
+  surface, pie-of-pie and bar-of-pie charts and Office 2016 charts (waterfall, treemap…) are still
+  boxes.
 
 ## [0.8.0] - 2026-11-16
 

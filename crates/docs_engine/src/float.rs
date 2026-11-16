@@ -1399,6 +1399,9 @@ pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> 
             },
             None => FloatKind::Other("Chart".into()),
         }
+    } else if uri.contains("chartex") {
+        // Office 2016 charts (waterfall, treemap…): not drawn.
+        FloatKind::Other("Chart".into())
     } else if uri.contains("wordprocessingGroup") {
         FloatKind::Group { canvas: false }
     } else if uri.contains("wordprocessingCanvas") {

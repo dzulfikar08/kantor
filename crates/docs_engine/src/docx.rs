@@ -971,6 +971,7 @@ impl BodyParser<'_> {
             FloatKind::Other(what) => {
                 self.preserved.insert(match what.as_str() {
                     "SmartArt" => "SmartArt".into(),
+                    "Chart" => "charts".into(),
                     _ => "drawings".into(),
                 });
             }
