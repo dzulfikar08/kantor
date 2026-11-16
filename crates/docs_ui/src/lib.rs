@@ -715,7 +715,7 @@ impl DocsView {
         self.cache = fresh;
         drop(engine);
         let boxes = Rc::new(PageBoxes::of(&laid.paged));
-        let part = self.part_pieces(&laid.furniture);
+        let part = self.part_pieces(&laid.furniture, &laid.floats);
         self.laid = Rc::new(Laid {
             paged: laid.paged,
             texts,
@@ -1006,6 +1006,17 @@ impl DocsView {
         }
     }
 
+    /// Whether a text box is being edited: Kantor keeps pictures and
+    /// tables out of it (it can't edit a box holding them), and says so.
+    fn no_objects_here(&mut self, cx: &mut Context<Self>) -> bool {
+        if !matches!(self.part_target(), Some(part::PartTarget::TextBox(_))) {
+            return false;
+        }
+        self.status = t("Pictures and tables can't go in a text box in Kantor yet").into();
+        cx.notify();
+        true
+    }
+
     /// Insert a `rows` × `cols` table at the caret.
     pub fn insert_table_doc(
         &mut self,
@@ -1015,6 +1026,9 @@ impl DocsView {
         cx: &mut Context<Self>,
     ) {
         self.table_picker = None;
+        if self.no_objects_here(cx) {
+            return;
+        }
         match self.doc.insert_table(self.sel, rows, cols) {
             Some(sel) => self.edited(sel, window, cx),
             None => {
@@ -1048,6 +1062,9 @@ impl DocsView {
 
     /// Ask for a PNG or JPEG and insert it at the caret.
     pub fn insert_image_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.no_objects_here(cx) {
+            return;
+        }
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -2042,6 +2059,8 @@ struct Frame {
     marked: Option<Range<usize>>,
     /// A header or footer is being edited (the body dims).
     editing_hf: Option<docs_engine::HfKind>,
+    /// The text box being edited: page and box (outlined, as in Word).
+    editing_box: Option<(usize, [f32; 4])>,
     zoom: f32,
     scroll: Point<f32>,
     focused: bool,
@@ -2338,6 +2357,28 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                     x += dash * 2.0;
                 }
             }
+            // The edge of the text box being edited.
+            if let Some((pg, [bx, by, bw, bh])) = f.editing_box
+                && pg == page
+            {
+                let dash = 4.0 / z;
+                let t = 1.0 / z;
+                let color = f.t.accent.opacity(0.8);
+                let mut d = 0.0;
+                while d < bw {
+                    let w = dash.min(bw - d);
+                    window.paint_quad(fill(rect(page, [bx + d, by, w, t]), color));
+                    window.paint_quad(fill(rect(page, [bx + d, by + bh - t, w, t]), color));
+                    d += dash * 2.0;
+                }
+                let mut d = 0.0;
+                while d < bh {
+                    let h = dash.min(bh - d);
+                    window.paint_quad(fill(rect(page, [bx, by + d, t, h]), color));
+                    window.paint_quad(fill(rect(page, [bx + bw - t, by + d, t, h]), color));
+                    d += dash * 2.0;
+                }
+            }
             let mut bridge = f.bridge.borrow_mut();
             // Headers and footers, a little faded as in Word (the body is
             // what's being edited); the PDF prints them in their colours.
@@ -2562,6 +2603,12 @@ impl Render for DocsView {
             marked: self.marked.clone(),
             editing_hf: match self.part_target() {
                 Some(part::PartTarget::Hf { kind, .. }) => Some(*kind),
+                _ => None,
+            },
+            editing_box: match (self.part_target(), &self.part) {
+                (Some(part::PartTarget::TextBox(b)), Some(s)) => {
+                    part::box_item(&self.laid.floats, *b, s.page).map(|(pg, it)| (pg, it.rect))
+                }
                 _ => None,
             },
             zoom: self.zoom,

@@ -413,3 +413,158 @@ fn smartart_parts_are_read_and_edited_parts_saved() {
         original["word/diagrams/drawing1.xml"]
     );
 }
+
+/// A text box edited in place, as Word does: its text formatted like the
+/// body's (runs, alignment, lists), one undo step, saved into the shape's
+/// `w:txbxContent` and the VML fallback's.
+#[test]
+fn text_box_is_edited_in_place_with_formatting() {
+    use docs_engine::{Align, BoxRef, ListKind, Position, Selection, Toggle};
+    let mut doc = open();
+    let (para, index, tb) = floats(&doc)
+        .into_iter()
+        .find(|f| f.2.name == "Text Box 1")
+        .unwrap();
+    let b = BoxRef {
+        story: None,
+        para,
+        index,
+        which: None,
+    };
+    let (edit, mut part) = doc.edit_text_box(b).unwrap();
+    assert_eq!(part.paragraph(0).text, "Text box");
+    // While it's edited the main document holds an empty box.
+    assert!(!doc.part_changed(&edit, &part));
+    let word = Selection {
+        anchor: Position::new(0, 0),
+        head: Position::new(0, 4),
+    };
+    assert!(part.toggle(word, Toggle::Bold));
+    part.set_align(Selection::caret(Position::new(1, 0)), Align::Center);
+    let end = part.end();
+    let c = part.insert_text(Selection::caret(end), "\nFirst point", None);
+    part.toggle_list(c, ListKind::Bullet);
+    // Its own undo while it's open.
+    part.undo();
+    part.toggle_list(c, ListKind::Bullet);
+    // Put back for layout and taken out again: nothing lost.
+    doc.swap_part(&edit, &mut part);
+    assert_eq!(
+        doc.float_at(para, index)
+            .unwrap()
+            .text_box_text()
+            .as_deref(),
+        Some("Text box\nwith two paragraphs\nFirst point")
+    );
+    doc.swap_part(&edit, &mut part);
+    assert!(doc.part_changed(&edit, &part));
+    assert!(doc.finish_part(edit, part, Selection::default()));
+    let f = doc.float_at(para, index).unwrap();
+    assert!(f.is_modified() && f.at == tb.at);
+    let saved = doc.to_docx_bytes().unwrap();
+    let xml = document_xml(&saved);
+    // Both the shape and its VML fallback, formatted.
+    assert_eq!(xml.matches("First point").count(), 2, "{xml}");
+    assert_eq!(xml.matches("<w:jc w:val=\"center\"/>").count() >= 2, true);
+    assert!(xml.contains("<w:b/>"), "{xml}");
+    let p = parts(&saved);
+    let numbering = String::from_utf8(p["word/numbering.xml"].clone()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tb.docx");
+    std::fs::write(&path, &saved).unwrap();
+    let back = Document::open(&path).unwrap();
+    let f = back.float_at(para, index).unwrap();
+    let d = &f.text.as_ref().unwrap().doc;
+    assert_eq!(d.len(), 3);
+    assert!(
+        d.resolve_run(d.paragraph(0), &d.paragraph(0).runs[0].props)
+            .bold
+    );
+    assert_eq!(d.resolve_para(d.paragraph(1)).align, Align::Center);
+    let num = d.paragraph(2).props.num.expect("a list item");
+    assert!(
+        numbering.contains(&format!("w:numId=\"{}\"", num.id)),
+        "the list's definition is written: {numbering}"
+    );
+    // One undo step puts the box back as it was.
+    doc.undo();
+    let f = doc.float_at(para, index).unwrap();
+    assert_eq!(
+        f.text_box_text().as_deref(),
+        Some("Text box\nwith two paragraphs")
+    );
+    assert!(!f.is_modified());
+    doc.redo();
+    assert_eq!(
+        doc.float_at(para, index)
+            .unwrap()
+            .text_box_text()
+            .as_deref(),
+        Some("Text box\nwith two paragraphs\nFirst point")
+    );
+
+    // Unchanged: nothing recorded, nothing rewritten.
+    let mut doc = open();
+    let (edit, part) = doc.edit_text_box(b).unwrap();
+    assert!(!doc.finish_part(edit, part, Selection::default()));
+    assert!(!doc.float_at(para, index).unwrap().is_modified());
+    assert!(!doc.is_dirty());
+}
+
+/// Typing in a text box with Track Changes on is tracked there.
+#[test]
+fn text_box_edits_are_tracked() {
+    use docs_engine::{BoxRef, Position, Selection};
+    let mut doc = open();
+    let (para, index, _) = floats(&doc)
+        .into_iter()
+        .find(|f| f.2.name == "Text Box 1")
+        .unwrap();
+    doc.set_track_changes(true, Selection::default());
+    let b = BoxRef {
+        story: None,
+        para,
+        index,
+        which: None,
+    };
+    let (edit, mut part) = doc.edit_text_box(b).unwrap();
+    part.insert_text(Selection::caret(Position::new(0, 0)), "New ", None);
+    assert!(doc.finish_part(edit, part, Selection::default()));
+    let xml = document_xml(&doc.to_docx_bytes().unwrap());
+    assert!(xml.contains("<w:ins "), "{xml}");
+    assert_eq!(xml.matches(">New <").count(), 2, "{xml}");
+}
+
+/// A group's shape's text edited in place: only that shape's text box
+/// is rewritten.
+#[test]
+fn group_shape_text_is_edited_in_place() {
+    use docs_engine::{BoxRef, Position, Selection, Toggle};
+    let mut doc = Document::open(&corpus("diagrams.docx")).unwrap();
+    let (para, index, _) = floats(&doc)
+        .into_iter()
+        .find(|f| f.2.name == "Labelled group")
+        .unwrap();
+    let b = BoxRef {
+        story: None,
+        para,
+        index,
+        which: Some(1),
+    };
+    let (edit, mut part) = doc.edit_text_box(b).unwrap();
+    let c = part.insert_text(Selection::caret(Position::new(0, 2)), " it", None);
+    part.toggle(
+        Selection {
+            anchor: Position::new(0, 0),
+            head: c.head,
+        },
+        Toggle::Italic,
+    );
+    assert!(doc.finish_part(edit, part, Selection::default()));
+    let f = doc.float_at(para, index).unwrap();
+    assert_eq!(f.text_box_text_in(Some(1)).as_deref(), Some("Do it"));
+    assert!(f.boxes[1].edited && !f.boxes[0].edited);
+    let xml = document_xml(&doc.to_docx_bytes().unwrap());
+    assert!(xml.contains(">Do it<") && xml.contains("<w:i/>"), "{xml}");
+    assert!(xml.contains(">Plan<"));
+}

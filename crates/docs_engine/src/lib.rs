@@ -60,7 +60,7 @@ pub use notes::{Note, NoteKind, NoteProps, NoteRef, NoteRestart};
 pub use numbering::ListKind;
 pub use object::{FieldMark, Image, ImageFormat, Level, OBJECT, Object, Opaque};
 pub use page::{MarginPreset, Orientation, PaperSize, cm_to_twips, twips_to_cm};
-pub use part_edit::{PartEdit, PartRef};
+pub use part_edit::{BoxRef, PartEdit, PartRef};
 pub use review::{Anchor, Change, Comment, RevKind, Revision};
 pub use section::{
     ChapterSep, HfKind, HfType, NumFormat, PageField, PageNumbering, Section, SectionProps,
