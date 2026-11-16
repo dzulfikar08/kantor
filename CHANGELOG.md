@@ -9,6 +9,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Docs: text in grouped shapes (and in shapes on a drawing canvas) is shown, wrapped inside its
+  shape and turned with it, on screen and in the PDF. Double-click a shape in the group to edit its
+  text, as with a text box.
+
 ## [0.8.0] - 2026-11-16
 
 Kantor now edits the parts of Office files it used to only show. In Docs: headers, footers and

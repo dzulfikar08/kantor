@@ -225,6 +225,7 @@ fn label(
         story: 0,
         note: None,
         text_box: Some(anchor),
+        group_box: None,
         paged,
         paras: paras
             .iter()

@@ -37,6 +37,8 @@ crates/docs_pdf/tests/.
   (`wpc:wpc`), a column chart with its values cached, a picture turned 30°,
   a text box turned 90°, a shape with a shadow, and a triangle with Tight
   wrapping (`wp:wrapPolygon`).
+* diagrams.docx: a group whose shapes hold text (`wps:txbx` inside
+  `wpg:wgp`, one shape turned 90°).
 * notes.docx: a footnote too long for its page (Word's continuation
   separator and notice), short footnotes, and endnotes placed at the end
   of each section (`w:endnotePr/w:pos w:val="sectEnd"`) in two sections.
@@ -839,4 +841,37 @@ add_draw(p, drawing(anchor(207, "Tight triangle", pos("H", "column", "<wp:align>
                             160 * EMU, 160 * EMU, poly, tri, 251660006)))
 p.add_run(LOREM * 5)
 save(d, "drawings.docx")
+
+# ── diagrams: text in grouped shapes, SmartArt, more chart types.
+def sp_text(prst, x, y, cx, cy, fill, text, rot=0, anchor_v="ctr"):
+    paras = "".join(f'<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>' for t in text)
+    return (
+        f'<wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm rot="{rot}"><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        f'<a:prstGeom prst="{prst}"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="{fill}"/></a:solidFill>'
+        f'<a:ln w="12700"><a:solidFill><a:srgbClr val="404040"/></a:solidFill></a:ln></wps:spPr>'
+        f'<wps:txbx><w:txbxContent>{paras}</w:txbxContent></wps:txbx>'
+        f'<wps:bodyPr rot="0" vert="horz" lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="{anchor_v}"/></wps:wsp>'
+    )
+
+
+d = Document()
+d.add_heading("Diagrams", 1)
+# A group of two labelled boxes and an arrow, in child coordinates twice
+# the group's size; the second box is turned 90°.
+p = d.add_paragraph()
+G = 300 * EMU
+group = (
+    f'<a:graphic><a:graphicData uri="{NS_WPG}"><wpg:wgp><wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm>'
+    f'<a:off x="0" y="0"/><a:ext cx="{G}" cy="{G // 3}"/><a:chOff x="0" y="0"/><a:chExt cx="{2 * G}" cy="{2 * G // 3}"/>'
+    f'</a:xfrm></wpg:grpSpPr>'
+    + sp_text("roundRect", 0, 0, 2 * G // 5, 2 * G // 3, "BDD7EE", ["Plan", "first"])
+    + sp("rightArrow", 2 * G // 5, G // 4, G // 5, G // 6, "A9D18E")
+    + sp_text("rect", 3 * G // 5 + G // 6, 2 * G // 15, 2 * G // 3, 2 * G // 5, "F8CBAD", ["Do"], rot=5400000)
+    + '</wpg:wgp></a:graphicData></a:graphic>'
+)
+add_draw(p, drawing(anchor(301, "Labelled group", pos("H", "column", "<wp:align>left</wp:align>"),
+                            pos("V", "paragraph", "<wp:posOffset>0</wp:posOffset>"),
+                            G, G // 3, '<wp:wrapTopAndBottom/>', group, 251661000)))
+p.add_run(LOREM)
+save(d, "diagrams.docx")
 print("docx ok")

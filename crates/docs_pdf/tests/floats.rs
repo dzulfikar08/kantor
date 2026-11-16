@@ -223,3 +223,46 @@ fn groups_charts_turns_shadows_and_tight_wrap() {
         .count();
     assert_eq!(pics, 1);
 }
+
+/// `diagrams.docx`: the text of a group's shapes is laid out inside each
+/// shape (a turned shape's text turned with it) and goes into the PDF.
+#[test]
+fn grouped_shapes_text_is_laid_out_and_exported() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/docx/diagrams.docx");
+    let doc = Document::open(&path).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let it = laid
+        .floats
+        .iter()
+        .flatten()
+        .find(|it| it.float(&doc).unwrap().name == "Labelled group")
+        .unwrap();
+    assert_eq!(it.boxes.len(), 2);
+    let r = it.rect;
+    for b in &it.boxes {
+        // Each shape's box lies in the group's box; its text starts inside.
+        assert!(b.rect[0] >= r[0] - 0.5 && b.rect[0] + b.rect[2] <= r[0] + r[2] + 0.5);
+        assert!(b.x >= b.rect[0] && b.y >= b.rect[1] - 0.5, "{:?}", b.rect);
+    }
+    let first = &it.boxes[0];
+    assert_eq!(first.layout.shown(0), "Plan");
+    assert_eq!(first.layout.shown(1), "first");
+    assert_eq!(first.turn, 0.0);
+    // The first box is the left fifth of the group (child space is twice
+    // the group's size).
+    assert!((first.rect[2] - r[2] / 5.0).abs() < 0.5, "{:?}", first.rect);
+    let second = &it.boxes[1];
+    assert_eq!(second.layout.shown(0), "Do");
+    assert_eq!(second.turn, 90.0);
+    let scene = docs_pdf::scene(&doc, &laid);
+    let scenes: Vec<_> = scene.pages.iter().flat_map(|p| &p.front).collect();
+    let with_text = scenes
+        .iter()
+        .filter(|f| f.content.runs.iter().any(|r| r.text.contains("Plan") || r.text.contains("Do")))
+        .count();
+    assert_eq!(with_text, 2);
+    assert!(scenes.iter().any(|f| f.content_turn.is_some_and(|t| t.0 == 90.0)));
+    assert!(docs_pdf::write(&scene).unwrap().starts_with(b"%PDF"));
+}

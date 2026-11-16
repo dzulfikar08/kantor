@@ -71,6 +71,9 @@ pub(crate) struct FloatDrag {
 /// The text box being edited.
 pub(crate) struct TextBoxEdit {
     sel: FloatSel,
+    /// A group's shape's text ([`docs_engine::Float::boxes`]), or the
+    /// object's own text box.
+    which: Option<usize>,
     at: Point<Pixels>,
     input: Entity<TextareaState>,
     locked: Option<String>,
@@ -256,19 +259,51 @@ impl DocsView {
         // and undo work on the object).
         self.sel = Selection::caret(Position::new(sel.para, sel.index));
         self.dragging = false;
-        if ev.click_count == 2
-            && self
-                .doc
-                .float_at(sel.para, sel.index)
-                .is_some_and(|f| f.text.is_some())
-        {
+        let target = (ev.click_count == 2)
+            .then(|| self.text_target(page, sel, ev.position))
+            .flatten();
+        if let Some(which) = target {
             let at = point(ev.position.x + SPACE_3, ev.position.y + SPACE_3);
-            self.open_text_box(sel, at, window, cx);
+            self.open_text_box(sel, which, at, window, cx);
         } else {
             self.start_float_drag(page, Grab::Move, rect, ev.position);
         }
         cx.notify();
         true
+    }
+
+    /// The text a double click at `p` on object `sel` edits: its own text
+    /// box (`Some(None)`), the text of the group's shape under the
+    /// pointer (or nearest to it), or nothing.
+    fn text_target(
+        &self,
+        page: usize,
+        sel: FloatSel,
+        p: Point<Pixels>,
+    ) -> Option<Option<usize>> {
+        let f = self.doc.float_at(sel.para, sel.index)?;
+        if f.text.is_some() {
+            return Some(None);
+        }
+        if f.boxes.is_empty() {
+            return None;
+        }
+        let (_, x, y) = self.geometry().screen_to_page(p, self.laid.paged.pages.len());
+        let it = self
+            .laid
+            .floats
+            .get(page)?
+            .iter()
+            .find(|it| it.story.is_none() && it.para == sel.para && it.index == sel.index)?;
+        let dist = |r: [f32; 4]| {
+            let dx = (r[0] - x).max(x - r[0] - r[2]).max(0.0);
+            let dy = (r[1] - y).max(y - r[1] - r[3]).max(0.0);
+            dx * dx + dy * dy
+        };
+        it.boxes
+            .iter()
+            .min_by(|a, b| dist(a.rect).total_cmp(&dist(b.rect)))
+            .map(|b| Some(b.which))
     }
 
     fn start_float_drag(&mut self, page: usize, grab: Grab, rect: [f32; 4], p: Point<Pixels>) {
@@ -503,6 +538,7 @@ impl DocsView {
     fn open_text_box(
         &mut self,
         sel: FloatSel,
+        which: Option<usize>,
         at: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -510,8 +546,8 @@ impl DocsView {
         let Some(f) = self.doc.float_at(sel.para, sel.index) else {
             return;
         };
-        let text = f.text_box_text().unwrap_or_default();
-        let locked = f.text_locked().map(str::to_owned);
+        let text = f.text_box_text_in(which).unwrap_or_default();
+        let locked = f.text_locked_in(which).map(str::to_owned);
         let input = cx.new(|cx| {
             let mut s = TextareaState::new(window, cx)
                 .auto_grow(2, 8)
@@ -533,6 +569,7 @@ impl DocsView {
         }
         self.text_box_edit = Some(TextBoxEdit {
             sel,
+            which,
             at,
             input,
             locked,
@@ -551,7 +588,7 @@ impl DocsView {
             let text = value.trim_end_matches(['\n', '\r']);
             if self
                 .doc
-                .set_text_box_text(edit.sel.para, edit.sel.index, text)
+                .set_text_box_text_in(edit.sel.para, edit.sel.index, edit.which, text)
             {
                 self.float_edited(window, cx);
                 self.status = t("Text box updated").into();
@@ -899,6 +936,13 @@ pub(crate) fn float_paint(
                 get(l, (*x, *y), it.rect, deg);
             }
             let mut labels = Vec::new();
+            for b in &it.boxes {
+                if b.turn != 0.0 {
+                    get(&b.layout, (b.x, b.y), b.rect, b.turn);
+                } else {
+                    labels.push((b.layout.clone(), b.x, b.y));
+                }
+            }
             for l in it.chart.iter().flat_map(|c| &c.labels) {
                 if l.rot != 0.0 {
                     get(&l.layout, (l.x, l.y), l.rect, l.rot);

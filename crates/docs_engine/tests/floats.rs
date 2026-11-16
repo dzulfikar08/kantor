@@ -326,3 +326,47 @@ fn groups_canvases_charts_and_wrap_polygons_are_read() {
         parts(&std::fs::read(&path).unwrap())["word/charts/chart1.xml"]
     );
 }
+
+/// `diagrams.docx`: a group whose shapes hold text.
+#[test]
+fn grouped_shapes_text_is_read_edited_and_saved() {
+    let path = corpus("diagrams.docx");
+    let mut doc = Document::open(&path).unwrap();
+    let (para, index, g) = floats(&doc)
+        .into_iter()
+        .find(|f| f.2.name == "Labelled group")
+        .unwrap();
+    assert_eq!(g.kind, FloatKind::Group { canvas: false });
+    assert!(g.has_text() && g.text.is_none());
+    let texts: Vec<String> = (0..g.boxes.len())
+        .map(|k| g.text_box_text_in(Some(k)).unwrap())
+        .collect();
+    assert_eq!(texts, ["Plan\nfirst", "Do"]);
+    // Untouched: the drawing is written back byte for byte.
+    let original = document_xml(&std::fs::read(&path).unwrap());
+    let group_xml = |x: &str| {
+        let (a, b) = (x.find("<wpg:wgp>").unwrap(), x.find("</wpg:wgp>").unwrap());
+        x[a..b].to_owned()
+    };
+    assert_eq!(
+        group_xml(&document_xml(&doc.to_docx_bytes().unwrap())),
+        group_xml(&original)
+    );
+    // Editing the second shape's text changes only that one.
+    assert!(doc.set_text_box_text_in(para, index, Some(1), "Do it\nnow"));
+    let saved = doc.to_docx_bytes().unwrap();
+    let xml = document_xml(&saved);
+    assert!(xml.contains(">Do it<") && xml.contains(">now<"), "{xml}");
+    assert!(xml.contains(">Plan<"));
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("g.docx");
+    std::fs::write(&out, &saved).unwrap();
+    let back = Document::open(&out).unwrap();
+    let f = back.float_at(para, index).unwrap();
+    assert_eq!(f.text_box_text_in(Some(0)).as_deref(), Some("Plan\nfirst"));
+    assert_eq!(f.text_box_text_in(Some(1)).as_deref(), Some("Do it\nnow"));
+    doc.undo();
+    let f = doc.float_at(para, index).unwrap();
+    assert_eq!(f.text_box_text_in(Some(1)).as_deref(), Some("Do"));
+    assert!(!f.is_modified());
+}

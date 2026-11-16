@@ -956,7 +956,7 @@ impl BodyParser<'_> {
                 self.image_rels.insert(rel_id.clone());
             }
             FloatKind::Group { .. } => {
-                // Pictures in the group; text in its shapes isn't shown.
+                // Pictures in the group (its shapes' text: below).
                 for id in f.picture_rels() {
                     if rels.get(&id).is_some_and(|r| !r.external) {
                         self.image_rels.insert(id);
@@ -975,7 +975,21 @@ impl BodyParser<'_> {
             }
             _ => {}
         }
-        // A shape's own text box (a group's shapes' text isn't shown).
+        if matches!(f.kind, FloatKind::Group { .. }) {
+            let boxes: Vec<_> = crate::float::group_text_boxes(xml)
+                .into_iter()
+                .map(|(inner, insets, v_align)| crate::float::GroupBox {
+                    text: Arc::new(TextBox {
+                        doc: self.text_box_doc(inner),
+                        insets,
+                        v_align,
+                    }),
+                    edited: false,
+                })
+                .collect();
+            f.boxes = boxes;
+        }
+        // A shape's own text box.
         if f.kind == FloatKind::Shape
             && let Some((inner, insets, v_align)) = crate::float::text_box_xml(xml)
         {
