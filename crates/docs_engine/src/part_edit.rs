@@ -12,9 +12,17 @@
 //! document, and Save writes that header, footer or notes part (and only
 //! that one).
 //!
+//! Text boxes (a shape's own, or one of a group's shapes) are edited the
+//! same way ([`Document::edit_text_box`]): their content is a small
+//! document too ([`crate::float::TextBox`]), and leaving makes the whole
+//! edit one undo step that rewrites the box's `w:txbxContent` (and the
+//! VML fallback's) on save.
+//!
 //! A header or footer that doesn't exist yet is created when editing
 //! starts (the section gets its reference) and dropped again if nothing
 //! was typed in it, so just looking leaves the file as it was.
+
+use std::sync::Arc;
 
 use crate::document::Document;
 use crate::model::{Paragraph, Selection};
@@ -28,6 +36,22 @@ pub enum PartRef {
     Story(usize),
     /// Index into [`Document::notes`].
     Note(usize),
+    /// A floating object's text box.
+    TextBox(BoxRef),
+}
+
+/// A text box: its object's place and which of its text boxes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BoxRef {
+    /// The header or footer story the object is anchored in (`None`: the
+    /// body).
+    pub story: Option<usize>,
+    /// The object's paragraph and byte index.
+    pub para: usize,
+    pub index: usize,
+    /// A group's shape number ([`crate::Float::boxes`]); `None` for the
+    /// shape's own text box.
+    pub which: Option<usize>,
 }
 
 /// An edit of a header, footer or note in progress (see the module docs).
@@ -40,6 +64,8 @@ pub struct PartEdit {
     para: Option<(usize, Paragraph)>,
     /// Created for this edit: dropped again if it's left empty.
     created: bool,
+    /// A text box's anchor paragraph as it was before the edit.
+    owner: Option<Paragraph>,
 }
 
 impl PartEdit {
@@ -80,6 +106,7 @@ impl Document {
         let mut doc = std::mem::take(&mut self.stories[index].doc);
         doc.media_stem = media_stem(&self.stories[index].part);
         doc.field_props = Some(props);
+        doc.numbering = self.numbering.clone();
         // Edits in it are tracked as the body's are.
         doc.track = self.track;
         doc.author = self.author.clone();
@@ -89,6 +116,7 @@ impl Document {
                 before,
                 para,
                 created,
+                owner: None,
             },
             doc,
         ))
@@ -102,6 +130,7 @@ impl Document {
         let mut doc = std::mem::take(&mut self.notes[index].doc);
         doc.field_props = Some(props);
         doc.media_stem = format!("{}{}_", kind.element(), id.trim_start_matches('-'));
+        doc.numbering = self.numbering.clone();
         doc.track = self.track;
         doc.author = self.author.clone();
         Some((
@@ -110,9 +139,65 @@ impl Document {
                 before,
                 para: None,
                 created: false,
+                owner: None,
             },
             doc,
         ))
+    }
+
+    /// Start editing a text box in place. `None` when there's no such
+    /// text box or Kantor can't edit it ([`crate::Float::text_locked_in`]).
+    pub fn edit_text_box(&mut self, b: BoxRef) -> Option<(PartEdit, Document)> {
+        let owner = self.box_owner(b.story)?;
+        let f = owner.float_at(b.para, b.index)?;
+        f.text_box_in(b.which)?;
+        if f.text_locked_in(b.which).is_some() {
+            return None;
+        }
+        let para = owner.paragraphs.get(b.para)?.clone();
+        let stem = match b.story {
+            Some(s) => self.stories.get(s).map(|st| media_stem(&st.part))?,
+            None => String::new(),
+        };
+        let before = self.side_state();
+        let props = Arc::new(crate::fields::Props::of(self));
+        let numbering = self.numbering.clone();
+        let (track, author) = (self.track, self.author.clone());
+        let mut doc = std::mem::take(self.box_doc_mut(b)?);
+        doc.clear_history();
+        doc.field_props = Some(props);
+        doc.numbering = numbering;
+        doc.media_stem = stem;
+        doc.track = track;
+        doc.author = author;
+        Some((
+            PartEdit {
+                part: PartRef::TextBox(b),
+                before,
+                para: None,
+                created: false,
+                owner: Some(para),
+            },
+            doc,
+        ))
+    }
+
+    /// The document a text box's object is anchored in.
+    fn box_owner(&self, story: Option<usize>) -> Option<&Document> {
+        match story {
+            Some(s) => self.stories.get(s).map(|st| &st.doc),
+            None => Some(self),
+        }
+    }
+
+    /// The text box's own document, in place (the object and its text box
+    /// copied first if anything else shares them, as the undo history).
+    fn box_doc_mut(&mut self, b: BoxRef) -> Option<&mut Document> {
+        let owner = match b.story {
+            Some(s) => &mut self.stories.get_mut(s)?.doc,
+            None => self,
+        };
+        box_in_para(owner.paragraphs.get_mut(b.para)?, b.index, b.which)
     }
 
     /// Exchange the edited part's document with `doc`: call it twice
@@ -129,6 +214,11 @@ impl Document {
                     std::mem::swap(&mut n.doc, doc);
                 }
             }
+            PartRef::TextBox(b) => {
+                if let Some(d) = self.box_doc_mut(b) {
+                    std::mem::swap(d, doc);
+                }
+            }
         }
     }
 
@@ -138,6 +228,7 @@ impl Document {
         let old = match e.part {
             PartRef::Story(i) => e.before.stories.get(i).map(|s| &s.doc),
             PartRef::Note(i) => e.before.notes.get(i).map(|n| &n.doc),
+            PartRef::TextBox(b) => e.owner.as_ref().and_then(|p| old_box(p, b)),
         };
         old.is_none_or(|o| o.paragraphs != doc.paragraphs || o.tables != doc.tables)
     }
@@ -152,6 +243,14 @@ impl Document {
         doc.media_stem.clear();
         doc.field_props = None;
         doc.track = false;
+        // Lists started in the part: their definitions are the main
+        // document's (numbering.xml).
+        if changed && doc.numbering.nums.len() > self.numbering.nums.len() {
+            self.numbering = doc.numbering.clone();
+        }
+        if let PartRef::TextBox(b) = e.part {
+            return self.finish_text_box(e, b, doc, changed, sel);
+        }
         let empty = doc.paragraphs.iter().all(|p| p.text.is_empty()) && doc.tables.is_empty();
         match e.part {
             PartRef::Story(i) => {
@@ -170,6 +269,7 @@ impl Document {
                     }
                 }
             }
+            PartRef::TextBox(_) => unreachable!("finished above"),
         }
         if e.created && (!changed || empty) {
             // Nothing written in a new header: as if it was never made.
@@ -183,6 +283,50 @@ impl Document {
             return false;
         }
         self.push_hf(e.before, e.para, sel);
+        true
+    }
+
+    /// [`Document::finish_part`] for a text box: the anchor paragraph
+    /// gets the edited box (one undo step), or is put back as it was.
+    fn finish_text_box(
+        &mut self,
+        e: PartEdit,
+        b: BoxRef,
+        mut doc: Document,
+        changed: bool,
+        sel: Selection,
+    ) -> bool {
+        let Some(old) = e.owner else {
+            return false;
+        };
+        let pictures = std::mem::take(&mut doc.new_media);
+        let mut para = old.clone();
+        if changed && let Some(d) = box_in_para(&mut para, b.index, b.which) {
+            *d = doc;
+            mark_edited(&mut para, b.index, b.which);
+        }
+        let Some(owner) = (match b.story {
+            Some(s) => self.stories.get_mut(s).map(|st| &mut st.doc),
+            None => Some(&mut *self),
+        }) else {
+            return false;
+        };
+        let Some(slot) = owner.paragraphs.get_mut(b.para) else {
+            return false;
+        };
+        if !changed {
+            *slot = old;
+            return false;
+        }
+        *slot = para;
+        owner.new_media.extend(pictures);
+        match b.story {
+            Some(s) => {
+                self.stories[s].modified = true;
+                self.push_hf(e.before, None, sel);
+            }
+            None => self.push_hf(e.before, Some((b.para, old)), sel),
+        }
         true
     }
 
@@ -251,6 +395,55 @@ impl Document {
         let para = self.set_sect_xml(sections, si, xml);
         (self.stories.len() - 1, para)
     }
+}
+
+/// The document of the text box `which` of the object at byte `index` of
+/// `p`, in place.
+fn box_in_para(p: &mut Paragraph, index: usize, which: Option<usize>) -> Option<&mut Document> {
+    let mut start = 0;
+    for run in &mut p.runs {
+        if start == index
+            && let Some(crate::Object::Float(f)) = &mut run.object
+        {
+            let f = Arc::make_mut(f);
+            let tb = match which {
+                None => f.text.as_mut()?,
+                Some(k) => &mut f.boxes.get_mut(k)?.text,
+            };
+            return Some(&mut Arc::make_mut(tb).doc);
+        }
+        start += run.len;
+    }
+    None
+}
+
+/// Mark the text box `which` of the object at `index` of `p` as changed
+/// in Kantor (its `w:txbxContent` is written from it).
+fn mark_edited(p: &mut Paragraph, index: usize, which: Option<usize>) {
+    let mut start = 0;
+    for run in &mut p.runs {
+        if start == index
+            && let Some(crate::Object::Float(f)) = &mut run.object
+        {
+            let f = Arc::make_mut(f);
+            match which {
+                None => f.text_edited = true,
+                Some(k) => {
+                    if let Some(g) = f.boxes.get_mut(k) {
+                        g.edited = true;
+                    }
+                }
+            }
+            return;
+        }
+        start += run.len;
+    }
+}
+
+/// The text box `b` in the anchor paragraph `p` as it was.
+fn old_box(p: &Paragraph, b: BoxRef) -> Option<&Document> {
+    let f = p.object_at(b.index)?.float()?;
+    f.text_box_in(b.which).map(|t| &t.doc)
 }
 
 /// The stem new pictures in a part are named with (`header1_`), so they

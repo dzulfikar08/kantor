@@ -132,6 +132,39 @@ fn layout_key(paras: &[docs_layout::Paragraph], width: f32) -> u64 {
     h.finish()
 }
 
+/// How tall and how wide (px) a text body is laid out `width` px wide:
+/// its height and its widest line (a word longer than the width sticks
+/// out). SmartArt autofit's measure
+/// ([`slides_engine::smartart_fit::set_text_measure`]).
+pub fn text_extent(t: &RenderText, width: f32) -> (f32, f32) {
+    thread_local! {
+        static ENGINE: RefCell<Engine> = RefCell::new(Engine::new());
+    }
+    let paras = layout_paragraphs(t);
+    let setup = PageSetup {
+        width: width.max(1.0),
+        height: 1.0e7,
+        margin_top: 0.0,
+        margin_bottom: 0.0,
+        margin_left: 0.0,
+        margin_right: 0.0,
+    };
+    ENGINE.with(|e| {
+        let paged = e.borrow_mut().layout_document(&paras, setup);
+        let height = paged
+            .pages
+            .first()
+            .and_then(|p| p.lines.last())
+            .map_or(0.0, |l| l.top + l.height);
+        let wide = paged
+            .layouts
+            .iter()
+            .map(|l| l.dx + l.layout.width())
+            .fold(0.0, f32::max);
+        (height, wide)
+    })
+}
+
 /// Width of a text body's layout area in slide px. Unwrapped text
 /// (`wrap="none"`) is aligned in it too, so it's the box's width either way.
 pub fn text_width(t: &RenderText, xfrm: &Xfrm) -> f32 {

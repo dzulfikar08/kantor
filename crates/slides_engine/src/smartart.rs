@@ -1256,6 +1256,12 @@ impl Presentation {
         let colors = self.color_ctx(f.0);
         let mut nd = read_drawing(&dd.part, &drawing, &rels, &data_part, &data, &colors, size)
             .context("SmartArt drawing")?;
+        // Its text shrinks to fit the shapes as laid out now.
+        let text = |sh: &Shape, x: &Xfrm, own: bool| self.shape_text(f.0, sh, x, own);
+        if let Some(fitted) = crate::smartart_fit::fit_text(&nd, &text) {
+            nd = read_drawing(&dd.part, &fitted, &rels, &data_part, &data, &colors, size)
+                .context("SmartArt drawing")?;
+        }
         nd.data_xml = Some(data.into());
         nd.rebuilt = true;
         Ok(crate::frame::Frame::new(FrameContent::Diagram(

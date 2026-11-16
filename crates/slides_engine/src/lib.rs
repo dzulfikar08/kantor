@@ -30,6 +30,7 @@ pub mod render;
 mod shape;
 pub mod sheet_shape;
 pub mod smartart;
+pub mod smartart_fit;
 pub mod smartart_layout;
 pub mod table_edit;
 mod template;

@@ -142,6 +142,8 @@ actions!(
 pub fn init(cx: &mut App) {
     // Placeholder prompts and chart fallbacks follow the interface language.
     slides_engine::display_text::set_display_translator(kantor_ui::i18n::t);
+    // SmartArt text laid out again shrinks to fit, measured as drawn.
+    slides_engine::smartart_fit::set_text_measure(slides_scene::text::text_extent);
     kantor_ui::find_bar::bind_app_keys(KEY_CONTEXT, cx);
     kantor_ui::spelling::init(cx);
     cx.bind_keys(key_bindings());

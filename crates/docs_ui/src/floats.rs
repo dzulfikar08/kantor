@@ -138,7 +138,7 @@ impl TextOwner {
 
 /// SmartArt edit messages from `docs_pdf::smartart` (translated with
 /// `t_dyn`).
-const SMARTART_MESSAGES: [&str; 5] = [
+const SMARTART_MESSAGES: [&str; 8] = [
     tk("This SmartArt shape shows several items: keep one line per item"),
     tk("Kantor can't read this SmartArt's drawing"),
     tk("This SmartArt shape doesn't show an item"),
@@ -146,6 +146,11 @@ const SMARTART_MESSAGES: [&str; 5] = [
     tk(
         "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes, cycles and hierarchies",
     ),
+    tk(
+        "A Labeled Hierarchy's labels take no shapes above or below them: add labels before or after them",
+    ),
+    tk("The top of a Labeled Hierarchy has no shapes beside it: add shapes below or above it"),
+    tk("The top of this Labeled Hierarchy can't be deleted while it has several shapes under it"),
 ];
 
 /// A change to a SmartArt's items from its text popover.
@@ -247,7 +252,7 @@ impl DocsView {
         match self.part.as_ref().map(|s| s.edit.part) {
             None => Some(None),
             Some(docs_engine::PartRef::Story(i)) => Some(Some(i)),
-            Some(docs_engine::PartRef::Note(_)) => None,
+            Some(docs_engine::PartRef::Note(_) | docs_engine::PartRef::TextBox(_)) => None,
         }
     }
 
@@ -346,6 +351,7 @@ impl DocsView {
             }
             return false;
         };
+        let was_selected = self.float_sel == Some(sel);
         self.float_sel = Some(sel);
         self.text_box_edit = None;
         if let Some(s) = &mut self.part {
@@ -355,9 +361,20 @@ impl DocsView {
         // and undo work on the object).
         self.sel = Selection::caret(Position::new(sel.para, sel.index));
         self.dragging = false;
-        let target = (ev.click_count == 2)
+        // A double click, or a click on the text of a selected box, puts
+        // the caret in the text (its edge still moves the box).
+        let into_text = ev.click_count == 2 || (was_selected && self.on_text(rect, ev.position));
+        let target = into_text
             .then(|| self.text_target(page, sel, ev.position))
             .flatten();
+        if let Some(which) = target
+            && self.text_in_place(page, sel, which, ev.position, window, cx)
+        {
+            self.dragging = ev.click_count <= 1;
+            cx.notify();
+            return true;
+        }
+        let target = target.filter(|_| ev.click_count == 2);
         if let Some(which) = target {
             let at = point(ev.position.x + SPACE_3, ev.position.y + SPACE_3);
             self.open_text_box(sel, which, at, window, cx);
@@ -366,6 +383,68 @@ impl DocsView {
         }
         cx.notify();
         true
+    }
+
+    /// Whether a window point is inside the object box `rect`, away from
+    /// its edge (where a press moves the box).
+    fn on_text(&self, [x, y, w, h]: [f32; 4], p: Point<Pixels>) -> bool {
+        let g = self.geometry();
+        let (_, px, py) = g.screen_to_page(p, self.laid.paged.pages.len());
+        let edge = 6.0 / g.zoom;
+        px > x + edge && px < x + w - edge && py > y + edge && py < y + h - edge
+    }
+
+    /// Edit the text `which` of object `sel` where it's drawn, caret at
+    /// the window point `p` (Word's text box editing). `false` when it
+    /// can't be (SmartArt, turned text, pictures or tables in it): the
+    /// text popover edits it instead.
+    fn text_in_place(
+        &mut self,
+        page: usize,
+        sel: FloatSel,
+        which: Option<usize>,
+        p: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(story) = self.float_story() else {
+            return false;
+        };
+        let Some(f) = self.doc.float_at(sel.para, sel.index) else {
+            return false;
+        };
+        if matches!(f.kind, docs_engine::FloatKind::SmartArt { .. })
+            || f.text_locked_in(which).is_some()
+        {
+            return false;
+        }
+        let turned = match which {
+            None => docs_pdf::floats::text_turn(f) != 0.0,
+            Some(k) => self.laid.floats.get(page).is_some_and(|items| {
+                items
+                    .iter()
+                    .filter(|it| {
+                        self.selectable(it) && it.para == sel.para && it.index == sel.index
+                    })
+                    .flat_map(|it| &it.boxes)
+                    .any(|b| b.which == k && b.turn != 0.0)
+            }),
+        };
+        if turned {
+            return false;
+        }
+        let b = docs_engine::BoxRef {
+            story,
+            para: sel.para,
+            index: sel.index,
+            which,
+        };
+        let (_, x, y) = self
+            .geometry()
+            .screen_to_page(p, self.laid.paged.pages.len());
+        self.float_sel = None;
+        self.float_drag = None;
+        self.edit_text_box_in_place(b, page, Some((x, y)), window, cx)
     }
 
     /// The text a double click at `p` on object `sel` edits: its own text

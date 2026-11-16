@@ -21,6 +21,10 @@ slide, in the layout families Kantor lays out itself:
   (`layout/hierarchy1`, a background and a text box per item, as
   PowerPoint draws it) and "Horizontal hierarchy" (`layout/hierarchy2`),
   with elbow connectors drawn for the parent transitions.
+- Slide 9 "Labeled hierarchy": Labeled Hierarchy (`layout/hierarchy6`), the
+  same tree, then the level labels "Board", "Managers", "Staff" (the
+  document's later top-level items), each a band across the diagram with
+  its text at the left, drawn behind the tree.
 
 Regenerate with
 `uv run --with python-pptx==1.0.2 scripts/corpus/gen_pptx_smartart.py tests/corpus/pptx`.
@@ -244,10 +248,13 @@ def connector(model, pts):
 TREE = ("CEO", [("CFO", []), ("CTO", [("Dev", []), ("Ops", [])])])
 
 
+LABELS = ["Board", "Managers", "Staff"]
+
+
 def tree_smartart(lo, style):
     """A hierarchy SmartArt of TREE: (data, drawing, layout). `style`:
     "org" (one box per item), "hier" (background + text box), "horiz"
-    (left to right)."""
+    (left to right), "label" (LABELS as bands behind the tree)."""
     doc = gid("D", 0)
     pts = (
         f'<dgm:pt modelId="{doc}" type="doc"><dgm:prSet loTypeId="urn:microsoft.com/office/officeart/2005/8/layout/{lo}" '
@@ -277,6 +284,19 @@ def tree_smartart(lo, style):
             add(k, node, j, depth + 1, me)
 
     add(TREE, doc, 0, 0, None)
+    labels = []  # (node, text)
+    if style == "label":
+        for j, text in enumerate(LABELS):
+            n += 1
+            node, par, sib, cxn = gid("A", n), gid("B", n), gid("C", n), gid("E", n)
+            pts += f'<dgm:pt modelId="{node}"><dgm:prSet phldrT="[Text]"/><dgm:spPr/>{text_body([text])}</dgm:pt>'
+            for tid, ty in [(par, "parTrans"), (sib, "sibTrans")]:
+                pts += f'<dgm:pt modelId="{tid}" type="{ty}" cxnId="{cxn}"><dgm:prSet/><dgm:spPr/>{text_body([""])}</dgm:pt>'
+            cxns += (
+                f'<dgm:cxn modelId="{cxn}" srcId="{doc}" destId="{node}" srcOrd="{j + 1}" destOrd="0" '
+                f'parTransId="{par}" sibTransId="{sib}"/>'
+            )
+            labels.append((node, text))
     # Tidy tree: leaves side by side, parents over their children.
     leaves = [i for i in range(len(items)) if not any(it[4] == i for it in items)]
     for slot, i in enumerate(leaves):
@@ -287,7 +307,14 @@ def tree_smartart(lo, style):
             items[i][5] = sum(items[k][5] for k in kids) / len(kids)
     nslots, nlev = len(leaves), max(it[3] for it in items) + 1
     horiz = style == "horiz"
-    if horiz:
+    # Labeled: the tree right of a label column, a row per level or label.
+    lw = W * 0.2 if style == "label" else 0
+    tw = W - lw
+    if style == "label":
+        nlev = max(nlev, len(labels))
+        bw = min(tw / (nslots + 0.25 * (nslots - 1)), H * 0.92 / (nlev + 0.5 * (nlev - 1)) / 0.6)
+        bh = bw * 0.6
+    elif horiz:
         bh = min(H / (nslots + 0.25 * (nslots - 1)), W / (nlev + 0.5 * (nlev - 1)) * 0.6)
         bw = bh / 0.6
     else:
@@ -298,9 +325,21 @@ def tree_smartart(lo, style):
         slot, depth = items[i][5], items[i][3]
         if horiz:
             return (depth * bw * 1.5, slot * bh * 1.25, bw, bh)
-        return (slot * bw * 1.25, depth * bh * 1.5, bw, bh)
+        top = bh * 0.2 if style == "label" else 0
+        return (lw + slot * bw * 1.25, top + depth * bh * 1.5, bw, bh)
 
     pres, shapes = [], []
+    for j, (node, text) in enumerate(labels):
+        y = j * bh * 1.5
+        band, h = gid("7", j), bh * 1.4
+        pres.append((band, node, "rootComposite", j, len(labels)))
+        sh = sp(band, "roundRect", (0, y, W, h), [text], fill="accent1", font="tx1")
+        # The label's text sits at the band's left.
+        sh = sh.replace(f'<dsp:txXfrm><a:off x="0" y="{int(y)}"/><a:ext cx="{int(W)}" cy="{int(h)}"/></dsp:txXfrm>',
+                        f'<dsp:txXfrm><a:off x="0" y="{int(y)}"/><a:ext cx="{int(lw)}" cy="{int(h)}"/></dsp:txXfrm>')
+        sh = sh.replace('<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>',
+                        '<a:solidFill><a:schemeClr val="accent1"><a:tint val="40000"/><a:alpha val="90000"/></a:schemeClr></a:solidFill>', 1)
+        shapes.append(sh)
     for i, (node, par, text, _depth, pidx, _slot) in enumerate(items):
         x, y, w, h = box(i)
         if pidx is not None:
@@ -323,7 +362,7 @@ def tree_smartart(lo, style):
         else:
             pid = gid("9", i)
             pres.append((pid, node, "rootText" if pidx is None else "hierChild", i, len(items)))
-            shapes.append(sp(pid, "rect", (x, y, w, h), [text]))
+            shapes.append(sp(pid, "roundRect" if style == "label" else "rect", (x, y, w, h), [text]))
     for m, (pid, assoc, name, idx, cnt) in enumerate(pres):
         pts += (
             f'<dgm:pt modelId="{pid}" type="pres"><dgm:prSet presAssocID="{assoc}" presName="{name}" '
@@ -360,6 +399,7 @@ SLIDES = [
     ("Org chart", "orgChart1", "org", None, None),
     ("Hierarchy", "hierarchy1", "hier", None, None),
     ("Horizontal hierarchy", "hierarchy2", "horiz", None, None),
+    ("Labeled hierarchy", "hierarchy6", "label", None, None),
 ]
 
 for title, *_ in SLIDES:

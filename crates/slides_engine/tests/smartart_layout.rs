@@ -331,3 +331,152 @@ fn hierarchy_shapes_are_added_above_below_and_deleted() {
         .unwrap();
     assert_eq!(drawn(&p, h).len(), n + 3);
 }
+
+/// The `fontScale` of each shape's text (100 000 = as written).
+fn scales(p: &Presentation, f: ShapeRef) -> Vec<(String, u32)> {
+    let g = &p.shape(f).unwrap().smartart().unwrap().group;
+    g.children
+        .iter()
+        .filter_map(|c| {
+            let t = c.text.as_ref().filter(|t| !t.is_empty())?;
+            Some((t.plain_text(), t.body.font_scale.unwrap_or(100_000)))
+        })
+        .collect()
+}
+
+#[test]
+fn text_shrinks_to_fit_when_laid_out_smaller_and_grows_back() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let f = frame(&p, 0);
+    assert!(scales(&p, f).iter().all(|(_, s)| *s == 100_000));
+    let a = find(&p, f, "A");
+    let end = text_ops::end(p.text_paras(a).unwrap());
+    p.insert_text(
+        a,
+        Selection::caret(end),
+        " is a much longer item name",
+        None,
+    )
+    .unwrap();
+    let orig = p.shape(f).unwrap().xfrm.unwrap();
+    // A third of the size: that text no longer fits as written.
+    let mut x = orig;
+    x.cx /= 3;
+    x.cy /= 3;
+    p.set_xfrm(f, x, false).unwrap();
+    let small = scales(&p, f);
+    assert!(small.iter().all(|(_, s)| *s < 100_000), "{small:?}");
+    // The blocks' text is one size, as Office keeps it.
+    assert!(small.iter().all(|(_, s)| *s == small[0].1), "{small:?}");
+    let bytes = p.to_bytes().unwrap();
+    if let Ok(out) = std::env::var("KANTOR_SMARTART_FIT_OUT") {
+        std::fs::write(out, &bytes).unwrap();
+    }
+    let saved = parts(&bytes);
+    let drawing = &saved["ppt/diagrams/drawing1.xml"];
+    assert!(
+        drawing.contains(&format!("<a:normAutofit fontScale=\"{}\"/>", small[0].1)),
+        "{drawing}"
+    );
+    let back = Presentation::from_bytes(bytes).unwrap();
+    assert_eq!(scales(&back, frame(&back, 0)), small);
+    // Back to its size: the text is as written again.
+    p.set_xfrm(f, orig, false).unwrap();
+    assert!(
+        scales(&p, f).iter().all(|(_, s)| *s == 100_000),
+        "{:?}",
+        scales(&p, f)
+    );
+    // Undo goes back to the small layout with its small text.
+    p.undo();
+    assert_eq!(scales(&p, f), small);
+}
+
+#[test]
+fn labeled_hierarchy_lays_out_bands_and_takes_shapes() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let f = frame(&p, 8);
+    assert_eq!(p.smartart_family(f), Some(SmartArtFamily::LabeledHierarchy));
+    let mut x = p.shape(f).unwrap().xfrm.unwrap();
+    x.cx = x.cx * 3 / 2;
+    p.set_xfrm(f, x, false).unwrap();
+    let b = items(&p, f);
+    let mid = |t: &str| (b[t].x + b[t].cx / 2, b[t].y + b[t].cy / 2);
+    // Bands across the whole width, one under another, top down.
+    for l in ["Board", "Managers", "Staff"] {
+        assert_eq!((b[l].x, b[l].cx), (0, x.cx), "{l}: {b:?}");
+    }
+    assert!(b["Board"].y < b["Managers"].y && b["Managers"].y < b["Staff"].y);
+    // Each level of the tree in its band, right of the labels.
+    let inside = |item: &str, band: &str| {
+        let (_, y) = mid(item);
+        y > b[band].y && y < b[band].y + b[band].cy
+    };
+    assert!(inside("CEO", "Board"), "{b:?}");
+    assert!(inside("CTO", "Managers") && inside("CFO", "Managers"));
+    assert!(inside("Dev", "Staff") && inside("Ops", "Staff"));
+    for t in ["CEO", "CFO", "CTO", "Dev", "Ops"] {
+        assert!(b[t].x >= x.cx / 5, "{t} right of the labels: {b:?}");
+        assert!(b[t].x + b[t].cx <= x.cx + 1);
+    }
+    // The bands' text stays at their left.
+    let g = &p.shape(f).unwrap().smartart().unwrap().group;
+    let k = g
+        .children
+        .iter()
+        .position(|c| c.text.as_ref().is_some_and(|t| t.plain_text() == "Board"))
+        .unwrap();
+    let tb = g.text_boxes[k].unwrap();
+    assert!(tb.x == 0 && tb.cx <= x.cx / 4, "{tb:?}");
+
+    // A new label after Staff: a fourth band, under it.
+    let n0 = drawn(&p, f).len();
+    let new = p
+        .smartart_add_shape(find(&p, f, "Staff"), AddPlace::After)
+        .unwrap();
+    let end = text_ops::end(p.text_paras(new).unwrap());
+    p.insert_text(new, Selection::caret(end), "Interns", None)
+        .unwrap();
+    let b = items(&p, f);
+    assert!(
+        b["Interns"].y > b["Staff"].y && b["Interns"].cx == x.cx,
+        "{b:?}"
+    );
+    assert_eq!(drawn(&p, f).len(), n0 + 1);
+    // Below Dev: a fourth level, in the fourth band.
+    let qa = p
+        .smartart_add_shape(find(&p, f, "Dev"), AddPlace::Below)
+        .unwrap();
+    let end = text_ops::end(p.text_paras(qa).unwrap());
+    p.insert_text(qa, Selection::caret(end), "QA", None)
+        .unwrap();
+    let b = items(&p, f);
+    let (_, y) = (b["QA"].x, b["QA"].y + b["QA"].cy / 2);
+    assert!(
+        y > b["Interns"].y && y < b["Interns"].y + b["Interns"].cy,
+        "{b:?}"
+    );
+    // Refused: shapes above or below a label, beside the top, deleting a
+    // top with two shapes under it.
+    let e = p
+        .smartart_add_shape(find(&p, f, "Board"), AddPlace::Below)
+        .unwrap_err();
+    assert_eq!(e.to_string(), slides_engine::smartart_layout::LABEL_LEVELS);
+    let e = p
+        .smartart_add_shape(find(&p, f, "CEO"), AddPlace::After)
+        .unwrap_err();
+    assert_eq!(e.to_string(), slides_engine::smartart_layout::TOP_ALONE);
+    let e = p.delete_shape(find(&p, f, "CEO")).unwrap_err();
+    assert_eq!(e.to_string(), slides_engine::smartart_layout::TOP_KEEP);
+    // A label deleted: the others close up.
+    p.delete_shape(find(&p, f, "Managers")).unwrap();
+    let b = items(&p, f);
+    assert!(!b.contains_key("Managers"));
+    // Saved and read back the same.
+    let bytes = p.to_bytes().unwrap();
+    if let Ok(out) = std::env::var("KANTOR_SMARTART_LABEL_OUT") {
+        std::fs::write(out, &bytes).unwrap();
+    }
+    let back = Presentation::from_bytes(bytes).unwrap();
+    assert_eq!(items(&back, frame(&back, 8)), b);
+}

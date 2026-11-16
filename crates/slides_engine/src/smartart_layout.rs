@@ -4,8 +4,8 @@
 //! algorithm), Vertical Bullet List (`layout/vList2`, `lin` with `tx`
 //! children), Basic Process (`layout/process1`, `lin` with arrows) and
 //! Basic Cycle (`layout/cycle2`, `cycle`); and the hierarchies
-//! Organization Chart, Hierarchy and Horizontal Hierarchy (child module
-//! `tree`). The family comes from the data model's document item
+//! Organization Chart, Hierarchy, Horizontal Hierarchy and Labeled
+//! Hierarchy (child module `tree`). The family comes from the data model's document item
 //! (`dgm:prSet/@loTypeId`); other layouts keep PowerPoint's drawing and are
 //! scaled.
 //!
@@ -48,6 +48,9 @@ pub enum Family {
     Hierarchy,
     /// Horizontal Hierarchy: a tree left to right.
     HorizontalHierarchy,
+    /// Labeled Hierarchy: a tree top down over a band per level, the
+    /// level's label at its left (the document's later top-level items).
+    LabeledHierarchy,
 }
 
 impl Family {
@@ -61,6 +64,7 @@ impl Family {
             "orgChart1" => Family::OrgChart,
             "hierarchy1" => Family::Hierarchy,
             "hierarchy2" => Family::HorizontalHierarchy,
+            "hierarchy6" => Family::LabeledHierarchy,
             _ => return None,
         })
     }
@@ -73,7 +77,10 @@ impl Family {
     pub fn is_tree(self) -> bool {
         matches!(
             self,
-            Family::OrgChart | Family::Hierarchy | Family::HorizontalHierarchy
+            Family::OrgChart
+                | Family::Hierarchy
+                | Family::HorizontalHierarchy
+                | Family::LabeledHierarchy
         )
     }
 }
@@ -402,7 +409,10 @@ fn boxes(family: Family, subs: &[bool], sub_ratio: f64, w: f64, h: f64) -> Vec<B
                 .collect()
         }
         // Laid out by the `tree` module.
-        Family::OrgChart | Family::Hierarchy | Family::HorizontalHierarchy => Vec::new(),
+        Family::OrgChart
+        | Family::Hierarchy
+        | Family::HorizontalHierarchy
+        | Family::LabeledHierarchy => Vec::new(),
         Family::Cycle => {
             let m = w.min(h);
             let k = if n == 1 {
@@ -899,6 +909,7 @@ fn set_attr(src: &str, n: Node, k: &str, val: &str) -> (Range<usize>, String) {
 
 #[path = "smartart_tree.rs"]
 mod tree;
+pub use tree::{LABEL_LEVELS, TOP_ALONE, TOP_KEEP};
 
 #[cfg(test)]
 mod tests {

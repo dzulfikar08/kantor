@@ -19,7 +19,9 @@
 
 use std::sync::Arc;
 
-use docs_engine::{Document, HfKind, HfType, NoteKind, PartEdit, PartRef, Position, Selection};
+use docs_engine::{
+    BoxRef, Document, HfKind, HfType, NoteKind, PartEdit, PartRef, Position, Selection,
+};
 use docs_layout::CaretRect;
 use gpui_kit::*;
 
@@ -39,6 +41,8 @@ pub(crate) enum PartTarget {
         kind: NoteKind,
         id: String,
     },
+    /// A text box (or a group's shape's text), edited where it's drawn.
+    TextBox(BoxRef),
 }
 
 /// A header, footer or note being edited.
@@ -237,9 +241,13 @@ impl Laid {
 /// that shows it).
 pub(crate) fn pieces(
     furniture: &[Vec<docs_pdf::Placed>],
+    floats: &[Vec<docs_pdf::floats::FloatItem>],
     part: PartRef,
     page: usize,
 ) -> Vec<Piece> {
+    if let PartRef::TextBox(b) = part {
+        return box_piece(floats, b, page).into_iter().collect();
+    }
     let is = |pl: &docs_pdf::Placed| {
         pl.layout.text_box.is_none()
             && match part {
@@ -247,6 +255,7 @@ pub(crate) fn pieces(
                     pl.note.is_none() && pl.layout.note.is_none() && pl.layout.story == i
                 }
                 PartRef::Note(i) => pl.layout.note == Some(i) && pl.note.is_some(),
+                PartRef::TextBox(_) => false,
             }
     };
     let on = |pg: usize| -> Vec<Piece> {
@@ -274,8 +283,37 @@ pub(crate) fn pieces(
                 .find(|v| !v.is_empty())
                 .unwrap_or_default()
         }
-        PartRef::Note(_) => (0..furniture.len()).flat_map(on).collect(),
+        PartRef::Note(_) | PartRef::TextBox(_) => (0..furniture.len()).flat_map(on).collect(),
     }
+}
+
+/// The floating object of text box `b` on the pages (on `page` first: a
+/// header's object is on every page), with the page it's on.
+pub(crate) fn box_item(
+    floats: &[Vec<docs_pdf::floats::FloatItem>],
+    b: BoxRef,
+    page: usize,
+) -> Option<(usize, &docs_pdf::floats::FloatItem)> {
+    let on = |pg: usize| {
+        floats.get(pg)?.iter().find_map(|it| {
+            (it.story == b.story && it.para == b.para && it.index == b.index).then_some((pg, it))
+        })
+    };
+    on(page).or_else(|| (0..floats.len()).find_map(on))
+}
+
+/// Where text box `b` is drawn.
+fn box_piece(floats: &[Vec<docs_pdf::floats::FloatItem>], b: BoxRef, page: usize) -> Option<Piece> {
+    let (page, it) = box_item(floats, b, page)?;
+    let (layout, x, y) = match b.which {
+        None => it.text.clone()?,
+        Some(k) => it
+            .boxes
+            .iter()
+            .find(|t| t.which == k)
+            .map(|t| (t.layout.clone(), t.x, t.y))?,
+    };
+    Some(Piece { page, x, y, layout })
 }
 
 impl DocsView {
@@ -412,6 +450,36 @@ impl DocsView {
         cx.notify();
     }
 
+    /// Start editing a text box where it's drawn (Word's click into a
+    /// text box), caret at `at` (page coordinates on `page`) or at the end
+    /// of its text. `false` when it can't be edited in place.
+    pub(crate) fn edit_text_box_in_place(
+        &mut self,
+        b: BoxRef,
+        page: usize,
+        at: Option<(f32, f32)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.leave_part(window, cx);
+        let Some((edit, part)) = self.doc.edit_text_box(b) else {
+            return false;
+        };
+        self.begin_part(edit, part, PartTarget::TextBox(b), page, window, cx);
+        let end = self.doc.end();
+        let pos = at
+            .and_then(|(x, y)| self.laid.hit_test(page, x, y))
+            .map(|(para, off)| self.doc.clamp(Position::new(para, off)))
+            .unwrap_or(end);
+        self.sel = Selection::caret(pos);
+        self.status =
+            kantor_ui::i18n::t("Editing the text box: click outside it or press Esc to go back")
+                .into();
+        self.reveal_caret.set(true);
+        cx.notify();
+        true
+    }
+
     fn begin_part(
         &mut self,
         edit: PartEdit,
@@ -496,6 +564,9 @@ impl DocsView {
         match target {
             PartTarget::Hf { kind, .. } => self.edit_hf_on_page(page, kind, None, window, cx),
             PartTarget::Note { kind, id } => self.edit_note_in_place(kind, &id, None, window, cx),
+            PartTarget::TextBox(b) => {
+                self.edit_text_box_in_place(b, page, None, window, cx);
+            }
         }
         if self.part.is_some() {
             self.sel = self.doc.clamp_selection(sel);
@@ -583,13 +654,29 @@ impl DocsView {
                 self.leave_part(window, cx);
                 None
             }
+            PartTarget::TextBox(b) => {
+                let inside = box_item(&self.laid.floats, b, on_page).is_some_and(|(pg, it)| {
+                    let [rx, ry, rw, rh] = it.rect;
+                    pg == page && x >= rx && x <= rx + rw && y >= ry && y <= ry + rh
+                });
+                if inside {
+                    return Some(false);
+                }
+                // Anywhere else: back to the text, and the click goes there.
+                self.leave_part(window, cx);
+                None
+            }
         }
     }
 
     /// Pieces of the part being edited, after a layout.
-    pub(crate) fn part_pieces(&self, furniture: &[Vec<docs_pdf::Placed>]) -> Option<Vec<Piece>> {
+    pub(crate) fn part_pieces(
+        &self,
+        furniture: &[Vec<docs_pdf::Placed>],
+        floats: &[Vec<docs_pdf::floats::FloatItem>],
+    ) -> Option<Vec<Piece>> {
         let s = self.part.as_ref()?;
-        Some(pieces(furniture, s.edit.part, s.page))
+        Some(pieces(furniture, floats, s.edit.part, s.page))
     }
 }
 
@@ -604,7 +691,7 @@ mod tests {
         main.swap_part(edit, part);
         let laid = docs_pdf::lay_out(main, &mut docs_layout::Engine::new());
         main.swap_part(edit, part);
-        let pieces = pieces(&laid.furniture, edit.part, page);
+        let pieces = pieces(&laid.furniture, &laid.floats, edit.part, page);
         Laid {
             boxes: Rc::new(crate::PageBoxes::of(&laid.paged)),
             paged: laid.paged,
@@ -614,6 +701,59 @@ mod tests {
             strikes: laid.strikes,
             part: Some(pieces),
         }
+    }
+
+    #[std::prelude::v1::test]
+    fn text_box_caret_and_clicks_land_in_the_box() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/corpus/docx/floats.docx");
+        let mut main = Document::open(&path).unwrap();
+        let (para, index) = main
+            .paragraphs()
+            .iter()
+            .enumerate()
+            .find_map(|(i, p)| {
+                p.objects().find_map(|(at, o)| {
+                    o.float()
+                        .filter(|f| f.name == "Text Box 1")
+                        .map(|_| (i, at))
+                })
+            })
+            .unwrap();
+        let b = BoxRef {
+            story: None,
+            para,
+            index,
+            which: None,
+        };
+        let (edit, mut part) = main.edit_text_box(b).unwrap();
+        part.insert_text(Selection::caret(Position::new(0, 0)), "New ", None);
+        let laid = laid_with(&mut main, &edit, &mut part, 0);
+        let pieces = laid.part.as_ref().unwrap();
+        assert_eq!(pieces.len(), 1);
+        let (pg, it) = box_item(&laid.floats, b, 0).unwrap();
+        let [x, y, w, h] = it.rect;
+        // The caret is inside the box, after the typed text.
+        let c = laid.caret(0, 4).expect("caret in the text box");
+        assert_eq!(c.page, pg);
+        assert!(
+            c.x > x && c.x < x + w && c.top >= y - 0.5 && c.top < y + h,
+            "{c:?} {:?}",
+            it.rect
+        );
+        // A click there finds the box's text, not the body's.
+        let hit = laid.hit_test(pg, c.x, c.top + c.height / 2.0).unwrap();
+        assert_eq!(hit, (0, 4));
+        let second = laid.caret(1, 0).unwrap();
+        assert!(second.top > c.top, "second paragraph below the first");
+        assert!(main.finish_part(edit, part, Selection::default()));
+        assert_eq!(
+            main.float_at(para, index)
+                .unwrap()
+                .text_box_text()
+                .as_deref(),
+            Some("New Text box\nwith two paragraphs")
+        );
     }
 
     #[std::prelude::v1::test]

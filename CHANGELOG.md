@@ -9,6 +9,24 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Docs: text boxes are edited in place, as in Word. Double-click a text box (or click the text of
+  a selected one) to type in it with the normal editor: fonts, colours, bold and italic,
+  alignment, lists, styles, undo and Track Changes all work there. Click outside it or press Esc
+  to go back; the whole edit is one undo step. The text of a group's shapes works the same way.
+  Boxes with pictures or tables stay read-only, and turned text is still edited in the text popover.
+- Docs and Slides: SmartArt text shrinks to fit its shapes when Kantor lays the SmartArt out again
+  (after a resize, or after adding or deleting a shape), as Office's autofit does, and grows back
+  when the SmartArt gets bigger.
+- Docs and Slides: Labeled Hierarchy SmartArt is laid out again when resized, with *Add Shape* and
+  Delete for the tree's shapes and for the level labels.
+
+### Fixed
+
+- Docs: a list started in a header, footer, note or text box now saves its list definition, so Word
+  shows its bullets or numbers.
+
 ## [0.10.0] - 2026-11-17
 
 Map charts are drawn in Sheets, Docs and Slides from the map data saved with them (a list of values
