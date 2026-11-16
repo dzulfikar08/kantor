@@ -1638,9 +1638,15 @@ fn slide_edits(p: &mut Presentation) -> Result<()> {
     }
     let n = p.new_slide(Some(p.len() - 1))?;
     p.set_notes_text(n, "A new slide's notes")?;
-    // The first slide Kantor can duplicate (slides with charts can't be).
+    // The first slide Kantor can duplicate (slides with charts or SmartArt
+    // can't be).
     let dup = (0..p.len())
-        .find(|&i| p.slide(i).shapes.iter().all(|s| s.chart_part().is_none()))
+        .find(|&i| {
+            p.slide(i)
+                .shapes
+                .iter()
+                .all(|s| s.chart_part().is_none() && !s.is_smartart())
+        })
         .unwrap_or(0);
     p.duplicate_slide(dup)?;
     Ok(())
