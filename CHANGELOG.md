@@ -176,6 +176,9 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Docs: rejecting a table of contents line added by a tracked update removes its page reference
   too (an empty `PAGEREF` field was left behind), and rejecting a removed line brings its fields
   back.
+- Sheets: a workbook with its own table styles saved by Excel no longer needs repairing in Excel
+  after Kantor saves it (the styles' revision ids were written without their namespace being
+  declared ignorable).
 
 ## [0.8.0] - 2026-11-16
 

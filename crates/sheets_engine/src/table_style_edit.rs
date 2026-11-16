@@ -1044,6 +1044,74 @@ pub(crate) fn patch_styles(xml: &str, save: &StylesSave) -> Result<String, Strin
     for (r, text) in edits {
         out.replace_range(r, &text);
     }
+    declare_ignorable(out)
+}
+
+const NS_MC: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+
+/// `xml` with every Office extension prefix its attributes use (Excel's
+/// `xr9:uid` on a `<tableStyle>` copied from the opened file) declared on
+/// the root and listed in its `mc:Ignorable`, as Excel writes them. Without
+/// that, Office reports the attribute as undeclared and repairs the file.
+fn declare_ignorable(xml: String) -> Result<String, String> {
+    let doc = roxmltree::Document::parse(&xml).map_err(|e| e.to_string())?;
+    let root = doc.root_element();
+    let ignorable: Vec<&str> = root
+        .attribute((NS_MC, "Ignorable"))
+        .map(|v| v.split_whitespace().collect())
+        .unwrap_or_default();
+    let mut need: Vec<(String, String)> = Vec::new();
+    for n in root.descendants().filter(|n| n.is_element()) {
+        for a in n.attributes() {
+            let Some(uri) = a.namespace() else { continue };
+            if !uri.starts_with("http://schemas.microsoft.com/office/") {
+                continue;
+            }
+            let Some(prefix) = n.lookup_prefix(uri) else {
+                continue;
+            };
+            if ignorable.contains(&prefix) || need.iter().any(|(p, _)| p == prefix) {
+                continue;
+            }
+            match root.lookup_namespace_uri(Some(prefix)) {
+                // The prefix means something else at the root: leave it.
+                Some(u) if u != uri => continue,
+                _ => need.push((prefix.to_owned(), uri.to_owned())),
+            }
+        }
+    }
+    if need.is_empty() {
+        return Ok(xml);
+    }
+    let start = root.range().start;
+    let tag_end = start + xml[start..].find('>').ok_or("broken root tag")?;
+    let tag = &xml[start..tag_end];
+    let name_end = start
+        + tag
+            .find(|c: char| c.is_whitespace() || c == '/')
+            .unwrap_or(tag.len());
+    let mut decls = String::new();
+    for (p, u) in &need {
+        if root.lookup_namespace_uri(Some(p)).is_none() {
+            decls.push_str(&format!(" xmlns:{p}=\"{}\"", esc(u)));
+        }
+    }
+    let prefixes: Vec<&str> = need.iter().map(|(p, _)| p.as_str()).collect();
+    let mut out = xml.clone();
+    match root.lookup_prefix(NS_MC) {
+        Some(mc) if root.has_attribute((NS_MC, "Ignorable")) => {
+            // Add to the root's list: its value starts after `mc:Ignorable="`.
+            let key = format!("{mc}:Ignorable=");
+            let at = tag.find(&key).ok_or("mc:Ignorable not found")? + key.len() + 1;
+            out.insert_str(start + at, &format!("{} ", prefixes.join(" ")));
+        }
+        Some(mc) => decls.push_str(&format!(" {mc}:Ignorable=\"{}\"", prefixes.join(" "))),
+        None => decls.push_str(&format!(
+            " xmlns:mc=\"{NS_MC}\" mc:Ignorable=\"{}\"",
+            prefixes.join(" ")
+        )),
+    }
+    out.insert_str(name_end, &decls);
     Ok(out)
 }
 
@@ -1088,5 +1156,49 @@ mod tests {
         let out = patch_styles(xml, &save).unwrap();
         assert!(out.contains("<dxfs count=\"2\"><dxf><font><b/></font></dxf><dxf><font><i/></font></dxf></dxfs><tableStyles count=\"1\" defaultTableStyle=\"Mine &amp; yours\" defaultPivotStyle=\"PivotStyleLight16\"><tableStyle name=\"Mine &amp; yours\" pivot=\"0\" count=\"1\"><tableStyleElement type=\"headerRow\" dxfId=\"1\"/></tableStyle></tableStyles></styleSheet>"), "{out}");
         roxmltree::Document::parse(&out).unwrap();
+    }
+
+    /// Excel puts `xr9:uid` on each `<tableStyle>` and declares `xr9` (as
+    /// ignorable) on the root only. Copied into Kantor's styles part, the
+    /// attribute needs both again (two real-world workbooks were saved with
+    /// an undeclared `xr9:uid`).
+    #[test]
+    fn copied_table_style_uids_stay_ignorable() {
+        const XR9: &str = "http://schemas.microsoft.com/office/spreadsheetml/2016/revision9";
+        let file_style = format!(
+            "<tableStyle xmlns:xr9=\"{XR9}\" name=\"Planner\" pivot=\"0\" count=\"0\" xr9:uid=\"{{C6A58DD1-0089-40BE-AF1D-B4736129A4E0}}\"/>"
+        );
+        let mk = |root_attrs: &str| {
+            let xml = format!(
+                "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"{root_attrs}><dxfs count=\"0\"/></styleSheet>"
+            );
+            let save = StylesSave {
+                verbatim: None,
+                styles: vec![StyleOut::File {
+                    xml: file_style.clone(),
+                    dxfs: Vec::new(),
+                }],
+                default_table: None,
+                default_pivot: None,
+                model_dxfs: 0,
+            };
+            patch_styles(&xml, &save).unwrap()
+        };
+        for root_attrs in [
+            "",
+            " xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" mc:Ignorable=\"x14ac\" xmlns:x14ac=\"http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac\"",
+        ] {
+            let out = mk(root_attrs);
+            let doc = roxmltree::Document::parse(&out).unwrap();
+            let root = doc.root_element();
+            assert_eq!(root.lookup_namespace_uri(Some("xr9")), Some(XR9), "{out}");
+            let ign = root.attribute((NS_MC, "Ignorable")).unwrap();
+            assert!(ign.split_whitespace().any(|p| p == "xr9"), "{out}");
+            if !root_attrs.is_empty() {
+                assert!(ign.split_whitespace().any(|p| p == "x14ac"), "{out}");
+            }
+            // Once declared, a second pass leaves the part as it is.
+            assert_eq!(declare_ignorable(out.clone()).unwrap(), out);
+        }
     }
 }

@@ -2,7 +2,7 @@
 
 424 public Office files, each opened, saved, reopened and exported to PDF by
 Kantor's engines, with the saved files checked by Microsoft's Open XML SDK.
-First run: 2026-11-15; second run on main: 2026-11-16.
+First run: 2026-11-15; second and third runs on main: 2026-11-16.
 
 ## What was swept
 
@@ -24,7 +24,7 @@ First run: 2026-11-15; second run on main: 2026-11-16.
 | Open XML SDK test assets (github.com/dotnet/Open-XML-SDK) | 39 | MIT |
 | data.gov.uk (UK government open data: statistics, registers, reports) | 36 | mostly OGL |
 | calamine test files (github.com/tafia/calamine) | 23 | MIT |
-| Indonesian public GitHub projects (budget workbooks, reports, overtime and election data) | 25 | as published |
+| Indonesian public GitHub projects (budget workbooks, reports, overtime and election data) | 26 | as published |
 | ClosedXML, python-pptx, python-docx test files | 21 | MIT |
 
 Indonesian government portals (data.go.id, BPS, regional Satu Data sites)
@@ -191,6 +191,63 @@ Fixed in this run (each with a synthetic test in
   repair): cells pointing at format 336 of 100 take the default format, as
   Excel repairs them (vendor/ironcalc §13,
   `xlsx_cell_formats_past_the_end_are_the_default`).
+
+## Third run, before v0.9.0 (2026-11-16)
+
+Rerun of all 424 files on main at `ab9aa6b` (after Slides chartex and
+SmartArt relayout, Sheets slicers, pivot calculated items, custom table
+and PivotTable styles, and IMAGE pictures saved as Excel's rich values
+had merged), release build, compared file by file with the second run.
+
+| | second run (with its fixes) | main, `ab9aa6b` | with this run's fix |
+|---|---:|---:|---:|
+| crash, panic or timeout | 0 | 0 | 0 |
+| refused to open | 6 | 6 | 6 |
+| saved file Office would repair | 0 | 2 | 0 |
+| content changed by a save | 0 | 0 | 0 |
+| page count changed by a save (Docs, Slides) | 0 of 199 | 0 of 199 | 0 of 199 |
+| ok | 418 | 416 | 418 |
+
+By source:
+
+| source | files | ok | refused |
+|---|---:|---:|---:|
+| Apache POI | 128 | 124 | 4 (3 Word 6/95, 1 `.xlsb`) |
+| LibreOffice QA documents | 106 | 106 | |
+| docx4j | 45 | 43 | 2 (not WordprocessingML) |
+| Open XML SDK | 39 | 39 | |
+| data.gov.uk | 36 | 36 | |
+| calamine | 23 | 23 | |
+| Indonesian public GitHub projects | 26 | 26 | |
+| ClosedXML, python-pptx, python-docx | 21 | 21 | |
+
+No other changes: no new open, save or reopen error, no new Open XML SDK
+error apart from the one below, and the same counts of cells, formulas,
+paragraphs, slides and shapes before and after saving as in the second
+run. The sweep flagged 9 workbooks as more than twice as slow; timed
+alone, five runs each, alternating with a probe built from the second
+run's commit, they were within noise (0.95–1.24×, under 250 ms apart),
+and the slowest file (a 9 MB `.xls`, 4.8 s in the second run, 8.4 s in
+this one) took the same time with both probes. The machine was heavily
+loaded during the sweep (its added-up probe time went from 75 s to 144 s
+for the same reason).
+
+Fixed in this run:
+
+- **Workbooks with custom table styles saved as Office would repair them**
+  (2 files). Excel puts an `xr9:uid` on each `<tableStyle>` and declares
+  `xr9` as ignorable on the styles part's root only. The custom table
+  styles work (v0.9) writes the file's own table styles back into the
+  styles part, which has no such root declaration, so the Open XML SDK
+  (and Office) saw an undeclared attribute. Extension prefixes the copied
+  markup uses are now declared on the root and listed in `mc:Ignorable`
+  (`table_style_edit::copied_table_style_uids_stay_ignorable`).
+
+The Office validation scenarios (`tools/fidelity/office_check.py`) were run
+in full as well: 157 saved files, 0 new Open XML SDK errors, all converted
+to PDF by LibreOffice.
+
+Results: `~/.cache/realworld-out/pre090-2026-11-16/`.
 
 ## Left
 
