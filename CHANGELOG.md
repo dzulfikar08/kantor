@@ -9,6 +9,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-16
+
+Sheets formulas reach the internet: `IMAGE` shows pictures in cells and `WEBSERVICE` fetches data,
+behind an Allow / Block bar like Excel's. Sheets also gets custom table and PivotTable styles, pivot
+calculated items, slicers you can click, text that overflows into empty cells, numbers in your
+regional format, and Excel 2007 conditional formats from `.xls` files. Docs draws and edits SmartArt
+and text in grouped shapes, merges and splits table cells, aligns tables as Word does, tracks table
+column and merge changes, and lets you type field codes in the text. All three apps draw waterfall,
+funnel, treemap, sunburst, histogram, Pareto, box & whisker, surface and pie-of-pie charts, and
+Slides lays SmartArt out again when it's resized. Cloud drives can sign in with your organisation's
+single sign-on.
+
 ### Added
 
 - Sheets: calculated items in pivot tables, as in Excel. *Insert Calculated Item…* (the menu of a
@@ -1533,7 +1545,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/dzulfikar08/kantor/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/dzulfikar08/kantor/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/dzulfikar08/kantor/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/dzulfikar08/kantor/compare/v0.5.0...v0.6.0
