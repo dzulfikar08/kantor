@@ -76,6 +76,9 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Fixed
 
+- Docs: the popover that edits a floating object's text is titled after what it edits: "SmartArt
+  text", "Shape text" (a shape or a group's shape) or "Text box", in the same style as Kantor's other
+  popovers, with a matching hint and status message (it said "Text box" for everything).
 - Sheets: an icon set in reverse order (*Reverse Icon Order*) brought in from an `.ods` or `.xls`
   file, or on a sheet whose rules were changed in Kantor, keeps that order when saved.
 - Docs: text wraps around a turned picture or shape's turned bounds, as in Word, instead of its
