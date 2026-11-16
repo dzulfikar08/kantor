@@ -267,6 +267,11 @@ pub(crate) fn read_csv(path: &Path, delimiter: Option<u8>) -> Result<(Model<'sta
 
 /// Write `sheet`'s displayed values as delimited text, atomically.
 pub(crate) fn write_csv(model: &Model<'_>, sheet: u32, path: &Path, delimiter: u8) -> Result<()> {
+    // File content: en-US numbers whatever the display locale.
+    kantor_numfmt::invariant(|| write_csv_inner(model, sheet, path, delimiter))
+}
+
+fn write_csv_inner(model: &Model<'_>, sheet: u32, path: &Path, delimiter: u8) -> Result<()> {
     let ws = model
         .workbook
         .worksheet(sheet)

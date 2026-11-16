@@ -11,6 +11,36 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Cloud storage: **Sign in with your organisation** (single sign-on) instead of an app password.
+  In *Cloud Accounts…*, choose *Organisation sign-in (SSO)*: Kantor opens your browser on your
+  organisation's sign-in page (OpenID Connect, Authorization Code with PKCE and a one-time
+  listener on 127.0.0.1), or shows a code to enter on another device when this computer has no
+  browser (*Use a code instead*, the device grant). OpenCloud says where to sign in by itself;
+  for Nextcloud with `user_oidc`, enter the sign-in server (issuer) too. The refresh token is kept
+  in the system keychain (same file fallback as passwords), access tokens are refreshed as needed
+  and sent as `Authorization: Bearer`, and a token the drive refuses is refreshed once and the
+  request sent again. When the sign-in ends (session revoked, password changed), uploads stop with
+  a message, your edits stay in the working copy, and *Sign in again* on the account resumes them
+  with *Sync Now*. App passwords still work as before.
+- Cloud storage trusts the system's certificate store as well as the public CAs, so a drive or
+  sign-in server with an organisation's own CA works once that CA is installed on the computer
+  (Linux: the system bundle or `SSL_CERT_FILE`/`SSL_CERT_DIR`; macOS: the keychains' trusted
+  roots; Windows: the certificate store, including Group Policy CAs). Verification can't be
+  turned off.
+- Sheets: text overflows into empty neighbouring cells as in Excel and LibreOffice. A long title in
+  A1 now reads in full across B1, C1… instead of showing "R…": left-aligned text spills right,
+  right-aligned left, centred both ways; it stops at the first cell that shows something, at a
+  merged cell and at frozen panes, and the gridlines under it are left out. Wrapped text, numbers
+  (which still show `###`), merged cells and fill formats don't spill; filling in a neighbour cuts
+  the text there at once.
+- Sheets: numbers follow the regional format, as Excel follows the system's. With the Indonesian
+  interface a `#,##0` cell shows `109.600.000` and decimals use a comma (`1.234,50`, `12,5%`,
+  General `1234,5`, Indonesian month names in untagged dates); typing `1.234,5` stores 1234.5, and
+  the formula bar shows `1234,5`. `number_format = "en"` or `"id"` in `settings.toml` sets it apart
+  from the interface language. Files, CSV exports, `TEXT()` results and agent (MCP) results keep
+  Excel's invariant format codes and en-US numbers; a format's own locale tag (`[$-409]`,
+  `[$€-407]`) still wins.
+
 - Sheets: custom table styles, as in Excel. *New Table Style…* (Table Design, the Table menu or
   the palette) names a style and formats each table element (whole table, first and second
   column and row stripes, first and last column, header and total rows, first and last header and

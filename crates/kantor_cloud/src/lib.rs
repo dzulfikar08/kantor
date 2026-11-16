@@ -9,8 +9,10 @@
 
 pub mod cache;
 pub mod chunked;
+pub mod oidc;
 pub mod session;
 pub mod sync;
+pub mod tls;
 mod xml;
 
 use std::io::Read;
@@ -39,6 +41,11 @@ pub enum Auth {
     },
     /// An OAuth/OIDC access token.
     Bearer(String),
+    /// OIDC access tokens from a source that refreshes them
+    /// ([`oidc::TokenSource`]): each request gets a valid one, and a
+    /// request the server refuses with 401 is sent once more with a fresh
+    /// token.
+    Source(std::sync::Arc<dyn oidc::BearerSource>),
 }
 
 impl std::fmt::Debug for Auth {
@@ -47,19 +54,35 @@ impl std::fmt::Debug for Auth {
             Auth::None => f.write_str("None"),
             Auth::Basic { user, .. } => write!(f, "Basic({user}, ***)"),
             Auth::Bearer(_) => f.write_str("Bearer(***)"),
+            Auth::Source(_) => f.write_str("Source(***)"),
         }
     }
 }
 
 impl Auth {
-    fn header(&self) -> Option<String> {
-        match self {
+    /// The `Authorization` header for the next request (a source may
+    /// refresh its token first, or fail when the sign-in ended).
+    fn header(&self) -> Result<Option<String>, Error> {
+        Ok(match self {
             Auth::None => None,
             Auth::Basic { user, password } => Some(format!(
                 "Basic {}",
                 base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"))
             )),
             Auth::Bearer(t) => Some(format!("Bearer {t}")),
+            Auth::Source(s) => Some(format!("Bearer {}", s.token()?)),
+        })
+    }
+
+    /// The server refused `header`: a source drops that token. Whether
+    /// trying again can help.
+    fn rejected(&self, header: Option<&str>) -> bool {
+        match (self, header.and_then(|h| h.strip_prefix("Bearer "))) {
+            (Auth::Source(s), Some(t)) => {
+                s.rejected(t);
+                true
+            }
+            _ => false,
         }
     }
 }
@@ -193,7 +216,7 @@ pub struct Client {
     config: ureq::config::Config,
     /// Ends with `/`, e.g. `https://drive.example/remote.php/dav/files/alice/`.
     base: String,
-    auth: Option<String>,
+    auth: Auth,
 }
 
 /// Slowest link a transfer is planned for (128 kbit/s): after a PUT body is
@@ -237,6 +260,7 @@ impl Client {
             .timeout_per_read(Some(STALL_TIMEOUT))
             .timeout_per_write(Some(STALL_TIMEOUT))
             .user_agent(concat!("Kantor/", env!("CARGO_PKG_VERSION"), " (WebDAV)"))
+            .tls_config(tls::tls_config())
             .build();
         let mut base = base.to_string();
         if !base.ends_with('/') {
@@ -246,7 +270,7 @@ impl Client {
             agent: config.clone().into(),
             config,
             base,
-            auth: auth.header(),
+            auth,
         }
     }
 
@@ -270,13 +294,9 @@ impl Client {
     }
 
     fn request(&self, method: &str, path: &str) -> http::request::Builder {
-        let mut b = http::Request::builder()
+        http::Request::builder()
             .method(Method::from_bytes(method.as_bytes()).expect("valid method"))
-            .uri(self.url(path));
-        if let Some(a) = &self.auth {
-            b = b.header("authorization", a);
-        }
-        b
+            .uri(self.url(path))
     }
 
     fn send(&self, req: http::request::Builder, body: &[u8]) -> Result<Reply, Error> {
@@ -290,12 +310,16 @@ impl Client {
             .http_status_as_error(false)
             .max_redirects(0)
             .timeout_global(Some(PROBE_TIMEOUT))
+            .tls_config(tls::tls_config())
             .build()
             .into();
         let mut b = http::Request::builder()
             .method(Method::HEAD)
             .uri(self.base.as_str());
-        if let Some(a) = &self.auth {
+        // Only whether it answers: no token refresh for this.
+        if let Auth::Basic { .. } | Auth::Bearer(_) = &self.auth
+            && let Ok(Some(a)) = self.auth.header()
+        {
             b = b.header("authorization", a);
         }
         match b.body(()) {
@@ -476,12 +500,21 @@ impl Client {
         wait: Option<Duration>,
         mut progress: Option<(Progress<'_>, u64, u64)>,
     ) -> Result<Reply, Error> {
-        for attempt in 0..2 {
+        // Once more on a stale pooled connection, and once more with a
+        // fresh token when a token source's token was refused.
+        let (mut stale_retried, mut auth_retried) = (false, false);
+        loop {
+            let header = self.auth.header()?;
             let mut b = http::Request::builder()
                 .method(parts.method.clone())
                 .uri(parts.uri.clone());
             for (k, v) in &parts.headers {
-                b = b.header(k, v);
+                if k != http::header::AUTHORIZATION {
+                    b = b.header(k, v);
+                }
+            }
+            if let Some(h) = &header {
+                b = b.header("authorization", h);
             }
             let result = match progress.as_mut() {
                 Some((report, base, total)) => {
@@ -505,12 +538,19 @@ impl Client {
                 }
             };
             match result {
-                Err(e) if attempt == 0 && stale_connection(&e) => continue,
+                Err(e) if !stale_retried && stale_connection(&e) => stale_retried = true,
                 Err(e) => return Err(Error::Network(e.to_string())),
-                Ok(resp) => return Reply::read(resp),
+                Ok(resp) => {
+                    let reply = Reply::read(resp)?;
+                    if reply.status == 401 && !auth_retried && self.auth.rejected(header.as_deref())
+                    {
+                        auth_retried = true;
+                        continue;
+                    }
+                    return Ok(reply);
+                }
             }
         }
-        unreachable!("the loop returns")
     }
 
     fn run_configured<B: ureq::AsSendBody>(
@@ -748,14 +788,11 @@ impl Client {
             format!("{origin}/graph/v1.0/users?$search=%22{enc}%22"),
         ];
         for url in searches {
-            let mut req = http::Request::builder()
+            let req = http::Request::builder()
                 .method(Method::GET)
                 .uri(&url)
                 .header("ocs-apirequest", "true")
                 .header("accept", "application/json");
-            if let Some(a) = &self.auth {
-                req = req.header("authorization", a);
-            }
             if let Ok(r) = self.send(req, &[])
                 && r.status == 200
                 && let Some(name) = parse_user_search(&String::from_utf8_lossy(&r.bytes), user)
@@ -768,14 +805,11 @@ impl Client {
             format!("{origin}/graph/v1.0/users/{enc}"),
         ];
         for url in urls {
-            let mut req = http::Request::builder()
+            let req = http::Request::builder()
                 .method(Method::GET)
                 .uri(&url)
                 .header("ocs-apirequest", "true")
                 .header("accept", "application/json");
-            if let Some(a) = &self.auth {
-                req = req.header("authorization", a);
-            }
             let Ok(r) = self.send(req, &[]) else {
                 continue;
             };
@@ -1064,7 +1098,10 @@ mod tests {
             user: "admin".into(),
             password: "secret".into(),
         };
-        assert_eq!(a.header().unwrap(), "Basic YWRtaW46c2VjcmV0");
+        assert_eq!(
+            a.header().unwrap().as_deref(),
+            Some("Basic YWRtaW46c2VjcmV0")
+        );
         assert!(!format!("{a:?}").contains("secret"));
     }
 

@@ -39,6 +39,12 @@ pub struct Settings {
     /// (Indonesian → `id`, anything else `en`). `KANTOR_LANG` overrides it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// Regional format for numbers: `id` (`1.234,5`) or `en` (`1,234.5`);
+    /// unset follows the interface language, as Excel follows the system's
+    /// regional settings. Only how numbers are shown and typed changes:
+    /// files keep Excel's invariant format codes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub number_format: Option<String>,
 }
 
 /// `[cloud]`: WebDAV accounts (Nextcloud, OpenCloud, any RFC 4918 server).
@@ -64,6 +70,21 @@ pub struct CloudAccount {
     /// Nextcloud, ownCloud and OpenCloud all serve).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub dav_url: String,
+    /// How it signs in: empty for an app password, `oidc` for the
+    /// organisation's single sign-on (the refresh token is in the keychain
+    /// under `id`).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub auth: String,
+    /// Single sign-on: the identity provider (`https://sso.example.go.id/realms/pemda`).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub issuer: String,
+    /// Single sign-on: the client id Kantor signs in as (default `kantor`).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub client_id: String,
+    /// The name to show when `user` is an id (single sign-on accounts:
+    /// `budi`, while Nextcloud's id may be a hash).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub name: String,
 }
 
 impl CloudAccount {
@@ -79,6 +100,11 @@ impl CloudAccount {
         format!("{server}/remote.php/dav/files/{}/", self.user.trim())
     }
 
+    /// Whether it signs in with the organisation's single sign-on.
+    pub fn is_sso(&self) -> bool {
+        self.auth == "oidc"
+    }
+
     /// `budi @ drive.example.go.id`.
     pub fn label(&self) -> String {
         let host = self
@@ -88,7 +114,12 @@ impl CloudAccount {
             .trim_start_matches("http://")
             .trim_end_matches('/');
         let host = host.split('/').next().unwrap_or(host);
-        format!("{} @ {host}", self.user)
+        let who = if self.name.is_empty() {
+            &self.user
+        } else {
+            &self.name
+        };
+        format!("{who} @ {host}")
     }
 }
 
@@ -216,6 +247,7 @@ impl Default for Settings {
             cloud: CloudSettings::default(),
             sheets: SheetsSettings::default(),
             language: None,
+            number_format: None,
         }
     }
 }
@@ -309,7 +341,7 @@ mod tests {
             id: "a1".into(),
             server: "https://drive.example.go.id/".into(),
             user: "budi".into(),
-            dav_url: String::new(),
+            ..Default::default()
         };
         assert_eq!(
             a.dav_root(),
@@ -331,7 +363,18 @@ mod tests {
             id: "a1".into(),
             server: "https://d.example".into(),
             user: "sri".into(),
-            dav_url: String::new(),
+            ..Default::default()
+        });
+        // A single sign-on account: issuer and client, no secret.
+        s.cloud.accounts.push(CloudAccount {
+            id: "a2".into(),
+            server: "https://d.example".into(),
+            user: "0f3c9a".into(),
+            auth: "oidc".into(),
+            issuer: "https://sso.example/realms/pemda".into(),
+            client_id: "kantor".into(),
+            name: "budi".into(),
+            ..Default::default()
         });
         s.cloud
             .last_folder
@@ -339,7 +382,11 @@ mod tests {
         s.save_to(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains("password"));
-        assert_eq!(Settings::load_from(&path), s);
+        assert!(!text.contains("token"));
+        let back = Settings::load_from(&path);
+        assert_eq!(back, s);
+        assert!(back.cloud.accounts[1].is_sso() && !back.cloud.accounts[0].is_sso());
+        assert_eq!(back.cloud.accounts[1].label(), "budi @ d.example");
     }
 
     #[test]
@@ -381,6 +428,7 @@ mod tests {
                 web_formulas: false,
             },
             language: Some("id".into()),
+            number_format: Some("en".into()),
         };
         assert_eq!(s.author_name(), "Dewi Lestari");
         s.save_to(&path).unwrap();

@@ -115,6 +115,136 @@ pub fn set_input_locale(locale: &str) {
         std::sync::atomic::Ordering::Relaxed,
     );
 }
+/// Which separators cells are displayed with (`1.234,5` in Indonesian), as
+/// Excel takes them from the system's regional settings. Set once by the
+/// app. Display only: files, CSV exports and formulas stay en-US.
+pub fn set_number_locale(locale: kantor_numfmt::DisplayLocale) {
+    kantor_numfmt::set_display_locale(locale);
+}
+
+/// Run `f` with cells displayed in en-US whatever the display locale: for
+/// output that is data rather than what a person reads (CSV export, agent
+/// tool results).
+pub fn numbers_invariant<R>(f: impl FnOnce() -> R) -> R {
+    kantor_numfmt::invariant(f)
+}
+
+/// A value typed in the cell editor or formula bar, with the display
+/// locale's separators turned into the en-US ones the engine reads:
+/// `1.234,5` → `1234.5`, `12,5%` → `12.5%`, `Rp1.250.000` → `Rp1250000`
+/// in Indonesian. Formulas, text and anything that isn't a plain number in
+/// the locale's form pass through unchanged (`16.11.2026` stays a date).
+/// Only for what a person types: values from files, the clipboard and
+/// agents are always en-US.
+pub fn delocalize_typed(text: &str) -> Cow<'_, str> {
+    delocalize_in(text, kantor_numfmt::display_locale())
+}
+
+fn delocalize_in(text: &str, locale: kantor_numfmt::DisplayLocale) -> Cow<'_, str> {
+    let (dec, grp) = (locale.decimal(), locale.group());
+    if dec == '.' || text.starts_with(['=', '\'']) || !text.contains([dec, grp]) {
+        return Cow::Borrowed(text);
+    }
+    let trimmed = text.trim();
+    // The number's span: from the first digit (or a decimal separator just
+    // before it) to the last digit.
+    let Some(first) = trimmed.find(|c: char| c.is_ascii_digit()) else {
+        return Cow::Borrowed(text);
+    };
+    let last = trimmed.rfind(|c: char| c.is_ascii_digit()).unwrap_or(first);
+    let mut start = first;
+    if trimmed[..start].ends_with(dec) {
+        start -= dec.len_utf8();
+    }
+    let (prefix, body, suffix) = (
+        &trimmed[..start],
+        &trimmed[start..=last],
+        &trimmed[last + 1..],
+    );
+    // Around the number only a sign, brackets, `%` and a currency.
+    let affix_ok = |s: &str| {
+        let mut rest = s.trim().to_owned();
+        for cur in ["rp", "idr", "usd", "eur"] {
+            if rest.to_ascii_lowercase().starts_with(cur) {
+                rest.drain(..cur.len());
+            } else if rest.to_ascii_lowercase().ends_with(cur) {
+                rest.truncate(rest.len() - cur.len());
+            }
+        }
+        rest.chars()
+            .all(|c| matches!(c, '-' | '+' | '%' | ' ' | '(' | ')' | '$' | '€' | '£' | '¥'))
+    };
+    if !affix_ok(prefix) || !affix_ok(suffix) {
+        return Cow::Borrowed(text);
+    }
+    // `1.234.567,89`: a first group of one to three digits, then groups of
+    // three, then the decimals.
+    let (int, frac) = match body.split_once(dec) {
+        Some((i, f)) => (i, Some(f)),
+        None => (body, None),
+    };
+    if frac.is_some_and(|f| f.is_empty() || !f.bytes().all(|b| b.is_ascii_digit())) {
+        return Cow::Borrowed(text);
+    }
+    let groups: Vec<&str> = int.split(grp).collect();
+    let digits = |g: &str| g.bytes().all(|b| b.is_ascii_digit());
+    let ok = if groups.len() == 1 {
+        digits(int)
+    } else {
+        groups.iter().enumerate().all(|(i, g)| {
+            digits(g)
+                && if i == 0 {
+                    (1..=3).contains(&g.len())
+                } else {
+                    g.len() == 3
+                }
+        })
+    };
+    if !ok {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    out.push_str(prefix);
+    out.push_str(&groups.concat());
+    if let Some(f) = frac {
+        out.push('.');
+        out.push_str(f);
+    }
+    out.push_str(suffix);
+    Cow::Owned(out)
+}
+
+#[cfg(test)]
+mod delocalize_tests {
+    use super::delocalize_in;
+    use kantor_numfmt::DisplayLocale::{EnUs, Indonesian};
+
+    #[test]
+    fn typed_numbers_in_indonesian() {
+        let id = |s: &str| delocalize_in(s, Indonesian).into_owned();
+        assert_eq!(id("1.234,5"), "1234.5");
+        assert_eq!(id("109.600.000"), "109600000");
+        assert_eq!(id("-1.234,50"), "-1234.50");
+        assert_eq!(id("12,5%"), "12.5%");
+        assert_eq!(id("Rp1.250.000"), "Rp1250000");
+        assert_eq!(id("Rp 1.250.000,00"), "Rp 1250000.00");
+        assert_eq!(id(",5"), ".5");
+        assert_eq!(id("1,5"), "1.5");
+        // Not numbers in the locale's form: left alone.
+        assert_eq!(id("16.11.2026"), "16.11.2026");
+        assert_eq!(id("1.5"), "1.5");
+        assert_eq!(id("1.2345"), "1.2345");
+        assert_eq!(id("=SUM(A1,1.5)"), "=SUM(A1,1.5)");
+        assert_eq!(id("'1.234"), "'1.234");
+        assert_eq!(id("Bab 1.234 dan"), "Bab 1.234 dan");
+        assert_eq!(id("9:30"), "9:30");
+        assert_eq!(id("1,2,3"), "1,2,3");
+        assert_eq!(id("halo"), "halo");
+        // en-US: untouched.
+        assert_eq!(delocalize_in("1,234.5", EnUs), "1,234.5");
+    }
+}
+
 pub use filter::{
     ColumnFilter, ColumnKind, Condition, DateGroup, FilterInfo, FilterKind, FilterOp, FilterScope,
     FilterValue, SortState, checked_values, date_serial, ymd,
@@ -968,6 +1098,22 @@ impl Workbook {
         cells
     }
 
+    /// The columns of `row` whose cells show something (a value, a formula's
+    /// result, an array's spilled value; empty text from a formula counts,
+    /// as in Excel), in ascending order: what stops text overflowing into
+    /// its neighbours. Cells that only carry a style are left out.
+    pub fn content_columns_in_row(&self, sheet: u32, row: u32) -> Vec<u32> {
+        let Ok(ws) = self.model.get_model().workbook.worksheet(sheet) else {
+            return Vec::new();
+        };
+        ws.sheet_data
+            .cells_in_row(row as i32 + 1)
+            .into_iter()
+            .filter(|(col, cell)| *col >= 1 && !matches!(**cell, Cell::EmptyCell { .. }))
+            .map(|(col, _)| col as u32 - 1)
+            .collect()
+    }
+
     /// The cells of `sheet` holding typed text (not formulas, numbers,
     /// dates or booleans), with their text, in reading order: what
     /// Spelling checks.
@@ -1040,6 +1186,31 @@ impl Workbook {
         self.model
             .get_cell_content(sheet, row as i32 + 1, col as i32 + 1)
             .unwrap_or_default()
+    }
+
+    /// [`Self::input`] as the formula bar and cell editor show it: a typed
+    /// number with the display locale's decimal separator (`1234,5` in
+    /// Indonesian), so pressing Enter stores the same value again (see
+    /// [`delocalize_typed`]). Formulas stay as they are.
+    pub fn input_for_editing(&self, sheet: u32, row: u32, col: u32) -> String {
+        let input = self.input(sheet, row, col);
+        let dec = kantor_numfmt::display_locale().decimal();
+        if dec == '.' || !input.contains('.') || input.starts_with('=') {
+            return input;
+        }
+        let number = matches!(
+            self.model
+                .get_cell_type(sheet, row as i32 + 1, col as i32 + 1),
+            Ok(ironcalc_base::types::CellType::Number)
+        );
+        let plain = input
+            .chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'E' | 'e' | '%'));
+        if number && plain {
+            input.replace('.', dec.encode_utf8(&mut [0; 4]))
+        } else {
+            input
+        }
     }
 
     /// A value whose format shows a time, as Excel's formula bar shows it

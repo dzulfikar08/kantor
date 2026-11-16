@@ -11,7 +11,8 @@
 //!   wrapped text and larger fonts; in a row given a smaller height, larger
 //!   fonts are capped to what fits and wrapped text shows the lines that fit.
 //! * Text rotation and indent aren't drawn (IronCalc's model doesn't keep
-//!   them), nor is text overflowing into empty neighbours.
+//!   them). Text overflowing into empty neighbours is drawn the way merged
+//!   cells are ([`crate::overflow`]).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -308,6 +309,23 @@ pub(crate) struct Content<'a> {
     /// in `text`: the text splits there and the character fills the gap, so
     /// `_("Rp"* #,##0_)` puts `Rp` at the left edge and the number at the right.
     pub fill: Option<(char, usize)>,
+    /// Text overflowing its cell ([`crate::overflow`]): drawn on one line in
+    /// a box sized to it, clipped by the cells, with no ellipsis.
+    pub spill: bool,
+}
+
+/// The size cell text is drawn at: the workbook's default font size maps
+/// to `base_size`, and larger fonts are capped to what fits one line in a
+/// box of `height`.
+pub(crate) fn text_size(
+    style: &CellStyle,
+    default_font_size: i32,
+    base_size: Pixels,
+    height: Pixels,
+) -> Pixels {
+    let scale = style.font_size.max(1) as f32 / default_font_size.max(1) as f32;
+    let fit = (height - px(2.)) / LINE_HEIGHT;
+    (base_size * scale).min(fit).max(px(6.))
 }
 
 /// Repeat characters laid out for a fill gap (the rest is clipped).
@@ -321,10 +339,8 @@ impl Content<'_> {
             return d;
         }
         let s = self.style;
-        let scale = s.font_size.max(1) as f32 / self.default_font_size.max(1) as f32;
         // Larger fonts are capped to what fits one line in the box.
-        let fit = (self.height - px(2.)) / LINE_HEIGHT;
-        let size = (self.base_size * scale).min(fit).max(px(6.));
+        let size = text_size(s, self.default_font_size, self.base_size, self.height);
         // Free height around one line. Bottom-aligned text (Excel's default)
         // keeps 40% of it below, so a plain cell reads about centred in our
         // tall rows while larger or wrapped text stays anchored to the
@@ -375,6 +391,8 @@ impl Content<'_> {
                 .map(|d| {
                     if s.wrap {
                         d.whitespace_normal().overflow_hidden()
+                    } else if self.spill {
+                        d.whitespace_nowrap()
                     } else {
                         d.truncate()
                     }

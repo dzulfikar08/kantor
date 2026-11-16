@@ -63,6 +63,22 @@ pub fn lang() -> Lang {
     *LANG.get_or_init(Lang::detect)
 }
 
+/// The regional format numbers are shown and typed in: `number_format` in
+/// settings.toml (`id` or `en`), else the interface language's
+/// (Indonesian: `1.234,5`).
+pub fn number_locale() -> kantor_numfmt::DisplayLocale {
+    let setting = kantor_core::settings::Settings::load().number_format;
+    number_locale_for(setting.as_deref().and_then(Lang::parse), lang())
+}
+
+/// [`number_locale`] from its inputs (testable without the globals).
+pub fn number_locale_for(setting: Option<Lang>, ui: Lang) -> kantor_numfmt::DisplayLocale {
+    match setting.unwrap_or(ui) {
+        Lang::Id => kantor_numfmt::DisplayLocale::Indonesian,
+        Lang::En => kantor_numfmt::DisplayLocale::EnUs,
+    }
+}
+
 /// The string for the interface language.
 pub fn tr(en: &'static str, id: &'static str) -> &'static str {
     pick(lang(), en, id)
@@ -189,6 +205,15 @@ mod tests {
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
+
+    #[std::prelude::v1::test]
+    fn number_locale_follows_the_setting_then_the_interface() {
+        use kantor_numfmt::DisplayLocale::{EnUs, Indonesian};
+        assert_eq!(number_locale_for(None, Lang::Id), Indonesian);
+        assert_eq!(number_locale_for(None, Lang::En), EnUs);
+        assert_eq!(number_locale_for(Some(Lang::En), Lang::Id), EnUs);
+        assert_eq!(number_locale_for(Some(Lang::Id), Lang::En), Indonesian);
+    }
 
     #[std::prelude::v1::test]
     fn parses_locales() {

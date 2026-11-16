@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+kantor_numfmt.workspace = true
 gpui-kit.workspace = true
 kantor_core.workspace = true
 kantor_spell.workspace = true

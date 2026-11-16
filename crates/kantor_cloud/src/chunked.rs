@@ -74,13 +74,9 @@ impl Client {
     }
 
     fn request_url(&self, method: &str, url: &str) -> http::request::Builder {
-        let mut b = http::Request::builder()
+        http::Request::builder()
             .method(Method::from_bytes(method.as_bytes()).expect("valid method"))
-            .uri(url);
-        if let Some(a) = &self.auth {
-            b = b.header("authorization", a);
-        }
-        b
+            .uri(url)
     }
 
     /// Send one part of an upload (`req`: method, URL and headers) with
