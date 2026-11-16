@@ -69,16 +69,38 @@ pub fn chart_draw(
                 let t = at.then(place);
                 match prim {
                     Prim::Fill { path, paint, .. } => {
-                        let color = match paint {
-                            Paint::Solid(c) => c,
+                        let color = match &paint {
+                            Paint::Solid(c) => *c,
                             Paint::Linear { stops, .. } | Paint::Radial { stops, .. } => {
                                 stops.first().map_or(Rgba::BLACK, |s| s.color)
                             }
+                        };
+                        // Gradients (column and area fills) on the page.
+                        let k = (t.a * t.a + t.b * t.b).sqrt().max(1e-3);
+                        let gradient = match paint {
+                            Paint::Solid(_) => None,
+                            Paint::Linear { from, to, stops } => Some(Paint::Linear {
+                                from: t.apply(from),
+                                to: t.apply(to),
+                                stops,
+                            }),
+                            Paint::Radial {
+                                center,
+                                rx,
+                                ry,
+                                stops,
+                            } => Some(Paint::Radial {
+                                center: t.apply(center),
+                                rx: rx * k,
+                                ry: ry * k,
+                                stops,
+                            }),
                         };
                         out.prims.push(FloatPrim::Path(DrawPath {
                             segs: segs(&path, &t),
                             fill: Some(color),
                             stroke: None,
+                            gradient,
                         }));
                     }
                     Prim::Stroke { path, stroke } => {
@@ -91,6 +113,7 @@ pub fn chart_draw(
                                 stroke.width * k,
                                 stroke.dash.map(|d| d.iter().map(|v| v * k).collect()),
                             )),
+                            gradient: None,
                         }));
                     }
                     _ => {}

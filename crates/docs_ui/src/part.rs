@@ -448,6 +448,8 @@ impl DocsView {
             return false;
         };
         self.hf_menu = None;
+        self.float_sel = None;
+        self.text_box_edit = None;
         let part = std::mem::replace(&mut self.doc, s.main);
         self.doc.finish_part(s.edit, part, s.body_sel);
         self.sel = self.doc.clamp_selection(s.body_sel);

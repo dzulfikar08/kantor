@@ -407,7 +407,13 @@ fn resolve_prop(xml: &str, outer: &str, change: &str, accept: bool, keep: &[&str
 /// `new` (`<w:outer>…</w:outer>`) with a change record holding `old`
 /// (without revision marks), by `author` now. When `old` already has a
 /// record it stays (it holds the properties before any change).
-fn record_prop(old: Option<&str>, new: &str, outer: &str, change: &str, tag: &str) -> String {
+pub(crate) fn record_prop(
+    old: Option<&str>,
+    new: &str,
+    outer: &str,
+    change: &str,
+    tag: &str,
+) -> String {
     if let Some(rec) = prop_change(old, change) {
         let base = strip_element(new, change);
         return add_to_props(Some(&base), outer, rec, None);
@@ -462,7 +468,7 @@ pub(crate) fn props_items(t: &Table) -> Vec<crate::fmt_track::FormatItem> {
     if t.rows
         .iter()
         .flat_map(|r| &r.cells)
-        .any(|c| cell_merge(c).is_some())
+        .any(|c| cell_merge(c).is_some() || hmerge_tracked(c))
     {
         out.push(F::MergedCells);
     }
@@ -477,6 +483,73 @@ pub(crate) fn cell_merge(cell: &Cell) -> Option<&str> {
         None => x,
     };
     el_in(own, "cellMerge")
+}
+
+/// Whether the cell's horizontal merge (`w:hMerge`) is a tracked change:
+/// a `w:tcPrChange` whose old properties weren't merged.
+pub(crate) fn hmerge_tracked(cell: &Cell) -> bool {
+    cell.hmerge != crate::table::VMerge::None
+        && prop_change(cell.tc_pr.as_deref(), "tcPrChange")
+            .is_some_and(|rec| !rec.contains("<w:hMerge"))
+}
+
+/// Table `t` with its horizontal merges (`w:hMerge`) that aren't tracked
+/// changes written as Word writes merges (`w:gridSpan` on the first cell,
+/// the covered cells removed from `paras`, which hold the whole table).
+/// Whether one changed.
+pub(crate) fn normalize_hmerge(paras: &mut Vec<Paragraph>, tables: &mut Tables, id: u32) -> bool {
+    use crate::table::VMerge;
+    let Some(t) = tables.get_mut(&id) else {
+        return false;
+    };
+    let mut gone = Vec::new();
+    for (ri, row) in t.rows.iter_mut().enumerate() {
+        let mut ci = 0;
+        while ci < row.cells.len() {
+            let c = &row.cells[ci];
+            if c.hmerge != VMerge::Restart || hmerge_tracked(c) {
+                ci += 1;
+                continue;
+            }
+            let mut k = ci + 1;
+            while k < row.cells.len()
+                && row.cells[k].hmerge == VMerge::Continue
+                && !hmerge_tracked(&row.cells[k])
+            {
+                k += 1;
+            }
+            let covered = &row.cells[ci + 1..k];
+            let span: u32 = c.span.max(1) + covered.iter().map(|c| c.span.max(1)).sum::<u32>();
+            let width: Option<u32> = std::iter::once(c)
+                .chain(covered)
+                .map(|c| c.width)
+                .sum::<Option<u32>>();
+            let mut x = c.tc_pr.as_deref().unwrap_or("<w:tcPr></w:tcPr>").to_owned();
+            x = crate::table_merge::set_tc_child(&x, "hMerge", None);
+            x = crate::table_merge::set_tc_child(
+                &x,
+                "gridSpan",
+                (span > 1).then(|| format!("<w:gridSpan w:val=\"{span}\"/>")),
+            );
+            if let Some(w) = width {
+                x = crate::table_merge::set_tc_child(
+                    &x,
+                    "tcW",
+                    Some(format!("<w:tcW w:w=\"{w}\" w:type=\"dxa\"/>")),
+                );
+            }
+            let cell = &mut row.cells[ci];
+            cell.tc_pr = Some(x.into());
+            cell.refresh();
+            gone.extend((ci + 1..k).map(|k| (ri, k)));
+            ci = k;
+        }
+    }
+    if gone.is_empty() {
+        return false;
+    }
+    remove_cells(paras, tables, id, &gone);
+    true
 }
 
 /// Resolve a cell's tracked merge: accepted, its new state (`w:vMerge`);
@@ -712,7 +785,7 @@ pub(crate) fn resolve_cells(
 /// Resolve the property changes of the tables in `paras` that touch
 /// `span` (all when `None`). Whether one changed.
 pub(crate) fn resolve_table_props(
-    paras: &[Paragraph],
+    paras: &mut Vec<Paragraph>,
     tables: &mut Tables,
     first: usize,
     span: Option<(Position, Position)>,
@@ -739,9 +812,13 @@ pub(crate) fn resolve_table_props(
                 continue;
             }
         }
-        if let Some(t) = tables.get_mut(&id) {
-            changed |= resolve_props(t, accept);
+        let done = tables
+            .get_mut(&id)
+            .is_some_and(|t| resolve_props(t, accept));
+        if done && accept {
+            normalize_hmerge(paras, tables, id);
         }
+        changed |= done;
     }
     changed
 }
@@ -771,7 +848,19 @@ impl Document {
         t: &mut Table,
         added: &[(usize, usize)],
     ) {
-        let mut id = self.max_rev_id();
+        self.track_inserted_cells_in(old, t, added, &[], self.max_rev_id());
+    }
+
+    /// [`Self::track_inserted_cells`] when rows `added_rows` (marked
+    /// inserted already) were added too; revision ids after `id`.
+    pub(crate) fn track_inserted_cells_in(
+        &self,
+        old: &Table,
+        t: &mut Table,
+        added: &[(usize, usize)],
+        added_rows: &[usize],
+        mut id: u64,
+    ) {
         let date = now_utc();
         let tag = |id: u64| {
             format!(
@@ -780,6 +869,10 @@ impl Document {
             )
         };
         for (ri, row) in t.rows.iter_mut().enumerate() {
+            if added_rows.contains(&ri) {
+                continue;
+            }
+            let ro = ri - added_rows.iter().filter(|&&r| r < ri).count();
             let mut k_old = 0;
             for (ci, cell) in row.cells.iter_mut().enumerate() {
                 if added.contains(&(ri, ci)) {
@@ -787,7 +880,7 @@ impl Document {
                     set_cell_rev(cell, &self.cell_rev_el(RevKind::Insert, id));
                     continue;
                 }
-                let was = old.rows.get(ri).and_then(|r| r.cells.get(k_old));
+                let was = old.rows.get(ro).and_then(|r| r.cells.get(k_old));
                 k_old += 1;
                 let Some(was) = was else { continue };
                 if was.tc_pr == cell.tc_pr {
@@ -820,14 +913,29 @@ impl Document {
         }
     }
 
-    /// Delete grid column `col` of table `id` with Track Changes on: each
-    /// cell in it is marked deleted (`w:cellDel`) and its text struck
-    /// through; cells the user inserted go at once. Returns the selection
-    /// afterwards.
-    pub(crate) fn tracked_delete_column(
+    /// Whether deleting grid columns `[g0, g1)` of table `id` can be
+    /// tracked: no cell spans past their edges.
+    pub(crate) fn column_deletable_tracked(&self, id: u32, (g0, g1): (usize, usize)) -> bool {
+        let Some(t) = self.tables.get(&id) else {
+            return false;
+        };
+        t.rows.iter().enumerate().all(|(ri, row)| {
+            (0..row.cells.len()).all(|ci| {
+                let (a, e) = t.shown_cols(ri, ci);
+                e <= g0 || a >= g1 || (a >= g0 && e <= g1)
+            })
+        })
+    }
+
+    /// Delete grid columns `[g0, g1)` of table `id` with Track Changes on:
+    /// each cell in them is marked deleted (`w:cellDel`) and its text
+    /// struck through; cells the user inserted go at once. Returns the
+    /// selection afterwards.
+    pub(crate) fn tracked_delete_columns(
         &mut self,
         id: u32,
-        col: usize,
+        g0: usize,
+        g1: usize,
         sel: Selection,
     ) -> Selection {
         let range = self.table_range(id);
@@ -835,10 +943,14 @@ impl Document {
         let mut ids = self.max_rev_id();
         let mut paras: Vec<Paragraph> = self.paragraphs[range.clone()].to_vec();
         let mut own = Vec::new();
-        for ri in 0..t.rows.len() {
-            let Some(ci) = (0..t.rows[ri].cells.len()).find(|&ci| t.grid_col(ri, ci) == col) else {
-                continue;
-            };
+        let inside: Vec<(usize, usize)> = (0..t.rows.len())
+            .flat_map(|ri| (0..t.rows[ri].cells.len()).map(move |ci| (ri, ci)))
+            .filter(|&(ri, ci)| {
+                let a = t.grid_col(ri, ci);
+                a >= g0 && a + t.rows[ri].cells[ci].span.max(1) as usize <= g1
+            })
+            .collect();
+        for (ri, ci) in inside {
             match cell_rev(&t.rows[ri].cells[ci]) {
                 Some((RevKind::Insert, au, _)) if au == self.author => {
                     own.push((ri, ci));
@@ -911,6 +1023,6 @@ impl Cell {
 
     /// Whether the cell's merge state is a tracked change (`w:cellMerge`).
     pub fn merge_tracked(&self) -> bool {
-        cell_merge(self).is_some()
+        cell_merge(self).is_some() || hmerge_tracked(self)
     }
 }

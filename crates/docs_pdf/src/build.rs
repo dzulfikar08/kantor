@@ -555,8 +555,16 @@ fn table_block(
             while end < range.end && paras[end].cell == Some(want) {
                 end += 1;
             }
-            let col = t.grid_col(ri, ci);
-            let span = cell.span.max(1) as usize;
+            let (col, last) = t.shown_cols(ri, ci);
+            let span = last - col;
+            // Covered by a horizontal merge on its left: not drawn.
+            let covered = cell.hmerge == VMerge::Continue
+                && ci > 0
+                && row.cells[..ci]
+                    .iter()
+                    .rev()
+                    .find(|c| c.hmerge != VMerge::Continue)
+                    .is_some_and(|c| c.hmerge == VMerge::Restart);
             let continues_below = |r: usize| {
                 t.rows.get(r + 1).is_some_and(|next| {
                     next.cells
@@ -587,6 +595,17 @@ fn table_block(
             );
             if cell.vmerge == VMerge::Continue {
                 top = None;
+            }
+            if covered {
+                cells.push(TableCell {
+                    col,
+                    span,
+                    paras: start..end,
+                    merge: Merge::Continue,
+                    borders: [None; 4],
+                    fill: None,
+                });
+                continue;
             }
             if cell.vmerge != VMerge::None && continues_below(ri) {
                 bottom = None;

@@ -267,8 +267,20 @@ impl Document {
     }
 
     /// Change the structure of the table at the caret. Returns the new
-    /// selection, or an error message (no table, merged cells).
+    /// selection, or an error message (no table).
     pub fn edit_table(&mut self, sel: Selection, edit: TableEdit) -> Result<Selection, String> {
+        self.edit_table_tracked(sel, edit).map(|(s, _)| s)
+    }
+
+    /// [`Self::edit_table`], and whether it went in untracked with Track
+    /// Changes on (deleting a column that a merged cell spans past: Word's
+    /// "This action will not be marked as a change").
+    pub fn edit_table_tracked(
+        &mut self,
+        sel: Selection,
+        edit: TableEdit,
+    ) -> Result<(Selection, bool), String> {
+        let mut untracked = false;
         let sel = self.clamp_selection(sel);
         let Some(at) = self.cell_at(sel.head) else {
             return Err("The caret isn't in a table".into());
@@ -281,21 +293,19 @@ impl Document {
         match edit {
             TableEdit::DeleteTable if self.track => {
                 let rows: Vec<usize> = (0..t.rows.len()).collect();
-                return Ok(self.tracked_delete_rows(id, &rows, sel));
+                return Ok((self.tracked_delete_rows(id, &rows, sel), false));
             }
             TableEdit::DeleteRow if self.track => {
-                return Ok(self.tracked_delete_rows(id, &[r], sel));
+                return Ok((self.tracked_delete_rows(id, &[r], sel), false));
             }
-            TableEdit::DeleteColumn if self.track => {
-                if t.has_merges() {
-                    return Err(
-                        "Column changes in tables with merged cells aren't supported yet".into(),
-                    );
-                }
-                return Ok(self.tracked_delete_column(id, t.grid_col(r, c), sel));
+            TableEdit::DeleteColumn
+                if self.track && self.column_deletable_tracked(id, t.shown_cols(r, c)) =>
+            {
+                let (g0, g1) = t.shown_cols(r, c);
+                return Ok((self.tracked_delete_columns(id, g0, g1, sel), false));
             }
             TableEdit::DeleteTable => {
-                return Ok(self.remove_table(id, range, sel));
+                return Ok((self.remove_table(id, range, sel), false));
             }
             TableEdit::RowAbove | TableEdit::RowBelow => {
                 let src = &t.rows[r];
@@ -344,7 +354,7 @@ impl Document {
             }
             TableEdit::DeleteRow => {
                 if t.rows.len() <= 1 {
-                    return Ok(self.remove_table(id, range, sel));
+                    return Ok((self.remove_table(id, range, sel), false));
                 }
                 // A merge that started here continues from the next row.
                 let removed = t.rows.remove(r);
@@ -372,36 +382,99 @@ impl Document {
             }
             TableEdit::ColumnLeft | TableEdit::ColumnRight | TableEdit::DeleteColumn => {
                 let mut added = Vec::new();
-                if t.has_merges() {
-                    return Err(
-                        "Column changes in tables with merged cells aren't supported yet".into(),
-                    );
-                }
                 let total: u32 = t.column_widths(self.content_width()).iter().sum();
                 let mut widths = t.column_widths(self.content_width());
+                // The caret cell's grid columns (all of a merged cell's).
+                let (g0, g1) = t.shown_cols(r, c);
+                let g1 = g1.min(widths.len()).max(g0 + 1);
                 if edit == TableEdit::DeleteColumn {
-                    if widths.len() <= 1 {
-                        return Ok(self.remove_table(id, range, sel));
+                    if g1 - g0 >= widths.len() {
+                        return Ok((self.remove_table(id, range, sel), false));
                     }
-                    widths.remove(c);
-                    for (row, cells) in t.rows.iter_mut().zip(grid.iter_mut()) {
-                        if c < row.cells.len() {
-                            row.cells.remove(c);
-                            cells.remove(c);
+                    widths.drain(g0..g1);
+                    let mut empty = Vec::new();
+                    for (ri, (row, cells)) in t.rows.iter_mut().zip(grid.iter_mut()).enumerate() {
+                        let mut g = 0;
+                        let mut ci = 0;
+                        while ci < row.cells.len() {
+                            let span = row.cells[ci].span.max(1) as usize;
+                            let (a, e) = (g, g + span);
+                            g = e;
+                            let overlap = e.min(g1).saturating_sub(a.max(g0));
+                            if overlap == 0 {
+                                ci += 1;
+                            } else if overlap == span {
+                                row.cells.remove(ci);
+                                cells.remove(ci);
+                            } else {
+                                // A merged cell across the column narrows.
+                                let cell = &mut row.cells[ci];
+                                let n = span - overlap;
+                                cell.tc_pr = Some(
+                                    crate::table_merge::set_tc_child(
+                                        cell.tc_pr.as_deref().unwrap_or("<w:tcPr></w:tcPr>"),
+                                        "gridSpan",
+                                        (n > 1).then(|| format!("<w:gridSpan w:val=\"{n}\"/>")),
+                                    )
+                                    .into(),
+                                );
+                                cell.refresh();
+                                ci += 1;
+                            }
+                        }
+                        if row.cells.is_empty() {
+                            empty.push(ri);
                         }
                     }
-                    focus = (r, c.min(widths.len() - 1));
+                    for &ri in empty.iter().rev() {
+                        t.rows.remove(ri);
+                        grid.remove(ri);
+                    }
+                    let fr = r.min(t.rows.len() - 1);
+                    focus = (fr, c.min(t.rows[fr].cells.len().max(1) - 1));
                 } else {
-                    let ci = if edit == TableEdit::ColumnLeft {
-                        c
-                    } else {
-                        c + 1
-                    };
-                    let w = widths.get(c).copied().unwrap_or(1440);
-                    widths.insert(ci.min(widths.len()), w);
+                    let left = edit == TableEdit::ColumnLeft;
+                    let at_g = if left { g0 } else { g1 };
+                    let w = widths
+                        .get(if left { g0 } else { g1 - 1 })
+                        .copied()
+                        .unwrap_or(1440);
+                    widths.insert(at_g.min(widths.len()), w);
+                    focus = (r, if left { c } else { c + 1 });
                     for (ri, (row, cells)) in t.rows.iter_mut().zip(grid.iter_mut()).enumerate() {
-                        let like = cells.get(c).and_then(|ps| ps.first()).cloned();
-                        let at = ci.min(row.cells.len());
+                        let mut g = 0;
+                        let mut at = row.cells.len();
+                        let mut across = None;
+                        for (ci, cell) in row.cells.iter().enumerate() {
+                            let e = g + cell.span.max(1) as usize;
+                            if g < at_g && at_g < e {
+                                across = Some(ci);
+                                break;
+                            }
+                            if g >= at_g {
+                                at = ci;
+                                break;
+                            }
+                            g = e;
+                        }
+                        if let Some(ci) = across {
+                            // A merged cell across the new column's place
+                            // takes it in, as Word's.
+                            let cell = &mut row.cells[ci];
+                            let n = cell.span.max(1) + 1;
+                            cell.tc_pr = Some(
+                                crate::table_merge::set_tc_child(
+                                    cell.tc_pr.as_deref().unwrap_or("<w:tcPr></w:tcPr>"),
+                                    "gridSpan",
+                                    Some(format!("<w:gridSpan w:val=\"{n}\"/>")),
+                                )
+                                .into(),
+                            );
+                            cell.refresh();
+                            continue;
+                        }
+                        let near = if left { at } else { at.saturating_sub(1) };
+                        let like = cells.get(near).and_then(|ps| ps.first()).cloned();
                         added.push((ri, at));
                         row.cells.insert(at, Table::new_cell(w, 1));
                         cells.insert(
@@ -416,7 +489,6 @@ impl Document {
                             )],
                         );
                     }
-                    focus = (r, ci);
                 }
                 // Keep the table's width: scale the columns to the old total.
                 let sum: u32 = widths.iter().sum::<u32>().max(1);
@@ -425,17 +497,25 @@ impl Document {
                     .map(|w| ((*w as u64 * total as u64) / sum as u64) as u32)
                     .collect();
                 for row in &mut t.rows {
-                    for (cell, w) in row.cells.iter_mut().zip(&widths) {
-                        if cell.width != Some(*w) {
-                            cell.width = Some(*w);
-                            cell.tc_pr = Some(with_tcw(cell.tc_pr.as_deref(), *w).into());
+                    let mut g = 0;
+                    for cell in &mut row.cells {
+                        let span = cell.span.max(1) as usize;
+                        let w: u32 = widths[g.min(widths.len())..(g + span).min(widths.len())]
+                            .iter()
+                            .sum();
+                        g += span;
+                        if w > 0 && cell.width != Some(w) {
+                            cell.width = Some(w);
+                            cell.tc_pr = Some(with_tcw(cell.tc_pr.as_deref(), w).into());
                         }
                     }
                 }
                 t.grid = widths;
-                if self.track && !added.is_empty() {
+                if self.track && edit != TableEdit::DeleteColumn {
                     let old = self.tables[&id].clone();
                     self.track_inserted_cells(&old, &mut t, &added);
+                } else if self.track {
+                    untracked = true;
                 }
             }
         }
@@ -458,7 +538,7 @@ impl Document {
             Kind::Other,
             true,
         );
-        Ok(after)
+        Ok((after, untracked))
     }
 
     fn remove_table(

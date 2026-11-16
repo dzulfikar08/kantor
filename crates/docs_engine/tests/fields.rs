@@ -772,3 +772,81 @@ fn nested_field_codes_are_shown_and_typed() {
     assert_eq!(f.shown_code(), code);
     assert_eq!(f.kind(), "IF");
 }
+
+#[test]
+fn tracked_field_code_edits_are_deleted_and_inserted_code() {
+    let original = Document::open(&corpus("fields.docx")).unwrap();
+    let mut doc = original.clone();
+    doc.set_author("Ani Wijaya");
+    doc.set_track_changes(true, Selection::default());
+    let date = doc
+        .fields()
+        .into_iter()
+        .find(|f| f.kind() == "DATE")
+        .expect("a DATE field");
+    let old_code = date.shown_code();
+    let sel = Selection::caret(date.begin);
+    assert!(doc.set_field_instr(date.begin, "DATE \\@ \"yyyy\"", sel));
+    let now = doc.field_at(date.begin).unwrap();
+    assert_eq!(now.instr.trim(), "DATE \\@ \"yyyy\"");
+    assert_eq!(now.shown_code(), "DATE \\@ \"yyyy\"");
+    let ch = doc.changes();
+    let code_changes: Vec<_> = ch.iter().filter(|c| c.start == date.begin).collect();
+    assert!(
+        code_changes
+            .iter()
+            .any(|c| c.kind == docs_engine::RevKind::Delete && c.text == old_code),
+        "{ch:?}"
+    );
+    assert!(
+        code_changes
+            .iter()
+            .any(|c| c.kind == docs_engine::RevKind::Insert
+                && c.text == "DATE \\@ \"yyyy\""
+                && c.author == "Ani Wijaya"),
+        "{ch:?}"
+    );
+    // Saved as Word writes it: the old code's runs deleted.
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("c.docx");
+    doc.save_as(&out).unwrap();
+    let body = &parts(&std::fs::read(&out).unwrap())["word/document.xml"];
+    assert!(body.contains("<w:delInstrText"), "{body}");
+    let back = Document::open(&out).unwrap();
+    assert!(
+        back.unsupported_content().is_empty(),
+        "{:?}",
+        back.unsupported_content()
+    );
+    let f = back
+        .fields()
+        .into_iter()
+        .find(|f| f.begin == date.begin)
+        .unwrap();
+    assert_eq!(f.shown_code(), "DATE \\@ \"yyyy\"");
+    assert_eq!(back.changes().len(), doc.changes().len());
+    // Rejected (the change at the field): the old code back; accepted: the
+    // new one, untracked.
+    let mut rej = back.clone();
+    rej.reject_change(Selection::caret(date.begin)).unwrap();
+    let f = rej
+        .fields()
+        .into_iter()
+        .find(|f| f.begin == date.begin)
+        .unwrap();
+    assert_eq!(f.shown_code(), old_code);
+    assert!(rej.changes().iter().all(|c| c.start != date.begin));
+    let mut acc = back.clone();
+    acc.resolve_all(true, Selection::default());
+    let f = acc
+        .fields()
+        .into_iter()
+        .find(|f| f.begin == date.begin)
+        .unwrap();
+    assert_eq!(f.shown_code(), "DATE \\@ \"yyyy\"");
+    assert!(acc.changes().is_empty());
+    let out2 = dir.path().join("a.docx");
+    acc.save_as(&out2).unwrap();
+    let body = &parts(&std::fs::read(&out2).unwrap())["word/document.xml"];
+    assert!(!body.contains("<w:delInstrText"), "{body}");
+}

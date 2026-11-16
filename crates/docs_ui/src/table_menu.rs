@@ -40,7 +40,7 @@ const MESSAGES: [&str; 5] = [
 ];
 
 /// Word's note when a table edit can't be tracked.
-const NOT_TRACKED: &str = tk("This action will not be marked as a change.");
+pub(crate) const NOT_TRACKED: &str = tk("This action will not be marked as a change.");
 
 const ALIGNS: [(TableAlign, &str); 3] = [
     (TableAlign::Left, tk("Left")),

@@ -283,8 +283,18 @@ impl FieldMark {
         let mut in_instr = false;
         // Just after a nested field's opening brace.
         let mut fresh = false;
+        // Inside a tracked edit's old code (`w:del`): not shown.
+        let mut in_del = false;
         loop {
             match r.read_event() {
+                Ok(quick_xml::events::Event::Eof) | Err(_) => break,
+                Ok(quick_xml::events::Event::Start(e)) if e.local_name().as_ref() == b"del" => {
+                    in_del = true;
+                }
+                Ok(quick_xml::events::Event::End(e)) if e.local_name().as_ref() == b"del" => {
+                    in_del = false;
+                }
+                _ if in_del => {}
                 Ok(quick_xml::events::Event::Start(e)) | Ok(quick_xml::events::Event::Empty(e))
                     if e.local_name().as_ref() == b"fldChar" =>
                 {
@@ -337,22 +347,21 @@ impl FieldMark {
                         fresh = fresh && v.trim().is_empty();
                     }
                 }
-                Ok(quick_xml::events::Event::GeneralRef(g)) if in_instr => {
-                    if !in_result.iter().any(|x| *x) {
-                        match g.resolve_char_ref().ok().flatten() {
-                            Some(c) => out.push(c),
-                            None => out.push_str(match &*g as &[u8] {
-                                b"amp" => "&",
-                                b"lt" => "<",
-                                b"gt" => ">",
-                                b"quot" => "\"",
-                                b"apos" => "'",
-                                _ => "",
-                            }),
-                        }
+                Ok(quick_xml::events::Event::GeneralRef(g))
+                    if in_instr && !in_result.iter().any(|x| *x) =>
+                {
+                    match g.resolve_char_ref().ok().flatten() {
+                        Some(c) => out.push(c),
+                        None => out.push_str(match &*g as &[u8] {
+                            b"amp" => "&",
+                            b"lt" => "<",
+                            b"gt" => ">",
+                            b"quot" => "\"",
+                            b"apos" => "'",
+                            _ => "",
+                        }),
                     }
                 }
-                Ok(quick_xml::events::Event::Eof) | Err(_) => break,
                 _ => {}
             }
         }

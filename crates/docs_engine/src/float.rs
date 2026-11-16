@@ -995,6 +995,31 @@ impl Document {
         out
     }
 
+    /// Move or resize a floating object and give it edited package parts
+    /// at once (a SmartArt laid out again for its new size): one undo step.
+    pub fn set_float_placement_parts(
+        &mut self,
+        para: usize,
+        index: usize,
+        at: Placement,
+        parts: Vec<(String, Arc<str>)>,
+    ) -> bool {
+        let Some(f) = self.float_at(para, index) else {
+            return false;
+        };
+        let mut nf = f.placed(at);
+        for (name, xml) in parts {
+            match nf.parts.iter_mut().find(|p| p.0 == name) {
+                Some(p) => p.1 = xml,
+                None => nf.parts.push((name, xml)),
+            }
+        }
+        if nf.at == f.at && nf.parts == f.parts {
+            return false;
+        }
+        self.swap_object(para, index, Some(crate::Object::Float(Arc::new(nf))))
+    }
+
     /// Move, resize or rewrap a floating object (one undo step).
     pub fn set_float_placement(&mut self, para: usize, index: usize, at: Placement) -> bool {
         let Some(f) = self.float_at(para, index) else {

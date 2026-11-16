@@ -22,6 +22,8 @@ use crate::pages::{LayoutFn, StoryLayout};
 pub struct SmartArt {
     pub data: String,
     pub data_xml: String,
+    /// The drawing part's XML (as edited, or as read).
+    pub drawing_xml: String,
     pub drawing: DiagramDrawing,
 }
 
@@ -56,13 +58,25 @@ pub fn read(doc: &Document, f: &Float, painter: &Painter) -> Option<SmartArt> {
         data,
         &data_xml,
         &painter.ctx(),
-        (f.read.cx.max(1), f.read.cy.max(1)),
+        design_size(f, &xml, &data_xml),
     )?;
     Some(SmartArt {
         data: data.clone(),
         data_xml,
+        drawing_xml: xml,
         drawing,
     })
+}
+
+/// The frame size (EMU) a SmartArt's drawing is drawn for: the object's
+/// size for layouts Kantor lays out (they're laid out again when resized),
+/// else the size it was read at (it scales).
+fn design_size(f: &Float, drawing: &str, data: &str) -> (i64, i64) {
+    if slides_engine::smartart_layout::family(drawing, data).is_some() {
+        (f.at.cx.max(1), f.at.cy.max(1))
+    } else {
+        (f.read.cx.max(1), f.read.cy.max(1))
+    }
 }
 
 /// A SmartArt's drawing at `rect`: its shapes, and their text laid out.
@@ -83,10 +97,8 @@ pub fn draw(
 ) -> Option<SmartArtDraw> {
     let sa = read(doc, f, painter)?;
     let dd = &sa.drawing;
-    let k = (
-        rect[2] / f.read.cx.max(1) as f32,
-        rect[3] / f.read.cy.max(1) as f32,
-    );
+    let (w, h) = design_size(f, &sa.drawing_xml, &sa.data_xml);
+    let k = (rect[2] / w as f32, rect[3] / h as f32);
     let prims = painter.smartart_prims(&dd.drawing_with_edits(&[]), rect, k);
     let base = ListStyle::default();
     let minor = painter.minor_font();
@@ -219,3 +231,87 @@ pub fn set_shape_text(
     }
     Ok(Some(parts))
 }
+
+/// Edited parts: the drawing and data model.
+pub type Parts = Vec<(String, Arc<str>)>;
+
+/// The SmartArt `f`'s drawing part name and XML, data model XML, and the
+/// model id of the item shape `k` shows (when `k` is given and shows one),
+/// for a layout Kantor lays out.
+fn laid_out(
+    doc: &Document,
+    f: &Float,
+    k: Option<usize>,
+) -> Result<(SmartArt, Option<String>), &'static str> {
+    let Some(sa) = read(doc, f, &Painter::new(doc)) else {
+        return Err("Kantor can't read this SmartArt's drawing");
+    };
+    if slides_engine::smartart_layout::family(&sa.drawing_xml, &sa.data_xml).is_none() {
+        return Err(slides_engine::smartart_layout::LAYOUT_REFUSAL);
+    }
+    let id = k.and_then(|k| sa.drawing.group.model_ids.get(k).cloned().flatten());
+    Ok((sa, id))
+}
+
+fn parts(sa: &SmartArt, drawing: String, data: Option<String>) -> Parts {
+    let mut out = vec![(sa.drawing.part.clone(), Arc::from(drawing))];
+    if let Some(d) = data {
+        out.push((sa.data.clone(), Arc::from(d)));
+    }
+    out
+}
+
+/// Whether Kantor lays SmartArt `f` out (items can be added and removed,
+/// and it's laid out again when resized).
+pub fn can_relayout(doc: &Document, f: &Float) -> bool {
+    laid_out(doc, f, None).is_ok()
+}
+
+/// Word's *Add Shape After* / *Before* on SmartArt shape `k`: a new empty
+/// item next to the one it shows, the others laid out with it. The edited
+/// parts to store with the object ([`Document::set_float_parts`]).
+pub fn add_item(doc: &Document, f: &Float, k: usize, after: bool) -> Result<Parts, &'static str> {
+    let (sa, id) = laid_out(doc, f, Some(k))?;
+    let id = id.ok_or(SELECT_ITEM)?;
+    let place = if after {
+        slides_engine::AddPlace::After
+    } else {
+        slides_engine::AddPlace::Before
+    };
+    let (w, h) = (f.at.cx.max(1), f.at.cy.max(1));
+    let (drawing, data, _) =
+        slides_engine::smartart_layout::add_item(&sa.drawing_xml, &sa.data_xml, &id, place, w, h)
+            .map_err(|_| SELECT_ITEM)?;
+    Ok(parts(&sa, drawing, Some(data)))
+}
+
+/// Delete the item SmartArt shape `k` shows (with its sub-items); the
+/// others are laid out again.
+pub fn remove_item(doc: &Document, f: &Float, k: usize) -> Result<Parts, &'static str> {
+    let (sa, id) = laid_out(doc, f, Some(k))?;
+    let id = id.ok_or(SELECT_ITEM)?;
+    let (w, h) = (f.at.cx.max(1), f.at.cy.max(1));
+    let (drawing, data) =
+        slides_engine::smartart_layout::remove_item(&sa.drawing_xml, &sa.data_xml, &id, w, h)
+            .map_err(|e| {
+                if e.to_string().contains("at least one") {
+                    LAST_ITEM
+                } else {
+                    SELECT_ITEM
+                }
+            })?;
+    Ok(parts(&sa, drawing, Some(data)))
+}
+
+/// SmartArt `f` laid out again for a `size` (EMU) frame, when Kantor lays
+/// its layout out: the edited parts (`None`: it scales).
+pub fn relaid(doc: &Document, f: &Float, size: (i64, i64)) -> Option<Parts> {
+    let (sa, _) = laid_out(doc, f, None).ok()?;
+    let drawing =
+        slides_engine::smartart_layout::relayout(&sa.drawing_xml, &sa.data_xml, size.0, size.1)
+            .ok()?;
+    Some(parts(&sa, drawing, None))
+}
+
+pub const SELECT_ITEM: &str = "This SmartArt shape doesn't show an item";
+pub const LAST_ITEM: &str = "A SmartArt keeps at least one item";

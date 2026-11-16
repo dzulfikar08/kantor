@@ -31,6 +31,20 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   to select dates, pick Years, Quarters, Months or Days from the time level, page through the
   periods with the scroll bar and use Clear Filter; the selection is saved as Excel saves it.
 - Sheets: slicers and timelines print and export to PDF as they show on screen.
+- Docs: with Track Changes on, merging cells across columns and splitting cells are tracked and
+  can be accepted or rejected (the merged cells shaded, as Word shows merges down a column).
+  Changing a field's code is tracked too, as Word records it: the old code deleted, the new one
+  inserted.
+- Docs: Insert Column Left/Right and Delete Column work in tables with merged cells, as in Word: a
+  merged cell across the new column's place takes it in, and one across a deleted column narrows.
+  Older files' horizontally merged cells (`w:hMerge`) are drawn merged.
+- Docs: SmartArt items can be added and removed (*Add Shape Before*, *Add Shape After* and *Delete
+  Shape* in the SmartArt text popover), and the SmartArt is laid out again when resized, in Basic
+  Block List, Vertical Bullet List, Basic Process, Basic Cycle and the hierarchies, as in Slides.
+- Docs: shapes' gradient fills are drawn as gradients on screen and in the PDF (path gradients as
+  radial ones), and glows and soft edges are approximated.
+- Docs: pictures, shapes and text boxes in headers and footers can be selected, moved and resized
+  while the header or footer is being edited.
 
 ### Fixed
 

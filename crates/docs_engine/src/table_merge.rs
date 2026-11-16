@@ -12,11 +12,15 @@
 //! continue the ones above (`w:vMerge`), or by dividing a vertically
 //! merged cell's rows. Its paragraphs go one per new cell.
 //!
-//! With Track Changes on, a merge down one column is recorded as Word
+//! With Track Changes on, a merge down a column is recorded as Word
 //! records it (`w:cellMerge` on each cell, the moved text as an insertion
-//! in the top cell and a deletion where it was); merges across columns and
-//! splits aren't tracked (Word: "This action will not be marked as a
-//! change").
+//! in the top cell and a deletion where it was); a merge across columns
+//! marks the row's cells merged with `w:hMerge` (first `restart`, the
+//! others continuing it) with the properties before in `w:tcPrChange`, so
+//! rejecting it brings the cells back and accepting it writes Word's
+//! `w:gridSpan`. A split is recorded as the cells and rows it adds
+//! (`w:cellIns`, `w:trPr/w:ins`) and the properties it changed
+//! (`w:tcPrChange`, `w:tblGridChange`); the text stays in the first cell.
 
 use crate::document::{Document, Kind};
 use crate::edit::Grid;
@@ -264,7 +268,8 @@ fn split(
     (r, c): (usize, usize),
     rows: usize,
     columns: usize,
-) -> Result<(Table, Grid, (usize, usize)), &'static str> {
+    keep_text: bool,
+) -> Result<Split, &'static str> {
     let (top, bottom) = group(t, r, c);
     let g = t.grid_col(r, c);
     let ci_top = cell_starting(t, top, g).unwrap_or(c);
@@ -332,7 +337,9 @@ fn split(
     let text = grid[top][ci_top].clone();
     let slots = rows * columns;
     let mut fill: Vec<Vec<Paragraph>> = vec![Vec::new(); slots];
-    if text.len() <= 1 {
+    let mut added: Vec<At> = Vec::new();
+    let mut added_rows: Vec<usize> = Vec::new();
+    if text.len() <= 1 || keep_text {
         fill[0] = text;
     } else {
         for (i, p) in text.into_iter().enumerate() {
@@ -348,6 +355,9 @@ fn split(
         for (ci, cell) in base.iter().enumerate() {
             if ci == ci_top {
                 for k in 0..columns {
+                    if k > 0 {
+                        added.push((top, cells.len()));
+                    }
                     cells.push(piece(k, VMerge::None));
                     let p = fill.next().unwrap_or_default();
                     paras.push(if p.is_empty() { empty(top, ci) } else { p });
@@ -401,6 +411,7 @@ fn split(
         nt.rows[top].cells = cells;
         ng[top] = paras;
         for (k, (row, ps)) in new_rows.into_iter().enumerate() {
+            added_rows.push(top + 1 + k);
             nt.rows.insert(top + 1 + k, row);
             ng.insert(top + 1 + k, ps);
         }
@@ -432,13 +443,30 @@ fn split(
                 };
                 paras.push(if p.is_empty() { empty(row, ci) } else { p });
             }
+            added.extend((1..columns).map(|k| (row, ci + k)));
             nt.rows[row]
                 .cells
                 .splice(ci..ci + 1, (0..columns).map(|k| piece(k, vm)));
             ng[row].splice(ci..ci + 1, paras);
         }
     }
-    Ok((nt, ng, (top, ci_top)))
+    Ok(Split {
+        table: nt,
+        grid: ng,
+        focus: (top, ci_top),
+        added,
+        added_rows,
+    })
+}
+
+/// What [`split`] made: the table and its text, the first new cell, and
+/// the cells (row, cell) and rows it added.
+struct Split {
+    table: Table,
+    grid: Grid,
+    focus: At,
+    added: Vec<At>,
+    added_rows: Vec<usize>,
 }
 
 impl Document {
@@ -483,8 +511,7 @@ impl Document {
             return Err(SELECT_CELLS);
         }
         let (range, grid) = self.grid(id);
-        let down_only = runs.iter().all(|r| r.1 == 1);
-        let (nt, ng, focus, untracked) = if self.track && down_only {
+        let (nt, ng, focus, untracked) = if self.track {
             let (nt, ng) = self.tracked_merge(&t, grid, id, range.start, rect, &runs);
             (nt, ng, (rect.r0, runs[0].0), false)
         } else {
@@ -526,8 +553,37 @@ impl Document {
         if rows == 1 && columns == 1 && a == b {
             return Ok((sel, false));
         }
-        let (nt, ng, focus) = split(&t, &grid, id, self.content_width(), at, rows, columns)?;
-        Ok((self.commit_table(id, range, nt, ng, focus, sel), self.track))
+        // Tracked as the cells and rows it adds, unless cells were merged
+        // first (that goes in untracked, as Word's).
+        let tracked = self.track && a == b;
+        let mut sp = split(
+            &t,
+            &grid,
+            id,
+            self.content_width(),
+            at,
+            rows,
+            columns,
+            tracked,
+        )?;
+        if tracked {
+            let el = |kind, id| self.row_rev_el(kind, id);
+            let mut id_now = self.max_rev_id();
+            for &r in &sp.added_rows {
+                id_now += 1;
+                crate::track_table::set_row_rev(
+                    &mut sp.table.rows[r],
+                    &el(RevKind::Insert, id_now),
+                );
+            }
+            let old = self.tables[&id].clone();
+            self.track_inserted_cells_in(&old, &mut sp.table, &sp.added, &sp.added_rows, id_now);
+        }
+        let untracked = self.track && !tracked;
+        Ok((
+            self.commit_table(id, range, sp.table, sp.grid, sp.focus, sel),
+            untracked,
+        ))
     }
 
     /// Put table `id` (paragraphs `range`) back as `t` with `grid`'s text:
@@ -581,6 +637,9 @@ impl Document {
         let date = now_utc();
         let author = xml::escape(&self.author);
         for (i, &(k, _)) in runs.iter().enumerate() {
+            if runs.len() < 2 {
+                break;
+            }
             let r = rect.r0 + i;
             let cell = &t.rows[r].cells[k];
             let now = if i == 0 {
@@ -624,13 +683,43 @@ impl Document {
             c.tc_pr = Some(x.into());
             c.refresh();
         }
-        // The text below moves up: struck there, inserted in the top cell.
+        // Across columns: the row's cells marked merged (`w:hMerge`), the
+        // properties before recorded (`w:tcPrChange`).
+        let tag = |id: u64| format!("w:id=\"{id}\" w:author=\"{author}\" w:date=\"{date}\"");
+        for (i, &(k0, n)) in runs.iter().enumerate() {
+            if n < 2 {
+                continue;
+            }
+            let r = rect.r0 + i;
+            for k in k0..k0 + n {
+                let old = t.rows[r].cells[k].tc_pr.as_deref();
+                let c = &mut nt.rows[r].cells[k];
+                let x = c.tc_pr.as_deref().unwrap_or("<w:tcPr></w:tcPr>");
+                let state = if k == k0 {
+                    "<w:hMerge w:val=\"restart\"/>"
+                } else {
+                    "<w:hMerge/>"
+                };
+                let x = set_tc_child(x, "hMerge", Some(state.into()));
+                ids += 1;
+                let x = crate::track_table::record_prop(old, &x, "tcPr", "tcPrChange", &tag(ids));
+                c.tc_pr = Some(x.into());
+                c.refresh();
+            }
+        }
+        // The other cells' text moves to the first: struck there, inserted
+        // at the end of the first cell.
         let ins = {
             ids += 1;
             self.new_rev(RevKind::Insert, ids)
         };
         let mut copies: Vec<Paragraph> = Vec::new();
-        for (i, &(k, _)) in runs.iter().enumerate().skip(1) {
+        let others = runs.iter().enumerate().flat_map(|(i, &(k0, n))| {
+            (k0..k0 + n)
+                .filter(move |&k| i > 0 || k > k0)
+                .map(move |k| (i, k))
+        });
+        for (i, k) in others {
             let r = rect.r0 + i;
             let Some((a, b)) =
                 crate::track_table::cell_paras(&self.paragraphs[first..], id, r as u32, k as u32)

@@ -649,6 +649,69 @@ pub fn fill(c: Rgba) -> Fill {
     }
 }
 
+/// A gradient fill (page px) as a PDF shading.
+fn gradient_fill(g: &slides_scene::Paint) -> Fill {
+    use krilla::paint::{LinearGradient, RadialGradient, SpreadMethod, Stop};
+    let stops = |s: &[slides_scene::Stop]| -> Vec<Stop> {
+        s.iter()
+            .map(|s| {
+                let [r, g, b, a] = s.color.0;
+                Stop {
+                    offset: NormalizedF32::new(s.offset.clamp(0.0, 1.0))
+                        .unwrap_or(NormalizedF32::ZERO),
+                    color: rgb::Color::new(r, g, b).into(),
+                    opacity: NormalizedF32::new(a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
+                }
+            })
+            .collect()
+    };
+    match g {
+        slides_scene::Paint::Solid(c) => fill(*c),
+        slides_scene::Paint::Linear { from, to, stops: s } => Fill {
+            paint: LinearGradient {
+                x1: from.x * TO_PT,
+                y1: from.y * TO_PT,
+                x2: to.x * TO_PT,
+                y2: to.y * TO_PT,
+                transform: Transform::identity(),
+                spread_method: SpreadMethod::Pad,
+                stops: stops(s),
+                anti_alias: true,
+            }
+            .into(),
+            opacity: NormalizedF32::ONE,
+            rule: Default::default(),
+        },
+        slides_scene::Paint::Radial {
+            center,
+            rx,
+            ry,
+            stops: s,
+        } => {
+            let (cx, cy, rx) = (center.x * TO_PT, center.y * TO_PT, (rx * TO_PT).max(1e-3));
+            // A circle of radius rx, squeezed to ry vertically.
+            let k = ry * TO_PT / rx;
+            Fill {
+                paint: RadialGradient {
+                    fx: cx,
+                    fy: cy,
+                    fr: 0.0,
+                    cx,
+                    cy,
+                    cr: rx,
+                    transform: Transform::from_row(1.0, 0.0, 0.0, k, 0.0, cy * (1.0 - k)),
+                    spread_method: SpreadMethod::Pad,
+                    stops: stops(s),
+                    anti_alias: true,
+                }
+                .into(),
+                opacity: NormalizedF32::ONE,
+                rule: Default::default(),
+            }
+        }
+    }
+}
+
 fn fill_rect(surface: &mut Surface, [x, y, w, h]: [f32; 4], color: Rgba) {
     let Some(rect) = Rect::from_xywh(x * TO_PT, y * TO_PT, w * TO_PT, h * TO_PT) else {
         return;
@@ -778,7 +841,10 @@ fn draw_float(surface: &mut Surface, f: &FloatScene, images: &mut Images, fonts:
         let Some(path) = krilla_path(&p.segs) else {
             continue;
         };
-        surface.set_fill(p.fill.map(fill));
+        surface.set_fill(match &p.gradient {
+            Some(g) => Some(gradient_fill(g)),
+            None => p.fill.map(fill),
+        });
         surface.set_stroke(p.stroke.as_ref().map(|(c, w, dash)| {
             let [r, g, b, a] = c.0;
             Stroke {

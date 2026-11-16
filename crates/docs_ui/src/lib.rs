@@ -1026,8 +1026,14 @@ impl DocsView {
 
     /// Change the structure of the table at the caret.
     pub fn table_edit_doc(&mut self, edit: TableEdit, window: &mut Window, cx: &mut Context<Self>) {
-        match self.doc.edit_table(self.sel, edit) {
-            Ok(sel) => self.edited(sel, window, cx),
+        match self.doc.edit_table_tracked(self.sel, edit) {
+            Ok((sel, untracked)) => {
+                self.edited(sel, window, cx);
+                if untracked {
+                    self.status = t(table_menu::NOT_TRACKED).into();
+                    cx.notify();
+                }
+            }
             Err(msg) => {
                 const KNOWN: &str = tk("The caret isn't in a table");
                 self.status = if msg == KNOWN {
@@ -1608,6 +1614,11 @@ impl DocsView {
         window.focus(&self.focus, cx);
         self.table_picker = None;
         self.spell.typing = false;
+        // Objects in the header or footer being edited are selected first
+        // (they may reach into the body).
+        if self.editing_hf() && self.float_mouse_down(ev, window, cx) {
+            return;
+        }
         let inside = match self.part_mouse_down(ev, window, cx) {
             Some(true) => return,
             Some(false) => true,
