@@ -273,6 +273,10 @@ impl AccountsPanel {
                         this.status = Status::Busy(t("Waiting for you to enter the code…").into());
                         this.device_code = Some((uri, code));
                     }
+                    SsoStep::Progress(text) => {
+                        this.device_code = None;
+                        this.status = Status::Busy(text);
+                    }
                 }
                 cx.notify();
             },

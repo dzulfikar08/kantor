@@ -9,11 +9,16 @@
 //! only by the user (0600). [`Vault::save`] reports which one was used so
 //! the UI can warn.
 //!
-//! These calls can block (D-Bus, an unlock prompt): run them off the UI thread.
+//! These calls can block (D-Bus, an unlock prompt): run them off the UI
+//! thread. Each waits a bounded time ([`CONNECT_WAIT`], [`CALL_WAIT`]); a
+//! keychain that doesn't answer in time is left alone for the rest of the
+//! run and the fallback file used instead.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 /// A set of secrets under one keychain service name, with its own 0600
 /// fallback file.
@@ -61,10 +66,13 @@ impl Vault {
     /// The stored secret for `name`.
     pub fn load(&self, name: &str) -> Option<String> {
         if keychain_ready() {
-            match keyring_core::Entry::new(self.service, name).and_then(|e| e.get_password()) {
-                Ok(k) => return Some(k),
-                Err(keyring_core::Error::NoEntry) => {}
-                Err(e) => log::warn!("keychain read failed: {e}"),
+            let (service, n) = (self.service, name.to_owned());
+            match bounded("read", CALL_WAIT, move || {
+                keyring_core::Entry::new(service, &n).and_then(|e| e.get_password())
+            }) {
+                Some(Ok(k)) => return Some(k),
+                Some(Err(keyring_core::Error::NoEntry)) | None => {}
+                Some(Err(e)) => log::warn!("keychain read failed: {e}"),
             }
         }
         self.fallback_path().and_then(|p| file_load(&p, name))
@@ -78,16 +86,19 @@ impl Vault {
             return Ok(KeyLocation::Keychain);
         }
         if keychain_ready() {
-            match keyring_core::Entry::new(self.service, name).and_then(|e| e.set_password(secret))
-            {
-                Ok(()) => {
+            let (service, n, s) = (self.service, name.to_owned(), secret.to_owned());
+            match bounded("write", CALL_WAIT, move || {
+                keyring_core::Entry::new(service, &n).and_then(|e| e.set_password(&s))
+            }) {
+                Some(Ok(())) => {
                     // Don't leave an older copy in the fallback file.
                     if let Some(p) = self.fallback_path() {
                         let _ = file_store(&p, name, None);
                     }
                     return Ok(KeyLocation::Keychain);
                 }
-                Err(e) => log::warn!("keychain unavailable, using the fallback file: {e}"),
+                Some(Err(e)) => log::warn!("keychain unavailable, using the fallback file: {e}"),
+                None => {}
             }
         }
         let path = self.fallback_path().ok_or("no home directory")?;
@@ -96,10 +107,11 @@ impl Vault {
     }
 
     pub fn delete(&self, name: &str) {
-        if keychain_ready()
-            && let Ok(e) = keyring_core::Entry::new(self.service, name)
-        {
-            let _ = e.delete_credential();
+        if keychain_ready() {
+            let (service, n) = (self.service, name.to_owned());
+            let _ = bounded("delete", CALL_WAIT, move || {
+                keyring_core::Entry::new(service, &n).and_then(|e| e.delete_credential())
+            });
         }
         if let Some(p) = self.fallback_path() {
             let _ = file_store(&p, name, None);
@@ -113,19 +125,76 @@ impl Vault {
     }
 }
 
-/// Install the platform's credential store once; `false` if there is none.
+/// How long connecting to the keychain may take. A Secret Service that
+/// D-Bus is asked to start but that never comes up (measured 2026-11-16: a
+/// second gnome-keyring-daemon in a session whose daemon belongs to another
+/// bus) makes the call wait for D-Bus's 25 s activation timeout; after this
+/// wait the fallback file is used for the rest of the run.
+const CONNECT_WAIT: Duration = Duration::from_secs(5);
+
+/// How long one read, write or delete may take. It can wait for the user:
+/// a locked keyring asks for its password, and the first secret on a system
+/// without a keyring asks for a new keyring's password. After this wait the
+/// fallback file is used for the rest of the run.
+const CALL_WAIT: Duration = Duration::from_secs(60);
+
+/// A keychain call took longer than its wait: don't use the keychain again
+/// this run (the next call would wait just as long, or queue behind it).
+static GAVE_UP: AtomicBool = AtomicBool::new(false);
+
+/// Run a keychain call on a thread of its own and wait at most `wait` for
+/// it (`None`: it took too long and is left running). Logs its time
+/// (`RUST_LOG=kantor_ai=debug`).
+fn bounded<T: Send + 'static>(
+    what: &str,
+    wait: Duration,
+    call: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    if GAVE_UP.load(Ordering::Relaxed) {
+        return None;
+    }
+    let start = Instant::now();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("kantor-keychain".into())
+        .spawn(move || {
+            let _ = tx.send(call());
+        });
+    if spawned.is_err() {
+        return None;
+    }
+    match rx.recv_timeout(wait) {
+        Ok(r) => {
+            log::debug!("keychain {what}: {:.2} s", start.elapsed().as_secs_f64());
+            Some(r)
+        }
+        Err(_) => {
+            GAVE_UP.store(true, Ordering::Relaxed);
+            log::warn!(
+                "the keychain didn't answer a {what} within {} s: using the fallback file for the rest of this run",
+                wait.as_secs()
+            );
+            None
+        }
+    }
+}
+
+/// Install the platform's credential store once; `false` if there is none
+/// or it doesn't answer (see [`CONNECT_WAIT`]).
 fn keychain_ready() -> bool {
     static READY: OnceLock<bool> = OnceLock::new();
-    *READY.get_or_init(|| match platform_store() {
-        Ok(store) => {
+    let ready = *READY.get_or_init(|| match bounded("connect", CONNECT_WAIT, platform_store) {
+        Some(Ok(store)) => {
             keyring_core::set_default_store(store);
             true
         }
-        Err(e) => {
+        Some(Err(e)) => {
             log::warn!("no OS keychain: {e}");
             false
         }
-    })
+        None => false,
+    });
+    ready && !GAVE_UP.load(Ordering::Relaxed)
 }
 
 #[cfg(target_os = "linux")]
@@ -213,6 +282,20 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_keychain_that_does_not_answer_is_given_up_on() {
+        assert_eq!(bounded("test", Duration::from_secs(5), || 7), Some(7));
+        let slow = bounded("test", Duration::from_millis(50), || {
+            std::thread::sleep(Duration::from_millis(500));
+        });
+        assert_eq!(slow, None);
+        // Later calls don't wait again this run.
+        let start = Instant::now();
+        assert_eq!(bounded("test", Duration::from_secs(5), || 7), None);
+        assert!(start.elapsed() < Duration::from_secs(1));
+        GAVE_UP.store(false, Ordering::Relaxed);
+    }
 
     #[test]
     fn fallback_file_round_trip_and_permissions() {

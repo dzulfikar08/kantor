@@ -34,6 +34,11 @@ slides_engine.workspace = true
 slides_pdf.workspace = true
 slides_ui.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# SIGTERM/SIGINT/SIGHUP (logout, `kill`, Ctrl+C) quit like the Quit command:
+# cloud locks are released (main.rs).
+signal-hook = { version = "0.3", default-features = false, features = ["iterator"] }
+
 [target.'cfg(windows)'.dependencies]
 # The MCP endpoint's token (ipc.rs); already linked through rustls.
 ring.workspace = true

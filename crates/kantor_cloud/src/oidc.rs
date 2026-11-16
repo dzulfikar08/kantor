@@ -174,7 +174,12 @@ pub fn discover_issuer(issuer: &str) -> Result<Endpoints, Error> {
     } else {
         format!("{issuer}/.well-known/openid-configuration")
     };
+    let start = Instant::now();
     let (status, json) = get_json(&url)?;
+    log::debug!(
+        "oidc discovery {url}: HTTP {status} after {:.2} s",
+        start.elapsed().as_secs_f64()
+    );
     if status != 200 {
         return Err(if status == 404 {
             Error::NotFound
@@ -513,19 +518,104 @@ fn refresh_reply(status: u16, json: serde_json::Value) -> Result<Tokens, Error> 
     tokens_from(status, json)
 }
 
-/// Tell the provider a refresh token is no longer wanted (account removed).
-/// Best effort.
-pub fn revoke(ep: &Endpoints, client_id: &str, refresh_token: &str) {
-    if let Some(url) = &ep.revocation_endpoint {
-        let _ = post_form(
-            url,
-            &[
-                ("token", refresh_token),
-                ("token_type_hint", "refresh_token"),
-                ("client_id", client_id),
-            ],
-        );
+/// Tell the provider a refresh token is no longer wanted (RFC 7009).
+/// `NotFound`: the provider has no revocation endpoint.
+///
+/// Keycloak ends the session the token belongs to: an offline token's
+/// offline session, or a session token's browser session (the SSO login
+/// itself). See [`retire_replaced`] before revoking a token that a new
+/// sign-in replaces.
+pub fn revoke(ep: &Endpoints, client_id: &str, refresh_token: &str) -> Result<(), Error> {
+    let Some(url) = &ep.revocation_endpoint else {
+        return Err(Error::NotFound);
+    };
+    let start = Instant::now();
+    let (status, json) = post_form(
+        url,
+        &[
+            ("token", refresh_token),
+            ("token_type_hint", "refresh_token"),
+            ("client_id", client_id),
+        ],
+    )?;
+    log::debug!(
+        "oidc revoke: HTTP {status} after {:.2} s",
+        start.elapsed().as_secs_f64()
+    );
+    // RFC 7009: 200 also for a token that was no longer valid.
+    if status == 200 {
+        Ok(())
+    } else {
+        Err(token_error(status, &json))
     }
+}
+
+/// The provider session (`sid`) a token belongs to, when the token is a
+/// JWT that says so: Keycloak's id, access, refresh and offline tokens do.
+pub fn session_id(token: &str) -> Option<String> {
+    jwt_claims(token)?["sid"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
+/// The session a fresh sign-in's tokens belong to.
+fn tokens_session(t: &Tokens) -> Option<String> {
+    t.id_token
+        .as_deref()
+        .and_then(session_id)
+        .or_else(|| t.refresh_token.as_deref().and_then(session_id))
+        .or_else(|| session_id(&t.access_token))
+}
+
+/// What became of the refresh token a new sign-in replaced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Replaced {
+    /// Revoked: its own session ended at the provider.
+    Revoked,
+    /// Kept: it belongs to the same provider session as the new sign-in
+    /// (the browser was still signed in), so revoking it would end the new
+    /// sign-in too. There is one session either way.
+    SameSession,
+    /// Kept: the tokens don't say which session they belong to, so
+    /// revoking could end the new sign-in.
+    Unknown,
+    /// The provider refused the revocation or couldn't be reached (the old
+    /// session then ends when it times out).
+    Failed(String),
+}
+
+/// After "Sign in again" (or adding an account that was already there),
+/// with the new sign-in checked and stored: revoke the `old` refresh token
+/// when it belongs to another provider session than the `new` sign-in, so
+/// the old sign-in's session doesn't stay usable.
+///
+/// Measured on Keycloak 26.8 (2026-11-16): revoking a token ends only the
+/// session it belongs to. A sign-in in a browser that is still signed in
+/// reuses that browser session (same `sid`) for session tokens; revoking
+/// the old token then ends the new sign-in as well, hence the `sid`
+/// comparison. Offline sign-ins get a session of their own each time.
+/// Revoking *before* the new sign-in would sign the browser out (the
+/// password is asked again) and lose the old token if the user cancels.
+pub fn retire_replaced(ep: &Endpoints, client_id: &str, old: &str, new: &Tokens) -> Replaced {
+    if new.refresh_token.as_deref() == Some(old) {
+        return Replaced::SameSession;
+    }
+    let (old_sid, new_sid) = (session_id(old), tokens_session(new));
+    let r = match (&old_sid, &new_sid) {
+        (Some(o), Some(n)) if o == n => Replaced::SameSession,
+        (Some(_), Some(_)) => match revoke(ep, client_id, old) {
+            Ok(()) => Replaced::Revoked,
+            Err(e) => Replaced::Failed(e.to_string()),
+        },
+        _ => Replaced::Unknown,
+    };
+    log::info!(
+        "replaced sign-in: {r:?} (old session known: {}, new: {})",
+        old_sid.is_some(),
+        new_sid.is_some()
+    );
+    r
 }
 
 /// A device sign-in in progress (RFC 8628): show `user_code` and
@@ -687,6 +777,7 @@ pub fn whoami(origin: &str, access_token: &str) -> Result<(String, Option<String
         "{}/ocs/v2.php/cloud/user?format=json",
         origin.trim_end_matches('/')
     );
+    let start = Instant::now();
     let mut resp = agent()
         .get(&url)
         .header("authorization", &format!("Bearer {access_token}"))
@@ -696,6 +787,12 @@ pub fn whoami(origin: &str, access_token: &str) -> Result<(String, Option<String
         .map_err(|e| Error::Network(e.to_string()))?;
     let status = resp.status().as_u16();
     let text = resp.body_mut().read_to_string().unwrap_or_default();
+    // A drive that creates the account on its first bearer request
+    // (Nextcloud user_oidc copying the skeleton files) takes seconds here.
+    log::debug!(
+        "oidc whoami: HTTP {status} after {:.2} s",
+        start.elapsed().as_secs_f64()
+    );
     match status {
         200 => {}
         401 | 403 => return Err(Error::Auth(status)),
@@ -848,7 +945,14 @@ impl BearerSource for TokenSource {
             return Err(Error::Auth(401));
         }
         let endpoints = self.endpoints()?;
-        match refresh(&endpoints, &self.client_id, &h.refresh) {
+        let start = Instant::now();
+        let refreshed = refresh(&endpoints, &self.client_id, &h.refresh);
+        log::debug!(
+            "oidc token refresh: {} after {:.2} s",
+            if refreshed.is_ok() { "ok" } else { "failed" },
+            start.elapsed().as_secs_f64()
+        );
+        match refreshed {
             Ok(t) => {
                 if let Some(r) = t.refresh_token.as_ref().filter(|r| **r != h.refresh) {
                     h.refresh = r.clone();
@@ -966,7 +1070,9 @@ pub fn sign_in_browser(
     }
 }
 
-fn browser_once(
+/// One browser sign-in asking for `scope` ([`SCOPE`] or [`SCOPE_ONLINE`]),
+/// without the fallback of [`sign_in_browser`].
+pub fn browser_once(
     endpoints: &Endpoints,
     client_id: &str,
     open: &dyn Fn(&str),
@@ -1117,6 +1223,53 @@ mod tests {
         let c = jwt_claims(&format!("h.{payload}.s")).unwrap();
         assert_eq!(c["preferred_username"], "budi");
         assert!(jwt_claims("nope").is_none());
+    }
+
+    fn jwt_with_sid(sid: &str) -> String {
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(format!(r#"{{"typ":"Offline","sid":"{sid}"}}"#));
+        format!("h.{payload}.s")
+    }
+
+    #[test]
+    fn a_replaced_token_of_the_same_session_is_never_revoked() {
+        // No revocation endpoint: any attempt to revoke shows as Failed.
+        let ep = Endpoints {
+            issuer: "https://sso.example/realms/pemda".into(),
+            authorization_endpoint: "https://sso.example/a".into(),
+            token_endpoint: "https://sso.example/t".into(),
+            device_authorization_endpoint: None,
+            revocation_endpoint: None,
+        };
+        assert_eq!(session_id(&jwt_with_sid("s1")).as_deref(), Some("s1"));
+        assert_eq!(session_id("opaque-token"), None);
+        let new = |refresh: &str, id: Option<&str>| Tokens {
+            access_token: "a".into(),
+            refresh_token: Some(refresh.into()),
+            id_token: id.map(jwt_with_sid),
+            ..Default::default()
+        };
+        let old = jwt_with_sid("s1");
+        // The browser was still signed in: same session, kept.
+        assert_eq!(
+            retire_replaced(&ep, "kantor", &old, &new(&jwt_with_sid("s1"), Some("s1"))),
+            Replaced::SameSession
+        );
+        // The id token says the session even when the refresh token is opaque.
+        assert_eq!(
+            retire_replaced(&ep, "kantor", &old, &new("opaque", Some("s1"))),
+            Replaced::SameSession
+        );
+        // Can't tell: kept.
+        assert_eq!(
+            retire_replaced(&ep, "kantor", "opaque-old", &new("opaque", None)),
+            Replaced::Unknown
+        );
+        // Another session: revoked (here: tried, no endpoint).
+        assert!(matches!(
+            retire_replaced(&ep, "kantor", &old, &new(&jwt_with_sid("s2"), Some("s2"))),
+            Replaced::Failed(_)
+        ));
     }
 
     #[test]

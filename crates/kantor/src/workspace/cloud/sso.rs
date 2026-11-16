@@ -25,6 +25,8 @@ pub enum SsoStep {
         code: String,
         open: Option<String>,
     },
+    /// What the sign-in is doing now (after the browser part).
+    Progress(String),
 }
 
 /// A sign-in's request: the drive, and what the user typed.
@@ -129,7 +131,11 @@ pub fn sign_in(
         t("The sign-in server gave no refresh token, so Kantor can't stay signed in. Ask your administrator to allow offline access for Kantor.")
             .to_owned()
     })?;
-    // Who the drive says this is, and its WebDAV root.
+    // Who the drive says this is, and its WebDAV root. A drive that makes
+    // the account on this first request can take a while.
+    step(SsoStep::Progress(
+        t("Signed in. Opening your drive… The first time can take a minute.").into(),
+    ));
     let (user, display) = oidc::whoami(&origin, &tokens.access_token).map_err(|e| describe(&e))?;
     let claims = tokens.id_token.as_deref().and_then(oidc::jwt_claims);
     let login = claims
@@ -160,9 +166,12 @@ pub fn sign_in(
             dav_url: String::new(),
         },
     };
-    // Check the drive takes the token for files too, before keeping it.
+    // The sign-in this one replaces (Sign in again, or the same account
+    // added again), read before its token source is swapped out.
     let id = account.id.clone();
-    let source = TokenSource::new(endpoints, client_id, refresh.clone(), {
+    let previous = previous_sign_in(&id, &endpoints.issuer);
+    // Check the drive takes the token for files too, before keeping it.
+    let source = TokenSource::new(endpoints.clone(), client_id, refresh.clone(), {
         let id = id.clone();
         move |r| {
             let _ = CLOUD.save(&id, r);
@@ -172,8 +181,34 @@ pub fn sign_in(
     let source = oidc::replace_source(&id, source);
     let client = Client::new(&account.dav_root(), Auth::Source(source));
     client.list("").map_err(|e| describe(&e))?;
+    step(SsoStep::Progress(
+        t("Saving the sign-in in the system keychain… If your computer asks for the keyring password, enter it.").into(),
+    ));
     let location = CLOUD.save(&id, &refresh)?;
+    // Only now, with the new sign-in working and stored: end the old one's
+    // session, unless it is the new one's too (see `retire_replaced`).
+    if let Some((old_client, old)) = previous
+        && old != refresh
+    {
+        oidc::retire_replaced(&endpoints, &old_client, &old, &tokens);
+    }
     Ok((account, location))
+}
+
+/// The client id and refresh token of the account `id`'s current single
+/// sign-on at `issuer`, if it has one (not an app password, not another
+/// provider's token).
+fn previous_sign_in(id: &str, issuer: &str) -> Option<(String, String)> {
+    let same = |a: &str| a.trim_end_matches('/') == issuer.trim_end_matches('/');
+    let old = kantor_core::settings::Settings::load()
+        .cloud
+        .accounts
+        .into_iter()
+        .find(|a| a.id == id && a.is_sso() && same(&a.issuer))?;
+    let refresh = oidc::source_of(id)
+        .map(|s| s.refresh_token())
+        .or_else(|| CLOUD.load(id))?;
+    Some((client_id(&old), refresh))
 }
 
 /// A client for a single sign-on account (no network: tokens are fetched
@@ -237,11 +272,11 @@ pub fn sign_out(account: &CloudAccount) {
     if let Some(source) = oidc::source_of(&account.id)
         && let Ok(ep) = source.endpoints()
     {
-        oidc::revoke(&ep, source.client_id(), &source.refresh_token());
+        let _ = oidc::revoke(&ep, source.client_id(), &source.refresh_token());
     } else if let Some(refresh) = CLOUD.load(&account.id)
         && let Ok(ep) = oidc::endpoints_cached(&account.issuer)
     {
-        oidc::revoke(&ep, &client_id(account), &refresh);
+        let _ = oidc::revoke(&ep, &client_id(account), &refresh);
     }
     oidc::forget_source(&account.id);
 }

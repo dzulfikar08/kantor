@@ -347,10 +347,26 @@ impl Client {
             .body(())
             .map_err(|e| Error::Protocol(format!("request: {e}")))?
             .into_parts();
-        match wait {
+        let start = std::time::Instant::now();
+        let what = log::log_enabled!(log::Level::Debug)
+            .then(|| format!("{} {}", parts.method, parts.uri.path()));
+        let r = match wait {
             Some(wait) => self.exec_watched(parts, body, wait, progress),
             None => self.exec_parts(&parts, body, None, progress),
+        };
+        // Every request's time (with any token refresh it needed), to find
+        // pauses like a first sign-in's: RUST_LOG=kantor_cloud=debug.
+        if let Some(what) = what {
+            let outcome = match &r {
+                Ok(reply) => format!("HTTP {}", reply.status),
+                Err(e) => format!("error: {e}"),
+            };
+            log::debug!(
+                "dav {what}: {outcome} after {:.2} s",
+                start.elapsed().as_secs_f64()
+            );
         }
+        r
     }
 
     /// Run an upload on its own thread and tell a dead link from a slow

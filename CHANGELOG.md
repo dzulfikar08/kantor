@@ -9,6 +9,32 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Fixed
+
+- Cloud storage: quitting Kantor releases the locks on every cloud file it has open, however it
+  quits: Quit (Ctrl+Q), closing the window, the system quitting it (logout or shutdown; macOS Dock
+  Quit, Windows end of session) and, on Linux and macOS, `SIGTERM`, `SIGINT` (Ctrl+C in a
+  terminal) and `SIGHUP`. Before, a signal ended Kantor with the locks still held, so others saw
+  the file locked until the lock timed out. Releases run all at once and wait 4 seconds at most, so
+  a dead network never holds up quitting; a lock that can't be released is taken back or released
+  at the next start, as after a crash. After a signal, unsaved documents keep their recovery
+  copies and unsynced cloud saves stay in the working copy (as *Keep Local Copy*); a second signal
+  ends Kantor at once.
+- Cloud storage: *Sign in again* (or adding a single sign-on account that's already there) now
+  ends the replaced sign-in's session at the identity provider, so its refresh token no longer
+  works. When the browser was still signed in and the new sign-in shares the old one's session,
+  the old token is left alone (revoking it would end the new sign-in too); Keycloak then shows one
+  Kantor session either way. OpenCloud's built-in sign-in server can't revoke tokens.
+- Cloud storage: a system keychain that doesn't answer no longer stalls signing in or opening
+  files. Connecting to it waits 5 seconds at most (a Secret Service that D-Bus can't start made
+  each attempt wait 25 seconds) and each read or write 60 seconds (time to answer a keyring
+  password prompt); after that the sign-in or password goes to `cloud-keys.toml` for the rest of
+  the run. Signing in now says what it's doing after the browser part ("Opening your drive… The
+  first time can take a minute", which is Nextcloud setting up a new account; "Saving the sign-in
+  in the system keychain…") instead of still showing "Waiting for you to sign in in the browser".
+  `RUST_LOG=kantor_cloud=debug,kantor_ai=debug` logs how long each WebDAV request, token refresh,
+  sign-in step and keychain call took.
+
 ## [0.9.0] - 2026-11-16
 
 Sheets formulas reach the internet: `IMAGE` shows pictures in cells and `WEBSERVICE` fetches data,

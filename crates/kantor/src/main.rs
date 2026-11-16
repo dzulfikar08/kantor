@@ -146,13 +146,23 @@ fn main() {
                 }
             };
             start_agent_endpoint(window, workspace.clone(), cx);
-            // A downloaded update goes in place when Kantor quits.
+            // A downloaded update goes in place when Kantor quits. Cloud
+            // locks are released by every way of quitting: the Quit command
+            // and closing the window do it before this (then there's nothing
+            // left here), the system's quit (macOS Dock or logout, Windows
+            // shutdown or logout) gets here directly. This runs before
+            // GPUI's short shutdown timeout starts.
             let updating = workspace.clone();
             cx.on_app_quit(move |cx| {
-                updating.update(cx, |ws, _| ws.apply_update_on_quit());
+                updating.update(cx, |ws, _| {
+                    ws.apply_update_on_quit();
+                    ws.cloud_quit();
+                });
                 async {}
             })
             .detach();
+            #[cfg(unix)]
+            quit_on_signals(window, workspace.clone(), cx);
             // Ctrl+Q while focus is outside the workspace (a dialog): still
             // goes through the unsaved-changes check.
             cx.on_action(move |_: &actions::Quit, cx| {
@@ -164,6 +174,65 @@ fn main() {
             cx.activate(true);
         });
 }
+
+/// SIGTERM (logout, shutdown, `kill`), SIGINT (Ctrl+C in a terminal) and
+/// SIGHUP (the terminal closed) quit Kantor as the Quit command would,
+/// minus the questions nobody is there to answer: unsaved documents keep
+/// their recovery copies (offered at the next start), cloud documents keep
+/// their working copies, and cloud locks are released. A second signal, or
+/// [`SIGNAL_QUIT_LIMIT`] without having quit, ends the process at once.
+#[cfg(unix)]
+fn quit_on_signals(window: AnyWindowHandle, workspace: Entity<Workspace>, cx: &mut App) {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+
+    let mut signals = match signal_hook::iterator::Signals::new([SIGTERM, SIGINT, SIGHUP]) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("can't handle quit signals: {e}");
+            return;
+        }
+    };
+    let (tx, rx) = async_channel::bounded::<i32>(1);
+    let _ = std::thread::Builder::new()
+        .name("kantor-signals".into())
+        .spawn(move || {
+            let mut first = true;
+            for sig in signals.forever() {
+                if !first {
+                    std::process::exit(128 + sig);
+                }
+                first = false;
+                log::info!("signal {sig}: quitting");
+                let _ = tx.send_blocking(sig);
+                std::thread::spawn(move || {
+                    std::thread::sleep(SIGNAL_QUIT_LIMIT);
+                    log::warn!(
+                        "still running {} s after signal {sig}: exiting",
+                        SIGNAL_QUIT_LIMIT.as_secs()
+                    );
+                    std::process::exit(128 + sig);
+                });
+            }
+        });
+    cx.spawn(async move |cx| {
+        if rx.recv().await.is_ok() {
+            let quit = window.update(cx, |_, _, cx| {
+                workspace.update(cx, |ws, cx| ws.quit_unattended(cx))
+            });
+            if quit.is_err() {
+                // The window is gone already: quit anyway (the app-quit hook
+                // releases the locks).
+                cx.update(|cx| cx.quit());
+            }
+        }
+    })
+    .detach();
+}
+
+/// How long quitting after a signal may take before the process just ends
+/// (lock release waits at most a few seconds of it).
+#[cfg(unix)]
+const SIGNAL_QUIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Listen for `kantor mcp` (see [`ipc`]) and run its tool calls on the main
 /// thread against `workspace`. The socket is removed when Kantor quits.

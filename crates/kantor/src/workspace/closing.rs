@@ -156,6 +156,21 @@ impl Workspace {
         false
     }
 
+    /// Quit without asking (a quit signal: logout, shutdown, `kill`):
+    /// documents with unsaved changes keep their recovery copies, offered at
+    /// the next start; cloud documents whose saves haven't reached the
+    /// server keep them in the working copy, synced the next time they're
+    /// opened (as "Keep Local Copy"). Cloud locks are released.
+    #[cfg(unix)]
+    pub fn quit_unattended(&mut self, cx: &mut Context<Self>) {
+        self.persist(cx);
+        if self.dirty_views(Closing::Quit, cx).is_empty() {
+            self.recovery_quit();
+        }
+        self.cloud_quit();
+        cx.quit();
+    }
+
     fn finish_close(&mut self, closing: Closing, window: &mut Window, cx: &mut Context<Self>) {
         // Cloud documents whose saves haven't reached the server: ask first.
         if !std::mem::take(&mut self.cloud.close_ok) {

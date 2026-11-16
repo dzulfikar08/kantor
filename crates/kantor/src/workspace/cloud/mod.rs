@@ -55,6 +55,10 @@ const RETRY_MAX: Duration = Duration::from_secs(300);
 /// Wait before retrying an upload the server was too busy for.
 const RETRY_AFTER: Duration = Duration::from_secs(5);
 
+/// How long quitting waits for its cloud locks to be released, all of them
+/// together (a sign-in's token refresh included).
+const QUIT_UNLOCK_WAIT: Duration = Duration::from_secs(4);
+
 /// What a cloud panel tells the workspace.
 pub enum PanelEvent {
     Close,
@@ -98,6 +102,8 @@ pub(super) struct Cloud {
     started: bool,
     /// The user chose "Keep Local Copy" for the close in progress.
     pub(super) close_ok: bool,
+    /// Lock releases of documents closed this run, still running.
+    unlocking: Vec<std::thread::JoinHandle<()>>,
 }
 
 /// The working copies (`<data dir>/cloud`: unsynced work must not live
@@ -1104,7 +1110,7 @@ impl Workspace {
             return;
         };
         let (account, remote, ops) = (cd.account, cd.sync.entry.remote.clone(), cd.ops);
-        let _ = std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("kantor-cloud-unlock".into())
             .spawn(move || {
                 let _ops = ops.lock().unwrap_or_else(|e| e.into_inner());
@@ -1114,34 +1120,65 @@ impl Workspace {
                     log::warn!("releasing the lock on {remote}: {e}");
                 }
             });
+        // Quitting soon after waits for it too.
+        self.cloud.unlocking.retain(|h| !h.is_finished());
+        if let Ok(h) = spawned {
+            self.cloud.unlocking.push(h);
+        }
     }
 
-    /// Quitting: release every lock, waiting a few seconds at most (what
-    /// can't be released stays in the ledger and is cleaned up next start;
-    /// the server also expires it).
-    pub(super) fn cloud_quit(&mut self) {
-        let mut handles = Vec::new();
+    /// Quitting (any way: Quit, closing the window, a quit signal, the
+    /// system's logout): release every lock, all at once, waiting
+    /// [`QUIT_UNLOCK_WAIT`] at most in all, so a dead network never holds
+    /// up quitting. A lock that can't be released stays in the ledger with
+    /// its token: the next start releases it or, when the file is open
+    /// again, takes it back; the server also expires it. Called more than
+    /// once, the later calls find nothing left to do.
+    pub(crate) fn cloud_quit(&mut self) {
+        let mut handles = std::mem::take(&mut self.cloud.unlocking);
+        let mut n = 0;
         for (_, cd) in self.cloud.docs.drain() {
             let Some(token) = cd.sync.lock_token().cloned() else {
                 continue;
             };
             let (account, remote) = (cd.account, cd.sync.entry.remote.clone());
-            if let Ok(h) = std::thread::Builder::new().spawn(move || {
-                if let Ok(r) = remote_for(&account) {
-                    let _ = session::release(&r, &cache(), &remote, &token);
-                }
-            }) {
+            n += 1;
+            if let Ok(h) = std::thread::Builder::new()
+                .name("kantor-cloud-unlock".into())
+                .spawn(move || {
+                    let start = std::time::Instant::now();
+                    let released = remote_for(&account).and_then(|r| {
+                        session::release(&r, &cache(), &remote, &token).map_err(|e| e.to_string())
+                    });
+                    match released {
+                        Ok(()) => log::debug!(
+                            "quit: released the lock on {remote} in {:.2} s",
+                            start.elapsed().as_secs_f64()
+                        ),
+                        Err(e) => {
+                            log::warn!("quit: the lock on {remote} stays until the next start: {e}")
+                        }
+                    }
+                })
+            {
                 handles.push(h);
             }
         }
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        for h in handles {
-            while !h.is_finished() && std::time::Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            if h.is_finished() {
-                let _ = h.join();
-            }
+        if handles.is_empty() {
+            return;
+        }
+        let deadline = std::time::Instant::now() + QUIT_UNLOCK_WAIT;
+        while handles.iter().any(|h| !h.is_finished()) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let left = handles.iter().filter(|h| !h.is_finished()).count();
+        if left > 0 {
+            log::warn!(
+                "quit: {left} cloud lock(s) not released within {} s; released at the next start",
+                QUIT_UNLOCK_WAIT.as_secs()
+            );
+        } else {
+            log::info!("quit: done with {n} cloud lock(s)");
         }
     }
 
