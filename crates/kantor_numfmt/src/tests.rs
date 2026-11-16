@@ -1347,3 +1347,31 @@ fn colours_fill_and_text_sections() {
     assert_eq!(nf.display_number(f64::NAN, S).text, "#NUM!");
     assert_eq!(NumberFormat::parse("[$-421]dddd").display_number(45886.0, S).text, "Minggu");
 }
+
+/// Cells displayed in Indonesian: the format's `,` and `.` show the locale's separators, as
+/// Excel shows them on an Indonesian system; `TEXT()` stays en-US.
+#[test]
+fn display_locale_separators() {
+    let id = |code: &str, n: f64| NumberFormat::parse(code).display_number_in(n, DateSystem::D1900, DisplayLocale::Indonesian).text;
+    assert_eq!(id("#,##0", 109_600_000.0), "109.600.000");
+    assert_eq!(id("#,##0.00", -1234.5), "-1.234,50");
+    assert_eq!(id("0.0%", 0.125), "12,5%");
+    assert_eq!(id("General", 1234.5), "1234,5");
+    assert_eq!(id("General", 1234.0), "1234");
+    assert_eq!(id("0.00E+00", 12345.0), "1,23E+04");
+    assert_eq!(id("\"Rp\"#,##0", 1_250_000.0), "Rp1.250.000");
+    // Untagged dates take the locale's names; a tag keeps its own.
+    assert_eq!(id("d mmmm yyyy", 45_890.0), "21 Agustus 2025");
+    assert_eq!(id("[$-409]d mmmm yyyy", 45_890.0), "21 August 2025");
+    assert_eq!(id("hh:mm:ss.00", 0.5), "12:00:00,00");
+    // A tag's separators win (a German file keeps German separators).
+    assert_eq!(id("[$-807]#,##0.00", 1234.5), "1\u{2019}234.50");
+    // en-US display and TEXT() are unchanged.
+    let en = |code: &str, n: f64| NumberFormat::parse(code).display_number_in(n, DateSystem::D1900, DisplayLocale::EnUs).text;
+    assert_eq!(en("#,##0", 109_600_000.0), "109,600,000");
+    assert_eq!(en("General", 1234.5), "1234.5");
+    assert_eq!(text_function(&Value::Number(1234.5), "#,##0.00", DateSystem::D1900).as_deref(), Ok("1,234.50"));
+    // Inside `invariant`, displays are en-US whatever the locale.
+    let inv = invariant(|| NumberFormat::parse("#,##0.0").display_number_in(1234.5, DateSystem::D1900, DisplayLocale::Indonesian).text);
+    assert_eq!(inv, "1,234.5");
+}

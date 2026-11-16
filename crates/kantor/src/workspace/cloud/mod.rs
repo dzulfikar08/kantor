@@ -11,6 +11,7 @@ mod accounts;
 mod browser;
 mod conflict;
 pub(crate) mod jobs;
+mod sso;
 mod widgets;
 
 use std::collections::HashMap;
@@ -60,7 +61,7 @@ pub enum PanelEvent {
     AccountsChanged,
     OpenAccounts,
     Open {
-        account: CloudAccount,
+        account: Box<CloudAccount>,
         remote: String,
     },
     Resolve {
@@ -142,6 +143,9 @@ const PRUNE_AFTER: Duration = Duration::from_secs(30 * 24 * 3600);
 /// A client for `account` with its stored app password (worker thread:
 /// the keychain may block).
 pub(crate) fn remote_for(account: &CloudAccount) -> Result<Remote, String> {
+    if account.is_sso() {
+        return sso::remote(account);
+    }
     let password = CLOUD.load(&account.id).ok_or_else(|| {
         tr(
             "No app password is saved for this account. Add it again in Cloud Accounts.",
@@ -218,7 +222,7 @@ impl Workspace {
                         ws.open_cloud_accounts(&CloudAccounts, window, cx);
                     }
                     PanelEvent::Open { account, remote } => {
-                        let (account, remote) = (account.clone(), remote.clone());
+                        let (account, remote) = ((**account).clone(), remote.clone());
                         ws.close_cloud_panel(window, cx);
                         ws.open_remote(account, remote, window, cx);
                     }
@@ -661,6 +665,13 @@ impl Workspace {
                         .to_string(),
                     )
                 });
+                // A single sign-on that has ended: say how to go on.
+                let out = match out {
+                    UploadOutcome::Failed(_) if sso::ended(&account) => {
+                        UploadOutcome::Failed(sso::ended_message(&account))
+                    }
+                    out => out,
+                };
                 if let UploadOutcome::Synced {
                     server,
                     stamp,
@@ -695,6 +706,10 @@ impl Workspace {
                 };
                 let synced = matches!(outcome, UploadOutcome::Synced { .. });
                 let offline = matches!(outcome, UploadOutcome::Offline(_));
+                let signed_out = match &outcome {
+                    UploadOutcome::Failed(m) if sso::ended(&cd.account) => Some(m.clone()),
+                    _ => None,
+                };
                 let action = cd.sync.on_upload(outcome);
                 if offline {
                     cd.retry_at = Some(std::time::Instant::now() + cd.retry_wait);
@@ -712,6 +727,8 @@ impl Workspace {
                         ),
                         cx,
                     );
+                } else if let Some(m) = signed_out {
+                    ws.cloud_notice(m, cx);
                 } else if offline {
                     ws.cloud_notice(
                         tr(

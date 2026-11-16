@@ -105,6 +105,7 @@ use sheets_engine::{CellRange, CellStyle, StyleChange, Tab, Workbook, cell_name,
 use table::{Column, DataTable, TableDelegate, TableEvent, TableState};
 
 mod notes_ui;
+mod overflow;
 pub use notes_ui::NoteCommand;
 pub use page_setup::PageBreakOp;
 pub use sheet_tab_ui::TabCommand;
@@ -117,6 +118,7 @@ pub use calc::SheetsEvent;
 use cell_editor::{CellEditor, EditMode};
 pub use grid_ops::GridCommand;
 use grid_ops::{GridDrag, Header, Span};
+use look::Content;
 pub use sheets_engine::CalcMode;
 pub use sheets_engine::{BorderPreset, HAlign, NumberFormat, Rgb, VAlign};
 
@@ -280,6 +282,10 @@ pub fn init(cx: &mut App) {
     if kantor_ui::i18n::lang() == kantor_ui::i18n::Lang::Id {
         sheets_engine::set_input_locale("id");
     }
+    // Number separators follow the regional format (`[sheets]
+    // number_format`, else the interface language): `1.234,5` in
+    // Indonesian, as Excel shows them on an Indonesian system.
+    sheets_engine::set_number_locale(kantor_ui::i18n::number_locale());
     // Chart fallbacks ("Chart Title") come from the renderer shared with Slides.
     slides_engine::display_text::set_display_translator(kantor_ui::i18n::t);
     let ctx = Some(KEY_CONTEXT);
@@ -412,6 +418,8 @@ pub struct SheetGrid {
     note_anchor: notes_ui::NoteAnchor,
     /// Show All Notes: every note's box is shown (a view setting).
     show_all_notes: bool,
+    /// Text overflowing into empty neighbours, per row ([`overflow`]).
+    overflow: overflow::OverflowCache,
 }
 
 /// A sheet's filters for `((revision), sheet)`.
@@ -456,6 +464,7 @@ impl SheetGrid {
             note_editing: None,
             note_anchor: Default::default(),
             show_all_notes: false,
+            overflow: Default::default(),
         };
         grid.resize();
         grid
@@ -887,6 +896,19 @@ impl TableDelegate for SheetGrid {
             .map(|m| look::merge_geometry(&self.book, sheet, m, row, col, self.scale, &heights));
         let row_height = px(heights.height(row as usize) as f32);
         drop(heights);
+        // A number (or date) too wide for its cell shows `###`, as in Excel.
+        if !style.wrap && shown.fill.is_none() && !text.is_empty() {
+            let width = match geometry {
+                Some(g) => f32::from(g.2),
+                None => self.spill_width(col),
+            };
+            let height = geometry.map_or(row_height, |g| g.3);
+            if let Some(hashes) =
+                self.number_hashes(&text, (sheet, vr, vc), style, width, height, window, cx)
+            {
+                text = hashes;
+            }
+        }
         let content = look::Content {
             text: SharedString::from(text),
             style,
@@ -905,7 +927,19 @@ impl TableDelegate for SheetGrid {
             family: self.fonts.for_style(style, cx),
             height: geometry.map_or(row_height, |g| g.3),
             fill: shown.fill,
+            spill: false,
         };
+        // Text spilling over empty neighbours: this cell's own, or a
+        // neighbour's drawn across it ([`overflow`]).
+        let spans = if look.merge.is_none() {
+            self.overflow_spans(row, window, cx)
+        } else {
+            Rc::new(Vec::new())
+        };
+        let spans: Vec<overflow::Span> = spans.iter().filter(|s| s.covers(col)).copied().collect();
+        if spans.iter().any(|s| s.hides_grid_right(col)) {
+            look.grid_right = false;
+        }
         let cell = div()
             .size_full()
             .relative()
@@ -932,8 +966,35 @@ impl TableDelegate for SheetGrid {
             Some((x, y, w, h)) => {
                 cell.child(content.apply(div().absolute().left(-x).top(-y).w(w).h(h)))
             }
-            None => content.apply(cell),
+            None => match spans.iter().find(|s| s.src == col) {
+                Some(s) => {
+                    let x = s.x_in(col, |c| self.spill_width(c));
+                    cell.child(
+                        Content {
+                            spill: true,
+                            ..content
+                        }
+                        .apply(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left(px(x))
+                                .w(px(s.w))
+                                .h(row_height),
+                        ),
+                    )
+                }
+                None => content.apply(cell),
+            },
         };
+        // Neighbours' text over this (empty) cell.
+        let cell = cell.children(
+            spans
+                .iter()
+                .filter(|s| s.src != col)
+                .filter_map(|s| self.spill_layer(row, *s, col, row_height, cx))
+                .collect::<Vec<_>>(),
+        );
         let cell = match &picture {
             Some(image) => {
                 let (x, y, w, h) = geometry.unwrap_or((
@@ -1660,7 +1721,15 @@ impl SheetsView {
         let value = self.edit_value(window, cx);
         let sheet = self.edit_sheet;
         self.set_editing(None, cx);
-        let changed = self.table.read(cx).delegate().book.input(sheet, row, col) != value;
+        let changed = self
+            .table
+            .read(cx)
+            .delegate()
+            .book
+            .input_for_editing(sheet, row, col)
+            != value;
+        // A number typed with the display locale's separators (`1.234,5`).
+        let value = sheets_engine::delocalize_typed(&value).into_owned();
         if changed {
             let result = self.set_cell(sheet, row, col, &value, cx);
             let manual = self.table.read(cx).delegate().book.calc_mode() == CalcMode::Manual;
@@ -2210,7 +2279,7 @@ impl SheetsView {
         let (row, col) = self.selected;
         let text = {
             let grid = self.table.read(cx).delegate();
-            grid.book.input(grid.sheet, row, col)
+            grid.book.input_for_editing(grid.sheet, row, col)
         };
         self.formula
             .update(cx, |input, cx| input.set_value(text, window, cx));

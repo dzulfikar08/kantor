@@ -132,6 +132,9 @@ pub(crate) struct Section {
     pub calendar: Calendar,
     /// Separators and names from a `[$-421]`-style locale tag (KANTOR PATCH); `None` is en-US.
     pub locale: Option<&'static Locale>,
+    /// Whether the code has a locale tag (`[$-409]` too, whose `locale` is `None`): an untagged
+    /// section takes month and day names from the display locale (KANTOR PATCH).
+    pub tagged: bool,
     /// Excel rejects the whole code because of this section: a `B` and digit that is not a
     /// calendar prefix, or a prefix before a number format (`B20.00`).
     pub invalid: bool,
@@ -534,6 +537,7 @@ fn analyze(raw: Raw) -> Section {
         fill: toks.iter().any(|t| matches!(t, Tok::Fill(_))),
         calendar,
         locale: lcid.and_then(locale::for_lcid),
+        tagged: lcid.is_some(),
         invalid,
     };
     if is_date {

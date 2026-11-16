@@ -87,6 +87,11 @@ pub fn list_sheets(book: &Workbook, shown: u32) -> Value {
 }
 
 pub fn read_range(book: &Workbook, sheet: u32, args: &Value) -> Result<Value> {
+    // Tool results are data: en-US numbers whatever the display locale.
+    sheets_engine::numbers_invariant(|| read_range_inner(book, sheet, args))
+}
+
+fn read_range_inner(book: &Workbook, sheet: u32, args: &Value) -> Result<Value> {
     let range = match opt_str(args, "range")? {
         Some(_) => range_arg(args, "range")?,
         None => {
@@ -302,6 +307,10 @@ pub fn plan_format(args: &Value) -> Result<FormatPlan> {
 }
 
 pub fn selection(book: &Workbook, sheet: u32, range: CellRange, active: (u32, u32)) -> Value {
+    sheets_engine::numbers_invariant(|| selection_inner(book, sheet, range, active))
+}
+
+fn selection_inner(book: &Workbook, sheet: u32, range: CellRange, active: (u32, u32)) -> Value {
     json!({
         "sheet": book.sheet_names().get(sheet as usize).cloned().unwrap_or_default(),
         "range": range.name(),

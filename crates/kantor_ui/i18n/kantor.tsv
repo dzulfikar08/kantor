@@ -571,3 +571,29 @@ Formulas may download from the internet (IMAGE, WEBSERVICE)	Rumus boleh mengundu
 Formulas don't download from the internet: IMAGE and WEBSERVICE show #BLOCKED!	Rumus tidak mengunduh dari internet: IMAGE dan WEBSERVICE menampilkan #BLOCKED!
 Docs · table alignment and indent	Docs · perataan dan inden tabel
 Docs · number of columns and rows	Docs · jumlah kolom dan baris
+# Cloud single sign-on (workspace/cloud/sso.rs, accounts.rs).
+You're signed in. You can close this tab and go back to Kantor.	Anda sudah masuk. Anda dapat menutup tab ini dan kembali ke Kantor.
+Sign-in didn't finish. Go back to Kantor and try again.	Proses masuk tidak selesai. Kembali ke Kantor dan coba lagi.
+The drive refused the sign-in. Ask your administrator whether Kantor may use single sign-on on this drive.	Drive menolak proses masuk. Tanyakan kepada administrator apakah Kantor boleh memakai masuk tunggal (SSO) di drive ini.
+This drive doesn't say where to sign in. Enter your organisation's sign-in server.	Drive ini tidak memberi tahu tempat masuk. Masukkan server masuk organisasi Anda.
+Sign-in failed: {}	Gagal masuk: {}
+This sign-in server has no sign-in with a code. Use the browser sign-in instead.	Server masuk ini tidak mendukung masuk dengan kode. Gunakan masuk lewat peramban.
+The sign-in server gave no refresh token, so Kantor can't stay signed in. Ask your administrator to allow offline access for Kantor.	Server masuk tidak memberikan token penyegaran, jadi Kantor tidak dapat tetap masuk. Minta administrator mengizinkan akses luring (offline access) untuk Kantor.
+Your sign-in to {} has ended. Your edits are kept on this computer. Sign in again in Cloud Accounts, then choose Sync Now.	Sesi masuk ke {} berakhir. Perubahan tetap tersimpan di komputer ini. Masuk lagi di Akun Cloud, lalu Sinkronkan Sekarang.
+Fill in the server address first.	Isi alamat server terlebih dahulu.
+Finding where to sign in…	Mencari tempat masuk…
+Waiting for you to sign in in the browser…	Menunggu Anda masuk di peramban…
+Waiting for you to enter the code…	Menunggu Anda memasukkan kode…
+Signed in. The sign-in is kept in the system keychain.	Berhasil masuk. Sesi masuk disimpan di keychain sistem.
+Signed in. No system keychain was found, so the sign-in is kept in cloud-keys.toml next to settings.toml (readable only by you).	Berhasil masuk. Keychain sistem tidak ditemukan, jadi sesi masuk disimpan di cloud-keys.toml di sebelah settings.toml (hanya dapat dibaca oleh Anda).
+Single sign-on · {}	Masuk tunggal (SSO) · {}
+Sign in again	Masuk lagi
+Organisation sign-in (SSO)	Masuk organisasi (SSO)
+Sign-in server (optional)	Server masuk (opsional)
+Only needed when the drive doesn't say where to sign in (Nextcloud): your organisation's identity provider.	Hanya diperlukan jika drive tidak memberi tahu tempat masuk (Nextcloud): penyedia identitas organisasi Anda.
+Client ID (optional)	ID klien (opsional)
+Kantor opens your browser to sign in with your organisation's account. Without a browser on this computer, use a code instead. The sign-in is kept in the system keychain; no password is stored.	Kantor membuka peramban untuk masuk dengan akun organisasi Anda. Jika komputer ini tidak memiliki peramban, gunakan kode. Sesi masuk disimpan di keychain sistem; tidak ada kata sandi yang disimpan.
+In a browser on any device, go to {} and enter this code:	Di peramban pada perangkat apa pun, buka {} lalu masukkan kode ini:
+Use a code instead	Gunakan kode
+Sign in with your organisation	Masuk dengan akun organisasi
+Account removed: signed out, and its sign-in deleted from the keychain.	Akun dihapus: sesi masuk diakhiri dan dihapus dari keychain.

@@ -5,6 +5,7 @@ use crate::core::date::{datetime_from_serial, max_serial};
 
 use crate::calendar::Calendar;
 use crate::decimal::{decimal_digits, fixed, fixed_from_digits, format_general_fit};
+use crate::locale::Locale;
 use crate::parse::{DatePart, Section, Tok};
 
 /// Text being built plus the first repeat-fill position.
@@ -35,13 +36,25 @@ impl Out {
 
 /// The decimal separator a section shows (KANTOR PATCH: from its locale tag).
 fn decimal_sep(sec: &Section) -> char {
-    sec.locale.map_or('.', |l| l.decimal)
+    seps(sec).map_or('.', |l| l.decimal)
+}
+
+/// The locale a section's separators come from: its tag's, else the display locale while a
+/// cell is being displayed (KANTOR PATCH, see [`crate::locale::set_display_locale`]).
+fn seps(sec: &Section) -> Option<&'static Locale> {
+    sec.locale.or_else(crate::locale::active)
+}
+
+/// The locale a section's month and day names come from: its tag's; an untagged section uses
+/// the display locale's (KANTOR PATCH).
+fn names(sec: &Section) -> Option<&'static Locale> {
+    if sec.tagged { sec.locale } else { crate::locale::active() }
 }
 
 /// The thousands separator a section shows, `None` without thousands grouping (KANTOR PATCH:
 /// from its locale tag).
 fn group(sec: &Section) -> Option<char> {
-    sec.thousands.then(|| sec.locale.map_or(',', |l| l.group))
+    sec.thousands.then(|| seps(sec).map_or(',', |l| l.group))
 }
 
 /// Renders a text value through a text section (`@` is replaced by the text).
@@ -65,7 +78,7 @@ pub(crate) fn render_general(sec: &Section, v: f64, width: usize) -> Out {
             Tok::General => {
                 let s = format_general_fit(v, width).unwrap_or_else(|| "#".repeat(width.clamp(1, 11)));
                 // KANTOR PATCH: a locale tag's decimal separator.
-                match sec.locale {
+                match seps(sec) {
                     Some(l) if l.decimal != '.' => out.push(&s.replace('.', l.decimal.encode_utf8(&mut [0; 4]))),
                     _ => out.push(&s),
                 }
@@ -109,7 +122,7 @@ pub(crate) fn render_date(sec: &Section, v: f64, sys: DateSystem) -> Option<Out>
     let milli = ms % 1000;
     let pad = |n: i64, w: u8| if w >= 2 { format!("{:0w$}", n, w = w.min(20) as usize) } else { n.to_string() };
     // No date in the section's calendar (serial 60 under `B2`): shown like an out-of-range date.
-    let date = sec.calendar.date(&dt, sec.locale)?;
+    let date = sec.calendar.date(&dt, names(sec))?;
     let mut out = Out::default();
     for t in &sec.toks {
         match t {

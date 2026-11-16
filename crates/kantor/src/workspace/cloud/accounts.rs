@@ -1,5 +1,6 @@
-//! Cloud Accounts: add a WebDAV account (server, user name, app password),
-//! test it, remove it. The password goes to the OS keychain
+//! Cloud Accounts: add a WebDAV account (server, user name, app password,
+//! or the organisation's single sign-on), test it, sign in again, remove
+//! it. The password or the sign-in's refresh token goes to the OS keychain
 //! (`kantor_ai::keys::CLOUD`), never to settings.toml.
 
 use gpui_kit::assets::IconName;
@@ -10,19 +11,35 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ai::keys::{CLOUD, KeyLocation};
 use kantor_core::settings::{CloudAccount, Settings};
-use kantor_ui::i18n::tr;
+use kantor_ui::i18n::{self, t, tf, tr};
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 
 use super::jobs;
+use super::sso::{self, SsoRequest, SsoStep};
 use super::widgets::{CLOUD_PANEL, ClosePanel, Status, card, field, footer, note, status_line};
 use super::{PanelEvent, remote_for};
 
+/// How a new account signs in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    AppPassword,
+    Sso,
+}
+
 pub struct AccountsPanel {
     accounts: Vec<CloudAccount>,
+    mode: Mode,
     server: Entity<InputState>,
     user: Entity<InputState>,
     password: Entity<InputState>,
+    /// Single sign-on: the sign-in server (issuer) and client id, optional.
+    issuer: Entity<InputState>,
+    client: Entity<InputState>,
+    /// A sign-in in progress: set to cancel it.
+    cancel: Option<sso::Cancel>,
+    /// A device sign-in's address and code, while it waits.
+    device_code: Option<(String, String)>,
     status: Status,
     busy: bool,
     /// Empty the form at the next render (needs the window).
@@ -43,11 +60,20 @@ impl AccountsPanel {
                 .masked(true)
                 .placeholder(tr("App password", "Kata sandi aplikasi"))
         });
+        let issuer = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("https://sso.example.go.id/realms/pemda")
+        });
+        let client = cx.new(|cx| InputState::new(window, cx).placeholder("kantor"));
         Self {
             accounts: Settings::load().cloud.accounts,
+            mode: Mode::AppPassword,
             server,
             user,
             password,
+            issuer,
+            client,
+            cancel: None,
+            device_code: None,
             status: Status::None,
             busy: false,
             clear_form: false,
@@ -75,7 +101,7 @@ impl AccountsPanel {
                 id,
                 server,
                 user,
-                dav_url: String::new(),
+                ..CloudAccount::default()
             },
             password,
         ))
@@ -199,8 +225,107 @@ impl AccountsPanel {
         cx.notify();
     }
 
+    /// Sign in with the organisation (`device`: with a code), for a new
+    /// account or `again` for an existing one.
+    fn sso_sign_in(&mut self, device: bool, again: Option<CloudAccount>, cx: &mut Context<Self>) {
+        let v = |i: &Entity<InputState>| i.read(cx).value().trim().to_owned();
+        let req = match &again {
+            Some(a) => SsoRequest {
+                server: a.server.clone(),
+                issuer: a.issuer.clone(),
+                client_id: a.client_id.clone(),
+                device,
+                again: Some(a.clone()),
+            },
+            None => SsoRequest {
+                server: v(&self.server),
+                issuer: v(&self.issuer),
+                client_id: v(&self.client),
+                device,
+                again: None,
+            },
+        };
+        if req.server.is_empty() {
+            self.status = Status::Error(t("Fill in the server address first.").into());
+            cx.notify();
+            return;
+        }
+        let cancel = sso::Cancel::default();
+        self.cancel = Some(cancel.clone());
+        self.device_code = None;
+        self.busy = true;
+        self.status = Status::Busy(t("Finding where to sign in…").into());
+        let again_id = again.as_ref().map(|a| a.id.clone());
+        jobs::spawn(
+            cx,
+            move |step: &dyn Fn(SsoStep)| sso::sign_in(req, &cancel, step),
+            |this: &mut Self, step, cx| {
+                match step {
+                    SsoStep::OpenBrowser(url) => {
+                        cx.open_url(&url);
+                        this.status =
+                            Status::Busy(t("Waiting for you to sign in in the browser…").into());
+                    }
+                    SsoStep::DeviceCode { uri, code, open } => {
+                        if let Some(u) = &open {
+                            cx.open_url(u);
+                        }
+                        this.status = Status::Busy(t("Waiting for you to enter the code…").into());
+                        this.device_code = Some((uri, code));
+                    }
+                }
+                cx.notify();
+            },
+            move |this: &mut Self, r, cx| {
+                this.busy = false;
+                this.cancel = None;
+                this.device_code = None;
+                match r {
+                    Err(e) => this.status = Status::Error(e),
+                    Ok((account, location)) => {
+                        let mut settings = Settings::load();
+                        let old = again_id.unwrap_or_else(|| account.id.clone());
+                        match settings.cloud.accounts.iter_mut().find(|a| a.id == old) {
+                            Some(a) => *a = account,
+                            None => settings.cloud.accounts.push(account),
+                        }
+                        if let Err(e) = settings.save() {
+                            this.status = Status::Error(format!("{e:#}"));
+                        } else {
+                            this.accounts = settings.cloud.accounts;
+                            this.clear_form = true;
+                            this.status = match location {
+                                KeyLocation::Keychain => Status::Ok(
+                                    t("Signed in. The sign-in is kept in the system keychain.")
+                                        .into(),
+                                ),
+                                KeyLocation::File => Status::Warn(
+                                    t("Signed in. No system keychain was found, so the sign-in is kept in cloud-keys.toml next to settings.toml (readable only by you).")
+                                        .into(),
+                                ),
+                            };
+                            cx.emit(PanelEvent::AccountsChanged);
+                        }
+                    }
+                }
+                cx.notify();
+            },
+        );
+        cx.notify();
+    }
+
+    fn cancel_sign_in(&mut self, cx: &mut Context<Self>) {
+        if let Some(c) = self.cancel.take() {
+            c.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.device_code = None;
+        self.status = Status::None;
+        cx.notify();
+    }
+
     fn remove(&mut self, id: String, cx: &mut Context<Self>) {
         let mut settings = Settings::load();
+        let removed = settings.cloud.accounts.iter().find(|a| a.id == id).cloned();
         settings.cloud.accounts.retain(|a| a.id != id);
         settings.cloud.last_folder.remove(&id);
         if let Err(e) = settings.save() {
@@ -209,18 +334,27 @@ impl AccountsPanel {
             return;
         }
         self.accounts = settings.cloud.accounts;
+        let sso = removed.as_ref().is_some_and(CloudAccount::is_sso);
         jobs::spawn(
             cx,
-            move |_: &dyn Fn(())| CLOUD.delete(&id),
+            move |_: &dyn Fn(())| {
+                if let Some(a) = removed.filter(CloudAccount::is_sso) {
+                    sso::sign_out(&a);
+                }
+                CLOUD.delete(&id)
+            },
             |_, _, _| {},
-            |this: &mut Self, _, cx| {
-                this.status = Status::Ok(
+            move |this: &mut Self, _, cx| {
+                this.status = Status::Ok(if sso {
+                    t("Account removed: signed out, and its sign-in deleted from the keychain.")
+                        .into()
+                } else {
                     tr(
                         "Account removed, and its password deleted from the keychain.",
                         "Akun dihapus, dan kata sandinya dihapus dari keychain.",
                     )
-                    .into(),
-                );
+                    .into()
+                });
                 cx.emit(PanelEvent::AccountsChanged);
                 cx.notify();
             },
@@ -276,7 +410,7 @@ fn test(account: &CloudAccount, password: Option<String>) -> Status {
 
 /// A stable id from server and user (`drive.example.go.id-budi`), safe as a
 /// folder and keychain name.
-fn account_id(server: &str, user: &str) -> String {
+pub(super) fn account_id(server: &str, user: &str) -> String {
     let host = server
         .trim_start_matches("https://")
         .trim_start_matches("http://")
@@ -298,7 +432,13 @@ fn account_id(server: &str, user: &str) -> String {
 impl Render for AccountsPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if std::mem::take(&mut self.clear_form) {
-            for input in [&self.server, &self.user, &self.password] {
+            for input in [
+                &self.server,
+                &self.user,
+                &self.password,
+                &self.issuer,
+                &self.client,
+            ] {
                 input.update(cx, |i, cx| i.set_value("", window, cx));
             }
             window.focus(&self.focus, cx);
@@ -338,9 +478,26 @@ impl Render for AccountsPanel {
                                     .text_size(FONT_CAPTION)
                                     .text_color(t.fg_dim)
                                     .truncate()
-                                    .child(a.dav_root()),
+                                    .child(if a.is_sso() {
+                                        tf("Single sign-on · {}", &[&a.dav_root()])
+                                    } else {
+                                        a.dav_root()
+                                    }),
                             ),
                     )
+                    .when(a.is_sso(), |row| {
+                        let again = a.clone();
+                        row.child(
+                            Button::new(("cloud-sso-again", i))
+                                .ghost()
+                                .small()
+                                .label(i18n::t("Sign in again"))
+                                .disabled(self.busy)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.sso_sign_in(false, Some(again.clone()), cx)
+                                })),
+                        )
+                    })
                     .child(
                         Button::new(("cloud-test", i))
                             .ghost()
@@ -374,22 +531,106 @@ impl Render for AccountsPanel {
                     .text_color(t.fg)
                     .child(tr("Add an account", "Tambah akun")),
             )
-            .child(field(tr("Server", "Server"), Input::new(&self.server), cx))
-            .child(field(tr("User name", "Nama pengguna"), Input::new(&self.user), cx))
             .child(
-                field(
-                    tr("App password", "Kata sandi aplikasi"),
-                    Input::new(&self.password).mask_toggle(),
-                    cx,
-                )
-                .child(note(
-                    tr(
-                        "Make an app password in Nextcloud (Settings → Security → Devices & sessions) or OpenCloud (App tokens). It is kept in the system keychain, never in the settings file.",
-                        "Buat kata sandi aplikasi di Nextcloud (Pengaturan → Keamanan → Perangkat & sesi) atau OpenCloud (Token aplikasi). Disimpan di keychain sistem, tidak pernah di berkas pengaturan.",
+                h_flex()
+                    .gap(SPACE_2)
+                    .child(
+                        Button::new("cloud-mode-password")
+                            .small()
+                            .map(|b| {
+                                if self.mode == Mode::AppPassword {
+                                    b.primary()
+                                } else {
+                                    b.ghost()
+                                }
+                            })
+                            .label(tr("App password", "Kata sandi aplikasi"))
+                            .disabled(self.busy)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.mode = Mode::AppPassword;
+                                this.status = Status::None;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("cloud-mode-sso")
+                            .small()
+                            .map(|b| {
+                                if self.mode == Mode::Sso {
+                                    b.primary()
+                                } else {
+                                    b.ghost()
+                                }
+                            })
+                            .label(i18n::t("Organisation sign-in (SSO)"))
+                            .disabled(self.busy)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.mode = Mode::Sso;
+                                this.status = Status::None;
+                                cx.notify();
+                            })),
                     ),
+            )
+            .child(field(tr("Server", "Server"), Input::new(&self.server), cx));
+        let body = match self.mode {
+            Mode::AppPassword => body
+                .child(field(tr("User name", "Nama pengguna"), Input::new(&self.user), cx))
+                .child(
+                    field(
+                        tr("App password", "Kata sandi aplikasi"),
+                        Input::new(&self.password).mask_toggle(),
+                        cx,
+                    )
+                    .child(note(
+                        tr(
+                            "Make an app password in Nextcloud (Settings → Security → Devices & sessions) or OpenCloud (App tokens). It is kept in the system keychain, never in the settings file.",
+                            "Buat kata sandi aplikasi di Nextcloud (Pengaturan → Keamanan → Perangkat & sesi) atau OpenCloud (Token aplikasi). Disimpan di keychain sistem, tidak pernah di berkas pengaturan.",
+                        ),
+                        cx,
+                    )),
+                ),
+            Mode::Sso => body
+                .child(
+                    field(i18n::t("Sign-in server (optional)"), Input::new(&self.issuer), cx).child(
+                        note(
+                            i18n::t("Only needed when the drive doesn't say where to sign in (Nextcloud): your organisation's identity provider."),
+                            cx,
+                        ),
+                    ),
+                )
+                .child(field(i18n::t("Client ID (optional)"), Input::new(&self.client), cx))
+                .child(note(
+                    i18n::t("Kantor opens your browser to sign in with your organisation's account. Without a browser on this computer, use a code instead. The sign-in is kept in the system keychain; no password is stored."),
                     cx,
-                )),
-            );
+                ))
+                .when_some(self.device_code.clone(), |d, (uri, code)| {
+                    d.child(
+                        v_flex()
+                            .gap(SPACE_2)
+                            .p(SPACE_4)
+                            .rounded(RADIUS_MD)
+                            .bg(t.surface)
+                            .border_1()
+                            .border_color(t.accent)
+                            .child(
+                                div()
+                                    .text_color(t.fg)
+                                    .child(tf("In a browser on any device, go to {} and enter this code:", &[&uri])),
+                            )
+                            .child(
+                                div()
+                                    .text_size(FONT_TITLE)
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(t.fg)
+                                    .child(code),
+                            ),
+                    )
+                }),
+        };
+        // Single sign-on has three buttons in the footer: its messages go
+        // above them at full width rather than in a narrow column beside.
+        let status_above = self.mode == Mode::Sso;
+        let body = body.when(status_above, |b| b.children(status_line(&self.status, cx)));
 
         div()
             .id("cloud-accounts")
@@ -404,21 +645,22 @@ impl Render for AccountsPanel {
                     .child(
                         footer(cx)
                             .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .children(status_line(&self.status, cx)),
+                                div().flex_1().min_w_0().when(!status_above, |d| {
+                                    d.children(status_line(&self.status, cx))
+                                }),
                             )
-                            .child(
-                                Button::new("cloud-test-new")
-                                    .outline()
-                                    .small()
-                                    .label(tr("Test connection", "Uji koneksi"))
-                                    .disabled(self.busy)
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.test_connection(cx)),
-                                    ),
-                            )
+                            .when(self.mode == Mode::AppPassword, |f| {
+                                f.child(
+                                    Button::new("cloud-test-new")
+                                        .outline()
+                                        .small()
+                                        .label(tr("Test connection", "Uji koneksi"))
+                                        .disabled(self.busy)
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.test_connection(cx)),
+                                        ),
+                                )
+                            })
                             .child(
                                 Button::new("cloud-close")
                                     .ghost()
@@ -426,16 +668,51 @@ impl Render for AccountsPanel {
                                     .label(tr("Close", "Tutup"))
                                     .on_click(cx.listener(|this, _, _, cx| this.close(cx))),
                             )
-                            .child(
-                                Button::new("cloud-add")
-                                    .primary()
-                                    .small()
-                                    .label(tr("Add account", "Tambah akun"))
-                                    .disabled(self.busy)
-                                    .on_click(
-                                        cx.listener(|this, _, window, cx| this.add(window, cx)),
-                                    ),
-                            ),
+                            .when(self.cancel.is_some(), |f| {
+                                f.child(
+                                    Button::new("cloud-sso-cancel")
+                                        .outline()
+                                        .small()
+                                        .label(i18n::t("Cancel"))
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.cancel_sign_in(cx)),
+                                        ),
+                                )
+                            })
+                            .when(self.mode == Mode::Sso && self.cancel.is_none(), |f| {
+                                f.child(
+                                    Button::new("cloud-sso-device")
+                                        .outline()
+                                        .small()
+                                        .label(i18n::t("Use a code instead"))
+                                        .disabled(self.busy)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.sso_sign_in(true, None, cx)
+                                        })),
+                                )
+                                .child(
+                                    Button::new("cloud-sso-sign-in")
+                                        .primary()
+                                        .small()
+                                        .label(i18n::t("Sign in with your organisation"))
+                                        .disabled(self.busy)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.sso_sign_in(false, None, cx)
+                                        })),
+                                )
+                            })
+                            .when(self.mode == Mode::AppPassword, |f| {
+                                f.child(
+                                    Button::new("cloud-add")
+                                        .primary()
+                                        .small()
+                                        .label(tr("Add account", "Tambah akun"))
+                                        .disabled(self.busy)
+                                        .on_click(
+                                            cx.listener(|this, _, window, cx| this.add(window, cx)),
+                                        ),
+                                )
+                            }),
                     ),
             )
     }

@@ -23,6 +23,7 @@ pub use crate::core::{CellError, DateSystem, Value};
 
 pub use builtin::{builtin_format, builtin_id};
 pub use decimal::format_general_fit;
+pub use locale::{DisplayLocale, display_locale, invariant, set_display_locale};
 
 use parse::{DatePart, SecKind, Section, Tok};
 use render::Out;
@@ -410,15 +411,31 @@ impl NumberFormat {
     /// A number as a cell shows it. Non-finite numbers show `#NUM!`; a date out of range shows
     /// `########`.
     pub fn display_number(&self, n: f64, sys: DateSystem) -> Formatted {
+        self.display_number_in(n, sys, locale::display_locale())
+    }
+
+    /// [`Self::display_number`] in a given display locale (the app's is
+    /// [`locale::display_locale`]).
+    pub fn display_number_in(&self, n: f64, sys: DateSystem, display: locale::DisplayLocale) -> Formatted {
         if !n.is_finite() {
             return Formatted { text: CellError::Num.as_str().into(), ..Formatted::default() };
         }
-        self.format_number(n, sys).0
+        locale::displaying(display, || {
+            let mut f = self.format_number(n, sys).0;
+            // General has no section to carry the separator: `1234.5` shows `1234,5`.
+            if self.is_general()
+                && let Some(l) = locale::active()
+                && l.decimal != '.'
+            {
+                f.text = f.text.replace('.', l.decimal.encode_utf8(&mut [0; 4]));
+            }
+            f
+        })
     }
 
     /// Text as a cell shows it: through the text section (`"Name: "@`), as is without one.
     pub fn display_text(&self, t: &str) -> Formatted {
-        self.format_text(t)
+        locale::displaying(locale::display_locale(), || self.format_text(t))
     }
 
     /// Whether text goes through a text section (otherwise it shows as is).

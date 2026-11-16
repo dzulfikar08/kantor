@@ -162,7 +162,7 @@ impl BrowserPanel {
             return;
         };
         cx.emit(PanelEvent::Open {
-            account,
+            account: Box::new(account),
             remote: path,
         });
     }

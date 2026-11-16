@@ -18,6 +18,10 @@ serde.workspace = true
 serde_json.workspace = true
 # Same blocking ureq + rustls stack as kantor_ai and kantor_update.
 ureq.workspace = true
+# Trust the OS certificate store too (organisations' own CAs), next to
+# Mozilla's roots in DER form (see src/tls.rs).
+rustls-native-certs = "0.8"
+webpki-root-certs = "1"
 
 [dev-dependencies]
 anyhow.workspace = true
@@ -25,6 +29,9 @@ anyhow.workspace = true
 docs_engine.workspace = true
 sheets_engine.workspace = true
 tempfile.workspace = true
+# A throwaway CA and an HTTPS server for the custom-CA test.
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
 [lints]
 workspace = true

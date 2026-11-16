@@ -155,6 +155,13 @@ Indonesian side; changing the English key breaks the lookup.
 | Model id | ID model | |
 | Agent | Agen | |
 | Cloud account | Akun Cloud | |
+| Sign in (verb) / sign-in (noun) | Masuk / proses masuk, sesi masuk | |
+| Single sign-on (SSO) | Masuk tunggal (SSO) | |
+| Organisation sign-in | Masuk organisasi | |
+| Sign-in server (identity provider) | Server masuk | |
+| Browser | Peramban | KBBI |
+| Refresh token | Token penyegaran | |
+| Client ID | ID klien | |
 | Sync Now | Sinkronkan Sekarang | |
 | offline | luring | KBBI |
 | Spelling suggestions | Saran Ejaan | |
