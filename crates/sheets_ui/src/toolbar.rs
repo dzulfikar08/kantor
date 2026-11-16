@@ -735,7 +735,7 @@ fn table_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu 
 /// The PivotTable menu: insert, fields, refresh, delete.
 fn pivot_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
     type Run = fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>);
-    let items: [(&str, &str, Run); 8] = [
+    let items: [(&str, &str, Run); 9] = [
         (tk("Insert PivotTable…"), "", |v, w, cx| {
             v.insert_pivot_doc(w, cx)
         }),
@@ -744,6 +744,9 @@ fn pivot_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu 
         }),
         (tk("Insert Slicer…"), "", |v, w, cx| {
             v.insert_slicer_doc(w, cx)
+        }),
+        (tk("Insert Timeline…"), "", |v, w, cx| {
+            v.insert_timeline_doc(w, cx)
         }),
         (tk("PivotTable Styles…"), "", |v, w, cx| {
             v.pivot_styles_doc(w, cx)

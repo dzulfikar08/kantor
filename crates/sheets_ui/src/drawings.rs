@@ -295,6 +295,10 @@ pub(crate) struct DrawLayer {
     pub(crate) slicer_multi: std::collections::HashSet<DrawingKey>,
     /// A drag over a timeline's periods in progress (see `slicer_ui`).
     pub(crate) timeline_drag: Option<crate::slicer_ui::TimelineDrag>,
+    /// The dates that drag would select, shown on its timeline.
+    pub(crate) timeline_preview: Option<(DrawingKey, (f64, f64))>,
+    /// A timeline's scroll bar thumb being dragged.
+    pub(crate) timeline_scroll: Option<crate::slicer_ui::TimelineScroll>,
 }
 
 /// Keys of note boxes drawn by the layer (never a drawing's index).
@@ -906,6 +910,9 @@ fn paint(
             .scenes
             .set_dark_text(t.dark.then(|| crate::look::rgb_of(t.fg)));
         layer_mut.scenes.set_multi(layer_mut.slicer_multi.clone());
+        layer_mut
+            .scenes
+            .set_timeline_preview(layer_mut.timeline_preview);
         let preview = layer_mut.preview.clone();
         let built: Vec<Arc<Vec<Item>>> = frame
             .placed
@@ -1105,6 +1112,9 @@ fn paint(
                         .map(|(kind, _)| kind.clone());
                     let _ = view.update(cx, |this, cx| match slicer.as_deref() {
                         Some(DrawingKind::Slicer { .. }) => this.slicer_settings_doc(window, cx),
+                        Some(DrawingKind::Timeline { .. }) => {
+                            this.timeline_settings_doc(window, cx)
+                        }
                         Some(_) => cx.notify(),
                         None => this.open_shape_panel(key, window, cx),
                     });
@@ -1200,12 +1210,43 @@ fn paint(
             let _ = view2.update(cx, |_, cx| cx.notify());
         });
     }
+    // A timeline drag (across periods, or its scroll bar's thumb): the
+    // pointer's moves preview the range or scroll.
+    let timeline_drag = {
+        let l = layer.borrow();
+        l.timeline_drag.is_some() || l.timeline_scroll.is_some()
+    };
+    if timeline_drag {
+        let layer2 = layer.clone();
+        let view2 = view.clone();
+        window.on_mouse_event(move |e: &MouseMoveEvent, phase, _, cx| {
+            if phase != DispatchPhase::Capture {
+                return;
+            }
+            let (drag, scroll) = {
+                let l = layer2.borrow();
+                (l.timeline_drag.clone(), l.timeline_scroll.clone())
+            };
+            let _ = view2.update(cx, |this, cx| {
+                if let Some(d) = drag {
+                    this.timeline_drag_move(d, e.position, cx);
+                }
+                if let Some(s) = scroll {
+                    this.timeline_scroll_move(s, e.position, cx);
+                }
+            });
+        });
+    }
     // Always listening: a quick click's button comes up before the frame
     // that would add this listener for the drag, and the object would then
     // stick to the pointer.
     let layer3 = layer.clone();
     window.on_mouse_event(move |e: &MouseUpEvent, phase, window, cx| {
         if phase != DispatchPhase::Capture || e.button != MouseButton::Left {
+            return;
+        }
+        if layer3.borrow_mut().timeline_scroll.take().is_some() {
+            let _ = view.update(cx, |_, cx| cx.notify());
             return;
         }
         let timeline = layer3.borrow_mut().timeline_drag.take();

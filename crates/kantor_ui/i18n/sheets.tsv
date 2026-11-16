@@ -1151,3 +1151,17 @@ Show items with no data last	Tampilkan item tanpa data di akhir
 Style:	Gaya:
 Columns:	Kolom:
 Button height (px):	Tinggi tombol (px):
+# Insert Timeline, Timeline Settings
+Insert Timeline…	Sisipkan Timeline…
+Timeline Settings…	Pengaturan Timeline…
+Sheets · timelines that filter the PivotTable at the active cell by dates, one per date field picked	Sheets · timeline yang memfilter PivotTable di sel aktif menurut tanggal, satu per bidang tanggal yang dipilih
+Sheets · caption, header, selection label, scroll bar, time level and style of the selected timeline	Sheets · keterangan, header, label pilihan, bilah gulir, tingkat waktu, dan gaya timeline yang dipilih
+Select a cell in a PivotTable to insert a timeline.	Pilih sel di PivotTable untuk menyisipkan timeline.
+Insert Timelines	Sisipkan Timeline
+{} timeline(s) inserted	{} timeline disisipkan
+Select a timeline to change its settings.	Pilih timeline untuk mengubah pengaturannya.
+Timeline Settings	Pengaturan Timeline
+Show	Tampilkan
+Selection Label	Label Pilihan
+Scrollbar	Bilah Gulir
+Time Level	Tingkat Waktu

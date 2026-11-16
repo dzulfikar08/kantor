@@ -444,6 +444,8 @@ pub struct DrawingScenes {
     dark_text: Option<Rgb>,
     /// Slicers whose Multi-Select is on (drawn pressed).
     multi: std::collections::HashSet<DrawingKey>,
+    /// A timeline being dragged across and the dates it would select.
+    timeline_preview: Option<(DrawingKey, (f64, f64))>,
 }
 
 /// Most built sizes kept (a resize drag makes many).
@@ -467,6 +469,12 @@ impl DrawingScenes {
     /// Slicers whose Multi-Select button is on.
     pub fn set_multi(&mut self, keys: std::collections::HashSet<DrawingKey>) {
         self.multi = keys;
+    }
+
+    /// The timeline whose periods are being dragged across, and the
+    /// dates that would select (drawn selected until the button is up).
+    pub fn set_timeline_preview(&mut self, preview: Option<(DrawingKey, (f64, f64))>) {
+        self.timeline_preview = preview;
     }
 
     /// Charts built since the last call.
@@ -590,6 +598,10 @@ impl DrawingScenes {
                         .map(|v| slicer::slicer_xml(&v, w, h, self.multi.contains(&d.key))),
                     DrawingKind::Timeline { name } => book
                         .timeline_view(d.key.sheet_id, name)
+                        .map(|v| match self.timeline_preview {
+                            Some((k, range)) if k == d.key => v.with_selection(range),
+                            _ => v,
+                        })
                         .map(|v| slicer::timeline_xml(&v, w, h)),
                     _ => None,
                 };

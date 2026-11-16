@@ -957,6 +957,22 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.slicer_settings_doc(w, cx)),
     },
     Command {
+        title: tk("Insert Timeline…"),
+        detail: tk(
+            "Sheets · timelines that filter the PivotTable at the active cell by dates, one per date field picked",
+        ),
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.insert_timeline_doc(w, cx)),
+    },
+    Command {
+        title: tk("Timeline Settings…"),
+        detail: tk(
+            "Sheets · caption, header, selection label, scroll bar, time level and style of the selected timeline",
+        ),
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.timeline_settings_doc(w, cx)),
+    },
+    Command {
         title: tk("Format as Table…"),
         detail: tk(
             "Sheets · make the selection or the data around the active cell a table with a style",

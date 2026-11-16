@@ -613,6 +613,16 @@ impl TableDelegate for SheetGrid {
                     },
                 ),
             );
+            if self.book.pivot_at(self.sheet, cell.0, cell.1).is_some() {
+                let view = self.view.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(kantor_ui::i18n::t("Insert Timeline…")).on_click(
+                        move |_, window, cx| {
+                            let _ = view.update(cx, |v, cx| v.insert_timeline_doc(window, cx));
+                        },
+                    ),
+                );
+            }
         }
         let has_note = self.book.note_at(self.sheet, cell.0, cell.1).is_some();
         notes_ui::cell_menu_items(menu.separator(), cell, has_note, &self.view)
@@ -1409,6 +1419,8 @@ pub struct SheetsView {
     insert_slicer: Option<slicer_ui::InsertSlicerDialog>,
     slicer_settings: Option<slicer_ui::SlicerSettingsDialog>,
     timeline_menu: Option<slicer_ui::TimelineMenu>,
+    insert_timeline: Option<slicer_ui::InsertTimelineDialog>,
+    timeline_settings: Option<slicer_ui::TimelineSettingsDialog>,
     /// The notes of the cells last copied or cut, with the clipboard text
     /// they go with (Paste brings them while the clipboard holds it).
     note_clip: Option<(String, sheets_engine::NoteClip)>,
@@ -1472,6 +1484,8 @@ impl SheetsView {
             insert_slicer: None,
             slicer_settings: None,
             timeline_menu: None,
+            insert_timeline: None,
+            timeline_settings: None,
             note_clip: None,
             chart_focus: cx.focus_handle(),
             bench: bench::ScrollBench::from_env(),
@@ -3022,6 +3036,8 @@ impl Render for SheetsView {
             .children(self.render_insert_slicer(cx))
             .children(self.render_slicer_settings(cx))
             .children(self.render_timeline_menu(cx))
+            .children(self.render_insert_timeline(cx))
+            .children(self.render_timeline_settings(cx))
             .into_any_element()
     }
 }
