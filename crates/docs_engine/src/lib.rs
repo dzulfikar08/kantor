@@ -59,6 +59,7 @@ pub use object::{FieldMark, Image, ImageFormat, Level, OBJECT, Object, Opaque};
 pub use page::{MarginPreset, Orientation, PaperSize, cm_to_twips, twips_to_cm};
 pub use part_edit::{PartEdit, PartRef};
 pub use review::{Anchor, Change, Comment, RevKind, Revision};
+pub use track_table::TableChange;
 pub use section::{
     ChapterSep, HfKind, HfType, NumFormat, PageField, PageNumbering, Section, SectionProps,
     SectionStart, Story, page_field, with_page_numbers,

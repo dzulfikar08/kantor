@@ -120,6 +120,34 @@ impl Cell {
             ..Self::default()
         }
     }
+
+    /// Set what layout needs (span, merge, width, borders) from `tc_pr`.
+    pub(crate) fn refresh(&mut self) {
+        self.span = 1;
+        self.vmerge = VMerge::None;
+        self.width = None;
+        self.borders = Borders::default();
+        let Some(el) = self.tc_pr.as_deref().and_then(crate::xml::parse) else {
+            return;
+        };
+        for c in &el.children {
+            match c.name.as_str() {
+                "gridSpan" => self.span = c.num("val").unwrap_or(1).max(1),
+                "vMerge" => {
+                    self.vmerge = if c.attr("val") == Some("restart") {
+                        VMerge::Restart
+                    } else {
+                        VMerge::Continue
+                    }
+                }
+                "tcW" if matches!(c.attr("type"), None | Some("dxa")) => {
+                    self.width = c.num("w");
+                }
+                "tcBorders" => self.borders = crate::docx::borders(c),
+                _ => {}
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -137,6 +165,24 @@ pub struct Row {
     pub cells: Vec<Cell>,
 }
 
+impl Row {
+    /// Set height, header and keep-together from `tr_pr`.
+    pub(crate) fn refresh(&mut self) {
+        self.height = None;
+        self.header = false;
+        self.cant_split = false;
+        let Some(el) = self.tr_pr.as_deref().and_then(crate::xml::parse) else {
+            return;
+        };
+        if let Some(h) = el.child("trHeight") {
+            let exact = h.attr("hRule") == Some("exact");
+            self.height = h.num("val").map(|v| (v, exact));
+        }
+        self.header = el.child("tblHeader").is_some_and(crate::xml::El::on);
+        self.cant_split = el.child("cantSplit").is_some_and(crate::xml::El::on);
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Table {
     /// The original `<w:tblPr>…</w:tblPr>`.
@@ -151,6 +197,9 @@ pub struct Table {
     /// Left indent in twips (`w:tblInd`).
     pub indent: i32,
     pub cell_margins: Option<CellMargins>,
+    /// The grid's tracked change (`w:tblGridChange`, the grid before), as
+    /// read or recorded: written back inside `w:tblGrid`.
+    pub grid_change: Option<Arc<str>>,
 }
 
 pub type Tables = BTreeMap<u32, Table>;
@@ -181,6 +230,27 @@ impl Table {
             borders: Borders::grid(),
             indent: 0,
             cell_margins: None,
+            grid_change: None,
+        }
+    }
+
+    /// Set style, borders, indent and cell margins from `tbl_pr`.
+    pub(crate) fn refresh(&mut self) {
+        self.style = None;
+        self.borders = Borders::default();
+        self.indent = 0;
+        self.cell_margins = None;
+        let Some(el) = self.tbl_pr.as_deref().and_then(crate::xml::parse) else {
+            return;
+        };
+        for c in &el.children {
+            match c.name.as_str() {
+                "tblStyle" => self.style = c.attr("val").map(str::to_owned),
+                "tblBorders" => self.borders = crate::docx::borders(c),
+                "tblInd" => self.indent = c.num("w").unwrap_or(0),
+                "tblCellMar" => self.cell_margins = Some(crate::docx::cell_margins(c)),
+                _ => {}
+            }
         }
     }
 

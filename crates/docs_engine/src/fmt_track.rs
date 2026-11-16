@@ -38,6 +38,13 @@ pub enum FormatItem {
     List(bool),
     PageBreakBefore,
     TabStops,
+    /// A table's properties (`w:tblPrChange`) or its columns' widths
+    /// (`w:tblGridChange`).
+    TableProps,
+    /// Row properties (`w:trPrChange`).
+    RowProps,
+    /// Cell properties (`w:tcPrChange`).
+    CellProps,
     /// Something else (borders, shading, effects Kantor keeps verbatim).
     Other,
 }
@@ -81,7 +88,7 @@ pub(crate) fn old_para_props(change: &str) -> ParaProps {
 
 /// The inner property element of a change record (`<w:rPr>…</w:rPr>` or
 /// `<w:rPr/>`).
-fn inner(change: &str, name: &str) -> Option<String> {
+pub(crate) fn inner(change: &str, name: &str) -> Option<String> {
     let open = change
         .find(&format!("<w:{name}>"))
         .or_else(|| change.find(&format!("<w:{name} ")))

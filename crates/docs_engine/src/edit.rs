@@ -286,6 +286,14 @@ impl Document {
             TableEdit::DeleteRow if self.track => {
                 return Ok(self.tracked_delete_rows(id, &[r], sel));
             }
+            TableEdit::DeleteColumn if self.track => {
+                if t.has_merges() {
+                    return Err(
+                        "Column changes in tables with merged cells aren't supported yet".into(),
+                    );
+                }
+                return Ok(self.tracked_delete_column(id, t.grid_col(r, c), sel));
+            }
             TableEdit::DeleteTable => {
                 return Ok(self.remove_table(id, range, sel));
             }
@@ -363,6 +371,7 @@ impl Document {
                 focus = (r.min(t.rows.len() - 1), 0);
             }
             TableEdit::ColumnLeft | TableEdit::ColumnRight | TableEdit::DeleteColumn => {
+                let mut added = Vec::new();
                 if t.has_merges() {
                     return Err(
                         "Column changes in tables with merged cells aren't supported yet".into(),
@@ -393,6 +402,7 @@ impl Document {
                     for (ri, (row, cells)) in t.rows.iter_mut().zip(grid.iter_mut()).enumerate() {
                         let like = cells.get(c).and_then(|ps| ps.first()).cloned();
                         let at = ci.min(row.cells.len());
+                        added.push((ri, at));
                         row.cells.insert(at, Table::new_cell(w, 1));
                         cells.insert(
                             at,
@@ -416,11 +426,17 @@ impl Document {
                     .collect();
                 for row in &mut t.rows {
                     for (cell, w) in row.cells.iter_mut().zip(&widths) {
-                        cell.width = Some(*w);
-                        cell.tc_pr = Some(with_tcw(cell.tc_pr.as_deref(), *w).into());
+                        if cell.width != Some(*w) {
+                            cell.width = Some(*w);
+                            cell.tc_pr = Some(with_tcw(cell.tc_pr.as_deref(), *w).into());
+                        }
                     }
                 }
                 t.grid = widths;
+                if self.track && !added.is_empty() {
+                    let old = self.tables[&id].clone();
+                    self.track_inserted_cells(&old, &mut t, &added);
+                }
             }
         }
         let out = Self::flatten(id, grid);
@@ -674,6 +690,14 @@ fn doc_pr_ids(xml: &str) -> u32 {
 
 /// A `w:tcPr` with its `w:tcW` set to `w` twips.
 fn with_tcw(tc_pr: Option<&str>, w: u32) -> String {
+    // A tracked property change keeps the old width it holds.
+    if let Some(x) = tc_pr
+        && let Some(i) = x.find("<w:tcPrChange")
+    {
+        let head = with_tcw(Some(&format!("{}</w:tcPr>", &x[..i])), w);
+        let head = head.strip_suffix("</w:tcPr>").unwrap_or(&head);
+        return format!("{head}{}", &x[i..]);
+    }
     let tcw = format!("<w:tcW w:w=\"{w}\" w:type=\"dxa\"/>");
     match tc_pr {
         Some(x) => {

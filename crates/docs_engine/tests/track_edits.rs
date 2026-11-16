@@ -267,6 +267,14 @@ fn write_tracked_samples() {
     d.edit_table(caret(3, 0), TableEdit::RowBelow).unwrap();
     d.replace_ranges(&[(0, 0..6)], "After", caret(0, 0));
     d.save_as(&out.join("tables-format.docx")).unwrap();
+    // Columns inserted and deleted, and Word's cell changes kept.
+    let mut d = table_doc();
+    d.edit_table(caret(1, 0), TableEdit::ColumnRight).unwrap();
+    d.edit_table(caret(1, 0), TableEdit::DeleteColumn).unwrap();
+    d.save_as(&out.join("columns-tracked.docx")).unwrap();
+    let mut d = start("tracked_cells.docx");
+    d.insert_text(caret(0, 0), "New ", None);
+    d.save_as(&out.join("cells-tracked.docx")).unwrap();
     // Fields updated with tracking.
     struct NoPages;
     impl PageLookup for NoPages {
@@ -406,4 +414,162 @@ fn word_tracked_formatting_rows_and_parts_are_read_and_resolved() {
         .map(|p| p.text.clone())
         .collect();
     assert_eq!(row_texts, ["Item", "Cost", "Venue", "Rp 5.000.000"]);
+}
+
+fn cell_texts(d: &Document) -> Vec<String> {
+    d.paragraphs()
+        .iter()
+        .filter(|p| p.cell.is_some())
+        .map(|p| p.text.clone())
+        .collect()
+}
+
+fn cell_changes(d: &Document) -> Vec<RevKind> {
+    d.changes()
+        .iter()
+        .filter(|c| c.table == Some(docs_engine::TableChange::Cell))
+        .map(|c| c.kind)
+        .collect()
+}
+
+#[test]
+fn inserted_columns_are_marked_cells_and_widths() {
+    let mut d = table_doc();
+    let grid = d.table(1).unwrap().grid.clone();
+    d.edit_table(caret(1, 0), TableEdit::ColumnRight).unwrap();
+    assert_eq!(d.table(1).unwrap().columns(), 3);
+    assert_eq!(cell_changes(&d), [RevKind::Insert, RevKind::Insert]);
+    // The widths it changed: one table formatting change.
+    let props: Vec<_> = d
+        .changes()
+        .into_iter()
+        .filter(|c| c.table == Some(docs_engine::TableChange::Props))
+        .collect();
+    assert_eq!(props.len(), 1);
+    assert_eq!(props[0].kind, RevKind::Format);
+    assert!(props[0].format.contains(&docs_engine::FormatItem::CellProps));
+    // Saved as Word writes it, and read back the same.
+    let mut copy = d.clone();
+    let xml = document_xml(&copy.to_docx_bytes().unwrap());
+    assert_eq!(xml.matches("<w:cellIns w:id=").count(), 2, "{xml}");
+    assert!(xml.contains("<w:tcPrChange w:id=") && xml.contains("<w:tblGridChange w:id="));
+    let back = reopen(&mut copy);
+    assert!(!back.has_unsupported_content(), "{:?}", back.unsupported_content());
+    assert_eq!(cell_changes(&back), [RevKind::Insert, RevKind::Insert]);
+    // Reject one inserted cell at the caret: only it goes.
+    let mut one = d.clone();
+    let c = one.cell_at(Position::new(2, 0)).unwrap();
+    assert_eq!(c.cell, 1);
+    one.reject_change(caret(2, 0)).unwrap();
+    assert_eq!(cell_changes(&one), [RevKind::Insert]);
+    assert_eq!(one.table(1).unwrap().rows[0].cells.len(), 2);
+    assert_eq!(one.table(1).unwrap().rows[1].cells.len(), 3);
+    // Reject All: the column and the old widths are back.
+    let mut rej = d.clone();
+    rej.resolve_all(false, Selection::default());
+    assert!(!rej.has_changes(), "{:?}", rej.changes());
+    assert_eq!(rej.table(1).unwrap().columns(), 2);
+    assert_eq!(rej.table(1).unwrap().grid, grid);
+    assert_eq!(cell_texts(&rej), ["a1", "b1", "a2", "b2"]);
+    let xml = document_xml(&rej.to_docx_bytes().unwrap());
+    assert!(!xml.contains("tcPrChange") && !xml.contains("cellIns"));
+    // Accept All: the column stays, unmarked.
+    d.resolve_all(true, Selection::default());
+    assert!(!d.has_changes());
+    assert_eq!(d.table(1).unwrap().columns(), 3);
+    let xml = document_xml(&d.to_docx_bytes().unwrap());
+    assert!(!xml.contains("tcPrChange") && !xml.contains("tblGridChange"));
+    // Deleting your own inserted column removes its cells at once.
+    let mut d = table_doc();
+    d.edit_table(caret(1, 0), TableEdit::ColumnRight).unwrap();
+    d.edit_table(caret(2, 0), TableEdit::DeleteColumn).unwrap();
+    assert_eq!(d.table(1).unwrap().columns(), 2);
+    assert!(cell_changes(&d).is_empty());
+}
+
+#[test]
+fn deleted_columns_stay_struck_until_accepted() {
+    let mut d = table_doc();
+    d.edit_table(caret(2, 0), TableEdit::DeleteColumn).unwrap();
+    // Kept, each cell marked deleted, its text struck.
+    assert_eq!(d.table(1).unwrap().columns(), 2);
+    assert_eq!(cell_changes(&d), [RevKind::Delete, RevKind::Delete]);
+    assert!(
+        d.changes()
+            .iter()
+            .any(|c| c.table.is_none() && c.kind == RevKind::Delete && c.text == "b1")
+    );
+    let mut copy = d.clone();
+    let xml = document_xml(&copy.to_docx_bytes().unwrap());
+    assert_eq!(xml.matches("<w:cellDel w:id=").count(), 2, "{xml}");
+    let back = reopen(&mut copy);
+    assert_eq!(cell_changes(&back), [RevKind::Delete, RevKind::Delete]);
+    // Reject: back, unmarked.
+    let mut rej = d.clone();
+    rej.resolve_all(false, Selection::default());
+    assert!(!rej.has_changes());
+    assert_eq!(cell_texts(&rej), ["a1", "b1", "a2", "b2"]);
+    // Accept: the column goes, and the grid with it.
+    d.resolve_all(true, Selection::default());
+    assert!(!d.has_changes(), "{:?}", d.changes());
+    assert_eq!(d.table(1).unwrap().columns(), 1);
+    assert_eq!(d.table(1).unwrap().grid.len(), 1);
+    assert_eq!(cell_texts(&d), ["a1", "a2"]);
+    d.undo();
+    assert_eq!(d.table(1).unwrap().columns(), 2);
+}
+
+/// `tracked_cells.docx`: Word's inserted and deleted cells and table, row
+/// and cell property changes.
+#[test]
+fn word_tracked_cells_and_properties_are_read_and_resolved() {
+    let doc = Document::open(&corpus("tracked_cells.docx")).unwrap();
+    assert!(!doc.has_unsupported_content(), "{:?}", doc.unsupported_content());
+    assert_eq!(
+        cell_changes(&doc),
+        [RevKind::Delete, RevKind::Insert, RevKind::Delete, RevKind::Insert]
+    );
+    let props: Vec<_> = doc
+        .changes()
+        .into_iter()
+        .filter(|c| c.table == Some(docs_engine::TableChange::Props))
+        .collect();
+    assert_eq!(props.len(), 1);
+    assert_eq!(props[0].author, "Citra");
+    use docs_engine::FormatItem as F;
+    assert_eq!(props[0].format, [F::TableProps, F::RowProps, F::CellProps]);
+    let id = doc.paragraphs().iter().find_map(|p| p.cell).unwrap().table;
+    // Untouched: saved back with its marks.
+    let xml = document_xml(&doc.clone().to_docx_bytes().unwrap());
+    for want in ["<w:tblPrChange w:id=\"98\"", "<w:tblGridChange w:id=\"99\"", "<w:trPrChange", "<w:cellDel", "<w:cellIns"] {
+        assert!(xml.contains(want), "{want}");
+    }
+    // Accept All: the inserted column stays, the deleted one goes; the
+    // table stays centred, the row tall.
+    let mut acc = doc.clone();
+    acc.resolve_all(true, Selection::default());
+    assert!(!acc.has_changes(), "{:?}", acc.changes());
+    assert_eq!(cell_texts(&acc), ["Item", "Qty", "Shop", "Rice", "2", "Pasar"]);
+    let t = acc.table(id).unwrap();
+    assert_eq!(t.grid, [2000, 2000, 2000]);
+    assert!(t.tbl_pr.as_deref().unwrap().contains("<w:jc w:val=\"center\"/>"));
+    assert_eq!(t.rows[1].height, Some((500, false)));
+    // Reject All: the old widths, no inserted column, not centred, the
+    // row's own height.
+    let mut rej = doc.clone();
+    rej.resolve_all(false, Selection::default());
+    assert!(!rej.has_changes(), "{:?}", rej.changes());
+    assert_eq!(cell_texts(&rej), ["Item", "Qty", "Note", "Rice", "2", "old"]);
+    let t = rej.table(id).unwrap();
+    assert_eq!(t.grid, [3000, 3000, 2000]);
+    assert!(!t.tbl_pr.as_deref().unwrap().contains("<w:jc "));
+    assert_eq!(t.rows[1].height, None);
+    assert_eq!(t.rows[0].cells[0].width, Some(3000));
+    // The table's formatting alone, at the caret in a cell without a
+    // change of its own.
+    let mut one = doc.clone();
+    let first = one.paragraphs().iter().position(|p| p.cell.is_some()).unwrap();
+    one.accept_change(caret(first, 0)).unwrap();
+    assert!(one.changes().iter().all(|c| c.table != Some(docs_engine::TableChange::Props)));
+    assert_eq!(cell_changes(&one).len(), 4);
 }

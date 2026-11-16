@@ -485,6 +485,16 @@ fn rule(b: Option<docs_engine::Border>) -> Option<Rule> {
     })
 }
 
+/// Word's shading of tracked table cells and rows (Track Changes
+/// options: inserted cells light blue, deleted cells pink), a little
+/// translucent so a selection still shows through on screen.
+pub fn tracked_fill(kind: docs_engine::RevKind) -> docs_layout::Rgba {
+    match kind {
+        docs_engine::RevKind::Delete => docs_layout::Rgba([0xFF, 0xB3, 0xD9, 0xA0]),
+        _ => docs_layout::Rgba([0x99, 0xCC, 0xFF, 0xA0]),
+    }
+}
+
 /// The table block for table `id`, whose paragraphs are `range`.
 fn table_block(
     doc: &Document,
@@ -560,6 +570,7 @@ fn table_block(
                     VMerge::Continue => Merge::Continue,
                 },
                 borders: [rule(top), rule(right), rule(bottom), rule(left)],
+                fill: cell.tracked().or(row.tracked()).map(tracked_fill),
             });
         }
         let (min_height, exact) = row.height.map_or((0.0, false), |(h, e)| (tw(h), e));

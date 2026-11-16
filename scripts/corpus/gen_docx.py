@@ -29,6 +29,10 @@ crates/docs_pdf/tests/.
   bold (`w:rPrChange`), a paragraph centred (`w:pPrChange`), a table with a
   deleted row and an inserted row (`w:trPr/w:del`, `w:trPr/w:ins`), an
   insertion in the header and a deletion in a footnote.
+* tracked_cells.docx: a table with an inserted column (`w:cellIns`, the
+  widths it changed in `w:tcPrChange` and `w:tblGridChange`), a deleted
+  column (`w:cellDel`), a table property change (`w:tblPrChange`) and a
+  row property change (`w:trPrChange`), as Word saves them.
 * threads.docx: Word 365 threaded comments: a question with a reply (both
   on the same word), a resolved comment, with commentsExtended,
   commentsIds, commentsExtensible and people parts.
@@ -648,6 +652,49 @@ settings.find(qn("w:compat")).addprevious(
     parse_xml(f'<w:footnotePr {W}><w:footnote w:id="-2"/><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>')
 )
 save(d, "tracked.docx")
+
+# ── tracked_cells: a column inserted (its cells `w:cellIns`, the widths it
+# changed in `w:tcPrChange` / `w:tblGridChange`), a column deleted
+# (`w:cellDel`, text in `w:del`), the table centred (`w:tblPrChange`) and
+# a row made taller (`w:trPrChange`), by "Citra".
+d = Document()
+d.add_paragraph("Shopping list")
+REVC = 'w:author="Citra" w:date="2026-11-11T09:00:00Z"'
+
+
+def tc(text, w, extra="", old_w=None, deleted=False, rid=0):
+    change = (f'<w:tcPrChange w:id="{rid + 1}" {REVC}><w:tcPr><w:tcW w:w="{old_w}" w:type="dxa"/></w:tcPr></w:tcPrChange>'
+              if old_w else "")
+    run = (f'<w:del w:id="{rid + 2}" {REVC}><w:r><w:delText>{text}</w:delText></w:r></w:del>' if deleted
+           else f'<w:r><w:t>{text}</w:t></w:r>')
+    return f'<w:tc><w:tcPr><w:tcW w:w="{w}" w:type="dxa"/>{extra}{change}</w:tcPr><w:p>{run}</w:p></w:tc>'
+
+
+rows = [("Item", "Qty", "Note", "Shop"), ("Rice", "2", "old", "Pasar")]
+trs = ""
+for r, (a, b, c, e) in enumerate(rows):
+    base = 100 + r * 20
+    tr_pr = (f'<w:trPr><w:trHeight w:val="500"/><w:trPrChange w:id="{base + 19}" {REVC}><w:trPr/></w:trPrChange></w:trPr>'
+             if r == 1 else "")
+    trs += ("<w:tr>" + tr_pr
+            + tc(a, 2000, old_w=3000, rid=base)
+            + tc(b, 2000, old_w=3000, rid=base + 3)
+            + tc(c, 2000, f'<w:cellDel w:id="{base + 9}" {REVC}/>', deleted=True, rid=base + 6)
+            + tc(e, 2000, f'<w:cellIns w:id="{base + 12}" {REVC}/>', rid=base + 13)
+            + "</w:tr>")
+tbl = (
+    f'<w:tbl {W}><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/><w:tblBorders>'
+    + "".join(f'<w:{s} w:val="single" w:sz="4" w:space="0" w:color="auto"/>' for s in ("top", "left", "bottom", "right", "insideH", "insideV"))
+    + f'</w:tblBorders><w:tblLook w:val="04A0"/><w:tblPrChange w:id="98" {REVC}><w:tblPr><w:tblW w:w="0" w:type="auto"/>'
+    + "<w:tblBorders>" + "".join(f'<w:{s} w:val="single" w:sz="4" w:space="0" w:color="auto"/>' for s in ("top", "left", "bottom", "right", "insideH", "insideV"))
+    + '</w:tblBorders><w:tblLook w:val="04A0"/></w:tblPr></w:tblPrChange></w:tblPr>'
+    + '<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/>'
+    + '<w:tblGridChange w:id="99"><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/><w:gridCol w:w="2000"/></w:tblGrid></w:tblGridChange></w:tblGrid>'
+    + trs + "</w:tbl>"
+)
+d.element.body.insert(1, parse_xml(tbl))
+d.add_paragraph("After the table.")
+save(d, "tracked_cells.docx")
 
 # ── threads: Word 365 threaded comments (a reply, a resolved thread) with
 # commentsExtended / commentsIds / commentsExtensible / people parts.

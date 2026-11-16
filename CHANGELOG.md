@@ -20,6 +20,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Docs: radar, bubble, stock and 3-D charts (drawn flat) are drawn too, as in Slides; only
   surface, pie-of-pie and bar-of-pie charts and Office 2016 charts (waterfall, treemap…) are still
   boxes.
+- Docs: with Track Changes on, inserting and deleting table columns is tracked as Word does it
+  (each cell marked inserted or deleted, the column widths it changed kept as a formatting change),
+  and tracked rows and cells are shaded as in Word (inserted light blue, deleted pink). Table, row
+  and cell property changes in files from Word open (they used to force Save As), show as a
+  "Formatted Table" balloon, and can be accepted or rejected.
 
 ## [0.8.0] - 2026-11-16
 

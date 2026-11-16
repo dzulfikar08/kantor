@@ -260,7 +260,12 @@ fn grouped_shapes_text_is_laid_out_and_exported() {
     let scenes: Vec<_> = scene.pages.iter().flat_map(|p| &p.front).collect();
     let with_text = scenes
         .iter()
-        .filter(|f| f.content.runs.iter().any(|r| r.text.contains("Plan") || r.text.contains("Do")))
+        .filter(|f| {
+            f.content
+                .runs
+                .iter()
+                .any(|r| matches!(&*r.text, "first" | "Do"))
+        })
         .count();
     assert_eq!(with_text, 2);
     assert!(scenes.iter().any(|f| f.content_turn.is_some_and(|t| t.0 == 90.0)));
