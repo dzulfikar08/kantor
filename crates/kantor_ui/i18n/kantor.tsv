@@ -577,7 +577,7 @@ This drive doesn't say where to sign in. Enter your organisation's sign-in serve
 Sign-in failed: {}	Gagal masuk: {}
 This sign-in server has no sign-in with a code. Use the browser sign-in instead.	Server masuk ini tidak mendukung masuk dengan kode. Gunakan masuk lewat peramban.
 The sign-in server gave no refresh token, so Kantor can't stay signed in. Ask your administrator to allow offline access for Kantor.	Server masuk tidak memberikan token penyegaran, jadi Kantor tidak dapat tetap masuk. Minta administrator mengizinkan akses luring (offline access) untuk Kantor.
-Your sign-in to {} has ended. Your edits are kept on this computer. Sign in again in Cloud Accounts, then choose Sync Now.	Sesi masuk Anda ke {} telah berakhir. Perubahan Anda tetap tersimpan di komputer ini. Masuk lagi di Akun Cloud, lalu pilih Sinkronkan Sekarang.
+Your sign-in to {} has ended. Your edits are kept on this computer. Sign in again in Cloud Accounts, then choose Sync Now.	Sesi masuk ke {} berakhir. Perubahan tetap tersimpan di komputer ini. Masuk lagi di Akun Cloud, lalu Sinkronkan Sekarang.
 Fill in the server address first.	Isi alamat server terlebih dahulu.
 Finding where to sign in…	Mencari tempat masuk…
 Waiting for you to sign in in the browser…	Menunggu Anda masuk di peramban…
@@ -594,3 +594,4 @@ Kantor opens your browser to sign in with your organisation's account. Without a
 In a browser on any device, go to {} and enter this code:	Di peramban pada perangkat apa pun, buka {} lalu masukkan kode ini:
 Use a code instead	Gunakan kode
 Sign in with your organisation	Masuk dengan akun organisasi
+Account removed: signed out, and its sign-in deleted from the keychain.	Akun dihapus: sesi masuk diakhiri dan dihapus dari keychain.

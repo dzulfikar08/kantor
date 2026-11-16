@@ -88,6 +88,9 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Fixed
 
+- Cloud storage: a cloud file that was open when Kantor was killed or crashed opens editable again
+  on the next start instead of "Read-only: locked by" yourself; Kantor takes back its own lock
+  with the token it recorded.
 - Sheets: an icon set in reverse order (*Reverse Icon Order*) brought in from an `.ods` or `.xls`
   file, or on a sheet whose rules were changed in Kantor, keeps that order when saved.
 - Docs: text wraps around a turned picture or shape's turned bounds, as in Word, instead of its

@@ -63,7 +63,9 @@ pub const OPENCLOUD_DESKTOP_CLIENT_ID: &str = "OpenCloudDesktop";
 /// How long the browser sign-in may take.
 pub const BROWSER_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Refresh this long before the access token expires.
+/// Refresh this long before the access token expires (at most half its
+/// lifetime: a provider handing out one-minute tokens would otherwise get a
+/// refresh before every request).
 const REFRESH_MARGIN: Duration = Duration::from_secs(60);
 
 /// The provider's endpoints (from its discovery document).
@@ -827,16 +829,18 @@ impl TokenSource {
     }
 }
 
+/// When to stop using an access token that lives `expires_in` seconds.
 fn expiry(expires_in: Option<u64>) -> Instant {
     // No lifetime given: assume five minutes, a common default.
-    Instant::now() + Duration::from_secs(expires_in.unwrap_or(300))
+    let life = Duration::from_secs(expires_in.unwrap_or(300));
+    Instant::now() + life - REFRESH_MARGIN.min(life / 2)
 }
 
 impl BearerSource for TokenSource {
     fn token(&self) -> Result<String, Error> {
         let mut h = self.held.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((t, until)) = &h.access
-            && Instant::now() + REFRESH_MARGIN < *until
+            && Instant::now() < *until
         {
             return Ok(t.clone());
         }
@@ -988,6 +992,20 @@ fn browser_once(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_lived_access_tokens_are_used_before_refreshing() {
+        // Keycloak realms with one-minute tokens: used for 30 s, not refreshed
+        // before every request.
+        let now = Instant::now();
+        let e = expiry(Some(60));
+        assert!(
+            e >= now + Duration::from_secs(30) && e <= Instant::now() + Duration::from_secs(30)
+        );
+        // An hour: refreshed a minute early.
+        assert!(expiry(Some(3600)) >= now + Duration::from_secs(3540));
+        assert!(expiry(Some(0)) <= Instant::now());
+    }
 
     #[test]
     fn pkce_matches_rfc_7636_example() {

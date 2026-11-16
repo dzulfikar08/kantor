@@ -334,6 +334,7 @@ impl AccountsPanel {
             return;
         }
         self.accounts = settings.cloud.accounts;
+        let sso = removed.as_ref().is_some_and(CloudAccount::is_sso);
         jobs::spawn(
             cx,
             move |_: &dyn Fn(())| {
@@ -343,14 +344,17 @@ impl AccountsPanel {
                 CLOUD.delete(&id)
             },
             |_, _, _| {},
-            |this: &mut Self, _, cx| {
-                this.status = Status::Ok(
+            move |this: &mut Self, _, cx| {
+                this.status = Status::Ok(if sso {
+                    t("Account removed: signed out, and its sign-in deleted from the keychain.")
+                        .into()
+                } else {
                     tr(
                         "Account removed, and its password deleted from the keychain.",
                         "Akun dihapus, dan kata sandinya dihapus dari keychain.",
                     )
-                    .into(),
-                );
+                    .into()
+                });
                 cx.emit(PanelEvent::AccountsChanged);
                 cx.notify();
             },
@@ -623,6 +627,10 @@ impl Render for AccountsPanel {
                     )
                 }),
         };
+        // Single sign-on has three buttons in the footer: its messages go
+        // above them at full width rather than in a narrow column beside.
+        let status_above = self.mode == Mode::Sso;
+        let body = body.when(status_above, |b| b.children(status_line(&self.status, cx)));
 
         div()
             .id("cloud-accounts")
@@ -637,10 +645,9 @@ impl Render for AccountsPanel {
                     .child(
                         footer(cx)
                             .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .children(status_line(&self.status, cx)),
+                                div().flex_1().min_w_0().when(!status_above, |d| {
+                                    d.children(status_line(&self.status, cx))
+                                }),
                             )
                             .when(self.mode == Mode::AppPassword, |f| {
                                 f.child(

@@ -772,3 +772,29 @@ fn crash_cleanup_releases_left_locks() {
     assert!(e.cache.held_locks().is_empty());
     assert_unlocked(&e, &path);
 }
+
+#[test]
+#[ignore]
+fn reopened_after_crash_takes_back_its_lock() {
+    let e = env_or_skip!();
+    let path = new_file(&e, "relock");
+    // A run that took the lock and died; the next start restores the file
+    // (so cleanup keeps its lock) and locks it again.
+    let opened = session::open(&e.alice, &e.cache, &path).unwrap();
+    let LockState::Held(token) = opened.lock.clone() else {
+        panic!("{:?}", opened.lock)
+    };
+    drop(opened);
+    assert_eq!(
+        session::take_lock(&e.alice, &e.cache, &path),
+        LockState::Held(token.clone()),
+        "its own lock, not read-only"
+    );
+    // Another computer of the same user still finds it locked.
+    assert!(matches!(
+        session::take_lock(&e.alice2, &e.cache, &path),
+        LockState::LockedBy(_)
+    ));
+    session::release(&e.alice, &e.cache, &path, &token).unwrap();
+    assert_unlocked(&e, &path);
+}

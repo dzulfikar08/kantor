@@ -109,6 +109,17 @@ pub fn take_lock(r: &Remote, cache: &Cache, remote: &str) -> LockState {
             });
             LockState::Held(token)
         }
+        // Our own lock from a run that didn't release it (crash, kill) on a
+        // file opened again: the recorded token still refreshes it.
+        Err(Error::Locked)
+            if let Some(l) = cache
+                .held_locks()
+                .into_iter()
+                .find(|l| l.account == r.account && l.remote == remote)
+                && refresh_lock(r, remote, &l.token()).is_ok() =>
+        {
+            LockState::Held(l.token())
+        }
         Err(Error::Locked) => LockState::LockedBy(
             lock_holder(r, remote)
                 .ok()
