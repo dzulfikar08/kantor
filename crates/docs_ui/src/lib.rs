@@ -21,6 +21,7 @@ extern crate gpui_kit as gpui;
 
 mod agent;
 mod ai;
+mod code_inline;
 mod field_menu;
 mod fields;
 mod find;
@@ -519,6 +520,8 @@ pub struct DocsView {
     /// The Table Properties / Split Cells popover.
     table_menu: Option<table_menu::TableMenu>,
     split_menu: Option<table_menu::SplitMenu>,
+    /// The caret in a field's code shown in the text.
+    code_inline: Option<code_inline::InlineCode>,
     engine: Rc<RefCell<Engine>>,
     bridge: Rc<RefCell<FontBridge>>,
     zoom: f32,
@@ -642,6 +645,7 @@ impl DocsView {
             tab_menu: None,
             table_menu: None,
             split_menu: None,
+            code_inline: None,
             engine,
             bridge,
             zoom: 1.0,
@@ -809,6 +813,10 @@ impl DocsView {
 
     fn horizontal(&mut self, forward: bool, word: bool, extend: bool, cx: &mut Context<Self>) {
         self.goal_x = None;
+        if !extend && !word && self.code_move(forward, cx) {
+            return;
+        }
+        self.code_inline = None;
         if !extend && !self.sel.is_empty() && !word {
             let (start, end) = self.sel.ordered();
             self.move_to(if forward { end } else { start }, false, cx);
@@ -821,6 +829,9 @@ impl DocsView {
             (true, true) => self.doc.next_word_position(head),
             (false, true) => self.doc.prev_word_position(head),
         };
+        if !extend && !word && self.sel.is_empty() && self.code_enter(head, pos, forward, cx) {
+            return;
+        }
         self.move_to(pos, extend, cx);
     }
 
@@ -845,6 +856,9 @@ impl DocsView {
 
     fn line_edge(&mut self, end: bool, extend: bool, cx: &mut Context<Self>) {
         self.goal_x = None;
+        if !extend && self.code_edge(end, cx) {
+            return;
+        }
         let head = self.sel.head;
         let Some((range, soft)) = self.laid.line_range(head.para, head.offset) else {
             return;
@@ -1645,16 +1659,11 @@ impl DocsView {
         let Some(pos) = self.hit(ev.position) else {
             return;
         };
-        // A double click on a field's code edits it.
-        if ev.click_count == 2
-            && let Some(f) = self.doc.field_at(pos)
-            && self.codes().shows(f.mark_id())
-        {
-            let at = point(ev.position.x, ev.position.y + SPACE_5);
-            let code = f.shown_code();
-            self.open_code_edit(Some(f.begin), &code, at, window, cx);
+        // A click on a field's code puts the caret in it.
+        if !ev.modifiers.shift && self.code_click(ev.position, cx) {
             return;
         }
+        self.code_inline = None;
         // Ctrl+click follows a hyperlink (Word's default).
         if ev.click_count == 1
             && ev.modifiers.secondary(cx)
@@ -2017,6 +2026,8 @@ struct Frame {
     float_sel: Option<(usize, [f32; 4])>,
     float_drag: Option<floats::FloatDrag>,
     sel: Selection,
+    /// The caret in a field's code, when it's there.
+    code_caret: Option<docs_layout::CaretRect>,
     marked: Option<Range<usize>>,
     /// A header or footer is being edited (the body dims).
     editing_hf: Option<docs_engine::HfKind>,
@@ -2421,7 +2432,9 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
         }
         if f.focused
             && start == end
-            && let Some(c) = laid.caret(f.sel.head.para, f.sel.head.offset)
+            && let Some(c) = f
+                .code_caret
+                .or_else(|| laid.caret(f.sel.head.para, f.sel.head.offset))
         {
             let top = g.page_to_screen(c.page, c.x, c.top);
             let caret = Bounds::new(top, size(CARET_WIDTH, px(c.height * z)));
@@ -2534,6 +2547,7 @@ impl Render for DocsView {
             float_sel,
             float_drag: self.float_drag,
             sel: self.sel,
+            code_caret: self.code_caret(),
             marked: self.marked.clone(),
             editing_hf: match self.part_target() {
                 Some(part::PartTarget::Hf { kind, .. }) => Some(*kind),
@@ -2666,11 +2680,13 @@ impl Render for DocsView {
                 this.move_to(h, false, cx)
             },
             Backspace => |this, w, cx| {
+                if this.code_delete(false, w, cx) { return; }
                 if this.delete_selected_float(w, cx) { return; }
                 let s = this.doc.backspace(this.sel);
                 this.edited(s, w, cx)
             },
             Delete => |this, w, cx| {
+                if this.code_delete(true, w, cx) { return; }
                 if this.delete_selected_float(w, cx) { return; }
                 let s = this.doc.delete_forward(this.sel);
                 this.edited(s, w, cx)
@@ -2726,7 +2742,7 @@ impl Render for DocsView {
             ToggleTrackChanges => |this, w, cx| this.toggle_track_changes_doc(w, cx),
             InsertFootnote => |this, w, cx| this.insert_note_doc(docs_engine::NoteKind::Footnote, w, cx),
             InsertEndnote => |this, w, cx| this.insert_note_doc(docs_engine::NoteKind::Endnote, w, cx),
-            UpdateFields => |this, w, cx| this.update_fields_doc(w, cx),
+            UpdateFields => |this, w, cx| { this.code_to_field(); this.update_fields_doc(w, cx) },
             UpdateTable => |this, w, cx| this.update_table_doc(w, cx),
             ToggleFieldCodes => |this, _w, cx| this.toggle_field_codes_doc(cx),
             ToggleFieldCode => |this, _w, cx| this.toggle_field_code_doc(cx),

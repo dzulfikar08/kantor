@@ -68,6 +68,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   yellow, the moved text as an insertion and a deletion); merging across columns and splitting say
   "This action will not be marked as a change", as Word does. Cell merges tracked in Word open
   (they used to force Save As) and can be accepted or rejected.
+- Docs: field codes are typed in the text, as in Word. With codes shown (Alt+F9 or Shift+F9),
+  clicking a code or moving into it with the arrow keys puts the caret between its braces; the
+  arrows, Home and End move through it, typing, Backspace and Delete edit it (each edit one undo
+  step), and the field keeps its result until F9 updates it. This replaces the small code box that
+  opened on a double click (Ctrl+F9 still asks for a new field's code in it).
 
 ### Fixed
 

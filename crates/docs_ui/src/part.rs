@@ -107,6 +107,35 @@ impl Laid {
         fallback
     }
 
+    /// [`docs_layout::PagedDocument::label_caret`] where it's drawn.
+    pub(crate) fn label_caret(&self, para: usize, index: usize, at: usize) -> Option<CaretRect> {
+        let Some(pieces) = &self.part else {
+            return self.paged.label_caret(para, index, at);
+        };
+        pieces.iter().find_map(|p| {
+            let c = p.paged().label_caret(para, index, at)?;
+            p.shows(&c).then(|| p.to_page(c))
+        })
+    }
+
+    /// [`docs_layout::PagedDocument::label_hit`] where it's drawn.
+    pub(crate) fn label_hit(
+        &self,
+        para: usize,
+        index: usize,
+        page: usize,
+        x: f32,
+        y: f32,
+    ) -> Option<usize> {
+        let Some(pieces) = &self.part else {
+            return self.paged.label_hit(para, index, page, x, y);
+        };
+        pieces
+            .iter()
+            .filter(|p| p.page == page)
+            .find_map(|p| p.paged().label_hit(para, index, 0, x - p.x, y - p.y))
+    }
+
     pub(crate) fn hit_test(&self, page: usize, x: f32, y: f32) -> Option<(usize, usize)> {
         let Some(pieces) = &self.part else {
             return self.paged.hit_test(page, x, y);

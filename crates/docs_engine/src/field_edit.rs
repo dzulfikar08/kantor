@@ -192,6 +192,32 @@ impl Document {
         if span.shown_code() == instr.trim() {
             return true;
         }
+        let (paras, id) = self.with_code(&span, instr);
+        let paras = self.updated(paras, vec![id], cx, lay_out);
+        let after = self.clamp_selection(sel);
+        self.commit_paras(paras, sel, after);
+        true
+    }
+
+    /// Change the code of the field starting at `begin` without updating
+    /// its result, as typing a code in the text does in Word (F9 updates
+    /// it): one undo step. `false` when there's no field there.
+    pub fn set_field_instr(&mut self, begin: Position, instr: &str, sel: Selection) -> bool {
+        let Some(span) = self.fields().into_iter().find(|s| s.begin == begin) else {
+            return false;
+        };
+        if span.shown_code() == instr.trim() {
+            return true;
+        }
+        let (paras, _) = self.with_code(&span, instr);
+        let after = self.clamp_selection(sel);
+        self.commit_paras(paras, sel, after);
+        true
+    }
+
+    /// The paragraphs with field `span`'s code replaced by `instr`, and the
+    /// new begin mark's id.
+    fn with_code(&self, span: &fields::FieldSpan, instr: &str) -> (Vec<Paragraph>, usize) {
         let instr = format!(" {} ", instr.trim());
         let mut paras = self.paragraphs.clone();
         // Written as a complex field (a simple one's code is an attribute);
@@ -213,10 +239,7 @@ impl Document {
             span.end,
             Object::Field(Arc::new(FieldMark::end())),
         );
-        let paras = self.updated(paras, vec![id], cx, lay_out);
-        let after = self.clamp_selection(sel);
-        self.commit_paras(paras, sel, after);
-        true
+        (paras, id)
     }
 
     // ── bookmarks ──────────────────────────────────────────────────────────

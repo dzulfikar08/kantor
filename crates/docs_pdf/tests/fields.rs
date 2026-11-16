@@ -157,3 +157,59 @@ fn field_codes_show_nested_codes() {
         .label;
     assert_eq!(label, &format!("{{ {code} }}"));
 }
+
+/// Field codes typed in the text: the caret walks the code shown between
+/// the braces, a click maps back to it, and a code edited this way keeps
+/// the result until it's updated (Word: F9).
+#[test]
+fn codes_in_the_text_take_a_caret_and_keep_the_result() {
+    let mut doc = Document::open(&corpus("fields.docx")).unwrap();
+    doc.set_field_codes(Some(docs_engine::CodeView {
+        all: true,
+        ids: Default::default(),
+    }));
+    let f = doc
+        .fields()
+        .into_iter()
+        .find(|f| f.kind() == "DATE")
+        .unwrap();
+    let code = f.shown_code();
+    let label = format!("{{ {code} }}");
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let paged = &laid.paged;
+    let (p, i) = (f.begin.para, f.begin.offset);
+    let first = paged.label_caret(p, i, 2).unwrap();
+    let last = paged.label_caret(p, i, label.len() - 2).unwrap();
+    assert!(last.x > first.x + 5.0, "{first:?} {last:?}");
+    assert_eq!(first.page, last.page);
+    // A click at a caret's spot finds that byte again.
+    for at in [2, 4, label.len() - 2] {
+        let c = paged.label_caret(p, i, at).unwrap();
+        let hit = paged.label_hit(p, i, c.page, c.x + 0.2, c.top + c.height / 2.0);
+        assert_eq!(hit, Some(at), "{label:?} at {at}");
+    }
+    // Off the label: nothing.
+    assert_eq!(
+        paged.label_hit(p, i, first.page, first.x - 40.0, first.top),
+        None
+    );
+
+    let before = doc.paragraph(p).text.clone();
+    let new = code.replace("DATE", "TIME");
+    assert!(doc.set_field_instr(f.begin, &new, Selection::caret(f.begin)));
+    let g = doc
+        .fields()
+        .into_iter()
+        .find(|g| g.begin == f.begin)
+        .unwrap();
+    assert_eq!(g.shown_code(), new.trim());
+    assert_eq!(doc.paragraph(p).text, before, "the result stays until F9");
+    doc.undo();
+    let g = doc
+        .fields()
+        .into_iter()
+        .find(|g| g.begin == f.begin)
+        .unwrap();
+    assert_eq!(g.shown_code(), code);
+}

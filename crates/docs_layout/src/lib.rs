@@ -2595,6 +2595,58 @@ impl PagedDocument {
         })
     }
 
+    /// Where the label of object `index` of `para` (a field code shown in
+    /// the text) is drawn: page, its left and top (page px), its layout.
+    fn label_box(&self, para: usize, index: usize) -> Option<(usize, f32, f32, &Layout<Rgba>)> {
+        let l = self.layouts.get(para)?;
+        let (_, label, _) = l.labels.iter().find(|x| x.0 == index)?;
+        for (k, line) in l.layout.lines().enumerate() {
+            let Some((page, dy, dx)) = self.origin(para, k) else {
+                continue;
+            };
+            for item in line.items() {
+                if let PositionedLayoutItem::InlineBox(b) = item
+                    && l.objects.get(b.id as usize).is_some_and(|o| o.0 == index)
+                {
+                    return Some((page, dx + b.x, dy + b.y, label));
+                }
+            }
+        }
+        None
+    }
+
+    /// The caret at byte `at` of the label of object `index` of `para`
+    /// (a field's code shown in the text).
+    pub fn label_caret(&self, para: usize, index: usize, at: usize) -> Option<CaretRect> {
+        let (page, x, y, label) = self.label_box(para, index)?;
+        let cursor = Cursor::from_byte_index(label, at, Affinity::Downstream);
+        let r = cursor.geometry(label, 1.0);
+        Some(CaretRect {
+            page,
+            x: x + r.x0 as f32,
+            top: y + r.y0 as f32,
+            height: (r.y1 - r.y0) as f32,
+        })
+    }
+
+    /// The byte of the label of object `index` of `para` nearest to `x`
+    /// on `page`, when `(x, y)` is on the label.
+    pub fn label_hit(
+        &self,
+        para: usize,
+        index: usize,
+        page: usize,
+        x: f32,
+        y: f32,
+    ) -> Option<usize> {
+        let (p, lx, ly, label) = self.label_box(para, index)?;
+        let (w, h) = (label.width(), label.height());
+        if p != page || x < lx - 1.0 || x > lx + w + 1.0 || y < ly - 1.0 || y > ly + h + 1.0 {
+            return None;
+        }
+        Some(Cursor::from_point(label, x - lx, h / 2.0).index())
+    }
+
     /// `(page, index into that page's lines)` of the line showing `index` of `para`.
     pub fn placed_line(&self, para: usize, index: usize) -> Option<(usize, usize)> {
         let k = self.layout_line_of(para, index)?;
