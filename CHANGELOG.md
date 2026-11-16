@@ -59,6 +59,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   (before, every table started at the left margin plus its indent). *Table Properties…* (table
   toolbar or palette) sets a table's alignment and its indent from left, as Word's Table tab; each
   change is one undo step, tracked with Track Changes on, and saved as Word saves it.
+- Docs: *Merge Cells* and *Split Cells…* (table toolbar or palette), as in Word. Merging joins the
+  selected cells (growing the selection over merged cells it cuts through) and keeps the text of
+  each one; splitting divides a cell into any number of columns and rows, adding grid columns and
+  rows where needed with the cells around them spanning them, and spreads its paragraphs over the
+  new cells. Both are one undo step and saved as Word saves them (`w:gridSpan`, `w:vMerge`). With
+  Track Changes on, merging down a column is tracked as Word tracks it ("Merged Cells", shaded light
+  yellow, the moved text as an insertion and a deletion); merging across columns and splitting say
+  "This action will not be marked as a change", as Word does. Cell merges tracked in Word open
+  (they used to force Save As) and can be accepted or rejected.
 
 ### Fixed
 

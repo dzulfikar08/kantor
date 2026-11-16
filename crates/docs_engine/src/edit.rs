@@ -22,7 +22,7 @@ pub enum TableEdit {
 }
 
 /// Cell contents: rows × cells × paragraphs.
-type Grid = Vec<Vec<Vec<Paragraph>>>;
+pub(crate) type Grid = Vec<Vec<Vec<Paragraph>>>;
 
 impl Document {
     // ── lists ──────────────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ impl Document {
 
     /// A new paragraph for a cell, formatted like `like` (or plain, with no
     /// spacing after, Word's table text default).
-    fn cell_paragraph(cell: CellRef, like: Option<&Paragraph>) -> Paragraph {
+    pub(crate) fn cell_paragraph(cell: CellRef, like: Option<&Paragraph>) -> Paragraph {
         let mut p = match like {
             Some(l) => {
                 let mut p = Paragraph::styled("", l.runs[0].props.clone());
@@ -219,7 +219,7 @@ impl Document {
     }
 
     /// A table's paragraphs grouped by row and cell.
-    fn grid(&self, id: u32) -> (std::ops::Range<usize>, Grid) {
+    pub(crate) fn grid(&self, id: u32) -> (std::ops::Range<usize>, Grid) {
         let range = self.table_range(id);
         let t = &self.tables[&id];
         let mut grid: Grid = t
@@ -240,7 +240,7 @@ impl Document {
     }
 
     /// Flatten a grid back into paragraphs with renumbered cell refs.
-    fn flatten(id: u32, grid: Grid) -> Vec<Paragraph> {
+    pub(crate) fn flatten(id: u32, grid: Grid) -> Vec<Paragraph> {
         let mut out = Vec::new();
         for (r, row) in grid.into_iter().enumerate() {
             for (c, cell) in row.into_iter().enumerate() {
@@ -262,7 +262,7 @@ impl Document {
     }
 
     /// Index of the first paragraph of a cell in `paras`.
-    fn first_of(paras: &[Paragraph], cell: CellRef) -> Option<usize> {
+    pub(crate) fn first_of(paras: &[Paragraph], cell: CellRef) -> Option<usize> {
         paras.iter().position(|p| p.cell == Some(cell))
     }
 

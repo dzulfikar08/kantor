@@ -61,6 +61,7 @@ icon_assets!(
         Shapes,
         TextWrap,
         TableCellsMerge,
+        TableCellsSplit,
         Funnel,
         Snowflake,
         Printer,

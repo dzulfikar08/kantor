@@ -62,6 +62,35 @@ impl TableAlign {
     }
 }
 
+impl VMerge {
+    /// From a `w:cellMerge`'s `w:vMerge` / `w:vMergeOrig` (`rest`, `cont`,
+    /// absent = not merged).
+    pub(crate) fn from_annotation(v: Option<&str>) -> Self {
+        match v {
+            Some("rest") | Some("restart") => Self::Restart,
+            Some("cont") | Some("continue") => Self::Continue,
+            _ => Self::None,
+        }
+    }
+
+    pub(crate) fn annotation(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Restart => Some("rest"),
+            Self::Continue => Some("cont"),
+        }
+    }
+
+    /// The `w:vMerge` element for this state (none when not merged).
+    pub(crate) fn element(self) -> Option<String> {
+        match self {
+            Self::None => None,
+            Self::Restart => Some("<w:vMerge w:val=\"restart\"/>".into()),
+            Self::Continue => Some("<w:vMerge/>".into()),
+        }
+    }
+}
+
 /// One border line. Every style is drawn as a single line for now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Border {
@@ -160,6 +189,8 @@ impl Cell {
         let Some(el) = self.tc_pr.as_deref().and_then(crate::xml::parse) else {
             return;
         };
+        // A tracked merge (`w:cellMerge`) holds the cell's merge state now.
+        let mut tracked = None;
         for c in &el.children {
             match c.name.as_str() {
                 "gridSpan" => self.span = c.num("val").unwrap_or(1).max(1),
@@ -170,12 +201,16 @@ impl Cell {
                         VMerge::Continue
                     }
                 }
+                "cellMerge" => tracked = Some(VMerge::from_annotation(c.attr("vMerge"))),
                 "tcW" if matches!(c.attr("type"), None | Some("dxa")) => {
                     self.width = c.num("w");
                 }
                 "tcBorders" => self.borders = crate::docx::borders(c),
                 _ => {}
             }
+        }
+        if let Some(v) = tracked {
+            self.vmerge = v;
         }
     }
 }

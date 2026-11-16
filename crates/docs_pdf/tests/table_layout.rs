@@ -174,3 +174,23 @@ fn tracked_table_properties_record_the_old_ones() {
     doc.resolve_all(false, sel);
     assert_eq!(doc.table_props(sel).unwrap().align, TableAlign::Left);
 }
+
+#[test]
+fn tracked_merges_are_shaded_and_drawn_merged() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/docx/tracked_merge.docx");
+    let doc = Document::open(&path).unwrap();
+    let (_, _, blocks) = docs_pdf::build::build(&doc);
+    let t = blocks
+        .iter()
+        .find_map(|b| match b {
+            Block::Table(t) => Some(t),
+            _ => None,
+        })
+        .unwrap();
+    let first = &t.rows[0].cells[0];
+    assert_eq!(first.merge, docs_layout::Merge::Restart);
+    assert_eq!(first.fill, Some(docs_pdf::build::MERGED_FILL));
+    assert_eq!(t.rows[1].cells[0].merge, docs_layout::Merge::Continue);
+    assert_eq!(t.rows[0].cells[1].fill, None);
+}

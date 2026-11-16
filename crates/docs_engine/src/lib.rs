@@ -36,6 +36,7 @@ pub mod rtf;
 pub mod section;
 pub mod style;
 pub mod table;
+pub mod table_merge;
 mod table_props;
 pub mod tabs;
 mod track;

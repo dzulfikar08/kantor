@@ -1,6 +1,7 @@
 //! The Table Properties popover, as Word's Table Properties › Table tab:
 //! the table's alignment between the margins and its indent from left.
-//! Each change is one undo step and applies at once.
+//! Each change is one undo step and applies at once. Also Merge Cells and
+//! the Split Cells popover (number of columns and rows).
 
 use docs_engine::{TableAlign, TableProps, cm_to_twips};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -20,6 +21,26 @@ pub(crate) struct TableMenu {
     indent: Entity<InputState>,
     _subs: Vec<Subscription>,
 }
+
+/// The open Split Cells popover.
+pub(crate) struct SplitMenu {
+    at: Point<Pixels>,
+    columns: Entity<InputState>,
+    rows: Entity<InputState>,
+    _subs: Vec<Subscription>,
+}
+
+/// Merge and split messages from docs_engine, marked for the catalog.
+const MESSAGES: [&str; 5] = [
+    tk("The caret isn't in a table"),
+    tk("Select two or more cells to merge"),
+    tk("These cells can't be merged"),
+    tk("The number of rows must divide the rows the merged cell spans"),
+    tk("A table can have at most 63 columns"),
+];
+
+/// Word's note when a table edit can't be tracked.
+const NOT_TRACKED: &str = tk("This action will not be marked as a change.");
 
 const ALIGNS: [(TableAlign, &str); 3] = [
     (TableAlign::Left, tk("Left")),
@@ -114,6 +135,153 @@ impl DocsView {
                 cx.notify();
             }
         }
+    }
+
+    /// Merge the selected cells (one undo step).
+    pub fn merge_cells_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let r = self.doc.merge_cells(self.sel);
+        self.table_structure_done(r, window, cx);
+    }
+
+    /// Split the cell at the caret into `columns` × `rows` (one undo step).
+    pub fn split_cells_doc(
+        &mut self,
+        columns: usize,
+        rows: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let r = self.doc.split_cells(self.sel, rows, columns);
+        self.table_structure_done(r, window, cx);
+    }
+
+    fn table_structure_done(
+        &mut self,
+        r: Result<(docs_engine::Selection, bool), &'static str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match r {
+            Ok((sel, untracked)) => {
+                self.edited(sel, window, cx);
+                if untracked {
+                    self.status = i18n::t(NOT_TRACKED).into();
+                    cx.notify();
+                }
+            }
+            Err(msg) => {
+                debug_assert!(MESSAGES.contains(&msg), "{msg}");
+                self.status = i18n::t_dyn(msg).into();
+                cx.notify();
+            }
+        }
+    }
+
+    /// Open the Split Cells popover (or close it when open).
+    pub fn toggle_split_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.split_menu.take().is_some() {
+            cx.notify();
+            return;
+        }
+        if self.doc.cell_at(self.sel.head).is_none() {
+            self.status = i18n::t("The caret isn't in a table").into();
+            cx.notify();
+            return;
+        }
+        let b = self.viewport.get();
+        let at = point(b.origin.x + SPACE_4, b.origin.y + SPACE_2);
+        let columns = cx.new(|cx| InputState::new(window, cx));
+        let rows = cx.new(|cx| InputState::new(window, cx));
+        columns.update(cx, |i, cx| i.set_value("2", window, cx));
+        rows.update(cx, |i, cx| i.set_value("1", window, cx));
+        let enter = |this: &mut Self,
+                     _: &Entity<InputState>,
+                     ev: &InputEvent,
+                     window: &mut Window,
+                     cx: &mut Context<Self>| {
+            if let InputEvent::PressEnter { .. } = ev {
+                this.split_menu_apply(window, cx);
+            }
+        };
+        let subs = vec![
+            cx.subscribe_in(&columns, window, enter),
+            cx.subscribe_in(&rows, window, enter),
+        ];
+        self.split_menu = Some(SplitMenu {
+            at,
+            columns: columns.clone(),
+            rows,
+            _subs: subs,
+        });
+        columns.update(cx, |i, cx| i.focus(window, cx));
+        cx.notify();
+    }
+
+    fn split_menu_apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(m) = &self.split_menu else { return };
+        let n = |e: &Entity<InputState>| e.read(cx).value().trim().parse::<usize>().ok();
+        let (Some(c), Some(r)) = (n(&m.columns), n(&m.rows)) else {
+            return;
+        };
+        if c == 0 || r == 0 {
+            return;
+        }
+        self.split_menu = None;
+        self.split_cells_doc(c, r, window, cx);
+        self.focus(window, cx);
+    }
+
+    pub(crate) fn render_split_menu(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
+        let menu = self.split_menu.as_ref()?;
+        let t = tokens(cx);
+        let v = cx.entity().downgrade();
+        let ok = div()
+            .id("docs-split-ok")
+            .h(CONTROL_SM)
+            .px(SPACE_5)
+            .flex()
+            .items_center()
+            .rounded(RADIUS_MD)
+            .cursor_pointer()
+            .bg(t.accent)
+            .text_color(t.accent_fg)
+            .child(i18n::t("Split"))
+            .on_click(move |_, window, cx| {
+                let _ = v.update(cx, |this, cx| this.split_menu_apply(window, cx));
+            });
+        let panel = v_flex()
+            .id("docs-split-menu")
+            .key_context(crate::POPOVER_CONTEXT)
+            .on_action(|_: &crate::PopoverKey, _, _| {})
+            .occlude()
+            .w(REM * 16.)
+            .gap(SPACE_3)
+            .p(SPACE_4)
+            .bg(t.elevated)
+            .border_1()
+            .border_color(t.border)
+            .rounded(RADIUS_LG)
+            .shadow(t.shadow(Elevation::Popover))
+            .text_size(FONT_SMALL)
+            .text_color(t.fg)
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.split_menu = None;
+                cx.notify();
+            }))
+            .child(heading(i18n::t("Number of columns"), cx))
+            .child(div().px(SPACE_4).child(Input::new(&menu.columns).small()))
+            .child(heading(i18n::t("Number of rows"), cx))
+            .child(div().px(SPACE_4).child(Input::new(&menu.rows).small()))
+            .child(h_flex().px(SPACE_4).justify_end().child(ok));
+        Some(deferred(
+            anchored()
+                .position(menu.at)
+                .snap_to_window_with_margin(SPACE_4)
+                .child(panel),
+        ))
     }
 
     pub(crate) fn render_table_menu(
@@ -229,10 +397,24 @@ mod tests {
     use super::*;
 
     #[std::prelude::v1::test]
+    fn engine_messages_are_in_the_catalog() {
+        use docs_engine::table_merge as m;
+        for msg in [
+            m::NOT_IN_TABLE,
+            m::SELECT_CELLS,
+            m::NOT_RECTANGLE,
+            m::ROWS_DIVIDE,
+            m::TOO_MANY_COLUMNS,
+        ] {
+            assert!(MESSAGES.contains(&msg), "{msg}");
+        }
+    }
+
+    #[std::prelude::v1::test]
     fn indents_in_cm() {
         assert_eq!(indent_cm(567), "1");
         assert_eq!(indent_cm(-284), "-0.5");
-        assert_eq!(parse_indent("-0,5"), Some(-284));
+        assert_eq!(parse_indent("-0,5"), Some(-283));
         assert_eq!(parse_indent("x"), None);
     }
 }

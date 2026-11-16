@@ -268,6 +268,22 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
                     cx,
                 ))
                 .child(tool(
+                    "docs-merge-cells",
+                    Lucide::TableCellsMerge,
+                    i18n::t("Merge Cells"),
+                    false,
+                    |v, w, cx| v.merge_cells_doc(w, cx),
+                    cx,
+                ))
+                .child(tool(
+                    "docs-split-cells",
+                    Lucide::TableCellsSplit,
+                    i18n::t("Split Cells…"),
+                    false,
+                    |v, w, cx| v.toggle_split_menu(w, cx),
+                    cx,
+                ))
+                .child(tool(
                     "docs-table-props",
                     Lucide::TableProperties,
                     i18n::t("Table Properties…"),

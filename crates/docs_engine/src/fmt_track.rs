@@ -45,6 +45,8 @@ pub enum FormatItem {
     RowProps,
     /// Cell properties (`w:tcPrChange`).
     CellProps,
+    /// Cells merged vertically (`w:cellMerge`): Word's "Merged Cells".
+    MergedCells,
     /// Something else (borders, shading, effects Kantor keeps verbatim).
     Other,
 }

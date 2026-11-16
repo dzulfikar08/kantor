@@ -290,3 +290,14 @@ Row	Baris
 Table Properties…	Properti Tabel…
 Table alignment	Perataan tabel
 Indent from left (cm)	Inden dari kiri (cm)
+Merged Cells	Sel Digabung
+Merge Cells	Gabungkan Sel
+Split Cells…	Pisahkan Sel…
+Split	Pisahkan
+Number of columns	Jumlah kolom
+Number of rows	Jumlah baris
+This action will not be marked as a change.	Tindakan ini tidak akan ditandai sebagai perubahan.
+Select two or more cells to merge	Pilih dua sel atau lebih untuk digabungkan
+These cells can't be merged	Sel-sel ini tidak dapat digabungkan
+The number of rows must divide the rows the merged cell spans	Jumlah baris harus membagi habis jumlah baris yang dicakup sel gabungan
+A table can have at most 63 columns	Tabel dapat memiliki paling banyak 63 kolom
