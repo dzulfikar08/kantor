@@ -455,3 +455,46 @@ fn image_formula_sizing_modes() {
         assert!((a - b).abs() < 1e-3, "{whole:?}");
     }
 }
+
+/// The Office 2016 chart types of `25_chartex.xlsx` (one per sheet, in
+/// `mc:AlternateContent`) are drawn, with live cell values.
+#[test]
+fn chartex_charts_are_drawn_from_live_cells() {
+    let mut book = Workbook::open(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/xlsx/25_chartex.xlsx"),
+    )
+    .unwrap();
+    let mut engine = Engine::new();
+    let mut scenes = DrawingScenes::default();
+    let expect: [&[&str]; 7] = [
+        &["Cash flow", "Start", "Increase", "-30"],
+        &["Pipeline", "Leads", "500"],
+        &["Sales by store", "North", "Alpha"],
+        &["Sales by area", "Europe"],
+        &["Scores", "[12, 32]"],
+        &["Complaints", "Late", "100%"],
+        &["Waiting times", "Mon", "Evening"],
+    ];
+    for (k, want) in expect.iter().enumerate() {
+        let d = book.drawings(k as u32);
+        assert_eq!(d.len(), 1, "sheet {k}");
+        assert!(matches!(*d[0].kind, DrawingKind::Chart { .. }));
+        assert!(!d[0].editable);
+        let items = scenes.items(&mut engine, &book, &d[0], 600.0, 360.0);
+        assert!(
+            !items
+                .iter()
+                .any(|i| matches!(i.prim, Prim::Unsupported { .. })),
+            "sheet {k} is a placeholder"
+        );
+        let s = strings(&items);
+        for t in *want {
+            assert!(s.iter().any(|x| x == t), "sheet {k}: {t} in {s:?}");
+        }
+    }
+    // Live: a changed funnel value shows.
+    book.set_input(1, 1, 1, "777").unwrap();
+    let d = book.drawings(1);
+    let s = strings(&scenes.items(&mut engine, &book, &d[0], 600.0, 360.0));
+    assert!(s.iter().any(|x| x == "777"), "{s:?}");
+}

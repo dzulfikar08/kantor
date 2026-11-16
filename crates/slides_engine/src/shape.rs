@@ -255,9 +255,18 @@ pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) ->
                     .find(|d| d.is_element() && d.tag_name().name() == "xfrm")
             });
             xfrm = xfrm_el.and_then(xfrm_of);
-            if in_p
-                && local == "graphicFrame"
-                && let Some(x) = child(n, ns, "xfrm")
+            // A chart of the newer types (`cx:chart`) comes wrapped in
+            // `mc:AlternateContent`: its choice's graphic frame.
+            let alt = (local == "AlternateContent")
+                .then(|| chartex_frame(n))
+                .flatten();
+            let gf = if in_p && local == "graphicFrame" {
+                Some(n)
+            } else {
+                alt
+            };
+            if let Some(gf) = gf
+                && let Some(x) = child(gf, NS_P, "xfrm")
             {
                 let r = x.range();
                 frame_xfrm_at = Some(XfrmAt::Frame(
@@ -286,15 +295,17 @@ pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) ->
                         own.as_ref(),
                     )))
                 }
-                (true, "graphicFrame") => {
+                _ if gf.is_some() => {
                     let text = |tb: Node| parse_text_body(tb, cx).0;
-                    crate::frame::parse_graphic_frame(n, &cx.colors, cx.rels, cx.part, &text)
-                        .map(Frame::new)
-                        .unwrap_or_default()
+                    gf.and_then(|gf| {
+                        crate::frame::parse_graphic_frame(gf, &cx.colors, cx.rels, cx.part, &text)
+                    })
+                    .map(Frame::new)
+                    .unwrap_or_default()
                 }
                 _ => Frame::default(),
             };
-            chart = chart_part(n, cx);
+            chart = gf.and_then(|gf| chart_part(gf, cx));
             ShapeKind::Other {
                 what: describe_element(local),
                 frame,
@@ -445,6 +456,18 @@ fn chart_part(n: Node, cx: &ParseCtx) -> Option<String> {
         .find(|d| d.is_element() && d.tag_name().name() == "chart" && r_attr(*d, "id").is_some())
         .and_then(|d| r_attr(d, "id"))?;
     cx.rels.iter().find(|r| r.id == id)?.part(cx.part)
+}
+
+/// The graphic frame of an `mc:AlternateContent` whose choice shows a
+/// chart of the Office 2016 types (`cx:chart`).
+fn chartex_frame<'a, 'i>(n: Node<'a, 'i>) -> Option<Node<'a, 'i>> {
+    let choice = n
+        .children()
+        .find(|c| c.is_element() && c.tag_name().name() == "Choice")?;
+    let gf = child(choice, NS_P, "graphicFrame")?;
+    gf.descendants()
+        .any(|d| is(d, crate::frame::NS_CX, "chart"))
+        .then_some(gf)
 }
 
 /// Whether `n` is an element in `ns` named one of `names`.

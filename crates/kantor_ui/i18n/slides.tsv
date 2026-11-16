@@ -110,6 +110,13 @@ Group	Kelompokkan
 Ungroup	Pisahkan Kelompok
 Regroup	Kelompokkan Ulang
 Convert to Shapes	Konversi ke Bentuk
+Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes and cycles	Kantor belum bisa menata tata letak SmartArt ini: item hanya bisa ditambah atau dihapus pada daftar, proses, dan siklus
+This SmartArt layout has one level: add shapes before or after	Tata letak SmartArt ini hanya punya satu tingkat: tambahkan bentuk sebelum atau sesudahnya
+A SmartArt keeps at least one item	SmartArt harus memiliki minimal satu item
+Add Shape After	Tambahkan Bentuk Setelahnya
+Add Shape Before	Tambahkan Bentuk Sebelumnya
+Select a SmartArt shape	Pilih bentuk SmartArt
+Slides · the selected SmartArt shape	Slides · bentuk SmartArt yang dipilih
 SmartArt	SmartArt
 Select the whole group to copy it	Pilih seluruh kelompok untuk menyalinnya
 Select two or more shapes to group them	Pilih dua bentuk atau lebih untuk mengelompokkannya

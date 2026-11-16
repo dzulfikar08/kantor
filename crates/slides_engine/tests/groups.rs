@@ -344,7 +344,7 @@ fn smartart_text_is_saved_to_the_drawing_and_the_data_model() {
             .len(),
         5
     );
-    // SmartArt shapes can't be deleted (that needs PowerPoint's layouts).
+    // Not deleted: an item drawn as two shapes isn't a layout Kantor lays out.
     let plan = inner(1, d, &[0]);
     assert!(p.delete_shape(plan).is_err());
     type_at_end(&mut p, plan, " 2027");

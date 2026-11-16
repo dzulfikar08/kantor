@@ -41,6 +41,7 @@ use crate::shift::{Layout, Moves};
 pub const NS_XDR: &str = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
 const NS_A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const NS_C: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+const NS_CX: &str = "http://schemas.microsoft.com/office/drawing/2014/chartex";
 
 /// EMU per pixel at 96 dpi.
 pub const EMU_PER_PX: f64 = 9525.0;
@@ -556,11 +557,17 @@ fn kind(
     let other = || DrawingKind::Other(obj.tag_name().name().to_owned());
     match obj.tag_name().name() {
         "graphicFrame" => {
+            // ChartML, or the Office 2016 types (`cx:chart`, inside an
+            // `mc:AlternateContent` choice).
             let chart = obj
                 .descendants()
                 .find(|d| is(*d, NS_C, "chart"))
                 .and_then(|c| r_id(c, "id"));
-            let Some(part) = target(chart, "chart") else {
+            let chartex = obj
+                .descendants()
+                .find(|d| is(*d, NS_CX, "chart"))
+                .and_then(|c| r_id(c, "id"));
+            let Some(part) = target(chart, "chart").or_else(|| target(chartex, "chartEx")) else {
                 return other();
             };
             match parts.get(&part).and_then(|b| {
@@ -622,8 +629,8 @@ fn read_objects(
         .collect::<Vec<_>>()
         .join(" ")
         .into();
-    // Anchors, and those of form controls (`mc:AlternateContent`, whose
-    // first choice Excel shows).
+    // Anchors, and those in `mc:AlternateContent` (form controls, charts
+    // of the newer types), whose first choice Excel shows.
     let anchors = doc.root_element().children().flat_map(|n| {
         if is_anchor(n) {
             vec![(n, false)]
@@ -657,8 +664,9 @@ fn read_objects(
             Some(obj) => kind(obj, targets, &mut parts),
             None => DrawingKind::Other("anchor".into()),
         };
-        // Only shapes of form controls: their other objects stay unseen.
-        if alternate && !matches!(kind, DrawingKind::Shape { .. }) {
+        // Shapes of form controls and charts of the newer types (shown,
+        // not edited); other alternate content stays unseen.
+        if alternate && !matches!(kind, DrawingKind::Shape { .. } | DrawingKind::Chart { .. }) {
             continue;
         }
         out.push(Object {

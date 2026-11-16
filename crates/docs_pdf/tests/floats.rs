@@ -354,3 +354,20 @@ fn turned_pictures_wrap_around_their_turned_bounds() {
             .any(|l| l.top + l.height <= y || l.top >= y + h)
     );
 }
+
+/// A floating Office 2016 chart (`chartex.docx`, scripts/corpus/
+/// gen_docx_chartex.py: a waterfall in `mc:AlternateContent`) is drawn.
+#[test]
+fn chartex_floats_are_drawn() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/docx/chartex.docx");
+    let doc = Document::open(&path).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let it = laid.floats.iter().flatten().next().expect("the chart");
+    let chart = it.chart.clone().expect("chart drawn");
+    let shown: Vec<String> = chart.labels.iter().map(|l| l.layout.shown(0)).collect();
+    for want in ["Cash flow", "Start", "End", "Increase", "-30"] {
+        assert!(shown.iter().any(|s| s == want), "{want} in {shown:?}");
+    }
+}

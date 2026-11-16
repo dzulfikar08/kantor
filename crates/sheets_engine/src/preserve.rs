@@ -2213,7 +2213,7 @@ fn sheet_drawing(orig: &Original<'_>, s: &SheetEntry) -> Option<DrawingSource> {
         let Some(t) = resolve(&part, &r.target) else {
             continue;
         };
-        if matches!(r.short_kind(), "chart" | "image")
+        if matches!(r.short_kind(), "chart" | "chartEx" | "image")
             && !parts.contains_key(&t)
             && let Ok(Some(data)) = orig.get(&t)
         {

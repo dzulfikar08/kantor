@@ -12,3 +12,4 @@ THIRD_PARTY_LICENSES.txt
 # .NET build output (tools/ooxml-validate)
 tools/ooxml-validate/bin/
 tools/ooxml-validate/obj/
+__pycache__/
