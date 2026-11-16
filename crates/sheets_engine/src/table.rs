@@ -98,6 +98,9 @@ pub struct TableCellLook {
     pub fill: Option<Rgb>,
     pub font_color: Option<Rgb>,
     pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strike: bool,
     pub top: Option<BorderLine>,
     pub bottom: Option<BorderLine>,
     pub left: Option<BorderLine>,
@@ -105,35 +108,69 @@ pub struct TableCellLook {
 }
 
 /// One element of a table style (`wholeTable`, `headerRow`...): a
-/// differential format.
+/// differential format, as Excel's Format Cells for a table element sets
+/// it (font, border, fill). `None`: the element leaves it as it is.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct Elem {
-    pub(crate) fill: Option<Rgb>,
-    pub(crate) font: Option<Rgb>,
-    pub(crate) bold: Option<bool>,
-    pub(crate) left: Option<BorderLine>,
-    pub(crate) right: Option<BorderLine>,
-    pub(crate) top: Option<BorderLine>,
-    pub(crate) bottom: Option<BorderLine>,
+pub struct Elem {
+    pub fill: Option<Rgb>,
+    pub font: Option<Rgb>,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub underline: Option<bool>,
+    pub strike: Option<bool>,
+    pub left: Option<BorderLine>,
+    pub right: Option<BorderLine>,
+    pub top: Option<BorderLine>,
+    pub bottom: Option<BorderLine>,
     /// Lines between rows / columns inside the element.
-    pub(crate) horizontal: Option<BorderLine>,
-    pub(crate) vertical: Option<BorderLine>,
+    pub horizontal: Option<BorderLine>,
+    pub vertical: Option<BorderLine>,
 }
 
-/// A table style: its elements, from the lowest priority up.
+impl Elem {
+    /// Whether the element formats nothing.
+    pub fn is_empty(&self) -> bool {
+        *self == Elem::default()
+    }
+}
+
+/// A table style: its elements, from the lowest priority up (Excel's
+/// order: whole table, column stripes, row stripes, last column, first
+/// column, header row, total row, first and last header cell, first and
+/// last total cell).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct TableStyleDef {
-    whole: Elem,
-    col_stripe1: Elem,
-    col_stripe2: Elem,
-    row_stripe1: Elem,
-    row_stripe2: Elem,
-    row_stripe_size: u32,
-    col_stripe_size: u32,
-    first_col: Elem,
-    last_col: Elem,
-    header: Elem,
-    total: Elem,
+    pub(crate) whole: Elem,
+    pub(crate) col_stripe1: Elem,
+    pub(crate) col_stripe2: Elem,
+    pub(crate) row_stripe1: Elem,
+    pub(crate) row_stripe2: Elem,
+    /// Rows or columns in each stripe (first, second).
+    pub(crate) row_stripe_size: u32,
+    pub(crate) row_stripe2_size: u32,
+    pub(crate) col_stripe_size: u32,
+    pub(crate) col_stripe2_size: u32,
+    pub(crate) first_col: Elem,
+    pub(crate) last_col: Elem,
+    pub(crate) header: Elem,
+    pub(crate) total: Elem,
+    pub(crate) first_header: Elem,
+    pub(crate) last_header: Elem,
+    pub(crate) first_total: Elem,
+    pub(crate) last_total: Elem,
+}
+
+impl TableStyleDef {
+    /// A style with no element formatted and stripes one row or column.
+    pub(crate) fn empty() -> Self {
+        Self {
+            row_stripe_size: 1,
+            row_stripe2_size: 1,
+            col_stripe_size: 1,
+            col_stripe2_size: 1,
+            ..Default::default()
+        }
+    }
 }
 
 /// A sheet's tables and their styles.
@@ -151,6 +188,8 @@ pub(crate) struct CustomStyles {
     /// The file's `<fills>` that are patterns (not solid), by fill index
     /// (IronCalc keeps one colour per fill).
     pub patterns: Vec<Option<FillPattern>>,
+    /// The file's `<tableStyles>` as it has them, for editing and saving.
+    pub file: crate::table_style_edit::FileStyles,
 }
 
 /// A cell fill drawn as a pattern (`<patternFill patternType="darkDown">`):
@@ -240,6 +279,23 @@ pub(crate) fn theme(theme_: &Theme, slot: i32, tint: f64) -> Rgb {
     parse_rgb(&Color::Theme(slot, tint).to_rgb(theme_)).unwrap_or(0)
 }
 
+/// Whether `name` is one of Excel's built-in table styles (any case).
+pub(crate) fn is_builtin(name: &str) -> bool {
+    builtin(&canonical_builtin(name), &Theme::default()).is_some()
+}
+
+/// `tablestylemedium2` → `TableStyleMedium2`.
+fn canonical_builtin(name: &str) -> String {
+    let lower = name.to_ascii_lowercase();
+    for fam in ["Light", "Medium", "Dark"] {
+        let p = format!("tablestyle{}", fam.to_ascii_lowercase());
+        if let Some(n) = lower.strip_prefix(&p) {
+            return format!("TableStyle{fam}{n}");
+        }
+    }
+    name.to_owned()
+}
+
 /// The built-in style `name` (`TableStyleMedium2`...), coloured by `t`.
 pub(crate) fn builtin(name: &str, t: &Theme) -> Option<TableStyleDef> {
     let (family, n) = if let Some(n) = name.strip_prefix("TableStyleLight") {
@@ -274,11 +330,7 @@ pub(crate) fn builtin(name: &str, t: &Theme) -> Option<TableStyleDef> {
     };
     let base = if k == 0 { black } else { accent(0.0) };
     let bold = Some(true);
-    let mut s = TableStyleDef {
-        row_stripe_size: 1,
-        col_stripe_size: 1,
-        ..Default::default()
-    };
+    let mut s = TableStyleDef::empty();
     s.first_col.bold = bold;
     s.last_col.bold = bold;
     s.header.bold = bold;
@@ -459,76 +511,122 @@ pub(crate) fn parse_custom_styles(xml: &str, theme_: &Theme) -> CustomStyles {
         return CustomStyles::default();
     };
     let root = doc.root_element();
-    let dxfs: Vec<Elem> = root
+    let dxf_nodes: Vec<Node> = root
         .children()
-        .find(|n| n.has_tag_name("dxfs") || n.tag_name().name() == "dxfs")
+        .find(|n| n.tag_name().name() == "dxfs")
         .map(|d| {
             d.children()
                 .filter(|n| n.tag_name().name() == "dxf")
-                .map(|n| parse_dxf(n, theme_))
                 .collect()
         })
         .unwrap_or_default();
+    let dxfs: Vec<Elem> = dxf_nodes.iter().map(|n| parse_dxf(*n, theme_)).collect();
     let mut styles = HashMap::new();
+    let mut file = crate::table_style_edit::FileStyles::default();
     if let Some(ts) = root
         .children()
         .find(|n| n.tag_name().name() == "tableStyles")
     {
+        file.element = crate::preserve::verbatim_pub(ts, xml).ok();
+        file.default_table = ts.attribute("defaultTableStyle").map(str::to_owned);
+        file.default_pivot = ts.attribute("defaultPivotStyle").map(str::to_owned);
         for style in ts
             .children()
             .filter(|n| n.tag_name().name() == "tableStyle")
         {
-            if style.attribute("table") == Some("0") {
-                continue; // pivot-only
-            }
             let Some(name) = style.attribute("name") else {
                 continue;
             };
-            let mut def = TableStyleDef {
-                row_stripe_size: 1,
-                col_stripe_size: 1,
-                ..Default::default()
-            };
+            let table = style.attribute("table") != Some("0");
+            let mut def = TableStyleDef::empty();
+            let mut elements = Vec::new();
             for el in style
                 .children()
                 .filter(|n| n.tag_name().name() == "tableStyleElement")
             {
-                let Some(dxf) = el
-                    .attribute("dxfId")
-                    .and_then(|d| d.parse::<usize>().ok())
-                    .and_then(|d| dxfs.get(d))
-                else {
-                    continue;
-                };
-                let size = el
-                    .attribute("size")
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(1);
-                match el.attribute("type").unwrap_or_default() {
-                    "wholeTable" => def.whole = dxf.clone(),
-                    "headerRow" => def.header = dxf.clone(),
-                    "totalRow" => def.total = dxf.clone(),
-                    "firstColumn" => def.first_col = dxf.clone(),
-                    "lastColumn" => def.last_col = dxf.clone(),
-                    "firstRowStripe" => {
-                        def.row_stripe1 = dxf.clone();
-                        def.row_stripe_size = size;
-                    }
-                    "secondRowStripe" => def.row_stripe2 = dxf.clone(),
-                    "firstColumnStripe" => {
-                        def.col_stripe1 = dxf.clone();
-                        def.col_stripe_size = size;
-                    }
-                    "secondColumnStripe" => def.col_stripe2 = dxf.clone(),
-                    _ => {}
+                let kind = el.attribute("type").unwrap_or_default();
+                let size = el.attribute("size").and_then(|s| s.parse().ok());
+                let id = el.attribute("dxfId").and_then(|d| d.parse::<usize>().ok());
+                let dxf_xml = id
+                    .and_then(|d| dxf_nodes.get(d))
+                    .and_then(|n| crate::preserve::verbatim_pub(*n, xml).ok());
+                if let Some(dxf) = id.and_then(|d| dxfs.get(d)) {
+                    def.set(kind, dxf.clone(), size.unwrap_or(1));
                 }
+                elements.push(crate::table_style_edit::FileElement { id, dxf_xml });
             }
-            styles.insert(name.to_owned(), def);
+            if table {
+                styles.insert(name.to_owned(), def.clone());
+            }
+            file.styles.push(crate::table_style_edit::FileStyle {
+                name: name.to_owned(),
+                xml: crate::preserve::verbatim_pub(style, xml).unwrap_or_default(),
+                table,
+                pivot: style.attribute("pivot") != Some("0"),
+                def,
+                elements,
+            });
         }
     }
     CustomStyles {
         styles,
         patterns: parse_patterns(root, theme_),
+        file,
+    }
+}
+
+impl TableStyleDef {
+    /// Set element `kind` (`headerRow`...) to `e`; `size` is a stripe's.
+    pub(crate) fn set(&mut self, kind: &str, e: Elem, size: u32) {
+        let size = size.max(1);
+        match kind {
+            "wholeTable" => self.whole = e,
+            "headerRow" => self.header = e,
+            "totalRow" => self.total = e,
+            "firstColumn" => self.first_col = e,
+            "lastColumn" => self.last_col = e,
+            "firstRowStripe" => {
+                self.row_stripe1 = e;
+                self.row_stripe_size = size;
+            }
+            "secondRowStripe" => {
+                self.row_stripe2 = e;
+                self.row_stripe2_size = size;
+            }
+            "firstColumnStripe" => {
+                self.col_stripe1 = e;
+                self.col_stripe_size = size;
+            }
+            "secondColumnStripe" => {
+                self.col_stripe2 = e;
+                self.col_stripe2_size = size;
+            }
+            "firstHeaderCell" => self.first_header = e,
+            "lastHeaderCell" => self.last_header = e,
+            "firstTotalCell" => self.first_total = e,
+            "lastTotalCell" => self.last_total = e,
+            _ => {}
+        }
+    }
+
+    /// Element `kind` and its stripe size.
+    pub(crate) fn get(&self, kind: &str) -> Option<(&Elem, u32)> {
+        Some(match kind {
+            "wholeTable" => (&self.whole, 1),
+            "headerRow" => (&self.header, 1),
+            "totalRow" => (&self.total, 1),
+            "firstColumn" => (&self.first_col, 1),
+            "lastColumn" => (&self.last_col, 1),
+            "firstRowStripe" => (&self.row_stripe1, self.row_stripe_size),
+            "secondRowStripe" => (&self.row_stripe2, self.row_stripe2_size),
+            "firstColumnStripe" => (&self.col_stripe1, self.col_stripe_size),
+            "secondColumnStripe" => (&self.col_stripe2, self.col_stripe2_size),
+            "firstHeaderCell" => (&self.first_header, 1),
+            "lastHeaderCell" => (&self.last_header, 1),
+            "firstTotalCell" => (&self.first_total, 1),
+            "lastTotalCell" => (&self.last_total, 1),
+            _ => return None,
+        })
     }
 }
 
@@ -565,6 +663,15 @@ fn parse_dxf(dxf: Node, theme_: &Theme) -> Elem {
                             e.bold =
                                 Some(f.attribute("val").is_none_or(|v| v != "0" && v != "false"))
                         }
+                        "i" => {
+                            e.italic =
+                                Some(f.attribute("val").is_none_or(|v| v != "0" && v != "false"))
+                        }
+                        "strike" => {
+                            e.strike =
+                                Some(f.attribute("val").is_none_or(|v| v != "0" && v != "false"))
+                        }
+                        "u" => e.underline = Some(f.attribute("val") != Some("none")),
                         "color" => e.font = color_of(f, theme_),
                         _ => {}
                     }
@@ -586,15 +693,8 @@ fn parse_dxf(dxf: Node, theme_: &Theme) -> Elem {
                     let Some(style) = b.attribute("style") else {
                         continue;
                     };
-                    let style = match style {
-                        "medium" | "mediumDashed" | "mediumDashDot" | "mediumDashDotDot" => {
-                            LineStyle::Medium
-                        }
-                        "thick" => LineStyle::Thick,
-                        "double" => LineStyle::Double,
-                        "dotted" | "hair" | "dashed" => LineStyle::Dotted,
-                        "none" => continue,
-                        _ => LineStyle::Thin,
+                    let Some(style) = LineStyle::from_xml(style) else {
+                        continue;
                     };
                     let color = b
                         .children()
@@ -630,6 +730,15 @@ impl TableCellLook {
         }
         if let Some(b) = e.bold {
             self.bold = b;
+        }
+        if let Some(b) = e.italic {
+            self.italic = b;
+        }
+        if let Some(b) = e.underline {
+            self.underline = b;
+        }
+        if let Some(b) = e.strike {
+            self.strike = b;
         }
         let pick = |outer: &Option<BorderLine>, inner: &Option<BorderLine>, at_edge: bool| {
             if at_edge { *outer } else { *inner }
@@ -682,14 +791,14 @@ impl TableStyleDef {
             },
         );
         if t.column_stripes && is_data {
-            let size = self.col_stripe_size.max(1);
-            let i = (col - a.left) / size;
-            let e = if i.is_multiple_of(2) {
+            let (i, first, size) =
+                stripe(col - a.left, self.col_stripe_size, self.col_stripe2_size);
+            let e = if i == 0 {
                 &self.col_stripe1
             } else {
                 &self.col_stripe2
             };
-            let first = a.left + i * size;
+            let first = a.left + first;
             look.apply(
                 e,
                 Edges {
@@ -701,14 +810,13 @@ impl TableStyleDef {
             );
         }
         if t.row_stripes && is_data {
-            let size = self.row_stripe_size.max(1);
             // Bands are counted over the rows shown, as in Excel (a filter
             // keeps them alternating).
             let skipped =
                 hidden.partition_point(|&h| h < row) - hidden.partition_point(|&h| h < dt);
             let shown = row - dt - skipped as u32;
-            let i = shown / size;
-            let e = if i.is_multiple_of(2) {
+            let (i, first, size) = stripe(shown, self.row_stripe_size, self.row_stripe2_size);
+            let e = if i == 0 {
                 &self.row_stripe1
             } else {
                 &self.row_stripe2
@@ -716,8 +824,8 @@ impl TableStyleDef {
             look.apply(
                 e,
                 Edges {
-                    top: shown.is_multiple_of(size),
-                    bottom: shown % size == size - 1 || row == db,
+                    top: shown == first,
+                    bottom: shown == first + size - 1 || row == db,
                     left: col == a.left,
                     right: col == a.right,
                 },
@@ -729,11 +837,11 @@ impl TableStyleDef {
             left: true,
             right: true,
         };
-        if t.first_column && col == a.left {
-            look.apply(&self.first_col, col_edges);
-        }
         if t.last_column && col == a.right {
             look.apply(&self.last_col, col_edges);
+        }
+        if t.first_column && col == a.left {
+            look.apply(&self.first_col, col_edges);
         }
         let row_edges = Edges {
             top: true,
@@ -741,13 +849,44 @@ impl TableStyleDef {
             left: col == a.left,
             right: col == a.right,
         };
+        let cell = Edges {
+            top: true,
+            bottom: true,
+            left: true,
+            right: true,
+        };
         if is_header {
             look.apply(&self.header, row_edges);
+            if t.first_column && col == a.left {
+                look.apply(&self.first_header, cell);
+            }
+            if t.last_column && col == a.right {
+                look.apply(&self.last_header, cell);
+            }
         }
         if is_total {
             look.apply(&self.total, row_edges);
+            if t.first_column && col == a.left {
+                look.apply(&self.first_total, cell);
+            }
+            if t.last_column && col == a.right {
+                look.apply(&self.last_total, cell);
+            }
         }
         look
+    }
+}
+
+/// Which stripe position `n` (0-based) is in, for stripes of `size1` then
+/// `size2`: `(0 or 1, where that stripe starts, its size)`.
+fn stripe(n: u32, size1: u32, size2: u32) -> (u32, u32, u32) {
+    let (s1, s2) = (size1.max(1), size2.max(1));
+    let cycle = s1 + s2;
+    let base = n / cycle * cycle;
+    if n - base < s1 {
+        (0, base, s1)
+    } else {
+        (1, base + s1, s2)
     }
 }
 
@@ -818,8 +957,8 @@ impl Workbook {
 
     /// A table style by name: the workbook's own, else a built-in one.
     pub(crate) fn table_style(&self, name: &str) -> Option<TableStyleDef> {
-        if let Some(s) = self.table_styles.styles.get(name) {
-            return Some(s.clone());
+        if let Some(s) = self.custom_table_style(name) {
+            return Some(s);
         }
         builtin(name, &self.model.get_model().workbook.theme)
     }

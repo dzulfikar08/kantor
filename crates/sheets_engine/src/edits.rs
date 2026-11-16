@@ -46,6 +46,9 @@ pub(crate) struct Edits {
     /// Shapes and text boxes of the file whose text was edited in Kantor:
     /// their element's XML now (see [`crate::drawing::DrawingKind::Shape`]).
     pub shape_texts: HashMap<crate::drawing::DrawingKey, Arc<str>>,
+    /// The workbook's custom table styles once one was made, changed or
+    /// deleted in Kantor (`None`: as opened).
+    pub table_styles: Option<Arc<crate::table_style_edit::StyleSet>>,
 }
 
 /// What was edited in Kantor at any point of the session (any history

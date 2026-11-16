@@ -9,6 +9,28 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Sheets: custom table styles, as in Excel. *New Table Style…* (Table Design, the Table menu or
+  the palette) names a style and formats each table element (whole table, first and second
+  column and row stripes, first and last column, header and total rows, first and last header and
+  total cells) with font, borders and fill, sets stripe sizes, and can make it the default style
+  for new tables in the workbook. Right-click a style in the gallery to modify, duplicate, delete
+  or set it as the default; built-in styles can be duplicated as a starting point. Tables in these
+  styles are drawn with them on screen and in the PDF, each change is one undo step, and the
+  styles are saved in the workbook as Excel saves them. Custom table styles that come with a file
+  are now kept when it is saved (before, they were dropped), unchanged when nobody touched them.
+- Sheets: Excel 97-2003 (`.xls`) files bring Excel 2007's conditional formats: colour scales, data
+  bars, icon sets (also reversed or without values, and ratings), top/bottom N, and the rules made
+  from Excel's templates (text that contains, begins or ends with, dates, blanks, errors,
+  duplicate and unique values, above and below average), in their priority order and with *Stop
+  If True*. They are saved into the new `.xlsx` as Excel 2007 rules.
+
+### Fixed
+
+- Sheets: an icon set in reverse order (*Reverse Icon Order*) brought in from an `.ods` or `.xls`
+  file, or on a sheet whose rules were changed in Kantor, keeps that order when saved.
+
 ## [0.8.0] - 2026-11-16
 
 Kantor now edits the parts of Office files it used to only show. In Docs: headers, footers and

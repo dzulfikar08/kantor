@@ -304,6 +304,50 @@ pub enum LineStyle {
 }
 
 impl LineStyle {
+    /// Every style, as Excel's border dialog lists them.
+    pub const ALL: [LineStyle; 13] = [
+        Self::Hair,
+        Self::Dotted,
+        Self::DashDotDot,
+        Self::DashDot,
+        Self::Dashed,
+        Self::Thin,
+        Self::MediumDashDotDot,
+        Self::SlantDashDot,
+        Self::MediumDashDot,
+        Self::MediumDashed,
+        Self::Medium,
+        Self::Thick,
+        Self::Double,
+    ];
+
+    /// The OOXML name (`ST_BorderStyle`).
+    pub fn xml(self) -> &'static str {
+        match self {
+            Self::Thin => "thin",
+            Self::Medium => "medium",
+            Self::Thick => "thick",
+            Self::Double => "double",
+            Self::Dotted => "dotted",
+            Self::MediumDashed => "mediumDashed",
+            Self::Hair => "hair",
+            Self::Dashed => "dashed",
+            Self::DashDot => "dashDot",
+            Self::DashDotDot => "dashDotDot",
+            Self::MediumDashDot => "mediumDashDot",
+            Self::MediumDashDotDot => "mediumDashDotDot",
+            Self::SlantDashDot => "slantDashDot",
+        }
+    }
+
+    /// From an OOXML name; `None` for `none` and unknown names.
+    pub fn from_xml(s: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .chain([Self::Thin])
+            .find(|l| l.xml() == s)
+    }
+
     pub(crate) fn from_ironcalc(s: &BorderStyle) -> Self {
         match s {
             BorderStyle::Thin => Self::Thin,

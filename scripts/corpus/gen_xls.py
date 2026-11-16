@@ -50,6 +50,22 @@ Files:
   view settings): frozen rows and columns, the second sheet active, pattern
   fills, an unlocked cell, page breaks, header and footer, centring,
   gridlines off on the second sheet.
+* cf12.xls: Excel 2007 conditional formats as Excel writes them in BIFF8
+  (neither LibreOffice nor xlwt writes them): xlwt makes the workbook and
+  this script adds CONDFMT12/CF12, CONDFMT/CF and CFEX records to sheet
+  "Rules" before its EOF, byte for byte as [MS-XLS] 2.4.40 CONDFMT12,
+  2.4.42 CF, 2.4.43 CF12 and 2.4.44 CFEX lay them out (see cf12_records):
+  A1:A10 a three-colour scale (RGB, palette and theme colours), B1:B10 a
+  data bar, C1:C10 3TrafficLights1 at 33/67 %, D1:D10 3Arrows reversed and
+  icon only with numbers (the second ">" not ">="), E1:E10 "text contains
+  ap", F1:F10 top 3, G1:G10 blanks (a CF with its CFEX), H1:H10 duplicate
+  values (CF + CFEX), I1:I10 an Excel 97 cell value rule (> 5, no CFEX),
+  J1:J10 a CF12 cell value between 3 and 6 with "stop if true", K1:K10 a
+  4Rating icon set, L1:L10 dates "yesterday" (CF + CFEX), M1:M10 one
+  CONDFMT with a CF (MOD(M1,2)=0, + CFEX) and a CF12 3Flags icon set tied to it
+  by a CFEX with fIsCF12 (as Excel writes a block mixing both; the CF12's
+  own ref8 is zeros, as in Excel's files). Not converted:
+  run `gen_xls.py --cf12` (needs xlwt only); `--cf12 --check` compares.
 """
 
 import os
@@ -505,6 +521,235 @@ def xlwt_book(path: Path) -> None:
     wb.save(str(path))
 
 
+# ---------------------------------------------------------------- CF12 (BIFF8)
+
+def _rec(typ: int, body: bytes) -> bytes:
+    import struct
+    return struct.pack("<HH", typ, len(body)) + body
+
+
+def _ref8(r1: int, r2: int, c1: int, c2: int) -> bytes:
+    import struct
+    return struct.pack("<4H", r1, r2, c1, c2)
+
+
+def _sqref(col: int) -> bytes:
+    import struct
+    return struct.pack("<H", 1) + _ref8(0, 9, col, col)
+
+
+def _dxfn_fill(icv: int) -> bytes:
+    """A DXFN (2.5.39) setting only a solid fill of palette colour `icv`:
+    every "not changed" bit set but the pattern's three, the pattern block
+    present (bit 29)."""
+    import struct
+    flags = 0x0000FFFF | (1 << 29)
+    return struct.pack("<IH", flags, 0) + struct.pack("<HH", 1 << 10, icv | (icv << 7))
+
+
+def _dxfn12(dxfn: bytes) -> bytes:
+    """DXFN12 (2.5.40): cbDxf, then the DXFN (no XFExtNoFRT); 0 and two
+    unused bytes when there is none."""
+    import struct
+    return struct.pack("<I", len(dxfn)) + dxfn if dxfn else struct.pack("<IH", 0, 0)
+
+
+def _cfvo(kind: int, num: float = 0.0) -> bytes:
+    """CFVO (2.5.18): cfvoType, an empty formula, and the number unless the
+    type is min (2) or max (3)."""
+    import struct
+    return struct.pack("<BH", kind, 0) + (b"" if kind in (2, 3) else struct.pack("<d", num))
+
+
+def _color(kind: str, value) -> bytes:
+    """CFColor (2.5.13): xclrType, the value, the tint."""
+    import struct
+    if kind == "rgb":
+        r, g, b = value
+        return struct.pack("<I", 2) + bytes([r, g, b, 0]) + struct.pack("<d", 0.0)
+    if kind == "index":
+        return struct.pack("<II", 1, value) + struct.pack("<d", 0.0)
+    return struct.pack("<II", 3, value) + struct.pack("<d", 0.0)
+
+
+# Formula tokens (2.5.198): a cell relative to the range's top-left
+# (PtgRefN, value class), strings, integers, functions by Ftab index.
+def _refn() -> bytes:
+    import struct
+    return struct.pack("<BHH", 0x4C, 0, 0xC000)
+
+
+def _str(s: str) -> bytes:
+    return bytes([0x17, len(s), 0]) + s.encode("latin-1")
+
+
+def _int(n: int) -> bytes:
+    import struct
+    return struct.pack("<BH", 0x1E, n)
+
+
+def _func(iftab: int) -> bytes:
+    import struct
+    return struct.pack("<BH", 0x41, iftab)
+
+
+def _funcvar(argc: int, iftab: int) -> bytes:
+    import struct
+    return struct.pack("<BBH", 0x42, argc, iftab)
+
+
+def _params(*parts: bytes) -> bytes:
+    raw = b"".join(parts)
+    return raw + bytes(16 - len(raw))
+
+
+def cf12_records() -> bytes:
+    """The conditional format records of sheet "Rules" (see the module
+    docstring for what each column gets)."""
+    import struct
+
+    out = b""
+    nid = 0
+
+    def condfmt12(col: int) -> bytes:
+        nonlocal nid
+        nid += 1
+        body = struct.pack("<HH", 0x0879, 1) + _ref8(0, 9, col, col)
+        body += struct.pack("<HH", 1, nid << 1) + _ref8(0, 9, col, col) + _sqref(col)
+        return _rec(0x0879, body)
+
+    def cf12(col: int, ct: int, cp: int, priority: int, template: int, *, dxfn: bytes = b"",
+             rgce1: bytes = b"", rgce2: bytes = b"", stop: bool = False, params: bytes = bytes(16),
+             rgbct: bytes = b"") -> bytes:
+        body = struct.pack("<HH", 0x087A, 1) + _ref8(0, 9, col, col)
+        body += struct.pack("<BBHH", ct, cp, len(rgce1), len(rgce2)) + _dxfn12(dxfn) + rgce1 + rgce2
+        body += struct.pack("<H", 0)  # fmlaActive: no formula
+        body += struct.pack("<BHHB", int(stop), priority, template, 16) + params + rgbct
+        return condfmt12(col) + _rec(0x087A, body)
+
+    def cf_with_ex(col: int, ct: int, cp: int, rgce1: bytes, dxfn: bytes,
+                   template: int | None, priority: int, params: bytes = bytes(16)) -> bytes:
+        nonlocal nid
+        nid += 1
+        recs = _rec(0x01B0, struct.pack("<HH", 1, nid << 1) + _ref8(0, 9, col, col) + _sqref(col))
+        recs += _rec(0x01B1, struct.pack("<BBHH", ct, cp, len(rgce1), 0) + dxfn + rgce1)
+        if template is not None:
+            # FrtRefHeader (rt, grbitFrt, ref8), fIsCF12 0, nID, then
+            # CFExNonCF12: icf, cp, icfTemplate, ipriority, fActive, fHasDXF
+            # (with a DXFN12 as Excel writes it), the template parameters.
+            body = struct.pack("<HH", 0x087B, 1) + _ref8(0, 9, col, col) + struct.pack("<IH", 0, nid)
+            body += struct.pack("<HBBHBB", 0, cp, template, priority, 0x1, 1) + _dxfn12(dxfn)
+            body += bytes([16]) + params
+            recs += _rec(0x087B, body)
+        return recs
+
+    red, yellow = 10, 13
+    # A: three-colour scale: min (RGB), 50th percentile (palette yellow),
+    # max (theme colour 9).
+    grad = struct.pack("<HBBBB", 0, 0, 3, 3, 0)
+    grad += _cfvo(2) + struct.pack("<d", 0.0)
+    grad += _cfvo(5, 50) + struct.pack("<d", 0.5)
+    grad += _cfvo(3) + struct.pack("<d", 1.0)
+    grad += struct.pack("<d", 0.0) + _color("rgb", (0xF8, 0x69, 0x6B))
+    grad += struct.pack("<d", 0.5) + _color("index", yellow)
+    grad += struct.pack("<d", 1.0) + _color("theme", 9)
+    out += cf12(0, 3, 0, 1, 0x02, rgbct=grad)
+    # B: data bar, lowest to highest, value shown (flags 0).
+    bar = struct.pack("<HBBBB", 0, 0, 0, 0, 100) + _color("rgb", (0x63, 0x8E, 0xC6))
+    bar += _cfvo(2) + _cfvo(3)
+    out += cf12(1, 4, 0, 2, 0x03, rgbct=bar)
+    # C: 3TrafficLights1 at 0 / 33 / 67 percent, all ">=".
+    icons = struct.pack("<HBBBB", 0, 0, 3, 3, 0)
+    for pct in (0, 33, 67):
+        icons += _cfvo(4, pct) + bytes([1]) + bytes(4)
+    out += cf12(2, 6, 0, 3, 0x04, rgbct=icons)
+    # D: 3Arrows, reversed, icon only; numbers 0 / 4 / 7, the second ">".
+    arrows = struct.pack("<HBBBB", 0, 0, 3, 0, 0x1 | 0x4)
+    for num, eq in ((0, 1), (4, 0), (7, 1)):
+        arrows += _cfvo(1, num) + bytes([eq]) + bytes(4)
+    out += cf12(3, 6, 0, 4, 0x04, rgbct=arrows)
+    # E: text contains "ap" (template 8, ctp 0), red fill.
+    contains = _str("ap") + _refn() + _funcvar(2, 82) + _func(3) + _func(38)
+    out += cf12(4, 2, 0, 5, 0x08, dxfn=_dxfn_fill(red), rgce1=contains,
+                params=_params(struct.pack("<H", 0)))
+    # F: top 3 (template 5: fTop, rank 3), yellow fill.
+    out += cf12(5, 5, 0, 6, 0x05, dxfn=_dxfn_fill(yellow),
+                params=_params(bytes([0x1]), struct.pack("<H", 3)))
+    # G: blanks, as a CF (LEN(TRIM(G1))=0) with its CFEX (template 9).
+    blank = _refn() + _func(118) + _func(32) + _int(0) + bytes([0x0B])
+    out += cf_with_ex(6, 2, 0, blank, _dxfn_fill(red), 0x09, 7)
+    # H: duplicate values, as a CF (TRUE) with its CFEX (template 0x1B).
+    out += cf_with_ex(7, 2, 0, bytes([0x1D, 1]), _dxfn_fill(yellow), 0x1B, 8)
+    # I: an Excel 97 rule: cell value > 5, no CFEX.
+    out += cf_with_ex(8, 1, 5, _int(5), _dxfn_fill(red), None, 0)
+    # J: a CF12 cell value rule between 3 and 6, stop if true.
+    out += cf12(9, 1, 1, 9, 0x00, dxfn=_dxfn_fill(red), rgce1=_int(3), rgce2=_int(6), stop=True)
+    # K: 4Rating at 0 / 25 / 50 / 75 percent.
+    rating = struct.pack("<HBBBB", 0, 0, 4, 11, 0)
+    for pct in (0, 25, 50, 75):
+        rating += _cfvo(4, pct) + bytes([1]) + bytes(4)
+    out += cf12(10, 6, 0, 10, 0x04, rgbct=rating)
+    # L: dates yesterday (template 0x11), a CF (TRUE) with its CFEX.
+    out += cf_with_ex(11, 2, 0, bytes([0x1D, 1]), _dxfn_fill(red), 0x11, 11,
+                      _params(struct.pack("<H", 1)))
+    # M: one CONDFMT holding a CF (formula MOD(M1,2)=0, its CFEX) and a CF12
+    # icon set (3Flags at 0 / 33 / 67 %), linked by a CFEX with fIsCF12 1,
+    # as Excel writes a block mixing both.
+    nid += 1
+    out += _rec(0x01B0, struct.pack("<HH", 2, nid << 1) + _ref8(0, 9, 12, 12) + _sqref(12))
+    even = _refn() + _int(2) + _func(39) + _int(0) + bytes([0x0B])
+    out += _rec(0x01B1, struct.pack("<BBHH", 2, 0, len(even), 0) + _dxfn_fill(yellow) + even)
+    body = struct.pack("<HH", 0x087B, 1) + _ref8(0, 9, 12, 12) + struct.pack("<IH", 0, nid)
+    body += struct.pack("<HBBHBB", 0, 0, 0x01, 12, 0x1, 0) + bytes([16]) + bytes(16)
+    out += _rec(0x087B, body)
+    out += _rec(0x087B, struct.pack("<HH", 0x087B, 1) + _ref8(0, 9, 12, 12) + struct.pack("<IH", 1, nid))
+    flags3 = struct.pack("<HBBBB", 0, 0, 3, 2, 0)
+    for pct in (0, 33, 67):
+        flags3 += _cfvo(4, pct) + bytes([1]) + bytes(4)
+    body = struct.pack("<HH", 0x087A, 1) + _ref8(0, 0, 0, 0)
+    body += struct.pack("<BBHH", 6, 0, 0, 0) + _dxfn12(b"") + struct.pack("<H", 0)
+    body += struct.pack("<BHHB", 0, 13, 0x04, 16) + bytes(16) + flags3
+    out += _rec(0x087A, body)
+    return out
+
+
+def cf12_book(path: Path) -> None:
+    import datetime as dt
+
+    import importlib
+
+    import xlwt
+
+    sheet_class = importlib.import_module("xlwt.Worksheet").Worksheet
+    wb = xlwt.Workbook()
+    ws = wb.add_sheet("Rules")
+    words = ["apple", "banana", "grape", "papaya", "kiwi", "apricot", "melon", "plum", "date", "fig"]
+    dupes = [1, 2, 2, 3, 4, 4, 5, 6, 7, 8]
+    date = xlwt.easyxf(num_format_str="yyyy-mm-dd")
+    for r in range(10):
+        ws.write(r, 0, (r + 1) * 10)
+        for c in (1, 2, 3, 5, 8, 9, 10, 12):
+            ws.write(r, c, r + 1)
+        ws.write(r, 4, words[r])
+        if r % 3 != 1:
+            ws.write(r, 6, f"g{r}")
+        ws.write(r, 7, dupes[r])
+        ws.write(r, 11, dt.date(2026, 11, 1) + dt.timedelta(days=r), date)
+    original = sheet_class.get_biff_data
+
+    def with_rules(self):
+        data = original(self)
+        if self.name != "Rules":
+            return data
+        return data[:-4] + cf12_records() + data[-4:]
+
+    sheet_class.get_biff_data = with_rules
+    try:
+        wb.save(str(path))
+    finally:
+        sheet_class.get_biff_data = original
+
+
 def convert(lo: Path, src: Path, filt: str, ext: str, outdir: Path) -> Path:
     profile = Path.home() / ".cache" / "ktmp" / "lo-gen-xls"
     cmd = [
@@ -528,6 +773,20 @@ def convert(lo: Path, src: Path, filt: str, ext: str, outdir: Path) -> Path:
 
 
 def main() -> None:
+    if "--cf12" in sys.argv:
+        out = OUT / "cf12.xls"
+        if "--check" in sys.argv:
+            tmp = Path(tempfile.mkdtemp())
+            try:
+                cf12_book(tmp / "cf12.xls")
+                if (tmp / "cf12.xls").read_bytes() != out.read_bytes():
+                    sys.exit(f"{out} is out of date: run {sys.argv[0]} --cf12")
+            finally:
+                shutil.rmtree(tmp)
+            return
+        cf12_book(out)
+        print(out)
+        return
     lo = Path(sys.argv[1] if len(sys.argv) > 1 else Path.home() / ".cache/lo/lo.AppImage")
     OUT.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(dir=Path.home() / ".cache" / "ktmp"))
@@ -560,6 +819,7 @@ def main() -> None:
         dates1904(src)
         shutil.copy(convert(lo, src, "MS Excel 97", "xls", tmp), OUT / "dates1904.xls")
         xlwt_book(OUT / "xlwt.xls")
+        cf12_book(OUT / "cf12.xls")
     finally:
         shutil.rmtree(tmp)
 

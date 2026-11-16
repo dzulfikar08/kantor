@@ -22,10 +22,12 @@
 //!   comments, which an `.xlsx` save writes (`notes`);
 //! * data validation (`DV`) and conditional formats (`CONDFMT`/`CF`: cell
 //!   value and formula rules with font, border, fill and number formats),
-//!   their formulas decompiled from tokens by [`crate::xls_formula`]. A rule
-//!   whose formula has an unsupported token is left out (with an import
-//!   note), as are Excel 2007 rules (`CF12`: data bars, colour scales, icon
-//!   sets) and `CFEX` extras.
+//!   their formulas decompiled from tokens by [`crate::xls_formula`]; Excel
+//!   2007 rules (`CONDFMT12`/`CF12`: colour scales, data bars, icon sets,
+//!   top/bottom, and the rule templates also kept in `CFEX` for a `CF`:
+//!   text, dates, blanks, errors, duplicates, averages), see [`cf12`]. A
+//!   rule whose formula has an unsupported token is left out (with an
+//!   import note).
 //!
 //! * pictures and charts (`MSODRAWINGGROUP`, `MSODRAWING`, `OBJ` and chart
 //!   substreams), read by [`crate::xls_drawing`].
@@ -52,6 +54,8 @@ use ironcalc_base::types::{Dxf, DxfFont};
 use crate::print::{HeaderFooter, Margins, PageSetup, Paper, PrintOptions, SheetPrint};
 use crate::validation::{ErrorStyle, Message, Validation, ValidationOperator, ValidationType};
 use crate::{CellRange, MAX_COLS, MAX_ROWS};
+
+mod cf12;
 
 /// Days between the 1900 and 1904 date systems' day zero.
 pub(crate) const DAYS_1904: f64 = 1462.0;
@@ -545,7 +549,17 @@ impl XlsFormat {
             if !list.is_empty() {
                 validations.push((sheet as u32, list));
             }
+            cf12::apply_cfex(&mut rules.cf, &rules.cfex);
+            for (ranges, d) in std::mem::take(&mut rules.cf12_raw) {
+                match cf12::parse_cf12_with(&d, g) {
+                    Some((own, cf)) => rules.cf.push((ranges.unwrap_or(own), cf)),
+                    None => rules.cf12 += 1,
+                }
+            }
             skipped.cf += rules.cf12;
+            // Excel 2007 rules carry their priority; older ones keep file
+            // order.
+            rules.cf.sort_by_key(|(_, cf)| cf.ext.priority.unwrap_or(0));
             let mut inputs = Vec::new();
             for (ranges, cf) in rules.cf {
                 let Some(input) = cf.convert(&ranges, &ctx, g, model) else {
@@ -636,8 +650,14 @@ struct SheetRules {
     validations: Vec<RawDv>,
     /// Each `CONDFMT`'s ranges with one of its `CF` rules.
     cf: Vec<(Vec<CellRange>, RawCf)>,
-    /// `CF12` rules (Excel 2007 data bars, colour scales, icon sets...).
+    /// `CF12` rules that could not be read.
     cf12: usize,
+    /// `CFEX` records: Excel 2007 templates of `CF` rules, by `CONDFMT` id
+    /// and rule index.
+    cfex: Vec<(u16, u16, cf12::Ext)>,
+    /// `CF12` records with their `CONDFMT12`'s ranges, read once the
+    /// palette is known.
+    cf12_raw: Vec<(Option<Vec<CellRange>>, Vec<u8>)>,
     /// The sheet's OfficeArt drawing (its `MSODRAWING` records joined).
     drawing: Vec<u8>,
     /// Its `OBJ`s in order, each with the chart substream after it.
@@ -798,6 +818,10 @@ struct RawCf {
     dxf: XlsDxf,
     rgce1: Vec<u8>,
     rgce2: Vec<u8>,
+    /// `(CONDFMT id, index in it)`, for its `CFEX`.
+    id: Option<(u16, u16)>,
+    /// What Excel 2007 adds (`CF12`, `CFEX`).
+    ext: cf12::Ext,
 }
 
 /// A `DXFN` as read: palette indices still to resolve.
@@ -981,6 +1005,8 @@ impl RawCf {
             dxf,
             rgce1,
             rgce2,
+            id: None,
+            ext: cf12::Ext::default(),
         })
     }
 
@@ -993,42 +1019,35 @@ impl RawCf {
     ) -> Option<CfRuleInput> {
         let first = *ranges.first()?;
         let ctx = ctx((first.top, first.left));
-        let format = self.dxf.convert(g);
-        let f1 = crate::xls_formula::decompile(&self.rgce1, &ctx)?;
-        match self.ct {
-            1 => {
-                let operator = match self.cp {
-                    1 => ValueOperator::Between,
-                    2 => ValueOperator::NotBetween,
-                    3 => ValueOperator::Equal,
-                    4 => ValueOperator::NotEqual,
-                    5 => ValueOperator::GreaterThan,
-                    6 => ValueOperator::LessThan,
-                    7 => ValueOperator::GreaterThanOrEqual,
-                    8 => ValueOperator::LessThanOrEqual,
-                    _ => return None,
-                };
-                let formula2 =
-                    if matches!(operator, ValueOperator::Between | ValueOperator::NotBetween) {
-                        Some(crate::xls_formula::decompile(&self.rgce2, &ctx)?)
-                    } else {
-                        None
-                    };
-                Some(CfRuleInput::CellIs {
-                    operator,
-                    formula: f1,
-                    formula2,
-                    format,
-                    stop_if_true: false,
-                })
-            }
-            2 => Some(CfRuleInput::Formula {
-                formula: f1,
-                format,
-                stop_if_true: false,
-            }),
-            _ => None,
-        }
+        cf12::convert(self, &ctx, g)
+    }
+
+    /// A cell value rule (`ct` 1).
+    fn cell_is(&self, ctx: &crate::xls_formula::Context, format: Dxf) -> Option<CfRuleInput> {
+        let f1 = crate::xls_formula::decompile(&self.rgce1, ctx)?;
+        let operator = match self.cp {
+            1 => ValueOperator::Between,
+            2 => ValueOperator::NotBetween,
+            3 => ValueOperator::Equal,
+            4 => ValueOperator::NotEqual,
+            5 => ValueOperator::GreaterThan,
+            6 => ValueOperator::LessThan,
+            7 => ValueOperator::GreaterThanOrEqual,
+            8 => ValueOperator::LessThanOrEqual,
+            _ => return None,
+        };
+        let formula2 = if matches!(operator, ValueOperator::Between | ValueOperator::NotBetween) {
+            Some(crate::xls_formula::decompile(&self.rgce2, ctx)?)
+        } else {
+            None
+        };
+        Some(CfRuleInput::CellIs {
+            operator,
+            formula: f1,
+            formula2,
+            format,
+            stop_if_true: self.ext.stop,
+        })
     }
 }
 
@@ -1454,8 +1473,14 @@ fn read_sheet(
     let mut note_obj: Option<u16> = None;
     let mut texts: HashMap<u16, String> = HashMap::new();
     let mut notes: Vec<(u16, u16, u16, String)> = Vec::new();
-    // The ranges of the last CONDFMT and how many CF records it has left.
-    let mut condfmt: Option<(Vec<CellRange>, u16)> = None;
+    // The ranges of the last CONDFMT, how many CF records it has left, its
+    // id and the index of the next one; the same for CONDFMT12 and CF12.
+    let mut condfmt: Option<(Vec<CellRange>, u16, u16, u16)> = None;
+    let mut condfmt12: Option<(Vec<CellRange>, u16)> = None;
+    // Each CONDFMT's ranges by id, and those of the one a CFEX gave the
+    // next CF12 to.
+    let mut condfmt_ranges: HashMap<u16, Vec<CellRange>> = HashMap::new();
+    let mut cf12_owner: Option<Vec<CellRange>> = None;
     // The records of the embedded chart being read.
     let mut chart: Option<Vec<(u16, Vec<u8>)>> = None;
     while let Some((typ, d)) = rec.next() {
@@ -1691,27 +1716,54 @@ fn read_sheet(
                 }
             }
             0x01B0 => {
-                // CONDFMT: ccf, flags, refBound, sqref.
+                // CONDFMT: ccf, fToughRecalc and nID, refBound, sqref.
                 condfmt = (|| {
                     let ccf = b.u16()?;
-                    b.skip(2 + 8)?;
-                    Some((sqref(&mut b)?, ccf))
+                    let id = b.u16()? >> 1;
+                    b.skip(8)?;
+                    Some((sqref(&mut b)?, ccf, id, 0))
                 })()
-                .filter(|(r, _)| !r.is_empty());
+                .filter(|(r, ..)| !r.is_empty());
+                if let Some((ranges, _, id, _)) = &condfmt {
+                    condfmt_ranges.insert(*id, ranges.clone());
+                }
             }
             0x01B1 => {
-                if let Some((ranges, left)) = &mut condfmt
+                if let Some((ranges, left, id, next)) = &mut condfmt
                     && *left > 0
                 {
                     *left -= 1;
                     match RawCf::parse(d) {
-                        Some(cf) => rules.cf.push((ranges.clone(), cf)),
+                        Some(mut cf) => {
+                            cf.id = Some((*id, *next));
+                            rules.cf.push((ranges.clone(), cf));
+                        }
                         None => rules.cf12 += 1,
                     }
+                    *next += 1;
                 }
             }
-            // CF12: Excel 2007 rules (data bars, colour scales, icon sets).
-            0x087A => rules.cf12 += 1,
+            // CONDFMT12 and its CF12 rules (Excel 2007), CFEX (Excel 2007
+            // templates of CF rules).
+            0x0879 => condfmt12 = cf12::condfmt12(d).filter(|(r, _)| !r.is_empty()),
+            0x087A => {
+                let ranges = match &mut condfmt12 {
+                    Some((ranges, left)) if *left > 0 => {
+                        *left -= 1;
+                        Some(ranges.clone())
+                    }
+                    _ => cf12_owner.take(),
+                };
+                rules.cf12_raw.push((ranges, d.to_vec()));
+            }
+            0x087B => match cf12::parse_cfex(d) {
+                Some(cf12::CfEx::Cf(id, icf, ext)) => rules.cfex.push((id, icf, ext)),
+                Some(cf12::CfEx::Cf12(id)) => {
+                    condfmt12 = None;
+                    cf12_owner = condfmt_ranges.get(&id).cloned();
+                }
+                None => {}
+            },
             0x00A1 => {
                 print.setup =
                     (|| Some((b.u16()?, b.u16()?, b.i16()?, b.u16()?, b.u16()?, b.u16()?)))();

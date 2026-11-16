@@ -226,3 +226,32 @@ fn preview_pages_are_the_pdf_pages_rasterized() {
     let big = r.render(&page, 2.0).unwrap();
     assert!((big.width as i64 - 2 * img.width as i64).abs() <= 1);
 }
+
+/// A table in a custom table style (`tests/corpus/xlsx/24_table_styles.xlsx`,
+/// purple header row, light purple bands) prints in it.
+#[test]
+fn custom_table_styles_print() {
+    let mut book = Workbook::open(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/corpus/xlsx/24_table_styles.xlsx"
+    ))
+    .unwrap();
+    let opts = Options {
+        sheets: Some(vec![0]),
+        file_name: "24_table_styles.xlsx".into(),
+        ..Options::default()
+    };
+    let p = plan(&book, &opts);
+    let page = sheets_pdf::extract(&mut book, &p, 0);
+    let img = sheets_pdf::preview::Rasterizer::new()
+        .render(&page, 1.0)
+        .unwrap();
+    let count = |rgb: [u8; 3]| {
+        img.rgba
+            .chunks(4)
+            .filter(|px| (0..3).all(|i| (i32::from(px[i]) - i32::from(rgb[i])).abs() <= 2))
+            .count()
+    };
+    assert!(count([0x70, 0x30, 0xA0]) > 200, "purple header");
+    assert!(count([0xE4, 0xDF, 0xEC]) > 200, "banded rows");
+}

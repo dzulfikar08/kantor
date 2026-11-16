@@ -132,7 +132,7 @@ const BORDERS: [(BorderPreset, &str, Lucide); 3] = [
 
 /// The swatches of the colour popovers, in rows: light tints for fills,
 /// Excel's standard colours, darks.
-const SWATCHES: [[Rgb; 8]; 3] = [
+pub(crate) const SWATCHES: [[Rgb; 8]; 3] = [
     [
         0xFFFFFF, 0xF2F2F2, 0xD9D9D9, 0xFFF2CC, 0xE2EFDA, 0xDDEBF7, 0xFCE4D6, 0xE4DFEC,
     ],
@@ -703,11 +703,14 @@ fn view_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
 /// The Table menu: Format as Table, Table Design, Convert to Range.
 fn table_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
     type Run = fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>);
-    let items: [(&str, &str, Run); 3] = [
+    let items: [(&str, &str, Run); 4] = [
         (tk("Format as Table…"), "Ctrl+T", |v, w, cx| {
             v.format_as_table_doc(w, cx)
         }),
         (tk("Table Design"), "", |v, w, cx| v.table_design_doc(w, cx)),
+        (tk("New Table Style…"), "", |v, w, cx| {
+            v.new_table_style_doc(w, cx)
+        }),
         (tk("Convert to Range"), "", |v, w, cx| {
             v.convert_table_doc(w, cx)
         }),

@@ -193,6 +193,28 @@ fn main() -> Result<()> {
         wb.save_as(o.join("sheet_copies_14_charts_images.xlsx"))?;
         Ok(Some(images.clone()))
     });
+    // Custom table styles: one of the file's modified, a new one with every
+    // element formatted (default style, used by a table), saved twice.
+    let styles = corpus.join("xlsx/24_table_styles.xlsx");
+    run.scenario("table_styles_24.xlsx", |o| {
+        let mut wb = Workbook::open(&styles)?;
+        table_style_edits(&mut wb)?;
+        wb.save_as(o.join("table_styles_24.xlsx"))?;
+        wb.save_as(o.join("table_styles_24.xlsx"))?;
+        Ok(Some(styles.clone()))
+    });
+    run.scenario("table_styles_new.xlsx", |o| {
+        let mut wb = data_book()?;
+        wb.create_table(
+            0,
+            CellRange::from_corners((0, 0), (ROWS.len() as u32, 3)),
+            true,
+            "TableStyleMedium2",
+        )?;
+        table_style_edits(&mut wb)?;
+        wb.save_as(o.join("table_styles_new.xlsx"))?;
+        Ok(None)
+    });
     let tables = corpus.join("xlsx/13_tables.xlsx");
     run.scenario("sheet_copies_13_tables.xlsx", |o| {
         let mut wb = Workbook::open(&tables)?;
@@ -802,6 +824,64 @@ fn kantor_features(wb: &mut Workbook) -> Result<()> {
     l.toggle_field(product);
     l.toggle_field(revenue);
     wb.set_pivot_layout(s3, r3, c3, &l)?;
+    Ok(())
+}
+
+/// New Table Style with every element formatted (made the default and used
+/// by the first table), a copy of a built-in style, and the file's own
+/// styles modified.
+fn table_style_edits(wb: &mut Workbook) -> Result<()> {
+    use sheets_engine::format::{BorderLine, LineStyle};
+    use sheets_engine::{TableElement, TableElementFormat};
+    let name = wb.next_table_style_name();
+    let mut spec = sheets_engine::TableStyleSpec::new(&name);
+    let line = |style, color| {
+        Some(BorderLine {
+            style,
+            color: Some(color),
+        })
+    };
+    for (i, e) in TableElement::ALL.into_iter().enumerate() {
+        let c = 0x203040 + 0x101010 * i as u32;
+        spec.set_format(
+            e,
+            TableElementFormat {
+                fill: Some(c),
+                font: Some(0xFFFFFF - c),
+                bold: Some(i % 2 == 0),
+                italic: Some(i % 3 == 0),
+                underline: Some(i % 4 == 0),
+                strike: Some(i % 5 == 0),
+                left: line(LineStyle::Thin, c),
+                right: line(LineStyle::Medium, c),
+                top: line(LineStyle::Dashed, c),
+                bottom: line(LineStyle::Double, c),
+                horizontal: line(LineStyle::Hair, c),
+                vertical: line(LineStyle::DashDot, c),
+            },
+        );
+        spec.set_size(e, 2);
+    }
+    wb.add_table_style(&spec, true)?;
+    let copy = wb.duplicate_table_style_name("TableStyleMedium9");
+    let mut medium = wb
+        .table_style_spec("TableStyleMedium9")
+        .context("built-in")?;
+    medium.name = copy;
+    wb.add_table_style(&medium, false)?;
+    for old in wb.custom_table_styles() {
+        if old == name || old == medium.name {
+            continue;
+        }
+        let mut s = wb.table_style_spec(&old).context("style")?;
+        s.name = format!("{old} & more");
+        wb.modify_table_style(&old, &s, false)?;
+    }
+    if let Some(t) = wb.tables(0).first() {
+        let mut o = wb.table_options(&t.name).context("table")?;
+        o.style = Some(name);
+        wb.set_table_options(&t.name, o)?;
+    }
     Ok(())
 }
 
