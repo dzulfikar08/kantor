@@ -684,9 +684,9 @@ fn tracked_updates_are_deletions_and_insertions() {
     let mut rejected = doc.clone();
     rejected.resolve_all(false, Selection::default());
     assert_eq!(texts(&rejected), texts(&original));
-    // Field marks follow the update (only results are tracked), so a
-    // rejected new table of contents line may leave an empty PAGEREF.
-    assert!(kinds(&rejected).len() >= kinds(&original).len());
+    // A rejected new table of contents line takes its fields with it (no
+    // empty PAGEREF left behind).
+    assert_eq!(kinds(&rejected), kinds(&original));
     // Saved and read back: the same changes, the same fields.
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("t.docx");
@@ -720,6 +720,10 @@ fn tracked_table_of_contents_update() {
     let mut rejected = doc.clone();
     rejected.resolve_all(false, Selection::default());
     assert_eq!(texts(&rejected), texts(&original));
+    // Its fields too: no empty PAGEREF from a rejected new line.
+    let kinds = |d: &Document| d.fields().iter().map(|f| f.kind()).collect::<Vec<_>>();
+    assert_eq!(kinds(&rejected), kinds(&original));
+    assert_eq!(kinds(&accepted), kinds(&plain));
     doc.undo();
     assert!(!doc.has_changes() || doc.changes() == original.changes());
 }

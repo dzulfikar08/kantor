@@ -30,6 +30,9 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 - Docs: text wraps around a turned picture or shape's turned bounds, as in Word, instead of its
   unturned box (text could run under a turned picture's corners).
+- Docs: rejecting a table of contents line added by a tracked update removes its page reference
+  too (an empty `PAGEREF` field was left behind), and rejecting a removed line brings its fields
+  back.
 
 ## [0.8.0] - 2026-11-16
 
