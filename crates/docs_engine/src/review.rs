@@ -247,6 +247,15 @@ pub(crate) fn comment_id(o: &Object) -> Option<(&'static str, String)> {
 }
 
 /// Today's date and time in UTC as `YYYY-MM-DDTHH:MM:SSZ` (Word's format).
+/// Resolve the tracked code edit of a field start (crate::code_track).
+fn resolve_code(run: &mut crate::model::Run, accept: bool) {
+    if let Some(crate::model::Object::Field(f)) = &run.object
+        && let Some(m) = crate::code_track::resolve(f, accept)
+    {
+        run.object = Some(crate::model::Object::Field(std::sync::Arc::new(m)));
+    }
+}
+
 pub fn now_utc() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -484,6 +493,27 @@ impl Document {
                 });
             }
             for (range, run) in p.run_ranges() {
+                // A field code edited with Track Changes on: the old code
+                // deleted, the new one inserted.
+                if run.rev.is_none()
+                    && let Some(crate::model::Object::Field(f)) = &run.object
+                    && let Some((old, new, author, date)) = crate::code_track::change(f)
+                {
+                    for (kind, text) in [(RevKind::Delete, old), (RevKind::Insert, new)] {
+                        add(Change {
+                            start: Position::new(pi, range.start),
+                            end: Position::new(pi, range.end),
+                            kind,
+                            author: author.clone(),
+                            date: date.clone(),
+                            text,
+                            format: Vec::new(),
+                            para: false,
+                            row: false,
+                            table: None,
+                        });
+                    }
+                }
                 if let Some(rev) = &run.rev {
                     add(Change {
                         start: Position::new(pi, range.start),
@@ -632,6 +662,12 @@ impl Document {
             for run in &mut p.runs {
                 let r = at..at + run.len;
                 at = r.end;
+                if r.end > lo
+                    && r.start < hi
+                    && (wants(RevKind::Insert, false) || wants(RevKind::Delete, false))
+                {
+                    resolve_code(run, accept);
+                }
                 let Some(rev) = run.rev.clone() else { continue };
                 if r.end <= lo || r.start >= hi || !wants(rev.kind, false) {
                     continue;
@@ -707,7 +743,7 @@ impl Document {
         let mut rows = rows;
         if only.is_none() {
             let span = Some((start, end));
-            rows |= track_table::resolve_table_props(&new, &mut tables, first, span, accept);
+            rows |= track_table::resolve_table_props(&mut new, &mut tables, first, span, accept);
             rows |= track_table::resolve_cells(&mut new, &mut tables, first, span, accept, None);
         }
         if new.is_empty() && count == self.paragraphs.len() {
@@ -759,9 +795,15 @@ impl Document {
         let mut paras: Vec<Paragraph> = self.paragraphs[range.clone()].to_vec();
         let mut tables = self.tables.clone();
         let changed = match what {
-            track_table::TableChange::Props => tables
-                .get_mut(&id)
-                .is_some_and(|t| track_table::resolve_props(t, accept)),
+            track_table::TableChange::Props => {
+                let done = tables
+                    .get_mut(&id)
+                    .is_some_and(|t| track_table::resolve_props(t, accept));
+                if done && accept {
+                    track_table::normalize_hmerge(&mut paras, &mut tables, id);
+                }
+                done
+            }
             _ => track_table::resolve_cells(
                 &mut paras,
                 &mut tables,
@@ -852,6 +894,7 @@ impl Document {
             for run in &mut p.runs {
                 let r = at..at + run.len;
                 at = r.end;
+                resolve_code(run, accept);
                 if let Some(rev) = run.rev.take() {
                     let remove = (rev.kind == RevKind::Delete) == accept;
                     if remove {
@@ -882,7 +925,7 @@ impl Document {
             join_next = joins;
         }
         let mut tables = self.tables.clone();
-        let mut rows = track_table::resolve_table_props(&out, &mut tables, 0, None, accept);
+        let mut rows = track_table::resolve_table_props(&mut out, &mut tables, 0, None, accept);
         rows |= track_table::resolve_cells(&mut out, &mut tables, 0, None, accept, None);
         rows |= track_table::resolve_rows(&mut out, &mut tables, 0, None, accept, None);
         if out.is_empty() {

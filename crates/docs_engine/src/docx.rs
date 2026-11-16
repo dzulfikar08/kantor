@@ -1611,11 +1611,16 @@ impl BodyParser<'_> {
                         crate::object::FIELD_SEPARATE.to_owned(),
                     )
                 };
-                let mark = FieldMark::Begin {
-                    instr: f.instr.clone(),
-                    code: code.into(),
-                    sep: Some(sep.into()),
-                    simple: false,
+                let mark = if crate::code_track::is_tracked(&code) {
+                    // A tracked code edit: the instruction is the new code.
+                    crate::code_track::with_code(code, Some(sep.into()))
+                } else {
+                    FieldMark::Begin {
+                        instr: f.instr.clone(),
+                        code: code.into(),
+                        sep: Some(sep.into()),
+                        simple: false,
+                    }
                 };
                 let props = f.props.clone();
                 self.insert_mark(at, mark, props);
@@ -1637,11 +1642,16 @@ impl BodyParser<'_> {
                     }
                     FieldMode::Code if f.container == self.container(stack_len) => {
                         // No result: the code, then the end.
-                        let begin = FieldMark::Begin {
-                            instr: f.instr.clone(),
-                            code: self.src[f.start..run_start].into(),
-                            sep: None,
-                            simple: false,
+                        let code = &self.src[f.start..run_start];
+                        let begin = if crate::code_track::is_tracked(code) {
+                            crate::code_track::with_code(code.to_owned(), None)
+                        } else {
+                            FieldMark::Begin {
+                                instr: f.instr.clone(),
+                                code: code.into(),
+                                sep: None,
+                                simple: false,
+                            }
                         };
                         let end = FieldMark::End {
                             xml: if clean {
@@ -1804,17 +1814,14 @@ impl BodyParser<'_> {
                 }
             }
             Cap::TcPr => {
-                let el = xml::parse(xml);
                 if let Some((_, t)) = &mut self.table
                     && let Some(cell) = t.rows.last_mut().and_then(|r| r.cells.last_mut())
                 {
                     cell.tc_pr = Some(xml.into());
                     // Inserted, deleted and merged cells (`w:cellMerge`)
                     // and property changes: crate::track_table.
+                    // Horizontal merges (`w:hMerge`) are drawn merged.
                     cell.refresh();
-                    if el.as_ref().is_some_and(|el| el.child("hMerge").is_some()) {
-                        self.preserved.insert("horizontally merged cells".into());
-                    }
                 }
             }
             Cap::BodySect => {

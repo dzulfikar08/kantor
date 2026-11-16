@@ -283,8 +283,18 @@ impl FieldMark {
         let mut in_instr = false;
         // Just after a nested field's opening brace.
         let mut fresh = false;
+        // Inside a tracked edit's old code (`w:del`): not shown.
+        let mut in_del = false;
         loop {
             match r.read_event() {
+                Ok(quick_xml::events::Event::Eof) | Err(_) => break,
+                Ok(quick_xml::events::Event::Start(e)) if e.local_name().as_ref() == b"del" => {
+                    in_del = true;
+                }
+                Ok(quick_xml::events::Event::End(e)) if e.local_name().as_ref() == b"del" => {
+                    in_del = false;
+                }
+                _ if in_del => {}
                 Ok(quick_xml::events::Event::Start(e)) | Ok(quick_xml::events::Event::Empty(e))
                     if e.local_name().as_ref() == b"fldChar" =>
                 {
@@ -352,7 +362,6 @@ impl FieldMark {
                         }
                     }
                 }
-                Ok(quick_xml::events::Event::Eof) | Err(_) => break,
                 _ => {}
             }
         }

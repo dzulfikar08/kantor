@@ -246,15 +246,220 @@ fn tracked_merge_down_a_column_is_cell_merge_and_resolves() {
     assert!(xml.contains("<w:vMerge w:val=\"restart\"/>"));
 }
 
+/// Each row's cells' horizontal merge state.
+fn hshape(d: &Document) -> Vec<Vec<VMerge>> {
+    d.table(1)
+        .unwrap()
+        .rows
+        .iter()
+        .map(|r| r.cells.iter().map(|c| c.hmerge).collect())
+        .collect()
+}
+
 #[test]
-fn tracked_merge_across_columns_goes_in_untracked() {
+fn tracked_merge_across_columns_is_hmerge_and_resolves() {
     let mut d = grid_doc();
     d.set_track_changes(true, Selection::default());
     let (_, untracked) = d.merge_cells(select(&d, "r0c0", "r0c1")).unwrap();
+    assert!(!untracked);
+    // The cells stay while it's pending, marked merged.
+    assert_eq!(hshape(&d)[0], [R, C, N]);
+    let ch = d.changes();
+    assert!(
+        ch.iter()
+            .any(|c| c.format.contains(&docs_engine::FormatItem::MergedCells)),
+        "{ch:?}"
+    );
+    assert!(
+        ch.iter()
+            .any(|c| c.kind == RevKind::Insert && c.text.contains("r0c1"))
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let mut back = reopen(&mut d, &dir, "h.docx");
+    let xml = document_xml(&dir.path().join("h.docx"));
+    assert!(xml.contains("<w:hMerge w:val=\"restart\"/>"), "{xml}");
+    assert!(xml.contains("<w:tcPrChange "), "{xml}");
+    assert_eq!(hshape(&back), hshape(&d));
+    // Rejected: as before.
+    let all = Selection::default();
+    let mut rej = back.clone();
+    rej.resolve_all(false, all);
+    assert_eq!(shape(&rej), vec![vec![(1, N); 3]; 3]);
+    assert_eq!(hshape(&rej), vec![vec![N; 3]; 3]);
+    assert_eq!(texts(&rej), texts(&grid_doc()));
+    // Accepted: one cell spanning two columns, with both texts.
+    back.resolve_all(true, all);
+    assert_eq!(shape(&back)[0], [(2, N), (1, N)]);
+    assert_eq!(hshape(&back)[0], [N, N]);
+    assert_eq!(texts(&back)[1..4], ["r0c0", "r0c1", "r0c2"]);
+    assert!(back.changes().is_empty());
+    // Accepting only the table's change merges too.
+    let mut one = d.clone();
+    let c = one
+        .changes()
+        .into_iter()
+        .find(|c| c.format.contains(&docs_engine::FormatItem::MergedCells))
+        .unwrap();
+    one.accept_change(caret(c.start.para, 0)).unwrap();
+    assert_eq!(shape(&one)[0], [(2, N), (1, N)]);
+}
+
+#[test]
+fn tracked_merge_of_a_block_resolves() {
+    let mut d = grid_doc();
+    d.set_track_changes(true, Selection::default());
+    d.merge_cells(select(&d, "r0c0", "r1c1")).unwrap();
+    assert_eq!(hshape(&d)[0], [R, C, N]);
+    assert_eq!(hshape(&d)[1], [R, C, N]);
+    assert_eq!(shape(&d)[1][0].1, C);
+    let all = Selection::default();
+    let mut acc = d.clone();
+    acc.resolve_all(true, all);
+    assert_eq!(
+        shape(&acc),
+        [vec![(2, R), (1, N)], vec![(2, C), (1, N)], vec![(1, N); 3]]
+    );
+    let first = texts(&acc)[1..5].to_vec();
+    assert_eq!(first, ["r0c0", "r0c1", "r1c0", "r1c1"]);
+    d.resolve_all(false, all);
+    assert_eq!(shape(&d), vec![vec![(1, N); 3]; 3]);
+    assert_eq!(texts(&d), texts(&grid_doc()));
+}
+
+#[test]
+fn tracked_split_adds_marked_cells_and_rows() {
+    let mut d = grid_doc();
+    d.set_track_changes(true, Selection::default());
+    let at = caret(para(&d, "r0c1"), 0);
+    let (_, untracked) = d.split_cells(at, 1, 2).unwrap();
+    assert!(!untracked);
+    let t = d.table(1).unwrap();
+    assert_eq!(t.rows[0].cells.len(), 4);
+    assert_eq!(t.rows[0].cells[2].tracked(), Some(RevKind::Insert));
+    // The cells above and below span the new grid column.
+    assert_eq!(shape(&d)[1], [(1, N), (2, N), (1, N)]);
+    // The text stays in the first cell.
+    assert!(texts(&d).contains(&"r0c1".to_string()));
+    let all = Selection::default();
+    let dir = tempfile::tempdir().unwrap();
+    let back = reopen(&mut d, &dir, "s.docx");
+    let mut rej = back.clone();
+    rej.resolve_all(false, all);
+    assert_eq!(shape(&rej), vec![vec![(1, N); 3]; 3]);
+    assert_eq!(rej.table(1).unwrap().grid.len(), 3);
+    assert_eq!(texts(&rej), texts(&grid_doc()));
+    let mut acc = back.clone();
+    acc.resolve_all(true, all);
+    assert_eq!(acc.table(1).unwrap().rows[0].cells.len(), 4);
+    assert!(acc.changes().is_empty());
+    // Into rows: a new row, marked inserted; the row's other cells merge
+    // down into it.
+    let mut e = grid_doc();
+    e.set_track_changes(true, Selection::default());
+    e.split_cells(caret(para(&e, "r1c1"), 0), 2, 1).unwrap();
+    let t = e.table(1).unwrap();
+    assert_eq!(t.rows.len(), 4);
+    assert_eq!(t.rows[2].tracked(), Some(RevKind::Insert));
+    assert_eq!(shape(&e)[1], [(1, R), (1, N), (1, R)]);
+    e.resolve_all(false, all);
+    assert_eq!(shape(&e), vec![vec![(1, N); 3]; 3]);
+    assert_eq!(texts(&e), texts(&grid_doc()));
+}
+
+#[test]
+fn merging_before_a_split_goes_in_untracked() {
+    let mut d = grid_doc();
+    d.set_track_changes(true, Selection::default());
+    let (_, untracked) = d.split_cells(select(&d, "r0c0", "r0c1"), 1, 2).unwrap();
     assert!(untracked);
-    assert_eq!(shape(&d)[0], [(2, N), (1, N)]);
-    let (_, untracked) = d.split_cells(caret(1, 0), 1, 2).unwrap();
+}
+
+#[test]
+fn columns_insert_and_delete_around_merged_cells() {
+    use docs_engine::TableEdit;
+    let mut d = grid_doc();
+    // Row 0: r0c0 spans two columns; r1c1 merges down into row 2.
+    d.merge_cells(select(&d, "r0c0", "r0c1")).unwrap();
+    d.merge_cells(select(&d, "r1c1", "r2c1")).unwrap();
+    // A column right of r1c0 (inside r0c0's span): r0c0 takes it in.
+    let mut e = d.clone();
+    e.edit_table(caret(para(&e, "r1c0"), 0), TableEdit::ColumnRight)
+        .unwrap();
+    assert_eq!(
+        shape(&e),
+        [
+            vec![(3, N), (1, N)],
+            vec![(1, N), (1, N), (1, R), (1, N)],
+            vec![(1, N), (1, N), (1, C), (1, N)]
+        ]
+    );
+    assert_eq!(e.table(1).unwrap().grid.len(), 4);
+    // A column left of the merged cell: a new cell in every row.
+    let mut e = d.clone();
+    e.edit_table(caret(para(&e, "r0c0"), 0), TableEdit::ColumnLeft)
+        .unwrap();
+    assert_eq!(
+        shape(&e),
+        [
+            vec![(1, N), (2, N), (1, N)],
+            vec![(1, N), (1, N), (1, R), (1, N)],
+            vec![(1, N), (1, N), (1, C), (1, N)]
+        ]
+    );
+    // Deleting the column of r1c1 (merged down): r0c0 narrows, the
+    // merged cell goes.
+    let mut e = d.clone();
+    e.edit_table(caret(para(&e, "r1c1"), 0), TableEdit::DeleteColumn)
+        .unwrap();
+    assert_eq!(
+        shape(&e),
+        [vec![(1, N), (1, N)], vec![(1, N); 2], vec![(1, N); 2]]
+    );
+    assert!(!texts(&e).contains(&"r1c1".to_string()));
+    // Deleting the merged cell's column deletes both its columns.
+    let mut e = d.clone();
+    e.edit_table(caret(para(&e, "r0c0"), 0), TableEdit::DeleteColumn)
+        .unwrap();
+    assert_eq!(shape(&e), [vec![(1, N)], vec![(1, N)], vec![(1, N)]]);
+    // Widths add up: every row as wide as the grid.
+    let t = e.table(1).unwrap();
+    assert_eq!(t.grid.len(), 1);
+}
+
+#[test]
+fn tracked_column_changes_with_merged_cells() {
+    use docs_engine::TableEdit;
+    let mut d = grid_doc();
+    d.merge_cells(select(&d, "r0c0", "r0c1")).unwrap();
+    d.set_track_changes(true, Selection::default());
+    // Inserting: new cells marked, r0c0's wider span recorded.
+    let mut e = d.clone();
+    let (_, untracked) = e
+        .edit_table_tracked(caret(para(&e, "r1c0"), 0), TableEdit::ColumnRight)
+        .unwrap();
+    assert!(!untracked);
+    assert_eq!(shape(&e)[0], [(3, N), (1, N)]);
+    e.resolve_all(false, Selection::default());
+    assert_eq!(shape(&e), shape(&d));
+    // Deleting a column the merged cell spans past isn't tracked.
+    let mut e = d.clone();
+    let (_, untracked) = e
+        .edit_table_tracked(caret(para(&e, "r1c1"), 0), TableEdit::DeleteColumn)
+        .unwrap();
     assert!(untracked);
+    assert_eq!(shape(&e)[0], [(1, N), (1, N)]);
+    // Deleting the last column (no merged cell across it) is.
+    let mut e = d.clone();
+    let (_, untracked) = e
+        .edit_table_tracked(caret(para(&e, "r1c2"), 0), TableEdit::DeleteColumn)
+        .unwrap();
+    assert!(!untracked);
+    assert_eq!(
+        e.table(1).unwrap().rows[1].cells[2].tracked(),
+        Some(RevKind::Delete)
+    );
+    e.resolve_all(true, Selection::default());
+    assert_eq!(shape(&e), [vec![(2, N)], vec![(1, N); 2], vec![(1, N); 2]]);
 }
 
 #[test]
@@ -314,6 +519,17 @@ fn write_merge_samples() {
     )
     .unwrap();
     d.save_as(&out.join("merge-tracked.docx")).unwrap();
+    let mut d = grid_doc();
+    d.set_track_changes(true, Selection::default());
+    d.merge_cells(select(&d, "r0c0", "r1c1")).unwrap();
+    d.split_cells(caret(para(&d, "r2c2"), 0), 2, 2).unwrap();
+    d.save_as(&out.join("merge-split-tracked.docx")).unwrap();
+    let mut d = Document::open(&corpus("fields.docx")).unwrap();
+    d.set_track_changes(true, Selection::default());
+    for f in d.fields().into_iter().filter(|f| f.kind() == "DATE") {
+        d.set_field_instr(f.begin, "DATE \\@ \"yyyy\"", Selection::caret(f.begin));
+    }
+    d.save_as(&out.join("code-tracked.docx")).unwrap();
     let mut d = Document::open(&corpus("tracked_merge.docx")).unwrap();
     d.insert_text(caret(0, 0), "New ", None);
     d.save_as(&out.join("merge-word.docx")).unwrap();

@@ -167,6 +167,10 @@ pub struct Cell {
     /// Grid columns covered (`w:gridSpan`).
     pub span: u32,
     pub vmerge: VMerge,
+    /// Horizontal merge (`w:hMerge`, older files and Track Changes'
+    /// merges across columns): a `Continue` cell is covered by the
+    /// `Restart` cell on its left.
+    pub hmerge: VMerge,
     /// Preferred width in twips (`w:tcW` of type `dxa`).
     pub width: Option<u32>,
     pub borders: Borders,
@@ -184,6 +188,7 @@ impl Cell {
     pub(crate) fn refresh(&mut self) {
         self.span = 1;
         self.vmerge = VMerge::None;
+        self.hmerge = VMerge::None;
         self.width = None;
         self.borders = Borders::default();
         let Some(el) = self.tc_pr.as_deref().and_then(crate::xml::parse) else {
@@ -196,6 +201,13 @@ impl Cell {
                 "gridSpan" => self.span = c.num("val").unwrap_or(1).max(1),
                 "vMerge" => {
                     self.vmerge = if c.attr("val") == Some("restart") {
+                        VMerge::Restart
+                    } else {
+                        VMerge::Continue
+                    }
+                }
+                "hMerge" => {
+                    self.hmerge = if c.attr("val") == Some("restart") {
                         VMerge::Restart
                     } else {
                         VMerge::Continue
@@ -345,6 +357,7 @@ impl Table {
             ),
             span,
             vmerge: VMerge::None,
+            hmerge: VMerge::None,
             width: Some(width),
             borders: Borders::default(),
         }
@@ -414,7 +427,30 @@ impl Table {
         self.rows
             .iter()
             .flat_map(|r| &r.cells)
-            .any(|c| c.span > 1 || c.vmerge != VMerge::None)
+            .any(|c| c.span > 1 || c.vmerge != VMerge::None || c.hmerge != VMerge::None)
+    }
+
+    /// Grid columns `[start, end)` cell `cell` of row `row` covers on
+    /// screen: a horizontal merge's first cell (`w:hMerge`) takes the
+    /// columns of the cells it covers.
+    pub fn shown_cols(&self, row: usize, cell: usize) -> (usize, usize) {
+        let g = self.grid_col(row, cell);
+        let Some(r) = self.rows.get(row) else {
+            return (g, g + 1);
+        };
+        let Some(c) = r.cells.get(cell) else {
+            return (g, g + 1);
+        };
+        let mut end = g + c.span.max(1) as usize;
+        if c.hmerge == VMerge::Restart {
+            for next in &r.cells[cell + 1..] {
+                if next.hmerge != VMerge::Continue {
+                    break;
+                }
+                end += next.span.max(1) as usize;
+            }
+        }
+        (g, end)
     }
 }
 

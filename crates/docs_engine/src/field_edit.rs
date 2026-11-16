@@ -232,6 +232,24 @@ impl Document {
             },
             end => end,
         });
+        // With Track Changes on, the old code's runs stay as a deletion and
+        // the new ones go in as an insertion (crate::code_track), unless
+        // the field itself is new.
+        let new = match self.begin_run(span.begin) {
+            Some((old, None)) if self.track => {
+                let id = self.max_rev_id();
+                let tag = |id: u64| {
+                    format!(
+                        "w:id=\"{id}\" w:author=\"{}\" w:date=\"{}\"",
+                        crate::xml::escape(&self.author),
+                        crate::review::now_utc()
+                    )
+                };
+                crate::code_track::track(&old, &new, (&tag(id + 1), &tag(id + 2)))
+                    .map_or(new, Arc::new)
+            }
+            _ => new,
+        };
         let id = Arc::as_ptr(&new) as usize;
         set_mark(&mut paras, span.begin, Object::Field(new));
         set_mark(
@@ -623,6 +641,24 @@ impl PageLookup for NoPages {
 }
 
 /// Swap the object at `pos` (same run formatting).
+impl Document {
+    /// The field start at `pos` and its run's tracked change.
+    fn begin_run(&self, pos: Position) -> Option<(FieldMark, Option<crate::review::RevKind>)> {
+        let p = self.paragraphs.get(pos.para)?;
+        p.run_ranges().find_map(|(r, run)| {
+            if r.start != pos.offset {
+                return None;
+            }
+            match run.object.as_ref()? {
+                Object::Field(f) if f.is_begin() => {
+                    Some(((**f).clone(), run.rev.as_ref().map(|v| v.kind)))
+                }
+                _ => None,
+            }
+        })
+    }
+}
+
 fn set_mark(paras: &mut [Paragraph], pos: Position, o: Object) {
     let p = &mut paras[pos.para];
     let i = p.split_run_at(pos.offset);
