@@ -48,6 +48,8 @@ pub const ENGINE_STRINGS: &[&str] = &[
     tk("Total"),
     tk("Cumulative %"),
     tk("Other"),
+    tk("Map: no map data saved with this chart"),
+    tk("Map: the map data saved with this chart can't be read"),
 ];
 
 /// Fixed phrases Docs and Slides use for content they can't keep or only

@@ -15,7 +15,12 @@ slide, in the layout families Kantor lays out itself:
 - Slide 4 "Cycle": Basic Cycle (`layout/cycle2`), "Spring", "Summer",
   "Autumn", "Winter" round a circle, arrows between them.
 - Slide 5 "Other layout": a layout Kantor doesn't lay out
-  (`layout/hierarchy1`, two items), drawn from its saved drawing.
+  (`layout/pyramid1`, two items), drawn from its saved drawing.
+- Slides 6-8: the hierarchies, each the tree CEO → (CFO, CTO → (Dev, Ops)):
+  "Org chart" (`layout/orgChart1`, a box per item), "Hierarchy"
+  (`layout/hierarchy1`, a background and a text box per item, as
+  PowerPoint draws it) and "Horizontal hierarchy" (`layout/hierarchy2`),
+  with elbow connectors drawn for the parent transitions.
 
 Regenerate with
 `uv run --with python-pptx==1.0.2 scripts/corpus/gen_pptx_smartart.py tests/corpus/pptx`.
@@ -206,7 +211,7 @@ def cycle(ids):
     return pres, shapes
 
 
-def hierarchy(ids):
+def pyramid(ids):
     pres, shapes = [], []
     for k, (node, _sib, _kids, text, _subs) in enumerate(ids):
         pid = gid("9", k)
@@ -215,12 +220,146 @@ def hierarchy(ids):
     return pres, shapes
 
 
+def connector(model, pts):
+    """An elbow line through `pts` (frame EMUs) as PowerPoint draws a
+    hierarchy's connectors: a custGeom path without fill."""
+    xs, ys = [int(p[0]) for p in pts], [int(p[1]) for p in pts]
+    x0, y0 = min(xs), min(ys)
+    w, h = max(max(xs) - x0, 1), max(max(ys) - y0, 1)
+    path = "".join(
+        f'<a:{"moveTo" if i == 0 else "lnTo"}><a:pt x="{x - x0}" y="{y - y0}"/></a:{"moveTo" if i == 0 else "lnTo"}>'
+        for i, (x, y) in enumerate(zip(xs, ys))
+    )
+    return (
+        f'<dsp:sp modelId="{model}"><dsp:nvSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvSpPr/></dsp:nvSpPr>'
+        f'<dsp:spPr><a:xfrm><a:off x="{x0}" y="{y0}"/><a:ext cx="{w}" cy="{h}"/></a:xfrm>'
+        '<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="0" b="0"/>'
+        f'<a:pathLst><a:path w="{w}" h="{h}" fill="none">{path}</a:path></a:pathLst></a:custGeom>'
+        '<a:noFill/><a:ln w="12700"><a:solidFill><a:schemeClr val="accent1"><a:shade val="60000"/></a:schemeClr></a:solidFill></a:ln></dsp:spPr>'
+        '<dsp:style><a:lnRef idx="2"><a:scrgbClr r="0" g="0" b="0"/></a:lnRef><a:fillRef idx="0"><a:scrgbClr r="0" g="0" b="0"/></a:fillRef>'
+        '<a:effectRef idx="0"><a:scrgbClr r="0" g="0" b="0"/></a:effectRef><a:fontRef idx="minor"/></dsp:style></dsp:sp>'
+    )
+
+
+TREE = ("CEO", [("CFO", []), ("CTO", [("Dev", []), ("Ops", [])])])
+
+
+def tree_smartart(lo, style):
+    """A hierarchy SmartArt of TREE: (data, drawing, layout). `style`:
+    "org" (one box per item), "hier" (background + text box), "horiz"
+    (left to right)."""
+    doc = gid("D", 0)
+    pts = (
+        f'<dgm:pt modelId="{doc}" type="doc"><dgm:prSet loTypeId="urn:microsoft.com/office/officeart/2005/8/layout/{lo}" '
+        'loCatId="hierarchy" qsTypeId="urn:microsoft.com/office/officeart/2005/8/quickstyle/simple1" qsCatId="simple" '
+        'csTypeId="urn:microsoft.com/office/officeart/2005/8/colors/accent1_2" csCatId="accent1" phldr="1"/><dgm:spPr/>'
+        f"{text_body([''])}</dgm:pt>"
+    )
+    cxns = ""
+    items = []  # (node, par, text, depth, parent index)
+    n = 0
+
+    def add(item, parent, ordinal, depth, pidx):
+        nonlocal pts, cxns, n
+        text, kids = item
+        n += 1
+        node, par, sib, cxn = gid("A", n), gid("B", n), gid("C", n), gid("E", n)
+        pts += f'<dgm:pt modelId="{node}"><dgm:prSet phldrT="[Text]"/><dgm:spPr/>{text_body([text])}</dgm:pt>'
+        for tid, ty in [(par, "parTrans"), (sib, "sibTrans")]:
+            pts += f'<dgm:pt modelId="{tid}" type="{ty}" cxnId="{cxn}"><dgm:prSet/><dgm:spPr/>{text_body([""])}</dgm:pt>'
+        cxns += (
+            f'<dgm:cxn modelId="{cxn}" srcId="{parent}" destId="{node}" srcOrd="{ordinal}" destOrd="0" '
+            f'parTransId="{par}" sibTransId="{sib}"/>'
+        )
+        me = len(items)
+        items.append([node, par, text, depth, pidx, 0.0])
+        for j, k in enumerate(kids):
+            add(k, node, j, depth + 1, me)
+
+    add(TREE, doc, 0, 0, None)
+    # Tidy tree: leaves side by side, parents over their children.
+    leaves = [i for i in range(len(items)) if not any(it[4] == i for it in items)]
+    for slot, i in enumerate(leaves):
+        items[i][5] = slot
+    for i in reversed(range(len(items))):
+        kids = [k for k in range(len(items)) if items[k][4] == i]
+        if kids:
+            items[i][5] = sum(items[k][5] for k in kids) / len(kids)
+    nslots, nlev = len(leaves), max(it[3] for it in items) + 1
+    horiz = style == "horiz"
+    if horiz:
+        bh = min(H / (nslots + 0.25 * (nslots - 1)), W / (nlev + 0.5 * (nlev - 1)) * 0.6)
+        bw = bh / 0.6
+    else:
+        bw = min(W / (nslots + 0.25 * (nslots - 1)), H / (nlev + 0.5 * (nlev - 1)) / 0.6)
+        bh = bw * 0.6
+
+    def box(i):
+        slot, depth = items[i][5], items[i][3]
+        if horiz:
+            return (depth * bw * 1.5, slot * bh * 1.25, bw, bh)
+        return (slot * bw * 1.25, depth * bh * 1.5, bw, bh)
+
+    pres, shapes = [], []
+    for i, (node, par, text, _depth, pidx, _slot) in enumerate(items):
+        x, y, w, h = box(i)
+        if pidx is not None:
+            px, py, pw, ph = box(pidx)
+            if horiz:
+                mx = px + pw + (x - px - pw) / 2
+                line = [(px + pw, py + ph / 2), (mx, py + ph / 2), (mx, y + h / 2), (x, y + h / 2)]
+            else:
+                my = py + ph + (y - py - ph) / 2
+                line = [(px + pw / 2, py + ph), (px + pw / 2, my), (x + w / 2, my), (x + w / 2, y)]
+            cid = gid("8", i)
+            pres.append((cid, par, "Name" + str(i), i, len(items)))
+            shapes.append(connector(cid, line))
+        if style == "hier":
+            bg, tx = gid("9", 2 * i), gid("9", 2 * i + 1)
+            pres.append((bg, node, "background", i, len(items)))
+            pres.append((tx, node, "text", i, len(items)))
+            shapes.append(sp(bg, "roundRect", (x, y, w, h), [""]))
+            shapes.append(sp(tx, "roundRect", (x + w * 0.1, y + h * 0.1, w * 0.9, h * 0.9), [text], fill="lt1", font="tx1"))
+        else:
+            pid = gid("9", i)
+            pres.append((pid, node, "rootText" if pidx is None else "hierChild", i, len(items)))
+            shapes.append(sp(pid, "rect", (x, y, w, h), [text]))
+    for m, (pid, assoc, name, idx, cnt) in enumerate(pres):
+        pts += (
+            f'<dgm:pt modelId="{pid}" type="pres"><dgm:prSet presAssocID="{assoc}" presName="{name}" '
+            f'presStyleLbl="node1" presStyleIdx="{idx}" presStyleCnt="{cnt}"/><dgm:spPr/></dgm:pt>'
+        )
+        cxns += f'<dgm:cxn modelId="{gid("F", m)}" type="presOf" srcId="{assoc}" destId="{pid}" srcOrd="0" destOrd="0"/>'
+    data = (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<dgm:dataModel xmlns:dgm="{DGM}" xmlns:a="{A}">'
+        f"<dgm:ptLst>{pts}</dgm:ptLst><dgm:cxnLst>{cxns}</dgm:cxnLst><dgm:bg/><dgm:whole/>"
+        f'<dgm:extLst><a:ext uri="http://schemas.microsoft.com/office/drawing/2008/diagram"><dsp:dataModelExt xmlns:dsp="{DSP}" '
+        'relId="rIdDr" minVer="http://schemas.openxmlformats.org/drawingml/2006/diagram"/></a:ext></dgm:extLst></dgm:dataModel>'
+    )
+    drawing = (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<dsp:drawing xmlns:dgm="{DGM}" xmlns:dsp="{DSP}" xmlns:a="{A}">'
+        '<dsp:spTree><dsp:nvGrpSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvGrpSpPr/></dsp:nvGrpSpPr><dsp:grpSpPr/>'
+        f"{''.join(shapes)}</dsp:spTree></dsp:drawing>"
+    )
+    alg = "hierRoot" if lo != "hierarchy2" else "hierChild"
+    layout = (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<dgm:layoutDef xmlns:dgm="{DGM}" xmlns:a="{A}" '
+        f'uniqueId="urn:microsoft.com/office/officeart/2005/8/layout/{lo}"><dgm:title val=""/><dgm:desc val=""/>'
+        f'<dgm:catLst><dgm:cat type="hierarchy" pri="400"/></dgm:catLst><dgm:layoutNode name="diagram"><dgm:alg type="{alg}"/>'
+        "<dgm:shape/><dgm:presOf/></dgm:layoutNode></dgm:layoutDef>"
+    )
+    return data, drawing, layout
+
+
 SLIDES = [
     ("Block list", "default", "list", [(t, []) for t in "ABCDE"], blocks),
     ("Bullet list", "vList2", "list", [("North", ["Oslo", "Bergen"]), ("South", ["Rome"])], bullets),
     ("Process", "process1", "process", [("Plan", []), ("Build", []), ("Ship", [])], process),
     ("Cycle", "cycle2", "cycle", [("Spring", []), ("Summer", []), ("Autumn", []), ("Winter", [])], cycle),
-    ("Other layout", "hierarchy1", "hierarchy", [("Boss", []), ("Team", [])], hierarchy),
+    ("Other layout", "pyramid1", "pyramid", [("Boss", []), ("Team", [])], pyramid),
+    ("Org chart", "orgChart1", "org", None, None),
+    ("Hierarchy", "hierarchy1", "hier", None, None),
+    ("Horizontal hierarchy", "hierarchy2", "horiz", None, None),
 ]
 
 for title, *_ in SLIDES:
@@ -243,7 +382,10 @@ colors = (
 ct = parts["[Content_Types].xml"].decode()
 for k, (title, lo, cat, items, shapes_of) in enumerate(SLIDES):
     i = k + 1
-    data, drawing, layout = smartart(lo, cat, items, shapes_of)
+    if shapes_of is None:
+        data, drawing, layout = tree_smartart(lo, cat)
+    else:
+        data, drawing, layout = smartart(lo, cat, items, shapes_of)
     frame = (
         f'<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="10" name="Diagram {i}"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>'
         f'<p:xfrm><a:off x="{FRAME[0]}" y="{FRAME[1]}"/><a:ext cx="{FRAME[2]}" cy="{FRAME[3]}"/></p:xfrm>'

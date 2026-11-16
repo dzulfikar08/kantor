@@ -9,6 +9,20 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Map charts (Excel's filled region maps) are drawn in Sheets, Docs and Slides, on screen and in
+  PDF: each region filled by its value on the chart's 2- or 3-colour scale (with a colour bar
+  legend) or by its category (with a legend), region labels where they fit, in the chart's
+  projection (Mercator, Miller, Robinson or Albers). The region outlines come from the map data
+  Office saves with the chart. When that data is missing, or saved in a form Kantor can't read (the
+  binary form isn't documented), the chart lists its values and says why instead of showing an
+  empty box.
+- Slides: SmartArt hierarchies (Organization Chart, Hierarchy, Horizontal Hierarchy) are laid out
+  again when resized, and *Add Shape After / Before / Above / Below* and Delete work in them, as in
+  PowerPoint (a deleted item's subordinates move up). The data model and the drawing are both
+  saved, so PowerPoint shows the same items.
+
 ### Fixed
 
 - Cloud storage: quitting Kantor releases the locks on every cloud file it has open, however it

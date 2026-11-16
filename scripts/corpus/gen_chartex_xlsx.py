@@ -60,7 +60,7 @@ def drawing(req: str) -> str:
         '<xdr:txBody><a:bodyPr vertOverflow="clip" horzOverflow="clip"/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="1100"/>'
         "<a:t>This chart isn't available in your version of Excel.</a:t></a:r></a:p></xdr:txBody></xdr:sp>"
     )
-    prefix = "cx2" if req == cxp.CX2 else "cx1"
+    prefix = {cxp.CX2: "cx2", cxp.CX4: "cx4"}.get(req, "cx1")
     return (
         HEAD + f'<xdr:wsDr xmlns:xdr="{NS_XDR}" xmlns:a="{NS_A}" xmlns:r="{NS_R}">'
         f'<mc:AlternateContent xmlns:mc="{NS_MC}"><mc:Choice xmlns:{prefix}="{req}" Requires="{prefix}">'

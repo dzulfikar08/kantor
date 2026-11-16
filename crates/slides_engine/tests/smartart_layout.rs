@@ -229,3 +229,96 @@ fn smartart_shapes_turn_and_keep_their_turn_when_laid_out() {
     let b = find(&p, f, "Build");
     assert_eq!(p.shape(b).unwrap().xfrm.unwrap().rot, 30 * 60_000);
 }
+
+/// Item boxes of a hierarchy SmartArt by text (connectors have none).
+fn items(p: &Presentation, f: ShapeRef) -> BTreeMap<String, slides_engine::Xfrm> {
+    drawn(p, f)
+        .into_iter()
+        .filter(|(t, _)| !t.is_empty())
+        .collect()
+}
+
+#[test]
+fn hierarchies_lay_out_as_trees() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let fam: Vec<Option<SmartArtFamily>> =
+        (5..8).map(|s| p.smartart_family(frame(&p, s))).collect();
+    assert_eq!(
+        fam,
+        [
+            Some(SmartArtFamily::OrgChart),
+            Some(SmartArtFamily::Hierarchy),
+            Some(SmartArtFamily::HorizontalHierarchy)
+        ]
+    );
+    for s in 5..8 {
+        let f = frame(&p, s);
+        let mut x = p.shape(f).unwrap().xfrm.unwrap();
+        x.cx = x.cx * 3 / 2;
+        p.set_xfrm(f, x, false).unwrap();
+        let b = items(&p, f);
+        let mid = |t: &str| (b[t].x + b[t].cx / 2, b[t].y + b[t].cy / 2);
+        if s == 7 {
+            // Left to right: CEO, then CFO and CTO, then Dev and Ops.
+            assert!(mid("CEO").0 < mid("CTO").0 && mid("CTO").0 < mid("Dev").0, "{b:?}");
+            assert!(mid("Dev").1 < mid("Ops").1);
+        } else {
+            assert!(mid("CEO").1 < mid("CTO").1 && mid("CTO").1 < mid("Dev").1, "{b:?}");
+            // CTO centred over Dev and Ops.
+            assert!((mid("CTO").0 - (mid("Dev").0 + mid("Ops").0) / 2).abs() < 2, "{b:?}");
+        }
+        for v in b.values() {
+            assert!(v.x >= 0 && v.x + v.cx <= x.cx + 1, "{v:?}");
+        }
+    }
+}
+
+#[test]
+fn hierarchy_shapes_are_added_above_below_and_deleted() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let f = frame(&p, 5);
+    let n0 = drawn(&p, f).len();
+    // Below CFO: a new box under it, with a connector.
+    let new = p
+        .smartart_add_shape(find(&p, f, "CFO"), AddPlace::Below)
+        .unwrap();
+    let end = text_ops::end(p.text_paras(new).unwrap());
+    p.insert_text(new, Selection::caret(end), "Audit", None)
+        .unwrap();
+    let b = items(&p, f);
+    assert!(b["Audit"].y > b["CFO"].y, "{b:?}");
+    assert_eq!(drawn(&p, f).len(), n0 + 2);
+    // Above CEO: a new top box.
+    let top = p
+        .smartart_add_shape(find(&p, f, "CEO"), AddPlace::Above)
+        .unwrap();
+    let end = text_ops::end(p.text_paras(top).unwrap());
+    p.insert_text(top, Selection::caret(end), "Board", None)
+        .unwrap();
+    let b = items(&p, f);
+    assert!(b["Board"].y < b["CEO"].y, "{b:?}");
+    assert_eq!(drawn(&p, f).len(), n0 + 4);
+    // Delete CTO: Dev and Ops move up beside CFO.
+    p.delete_shape(find(&p, f, "CTO")).unwrap();
+    let b = items(&p, f);
+    assert!(!b.contains_key("CTO"));
+    assert_eq!(b["Dev"].y, b["CFO"].y, "{b:?}");
+    // Saved: the data model has the new items and the tree, and reads back
+    // the same.
+    let bytes = p.to_bytes().unwrap();
+    if let Ok(out) = std::env::var("KANTOR_SMARTART_TREE_OUT") {
+        std::fs::write(out, &bytes).unwrap();
+    }
+    let saved = parts(&bytes);
+    let data = &saved["ppt/diagrams/data6.xml"];
+    assert!(data.contains("<a:t>Audit</a:t>") && data.contains("<a:t>Board</a:t>"));
+    assert!(!data.contains("<a:t>CTO</a:t>"));
+    let back = Presentation::from_bytes(bytes).unwrap();
+    assert_eq!(items(&back, frame(&back, 5)), b);
+    // Hierarchies with a background and a text box per item: both copied.
+    let h = frame(&p, 6);
+    let n = drawn(&p, h).len();
+    p.smartart_add_shape(find(&p, h, "Ops"), AddPlace::After)
+        .unwrap();
+    assert_eq!(drawn(&p, h).len(), n + 3);
+}

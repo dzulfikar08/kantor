@@ -934,7 +934,7 @@ FILES = [
 # gen_features_xlsx.py (13–18), gen_validation_xlsx.py (19), gen_charts_xlsx.py (20),
 # gen_pivot_xlsx.py (21, 23_pivot_settings), gen_chartsheets_xlsx.py (22), gen_shapes_xlsx.py (23_shapes),
 # gen_table_styles_xlsx.py (24_table_styles), gen_chartex_xlsx.py (25_chartex),
-# gen_slicers_xlsx.py (25_slicers).
+# gen_slicers_xlsx.py (25_slicers), gen_region_map.py (26_region_map).
 FEATURE_FILES = [
     "13_tables.xlsx",
     "14_charts_images.xlsx",
@@ -951,6 +951,7 @@ FEATURE_FILES = [
     "24_table_styles.xlsx",
     "25_chartex.xlsx",
     "25_slicers.xlsx",
+    "26_region_map.xlsx",
 ]
 
 

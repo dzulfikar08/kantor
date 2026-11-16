@@ -337,6 +337,10 @@ pub fn layout(chart: &Chart, w: f32, h: f32, d: &Defaults, m: &mut dyn Measure) 
                 ex_draw::sunburst(chart, g, &mut o, plot);
                 return o.marks;
             }
+            super::ex::ExKind::RegionMap(ref map) => {
+                ex_draw::region_map(chart, g, map, &mut o, plot);
+                return o.marks;
+            }
             _ => {}
         },
         _ => {}
@@ -493,6 +497,30 @@ pub fn legend_entries(chart: &Chart, d: &Defaults) -> Vec<Entry> {
                             marker: None,
                         })
                         .collect();
+                }
+            }
+            Kind::Ex(x) => {
+                // A categorical map: its categories. Value maps draw
+                // their own colour bar.
+                if let super::ex::ExKind::RegionMap(map) = &x.kind {
+                    if let Some(s) = g.series.first()
+                        && let Some(cats) = ex_draw::map_categories(s, map)
+                    {
+                        out = cats
+                            .into_iter()
+                            .enumerate()
+                            .map(|(k, text)| Entry {
+                                text,
+                                fill: Fill::Solid(auto_color(d, k), 255),
+                                line: None,
+                                line_key: false,
+                                marker: None,
+                            })
+                            .collect();
+                    }
+                    if out.is_empty() {
+                        return out;
+                    }
                 }
             }
             _ => {}

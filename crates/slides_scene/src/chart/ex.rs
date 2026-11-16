@@ -1,6 +1,7 @@
 //! The Office 2016 chart types (`cx:chartSpace` parts, "chartex"):
 //! waterfall, funnel, treemap, sunburst, histogram, Pareto and box &
-//! whisker. Region maps aren't drawn (they need map data).
+//! whisker, and region maps (drawn from the region outlines Office caches
+//! in the part, see [`super::geo`]).
 //!
 //! Parsing keeps the data as the part caches it (`cx:chartData`), so a
 //! spreadsheet can put live cell values in its place, as it does for
@@ -84,6 +85,8 @@ pub enum ExKind {
         /// `quartileMethod="exclusive"` (default) or inclusive.
         exclusive: bool,
     },
+    /// Regions filled by value (a colour scale) or by category.
+    RegionMap(Box<super::geo::GeoMap>),
 }
 
 /// How a histogram makes its bins.
@@ -136,6 +139,8 @@ struct Data {
     fmt: Option<String>,
     cat_ref: Option<String>,
     val_ref: Option<String>,
+    /// A region map's category values (`colorStr`).
+    color_strs: Vec<String>,
 }
 
 fn lvl_pts(lvl: Node) -> Vec<Option<String>> {
@@ -172,7 +177,17 @@ fn data(d: Node) -> Data {
     for dim in d.children().filter(|c| c.is_element()) {
         let ty = dim.attribute("type").unwrap_or("");
         match dim.tag_name().name() {
-            "strDim" if ty == "cat" || ty == "colorStr" || ty.is_empty() => {
+            "strDim" if ty == "colorStr" => {
+                out.color_strs = kid(dim, "lvl")
+                    .map(|l| {
+                        lvl_pts(l)
+                            .into_iter()
+                            .map(Option::unwrap_or_default)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            }
+            "strDim" if ty == "cat" || ty.is_empty() => {
                 out.levels = kids(dim, "lvl")
                     .map(|l| {
                         lvl_pts(l)
@@ -421,6 +436,7 @@ pub(crate) fn parse(space: Node, cx: &ColorCtx) -> Option<Chart> {
                     .and_then(|s| s.attribute("quartileMethod"))
                     != Some("inclusive"),
             },
+            "regionMap" => ExKind::RegionMap(Box::new(super::geo::read(s, cx))),
             other => {
                 unsupported.push(if other.is_empty() {
                     "chartex".to_owned()
@@ -435,6 +451,10 @@ pub(crate) fn parse(space: Node, cx: &ColorCtx) -> Option<Chart> {
             .and_then(|id| blocks.iter().find(|(b, _)| b == id))
             .map(|(_, n)| data(*n))
             .unwrap_or_default();
+        let mut kind = kind;
+        if let ExKind::RegionMap(m) = &mut kind {
+            m.color_strs = d.color_strs;
+        }
         let mut levels = d.levels;
         let cats = if levels.is_empty() {
             Vec::new()

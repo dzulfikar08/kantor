@@ -7249,8 +7249,10 @@ dependencies = [
 name = "slides_scene"
 version = "0.9.0"
 dependencies = [
+ "base64 0.22.1",
  "docs_engine",
  "docs_layout",
+ "flate2",
  "kantor_numfmt",
  "log",
  "roxmltree 0.21.2",

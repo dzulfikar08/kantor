@@ -355,6 +355,25 @@ fn turned_pictures_wrap_around_their_turned_bounds() {
     );
 }
 
+/// A floating region map (`region_map.docx`, scripts/corpus/
+/// gen_region_map.py) is drawn as a map: filled regions and its colour bar.
+#[test]
+fn region_map_floats_are_drawn() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/docx/region_map.docx");
+    let doc = Document::open(&path).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let it = laid.floats.iter().flatten().next().expect("the chart");
+    let chart = it.chart.clone().expect("chart drawn");
+    let shown: Vec<String> = chart.labels.iter().map(|l| l.layout.shown(0)).collect();
+    for want in ["Sales by country", "12", "95"] {
+        assert!(shown.iter().any(|s| s == want), "{want} in {shown:?}");
+    }
+    // Eleven regions, the colour bar's steps and the chart's box.
+    assert!(chart.prims.len() > 11 + 40, "{}", chart.prims.len());
+}
+
 /// A floating Office 2016 chart (`chartex.docx`, scripts/corpus/
 /// gen_docx_chartex.py: a waterfall in `mc:AlternateContent`) is drawn.
 #[test]

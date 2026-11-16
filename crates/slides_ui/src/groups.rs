@@ -1,5 +1,5 @@
 //! Group, Ungroup, Regroup, Convert to Shapes and Add Shape After /
-//! Before (SmartArt), from the
+//! Before / Above / Below (SmartArt; Above and Below in hierarchies), from the
 //! keyboard (Ctrl+G, Ctrl+Shift+G), the palette and the canvas's
 //! right-click menu, as in PowerPoint. Selecting shapes inside groups
 //! (the second click) is in the view's mouse handling.
@@ -16,7 +16,7 @@ use crate::SlidesView;
 #[allow(dead_code)] // keys for the catalog scanner (shown through `report`)
 pub(crate) const ENGINE_MESSAGES: &[&str] = &[
     i18n::tk(
-        "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes and cycles",
+        "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes, cycles and hierarchies",
     ),
     i18n::tk("This SmartArt layout has one level: add shapes before or after"),
     i18n::tk("A SmartArt keeps at least one item"),
@@ -65,7 +65,18 @@ impl SlidesView {
             })
     }
 
-    /// PowerPoint's Add Shape After / Before on the selected SmartArt shape.
+    /// Whether Add Shape Above / Below applies: a shape of a hierarchy
+    /// SmartArt selected.
+    pub fn can_add_smartart_level(&self) -> bool {
+        self.can_add_smartart_shape()
+            && self
+                .sel_ref()
+                .and_then(|r| self.pres.smartart_family(r))
+                .is_some_and(|f| f.is_tree())
+    }
+
+    /// PowerPoint's Add Shape After / Before / Above / Below on the
+    /// selected SmartArt shape.
     pub fn smartart_add_doc(
         &mut self,
         place: AddPlace,
@@ -172,7 +183,7 @@ pub(crate) fn menu_items(
     };
     let v = v.read(cx);
     type Run = fn(&mut SlidesView, &mut Window, &mut Context<SlidesView>);
-    let items: [(bool, &str, Box<dyn Action>, Run); 6] = [
+    let items: [(bool, &str, Box<dyn Action>, Run); 8] = [
         (
             v.can_add_smartart_shape(),
             i18n::t("Add Shape After"),
@@ -184,6 +195,18 @@ pub(crate) fn menu_items(
             i18n::t("Add Shape Before"),
             Box::new(crate::SmartArtAddBefore),
             |v, w, cx| v.smartart_add_doc(AddPlace::Before, w, cx),
+        ),
+        (
+            v.can_add_smartart_level(),
+            i18n::t("Add Shape Above"),
+            Box::new(crate::SmartArtAddAbove),
+            |v, w, cx| v.smartart_add_doc(AddPlace::Above, w, cx),
+        ),
+        (
+            v.can_add_smartart_level(),
+            i18n::t("Add Shape Below"),
+            Box::new(crate::SmartArtAddBelow),
+            |v, w, cx| v.smartart_add_doc(AddPlace::Below, w, cx),
         ),
         (
             v.can_group(),
