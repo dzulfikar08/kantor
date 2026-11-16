@@ -55,9 +55,30 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Docs: a field's code (Alt+F9, Shift+F9 and the code box) shows the codes of the fields nested in
   it in braces, as Word does (`IF { MERGEFIELD Amount } > 100 …`); typing braces in the code box
   nests fields.
+- Docs: tables centred or right-aligned in Word are placed that way, on screen and in the PDF
+  (before, every table started at the left margin plus its indent). *Table Properties…* (table
+  toolbar or palette) sets a table's alignment and its indent from left, as Word's Table tab; each
+  change is one undo step, tracked with Track Changes on, and saved as Word saves it.
+- Docs: *Merge Cells* and *Split Cells…* (table toolbar or palette), as in Word. Merging joins the
+  selected cells (growing the selection over merged cells it cuts through) and keeps the text of
+  each one; splitting divides a cell into any number of columns and rows, adding grid columns and
+  rows where needed with the cells around them spanning them, and spreads its paragraphs over the
+  new cells. Both are one undo step and saved as Word saves them (`w:gridSpan`, `w:vMerge`). With
+  Track Changes on, merging down a column is tracked as Word tracks it ("Merged Cells", shaded light
+  yellow, the moved text as an insertion and a deletion); merging across columns and splitting say
+  "This action will not be marked as a change", as Word does. Cell merges tracked in Word open
+  (they used to force Save As) and can be accepted or rejected.
+- Docs: field codes are typed in the text, as in Word. With codes shown (Alt+F9 or Shift+F9),
+  clicking a code or moving into it with the arrow keys puts the caret between its braces; the
+  arrows, Home and End move through it, typing, Backspace and Delete edit it (each edit one undo
+  step), and the field keeps its result until F9 updates it. This replaces the small code box that
+  opened on a double click (Ctrl+F9 still asks for a new field's code in it).
 
 ### Fixed
 
+- Docs: the popover that edits a floating object's text is titled after what it edits: "SmartArt
+  text", "Shape text" (a shape or a group's shape) or "Text box", in the same style as Kantor's other
+  popovers, with a matching hint and status message (it said "Text box" for everything).
 - Sheets: an icon set in reverse order (*Reverse Icon Order*) brought in from an `.ods` or `.xls`
   file, or on a sheet whose rules were changed in Kantor, keeps that order when saved.
 - Docs: text wraps around a turned picture or shape's turned bounds, as in Word, instead of its

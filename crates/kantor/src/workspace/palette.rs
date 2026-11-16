@@ -1301,6 +1301,24 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: tk("Merge Cells"),
+        detail: tk("Docs · table"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.merge_cells_doc(w, cx)),
+    },
+    Command {
+        title: tk("Split Cells…"),
+        detail: tk("Docs · number of columns and rows"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.toggle_split_menu(w, cx)),
+    },
+    Command {
+        title: tk("Table Properties…"),
+        detail: tk("Docs · table alignment and indent"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.toggle_table_menu(w, cx)),
+    },
+    Command {
         title: tk("Insert Picture…"),
         detail: tk("Docs · PNG or JPEG"),
         keys: "",

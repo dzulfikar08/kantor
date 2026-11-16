@@ -90,7 +90,7 @@ use crate::numbering::{Numbering, parse_ind};
 use crate::review::Revision;
 use crate::section::{HfKind, Story, set_settings_even_odd, settings_even_odd};
 use crate::style::{Style, StyleKind, StyleSheet, TableStyle};
-use crate::table::{Border, Borders, Cell, CellMargins, Row, Table, Tables, VMerge};
+use crate::table::{Border, Borders, Cell, CellMargins, Row, Table, Tables};
 use crate::xml::{self, El, PPR_ORDER, RPR_ORDER, escape, ordered};
 
 const W: &[u8] = b"http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -1757,18 +1757,8 @@ impl BodyParser<'_> {
             Cap::TblPr => {
                 if let Some((_, t)) = &mut self.table {
                     t.tbl_pr = Some(xml.into());
-                    if let Some(el) = xml::parse(xml) {
-                        for c in &el.children {
-                            match c.name.as_str() {
-                                "tblStyle" => t.style = c.attr("val").map(str::to_owned),
-                                "tblBorders" => t.borders = borders(c),
-                                "tblInd" => t.indent = c.num("w").unwrap_or(0),
-                                "tblCellMar" => t.cell_margins = Some(cell_margins(c)),
-                                // Tracked property changes: crate::track_table.
-                                _ => {}
-                            }
-                        }
-                    }
+                    // Tracked property changes: crate::track_table.
+                    t.refresh();
                 }
             }
             Cap::TblGrid => {
@@ -1819,32 +1809,11 @@ impl BodyParser<'_> {
                     && let Some(cell) = t.rows.last_mut().and_then(|r| r.cells.last_mut())
                 {
                     cell.tc_pr = Some(xml.into());
-                    if let Some(el) = &el {
-                        for c in &el.children {
-                            match c.name.as_str() {
-                                "gridSpan" => cell.span = c.num("val").unwrap_or(1).max(1),
-                                "vMerge" => {
-                                    cell.vmerge = if c.attr("val") == Some("restart") {
-                                        VMerge::Restart
-                                    } else {
-                                        VMerge::Continue
-                                    }
-                                }
-                                "tcW" if matches!(c.attr("type"), None | Some("dxa")) => {
-                                    cell.width = c.num("w");
-                                }
-                                "tcBorders" => cell.borders = borders(c),
-                                "hMerge" => {
-                                    self.preserved.insert("horizontally merged cells".into());
-                                }
-                                // Inserted and deleted cells and property
-                                // changes: crate::track_table.
-                                "cellMerge" => {
-                                    self.unsupported.insert("tracked changes".into());
-                                }
-                                _ => {}
-                            }
-                        }
+                    // Inserted, deleted and merged cells (`w:cellMerge`)
+                    // and property changes: crate::track_table.
+                    cell.refresh();
+                    if el.as_ref().is_some_and(|el| el.child("hMerge").is_some()) {
+                        self.preserved.insert("horizontally merged cells".into());
                     }
                 }
             }
@@ -2226,6 +2195,9 @@ fn parse_styles(src: &str, sheet: &mut StyleSheet) {
                     match c.name.as_str() {
                         "tblBorders" => t.borders = borders(c),
                         "tblCellMar" => t.cell_margins = Some(cell_margins(c)),
+                        "jc" => {
+                            t.align = c.attr("val").and_then(crate::table::TableAlign::from_jc);
+                        }
                         _ => {}
                     }
                 }

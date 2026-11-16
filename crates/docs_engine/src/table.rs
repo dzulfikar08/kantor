@@ -32,6 +32,65 @@ pub enum VMerge {
     Continue,
 }
 
+/// Horizontal alignment of a table between the margins (`w:tblPr/w:jc`).
+/// Word ignores the indent from left unless the table is left-aligned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TableAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+impl TableAlign {
+    /// `w:jc`'s value (`start`/`end` are the Strict and Word 2010+ names).
+    pub fn from_jc(v: &str) -> Option<Self> {
+        match v {
+            "left" | "start" => Some(Self::Left),
+            "center" => Some(Self::Center),
+            "right" | "end" => Some(Self::Right),
+            _ => None,
+        }
+    }
+
+    pub fn jc(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Center => "center",
+            Self::Right => "right",
+        }
+    }
+}
+
+impl VMerge {
+    /// From a `w:cellMerge`'s `w:vMerge` / `w:vMergeOrig` (`rest`, `cont`,
+    /// absent = not merged).
+    pub(crate) fn from_annotation(v: Option<&str>) -> Self {
+        match v {
+            Some("rest") | Some("restart") => Self::Restart,
+            Some("cont") | Some("continue") => Self::Continue,
+            _ => Self::None,
+        }
+    }
+
+    pub(crate) fn annotation(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Restart => Some("rest"),
+            Self::Continue => Some("cont"),
+        }
+    }
+
+    /// The `w:vMerge` element for this state (none when not merged).
+    pub(crate) fn element(self) -> Option<String> {
+        match self {
+            Self::None => None,
+            Self::Restart => Some("<w:vMerge w:val=\"restart\"/>".into()),
+            Self::Continue => Some("<w:vMerge/>".into()),
+        }
+    }
+}
+
 /// One border line. Every style is drawn as a single line for now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Border {
@@ -130,6 +189,8 @@ impl Cell {
         let Some(el) = self.tc_pr.as_deref().and_then(crate::xml::parse) else {
             return;
         };
+        // A tracked merge (`w:cellMerge`) holds the cell's merge state now.
+        let mut tracked = None;
         for c in &el.children {
             match c.name.as_str() {
                 "gridSpan" => self.span = c.num("val").unwrap_or(1).max(1),
@@ -140,12 +201,16 @@ impl Cell {
                         VMerge::Continue
                     }
                 }
+                "cellMerge" => tracked = Some(VMerge::from_annotation(c.attr("vMerge"))),
                 "tcW" if matches!(c.attr("type"), None | Some("dxa")) => {
                     self.width = c.num("w");
                 }
                 "tcBorders" => self.borders = crate::docx::borders(c),
                 _ => {}
             }
+        }
+        if let Some(v) = tracked {
+            self.vmerge = v;
         }
     }
 }
@@ -196,6 +261,8 @@ pub struct Table {
     pub borders: Borders,
     /// Left indent in twips (`w:tblInd`).
     pub indent: i32,
+    /// Alignment (`w:jc`); `None` = the style's (else left).
+    pub align: Option<TableAlign>,
     pub cell_margins: Option<CellMargins>,
     /// The grid's tracked change (`w:tblGridChange`, the grid before), as
     /// read or recorded: written back inside `w:tblGrid`.
@@ -229,6 +296,7 @@ impl Table {
             style: None,
             borders: Borders::grid(),
             indent: 0,
+            align: None,
             cell_margins: None,
             grid_change: None,
         }
@@ -239,6 +307,7 @@ impl Table {
         self.style = None;
         self.borders = Borders::default();
         self.indent = 0;
+        self.align = None;
         self.cell_margins = None;
         let Some(el) = self.tbl_pr.as_deref().and_then(crate::xml::parse) else {
             return;
@@ -248,6 +317,7 @@ impl Table {
                 "tblStyle" => self.style = c.attr("val").map(str::to_owned),
                 "tblBorders" => self.borders = crate::docx::borders(c),
                 "tblInd" => self.indent = c.num("w").unwrap_or(0),
+                "jc" => self.align = c.attr("val").and_then(TableAlign::from_jc),
                 "tblCellMar" => self.cell_margins = Some(crate::docx::cell_margins(c)),
                 _ => {}
             }

@@ -117,6 +117,10 @@ impl EntityInputHandler for DocsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.marked.is_none() && self.code_type(text, window, cx) {
+            return;
+        }
+        self.code_inline = None;
         let target = self.ime_target(range);
         let props = self.typing_props.take();
         let sel = if self.marked.take().is_some() {
