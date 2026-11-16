@@ -1045,3 +1045,48 @@ All manual page breaks removed	Semua hentian halaman manual dihapus
 Select a cell below or right of where the page should break	Pilih sel di bawah atau di kanan tempat halaman harus berganti
 No manual page break here	Tidak ada hentian halaman manual di sini
 Apply these changes to all other cells with the same settings	Terapkan perubahan ini ke semua sel lain dengan pengaturan yang sama
+# Custom table styles (New / Modify Table Style)
+A table style name has at most 255 characters	Nama gaya tabel paling banyak 255 karakter
+A table style with this name already exists	Gaya tabel dengan nama ini sudah ada
+Type a name for the table style	Ketik nama untuk gaya tabel
+Border	Batas
+Built-In	Bawaan
+Thin	Tipis
+Hair	Rambut
+Dotted	Titik-titik
+Dashed	Putus-putus
+Thick	Tebal Sekali
+Double	Ganda
+Duplicate…	Duplikat…
+Modify…	Ubah…
+Set As Default	Atur sebagai Default
+Element formatting: {}	Format elemen: {}
+Format Cells · {}	Format Sel · {}
+Format…	Format…
+Whole Table	Seluruh Tabel
+First Column Stripe	Pita Kolom Pertama
+Second Column Stripe	Pita Kolom Kedua
+First Row Stripe	Pita Baris Pertama
+Second Row Stripe	Pita Baris Kedua
+First Header Cell	Sel Header Pertama
+Last Header Cell	Sel Header Terakhir
+First Total Cell	Sel Total Pertama
+Last Total Cell	Sel Total Terakhir
+Outline	Garis Luar
+Inside	Dalam
+Inside Horizontal	Dalam Horizontal
+Inside Vertical	Dalam Vertikal
+Line colour	Warna garis
+Modify Table Style	Ubah Gaya Tabel
+New Table Style	Gaya Tabel Baru
+New tables get {}	Tabel baru memakai {}
+Preview	Pratinjau
+Set as default table style for this document	Atur sebagai gaya tabel default untuk dokumen ini
+Stripe Size	Ukuran Pita
+Table Element	Elemen Tabel
+Table style {} added	Gaya tabel {} ditambahkan
+Table style {} changed	Gaya tabel {} diubah
+Table style {} deleted	Gaya tabel {} dihapus
+none	tidak ada
+{} (default)	{} (default)
+New Table Style…	Gaya Tabel Baru…

@@ -78,6 +78,7 @@ mod spell_ui;
 // Upstream code, kept close to GPUI Kit's so it can be compared.
 #[allow(dead_code, clippy::all)]
 mod table;
+mod table_style_ui;
 mod table_ui;
 
 use std::cell::{Cell, RefCell};
@@ -1076,6 +1077,9 @@ fn table_style(style: &CellStyle, tl: &sheets_engine::TableCellLook) -> CellStyl
         s.font_color = tl.font_color;
     }
     s.bold |= tl.bold;
+    s.italic |= tl.italic;
+    s.underline |= tl.underline;
+    s.strikethrough |= tl.strike;
     s
 }
 
@@ -1257,6 +1261,7 @@ pub struct SheetsView {
     /// The Format as Table card and the Table Design panel (see
     /// [`table_ui`]).
     table_dialog: Option<table_ui::TableDialog>,
+    table_style_dialog: Option<table_style_ui::TableStyleDialog>,
     table_panel: Option<table_ui::TablePanel>,
     /// The conditional formatting rule card and Manage Rules (see
     /// [`cf_ui`]).
@@ -1370,6 +1375,7 @@ impl SheetsView {
             note_edit: None,
             shape_edit: None,
             table_dialog: None,
+            table_style_dialog: None,
             cf_dialog: None,
             dv_dialog: None,
             chart_panel: None,
@@ -2877,6 +2883,7 @@ impl Render for SheetsView {
             .children(self.render_pivot_dialog(cx))
             .children(self.render_page_setup(cx))
             .children(self.render_table_dialog(cx))
+            .children(self.render_table_style_dialog(cx))
             .children(self.render_cf_manager(cx))
             .children(self.render_cf_dialog(cx))
             .children(self.render_dv_dialog(cx))

@@ -48,6 +48,7 @@ mod shift;
 mod sort;
 mod table;
 mod table_edit;
+mod table_style_edit;
 mod validation;
 mod validation_edit;
 mod xls;
@@ -146,7 +147,8 @@ pub use print::{
 };
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 pub use sort::SortKey;
-pub use table::{FillPattern, TableCellLook, TableInfo};
+pub use table::{Elem as TableElementFormat, FillPattern, TableCellLook, TableInfo};
+pub use table_style_edit::{DEFAULT_TABLE_STYLE, TableElement, TableStyleSpec};
 pub use validation::{
     ErrorStyle, ListItem, Message, Validation, ValidationOperator, ValidationType,
 };
@@ -284,6 +286,9 @@ struct Origin {
     /// Rows and columns moved between the opened file and the state `xlsx`
     /// was read or written in: what references carried from it follow.
     xlsx_layout: shift::Layout,
+    /// When `xlsx` was written by a save of this session: how many dxfs
+    /// the model had then (see `preserve::Patches::dxf_base`).
+    dxf_base: Option<usize>,
 }
 
 /// Files up to this size are kept in memory for part preservation; larger
@@ -700,6 +705,7 @@ impl Workbook {
                 notes: imported.notes,
                 xlsx,
                 xlsx_layout: shift::Layout::default(),
+                dxf_base: None,
             },
             save_notes: Vec::new(),
             cache: RefCell::default(),
@@ -1437,6 +1443,7 @@ impl Workbook {
                 self.file_chart_patches(&mut p);
                 self.note_patches(&mut p);
                 self.chart_sheet_tab_patches(&mut p);
+                self.table_style_patches(&mut p);
                 p
             },
             chart_sheets: self.chart_sheet_plans(),

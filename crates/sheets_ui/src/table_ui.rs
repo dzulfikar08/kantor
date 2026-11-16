@@ -18,7 +18,7 @@ use gpui_kit::component::{
     checkbox::Checkbox,
     h_flex,
     input::{self, Input, InputEvent, InputState},
-    menu::{DropdownMenu as _, PopupMenuItem},
+    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
     v_flex,
 };
 use gpui_kit::prelude::*;
@@ -33,7 +33,6 @@ use crate::{GRID_CONTEXT, SheetsView};
 actions!(sheets, [FormatAsTable, TableDesign, ConvertTableToRange]);
 
 const PANEL_WIDTH: Pixels = px(300.);
-const DEFAULT_STYLE: &str = "TableStyleMedium2";
 
 /// Texts of `sheets_engine` (table edits, total row functions) shown here,
 /// translated where shown.
@@ -117,6 +116,7 @@ impl SheetsView {
             cx.notify();
             return;
         }
+        let style = self.table.read(cx).delegate().book.default_table_style();
         let range = cx.new(|cx| InputState::new(window, cx));
         range.update(cx, |i, cx| {
             i.set_value(dialog::range_text(&suggestion), window, cx);
@@ -136,7 +136,7 @@ impl SheetsView {
             sheet,
             range,
             headers: true,
-            style: DEFAULT_STYLE.into(),
+            style,
             error: None,
             _sub: sub,
         });
@@ -358,7 +358,9 @@ impl SheetsView {
         Some(dialog::place(card).into_any_element())
     }
 
-    /// The built-in styles as small pictures; `pick` gets the clicked name.
+    /// The workbook's own styles (Custom) and the built-in ones as small
+    /// pictures; `pick` gets the clicked name. Right-click: Modify,
+    /// Duplicate, Delete, Set As Default.
     fn style_gallery(
         &self,
         current: &str,
@@ -368,56 +370,74 @@ impl SheetsView {
     ) -> Stateful<Div> {
         let t = tokens(cx);
         let book = &self.table.read(cx).delegate().book;
-        let mut grid = h_flex().flex_wrap().gap(SPACE_2);
-        for (i, name) in table_style_names().into_iter().enumerate() {
-            let Some(cells) = book.table_style_preview(&name) else {
+        let custom = book.custom_table_styles();
+        let default = book.default_table_style();
+        let mut out = v_flex().gap(SPACE_2);
+        let groups = [
+            (tk("Custom"), custom.clone()),
+            (tk("Built-In"), table_style_names()),
+        ];
+        let mut i = 0usize;
+        for (label, names) in groups {
+            if names.is_empty() {
                 continue;
-            };
-            let selected = name == current;
-            let v = view.clone();
-            let label: SharedString = style_label(&name).into();
-            let mut pic = v_flex().gap(px(1.));
-            for r in &cells {
-                let mut line = h_flex().gap(px(1.));
-                for c in r {
-                    line = line.child(
-                        div()
-                            .w(px(9.))
-                            .h(px(5.))
-                            .bg(c.fill.map(crate::look::hsla).unwrap_or(gpui::white()))
-                            .when_some(c.bottom.as_ref().and_then(|b| b.color), |d, col| {
-                                d.border_b_1().border_color(crate::look::hsla(col))
-                            }),
-                    );
-                }
-                pic = pic.child(line);
             }
-            let name2 = name.clone();
-            grid = grid.child(
-                div()
-                    .id(("table-style", i))
-                    .p(px(3.))
-                    .rounded(RADIUS_SM)
-                    .border_2()
-                    .border_color(if selected {
-                        t.accent
-                    } else {
-                        gpui::transparent_black()
-                    })
-                    .hover(|s| s.bg(t.hover))
-                    .cursor_pointer()
-                    .tooltip(move |window, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new(label.clone()).build(window, cx)
-                    })
-                    .child(pic)
-                    .on_click(move |_, w, cx| {
-                        let n = name2.clone();
-                        let _ = v.update(cx, |this, cx| {
-                            pick(this, n, w, cx);
-                            cx.notify();
-                        });
-                    }),
-            );
+            if !custom.is_empty() {
+                out = out.child(note(t_dyn(label).to_owned(), false, cx));
+            }
+            let mut grid = h_flex().flex_wrap().gap(SPACE_2);
+            for name in names {
+                let Some(cells) = book.table_style_preview(&name) else {
+                    continue;
+                };
+                i += 1;
+                let selected = name == current;
+                let v = view.clone();
+                let mv = view.clone();
+                let is_custom = custom.contains(&name);
+                let mut label = style_label(&name);
+                if name == default {
+                    label = tf("{} (default)", &[&label]);
+                }
+                let label: SharedString = label.into();
+                let name2 = name.clone();
+                let menu_name = name.clone();
+                grid = grid.child(
+                    div()
+                        .id(("table-style", i))
+                        .p(px(3.))
+                        .rounded(RADIUS_SM)
+                        .border_2()
+                        .border_color(if selected {
+                            t.accent
+                        } else {
+                            gpui::transparent_black()
+                        })
+                        .hover(|s| s.bg(t.hover))
+                        .cursor_pointer()
+                        .tooltip(move |window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(label.clone())
+                                .build(window, cx)
+                        })
+                        .child(crate::table_style_ui::preview_picture(
+                            &cells,
+                            px(9.),
+                            px(5.),
+                            false,
+                        ))
+                        .on_click(move |_, w, cx| {
+                            let n = name2.clone();
+                            let _ = v.update(cx, |this, cx| {
+                                pick(this, n, w, cx);
+                                cx.notify();
+                            });
+                        })
+                        .context_menu(move |menu, _, _| {
+                            crate::table_style_ui::style_menu(menu, &menu_name, is_custom, &mv)
+                        }),
+                );
+            }
+            out = out.child(grid);
         }
         div()
             .id("table-styles")
@@ -428,7 +448,7 @@ impl SheetsView {
             .border_1()
             .border_color(t.border)
             .bg(t.bg)
-            .child(grid)
+            .child(out)
     }
 
     pub(crate) fn render_table_panel(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -593,6 +613,17 @@ impl SheetsView {
                         |this, s, w, cx| this.set_table_option(|o| o.style = Some(s), w, cx),
                         cx,
                     ));
+                let nv = view.clone();
+                b = b.child(
+                    Button::new("table-new-style")
+                        .small()
+                        .ghost()
+                        .icon(Lucide::Plus)
+                        .label(i18n::t("New Table Style…"))
+                        .on_click(move |_, w, cx| {
+                            let _ = nv.update(cx, |this, cx| this.new_table_style_doc(w, cx));
+                        }),
+                );
                 let cv = view.clone();
                 b = b.child(
                     Button::new("table-convert")
@@ -646,13 +677,18 @@ impl SheetsView {
         )
         .on_action(cx.listener(|this, _: &TableDesign, w, cx| this.table_design_doc(w, cx)))
         .on_action(
+            cx.listener(|this, _: &crate::table_style_ui::NewTableStyle, w, cx| {
+                this.new_table_style_doc(w, cx)
+            }),
+        )
+        .on_action(
             cx.listener(|this, _: &ConvertTableToRange, w, cx| this.convert_table_doc(w, cx)),
         )
     }
 }
 
 /// `TableStyleMedium2` → `Medium 2`.
-fn style_label(name: &str) -> String {
+pub(crate) fn style_label(name: &str) -> String {
     for (family, label) in [
         ("Light", tk("Light")),
         ("Medium", tk("Medium")),

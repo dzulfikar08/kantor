@@ -127,6 +127,9 @@ fn table_style(style: &CellStyle, tl: &TableCellLook) -> CellStyle {
         s.font_color = tl.font_color;
     }
     s.bold |= tl.bold;
+    s.italic |= tl.italic;
+    s.underline |= tl.underline;
+    s.strikethrough |= tl.strike;
     s
 }
 

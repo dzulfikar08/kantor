@@ -317,6 +317,15 @@ pub(crate) struct Patches {
     /// Notes of an import, by `sheetId`: written with their VML boxes to
     /// sheets that have none.
     pub notes: Vec<(u32, Vec<crate::notes::NoteSave>)>,
+    /// The workbook's `<tableStyles>` to write into the styles part, with
+    /// the dxfs of styles made or changed in Kantor
+    /// (`crate::table_style_edit`).
+    pub table_styles: Option<crate::table_style_edit::StylesSave>,
+    /// How many leading dxfs of the original line up with the model's:
+    /// `None` when the original is the opened file (all of them); after a
+    /// save of this session, the model's count then (the saved file has
+    /// table style dxfs after them, which the model doesn't hold).
+    pub dxf_base: Option<usize>,
 }
 
 /// Where a save put a chart made in Kantor (the next save of the same
@@ -408,6 +417,7 @@ impl Patches {
             && self.notes.is_empty()
             && self.chart_sheet_tabs.is_empty()
             && self.cf_x14.is_empty()
+            && self.table_styles.is_none()
     }
 }
 
@@ -1852,6 +1862,11 @@ fn write_node_without(
 /// The markup of `node` as written in `src`, with the namespace declarations
 /// it inherits added to its start tag, so it can be moved into another
 /// document whose default namespace is SpreadsheetML.
+/// [`verbatim`] for other modules.
+pub(crate) fn verbatim_pub(node: Node, src: &str) -> Result<String, String> {
+    verbatim(node, src)
+}
+
 fn verbatim(node: Node, src: &str) -> Result<String, String> {
     let range = node.range();
     let text = &src[range.clone()];
@@ -2781,7 +2796,15 @@ fn merge(
     // The original's dxfs, which the carried conditional formats (and
     // tables) point into, unless IronCalc's own rules stay somewhere.
     let styles_edit = if m.cf_carried && !m.cf_failed {
-        match carry_dxfs(&orig, &orig_wb, &orig_wb_rels, new, &new_wb, &new_wb_rels) {
+        match carry_dxfs(
+            &orig,
+            &orig_wb,
+            &orig_wb_rels,
+            new,
+            &new_wb,
+            &new_wb_rels,
+            ctx.patches.dxf_base,
+        ) {
             Ok(edit) => edit,
             Err(e) => {
                 notes.push(format!("conditional formats written by Kantor: {e}"));
@@ -3001,6 +3024,7 @@ fn carry_dxfs(
     new: &Package,
     new_wb: &str,
     new_wb_rels: &[Rel],
+    base: Option<usize>,
 ) -> Result<Option<(String, String)>, String> {
     let styles = |wb: &str, rels: &[Rel]| {
         rels.iter()
@@ -3047,22 +3071,26 @@ fn carry_dxfs(
         }
     };
     // Dxfs the model added (rules made in Kantor) come after the
-    // original's: append IronCalc's.
+    // original's: append IronCalc's. After a save of this session, only the
+    // first `base` of the original's are the model's (table style dxfs
+    // written by that save follow them).
     let orig_count = dxfs.children().filter(|c| is_main(*c, "dxf")).count();
+    let base = base.map_or(orig_count, |b| b.min(orig_count));
     let extra: Vec<Node> = root
         .children()
         .find(|c| is_main(*c, "dxfs"))
         .map(|d| d.children().filter(|c| is_main(*c, "dxf")).collect())
         .unwrap_or_default();
-    let text = if extra.len() > orig_count {
+    let text = if extra.len() > base || base < orig_count {
         let mut inner = String::new();
-        for c in dxfs.children().filter(|c| c.is_element()) {
+        for c in dxfs.children().filter(|c| is_main(*c, "dxf")).take(base) {
             inner.push_str(&verbatim(c, &orig_xml)?);
         }
-        for c in &extra[orig_count..] {
+        let count = extra.len().max(base);
+        for c in extra.iter().skip(base) {
             inner.push_str(&verbatim(*c, new_xml)?);
         }
-        format!("<dxfs count=\"{}\">{inner}</dxfs>", extra.len())
+        format!("<dxfs count=\"{count}\">{inner}</dxfs>")
     } else {
         text
     };
@@ -4614,6 +4642,18 @@ fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
     }
     if !patches.notes.is_empty() {
         write_notes(pkg, &sheets, &patches.notes)?;
+    }
+    if let Some(ts) = &patches.table_styles {
+        let wb_rels = parse_rels(pkg.text(&rels_part(&wb))?.unwrap_or_default())?;
+        let part = wb_rels
+            .iter()
+            .find(|r| r.short_kind() == "styles" && !r.external)
+            .and_then(|r| resolve(&wb, &r.target))
+            .ok_or("saved workbook has no styles")?;
+        let xml = pkg.text(&part)?.ok_or("saved styles are missing")?;
+        let new = crate::table_style_edit::patch_styles(xml, ts)
+            .map_err(|e| format!("table styles: {e}"))?;
+        pkg.set(&part, new.into_bytes());
     }
     Ok(())
 }

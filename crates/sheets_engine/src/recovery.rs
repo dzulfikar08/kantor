@@ -46,6 +46,8 @@ pub struct XlsxOutput {
     revision: u64,
     view_changes: u64,
     layout: shift::Layout,
+    /// The model's dxf count (see `preserve::Patches::dxf_base`).
+    dxfs: usize,
 }
 
 impl XlsxOutput {
@@ -64,6 +66,7 @@ impl XlsxSnapshot {
             full_calc,
             ..self.parts
         };
+        let dxfs = self.workbook.styles.dxfs.len();
         let model = Model::from_workbook(self.workbook, LANGUAGE)
             .map_err(|e| anyhow!("copying workbook: {e}"))?;
         let mut notes = Vec::new();
@@ -84,6 +87,7 @@ impl XlsxSnapshot {
             revision: self.revision,
             view_changes: self.view_changes,
             layout: self.layout,
+            dxfs,
         })
     }
 }
@@ -217,25 +221,18 @@ impl Workbook {
     /// `out`, rendered from a [`Self::xlsx_snapshot`], was written to `path` (the
     /// workbook's file): record it as saved. Edits made since the snapshot
     /// stay unsaved.
-    pub fn commit_autosave(&mut self, path: &Path, out: XlsxOutput) {
-        let xlsx = XlsxSource::kept(path, out.bytes);
-        self.commit_xlsx(path, xlsx, out.notes, out.pivots, out.charts, out.layout);
+    pub fn commit_autosave(&mut self, path: &Path, mut out: XlsxOutput) {
+        let xlsx = XlsxSource::kept(path, std::mem::take(&mut out.bytes));
+        self.commit_xlsx(path, xlsx, &out);
         self.saved_at(out.revision, out.view_changes);
     }
 
     /// The `.xlsx` written to `path` is the original of the next save.
-    fn commit_xlsx(
-        &mut self,
-        path: &Path,
-        xlsx: XlsxSource,
-        notes: Vec<String>,
-        pivots: preserve::PivotsSaved,
-        charts: HashMap<u32, preserve::SavedChart>,
-        layout: shift::Layout,
-    ) {
-        self.save_notes = notes;
-        self.pivots_saved(&pivots);
-        self.saved_charts = charts;
+    fn commit_xlsx(&mut self, path: &Path, xlsx: XlsxSource, out: &XlsxOutput) {
+        self.save_notes = out.notes.clone();
+        self.pivots_saved(&out.pivots);
+        self.saved_charts = out.charts.clone();
+        let layout = out.layout.clone();
         self.path = Some(path.to_path_buf());
         self.origin = Origin {
             format: SourceFormat::Xlsx,
@@ -243,6 +240,7 @@ impl Workbook {
             notes: Vec::new(),
             xlsx: Some(xlsx),
             xlsx_layout: layout,
+            dxf_base: Some(out.dxfs),
         };
     }
 
@@ -298,7 +296,7 @@ impl Workbook {
                 for note in &out.notes {
                     log::warn!("saving {}: {note}", path.display());
                 }
-                self.commit_xlsx(&path, xlsx, out.notes, out.pivots, out.charts, out.layout);
+                self.commit_xlsx(&path, xlsx, &out);
                 self.saved_at(out.revision, out.view_changes);
             }
             SavedKind::Csv {

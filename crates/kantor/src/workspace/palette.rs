@@ -957,6 +957,14 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.table_design_doc(w, cx)),
     },
     Command {
+        title: tk("New Table Style…"),
+        detail: tk(
+            "Sheets · a table style of this workbook: format of each table element, stripe sizes, default style",
+        ),
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.new_table_style_doc(w, cx)),
+    },
+    Command {
         title: tk("Convert Table to Range"),
         detail: tk("Sheets · keep the cells, remove the table at the active cell"),
         keys: "",

@@ -9,6 +9,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Sheets: custom table styles, as in Excel. *New Table Style…* (Table Design, the Table menu or
+  the palette) names a style and formats each table element (whole table, first and second
+  column and row stripes, first and last column, header and total rows, first and last header and
+  total cells) with font, borders and fill, sets stripe sizes, and can make it the default style
+  for new tables in the workbook. Right-click a style in the gallery to modify, duplicate, delete
+  or set it as the default; built-in styles can be duplicated as a starting point. Tables in these
+  styles are drawn with them on screen and in the PDF, each change is one undo step, and the
+  styles are saved in the workbook as Excel saves them. Custom table styles that come with a file
+  are now kept when it is saved (before, they were dropped), unchanged when nobody touched them.
+
 ## [0.8.0] - 2026-11-16
 
 Kantor now edits the parts of Office files it used to only show. In Docs: headers, footers and
