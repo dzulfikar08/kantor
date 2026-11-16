@@ -2357,28 +2357,6 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                     x += dash * 2.0;
                 }
             }
-            // The edge of the text box being edited.
-            if let Some((pg, [bx, by, bw, bh])) = f.editing_box
-                && pg == page
-            {
-                let dash = 4.0 / z;
-                let t = 1.0 / z;
-                let color = f.t.accent.opacity(0.8);
-                let mut d = 0.0;
-                while d < bw {
-                    let w = dash.min(bw - d);
-                    window.paint_quad(fill(rect(page, [bx + d, by, w, t]), color));
-                    window.paint_quad(fill(rect(page, [bx + d, by + bh - t, w, t]), color));
-                    d += dash * 2.0;
-                }
-                let mut d = 0.0;
-                while d < bh {
-                    let h = dash.min(bh - d);
-                    window.paint_quad(fill(rect(page, [bx, by + d, t, h]), color));
-                    window.paint_quad(fill(rect(page, [bx + bw - t, by + d, t, h]), color));
-                    d += dash * 2.0;
-                }
-            }
             let mut bridge = f.bridge.borrow_mut();
             // Headers and footers, a little faded as in Word (the body is
             // what's being edited); the PDF prints them in their colours.
@@ -2443,6 +2421,31 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             drop(bridge);
             floats::paint_floats(f, &g, page, false, window, &mut text_box);
             floats::paint_float_selection(f, &g, page, window);
+            // The edge of the text box being edited.
+            if let Some((pg, [bx, by, bw, bh])) = f.editing_box
+                && pg == page
+            {
+                // Just outside the shape's own outline.
+                let out = 3.0 / z;
+                let (bx, by, bw, bh) = (bx - out, by - out, bw + 2.0 * out, bh + 2.0 * out);
+                let dash = 4.0 / z;
+                let t = 1.0 / z;
+                let color = f.t.accent.opacity(0.8);
+                let mut d = 0.0;
+                while d < bw {
+                    let w = dash.min(bw - d);
+                    window.paint_quad(fill(rect(page, [bx + d, by, w, t]), color));
+                    window.paint_quad(fill(rect(page, [bx + d, by + bh - t, w, t]), color));
+                    d += dash * 2.0;
+                }
+                let mut d = 0.0;
+                while d < bh {
+                    let h = dash.min(bh - d);
+                    window.paint_quad(fill(rect(page, [bx, by + d, t, h]), color));
+                    window.paint_quad(fill(rect(page, [bx + bw - t, by + d, t, h]), color));
+                    d += dash * 2.0;
+                }
+            }
             paint_misspelled(window, &g, page, paged, &runs, &f.misspelled, cx);
             for (_, [x, y, w, h]) in f.part_misspelled.iter().filter(|m| m.0 == page) {
                 let origin = g.page_to_screen(page, *x, y + h - 3.0);

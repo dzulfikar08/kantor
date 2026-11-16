@@ -257,7 +257,7 @@ fn laid_out(
 /// its text shrunk to fit the shapes, as Word's autofit does
 /// ([`slides_engine::smartart_fit`]).
 fn fitted(doc: &Document, sa: &SmartArt, drawing: String, data: &str, size: (i64, i64)) -> String {
-    slides_engine::smartart_fit::set_text_measure(slides_scene::text::text_height);
+    slides_engine::smartart_fit::set_text_measure(slides_scene::text::text_extent);
     let painter = Painter::new(doc);
     let Some(dd) = slides_engine::smartart::read_drawing(
         &sa.drawing.part,

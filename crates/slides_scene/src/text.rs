@@ -132,9 +132,11 @@ fn layout_key(paras: &[docs_layout::Paragraph], width: f32) -> u64 {
     h.finish()
 }
 
-/// How tall (px) a text body is laid out `width` px wide (SmartArt
-/// autofit: [`slides_engine::smartart_fit::set_text_measure`]).
-pub fn text_height(t: &RenderText, width: f32) -> f32 {
+/// How tall and how wide (px) a text body is laid out `width` px wide:
+/// its height and its widest line (a word longer than the width sticks
+/// out). SmartArt autofit's measure
+/// ([`slides_engine::smartart_fit::set_text_measure`]).
+pub fn text_extent(t: &RenderText, width: f32) -> (f32, f32) {
     thread_local! {
         static ENGINE: RefCell<Engine> = RefCell::new(Engine::new());
     }
@@ -149,11 +151,17 @@ pub fn text_height(t: &RenderText, width: f32) -> f32 {
     };
     ENGINE.with(|e| {
         let paged = e.borrow_mut().layout_document(&paras, setup);
-        paged
+        let height = paged
             .pages
             .first()
             .and_then(|p| p.lines.last())
-            .map_or(0.0, |l| l.top + l.height)
+            .map_or(0.0, |l| l.top + l.height);
+        let wide = paged
+            .layouts
+            .iter()
+            .map(|l| l.dx + l.layout.width())
+            .fold(0.0, f32::max);
+        (height, wide)
     })
 }
 

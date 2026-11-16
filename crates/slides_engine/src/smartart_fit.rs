@@ -22,8 +22,9 @@ use crate::model::{EMU_PER_PX, Shape, Xfrm};
 use crate::render::RenderText;
 use crate::xml::*;
 
-/// How tall (px) a text is laid out `width` px wide.
-pub type TextMeasure = fn(&RenderText, f32) -> f32;
+/// How tall and how wide (px) a text is laid out `width` px wide (its
+/// widest line: a word longer than the width sticks out).
+pub type TextMeasure = fn(&RenderText, f32) -> (f32, f32);
 
 static MEASURE: OnceLock<TextMeasure> = OnceLock::new();
 
@@ -32,22 +33,39 @@ pub fn set_text_measure(m: TextMeasure) {
     let _ = MEASURE.set(m);
 }
 
-/// A text's height laid out `width` px wide: the app's measure, else an
-/// estimate (half an em per character, lines 1.2 em).
-pub fn measure(t: &RenderText, width: f32) -> f32 {
+/// A text's height and widest line laid out `width` px wide: the app's
+/// measure, else an estimate (half an em per character, lines 1.2 em).
+pub fn measure(t: &RenderText, width: f32) -> (f32, f32) {
     if let Some(m) = MEASURE.get() {
         return m(t, width);
     }
     let pt = 4.0 / 3.0;
-    t.paras
+    let em = |p: &crate::render::RenderPara| {
+        p.runs
+            .iter()
+            .map(|r| r.size_pt)
+            .fold(p.base.size_pt, f32::max)
+            * pt
+    };
+    // Wrapped text is as wide as its longest word, else its longest line.
+    let wide = t
+        .paras
+        .iter()
+        .flat_map(|p| {
+            let words: Vec<&str> = match t.wrap {
+                true => p.text.split_whitespace().collect(),
+                false => vec![p.text.as_str()],
+            };
+            words
+                .into_iter()
+                .map(move |w| w.chars().count() as f32 * em(p) * 0.5)
+        })
+        .fold(0.0, f32::max);
+    let high = t
+        .paras
         .iter()
         .map(|p| {
-            let size = p
-                .runs
-                .iter()
-                .map(|r| r.size_pt)
-                .fold(p.base.size_pt, f32::max)
-                * pt;
+            let size = em(p);
             let chars = p.text.chars().count() as f32;
             let lines = if t.wrap {
                 (chars * size * 0.5 / width.max(1.0)).ceil().max(1.0)
@@ -56,7 +74,8 @@ pub fn measure(t: &RenderText, width: f32) -> f32 {
             };
             lines * size * 1.2 + (p.space_before_pt + p.space_after_pt) * pt
         })
-        .sum()
+        .sum();
+    (high, wide)
 }
 
 /// Smallest text size autofit goes down to, and its step (100 000 = 100 %).
@@ -97,7 +116,9 @@ pub fn fit_text(
                 Vert::Horz => (w, h),
                 _ => (h, w),
             };
-            measure(t, (w / EMU_PER_PX).max(1.0)) <= h / EMU_PER_PX + 0.5
+            let (w, h) = ((w / EMU_PER_PX).max(1.0), h / EMU_PER_PX);
+            let (high, wide) = measure(t, w);
+            high <= h + 0.5 && wide <= w + 0.5
         };
         let mut scale = 100_000;
         let mut t = full.clone();
