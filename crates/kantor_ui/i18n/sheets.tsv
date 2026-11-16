@@ -1093,3 +1093,40 @@ New Table Style…	Gaya Tabel Baru…
 Security Warning	Peringatan Keamanan
 This workbook downloads pictures or data from the internet.	Buku kerja ini mengunduh gambar atau data dari internet.
 Block	Blokir
+Insert Calculated Item…	Sisipkan Item Terhitung…
+Insert Calculated Item in "{}"	Sisipkan Item Terhitung di "{}"
+Items · click to insert into the formula	Item · klik untuk menyisipkan ke rumus
+Calculated items · click to change	Item terhitung · klik untuk mengubah
+# Custom PivotTable styles (New / Modify PivotTable Style)
+New PivotTable Style…	Gaya PivotTable Baru…
+New PivotTable Style	Gaya PivotTable Baru
+Modify PivotTable Style	Ubah Gaya PivotTable
+PivotTable Element	Elemen PivotTable
+Set as default PivotTable style for this document	Atur sebagai gaya PivotTable default untuk dokumen ini
+PivotTable style {} added	Gaya PivotTable {} ditambahkan
+PivotTable style {} changed	Gaya PivotTable {} diubah
+PivotTable style {} deleted	Gaya PivotTable {} dihapus
+New PivotTables get {}	PivotTable baru memakai {}
+Sheets · make a PivotTable style of your own: a format for each part of the PivotTable	Sheets · buat gaya PivotTable sendiri: format untuk setiap bagian PivotTable
+Report Filter Labels	Label Filter Laporan
+Report Filter Values	Nilai Filter Laporan
+Subtotal Column 1	Kolom Subtotal 1
+Subtotal Column 2	Kolom Subtotal 2
+Subtotal Column 3	Kolom Subtotal 3
+Subtotal Row 1	Baris Subtotal 1
+Subtotal Row 2	Baris Subtotal 2
+Subtotal Row 3	Baris Subtotal 3
+Blank Row	Baris Kosong
+Column Subheading 1	Subjudul Kolom 1
+Column Subheading 2	Subjudul Kolom 2
+Column Subheading 3	Subjudul Kolom 3
+Row Subheading 1	Subjudul Baris 1
+Row Subheading 2	Subjudul Baris 2
+Row Subheading 3	Subjudul Baris 3
+Grand Total Column	Kolom Total Keseluruhan
+Grand Total Row	Baris Total Keseluruhan
+# Slicers and timelines
+Timelines are shown as the file saved them: Kantor can't change their dates yet	Timeline ditampilkan seperti yang disimpan file: Kantor belum bisa mengubah tanggalnya
+The slicer {} can't filter: {}	Slicer {} tidak bisa memfilter: {}
+{}: filter cleared	{}: filter dihapus
+{}: {} selected	{}: {} dipilih

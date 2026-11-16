@@ -346,3 +346,35 @@ fn network_errors_are_formula_literals() {
     assert_eq!(number(&model, 3, 1), 11.0);
     assert_eq!(model._get_formula("A1"), "=#CONNECT!");
 }
+
+/// KANTOR PATCH (saved pictures follow cells).
+#[test]
+fn saved_pictures_follow_inserted_and_deleted_rows_and_columns() {
+    let mut model = new_empty_model();
+    model._set("A1", "https://example.com/a.png");
+    model._set("B3", "=IMAGE(A1)");
+    model._set("D5", "=IMAGE(\"https://example.com/b.png\")");
+    model.kantor_set_saved_picture(0, 3, 2, Arc::new(vec![1]), 8, 4, None);
+    model.kantor_set_saved_picture(0, 5, 4, Arc::new(vec![2]), 8, 4, None);
+    model.evaluate();
+    assert!(model.kantor_shows_saved_picture(0, 3, 2));
+    // A row between B3 and A1: B3 is B4 and its formula's reference moves.
+    model.insert_rows(0, 2, 1).unwrap();
+    model.evaluate();
+    assert!(model.kantor_shows_saved_picture(0, 4, 2), "B4");
+    assert!(model.kantor_shows_saved_picture(0, 6, 4), "D6");
+    assert!(model.kantor_cell_image(0, 3, 2).is_none());
+    // A column before D: D6 is E6.
+    model.insert_columns(0, 3, 1).unwrap();
+    model.evaluate();
+    assert!(model.kantor_shows_saved_picture(0, 6, 5), "E6");
+    assert_eq!(model.kantor_saved_picture_cells(), [(0, 4, 2), (0, 6, 5)]);
+    // Deleted: the picture goes with its cell.
+    model.delete_rows(0, 6, 1).unwrap();
+    model.evaluate();
+    assert_eq!(model.kantor_saved_picture_cells(), [(0, 4, 2)]);
+    // Rows deleted above move it up.
+    model.delete_rows(0, 2, 1).unwrap();
+    model.evaluate();
+    assert_eq!(model.kantor_saved_picture_cells(), [(0, 3, 2)]);
+}

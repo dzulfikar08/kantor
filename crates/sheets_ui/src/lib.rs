@@ -74,6 +74,7 @@ mod saving;
 mod shape_format_ui;
 mod shape_ui;
 mod sheet_tab_ui;
+mod slicer_ui;
 mod spell_ui;
 // Upstream code, kept close to GPUI Kit's so it can be compared.
 #[allow(dead_code, clippy::all)]
@@ -1106,6 +1107,9 @@ fn table_style(style: &CellStyle, tl: &sheets_engine::TableCellLook) -> CellStyl
     s.italic |= tl.italic;
     s.underline |= tl.underline;
     s.strikethrough |= tl.strike;
+    if s.indent == 0 {
+        s.indent = tl.indent;
+    }
     s
 }
 

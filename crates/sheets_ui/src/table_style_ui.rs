@@ -47,6 +47,23 @@ const ENGINE_TEXTS: &[&str] = &[
     tk("Last Header Cell"),
     tk("First Total Cell"),
     tk("Last Total Cell"),
+    tk("Report Filter Labels"),
+    tk("Report Filter Values"),
+    tk("Subtotal Column 1"),
+    tk("Subtotal Column 2"),
+    tk("Subtotal Column 3"),
+    tk("Subtotal Row 1"),
+    tk("Subtotal Row 2"),
+    tk("Subtotal Row 3"),
+    tk("Blank Row"),
+    tk("Column Subheading 1"),
+    tk("Column Subheading 2"),
+    tk("Column Subheading 3"),
+    tk("Row Subheading 1"),
+    tk("Row Subheading 2"),
+    tk("Row Subheading 3"),
+    tk("Grand Total Column"),
+    tk("Grand Total Row"),
     tk("Type a name for the table style"),
     tk("A table style name has at most 255 characters"),
     tk("A table style with this name already exists"),
@@ -54,6 +71,8 @@ const ENGINE_TEXTS: &[&str] = &[
 
 /// The New / Modify Table Style card.
 pub(crate) struct TableStyleDialog {
+    /// New / Modify PivotTable Style (else a table style).
+    pivot: bool,
     /// Modify: the style's name; `None` for New and Duplicate.
     editing: Option<String>,
     name: Entity<InputState>,
@@ -163,7 +182,93 @@ impl SheetsView {
     /// Table Design ▸ New Table Style…
     pub fn new_table_style_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.table.read(cx).delegate().book.next_table_style_name();
-        self.open_table_style(None, TableStyleSpec::new(&name), false, window, cx);
+        self.open_table_style(false, None, TableStyleSpec::new(&name), false, window, cx);
+    }
+
+    /// PivotTable Styles ▸ New PivotTable Style….
+    pub fn new_pivot_style_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self.table.read(cx).delegate().book.next_pivot_style_name();
+        self.open_table_style(true, None, TableStyleSpec::new(&name), false, window, cx);
+    }
+
+    /// Modify… for custom PivotTable style `name`.
+    pub(crate) fn modify_pivot_style_ui(
+        &mut self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (spec, default) = {
+            let book = &self.table.read(cx).delegate().book;
+            (
+                book.pivot_style_spec(name),
+                book.default_pivot_style() == name,
+            )
+        };
+        if let Some(spec) = spec {
+            self.open_table_style(true, Some(name.to_owned()), spec, default, window, cx);
+        }
+    }
+
+    /// Duplicate… for PivotTable style `name` (custom or built-in).
+    pub(crate) fn duplicate_pivot_style_ui(
+        &mut self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let spec = {
+            let book = &self.table.read(cx).delegate().book;
+            book.pivot_style_spec(name).map(|mut s| {
+                s.name = book.duplicate_table_style_name(name);
+                s
+            })
+        };
+        if let Some(spec) = spec {
+            self.open_table_style(true, None, spec, false, window, cx);
+        }
+    }
+
+    /// Delete for custom PivotTable style `name`.
+    pub(crate) fn delete_pivot_style_ui(
+        &mut self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.editing.is_some() || self.blocked(cx) {
+            return;
+        }
+        let res = self.with_book(cx, |b| b.delete_pivot_style(name));
+        self.status = match res {
+            Ok(()) => tf("PivotTable style {} deleted", &[&name]),
+            Err(e) => t_dyn(&format!("{e:#}")).to_owned(),
+        }
+        .into();
+        self.after_pivot_edit(window, cx);
+    }
+
+    /// Set As Default for PivotTable style `name`.
+    pub(crate) fn default_pivot_style_ui(
+        &mut self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.editing.is_some() || self.blocked(cx) {
+            return;
+        }
+        let res = self.with_book(cx, |b| b.set_default_pivot_style(name));
+        self.status = match res {
+            Ok(()) => tf(
+                "New PivotTables get {}",
+                &[&crate::pivot_cards::style_label(name)],
+            ),
+            Err(e) => t_dyn(&format!("{e:#}")).to_owned(),
+        }
+        .into();
+        self.update_title(window, cx);
+        cx.notify();
     }
 
     /// Modify… for custom style `name`.
@@ -181,7 +286,7 @@ impl SheetsView {
             )
         };
         if let Some(spec) = spec {
-            self.open_table_style(Some(name.to_owned()), spec, default, window, cx);
+            self.open_table_style(false, Some(name.to_owned()), spec, default, window, cx);
         }
     }
 
@@ -201,12 +306,13 @@ impl SheetsView {
             })
         };
         if let Some(spec) = spec {
-            self.open_table_style(None, spec, false, window, cx);
+            self.open_table_style(false, None, spec, false, window, cx);
         }
     }
 
     fn open_table_style(
         &mut self,
+        pivot: bool,
         editing: Option<String>,
         spec: TableStyleSpec,
         default: bool,
@@ -232,6 +338,7 @@ impl SheetsView {
             _ => {}
         });
         self.table_style_dialog = Some(TableStyleDialog {
+            pivot,
             editing,
             name,
             spec,
@@ -261,20 +368,26 @@ impl SheetsView {
         }
         let mut spec = d.spec.clone();
         spec.name = d.name.read(cx).value().trim().to_string();
-        let (editing, default) = (d.editing.clone(), d.default);
-        let res = self.with_book(cx, |book| match &editing {
-            Some(old) => book.modify_table_style(old, &spec, default),
-            None => book.add_table_style(&spec, default),
+        let (editing, default, pivot) = (d.editing.clone(), d.default, d.pivot);
+        let res = self.with_book(cx, |book| match (&editing, pivot) {
+            (Some(old), false) => book.modify_table_style(old, &spec, default),
+            (None, false) => book.add_table_style(&spec, default),
+            (Some(old), true) => book.modify_pivot_style(old, &spec, default),
+            (None, true) => book.add_pivot_style(&spec, default),
         });
         match res {
             Ok(()) => {
                 self.table_style_dialog = None;
-                self.status = if editing.is_some() {
-                    tf("Table style {} changed", &[&spec.name])
-                } else {
-                    tf("Table style {} added", &[&spec.name])
+                self.status = match (editing.is_some(), pivot) {
+                    (true, false) => tf("Table style {} changed", &[&spec.name]),
+                    (false, false) => tf("Table style {} added", &[&spec.name]),
+                    (true, true) => tf("PivotTable style {} changed", &[&spec.name]),
+                    (false, true) => tf("PivotTable style {} added", &[&spec.name]),
                 }
                 .into();
+                if pivot {
+                    self.after_pivot_edit(window, cx);
+                }
                 self.focus_grid(window, cx);
                 self.load_selected_into_formula(window, cx);
                 self.update_title(window, cx);
@@ -395,10 +508,16 @@ impl SheetsView {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let tk_ = tokens(cx);
-        let title = if d.editing.is_some() {
-            t("Modify Table Style")
+        let title = match (d.editing.is_some(), d.pivot) {
+            (true, false) => t("Modify Table Style"),
+            (false, false) => t("New Table Style"),
+            (true, true) => t("Modify PivotTable Style"),
+            (false, true) => t("New PivotTable Style"),
+        };
+        let elements: &[TableElement] = if d.pivot {
+            &TableElement::PIVOT
         } else {
-            t("New Table Style")
+            &TableElement::ALL
         };
         // Element list.
         let mut list = v_flex()
@@ -409,7 +528,7 @@ impl SheetsView {
             .border_1()
             .border_color(tk_.border)
             .bg(tk_.bg);
-        for (i, e) in TableElement::ALL.into_iter().enumerate() {
+        for (i, e) in elements.iter().copied().enumerate() {
             let v = view.clone();
             let selected = e == d.element;
             let formatted = !d.spec.format(e).is_empty();
@@ -423,7 +542,7 @@ impl SheetsView {
                     .when(!selected, |s| s.hover(|s| s.bg(tk_.hover)))
                     .when(formatted, |s| s.font_weight(FontWeight::SEMIBOLD))
                     .cursor_pointer()
-                    .child(t_dyn(e.label()).to_owned())
+                    .child(t_dyn(if d.pivot { e.pivot_label() } else { e.label() }).to_owned())
                     .on_click(move |ev, w, cx| {
                         let double = ev.click_count() > 1;
                         let _ = v.update(cx, |this, cx| {
@@ -440,12 +559,12 @@ impl SheetsView {
             );
         }
         // Preview.
-        let cells = self
-            .table
-            .read(cx)
-            .delegate()
-            .book
-            .table_style_spec_preview(&d.spec);
+        let book = &self.table.read(cx).delegate().book;
+        let cells = if d.pivot {
+            book.pivot_style_spec_preview(&d.spec)
+        } else {
+            book.table_style_spec_preview(&d.spec)
+        };
         let preview = v_flex()
             .gap(SPACE_2)
             .child(kantor_ui::components::section_label(t("Preview"), cx))
@@ -533,7 +652,14 @@ impl SheetsView {
                     .child(
                         v_flex()
                             .gap(SPACE_2)
-                            .child(kantor_ui::components::section_label(t("Table Element"), cx))
+                            .child(kantor_ui::components::section_label(
+                                if d.pivot {
+                                    t("PivotTable Element")
+                                } else {
+                                    t("Table Element")
+                                },
+                                cx,
+                            ))
                             .child(list),
                     )
                     .child(preview),
@@ -549,7 +675,11 @@ impl SheetsView {
             ))
             .child(
                 Checkbox::new("ts-default")
-                    .label(t("Set as default table style for this document"))
+                    .label(if d.pivot {
+                        t("Set as default PivotTable style for this document")
+                    } else {
+                        t("Set as default table style for this document")
+                    })
                     .checked(d.default)
                     .on_click(move |on, _, cx| {
                         let on = *on;
@@ -943,6 +1073,17 @@ pub(crate) fn style_menu(
     custom: bool,
     view: &WeakEntity<SheetsView>,
 ) -> PopupMenu {
+    style_menu_for(menu, name, custom, false, view)
+}
+
+/// [`style_menu`] for a table style or (`pivot`) a PivotTable style.
+pub(crate) fn style_menu_for(
+    menu: PopupMenu,
+    name: &str,
+    custom: bool,
+    pivot: bool,
+    view: &WeakEntity<SheetsView>,
+) -> PopupMenu {
     type Run = fn(&mut SheetsView, &str, &mut Window, &mut Context<SheetsView>);
     let item = |label: &'static str, run: Run| {
         let v = view.clone();
@@ -952,23 +1093,29 @@ pub(crate) fn style_menu(
         })
     };
     let mut menu = menu;
+    let (modify, duplicate, delete, default): (Run, Run, Run, Run) = if pivot {
+        (
+            |v, n, w, cx| v.modify_pivot_style_ui(n, w, cx),
+            |v, n, w, cx| v.duplicate_pivot_style_ui(n, w, cx),
+            |v, n, w, cx| v.delete_pivot_style_ui(n, w, cx),
+            |v, n, w, cx| v.default_pivot_style_ui(n, w, cx),
+        )
+    } else {
+        (
+            |v, n, w, cx| v.modify_table_style_ui(n, w, cx),
+            |v, n, w, cx| v.duplicate_table_style_ui(n, w, cx),
+            |v, n, w, cx| v.delete_table_style_ui(n, w, cx),
+            |v, n, w, cx| v.default_table_style_ui(n, w, cx),
+        )
+    };
     if custom {
-        menu = menu.item(item(tk("Modify…"), |v, n, w, cx| {
-            v.modify_table_style_ui(n, w, cx)
-        }));
+        menu = menu.item(item(tk("Modify…"), modify));
     }
-    menu = menu.item(item(tk("Duplicate…"), |v, n, w, cx| {
-        v.duplicate_table_style_ui(n, w, cx)
-    }));
+    menu = menu.item(item(tk("Duplicate…"), duplicate));
     if custom {
-        menu = menu.item(item(tk("Delete"), |v, n, w, cx| {
-            v.delete_table_style_ui(n, w, cx)
-        }));
+        menu = menu.item(item(tk("Delete"), delete));
     }
-    menu.separator()
-        .item(item(tk("Set As Default"), |v, n, w, cx| {
-            v.default_table_style_ui(n, w, cx)
-        }))
+    menu.separator().item(item(tk("Set As Default"), default))
 }
 
 #[cfg(test)]
@@ -982,6 +1129,9 @@ mod tests {
         }
         for e in TableElement::ALL {
             assert!(ENGINE_TEXTS.contains(&e.label()), "{e:?}");
+        }
+        for e in TableElement::PIVOT {
+            assert!(ENGINE_TEXTS.contains(&e.pivot_label()), "{e:?}");
         }
     }
 }

@@ -78,6 +78,9 @@ jobs:
       - name: Pivot table fixture matches its generator
         run: python3 scripts/corpus/gen_pivot_xlsx.py --check
 
+      - name: Slicers fixture matches its generator
+        run: python3 scripts/corpus/gen_slicers_xlsx.py --check
+
       - name: Strict Open XML fixtures match their generator
         run: python3 scripts/corpus/gen_strict.py --check
 

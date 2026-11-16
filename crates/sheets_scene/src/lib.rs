@@ -39,6 +39,7 @@ use slides_engine::{EMU_PER_PX, Fill, Rgb, Xfrm};
 use slides_scene::chart::model::Line;
 use slides_scene::chart::{self, Chart, Defaults};
 use slides_scene::{Affine, Builder, Item, Picture, Prim};
+pub mod slicer;
 
 /// The chart look of a workbook: its theme's colours and fonts.
 pub struct ChartTheme {
@@ -441,6 +442,8 @@ pub struct DrawingScenes {
     builds: usize,
     /// The dark theme's text colour (see [`shape_items_on`]).
     dark_text: Option<Rgb>,
+    /// Slicers whose Multi-Select is on (drawn pressed).
+    multi: std::collections::HashSet<DrawingKey>,
 }
 
 /// Most built sizes kept (a resize drag makes many).
@@ -459,6 +462,11 @@ impl DrawingScenes {
             self.dark_text = fg;
             self.built.clear();
         }
+    }
+
+    /// Slicers whose Multi-Select button is on.
+    pub fn set_multi(&mut self, keys: std::collections::HashSet<DrawingKey>) {
+        self.multi = keys;
     }
 
     /// Charts built since the last call.
@@ -522,6 +530,44 @@ impl DrawingScenes {
         Some((chart, hash))
     }
 
+    /// A shape's items, cached by its XML and size.
+    fn shape_cached(
+        &mut self,
+        engine: &mut Engine,
+        book: &Workbook,
+        key: DrawingKey,
+        xml: &str,
+        w: f32,
+        h: f32,
+    ) -> Arc<Vec<Item>> {
+        let hash = {
+            let mut s = DefaultHasher::new();
+            xml.hash(&mut s);
+            s.finish()
+        };
+        let k = (key, q(w), q(h));
+        if let Some((h0, items)) = self.built.get(&k)
+            && *h0 == hash
+        {
+            return items.clone();
+        }
+        let theme = self.theme(book);
+        let items = Arc::new(shape_items_on(
+            &self.shapes,
+            engine,
+            &theme,
+            xml,
+            w,
+            h,
+            self.dark_text,
+        ));
+        if self.built.len() >= MAX_BUILT {
+            self.built.clear();
+        }
+        self.built.insert(k, (hash, items.clone()));
+        items
+    }
+
     /// The items of drawing `d` drawn into `w` × `h` px (its own
     /// coordinates), cached.
     pub fn items(
@@ -537,6 +583,21 @@ impl DrawingScenes {
                 return Arc::new(picture_items(part, data, *crop, w, h));
             }
             DrawingKind::Other(_) => return Arc::new(placeholder(w, h)),
+            DrawingKind::Slicer { .. } | DrawingKind::Timeline { .. } => {
+                let xml = match &*d.kind {
+                    DrawingKind::Slicer { name } => book
+                        .slicer_view(d.key.sheet_id, name)
+                        .map(|v| slicer::slicer_xml(&v, w, h, self.multi.contains(&d.key))),
+                    DrawingKind::Timeline { name } => book
+                        .timeline_view(d.key.sheet_id, name)
+                        .map(|v| slicer::timeline_xml(&v, w, h)),
+                    _ => None,
+                };
+                let Some(xml) = xml else {
+                    return Arc::new(placeholder(w, h));
+                };
+                return self.shape_cached(engine, book, d.key, &xml, w, h);
+            }
             DrawingKind::Shape { xml } => {
                 let hash = {
                     let mut h = DefaultHasher::new();

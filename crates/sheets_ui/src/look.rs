@@ -10,8 +10,9 @@
 //! * Rows have their own heights (`row_layout`): automatic rows grow to fit
 //!   wrapped text and larger fonts; in a row given a smaller height, larger
 //!   fonts are capped to what fits and wrapped text shows the lines that fit.
-//! * Text rotation and indent aren't drawn (IronCalc's model doesn't keep
-//!   them), nor is text overflowing into empty neighbours.
+//! * Indent shows as space before left-aligned text (after right-aligned
+//!   text), about three characters a step as in Excel. Text rotation isn't
+//!   drawn, nor is text overflowing into empty neighbours.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -381,8 +382,17 @@ impl Content<'_> {
                 })
                 .child(self.text),
         };
+        // Excel's indent step: about three characters.
+        let indent = self.base_size * 1.5 * s.indent.min(250) as f32;
         d.flex()
             .px(SPACE_3)
+            .when(s.indent > 0 && self.align != HAlign::Center, |d| {
+                if self.align == HAlign::Right {
+                    d.pr(SPACE_3 + indent)
+                } else {
+                    d.pl(SPACE_3 + indent)
+                }
+            })
             .map(|d| match s.valign {
                 VAlign::Top => d.items_start().pt(V_PAD.min(slack / 2.)),
                 VAlign::Center => d.items_center(),

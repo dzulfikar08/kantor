@@ -242,6 +242,20 @@ impl Workbook {
             xlsx_layout: layout,
             dxf_base: Some(out.dxfs),
         };
+        // Only workbooks with slicers read the saved package back.
+        let bytes = (!self.pivots.slicers.caches.is_empty())
+            .then(|| {
+                self.origin
+                    .xlsx
+                    .as_ref()?
+                    .bytes()
+                    .ok()
+                    .map(|b| b.into_owned())
+            })
+            .flatten();
+        if let Some(bytes) = bytes {
+            self.slicers_saved(&bytes);
+        }
     }
 
     /// The state `revision` is what the file now holds. A view change

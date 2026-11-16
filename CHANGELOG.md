@@ -11,6 +11,40 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Sheets: calculated items in pivot tables, as in Excel. *Insert Calculated Item…* (the menu of a
+  row or column field in the PivotTable Fields panel) adds an item worked out from other items of
+  the same field (`=East+West`, `='North East'*2`, `=Region[North]*1.1`); each cell shows the
+  formula over the same row or column, and totals include it, as Excel's do. Calculated items can
+  be changed or deleted from the same card, are saved as Excel saves them, and pivot tables from a
+  file with calculated items can now be refreshed and rearranged (before, Kantor refused).
+- Sheets: custom PivotTable styles, as in Excel. *New PivotTable Style…* (the PivotTable Style
+  gallery or the palette) names a style and formats each part of a pivot table (whole table,
+  report filter labels and values, stripes, first column, header row, subtotal rows and columns,
+  subheadings, blank rows, grand totals); right-click a style in the gallery to modify, duplicate
+  (built-in ones too), delete or set it as the default for new pivot tables. Styles are saved as
+  Excel saves them, and pivot tables follow a renamed style.
+- Sheets: slicers, as in Excel. Slicers in a file (for pivot tables and for tables) are drawn over
+  the sheet with their buttons, selected, not selected and greyed for items without data; click
+  an item to filter by it, Ctrl+click or the Multi-Select button to pick several, and Clear
+  Filter to show everything. A pivot table slicer filters every pivot table it is connected to
+  (also on a field that isn't in the layout), a table slicer filters its table's column, and the
+  slicer's state is saved back as Excel saves it. Timelines are drawn with their periods and the
+  dates the file selected (they can't be changed in Kantor yet).
+
+### Changed
+
+- Sheets: a picture an `IMAGE` formula downloaded in Kantor is saved into the file as Excel saves
+  one, so Excel shows it without downloading and the file shows it offline. Pictures Excel saved
+  for `IMAGE` cells (and pictures placed in cells) now follow their cells when rows or columns are
+  inserted, deleted or moved (before, they stopped showing), also through undo and saves.
+- Sheets: a picture, chart or slicer set to move but not size with its cells keeps its size when
+  rows or columns under it are hidden (by a filter, for instance), as in Excel.
+- Sheets: a pivot table copied with its sheet keeps its name (`PivotTable1`), as in Excel, since
+  pivot table names only need to be unique on their sheet.
+- Sheets: inner items of a compact pivot table are indented under their outer item, as Excel
+  draws them. Cells with an indent from their alignment (Format Cells) are now drawn indented in
+  the grid too, as in Excel (they already were in the PDF).
+
 - Sheets: custom table styles, as in Excel. *New Table Style…* (Table Design, the Table menu or
   the palette) names a style and formats each table element (whole table, first and second
   column and row stripes, first and last column, header and total rows, first and last header and

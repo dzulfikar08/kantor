@@ -25,6 +25,9 @@ use crate::{CellRange, Workbook};
 /// Excel's default style for new tables.
 pub const DEFAULT_TABLE_STYLE: &str = "TableStyleMedium2";
 
+/// Excel's default style for new pivot tables.
+pub const DEFAULT_PIVOT_STYLE: &str = "PivotStyleLight16";
+
 /// The elements of a table style, in the order Excel lists (and draws, one
 /// over the other) them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -42,9 +45,76 @@ pub enum TableElement {
     LastHeaderCell,
     FirstTotalCell,
     LastTotalCell,
+    // PivotTable styles only.
+    PageFieldLabels,
+    PageFieldValues,
+    FirstSubtotalColumn,
+    SecondSubtotalColumn,
+    ThirdSubtotalColumn,
+    FirstSubtotalRow,
+    SecondSubtotalRow,
+    ThirdSubtotalRow,
+    BlankRow,
+    FirstColumnSubheading,
+    SecondColumnSubheading,
+    ThirdColumnSubheading,
+    FirstRowSubheading,
+    SecondRowSubheading,
+    ThirdRowSubheading,
 }
 
 impl TableElement {
+    /// The elements of a PivotTable style, in the order Excel's New
+    /// PivotTable Style lists them.
+    pub const PIVOT: [TableElement; 25] = [
+        Self::WholeTable,
+        Self::PageFieldLabels,
+        Self::PageFieldValues,
+        Self::FirstColumnStripe,
+        Self::SecondColumnStripe,
+        Self::FirstRowStripe,
+        Self::SecondRowStripe,
+        Self::FirstColumn,
+        Self::HeaderRow,
+        Self::FirstHeaderCell,
+        Self::FirstSubtotalColumn,
+        Self::SecondSubtotalColumn,
+        Self::ThirdSubtotalColumn,
+        Self::FirstSubtotalRow,
+        Self::SecondSubtotalRow,
+        Self::ThirdSubtotalRow,
+        Self::BlankRow,
+        Self::FirstColumnSubheading,
+        Self::SecondColumnSubheading,
+        Self::ThirdColumnSubheading,
+        Self::FirstRowSubheading,
+        Self::SecondRowSubheading,
+        Self::ThirdRowSubheading,
+        Self::LastColumn,
+        Self::TotalRow,
+    ];
+
+    /// Every element type, for reading and writing styles.
+    pub(crate) fn every() -> impl Iterator<Item = TableElement> {
+        Self::ALL
+            .into_iter()
+            .chain(Self::PIVOT.into_iter().filter(|e| !Self::ALL.contains(e)))
+    }
+
+    /// The element of OOXML type `xml`.
+    pub(crate) fn of_xml(xml: &str) -> Option<TableElement> {
+        Self::every().find(|e| e.xml() == xml)
+    }
+
+    /// Excel's name for it in a PivotTable style (the grand totals are the
+    /// table's last column and total row).
+    pub fn pivot_label(self) -> &'static str {
+        match self {
+            Self::LastColumn => "Grand Total Column",
+            Self::TotalRow => "Grand Total Row",
+            e => e.label(),
+        }
+    }
     pub const ALL: [TableElement; 13] = [
         Self::WholeTable,
         Self::FirstColumnStripe,
@@ -77,6 +147,21 @@ impl TableElement {
             Self::LastHeaderCell => "lastHeaderCell",
             Self::FirstTotalCell => "firstTotalCell",
             Self::LastTotalCell => "lastTotalCell",
+            Self::PageFieldLabels => "pageFieldLabels",
+            Self::PageFieldValues => "pageFieldValues",
+            Self::FirstSubtotalColumn => "firstSubtotalColumn",
+            Self::SecondSubtotalColumn => "secondSubtotalColumn",
+            Self::ThirdSubtotalColumn => "thirdSubtotalColumn",
+            Self::FirstSubtotalRow => "firstSubtotalRow",
+            Self::SecondSubtotalRow => "secondSubtotalRow",
+            Self::ThirdSubtotalRow => "thirdSubtotalRow",
+            Self::BlankRow => "blankRow",
+            Self::FirstColumnSubheading => "firstColumnSubheading",
+            Self::SecondColumnSubheading => "secondColumnSubheading",
+            Self::ThirdColumnSubheading => "thirdColumnSubheading",
+            Self::FirstRowSubheading => "firstRowSubheading",
+            Self::SecondRowSubheading => "secondRowSubheading",
+            Self::ThirdRowSubheading => "thirdRowSubheading",
         }
     }
 
@@ -96,6 +181,21 @@ impl TableElement {
             Self::LastHeaderCell => "Last Header Cell",
             Self::FirstTotalCell => "First Total Cell",
             Self::LastTotalCell => "Last Total Cell",
+            Self::PageFieldLabels => "Report Filter Labels",
+            Self::PageFieldValues => "Report Filter Values",
+            Self::FirstSubtotalColumn => "Subtotal Column 1",
+            Self::SecondSubtotalColumn => "Subtotal Column 2",
+            Self::ThirdSubtotalColumn => "Subtotal Column 3",
+            Self::FirstSubtotalRow => "Subtotal Row 1",
+            Self::SecondSubtotalRow => "Subtotal Row 2",
+            Self::ThirdSubtotalRow => "Subtotal Row 3",
+            Self::BlankRow => "Blank Row",
+            Self::FirstColumnSubheading => "Column Subheading 1",
+            Self::SecondColumnSubheading => "Column Subheading 2",
+            Self::ThirdColumnSubheading => "Column Subheading 3",
+            Self::FirstRowSubheading => "Row Subheading 1",
+            Self::SecondRowSubheading => "Row Subheading 2",
+            Self::ThirdRowSubheading => "Row Subheading 3",
         }
     }
 
@@ -164,15 +264,18 @@ impl TableStyleSpec {
 
     pub(crate) fn def(&self) -> TableStyleDef {
         let mut d = TableStyleDef::empty();
-        for e in TableElement::ALL {
-            d.set(e.xml(), self.format(e), self.size(e));
+        for e in TableElement::every() {
+            let f = self.format(e);
+            if TableElement::ALL.contains(&e) || !f.is_empty() || self.size(e) != 1 {
+                d.set(e.xml(), f, self.size(e));
+            }
         }
         d
     }
 
-    fn from_def(name: &str, d: &TableStyleDef) -> Self {
+    pub(crate) fn from_def(name: &str, d: &TableStyleDef) -> Self {
         let mut s = Self::new(name);
-        for e in TableElement::ALL {
+        for e in TableElement::every() {
             if let Some((f, size)) = d.get(e.xml()) {
                 s.set_format(e, f.clone());
                 s.set_size(e, size);
@@ -221,6 +324,8 @@ pub(crate) struct StyleSet {
     pub styles: Vec<StyleNow>,
     /// "Set as default table style for this document" (`None`: Excel's).
     pub default_table: Option<String>,
+    /// "Set as default PivotTable style for this document".
+    pub default_pivot: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -249,6 +354,7 @@ impl StyleSet {
                 })
                 .collect(),
             default_table: f.default_table.clone(),
+            default_pivot: f.default_pivot.clone(),
         }
     }
 
@@ -318,6 +424,154 @@ impl Workbook {
                     .map(|(_, v)| v.clone())
             }),
         }
+    }
+
+    /// A custom PivotTable style by name.
+    pub(crate) fn custom_pivot_style(&self, name: &str) -> Option<TableStyleDef> {
+        let set = self.style_set();
+        set.find(name)
+            .map(|i| &set.styles[i])
+            .filter(|s| s.pivot && !s.table)
+            .map(|s| s.def.clone())
+    }
+
+    /// The workbook's own PivotTable styles: the gallery's Custom group.
+    pub fn custom_pivot_styles(&self) -> Vec<String> {
+        self.style_set()
+            .styles
+            .iter()
+            .filter(|s| s.pivot && !s.table)
+            .map(|s| s.name.clone())
+            .collect()
+    }
+
+    /// The style new pivot tables get: the document's default, else
+    /// Excel's (`PivotStyleLight16`).
+    pub fn default_pivot_style(&self) -> String {
+        let set = self.style_set();
+        set.default_pivot
+            .clone()
+            .filter(|d| {
+                set.find(d).is_some_and(|i| set.styles[i].pivot)
+                    || crate::pivot_tools::pivot_style_names()
+                        .iter()
+                        .any(|p| p.eq_ignore_ascii_case(d))
+            })
+            .unwrap_or_else(|| DEFAULT_PIVOT_STYLE.to_owned())
+    }
+
+    /// PivotTable style `name` (custom or built-in) as New / Modify
+    /// PivotTable Style shows it.
+    pub fn pivot_style_spec(&self, name: &str) -> Option<TableStyleSpec> {
+        let def = match self.custom_pivot_style(name) {
+            Some(d) => d,
+            None => {
+                crate::pivot::builtin(name, &self.model.get_model().workbook.theme)?.to_table_def()
+            }
+        };
+        Some(TableStyleSpec::from_def(name, &def))
+    }
+
+    /// "PivotTable Style 1", "PivotTable Style 2"... the first one free.
+    pub fn next_pivot_style_name(&self) -> String {
+        (1..)
+            .map(|i| format!("PivotTable Style {i}"))
+            .find(|n| !self.style_name_taken(n, None))
+            .expect("a free name")
+    }
+
+    /// New PivotTable Style: add `spec` (one undo step); `default`: new
+    /// pivot tables in this document get it.
+    pub fn add_pivot_style(&mut self, spec: &TableStyleSpec, default: bool) -> Result<()> {
+        self.check_style_name(&spec.name, None)?;
+        let mut set = self.style_set().into_owned();
+        let name = spec.name.trim().to_owned();
+        set.styles.push(StyleNow {
+            name: name.clone(),
+            def: spec.def(),
+            file: None,
+            table: false,
+            pivot: true,
+        });
+        if default {
+            set.default_pivot = Some(name);
+        }
+        self.set_style_set(set);
+        Ok(())
+    }
+
+    /// Modify PivotTable Style: custom style `name` becomes `spec` (renamed
+    /// if its name differs: pivot tables using it follow). One undo step.
+    pub fn modify_pivot_style(
+        &mut self,
+        name: &str,
+        spec: &TableStyleSpec,
+        default: bool,
+    ) -> Result<()> {
+        let mut set = self.style_set().into_owned();
+        let i = set
+            .find(name)
+            .filter(|i| set.styles[*i].pivot)
+            .ok_or_else(|| anyhow!("no PivotTable style {name}"))?;
+        let old = set.styles[i].name.clone();
+        self.check_style_name(&spec.name, Some(&old))?;
+        let new = spec.name.trim().to_owned();
+        let def = spec.def();
+        let s = &mut set.styles[i];
+        if s.def != def || s.name != new {
+            s.file = None;
+        }
+        s.def = def;
+        s.name = new.clone();
+        if default {
+            set.default_pivot = Some(new.clone());
+        } else if set
+            .default_pivot
+            .as_deref()
+            .is_some_and(|d| d.eq_ignore_ascii_case(&old))
+        {
+            set.default_pivot = None;
+        }
+        self.set_style_set(set);
+        if old != new {
+            self.restyle_pivots(&old, Some(&new))?;
+        }
+        self.cache.borrow_mut().pivots.clear();
+        Ok(())
+    }
+
+    /// Delete custom PivotTable style `name` (one undo step): pivot tables
+    /// using it get the document's default style.
+    pub fn delete_pivot_style(&mut self, name: &str) -> Result<()> {
+        let mut set = self.style_set().into_owned();
+        let i = set
+            .find(name)
+            .filter(|i| set.styles[*i].pivot)
+            .ok_or_else(|| anyhow!("no PivotTable style {name}"))?;
+        let old = set.styles.remove(i).name;
+        if set
+            .default_pivot
+            .as_deref()
+            .is_some_and(|d| d.eq_ignore_ascii_case(&old))
+        {
+            set.default_pivot = None;
+        }
+        self.set_style_set(set);
+        let fallback = self.default_pivot_style();
+        self.restyle_pivots(&old, Some(&fallback))?;
+        self.cache.borrow_mut().pivots.clear();
+        Ok(())
+    }
+
+    /// Set As Default for PivotTable style `name`. One undo step.
+    pub fn set_default_pivot_style(&mut self, name: &str) -> Result<()> {
+        if self.pivot_style_spec(name).is_none() {
+            bail!("no PivotTable style {name}");
+        }
+        let mut set = self.style_set().into_owned();
+        set.default_pivot = Some(name.to_owned());
+        self.set_style_set(set);
+        Ok(())
     }
 
     /// The workbook's own table styles (for tables), in the order the file
@@ -559,7 +813,11 @@ impl Workbook {
         let edited = self.edits().table_styles.clone();
         let from_file = StyleSet::from_file(file);
         let set = edited.as_deref().unwrap_or(&from_file);
-        if file.element.is_none() && set.styles.is_empty() && set.default_table.is_none() {
+        if file.element.is_none()
+            && set.styles.is_empty()
+            && set.default_table.is_none()
+            && set.default_pivot.is_none()
+        {
             return;
         }
         let model_dxfs = self.model.get_model().workbook.styles.dxfs.len();
@@ -580,8 +838,8 @@ impl Workbook {
                     name: s.name.clone(),
                     table: s.table,
                     pivot: s.pivot,
-                    elements: TableElement::ALL
-                        .iter()
+                    elements: TableElement::every()
+                        .filter(|e| s.pivot || TableElement::ALL.contains(e))
                         .filter_map(|e| {
                             let (f, size) = s.def.get(e.xml())?;
                             let size = (e.has_size() && size != 1).then_some(size);
@@ -595,7 +853,7 @@ impl Workbook {
             verbatim,
             styles,
             default_table: set.default_table.clone(),
-            default_pivot: file.default_pivot.clone(),
+            default_pivot: set.default_pivot.clone(),
             model_dxfs,
         });
     }
@@ -739,7 +997,7 @@ pub(crate) fn patch_styles(xml: &str, save: &StylesSave) -> Result<String, Strin
                 "<tableStyles count=\"{}\" defaultTableStyle=\"{}\" defaultPivotStyle=\"{}\"",
                 save.styles.len(),
                 esc(save.default_table.as_deref().unwrap_or(DEFAULT_TABLE_STYLE)),
-                esc(save.default_pivot.as_deref().unwrap_or("PivotStyleLight16")),
+                esc(save.default_pivot.as_deref().unwrap_or(DEFAULT_PIVOT_STYLE)),
             );
             if inner.is_empty() {
                 out.push_str("/>");

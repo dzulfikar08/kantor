@@ -245,7 +245,9 @@ fn print_kind(book: &Workbook, d: &Drawing, theme: &mut Option<ChartTheme>) -> O
             )
         }
         DrawingKind::Shape { xml } => PrintKind::Shape(xml.clone()),
-        DrawingKind::Other(_) => return None,
+        DrawingKind::Other(_) | DrawingKind::Slicer { .. } | DrawingKind::Timeline { .. } => {
+            return None;
+        }
     })
 }
 

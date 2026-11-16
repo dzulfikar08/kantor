@@ -255,6 +255,9 @@ pub struct PivotSourceField {
     /// Its smallest and largest values (numbers and dates).
     pub min: Option<f64>,
     pub max: Option<f64>,
+    /// Its calculated items: `(name, formula with =)`. They are in `items`
+    /// too, after the source's.
+    pub calc_items: Vec<(String, String)>,
 }
 
 /// Excel's Report Layout.
@@ -758,6 +761,7 @@ impl Workbook {
         let name = self.next_pivot_name();
         let captions = Captions::new();
         let def = Def {
+            indent: 1,
             part: format!("{NEW_PREFIX}pivotTable{k}.xml"),
             sheet_id,
             name: name.clone(),
@@ -784,7 +788,7 @@ impl Workbook {
             row_grand: true,
             col_grand: true,
             style: StyleInfo {
-                name: Some(STYLE.into()),
+                name: Some(self.default_pivot_style()),
                 row_headers: true,
                 col_headers: true,
                 row_stripes: false,
@@ -978,6 +982,7 @@ impl Workbook {
                         .partial_cmp(&b.sort_key())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 });
+                values.extend(cf.calc_items.iter().map(|c| Val::Str(c.name.clone())));
                 values
             };
             let fd = def.fields.get(f);
@@ -1025,6 +1030,11 @@ impl Workbook {
                 dates,
                 min,
                 max,
+                calc_items: cf
+                    .calc_items
+                    .iter()
+                    .map(|c| (c.name.clone(), format!("={}", c.formula)))
+                    .collect(),
             });
         }
         let entry = |x: &i32| match *x {
@@ -1566,7 +1576,9 @@ impl Workbook {
                 Some(l) => (**l).clone(),
                 None => crate::pivot::laid_of(&p.def),
             };
-            let name = self.next_pivot_name();
+            // The copy keeps its name, as in Excel (names are unique per
+            // sheet, and the copy is alone on its new sheet).
+            let name = p.def.name.clone();
             let k = self.pivots.defs.len() + 1;
             let mut def = laid.def.clone();
             def.part = format!("{NEW_PREFIX}pivotTable{k}.xml");

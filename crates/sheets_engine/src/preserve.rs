@@ -78,7 +78,7 @@ use roxmltree::{Document, Node};
 use crate::shift::{Moves, parse_range};
 
 mod rich_value;
-pub(crate) use rich_value::{RichPicture, read as rich_pictures};
+pub(crate) use rich_value::{CellPicture, RichPicture, read as rich_pictures};
 
 const NS_MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const NS_R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -259,9 +259,9 @@ pub(crate) struct Context<'a> {
     /// The chart sheets to save, in order (`None`: the original's, as they
     /// are).
     pub chart_sheets: Option<&'a [ChartSheetPlan]>,
-    /// Whether the cell `(sheetId, row, column)` (0-based) shows the picture
-    /// the original saved for its IMAGE formula (see `rich_value`).
-    pub saved_picture: &'a dyn Fn(u32, u32, u32) -> bool,
+    /// The pictures cells show (IMAGE formulas', placed in cells), saved as
+    /// Excel's rich values (see `rich_value`).
+    pub pictures: &'a [CellPicture],
 }
 
 /// A chart sheet to save (see `crate::chart_sheet`).
@@ -521,6 +521,13 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
                 b = Package::read(&ironcalc)?;
                 polish(&mut b, tabs, full_calc, notes)?;
             }
+            if !ctx.pictures.is_empty() {
+                let before = b.clone();
+                if let Err(e) = rich_value::write(&mut b, ctx.pictures) {
+                    notes.push(format!("pictures of IMAGE formulas are not kept: {e}"));
+                    b = before;
+                }
+            }
             if !new_pivots.is_empty() {
                 let before = b.clone();
                 match add_pivots(&mut b, new_pivots).and_then(|a| {
@@ -596,10 +603,10 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
         Ok(true) => polish(&mut merged, tabs, full_calc, &mut polish_notes).and_then(|()| {
             apply_patches(&mut merged, ctx.patches)?;
             added = add_pivots(&mut merged, new_pivots)?;
-            // Pictures Excel saved for IMAGE cells: optional, the rest is
-            // saved without them.
+            // Pictures in cells (IMAGE formulas', placed ones): optional,
+            // the rest is saved without them.
             let before = merged.clone();
-            if let Err(e) = rich_value::keep(&mut merged, original, ctx) {
+            if let Err(e) = rich_value::write(&mut merged, ctx.pictures) {
                 polish_notes.push(format!("pictures of IMAGE formulas are not kept: {e}"));
                 merged = before;
             }
@@ -2300,6 +2307,78 @@ pub(crate) fn pivot_sources(bytes: &[u8]) -> Result<Vec<PivotSource>, String> {
                 cache_xml,
                 records_part,
             });
+        }
+    }
+    Ok(out)
+}
+
+/// The slicer and timeline parts of a package, as `slicer::Slicers` reads
+/// them.
+#[derive(Default)]
+pub(crate) struct SlicerSources {
+    /// Slicer caches and timeline caches: `(part, xml)`.
+    pub caches: Vec<(String, String)>,
+    /// Slicer and timeline parts of each worksheet: `(sheetId, part, xml)`.
+    pub sheets: Vec<(u32, String, String)>,
+    /// The tables' `id` and `name` (table slicers name their table by id).
+    pub tables: Vec<(u32, String)>,
+}
+
+pub(crate) fn slicer_sources(bytes: &[u8]) -> Result<SlicerSources, String> {
+    let orig = Original::new(bytes)?;
+    let mut out = SlicerSources::default();
+    let mut names: Vec<&String> = orig.names.values().collect();
+    names.sort();
+    let has_any = names.iter().any(|n| {
+        let l = n.to_lowercase();
+        l.starts_with("xl/slicercaches/") || l.starts_with("xl/timelinecaches/")
+    });
+    if !has_any {
+        return Ok(out);
+    }
+    for n in &names {
+        let l = n.to_lowercase();
+        let cache = (l.starts_with("xl/slicercaches/") || l.starts_with("xl/timelinecaches/"))
+            && l.ends_with(".xml");
+        if cache && let Some(xml) = orig.text(n)? {
+            out.caches.push(((*n).clone(), xml));
+        }
+        if l.starts_with("xl/tables/")
+            && l.ends_with(".xml")
+            && let Some(xml) = orig.text(n)?
+            && let Ok(doc) = Document::parse(&xml)
+        {
+            let root = doc.root_element();
+            if let (Some(id), Some(name)) = (
+                root.attribute("id").and_then(|i| i.parse().ok()),
+                root.attribute("name"),
+            ) {
+                out.tables.push((id, name.to_owned()));
+            }
+        }
+    }
+    let Some(root) = orig.text("_rels/.rels")? else {
+        return Ok(out);
+    };
+    let root_rels = parse_rels(&root)?;
+    let (_, _, _, sheets) = workbook_sheets(&root_rels, &|name| orig.text(name))?;
+    for s in sheets.iter().filter(|s| s.kind == SheetKind::Work) {
+        let Some(sheet_rels) = orig.text(&rels_part(&s.part)).ok().flatten() else {
+            continue;
+        };
+        let Ok(sheet_rels) = parse_rels(&sheet_rels) else {
+            continue;
+        };
+        for r in sheet_rels
+            .iter()
+            .filter(|r| matches!(r.short_kind(), "slicer" | "timeline") && !r.external)
+        {
+            let Some(part) = resolve(&s.part, &r.target) else {
+                continue;
+            };
+            if let Some(xml) = orig.text(&part).ok().flatten() {
+                out.sheets.push((s.sheet_id, part, xml));
+            }
         }
     }
     Ok(out)
@@ -6751,7 +6830,7 @@ mod tests {
             pivots: &PivotSave::default(),
             patches: &Patches::default(),
             chart_sheets: None,
-            saved_picture: &|_, _, _| false,
+            pictures: &[],
         };
         let done = finish(out, original, &ctx);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());

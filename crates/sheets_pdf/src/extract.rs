@@ -130,6 +130,9 @@ fn table_style(style: &CellStyle, tl: &TableCellLook) -> CellStyle {
     s.italic |= tl.italic;
     s.underline |= tl.underline;
     s.strikethrough |= tl.strike;
+    if s.indent == 0 {
+        s.indent = tl.indent;
+    }
     s
 }
 

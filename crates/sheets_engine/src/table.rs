@@ -105,6 +105,9 @@ pub struct TableCellLook {
     pub bottom: Option<BorderLine>,
     pub left: Option<BorderLine>,
     pub right: Option<BorderLine>,
+    /// Indent steps a pivot table gives a compact row label (its level),
+    /// unless the cell has its own.
+    pub indent: u32,
 }
 
 /// One element of a table style (`wholeTable`, `headerRow`...): a
@@ -158,6 +161,9 @@ pub(crate) struct TableStyleDef {
     pub(crate) last_header: Elem,
     pub(crate) first_total: Elem,
     pub(crate) last_total: Elem,
+    /// PivotTable-only elements (`pageFieldLabels`, `firstSubtotalRow`...):
+    /// `(type, format, size)`.
+    pub(crate) extra: Vec<(String, Elem, u32)>,
 }
 
 impl TableStyleDef {
@@ -605,6 +611,10 @@ impl TableStyleDef {
             "lastHeaderCell" => self.last_header = e,
             "firstTotalCell" => self.first_total = e,
             "lastTotalCell" => self.last_total = e,
+            k if crate::table_style_edit::TableElement::of_xml(k).is_some() => {
+                self.extra.retain(|(x, _, _)| x != k);
+                self.extra.push((k.to_owned(), e, size));
+            }
             _ => {}
         }
     }
@@ -625,7 +635,10 @@ impl TableStyleDef {
             "lastHeaderCell" => (&self.last_header, 1),
             "firstTotalCell" => (&self.first_total, 1),
             "lastTotalCell" => (&self.last_total, 1),
-            _ => return None,
+            k => {
+                let (_, e, size) = self.extra.iter().find(|(x, _, _)| x == k)?;
+                (e, *size)
+            }
         })
     }
 }

@@ -277,6 +277,18 @@ pub(crate) struct CacheField {
     /// A calculated field's formula (without `=`).
     pub formula: Option<String>,
     pub group: Option<FieldGroup>,
+    /// Calculated items (Insert Calculated Item), in solve order. Each one's
+    /// name is also a shared item (records never point at it), after the
+    /// source's.
+    pub calc_items: Vec<CalcItem>,
+}
+
+/// A calculated item: a formula over other items of its field.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CalcItem {
+    pub name: String,
+    /// Without `=`, as the file has it (`East+West`, `Region[East]*2`).
+    pub formula: String,
 }
 
 impl CacheField {
@@ -288,7 +300,18 @@ impl CacheField {
             database: true,
             formula: None,
             group: None,
+            calc_items: Vec::new(),
         }
+    }
+
+    /// Whether shared item `x` is one of its calculated items.
+    pub(crate) fn is_calc(&self, x: usize) -> bool {
+        !self.calc_items.is_empty()
+            && self.items.get(x).is_some_and(|v| {
+                self.calc_items
+                    .iter()
+                    .any(|c| Val::Str(c.name.clone()).key() == v.key())
+            })
     }
 
     /// What pivot fields' items point at: a grouped field's group items,
@@ -343,6 +366,8 @@ pub(crate) struct FieldItem {
     pub expanded: bool,
     /// A caption replacing the value.
     pub n: Option<String>,
+    /// A calculated item (`f`).
+    pub calc: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -625,6 +650,10 @@ pub(crate) struct Def {
     pub in_origin: bool,
     /// Root attributes a layout change sets (`compact`, `outline`...).
     pub root_sets: Vec<(&'static str, String)>,
+    /// `indent`: how far each level of a compact row field is indented
+    /// (Excel's "When in compact form indent row labels"; Excel writes 0
+    /// for its default of one step and still indents).
+    pub indent: u32,
 }
 
 fn attr_bool(n: Node, name: &str, default: bool) -> bool {
@@ -722,11 +751,40 @@ fn parse_cache(part: &str, records_part: Option<String>, xml: &str) -> Result<Ca
                 database,
                 formula,
                 group,
+                calc_items: Vec::new(),
             });
         }
     }
-    if child(root, "calculatedItems").is_some() {
-        unsupported.get_or_insert_with(|| "it has calculated items".to_owned());
+    if let Some(list) = child(root, "calculatedItems") {
+        for ci in children(list, "calculatedItem") {
+            // The item: a reference to one shared item of one field.
+            let reference = ci
+                .descendants()
+                .find(|n| n.is_element() && n.tag_name().name() == "reference");
+            let found = reference.and_then(|r| {
+                let f = attr_u32(r, "field")? as usize;
+                let x = children(r, "x")
+                    .next()
+                    .map(|x| attr_u32(x, "v").unwrap_or(0))? as usize;
+                let name = fields.get(f)?.items.get(x)?.label();
+                Some((f, name))
+            });
+            match (found, ci.attribute("formula")) {
+                (Some((f, name)), Some(formula))
+                    if fields[f].database && fields[f].group.is_none() =>
+                {
+                    fields[f].calc_items.push(CalcItem {
+                        name,
+                        formula: formula.trim().trim_start_matches('=').to_owned(),
+                    });
+                }
+                _ => {
+                    unsupported.get_or_insert_with(|| {
+                        "it has a calculated item Kantor can't read".to_owned()
+                    });
+                }
+            }
+        }
     }
     Ok(Cache {
         part: part.to_owned(),
@@ -802,15 +860,11 @@ fn parse_def(part: &str, sheet_id: u32, cache: usize, xml: &str) -> Result<Def, 
                             t: it.attribute("t").map(str::to_owned),
                             expanded: attr_bool(it, "sd", true),
                             n: it.attribute("n").map(str::to_owned),
+                            calc: attr_bool(it, "f", false),
                         })
                         .collect()
                 })
                 .unwrap_or_default();
-            if child(f, "items")
-                .is_some_and(|its| children(its, "item").any(|i| i.attribute("f").is_some()))
-            {
-                unsupported.get_or_insert_with(|| "it has calculated items".to_owned());
-            }
             fields.push(Field {
                 axis: f.attribute("axis").map(str::to_owned),
                 data: attr_bool(f, "dataField", false),
@@ -943,6 +997,7 @@ fn parse_def(part: &str, sheet_id: u32, cache: usize, xml: &str) -> Result<Def, 
         added: false,
         in_origin: true,
         root_sets: Vec::new(),
+        indent: attr_u32(root, "indent").unwrap_or(1),
     })
 }
 
@@ -956,18 +1011,27 @@ pub(crate) struct Pivots {
     /// undoing a refresh after saving it brings these back).
     pub records: HashMap<String, Arc<Vec<u8>>>,
     pub refreshed: bool,
+    /// The file's slicers and timelines (see [`crate::slicer`]).
+    pub slicers: crate::slicer::Slicers,
 }
 
 impl Pivots {
     pub(crate) fn read(bytes: &[u8]) -> Self {
+        let slicers = crate::slicer::Slicers::read(bytes);
         let sources = match crate::preserve::pivot_sources(bytes) {
             Ok(s) => s,
             Err(e) => {
                 log::warn!("pivot tables not read: {e}");
-                return Self::default();
+                return Self {
+                    slicers,
+                    ..Self::default()
+                };
             }
         };
-        let mut out = Pivots::default();
+        let mut out = Pivots {
+            slicers,
+            ..Pivots::default()
+        };
         let mut cache_index: HashMap<String, usize> = HashMap::new();
         for s in sources {
             let cache = match cache_index.get(&s.cache_part) {
@@ -1039,6 +1103,48 @@ pub(crate) struct Placed {
     rows: Vec<Line>,
     cols: Vec<Line>,
     style: Option<Arc<PivotStyleDef>>,
+    /// Per body row: the label column (offset from the left) holding a
+    /// compact row label and its indent.
+    indents: Vec<Option<(u32, u32)>>,
+}
+
+/// Each row item's compact label: its column offset and indent (Excel
+/// indents an inner item of a compact field by its level below the
+/// outermost field sharing the column).
+fn compact_indents(def: &Def) -> Vec<Option<(u32, u32)>> {
+    let nf = def.fields.len();
+    let lv = levels(&def.row_fields, nf);
+    let compact = |l: &Level| match l {
+        Level::Field(f) => def.fields[*f].compact && def.fields[*f].outline,
+        Level::Values => true,
+    };
+    let outline = |l: &Level| match l {
+        Level::Field(f) => def.fields[*f].outline,
+        Level::Values => true,
+    };
+    let mut col: Vec<u32> = Vec::with_capacity(lv.len());
+    for (i, l) in lv.iter().enumerate() {
+        let c = if i == 0 {
+            0
+        } else if compact(l) && outline(&lv[i - 1]) {
+            col[i - 1]
+        } else {
+            col[i - 1] + 1
+        };
+        col.push(c);
+    }
+    def.row_items
+        .iter()
+        .map(|it| {
+            if matches!(it.t.as_str(), "grand" | "blank") {
+                return None;
+            }
+            let depth = (it.r + it.x.len()).checked_sub(1)?;
+            let c = *col.get(depth)?;
+            let level = col[..depth].iter().filter(|x| **x == c).count() as u32;
+            (level > 0).then_some((c, level * def.indent.max(1)))
+        })
+        .collect()
 }
 
 /// The page-field area of a pivot at `area`: `rowPageCount` rows of
@@ -1078,6 +1184,7 @@ impl Placed {
             .map(|i| line_of(i, def.col_fields.len()))
             .collect();
         let page = page_area(&def, area);
+        let indents = compact_indents(&def);
         Placed {
             index,
             def,
@@ -1086,7 +1193,17 @@ impl Placed {
             rows,
             cols,
             style,
+            indents,
         }
+    }
+
+    /// The indent of cell `(row, col)`'s compact row label, if it has one.
+    fn indent(&self, row: u32, col: u32) -> u32 {
+        let top = self.area.top + self.def.first_data_row;
+        row.checked_sub(top)
+            .and_then(|k| self.indents.get(k as usize).copied().flatten())
+            .filter(|(c, _)| self.area.left + c == col)
+            .map_or(0, |(_, n)| n)
     }
 
     pub fn contains(&self, row: u32, col: u32) -> bool {
@@ -1108,13 +1225,19 @@ impl Placed {
     }
 
     fn look(&self, row: u32, col: u32) -> Option<TableCellLook> {
-        let s = self.style.as_ref()?;
+        let indent = self.indent(row, col);
+        let Some(s) = self.style.as_ref() else {
+            return (indent > 0).then(|| TableCellLook {
+                indent,
+                ..Default::default()
+            });
+        };
         let d = &self.def;
         if d.row_fields.is_empty() && d.col_fields.is_empty() && d.data_fields.is_empty() {
             // Excel's placeholder for a pivot with no fields: plain.
             return None;
         }
-        Some(look_of(
+        let mut look = look_of(
             s,
             &Frame {
                 style: &d.style,
@@ -1127,7 +1250,9 @@ impl Placed {
             },
             row,
             col,
-        ))
+        );
+        look.indent = indent;
+        Some(look)
     }
 }
 
@@ -1186,15 +1311,21 @@ fn look_of(s: &PivotStyleDef, f: &Frame, row: u32, col: u32) -> TableCellLook {
             .checked_sub(data_left)
             .and_then(|i| f.cols.get(i as usize))
             .copied();
-        if f.style.row_stripes && row_line == Some(Line::Body) && (row - data_top).is_multiple_of(2)
-        {
-            look.apply(&s.row_stripe, row_edges);
+        if f.style.row_stripes && row_line == Some(Line::Body) {
+            let e = if (row - data_top).is_multiple_of(2) {
+                &s.row_stripe
+            } else {
+                &s.row_stripe2
+            };
+            look.apply(e, row_edges);
         }
-        if f.style.col_stripes
-            && col_line == Some(Line::Body)
-            && (col - data_left).is_multiple_of(2)
-        {
-            look.apply(&s.col_stripe, col_edges);
+        if f.style.col_stripes && col_line == Some(Line::Body) {
+            let e = if (col - data_left).is_multiple_of(2) {
+                &s.col_stripe
+            } else {
+                &s.col_stripe2
+            };
+            look.apply(e, col_edges);
         }
         if f.style.row_headers && col < data_left && row >= data_top {
             look.apply(&s.first_col, col_edges);
@@ -1206,6 +1337,11 @@ fn look_of(s: &PivotStyleDef, f: &Frame, row: u32, col: u32) -> TableCellLook {
             if row == a.top && col == a.left {
                 look.apply(&s.first_header_cell, Edges::all());
             }
+            // The labels of an outer column field.
+            if row > a.top && col >= data_left && row + 1 < data_top {
+                let l = ((row - a.top - 1) as usize).min(2);
+                look.apply(&s.col_subheading[l], row_edges);
+            }
         }
         if let Some(Line::Subtotal(l)) = col_line {
             look.apply(&s.subtotal_col[l as usize], col_edges);
@@ -1213,6 +1349,7 @@ fn look_of(s: &PivotStyleDef, f: &Frame, row: u32, col: u32) -> TableCellLook {
         match row_line {
             Some(Line::Subheading(l)) => look.apply(&s.subheading[l as usize], row_edges),
             Some(Line::Subtotal(l)) => look.apply(&s.subtotal_row[l as usize], row_edges),
+            Some(Line::Blank) => look.apply(&s.blank_row, row_edges),
             _ => {}
         }
         if f.style.last_column && col_line == Some(Line::Grand) {
@@ -1244,16 +1381,82 @@ pub(crate) struct PivotStyleDef {
     whole: Elem,
     row_stripe: Elem,
     col_stripe: Elem,
+    row_stripe2: Elem,
+    col_stripe2: Elem,
     first_col: Elem,
     header: Elem,
     first_header_cell: Elem,
     subtotal_col: [Elem; 3],
     subheading: [Elem; 3],
+    col_subheading: [Elem; 3],
     subtotal_row: [Elem; 3],
+    blank_row: Elem,
     last_col: Elem,
     total: Elem,
     page_label: Elem,
     page_value: Elem,
+}
+
+/// The pivot elements as OOXML types, with their place in a
+/// [`PivotStyleDef`].
+fn pivot_slots(s: &mut PivotStyleDef) -> Vec<(&'static str, &mut Elem)> {
+    let [st1, st2, st3] = &mut s.subtotal_col;
+    let [sr1, sr2, sr3] = &mut s.subtotal_row;
+    let [rh1, rh2, rh3] = &mut s.subheading;
+    let [ch1, ch2, ch3] = &mut s.col_subheading;
+    vec![
+        ("wholeTable", &mut s.whole),
+        ("pageFieldLabels", &mut s.page_label),
+        ("pageFieldValues", &mut s.page_value),
+        ("firstColumnStripe", &mut s.col_stripe),
+        ("secondColumnStripe", &mut s.col_stripe2),
+        ("firstRowStripe", &mut s.row_stripe),
+        ("secondRowStripe", &mut s.row_stripe2),
+        ("firstColumn", &mut s.first_col),
+        ("headerRow", &mut s.header),
+        ("firstHeaderCell", &mut s.first_header_cell),
+        ("firstSubtotalColumn", st1),
+        ("secondSubtotalColumn", st2),
+        ("thirdSubtotalColumn", st3),
+        ("firstSubtotalRow", sr1),
+        ("secondSubtotalRow", sr2),
+        ("thirdSubtotalRow", sr3),
+        ("blankRow", &mut s.blank_row),
+        ("firstColumnSubheading", ch1),
+        ("secondColumnSubheading", ch2),
+        ("thirdColumnSubheading", ch3),
+        ("firstRowSubheading", rh1),
+        ("secondRowSubheading", rh2),
+        ("thirdRowSubheading", rh3),
+        ("lastColumn", &mut s.last_col),
+        ("totalRow", &mut s.total),
+    ]
+}
+
+impl PivotStyleDef {
+    /// A custom PivotTable style (`<tableStyle pivot="1">`) as drawn.
+    pub(crate) fn from_table_def(d: &crate::table::TableStyleDef) -> Self {
+        let mut s = PivotStyleDef::default();
+        for (kind, slot) in pivot_slots(&mut s) {
+            if let Some((e, _)) = d.get(kind) {
+                *slot = e.clone();
+            }
+        }
+        s
+    }
+
+    /// This style's elements as a table style definition (for New
+    /// PivotTable Style from a built-in one).
+    pub(crate) fn to_table_def(&self) -> crate::table::TableStyleDef {
+        let mut s = self.clone();
+        let mut d = crate::table::TableStyleDef::empty();
+        for (kind, slot) in pivot_slots(&mut s) {
+            if !slot.is_empty() {
+                d.set(kind, slot.clone(), 1);
+            }
+        }
+        d
+    }
 }
 
 /// The built-in style `name` (`PivotStyleLight16`...), coloured by `t`.
@@ -1484,6 +1687,68 @@ struct Ctx<'a> {
     pos: Vec<Vec<Option<usize>>>,
     /// Calculated fields' formulas, by cache field.
     formulas: Vec<Option<std::result::Result<Formula, String>>>,
+    /// Calculated items' formulas, by field and item position (their
+    /// `fields` are item positions of the same field).
+    calc: Vec<HashMap<usize, std::result::Result<Formula, String>>>,
+}
+
+/// The calculated items of each field of `def` (matched to `cache`),
+/// compiled against the field's item names.
+fn calc_formulas(
+    def: &Def,
+    cache: &Cache,
+) -> Vec<HashMap<usize, std::result::Result<Formula, String>>> {
+    def.fields
+        .iter()
+        .enumerate()
+        .map(|(f, fd)| {
+            let mut out = HashMap::new();
+            let Some(cf) = cache.fields.get(f) else {
+                return out;
+            };
+            if cf.calc_items.is_empty() {
+                return out;
+            }
+            let names: Vec<String> = fd
+                .items
+                .iter()
+                .map(|it| {
+                    it.x.and_then(|x| cf.items.get(x))
+                        .map_or_else(|| "\u{0}".to_owned(), Val::label)
+                })
+                .collect();
+            for (k, it) in fd.items.iter().enumerate() {
+                let Some(v) = it.x.and_then(|x| cf.items.get(x)) else {
+                    continue;
+                };
+                if let Some(ci) = cf
+                    .calc_items
+                    .iter()
+                    .find(|c| Val::Str(c.name.clone()).key() == v.key())
+                {
+                    out.insert(k, Formula::compile_items(&ci.formula, &cf.name, &names));
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+/// A total over a field with calculated items: `a` and a calculated item's
+/// value `b` together, as `func` totals them (Excel counts calculated items
+/// in totals; averages and deviations leave them out here).
+fn combine(func: Func, a: Agg, b: Agg) -> Agg {
+    match (a, b) {
+        (None, x) | (x, None) => x,
+        (Some(Err(e)), _) | (_, Some(Err(e))) => Some(Err(e)),
+        (Some(Ok(x)), Some(Ok(y))) => Some(Ok(match func {
+            Func::Sum | Func::Count | Func::CountNums => x + y,
+            Func::Max => x.max(y),
+            Func::Min => x.min(y),
+            Func::Product => x * y,
+            _ => x,
+        })),
+    }
 }
 
 type Agg = Option<std::result::Result<f64, &'static str>>;
@@ -1492,6 +1757,14 @@ type Agg = Option<std::result::Result<f64, &'static str>>;
 type Group<'a> = (usize, Vec<usize>, Option<usize>, &'a Field);
 
 impl Ctx<'_> {
+    fn is_calc(&self, f: usize, k: usize) -> bool {
+        self.calc.get(f).is_some_and(|m| m.contains_key(&k))
+    }
+
+    fn has_calc(&self) -> bool {
+        self.calc.iter().any(|m| !m.is_empty())
+    }
+
     /// Data field `d` over records `recs` (by `func` for a custom
     /// subtotal). A calculated field is its formula over the sums of the
     /// fields it names, as in Excel.
@@ -1686,7 +1959,9 @@ impl Ctx<'_> {
                     .enumerate()
                     .filter(|(_, it)| it.t.is_none() && !it.hidden)
                     .map(|(k, _)| (k, std::mem::take(&mut by_item[k]), data, field))
-                    .filter(|(_, sub, _, _)| field.show_all || !sub.is_empty())
+                    .filter(|(k, sub, _, _)| {
+                        field.show_all || !sub.is_empty() || self.is_calc(f, *k)
+                    })
                     .collect()
             }
         };
@@ -1920,6 +2195,7 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
             .iter()
             .map(|c| c.formula.as_ref().map(|f| Formula::compile(f, &names)))
             .collect(),
+        calc: calc_formulas(def, cache),
     };
     let pos = &ctx.pos;
     let row_lv = levels(&def.row_fields, nf);
@@ -1933,6 +2209,10 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
             Level::Values => None,
         })
         .chain(def.page_fields.iter().map(|p| p.fld).filter(|&f| f < nf))
+        // A field on no axis with hidden items (a slicer's) filters too.
+        .chain((0..def.fields.len().min(nf)).filter(|&f| {
+            def.fields[f].axis.is_none() && def.fields[f].items.iter().any(|i| i.hidden)
+        }))
         .collect();
     let recs: Vec<usize> = (0..records.len())
         .filter(|&r| {
@@ -2301,6 +2581,10 @@ fn spec_of(lv: &[Level], e: &Entry) -> Spec {
 
 impl ShowCtx<'_> {
     fn agg(&self, d: usize, func: Option<Func>, rows: &Spec, cols: &Spec) -> Agg {
+        if self.ctx.has_calc() {
+            let spec: Spec = rows.iter().chain(cols).cloned().collect();
+            return self.cell(d, func, &spec, 0);
+        }
         let pos = &self.ctx.pos;
         let recs: Vec<usize> = self
             .recs
@@ -2313,6 +2597,89 @@ impl ShowCtx<'_> {
             })
             .collect();
         self.ctx.summarise(d, func, &recs)
+    }
+
+    /// Data field `d` where the fields have the items `spec` says, with
+    /// calculated items as Excel works them out: one in `spec` is its
+    /// formula over the values of the items it names (with everything else
+    /// in `spec` the same); a field on an axis but not in `spec` (a total
+    /// across it) adds its shown calculated items to its items' total.
+    fn cell(&self, d: usize, func: Option<Func>, spec: &Spec, depth: usize) -> Agg {
+        let ctx = self.ctx;
+        let def = ctx.def;
+        if depth > 32 {
+            return Some(Err("#REF!"));
+        }
+        for (i, (f, ks)) in spec.iter().enumerate() {
+            let [k] = ks[..] else { continue };
+            let Some(formula) = ctx.calc.get(*f).and_then(|m| m.get(&k)) else {
+                continue;
+            };
+            let Ok(formula) = formula else {
+                return Some(Err("#NAME?"));
+            };
+            let err: std::cell::Cell<Option<&'static str>> = std::cell::Cell::new(None);
+            let any = std::cell::Cell::new(false);
+            let v = formula.eval(&|j| {
+                let mut s = spec.clone();
+                s[i].1 = vec![j];
+                match self.cell(d, func, &s, depth + 1) {
+                    Some(Ok(x)) => {
+                        any.set(true);
+                        x
+                    }
+                    Some(Err(e)) => {
+                        err.set(Some(e));
+                        0.0
+                    }
+                    None => 0.0,
+                }
+            });
+            if let Some(e) = err.get() {
+                return Some(Err(e));
+            }
+            if !any.get() && !formula.fields.is_empty() {
+                return None;
+            }
+            return Some(v);
+        }
+        for l in self.row_lv.iter().chain(self.col_lv) {
+            let Level::Field(f) = *l else { continue };
+            let Some(calc) = ctx.calc.get(f).filter(|m| !m.is_empty()) else {
+                continue;
+            };
+            if spec.iter().any(|(g, _)| *g == f) {
+                continue;
+            }
+            let items = &def.fields[f].items;
+            let mut shown: Vec<usize> =
+                calc.keys().copied().filter(|k| !items[*k].hidden).collect();
+            shown.sort_unstable();
+            let plain: Vec<usize> = (0..items.len())
+                .filter(|k| !calc.contains_key(k) && items[*k].t.is_none())
+                .collect();
+            let mut s = spec.clone();
+            s.push((f, plain));
+            let mut acc = self.cell(d, func, &s, depth + 1);
+            let total_by = func.unwrap_or(def.data_fields[d].func);
+            for k in shown {
+                let mut s = spec.clone();
+                s.push((f, vec![k]));
+                acc = combine(total_by, acc, self.cell(d, func, &s, depth + 1));
+            }
+            return acc;
+        }
+        let pos = &ctx.pos;
+        let recs: Vec<usize> = self
+            .recs
+            .iter()
+            .copied()
+            .filter(|&r| {
+                spec.iter()
+                    .all(|(f, ks)| pos[*f][r].is_some_and(|k| ks.contains(&k)))
+            })
+            .collect();
+        ctx.summarise(d, func, &recs)
     }
 
     /// The items of field `f` in the order an axis shows them.
@@ -2348,7 +2715,11 @@ impl ShowCtx<'_> {
                     .all(|(f, ks)| pos[*f][r].is_some_and(|k| ks.contains(&k)))
             })
             .collect();
-        let raw = self.ctx.summarise(d, func, &cell);
+        let raw = if self.ctx.has_calc() {
+            self.agg(d, func, &rs, &cs)
+        } else {
+            self.ctx.summarise(d, func, &cell)
+        };
         if df.show_as == ShowAs::Normal {
             return raw;
         }
@@ -2536,7 +2907,9 @@ pub(crate) fn rebuild_cache(old: &Cache, data: SourceData, axis: &[String]) -> C
         let mut items: Vec<Val> = Vec::new();
         let mut seen: HashMap<String, ()> = HashMap::new();
         let column = data.rows.iter().map(|r| &r[f]);
+        let calc_items = prev.map(|p| p.calc_items.clone()).unwrap_or_default();
         let needs_items = discrete_base
+            || !calc_items.is_empty()
             || (!ranged
                 && (prev.is_some_and(|p| !p.items.is_empty())
                     || axis.iter().any(|a| a.eq_ignore_ascii_case(name))
@@ -2558,10 +2931,18 @@ pub(crate) fn rebuild_cache(old: &Cache, data: SourceData, axis: &[String]) -> C
                     items.push(v.clone());
                 }
             }
+            // Calculated items after the source's (records never hold them).
+            for c in &calc_items {
+                let v = Val::Str(c.name.clone());
+                if seen.insert(v.key(), ()).is_none() {
+                    items.push(v);
+                }
+            }
         }
         fields.push(CacheField {
             items,
             num_fmt_id: prev.map_or(0, |p| p.num_fmt_id),
+            calc_items,
             ..CacheField::source(name.clone())
         });
     }
@@ -2653,8 +3034,10 @@ pub(crate) fn rematch(def: &Def, old: &Cache, new: &Cache) -> Def {
                     ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal)
                 }
             };
+            let calc = |x: usize| new.fields[j].is_calc(x);
             let mut fresh: Vec<usize> = (0..new_items.len()).filter(|x| !used[*x]).collect();
-            fresh.sort_by(|a, b| order(*a, *b));
+            // Calculated items after the others, in the order made.
+            fresh.sort_by(|a, b| calc(*a).cmp(&calc(*b)).then(order(*a, *b)));
             if !fresh.is_empty() {
                 reindexed = true;
             }
@@ -2671,13 +3054,18 @@ pub(crate) fn rematch(def: &Def, old: &Cache, new: &Cache) -> Def {
                     n: blank
                         .filter(|_| new_items[x] == Val::Missing)
                         .map(str::to_owned),
+                    calc: false,
                 }
             }));
+            for it in kept.iter_mut() {
+                it.calc = it.x.is_some_and(calc);
+            }
             if let Some(dir @ ("ascending" | "descending")) = f.sort.as_deref() {
                 {
                     kept.sort_by(|a, b| {
                         let o = order(a.x.unwrap_or(0), b.x.unwrap_or(0));
-                        if dir == "descending" { o.reverse() } else { o }
+                        let o = if dir == "descending" { o.reverse() } else { o };
+                        a.calc.cmp(&b.calc).then(o)
                     });
                 }
             }
@@ -2687,6 +3075,7 @@ pub(crate) fn rematch(def: &Def, old: &Cache, new: &Cache) -> Def {
                 t: Some(t.into()),
                 expanded: true,
                 n: None,
+                calc: false,
             };
             if !f.subtotals.is_empty() {
                 // Custom subtotals: one item each, in Excel's order.
@@ -2987,6 +3376,9 @@ fn field_xml(f: &Field) -> String {
             if !it.expanded {
                 out.push_str(" sd=\"0\"");
             }
+            if it.calc {
+                out.push_str(" f=\"1\"");
+            }
             if let Some(x) = it.x {
                 out.push_str(&format!(" x=\"{x}\""));
             }
@@ -3219,6 +3611,15 @@ pub(crate) fn cache_xml(cache: &Cache, source: Option<Area>) -> Option<(String, 
     let name = root_name(xml)?;
     let mut out = String::from(XML_HEAD);
     out.push_str(&start);
+    // `calculatedItems` goes before these (CT_PivotCacheDefinition).
+    const CALC_AFTER: [&str; 5] = [
+        "calculatedMembers",
+        "dimensions",
+        "measureGroups",
+        "maps",
+        "extLst",
+    ];
+    let mut calc_done = false;
     for c in root.children().filter(|c| c.is_element()) {
         match c.tag_name().name() {
             "cacheSource" => match (source, child(c, "worksheetSource")) {
@@ -3267,8 +3668,18 @@ pub(crate) fn cache_xml(cache: &Cache, source: Option<Area>) -> Option<(String, 
                 }
                 out.push_str("</cacheFields>");
             }
-            _ => out.push_str(&xml[c.range()]),
+            "calculatedItems" => {}
+            n => {
+                if !calc_done && CALC_AFTER.contains(&n) {
+                    calc_items_xml(cache, &mut out);
+                    calc_done = true;
+                }
+                out.push_str(&xml[c.range()]);
+            }
         }
+    }
+    if !calc_done {
+        calc_items_xml(cache, &mut out);
     }
     out.push_str(&format!("</{name}>"));
 
@@ -3305,6 +3716,30 @@ pub(crate) fn cache_xml(cache: &Cache, source: Option<Area>) -> Option<(String, 
     Some((out, rec))
 }
 
+/// `<calculatedItems>` of a cache with calculated items: each one a formula
+/// and the shared item it fills (`cacheIndex`: `x` is a shared item index).
+fn calc_items_xml(cache: &Cache, out: &mut String) {
+    let mut list = Vec::new();
+    for (f, cf) in cache.fields.iter().enumerate() {
+        for c in &cf.calc_items {
+            let key = Val::Str(c.name.clone()).key();
+            if let Some(x) = cf.items.iter().position(|v| v.key() == key) {
+                list.push(format!(
+                    "<calculatedItem formula=\"{}\"><pivotArea cacheIndex=\"1\" outline=\"0\" fieldPosition=\"0\"><references count=\"1\"><reference field=\"{f}\" count=\"1\" selected=\"0\"><x v=\"{x}\"/></reference></references></pivotArea></calculatedItem>",
+                    esc(&c.formula)
+                ));
+            }
+        }
+    }
+    if !list.is_empty() {
+        out.push_str(&format!(
+            "<calculatedItems count=\"{}\">{}</calculatedItems>",
+            list.len(),
+            list.concat()
+        ));
+    }
+}
+
 /// `<sharedItems>` of a field: its items, or the kinds of values it has.
 fn shared_items_xml<'a>(cf: &CacheField, values: impl Iterator<Item = &'a Val>, out: &mut String) {
     let (mut s, mut n, mut b, mut d, mut e, mut m) = (false, false, false, false, false, false);
@@ -3329,6 +3764,8 @@ fn shared_items_xml<'a>(cf: &CacheField, values: impl Iterator<Item = &'a Val>, 
             Val::Missing => m = true,
         }
     }
+    // Calculated items' names are text items.
+    s |= !cf.calc_items.is_empty();
     let mut a = String::new();
     let kinds = [s, n, b, d, e].iter().filter(|x| **x).count();
     if !s && !b && !e {
@@ -3450,7 +3887,6 @@ impl Workbook {
         }
         let state = self.pivot_state();
         let sheet_id = self.sheet_id(sheet);
-        let theme = &self.model.get_model().workbook.theme;
         let mut out = Vec::new();
         for i in 0..self.pivots.defs.len() {
             if !self.pivot_present(&state, i) {
@@ -3467,7 +3903,7 @@ impl Workbook {
                 .style
                 .name
                 .as_deref()
-                .and_then(|n| builtin(n, theme))
+                .and_then(|n| self.pivot_style_def(n))
                 .map(Arc::new);
             out.push(Placed::new(i, def, area, style));
         }
@@ -3516,7 +3952,78 @@ impl Workbook {
         name: &str,
         options: &crate::PivotStyleOptions,
     ) -> Option<Vec<Vec<TableCellLook>>> {
-        let s = builtin(name, &self.model.get_model().workbook.theme)?;
+        let s = self.pivot_style_def(name)?;
+        Some(preview_of(&s, name, options))
+    }
+
+    /// How a PivotTable style being made (New / Modify PivotTable Style)
+    /// draws the preview pivot table, with every option on.
+    pub fn pivot_style_spec_preview(
+        &self,
+        spec: &crate::TableStyleSpec,
+    ) -> Vec<Vec<TableCellLook>> {
+        let s = PivotStyleDef::from_table_def(&spec.def());
+        let options = crate::PivotStyleOptions {
+            name: None,
+            row_headers: true,
+            column_headers: true,
+            banded_rows: true,
+            banded_columns: false,
+        };
+        preview_of(&s, &spec.name, &options)
+    }
+
+    /// PivotTable style `name`: the workbook's own, else a built-in one.
+    pub(crate) fn pivot_style_def(&self, name: &str) -> Option<PivotStyleDef> {
+        match self.custom_pivot_style(name) {
+            Some(d) => Some(PivotStyleDef::from_table_def(&d)),
+            None => builtin(name, &self.model.get_model().workbook.theme),
+        }
+    }
+
+    /// Pivot tables styled `old` get style `new` (no style for `None`), in
+    /// the current history state (part of the caller's undo step).
+    pub(crate) fn restyle_pivots(&mut self, old: &str, new: Option<&str>) -> Result<()> {
+        let state = self.pivot_state();
+        let users: Vec<usize> = (0..self.pivots.defs.len())
+            .filter(|&i| self.pivot_present(&state, i))
+            .filter(|&i| {
+                self.pivot_def(&state, i)
+                    .style
+                    .name
+                    .as_deref()
+                    .is_some_and(|n| n.eq_ignore_ascii_case(old))
+            })
+            .collect();
+        if users.is_empty() {
+            return Ok(());
+        }
+        self.keep_pivot_records()
+            .map_err(|e| anyhow!("can't restyle the PivotTables: {e}"))?;
+        let mut next = (*state).clone();
+        for i in users {
+            let mut laid = match state.defs.get(&i) {
+                Some(l) => (**l).clone(),
+                None => laid_of(&self.pivots.defs[i]),
+            };
+            laid.def.style.name = new.map(str::to_owned);
+            next.defs.insert(i, Arc::new(laid));
+        }
+        self.history.set_pivot_state(Arc::new(next));
+        self.cache.borrow_mut().pivots.clear();
+        Ok(())
+    }
+}
+
+/// The preview pivot table of the style gallery drawn in `s`: a header
+/// row, two outer items with two inner ones each and a grand total row; a
+/// label column, two value columns and a grand total column.
+fn preview_of(
+    s: &PivotStyleDef,
+    name: &str,
+    options: &crate::PivotStyleOptions,
+) -> Vec<Vec<TableCellLook>> {
+    {
         let style = StyleInfo {
             name: Some(name.to_owned()),
             row_headers: options.row_headers,
@@ -3549,13 +4056,13 @@ impl Workbook {
             rows: &rows,
             cols: &cols,
         };
-        Some(
-            (0..8)
-                .map(|r| (0..4).map(|c| look_of(&s, &frame, r, c)).collect())
-                .collect(),
-        )
+        (0..8)
+            .map(|r| (0..4).map(|c| look_of(s, &frame, r, c)).collect())
+            .collect()
     }
+}
 
+impl Workbook {
     /// The look the pivot table style gives cell `(row, col)`.
     pub(crate) fn pivot_cell_look(&self, sheet: u32, row: u32, col: u32) -> Option<TableCellLook> {
         self.placed_pivots(sheet)
@@ -4254,6 +4761,7 @@ impl Workbook {
                 out.replaced.insert(rp.clone(), rec.into_bytes());
             }
         }
+        self.slicer_saves(&mut out.replaced);
         out
     }
 

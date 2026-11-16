@@ -45,6 +45,7 @@ mod shape_edit;
 pub mod shape_format;
 mod sheet_tabs;
 mod shift;
+pub mod slicer;
 mod sort;
 mod table;
 mod table_edit;
@@ -79,7 +80,7 @@ pub use validation_edit::{
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Cursor, Seek};
 use std::path::{Path, PathBuf};
@@ -148,7 +149,9 @@ pub use print::{
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 pub use sort::SortKey;
 pub use table::{Elem as TableElementFormat, FillPattern, TableCellLook, TableInfo};
-pub use table_style_edit::{DEFAULT_TABLE_STYLE, TableElement, TableStyleSpec};
+pub use table_style_edit::{
+    DEFAULT_PIVOT_STYLE, DEFAULT_TABLE_STYLE, TableElement, TableStyleSpec,
+};
 pub use validation::{
     ErrorStyle, ListItem, Message, Validation, ValidationOperator, ValidationType,
 };
@@ -219,6 +222,8 @@ struct Cache {
     hidden_rows: HashMap<u32, std::sync::Arc<std::collections::HashSet<u32>>>,
     /// Each sheet's notes at the cells they are on now (`notes`).
     notes: HashMap<u32, std::sync::Arc<notes::SheetNotes>>,
+    /// Slicers as they show, by `(sheetId, name)` (`slicer`).
+    slicers: HashMap<(u32, String), Option<slicer::SlicerView>>,
 }
 
 /// When formulas are recalculated, like Excel's calculation options.
@@ -1449,13 +1454,7 @@ impl Workbook {
                 p
             },
             chart_sheets: self.chart_sheet_plans(),
-            saved_pictures: self
-                .model
-                .get_model()
-                .kantor_saved_picture_cells()
-                .into_iter()
-                .map(|(sheet, row, col)| (self.sheet_id(sheet), row as u32 - 1, col as u32 - 1))
-                .collect(),
+            pictures: self.cell_pictures(),
         }
     }
 }
@@ -1487,9 +1486,8 @@ struct XlsxParts {
     drawings: HashMap<u32, Vec<drawing::SaveEdit>>,
     patches: preserve::Patches,
     chart_sheets: Option<Vec<preserve::ChartSheetPlan>>,
-    /// Cells showing the picture the file saved for them (rich values), by
-    /// `(sheetId, row, col)`, 0-based.
-    saved_pictures: HashSet<(u32, u32, u32)>,
+    /// The pictures cells show (saved as rich values).
+    pictures: Vec<preserve::CellPicture>,
 }
 
 /// IronCalc's `.xlsx` of `model`, with the parts of `original` it doesn't
@@ -1531,8 +1529,6 @@ fn build_xlsx(
             columns: t.columns.iter().map(|c| (c.id, c.name.clone())).collect(),
         })
     };
-    let saved_picture =
-        |sheet_id: u32, row: u32, col: u32| parts.saved_pictures.contains(&(sheet_id, row, col));
     let ctx = preserve::Context {
         pivots: &parts.pivots,
         tabs: &parts.tabs,
@@ -1543,7 +1539,7 @@ fn build_xlsx(
         drawings: &parts.drawings,
         patches: &parts.patches,
         chart_sheets: parts.chart_sheets.as_deref(),
-        saved_picture: &saved_picture,
+        pictures: &parts.pictures,
     };
     Ok(preserve::finish(written, original, &ctx))
 }

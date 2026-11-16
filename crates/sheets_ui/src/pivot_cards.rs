@@ -8,6 +8,9 @@
 //!   levels, the number of days), as Excel's Grouping dialog; **Group
 //!   Selection** reuses the item picker; **Ungroup** is a menu item.
 //! * **Calculated Field**: a name and a formula over the fields' names.
+//! * **Calculated Item** (a row or column field's menu): a name and a
+//!   formula over the field's items; its existing calculated items can be
+//!   picked to change or delete.
 //! * **PivotTable Styles**: the gallery of the 84 built-in styles drawn by
 //!   the engine, with the style options.
 //!
@@ -19,7 +22,7 @@ use gpui_kit::component::{
     checkbox::Checkbox,
     h_flex,
     input::{Input, InputEvent, InputState},
-    menu::{DropdownMenu as _, PopupMenuItem},
+    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
     v_flex,
 };
 use gpui_kit::prelude::*;
@@ -60,8 +63,10 @@ pub(crate) struct GroupCard {
     _subs: Vec<Subscription>,
 }
 
-/// The Insert Calculated Field card.
+/// The Insert Calculated Field card, or Insert Calculated Item of field
+/// `item_field`.
 pub(crate) struct CalcCard {
+    pub item_field: Option<usize>,
     pub name: Entity<InputState>,
     pub formula: Entity<InputState>,
     pub error: Option<String>,
@@ -1133,11 +1138,35 @@ impl SheetsView {
         self.close_pivot_cards();
         if let Some(p) = self.pivot_panel.as_mut() {
             p.calc_card = Some(CalcCard {
+                item_field: None,
                 name: name_i,
                 formula: formula_i,
                 error: None,
                 _subs: subs,
             });
+        }
+        cx.notify();
+    }
+
+    /// Insert Calculated Item in field `field` (a row or column field).
+    pub(crate) fn open_calc_item_card(
+        &mut self,
+        field: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(l) = self.panel_layout() else { return };
+        let Some(f) = l.fields.get(field) else { return };
+        let name = (1..)
+            .map(|k| format!("{}{k}", i18n::t("Formula")))
+            .find(|n| !f.items.iter().any(|i| i.label.eq_ignore_ascii_case(n)))
+            .unwrap_or_default();
+        self.open_calc_card(None, window, cx);
+        if let Some(c) = self.pivot_panel.as_mut().and_then(|p| p.calc_card.as_mut()) {
+            c.item_field = Some(field);
+            let (n, fo) = (c.name.clone(), c.formula.clone());
+            n.update(cx, |i, cx| i.set_value(name, window, cx));
+            fo.update(cx, |i, cx| i.set_value("= 0", window, cx));
         }
         cx.notify();
     }
@@ -1149,9 +1178,13 @@ impl SheetsView {
         let name = c.name.read(cx).value().trim().to_owned();
         let formula = c.formula.read(cx).value().trim().to_owned();
         let n = name.clone();
+        let item_field = c.item_field;
         let ok = self.pivot_op(
             tf("{} saved", &[&name]),
-            move |book, s, r, col| book.set_pivot_calculated_field(s, r, col, &n, &formula),
+            move |book, s, r, col| match item_field {
+                Some(f) => book.set_pivot_calculated_item(s, r, col, f, &n, &formula),
+                None => book.set_pivot_calculated_field(s, r, col, &n, &formula),
+            },
             window,
             cx,
         );
@@ -1166,6 +1199,26 @@ impl SheetsView {
             }
             cx.notify();
         }
+    }
+
+    /// Delete the calculated item named in the Calculated Item card.
+    fn delete_calc_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(c) = self.pivot_panel.as_ref().and_then(|p| p.calc_card.as_ref()) else {
+            return;
+        };
+        let Some(field) = c.item_field else { return };
+        let name = c.name.read(cx).value().trim().to_owned();
+        let n = name.clone();
+        let ok = self.pivot_op(
+            tf("{} deleted", &[&name]),
+            move |book, s, r, col| book.delete_pivot_calculated_item(s, r, col, field, &n),
+            window,
+            cx,
+        );
+        if ok && let Some(p) = self.pivot_panel.as_mut() {
+            p.calc_card = None;
+        }
+        cx.notify();
     }
 
     /// Delete calculated field `field`.
@@ -1199,12 +1252,23 @@ impl SheetsView {
         let t = tokens(cx);
         let view = cx.entity().downgrade();
         let mut fields = h_flex().flex_wrap().gap(SPACE_1);
-        for (k, f) in l.fields.iter().enumerate() {
-            if f.formula.is_some() || f.group_base.is_some() {
-                continue;
-            }
+        // The names the formula can use: fields, or the field's items.
+        let names: Vec<String> = match c.item_field.and_then(|f| l.fields.get(f)) {
+            Some(f) => f.items.iter().map(|i| i.label.clone()).collect(),
+            None => l
+                .fields
+                .iter()
+                .filter(|f| f.formula.is_none() && f.group_base.is_none())
+                .map(|f| f.name.clone())
+                .collect(),
+        };
+        let calc_items: Vec<(String, String)> = c
+            .item_field
+            .and_then(|f| l.fields.get(f))
+            .map(|f| f.calc_items.clone())
+            .unwrap_or_default();
+        for (k, name) in names.into_iter().enumerate() {
             let v = view.clone();
-            let name = f.name.clone();
             fields = fields.child(
                 Button::new(("pivot-calc-field", k))
                     .xsmall()
@@ -1240,13 +1304,53 @@ impl SheetsView {
                     }),
             );
         }
+        // A calculated item's existing ones: click to change or delete.
+        let mut existing = h_flex().flex_wrap().gap(SPACE_1);
+        for (k, (name, formula)) in calc_items.iter().enumerate() {
+            let v = view.clone();
+            let (name, formula) = (name.clone(), formula.clone());
+            existing = existing.child(
+                Button::new(("pivot-calc-item", k))
+                    .xsmall()
+                    .outline()
+                    .label(SharedString::from(name.clone()))
+                    .on_click(move |_, w, cx| {
+                        let _ = v.update(cx, |this, cx| {
+                            let Some(c) =
+                                this.pivot_panel.as_ref().and_then(|p| p.calc_card.as_ref())
+                            else {
+                                return;
+                            };
+                            let (n, f) = (c.name.clone(), c.formula.clone());
+                            n.update(cx, |i, cx| i.set_value(name.clone(), w, cx));
+                            f.update(cx, |i, cx| i.set_value(formula.clone(), w, cx));
+                        });
+                    }),
+            );
+        }
+        let typed = c.name.read(cx).value().trim().to_owned();
+        let deletable = calc_items
+            .iter()
+            .any(|(n, _)| n.eq_ignore_ascii_case(&typed));
+        let del = view.clone();
+        let item_mode = c.item_field.is_some();
+        let (title, hint) = match c.item_field.and_then(|f| l.fields.get(f)) {
+            Some(f) => (
+                tf("Insert Calculated Item in \"{}\"", &[&f.name]),
+                i18n::t("Items · click to insert into the formula"),
+            ),
+            None => (
+                i18n::t("Insert Calculated Field").to_owned(),
+                i18n::t("Fields · click to insert into the formula"),
+            ),
+        };
         let ok = view.clone();
         let cancel = view.clone();
         crate::pivot::card(cx)
             .child(
                 div()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(i18n::t("Insert Calculated Field")),
+                    .child(SharedString::from(title)),
             )
             .child(kantor_ui::components::section_label(i18n::t("Name"), cx))
             .child(Input::new(&c.name).small())
@@ -1256,9 +1360,31 @@ impl SheetsView {
                 div()
                     .text_size(FONT_SMALL)
                     .text_color(t.fg_muted)
-                    .child(i18n::t("Fields · click to insert into the formula")),
+                    .child(hint),
             )
             .child(fields)
+            .when(!calc_items.is_empty(), |d| {
+                d.child(kantor_ui::components::section_label(
+                    i18n::t("Calculated items · click to change"),
+                    cx,
+                ))
+                .child(existing)
+            })
+            .when(item_mode, |d| {
+                d.child(
+                    h_flex().child(
+                        Button::new("pivot-calc-item-delete")
+                            .xsmall()
+                            .ghost()
+                            .icon(gpui_kit::assets::IconName::Trash)
+                            .label(i18n::t("Delete"))
+                            .disabled(!deletable)
+                            .on_click(move |_, w, cx| {
+                                let _ = del.update(cx, |this, cx| this.delete_calc_item(w, cx));
+                            }),
+                    ),
+                )
+            })
             .when_some(c.error.clone(), |d, e| {
                 d.child(
                     div()
@@ -1364,6 +1490,7 @@ impl SheetsView {
         let opts = l.style.clone();
         let current = opts.name.clone();
         let close = view.clone();
+        let new_view = view.clone();
         let out = crate::pivot::card(cx).child(
             h_flex()
                 .child(
@@ -1371,6 +1498,16 @@ impl SheetsView {
                         .flex_1()
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(i18n::t("PivotTable Style")),
+                )
+                .child(
+                    Button::new("pivot-style-new")
+                        .ghost()
+                        .xsmall()
+                        .icon(gpui_kit::assets::IconName::Plus)
+                        .label(i18n::t("New PivotTable Style…"))
+                        .on_click(move |_, w, cx| {
+                            let _ = new_view.update(cx, |this, cx| this.new_pivot_style_doc(w, cx));
+                        }),
                 )
                 .child(
                     Button::new("pivot-styles-close")
@@ -1423,10 +1560,14 @@ impl SheetsView {
                     });
                 }),
         );
-        for (i, name) in pivot_style_names().into_iter().enumerate() {
+        let custom = book.custom_pivot_styles();
+        let names = custom.iter().cloned().chain(pivot_style_names());
+        for (i, name) in names.enumerate() {
             let Some(cells) = book.pivot_style_preview(&name, &opts) else {
                 continue;
             };
+            let is_custom = custom.contains(&name);
+            let (menu_name, mv) = (name.clone(), view.clone());
             let selected = current.as_deref() == Some(name.as_str());
             let v = view.clone();
             let tip: SharedString = style_label(&name).into();
@@ -1472,6 +1613,11 @@ impl SheetsView {
                         let _ = v.update(cx, |this, cx| {
                             this.edit_layout(|l| l.style.name = Some(n), w, cx)
                         });
+                    })
+                    .context_menu(move |menu, _, _| {
+                        crate::table_style_ui::style_menu_for(
+                            menu, &menu_name, is_custom, true, &mv,
+                        )
                     }),
             );
         }
@@ -1491,7 +1637,7 @@ impl SheetsView {
 }
 
 /// `PivotStyleMedium9` → `Medium 9`.
-fn style_label(name: &str) -> String {
+pub(crate) fn style_label(name: &str) -> String {
     for (family, label) in [
         ("Light", tk("Light")),
         ("Medium", tk("Medium")),

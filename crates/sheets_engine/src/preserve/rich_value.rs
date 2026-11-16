@@ -27,9 +27,7 @@ use std::sync::Arc;
 
 use roxmltree::{Document, Node};
 
-use super::{
-    Context, Original, Package, Rel, SheetKind, parse_rels, rels_part, resolve, workbook_sheets,
-};
+use super::{Original, Package, Rel, SheetKind, parse_rels, rels_part, resolve, workbook_sheets};
 
 const NS_RICH_DATA: &str = "http://schemas.microsoft.com/office/spreadsheetml/2017/richdata";
 const RVB_EXT: &str = "{3e2802c4-a4d2-4d8b-9148-e3be6c30e623}";
@@ -331,86 +329,6 @@ pub(crate) fn read(bytes: &[u8]) -> HashMap<(u32, u32, u32), RichPicture> {
     out
 }
 
-/// After the merge: the original's rich value metadata in the saved
-/// `metadata.xml`, and the cells that still show their saved picture
-/// written as Excel writes them. Does nothing when the original has none;
-/// an error leaves the package as it was.
-pub(crate) fn keep(pkg: &mut Package, original: &[u8], ctx: &Context) -> Result<(), String> {
-    let orig = Original::new(original)?;
-    let Some((parts, orig_sheets, _)) = rich_parts(&orig) else {
-        return Ok(());
-    };
-    let Some(meta) = parts
-        .get("sheetMetadata")
-        .and_then(|p| orig.text(p).ok().flatten())
-        .and_then(|x| read_metadata(&x))
-    else {
-        return Ok(());
-    };
-    if !meta.value.iter().any(Option::is_some) || rich_pictures(&orig, &parts).is_empty() {
-        return Ok(());
-    }
-    // Which cells keep their rich value: (sheetId, row, col) -> old vm.
-    let mut kept: Vec<(u32, (u32, u32), usize)> = Vec::new();
-    for s in orig_sheets.iter().filter(|s| s.kind == SheetKind::Work) {
-        let Some(xml) = orig.text(&s.part).ok().flatten() else {
-            continue;
-        };
-        for ((row, col), vm) in vm_cells(&xml) {
-            let rich = vm
-                .checked_sub(1)
-                .and_then(|i| meta.value.get(i).copied().flatten())
-                .is_some();
-            if rich && (ctx.saved_picture)(s.sheet_id, row, col) {
-                kept.push((s.sheet_id, (row, col), vm));
-            }
-        }
-    }
-    if kept.is_empty() {
-        return Ok(());
-    }
-    // The new value metadata: the original's rich value records, in order.
-    let mut renumber: HashMap<usize, usize> = HashMap::new();
-    let mut records = Vec::new();
-    for (i, f) in meta.value.iter().enumerate() {
-        if let Some(f) = f {
-            records.push(*f);
-            renumber.insert(i + 1, records.len());
-        }
-    }
-    let new_root = parse_rels(pkg.text("_rels/.rels")?.ok_or("no package relationships")?)?;
-    let (new_wb, new_wb_rels, _, new_sheets) =
-        workbook_sheets(&new_root, &|n| Ok(pkg.text(n)?.map(str::to_owned)))?;
-    let meta_part = new_wb_rels
-        .iter()
-        .find(|r| r.short_kind() == "sheetMetadata" && !r.external)
-        .and_then(|r| resolve(&new_wb, &r.target))
-        .ok_or("the saved workbook has no metadata part")?;
-    let saved_meta = pkg
-        .text(&meta_part)?
-        .ok_or("the saved metadata part is missing")?
-        .to_owned();
-    let new_meta = add_rich_metadata(&saved_meta, &meta.rvb, &records)?;
-    let mut sheet_texts = Vec::new();
-    for s in new_sheets.iter().filter(|s| s.kind == SheetKind::Work) {
-        let cells: HashMap<(u32, u32), usize> = kept
-            .iter()
-            .filter(|k| k.0 == s.sheet_id)
-            .filter_map(|k| Some((k.1, *renumber.get(&k.2)?)))
-            .collect();
-        if cells.is_empty() {
-            continue;
-        }
-        let xml = pkg.text(&s.part)?.ok_or("a saved sheet is missing")?;
-        sheet_texts.push((s.part.clone(), mark_cells(xml, &cells)));
-    }
-    pkg.set(&meta_part, new_meta.into_bytes());
-    for (part, xml) in sheet_texts {
-        pkg.set(&part, xml.into_bytes());
-    }
-    Ok(())
-}
-
 /// IronCalc's `metadata.xml` with an `XLRICHVALUE` type, its future
 /// metadata (`rvb`: rich value indices) and value metadata (`records`:
 /// indices into the future metadata).
@@ -555,6 +473,412 @@ fn tag_attrs(tag: &str) -> Vec<(&str, &str)> {
         rest = &after[end + 1..];
     }
     out
+}
+
+// ---------------------------------------------------------------- writing
+
+/// A picture a cell shows at save time (an IMAGE formula's, or one placed
+/// in the cell), to save as Excel's rich value.
+#[derive(Clone, Debug)]
+pub(crate) struct CellPicture {
+    pub sheet_id: u32,
+    /// 0-based.
+    pub row: u32,
+    pub col: u32,
+    pub data: Arc<Vec<u8>>,
+    /// The picture's address (an IMAGE formula's URL), if known.
+    pub url: Option<String>,
+    pub alt: String,
+    /// IMAGE's sizing argument (0-3).
+    pub sizing: u8,
+    /// A picture placed in the cell (no formula): `_localImage`.
+    pub placed: bool,
+}
+
+const REL_RICH_VALUE: &str =
+    "http://schemas.microsoft.com/office/2017/06/relationships/rdRichValue";
+const REL_RICH_STRUCTURE: &str =
+    "http://schemas.microsoft.com/office/2017/06/relationships/rdRichValueStructure";
+const REL_WEB_IMAGE: &str =
+    "http://schemas.microsoft.com/office/2020/07/relationships/rdRichValueWebImage";
+const REL_VALUE_REL: &str =
+    "http://schemas.microsoft.com/office/2022/10/relationships/richValueRel";
+const NS_WEB_IMAGE: &str =
+    "http://schemas.microsoft.com/office/spreadsheetml/2020/richdatawebimage";
+const NS_VALUE_REL: &str = "http://schemas.microsoft.com/office/spreadsheetml/2022/richvaluerel";
+const NS_R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const NS_MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const CT_RICH: [(&str, &str); 4] = [
+    (
+        "rdrichvalue.xml",
+        "application/vnd.ms-excel.rdrichvalue+xml",
+    ),
+    (
+        "rdrichvaluestructure.xml",
+        "application/vnd.ms-excel.rdrichvaluestructure+xml",
+    ),
+    (
+        "rdRichValueWebImage.xml",
+        "application/vnd.ms-excel.rdrichvaluewebimage+xml",
+    ),
+    (
+        "richValueRel.xml",
+        "application/vnd.ms-excel.richvaluerel+xml",
+    ),
+];
+const CT_METADATA: &str =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml";
+
+/// A picture's file extension and content type, from its bytes.
+fn image_kind(data: &[u8]) -> (&'static str, &'static str) {
+    match data {
+        [0x89, b'P', b'N', b'G', ..] => ("png", "image/png"),
+        [0xFF, 0xD8, ..] => ("jpeg", "image/jpeg"),
+        [b'G', b'I', b'F', ..] => ("gif", "image/gif"),
+        [b'B', b'M', ..] => ("bmp", "image/bmp"),
+        [
+            b'R',
+            b'I',
+            b'F',
+            b'F',
+            _,
+            _,
+            _,
+            _,
+            b'W',
+            b'E',
+            b'B',
+            b'P',
+            ..,
+        ] => ("webp", "image/webp"),
+        [b'I', b'I', 42, 0, ..] | [b'M', b'M', 0, 42, ..] => ("tiff", "image/tiff"),
+        [0, 0, 1, 0, ..] => ("ico", "image/x-icon"),
+        _ => ("png", "image/png"),
+    }
+}
+
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Save `pictures` as Excel saves pictures in cells: the rich value parts
+/// (structures, values, the web image and local image lists with their
+/// pictures), the `XLRICHVALUE` metadata and the cells marked `t="e" vm`.
+/// Rich value parts already in the package (carried from the original) are
+/// replaced. Nothing changes when `pictures` is empty.
+pub(crate) fn write(pkg: &mut Package, pictures: &[CellPicture]) -> Result<(), String> {
+    if pictures.is_empty() {
+        return Ok(());
+    }
+    let root = parse_rels(pkg.text("_rels/.rels")?.ok_or("no package relationships")?)?;
+    let (wb, mut wb_rels, _, sheets) =
+        workbook_sheets(&root, &|n| Ok(pkg.text(n)?.map(str::to_owned)))?;
+    let wb_rels_part = rels_part(&wb);
+    let dir = wb
+        .rsplit_once('/')
+        .map_or(String::new(), |(d, _)| format!("{d}/"));
+
+    // The original's rich value parts out, with the pictures only they use.
+    let mut dropped: Vec<String> = Vec::new();
+    let old: Vec<(String, String)> = wb_rels
+        .iter()
+        .filter(|r| {
+            !r.external
+                && [
+                    REL_RICH_VALUE,
+                    REL_RICH_STRUCTURE,
+                    REL_WEB_IMAGE,
+                    REL_VALUE_REL,
+                ]
+                .contains(&r.kind.as_str())
+        })
+        .filter_map(|r| Some((r.id.clone(), resolve(&wb, &r.target)?)))
+        .collect();
+    let mut media: Vec<String> = Vec::new();
+    for (_, part) in &old {
+        let rp = rels_part(part);
+        if let Some(text) = pkg.text(&rp)? {
+            for r in parse_rels(text)? {
+                if !r.external
+                    && let Some(t) = resolve(part, &r.target)
+                {
+                    media.push(t);
+                }
+            }
+        }
+        pkg.remove(part);
+        pkg.remove(&rp);
+        dropped.push(part.clone());
+    }
+    wb_rels.retain(|r| !old.iter().any(|(id, _)| *id == r.id));
+    // Pictures nothing else points to go too.
+    let still: Vec<String> = pkg
+        .parts()
+        .filter(|p| p.ends_with(".rels"))
+        .map(str::to_owned)
+        .collect();
+    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for rp in &still {
+        let Some(text) = pkg.text(rp)? else { continue };
+        let Ok(rels) = parse_rels(text) else { continue };
+        let source = rp
+            .replace("_rels/", "")
+            .trim_end_matches(".rels")
+            .to_owned();
+        for r in rels.iter().filter(|r| !r.external) {
+            if let Some(t) = resolve(&source, &r.target) {
+                used.insert(t.to_lowercase());
+            }
+        }
+    }
+    for m in media {
+        if !used.contains(&m.to_lowercase()) {
+            pkg.remove(&m);
+            dropped.push(m);
+        }
+    }
+
+    // The pictures, each once (several cells may show the same).
+    let rich = format!("{dir}richData/");
+    let mut parts_of: Vec<(Arc<Vec<u8>>, String)> = Vec::new();
+    let mut defaults: Vec<(&str, &str)> = Vec::new();
+    let mut picture_part = |pkg: &mut Package, data: &Arc<Vec<u8>>| -> String {
+        if let Some((_, p)) = parts_of
+            .iter()
+            .find(|(d, _)| Arc::ptr_eq(d, data) || **d == **data)
+        {
+            return p.clone();
+        }
+        let (ext, ct) = image_kind(data);
+        let part = super::free_name(pkg, &format!("{dir}media/image"), &format!(".{ext}"));
+        pkg.set(&part, data.to_vec());
+        if !defaults.iter().any(|(e, _)| *e == ext) {
+            defaults.push((ext, ct));
+        }
+        parts_of.push((data.clone(), part.clone()));
+        part
+    };
+    let mut web_list = String::new();
+    let mut web_rels: Vec<Rel> = Vec::new();
+    let mut local_list = String::new();
+    let mut local_rels: Vec<Rel> = Vec::new();
+    let mut values = String::new();
+    let web_part = format!("{rich}rdRichValueWebImage.xml");
+    let local_part = format!("{rich}richValueRel.xml");
+    let (mut web_n, mut local_n) = (0usize, 0usize);
+    for p in pictures {
+        let image = picture_part(pkg, &p.data);
+        if p.placed {
+            let id = format!("rId{}", local_rels.len() + 1);
+            local_rels.push(Rel {
+                id: id.clone(),
+                kind: format!("{}image", super::REL_BASE),
+                target: super::relative(&local_part, &image),
+                external: false,
+            });
+            local_list.push_str(&format!("<rel r:id=\"{id}\"/>"));
+            values.push_str(&format!("<rv s=\"1\"><v>{local_n}</v><v>5</v></rv>"));
+            local_n += 1;
+        } else {
+            let mut srd = String::from("<webImageSrd>");
+            if let Some(url) = &p.url {
+                let id = format!("rId{}", web_rels.len() + 1);
+                web_rels.push(Rel {
+                    id: id.clone(),
+                    kind: format!("{}hyperlink", super::REL_BASE),
+                    target: url.clone(),
+                    external: true,
+                });
+                srd.push_str(&format!("<address r:id=\"{id}\"/>"));
+            }
+            let id = format!("rId{}", web_rels.len() + 1);
+            web_rels.push(Rel {
+                id: id.clone(),
+                kind: format!("{}image", super::REL_BASE),
+                target: super::relative(&web_part, &image),
+                external: false,
+            });
+            srd.push_str(&format!("<blip r:id=\"{id}\"/></webImageSrd>"));
+            web_list.push_str(&srd);
+            values.push_str(&format!(
+                "<rv s=\"0\"><v>{web_n}</v><v>1</v><v>1</v><v>{}</v><v>{}</v></rv>",
+                p.sizing,
+                esc(&p.alt)
+            ));
+            web_n += 1;
+        }
+    }
+    let head = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n";
+    let structures = format!(
+        "{head}<rvStructures xmlns=\"{NS_RICH_DATA}\" count=\"2\"><s t=\"_webimage\"><k n=\"WebImageIdentifier\" t=\"i\"/><k n=\"CalcOrigin\" t=\"i\"/><k n=\"ComputedImage\" t=\"b\"/><k n=\"ImageSizing\" t=\"i\"/><k n=\"Text\" t=\"s\"/></s><s t=\"_localImage\"><k n=\"_rvRel:LocalImageIdentifier\" t=\"i\"/><k n=\"CalcOrigin\" t=\"i\"/></s></rvStructures>"
+    );
+    let rv = format!(
+        "{head}<rvData xmlns=\"{NS_RICH_DATA}\" count=\"{}\">{values}</rvData>",
+        pictures.len()
+    );
+    let mut new_parts: Vec<(String, &str)> = vec![
+        (format!("{rich}rdrichvalue.xml"), REL_RICH_VALUE),
+        (
+            format!("{rich}rdrichvaluestructure.xml"),
+            REL_RICH_STRUCTURE,
+        ),
+    ];
+    pkg.set(&new_parts[0].0, rv.into_bytes());
+    pkg.set(&new_parts[1].0, structures.into_bytes());
+    if web_n > 0 {
+        pkg.set(
+            &web_part,
+            format!("{head}<webImagesSrd xmlns=\"{NS_WEB_IMAGE}\" xmlns:r=\"{NS_R}\">{web_list}</webImagesSrd>")
+                .into_bytes(),
+        );
+        pkg.set(
+            &rels_part(&web_part),
+            super::write_rels(&web_rels).into_bytes(),
+        );
+        new_parts.push((web_part.clone(), REL_WEB_IMAGE));
+    }
+    if local_n > 0 {
+        pkg.set(
+            &local_part,
+            format!("{head}<richValueRels xmlns=\"{NS_VALUE_REL}\" xmlns:r=\"{NS_R}\">{local_list}</richValueRels>")
+                .into_bytes(),
+        );
+        pkg.set(
+            &rels_part(&local_part),
+            super::write_rels(&local_rels).into_bytes(),
+        );
+        new_parts.push((local_part.clone(), REL_VALUE_REL));
+    }
+    let mut ids = super::IdAlloc::new(&wb_rels);
+    for (part, kind) in &new_parts {
+        wb_rels.push(Rel {
+            id: ids.next(),
+            kind: (*kind).to_owned(),
+            target: super::relative(&wb, part),
+            external: false,
+        });
+    }
+
+    // The metadata: IronCalc's (dynamic arrays), with the rich values.
+    let meta_part = wb_rels
+        .iter()
+        .find(|r| r.short_kind() == "sheetMetadata" && !r.external)
+        .and_then(|r| resolve(&wb, &r.target));
+    let (meta_part, base, meta_added) = match meta_part.and_then(|p| {
+        let text = pkg.text(&p).ok()??.to_owned();
+        Some((p, text))
+    }) {
+        Some((p, text)) => (p, text, false),
+        None => {
+            let p = format!("{dir}metadata.xml");
+            wb_rels.push(Rel {
+                id: ids.next(),
+                kind: format!("{}sheetMetadata", super::REL_BASE),
+                target: super::relative(&wb, &p),
+                external: false,
+            });
+            (
+                p,
+                format!(
+                    "{head}<metadata xmlns=\"{NS_MAIN}\"><metadataTypes count=\"0\"></metadataTypes></metadata>"
+                ),
+                true,
+            )
+        }
+    };
+    let all: Vec<usize> = (0..pictures.len()).collect();
+    let meta = add_rich_metadata(&base, &all, &all)?;
+    pkg.set(&meta_part, meta.into_bytes());
+    pkg.set(&wb_rels_part, super::write_rels(&wb_rels).into_bytes());
+
+    // The cells.
+    for s in sheets.iter().filter(|s| s.kind == SheetKind::Work) {
+        let cells: HashMap<(u32, u32), usize> = pictures
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.sheet_id == s.sheet_id)
+            .map(|(i, p)| ((p.row, p.col), i + 1))
+            .collect();
+        if cells.is_empty() {
+            continue;
+        }
+        let xml = pkg.text(&s.part)?.ok_or("a saved sheet is missing")?;
+        let marked = mark_cells(xml, &cells);
+        pkg.set(&s.part, marked.into_bytes());
+    }
+
+    // Content types.
+    let types = pkg
+        .text(super::CONTENT_TYPES)?
+        .ok_or("no content types")?
+        .to_owned();
+    let doc = Document::parse(&types).map_err(|e| e.to_string())?;
+    let mut edits = Vec::new();
+    let mut have_defaults: Vec<String> = Vec::new();
+    for n in doc.root_element().children().filter(|n| n.is_element()) {
+        let name = n.attribute("PartName").unwrap_or_default();
+        let name = name.strip_prefix('/').unwrap_or(name);
+        let ours = new_parts.iter().any(|(p, _)| p.eq_ignore_ascii_case(name));
+        if n.tag_name().name() == "Override"
+            && (ours || dropped.iter().any(|d| d.eq_ignore_ascii_case(name)))
+        {
+            edits.push((n.range(), String::new()));
+        }
+        if n.tag_name().name() == "Default"
+            && let Some(e) = n.attribute("Extension")
+        {
+            have_defaults.push(e.to_lowercase());
+        }
+    }
+    let mut adds = String::new();
+    for (ext, ct) in defaults {
+        if !have_defaults.contains(&ext.to_owned()) {
+            adds.push_str(&format!(
+                "<Default Extension=\"{ext}\" ContentType=\"{ct}\"/>"
+            ));
+        }
+    }
+    for (part, _) in &new_parts {
+        let file = part.rsplit('/').next().unwrap_or_default();
+        if let Some((_, ct)) = CT_RICH.iter().find(|(f, _)| *f == file) {
+            adds.push_str(&format!(
+                "<Override PartName=\"/{part}\" ContentType=\"{ct}\"/>"
+            ));
+        }
+    }
+    if meta_added {
+        adds.push_str(&format!(
+            "<Override PartName=\"/{meta_part}\" ContentType=\"{CT_METADATA}\"/>"
+        ));
+    }
+    // Defaults go before the overrides.
+    let first_override = types
+        .find("<Override")
+        .unwrap_or_else(|| types.rfind("</Types>").unwrap_or(types.len()));
+    let (def_adds, over_adds): (String, String) = {
+        let mut d = String::new();
+        let mut o = String::new();
+        let mut rest = adds.as_str();
+        while let Some(end) = rest.find("/>") {
+            let item = &rest[..end + 2];
+            if item.starts_with("<Default") {
+                d.push_str(item);
+            } else {
+                o.push_str(item);
+            }
+            rest = &rest[end + 2..];
+        }
+        (d, o)
+    };
+    edits.push((first_override..first_override, def_adds));
+    let at = types.rfind("</Types>").ok_or("content types not closed")?;
+    edits.push((at..at, over_adds));
+    let new = super::apply_edits(&types, edits);
+    pkg.set(super::CONTENT_TYPES, new.into_bytes());
+    Ok(())
 }
 
 #[cfg(test)]

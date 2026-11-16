@@ -478,3 +478,111 @@ fn pictures_excel_saved_show_offline_and_are_kept_on_save() {
         std::fs::copy(&again, out.join("rich-edited.xlsx")).unwrap();
     }
 }
+
+/// Excel's saved pictures follow their cells when rows and columns are
+/// inserted or deleted: shown there, and saved there.
+#[test]
+fn saved_pictures_follow_their_cells() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = dir.path().join("rich.xlsx");
+    rich_workbook(&original);
+    let mut wb = Workbook::open(&original).unwrap();
+    // A row above and a column before: B2 is C3, B3 C4, B4 C5.
+    wb.insert_rows(0, 0, 1).unwrap();
+    wb.insert_columns(0, 0, 1).unwrap();
+    wb.recalculate();
+    assert_eq!(wb.cell_image(0, 2, 2).unwrap().pixel_width, 40);
+    assert_eq!(wb.cell_image(0, 3, 2).unwrap().pixel_width, 8);
+    assert_eq!(wb.cell_image(0, 4, 2).unwrap().pixel_width, 10);
+    assert!(wb.cell_image(0, 1, 1).is_none());
+    // B4 (now C5) deleted with its row: its picture goes.
+    wb.delete_rows(0, 4, 4).unwrap();
+    wb.recalculate();
+    let saved = dir.path().join("moved.xlsx");
+    wb.save_as(&saved).unwrap();
+    if let Ok(d) = std::env::var("KANTOR_PIVOT_SAMPLES") {
+        std::fs::copy(&saved, Path::new(&d).join("image-moved.xlsx")).unwrap();
+        std::fs::copy(&original, Path::new(&d).join("image-original.xlsx")).unwrap();
+    }
+    let p = parts(&saved);
+    let sheet = text(&p, "xl/worksheets/sheet1.xml");
+    assert!(sheet.contains(r#"<c r="C3" t="e" vm="1">"#), "{sheet}");
+    assert!(sheet.contains(r#"<c r="C4" t="e" vm="2">"#), "{sheet}");
+    assert!(!sheet.contains(r#"vm="3""#), "{sheet}");
+    assert!(sheets_engine::package_problems(&std::fs::read(&saved).unwrap()).is_empty());
+    let back = Workbook::open(&saved).unwrap();
+    assert_eq!(back.cell_image(0, 2, 2).unwrap().pixel_width, 40);
+    assert_eq!(back.cell_image(0, 3, 2).unwrap().pixel_width, 8);
+    // Undone: back where they were, and saved there.
+    assert!(wb.undo().unwrap());
+    assert!(wb.undo().unwrap());
+    assert!(wb.undo().unwrap());
+    wb.recalculate();
+    assert_eq!(wb.cell_image(0, 1, 1).unwrap().pixel_width, 40);
+    assert_eq!(wb.cell_image(0, 3, 1).unwrap().pixel_width, 10);
+    let again = dir.path().join("undone.xlsx");
+    wb.save_as(&again).unwrap();
+    let sheet = text(&parts(&again), "xl/worksheets/sheet1.xml");
+    assert!(sheet.contains(r#"<c r="B2" t="e" vm="1">"#), "{sheet}");
+    assert!(sheet.contains(r#"<c r="B4" t="e" vm="3">"#), "{sheet}");
+}
+
+/// A picture downloaded in Kantor is saved into the file as Excel saves
+/// IMAGE pictures (a `_webimage` rich value with its address), so Excel and
+/// Kantor show it without downloading; saved again, nothing doubles.
+#[test]
+fn downloaded_pictures_are_saved_as_rich_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = Workbook::new_empty().unwrap();
+    wb.set_web_enabled(true);
+    wb.set_input(
+        0,
+        1,
+        1,
+        "=IMAGE(\"https://kantor-test.invalid/a.png\",\"Logo\")",
+    )
+    .unwrap();
+    wb.set_input(0, 4, 2, "=IMAGE(\"https://kantor-test.invalid/b.png\")")
+        .unwrap();
+    wb.recalculate();
+    for (url, w) in [("a", 12), ("b", 6)] {
+        wb.set_web_result(
+            &format!("https://kantor-test.invalid/{url}.png"),
+            WebKind::Image,
+            web::answer(png(w, w), WebKind::Image),
+        );
+    }
+    wb.recalculate();
+    assert_eq!(wb.cell_image(0, 1, 1).unwrap().pixel_width, 12);
+    let path = dir.path().join("downloaded.xlsx");
+    wb.save_as(&path).unwrap();
+    assert_eq!(wb.save_notes(), &[] as &[String], "{:?}", wb.save_notes());
+    let p = parts(&path);
+    let sheet = text(&p, "xl/worksheets/sheet1.xml");
+    assert!(
+        sheet.contains(r#"<c r="B2" t="e" vm="1"><f>_xlfn.IMAGE("#),
+        "{sheet}"
+    );
+    assert!(sheet.contains(r#"<c r="C5" t="e" vm="2">"#), "{sheet}");
+    let rv = text(&p, "xl/richData/rdrichvalue.xml");
+    assert!(rv.contains("<v>Logo</v>"), "{rv}");
+    let rels = text(&p, "xl/richData/_rels/rdRichValueWebImage.xml.rels");
+    assert!(rels.contains("https://kantor-test.invalid/a.png"), "{rels}");
+    assert!(sheets_engine::package_problems(&std::fs::read(&path).unwrap()).is_empty());
+    if let Ok(d) = std::env::var("KANTOR_PIVOT_SAMPLES") {
+        std::fs::copy(&path, Path::new(&d).join("image-downloaded.xlsx")).unwrap();
+    }
+    // Opened offline: the pictures show.
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(back.cell_image(0, 1, 1).unwrap().pixel_width, 12);
+    assert_eq!(back.cell_image(0, 4, 2).unwrap().pixel_width, 6);
+    assert_eq!(back.cell_image(0, 1, 1).unwrap().alt_text, "Logo");
+    // Saved twice in the session: one set of rich data, no extra pictures.
+    let again = dir.path().join("again.xlsx");
+    wb.save_as(&again).unwrap();
+    let p2 = parts(&again);
+    let media = p2.keys().filter(|k| k.starts_with("xl/media/")).count();
+    assert_eq!(media, 2, "{:?}", p2.keys().collect::<Vec<_>>());
+    assert_eq!(text(&p2, "xl/metadata.xml").matches("<xlrd:rvb").count(), 2);
+    assert!(sheets_engine::package_problems(&std::fs::read(&again).unwrap()).is_empty());
+}
