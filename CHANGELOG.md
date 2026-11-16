@@ -9,6 +9,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-17
+
+Docs text boxes are edited in place with their formatting, undo and Track Changes, as in Word.
+SmartArt text shrinks to fit when Kantor lays a SmartArt out again, and Labeled Hierarchy joins the
+layouts that relayout with Add Shape and Delete. Sheets gets Insert Timeline and Timeline Settings,
+a draggable timeline scroll bar and a live range while you drag. The data of waterfall, funnel,
+treemap, sunburst, histogram, Pareto and box & whisker charts is edited in Slides, and in Sheets
+those charts are moved, resized, deleted and given a new data range.
+
 ### Added
 
 - Docs: text boxes are edited in place, as in Word. Double-click a text box (or click the text of
@@ -1664,7 +1673,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/dzulfikar08/kantor/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/dzulfikar08/kantor/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/dzulfikar08/kantor/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/dzulfikar08/kantor/compare/v0.7.0...v0.8.0
