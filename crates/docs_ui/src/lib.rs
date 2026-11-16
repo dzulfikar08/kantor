@@ -35,6 +35,7 @@ mod review;
 mod ruler;
 mod spell;
 mod tab_menu;
+mod table_menu;
 mod toolbar;
 pub mod turned_text;
 
@@ -515,6 +516,8 @@ pub struct DocsView {
     ruler_tab: docs_engine::TabKind,
     /// The Tabs popover.
     tab_menu: Option<tab_menu::TabMenu>,
+    /// The Table Properties / Split Cells popover.
+    table_menu: Option<table_menu::TableMenu>,
     engine: Rc<RefCell<Engine>>,
     bridge: Rc<RefCell<FontBridge>>,
     zoom: f32,
@@ -636,6 +639,7 @@ impl DocsView {
             ruler_drag: None,
             ruler_tab: docs_engine::TabKind::Left,
             tab_menu: None,
+            table_menu: None,
             engine,
             bridge,
             zoom: 1.0,
@@ -2652,6 +2656,7 @@ impl Render for DocsView {
                 this.table_picker = None;
                 this.page_menu = None;
                 this.tab_menu = None;
+                this.table_menu = None;
                 this.ruler_drag = None;
                 this.text_box_edit = None;
                 let h = this.sel.head;
@@ -2746,6 +2751,7 @@ impl Render for DocsView {
             .children(self.render_table_picker(cx))
             .children(self.render_page_menu(cx))
             .children(self.render_tab_menu(cx))
+            .children(self.render_table_menu(cx))
             .children(self.render_text_box_menu(cx))
             .children(self.render_field_menu(cx))
     }

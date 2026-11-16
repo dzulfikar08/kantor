@@ -55,6 +55,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Docs: a field's code (Alt+F9, Shift+F9 and the code box) shows the codes of the fields nested in
   it in braces, as Word does (`IF { MERGEFIELD Amount } > 100 …`); typing braces in the code box
   nests fields.
+- Docs: tables centred or right-aligned in Word are placed that way, on screen and in the PDF
+  (before, every table started at the left margin plus its indent). *Table Properties…* (table
+  toolbar or palette) sets a table's alignment and its indent from left, as Word's Table tab; each
+  change is one undo step, tracked with Track Changes on, and saved as Word saves it.
 
 ### Fixed
 

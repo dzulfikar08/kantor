@@ -1757,18 +1757,8 @@ impl BodyParser<'_> {
             Cap::TblPr => {
                 if let Some((_, t)) = &mut self.table {
                     t.tbl_pr = Some(xml.into());
-                    if let Some(el) = xml::parse(xml) {
-                        for c in &el.children {
-                            match c.name.as_str() {
-                                "tblStyle" => t.style = c.attr("val").map(str::to_owned),
-                                "tblBorders" => t.borders = borders(c),
-                                "tblInd" => t.indent = c.num("w").unwrap_or(0),
-                                "tblCellMar" => t.cell_margins = Some(cell_margins(c)),
-                                // Tracked property changes: crate::track_table.
-                                _ => {}
-                            }
-                        }
-                    }
+                    // Tracked property changes: crate::track_table.
+                    t.refresh();
                 }
             }
             Cap::TblGrid => {
@@ -2226,6 +2216,9 @@ fn parse_styles(src: &str, sheet: &mut StyleSheet) {
                     match c.name.as_str() {
                         "tblBorders" => t.borders = borders(c),
                         "tblCellMar" => t.cell_margins = Some(cell_margins(c)),
+                        "jc" => {
+                            t.align = c.attr("val").and_then(crate::table::TableAlign::from_jc);
+                        }
                         _ => {}
                     }
                 }

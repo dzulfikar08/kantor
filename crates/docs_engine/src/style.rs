@@ -40,6 +40,8 @@ pub struct Style {
 pub struct TableStyle {
     pub borders: Borders,
     pub cell_margins: Option<CellMargins>,
+    /// `w:jc` of the style's `w:tblPr`.
+    pub align: Option<crate::table::TableAlign>,
 }
 
 /// Effective character formatting, ready for layout.
@@ -312,6 +314,9 @@ impl StyleSheet {
                 out.borders.overlay(&t.borders);
                 if t.cell_margins.is_some() {
                     out.cell_margins = t.cell_margins;
+                }
+                if t.align.is_some() {
+                    out.align = t.align;
                 }
             }
         }

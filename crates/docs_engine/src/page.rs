@@ -567,6 +567,18 @@ pub(crate) fn set_sect_child(
     matches: impl Fn(&str) -> bool,
     new: Option<String>,
 ) -> String {
+    set_child_ranked(sect_pr, name, sect_rank, matches, new)
+}
+
+/// [`set_sect_child`] for any property element, `rank` giving a child
+/// name's place in the schema order.
+pub(crate) fn set_child_ranked(
+    sect_pr: &str,
+    name: &str,
+    rank_of: impl Fn(&str) -> usize,
+    matches: impl Fn(&str) -> bool,
+    new: Option<String>,
+) -> String {
     let tags = child_tags(sect_pr);
     let hits: Vec<&Tag> = tags
         .iter()
@@ -590,10 +602,10 @@ pub(crate) fn set_sect_child(
         return out;
     }
     let Some(new) = new else { return out };
-    let rank = sect_rank(name);
+    let rank = rank_of(name);
     let at = tags
         .iter()
-        .find(|t| sect_rank(&t.name) > rank)
+        .find(|t| rank_of(&t.name) > rank)
         .map(|t| t.start)
         .unwrap_or_else(|| {
             if sect_pr.trim_end().ends_with("/>") {
@@ -604,9 +616,13 @@ pub(crate) fn set_sect_child(
         });
     if sect_pr.trim_end().ends_with("/>") && !sect_pr.contains("</") {
         // `<w:sectPr/>`: open it up.
-        let p = root_prefix(sect_pr).to_owned();
+        let s = sect_pr.find('<').map_or(0, |i| i + 1);
+        let qname: String = sect_pr[s..]
+            .chars()
+            .take_while(|c| !c.is_whitespace() && *c != '/' && *c != '>')
+            .collect();
         let open = sect_pr.trim_end().trim_end_matches("/>").to_owned() + ">";
-        return format!("{open}{new}</{p}sectPr>");
+        return format!("{open}{new}</{qname}>");
     }
     out.insert_str(at, &new);
     out

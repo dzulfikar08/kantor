@@ -267,6 +267,14 @@ pub(crate) fn render(view: &DocsView, cx: &mut Context<DocsView>) -> Div {
                     |v, w, cx| v.table_edit_doc(TableEdit::DeleteTable, w, cx),
                     cx,
                 ))
+                .child(tool(
+                    "docs-table-props",
+                    Lucide::TableProperties,
+                    i18n::t("Table Properties…"),
+                    false,
+                    |v, w, cx| v.toggle_table_menu(w, cx),
+                    cx,
+                ))
         })
         .child(div().flex_1())
         .when(kantor_ui::ai::ai_enabled(cx), |d| {

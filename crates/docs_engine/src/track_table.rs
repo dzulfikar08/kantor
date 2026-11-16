@@ -73,6 +73,23 @@ pub(crate) fn clear_row_rev(row: &mut Row) {
 }
 
 impl Document {
+    /// With Track Changes on, `new` (a `w:tblPr`/`w:trPr`/`w:tcPr`
+    /// replacing `old`) with the old properties recorded as a change by the
+    /// user, as Word does; else `new` as is.
+    pub(crate) fn track_props(&self, old: Option<&str>, new: String, outer: &str) -> String {
+        if !self.track {
+            return new;
+        }
+        let change = format!("{outer}Change");
+        let tag = format!(
+            "w:id=\"{}\" w:author=\"{}\" w:date=\"{}\"",
+            self.max_rev_id() + 1,
+            xml::escape(&self.author),
+            now_utc()
+        );
+        record_prop(old, &new, outer, &change, &tag)
+    }
+
     /// A row revision element by the user.
     pub(crate) fn row_rev_el(&self, kind: RevKind, id: u64) -> String {
         let name = if kind == RevKind::Insert {

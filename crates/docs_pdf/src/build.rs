@@ -507,6 +507,22 @@ pub fn tracked_fill(kind: docs_engine::RevKind) -> docs_layout::Rgba {
     }
 }
 
+/// A table's left edge from the content area's left (px), as Word places
+/// it: left-aligned tables at their indent, centred and right-aligned ones
+/// between the margins (the indent doesn't apply then).
+pub fn table_x(
+    align: Option<docs_engine::TableAlign>,
+    indent: i32,
+    content: f32,
+    width: f32,
+) -> f32 {
+    match align.unwrap_or_default() {
+        docs_engine::TableAlign::Left => tw(indent),
+        docs_engine::TableAlign::Center => (content - width) / 2.0,
+        docs_engine::TableAlign::Right => content - width,
+    }
+}
+
 /// The table block for table `id`, whose paragraphs are `range`.
 fn table_block(
     doc: &Document,
@@ -594,8 +610,9 @@ fn table_block(
             cant_split: row.cant_split,
         });
     }
+    let width: f32 = columns.iter().sum();
     Some(TableBlock {
-        x: tw(t.indent),
+        x: table_x(t.align.or(style.align), t.indent, tw(content_tw), width),
         columns,
         rows,
         padding: [tw(m.top), tw(m.right), tw(m.bottom), tw(m.left)],

@@ -1301,6 +1301,12 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: tk("Table Properties…"),
+        detail: tk("Docs · table alignment and indent"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.toggle_table_menu(w, cx)),
+    },
+    Command {
         title: tk("Insert Picture…"),
         detail: tk("Docs · PNG or JPEG"),
         keys: "",
