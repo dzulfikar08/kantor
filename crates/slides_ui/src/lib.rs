@@ -131,6 +131,8 @@ actions!(
         UngroupShapes,
         RegroupShapes,
         ConvertToShapes,
+        SmartArtAddAfter,
+        SmartArtAddBefore,
     ]
 );
 
@@ -793,7 +795,9 @@ impl SlidesView {
         match r {
             Ok(v) => Some(v),
             Err(e) => {
-                self.set_status(format!("{e:#}"), cx);
+                // Engine messages listed in `ENGINE_MESSAGES` are translated.
+                let msg = format!("{e:#}");
+                self.set_status(i18n::t_dyn(&msg).to_owned(), cx);
                 None
             }
         }
@@ -2978,6 +2982,8 @@ impl Render for SlidesView {
             UngroupShapes => |v, w, cx| v.ungroup_doc(w, cx),
             RegroupShapes => |v, w, cx| v.regroup_doc(w, cx),
             ConvertToShapes => |v, w, cx| v.convert_to_shapes_doc(w, cx),
+            SmartArtAddAfter => |v, w, cx| v.smartart_add_doc(slides_engine::AddPlace::After, w, cx),
+            SmartArtAddBefore => |v, w, cx| v.smartart_add_doc(slides_engine::AddPlace::Before, w, cx),
         ]);
         let notes_pane = self.render_notes(cx);
         let root = root

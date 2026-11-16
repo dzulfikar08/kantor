@@ -434,7 +434,7 @@ impl Presentation {
     /// dissolved into it (as PowerPoint); an emptied group goes too.
     pub(crate) fn delete_inner(&mut self, r: ShapeRef) -> anyhow::Result<()> {
         if self.in_smartart(r) {
-            bail!("SmartArt shapes can't be deleted yet (that needs PowerPoint's layouts)");
+            return self.smartart_delete_shape(r);
         }
         let focus = Focus::at(r);
         self.record(Kind::Other, None, focus, false, |p| {

@@ -160,6 +160,16 @@ impl Presentation {
         {
             return self.resize_table(r.0, r.1, xfrm, kind);
         }
+        // SmartArt resized: laid out again when Kantor knows its layout
+        // (else its drawing scales).
+        let relaid = self
+            .slides
+            .get(r.0)
+            .and_then(|s| s.shapes.get(r.1))
+            .filter(|s| s.smartart().is_some())
+            .and_then(|s| s.xfrm)
+            .filter(|old| (old.cx, old.cy) != (xfrm.cx, xfrm.cy))
+            .and_then(|_| self.smartart_relaid(r, (xfrm.cx.max(1), xfrm.cy.max(1))));
         self.record(kind, Some(r), focus.clone(), false, |p| {
             let s = p.slide_mut(r.0)?;
             let shape = s.shapes.get_mut(r.1).context("no such shape")?;
@@ -172,6 +182,11 @@ impl Presentation {
                 ..xfrm
             };
             shape.xfrm = Some(xfrm);
+            if let Some(new) = relaid
+                && let ShapeKind::Other { frame, .. } = &mut shape.kind
+            {
+                *frame = new;
+            }
             Ok(((), focus))
         })
     }

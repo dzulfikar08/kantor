@@ -123,6 +123,11 @@ pub struct DiagramDrawing {
     pub(crate) ranges: Vec<std::ops::Range<usize>>,
     /// Which data model points each shape's text comes from.
     pub(crate) links: Vec<crate::smartart::Link>,
+    /// The data model as Kantor changed it (items added or removed), and
+    /// whether the drawing XML is Kantor's (laid out again) rather than
+    /// the part's: both are saved even when no shape was edited since.
+    pub(crate) data_xml: Option<Arc<str>>,
+    pub(crate) rebuilt: bool,
 }
 
 /// A chart frame: the chart part (`c:chart r:id`).

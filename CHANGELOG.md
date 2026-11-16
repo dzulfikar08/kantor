@@ -34,6 +34,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   and box & whisker (quartiles, whiskers, mean markers and outliers). Sheets draws them from the
   live cells. They are kept as they were when saved; the newer types can be moved and resized in
   Slides but their data isn't edited in Kantor yet. Map charts still show a placeholder.
+- Slides: SmartArt in the common layouts (Basic Block List, Vertical Bullet List, Basic Process,
+  Basic Cycle) is laid out again when its frame is resized, instead of being stretched, and items
+  can be added and removed: right-click a shape for *Add Shape After* or *Add Shape Before* (also
+  in the palette; the SmartArt frame alone adds after the last item), type into the new shape, or
+  press Delete on a shape to remove its item with its sub-items. The arrows of processes and
+  cycles follow, and the data model and drawing are saved so PowerPoint shows the same items. Other
+  layouts (hierarchies and the rest) keep PowerPoint's drawing, are scaled when resized, and say
+  so when you try to add or remove items.
 
 ### Fixed
 
