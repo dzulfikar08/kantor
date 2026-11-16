@@ -63,6 +63,21 @@ impl Document {
                 s = rest;
             }
         };
+        for t in self.tables.values() {
+            for x in [&t.tbl_pr, &t.grid_change].into_iter().flatten() {
+                scan(x);
+            }
+            for r in &t.rows {
+                for x in r.tr_pr.iter() {
+                    scan(x);
+                }
+                for c in &r.cells {
+                    for x in c.tc_pr.iter() {
+                        scan(x);
+                    }
+                }
+            }
+        }
         for p in &self.paragraphs {
             for x in p.props.extras.iter() {
                 scan(x);

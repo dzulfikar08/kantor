@@ -54,6 +54,14 @@ impl FieldSpan {
         Instr::parse(&self.instr).kind
     }
 
+    /// The code as the field codes view shows it, nested fields' codes in
+    /// braces ([`FieldMark::shown_code`]).
+    pub fn shown_code(&self) -> String {
+        self.mark
+            .shown_code()
+            .unwrap_or_else(|| self.instr.trim().to_owned())
+    }
+
     /// The result's range (between the marks).
     pub fn result(&self) -> (Position, Position) {
         (

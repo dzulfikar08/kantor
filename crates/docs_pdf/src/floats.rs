@@ -36,8 +36,38 @@ pub struct FloatItem {
     pub behind: bool,
     /// Its text box laid out, with where the layout's (0, 0) goes.
     pub text: Option<(Arc<StoryLayout>, f32, f32)>,
-    /// A chart's drawing (drawn instead of the object's placeholder).
+    /// A chart's or SmartArt's drawing (drawn instead of the object's
+    /// placeholder; SmartArt's text is in `boxes`).
     pub chart: Option<Arc<crate::chart::ChartDraw>>,
+    /// The text of a group's shapes ([`Float::boxes`]), in their order, or
+    /// of a SmartArt's shapes (`which`: the shape in its drawing).
+    pub boxes: Vec<BoxText>,
+}
+
+/// The text of a shape in a group, laid out.
+#[derive(Clone)]
+pub struct BoxText {
+    /// Which of the object's [`Float::boxes`].
+    pub which: usize,
+    pub layout: Arc<StoryLayout>,
+    /// Where the layout's (0, 0) goes, page px.
+    pub x: f32,
+    pub y: f32,
+    /// The shape's box on the page (the text turns about its centre).
+    pub rect: [f32; 4],
+    /// Degrees clockwise.
+    pub turn: f32,
+}
+
+/// Where a group's shape's text goes on the page.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoxArea {
+    /// The shape's box.
+    pub rect: [f32; 4],
+    /// Its text area (geometry's text rectangle less the insets).
+    pub area: [f32; 4],
+    /// Degrees clockwise (0 when the text stays upright).
+    pub turn: f32,
 }
 
 impl FloatItem {
@@ -164,7 +194,7 @@ impl Painter {
                     None => out.push(FloatPrim::Placeholder(rect, f.label().to_owned())),
                 }
             }
-            FloatKind::Chart { .. } | FloatKind::Other(_) => {
+            FloatKind::Chart { .. } | FloatKind::SmartArt { .. } | FloatKind::Other(_) => {
                 out.push(FloatPrim::Placeholder(rect, f.label().to_owned()))
             }
         }
@@ -305,7 +335,8 @@ impl Painter {
         }
         for c in g.children().filter(|c| c.is_element()) {
             match c.tag_name().name() {
-                "wsp" => {
+                // Word's shapes; SmartArt drawings' (`dsp:sp`).
+                "wsp" | "sp" | "cxnSp" => {
                     let sp = child(c, "spPr");
                     let Some((r, size)) = map.child_rect(sp) else {
                         continue;
@@ -349,6 +380,35 @@ impl Painter {
                 _ => {}
             }
         }
+    }
+
+    /// The shapes of a SmartArt drawing part (`dsp:drawing`, positions in
+    /// EMU from the frame's corner) drawn into `rect`, `k` px per EMU.
+    pub(crate) fn smartart_prims(
+        &self,
+        xml: &str,
+        rect: [f32; 4],
+        k: (f32, f32),
+    ) -> Vec<FloatPrim> {
+        let mut out = Vec::new();
+        let Ok(doc) = roxmltree::Document::parse(xml) else {
+            return out;
+        };
+        let Some(tree) = child(doc.root_element(), "spTree") else {
+            return out;
+        };
+        let map = ChildMap {
+            off: (0.0, 0.0),
+            k,
+            at: (rect[0], rect[1]),
+        };
+        self.children(tree, &map, 0, &mut out);
+        out
+    }
+
+    /// The theme's body font.
+    pub(crate) fn minor_font(&self) -> Option<&str> {
+        self.theme.minor_font.as_deref()
     }
 
     /// An outer shadow (`a:effectLst/a:outerShdw`) under `outlines`: the
@@ -739,6 +799,99 @@ pub fn text_turn(f: &Float) -> f32 {
     };
     let sp = doc.root_element().first_element_child();
     Xform::of(sp, [0.0; 4], (1.0, 1.0)).rot
+}
+
+/// Where the text of a group's or canvas's shapes goes when the object
+/// is at `rect`: one entry per [`Float::boxes`] (`None` for a shape
+/// without a size of its own).
+pub fn group_text_areas(f: &Float, rect: [f32; 4]) -> Vec<Option<BoxArea>> {
+    let FloatKind::Group { canvas } = f.kind else {
+        return Vec::new();
+    };
+    let src = f.graphic_xml().map(wrap);
+    let Some(doc) = src
+        .as_deref()
+        .and_then(|x| roxmltree::Document::parse(x).ok())
+    else {
+        return Vec::new();
+    };
+    let Some(g) = doc
+        .root_element()
+        .first_element_child()
+        .and_then(|data| data.first_element_child())
+    else {
+        return Vec::new();
+    };
+    let map = if canvas {
+        ChildMap {
+            off: (0.0, 0.0),
+            k: (
+                rect[2] / f.read.cx.max(1) as f32,
+                rect[3] / f.read.cy.max(1) as f32,
+            ),
+            at: (rect[0], rect[1]),
+        }
+    } else {
+        ChildMap::of(child(g, "grpSpPr"), rect)
+    };
+    let mut out = Vec::new();
+    box_areas(f, g, &map, 0, &mut out);
+    out
+}
+
+fn box_areas(f: &Float, g: Node, map: &ChildMap, depth: usize, out: &mut Vec<Option<BoxArea>>) {
+    if depth > 16 {
+        return;
+    }
+    for c in g.children().filter(|c| c.is_element()) {
+        match c.tag_name().name() {
+            "wsp" => {
+                let has_text = child(c, "txbx").is_some_and(|t| child(t, "txbxContent").is_some());
+                if !has_text {
+                    continue;
+                }
+                let sp = child(c, "spPr");
+                let Some((r, (cx, cy))) = map.child_rect(sp) else {
+                    out.push(None);
+                    continue;
+                };
+                let geometry = sp
+                    .and_then(|s| child(s, "prstGeom").or_else(|| child(s, "custGeom")))
+                    .and_then(Geometry::from_xml)
+                    .unwrap_or_else(|| Geometry::preset("rect"));
+                let tr = outline(&geometry, cx, cy).text_rect;
+                let k = map.k;
+                let [l, t, rr, b] = f.boxes.get(out.len()).map_or([0.0; 4], |b| {
+                    b.text.insets.map(|v| v.max(0) as f32 / EMU_PER_PX)
+                });
+                let x = r[0] + tr.l as f32 * k.0 + l;
+                let y = r[1] + tr.t as f32 * k.1 + t;
+                let w = ((tr.r - tr.l) as f32 * k.0 - l - rr).max(8.0);
+                let h = ((tr.b - tr.t) as f32 * k.1 - t - b).max(0.0);
+                let upright = child(c, "bodyPr")
+                    .and_then(|b| b.attribute("upright"))
+                    .is_some_and(|v| v == "1" || v == "true");
+                let turn = if upright {
+                    0.0
+                } else {
+                    Xform::of(sp, r, (1.0, 1.0)).rot
+                };
+                out.push(Some(BoxArea {
+                    rect: r,
+                    area: [x, y, w, h],
+                    turn,
+                }));
+            }
+            "grpSp" => {
+                let gp = child(c, "grpSpPr");
+                let Some((r, _)) = map.child_rect(gp) else {
+                    continue;
+                };
+                box_areas(f, c, &ChildMap::of(gp, r), depth + 1, out);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Inner margins of a text box, px: left, top, right, bottom.

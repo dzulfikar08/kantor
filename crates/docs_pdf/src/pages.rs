@@ -51,6 +51,10 @@ pub struct StoryLayout {
     /// A text box: its object's header or footer story (`None`: the
     /// body), paragraph and byte index.
     pub text_box: Option<(Option<usize>, usize, usize)>,
+    /// With [`StoryLayout::text_box`]: the text of the group's shape
+    /// number `n` ([`docs_engine::Float::boxes`]) rather than the
+    /// object's own text box.
+    pub group_box: Option<usize>,
     /// Laid out on one tall page whose content area starts at 0, 0.
     pub paged: PagedDocument,
     /// The story's paragraphs as laid out (page numbers filled in).
@@ -104,7 +108,7 @@ impl StoryLayout {
             };
             return owner
                 .float_at(para, index)
-                .and_then(|f| f.text.as_ref())
+                .and_then(|f| f.text_box_in(self.group_box))
                 .map_or(owner, |t| &t.doc);
         }
         match self.note {
@@ -116,7 +120,8 @@ impl StoryLayout {
     /// A key telling stories apart (picture caches).
     pub fn key(&self) -> usize {
         if let Some((story, para, index)) = self.text_box {
-            return (3 << 40) + (story.map_or(0, |s| s + 1) << 32) + (para << 12) + index;
+            let sub = self.group_box.map_or(0, |k| (k + 1) << 48);
+            return sub + (3 << 40) + (story.map_or(0, |s| s + 1) << 32) + (para << 12) + index;
         }
         match self.note {
             Some(i) => (1 << 24) + i,
@@ -282,6 +287,7 @@ fn lay_story(
         story,
         note,
         text_box: None,
+        group_box: None,
         paged,
         paras,
         height,
@@ -745,8 +751,9 @@ fn float_item(
         None => doc,
     };
     let f = owner.float_at(para, index)?;
-    let text = f.text.as_ref().map(|tb| {
-        let [x, y, width, room] = floats::text_area(f, rect);
+    let mut lay_box = |tb: &docs_engine::float::TextBox,
+                       [x, y, width, room]: [f32; 4],
+                       group_box: Option<usize>| {
         let mut sl = lay_story(
             &tb.doc,
             tb.doc.paragraphs().to_vec(),
@@ -757,15 +764,44 @@ fn float_item(
             None,
         );
         sl.text_box = Some((story, para, index));
+        sl.group_box = group_box;
         let dy = match tb.v_align {
             docs_engine::float::FloatAlign::Center => ((room - sl.height) / 2.0).max(0.0),
             docs_engine::float::FloatAlign::End => (room - sl.height).max(0.0),
             _ => 0.0,
         };
         (Arc::new(sl), x, y + dy)
-    });
-    let chart =
+    };
+    let text = f
+        .text
+        .as_ref()
+        .map(|tb| lay_box(tb, floats::text_area(f, rect), None));
+    let mut boxes = Vec::new();
+    if !f.boxes.is_empty() {
+        for (k, area) in floats::group_text_areas(f, rect).into_iter().enumerate() {
+            let (Some(a), Some(b)) = (area, f.boxes.get(k)) else {
+                continue;
+            };
+            let (l, x, y) = lay_box(&b.text, a.area, Some(k));
+            boxes.push(floats::BoxText {
+                which: k,
+                layout: l,
+                x,
+                y,
+                rect: a.rect,
+                turn: a.turn,
+            });
+        }
+    }
+    let mut chart =
         crate::chart::chart_draw(doc, f, (story, para, index), rect, painter, layout).map(Arc::new);
+    if let Some(sa) = crate::smartart::draw(doc, f, (story, para, index), rect, painter, layout) {
+        chart = Some(Arc::new(crate::chart::ChartDraw {
+            prims: sa.prims,
+            labels: Vec::new(),
+        }));
+        boxes.extend(sa.texts);
+    }
     Some(FloatItem {
         para,
         index,
@@ -775,6 +811,7 @@ fn float_item(
         behind: f.at.behind,
         text,
         chart,
+        boxes,
     })
 }
 
@@ -845,6 +882,7 @@ fn note_part(l: Arc<StoryLayout>, from: f32, to: f32) -> Arc<StoryLayout> {
         story: l.story,
         note: l.note,
         text_box: l.text_box,
+        group_box: l.group_box,
         paged: l.paged.slice(0, from, to),
         paras: l.paras.clone(),
         height: to - from,

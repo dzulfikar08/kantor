@@ -23,6 +23,7 @@ pub mod build;
 pub mod chart;
 pub mod floats;
 pub mod pages;
+pub mod smartart;
 
 pub use floats::FloatItem;
 pub use pages::{Layout, Placed, StoryLayout, lay_out_with};
@@ -451,6 +452,31 @@ pub fn scene_of(
                     if l.rot != 0.0 {
                         let [x, y, w, h] = l.rect;
                         fs.content_turn = Some((l.rot, [x + w / 2.0, y + h / 2.0]));
+                    }
+                    scenes.push(fs);
+                }
+                // The text of a group's shapes, each turned with its shape.
+                for b in &it.boxes {
+                    let mut fs = FloatScene::default();
+                    add_page(
+                        &mut fs.content,
+                        b.layout.doc(doc),
+                        &b.layout.paras,
+                        &b.layout.paged,
+                        0,
+                        (b.x, b.y),
+                        &mut pictures,
+                        b.layout.key() + 1,
+                    );
+                    fs.content
+                        .rules
+                        .extend(b.layout.strike_rules().into_iter().map(|r| {
+                            let [rx, ry, w, h] = r.rect;
+                            ([rx + b.x, ry + b.y, w, h], r.color)
+                        }));
+                    if b.turn != 0.0 {
+                        let [x, y, w, h] = b.rect;
+                        fs.content_turn = Some((b.turn, [x + w / 2.0, y + h / 2.0]));
                     }
                     scenes.push(fs);
                 }

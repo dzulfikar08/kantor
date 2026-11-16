@@ -369,7 +369,7 @@ fn border(el: &El) -> Border {
     }
 }
 
-fn borders(el: &El) -> Borders {
+pub(crate) fn borders(el: &El) -> Borders {
     let mut b = Borders::default();
     for c in &el.children {
         let v = Some(border(c));
@@ -386,7 +386,7 @@ fn borders(el: &El) -> Borders {
     b
 }
 
-fn cell_margins(el: &El) -> CellMargins {
+pub(crate) fn cell_margins(el: &El) -> CellMargins {
     let mut m = CellMargins::default();
     for c in &el.children {
         let w = c.num::<u32>("w");
@@ -956,7 +956,7 @@ impl BodyParser<'_> {
                 self.image_rels.insert(rel_id.clone());
             }
             FloatKind::Group { .. } => {
-                // Pictures in the group; text in its shapes isn't shown.
+                // Pictures in the group (its shapes' text: below).
                 for id in f.picture_rels() {
                     if rels.get(&id).is_some_and(|r| !r.external) {
                         self.image_rels.insert(id);
@@ -964,18 +964,42 @@ impl BodyParser<'_> {
                 }
             }
             FloatKind::Chart { part, .. } if !part.is_empty() => {}
+            FloatKind::SmartArt { .. } => {}
             FloatKind::Chart { .. } => {
                 self.preserved.insert("charts".into());
             }
             FloatKind::Other(what) => {
                 self.preserved.insert(match what.as_str() {
                     "SmartArt" => "SmartArt".into(),
+                    "Chart" => "charts".into(),
                     _ => "drawings".into(),
                 });
             }
             _ => {}
         }
-        // A shape's own text box (a group's shapes' text isn't shown).
+        if let FloatKind::SmartArt { drawings, .. } = &mut f.kind {
+            for (id, r) in rels.iter() {
+                if r.ty.ends_with("/diagramDrawing") && !r.external {
+                    drawings.push((id.clone(), resolve(part, &r.target)));
+                }
+            }
+            drawings.sort();
+        }
+        if matches!(f.kind, FloatKind::Group { .. }) {
+            let boxes: Vec<_> = crate::float::group_text_boxes(xml)
+                .into_iter()
+                .map(|(inner, insets, v_align)| crate::float::GroupBox {
+                    text: Arc::new(TextBox {
+                        doc: self.text_box_doc(inner),
+                        insets,
+                        v_align,
+                    }),
+                    edited: false,
+                })
+                .collect();
+            f.boxes = boxes;
+        }
+        // A shape's own text box.
         if f.kind == FloatKind::Shape
             && let Some((inner, insets, v_align)) = crate::float::text_box_xml(xml)
         {
@@ -1740,9 +1764,7 @@ impl BodyParser<'_> {
                                 "tblBorders" => t.borders = borders(c),
                                 "tblInd" => t.indent = c.num("w").unwrap_or(0),
                                 "tblCellMar" => t.cell_margins = Some(cell_margins(c)),
-                                "tblPrChange" => {
-                                    self.unsupported.insert("tracked changes".into());
-                                }
+                                // Tracked property changes: crate::track_table.
                                 _ => {}
                             }
                         }
@@ -1759,8 +1781,8 @@ impl BodyParser<'_> {
                         .filter(|c| c.name == "gridCol")
                         .map(|c| c.num("w").unwrap_or(0))
                         .collect();
-                    if el.child("tblGridChange").is_some() {
-                        self.unsupported.insert("tracked changes".into());
+                    if let Some(r) = crate::float::element_range(xml, "tblGridChange") {
+                        t.grid_change = Some(xml[r].into());
                     }
                 }
             }
@@ -1780,8 +1802,8 @@ impl BodyParser<'_> {
                             }
                             row.header = el.child("tblHeader").is_some_and(El::on);
                             row.cant_split = el.child("cantSplit").is_some_and(El::on);
-                            // Inserted and deleted rows are modelled
-                            // (crate::track_table); other row changes aren't.
+                            // Inserted and deleted rows and row property
+                            // changes are modelled (crate::track_table).
                             if el.children.iter().any(|c| {
                                 is_tracked(&c.name) && !crate::track_table::is_row_mark(&c.name)
                             }) {
@@ -1815,7 +1837,9 @@ impl BodyParser<'_> {
                                 "hMerge" => {
                                     self.preserved.insert("horizontally merged cells".into());
                                 }
-                                "cellIns" | "cellDel" | "cellMerge" | "tcPrChange" => {
+                                // Inserted and deleted cells and property
+                                // changes: crate::track_table.
+                                "cellMerge" => {
                                     self.unsupported.insert("tracked changes".into());
                                 }
                                 _ => {}
@@ -3077,6 +3101,9 @@ fn write_table(out: &mut String, t: &Table, id: u32, paras: &[Paragraph], availa
     for w in t.column_widths(available) {
         out.push_str(&format!("<w:gridCol w:w=\"{w}\"/>"));
     }
+    if let Some(x) = &t.grid_change {
+        out.push_str(x);
+    }
     out.push_str("</w:tblGrid>");
     let mut used = vec![false; paras.len()];
     for (ri, row) in t.rows.iter().enumerate() {
@@ -3128,7 +3155,18 @@ fn write_table(out: &mut String, t: &Table, id: u32, paras: &[Paragraph], availa
 /// several pieces (around a hyperlink's edge, a text box's own changes)
 /// would repeat its `w:id`; later repeats get fresh ones.
 fn unique_rev_ids(xml: String) -> String {
-    const TAGS: [&str; 4] = ["<w:ins ", "<w:del ", "<w:rPrChange ", "<w:pPrChange "];
+    const TAGS: [&str; 10] = [
+        "<w:ins ",
+        "<w:del ",
+        "<w:rPrChange ",
+        "<w:pPrChange ",
+        "<w:cellIns ",
+        "<w:cellDel ",
+        "<w:tcPrChange ",
+        "<w:trPrChange ",
+        "<w:tblPrChange ",
+        "<w:tblGridChange ",
+    ];
     if !TAGS.iter().any(|t| xml.contains(t)) {
         return xml;
     }
@@ -3645,6 +3683,13 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
             out = crate::section::set_settings_track(&out, doc.track_changes());
         }
         replace.insert(name.clone(), out.into_bytes());
+    }
+
+    // Parts edited with floating objects (SmartArt text).
+    for (name, xml) in doc.edited_parts().into_iter().rev() {
+        if pkg.has_part(&name) {
+            replace.insert(name, xml.as_bytes().to_vec());
+        }
     }
 
     // Pictures inserted in Kantor that the body still uses.

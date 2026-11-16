@@ -684,9 +684,9 @@ fn tracked_updates_are_deletions_and_insertions() {
     let mut rejected = doc.clone();
     rejected.resolve_all(false, Selection::default());
     assert_eq!(texts(&rejected), texts(&original));
-    // Field marks follow the update (only results are tracked), so a
-    // rejected new table of contents line may leave an empty PAGEREF.
-    assert!(kinds(&rejected).len() >= kinds(&original).len());
+    // A rejected new table of contents line takes its fields with it (no
+    // empty PAGEREF left behind).
+    assert_eq!(kinds(&rejected), kinds(&original));
     // Saved and read back: the same changes, the same fields.
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("t.docx");
@@ -720,6 +720,55 @@ fn tracked_table_of_contents_update() {
     let mut rejected = doc.clone();
     rejected.resolve_all(false, Selection::default());
     assert_eq!(texts(&rejected), texts(&original));
+    // Its fields too: no empty PAGEREF from a rejected new line.
+    let kinds = |d: &Document| d.fields().iter().map(|f| f.kind()).collect::<Vec<_>>();
+    assert_eq!(kinds(&rejected), kinds(&original));
+    assert_eq!(kinds(&accepted), kinds(&plain));
     doc.undo();
     assert!(!doc.has_changes() || doc.changes() == original.changes());
+}
+
+/// A field's code shows the codes of the fields nested in it (in braces,
+/// as Word's field codes view); typing braces in the code box nests
+/// fields, saved and read back as fields.
+#[test]
+fn nested_field_codes_are_shown_and_typed() {
+    let mut doc = Document::open(&corpus("fields.docx")).unwrap();
+    let date = doc
+        .fields()
+        .into_iter()
+        .find(|f| f.kind() == "DATE")
+        .unwrap();
+    let code = "IF { DATE \\@ \"yyyy\" } = \"2026\" \"this year\" \"later\"";
+    let sel = Selection::caret(date.begin);
+    assert!(doc.set_field_code(date.begin, code, sel, &cx(), &mut lay_out));
+    let f = doc.field_at(date.begin).unwrap();
+    assert_eq!(f.kind(), "IF");
+    assert_eq!(f.shown_code(), code);
+    // The same code again changes nothing.
+    assert!(doc.set_field_code(date.begin, code, sel, &cx(), &mut lay_out));
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("n.docx");
+    doc.save_as(&out).unwrap();
+    let body = &parts(&std::fs::read(&out).unwrap())["word/document.xml"];
+    // Two field starts for the IF and the nested DATE.
+    let at = body
+        .find("> IF </w:instrText>")
+        .or_else(|| body.find(">IF "))
+        .unwrap_or(0);
+    assert!(
+        body[at.saturating_sub(400)..]
+            .matches("fldCharType=\"begin\"")
+            .count()
+            >= 2
+    );
+    let back = Document::open(&out).unwrap();
+    assert!(
+        back.unsupported_content().is_empty(),
+        "{:?}",
+        back.unsupported_content()
+    );
+    let f = back.field_at(date.begin).unwrap();
+    assert_eq!(f.shown_code(), code);
+    assert_eq!(f.kind(), "IF");
 }

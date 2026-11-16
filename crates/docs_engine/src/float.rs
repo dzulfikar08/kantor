@@ -310,7 +310,15 @@ pub enum FloatKind {
     /// A chart (`c:chart` in the graphic frame): relationship id and the
     /// chart part's name.
     Chart { rel_id: String, part: String },
-    /// SmartArt or other content: placed, shown as a box.
+    /// SmartArt (`dgm:relIds`): its data model part, and the drawing
+    /// parts its anchor's part relates to (relationship id, part name;
+    /// the data model's `dsp:dataModelExt/@relId` picks one). Drawn from
+    /// Word's pre-drawn shapes (the drawing part).
+    SmartArt {
+        data: String,
+        drawings: Vec<(String, String)>,
+    },
+    /// Other content: placed, shown as a box.
     Other(String),
 }
 
@@ -352,6 +360,27 @@ pub struct Float {
     /// The text box's text was changed in Kantor: its `w:txbxContent` is
     /// written from [`Float::text`].
     pub text_edited: bool,
+    /// A group's or canvas's shapes' text boxes, in the order their
+    /// `w:txbxContent`s are written ([`Float::text_box_in`]).
+    pub boxes: Vec<GroupBox>,
+    /// Parts of the package changed with this object (SmartArt text
+    /// edited in Kantor: its drawing and data model), by name: written in
+    /// place of the originals on save.
+    pub parts: Vec<(String, Arc<str>)>,
+}
+
+/// The text box of one shape in a group.
+#[derive(Clone, Debug)]
+pub struct GroupBox {
+    pub text: Arc<TextBox>,
+    /// Changed in Kantor: its `w:txbxContent` is written from `text`.
+    pub edited: bool,
+}
+
+impl GroupBox {
+    fn edited_paras(&self) -> Option<&[crate::Paragraph]> {
+        self.edited.then(|| self.text.doc.paragraphs())
+    }
 }
 
 impl PartialEq for Float {
@@ -365,6 +394,13 @@ impl PartialEq for Float {
             && (!self.text_edited
                 || self.text.as_ref().map(|t| t.doc.paragraphs())
                     == o.text.as_ref().map(|t| t.doc.paragraphs()))
+            && self.parts == o.parts
+            && self.boxes.len() == o.boxes.len()
+            && self
+                .boxes
+                .iter()
+                .zip(&o.boxes)
+                .all(|(a, b)| a.edited_paras() == b.edited_paras())
     }
 }
 
@@ -380,6 +416,10 @@ impl Hash for Float {
         {
             t.doc.paragraphs().hash(h);
         }
+        for b in &self.boxes {
+            b.edited_paras().hash(h);
+        }
+        self.parts.hash(h);
     }
 }
 
@@ -393,6 +433,7 @@ impl Float {
             FloatKind::Group { canvas: false } => "Group",
             FloatKind::Group { canvas: true } => "Drawing canvas",
             FloatKind::Chart { .. } => "Chart",
+            FloatKind::SmartArt { .. } => "SmartArt",
             FloatKind::Other(what) => what,
         }
     }
@@ -405,7 +446,7 @@ impl Float {
 
     /// Whether Kantor changed it (its XML gets rewritten on save).
     pub fn is_modified(&self) -> bool {
-        self.at != self.read || self.text_edited
+        self.at != self.read || self.text_edited || self.boxes.iter().any(|b| b.edited)
     }
 
     /// A copy placed at `at`.
@@ -430,13 +471,42 @@ impl Float {
         {
             xml = Cow::Owned(replace_text_box(&xml, &crate::docx::body_xml(&t.doc)));
         }
+        for (k, b) in self.boxes.iter().enumerate() {
+            if b.edited {
+                xml = Cow::Owned(replace_nth_text_box(
+                    &xml,
+                    k,
+                    &crate::docx::body_xml(&b.text.doc),
+                ));
+            }
+        }
         xml
+    }
+
+    /// The shape's own text box (`which` = `None`) or the text box of a
+    /// group's shape number `which` ([`Float::boxes`]).
+    pub fn text_box_in(&self, which: Option<usize>) -> Option<&Arc<TextBox>> {
+        match which {
+            None => self.text.as_ref(),
+            Some(k) => self.boxes.get(k).map(|b| &b.text),
+        }
+    }
+
+    /// Whether it has text Kantor can edit in place: a text box, or a
+    /// group with text in its shapes.
+    pub fn has_text(&self) -> bool {
+        self.text.is_some() || !self.boxes.is_empty()
     }
 
     /// Why the text box can't be edited as plain text (tables, pictures
     /// or other objects in it), if so; `None` also when it has no text box.
     pub fn text_locked(&self) -> Option<&'static str> {
-        let t = self.text.as_ref()?;
+        self.text_locked_in(None)
+    }
+
+    /// [`Float::text_locked`] for the text box `which` ([`Float::text_box_in`]).
+    pub fn text_locked_in(&self, which: Option<usize>) -> Option<&'static str> {
+        let t = self.text_box_in(which)?;
         let other = t
             .doc
             .paragraphs()
@@ -449,7 +519,12 @@ impl Float {
 
     /// The text box's text for the editor: paragraphs joined with `\n`.
     pub fn text_box_text(&self) -> Option<String> {
-        let t = self.text.as_ref()?;
+        self.text_box_text_in(None)
+    }
+
+    /// [`Float::text_box_text`] for the text box `which` ([`Float::text_box_in`]).
+    pub fn text_box_text_in(&self, which: Option<usize>) -> Option<String> {
+        let t = self.text_box_in(which)?;
         let lines: Vec<String> = t
             .doc
             .paragraphs()
@@ -476,6 +551,24 @@ impl Float {
             .filter_map(|c| Some((c.num::<f32>("x")? / 21_600.0, c.num::<f32>("y")? / 21_600.0)))
             .collect();
         (pts.len() >= 3).then_some(pts)
+    }
+
+    /// How far it's turned, degrees clockwise: its own `a:xfrm/@rot` (a
+    /// picture's or shape's, a group's `grpSpPr`).
+    pub fn rotation(&self) -> f32 {
+        let choice = choice_part(&self.xml);
+        let Some(g) = element_range(choice, "graphic") else {
+            return 0.0;
+        };
+        element_range(&choice[g.clone()], "xfrm")
+            .and_then(|r| {
+                let x = &choice[g.start + r.start..g.start + r.end];
+                let tag = &x[..x.find('>').map_or(x.len(), |i| i + 1)];
+                let i = tag.find(" rot=\"")? + 6;
+                let e = tag[i..].find('"')? + i;
+                tag[i..e].parse::<f32>().ok()
+            })
+            .map_or(0.0, |r| r / 60_000.0)
     }
 
     /// The pictures (`a:blip/@r:embed`) a picture or group draws.
@@ -524,18 +617,26 @@ pub(crate) fn share_parts(paras: &mut [crate::Paragraph], doc: &Document) {
             let Some(crate::Object::Float(f)) = &run.object else {
                 continue;
             };
-            let Some(tb) = &f.text else { continue };
-            let mut inner = tb.doc.clone();
-            inner.styles = doc.styles.clone();
-            inner.numbering = doc.numbering.clone();
-            inner.media = doc.media.clone();
-            inner.default_tab = doc.default_tab;
-            inner.decimal = doc.decimal;
+            if f.text.is_none() && f.boxes.is_empty() {
+                continue;
+            }
+            let share = |tb: &Arc<TextBox>| {
+                let mut inner = tb.doc.clone();
+                inner.styles = doc.styles.clone();
+                inner.numbering = doc.numbering.clone();
+                inner.media = doc.media.clone();
+                inner.default_tab = doc.default_tab;
+                inner.decimal = doc.decimal;
+                Arc::new(TextBox {
+                    doc: inner,
+                    ..(**tb).clone()
+                })
+            };
             let mut nf = (**f).clone();
-            nf.text = Some(Arc::new(TextBox {
-                doc: inner,
-                ..(**tb).clone()
-            }));
+            nf.text = f.text.as_ref().map(share);
+            for b in &mut nf.boxes {
+                b.text = share(&b.text);
+            }
             run.object = Some(crate::Object::Float(Arc::new(nf)));
         }
     }
@@ -596,6 +697,65 @@ fn replace_text_box(src: &str, body: &str) -> String {
     out
 }
 
+/// `src` with the inside of the `n`th `w:txbxContent` of the shape's
+/// XML (in `mc:Choice`) and the `n`th of its VML fallback replaced by
+/// `body`.
+fn replace_nth_text_box(src: &str, n: usize, body: &str) -> String {
+    // Start tags of every text box, and where the fallback begins.
+    let mut starts = Vec::new();
+    let mut at = 0;
+    while let Some(i) = next_start_tag(&src[at..], "txbxContent") {
+        starts.push(at + i);
+        at += i + src[at + i..].find('>').map_or(1, |e| e + 1);
+    }
+    let fallback = next_start_tag(src, "Fallback").unwrap_or(src.len());
+    let (choice, fb): (Vec<usize>, Vec<usize>) = starts.iter().partition(|&&s| s < fallback);
+    let mut targets: Vec<usize> = [choice.get(n), fb.get(n)]
+        .into_iter()
+        .flatten()
+        .copied()
+        .collect();
+    targets.sort_unstable();
+    let mut out = String::with_capacity(src.len() + body.len());
+    let mut done = 0;
+    for t in targets {
+        let Some(r) = element_range(&src[t..], "txbxContent") else {
+            continue;
+        };
+        let whole = &src[t..t + r.end];
+        out.push_str(&src[done..t]);
+        let replaced = replace_text_box(whole, body);
+        out.push_str(&replaced);
+        done = t + r.end;
+    }
+    out.push_str(&src[done..]);
+    out
+}
+
+/// The text boxes of a group's or canvas's shapes (`wps:wsp` with a
+/// `wps:txbx`), in the order they're written: their content, insets and
+/// vertical anchor (as [`text_box_xml`]).
+pub(crate) fn group_text_boxes(xml_src: &str) -> Vec<(&str, [i64; 4], FloatAlign)> {
+    let choice = choice_part(xml_src);
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(i) = next_start_tag(&choice[at..], "wsp") {
+        let s = at + i;
+        let Some(r) = element_range(&choice[s..], "wsp") else {
+            break;
+        };
+        let wsp = &choice[s..s + r.end];
+        at = s + r.end.max(1);
+        if next_start_tag(wsp, "txbx").is_none() {
+            continue;
+        }
+        if let Some(tb) = text_box_xml(wsp) {
+            out.push(tb);
+        }
+    }
+    out
+}
+
 // ── editing ────────────────────────────────────────────────────────────────
 
 impl Document {
@@ -603,52 +763,72 @@ impl Document {
     /// step. Each paragraph keeps the formatting of the box's first
     /// paragraph and first text run.
     pub fn set_text_box_text(&mut self, para: usize, index: usize, text: &str) -> bool {
+        self.set_text_box_text_in(para, index, None, text)
+    }
+
+    /// [`Document::set_text_box_text`] for the text box `which`
+    /// ([`Float::text_box_in`]: a group's shapes have one each).
+    pub fn set_text_box_text_in(
+        &mut self,
+        para: usize,
+        index: usize,
+        which: Option<usize>,
+        text: &str,
+    ) -> bool {
         let Some(f) = self.float_at(para, index) else {
             return false;
         };
-        if f.text_locked().is_some() || f.text_box_text().is_none_or(|t| t == text) {
+        if f.text_locked_in(which).is_some() || f.text_box_text_in(which).is_none_or(|t| t == text)
+        {
             return false;
         }
-        let tb = f.text.clone().expect("text box");
-        if self.track
-            && let Some(doc) =
-                self.tracked_text_box(&tb.doc, &f.text_box_text().unwrap_or_default(), text)
-        {
-            let mut nf = f.clone();
-            nf.text = Some(Arc::new(TextBox {
-                doc,
-                ..(*tb).clone()
-            }));
-            nf.text_edited = true;
-            return self.swap_object(para, index, Some(crate::Object::Float(Arc::new(nf))));
-        }
-        let first = tb.doc.paragraphs().first().cloned().unwrap_or_default();
-        let props = first
-            .runs
-            .iter()
-            .find(|r| r.object.is_none())
-            .map(|r| r.props.clone())
-            .unwrap_or_default();
-        let paras: Vec<crate::Paragraph> = text
-            .split('\n')
-            .map(|line| {
-                let mut p = crate::Paragraph {
-                    props: first.props.clone(),
-                    ..crate::Paragraph::styled(line, props.clone())
-                };
-                p.props.extras.remove("sectPr");
-                p
-            })
-            .collect();
-        let mut doc = tb.doc.clone();
-        doc.paragraphs = paras;
-        doc.tables.clear();
-        let mut nf = f.clone();
-        nf.text = Some(Arc::new(TextBox {
+        let tb = f.text_box_in(which).cloned().expect("text box");
+        let doc = match self.track {
+            true => self.tracked_text_box(
+                &tb.doc,
+                &f.text_box_text_in(which).unwrap_or_default(),
+                text,
+            ),
+            false => None,
+        };
+        let doc = doc.unwrap_or_else(|| {
+            let first = tb.doc.paragraphs().first().cloned().unwrap_or_default();
+            let props = first
+                .runs
+                .iter()
+                .find(|r| r.object.is_none())
+                .map(|r| r.props.clone())
+                .unwrap_or_default();
+            let paras: Vec<crate::Paragraph> = text
+                .split('\n')
+                .map(|line| {
+                    let mut p = crate::Paragraph {
+                        props: first.props.clone(),
+                        ..crate::Paragraph::styled(line, props.clone())
+                    };
+                    p.props.extras.remove("sectPr");
+                    p
+                })
+                .collect();
+            let mut doc = tb.doc.clone();
+            doc.paragraphs = paras;
+            doc.tables.clear();
+            doc
+        });
+        let text = Arc::new(TextBox {
             doc,
             ..(*tb).clone()
-        }));
-        nf.text_edited = true;
+        });
+        let mut nf = f.clone();
+        match which {
+            None => {
+                nf.text = Some(text);
+                nf.text_edited = true;
+            }
+            Some(k) => {
+                nf.boxes[k] = GroupBox { text, edited: true };
+            }
+        }
         self.swap_object(para, index, Some(crate::Object::Float(Arc::new(nf))))
     }
 
@@ -762,6 +942,57 @@ impl Document {
             true,
         );
         true
+    }
+
+    /// Give the object at `para`/`index` edited package parts
+    /// ([`Float::parts`]; a part already there is replaced): one undo step.
+    pub fn set_float_parts(
+        &mut self,
+        para: usize,
+        index: usize,
+        parts: Vec<(String, Arc<str>)>,
+    ) -> bool {
+        let Some(f) = self.float_at(para, index) else {
+            return false;
+        };
+        let mut nf = f.clone();
+        for (name, xml) in parts {
+            match nf.parts.iter_mut().find(|p| p.0 == name) {
+                Some(p) => p.1 = xml,
+                None => nf.parts.push((name, xml)),
+            }
+        }
+        if nf.parts == f.parts {
+            return false;
+        }
+        self.swap_object(para, index, Some(crate::Object::Float(Arc::new(nf))))
+    }
+
+    /// A part's XML as the document has it now: edited with a floating
+    /// object ([`Float::parts`], body, headers and footers), else as read.
+    pub fn current_part_xml(&self, name: &str) -> Option<String> {
+        self.edited_parts()
+            .into_iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, x)| x.to_string())
+            .or_else(|| self.part_xml(name))
+    }
+
+    /// Every package part edited with a floating object (the body's
+    /// first, then headers' and footers').
+    pub(crate) fn edited_parts(&self) -> Vec<(String, Arc<str>)> {
+        let mut out = Vec::new();
+        let docs = std::iter::once(self).chain(self.stories().iter().map(|s| &s.doc));
+        for d in docs {
+            for p in d.paragraphs() {
+                for (_, o) in p.objects() {
+                    if let crate::Object::Float(f) = o {
+                        out.extend(f.parts.iter().cloned());
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// Move, resize or rewrap a floating object (one undo step).
@@ -1190,12 +1421,25 @@ pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> 
             },
             None => FloatKind::Other("Chart".into()),
         }
+    } else if uri.contains("chartex") {
+        // Office 2016 charts (waterfall, treemap…): not drawn.
+        FloatKind::Other("Chart".into())
     } else if uri.contains("wordprocessingGroup") {
         FloatKind::Group { canvas: false }
     } else if uri.contains("wordprocessingCanvas") {
         FloatKind::Group { canvas: true }
     } else if uri.contains("diagram") {
-        FloatKind::Other("SmartArt".into())
+        match data
+            .and_then(|d| find(d, "relIds"))
+            .and_then(|c| c.attr("dm"))
+            .and_then(rel_part)
+        {
+            Some(part) => FloatKind::SmartArt {
+                data: part,
+                drawings: Vec::new(),
+            },
+            None => FloatKind::Other("SmartArt".into()),
+        }
     } else {
         FloatKind::Other("Drawing".into())
     };
@@ -1214,6 +1458,8 @@ pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> 
             .to_owned(),
         text: None,
         text_edited: false,
+        boxes: Vec::new(),
+        parts: Vec::new(),
     })
 }
 

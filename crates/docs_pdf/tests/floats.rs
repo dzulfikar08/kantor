@@ -223,3 +223,134 @@ fn groups_charts_turns_shadows_and_tight_wrap() {
         .count();
     assert_eq!(pics, 1);
 }
+
+/// `diagrams.docx`: the text of a group's shapes is laid out inside each
+/// shape (a turned shape's text turned with it) and goes into the PDF.
+#[test]
+fn grouped_shapes_text_is_laid_out_and_exported() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/docx/diagrams.docx");
+    let doc = Document::open(&path).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let it = laid
+        .floats
+        .iter()
+        .flatten()
+        .find(|it| it.float(&doc).unwrap().name == "Labelled group")
+        .unwrap();
+    assert_eq!(it.boxes.len(), 2);
+    let r = it.rect;
+    for b in &it.boxes {
+        // Each shape's box lies in the group's box; its text starts inside.
+        assert!(b.rect[0] >= r[0] - 0.5 && b.rect[0] + b.rect[2] <= r[0] + r[2] + 0.5);
+        assert!(b.x >= b.rect[0] && b.y >= b.rect[1] - 0.5, "{:?}", b.rect);
+    }
+    let first = &it.boxes[0];
+    assert_eq!(first.layout.shown(0), "Plan");
+    assert_eq!(first.layout.shown(1), "first");
+    assert_eq!(first.turn, 0.0);
+    // The first box is the left fifth of the group (child space is twice
+    // the group's size).
+    assert!((first.rect[2] - r[2] / 5.0).abs() < 0.5, "{:?}", first.rect);
+    let second = &it.boxes[1];
+    assert_eq!(second.layout.shown(0), "Do");
+    assert_eq!(second.turn, 90.0);
+    let scene = docs_pdf::scene(&doc, &laid);
+    let scenes: Vec<_> = scene.pages.iter().flat_map(|p| &p.front).collect();
+    let with_text = scenes
+        .iter()
+        .filter(|f| {
+            f.content
+                .runs
+                .iter()
+                .any(|r| matches!(&*r.text, "first" | "Do"))
+        })
+        .count();
+    assert_eq!(with_text, 2);
+    assert!(
+        scenes
+            .iter()
+            .any(|f| f.content_turn.is_some_and(|t| t.0 == 90.0))
+    );
+    assert!(docs_pdf::write(&scene).unwrap().starts_with(b"%PDF"));
+}
+
+/// `diagrams.docx`: radar, bubble, stock and 3-D column charts are drawn
+/// with Slides' chart code (not boxes), their titles as text.
+#[test]
+fn more_chart_types_are_drawn() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/docx/diagrams.docx");
+    let doc = Document::open(&path).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    for (name, title) in [
+        ("Radar chart", "Radar"),
+        ("Bubble chart", "Bubbles"),
+        ("Stock chart", "Prices"),
+        ("3-D column chart", "Output"),
+    ] {
+        let it = laid
+            .floats
+            .iter()
+            .flatten()
+            .find(|it| it.float(&doc).unwrap().name == name)
+            .unwrap_or_else(|| panic!("{name}"));
+        let chart = it.chart.as_ref().unwrap_or_else(|| panic!("{name} drawn"));
+        assert!(chart.prims.len() > 4, "{name}: {}", chart.prims.len());
+        let shown: Vec<String> = chart.labels.iter().map(|l| l.layout.shown(0)).collect();
+        assert!(shown.iter().any(|s| s == title), "{name}: {shown:?}");
+    }
+}
+
+/// `drawings.docx`: text wraps around the turned picture's turned bounds
+/// (Word's rotated bounding box), not its unturned box.
+#[test]
+fn turned_pictures_wrap_around_their_turned_bounds() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/docx/drawings.docx");
+    let doc = Document::open(&path).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let (page, it) = laid
+        .floats
+        .iter()
+        .enumerate()
+        .find_map(|(p, items)| {
+            items
+                .iter()
+                .find(|it| it.float(&doc).unwrap().name == "Turned picture")
+                .map(|it| (p, it))
+        })
+        .unwrap();
+    assert_eq!(it.float(&doc).unwrap().rotation(), 30.0);
+    // 120 × 60 turned 30°: about 134 × 112.
+    let [x, y, w, h] = it.rect;
+    let (s, c) = 30f32.to_radians().sin_cos();
+    let (bw, bh) = (w * c + h * s, w * s + h * c);
+    let bounds = [x + w / 2.0 - bw / 2.0, y + h / 2.0 - bh / 2.0, bw, bh];
+    // Text runs on its right: no line (from its anchor paragraph on)
+    // level with the turned bounds starts inside them (the distance from
+    // text is 12 px).
+    let beside: Vec<_> = laid.paged.pages[page]
+        .lines
+        .iter()
+        .filter(|l| l.para >= it.para)
+        .filter(|l| l.top < bounds[1] + bounds[3] && l.top + l.height > bounds[1])
+        .collect();
+    assert!(!beside.is_empty());
+    for l in &beside {
+        assert!(
+            l.x >= bounds[0] + bounds[2] + 12.0 - 0.01,
+            "{l:?} into {bounds:?}"
+        );
+    }
+    // Some of them are above or below the unturned box: only the turned
+    // bounds keep them away.
+    assert!(
+        beside
+            .iter()
+            .any(|l| l.top + l.height <= y || l.top >= y + h)
+    );
+}

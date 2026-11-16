@@ -301,56 +301,18 @@ impl Presentation {
         frame: Xfrm,
     ) -> Option<DiagramDrawing> {
         let (part, xml, rels) = drawing_source(self, slide, d)?;
-        let doc = roxmltree::Document::parse(&xml).ok()?;
-        let tree = doc
-            .root_element()
-            .children()
-            .find(|n| is(*n, NS_DSP, "spTree"))?;
-        let cx = ParseCtx {
-            src: &xml,
-            part: &part,
-            rels: &rels,
-            colors: *colors,
-        };
-        let mut group = parse_group(tree, &cx, None, None, None);
-        group.child_box = Xfrm::new(0, 0, frame.cx, frame.cy);
-        let ranges = tree
-            .children()
-            .filter(is_group_child)
-            .map(|n| n.range())
-            .collect();
-        // Links to the data model.
-        let data_bytes = self.part_bytes(d.data.as_deref()?)?;
+        let data_part = d.data.as_deref()?;
+        let data_bytes = self.part_bytes(data_part)?;
         let data_xml = std::str::from_utf8(&data_bytes).ok()?;
-        let data_doc = roxmltree::Document::parse(data_xml).ok()?;
-        let dcx = ParseCtx {
-            src: data_xml,
-            part: d.data.as_deref()?,
-            rels: &[],
-            colors: *colors,
-        };
-        let model = Model::read(&data_doc, &dcx);
-        let links = group
-            .children
-            .iter()
-            .zip(&group.model_ids)
-            .map(|(c, m)| {
-                let shown: Vec<String> = c
-                    .text
-                    .as_ref()
-                    .map(|t| t.paras.iter().map(|p| p.text.clone()).collect())
-                    .unwrap_or_default();
-                model.link(m.as_deref(), &shown)
-            })
-            .collect();
-        drop(data_doc);
-        Some(DiagramDrawing {
-            part,
-            group,
-            xml: Arc::from(xml.as_str()),
-            ranges,
-            links,
-        })
+        read_drawing(
+            &part,
+            &xml,
+            &rels,
+            data_part,
+            data_xml,
+            colors,
+            (frame.cx, frame.cy),
+        )
     }
 
     /// The SmartArt drawing `r` is in, and the shape's index in it.
@@ -370,12 +332,9 @@ impl Presentation {
         let Some((dd, i)) = self.smartart_of(r) else {
             return Ok(None);
         };
-        match dd.links.get(i) {
-            Some(Link::One(_)) => Ok(None),
-            Some(Link::Many(v)) => Ok(Some(v.iter().map(|x| x.1).sum())),
-            _ => bail!(
-                "This SmartArt text can't be edited: Kantor can't tell which item it belongs to"
-            ),
+        match dd.fixed_paras(i) {
+            Ok(n) => Ok(n),
+            Err(e) => bail!("{e}"),
         }
     }
 
@@ -402,122 +361,24 @@ impl Presentation {
                     continue;
                 };
                 let Some(dd) = &d.drawing else { continue };
-                let changed: Vec<usize> = (0..dd.group.children.len())
-                    .filter(|&k| !dd.group.children[k].unchanged())
-                    .collect();
+                let changed = dd.changed();
                 if changed.is_empty() {
                     continue;
                 }
-                // The drawing: the edited shapes spliced in.
-                let mut xml = dd.xml.to_string();
-                for &k in changed.iter().rev() {
-                    let Some(r) = dd.ranges.get(k) else { continue };
-                    let mut buf = String::new();
-                    let c = &dd.group.children[k];
-                    write_shape(&mut buf, c);
-                    // A moved or resized shape's text box went with it.
-                    if c.src.as_ref().is_some_and(|o| o.xfrm != c.xfrm)
-                        && let Some(Some(tb)) = dd.group.text_boxes.get(k)
-                    {
-                        set_tx_xfrm(&mut buf, tb);
-                    }
-                    xml.replace_range(r.clone(), &buf);
-                }
-                out.push((dd.part.clone(), xml.into_bytes()));
+                out.push((
+                    dd.part.clone(),
+                    dd.drawing_with_edits(&changed).into_bytes(),
+                ));
                 if let Some(data) = &d.data
                     && let Some(bytes) = self.part_bytes(data)
                     && let Ok(text) = std::str::from_utf8(&bytes)
-                    && let Some(new) = self.data_with_edits(i, data, text, dd, &changed)
+                    && let Some(new) = data_with_edits(&self.color_ctx(i), data, text, dd, &changed)
                 {
                     out.push((data.clone(), new.into_bytes()));
                 }
             }
         }
         out
-    }
-
-    /// The data model `xml` with the edited shapes' text and formatting.
-    fn data_with_edits(
-        &self,
-        slide: usize,
-        part: &str,
-        xml: &str,
-        dd: &DiagramDrawing,
-        changed: &[usize],
-    ) -> Option<String> {
-        let doc = roxmltree::Document::parse(xml).ok()?;
-        let cx = ParseCtx {
-            src: xml,
-            part,
-            rels: &[],
-            colors: self.color_ctx(slide),
-        };
-        let model = Model::read(&doc, &cx);
-        let mut edits: Vec<(Range<usize>, String)> = Vec::new();
-        for &k in changed {
-            let c = &dd.group.children[k];
-            // Text.
-            if let Some(t) = &c.text {
-                let parts: Vec<(&str, &[TextPara])> = match dd.links.get(k) {
-                    Some(Link::One(id)) => vec![(id.as_str(), &t.paras[..])],
-                    Some(Link::Many(v))
-                        if v.iter().map(|x| x.1).sum::<usize>() == t.paras.len() =>
-                    {
-                        let mut at = 0;
-                        v.iter()
-                            .map(|(id, n)| {
-                                let s = &t.paras[at..at + n];
-                                at += n;
-                                (id.as_str(), s)
-                            })
-                            .collect()
-                    }
-                    _ => Vec::new(),
-                };
-                let unchanged_text = c
-                    .src
-                    .as_ref()
-                    .is_some_and(|s| s.text.as_ref() == Some(&t.paras));
-                if !unchanged_text {
-                    for (id, paras) in parts {
-                        if let Some(p) = model.points.get(id) {
-                            edits.extend(point_text_edits(xml, p.node, paras, &cx));
-                        }
-                    }
-                }
-            }
-            // A move or resize: PowerPoint's custom position and size on the
-            // presentation item, so its layout puts the shape there too.
-            if let (Some(new), Some(old)) = (c.xfrm, c.src.as_ref().and_then(|o| o.xfrm))
-                && new != old
-                && let Some(id) = dd.group.model_ids.get(k).cloned().flatten()
-                && let Some(p) = model.points.get(id.as_str())
-            {
-                edits.extend(point_layout_edits(xml, p.node, &old, &new));
-            }
-            // Fill and outline go on the presentation item the shape draws.
-            if !c.paint.is_empty()
-                && let Some(id) = dd.group.model_ids.get(k).cloned().flatten()
-                && let Some(p) = model.points.get(id.as_str())
-            {
-                edits.extend(point_paint_edits(xml, p.node, &c.paint));
-            }
-        }
-        if edits.is_empty() {
-            return None;
-        }
-        edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
-        let mut out = xml.to_owned();
-        let mut last = usize::MAX;
-        for (r, t) in edits {
-            // Edits never overlap; a defensive skip if they ever did.
-            if r.end > last {
-                continue;
-            }
-            last = r.start;
-            out.replace_range(r, &t);
-        }
-        Some(out)
     }
 
     /// PowerPoint's *Convert to Shapes*: SmartArt `r` becomes a group of
@@ -618,6 +479,265 @@ impl Presentation {
             s.shapes[r.1] = group;
             Ok((r.1, Focus::at(r)))
         })
+    }
+}
+
+/// The data model `xml` with the edited shapes' text and formatting.
+fn data_with_edits(
+    colors: &ColorCtx,
+    part: &str,
+    xml: &str,
+    dd: &DiagramDrawing,
+    changed: &[usize],
+) -> Option<String> {
+    let doc = roxmltree::Document::parse(xml).ok()?;
+    let cx = ParseCtx {
+        src: xml,
+        part,
+        rels: &[],
+        colors: *colors,
+    };
+    let model = Model::read(&doc, &cx);
+    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+    for &k in changed {
+        let c = &dd.group.children[k];
+        // Text.
+        if let Some(t) = &c.text {
+            let parts: Vec<(&str, &[TextPara])> = match dd.links.get(k) {
+                Some(Link::One(id)) => vec![(id.as_str(), &t.paras[..])],
+                Some(Link::Many(v)) if v.iter().map(|x| x.1).sum::<usize>() == t.paras.len() => {
+                    let mut at = 0;
+                    v.iter()
+                        .map(|(id, n)| {
+                            let s = &t.paras[at..at + n];
+                            at += n;
+                            (id.as_str(), s)
+                        })
+                        .collect()
+                }
+                _ => Vec::new(),
+            };
+            let unchanged_text = c
+                .src
+                .as_ref()
+                .is_some_and(|s| s.text.as_ref() == Some(&t.paras));
+            if !unchanged_text {
+                for (id, paras) in parts {
+                    if let Some(p) = model.points.get(id) {
+                        edits.extend(point_text_edits(xml, p.node, paras, &cx));
+                    }
+                }
+            }
+        }
+        // A move or resize: PowerPoint's custom position and size on the
+        // presentation item, so its layout puts the shape there too.
+        if let (Some(new), Some(old)) = (c.xfrm, c.src.as_ref().and_then(|o| o.xfrm))
+            && new != old
+            && let Some(id) = dd.group.model_ids.get(k).cloned().flatten()
+            && let Some(p) = model.points.get(id.as_str())
+        {
+            edits.extend(point_layout_edits(xml, p.node, &old, &new));
+        }
+        // Fill and outline go on the presentation item the shape draws.
+        if !c.paint.is_empty()
+            && let Some(id) = dd.group.model_ids.get(k).cloned().flatten()
+            && let Some(p) = model.points.get(id.as_str())
+        {
+            edits.extend(point_paint_edits(xml, p.node, &c.paint));
+        }
+    }
+    if edits.is_empty() {
+        return None;
+    }
+    edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+    let mut out = xml.to_owned();
+    let mut last = usize::MAX;
+    for (r, t) in edits {
+        // Edits never overlap; a defensive skip if they ever did.
+        if r.end > last {
+            continue;
+        }
+        last = r.start;
+        out.replace_range(r, &t);
+    }
+    Some(out)
+}
+
+/// A SmartArt drawing (`dsp:drawing`, part `part` with relationships
+/// `rels`) read with its data model (`data_part`, `data_xml`) for a frame
+/// of `frame` EMU: Kantor Docs reads Word's SmartArt with it, as Slides
+/// does PowerPoint's.
+pub fn read_drawing(
+    part: &str,
+    xml: &str,
+    rels: &[Rel],
+    data_part: &str,
+    data_xml: &str,
+    colors: &ColorCtx,
+    frame: (Emu, Emu),
+) -> Option<DiagramDrawing> {
+    let doc = roxmltree::Document::parse(xml).ok()?;
+    let tree = doc
+        .root_element()
+        .children()
+        .find(|n| is(*n, NS_DSP, "spTree"))?;
+    let cx = ParseCtx {
+        src: xml,
+        part,
+        rels,
+        colors: *colors,
+    };
+    let mut group = parse_group(tree, &cx, None, None, None);
+    group.child_box = Xfrm::new(0, 0, frame.0, frame.1);
+    let ranges = tree
+        .children()
+        .filter(is_group_child)
+        .map(|n| n.range())
+        .collect();
+    // Links to the data model.
+    let data_doc = roxmltree::Document::parse(data_xml).ok()?;
+    let dcx = ParseCtx {
+        src: data_xml,
+        part: data_part,
+        rels: &[],
+        colors: *colors,
+    };
+    let model = Model::read(&data_doc, &dcx);
+    let links = group
+        .children
+        .iter()
+        .zip(&group.model_ids)
+        .map(|(c, m)| {
+            let shown: Vec<String> = c
+                .text
+                .as_ref()
+                .map(|t| t.paras.iter().map(|p| p.text.clone()).collect())
+                .unwrap_or_default();
+            model.link(m.as_deref(), &shown)
+        })
+        .collect();
+    drop(data_doc);
+    Some(DiagramDrawing {
+        part: part.to_owned(),
+        group,
+        xml: Arc::from(xml),
+        ranges,
+        links,
+    })
+}
+
+/// The relationship id (`dsp:dataModelExt/@relId`) of the drawing a
+/// SmartArt data model names: a relationship of the part holding the
+/// SmartArt frame.
+pub fn drawing_rel_id(data_xml: &str) -> Option<String> {
+    let doc = roxmltree::Document::parse(data_xml).ok()?;
+    doc.descendants()
+        .find(|n| is(*n, NS_DSP, "dataModelExt"))
+        .and_then(|n| n.attribute("relId"))
+        .map(str::to_owned)
+}
+
+/// Why a SmartArt shape showing several items can't take text with
+/// another number of lines.
+pub const SMARTART_LINES: &str = "This SmartArt shape shows several items: keep one line per item";
+
+impl DiagramDrawing {
+    /// Whether shape `k`'s text can be edited: an error when Kantor can't
+    /// tell which data model item it belongs to, else the paragraph count
+    /// it must keep (a shape showing several items) or `None`.
+    pub fn fixed_paras(&self, k: usize) -> Result<Option<usize>, &'static str> {
+        match self.links.get(k) {
+            Some(Link::One(_)) => Ok(None),
+            Some(Link::Many(v)) => Ok(Some(v.iter().map(|x| x.1).sum())),
+            _ => Err(
+                "This SmartArt text can't be edited: Kantor can't tell which item it belongs to",
+            ),
+        }
+    }
+
+    /// Give shape `k` the text `text` (`\n` between paragraphs): each
+    /// paragraph keeps the formatting of the one it replaces (the last
+    /// one's for added paragraphs) and of its first run. Whether it
+    /// changed.
+    pub fn set_plain_text(&mut self, k: usize, text: &str) -> Result<bool, &'static str> {
+        let fixed = self.fixed_paras(k)?;
+        let lines: Vec<&str> = text.split('\n').collect();
+        if fixed.is_some_and(|n| n != lines.len()) {
+            return Err(SMARTART_LINES);
+        }
+        let Some(shape) = self.group.children.get_mut(k) else {
+            return Ok(false);
+        };
+        let Some(body) = shape.text.as_mut() else {
+            return Ok(false);
+        };
+        let old: Vec<&str> = body.paras.iter().map(|p| p.text.as_str()).collect();
+        if old == lines {
+            return Ok(false);
+        }
+        let paras: Vec<TextPara> = lines
+            .iter()
+            .enumerate()
+            .map(|(i, line)| {
+                let base = body.paras.get(i).or(body.paras.last());
+                let run = base
+                    .and_then(|p| p.runs.first())
+                    .map(|r| r.props.clone())
+                    .unwrap_or_default();
+                let mut p = TextPara::styled(*line, run);
+                if let Some(b) = base {
+                    p.props = b.props.clone();
+                    p.end = b.end.clone();
+                }
+                p
+            })
+            .collect();
+        body.paras = paras;
+        Ok(true)
+    }
+
+    /// The shapes changed since it was read.
+    pub fn changed(&self) -> Vec<usize> {
+        (0..self.group.children.len())
+            .filter(|&k| !self.group.children[k].unchanged())
+            .collect()
+    }
+
+    /// The drawing part's XML with shapes `changed` written in.
+    pub fn drawing_with_edits(&self, changed: &[usize]) -> String {
+        let mut xml = self.xml.to_string();
+        for &k in changed.iter().rev() {
+            let Some(r) = self.ranges.get(k) else {
+                continue;
+            };
+            let mut buf = String::new();
+            let c = &self.group.children[k];
+            write_shape(&mut buf, c);
+            // A moved or resized shape's text box went with it.
+            if c.src.as_ref().is_some_and(|o| o.xfrm != c.xfrm)
+                && let Some(Some(tb)) = self.group.text_boxes.get(k)
+            {
+                set_tx_xfrm(&mut buf, tb);
+            }
+            xml.replace_range(r.clone(), &buf);
+        }
+        xml
+    }
+
+    /// The drawing and data model parts as saved after edits: the new
+    /// drawing XML, and the data model `data_xml` (part `data_part`) with
+    /// the edited text, when it changed.
+    pub fn saved_parts(
+        &self,
+        colors: &ColorCtx,
+        data_part: &str,
+        data_xml: &str,
+    ) -> (String, Option<String>) {
+        let changed = self.changed();
+        (
+            self.drawing_with_edits(&changed),
+            data_with_edits(colors, data_part, data_xml, self, &changed),
+        )
     }
 }
 

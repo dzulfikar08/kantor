@@ -361,7 +361,7 @@ fn show_codes(
             .find(|o| o.index == s.begin.offset)
         {
             o.kind = ObjectKind::Text;
-            o.label = code(&s.instr);
+            o.label = code(&s.shown_code());
             o.width = 0.0;
             o.height = 0.0;
         }
@@ -447,7 +447,19 @@ pub fn float_spec(index: usize, f: &docs_engine::Float) -> docs_layout::FloatSpe
         RelV::OutsideMargin => FloatRefV::OutsideMargin,
     };
     let (width, height) = at.size_px();
+    // Text wraps around a turned object's turned bounds, as in Word.
+    let deg = f.rotation();
+    let extent = if deg.rem_euclid(180.0) != 0.0 {
+        let (s, c) = deg.to_radians().sin_cos();
+        let bw = width * c.abs() + height * s.abs();
+        let bh = width * s.abs() + height * c.abs();
+        let (dx, dy) = ((bw - width) / 2.0, (bh - height) / 2.0);
+        [dx, dy, dx, dy]
+    } else {
+        [0.0; 4]
+    };
     docs_layout::FloatSpec {
+        extent,
         index,
         h: (h, pos(at.h.1)),
         v: (v, pos(at.v.1)),
@@ -483,6 +495,16 @@ fn rule(b: Option<docs_engine::Border>) -> Option<Rule> {
         width: (b.size as f32 / 8.0 * PT).max(0.75),
         color: b.color.map(rgba).unwrap_or(Rgba::BLACK),
     })
+}
+
+/// Word's shading of tracked table cells and rows (Track Changes
+/// options: inserted cells light blue, deleted cells pink), a little
+/// translucent so a selection still shows through on screen.
+pub fn tracked_fill(kind: docs_engine::RevKind) -> docs_layout::Rgba {
+    match kind {
+        docs_engine::RevKind::Delete => docs_layout::Rgba([0xFF, 0xB3, 0xD9, 0xA0]),
+        _ => docs_layout::Rgba([0x99, 0xCC, 0xFF, 0xA0]),
+    }
 }
 
 /// The table block for table `id`, whose paragraphs are `range`.
@@ -560,6 +582,7 @@ fn table_block(
                     VMerge::Continue => Merge::Continue,
                 },
                 borders: [rule(top), rule(right), rule(bottom), rule(left)],
+                fill: cell.tracked().or(row.tracked()).map(tracked_fill),
             });
         }
         let (min_height, exact) = row.height.map_or((0.0, false), |(h, e)| (tw(h), e));

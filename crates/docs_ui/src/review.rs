@@ -81,6 +81,14 @@ pub(crate) struct ChangeNote {
 /// Word's balloon text for a formatting change: "Formatted: Font: Bold".
 pub(crate) fn format_label(items: &[docs_engine::FormatItem]) -> String {
     use docs_engine::{Align, FormatItem as F};
+    // A table's, rows' or cells' properties: Word's "Formatted Table".
+    if !items.is_empty()
+        && items
+            .iter()
+            .all(|it| matches!(it, F::TableProps | F::RowProps | F::CellProps))
+    {
+        return t("Formatted Table").to_owned();
+    }
     let parts: Vec<String> = items
         .iter()
         .map(|it| match it {
@@ -107,6 +115,9 @@ pub(crate) fn format_label(items: &[docs_engine::FormatItem]) -> String {
             F::List(false) => t("Not a list").to_owned(),
             F::PageBreakBefore => t("Page break before").to_owned(),
             F::TabStops => t("Tab stops").to_owned(),
+            F::TableProps => t("Table").to_owned(),
+            F::RowProps => t("Row").to_owned(),
+            F::CellProps => t("Cell").to_owned(),
             F::Other => t("Other formatting").to_owned(),
         })
         .collect();

@@ -29,6 +29,10 @@ crates/docs_pdf/tests/.
   bold (`w:rPrChange`), a paragraph centred (`w:pPrChange`), a table with a
   deleted row and an inserted row (`w:trPr/w:del`, `w:trPr/w:ins`), an
   insertion in the header and a deletion in a footnote.
+* tracked_cells.docx: a table with an inserted column (`w:cellIns`, the
+  widths it changed in `w:tcPrChange` and `w:tblGridChange`), a deleted
+  column (`w:cellDel`), a table property change (`w:tblPrChange`) and a
+  row property change (`w:trPrChange`), as Word saves them.
 * threads.docx: Word 365 threaded comments: a question with a reply (both
   on the same word), a resolved comment, with commentsExtended,
   commentsIds, commentsExtensible and people parts.
@@ -37,6 +41,10 @@ crates/docs_pdf/tests/.
   (`wpc:wpc`), a column chart with its values cached, a picture turned 30°,
   a text box turned 90°, a shape with a shadow, and a triangle with Tight
   wrapping (`wp:wrapPolygon`).
+* diagrams.docx: a group whose shapes hold text (`wps:txbx` inside
+  `wpg:wgp`, one shape turned 90°); SmartArt (data model, layout, style,
+  colours and Word's drawing part), one shape showing two items; radar,
+  bubble, stock and 3-D column charts.
 * notes.docx: a footnote too long for its page (Word's continuation
   separator and notice), short footnotes, and endnotes placed at the end
   of each section (`w:endnotePr/w:pos w:val="sectEnd"`) in two sections.
@@ -645,6 +653,49 @@ settings.find(qn("w:compat")).addprevious(
 )
 save(d, "tracked.docx")
 
+# ── tracked_cells: a column inserted (its cells `w:cellIns`, the widths it
+# changed in `w:tcPrChange` / `w:tblGridChange`), a column deleted
+# (`w:cellDel`, text in `w:del`), the table centred (`w:tblPrChange`) and
+# a row made taller (`w:trPrChange`), by "Citra".
+d = Document()
+d.add_paragraph("Shopping list")
+REVC = 'w:author="Citra" w:date="2026-11-11T09:00:00Z"'
+
+
+def tc(text, w, extra="", old_w=None, deleted=False, rid=0):
+    change = (f'<w:tcPrChange w:id="{rid + 1}" {REVC}><w:tcPr><w:tcW w:w="{old_w}" w:type="dxa"/></w:tcPr></w:tcPrChange>'
+              if old_w else "")
+    run = (f'<w:del w:id="{rid + 2}" {REVC}><w:r><w:delText>{text}</w:delText></w:r></w:del>' if deleted
+           else f'<w:r><w:t>{text}</w:t></w:r>')
+    return f'<w:tc><w:tcPr><w:tcW w:w="{w}" w:type="dxa"/>{extra}{change}</w:tcPr><w:p>{run}</w:p></w:tc>'
+
+
+rows = [("Item", "Qty", "Note", "Shop"), ("Rice", "2", "old", "Pasar")]
+trs = ""
+for r, (a, b, c, e) in enumerate(rows):
+    base = 100 + r * 20
+    tr_pr = (f'<w:trPr><w:trHeight w:val="500"/><w:trPrChange w:id="{base + 19}" {REVC}><w:trPr/></w:trPrChange></w:trPr>'
+             if r == 1 else "")
+    trs += ("<w:tr>" + tr_pr
+            + tc(a, 2000, old_w=3000, rid=base)
+            + tc(b, 2000, old_w=3000, rid=base + 3)
+            + tc(c, 2000, f'<w:cellDel w:id="{base + 9}" {REVC}/>', deleted=True, rid=base + 6)
+            + tc(e, 2000, f'<w:cellIns w:id="{base + 12}" {REVC}/>', rid=base + 13)
+            + "</w:tr>")
+tbl = (
+    f'<w:tbl {W}><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/><w:tblBorders>'
+    + "".join(f'<w:{s} w:val="single" w:sz="4" w:space="0" w:color="auto"/>' for s in ("top", "left", "bottom", "right", "insideH", "insideV"))
+    + f'</w:tblBorders><w:tblLook w:val="04A0"/><w:tblPrChange w:id="98" {REVC}><w:tblPr><w:tblW w:w="0" w:type="auto"/>'
+    + "<w:tblBorders>" + "".join(f'<w:{s} w:val="single" w:sz="4" w:space="0" w:color="auto"/>' for s in ("top", "left", "bottom", "right", "insideH", "insideV"))
+    + '</w:tblBorders><w:tblLook w:val="04A0"/></w:tblPr></w:tblPrChange></w:tblPr>'
+    + '<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/>'
+    + '<w:tblGridChange w:id="99"><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/><w:gridCol w:w="2000"/></w:tblGrid></w:tblGridChange></w:tblGrid>'
+    + trs + "</w:tbl>"
+)
+d.element.body.insert(1, parse_xml(tbl))
+d.add_paragraph("After the table.")
+save(d, "tracked_cells.docx")
+
 # ── threads: Word 365 threaded comments (a reply, a resolved thread) with
 # commentsExtended / commentsIds / commentsExtensible / people parts.
 W14 = 'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
@@ -839,4 +890,223 @@ add_draw(p, drawing(anchor(207, "Tight triangle", pos("H", "column", "<wp:align>
                             160 * EMU, 160 * EMU, poly, tri, 251660006)))
 p.add_run(LOREM * 5)
 save(d, "drawings.docx")
+
+# ── diagrams: text in grouped shapes, SmartArt, more chart types.
+def sp_text(prst, x, y, cx, cy, fill, text, rot=0, anchor_v="ctr"):
+    paras = "".join(f'<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>' for t in text)
+    return (
+        f'<wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm rot="{rot}"><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        f'<a:prstGeom prst="{prst}"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="{fill}"/></a:solidFill>'
+        f'<a:ln w="12700"><a:solidFill><a:srgbClr val="404040"/></a:solidFill></a:ln></wps:spPr>'
+        f'<wps:txbx><w:txbxContent>{paras}</w:txbxContent></wps:txbx>'
+        f'<wps:bodyPr rot="0" vert="horz" lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="{anchor_v}"/></wps:wsp>'
+    )
+
+
+d = Document()
+d.add_heading("Diagrams", 1)
+# A group of two labelled boxes and an arrow, in child coordinates twice
+# the group's size; the second box is turned 90°.
+p = d.add_paragraph()
+G = 300 * EMU
+group = (
+    f'<a:graphic><a:graphicData uri="{NS_WPG}"><wpg:wgp><wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm>'
+    f'<a:off x="0" y="0"/><a:ext cx="{G}" cy="{G // 3}"/><a:chOff x="0" y="0"/><a:chExt cx="{2 * G}" cy="{2 * G // 3}"/>'
+    f'</a:xfrm></wpg:grpSpPr>'
+    + sp_text("roundRect", 0, 0, 2 * G // 5, 2 * G // 3, "BDD7EE", ["Plan", "first"])
+    + sp("rightArrow", 2 * G // 5, G // 4, G // 5, G // 6, "A9D18E")
+    + sp_text("rect", 3 * G // 5 + G // 6, 2 * G // 15, 2 * G // 3, 2 * G // 5, "F8CBAD", ["Do"], rot=5400000)
+    + '</wpg:wgp></a:graphicData></a:graphic>'
+)
+add_draw(p, drawing(anchor(301, "Labelled group", pos("H", "column", "<wp:align>left</wp:align>"),
+                            pos("V", "paragraph", "<wp:posOffset>0</wp:posOffset>"),
+                            G, G // 3, '<wp:wrapTopAndBottom/>', group, 251661000)))
+p.add_run(LOREM)
+
+# SmartArt, by hand (as gen_pptx_groups.py): a data model, layout, style,
+# colours and Word's pre-drawn shapes: three boxes, the middle one an
+# empty placeholder item, and a list shape showing two items.
+DGM = "http://schemas.openxmlformats.org/drawingml/2006/diagram"
+DSP = "http://schemas.microsoft.com/office/drawing/2008/diagram"
+FW, FH = 400 * EMU, 160 * EMU
+doc_id = "{00000000-0000-0000-0000-000000000001}"
+items = [  # (id, text, parent, placeholder)
+    ("{A0000000-0000-0000-0000-000000000001}", "Plan", doc_id, False),
+    ("{A0000000-0000-0000-0000-000000000002}", "", doc_id, True),
+    ("{A0000000-0000-0000-0000-000000000003}", "Ship", doc_id, False),
+    ("{A0000000-0000-0000-0000-000000000004}", "Steps", doc_id, False),
+    ("{A0000000-0000-0000-0000-000000000005}", "One", "{A0000000-0000-0000-0000-000000000004}", False),
+    ("{A0000000-0000-0000-0000-000000000006}", "Two", "{A0000000-0000-0000-0000-000000000004}", False),
+]
+bw = FW // 5
+drawn = [  # (presentation item, data item it shows, paragraphs, box)
+    ("{B0000000-0000-0000-0000-000000000001}", items[0][0], ["Plan"], (0, 0, bw, FH // 2)),
+    ("{B0000000-0000-0000-0000-000000000002}", items[1][0], [""], (int(bw * 1.25), 0, bw, FH // 2)),
+    ("{B0000000-0000-0000-0000-000000000003}", items[2][0], ["Ship"], (int(bw * 2.5), 0, bw, FH // 2)),
+    ("{B0000000-0000-0000-0000-000000000004}", items[3][0], ["Steps"], (int(bw * 3.75), 0, bw, FH // 4)),
+    ("{B0000000-0000-0000-0000-000000000005}", items[3][0], ["One", "Two"], (int(bw * 3.75), FH // 4, bw, FH // 2)),
+]
+
+
+def dgm_paras(texts, extra=""):
+    out = ""
+    for t in texts:
+        if t:
+            out += f'<a:p><a:r><a:rPr lang="en-US"{extra}/><a:t>{t}</a:t></a:r></a:p>'
+        else:
+            out += '<a:p><a:endParaRPr lang="en-US"/></a:p>'
+    return out
+
+
+pts = (
+    f'<dgm:pt modelId="{doc_id}" type="doc"><dgm:prSet loTypeId="urn:microsoft.com/office/officeart/2005/8/layout/default" '
+    'loCatId="list" qsTypeId="urn:microsoft.com/office/officeart/2005/8/quickstyle/simple1" qsCatId="simple" '
+    'csTypeId="urn:microsoft.com/office/officeart/2005/8/colors/accent1_2" csCatId="accent1"/><dgm:spPr/>'
+    f'<dgm:t><a:bodyPr/><a:lstStyle/>{dgm_paras([""])}</dgm:t></dgm:pt>'
+)
+for mid, text, _, ph in items:
+    pr = '<dgm:prSet phldrT="[Text]" phldr="1"/>' if ph else '<dgm:prSet phldrT="[Text]"/>'
+    pts += f'<dgm:pt modelId="{mid}">{pr}<dgm:spPr/><dgm:t><a:bodyPr/><a:lstStyle/>{dgm_paras([text])}</dgm:t></dgm:pt>'
+for i, (pid, assoc, _, _) in enumerate(drawn):
+    pts += (
+        f'<dgm:pt modelId="{pid}" type="pres"><dgm:prSet presAssocID="{assoc}" presName="node" '
+        f'presStyleLbl="node1" presStyleIdx="{i}" presStyleCnt="{len(drawn)}"/><dgm:spPr/></dgm:pt>'
+    )
+cxns = ""
+order = {}
+for n, (mid, _, parent, _) in enumerate(items):
+    k = order.get(parent, 0)
+    order[parent] = k + 1
+    cxns += f'<dgm:cxn modelId="{{C0000000-0000-0000-0000-00000000000{n}}}" srcId="{parent}" destId="{mid}" srcOrd="{k}" destOrd="0"/>'
+for n, (pid, assoc, _, _) in enumerate(drawn):
+    cxns += (
+        f'<dgm:cxn modelId="{{D0000000-0000-0000-0000-00000000000{n}}}" type="presOf" srcId="{assoc}" '
+        f'destId="{pid}" srcOrd="0" destOrd="0"/>'
+    )
+sps = ""
+for pid, _, texts, (x, y, cx, cy) in drawn:
+    ins = 40000
+    sps += (
+        f'<dsp:sp modelId="{pid}"><dsp:nvSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvSpPr/></dsp:nvSpPr>'
+        f'<dsp:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:schemeClr val="accent1"/></a:solidFill>'
+        '<a:ln w="12700"><a:solidFill><a:schemeClr val="lt1"/></a:solidFill></a:ln></dsp:spPr>'
+        '<dsp:style><a:lnRef idx="2"><a:scrgbClr r="0" g="0" b="0"/></a:lnRef><a:fillRef idx="1"><a:scrgbClr r="0" g="0" b="0"/></a:fillRef>'
+        '<a:effectRef idx="0"><a:scrgbClr r="0" g="0" b="0"/></a:effectRef><a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></dsp:style>'
+        '<dsp:txBody><a:bodyPr spcFirstLastPara="0" vert="horz" wrap="square" lIns="38100" tIns="38100" rIns="38100" bIns="38100" '
+        'numCol="1" spcCol="1270" anchor="ctr" anchorCtr="0"><a:noAutofit/></a:bodyPr><a:lstStyle/>'
+        + dgm_paras(texts, ' sz="1400" kern="1200"').replace("<a:p>", '<a:p><a:pPr algn="ctr"/>')
+        + f'</dsp:txBody><dsp:txXfrm><a:off x="{x + ins}" y="{y + ins}"/><a:ext cx="{cx - 2 * ins}" cy="{cy - 2 * ins}"/></dsp:txXfrm></dsp:sp>'
+    )
+dgm_drawing = (
+    f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<dsp:drawing xmlns:dgm="{DGM}" xmlns:dsp="{DSP}" xmlns:a="{NS_A}">'
+    '<dsp:spTree><dsp:nvGrpSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvGrpSpPr/></dsp:nvGrpSpPr><dsp:grpSpPr/>'
+    f"{sps}</dsp:spTree></dsp:drawing>"
+)
+dgm_layout = (
+    f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<dgm:layoutDef xmlns:dgm="{DGM}" xmlns:a="{NS_A}" '
+    'uniqueId="urn:microsoft.com/office/officeart/2005/8/layout/default"><dgm:title val=""/><dgm:desc val=""/>'
+    '<dgm:catLst><dgm:cat type="list" pri="400"/></dgm:catLst><dgm:layoutNode name="diagram"><dgm:alg type="snake"/>'
+    '<dgm:shape/><dgm:presOf/></dgm:layoutNode></dgm:layoutDef>'
+)
+dgm_style = (
+    f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<dgm:styleDef xmlns:dgm="{DGM}" xmlns:a="{NS_A}" '
+    'uniqueId="urn:microsoft.com/office/officeart/2005/8/quickstyle/simple1"><dgm:title val=""/><dgm:desc val=""/>'
+    '<dgm:styleLbl name="node1"/></dgm:styleDef>'
+)
+dgm_colors = (
+    f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<dgm:colorsDef xmlns:dgm="{DGM}" xmlns:a="{NS_A}" '
+    'uniqueId="urn:microsoft.com/office/officeart/2005/8/colors/accent1_2"><dgm:title val=""/><dgm:desc val=""/></dgm:colorsDef>'
+)
+CT_DGM = "application/vnd.openxmlformats-officedocument.drawingml."
+REL_DGM = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+
+
+def dgm_part(name, ct, xml, rel):
+    part = Part(PackURI(f"/word/diagrams/{name}"), ct, xml.encode(), d.part.package)
+    return d.part.relate_to(part, rel)
+
+
+rid_dr = dgm_part("drawing1.xml", "application/vnd.ms-office.drawingml.diagramDrawing+xml", dgm_drawing,
+                  "http://schemas.microsoft.com/office/2007/relationships/diagramDrawing")
+dgm_data = (
+    f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<dgm:dataModel xmlns:dgm="{DGM}" xmlns:a="{NS_A}">'
+    f"<dgm:ptLst>{pts}</dgm:ptLst><dgm:cxnLst>{cxns}</dgm:cxnLst><dgm:bg/><dgm:whole/>"
+    f'<dgm:extLst><a:ext uri="http://schemas.microsoft.com/office/drawing/2008/diagram"><dsp:dataModelExt xmlns:dsp="{DSP}" '
+    f'relId="{rid_dr}" minVer="http://schemas.openxmlformats.org/drawingml/2006/diagram"/></a:ext></dgm:extLst></dgm:dataModel>'
+)
+rid_dm = dgm_part("data1.xml", CT_DGM + "diagramData+xml", dgm_data, REL_DGM + "diagramData")
+rid_lo = dgm_part("layout1.xml", CT_DGM + "diagramLayout+xml", dgm_layout, REL_DGM + "diagramLayout")
+rid_qs = dgm_part("quickStyle1.xml", CT_DGM + "diagramStyle+xml", dgm_style, REL_DGM + "diagramQuickStyle")
+rid_cs = dgm_part("colors1.xml", CT_DGM + "diagramColors+xml", dgm_colors, REL_DGM + "diagramColors")
+p = d.add_paragraph()
+smartart = (
+    f'<a:graphic><a:graphicData uri="{DGM}"><dgm:relIds xmlns:dgm="{DGM}" r:dm="{rid_dm}" r:lo="{rid_lo}" '
+    f'r:qs="{rid_qs}" r:cs="{rid_cs}"/></a:graphicData></a:graphic>'
+)
+add_draw(p, drawing(anchor(302, "Diagram 1", pos("H", "column", "<wp:align>center</wp:align>"),
+                            pos("V", "paragraph", "<wp:posOffset>0</wp:posOffset>"),
+                            FW, FH, '<wp:wrapTopAndBottom/>', smartart, 251661001)))
+p.add_run(LOREM)
+
+
+# More chart types: radar, bubble, stock (high-low-close) and 3-D columns.
+def cat_ser(i, name, vals, extra=""):
+    cats = "".join(f'<c:pt idx="{k}"><c:v>{c}</c:v></c:pt>' for k, c in enumerate(["Mon", "Tue", "Wed", "Thu"][:len(vals)]))
+    pts = "".join(f'<c:pt idx="{k}"><c:v>{v}</c:v></c:pt>' for k, v in enumerate(vals))
+    return (
+        f'<c:ser><c:idx val="{i}"/><c:order val="{i}"/><c:tx><c:v>{name}</c:v></c:tx>{extra}'
+        f'<c:cat><c:strLit><c:ptCount val="{len(vals)}"/>{cats}</c:strLit></c:cat>'
+        f'<c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="{len(vals)}"/>{pts}</c:numLit></c:val></c:ser>'
+    )
+
+
+def bubble_ser(i, name, xs, ys, sizes):
+    lit = lambda vs: "".join(f'<c:pt idx="{k}"><c:v>{v}</c:v></c:pt>' for k, v in enumerate(vs))
+    n = len(xs)
+    return (
+        f'<c:ser><c:idx val="{i}"/><c:order val="{i}"/><c:tx><c:v>{name}</c:v></c:tx><c:invertIfNegative val="0"/>'
+        f'<c:xVal><c:numLit><c:ptCount val="{n}"/>{lit(xs)}</c:numLit></c:xVal>'
+        f'<c:yVal><c:numLit><c:ptCount val="{n}"/>{lit(ys)}</c:numLit></c:yVal>'
+        f'<c:bubbleSize><c:numLit><c:ptCount val="{n}"/>{lit(sizes)}</c:numLit></c:bubbleSize><c:bubble3D val="0"/></c:ser>'
+    )
+
+
+AXES = ('<c:catAx><c:axId val="2001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/>'
+        '<c:crossAx val="2002"/></c:catAx><c:valAx><c:axId val="2002"/><c:scaling><c:orientation val="minMax"/></c:scaling>'
+        '<c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:numFmt formatCode="General" sourceLinked="0"/><c:crossAx val="2001"/></c:valAx>')
+VAL_AXES = ('<c:valAx><c:axId val="2001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/>'
+            '<c:crossAx val="2002"/></c:valAx><c:valAx><c:axId val="2002"/><c:scaling><c:orientation val="minMax"/></c:scaling>'
+            '<c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:crossAx val="2001"/></c:valAx>')
+AX_IDS = '<c:axId val="2001"/><c:axId val="2002"/>'
+more_charts = [
+    ("Radar chart", "Radar", '<c:radarChart><c:radarStyle val="marker"/><c:varyColors val="0"/>'
+     + cat_ser(0, "Team A", (4, 3, 5, 2)) + cat_ser(1, "Team B", (2, 5, 3, 4)) + AX_IDS + '</c:radarChart>' + AXES),
+    ("Bubble chart", "Bubbles", '<c:bubbleChart><c:varyColors val="0"/>'
+     + bubble_ser(0, "Plants", (1, 2, 3), (3, 1, 2), (5, 10, 3)) + '<c:bubbleScale val="100"/>' + AX_IDS + '</c:bubbleChart>' + VAL_AXES),
+    ("Stock chart", "Prices", '<c:stockChart>'
+     + cat_ser(0, "High", (12, 14, 13, 15)) + cat_ser(1, "Low", (8, 9, 10, 11)) + cat_ser(2, "Close", (10, 13, 11, 14))
+     + '<c:hiLowLines/>' + AX_IDS + '</c:stockChart>' + AXES),
+    ("3-D column chart", "Output", '<c:bar3DChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>'
+     + cat_ser(0, "Line 1", (5, 7, 6)) + '<c:gapWidth val="150"/><c:shape val="box"/>' + AX_IDS + '<c:axId val="0"/></c:bar3DChart>' + AXES),
+]
+for n, (name, title, plot) in enumerate(more_charts):
+    view3d = '<c:view3D><c:rotX val="15"/><c:rotY val="20"/><c:rAngAx val="1"/></c:view3D>' if "3D" in plot else ""
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        f'<c:chartSpace xmlns:c="{NS_C}" xmlns:a="{NS_A}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        f'<c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>{title}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title>'
+        f'<c:autoTitleDeleted val="0"/>{view3d}<c:plotArea><c:layout/>{plot}</c:plotArea>'
+        '<c:legend><c:legendPos val="r"/><c:overlay val="0"/></c:legend><c:plotVisOnly val="1"/></c:chart></c:chartSpace>'
+    )
+    part = Part(PackURI(f"/word/charts/chart{n + 1}.xml"),
+                "application/vnd.openxmlformats-officedocument.drawingml.chart+xml", xml.encode(), d.part.package)
+    rid = d.part.relate_to(part, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart")
+    p = d.add_paragraph()
+    frame = f'<a:graphic><a:graphicData uri="{NS_C}"><c:chart r:id="{rid}"/></a:graphicData></a:graphic>'
+    add_draw(p, drawing(anchor(310 + n, name, pos("H", "column", "<wp:align>center</wp:align>"),
+                                pos("V", "paragraph", "<wp:posOffset>0</wp:posOffset>"),
+                                300 * EMU, 180 * EMU, '<wp:wrapTopAndBottom/>', frame, 251661010 + n)))
+    p.add_run(f"{name}.")
+save(d, "diagrams.docx")
 print("docx ok")

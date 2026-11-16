@@ -38,11 +38,33 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   once per file until Kantor quits, like Excel's security warning. *Let Formulas Download from
   the Internet* in the command palette (or `[sheets] web_formulas = false` in `settings.toml`)
   turns downloading off; the formulas then show `#BLOCKED!`. `kantor convert` never downloads.
+- Docs: text in grouped shapes (and in shapes on a drawing canvas) is shown, wrapped inside its
+  shape and turned with it, on screen and in the PDF. Double-click a shape in the group to edit its
+  text, as with a text box.
+- Docs: SmartArt is drawn, on screen and in the PDF, from the shapes Word saved for it (with
+  Slides' SmartArt code). Double-click a SmartArt shape to edit its text; it's saved to both the
+  drawing and the SmartArt's data, so Word shows the edit too. Items can't be added or removed.
+- Docs: radar, bubble, stock and 3-D charts (drawn flat) are drawn too, as in Slides; only
+  surface, pie-of-pie and bar-of-pie charts and Office 2016 charts (waterfall, treemap…) are still
+  boxes.
+- Docs: with Track Changes on, inserting and deleting table columns is tracked as Word does it
+  (each cell marked inserted or deleted, the column widths it changed kept as a formatting change),
+  and tracked rows and cells are shaded as in Word (inserted light blue, deleted pink). Table, row
+  and cell property changes in files from Word open (they used to force Save As), show as a
+  "Formatted Table" balloon, and can be accepted or rejected.
+- Docs: a field's code (Alt+F9, Shift+F9 and the code box) shows the codes of the fields nested in
+  it in braces, as Word does (`IF { MERGEFIELD Amount } > 100 …`); typing braces in the code box
+  nests fields.
 
 ### Fixed
 
 - Sheets: an icon set in reverse order (*Reverse Icon Order*) brought in from an `.ods` or `.xls`
   file, or on a sheet whose rules were changed in Kantor, keeps that order when saved.
+- Docs: text wraps around a turned picture or shape's turned bounds, as in Word, instead of its
+  unturned box (text could run under a turned picture's corners).
+- Docs: rejecting a table of contents line added by a tracked update removes its page reference
+  too (an empty `PAGEREF` field was left behind), and rejecting a removed line brings its fields
+  back.
 
 ## [0.8.0] - 2026-11-16
 

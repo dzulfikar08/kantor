@@ -97,6 +97,10 @@ pub struct FloatSpec {
     pub z: u32,
     /// The wrap polygon (Tight, Through) as fractions of the box.
     pub polygon: Option<Vec<[f32; 2]>>,
+    /// How far the object reaches past its box on the left, top, right
+    /// and bottom (px; negative inside it): a turned object's turned
+    /// bounds, which text wraps around as in Word.
+    pub extent: [f32; 4],
 }
 
 /// A floating object placed on a page.
@@ -203,6 +207,8 @@ impl WrapArea {
         }
         let [x, y, w, h] = rect;
         let [t, b, l, r] = spec.dist;
+        // (Negative when the turned bounds are narrower than the box.)
+        let [el, et, er, eb] = spec.extent.map(|v| v.max(-w.min(h) / 2.0));
         let polygon = spec
             .polygon
             .as_ref()
@@ -213,7 +219,7 @@ impl WrapArea {
                 (pts, [l, r])
             });
         Some(Self {
-            area: [x - l, y - t, x + w + r, y + h + b],
+            area: [x - l - el, y - t - et, x + w + r + er, y + h + b + eb],
             wrap: spec.wrap,
             side: spec.side,
             key,
@@ -342,6 +348,7 @@ mod tests {
             behind: false,
             z: 1,
             polygon: None,
+            extent: [0.0; 4],
         }
     }
 
@@ -450,6 +457,19 @@ mod tests {
     }
 
     #[test]
+    fn turned_bounds_widen_the_wrap_area() {
+        let mut sp = spec(
+            (FloatRefH::Page, FloatPos::Offset(100.0)),
+            (FloatRefV::Page, FloatPos::Offset(100.0)),
+        );
+        let plain = WrapArea::of(&sp, [100.0, 100.0, 100.0, 50.0], (0, 0)).unwrap();
+        assert_eq!(plain.area, [88.0, 100.0, 212.0, 150.0]);
+        sp.extent = [5.0, 20.0, 5.0, 20.0];
+        let turned = WrapArea::of(&sp, [100.0, 100.0, 100.0, 50.0], (0, 0)).unwrap();
+        assert_eq!(turned.area, [83.0, 80.0, 217.0, 170.0]);
+    }
+
+    #[test]
     fn tight_wrap_follows_the_polygon() {
         // A triangle pointing down: wide at the top, a point at the bottom.
         let mut sp = spec(
@@ -517,6 +537,7 @@ mod flow_tests {
             behind: false,
             z: 1,
             polygon: None,
+            extent: [0.0; 4],
         }
     }
 

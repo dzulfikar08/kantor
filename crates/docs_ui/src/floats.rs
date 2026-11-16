@@ -71,6 +71,9 @@ pub(crate) struct FloatDrag {
 /// The text box being edited.
 pub(crate) struct TextBoxEdit {
     sel: FloatSel,
+    /// A group's shape's text ([`docs_engine::Float::boxes`]), or the
+    /// object's own text box.
+    which: Option<usize>,
     at: Point<Pixels>,
     input: Entity<TextareaState>,
     locked: Option<String>,
@@ -83,6 +86,13 @@ pub(crate) struct TextBoxEdit {
 const LOCKED: &str = tk(
     "This text box has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet",
 );
+
+/// SmartArt edit messages from `docs_pdf::smartart` (translated with
+/// `t_dyn`).
+const SMARTART_MESSAGES: [&str; 2] = [
+    tk("This SmartArt shape shows several items: keep one line per item"),
+    tk("Kantor can't read this SmartArt's drawing"),
+];
 
 /// Word's Layout Options names in the interface language.
 fn option_label(o: LayoutOption) -> &'static str {
@@ -256,19 +266,49 @@ impl DocsView {
         // and undo work on the object).
         self.sel = Selection::caret(Position::new(sel.para, sel.index));
         self.dragging = false;
-        if ev.click_count == 2
-            && self
-                .doc
-                .float_at(sel.para, sel.index)
-                .is_some_and(|f| f.text.is_some())
-        {
+        let target = (ev.click_count == 2)
+            .then(|| self.text_target(page, sel, ev.position))
+            .flatten();
+        if let Some(which) = target {
             let at = point(ev.position.x + SPACE_3, ev.position.y + SPACE_3);
-            self.open_text_box(sel, at, window, cx);
+            self.open_text_box(sel, which, at, window, cx);
         } else {
             self.start_float_drag(page, Grab::Move, rect, ev.position);
         }
         cx.notify();
         true
+    }
+
+    /// The text a double click at `p` on object `sel` edits: its own text
+    /// box (`Some(None)`), the text of the group's shape under the
+    /// pointer (or nearest to it), or nothing.
+    fn text_target(&self, page: usize, sel: FloatSel, p: Point<Pixels>) -> Option<Option<usize>> {
+        let f = self.doc.float_at(sel.para, sel.index)?;
+        if f.text.is_some() {
+            return Some(None);
+        }
+        let smartart = matches!(f.kind, docs_engine::FloatKind::SmartArt { .. });
+        if f.boxes.is_empty() && !smartart {
+            return None;
+        }
+        let (_, x, y) = self
+            .geometry()
+            .screen_to_page(p, self.laid.paged.pages.len());
+        let it = self
+            .laid
+            .floats
+            .get(page)?
+            .iter()
+            .find(|it| it.story.is_none() && it.para == sel.para && it.index == sel.index)?;
+        let dist = |r: [f32; 4]| {
+            let dx = (r[0] - x).max(x - r[0] - r[2]).max(0.0);
+            let dy = (r[1] - y).max(y - r[1] - r[3]).max(0.0);
+            dx * dx + dy * dy
+        };
+        it.boxes
+            .iter()
+            .min_by(|a, b| dist(a.rect).total_cmp(&dist(b.rect)))
+            .map(|b| Some(b.which))
     }
 
     fn start_float_drag(&mut self, page: usize, grab: Grab, rect: [f32; 4], p: Point<Pixels>) {
@@ -503,6 +543,7 @@ impl DocsView {
     fn open_text_box(
         &mut self,
         sel: FloatSel,
+        which: Option<usize>,
         at: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -510,8 +551,18 @@ impl DocsView {
         let Some(f) = self.doc.float_at(sel.para, sel.index) else {
             return;
         };
-        let text = f.text_box_text().unwrap_or_default();
-        let locked = f.text_locked().map(str::to_owned);
+        let (text, locked) = match (&f.kind, which) {
+            (docs_engine::FloatKind::SmartArt { .. }, Some(k)) => {
+                let Some((text, locked)) = docs_pdf::smartart::shape_text(&self.doc, f, k) else {
+                    return;
+                };
+                (text, locked.map(|l| t_dyn(l).to_owned()))
+            }
+            _ => (
+                f.text_box_text_in(which).unwrap_or_default(),
+                f.text_locked_in(which).map(str::to_owned),
+            ),
+        };
         let input = cx.new(|cx| {
             let mut s = TextareaState::new(window, cx)
                 .auto_grow(2, 8)
@@ -533,6 +584,7 @@ impl DocsView {
         }
         self.text_box_edit = Some(TextBoxEdit {
             sel,
+            which,
             at,
             input,
             locked,
@@ -549,12 +601,36 @@ impl DocsView {
         if edit.locked.is_none() {
             let value = edit.input.read(cx).value().to_string();
             let text = value.trim_end_matches(['\n', '\r']);
-            if self
+            let (para, index) = (edit.sel.para, edit.sel.index);
+            let smartart = self
                 .doc
-                .set_text_box_text(edit.sel.para, edit.sel.index, text)
-            {
-                self.float_edited(window, cx);
-                self.status = t("Text box updated").into();
+                .float_at(para, index)
+                .filter(|f| matches!(f.kind, docs_engine::FloatKind::SmartArt { .. }));
+            match (smartart, edit.which) {
+                (Some(f), Some(k)) => {
+                    match docs_pdf::smartart::set_shape_text(&self.doc, f, k, text) {
+                        Ok(Some(parts)) => {
+                            if self.doc.set_float_parts(para, index, parts) {
+                                self.float_edited(window, cx);
+                                self.status = t("SmartArt text updated").into();
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(why) => {
+                            debug_assert!(
+                                SMARTART_MESSAGES.contains(&why)
+                                    || why.starts_with("This SmartArt text")
+                            );
+                            self.status = t_dyn(why).into();
+                        }
+                    }
+                }
+                _ => {
+                    if self.doc.set_text_box_text_in(para, index, edit.which, text) {
+                        self.float_edited(window, cx);
+                        self.status = t("Text box updated").into();
+                    }
+                }
             }
         }
         cx.notify();
@@ -899,6 +975,13 @@ pub(crate) fn float_paint(
                 get(l, (*x, *y), it.rect, deg);
             }
             let mut labels = Vec::new();
+            for b in &it.boxes {
+                if b.turn != 0.0 {
+                    get(&b.layout, (b.x, b.y), b.rect, b.turn);
+                } else {
+                    labels.push((b.layout.clone(), b.x, b.y));
+                }
+            }
             for l in it.chart.iter().flat_map(|c| &c.labels) {
                 if l.rot != 0.0 {
                     get(&l.layout, (l.x, l.y), l.rect, l.rot);

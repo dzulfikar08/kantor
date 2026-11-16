@@ -50,6 +50,28 @@ fn untracked(run: &Run) -> bool {
         .is_some_and(|o| o.is_marker() || matches!(o, Object::Field(_)))
 }
 
+/// Field marks in `paras` whose partner (a start's end, an end's start)
+/// is in `paras` too: (paragraph index, byte offset). A field wholly in new
+/// lines is new: its marks are inserted with them, so rejecting the lines
+/// leaves no empty field behind.
+fn paired_marks(paras: &[Paragraph]) -> Vec<(usize, usize)> {
+    let mut open: Vec<(usize, usize)> = Vec::new();
+    let mut out = Vec::new();
+    for (i, p) in paras.iter().enumerate() {
+        for (r, run) in p.run_ranges() {
+            if let Some(Object::Field(f)) = &run.object {
+                if f.is_begin() {
+                    open.push((i, r.start));
+                } else if let Some(b) = open.pop() {
+                    out.push(b);
+                    out.push((i, r.start));
+                }
+            }
+        }
+    }
+    out
+}
+
 fn deleted(run: &Run) -> bool {
     run.rev.as_ref().is_some_and(|r| r.kind == RevKind::Delete)
 }
@@ -269,13 +291,23 @@ impl Document {
             rev.date
         );
         let mut out = Vec::new();
-        for p in old.iter().chain(new) {
+        // Fields wholly in these lines come and go with them.
+        let paired = if kind == RevKind::Insert {
+            paired_marks(new)
+        } else {
+            paired_marks(old)
+        };
+        for (k, p) in old.iter().chain(new).enumerate() {
             let mut p = p.clone();
             let mut drop = Vec::new();
             let mut at = 0;
             for run in &mut p.runs {
                 let r = at..at + run.len;
                 at = r.end;
+                if matches!(run.object, Some(Object::Field(_))) && paired.contains(&(k, r.start)) {
+                    run.rev = Some(rev.clone());
+                    continue;
+                }
                 if r.is_empty() || untracked(run) || deleted(run) {
                     continue;
                 }
@@ -293,10 +325,11 @@ impl Document {
                 p.delete(r);
             }
             if kind == RevKind::Delete {
-                // Field marks are the new version's: these lines have none.
+                // Field marks are the new version's: these lines have none
+                // (but their own whole fields, struck with them).
                 let marks: Vec<usize> = p
                     .run_ranges()
-                    .filter(|(_, r)| matches!(r.object, Some(Object::Field(_))))
+                    .filter(|(_, r)| matches!(r.object, Some(Object::Field(_))) && r.rev.is_none())
                     .map(|(r, _)| r.start)
                     .collect();
                 for i in marks.into_iter().rev() {
@@ -415,9 +448,29 @@ impl Document {
             last_new
         };
         let mut out = Vec::with_capacity(old.len() + new.len());
-        for p in old_rest {
-            let p = &unmark(p.clone());
-            let mut p = strike(p);
+        // Fields wholly in the old lines but the last go with them (struck,
+        // so rejecting brings them back).
+        let old_paired = paired_marks(old_rest);
+        for (k, p) in old_rest.iter().enumerate() {
+            let mut p = p.clone();
+            let own: Vec<usize> = p
+                .run_ranges()
+                .filter(|(r, _)| old_paired.contains(&(k, r.start)))
+                .map(|(r, _)| r.start)
+                .collect();
+            for &a in &own {
+                let i = p.split_run_at(a);
+                p.runs[i].rev = Some(del.clone());
+            }
+            let at: Vec<usize> = p
+                .run_ranges()
+                .filter(|(r, run)| untracked(run) && !own.contains(&r.start))
+                .map(|(r, _)| r.start)
+                .collect();
+            for i in at.into_iter().rev() {
+                p.remove_object(i);
+            }
+            let mut p = strike(&p);
             if mark_state(&p, &me).0 {
                 // A line the user inserted (an earlier tracked update)
                 // simply goes.
@@ -432,8 +485,20 @@ impl Document {
             out.push(p);
         }
         let n = new.len();
-        for p in new.into_iter().take(n - 1) {
+        // Fields wholly in the new lines but the last are new.
+        let paired = paired_marks(&new[..n - 1]);
+        for (k, p) in new.into_iter().take(n - 1).enumerate() {
             let mut p = insert(p);
+            let at: Vec<usize> = p
+                .run_ranges()
+                .filter(|(r, _)| paired.contains(&(k, r.start)))
+                .map(|(r, _)| r.start)
+                .collect();
+            for a in at {
+                let i = p.split_run_at(a);
+                p.runs[i].rev = Some(ins.clone());
+            }
+            p.normalize();
             set_mark_rev(&mut p, &ins_mark);
             out.push(p);
         }

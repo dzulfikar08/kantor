@@ -855,6 +855,9 @@ pub struct TableCell {
     pub merge: Merge,
     /// Top, right, bottom, left.
     pub borders: [Option<Rule>; 4],
+    /// Shading drawn under the cell's text (Track Changes' inserted and
+    /// deleted cells and rows).
+    pub fill: Option<Rgba>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1941,6 +1944,12 @@ impl Flow<'_> {
     fn cell_borders(&mut self, cell: &TableCell, cx: f32, cw: f32, top: f32, h: f32) {
         let page = self.pages.len() - 1;
         let rules = &mut self.pages[page].rules;
+        if let Some(color) = cell.fill {
+            rules.push(RuleRect {
+                rect: [cx, top, cw, h],
+                color,
+            });
+        }
         let [bt, br, bb, bl] = cell.borders;
         if let Some(r) = bt {
             rules.push(RuleRect {
@@ -3408,6 +3417,7 @@ mod tests {
                             paras: 1 + r * 2 + c..2 + r * 2 + c,
                             merge: Merge::None,
                             borders: [rule; 4],
+                            fill: None,
                         })
                         .collect(),
                     min_height: 0.0,
@@ -3530,6 +3540,7 @@ mod tab_tests {
                         paras: r..r + 1,
                         merge: Merge::None,
                         borders: [rule; 4],
+                        fill: None,
                     }],
                     min_height: 0.0,
                     exact: false,

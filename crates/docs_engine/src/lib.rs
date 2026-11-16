@@ -68,3 +68,4 @@ pub use style::{
 };
 pub use table::{Border, Borders, Table, VMerge};
 pub use tabs::{TabKind, TabLeader, TabStop};
+pub use track_table::TableChange;

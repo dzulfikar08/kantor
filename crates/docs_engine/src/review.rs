@@ -93,6 +93,10 @@ pub struct Change {
     /// An inserted or deleted table row (`w:trPr/w:ins|w:del`), from its
     /// first cell to its last.
     pub row: bool,
+    /// A change to a table's structure or properties rather than its text:
+    /// a row or cell inserted or deleted (the row's or cell's paragraphs),
+    /// or the table's properties (the whole table; [`RevKind::Format`]).
+    pub table: Option<track_table::TableChange>,
 }
 
 /// A comment from `comments.xml` (or added in Kantor).
@@ -378,6 +382,8 @@ impl Document {
                 && !c.para
                 && !last.row
                 && !c.row
+                && last.table.is_none()
+                && c.table.is_none()
             {
                 last.end = c.end;
                 last.text.push_str(&c.text);
@@ -387,7 +393,29 @@ impl Document {
         };
         let n = self.paragraphs.len();
         for (pi, p) in self.paragraphs.iter().enumerate() {
-            // A tracked table row, at its first paragraph.
+            // A table's property changes, at its first paragraph.
+            if let Some(c) = p.cell
+                && (pi == 0
+                    || self.paragraphs[pi - 1]
+                        .cell
+                        .is_none_or(|q| q.table != c.table))
+                && let Some(t) = self.tables.get(&c.table)
+                && let Some((author, date)) = track_table::props_changed(t)
+            {
+                let last = self.table_range(c.table).end - 1;
+                add(Change {
+                    start: Position::new(pi, 0),
+                    end: Position::new(last, self.paragraphs[last].text.len()),
+                    kind: RevKind::Format,
+                    author,
+                    date,
+                    text: String::new(),
+                    format: track_table::props_items(t),
+                    para: false,
+                    row: false,
+                    table: Some(track_table::TableChange::Props),
+                });
+            }
             if let Some(c) = p.cell
                 && (pi == 0
                     || self.paragraphs[pi - 1]
@@ -411,6 +439,33 @@ impl Document {
                     format: Vec::new(),
                     para: false,
                     row: true,
+                    table: Some(track_table::TableChange::Row),
+                });
+            }
+            // An inserted or deleted cell, at its first paragraph.
+            if let Some(c) = p.cell
+                && (pi == 0 || self.paragraphs[pi - 1].cell != Some(c))
+                && let Some(cell) = self
+                    .tables
+                    .get(&c.table)
+                    .and_then(|t| t.rows.get(c.row as usize))
+                    .and_then(|r| r.cells.get(c.cell as usize))
+                && let Some((kind, author, date)) = track_table::cell_rev(cell)
+                && let Some((_, b)) =
+                    track_table::cell_paras(&self.paragraphs[pi..], c.table, c.row, c.cell)
+            {
+                let b = pi + b;
+                add(Change {
+                    start: Position::new(pi, 0),
+                    end: Position::new(b, self.paragraphs[b].text.len()),
+                    kind,
+                    author,
+                    date,
+                    text: String::new(),
+                    format: Vec::new(),
+                    para: false,
+                    row: false,
+                    table: Some(track_table::TableChange::Cell),
                 });
             }
             if let Some(ch) = fmt_track::para_change(&p.props) {
@@ -425,6 +480,7 @@ impl Document {
                     format: self.para_format_items(&p.props, ch),
                     para: true,
                     row: false,
+                    table: None,
                 });
             }
             for (range, run) in p.run_ranges() {
@@ -439,6 +495,7 @@ impl Document {
                         format: Vec::new(),
                         para: false,
                         row: false,
+                        table: None,
                     });
                 }
                 if !range.is_empty()
@@ -455,6 +512,7 @@ impl Document {
                         format: self.run_format_items(&run.props, ch),
                         para: false,
                         row: false,
+                        table: None,
                     });
                 }
             }
@@ -474,6 +532,7 @@ impl Document {
                     format: Vec::new(),
                     para: false,
                     row: false,
+                    table: None,
                 });
             }
         }
@@ -509,12 +568,14 @@ impl Document {
         let all = self.changes();
         let hit =
             |c: &&Change| c.start <= b && c.end >= a && (a != b || (c.start <= a && a <= c.end));
-        // The text's own change before its paragraph's formatting.
-        all.iter()
-            .filter(hit)
-            .find(|c| !c.para)
-            .or_else(|| all.iter().find(hit))
-            .cloned()
+        // The text's own change (or its row's or cell's, which come first)
+        // before its paragraph's formatting, and that before its table's.
+        let rank = |c: &Change| match (c.para, c.table) {
+            (_, Some(track_table::TableChange::Props)) => 2,
+            (true, _) => 1,
+            _ => 0,
+        };
+        all.iter().filter(hit).min_by_key(|c| rank(c)).cloned()
     }
 
     /// Accept or reject the tracked changes in `start..end` (`only`: just
@@ -643,6 +704,12 @@ impl Document {
                 None,
             ),
         };
+        let mut rows = rows;
+        if only.is_none() {
+            let span = Some((start, end));
+            rows |= track_table::resolve_table_props(&new, &mut tables, first, span, accept);
+            rows |= track_table::resolve_cells(&mut new, &mut tables, first, span, accept, None);
+        }
         if new.is_empty() && count == self.paragraphs.len() {
             new.push(Paragraph::default());
         }
@@ -676,6 +743,54 @@ impl Document {
         Position::new(pos.para, pos.offset.min(p.text.len()))
     }
 
+    /// Accept or reject one table change: an inserted or deleted cell, or
+    /// the table's property changes. One undo step.
+    fn resolve_table_change(
+        &mut self,
+        c: &Change,
+        what: track_table::TableChange,
+        accept: bool,
+        sel: Selection,
+    ) -> Selection {
+        let Some(id) = self.paragraphs[c.start.para].cell.map(|x| x.table) else {
+            return sel;
+        };
+        let range = self.table_range(id);
+        let mut paras: Vec<Paragraph> = self.paragraphs[range.clone()].to_vec();
+        let mut tables = self.tables.clone();
+        let changed = match what {
+            track_table::TableChange::Props => tables
+                .get_mut(&id)
+                .is_some_and(|t| track_table::resolve_props(t, accept)),
+            _ => track_table::resolve_cells(
+                &mut paras,
+                &mut tables,
+                range.start,
+                Some((c.start, c.end)),
+                accept,
+                Some(c.kind),
+            ),
+        };
+        if !changed {
+            return sel;
+        }
+        let lone = paras.is_empty() && self.paragraphs.len() == range.len();
+        if lone {
+            paras.push(Paragraph::default());
+        }
+        let after = Selection::caret(self.clamp_pos_in(&paras, range.start, c.start, range.len()));
+        self.replace_with_tables(
+            range.start,
+            range.len(),
+            paras,
+            Some(tables),
+            (sel, after),
+            Kind::Other,
+            true,
+        );
+        self.clamp_selection(after)
+    }
+
     /// Accept the change at the caret (or every change in the selection).
     pub fn accept_change(&mut self, sel: Selection) -> Option<Selection> {
         self.resolve_at(sel, true)
@@ -690,6 +805,9 @@ impl Document {
         let (a, b) = self.clamp_selection(sel).ordered();
         if a == b {
             let c = self.change_at(sel)?;
+            if let Some(what) = c.table.filter(|w| *w != track_table::TableChange::Row) {
+                return Some(self.resolve_table_change(&c, what, accept, sel));
+            }
             return Some(self.resolve_runs(c.start, c.end, accept, sel, Some((c.kind, c.para))));
         }
         let cs: Vec<Change> = self
@@ -764,7 +882,9 @@ impl Document {
             join_next = joins;
         }
         let mut tables = self.tables.clone();
-        let rows = track_table::resolve_rows(&mut out, &mut tables, 0, None, accept, None);
+        let mut rows = track_table::resolve_table_props(&out, &mut tables, 0, None, accept);
+        rows |= track_table::resolve_cells(&mut out, &mut tables, 0, None, accept, None);
+        rows |= track_table::resolve_rows(&mut out, &mut tables, 0, None, accept, None);
         if out.is_empty() {
             out.push(Paragraph::default());
         }
