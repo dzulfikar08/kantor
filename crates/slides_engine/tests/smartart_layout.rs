@@ -369,6 +369,9 @@ fn text_shrinks_to_fit_when_laid_out_smaller_and_grows_back() {
     // The blocks' text is one size, as Office keeps it.
     assert!(small.iter().all(|(_, s)| *s == small[0].1), "{small:?}");
     let bytes = p.to_bytes().unwrap();
+    if let Ok(out) = std::env::var("KANTOR_SMARTART_FIT_OUT") {
+        std::fs::write(out, &bytes).unwrap();
+    }
     let saved = parts(&bytes);
     let drawing = &saved["ppt/diagrams/drawing1.xml"];
     assert!(

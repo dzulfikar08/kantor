@@ -250,6 +250,9 @@ fn text_shrinks_to_fit_when_laid_out_again() {
     let xml = parts.iter().find(|p| p.0 == drawing).unwrap().1.clone();
     assert!(xml.contains("fontScale=\""), "{xml}");
     assert!(doc.set_float_placement_parts(para, index, small, parts));
+    if let Ok(out) = std::env::var("KANTOR_SA_FIT_OUT") {
+        std::fs::write(out, doc.to_docx_bytes().unwrap()).unwrap();
+    }
     // Every text fits its box.
     let mut engine = Engine::new();
     let laid = docs_pdf::lay_out(&doc, &mut engine);

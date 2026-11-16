@@ -467,6 +467,9 @@ fn text_box_is_edited_in_place_with_formatting() {
     assert_eq!(xml.matches("First point").count(), 2, "{xml}");
     assert!(xml.matches("<w:jc w:val=\"center\"/>").count() >= 2);
     assert!(xml.contains("<w:b/>"), "{xml}");
+    if let Ok(out) = std::env::var("KANTOR_TEXTBOX_OUT") {
+        std::fs::write(out, &saved).unwrap();
+    }
     let p = parts(&saved);
     let numbering = String::from_utf8(p["word/numbering.xml"].clone()).unwrap();
     let dir = tempfile::tempdir().unwrap();
