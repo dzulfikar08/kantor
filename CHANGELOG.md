@@ -33,6 +33,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Changed
 
+- Sheets: a picture an `IMAGE` formula downloaded in Kantor is saved into the file as Excel saves
+  one, so Excel shows it without downloading and the file shows it offline. Pictures Excel saved
+  for `IMAGE` cells (and pictures placed in cells) now follow their cells when rows or columns are
+  inserted, deleted or moved (before, they stopped showing), also through undo and saves.
 - Sheets: a picture, chart or slicer set to move but not size with its cells keeps its size when
   rows or columns under it are hidden (by a filter, for instance), as in Excel.
 - Sheets: a pivot table copied with its sheet keeps its name (`PivotTable1`), as in Excel, since

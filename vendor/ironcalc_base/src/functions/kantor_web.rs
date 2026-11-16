@@ -94,6 +94,9 @@ pub struct KantorWeb {
     /// The evaluation count when the saved pictures were set: until the
     /// next evaluation they are what the cells show.
     saved_at: Option<u64>,
+    /// Saved pictures of deleted rows and columns, where they were: put
+    /// back when those rows or columns come back (undo).
+    deleted: Vec<((u32, i32, i32), SavedPicture)>,
 }
 
 /// A picture saved in the file for an IMAGE cell.
@@ -237,6 +240,146 @@ impl Model<'_> {
             .shared_formulas
             .get(f as usize)
             .cloned()
+    }
+
+    /// KANTOR PATCH (saved pictures follow cells): the pictures saved for
+    /// cells, and the pictures drawn, move with inserted, deleted and moved
+    /// rows and columns (deleted cells lose theirs).
+    pub(crate) fn displace_saved_pictures(
+        &mut self,
+        displace: &crate::expressions::parser::stringify::DisplaceData,
+    ) {
+        use crate::expressions::parser::stringify::DisplaceData;
+        if self.kantor_web.saved.is_empty() && self.kantor_web.images.is_empty() {
+            return;
+        }
+        // New (row, column) of a cell on `sheet`, `None` when deleted.
+        let (sheet, map): (u32, Box<dyn Fn(i32, i32) -> Option<(i32, i32)>>) = match *displace {
+            DisplaceData::Row { sheet, row, delta } => (
+                sheet,
+                Box::new(move |r, c| {
+                    if r < row {
+                        Some((r, c))
+                    } else if delta < 0 && r < row - delta {
+                        None
+                    } else {
+                        Some((r + delta, c))
+                    }
+                }),
+            ),
+            DisplaceData::Column {
+                sheet,
+                column,
+                delta,
+            } => (
+                sheet,
+                Box::new(move |r, c| {
+                    if c < column {
+                        Some((r, c))
+                    } else if delta < 0 && c < column - delta {
+                        None
+                    } else {
+                        Some((r, c + delta))
+                    }
+                }),
+            ),
+            // A row (column) moved by `delta`: the ones between shift back.
+            DisplaceData::RowMove { sheet, row, delta } => (
+                sheet,
+                Box::new(move |r, c| {
+                    let target = row + delta;
+                    Some(if r == row {
+                        (target, c)
+                    } else if delta > 0 && r > row && r <= target {
+                        (r - 1, c)
+                    } else if delta < 0 && r >= target && r < row {
+                        (r + 1, c)
+                    } else {
+                        (r, c)
+                    })
+                }),
+            ),
+            DisplaceData::ColumnMove {
+                sheet,
+                column,
+                delta,
+            } => (
+                sheet,
+                Box::new(move |r, c| {
+                    let target = column + delta;
+                    Some(if c == column {
+                        (r, target)
+                    } else if delta > 0 && c > column && c <= target {
+                        (r, c - 1)
+                    } else if delta < 0 && c >= target && c < column {
+                        (r, c + 1)
+                    } else {
+                        (r, c)
+                    })
+                }),
+            ),
+            _ => return,
+        };
+        fn moved<V>(
+            m: &mut HashMap<(u32, i32, i32), V>,
+            sheet: u32,
+            map: &dyn Fn(i32, i32) -> Option<(i32, i32)>,
+        ) -> Vec<((u32, i32, i32), V)> {
+            let keys: Vec<(u32, i32, i32)> = m.keys().filter(|k| k.0 == sheet).copied().collect();
+            let mut taken: Vec<((u32, i32, i32), V)> = keys
+                .into_iter()
+                .filter_map(|k| Some((k, m.remove(&k)?)))
+                .collect();
+            let mut gone = Vec::new();
+            for ((s, r, c), v) in taken.drain(..) {
+                match map(r, c) {
+                    Some((nr, nc)) => {
+                        m.insert((s, nr, nc), v);
+                    }
+                    None => gone.push(((s, r, c), v)),
+                }
+            }
+            gone
+        }
+        let gone = moved(&mut self.kantor_web.saved, sheet, &*map);
+        moved(&mut self.kantor_web.images, sheet, &*map);
+        self.kantor_web.deleted.extend(gone);
+        // Rows or columns inserted where deleted ones were: their pictures
+        // come back (an undo; new empty cells don't show them).
+        let back: Option<Box<dyn Fn(i32, i32) -> bool>> = match *displace {
+            DisplaceData::Row { row, delta, .. } if delta > 0 => {
+                Some(Box::new(move |r, _| r >= row && r < row + delta))
+            }
+            DisplaceData::Column { column, delta, .. } if delta > 0 => {
+                Some(Box::new(move |_, c| c >= column && c < column + delta))
+            }
+            _ => None,
+        };
+        if let Some(back) = back {
+            let (put, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.kantor_web.deleted)
+                .into_iter()
+                .partition(|((s, r, c), _)| *s == sheet && back(*r, *c));
+            self.kantor_web.deleted = keep;
+            for (k, v) in put {
+                self.kantor_web.saved.entry(k).or_insert(v);
+            }
+        }
+        // The cells' formulas were rewritten (their references moved): the
+        // pictures stay bound to them (and to the URL they first showed).
+        let keys: Vec<(u32, i32, i32)> = self
+            .kantor_web
+            .saved
+            .iter()
+            .filter(|(k, s)| k.0 == sheet && s.formula.is_some())
+            .map(|(k, _)| *k)
+            .collect();
+        for (s, row, column) in keys {
+            // (A cell not filled yet, being undone, keeps its binding.)
+            let f = self.kantor_formula_text(CellReferenceIndex { sheet: s, row, column });
+            if let (Some(f), Some(saved)) = (f, self.kantor_web.saved.get_mut(&(s, row, column))) {
+                saved.formula = Some(f);
+            }
+        }
     }
 
     /// Whether any IMAGE cell has a picture saved in the file.

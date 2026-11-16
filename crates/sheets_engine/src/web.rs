@@ -127,6 +127,57 @@ impl Workbook {
     pub fn has_saved_pictures(&self) -> bool {
         self.model.get_model().kantor_has_saved_pictures()
     }
+
+    /// The pictures the cells show now (downloaded by IMAGE formulas, saved
+    /// by Excel, placed in cells), to save as Excel's rich values so Excel
+    /// shows them without downloading.
+    pub(crate) fn cell_pictures(&self) -> Vec<crate::preserve::CellPicture> {
+        let model = self.model.get_model();
+        let mut out = Vec::new();
+        for (sheet, row, col) in model.kantor_image_cells() {
+            let Some(image) = model.kantor_cell_image(sheet, row, col) else {
+                continue;
+            };
+            let formula = model.get_cell_formula(sheet, row, col).ok().flatten();
+            let url = if image.source.is_empty() {
+                formula.as_deref().and_then(literal_url)
+            } else {
+                Some(image.source.clone())
+            };
+            out.push(crate::preserve::CellPicture {
+                sheet_id: self.sheet_id(sheet),
+                row: row as u32 - 1,
+                col: col as u32 - 1,
+                data: image.data.clone(),
+                url,
+                alt: image.alt_text.clone(),
+                sizing: image.sizing,
+                placed: formula.is_none(),
+            });
+        }
+        out
+    }
+}
+
+/// The URL an `=IMAGE("…")` formula names as its first argument, if a
+/// literal.
+fn literal_url(formula: &str) -> Option<String> {
+    let at = formula.to_uppercase().find("IMAGE(")? + "IMAGE(".len();
+    let rest = formula[at..].trim_start().strip_prefix('"')?;
+    let mut out = String::new();
+    let mut chars = rest.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '"' {
+            if chars.peek() == Some(&'"') {
+                chars.next();
+                out.push('"');
+                continue;
+            }
+            return (!out.is_empty()).then_some(out);
+        }
+        out.push(c);
+    }
+    None
 }
 
 /// What this session downloaded, by URL and kind.

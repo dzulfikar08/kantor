@@ -802,6 +802,23 @@ the range moved): it no longer describes those rows.
 Tests: `test/test_kantor_tables.rs` (`sort_state_in_the_filter`); Kantor's
 `crates/sheets_engine/tests/sort_state.rs`.
 
+## 28. Saved pictures follow their cells
+
+Why: pictures Excel saved for IMAGE cells (and pictures placed in cells,
+section 25) are kept per cell; after inserting or deleting rows or columns
+they stayed at the old position, so the moved cells lost them. Marked
+`KANTOR PATCH (saved pictures follow cells)`.
+
+What: `Model::displace_saved_pictures` (`functions/kantor_web.rs`), called
+next to `displace_tables` in `actions.rs` after inserting, deleting and
+moving rows and columns: the saved pictures and the drawn ones move with
+their cells, the saved ones are bound again to the moved formula's text,
+and those of deleted cells are kept aside and put back when the same rows
+or columns are inserted again (an undo; new empty cells don't show them).
+
+Tests: `test/test_kantor_web.rs`
+(`saved_pictures_follow_inserted_and_deleted_rows_and_columns`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the
