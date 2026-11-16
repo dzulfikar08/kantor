@@ -307,7 +307,7 @@ pub fn add_item(doc: &Document, f: &Float, k: usize, after: bool) -> Result<Part
     let (w, h) = (f.at.cx.max(1), f.at.cy.max(1));
     let (drawing, data, _) =
         slides_engine::smartart_layout::add_item(&sa.drawing_xml, &sa.data_xml, &id, place, w, h)
-            .map_err(|_| SELECT_ITEM)?;
+            .map_err(|e| known(&e).unwrap_or(SELECT_ITEM))?;
     let drawing = fitted(doc, &sa, drawing, &data, (w, h));
     Ok(parts(&sa, drawing, Some(data)))
 }
@@ -324,7 +324,7 @@ pub fn remove_item(doc: &Document, f: &Float, k: usize) -> Result<Parts, &'stati
                 if e.to_string().contains("at least one") {
                     LAST_ITEM
                 } else {
-                    SELECT_ITEM
+                    known(&e).unwrap_or(SELECT_ITEM)
                 }
             })?;
     let drawing = fitted(doc, &sa, drawing, &data, (w, h));
@@ -340,6 +340,15 @@ pub fn relaid(doc: &Document, f: &Float, size: (i64, i64)) -> Option<Parts> {
             .ok()?;
     let drawing = fitted(doc, &sa, drawing, &sa.data_xml, size);
     Some(parts(&sa, drawing, None))
+}
+
+/// A refusal Slides' layout explains itself (a Labeled Hierarchy's).
+fn known(e: &anyhow::Error) -> Option<&'static str> {
+    use slides_engine::smartart_layout::{LABEL_LEVELS, TOP_ALONE, TOP_KEEP};
+    let msg = e.to_string();
+    [LABEL_LEVELS, TOP_ALONE, TOP_KEEP]
+        .into_iter()
+        .find(|m| *m == msg)
 }
 
 pub const SELECT_ITEM: &str = "This SmartArt shape doesn't show an item";

@@ -20,6 +20,15 @@ pub(crate) const ENGINE_MESSAGES: &[&str] = &[
     ),
     i18n::tk("This SmartArt layout has one level: add shapes before or after"),
     i18n::tk("A SmartArt keeps at least one item"),
+    i18n::tk(
+        "A Labeled Hierarchy's labels take no shapes above or below them: add labels before or after them",
+    ),
+    i18n::tk(
+        "The top of a Labeled Hierarchy has no shapes beside it: add shapes below or above it",
+    ),
+    i18n::tk(
+        "The top of this Labeled Hierarchy can't be deleted while it has several shapes under it",
+    ),
 ];
 
 impl SlidesView {

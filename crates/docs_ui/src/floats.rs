@@ -138,7 +138,7 @@ impl TextOwner {
 
 /// SmartArt edit messages from `docs_pdf::smartart` (translated with
 /// `t_dyn`).
-const SMARTART_MESSAGES: [&str; 5] = [
+const SMARTART_MESSAGES: [&str; 8] = [
     tk("This SmartArt shape shows several items: keep one line per item"),
     tk("Kantor can't read this SmartArt's drawing"),
     tk("This SmartArt shape doesn't show an item"),
@@ -146,6 +146,11 @@ const SMARTART_MESSAGES: [&str; 5] = [
     tk(
         "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes, cycles and hierarchies",
     ),
+    tk(
+        "A Labeled Hierarchy's labels take no shapes above or below them: add labels before or after them",
+    ),
+    tk("The top of a Labeled Hierarchy has no shapes beside it: add shapes below or above it"),
+    tk("The top of this Labeled Hierarchy can't be deleted while it has several shapes under it"),
 ];
 
 /// A change to a SmartArt's items from its text popover.

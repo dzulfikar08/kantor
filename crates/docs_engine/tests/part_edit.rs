@@ -441,3 +441,21 @@ fn edits_in_headers_and_notes_are_tracked() {
     assert_eq!(accepted.part_changes(), 0);
     assert!(note(&accepted).contains("Checked."));
 }
+
+/// A list started in a header saves its definition in numbering.xml.
+#[test]
+fn list_started_in_a_header_is_saved_with_its_definition() {
+    let mut doc = Document::new();
+    doc.insert_text(Selection::default(), "Body", None);
+    let (edit, mut part) = doc.edit_hf(0, HfKind::Header, HfType::Default).unwrap();
+    let c = part.insert_text(Selection::default(), "Item", None);
+    part.toggle_list(c, docs_engine::ListKind::Bullet);
+    let num = part.paragraph(0).props.num.expect("a list item").id;
+    assert!(doc.finish_part(edit, part, Selection::default()));
+    let p = parts(&doc.to_docx_bytes().unwrap());
+    let numbering = text(&p, "word/numbering.xml");
+    assert!(
+        numbering.contains(&format!("w:numId=\"{num}\"")),
+        "{numbering}"
+    );
+}

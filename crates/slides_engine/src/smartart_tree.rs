@@ -1,7 +1,15 @@
 //! Kantor's own layout of the hierarchy SmartArt layouts: Organization
-//! Chart (`layout/orgChart1`), Hierarchy (`layout/hierarchy1`) and
-//! Horizontal Hierarchy (`layout/hierarchy2`). A child of
-//! [`super`] (the list layouts), sharing its helpers.
+//! Chart (`layout/orgChart1`), Hierarchy (`layout/hierarchy1`),
+//! Horizontal Hierarchy (`layout/hierarchy2`) and Labeled Hierarchy
+//! (`layout/hierarchy6`). A child of [`super`] (the list layouts), sharing
+//! its helpers.
+//!
+//! In a Labeled Hierarchy the document's first top-level item is the
+//! tree's top; its later top-level items are the level labels, each drawn
+//! as a band across the diagram behind a level of the tree with its text
+//! at the left (PowerPoint's text pane: "the first line of Level 1 text
+//! appears in the shape at the top of the hierarchy, the others in the
+//! wide rectangles"). Labels take items before and after them.
 //!
 //! The data model's items form a tree (`parOf` connections from the
 //! document item down); each item is drawn by one or more shapes (Hierarchy
@@ -35,6 +43,8 @@ struct Tree {
     doc: String,
     nodes: Vec<TNode>,
     roots: Vec<usize>,
+    /// Labeled Hierarchy: the level labels, top down.
+    labels: Vec<usize>,
     /// Presentation item → the data item it shows.
     pres: HashMap<String, String>,
 }
@@ -131,6 +141,7 @@ fn tree(data: &str) -> anyhow::Result<Tree> {
         doc: doc_id.clone(),
         nodes: Vec::new(),
         roots: Vec::new(),
+        labels: Vec::new(),
         pres: HashMap::new(),
     };
     fn walk(
@@ -157,6 +168,11 @@ fn tree(data: &str) -> anyhow::Result<Tree> {
             });
             match parent {
                 Some(p) => t.nodes[p].kids.push(k),
+                None if t.family == Family::LabeledHierarchy && !t.roots.is_empty() => {
+                    // A level label: its own items (if any) aren't drawn.
+                    t.labels.push(k);
+                    continue;
+                }
                 None => t.roots.push(k),
             }
             walk(t, kids, dst, Some(k), depth + 1);
@@ -226,6 +242,10 @@ pub(super) fn family(data: &str) -> Option<Family> {
 /// heights).
 const GAP_ACROSS: f64 = 0.25;
 const GAP_LEVELS: f64 = 0.5;
+/// Labeled Hierarchy: the labels' column (share of the width), and how
+/// much taller than its boxes a level's band is (box heights).
+const LABEL_COLUMN: f64 = 0.2;
+const BAND_PAD: f64 = 0.4;
 
 /// Each item's box in a `w` × `h` frame.
 fn place(t: &Tree, w: f64, h: f64) -> Vec<Xfrm> {
@@ -242,11 +262,25 @@ fn place(t: &Tree, w: f64, h: f64) -> Vec<Xfrm> {
     }
     let slots: usize = t.roots.iter().map(|r| count(t, *r, &mut leaves)).sum();
     let levels = t.nodes.iter().map(|n| n.depth + 1).max().unwrap_or(1);
+    let labeled = t.family == Family::LabeledHierarchy;
+    // A Labeled Hierarchy: a row per level or label, the labels' column
+    // at the left.
+    let levels = if labeled {
+        levels.max(t.labels.len())
+    } else {
+        levels
+    };
+    let label_w = if labeled { w * LABEL_COLUMN } else { 0.0 };
     let (s, l) = (slots.max(1) as f64, levels as f64);
     let horizontal = t.family == Family::HorizontalHierarchy;
     // Box width (10:6 boxes) that fits both ways.
-    let (across, along) = if horizontal { (h, w) } else { (w, h) };
-    let bw = if horizontal {
+    let (across, along) = if horizontal { (h, w) } else { (w - label_w, h) };
+    let bw = if labeled {
+        // Rows of bands (a box and some room round it) one under another.
+        let by_slots = across / (s + GAP_ACROSS * (s - 1.0));
+        let by_levels = along / (l * (1.0 + GAP_LEVELS) - (GAP_LEVELS - BAND_PAD)) / 0.6;
+        by_slots.min(by_levels)
+    } else if horizontal {
         // Slots run down (box heights), levels across (box widths).
         let by_slots = across / (s + GAP_ACROSS * (s - 1.0)) / 0.6;
         let by_levels = along / (l + GAP_LEVELS * (l - 1.0));
@@ -264,9 +298,11 @@ fn place(t: &Tree, w: f64, h: f64) -> Vec<Xfrm> {
         (bw * (1.0 + GAP_ACROSS), bw, bh * (1.0 + GAP_LEVELS), bh)
     };
     let total_across = s * slot - (slot - size_across);
-    let total_along = l * level - (level - size_along);
-    let a0 = (across - total_across) / 2.0;
-    let l0 = (along - total_along) / 2.0;
+    // A band reaches past its boxes by half its padding each way.
+    let band_pad = if labeled { bh * BAND_PAD / 2.0 } else { 0.0 };
+    let total_along = l * level - (level - size_along) + 2.0 * band_pad;
+    let a0 = label_w + (across - total_across) / 2.0;
+    let l0 = (along - total_along) / 2.0 + band_pad;
     // Centre of each item across: leaves in slot order, parents over the
     // middle of their children.
     let mut centre = vec![0.0f64; n];
@@ -287,8 +323,15 @@ fn place(t: &Tree, w: f64, h: f64) -> Vec<Xfrm> {
     for r in &t.roots {
         assign(t, *r, &mut next, slot, &mut centre);
     }
+    let band = |row: usize| {
+        let y = l0 + row as f64 * level - band_pad;
+        Xfrm::new(0, r(y), r(w), r(bh + 2.0 * band_pad))
+    };
     (0..n)
         .map(|k| {
+            if let Some(row) = t.labels.iter().position(|x| *x == k) {
+                return band(row);
+            }
             let c = centre[k];
             let at = l0 + t.nodes[k].depth as f64 * level;
             if horizontal {
@@ -504,9 +547,15 @@ pub(super) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Res
             &elbow(horizontal, &boxes[p], &boxes[k]),
         ));
     }
-    // New shapes go first (behind the items): connectors under the boxes.
+    // New shapes go first (behind the items): connectors under the boxes
+    // (but over a Labeled Hierarchy's bands).
     if !add.is_empty() {
-        let first = list.first().map_or(tree_end, |s| s.range.start);
+        let after_bands = list
+            .iter()
+            .filter(|s| matches!(s.role, TRole::Node(k) if t.labels.contains(&k)))
+            .map(|s| s.range.end)
+            .max();
+        let first = after_bands.unwrap_or_else(|| list.first().map_or(tree_end, |s| s.range.start));
         edits.push((first..first, add));
     }
     Ok(apply(drawing, edits))
@@ -529,6 +578,13 @@ fn set_attrs(src: &str, n: Node, kv: &[(&str, String)]) -> (Range<usize>, String
     (st..st + tag.len(), out)
 }
 
+/// Labeled Hierarchy messages (translated by the apps).
+pub const LABEL_LEVELS: &str = "A Labeled Hierarchy's labels take no shapes above or below them: add labels before or after them";
+pub const TOP_ALONE: &str =
+    "The top of a Labeled Hierarchy has no shapes beside it: add shapes below or above it";
+pub const TOP_KEEP: &str =
+    "The top of this Labeled Hierarchy can't be deleted while it has several shapes under it";
+
 fn is_par_of(c: Node) -> bool {
     c.attribute("type").is_none_or(|t| t == "parOf")
 }
@@ -547,6 +603,15 @@ pub(super) fn add_item(
     let k = t
         .node_of(selected)
         .context("Select an item's shape to add a shape next to it")?;
+    if t.labels.contains(&k) && matches!(place, AddPlace::Above | AddPlace::Below) {
+        bail!(LABEL_LEVELS);
+    }
+    if t.family == Family::LabeledHierarchy
+        && t.roots.contains(&k)
+        && matches!(place, AddPlace::After | AddPlace::Before)
+    {
+        bail!(TOP_ALONE);
+    }
     let doc = Document::parse(data).context("SmartArt data")?;
     let dgm = doc
         .root_element()
@@ -665,6 +730,11 @@ pub(super) fn remove_item(
         bail!("A SmartArt keeps at least one item");
     }
     let me = &t.nodes[k];
+    // A Labeled Hierarchy's top with several items under it: they'd move
+    // up beside it and become labels.
+    if t.family == Family::LabeledHierarchy && t.roots.contains(&k) && me.kids.len() != 1 {
+        bail!(TOP_KEEP);
+    }
     let parent = t.parent_id(k).to_owned();
     let doc = Document::parse(data).context("SmartArt data")?;
     let mut gone: Vec<String> = vec![me.id.clone()];

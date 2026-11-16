@@ -125,3 +125,6 @@ Select two or more shapes to group them	Pilih dua bentuk atau lebih untuk mengel
 Select a group to ungroup it	Pilih kelompok untuk memisahkannya
 Select a SmartArt graphic to convert it	Pilih grafik SmartArt untuk mengonversinya
 This SmartArt text can't be edited: Kantor can't tell which item it belongs to	Teks SmartArt ini tidak bisa diedit: Kantor tidak tahu milik item yang mana
+A Labeled Hierarchy's labels take no shapes above or below them: add labels before or after them	Label pada Hierarki Berlabel tidak bisa diberi bentuk di atas atau di bawahnya: tambahkan label sebelum atau sesudahnya
+The top of a Labeled Hierarchy has no shapes beside it: add shapes below or above it	Puncak Hierarki Berlabel tidak punya bentuk di sampingnya: tambahkan bentuk di bawah atau di atasnya
+The top of this Labeled Hierarchy can't be deleted while it has several shapes under it	Puncak Hierarki Berlabel ini tidak bisa dihapus selama ada beberapa bentuk di bawahnya

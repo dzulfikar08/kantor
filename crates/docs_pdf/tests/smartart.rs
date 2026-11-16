@@ -273,3 +273,35 @@ fn text_shrinks_to_fit_when_laid_out_again() {
     let xml = parts.iter().find(|p| p.0 == drawing).unwrap().1.clone();
     assert!(!xml.contains("fontScale=\""), "{xml}");
 }
+
+/// A Labeled Hierarchy in Word: laid out by Kantor, labels added.
+#[test]
+fn labeled_hierarchy_takes_labels() {
+    let mut doc = open();
+    let (para, index) = anchor(&doc);
+    let f = doc.float_at(para, index).unwrap().clone();
+    let docs_engine::FloatKind::SmartArt { data, drawings } = &f.kind else {
+        panic!()
+    };
+    let labeled = vec![
+        (data.clone(), pptx_part("ppt/diagrams/data9.xml").into()),
+        (
+            drawings[0].1.clone(),
+            pptx_part("ppt/diagrams/drawing9.xml").into(),
+        ),
+    ];
+    assert!(doc.set_float_parts(para, index, labeled));
+    let f = doc.float_at(para, index).unwrap().clone();
+    assert!(docs_pdf::smartart::can_relayout(&doc, &f));
+    let before = shown(&doc);
+    let staff = before.iter().position(|t| t == "Staff").unwrap();
+    let parts = docs_pdf::smartart::add_item(&doc, &f, staff, true).unwrap();
+    assert!(doc.set_float_parts(para, index, parts));
+    assert_eq!(shown(&doc).len(), before.len() + 1);
+    let f = doc.float_at(para, index).unwrap().clone();
+    let ceo = shown(&doc).iter().position(|t| t == "CEO").unwrap();
+    assert_eq!(
+        docs_pdf::smartart::add_item(&doc, &f, ceo, true).unwrap_err(),
+        slides_engine::smartart_layout::TOP_ALONE
+    );
+}
