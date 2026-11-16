@@ -303,20 +303,35 @@ fn main() -> Result<()> {
             sheet: 1,
             name: "PivotTable1".into(),
         };
+        // Excel names a new slicer uniquely in the workbook ("Product 1" when
+        // the file has a Product slicer), so the slicers are found by key.
+        let inserted = |wb: &Workbook, sheet: u32, keys: &[sheets_engine::drawing::DrawingKey]| {
+            wb.drawings(sheet)
+                .into_iter()
+                .find_map(|d| match &*d.kind {
+                    sheets_engine::drawing::DrawingKind::Slicer { name } if keys.contains(&d.key) => {
+                        Some((wb.sheet_id(sheet), name.clone()))
+                    }
+                    _ => None,
+                })
+                .ok_or_else(|| anyhow::anyhow!("inserted slicer not found"))
+        };
         let (sheet, at) = wb.slicer_place(&pivot).unwrap_or((1, (2, 6)));
-        wb.insert_slicers(sheet, &pivot, &["Product".into()], at)?;
-        wb.slicer_select(2, "Product", &[true, true, false])?;
+        let keys = wb.insert_slicers(sheet, &pivot, &["Product".into()], at)?;
+        let (id, name) = inserted(&wb, sheet, &keys)?;
+        wb.slicer_select(id, &name, &[true, true, false])?;
         let table = SlicerSource::Table("Sales".into());
         let (sheet, at) = wb.slicer_place(&table).unwrap_or((0, (0, 6)));
-        wb.insert_slicers(sheet, &table, &["Region".into()], at)?;
+        let keys = wb.insert_slicers(sheet, &table, &["Region".into()], at)?;
+        let (id, name) = inserted(&wb, sheet, &keys)?;
         let mut s = wb
-            .slicer_settings(2, "Region")
-            .ok_or_else(|| anyhow::anyhow!("no Region slicer"))?;
+            .slicer_settings(id, &name)
+            .ok_or_else(|| anyhow::anyhow!("no {name} slicer"))?;
         s.caption = "Area".into();
         s.style = "SlicerStyleDark2".into();
         s.hide_no_data = true;
         s.descending = true;
-        wb.set_slicer_settings(2, "Region", &s)?;
+        wb.set_slicer_settings(id, &name, &s)?;
         if let Some(d) = wb.drawings(0).into_iter().find(|d| {
             matches!(&*d.kind, sheets_engine::drawing::DrawingKind::Slicer { name } if name == "Product")
         }) {
@@ -1623,7 +1638,8 @@ fn slide_edits(p: &mut Presentation) -> Result<()> {
             if table.is_none() && p.table(i, k).is_some() {
                 table = Some((i, k));
             }
-            if chart.is_none() && p.slide(i).shapes[k].chart_part().is_some() {
+            // Map and other chartex charts have no editable data grid.
+            if chart.is_none() && p.chart_data(i, k).is_some() {
                 chart = Some((i, k));
             }
         }
@@ -1680,14 +1696,14 @@ fn slide_edits(p: &mut Presentation) -> Result<()> {
     let n = p.new_slide(Some(p.len() - 1))?;
     p.set_notes_text(n, "A new slide's notes")?;
     // The first slide Kantor can duplicate (slides with charts or SmartArt
-    // can't be).
+    // can't be, also when group_edits put them in a group).
+    fn copyable(s: &slides_engine::Shape) -> bool {
+        s.chart_part().is_none()
+            && !s.is_smartart()
+            && s.group().is_none_or(|g| g.children.iter().all(copyable))
+    }
     let dup = (0..p.len())
-        .find(|&i| {
-            p.slide(i)
-                .shapes
-                .iter()
-                .all(|s| s.chart_part().is_none() && !s.is_smartart())
-        })
+        .find(|&i| p.slide(i).shapes.iter().all(copyable))
         .unwrap_or(0);
     p.duplicate_slide(dup)?;
     Ok(())
