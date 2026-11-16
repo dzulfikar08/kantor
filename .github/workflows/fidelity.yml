@@ -98,6 +98,12 @@ jobs:
       - name: Table styles fixture matches its generator
         run: python3 scripts/corpus/gen_table_styles_xlsx.py --check
 
+      - name: Chartex fixture matches its generator
+        run: python3 scripts/corpus/gen_chartex_xlsx.py --check
+
+      - name: Chartex docx fixture matches its generator
+        run: python3 scripts/corpus/gen_docx_chartex.py --check
+
       - name: .xls CF12 fixture matches its generator
         run: uv run --with openpyxl==3.1.5 --with xlwt==1.3.0 scripts/corpus/gen_xls.py --cf12 --check
 

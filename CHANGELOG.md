@@ -25,6 +25,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   from Excel's templates (text that contains, begins or ends with, dates, blanks, errors,
   duplicate and unique values, above and below average), in their priority order and with *Stop
   If True*. They are saved into the new `.xlsx` as Excel 2007 rules.
+- Slides, Sheets and Docs: charts that were shown as a placeholder are drawn, on screen and in the
+  PDF: surface charts (as PowerPoint's 2-D contour view, filled bands or a wireframe, with the
+  value bands in the legend), pie of pie and bar of pie (the last points, or the ones chosen,
+  taken out of the pie into a smaller pie or a stacked bar, joined by series lines), and the
+  Office 2016 types: waterfall (with its totals and connector lines), funnel, treemap, sunburst,
+  histogram (Excel's automatic bins, a bin width or count, overflow and underflow bins), Pareto
+  and box & whisker (quartiles, whiskers, mean markers and outliers). Sheets draws them from the
+  live cells. They are kept as they were when saved; the newer types can be moved and resized in
+  Slides but their data isn't edited in Kantor yet. Map charts still show a placeholder.
 
 ### Fixed
 

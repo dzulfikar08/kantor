@@ -61,9 +61,14 @@ pub struct Look {
 
 impl Look {
     fn parse(n: Option<Node>, cx: &ColorCtx) -> Self {
-        let Some(sp) = n.and_then(|n| kid(n, "spPr")) else {
-            return Self::default();
-        };
+        match n.and_then(|n| kid(n, "spPr")) {
+            Some(sp) => Self::of_sppr(sp, cx),
+            None => Self::default(),
+        }
+    }
+
+    /// An `spPr` element's look (any namespace: chartex parts use `cx:`).
+    pub(crate) fn of_sppr(sp: Node, cx: &ColorCtx) -> Self {
         let fill = sp
             .children()
             .filter(|c| c.is_element() && c.tag_name().namespace() == Some(NS_A))
@@ -110,7 +115,7 @@ pub struct Font {
 }
 
 impl Font {
-    fn from_rpr(r: Node, cx: &ColorCtx) -> Self {
+    pub(crate) fn from_rpr(r: Node, cx: &ColorCtx) -> Self {
         let b = |k| r.attribute(k).map(|v| v == "1" || v == "true");
         Font {
             size_pt: r
@@ -144,7 +149,7 @@ impl Font {
 
     /// The first paragraph's default run properties of a `c:txPr` or
     /// `c:rich` (`a:p/a:pPr/a:defRPr`).
-    fn of_body(body: Node, cx: &ColorCtx) -> Self {
+    pub(crate) fn of_body(body: Node, cx: &ColorCtx) -> Self {
         body.children()
             .filter(|c| is(*c, NS_A, "p"))
             .find_map(|p| a_kid(p, "pPr").and_then(|ppr| a_kid(ppr, "defRPr")))
@@ -309,6 +314,63 @@ pub enum Kind {
         hi_low: Option<Box<Look>>,
         up_down: Option<Box<UpDown>>,
     },
+    /// Surface (`c:surfaceChart`, `c:surface3DChart`): drawn as
+    /// PowerPoint's 2-D contour view, the values seen from above in bands
+    /// of the value axis' major unit (3-D ones too).
+    Surface {
+        /// `c:wireframe`: band edges only.
+        wireframe: bool,
+        /// Band formats (`c:bandFmts/c:bandFmt`), by band index.
+        bands: Vec<(usize, Look)>,
+    },
+    /// Pie of pie and bar of pie (`c:ofPieChart`).
+    OfPie(Box<OfPie>),
+    /// The Office 2016 chart types (`cx:chartSpace` parts).
+    Ex(Box<super::ex::ExPlot>),
+}
+
+/// A pie of pie or bar of pie.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OfPie {
+    /// `ofPieType val="bar"`: the second plot is a stacked bar.
+    pub bar: bool,
+    /// Gap between the plots, % of the second plot's size.
+    pub gap: f32,
+    /// Size of the second plot, % of the first.
+    pub second_size: f32,
+    pub split: Split,
+    /// Series lines between the plots (`c:serLines`).
+    pub lines: Option<Look>,
+}
+
+/// Which points go to the second plot of a pie of pie.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Split {
+    /// The last n points.
+    Pos(usize),
+    /// Points below a value.
+    Val(f64),
+    /// Points below a percentage of the total.
+    Percent(f64),
+    /// Chosen points (`c:custSplit`).
+    Custom(Vec<usize>),
+}
+
+impl Split {
+    /// Whether point `i` of `vals` goes to the second plot.
+    pub fn second(&self, vals: &[Option<f64>], i: usize) -> bool {
+        let n = vals.len();
+        let v = vals.get(i).copied().flatten().unwrap_or(0.0);
+        match self {
+            Split::Pos(k) => i + (*k).min(n.saturating_sub(1)) >= n,
+            Split::Val(t) => v < *t,
+            Split::Percent(t) => {
+                let total: f64 = vals.iter().flatten().filter(|v| **v > 0.0).sum();
+                total > 0.0 && v / total * 100.0 < *t
+            }
+            Split::Custom(list) => list.contains(&i),
+        }
+    }
 }
 
 /// Up/down bars of a stock chart (`c:upDownBars`).
@@ -497,6 +559,19 @@ pub struct Series {
     pub explosion: f32,
     pub invert_if_negative: bool,
     pub refs: SeriesRefs,
+    /// Outer category levels of hierarchical data (treemap, sunburst):
+    /// `levels[0]` holds the parents of `cats`, `levels[1]` theirs...
+    pub levels: Vec<Vec<String>>,
+    /// Floating bars (waterfall): each bar's start and end.
+    pub float: Option<Float>,
+}
+
+/// Floating bars and the lines joining them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Float {
+    pub ranges: Vec<Option<(f64, f64)>>,
+    /// Connector lines from each bar's end to the next bar.
+    pub connectors: Option<Look>,
 }
 
 impl Series {
@@ -616,6 +691,36 @@ impl DispUnits {
 }
 
 impl Axis {
+    /// An axis with Office's defaults (for chart types whose parts don't
+    /// write ChartML axes).
+    pub fn plain(id: i64, kind: AxisKind, pos: AxPos, cross_ax: i64) -> Self {
+        Axis {
+            id,
+            kind,
+            pos,
+            delete: false,
+            cross_ax,
+            reversed: false,
+            min: None,
+            max: None,
+            major_unit: None,
+            log_base: None,
+            num_fmt: None,
+            major_grid: None,
+            minor_grid: None,
+            tick_lbl_pos: "nextTo".into(),
+            major_tick: "none".into(),
+            font: Font::default(),
+            rot: None,
+            look: Look::default(),
+            title: None,
+            crosses: None,
+            crosses_at: None,
+            cross_between: None,
+            disp_units: None,
+        }
+    }
+
     fn parse(n: Node, cx: &ColorCtx) -> Option<Self> {
         let kind = match n.tag_name().name() {
             "catAx" => AxisKind::Cat,
@@ -713,8 +818,11 @@ pub struct Chart {
     pub rounded: bool,
     /// `c:style` (1..48), for defaults.
     pub style: u32,
-    /// Plot types seen that aren't drawn (surface, pie of pie...).
+    /// Plot types seen that aren't drawn (region maps...).
     pub unsupported: Vec<String>,
+    /// Legend entries given by the chart type rather than its series
+    /// (a waterfall's Increase / Decrease / Total).
+    pub legend_keys: Option<Vec<(String, Fill)>>,
 }
 
 /// Cached strings of a `c:strRef`/`c:strLit`/`c:multiLvlStrRef` (by
@@ -882,6 +990,8 @@ fn series(s: Node, cx: &ColorCtx) -> Series {
         explosion: val_f(s, "explosion").unwrap_or(0.0) as f32,
         invert_if_negative: flag(s, "invertIfNegative").unwrap_or(false),
         refs,
+        levels: Vec::new(),
+        float: None,
     }
 }
 
@@ -961,6 +1071,37 @@ fn group(g: Node, cx: &ColorCtx) -> Option<Group> {
             first_angle: 0.0,
             hole: None,
         },
+        "surfaceChart" | "surface3DChart" => Kind::Surface {
+            wireframe: flag(g, "wireframe").unwrap_or(false),
+            bands: kid(g, "bandFmts")
+                .into_iter()
+                .flat_map(|b| kids(b, "bandFmt"))
+                .filter_map(|b| Some((val(b, "idx")?.parse().ok()?, Look::parse(Some(b), cx))))
+                .collect(),
+        },
+        "ofPieChart" => {
+            let pos = val_f(g, "splitPos");
+            let split = match val(g, "splitType") {
+                Some("val") => Split::Val(pos.unwrap_or(0.0)),
+                Some("percent") => Split::Percent(pos.unwrap_or(10.0)),
+                Some("cust") => Split::Custom(
+                    kid(g, "custSplit")
+                        .into_iter()
+                        .flat_map(|c| kids(c, "secondPiePt"))
+                        .filter_map(|p| p.attribute("val")?.parse().ok())
+                        .collect(),
+                ),
+                // `pos` and `auto`: Excel's automatic split is by position.
+                _ => Split::Pos(pos.map_or(2, |p| p.max(0.0) as usize)),
+            };
+            Kind::OfPie(Box::new(OfPie {
+                bar: val(g, "ofPieType") == Some("bar"),
+                gap: val_f(g, "gapWidth").unwrap_or(150.0).clamp(0.0, 500.0) as f32,
+                second_size: val_f(g, "secondPieSize").unwrap_or(75.0).clamp(5.0, 200.0) as f32,
+                split,
+                lines: kid(g, "serLines").map(|l| Look::parse(Some(l), cx)),
+            }))
+        }
         _ => return None,
     };
     let mut series: Vec<Series> = kids(g, "ser").map(|s| series(s, cx)).collect();
@@ -982,6 +1123,9 @@ impl Chart {
     pub fn parse(xml: &str, cx: &ColorCtx) -> Option<Chart> {
         let doc = roxmltree::Document::parse(xml).ok()?;
         let space = doc.root_element();
+        if is(space, super::ex::NS_CX, "chartSpace") {
+            return super::ex::parse(space, cx);
+        }
         if !is(space, NS_C, "chartSpace") {
             return None;
         }
@@ -1037,6 +1181,7 @@ impl Chart {
             rounded: flag(space, "roundedCorners").unwrap_or(false),
             style,
             unsupported,
+            legend_keys: None,
         })
     }
 

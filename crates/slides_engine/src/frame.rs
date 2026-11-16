@@ -8,7 +8,8 @@
 //!   built in) resolved per cell by [`Table::cell_look`].
 //! - SmartArt (`dgm:relIds`): the data part; PowerPoint's pre-drawn shapes
 //!   are read on demand ([`crate::Presentation::diagram_drawing`]).
-//! - Charts (`c:chart`): the chart part (drawn elsewhere).
+//! - Charts (`c:chart`, and `cx:chart` in an `mc:AlternateContent`): the
+//!   chart part (drawn elsewhere).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,6 +25,8 @@ use crate::xml::*;
 pub const NS_DSP: &str = "http://schemas.microsoft.com/office/drawing/2008/diagram";
 pub const NS_DGM: &str = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
 pub const NS_C: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+/// Office 2016 charts (waterfall, treemap...: `cx:chart`).
+pub const NS_CX: &str = "http://schemas.microsoft.com/office/drawing/2014/chartex";
 const URI_TABLE: &str = "http://schemas.openxmlformats.org/drawingml/2006/table";
 
 /// Display content of a group or graphic frame. Compares by identity (as
@@ -962,7 +965,7 @@ pub(crate) fn parse_graphic_frame(
             drawing: None,
         }));
     }
-    if let Some(c) = child(data, NS_C, "chart") {
+    if let Some(c) = child(data, NS_C, "chart").or_else(|| child(data, NS_CX, "chart")) {
         return Some(FrameContent::Chart(ChartRef {
             part: rel_part(r_attr(c, "id")),
         }));

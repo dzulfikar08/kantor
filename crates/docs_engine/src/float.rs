@@ -1179,7 +1179,8 @@ pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> 
         }
     } else if data.and_then(|d| d.child("wsp")).is_some() {
         FloatKind::Shape
-    } else if uri.ends_with("/chart") {
+    } else if uri.ends_with("/chart") || uri.ends_with("/chartex") {
+        // ChartML, or the Office 2016 types (`cx:chart`).
         match data
             .and_then(|d| find(d, "chart"))
             .and_then(|c| c.attr("id"))
