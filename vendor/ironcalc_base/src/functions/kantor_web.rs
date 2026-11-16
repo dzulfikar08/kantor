@@ -39,7 +39,7 @@ use crate::{
 const MAX_TEXT: usize = 32767;
 
 /// What a formula asks the host to fetch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum WebKind {
     /// WEBSERVICE: the body as text.
     Text,
@@ -88,6 +88,26 @@ pub struct KantorWeb {
     requests: BTreeMap<(String, WebKind), ()>,
     /// Per cell: its picture and the evaluation that drew it.
     images: HashMap<(u32, i32, i32), (CellImage, u64)>,
+    /// Pictures the file saved for IMAGE cells (Excel's rich values), per
+    /// cell: shown until the formula's own download is there.
+    saved: HashMap<(u32, i32, i32), SavedPicture>,
+    /// The evaluation count when the saved pictures were set: until the
+    /// next evaluation they are what the cells show.
+    saved_at: Option<u64>,
+}
+
+/// A picture saved in the file for an IMAGE cell.
+#[derive(Clone, Debug)]
+struct SavedPicture {
+    /// As the cell shows it before any evaluation (sizing from the
+    /// formula's literal arguments).
+    image: CellImage,
+    /// The source of the cell's first evaluation: the picture belongs to it
+    /// (a formula changed to another URL doesn't show it).
+    source: Option<String>,
+    /// The cell's formula when the file was read (another formula typed
+    /// in doesn't show the picture).
+    formula: Option<String>,
 }
 
 fn formula_value(v: &FormulaValue) -> Option<ArrayNode> {
@@ -141,13 +161,183 @@ impl Model<'_> {
         self.kantor_web.results.clear();
     }
 
+    /// Forgets what WEBSERVICE fetched and every failed download, keeping
+    /// the pictures: a recalculation the user asked for (F9) fetches them
+    /// again.
+    pub fn kantor_refresh_web(&mut self) {
+        self.kantor_web
+            .results
+            .retain(|_, r| matches!(r, WebResult::Image { .. }));
+    }
+
+    /// A picture the file saved for the IMAGE formula in a cell (Excel
+    /// keeps the last download as a rich value), with its alt text. Shown
+    /// from now on, and by the formula whenever its own download isn't
+    /// there (blocked, offline, waiting).
+    #[allow(clippy::too_many_arguments)]
+    pub fn kantor_set_saved_picture(
+        &mut self,
+        sheet: u32,
+        row: i32,
+        column: i32,
+        data: Arc<Vec<u8>>,
+        pixel_width: u32,
+        pixel_height: u32,
+        alt_text: Option<String>,
+    ) {
+        let cell = CellReferenceIndex { sheet, row, column };
+        // A picture placed in a cell is `#VALUE!` (the importer may have
+        // read another error from the cell's value metadata).
+        if let Some(Cell::ErrorCell { ei, s }) = self.fetch_cell(cell).map(|c| c.into_owned()) {
+            if ei != Error::VALUE {
+                if let Ok(ws) = self.workbook.worksheet_mut(sheet) {
+                    let _ = ws.update_cell(
+                        row,
+                        column,
+                        Cell::ErrorCell {
+                            ei: Error::VALUE,
+                            s,
+                        },
+                    );
+                }
+            }
+        }
+        let (sizing, height, width, literal_alt) = self.image_literal_args(cell);
+        let image = CellImage {
+            source: String::new(),
+            alt_text: alt_text.or(literal_alt).unwrap_or_default(),
+            sizing,
+            height,
+            width,
+            data,
+            pixel_width,
+            pixel_height,
+        };
+        let formula = self.kantor_formula_text(cell);
+        self.kantor_web.saved.insert(
+            (sheet, row, column),
+            SavedPicture {
+                image,
+                source: None,
+                formula,
+            },
+        );
+        self.kantor_web.saved_at = Some(self.kantor_evaluations);
+    }
+
+    /// A cell's formula as stored (its sheet's shared formula).
+    fn kantor_formula_text(&self, cell: CellReferenceIndex) -> Option<String> {
+        let f = match self.fetch_cell(cell)?.as_ref() {
+            Cell::CellFormula { f, .. } | Cell::ArrayFormula { f, .. } => *f,
+            _ => return None,
+        };
+        self.workbook
+            .worksheets
+            .get(cell.sheet as usize)?
+            .shared_formulas
+            .get(f as usize)
+            .cloned()
+    }
+
+    /// Whether any IMAGE cell has a picture saved in the file.
+    pub fn kantor_has_saved_pictures(&self) -> bool {
+        !self.kantor_web.saved.is_empty()
+    }
+
+    /// The sizing, height, width and alt text an IMAGE formula gives as
+    /// literal arguments (fit, no alt text, for anything else).
+    fn image_literal_args(
+        &self,
+        cell: CellReferenceIndex,
+    ) -> (u8, Option<f64>, Option<f64>, Option<String>) {
+        let none = (0, None, None, None);
+        let Some(f) = self.fetch_cell(cell).and_then(|c| match &*c {
+            Cell::CellFormula { f, .. } | Cell::ArrayFormula { f, .. } => Some(*f),
+            _ => None,
+        }) else {
+            return none;
+        };
+        let Some(mut node) = self
+            .parsed_formulas
+            .get(cell.sheet as usize)
+            .and_then(|s| s.get(f as usize))
+            .map(|p| p.0.as_ref())
+        else {
+            return none;
+        };
+        while let Node::ImplicitIntersection { child, .. } = node {
+            node = child;
+        }
+        let Node::FunctionKind {
+            kind: Function::Image,
+            args,
+        } = node
+        else {
+            return none;
+        };
+        let number = |i: usize| match args.get(i) {
+            Some(Node::NumberKind(n)) => Some(*n),
+            _ => None,
+        };
+        let alt = match args.get(1) {
+            Some(Node::StringKind(s)) => Some(s.clone()),
+            _ => None,
+        };
+        let sizing = number(2).filter(|s| (0.0..=3.0).contains(s)).unwrap_or(0.0) as u8;
+        if sizing == 3 {
+            (3, number(3), number(4), alt)
+        } else {
+            (sizing, None, None, alt)
+        }
+    }
+
     /// The picture an IMAGE formula shows in a cell, after the last
-    /// recalculation.
+    /// recalculation (before any, the picture the file saved).
     pub fn kantor_cell_image(&self, sheet: u32, row: i32, column: i32) -> Option<&CellImage> {
         match self.kantor_web.images.get(&(sheet, row, column)) {
             Some((image, at)) if *at == self.kantor_evaluations => Some(image),
-            _ => None,
+            _ => {
+                let saved = &self.kantor_web.saved.get(&(sheet, row, column))?.image;
+                let unevaluated = self.kantor_web.saved_at == Some(self.kantor_evaluations);
+                (unevaluated || self.kantor_is_placed_picture(sheet, row, column)).then_some(saved)
+            }
         }
+    }
+
+    /// Whether a cell is a picture placed in it (Excel's Place in Cell: an
+    /// error value with a saved picture, no formula), as the file had it.
+    fn kantor_is_placed_picture(&self, sheet: u32, row: i32, column: i32) -> bool {
+        let cell = CellReferenceIndex { sheet, row, column };
+        matches!(
+            self.fetch_cell(cell).as_deref(),
+            Some(Cell::ErrorCell { .. })
+        )
+    }
+
+    /// Whether the picture a cell shows is the one the file saved (not a
+    /// new download).
+    pub fn kantor_shows_saved_picture(&self, sheet: u32, row: i32, column: i32) -> bool {
+        match (
+            self.kantor_cell_image(sheet, row, column),
+            self.kantor_web.saved.get(&(sheet, row, column)),
+        ) {
+            (Some(shown), Some(saved)) => Arc::ptr_eq(&shown.data, &saved.image.data),
+            _ => false,
+        }
+    }
+
+    /// The cells showing the picture the file saved for them: (sheet, row,
+    /// column).
+    pub fn kantor_saved_picture_cells(&self) -> Vec<(u32, i32, i32)> {
+        let mut cells: Vec<_> = self
+            .kantor_web
+            .saved
+            .keys()
+            .copied()
+            .filter(|&(s, r, c)| self.kantor_shows_saved_picture(s, r, c))
+            .collect();
+        cells.sort_unstable();
+        cells
     }
 
     /// Every cell showing a picture: (sheet, row, column).
@@ -155,11 +345,13 @@ impl Model<'_> {
         let mut cells: Vec<_> = self
             .kantor_web
             .images
-            .iter()
-            .filter(|(_, (_, at))| *at == self.kantor_evaluations)
-            .map(|(k, _)| *k)
+            .keys()
+            .chain(self.kantor_web.saved.keys())
+            .copied()
+            .filter(|&(s, r, c)| self.kantor_cell_image(s, r, c).is_some())
             .collect();
         cells.sort_unstable();
+        cells.dedup();
         cells
     }
 
@@ -194,6 +386,20 @@ impl Model<'_> {
             Ok(WebResult::Text(s)) if s.chars().count() <= MAX_TEXT => CalcResult::String(s),
             Ok(WebResult::Error(e)) => error(e),
             Ok(_) => error(Error::VALUE),
+            // Not allowed to download: the value the cell had (the file's,
+            // or the last download), as Excel keeps it until it may refresh.
+            Err(Error::BLOCKED) => self
+                .kantor_saved_result(&Function::Webservice, cell)
+                .filter(|r| {
+                    !matches!(
+                        r,
+                        CalcResult::Error {
+                            error: Error::BLOCKED | Error::BUSY,
+                            ..
+                        }
+                    )
+                })
+                .unwrap_or_else(|| error(Error::BLOCKED)),
             Err(e) => error(e),
         }
     }
@@ -264,9 +470,39 @@ impl Model<'_> {
                     .insert((cell.sheet, cell.row, cell.column), (image, at));
                 CalcResult::String(alt_text)
             }
-            Ok(WebResult::Error(e)) => error(e),
-            Ok(WebResult::Text(_)) => error(Error::VALUE),
-            Err(e) => error(e),
+            other => {
+                // The picture the file saved, while the formula's own
+                // download isn't there (blocked, offline, waiting).
+                let key = (cell.sheet, cell.row, cell.column);
+                let formula = self.kantor_formula_text(cell);
+                if let Some(saved) = self
+                    .kantor_web
+                    .saved
+                    .get_mut(&key)
+                    .filter(|s| s.formula == formula)
+                {
+                    let bound = saved.source.get_or_insert_with(|| source.clone());
+                    if *bound == source {
+                        let image = CellImage {
+                            source,
+                            alt_text: alt_text.clone(),
+                            sizing: sizing as u8,
+                            height,
+                            width,
+                            data: saved.image.data.clone(),
+                            pixel_width: saved.image.pixel_width,
+                            pixel_height: saved.image.pixel_height,
+                        };
+                        let at = self.kantor_evaluations;
+                        self.kantor_web.images.insert(key, (image, at));
+                        return CalcResult::String(alt_text);
+                    }
+                }
+                match other {
+                    Ok(WebResult::Error(e)) | Err(e) => error(e),
+                    _ => error(Error::VALUE),
+                }
+            }
         }
     }
 
@@ -381,6 +617,34 @@ impl crate::UserModel<'_> {
     /// See [`Model::kantor_cell_image`].
     pub fn kantor_cell_image(&self, sheet: u32, row: i32, column: i32) -> Option<&CellImage> {
         self.model.kantor_cell_image(sheet, row, column)
+    }
+
+    /// See [`Model::kantor_refresh_web`].
+    pub fn kantor_refresh_web(&mut self) {
+        self.model.kantor_refresh_web();
+    }
+
+    /// See [`Model::kantor_set_saved_picture`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn kantor_set_saved_picture(
+        &mut self,
+        sheet: u32,
+        row: i32,
+        column: i32,
+        data: Arc<Vec<u8>>,
+        pixel_width: u32,
+        pixel_height: u32,
+        alt_text: Option<String>,
+    ) {
+        self.model.kantor_set_saved_picture(
+            sheet,
+            row,
+            column,
+            data,
+            pixel_width,
+            pixel_height,
+            alt_text,
+        );
     }
 }
 

@@ -33,6 +33,8 @@ pub struct Settings {
     /// Cloud drives (`[cloud]`): WebDAV accounts. Passwords are never stored
     /// here: they live in the OS keychain (see `kantor_ai::keys`).
     pub cloud: CloudSettings,
+    /// Sheets (`[sheets]`).
+    pub sheets: SheetsSettings,
     /// Interface language: `en` or `id`; unset follows the system language
     /// (Indonesian → `id`, anything else `en`). `KANTOR_LANG` overrides it.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -212,8 +214,27 @@ impl Default for Settings {
             author: None,
             spelling: SpellingSettings::default(),
             cloud: CloudSettings::default(),
+            sheets: SheetsSettings::default(),
             language: None,
         }
+    }
+}
+
+/// `[sheets]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SheetsSettings {
+    /// "Let formulas download from the internet": IMAGE and WEBSERVICE
+    /// fetch the URLs a workbook names. Off, they show `#BLOCKED!` (IMAGE
+    /// cells keep the pictures saved in the file) and nothing is
+    /// downloaded. Workbooks opened from a file still ask first (once per
+    /// file and session).
+    pub web_formulas: bool,
+}
+
+impl Default for SheetsSettings {
+    fn default() -> Self {
+        Self { web_formulas: true }
     }
 }
 
@@ -272,6 +293,15 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_formulas_are_on_unless_turned_off() {
+        assert!(Settings::default().sheets.web_formulas);
+        let off: Settings = toml::from_str("[sheets]\nweb_formulas = false\n").unwrap();
+        assert!(!off.sheets.web_formulas);
+        let other: Settings = toml::from_str("theme = \"omarchy\"\n").unwrap();
+        assert!(other.sheets.web_formulas);
+    }
 
     #[test]
     fn cloud_account_dav_root() {
@@ -347,6 +377,9 @@ mod tests {
                 language: Some("id_ID".into()),
             },
             cloud: CloudSettings::default(),
+            sheets: SheetsSettings {
+                web_formulas: false,
+            },
             language: Some("id".into()),
         };
         assert_eq!(s.author_name(), "Dewi Lestari");

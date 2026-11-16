@@ -196,6 +196,125 @@ fn webservice_and_image_wait_for_the_host() {
 }
 
 #[test]
+fn saved_pictures_show_until_the_formula_downloads_its_own() {
+    let mut model = new_empty_model();
+    model._set(
+        "B2",
+        "=IMAGE(\"https://example.com/a.png\",\"Logo\",3,30,60)",
+    );
+    model._set("B3", "=IMAGE(\"https://example.com/b.png\")");
+    let saved = Arc::new(vec![9, 9, 9]);
+    // Before any evaluation: what the file saved, sized by the formula's
+    // literal arguments.
+    model.kantor_set_saved_picture(0, 2, 2, saved.clone(), 8, 4, None);
+    assert!(model.kantor_has_saved_pictures());
+    let shown = model.kantor_cell_image(0, 2, 2).unwrap();
+    assert_eq!(
+        (
+            shown.sizing,
+            shown.height,
+            shown.width,
+            shown.alt_text.as_str()
+        ),
+        (3, Some(30.0), Some(60.0), "Logo")
+    );
+    assert!(model.kantor_shows_saved_picture(0, 2, 2));
+    assert_eq!(model.kantor_image_cells(), [(0, 2, 2)]);
+
+    // Blocked: the saved picture stays; a cell without one is #BLOCKED!.
+    model.evaluate();
+    assert_eq!(model._get_text("B2"), "Logo");
+    assert!(model.kantor_shows_saved_picture(0, 2, 2));
+    assert_eq!(model._get_text("B3"), "#BLOCKED!");
+
+    // Downloading: the saved picture while it waits, then the new one.
+    model.kantor_set_web_enabled(true);
+    model.evaluate();
+    assert!(model.kantor_shows_saved_picture(0, 2, 2));
+    assert_eq!(model._get_text("B3"), "#BUSY!");
+    model.kantor_set_web_result(
+        "https://example.com/a.png",
+        WebKind::Image,
+        WebResult::Image {
+            data: Arc::new(vec![1]),
+            width: 2,
+            height: 2,
+        },
+    );
+    model.evaluate();
+    assert!(!model.kantor_shows_saved_picture(0, 2, 2));
+    assert_eq!(model.kantor_cell_image(0, 2, 2).unwrap().pixel_width, 2);
+
+    // Another URL in the cell: the saved picture isn't its picture.
+    model.kantor_set_web_enabled(false);
+    model._set("B2", "=IMAGE(\"https://example.com/other.png\")");
+    model.evaluate();
+    assert_eq!(model._get_text("B2"), "#BLOCKED!");
+    assert!(model.kantor_cell_image(0, 2, 2).is_none());
+}
+
+#[test]
+fn refreshing_refetches_text_and_failures_but_keeps_pictures() {
+    let mut model = new_empty_model();
+    model._set("A1", "=WEBSERVICE(\"https://example.com/rate\")");
+    model._set("A2", "=IMAGE(\"https://example.com/a.png\")");
+    model._set("A3", "=IMAGE(\"https://example.com/gone.png\")");
+    model.kantor_set_web_enabled(true);
+    model.evaluate();
+    model.kantor_set_web_result(
+        "https://example.com/rate",
+        WebKind::Text,
+        WebResult::Text("1".to_string()),
+    );
+    model.kantor_set_web_result(
+        "https://example.com/a.png",
+        WebKind::Image,
+        WebResult::Image {
+            data: Arc::new(vec![1]),
+            width: 1,
+            height: 1,
+        },
+    );
+    model.kantor_set_web_result(
+        "https://example.com/gone.png",
+        WebKind::Image,
+        WebResult::Error(crate::expressions::token::Error::CONNECT),
+    );
+    model.evaluate();
+    assert_eq!(model._get_text("A1"), "1");
+    assert_eq!(model._get_text("A3"), "#CONNECT!");
+    model.kantor_refresh_web();
+    model.evaluate();
+    assert_eq!(model._get_text("A1"), "#BUSY!");
+    assert_eq!(model._get_text("A2"), "");
+    assert!(model.kantor_cell_image(0, 2, 1).is_some());
+    assert_eq!(model._get_text("A3"), "#BUSY!");
+    assert_eq!(
+        model.kantor_web_requests(),
+        [
+            ("https://example.com/gone.png".to_string(), WebKind::Image),
+            ("https://example.com/rate".to_string(), WebKind::Text),
+        ]
+    );
+
+    // Blocked afterwards: WEBSERVICE keeps the value it had.
+    model.kantor_set_web_result(
+        "https://example.com/rate",
+        WebKind::Text,
+        WebResult::Text("2".to_string()),
+    );
+    model.evaluate();
+    model.kantor_set_web_enabled(false);
+    model.kantor_refresh_web();
+    model.evaluate();
+    assert_eq!(model._get_text("A1"), "2");
+    // A formula typed while blocked has nothing to keep.
+    model._set("A4", "=WEBSERVICE(\"https://example.com/new\")");
+    model.evaluate();
+    assert_eq!(model._get_text("A4"), "#BLOCKED!");
+}
+
+#[test]
 fn online_functions_give_excels_offline_errors() {
     let mut model = new_empty_model();
     model._set("A1", "=STOCKHISTORY(\"MSFT\",TODAY())");

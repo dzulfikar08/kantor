@@ -193,6 +193,8 @@ impl SheetsView {
                 });
                 self.select_cell(0, 0, cx);
                 self.load_selected_into_formula(window, cx);
+                let path = self.path(cx);
+                self.web_after_open(path, cx);
             }
             Err(err) => {
                 log::error!("{err:#}");
@@ -230,6 +232,8 @@ impl SheetsView {
         if self.editing.is_some() {
             self.commit_edit(None, window, cx);
         }
+        // A full recalculation fetches WEBSERVICE answers again.
+        self.refresh_web(cx);
         self.run_book_job(
             Job::Calculating,
             |book| book.recalculate(),

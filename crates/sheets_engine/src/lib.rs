@@ -79,7 +79,7 @@ pub use validation_edit::{
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Cursor, Seek};
 use std::path::{Path, PathBuf};
@@ -629,6 +629,7 @@ impl Workbook {
             panes,
             note_extras,
             mut cf_x14,
+            pictures,
         } = extras
             .map(|h| h.join().unwrap_or_default())
             .unwrap_or_default();
@@ -722,6 +723,7 @@ impl Workbook {
             cf_x14,
         };
         book.apply_read_panes(&panes);
+        book.set_saved_pictures(pictures);
         if !xls_drawings.is_empty() {
             book.import_drawings(&xls_drawings);
         }
@@ -1447,6 +1449,13 @@ impl Workbook {
                 p
             },
             chart_sheets: self.chart_sheet_plans(),
+            saved_pictures: self
+                .model
+                .get_model()
+                .kantor_saved_picture_cells()
+                .into_iter()
+                .map(|(sheet, row, col)| (self.sheet_id(sheet), row as u32 - 1, col as u32 - 1))
+                .collect(),
         }
     }
 }
@@ -1478,6 +1487,9 @@ struct XlsxParts {
     drawings: HashMap<u32, Vec<drawing::SaveEdit>>,
     patches: preserve::Patches,
     chart_sheets: Option<Vec<preserve::ChartSheetPlan>>,
+    /// Cells showing the picture the file saved for them (rich values), by
+    /// `(sheetId, row, col)`, 0-based.
+    saved_pictures: HashSet<(u32, u32, u32)>,
 }
 
 /// IronCalc's `.xlsx` of `model`, with the parts of `original` it doesn't
@@ -1519,6 +1531,8 @@ fn build_xlsx(
             columns: t.columns.iter().map(|c| (c.id, c.name.clone())).collect(),
         })
     };
+    let saved_picture =
+        |sheet_id: u32, row: u32, col: u32| parts.saved_pictures.contains(&(sheet_id, row, col));
     let ctx = preserve::Context {
         pivots: &parts.pivots,
         tabs: &parts.tabs,
@@ -1529,6 +1543,7 @@ fn build_xlsx(
         drawings: &parts.drawings,
         patches: &parts.patches,
         chart_sheets: parts.chart_sheets.as_deref(),
+        saved_picture: &saved_picture,
     };
     Ok(preserve::finish(written, original, &ctx))
 }
@@ -1546,6 +1561,8 @@ struct Extras {
     note_extras: HashMap<(u32, u32, u32), notes::NoteExtra>,
     /// Excel 2010 conditional format extras (`cf_x14`).
     cf_x14: cf_x14::CfX14,
+    /// Pictures Excel saved for IMAGE cells, by `(sheetId, row, col)`.
+    pictures: HashMap<(u32, u32, u32), preserve::RichPicture>,
 }
 
 impl Extras {
@@ -1560,6 +1577,7 @@ impl Extras {
             panes: grid::read_panes(&skeletons),
             note_extras: preserve::note_extras(bytes),
             cf_x14: cf_x14::read(&skeletons),
+            pictures: preserve::rich_pictures(bytes),
         }
     }
 }

@@ -1090,3 +1090,6 @@ Table style {} deleted	Gaya tabel {} dihapus
 none	tidak ada
 {} (default)	{} (default)
 New Table Style…	Gaya Tabel Baru…
+Security Warning	Peringatan Keamanan
+This workbook downloads pictures or data from the internet.	Buku kerja ini mengunduh gambar atau data dari internet.
+Block	Blokir
