@@ -299,3 +299,47 @@ fn more_chart_types_are_drawn() {
         assert!(shown.iter().any(|s| s == title), "{name}: {shown:?}");
     }
 }
+
+/// `drawings.docx`: text wraps around the turned picture's turned bounds
+/// (Word's rotated bounding box), not its unturned box.
+#[test]
+fn turned_pictures_wrap_around_their_turned_bounds() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/docx/drawings.docx");
+    let doc = Document::open(&path).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let (page, it) = laid
+        .floats
+        .iter()
+        .enumerate()
+        .find_map(|(p, items)| {
+            items
+                .iter()
+                .find(|it| it.float(&doc).unwrap().name == "Turned picture")
+                .map(|it| (p, it))
+        })
+        .unwrap();
+    assert_eq!(it.float(&doc).unwrap().rotation(), 30.0);
+    // 120 × 60 turned 30°: about 134 × 112.
+    let [x, y, w, h] = it.rect;
+    let (s, c) = 30f32.to_radians().sin_cos();
+    let (bw, bh) = (w * c + h * s, w * s + h * c);
+    let bounds = [x + w / 2.0 - bw / 2.0, y + h / 2.0 - bh / 2.0, bw, bh];
+    // Text runs on its right: no line (from its anchor paragraph on)
+    // level with the turned bounds starts inside them (the distance from
+    // text is 12 px).
+    let beside: Vec<_> = laid.paged.pages[page]
+        .lines
+        .iter()
+        .filter(|l| l.para >= it.para)
+        .filter(|l| l.top < bounds[1] + bounds[3] && l.top + l.height > bounds[1])
+        .collect();
+    assert!(!beside.is_empty());
+    for l in &beside {
+        assert!(l.x >= bounds[0] + bounds[2] + 12.0 - 0.01, "{l:?} into {bounds:?}");
+    }
+    // Some of them are above or below the unturned box: only the turned
+    // bounds keep them away.
+    assert!(beside.iter().any(|l| l.top + l.height <= y || l.top >= y + h));
+}

@@ -553,6 +553,24 @@ impl Float {
         (pts.len() >= 3).then_some(pts)
     }
 
+    /// How far it's turned, degrees clockwise: its own `a:xfrm/@rot` (a
+    /// picture's or shape's, a group's `grpSpPr`).
+    pub fn rotation(&self) -> f32 {
+        let choice = choice_part(&self.xml);
+        let Some(g) = element_range(choice, "graphic") else {
+            return 0.0;
+        };
+        element_range(&choice[g.clone()], "xfrm")
+            .and_then(|r| {
+                let x = &choice[g.start + r.start..g.start + r.end];
+                let tag = &x[..x.find('>').map_or(x.len(), |i| i + 1)];
+                let i = tag.find(" rot=\"")? + 6;
+                let e = tag[i..].find('"')? + i;
+                tag[i..e].parse::<f32>().ok()
+            })
+            .map_or(0.0, |r| r / 60_000.0)
+    }
+
     /// The pictures (`a:blip/@r:embed`) a picture or group draws.
     pub fn picture_rels(&self) -> Vec<String> {
         match &self.kind {

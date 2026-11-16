@@ -447,7 +447,19 @@ pub fn float_spec(index: usize, f: &docs_engine::Float) -> docs_layout::FloatSpe
         RelV::OutsideMargin => FloatRefV::OutsideMargin,
     };
     let (width, height) = at.size_px();
+    // Text wraps around a turned object's turned bounds, as in Word.
+    let deg = f.rotation();
+    let extent = if deg.rem_euclid(180.0) != 0.0 {
+        let (s, c) = deg.to_radians().sin_cos();
+        let bw = width * c.abs() + height * s.abs();
+        let bh = width * s.abs() + height * c.abs();
+        let (dx, dy) = ((bw - width) / 2.0, (bh - height) / 2.0);
+        [dx, dy, dx, dy]
+    } else {
+        [0.0; 4]
+    };
     docs_layout::FloatSpec {
+        extent,
         index,
         h: (h, pos(at.h.1)),
         v: (v, pos(at.v.1)),

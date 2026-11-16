@@ -26,6 +26,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   and cell property changes in files from Word open (they used to force Save As), show as a
   "Formatted Table" balloon, and can be accepted or rejected.
 
+### Fixed
+
+- Docs: text wraps around a turned picture or shape's turned bounds, as in Word, instead of its
+  unturned box (text could run under a turned picture's corners).
+
 ## [0.8.0] - 2026-11-16
 
 Kantor now edits the parts of Office files it used to only show. In Docs: headers, footers and
