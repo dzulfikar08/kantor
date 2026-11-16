@@ -145,6 +145,22 @@ impl DocSync {
         self.entry.has_local_changes()
     }
 
+    /// Local saves on their way to the server without the user's help: an
+    /// upload is running, or one starts by itself (a save the app hasn't
+    /// handled yet, or a retry after the server was busy). Closing waits
+    /// for these; offline, failed, conflicting and read-only documents
+    /// need the user instead.
+    pub fn upload_expected(&self) -> bool {
+        if self.read_only_by().is_some() {
+            return false;
+        }
+        match self.state {
+            SyncState::Uploading { .. } => true,
+            SyncState::LocalChanges | SyncState::Synced => self.unsynced(),
+            SyncState::Offline | SyncState::Conflict { .. } | SyncState::Failed(_) => false,
+        }
+    }
+
     /// The app saved the working copy.
     pub fn on_local_save(&mut self) -> Action {
         if self.read_only_by().is_some() {
@@ -514,6 +530,56 @@ mod tests {
         d.on_upload(UploadOutcome::Failed("HTTP 507".into()));
         assert_eq!(d.status(), Status::Failed("HTTP 507".into()));
         assert_eq!(d.on_reconnect(), Action::Upload);
+    }
+
+    /// Closing right after Save: the save the app hasn't handled yet and
+    /// the upload it starts are both waited for; a failed upload isn't.
+    #[test]
+    fn upload_expected_while_save_is_on_its_way() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut d = doc(dir.path());
+        assert!(!d.upload_expected(), "nothing to send");
+        // Saved, not yet seen by the app (state still Synced).
+        local_save(&d, "edit 1");
+        assert!(d.unsynced());
+        assert!(d.upload_expected());
+        assert_eq!(d.on_local_save(), Action::Upload);
+        assert!(d.upload_expected());
+        d.begin_upload(6);
+        assert!(d.upload_expected());
+        let out = synced(&d, "\"e2\"");
+        d.on_upload(out);
+        assert!(!d.upload_expected(), "on the server");
+
+        // Server down: the close asks the user instead of waiting.
+        local_save(&d, "edit 2, longer");
+        d.on_local_save();
+        d.begin_upload(14);
+        d.on_upload(UploadOutcome::Offline("connection refused".into()));
+        assert!(d.unsynced());
+        assert!(!d.upload_expected());
+
+        // Busy: retried by itself shortly, so still on its way.
+        let mut b = doc(dir.path());
+        local_save(&b, "busy");
+        b.on_local_save();
+        b.begin_upload(4);
+        b.on_upload(UploadOutcome::Busy);
+        assert!(b.upload_expected());
+        // Failed and conflicting uploads wait for the user.
+        b.begin_upload(4);
+        b.on_upload(UploadOutcome::Failed("HTTP 507".into()));
+        assert!(!b.upload_expected());
+        b.on_reconnect();
+        b.begin_upload(4);
+        b.on_upload(UploadOutcome::Conflict { server_etag: None });
+        assert!(!b.upload_expected());
+        // Read-only documents never upload.
+        let mut r = doc(dir.path());
+        r.lock = LockState::LockedBy("Budi".into());
+        local_save(&r, "local only, read-only");
+        r.on_local_save();
+        assert!(!r.upload_expected());
     }
 
     #[test]

@@ -76,6 +76,9 @@ Save All	Simpan Semua
 Your changes will be lost if you don't save them.	Perubahan Anda akan hilang jika tidak disimpan.
 Closing when the save has finished…	Menutup setelah penyimpanan selesai…
 Not closed: “{}” wasn't saved.	Tidak ditutup: “{}” tidak disimpan.
+Uploading “{}” to the cloud…	Mengunggah “{}” ke cloud…
+Uploading {} documents to the cloud…	Mengunggah {} dokumen ke cloud…
+Your changes are saved. Closing when they're on the server too.	Perubahan Anda sudah tersimpan. Ditutup setelah perubahan juga ada di server.
 just now	baru saja
 1 minute ago	1 menit yang lalu
 {} minutes ago	{} menit yang lalu

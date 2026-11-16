@@ -34,6 +34,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   in the system keychain…") instead of still showing "Waiting for you to sign in in the browser".
   `RUST_LOG=kantor_cloud=debug,kantor_ai=debug` logs how long each WebDAV request, token refresh,
   sign-in step and keychain call took.
+- Cloud storage: choosing *Save* when closing a cloud document with unsaved changes (closing its
+  tab, the window, or quitting) no longer shows the *Not synced* warning while the save is still
+  being uploaded. Kantor now shows the upload's progress and closes once it's on the server; the
+  warning (with *Keep Local Copy* and *Sync Now*) appears only when the upload fails (server
+  down) or makes no progress for 45 seconds, and in any case after 5 minutes. *Don't Close* stops
+  waiting and keeps the document open while the upload carries on. The same wait applies to
+  uploads still running from an earlier save, after *Don't Save*.
 
 ## [0.9.0] - 2026-11-16
 

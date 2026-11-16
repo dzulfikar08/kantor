@@ -1393,6 +1393,53 @@ impl Workspace {
             .collect()
     }
 
+    /// Of `panes`, the cloud documents whose saves are on their way to the
+    /// server by themselves (see `DocSync::upload_expected`). Saves the
+    /// workspace hasn't seen yet (a close right after Save) start their
+    /// upload first.
+    pub(super) fn cloud_uploads_due(
+        &mut self,
+        panes: &[PaneId],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<PaneId> {
+        for &pane in panes {
+            self.cloud_doc_changed(pane, window, cx);
+        }
+        panes
+            .iter()
+            .copied()
+            .filter(|p| {
+                self.cloud
+                    .docs
+                    .get(p)
+                    .is_some_and(|cd| cd.sync.upload_expected())
+            })
+            .collect()
+    }
+
+    /// Bytes sent and to send of the uploads running for `panes`.
+    pub(super) fn cloud_upload_progress(&self, panes: &[PaneId]) -> (u64, u64) {
+        panes
+            .iter()
+            .filter_map(|p| self.cloud.docs.get(p))
+            .filter_map(|cd| match cd.sync.state {
+                kantor_cloud::sync::SyncState::Uploading { sent, total } => Some((sent, total)),
+                _ => None,
+            })
+            .fold((0, 0), |(s, t), (sent, total)| (s + sent, t + total))
+    }
+
+    /// Whether any of `panes` still has saves on their way to the server.
+    pub(super) fn cloud_upload_pending(&self, panes: &[PaneId]) -> bool {
+        panes.iter().any(|p| {
+            self.cloud
+                .docs
+                .get(p)
+                .is_some_and(|cd| cd.sync.upload_expected())
+        })
+    }
+
     pub(super) fn cloud_uploading(&self, panes: &[PaneId]) -> bool {
         panes.iter().any(|p| {
             self.cloud
