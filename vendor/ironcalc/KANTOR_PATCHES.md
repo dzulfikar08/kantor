@@ -234,6 +234,21 @@ the default format (0; no style for a column).
 Tests: Kantor's `crates/sheets_engine/tests/realworld.rs`
 (`xlsx_cell_formats_past_the_end_are_the_default`).
 
+## 14. Reversed icon sets written with `reverse="1"`
+
+Why: an icon set whose icons are a known set in reverse order (Excel's
+"Reverse Icon Order", e.g. imported from an `.xls` `CF12`) was written as
+the guess "3Arrows" with the icons in the normal order: the order was lost
+on reopening.
+
+What: `export/conditional_formatting.rs` `icon_set_name_from_thresholds`
+also matches the known sets reversed and the `<iconSet>` gets
+`reverse="1"` (the import reverses it back, see the conditional formatting
+patch of `import/conditional_formatting.rs`).
+
+Tests: Kantor's `crates/sheets_engine/tests/xls_cf12.rs`
+(`saved_as_xlsx_the_rules_are_excel_2007_rules`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

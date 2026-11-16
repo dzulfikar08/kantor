@@ -191,7 +191,9 @@ const KNOWN_ICON_SETS: &[&str] = &[
 
 // Tries to get Excel's built-in icon set name for this set of thresholds.
 // we could do better with x14 custom sets. Similarly to what we do for DataBars.
-fn icon_set_name_from_thresholds(thresholds: &[IconThreshold]) -> Option<&'static str> {
+// KANTOR PATCH (§14): also a known set in reverse order ("Reverse Icon
+// Order"): `(name, reversed)`.
+fn icon_set_name_from_thresholds(thresholds: &[IconThreshold]) -> Option<(&'static str, bool)> {
     // We first try to see if it is one of the standard sets by comparing the (icon, color) pairs of the thresholds to the known sets.
     let pairs: Vec<(Icon, Color)> = thresholds
         .iter()
@@ -200,15 +202,23 @@ fn icon_set_name_from_thresholds(thresholds: &[IconThreshold]) -> Option<&'stati
     for &name in KNOWN_ICON_SETS {
         if let Some(set_pairs) = icon_set_icons(name) {
             if set_pairs == pairs {
-                return Some(name);
+                return Some((name, false));
+            }
+        }
+    }
+    for &name in KNOWN_ICON_SETS {
+        if let Some(mut set_pairs) = icon_set_icons(name) {
+            set_pairs.reverse();
+            if set_pairs == pairs {
+                return Some((name, true));
             }
         }
     }
     // Then take a wild guess
     match thresholds.len() {
-        3 => Some("3Arrows"),
-        4 => Some("4Arrows"),
-        5 => Some("5Arrows"),
+        3 => Some(("3Arrows", false)),
+        4 => Some(("4Arrows", false)),
+        5 => Some(("5Arrows", false)),
         _ => None,
     }
 }
@@ -500,15 +510,16 @@ fn build_cf_rule_xml(
             thresholds,
             show_value,
         } => {
-            let set_name = icon_set_name_from_thresholds(thresholds)?;
+            let (set_name, reversed) = icon_set_name_from_thresholds(thresholds)?;
             // Known named set → standard conditionalFormatting element.
             let show_val = if !show_value { r#" showValue="0""# } else { "" };
+            let reverse = if reversed { r#" reverse="1""# } else { "" };
             let cfvos: String = thresholds
                 .iter()
                 .map(|t| cfvo_with_gte_xml(&t.cfvo, t.is_strict))
                 .collect();
             format!(
-                r#"<conditionalFormatting sqref="{range}"><cfRule type="iconSet" priority="{excel_priority}"><iconSet iconSet="{set_name}"{show_val}>{cfvos}</iconSet></cfRule></conditionalFormatting>"#
+                r#"<conditionalFormatting sqref="{range}"><cfRule type="iconSet" priority="{excel_priority}"><iconSet iconSet="{set_name}"{show_val}{reverse}>{cfvos}</iconSet></cfRule></conditionalFormatting>"#
             )
         }
         CfRule::IconRating {

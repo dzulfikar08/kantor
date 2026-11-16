@@ -2240,7 +2240,7 @@ impl RuleCtx<'_, '_> {
 }
 
 /// Rating sets: icon count, icon and colour (as an `.xlsx` import makes them).
-fn rating(set: &str) -> Option<(usize, Icon, &'static str)> {
+pub(crate) fn rating(set: &str) -> Option<(usize, Icon, &'static str)> {
     match set {
         "3Stars" => Some((3, Icon::Star, "#FFD700")),
         "5Quarters" => Some((5, Icon::Circle, "#FFD700")),
