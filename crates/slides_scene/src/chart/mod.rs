@@ -23,6 +23,7 @@
 
 pub mod ex;
 pub mod format;
+pub mod geo;
 pub mod layout;
 pub mod model;
 pub mod scale;

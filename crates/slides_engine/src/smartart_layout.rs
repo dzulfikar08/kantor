@@ -3,9 +3,11 @@
 //! removed: Basic Block List (`layout/default`, PowerPoint's `snake`
 //! algorithm), Vertical Bullet List (`layout/vList2`, `lin` with `tx`
 //! children), Basic Process (`layout/process1`, `lin` with arrows) and
-//! Basic Cycle (`layout/cycle2`, `cycle`). The family comes from the data
-//! model's document item (`dgm:prSet/@loTypeId`); other layouts (and
-//! hierarchies) keep PowerPoint's drawing and are scaled.
+//! Basic Cycle (`layout/cycle2`, `cycle`); and the hierarchies
+//! Organization Chart, Hierarchy and Horizontal Hierarchy (child module
+//! `tree`). The family comes from the data model's document item
+//! (`dgm:prSet/@loTypeId`); other layouts keep PowerPoint's drawing and are
+//! scaled.
 //!
 //! Everything here works on the parts' XML: the data model (items in
 //! order, their sibling transitions and presentation items) and the
@@ -40,6 +42,12 @@ pub enum Family {
     Process,
     /// Basic Cycle: circles round a circle, arrows between them.
     Cycle,
+    /// Organization Chart: a tree top down, elbow connectors.
+    OrgChart,
+    /// Hierarchy: a tree top down.
+    Hierarchy,
+    /// Horizontal Hierarchy: a tree left to right.
+    HorizontalHierarchy,
 }
 
 impl Family {
@@ -50,12 +58,23 @@ impl Family {
             "vList2" => Family::Bullets,
             "process1" => Family::Process,
             "cycle2" => Family::Cycle,
+            "orgChart1" => Family::OrgChart,
+            "hierarchy1" => Family::Hierarchy,
+            "hierarchy2" => Family::HorizontalHierarchy,
             _ => return None,
         })
     }
 
     fn arrows(self) -> bool {
         matches!(self, Family::Process | Family::Cycle)
+    }
+
+    /// A hierarchy (laid out by the `tree` module).
+    pub fn is_tree(self) -> bool {
+        matches!(
+            self,
+            Family::OrgChart | Family::Hierarchy | Family::HorizontalHierarchy
+        )
     }
 }
 
@@ -163,12 +182,15 @@ fn view(data: &str) -> anyhow::Result<View> {
     })
 }
 
-pub(crate) const LAYOUT_REFUSAL: &str = "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes and cycles";
+pub(crate) const LAYOUT_REFUSAL: &str = "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes, cycles and hierarchies";
 
 /// The family of a SmartArt (drawing and data model XML), if Kantor lays
 /// it out: a known layout whose items each have one shape (and, in a
 /// bullet list, one sub-item box).
 pub(crate) fn family(drawing: &str, data: &str) -> Option<Family> {
+    if let Some(f) = tree::family(data) {
+        return Some(f);
+    }
     let v = view(data).ok()?;
     let (list, _) = shapes(drawing, &v).ok()?;
     for i in 0..v.items.len() {
@@ -379,6 +401,8 @@ fn boxes(family: Family, subs: &[bool], sub_ratio: f64, w: f64, h: f64) -> Vec<B
                 })
                 .collect()
         }
+        // Laid out by the `tree` module.
+        Family::OrgChart | Family::Hierarchy | Family::HorizontalHierarchy => Vec::new(),
         Family::Cycle => {
             let m = w.min(h);
             let k = if n == 1 {
@@ -515,6 +539,9 @@ fn wrap_pre() -> usize {
 /// Lay the drawing out again for a `w` × `h` frame from the data model;
 /// returns the new drawing XML.
 pub(crate) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<String> {
+    if tree::family(data).is_some() {
+        return tree::relayout(drawing, data, w, h);
+    }
     let v = view(data)?;
     let (list, tree_end) = shapes(drawing, &v)?;
     let n = v.items.len();
@@ -679,6 +706,9 @@ pub(crate) fn add_item(
     w: Emu,
     h: Emu,
 ) -> anyhow::Result<(String, String, String)> {
+    if tree::family(data).is_some() {
+        return tree::add_item(drawing, data, selected, place, w, h);
+    }
     let v = view(data)?;
     if matches!(place, AddPlace::Above | AddPlace::Below) {
         bail!("This SmartArt layout has one level: add shapes before or after");
@@ -769,6 +799,9 @@ pub(crate) fn remove_item(
     w: Emu,
     h: Emu,
 ) -> anyhow::Result<(String, String)> {
+    if tree::family(data).is_some() {
+        return tree::remove_item(drawing, data, selected, w, h);
+    }
     let v = view(data)?;
     let i = v
         .item_of(selected)
@@ -863,6 +896,9 @@ fn set_attr(src: &str, n: Node, k: &str, val: &str) -> (Range<usize>, String) {
     let st = n.range().start;
     (st..st + tag.len(), out)
 }
+
+#[path = "smartart_tree.rs"]
+mod tree;
 
 #[cfg(test)]
 mod tests {

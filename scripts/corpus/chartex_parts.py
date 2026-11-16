@@ -19,6 +19,8 @@ URI_CHARTEX = "http://schemas.microsoft.com/office/drawing/2014/chartex"
 # The namespace a viewer must know to show each type (mc:Choice Requires).
 CX1 = "http://schemas.microsoft.com/office/drawing/2015/9/8/chartex"
 CX2 = "http://schemas.microsoft.com/office/drawing/2015/10/21/chartex"
+# Region maps (scripts/corpus/gen_region_map.py).
+CX4 = "http://schemas.microsoft.com/office/drawing/2016/5/10/chartex"
 
 
 def esc(s: str) -> str:

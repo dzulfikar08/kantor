@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+# Region maps: Office's geography cache (base64, maybe compressed).
+base64.workspace = true
+flate2 = "1"
 # Rgb and the font substitution table.
 docs_engine.workspace = true
 # Text bodies are laid out with the Docs engine (parley), as on screen.

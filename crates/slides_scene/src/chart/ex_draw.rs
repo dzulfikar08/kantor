@@ -1,9 +1,10 @@
 //! Layout of the chart types with their own geometry: surface (as
 //! PowerPoint's 2-D contour view), pie of pie / bar of pie, and the
-//! chartex funnel, treemap, sunburst and box & whisker. A child of
+//! chartex funnel, treemap, sunburst, box & whisker and region maps. A child of
 //! [`super`] (the layout), sharing its helpers.
 
 use super::super::ex::{BoxStats, ExKind, ExPlot, Node2, hierarchy};
+use super::super::geo::{CacheState, GeoMap, Projector, RegionLabels, Scale as GeoScale};
 use super::*;
 
 fn contrast(fill: &Fill) -> Rgba {
@@ -954,5 +955,424 @@ pub(super) fn of_pie(g: &Group, of: &OfPie, o: &mut Out, area: Rect) {
     }
     for (text, font, q) in labels {
         o.label_at(&text, &font, q, 0.5, 0.5);
+    }
+}
+
+// ── region maps ────────────────────────────────────────────────────────────
+
+/// The region each data point of a map is shown in.
+pub(super) fn map_points(s: &Series, map: &GeoMap) -> Vec<Option<usize>> {
+    let n = s.vals.len().max(s.cats.len()).max(map.color_strs.len());
+    (0..n)
+        .map(|i| {
+            let leaf = s.cats.get(i).map_or("", String::as_str);
+            let outer: Vec<&str> = s
+                .levels
+                .iter()
+                .filter_map(|l| l.get(i).map(String::as_str))
+                .collect();
+            map.region_for(leaf, &outer)
+        })
+        .collect()
+}
+
+/// A categorical map (text values): its categories in order of first use.
+pub(super) fn map_categories(s: &Series, map: &GeoMap) -> Option<Vec<String>> {
+    if map.color_strs.is_empty() || s.vals.iter().any(Option::is_some) {
+        return None;
+    }
+    let mut out: Vec<String> = Vec::new();
+    for c in &map.color_strs {
+        if !c.is_empty() && !out.contains(c) {
+            out.push(c.clone());
+        }
+    }
+    Some(out)
+}
+
+const NO_DATA: Rgb = Rgb([0xD9, 0xD9, 0xD9]);
+
+/// A region map: each region filled with its value's colour on the
+/// series' scale (or its category's colour), a gradient legend for values,
+/// region labels where they fit. Without region outlines (no cache, or one
+/// Kantor can't read) the values are listed instead.
+pub(super) fn region_map(chart: &Chart, g: &Group, map: &GeoMap, o: &mut Out, area: Rect) {
+    let Some(s) = g.series.first() else { return };
+    let points = map_points(s, map);
+    let drawable =
+        map.regions.iter().any(|r| !r.rings.is_empty()) && points.iter().any(Option::is_some);
+    if !drawable {
+        map_fallback(chart, s, map, o, area);
+        return;
+    }
+    let cats = map_categories(s, map);
+    let vals: Vec<f64> = points
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.is_some())
+        .filter_map(|(i, _)| s.vals.get(i).copied().flatten())
+        .collect();
+    let (lo, hi) = vals
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), v| {
+            (a.min(*v), b.max(*v))
+        });
+    let scale = (cats.is_none() && lo.is_finite())
+        .then(|| GeoScale::new(&map.colors, lo, hi, o.d.accents[0]));
+    let mut plot = area;
+    if let (Some(sc), Some(lg)) = (&scale, &chart.legend) {
+        plot = map_legend(lg, s, sc, o, area);
+    }
+    plot_back(chart, o, plot);
+    // Each region's fill: from its first data point.
+    let mut fills: Vec<Option<(Rgb, usize)>> = vec![None; map.regions.len()];
+    for (i, r) in points.iter().enumerate() {
+        let Some(r) = *r else { continue };
+        if fills[r].is_some() {
+            continue;
+        }
+        let color = match (&cats, &scale) {
+            (Some(cats), _) => map
+                .color_strs
+                .get(i)
+                .and_then(|c| cats.iter().position(|k| k == c))
+                .map(|k| auto_color(o.d, k)),
+            (None, Some(sc)) => s.vals.get(i).copied().flatten().map(|v| sc.color(v)),
+            _ => None,
+        };
+        if let Some(c) = color {
+            fills[r] = Some((c, i));
+        }
+    }
+    // Fit the regions' projected outlines in the plot.
+    let shown: Vec<usize> = (0..map.regions.len())
+        .filter(|r| !map.regions[*r].rings.is_empty())
+        .collect();
+    let mut b = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    for r in &shown {
+        for ring in &map.regions[*r].rings {
+            for q in ring {
+                b = [
+                    b[0].min(q[0]),
+                    b[1].min(q[1]),
+                    b[2].max(q[0]),
+                    b[3].max(q[1]),
+                ];
+            }
+        }
+    }
+    let proj = Projector::new(map.projection, b);
+    let projected: Vec<Vec<Vec<[f64; 2]>>> = shown
+        .iter()
+        .map(|r| {
+            map.regions[*r]
+                .rings
+                .iter()
+                .map(|ring| ring.iter().map(|q| proj.project(q[0], q[1])).collect())
+                .collect()
+        })
+        .collect();
+    let mut pb = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    for q in projected.iter().flatten().flatten() {
+        pb = [
+            pb[0].min(q[0]),
+            pb[1].min(q[1]),
+            pb[2].max(q[0]),
+            pb[3].max(q[1]),
+        ];
+    }
+    let margin = 4.0f32;
+    let (pw, ph) = ((pb[2] - pb[0]).max(1e-9), (pb[3] - pb[1]).max(1e-9));
+    let k = ((plot[2] - 2.0 * margin).max(1.0) as f64 / pw)
+        .min((plot[3] - 2.0 * margin).max(1.0) as f64 / ph);
+    let ox = plot[0] as f64 + (plot[2] as f64 - pw * k) / 2.0;
+    let oy = plot[1] as f64 + (plot[3] as f64 - ph * k) / 2.0;
+    let at = |q: &[f64; 2]| {
+        p(
+            (ox + (q[0] - pb[0]) * k) as f32,
+            (oy + (pb[3] - q[1]) * k) as f32,
+        )
+    };
+    let border = stroke_of(s.look.line.as_ref(), None).unwrap_or_else(|| white_line(0.75));
+    let lbl = map.labels != RegionLabels::None;
+    let mut labels = Vec::new();
+    for (j, r) in shown.iter().enumerate() {
+        let mut path = Path::default();
+        // The biggest ring (for the label) and its area.
+        let mut big: Option<(f32, Vec<P>, P)> = None;
+        for ring in &projected[j] {
+            let pts: Vec<P> = ring.iter().map(&at).collect();
+            let Some((first, rest)) = pts.split_first() else {
+                continue;
+            };
+            path.move_to(*first);
+            for q in rest {
+                path.line_to(*q);
+            }
+            path.close();
+            let (a, c) = ring_area_centroid(&pts);
+            if big.as_ref().is_none_or(|b| a > b.0) {
+                big = Some((a, pts, c));
+            }
+        }
+        if path.is_empty() {
+            continue;
+        }
+        let fill = fills[*r].map_or(NO_DATA, |f| f.0);
+        o.marks.push(Mark::Prim {
+            prim: Prim::Fill {
+                path: path.clone(),
+                paint: crate::Paint::Solid(rgba(fill, 255)),
+                rule: FillRule::EvenOdd,
+            },
+            at: Affine::IDENTITY,
+        });
+        o.stroke(path, border.clone());
+        if lbl && let (Some((_, i)), Some(big)) = (fills[*r], big) {
+            labels.push((i, fill, big.1, big.2));
+        }
+    }
+    for (i, fill, ring, c) in labels {
+        let Some(l) = series_labels(g, s, i) else {
+            continue;
+        };
+        let mut parts = Vec::new();
+        if l.show_ser
+            && let Some(n) = &s.name
+        {
+            parts.push(n.clone());
+        }
+        if l.show_cat {
+            parts.push(cat_label(s, i, None));
+        }
+        if l.show_val {
+            if let Some(v) = s.vals.get(i).copied().flatten() {
+                let code = l.num_fmt.as_deref().or(s.fmt.as_deref());
+                parts.push(format_number(v, code));
+            } else if let Some(c) = map.color_strs.get(i).filter(|c| !c.is_empty()) {
+                parts.push(c.clone());
+            }
+        }
+        let sep = l.separator.clone().unwrap_or_else(|| ", ".into());
+        let text = parts.join(&sep);
+        if text.is_empty() {
+            continue;
+        }
+        let mut font = label_font(o, &l);
+        if l.font.color.is_none() {
+            font.color = contrast(&Fill::Solid(fill, 255));
+        }
+        let (tw, th) = o.measure(&text, &font, None);
+        // Best fit: only labels whose box lies inside the region.
+        let (x0, y0) = (c.x - tw / 2.0, c.y - th / 2.0);
+        let inside = [0.0, 0.5, 1.0].iter().all(|fx| {
+            [0.0, 0.5, 1.0]
+                .iter()
+                .all(|fy| point_in(&ring, p(x0 + tw * fx, y0 + th * fy)))
+        });
+        if map.labels == RegionLabels::BestFit && !inside {
+            continue;
+        }
+        o.label_at(&text, &font, c, 0.5, 0.5);
+    }
+}
+
+/// Whether `q` is inside the closed ring `pts` (even-odd).
+fn point_in(pts: &[P], q: P) -> bool {
+    let mut inside = false;
+    let n = pts.len();
+    for k in 0..n {
+        let (a, b) = (pts[k], pts[(k + 1) % n]);
+        if (a.y > q.y) != (b.y > q.y) && q.x < a.x + (q.y - a.y) / (b.y - a.y) * (b.x - a.x) {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
+/// Area (absolute) and centroid of a closed ring.
+fn ring_area_centroid(pts: &[P]) -> (f32, P) {
+    let (mut a, mut cx, mut cy) = (0.0f64, 0.0f64, 0.0f64);
+    for (k, q) in pts.iter().enumerate() {
+        let r = pts[(k + 1) % pts.len()];
+        let cross = q.x as f64 * r.y as f64 - r.x as f64 * q.y as f64;
+        a += cross;
+        cx += (q.x as f64 + r.x as f64) * cross;
+        cy += (q.y as f64 + r.y as f64) * cross;
+    }
+    if a.abs() < 1e-9 {
+        let n = pts.len().max(1) as f32;
+        let s = pts.iter().fold(p(0.0, 0.0), |m, q| m.plus(*q));
+        return (0.0, p(s.x / n, s.y / n));
+    }
+    let c = p((cx / (3.0 * a)) as f32, (cy / (3.0 * a)) as f32);
+    ((a / 2.0).abs() as f32, c)
+}
+
+/// A value map's legend: a colour bar from the lowest to the highest value
+/// with the stops' values beside it, where the chart's legend is. The plot
+/// rectangle left.
+fn map_legend(lg: &Legend, s: &Series, sc: &GeoScale, o: &mut Out, area: Rect) -> Rect {
+    let base = o.base.size_pt.unwrap_or(18.0);
+    let font = o.font(&lg.font, base, false);
+    let texts: Vec<(f64, String)> = sc
+        .stops
+        .iter()
+        .map(|(v, _)| (*v, format_number(*v, s.fmt.as_deref())))
+        .collect();
+    let tw = texts
+        .iter()
+        .map(|(_, t)| o.measure(t, &font, None).0)
+        .fold(0.0, f32::max);
+    let th = font.size_pt * PX_PER_PT * 1.2;
+    let bar = (th * 0.8).max(6.0);
+    let gap = th * 0.4;
+    let (lo, hi) = sc.range();
+    let steps = 48;
+    let vertical = matches!(lg.pos, LegendPos::R | LegendPos::L | LegendPos::Tr);
+    let mut plot = area;
+    if vertical {
+        let w = bar + gap + tw;
+        let len = (area[3] * 0.6).max(th * 2.0).min(area[3]);
+        let x = if lg.pos == LegendPos::L {
+            area[0]
+        } else {
+            area[0] + area[2] - w
+        };
+        let y = area[1] + (area[3] - len) / 2.0;
+        // Highest value at the top.
+        for k in 0..steps {
+            let t0 = k as f32 / steps as f32;
+            let v = hi - (hi - lo) * (k as f64 + 0.5) / steps as f64;
+            let r = [x, y + len * t0, bar, len / steps as f32 + 0.5];
+            o.boxed(
+                Path::rect(r[0], r[1], r[2], r[3]),
+                r,
+                &Fill::Solid(sc.color(v), 255),
+                None,
+            );
+        }
+        for (v, t) in &texts {
+            let f = if hi > lo {
+                ((hi - v) / (hi - lo)) as f32
+            } else {
+                0.5
+            };
+            o.label_at(
+                t,
+                &font,
+                p(x + bar + gap, y + len * f.clamp(0.0, 1.0)),
+                0.0,
+                0.5,
+            );
+        }
+        if !lg.overlay {
+            if lg.pos == LegendPos::L {
+                plot[0] += w + gap;
+            }
+            plot[2] = (plot[2] - w - gap).max(1.0);
+        }
+    } else {
+        let h = bar + gap + th;
+        let len = (area[2] * 0.6).min(area[2]);
+        let x = area[0] + (area[2] - len) / 2.0;
+        let y = if lg.pos == LegendPos::T {
+            area[1]
+        } else {
+            area[1] + area[3] - h
+        };
+        for k in 0..steps {
+            let v = lo + (hi - lo) * (k as f64 + 0.5) / steps as f64;
+            let r = [
+                x + len * k as f32 / steps as f32,
+                y,
+                len / steps as f32 + 0.5,
+                bar,
+            ];
+            o.boxed(
+                Path::rect(r[0], r[1], r[2], r[3]),
+                r,
+                &Fill::Solid(sc.color(v), 255),
+                None,
+            );
+        }
+        for (v, t) in &texts {
+            let f = if hi > lo {
+                ((v - lo) / (hi - lo)) as f32
+            } else {
+                0.5
+            };
+            o.label_at(
+                t,
+                &font,
+                p(x + len * f.clamp(0.0, 1.0), y + bar + gap),
+                0.5,
+                0.0,
+            );
+        }
+        if !lg.overlay {
+            if lg.pos == LegendPos::T {
+                plot[1] += h + gap;
+            }
+            plot[3] = (plot[3] - h - gap).max(1.0);
+        }
+    }
+    plot
+}
+
+/// No region outlines to draw: say so, and list the values.
+fn map_fallback(chart: &Chart, s: &Series, map: &GeoMap, o: &mut Out, area: Rect) {
+    plot_back(chart, o, area);
+    let base = o.base.size_pt.unwrap_or(18.0);
+    let font = o.font(&Font::default(), base * 0.8, false);
+    let mut head = font.clone();
+    head.bold = true;
+    let msg = match map.cache {
+        CacheState::Unreadable => tr("Map: the map data saved with this chart can't be read"),
+        _ => tr("Map: no map data saved with this chart"),
+    };
+    let pad = 6.0;
+    let wrap = (area[2] - 2.0 * pad).max(10.0);
+    let (mw, mh) = o.measure(msg, &head, Some(wrap));
+    o.text(Label {
+        text: msg.to_owned(),
+        font: head,
+        x: area[0] + (area[2] - mw) / 2.0,
+        y: area[1] + pad,
+        w: mw,
+        h: mh,
+        align: HAlign::Center,
+        rot: 0.0,
+    });
+    let line_h = font.size_pt * PX_PER_PT * 1.25;
+    let mut y = area[1] + pad + mh + line_h * 0.5;
+    let n = s.vals.len().max(s.cats.len()).max(map.color_strs.len());
+    for i in 0..n {
+        let value = match s.vals.get(i).copied().flatten() {
+            Some(v) => format_number(v, s.fmt.as_deref()),
+            None => map.color_strs.get(i).cloned().unwrap_or_default(),
+        };
+        let name = cat_label(s, i, None);
+        let text = if value.is_empty() {
+            name
+        } else {
+            format!("{name}: {value}")
+        };
+        if y + 2.0 * line_h > area[1] + area[3] && i + 1 < n {
+            o.label_at("…", &font, p(area[0] + area[2] / 2.0, y), 0.5, 0.0);
+            break;
+        }
+        o.label_at(&text, &font, p(area[0] + area[2] / 2.0, y), 0.5, 0.0);
+        y += line_h;
     }
 }

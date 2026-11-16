@@ -5,7 +5,7 @@ use slides_engine::theme::{ClrMap, ColorCtx, Theme};
 
 use super::layout::*;
 use super::model::*;
-use crate::{Paint, Prim};
+use crate::{Paint, Prim, Rgba};
 
 const THEME: &str = r#"<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:themeElements><a:clrScheme name="t"><a:dk1><a:srgbClr val="000000"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="1F1F1F"/></a:dk2><a:lt2><a:srgbClr val="EEEEEE"/></a:lt2><a:accent1><a:srgbClr val="110000"/></a:accent1><a:accent2><a:srgbClr val="220000"/></a:accent2><a:accent3><a:srgbClr val="330000"/></a:accent3><a:accent4><a:srgbClr val="440000"/></a:accent4><a:accent5><a:srgbClr val="550000"/></a:accent5><a:accent6><a:srgbClr val="660000"/></a:accent6></a:clrScheme><a:fontScheme name="f"><a:majorFont><a:latin typeface="Major Face"/></a:majorFont><a:minorFont><a:latin typeface="Minor Face"/></a:minorFont></a:fontScheme></a:themeElements></a:theme>"#;
 
@@ -468,9 +468,9 @@ fn scatter_area_and_unsupported() {
     );
     let m = marks(&area, 400.0, 300.0);
     assert_eq!(solid_boxes(&m).iter().filter(|b| b.0 == A2).count(), 2);
-    // A region map (chartex) isn't drawn: placeholder.
+    // A region map without map data is drawn as a list of its values.
     let map = r#"<cx:chartSpace xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex"><cx:chart><cx:plotArea><cx:plotAreaRegion><cx:series layoutId="regionMap"/></cx:plotAreaRegion></cx:plotArea></cx:chart></cx:chartSpace>"#;
-    assert!(!parse(map).drawable());
+    assert!(parse(map).drawable());
 }
 
 #[test]
@@ -894,4 +894,154 @@ fn histograms_paretos_and_boxes() {
     assert!(t.contains(&"a".into()) && t.contains(&"b".into()), "{t:?}");
     // The two boxes, after the legend key.
     assert_eq!(drawn(&solid_boxes(&m), A1).len(), 2);
+}
+
+// ── region maps (tests/corpus/pptx/region_map.pptx) ───────────────────────
+
+fn map_part(k: usize) -> String {
+    use std::io::Read as _;
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/corpus/pptx/region_map.pptx"
+    );
+    let mut z = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+    let mut s = String::new();
+    z.by_name(&format!("ppt/charts/chartEx{k}.xml"))
+        .unwrap()
+        .read_to_string(&mut s)
+        .unwrap();
+    s
+}
+
+/// Region fills: (colour, rule) of fills drawn with the even-odd rule.
+fn region_fills(m: &[Mark]) -> Vec<Rgba> {
+    m.iter()
+        .filter_map(|m| match m {
+            Mark::Prim {
+                prim:
+                    Prim::Fill {
+                        paint: Paint::Solid(c),
+                        rule: crate::FillRule::EvenOdd,
+                        ..
+                    },
+                ..
+            } => Some(*c),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn value_maps_fill_regions_on_their_colour_scale() {
+    let xml = map_part(1);
+    let chart = parse(&xml);
+    assert!(chart.drawable(), "{:?}", chart.unsupported);
+    let m = marks(&xml, 800.0, 500.0);
+    let fills = region_fills(&m);
+    // Ten countries with values and Czechia without.
+    assert_eq!(fills.len(), 11, "{fills:?}");
+    let has = |c: [u8; 3]| fills.iter().any(|f| f.0[..3] == c);
+    assert!(
+        has([0x1F, 0x4E, 0x79]),
+        "Germany (highest) at the max colour"
+    );
+    assert!(
+        has([0xDE, 0xEB, 0xF7]),
+        "Portugal (lowest) at the min colour"
+    );
+    assert!(has([0xD9, 0xD9, 0xD9]), "Czechia: no data");
+    let t = texts(&m);
+    // Colour bar labels and value labels where they fit.
+    assert!(
+        t.contains(&"12".into()) && t.contains(&"95".into()),
+        "{t:?}"
+    );
+    assert!(t.contains(&"Sales by country".into()), "{t:?}");
+    // The map keeps its aspect: Europe is about as tall as wide in
+    // Mercator, so it doesn't fill the whole 800 px width.
+    let xs: Vec<f32> = m
+        .iter()
+        .filter_map(|m| match m {
+            Mark::Prim {
+                prim:
+                    Prim::Fill {
+                        path,
+                        rule: crate::FillRule::EvenOdd,
+                        ..
+                    },
+                ..
+            } => path.bounds().map(|b| b[2]),
+            _ => None,
+        })
+        .collect();
+    let right = xs.iter().fold(0.0f32, |a, b| a.max(*b));
+    assert!(right < 700.0, "{right}");
+}
+
+#[test]
+fn categorical_maps_colour_by_category_with_a_legend() {
+    let xml = map_part(2);
+    let m = marks(&xml, 800.0, 500.0);
+    let fills = region_fills(&m);
+    assert_eq!(fills.len(), 10, "{fills:?}");
+    // Mercosur is the first category: accent 1.
+    assert!(fills.iter().any(|f| f.0[..3] == [0x11, 0, 0]));
+    assert!(
+        fills.iter().any(|f| f.0[..3] == [0x44, 0, 0]),
+        "fourth category"
+    );
+    let t = texts(&m);
+    for c in ["Mercosur", "Andean", "Pacific", "Other", "Brazil"] {
+        assert!(t.contains(&c.to_owned()), "{c}: {t:?}");
+    }
+}
+
+#[test]
+fn maps_without_map_data_list_their_values() {
+    let m = marks(&map_part(3), 600.0, 400.0);
+    assert!(region_fills(&m).is_empty());
+    let t = texts(&m);
+    assert!(
+        t.contains(&"Map: no map data saved with this chart".into()),
+        "{t:?}"
+    );
+    assert!(
+        t.contains(&"Japan: 120".into()) && t.contains(&"Vietnam: 40".into()),
+        "{t:?}"
+    );
+}
+
+#[test]
+fn binary_caches_are_read_when_compressed_xml() {
+    use base64::Engine as _;
+    use std::io::Write as _;
+    let xml = map_part(1);
+    let start = xml.find("<cx:clear>").unwrap();
+    let end = xml.find("</cx:clear>").unwrap() + "</cx:clear>".len();
+    let clear = xml[start..end].replace(
+        "<cx:clear>",
+        r#"<cx:clear xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex">"#,
+    );
+    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    z.write_all(clear.as_bytes()).unwrap();
+    let b64 = base64::engine::general_purpose::STANDARD.encode(z.finish().unwrap());
+    let binary = format!(
+        "{}<cx:binary>{b64}</cx:binary>{}",
+        &xml[..start],
+        &xml[end..]
+    );
+    assert_eq!(region_fills(&marks(&binary, 800.0, 500.0)).len(), 11);
+    // Something else: the values are listed.
+    let junk = format!(
+        "{}<cx:binary>AAECAwQFBgc=</cx:binary>{}",
+        &xml[..start],
+        &xml[end..]
+    );
+    let m = marks(&junk, 800.0, 500.0);
+    assert!(region_fills(&m).is_empty());
+    assert!(
+        texts(&m).contains(&"Map: the map data saved with this chart can't be read".into()),
+        "{:?}",
+        texts(&m)
+    );
 }

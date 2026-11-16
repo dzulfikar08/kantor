@@ -499,6 +499,53 @@ fn chartex_charts_are_drawn_from_live_cells() {
     assert!(s.iter().any(|x| x == "777"), "{s:?}");
 }
 
+/// Region maps (`26_region_map.xlsx`) are drawn as maps from the cached
+/// region outlines, recoloured from live cell values; without map data,
+/// as a list of the values.
+#[test]
+fn region_maps_are_drawn_from_live_cells() {
+    let mut book = Workbook::open(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/xlsx/26_region_map.xlsx"),
+    )
+    .unwrap();
+    let mut engine = Engine::new();
+    let mut scenes = DrawingScenes::default();
+    let fills = |items: &[Item]| {
+        items
+            .iter()
+            .filter(|i| {
+                matches!(
+                    i.prim,
+                    Prim::Fill {
+                        rule: slides_scene::FillRule::EvenOdd,
+                        ..
+                    }
+                )
+            })
+            .count()
+    };
+    let d = book.drawings(0);
+    let items = scenes.items(&mut engine, &book, &d[0], 700.0, 420.0);
+    assert_eq!(fills(&items), 11);
+    let s = strings(&items);
+    assert!(
+        s.iter().any(|x| x == "Sales by country") && s.iter().any(|x| x == "95"),
+        "{s:?}"
+    );
+    // Live: a new highest value tops the colour bar.
+    book.set_input(0, 4, 1, "300").unwrap();
+    let d = book.drawings(0);
+    let s = strings(&scenes.items(&mut engine, &book, &d[0], 700.0, 420.0));
+    assert!(s.iter().any(|x| x == "300"), "{s:?}");
+    let d = book.drawings(1);
+    let s = strings(&scenes.items(&mut engine, &book, &d[0], 700.0, 420.0));
+    assert!(s.iter().any(|x| x == "Mercosur"), "{s:?}");
+    let d = book.drawings(2);
+    let items = scenes.items(&mut engine, &book, &d[0], 700.0, 420.0);
+    assert_eq!(fills(&items), 0);
+    assert!(strings(&items).iter().any(|x| x == "Japan: 120"));
+}
+
 #[test]
 fn slicers_and_timelines_are_drawn_with_their_items() {
     let mut book = Workbook::open(
