@@ -408,29 +408,46 @@ impl Workbook {
     }
 
     /// Where Insert Slicer puts slicers for `source` on its sheet: right of
-    /// it, a column apart, level with its top.
+    /// it, a column apart, level with its top, and right of objects
+    /// already there.
     pub fn slicer_place(&self, source: &SlicerSource) -> Option<(u32, (u32, u32))> {
-        match source {
+        let (sheet, (row, mut col)) = match source {
             SlicerSource::Pivot { sheet, name } => {
                 let p = self
                     .pivot_tables(*sheet)
                     .into_iter()
                     .find(|p| p.name.eq_ignore_ascii_case(name))?;
-                Some((*sheet, (p.bounds.top, p.bounds.right + 2)))
+                (*sheet, (p.bounds.top, p.bounds.right + 2))
             }
             SlicerSource::Table(name) => {
-                for sheet in 0..self.sheet_names().len() as u32 {
-                    if let Some(t) = self
-                        .tables(sheet)
+                (0..self.sheet_names().len() as u32).find_map(|sheet| {
+                    self.tables(sheet)
                         .into_iter()
                         .find(|t| t.name.eq_ignore_ascii_case(name))
-                    {
-                        return Some((sheet, (t.area.top, t.area.right + 2)));
-                    }
-                }
-                None
+                        .map(|t| (sheet, (t.area.top, t.area.right + 2)))
+                })?
+            }
+        };
+        let taken: Vec<(u32, u32, u32, u32)> = self
+            .drawings(sheet)
+            .iter()
+            .filter(|d| !d.hidden)
+            .filter_map(|d| match d.anchor {
+                Anchor::TwoCell { from, to, .. } => Some((from.row, from.col, to.row, to.col)),
+                Anchor::OneCell { from, .. } => Some((from.row, from.col, from.row, from.col)),
+                Anchor::Absolute { .. } => None,
+            })
+            .collect();
+        for _ in 0..taken.len() {
+            let hit = taken.iter().find(|(r0, c0, r1, c1)| {
+                *c0 < col + SLICER_COLS && *c1 >= col && *r0 < row + SLICER_ROWS && *r1 >= row
+            });
+            match hit {
+                Some((_, _, _, c1)) => col = c1 + 1,
+                None => break,
             }
         }
+        Some((sheet, (row, col)))
     }
 
     /// Slicer `name`'s settings now.

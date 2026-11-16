@@ -441,7 +441,8 @@ fn insert_slicer_on_a_table_and_delete_one() {
     let mut wb = Workbook::open(fixture()).unwrap();
     let source = SlicerSource::Table("Sales".into());
     let (sheet, at) = wb.slicer_place(&source).unwrap();
-    assert_eq!((sheet, at), (0, (0, 6)));
+    // Right of the table and of its Product slicer (G2:J13).
+    assert_eq!((sheet, at), (0, (0, 10)));
     wb.insert_slicers(sheet, &source, &["Region".into()], at)
         .unwrap();
     wb.slicer_select(DATA, "Region 1", &[true, false, false])
