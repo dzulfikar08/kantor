@@ -138,10 +138,23 @@ impl TextOwner {
 
 /// SmartArt edit messages from `docs_pdf::smartart` (translated with
 /// `t_dyn`).
-const SMARTART_MESSAGES: [&str; 2] = [
+const SMARTART_MESSAGES: [&str; 5] = [
     tk("This SmartArt shape shows several items: keep one line per item"),
     tk("Kantor can't read this SmartArt's drawing"),
+    tk("This SmartArt shape doesn't show an item"),
+    tk("A SmartArt keeps at least one item"),
+    tk(
+        "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes and cycles",
+    ),
 ];
+
+/// A change to a SmartArt's items from its text popover.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ItemEdit {
+    AddBefore,
+    AddAfter,
+    Delete,
+}
 
 /// Word's Layout Options names in the interface language.
 fn option_label(o: LayoutOption) -> &'static str {
@@ -227,19 +240,43 @@ impl FloatDrag {
 }
 
 impl DocsView {
-    /// The selected floating object's box: page and `[x, y, w, h]`.
+    /// Whose floating objects can be selected: the body's (`Some(None)`),
+    /// or the header's or footer's being edited (`Some(Some(story))`);
+    /// `None` while a note is edited.
+    fn float_story(&self) -> Option<Option<usize>> {
+        match self.part.as_ref().map(|s| s.edit.part) {
+            None => Some(None),
+            Some(docs_engine::PartRef::Story(i)) => Some(Some(i)),
+            Some(docs_engine::PartRef::Note(_)) => None,
+        }
+    }
+
+    /// Whether a header or footer is being edited.
+    pub(crate) fn editing_hf(&self) -> bool {
+        self.float_story().flatten().is_some()
+    }
+
+    /// Whether `it` is one of the objects that can be selected now.
+    fn selectable(&self, it: &docs_pdf::floats::FloatItem) -> bool {
+        self.float_story() == Some(it.story)
+    }
+
+    /// The selected floating object's box: page and `[x, y, w, h]` (a
+    /// header's on the page it's edited on).
     pub(crate) fn float_sel_rect(&self) -> Option<(usize, [f32; 4])> {
         let s = self.float_sel?;
-        self.laid
-            .floats
-            .iter()
-            .enumerate()
-            .find_map(|(page, items)| {
+        let on = |page: usize| {
+            self.laid.floats.get(page).and_then(|items| {
                 items
                     .iter()
-                    .find(|it| it.story.is_none() && it.para == s.para && it.index == s.index)
+                    .find(|it| self.selectable(it) && it.para == s.para && it.index == s.index)
                     .map(|it| (page, it.rect))
             })
+        };
+        if let Some(found) = self.part.as_ref().and_then(|p| on(p.page)) {
+            return Some(found);
+        }
+        (0..self.laid.floats.len()).find_map(on)
     }
 
     /// The body floating object under a window point (topmost first; one
@@ -261,7 +298,7 @@ impl DocsView {
         items
             .iter()
             .rev()
-            .filter(|it| it.story.is_none() && inside(it.rect))
+            .filter(|it| self.selectable(it) && inside(it.rect))
             .find(|it| !it.behind || !over_text)
             .map(|it| {
                 (
@@ -311,6 +348,9 @@ impl DocsView {
         };
         self.float_sel = Some(sel);
         self.text_box_edit = None;
+        if let Some(s) = &mut self.part {
+            s.page = page;
+        }
         // The caret goes to the anchor, as in Word (Delete, Layout Options
         // and undo work on the object).
         self.sel = Selection::caret(Position::new(sel.para, sel.index));
@@ -348,7 +388,7 @@ impl DocsView {
             .floats
             .get(page)?
             .iter()
-            .find(|it| it.story.is_none() && it.para == sel.para && it.index == sel.index)?;
+            .find(|it| self.selectable(it) && it.para == sel.para && it.index == sel.index)?;
         let dist = |r: [f32; 4]| {
             let dx = (r[0] - x).max(x - r[0] - r[2]).max(0.0);
             let dy = (r[1] - y).max(y - r[1] - r[3]).max(0.0);
@@ -443,14 +483,36 @@ impl DocsView {
             .unwrap_or(setup.margin_top);
         let emu = |v: f32| (v * EMU_PER_PX).round() as i64;
         let mut at = f.at;
-        at.h = (
-            RelH::Column,
-            Place::Offset(emu(rect[0] - setup.margin_left)),
-        );
-        at.v = (RelV::Paragraph, Place::Offset(emu(rect[1] - para_top)));
+        if self.part.is_some() {
+            // A header's or footer's object: from the page's corner (its
+            // paragraph isn't in the body's layout).
+            at.h = (RelH::Page, Place::Offset(emu(rect[0])));
+            at.v = (RelV::Page, Place::Offset(emu(rect[1])));
+        } else {
+            at.h = (
+                RelH::Column,
+                Place::Offset(emu(rect[0] - setup.margin_left)),
+            );
+            at.v = (RelV::Paragraph, Place::Offset(emu(rect[1] - para_top)));
+        }
         at.cx = emu(rect[2]);
         at.cy = emu(rect[3]);
-        if self.doc.set_float_placement(s.para, s.index, at) {
+        // A SmartArt Kantor lays out is laid out again for its new size.
+        let resized = (at.cx, at.cy) != (f.at.cx, f.at.cy);
+        let relaid = resized
+            .then(|| {
+                let mut sized = f.clone();
+                sized.at = at;
+                docs_pdf::smartart::relaid(&self.doc, &sized, (at.cx, at.cy))
+            })
+            .flatten();
+        let done = match relaid {
+            Some(parts) => self
+                .doc
+                .set_float_placement_parts(s.para, s.index, at, parts),
+            None => self.doc.set_float_placement(s.para, s.index, at),
+        };
+        if done {
             self.float_edited(window, cx);
         }
     }
@@ -687,6 +749,47 @@ impl DocsView {
         cx.notify();
     }
 
+    /// Add an item before or after the one the SmartArt shape in the
+    /// text popover shows, or delete it (one undo step); the popover
+    /// closes without applying its text.
+    pub(crate) fn smartart_item_doc(
+        &mut self,
+        op: ItemEdit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(edit) = self.text_box_edit.take() else {
+            return;
+        };
+        let (para, index) = (edit.sel.para, edit.sel.index);
+        let (Some(f), Some(k)) = (self.doc.float_at(para, index), edit.which) else {
+            return;
+        };
+        let r = match op {
+            ItemEdit::AddBefore => docs_pdf::smartart::add_item(&self.doc, f, k, false),
+            ItemEdit::AddAfter => docs_pdf::smartart::add_item(&self.doc, f, k, true),
+            ItemEdit::Delete => docs_pdf::smartart::remove_item(&self.doc, f, k),
+        };
+        match r {
+            Ok(parts) => {
+                if self.doc.set_float_parts(para, index, parts) {
+                    self.float_edited(window, cx);
+                    self.status = t(match op {
+                        ItemEdit::Delete => "SmartArt shape deleted",
+                        _ => "SmartArt shape added",
+                    })
+                    .into();
+                }
+            }
+            Err(why) => {
+                debug_assert!(SMARTART_MESSAGES.contains(&why), "{why}");
+                self.status = t_dyn(why).into();
+            }
+        }
+        self.focus(window, cx);
+        cx.notify();
+    }
+
     pub(crate) fn render_text_box_menu(
         &self,
         cx: &mut Context<Self>,
@@ -744,7 +847,13 @@ impl DocsView {
             }))
             .child(section_label(edit.owner.title(), cx))
             .child(body)
-            .child(h_flex().child(div().flex_1()).child(done));
+            .child(
+                h_flex()
+                    .gap(SPACE_2)
+                    .children(self.item_buttons(edit, cx))
+                    .child(div().flex_1())
+                    .child(done),
+            );
         Some(deferred(
             anchored()
                 .position(edit.at)
@@ -752,6 +861,57 @@ impl DocsView {
                 .snap_to_window_with_margin(SPACE_4)
                 .child(panel),
         ))
+    }
+
+    /// The SmartArt item buttons of the text popover (Word's Add Shape
+    /// Before / After and Delete), for layouts Kantor lays out.
+    fn item_buttons(&self, edit: &TextBoxEdit, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let laid_out = edit.which.is_some()
+            && edit.owner == TextOwner::SmartArt
+            && self
+                .doc
+                .float_at(edit.sel.para, edit.sel.index)
+                .is_some_and(|f| docs_pdf::smartart::can_relayout(&self.doc, f));
+        if !laid_out {
+            return Vec::new();
+        }
+        let t = tokens(cx);
+        let view = cx.entity().downgrade();
+        [
+            (
+                "docs-smartart-add-before",
+                tk("Add Shape Before"),
+                ItemEdit::AddBefore,
+            ),
+            (
+                "docs-smartart-add-after",
+                tk("Add Shape After"),
+                ItemEdit::AddAfter,
+            ),
+            ("docs-smartart-delete", tk("Delete Shape"), ItemEdit::Delete),
+        ]
+        .into_iter()
+        .map(|(id, label, op)| {
+            let v = view.clone();
+            div()
+                .id(id)
+                .flex_none()
+                .h(CONTROL_SM)
+                .px(SPACE_3)
+                .flex()
+                .items_center()
+                .rounded(RADIUS_MD)
+                .cursor_pointer()
+                .border_1()
+                .border_color(t.border)
+                .hover(|s| s.bg(t.hover))
+                .child(t_dyn(label).to_owned())
+                .on_click(move |_, window, cx| {
+                    let _ = v.update(cx, |this, cx| this.smartart_item_doc(op, window, cx));
+                })
+                .into_any_element()
+        })
+        .collect()
     }
 
     /// Decoded pictures of the floating objects about to be painted, by
@@ -1059,6 +1219,33 @@ pub(crate) fn float_paint(
 }
 
 /// Screen point of a page point.
+/// A GPUI two-stop linear gradient for a gradient band on the page (box
+/// `[x, y, w, h]`, colour along unit vector `u`: `from.1` where the
+/// projection is `from.0`, `to.1` at `to.0`). GPUI measures a gradient
+/// against the painted path's box in its own way (`gradient_color` in its
+/// shaders): this picks the angle and stop percentages that land the stops
+/// where asked (as Slides' bands). Zoom and scroll scale the box and the
+/// projections alike, so page coordinates give the same percentages.
+fn band(
+    [x, y, w, h]: [f32; 4],
+    u: [f32; 2],
+    (s0, c0): (f32, docs_layout::Rgba),
+    (s1, c1): (f32, docs_layout::Rgba),
+) -> Background {
+    let (w, h) = (w.max(1e-3), h.max(1e-3));
+    let (kx, ky) = if w > h { (1.0, h / w) } else { (w / h, 1.0) };
+    let r = (u[1] / ky).atan2(u[0] / kx);
+    let dir = (r.cos() * kx, r.sin() * ky);
+    let size = if dir.0.abs() > dir.1.abs() { w } else { h };
+    let sc = (x + w / 2.0) * u[0] + (y + h / 2.0) * u[1];
+    let pct = |s: f32| (s - sc + size / 2.0) / size;
+    linear_gradient(
+        r.to_degrees() + 90.0,
+        linear_color_stop(layout_color(c0), pct(s0)),
+        linear_color_stop(layout_color(c1), pct(s1)),
+    )
+}
+
 fn sp(g: &Geometry, page: usize, q: [f32; 2]) -> Point<Pixels> {
     g.page_to_screen(page, q[0], q[1])
 }
@@ -1099,7 +1286,24 @@ pub(crate) fn paint_floats(
         for prim in &fp.prims {
             match prim {
                 FloatPrim::Path(p) => {
-                    if let Some(c) = p.fill {
+                    if let Some(gr) = &p.gradient {
+                        for (segs, piece) in docs_pdf::floats::gradient_pieces(&p.segs, gr) {
+                            let mut pb = PathBuilder::fill();
+                            build_segs(&mut pb, g, page, &segs);
+                            let Ok(path) = pb.build() else { continue };
+                            match piece {
+                                docs_pdf::floats::GradientPiece::Solid(c) => {
+                                    window.paint_path(path, layout_color(c))
+                                }
+                                docs_pdf::floats::GradientPiece::Band {
+                                    bbox,
+                                    dir,
+                                    from,
+                                    to,
+                                } => window.paint_path(path, band(bbox, dir, from, to)),
+                            }
+                        }
+                    } else if let Some(c) = p.fill {
                         let mut pb = PathBuilder::fill();
                         build_segs(&mut pb, g, page, &p.segs);
                         if let Ok(path) = pb.build() {

@@ -6,9 +6,11 @@
 //! Shape outlines come from Slides' DrawingML preset geometry
 //! ([`slides_engine::geom`], all 187 presets and custom geometry), colours
 //! from the document's theme with Slides' colour rules. Outer shadows are
-//! drawn (their blur approximated). Not drawn: other effects (glow, soft
-//! edges, 3-D), gradients (their first colour fills) and picture fills of
-//! shapes.
+//! drawn (their blur approximated), and glows (a few fading edges) and
+//! soft edges (the shape a little transparent) approximated. Gradients
+//! are drawn as gradients (linear; path gradients as radial ones); the
+//! screen and the PDF draw them, [`DrawPath::fill`] holds the first colour
+//! for anything that can't. Not drawn: 3-D and picture fills of shapes.
 
 use std::sync::Arc;
 
@@ -102,6 +104,9 @@ pub struct DrawPath {
     pub fill: Option<Rgba>,
     /// Colour, width (px) and dash pattern (px).
     pub stroke: Option<(Rgba, f32, Option<Vec<f32>>)>,
+    /// A gradient fill (page coordinates), drawn instead of `fill` (which
+    /// holds its first colour) where the renderer can.
+    pub gradient: Option<slides_scene::Paint>,
 }
 
 /// What a floating object draws.
@@ -233,6 +238,7 @@ impl Painter {
                 segs: outline,
                 fill: None,
                 stroke: Some((color, width, dash)),
+                gradient: None,
             }));
         }
     }
@@ -256,6 +262,7 @@ impl Painter {
             .unwrap_or_else(|| Geometry::preset("rect"));
         let o = outline(&geometry, cx, cy);
         let fill = self.fill(sp, style);
+        let gradient = self.gradient(sp, style, rect);
         let line = self.line(sp, style);
         let style_ln = sp.and_then(|s| child(s, "ln"));
         let ls = style_ln.map(|ln| {
@@ -270,13 +277,60 @@ impl Painter {
                 .map(|p| p.cmds.iter().map(|c| xform.seg(c)).collect())
                 .collect();
             out.extend(self.shadow(sp, &outlines));
+            out.extend(self.glow(sp, &outlines));
         }
+        // Soft edges fade the shape out towards its edge: approximated as
+        // the whole shape a little transparent, without its outline.
+        let soft = self.soft_edge(sp).is_some();
+        let faded = |c: Rgba| {
+            let [r, g, b, a] = c.0;
+            Rgba([r, g, b, (a as f32 * 0.7).round() as u8])
+        };
+        let fade_stops = |p: slides_scene::Paint| match p {
+            slides_scene::Paint::Linear { from, to, stops } => slides_scene::Paint::Linear {
+                from,
+                to,
+                stops: stops
+                    .into_iter()
+                    .map(|s| slides_scene::Stop {
+                        color: faded(s.color),
+                        ..s
+                    })
+                    .collect(),
+            },
+            slides_scene::Paint::Radial {
+                center,
+                rx,
+                ry,
+                stops,
+            } => slides_scene::Paint::Radial {
+                center,
+                rx,
+                ry,
+                stops: stops
+                    .into_iter()
+                    .map(|s| slides_scene::Stop {
+                        color: faded(s.color),
+                        ..s
+                    })
+                    .collect(),
+            },
+            slides_scene::Paint::Solid(c) => slides_scene::Paint::Solid(faded(c)),
+        };
         for sub in &o.paths {
             let segs: Vec<Seg> = sub.cmds.iter().map(|c| xform.seg(c)).collect();
+            let filled = sub.fill.is_filled();
+            let mut fill = fill.filter(|_| filled);
+            let mut gradient = gradient.clone().filter(|_| filled);
+            if soft {
+                fill = fill.map(faded);
+                gradient = gradient.map(fade_stops);
+            }
             out.push(FloatPrim::Path(DrawPath {
                 segs,
-                fill: fill.filter(|_| sub.fill.is_filled()),
-                stroke: line.clone().filter(|_| sub.stroke),
+                fill,
+                stroke: line.clone().filter(|_| sub.stroke && !soft),
+                gradient,
             }));
         }
         // Arrowheads on open paths.
@@ -316,6 +370,7 @@ impl Painter {
                     segs: rect_segs(rect),
                     fill: Some(c),
                     stroke: None,
+                    gradient: None,
                 }));
             }
             ChildMap {
@@ -411,6 +466,62 @@ impl Painter {
         self.theme.minor_font.as_deref()
     }
 
+    /// A glow (`a:effectLst/a:glow`) round `outlines`: its colour in a few
+    /// widening, fainter edges out to its radius.
+    fn glow(&self, sp: Option<Node>, outlines: &[Vec<Seg>]) -> Vec<FloatPrim> {
+        let Some(gl) = sp
+            .and_then(|s| child(s, "effectLst"))
+            .and_then(|e| child(e, "glow"))
+        else {
+            return Vec::new();
+        };
+        let rad = gl
+            .attribute("rad")
+            .and_then(|v| v.parse::<f32>().ok())
+            .unwrap_or(0.0)
+            / EMU_PER_PX;
+        if rad < 0.5 {
+            return Vec::new();
+        }
+        let cx = self.ctx();
+        let Some((color, alpha)) = gl
+            .children()
+            .filter(|c| c.is_element())
+            .find_map(|c| cx.color_alpha(c))
+        else {
+            return Vec::new();
+        };
+        const LAYERS: usize = 4;
+        let mut out = Vec::new();
+        for segs in outlines {
+            for k in (1..=LAYERS).rev() {
+                let a = (alpha as f32 / LAYERS as f32).round() as u8;
+                out.push(FloatPrim::Path(DrawPath {
+                    segs: segs.clone(),
+                    fill: None,
+                    // Stroked on the outline: half its width lies outside.
+                    stroke: Some((
+                        rgba(color, a.max(1)),
+                        2.0 * rad * k as f32 / LAYERS as f32,
+                        None,
+                    )),
+                    gradient: None,
+                }));
+            }
+        }
+        out
+    }
+
+    /// Soft edges' radius (`a:effectLst/a:softEdge/@rad`) in px.
+    fn soft_edge(&self, sp: Option<Node>) -> Option<f32> {
+        sp.and_then(|s| child(s, "effectLst"))
+            .and_then(|e| child(e, "softEdge"))
+            .and_then(|e| e.attribute("rad"))
+            .and_then(|v| v.parse::<f32>().ok())
+            .map(|r| r / EMU_PER_PX)
+            .filter(|r| *r >= 0.5)
+    }
+
     /// An outer shadow (`a:effectLst/a:outerShdw`) under `outlines`: the
     /// outlines moved by the shadow's distance and direction, filled in
     /// its colour, the blur as a few fainter widening edges.
@@ -452,12 +563,14 @@ impl Painter {
                     segs: segs.clone(),
                     fill: None,
                     stroke: Some((rgba(color, a.max(1)), blur * k as f32 / layers as f32, None)),
+                    gradient: None,
                 }));
             }
             out.push(FloatPrim::Path(DrawPath {
                 segs: segs.clone(),
                 fill: Some(rgba(color, core)),
                 stroke: None,
+                gradient: None,
             }));
         }
         out
@@ -484,6 +597,69 @@ impl Painter {
                 .and_then(|r| cx.first_color(r))
                 .map(|c| rgba(c, 255)),
         }
+    }
+
+    /// A gradient fill (`spPr`'s own `a:gradFill`, else a gradient fill
+    /// style the style's `fillRef` names) over `rect` (page px): linear,
+    /// or radial for path gradients (circle, rectangle and shape ones as
+    /// ellipses). `None` for other fills.
+    fn gradient(
+        &self,
+        sp: Option<Node>,
+        style: Option<Node>,
+        rect: [f32; 4],
+    ) -> Option<slides_scene::Paint> {
+        let cx = self.ctx();
+        let own = sp.and_then(|s| {
+            s.children().find(|c| {
+                c.is_element()
+                    && matches!(
+                        c.tag_name().name(),
+                        "noFill" | "solidFill" | "gradFill" | "pattFill" | "blipFill" | "grpFill"
+                    )
+            })
+        });
+        let fill = match own {
+            Some(n) if n.tag_name().name() == "gradFill" => cx.full_fill(n, &|_| None)?,
+            Some(_) => return None,
+            None => {
+                let r = style.and_then(|s| child(s, "fillRef"))?;
+                let idx: i64 = r.attribute("idx")?.parse().ok()?;
+                let ph = cx.first_color(r);
+                cx.style_fill(idx, ph)?
+            }
+        };
+        if !matches!(fill, slides_engine::Fill::Gradient(_)) {
+            return None;
+        }
+        let [x, y, w, h] = rect;
+        let paint = slides_scene::paint::fill_paint(
+            &fill,
+            slides_scene::PathFill::Norm,
+            w,
+            h,
+            &slides_scene::Affine::IDENTITY,
+        )?;
+        let at = |q: slides_scene::P| slides_scene::p(q.x + x, q.y + y);
+        Some(match paint {
+            slides_scene::Paint::Linear { from, to, stops } => slides_scene::Paint::Linear {
+                from: at(from),
+                to: at(to),
+                stops,
+            },
+            slides_scene::Paint::Radial {
+                center,
+                rx,
+                ry,
+                stops,
+            } => slides_scene::Paint::Radial {
+                center: at(center),
+                rx,
+                ry,
+                stops,
+            },
+            solid => solid,
+        })
     }
 
     /// Outline: `spPr/a:ln`, else the style's `lnRef`.
@@ -736,6 +912,183 @@ fn rect_segs([x, y, w, h]: [f32; 4]) -> Vec<Seg> {
     ]
 }
 
+// ── gradients for renderers without shadings ───────────────────────────────
+
+/// A piece of a gradient fill for a renderer that fills only with a
+/// colour or a two-colour linear gradient (the Docs view: GPUI).
+#[derive(Clone, Debug, PartialEq)]
+pub enum GradientPiece {
+    Solid(Rgba),
+    /// Colour `from.1` where the projection of a point on unit vector
+    /// `dir` is `from.0`, `to.1` at `to.0`; `bbox` is the piece's box.
+    Band {
+        bbox: [f32; 4],
+        dir: [f32; 2],
+        from: (f32, Rgba),
+        to: (f32, Rgba),
+    },
+}
+
+/// Steps of a radial gradient drawn as nested ellipses.
+const RADIAL_STEPS: usize = 24;
+
+/// Gradient `g` over the path `segs` as pieces, each with its outline: a
+/// linear gradient as one band per pair of stops (exact), a radial one as
+/// nested ellipses of solid colour clipped to the path (approximated).
+pub fn gradient_pieces(segs: &[Seg], g: &slides_scene::Paint) -> Vec<(Vec<Seg>, GradientPiece)> {
+    use slides_scene::{P, Paint, p};
+    let path = slides_scene::Path {
+        segs: segs
+            .iter()
+            .map(|s| match *s {
+                Seg::Move(a) => slides_scene::Seg::Move(p(a[0], a[1])),
+                Seg::Line(a) => slides_scene::Seg::Line(p(a[0], a[1])),
+                Seg::Quad(a, b) => slides_scene::Seg::Quad(p(a[0], a[1]), p(b[0], b[1])),
+                Seg::Cubic(a, b, c) => {
+                    slides_scene::Seg::Cubic(p(a[0], a[1]), p(b[0], b[1]), p(c[0], c[1]))
+                }
+                Seg::Close => slides_scene::Seg::Close,
+            })
+            .collect(),
+    };
+    let polys: Vec<Vec<P>> = path.flatten(0.25).into_iter().map(|(q, _)| q).collect();
+    let to_segs = |polys: &[Vec<P>]| -> Vec<Seg> {
+        let mut out = Vec::new();
+        for poly in polys.iter().filter(|q| q.len() >= 3) {
+            out.push(Seg::Move([poly[0].x, poly[0].y]));
+            out.extend(poly[1..].iter().map(|q| Seg::Line([q.x, q.y])));
+            out.push(Seg::Close);
+        }
+        out
+    };
+    let clip = |poly: &[P], f: &dyn Fn(P) -> f32| -> Vec<P> {
+        let mut out = Vec::with_capacity(poly.len() + 4);
+        for i in 0..poly.len() {
+            let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+            let (fa, fb) = (f(a), f(b));
+            if fa >= 0.0 {
+                out.push(a);
+            }
+            if (fa >= 0.0) != (fb >= 0.0) {
+                out.push(a.plus(b.minus(a).scale(fa / (fa - fb))));
+            }
+        }
+        out
+    };
+    let mut out = Vec::new();
+    match g {
+        Paint::Solid(c) => out.push((segs.to_vec(), GradientPiece::Solid(*c))),
+        Paint::Linear { from, to, stops } if stops.len() >= 2 => {
+            let len = to.minus(*from).len().max(1e-4);
+            let u = to.minus(*from).scale(1.0 / len);
+            let s_of = |o: f32| from.dot(u) + o * len;
+            for k in 0..stops.len() - 1 {
+                let (lo, hi) = (s_of(stops[k].offset), s_of(stops[k + 1].offset));
+                let (first, last) = (k == 0, k + 2 == stops.len());
+                let band: Vec<Vec<P>> = polys
+                    .iter()
+                    .map(|poly| {
+                        let mut q = poly.clone();
+                        if !first {
+                            q = clip(&q, &|v| v.dot(u) - lo);
+                        }
+                        if !last {
+                            q = clip(&q, &|v| hi - v.dot(u));
+                        }
+                        q
+                    })
+                    .collect();
+                let all: Vec<P> = band.concat();
+                let piece = to_segs(&band);
+                if piece.is_empty() {
+                    continue;
+                }
+                let x0 = all.iter().map(|q| q.x).fold(f32::MAX, f32::min);
+                let y0 = all.iter().map(|q| q.y).fold(f32::MAX, f32::min);
+                let x1 = all.iter().map(|q| q.x).fold(f32::MIN, f32::max);
+                let y1 = all.iter().map(|q| q.y).fold(f32::MIN, f32::max);
+                out.push((
+                    piece,
+                    GradientPiece::Band {
+                        bbox: [x0, y0, x1 - x0, y1 - y0],
+                        dir: [u.x, u.y],
+                        from: (lo, stops[k].color),
+                        to: (hi.max(lo + 1e-3), stops[k + 1].color),
+                    },
+                ));
+            }
+        }
+        Paint::Linear { stops, .. } | Paint::Radial { stops, .. } if stops.len() < 2 => {
+            if let Some(s) = stops.first() {
+                out.push((segs.to_vec(), GradientPiece::Solid(s.color)));
+            }
+        }
+        Paint::Radial {
+            center,
+            rx,
+            ry,
+            stops,
+        } => {
+            let color_at = |o: f32| -> Rgba {
+                let (mut lo, mut hi) = (stops[0], stops[stops.len() - 1]);
+                for w in stops.windows(2) {
+                    if o >= w[0].offset && o <= w[1].offset {
+                        (lo, hi) = (w[0], w[1]);
+                        break;
+                    }
+                }
+                let k = if o <= lo.offset {
+                    0.0
+                } else if o >= hi.offset || hi.offset <= lo.offset {
+                    1.0
+                } else {
+                    (o - lo.offset) / (hi.offset - lo.offset)
+                };
+                let (a, b) = (lo.color.0, hi.color.0);
+                let m = |i: usize| (a[i] as f32 + (b[i] as f32 - a[i] as f32) * k).round() as u8;
+                Rgba([m(0), m(1), m(2), m(3)])
+            };
+            out.push((segs.to_vec(), GradientPiece::Solid(color_at(1.0))));
+            for i in 1..RADIAL_STEPS {
+                let r = 1.0 - i as f32 / RADIAL_STEPS as f32;
+                let ell: Vec<P> = (0..48)
+                    .map(|j| {
+                        let a = j as f32 / 48.0 * std::f32::consts::TAU;
+                        p(center.x + rx * r * a.cos(), center.y + ry * r * a.sin())
+                    })
+                    .collect();
+                let clipped: Vec<Vec<P>> = polys
+                    .iter()
+                    .map(|poly| {
+                        let mut q = poly.clone();
+                        for e in 0..ell.len() {
+                            let (a, b) = (ell[e], ell[(e + 1) % ell.len()]);
+                            let n = p(-(b.y - a.y), b.x - a.x);
+                            let side = if center.minus(a).dot(n) >= 0.0 {
+                                1.0
+                            } else {
+                                -1.0
+                            };
+                            q = clip(&q, &|v| v.minus(a).dot(n) * side);
+                            if q.is_empty() {
+                                break;
+                            }
+                        }
+                        q
+                    })
+                    .collect();
+                let piece = to_segs(&clipped);
+                if !piece.is_empty() {
+                    let c = color_at(r - 0.5 / RADIAL_STEPS as f32);
+                    out.push((piece, GradientPiece::Solid(c)));
+                }
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
 /// A filled triangle at `tip`, pointing from `from`.
 fn arrow(from: [f32; 2], tip: [f32; 2], color: Rgba, width: f32) -> FloatPrim {
     let (dx, dy) = (tip[0] - from[0], tip[1] - from[1]);
@@ -752,6 +1105,7 @@ fn arrow(from: [f32; 2], tip: [f32; 2], color: Rgba, width: f32) -> FloatPrim {
         ],
         fill: Some(color),
         stroke: None,
+        gradient: None,
     })
 }
 
@@ -926,5 +1280,77 @@ mod tests {
         };
         assert_eq!(head.segs[0], Seg::Move([10.0, 20.0]));
         assert!(head.fill.is_some());
+    }
+
+    fn shape_xml(sp_pr: &str) -> String {
+        format!(
+            "<w:drawing xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\"><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\"><wp:simplePos x=\"0\" y=\"0\"/><wp:positionH relativeFrom=\"page\"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom=\"page\"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx=\"952500\" cy=\"952500\"/><wp:wrapNone/><wp:docPr id=\"1\" name=\"Box\"/><a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\"><wps:wsp><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"952500\" cy=\"952500\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>{sp_pr}</wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>"
+        )
+    }
+
+    const GRAD: &str = "<a:gradFill><a:gsLst><a:gs pos=\"0\"><a:srgbClr val=\"FF0000\"/></a:gs><a:gs pos=\"50000\"><a:srgbClr val=\"00FF00\"/></a:gs><a:gs pos=\"100000\"><a:srgbClr val=\"0000FF\"/></a:gs></a:gsLst><a:lin ang=\"0\" scaled=\"0\"/></a:gradFill>";
+
+    #[test]
+    fn gradients_are_drawn_as_gradients() {
+        let doc = Document::new();
+        let p = Painter::new(&doc);
+        let f = Float::from_xml(&shape_xml(GRAD)).unwrap();
+        let prims = p.prims(&f, [10.0, 20.0, 100.0, 100.0]);
+        let FloatPrim::Path(box_) = &prims[0] else {
+            panic!("{prims:?}")
+        };
+        // The first colour stays as the plain fill.
+        assert_eq!(box_.fill, Some(Rgba([255, 0, 0, 255])));
+        let Some(slides_scene::Paint::Linear { from, to, stops }) = &box_.gradient else {
+            panic!("{:?}", box_.gradient)
+        };
+        assert_eq!((from.x, to.x), (10.0, 110.0));
+        assert_eq!(stops.len(), 3);
+        // On screen: two bands, left and right halves.
+        let pieces = gradient_pieces(&box_.segs, box_.gradient.as_ref().unwrap());
+        assert_eq!(pieces.len(), 2);
+        let GradientPiece::Band { bbox, from, to, .. } = &pieces[0].1 else {
+            panic!()
+        };
+        assert!((bbox[0] - 10.0).abs() < 0.01 && (bbox[2] - 50.0).abs() < 0.01);
+        assert_eq!(
+            (from.1, to.1),
+            (Rgba([255, 0, 0, 255]), Rgba([0, 255, 0, 255]))
+        );
+        // A path gradient: nested ellipses, the outer colour first.
+        let radial = GRAD.replace(
+            "<a:lin ang=\"0\" scaled=\"0\"/>",
+            "<a:path path=\"circle\"><a:fillToRect l=\"50000\" t=\"50000\" r=\"50000\" b=\"50000\"/></a:path>",
+        );
+        let f = Float::from_xml(&shape_xml(&radial)).unwrap();
+        let prims = p.prims(&f, [0.0, 0.0, 100.0, 100.0]);
+        let FloatPrim::Path(box_) = &prims[0] else {
+            panic!()
+        };
+        let pieces = gradient_pieces(&box_.segs, box_.gradient.as_ref().unwrap());
+        assert!(pieces.len() > 10);
+        assert_eq!(pieces[0].1, GradientPiece::Solid(Rgba([0, 0, 255, 255])));
+    }
+
+    #[test]
+    fn glow_and_soft_edges_are_approximated() {
+        let doc = Document::new();
+        let p = Painter::new(&doc);
+        let glow = "<a:solidFill><a:srgbClr val=\"4472C4\"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill></a:ln><a:effectLst><a:glow rad=\"101600\"><a:srgbClr val=\"FFC000\"><a:alpha val=\"60000\"/></a:srgbClr></a:glow></a:effectLst>";
+        let f = Float::from_xml(&shape_xml(glow)).unwrap();
+        let prims = p.prims(&f, [0.0, 0.0, 100.0, 100.0]);
+        let glows = prims
+            .iter()
+            .filter(|q| matches!(q, FloatPrim::Path(d) if d.fill.is_none() && d.stroke.as_ref().is_some_and(|s| s.0.0[..3] == [0xFF, 0xC0, 0])))
+            .count();
+        assert_eq!(glows, 4);
+        let soft = "<a:solidFill><a:srgbClr val=\"4472C4\"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill></a:ln><a:effectLst><a:softEdge rad=\"63500\"/></a:effectLst>";
+        let f = Float::from_xml(&shape_xml(soft)).unwrap();
+        let prims = p.prims(&f, [0.0, 0.0, 100.0, 100.0]);
+        let FloatPrim::Path(d) = &prims[0] else {
+            panic!()
+        };
+        assert!(d.stroke.is_none());
+        assert!(d.fill.unwrap().0[3] < 255);
     }
 }

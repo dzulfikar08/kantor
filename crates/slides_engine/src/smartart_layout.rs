@@ -163,12 +163,12 @@ fn view(data: &str) -> anyhow::Result<View> {
     })
 }
 
-pub(crate) const LAYOUT_REFUSAL: &str = "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes and cycles";
+pub const LAYOUT_REFUSAL: &str = "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes and cycles";
 
 /// The family of a SmartArt (drawing and data model XML), if Kantor lays
 /// it out: a known layout whose items each have one shape (and, in a
 /// bullet list, one sub-item box).
-pub(crate) fn family(drawing: &str, data: &str) -> Option<Family> {
+pub fn family(drawing: &str, data: &str) -> Option<Family> {
     let v = view(data).ok()?;
     let (list, _) = shapes(drawing, &v).ok()?;
     for i in 0..v.items.len() {
@@ -514,7 +514,7 @@ fn wrap_pre() -> usize {
 
 /// Lay the drawing out again for a `w` × `h` frame from the data model;
 /// returns the new drawing XML.
-pub(crate) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<String> {
+pub fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<String> {
     let v = view(data)?;
     let (list, tree_end) = shapes(drawing, &v)?;
     let n = v.items.len();
@@ -671,7 +671,7 @@ fn new_id(data: &str, salt: u32) -> String {
 
 /// The new item's model id and the parts with it added next to the item
 /// whose drawing shape is `selected` (a `modelId`).
-pub(crate) fn add_item(
+pub fn add_item(
     drawing: &str,
     data: &str,
     selected: &str,
@@ -762,7 +762,7 @@ pub(crate) fn add_item(
 
 /// The parts with the item whose drawing shape is `selected` removed (with
 /// its sub-items, transitions, presentation items and shapes).
-pub(crate) fn remove_item(
+pub fn remove_item(
     drawing: &str,
     data: &str,
     selected: &str,
