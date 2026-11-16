@@ -203,3 +203,29 @@ fn cycles_bullets_and_blocks_take_new_items() {
     assert_eq!(drawn(&back, frame(&back, 3)).len(), 10);
     assert_eq!(drawn(&back, frame(&back, 0)).len(), 6);
 }
+
+#[test]
+fn smartart_shapes_turn_and_keep_their_turn_when_laid_out() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let f = frame(&p, 2);
+    let build = find(&p, f, "Build");
+    let at = p.placed(build).unwrap().xfrm;
+    p.set_xfrm(build, at.with_degrees(30.0), false).unwrap();
+    assert_eq!(p.shape(build).unwrap().xfrm.unwrap().rot, 30 * 60_000);
+    let saved = parts(&p.to_bytes().unwrap());
+    let drawing = &saved["ppt/diagrams/drawing3.xml"];
+    // The shape and its text box turned; PowerPoint's custom angle on its
+    // presentation item.
+    assert!(drawing.contains("<a:xfrm rot=\"1800000\">"), "{drawing}");
+    assert!(
+        drawing.contains("<dsp:txXfrm rot=\"1800000\">"),
+        "{drawing}"
+    );
+    assert!(saved["ppt/diagrams/data3.xml"].contains("custAng=\"1800000\""));
+    // Laid out again (resized), the turn stays.
+    let mut x = p.shape(f).unwrap().xfrm.unwrap();
+    x.cx = x.cx * 3 / 2;
+    p.set_xfrm(f, x, false).unwrap();
+    let b = find(&p, f, "Build");
+    assert_eq!(p.shape(b).unwrap().xfrm.unwrap().rot, 30 * 60_000);
+}

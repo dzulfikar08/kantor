@@ -47,6 +47,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   full stop are drawn in their vertical shapes, upright, on screen and in the PDF (fonts without
   them keep the turned glyphs). `mongolianVert` text stacks its lines left to right, as
   PowerPoint does.
+- Slides: SmartArt shapes can be turned with their turn handle, as in PowerPoint; the text turns
+  with the shape, the angle is saved on the SmartArt's item so PowerPoint keeps it, and a
+  SmartArt laid out again keeps the turned shapes turned. (Deleting a SmartArt shape removes its
+  item, in the layouts Kantor lays out.)
 
 ### Fixed
 

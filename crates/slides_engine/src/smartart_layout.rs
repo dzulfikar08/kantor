@@ -560,6 +560,11 @@ pub(crate) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Res
             }
             Role::Other => continue,
         };
+        // Items' shapes keep a turn given them; arrows turn with the layout.
+        let target = target.map(|b| match (s.role, &s.xfrm) {
+            (Role::Node(_) | Role::Sub(_), Some((_, old))) => Xfrm { rot: old.rot, ..b },
+            _ => b,
+        });
         let Some(new) = target else {
             if matches!(s.role, Role::Arrow(_) | Role::Sub(_)) {
                 edits.push((s.range.clone(), String::new()));

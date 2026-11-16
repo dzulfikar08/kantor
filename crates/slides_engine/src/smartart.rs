@@ -974,6 +974,17 @@ fn set_tx_xfrm(shape: &mut String, tb: &Xfrm) {
         tb.x, tb.y, tb.cx, tb.cy
     );
     shape.replace_range(open_end..close, &body);
+    // Its turn (`rot` on the start tag).
+    let tag = &shape[open..open_end];
+    let mut attrs = split_attrs(tag_attrs(tag));
+    attrs.retain(|(k, _)| k != "rot");
+    if tb.rot != 0 {
+        attrs.insert(0, ("rot".into(), tb.rot.to_string()));
+    }
+    let mut new = format!("<{}", tag_name(tag));
+    write_attrs(&mut new, &attrs);
+    new.push('>');
+    shape.replace_range(open..open_end, &new);
 }
 
 /// Edits recording on presentation item `pt` (`dgm:prSet`) that its shape
@@ -1007,6 +1018,15 @@ fn point_layout_edits(xml: &str, pt: Node, old: &Xfrm, new: &Xfrm) -> Vec<(Range
         let sy = get(&attrs, "custScaleY").unwrap_or(100_000) as f64 * ratio(new.cy, old.cy);
         set(&mut attrs, "custScaleX", sx.round() as i64);
         set(&mut attrs, "custScaleY", sy.round() as i64);
+    }
+    // A turn: PowerPoint's custom angle on the presentation item.
+    if new.rot != old.rot {
+        let ang = get(&attrs, "custAng").unwrap_or(0) + (new.rot - old.rot) as i64;
+        set(
+            &mut attrs,
+            "custAng",
+            ang.rem_euclid(360 * crate::model::ROT_PER_DEG as i64),
+        );
     }
     if (ncx - ocx).abs() > 0.5 || (ncy - ocy).abs() > 0.5 {
         let fx = get(&attrs, "custLinFactNeighborX").unwrap_or(0) as f64

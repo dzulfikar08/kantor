@@ -615,10 +615,9 @@ impl SlidesView {
     }
 
     /// Whether shape `r` can be turned (not tables, charts or SmartArt
-    /// frames, as in PowerPoint; SmartArt shapes keep their turn).
+    /// frames, as in PowerPoint; SmartArt shapes can).
     fn item_rotatable(&self, r: ShapeRef) -> bool {
         self.item_movable(r)
-            && !self.pres.in_smartart(r)
             && self
                 .pres
                 .shape(r)

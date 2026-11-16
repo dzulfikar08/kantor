@@ -396,13 +396,13 @@ impl Presentation {
         let kind = if nudge { Kind::Nudge } else { Kind::Other };
         let focus = Focus::at(r);
         if placed.smartart {
-            // SmartArt shapes keep their turn; the frame doesn't refit (its
-            // child space is the frame), and the text box follows the shape.
+            // SmartArt shapes turn (as in PowerPoint) but keep their flips;
+            // the frame doesn't refit (its child space is the frame), and
+            // the text box follows the shape, turned with it.
             let old = self
                 .shape(r)
                 .and_then(|s| s.xfrm)
                 .context("no such shape")?;
-            local.rot = old.rot;
             local.flip_h = old.flip_h;
             local.flip_v = old.flip_v;
             let i = r.2.last().context("no such shape")?;
@@ -416,7 +416,9 @@ impl Presentation {
                 let c = g.children.get_mut(i).context("no such shape")?;
                 c.xfrm = Some(local);
                 if let Some(Some(tb)) = g.text_boxes.get_mut(i) {
+                    let rot = tb.rot.wrapping_add(local.rot - old.rot);
                     *tb = follow(&old, &local, tb);
+                    tb.rot = rot.rem_euclid(360 * crate::model::ROT_PER_DEG);
                 }
                 Ok(((), focus))
             });
