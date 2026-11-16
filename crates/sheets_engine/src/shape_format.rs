@@ -371,6 +371,7 @@ impl Workbook {
                     c.shape = Some(Arc::new(NewShape {
                         xml: new,
                         name: s.name.clone(),
+                        slicer: s.slicer.clone(),
                     }));
                 }
             });

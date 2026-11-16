@@ -294,6 +294,38 @@ fn main() -> Result<()> {
         wb.save_as(o.join("slicers_25_slicers.xlsx"))?;
         Ok(Some(slicers.clone()))
     });
+    run.scenario("slicers_inserted_25_slicers.xlsx", |o| {
+        use sheets_engine::slicer_edit::SlicerSource;
+        let mut wb = Workbook::open(&slicers)?;
+        // New slicers on the pivot table and the table, settings changed,
+        // the file's table slicer deleted, the timeline filtering Q1.
+        let pivot = SlicerSource::Pivot {
+            sheet: 1,
+            name: "PivotTable1".into(),
+        };
+        let (sheet, at) = wb.slicer_place(&pivot).unwrap_or((1, (2, 6)));
+        wb.insert_slicers(sheet, &pivot, &["Product".into()], at)?;
+        wb.slicer_select(2, "Product", &[true, true, false])?;
+        let table = SlicerSource::Table("Sales".into());
+        let (sheet, at) = wb.slicer_place(&table).unwrap_or((0, (0, 6)));
+        wb.insert_slicers(sheet, &table, &["Region".into()], at)?;
+        let mut s = wb
+            .slicer_settings(2, "Region")
+            .ok_or_else(|| anyhow::anyhow!("no Region slicer"))?;
+        s.caption = "Area".into();
+        s.style = "SlicerStyleDark2".into();
+        s.hide_no_data = true;
+        s.descending = true;
+        wb.set_slicer_settings(2, "Region", &s)?;
+        if let Some(d) = wb.drawings(0).into_iter().find(|d| {
+            matches!(&*d.kind, sheets_engine::drawing::DrawingKind::Slicer { name } if name == "Product")
+        }) {
+            wb.delete_drawing(d.key)?;
+        }
+        wb.timeline_select(2, "NativeTimeline_Date", Some((46023.0, 46112.0)))?;
+        wb.save_as(o.join("slicers_inserted_25_slicers.xlsx"))?;
+        Ok(Some(slicers.clone()))
+    });
 
     for src in files(&corpus.join("docx"), "docx")? {
         let stem = stem(&src);

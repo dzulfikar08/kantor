@@ -1126,7 +1126,28 @@ Row Subheading 3	Subjudul Baris 3
 Grand Total Column	Kolom Total Keseluruhan
 Grand Total Row	Baris Total Keseluruhan
 # Slicers and timelines
-Timelines are shown as the file saved them: Kantor can't change their dates yet	Timeline ditampilkan seperti yang disimpan file: Kantor belum bisa mengubah tanggalnya
 The slicer {} can't filter: {}	Slicer {} tidak bisa memfilter: {}
 {}: filter cleared	{}: filter dihapus
 {}: {} selected	{}: {} dipilih
+# Insert Slicer, Slicer Settings, timelines
+Insert Slicer…	Sisipkan Slicer…
+Slicer Settings…	Pengaturan Slicer…
+Sheets · slicers that filter the PivotTable or table at the active cell, one per field picked	Sheets · slicer yang memfilter PivotTable atau tabel di sel aktif, satu per bidang yang dipilih
+Sheets · caption, sorting, items with no data, style and columns of the selected slicer	Sheets · keterangan, urutan, item tanpa data, gaya, dan kolom slicer yang dipilih
+Select a cell in a PivotTable or a table to insert a slicer.	Pilih sel di PivotTable atau tabel untuk menyisipkan slicer.
+Insert Slicers	Sisipkan Slicer
+{} slicer(s) inserted	{} slicer disisipkan
+Select a slicer to change its settings.	Pilih slicer untuk mengubah pengaturannya.
+Type a whole number of columns and a button height in px.	Ketik jumlah kolom berupa bilangan bulat dan tinggi tombol dalam px.
+{}: settings changed	{}: pengaturan diubah
+Slicer Settings	Pengaturan Slicer
+Source Name: {} · Name to use in formulas: {}	Nama Sumber: {} · Nama untuk rumus: {}
+Caption:	Keterangan:
+Display header	Tampilkan header
+Item Sorting and Filtering	Pengurutan dan Pemfilteran Item
+Hide items with no data	Sembunyikan item tanpa data
+Visually indicate items with no data	Tandai item tanpa data
+Show items with no data last	Tampilkan item tanpa data di akhir
+Style:	Gaya:
+Columns:	Kolom:
+Button height (px):	Tinggi tombol (px):

@@ -9,6 +9,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Sheets: Insert Slicer, as in Excel. From the PivotTable menu, the Table menu, Table Design or a
+  cell's right-click menu, pick fields in a list of check boxes and get one slicer each, placed
+  beside the PivotTable or table. Slicers can be deleted, moved and resized, and Slicer Settings
+  (right-click a slicer) changes the caption, the header, the sorting, how items with no data
+  show, the style, the columns and the button height. Excel opens the saved file with them.
+- Sheets: timelines filter their PivotTables. Click a period, drag across periods or Shift+click
+  to select dates, pick Years, Quarters, Months or Days from the time level, page through the
+  periods with the scroll bar and use Clear Filter; the selection is saved as Excel saves it.
+- Sheets: slicers and timelines print and export to PDF as they show on screen.
+
 ### Fixed
 
 - Cloud storage: quitting Kantor releases the locks on every cloud file it has open, however it

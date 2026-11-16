@@ -77,6 +77,8 @@ pub(crate) fn printed(book: &Workbook, sheet: u32) -> Vec<Drawing> {
                     DrawingKind::Chart { .. }
                         | DrawingKind::Picture { .. }
                         | DrawingKind::Shape { .. }
+                        | DrawingKind::Slicer { .. }
+                        | DrawingKind::Timeline { .. }
                 )
         })
         .collect()
@@ -227,8 +229,16 @@ impl SheetGeometry for Geometry<'_> {
     }
 }
 
-/// What prints for `d` (`None`: something Kantor can't draw).
-fn print_kind(book: &Workbook, d: &Drawing, theme: &mut Option<ChartTheme>) -> Option<PrintKind> {
+/// What prints for `d` placed at `rect` (points; `None`: something Kantor
+/// can't draw). Slicers and timelines print as they show now, drawn as
+/// shapes at the sheet's own px size.
+fn print_kind(
+    book: &Workbook,
+    d: &Drawing,
+    rect: [f64; 4],
+    theme: &mut Option<ChartTheme>,
+) -> Option<PrintKind> {
+    let (w, h) = ((rect[2] / PT_PER_PX) as f32, (rect[3] / PT_PER_PX) as f32);
     Some(match &*d.kind {
         DrawingKind::Picture { part, data, crop } => PrintKind::Picture {
             part: part.clone(),
@@ -245,9 +255,15 @@ fn print_kind(book: &Workbook, d: &Drawing, theme: &mut Option<ChartTheme>) -> O
             )
         }
         DrawingKind::Shape { xml } => PrintKind::Shape(xml.clone()),
-        DrawingKind::Other(_) | DrawingKind::Slicer { .. } | DrawingKind::Timeline { .. } => {
-            return None;
-        }
+        DrawingKind::Slicer { name } => PrintKind::Shape(
+            sheets_scene::slicer::slicer_xml(&book.slicer_view(d.key.sheet_id, name)?, w, h, false)
+                .into(),
+        ),
+        DrawingKind::Timeline { name } => PrintKind::Shape(
+            sheets_scene::slicer::timeline_xml(&book.timeline_view(d.key.sheet_id, name)?, w, h)
+                .into(),
+        ),
+        DrawingKind::Other(_) => return None,
     })
 }
 
@@ -282,7 +298,7 @@ impl SheetDrawings {
             if rect[2] <= 0.0 || rect[3] <= 0.0 {
                 continue;
             }
-            let Some(kind) = print_kind(book, &d, &mut theme) else {
+            let Some(kind) = print_kind(book, &d, rect, &mut theme) else {
                 continue;
             };
             items.push(PrintDrawing {
@@ -311,7 +327,7 @@ impl SheetDrawings {
         let mut theme: Option<ChartTheme> = None;
         let mut items = Vec::new();
         for (d, rect) in found.into_iter().zip(rects) {
-            if let Some(kind) = print_kind(book, &d, &mut theme) {
+            if let Some(kind) = print_kind(book, &d, rect, &mut theme) {
                 items.push(PrintDrawing {
                     key: d.key,
                     rect,

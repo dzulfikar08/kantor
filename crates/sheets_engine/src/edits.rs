@@ -49,6 +49,15 @@ pub(crate) struct Edits {
     /// The workbook's custom table styles once one was made, changed or
     /// deleted in Kantor (`None`: as opened).
     pub table_styles: Option<Arc<crate::table_style_edit::StyleSet>>,
+    /// Timelines' level and first period shown, set in Kantor, by
+    /// `(sheetId, lower-case name)`.
+    pub timelines: HashMap<(u32, String), (u32, Option<f64>)>,
+    /// Slicers' settings changed in Kantor (Slicer Settings, styles,
+    /// columns), by `(sheetId, lower-case name)`.
+    pub slicer_defs: HashMap<(u32, String), crate::slicer::SlicerDef>,
+    /// Slicer caches' settings changed in Kantor (sorting, items with no
+    /// data), by lower-case cache name.
+    pub slicer_caches: HashMap<String, crate::slicer::CacheSettings>,
 }
 
 /// What was edited in Kantor at any point of the session (any history

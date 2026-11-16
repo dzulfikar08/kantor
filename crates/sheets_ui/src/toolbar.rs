@@ -703,11 +703,14 @@ fn view_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
 /// The Table menu: Format as Table, Table Design, Convert to Range.
 fn table_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
     type Run = fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>);
-    let items: [(&str, &str, Run); 4] = [
+    let items: [(&str, &str, Run); 5] = [
         (tk("Format as Table…"), "Ctrl+T", |v, w, cx| {
             v.format_as_table_doc(w, cx)
         }),
         (tk("Table Design"), "", |v, w, cx| v.table_design_doc(w, cx)),
+        (tk("Insert Slicer…"), "", |v, w, cx| {
+            v.insert_slicer_doc(w, cx)
+        }),
         (tk("New Table Style…"), "", |v, w, cx| {
             v.new_table_style_doc(w, cx)
         }),
@@ -732,12 +735,15 @@ fn table_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu 
 /// The PivotTable menu: insert, fields, refresh, delete.
 fn pivot_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
     type Run = fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>);
-    let items: [(&str, &str, Run); 7] = [
+    let items: [(&str, &str, Run); 8] = [
         (tk("Insert PivotTable…"), "", |v, w, cx| {
             v.insert_pivot_doc(w, cx)
         }),
         (tk("PivotTable Fields"), "", |v, w, cx| {
             v.pivot_fields_doc(w, cx)
+        }),
+        (tk("Insert Slicer…"), "", |v, w, cx| {
+            v.insert_slicer_doc(w, cx)
         }),
         (tk("PivotTable Styles…"), "", |v, w, cx| {
             v.pivot_styles_doc(w, cx)
@@ -756,7 +762,7 @@ fn pivot_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu 
         }),
     ];
     for (i, (label, keys, run)) in items.into_iter().enumerate() {
-        if i == 4 || i == 6 {
+        if i == 5 || i == 7 {
             menu = menu.separator();
         }
         let view = view.clone();

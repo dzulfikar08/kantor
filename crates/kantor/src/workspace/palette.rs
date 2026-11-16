@@ -941,6 +941,22 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_sheets_any(window, cx, |v, w, cx| v.move_chart_doc(w, cx)),
     },
     Command {
+        title: tk("Insert Slicer…"),
+        detail: tk(
+            "Sheets · slicers that filter the PivotTable or table at the active cell, one per field picked",
+        ),
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.insert_slicer_doc(w, cx)),
+    },
+    Command {
+        title: tk("Slicer Settings…"),
+        detail: tk(
+            "Sheets · caption, sorting, items with no data, style and columns of the selected slicer",
+        ),
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.slicer_settings_doc(w, cx)),
+    },
+    Command {
         title: tk("Format as Table…"),
         detail: tk(
             "Sheets · make the selection or the data around the active cell a table with a style",

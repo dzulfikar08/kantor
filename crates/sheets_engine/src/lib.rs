@@ -46,6 +46,7 @@ pub mod shape_format;
 mod sheet_tabs;
 mod shift;
 pub mod slicer;
+pub mod slicer_edit;
 mod sort;
 mod table;
 mod table_edit;
@@ -1626,6 +1627,7 @@ impl Workbook {
             },
             chart_sheets: self.chart_sheet_plans(),
             pictures: self.cell_pictures(),
+            slicers: self.slicer_plan(),
         }
     }
 }
@@ -1659,6 +1661,7 @@ struct XlsxParts {
     chart_sheets: Option<Vec<preserve::ChartSheetPlan>>,
     /// The pictures cells show (saved as rich values).
     pictures: Vec<preserve::CellPicture>,
+    slicers: preserve::SlicerPlan,
 }
 
 /// IronCalc's `.xlsx` of `model`, with the parts of `original` it doesn't
@@ -1711,6 +1714,7 @@ fn build_xlsx(
         patches: &parts.patches,
         chart_sheets: parts.chart_sheets.as_deref(),
         pictures: &parts.pictures,
+        slicers: &parts.slicers,
     };
     Ok(preserve::finish(written, original, &ctx))
 }

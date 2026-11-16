@@ -370,6 +370,7 @@ impl Workbook {
                 shape: Some(Arc::new(NewShape {
                     xml: preset.xml(&name).into(),
                     name,
+                    slicer: None,
                 })),
             });
         });

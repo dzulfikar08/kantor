@@ -357,6 +357,25 @@ pub(crate) struct Drawings {
     pub(crate) tab_touched: HashSet<usize>,
 }
 
+impl Drawings {
+    /// The names of the slicers the opened file has anchors for on the
+    /// sheet with `sheet_id`.
+    pub(crate) fn opened_slicers(&self, sheet_id: u32) -> Vec<String> {
+        self.sheets
+            .get(&sheet_id)
+            .map(|objects| {
+                objects
+                    .iter()
+                    .filter_map(|o| match &*o.kind {
+                        DrawingKind::Slicer { name } => Some(name.to_lowercase()),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
 /// A chart sheet as opened.
 #[derive(Debug)]
 struct ChartSheet {
