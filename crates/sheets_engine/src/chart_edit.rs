@@ -231,6 +231,8 @@ pub(crate) struct NewShape {
     /// A slicer made in Kantor (Insert Slicer): `xml` is its anchor's
     /// `mc:AlternateContent`.
     pub slicer: Option<Arc<crate::slicer_edit::NewSlicer>>,
+    /// A timeline made in Kantor (Insert Timeline), the same way.
+    pub timeline: Option<Arc<crate::slicer_edit::NewTimeline>>,
 }
 
 /// A picture on a worksheet copied with Move or Copy.
@@ -688,11 +690,14 @@ impl Workbook {
                         name: sh.name.clone(),
                         descr: String::new(),
                         anchor,
-                        kind: Arc::new(match &sh.slicer {
-                            Some(s) => DrawingKind::Slicer {
+                        kind: Arc::new(match (&sh.slicer, &sh.timeline) {
+                            (Some(s), _) => DrawingKind::Slicer {
                                 name: s.def.name.clone(),
                             },
-                            None => DrawingKind::Shape {
+                            (None, Some(t)) => DrawingKind::Timeline {
+                                name: t.def.name.clone(),
+                            },
+                            (None, None) => DrawingKind::Shape {
                                 xml: sh.xml.clone(),
                             },
                         }),

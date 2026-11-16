@@ -11,9 +11,9 @@
 //! * A **table slicer** (`x15:tableSlicerCache`) filters a column of its
 //!   table: its selection is the table's AutoFilter on that column, which
 //!   the table saves.
-//! * A **timeline** (`x15:timelineCacheDefinition`) is drawn with its
-//!   periods and the selection the file saved, read-only: Kantor can't
-//!   change its date filter yet.
+//! * A **timeline** (`x15:timelineCacheDefinition`) filters a date field
+//!   of its pivot tables: its selection *is* their "between" date filter on
+//!   the field, named after the timeline's cache (see `timeline_select`).
 //!
 //! Items with no data (filtered out by the other fields or columns) are
 //! greyed and, by default, listed last, as Excel's "Visually indicate items
@@ -93,7 +93,7 @@ pub(crate) struct SlicerDef {
     pub style: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TimelineCache {
     pub name: String,
     pub source_name: String,
@@ -104,7 +104,7 @@ pub(crate) struct TimelineCache {
     pub bounds: Option<(f64, f64)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TimelineDef {
     pub sheet_id: u32,
     pub name: String,
@@ -115,6 +115,8 @@ pub(crate) struct TimelineDef {
     pub show_header: bool,
     pub show_selection_label: bool,
     pub show_time_level: bool,
+    /// `showHorizontalScrollbar`.
+    pub show_scrollbar: bool,
     /// The first period shown.
     pub scroll: Option<f64>,
     pub style: Option<String>,
@@ -313,6 +315,7 @@ impl Slicers {
                     show_header: flag(t, "showHeader", true),
                     show_selection_label: flag(t, "showSelectionLabel", true),
                     show_time_level: flag(t, "showTimeLevel", true),
+                    show_scrollbar: flag(t, "showHorizontalScrollbar", true),
                     scroll: t
                         .attribute("scrollPosition")
                         .and_then(crate::pivot::serial_of_iso),
@@ -393,6 +396,7 @@ pub struct TimelineView {
     pub name: String,
     pub caption: String,
     pub show_header: bool,
+    pub show_scrollbar: bool,
     /// `All Periods` or the selected dates (`Jan - Mar 2026`).
     pub label: Option<String>,
     /// `MONTHS`, `YEARS`...
@@ -410,6 +414,28 @@ pub struct TimelineView {
     /// Why it can't filter, if it can't.
     pub problem: Option<String>,
     pub colors: SlicerColors,
+}
+
+impl TimelineView {
+    /// How it shows while the dates `range` (first and last day) are being
+    /// picked (a drag across periods), before they filter anything.
+    pub fn with_selection(mut self, range: (f64, f64)) -> Self {
+        let (a, b) = (range.0.min(range.1).floor(), range.0.max(range.1).floor());
+        for p in &mut self.periods {
+            p.selected = p.start <= b && p.end > a;
+        }
+        if self.label.is_some() {
+            self.label = Some(range_label(self.level_index, a, b));
+        }
+        self.filtered = true;
+        self
+    }
+
+    /// The first period that can be scrolled to with `shown` periods in
+    /// view (the last page full).
+    pub fn last_scroll(&self, shown: usize) -> usize {
+        self.total.saturating_sub(shown.max(1))
+    }
 }
 
 /// The time levels' names, as Excel shows them.
@@ -499,11 +525,15 @@ pub fn timeline_layout(v: &TimelineView, w: f32, h: f32) -> TimelineLayout {
         (w - 2.0 * PAD) * 0.4,
         20.0,
     ];
-    top += 22.0;
+    // The line of the selection label and time level, unless both are
+    // hidden.
+    if v.label.is_some() || v.level.is_some() {
+        top += 22.0;
+    }
     let groups = [PAD, top, (w - 2.0 * PAD).max(0.0), 18.0];
     top += 18.0;
     let n = ((w - 2.0 * PAD) / PERIOD).floor().max(0.0) as usize;
-    let scrolls = v.total > n.min(v.periods.len()) && n > 0;
+    let scrolls = v.show_scrollbar && v.total > n.min(v.periods.len()) && n > 0;
     let bottom = if scrolls { SCROLL + 4.0 } else { 0.0 };
     let ph = (h - top - PAD - bottom).clamp(10.0, 26.0);
     let periods = (0..v.periods.len().min(n))
@@ -1124,30 +1154,50 @@ impl Workbook {
         Ok(())
     }
 
-    /// A timeline's definition now (its level and scroll position as set
-    /// in Kantor).
+    /// A timeline's definition now (the file's or one made in Kantor, with
+    /// its settings, level and scroll position as set in Kantor).
     pub(crate) fn timeline_def(&self, sheet_id: u32, name: &str) -> Option<TimelineDef> {
-        let mut t = self
-            .pivots
-            .slicers
-            .timelines
-            .iter()
-            .find(|t| t.sheet_id == sheet_id && t.name.eq_ignore_ascii_case(name))?
-            .clone();
-        if let Some((level, scroll)) = self.edits().timelines.get(&(sheet_id, name.to_lowercase()))
-        {
+        let edits = self.edits();
+        let key = (sheet_id, name.to_lowercase());
+        let mut t = match edits.timeline_defs.get(&key) {
+            Some(t) => t.clone(),
+            None => self
+                .pivots
+                .slicers
+                .timelines
+                .iter()
+                .find(|t| t.sheet_id == sheet_id && t.name.eq_ignore_ascii_case(name))
+                .cloned()
+                .or_else(|| {
+                    self.new_timelines()
+                        .into_iter()
+                        .find(|n| {
+                            n.def.sheet_id == sheet_id && n.def.name.eq_ignore_ascii_case(name)
+                        })
+                        .map(|n| n.def.clone())
+                })?,
+        };
+        if let Some((level, scroll)) = edits.timelines.get(&key) {
             t.level = *level;
             t.scroll = *scroll;
         }
         Some(t)
     }
 
-    fn timeline_cache(&self, name: &str) -> Option<&TimelineCache> {
+    /// Timeline cache `name`: the file's or one made in Kantor.
+    pub(crate) fn timeline_cache(&self, name: &str) -> Option<TimelineCache> {
         self.pivots
             .slicers
             .timeline_caches
             .iter()
             .find(|c| c.name.eq_ignore_ascii_case(name))
+            .cloned()
+            .or_else(|| {
+                self.new_timelines()
+                    .into_iter()
+                    .find(|n| n.cache.name.eq_ignore_ascii_case(name))
+                    .map(|n| n.cache.clone())
+            })
     }
 
     /// A timeline's pivot tables present now (the first one shows its
@@ -1195,7 +1245,7 @@ impl Workbook {
 
     /// The first and last day a timeline spans: its cache's bounds, else
     /// its field's dates in the pivot table's source.
-    fn timeline_bounds(&self, c: &TimelineCache) -> Option<(f64, f64)> {
+    pub(crate) fn timeline_bounds(&self, c: &TimelineCache) -> Option<(f64, f64)> {
         // The cache's end date is the day after the last.
         if let Some((a, b)) = c.bounds {
             return Some((a, (b - 1.0).max(a)));
@@ -1235,6 +1285,7 @@ impl Workbook {
         let t = self.timeline_def(sheet_id, name)?;
         let theme = &self.model.get_model().workbook.theme;
         let c = self.timeline_cache(&t.cache);
+        let c = c.as_ref();
         let bounds = c.and_then(|c| self.timeline_bounds(c));
         let selection = c.and_then(|c| self.timeline_selection(c));
         let problem = match c {
@@ -1261,6 +1312,7 @@ impl Workbook {
             name: t.name.clone(),
             caption: t.caption.clone(),
             show_header: t.show_header,
+            show_scrollbar: t.show_scrollbar,
             label,
             level,
             level_index: t.level.min(3),
@@ -1288,7 +1340,6 @@ impl Workbook {
             .ok_or_else(|| anyhow!("there is no timeline {name}"))?;
         let c = self
             .timeline_cache(&t.cache)
-            .cloned()
             .ok_or_else(|| anyhow!("its timeline cache is missing"))?;
         let (all, _) = self
             .timeline_conn(&c)
@@ -1369,13 +1420,27 @@ impl Workbook {
         }
         let first = self
             .timeline_cache(&t.cache)
-            .and_then(|c| self.timeline_selection(c).or(self.timeline_bounds(c)))
+            .and_then(|c| self.timeline_selection(&c).or(self.timeline_bounds(&c)))
             .map(|(a, _)| period_bounds(level, a).0);
         let key = (sheet_id, t.name.to_lowercase());
         self.own_edit(|e, _| {
             e.timelines.insert(key, (level, first));
         });
         Ok(())
+    }
+
+    /// Scroll timeline `name` so that period `first` (counted from its
+    /// first date) is the first one shown, as dragging the scroll bar's
+    /// thumb does. Not an undo step.
+    pub fn timeline_scroll_to(&mut self, sheet_id: u32, name: &str, first: usize) -> Result<()> {
+        let v = self
+            .timeline_view(sheet_id, name)
+            .ok_or_else(|| anyhow!("there is no timeline {name}"))?;
+        let by = first.min(v.total.saturating_sub(1)) as i64 - v.before as i64;
+        if by == 0 {
+            return Ok(());
+        }
+        self.timeline_scroll(sheet_id, name, by.clamp(-100_000, 100_000) as i32)
     }
 
     /// Scroll timeline `name` by `by` periods (back when negative), within
@@ -1386,7 +1451,7 @@ impl Workbook {
             .ok_or_else(|| anyhow!("there is no timeline {name}"))?;
         let Some((lo, hi)) = self
             .timeline_cache(&t.cache)
-            .and_then(|c| self.timeline_bounds(c))
+            .and_then(|c| self.timeline_bounds(&c))
         else {
             return Ok(());
         };

@@ -361,13 +361,24 @@ impl Drawings {
     /// The names of the slicers the opened file has anchors for on the
     /// sheet with `sheet_id`.
     pub(crate) fn opened_slicers(&self, sheet_id: u32) -> Vec<String> {
+        self.opened_names(sheet_id, false)
+    }
+
+    /// The names of the timelines the opened file has anchors for on the
+    /// sheet with `sheet_id`.
+    pub(crate) fn opened_timelines(&self, sheet_id: u32) -> Vec<String> {
+        self.opened_names(sheet_id, true)
+    }
+
+    fn opened_names(&self, sheet_id: u32, timelines: bool) -> Vec<String> {
         self.sheets
             .get(&sheet_id)
             .map(|objects| {
                 objects
                     .iter()
-                    .filter_map(|o| match &*o.kind {
-                        DrawingKind::Slicer { name } => Some(name.to_lowercase()),
+                    .filter_map(|o| match (&*o.kind, timelines) {
+                        (DrawingKind::Slicer { name }, false)
+                        | (DrawingKind::Timeline { name }, true) => Some(name.to_lowercase()),
                         _ => None,
                     })
                     .collect()

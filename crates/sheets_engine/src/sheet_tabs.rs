@@ -556,6 +556,7 @@ impl Workbook {
                         xml: xml.clone(),
                         name: d.name.clone(),
                         slicer: None,
+                        timeline: None,
                     }));
                 }
                 DrawingKind::Other(_)

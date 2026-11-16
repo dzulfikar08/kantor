@@ -371,6 +371,7 @@ impl Workbook {
                     xml: preset.xml(&name).into(),
                     name,
                     slicer: None,
+                    timeline: None,
                 })),
             });
         });

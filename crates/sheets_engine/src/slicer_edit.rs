@@ -24,7 +24,9 @@ use crate::Workbook;
 use crate::chart_edit::{NEW_CHART_BASE, NewChart, NewShape};
 use crate::drawing::{Anchor, DrawingKey, DrawingKind, EditAs, Marker};
 use crate::pivot::Rebuild;
-use crate::slicer::{CacheSettings, CacheSource, Cross, SlicerCache, SlicerDef};
+use crate::slicer::{
+    CacheSettings, CacheSource, Cross, SlicerCache, SlicerDef, TimelineCache, TimelineDef,
+};
 
 /// A slicer made in Kantor and its cache.
 #[derive(Debug, Clone)]
@@ -32,6 +34,48 @@ pub(crate) struct NewSlicer {
     pub def: SlicerDef,
     pub cache: SlicerCache,
 }
+
+/// A timeline made in Kantor (Insert Timeline) and its cache.
+#[derive(Debug, Clone)]
+pub(crate) struct NewTimeline {
+    pub def: TimelineDef,
+    pub cache: TimelineCache,
+}
+
+/// A timeline's settings, as Excel's Timeline Settings dialog and the
+/// Timeline tab show them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimelineSettings {
+    /// The timeline's name (read-only here).
+    pub name: String,
+    /// The date field it filters (read-only).
+    pub source_name: String,
+    /// The cache's name, used in formulas (read-only).
+    pub cache_name: String,
+    pub caption: String,
+    pub show_header: bool,
+    pub show_selection_label: bool,
+    pub show_time_level: bool,
+    pub show_scrollbar: bool,
+    /// `TimeSlicerStyleLight1`...
+    pub style: String,
+}
+
+/// The built-in timeline styles, as Excel's gallery lists them.
+pub const TIMELINE_STYLES: [&str; 12] = [
+    "TimeSlicerStyleLight1",
+    "TimeSlicerStyleLight2",
+    "TimeSlicerStyleLight3",
+    "TimeSlicerStyleLight4",
+    "TimeSlicerStyleLight5",
+    "TimeSlicerStyleLight6",
+    "TimeSlicerStyleDark1",
+    "TimeSlicerStyleDark2",
+    "TimeSlicerStyleDark3",
+    "TimeSlicerStyleDark4",
+    "TimeSlicerStyleDark5",
+    "TimeSlicerStyleDark6",
+];
 
 /// What a new slicer filters.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,11 +134,16 @@ pub const SLICER_STYLES: [&str; 14] = [
 /// A slicer's default size in cells (about Excel's 1.8" × 2.6").
 const SLICER_COLS: u32 = 3;
 const SLICER_ROWS: u32 = 13;
+/// A timeline's default size in cells (about Excel's 3.3" × 1.5").
+const TIMELINE_COLS: u32 = 6;
+const TIMELINE_ROWS: u32 = 7;
 
 const NS_XDR: &str = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
 const NS_A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const NS_MC: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const NS_SLE: &str = "http://schemas.microsoft.com/office/drawing/2010/slicer";
+const NS_TSLE: &str = "http://schemas.microsoft.com/office/drawing/2012/timeslicer";
+const NS_A15: &str = "http://schemas.microsoft.com/office/drawing/2012/main";
 
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -122,6 +171,37 @@ pub(crate) fn slicer_object(name: &str, table: bool) -> String {
     format!(
         "<mc:AlternateContent xmlns:mc=\"{NS_MC}\"><mc:Choice xmlns:{req}=\"{ns}\" Requires=\"{req}\"><xdr:graphicFrame xmlns:xdr=\"{NS_XDR}\" xmlns:a=\"{NS_A}\" macro=\"\"><xdr:nvGraphicFramePr><xdr:cNvPr id=\"2\" name=\"{name}\"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/></xdr:xfrm><a:graphic><a:graphicData uri=\"{NS_SLE}\"><sle:slicer xmlns:sle=\"{NS_SLE}\" name=\"{name}\"/></a:graphicData></a:graphic></xdr:graphicFrame></mc:Choice><mc:Fallback><xdr:sp xmlns:xdr=\"{NS_XDR}\" xmlns:a=\"{NS_A}\" macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"3\" name=\"\"/><xdr:cNvSpPr><a:spLocks noTextEdit=\"1\"/></xdr:cNvSpPr></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"1828800\" cy=\"2381250\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:solidFill><a:prstClr val=\"white\"/></a:solidFill><a:ln w=\"1\"><a:solidFill><a:prstClr val=\"green\"/></a:solidFill></a:ln></xdr:spPr><xdr:txBody><a:bodyPr vertOverflow=\"clip\" horzOverflow=\"clip\"/><a:lstStyle/><a:p><a:r><a:rPr lang=\"en-US\" sz=\"1100\"/><a:t>This shape represents a slicer. Slicers are supported in Excel 2010 or later.</a:t></a:r></a:p></xdr:txBody></xdr:sp></mc:Fallback></mc:AlternateContent>"
     )
+}
+
+/// The anchor's object for a timeline, as Excel writes it: the timeline
+/// frame for Excel 2013+ (`a15`) and its fallback shape.
+pub(crate) fn timeline_object(name: &str) -> String {
+    let name = esc(name);
+    format!(
+        "<mc:AlternateContent xmlns:mc=\"{NS_MC}\"><mc:Choice xmlns:a15=\"{NS_A15}\" Requires=\"a15\"><xdr:graphicFrame xmlns:xdr=\"{NS_XDR}\" xmlns:a=\"{NS_A}\" macro=\"\"><xdr:nvGraphicFramePr><xdr:cNvPr id=\"2\" name=\"{name}\"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/></xdr:xfrm><a:graphic><a:graphicData uri=\"{NS_TSLE}\"><tsle:timeslicer xmlns:tsle=\"{NS_TSLE}\" name=\"{name}\"/></a:graphicData></a:graphic></xdr:graphicFrame></mc:Choice><mc:Fallback><xdr:sp xmlns:xdr=\"{NS_XDR}\" xmlns:a=\"{NS_A}\" macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"3\" name=\"\"/><xdr:cNvSpPr><a:spLocks noTextEdit=\"1\"/></xdr:cNvSpPr></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"3429000\" cy=\"1333500\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:solidFill><a:prstClr val=\"white\"/></a:solidFill><a:ln w=\"1\"><a:solidFill><a:prstClr val=\"green\"/></a:solidFill></a:ln></xdr:spPr><xdr:txBody><a:bodyPr vertOverflow=\"clip\" horzOverflow=\"clip\"/><a:lstStyle/><a:p><a:r><a:rPr lang=\"en-US\" sz=\"1100\"/><a:t>Timeline: Works in Excel 2013 or higher. Do not move or resize.</a:t></a:r></a:p></xdr:txBody></xdr:sp></mc:Fallback></mc:AlternateContent>"
+    )
+}
+
+/// A two-cell anchor `cols` × `rows` cells from `(row, col)`, moved in so
+/// it fits on the sheet.
+fn object_anchor((row, col): (u32, u32), cols: u32, rows: u32) -> Anchor {
+    let col = col.min(crate::MAX_COLS - 1 - cols);
+    let row = row.min(crate::MAX_ROWS - 1 - rows);
+    Anchor::TwoCell {
+        from: Marker {
+            col,
+            col_off: 0,
+            row,
+            row_off: 0,
+        },
+        to: Marker {
+            col: col + cols,
+            col_off: 0,
+            row: row + rows,
+            row_off: 0,
+        },
+        edit_as: EditAs::OneCell,
+    }
 }
 
 /// `base`, or `base` with the first number from 1 that makes it unused
@@ -161,6 +241,63 @@ impl Workbook {
             .iter()
             .filter(|c| self.sheet_index_of(c.sheet_id).is_some())
             .filter_map(|c| c.shape.as_ref()?.slicer.clone())
+            .collect()
+    }
+
+    /// The timelines made in Kantor present now (their drawing not
+    /// deleted, their sheet still there).
+    pub(crate) fn new_timelines(&self) -> Vec<Arc<NewTimeline>> {
+        let edits = self.edits();
+        edits
+            .charts
+            .iter()
+            .filter(|c| self.sheet_index_of(c.sheet_id).is_some())
+            .filter_map(|c| c.shape.as_ref()?.timeline.clone())
+            .collect()
+    }
+
+    /// Every slicer cache, timeline cache and defined name (lower case):
+    /// the names a new cache must not take.
+    fn cache_names_taken(&self) -> Vec<String> {
+        let file = &self.pivots.slicers;
+        file.caches
+            .iter()
+            .map(|c| c.name.to_lowercase())
+            .chain(file.timeline_caches.iter().map(|c| c.name.to_lowercase()))
+            .chain(
+                self.new_slicers()
+                    .iter()
+                    .map(|n| n.cache.name.to_lowercase()),
+            )
+            .chain(
+                self.new_timelines()
+                    .iter()
+                    .map(|n| n.cache.name.to_lowercase()),
+            )
+            .chain(
+                self.model
+                    .get_model()
+                    .workbook
+                    .defined_names
+                    .iter()
+                    .map(|d| d.name.to_lowercase()),
+            )
+            .collect()
+    }
+
+    /// Every slicer's and timeline's name (lower case).
+    fn object_names_taken(&self) -> Vec<String> {
+        let file = &self.pivots.slicers;
+        file.slicers
+            .iter()
+            .map(|s| s.name.to_lowercase())
+            .chain(file.timelines.iter().map(|t| t.name.to_lowercase()))
+            .chain(self.new_slicers().iter().map(|n| n.def.name.to_lowercase()))
+            .chain(
+                self.new_timelines()
+                    .iter()
+                    .map(|n| n.def.name.to_lowercase()),
+            )
             .collect()
     }
 
@@ -237,41 +374,8 @@ impl Workbook {
             .collect::<Result<_>>()?;
         // Names: slicers unique in the workbook, caches unique among caches
         // and defined names.
-        let mut slicer_names: Vec<String> = self
-            .pivots
-            .slicers
-            .slicers
-            .iter()
-            .map(|s| s.name.to_lowercase())
-            .chain(self.new_slicers().iter().map(|n| n.def.name.to_lowercase()))
-            .collect();
-        let mut cache_names: Vec<String> = self
-            .pivots
-            .slicers
-            .caches
-            .iter()
-            .map(|c| c.name.to_lowercase())
-            .chain(
-                self.pivots
-                    .slicers
-                    .timeline_caches
-                    .iter()
-                    .map(|c| c.name.to_lowercase()),
-            )
-            .chain(
-                self.new_slicers()
-                    .iter()
-                    .map(|n| n.cache.name.to_lowercase()),
-            )
-            .chain(
-                self.model
-                    .get_model()
-                    .workbook
-                    .defined_names
-                    .iter()
-                    .map(|d| d.name.to_lowercase()),
-            )
-            .collect();
+        let mut slicer_names = self.object_names_taken();
+        let mut cache_names = self.cache_names_taken();
         let sheet_id = self.sheet_id(sheet);
         let mut made: Vec<NewSlicer> = Vec::new();
         for field in &fields {
@@ -343,25 +447,7 @@ impl Workbook {
             SlicerSource::Table(_) => None,
         };
         let anchors: Vec<Anchor> = (0..made.len() as u32)
-            .map(|k| {
-                let col = (col + k).min(crate::MAX_COLS - 1 - SLICER_COLS);
-                let row = (row + k).min(crate::MAX_ROWS - 1 - SLICER_ROWS);
-                Anchor::TwoCell {
-                    from: Marker {
-                        col,
-                        col_off: 0,
-                        row,
-                        row_off: 0,
-                    },
-                    to: Marker {
-                        col: col + SLICER_COLS,
-                        col_off: 0,
-                        row: row + SLICER_ROWS,
-                        row_off: 0,
-                    },
-                    edit_as: EditAs::OneCell,
-                }
-            })
+            .map(|k| object_anchor((row + k, col + k), SLICER_COLS, SLICER_ROWS))
             .collect();
         let mut keys = Vec::new();
         let push = |e: &mut crate::edits::Edits,
@@ -383,6 +469,7 @@ impl Workbook {
                         xml: slicer_object(&name, table).into(),
                         name,
                         slicer: Some(Arc::new(n)),
+                        timeline: None,
                     })),
                 });
                 keys.push(DrawingKey {
@@ -411,6 +498,25 @@ impl Workbook {
     /// it, a column apart, level with its top, and right of objects
     /// already there.
     pub fn slicer_place(&self, source: &SlicerSource) -> Option<(u32, (u32, u32))> {
+        self.object_place(source, SLICER_COLS, SLICER_ROWS)
+    }
+
+    /// Where Insert Timeline puts timelines for pivot table `name` on
+    /// sheet `sheet` (as [`Self::slicer_place`] does).
+    pub fn timeline_place(&self, sheet: u32, name: &str) -> Option<(u32, (u32, u32))> {
+        let source = SlicerSource::Pivot {
+            sheet,
+            name: name.to_owned(),
+        };
+        self.object_place(&source, TIMELINE_COLS, TIMELINE_ROWS)
+    }
+
+    fn object_place(
+        &self,
+        source: &SlicerSource,
+        cols: u32,
+        rows: u32,
+    ) -> Option<(u32, (u32, u32))> {
         let (sheet, (row, mut col)) = match source {
             SlicerSource::Pivot { sheet, name } => {
                 let p = self
@@ -440,7 +546,7 @@ impl Workbook {
             .collect();
         for _ in 0..taken.len() {
             let hit = taken.iter().find(|(r0, c0, r1, c1)| {
-                *c0 < col + SLICER_COLS && *c1 >= col && *r0 < row + SLICER_ROWS && *r1 >= row
+                *c0 < col + cols && *c1 >= col && *r0 < row + rows && *r1 >= row
             });
             match hit {
                 Some((_, _, _, c1)) => col = c1 + 1,
@@ -534,6 +640,219 @@ impl Workbook {
                 _ => None,
             })
     }
+
+    /// Whether drawing `key` is a timeline (its name).
+    pub fn timeline_of(&self, key: DrawingKey) -> Option<String> {
+        let sheet = self.sheet_index_of(key.sheet_id)?;
+        self.drawings(sheet)
+            .into_iter()
+            .find(|d| d.key == key)
+            .and_then(|d| match &*d.kind {
+                DrawingKind::Timeline { name } => Some(name.clone()),
+                _ => None,
+            })
+    }
+
+    // ------------------------------------------------------- timelines
+
+    /// The fields Insert Timeline offers for pivot table `name` on sheet
+    /// `sheet`: those holding dates (every value in the source a date), as
+    /// Excel lists them.
+    pub fn timeline_fields(&self, sheet: u32, name: &str) -> Result<Vec<String>> {
+        let (def, cache) = self.pivot_named(sheet, name)?;
+        if let Some(why) = cache.unsupported.clone().or(def.unsupported.clone()) {
+            bail!("Kantor can't add a timeline to this PivotTable: {why}");
+        }
+        use crate::pivot::Val;
+        let dates = |vals: &mut dyn Iterator<Item = &Val>| {
+            let mut any = false;
+            for v in vals {
+                match v {
+                    Val::Date(_) => any = true,
+                    Val::Missing => {}
+                    _ => return false,
+                }
+            }
+            any
+        };
+        let source = self.read_source(&cache).ok().map(|(_, _, d)| d);
+        let out: Vec<String> = cache
+            .fields
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.database && f.formula.is_none())
+            .filter(|(i, f)| {
+                if let Some(d) = &source
+                    && let Some(k) = d.names.iter().position(|n| n.eq_ignore_ascii_case(&f.name))
+                {
+                    return dates(&mut d.rows.iter().map(|r| &r[k]));
+                }
+                if !f.items.is_empty() {
+                    return dates(&mut f.items.iter());
+                }
+                cache
+                    .records
+                    .as_ref()
+                    .is_some_and(|r| dates(&mut r.iter().filter_map(|r| r.get(*i))))
+            })
+            .map(|(_, f)| f.name.clone())
+            .collect();
+        if out.is_empty() {
+            bail!("The PivotTable has no field of dates for a timeline to filter.");
+        }
+        Ok(out)
+    }
+
+    /// Insert Timeline: one timeline for each of the date `fields` of
+    /// pivot table `pivot` on sheet `sheet`, cascading from cell
+    /// `(row, col)` as Excel does. Each gets its own cache
+    /// (`NativeTimeline_Date`, `NativeTimeline_Date1`...) spanning the
+    /// field's years, shown by months and with no dates selected. One undo
+    /// step. Returns their drawings' keys.
+    pub fn insert_timelines(
+        &mut self,
+        sheet: u32,
+        pivot: &str,
+        fields: &[String],
+        (row, col): (u32, u32),
+    ) -> Result<Vec<DrawingKey>> {
+        if fields.is_empty() {
+            bail!("pick at least one field");
+        }
+        let offered = self.timeline_fields(sheet, pivot)?;
+        let (def, _) = self.pivot_named(sheet, pivot)?;
+        let pivots = vec![(def.sheet_id, def.name.clone())];
+        let mut names = self.object_names_taken();
+        let mut cache_names = self.cache_names_taken();
+        let sheet_id = self.sheet_id(sheet);
+        let mut made: Vec<NewTimeline> = Vec::new();
+        for f in fields {
+            let field = offered
+                .iter()
+                .find(|o| o.eq_ignore_ascii_case(f))
+                .cloned()
+                .ok_or_else(|| anyhow!("there is no field of dates {f}"))?;
+            let name = unique(&field, " ", |n| names.contains(&n.to_lowercase()));
+            names.push(name.to_lowercase());
+            let cache_name = unique(
+                &cache_base(&field).replacen("Slicer_", "NativeTimeline_", 1),
+                "",
+                |n| cache_names.contains(&n.to_lowercase()),
+            );
+            cache_names.push(cache_name.to_lowercase());
+            let mut cache = TimelineCache {
+                name: cache_name.clone(),
+                source_name: field.clone(),
+                pivots: pivots.clone(),
+                selection: None,
+                bounds: None,
+            };
+            // The years its dates span (Excel's bounds: the end is the day
+            // after the last).
+            let (lo, hi) = self
+                .timeline_bounds(&cache)
+                .ok_or_else(|| anyhow!("the field {field} has no dates"))?;
+            let year = |d: f64| crate::pivot_calc::ymd(d).0;
+            let jan1 = |y: i64| {
+                crate::pivot::serial_of_iso(&format!("{y:04}-01-01")).unwrap_or(lo.floor())
+            };
+            cache.bounds = Some((jan1(year(lo)), jan1(year(hi) + 1)));
+            made.push(NewTimeline {
+                def: TimelineDef {
+                    sheet_id,
+                    name,
+                    cache: cache_name,
+                    caption: field.clone(),
+                    level: 2,
+                    show_header: true,
+                    show_selection_label: true,
+                    show_time_level: true,
+                    show_scrollbar: true,
+                    scroll: Some(jan1(year(lo))),
+                    style: None,
+                },
+                cache,
+            });
+        }
+        let anchors: Vec<Anchor> = (0..made.len() as u32)
+            .map(|k| object_anchor((row + k, col + k), TIMELINE_COLS, TIMELINE_ROWS))
+            .collect();
+        let mut keys = Vec::new();
+        self.own_edit(|e, layout| {
+            for (n, anchor) in made.into_iter().zip(anchors) {
+                let id = e.charts.iter().map(|c| c.id).max().map_or(1, |m| m + 1);
+                let name = n.def.name.clone();
+                e.charts.push(NewChart {
+                    id,
+                    sheet_id,
+                    spec: crate::ChartSpec::placeholder(),
+                    anchor,
+                    layout: layout.clone(),
+                    xml: None,
+                    picture: None,
+                    shape: Some(Arc::new(NewShape {
+                        xml: timeline_object(&name).into(),
+                        name,
+                        slicer: None,
+                        timeline: Some(Arc::new(n)),
+                    })),
+                });
+                keys.push(DrawingKey {
+                    sheet_id,
+                    index: NEW_CHART_BASE + id as usize,
+                });
+            }
+        });
+        Ok(keys)
+    }
+
+    /// Timeline `name`'s settings now.
+    pub fn timeline_settings(&self, sheet_id: u32, name: &str) -> Option<TimelineSettings> {
+        let t = self.timeline_def(sheet_id, name)?;
+        let c = self.timeline_cache(&t.cache);
+        Some(TimelineSettings {
+            name: t.name.clone(),
+            source_name: c.map(|c| c.source_name).unwrap_or_default(),
+            cache_name: t.cache.clone(),
+            caption: t.caption.clone(),
+            show_header: t.show_header,
+            show_selection_label: t.show_selection_label,
+            show_time_level: t.show_time_level,
+            show_scrollbar: t.show_scrollbar,
+            style: t
+                .style
+                .clone()
+                .unwrap_or_else(|| "TimeSlicerStyleLight1".to_owned()),
+        })
+    }
+
+    /// Change timeline `name`'s settings to `s` (its name, field and cache
+    /// stay). One undo step.
+    pub fn set_timeline_settings(
+        &mut self,
+        sheet_id: u32,
+        name: &str,
+        s: &TimelineSettings,
+    ) -> Result<()> {
+        let mut t = self
+            .timeline_def(sheet_id, name)
+            .ok_or_else(|| anyhow!("there is no timeline {name}"))?;
+        if self.timeline_settings(sheet_id, name).as_ref() == Some(s) {
+            return Ok(());
+        }
+        t.caption = s.caption.trim().to_owned();
+        t.show_header = s.show_header;
+        t.show_selection_label = s.show_selection_label;
+        t.show_time_level = s.show_time_level;
+        t.show_scrollbar = s.show_scrollbar;
+        t.style =
+            Some(s.style.clone()).filter(|st| st != "TimeSlicerStyleLight1" || t.style.is_some());
+        let key = (sheet_id, t.name.to_lowercase());
+        self.own_edit(|e, _| {
+            e.timeline_defs.insert(key, t);
+        });
+        Ok(())
+    }
 }
 
 impl Workbook {
@@ -546,7 +865,12 @@ impl Workbook {
         };
         let file = &self.pivots.slicers;
         let new = self.new_slicers();
-        if file.caches.is_empty() && file.timeline_caches.is_empty() && new.is_empty() {
+        let new_t = self.new_timelines();
+        if file.caches.is_empty()
+            && file.timeline_caches.is_empty()
+            && new.is_empty()
+            && new_t.is_empty()
+        {
             return SlicerPlan::default();
         }
         let mut plan = SlicerPlan {
@@ -639,35 +963,73 @@ impl Workbook {
                 new: is_new && !other,
             });
         }
-        // Timelines.
-        for ((sheet_id, name), (level, scroll)) in &self.edits().timelines {
-            if self.sheet_index_of(*sheet_id).is_none() {
-                continue;
-            }
-            plan.timelines.push(TimelineOut {
-                name: name.clone(),
-                level: *level,
-                scroll: *scroll,
-            });
-        }
-        for c in &file.timeline_caches {
-            let Ok((all, field)) = self.timeline_conn(c) else {
+        // Timelines: the file's not deleted (on sheets still there), then
+        // Kantor's.
+        let mut tdefs: Vec<crate::slicer::TimelineDef> = Vec::new();
+        for d in &file.timelines {
+            let Some(sheet) = self.sheet_index_of(d.sheet_id) else {
                 continue;
             };
-            let state = self.pivot_state();
-            let def = self.pivot_def(&state, all[0]);
-            let filter = def
-                .filters
-                .iter()
-                .position(|f| f.fld == field && f.kind == "dateBetween")
-                .map(|k| TimelineFilter {
-                    id: k + 1,
-                    tab: def.sheet_id,
-                    pivot: def.name.clone(),
-                });
+            let opened = self.drawings.opened_timelines(d.sheet_id);
+            let shown = self.drawings(sheet).iter().any(|x| {
+                matches!(&*x.kind, DrawingKind::Timeline { name } if name.eq_ignore_ascii_case(&d.name))
+            });
+            if opened.contains(&d.name.to_lowercase()) && !shown {
+                continue;
+            }
+            tdefs.push(
+                self.timeline_def(d.sheet_id, &d.name)
+                    .unwrap_or_else(|| d.clone()),
+            );
+        }
+        for n in &new_t {
+            tdefs.push(
+                self.timeline_def(n.def.sheet_id, &n.def.name)
+                    .unwrap_or_else(|| n.def.clone()),
+            );
+        }
+        plan.timelines = tdefs
+            .into_iter()
+            .map(|t| TimelineOut {
+                sheet_id: t.sheet_id,
+                name: t.name,
+                cache: t.cache,
+                caption: t.caption,
+                level: t.level,
+                scroll: t.scroll,
+                show_header: t.show_header,
+                show_selection_label: t.show_selection_label,
+                show_time_level: t.show_time_level,
+                show_scrollbar: t.show_scrollbar,
+                style: t.style,
+            })
+            .collect();
+        let caches = file
+            .timeline_caches
+            .iter()
+            .cloned()
+            .chain(new_t.iter().map(|n| n.cache.clone()));
+        for c in caches {
+            let conn = self.timeline_conn(&c);
+            let filter = conn.as_ref().ok().and_then(|(all, field)| {
+                let state = self.pivot_state();
+                let def = self.pivot_def(&state, all[0]);
+                def.filters
+                    .iter()
+                    .position(|f| f.fld == *field && f.kind == "dateBetween")
+                    .map(|k| TimelineFilter {
+                        id: k + 1,
+                        tab: def.sheet_id,
+                        pivot: def.name.clone(),
+                    })
+            });
             plan.timeline_caches.push(TimelineCacheOut {
-                name: c.name.clone(),
-                selection: self.timeline_selection(c),
+                selection: self.timeline_selection(&c),
+                known: conn.is_ok(),
+                name: c.name,
+                source_name: c.source_name,
+                pivots: c.pivots,
+                bounds: c.bounds,
                 filter,
             });
         }

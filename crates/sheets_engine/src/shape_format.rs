@@ -372,6 +372,7 @@ impl Workbook {
                         xml: new,
                         name: s.name.clone(),
                         slicer: s.slicer.clone(),
+                        timeline: s.timeline.clone(),
                     }));
                 }
             });
