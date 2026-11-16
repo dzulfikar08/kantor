@@ -96,7 +96,13 @@ fn tree(data: &str) -> anyhow::Result<Tree> {
         .filter_map(|p| p.attribute("modelId"))
         .collect();
     // (srcOrd, dest, parTrans, sibTrans, cxn) per source.
-    type Edge<'a> = (i64, &'a str, Option<&'a str>, Option<&'a str>, Option<&'a str>);
+    type Edge<'a> = (
+        i64,
+        &'a str,
+        Option<&'a str>,
+        Option<&'a str>,
+        Option<&'a str>,
+    );
     let mut kids: HashMap<&str, Vec<Edge>> = HashMap::new();
     for c in doc.descendants().filter(|n| is(*n, NS_DGM, "cxn")) {
         if c.attribute("type").is_some_and(|t| t != "parOf") {
@@ -127,7 +133,13 @@ fn tree(data: &str) -> anyhow::Result<Tree> {
         roots: Vec::new(),
         pres: HashMap::new(),
     };
-    fn walk(t: &mut Tree, kids: &HashMap<&str, Vec<Edge>>, src: &str, parent: Option<usize>, depth: usize) {
+    fn walk(
+        t: &mut Tree,
+        kids: &HashMap<&str, Vec<Edge>>,
+        src: &str,
+        parent: Option<usize>,
+        depth: usize,
+    ) {
         for (ord, dst, par, sib, cxn) in kids.get(src).into_iter().flatten() {
             if t.nodes.len() >= 5_000 || t.nodes.iter().any(|n| n.id == *dst) {
                 continue;
@@ -411,17 +423,25 @@ pub(super) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Res
     let mut drawn = vec![false; t.nodes.len()];
     for (k, b) in boxes.iter().enumerate() {
         let mine: Vec<&TShape> = list.iter().filter(|s| s.role == TRole::Node(k)).collect();
-        let olds: Vec<Xfrm> = mine.iter().filter_map(|s| s.xfrm.as_ref().map(|x| x.1)).collect();
+        let olds: Vec<Xfrm> = mine
+            .iter()
+            .filter_map(|s| s.xfrm.as_ref().map(|x| x.1))
+            .collect();
         let Some(u) = union(&olds) else { continue };
         drawn[k] = true;
         for s in mine {
-            let Some((range, old)) = &s.xfrm else { continue };
+            let Some((range, old)) = &s.xfrm else {
+                continue;
+            };
             let new = Xfrm {
                 rot: old.rot,
                 ..follow(&u, b, old)
             };
             if let Some((trange, told)) = &s.tx {
-                edits.push((trange.clone(), write_box(drawing, trange, &follow(old, &new, told))));
+                edits.push((
+                    trange.clone(),
+                    write_box(drawing, trange, &follow(old, &new, told)),
+                ));
             }
             edits.push((range.clone(), write_box(drawing, range, &new)));
         }
@@ -431,7 +451,10 @@ pub(super) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Res
     if let Some(tk) = drawn.iter().position(|d| *d) {
         for k in (0..t.nodes.len()).filter(|k| !drawn[*k]) {
             let mine: Vec<&TShape> = list.iter().filter(|s| s.role == TRole::Node(tk)).collect();
-            let olds: Vec<Xfrm> = mine.iter().filter_map(|s| s.xfrm.as_ref().map(|x| x.1)).collect();
+            let olds: Vec<Xfrm> = mine
+                .iter()
+                .filter_map(|s| s.xfrm.as_ref().map(|x| x.1))
+                .collect();
             let Some(u) = union(&olds) else { continue };
             for s in mine {
                 let Some((_, old)) = &s.xfrm else { continue };
@@ -459,7 +482,10 @@ pub(super) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Res
         }
         has_conn[k] = true;
         let pts = elbow(horizontal, &boxes[p], &boxes[k]);
-        edits.push((s.range.clone(), draw_connector(&drawing[s.range.clone()], &pts)));
+        edits.push((
+            s.range.clone(),
+            draw_connector(&drawing[s.range.clone()], &pts),
+        ));
     }
     let template = list
         .iter()
@@ -473,7 +499,10 @@ pub(super) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Res
             Some(x) => copy_shape(x, par),
             None => new_connector(par),
         };
-        add.push_str(&draw_connector(&base, &elbow(horizontal, &boxes[p], &boxes[k])));
+        add.push_str(&draw_connector(
+            &base,
+            &elbow(horizontal, &boxes[p], &boxes[k]),
+        ));
     }
     // New shapes go first (behind the items): connectors under the boxes.
     if !add.is_empty() {
@@ -670,9 +699,13 @@ pub(super) fn remove_item(
             edits.push(set_attrs(
                 data,
                 c,
-                &[("srcId", parent.clone()), ("srcOrd", (me.ord + pos).to_string())],
+                &[
+                    ("srcId", parent.clone()),
+                    ("srcOrd", (me.ord + pos).to_string()),
+                ],
             ));
-        } else if is_gone(c.attribute("modelId")) || is_gone(src) || is_gone(c.attribute("destId")) {
+        } else if is_gone(c.attribute("modelId")) || is_gone(src) || is_gone(c.attribute("destId"))
+        {
             edits.push((c.range(), String::new()));
         } else if is_par_of(c)
             && src == Some(parent.as_str())
@@ -744,10 +777,7 @@ mod tests {
         let mut conns = Vec::new();
         for sp in doc.descendants().filter(|n| is(*n, NS_DSP, "sp")) {
             let m = sp.attribute("modelId").unwrap().to_owned();
-            let x = xfrm_of(
-                sp.descendants().find(|n| is(*n, NS_A, "xfrm")).unwrap(),
-            )
-            .unwrap();
+            let x = xfrm_of(sp.descendants().find(|n| is(*n, NS_A, "xfrm")).unwrap()).unwrap();
             if sp.descendants().any(|n| is(n, NS_A, "custGeom")) {
                 conns.push((m, x));
             } else {
@@ -758,7 +788,13 @@ mod tests {
     }
 
     // Boss over A and B; A over A1 and A2.
-    const ORG: &[(Option<usize>, usize)] = &[(None, 0), (Some(0), 1), (Some(0), 2), (Some(1), 3), (Some(1), 4)];
+    const ORG: &[(Option<usize>, usize)] = &[
+        (None, 0),
+        (Some(0), 1),
+        (Some(0), 2),
+        (Some(1), 3),
+        (Some(1), 4),
+    ];
 
     #[test]
     fn org_charts_centre_parents_over_children_with_elbow_connectors() {
@@ -774,7 +810,10 @@ mod tests {
         assert!((mid(&b["N0"]) - (mid(&b["N1"]) + mid(&b["N2"])) / 2).abs() <= 1);
         // Inside the frame, 10:6.
         for x in b.values() {
-            assert!(x.x >= 0 && x.y >= 0 && x.x + x.cx <= 10_000 && x.y + x.cy <= 6_000, "{x:?}");
+            assert!(
+                x.x >= 0 && x.y >= 0 && x.x + x.cx <= 10_000 && x.y + x.cy <= 6_000,
+                "{x:?}"
+            );
             assert!((x.cy as f64 / x.cx as f64 - 0.6).abs() < 0.01);
         }
         // A connector per item with a parent, from the parent's bottom to
@@ -807,19 +846,30 @@ mod tests {
         let (dr2, d2, id) = add_item(&dr, &d, "N2", AddPlace::Below, 10_000, 6_000).unwrap();
         let t = tree(&d2).unwrap();
         let k = t.nodes.iter().position(|n| n.id == id).unwrap();
-        assert_eq!(t.nodes[k].parent.map(|p| t.nodes[p].id.as_str()), Some("N2"));
+        assert_eq!(
+            t.nodes[k].parent.map(|p| t.nodes[p].id.as_str()),
+            Some("N2")
+        );
         let (b, c) = read(&dr2);
         assert!(b[&id].y > b["N2"].y);
         assert_eq!(c.len(), 5);
         // Before A: a sibling first under the boss.
         let (_, d3, id) = add_item(&dr, &d, "N1", AddPlace::Before, 10_000, 6_000).unwrap();
         let t = tree(&d3).unwrap();
-        let kids: Vec<&str> = t.nodes[0].kids.iter().map(|k| t.nodes[*k].id.as_str()).collect();
+        let kids: Vec<&str> = t.nodes[0]
+            .kids
+            .iter()
+            .map(|k| t.nodes[*k].id.as_str())
+            .collect();
         assert_eq!(kids, [id.as_str(), "N1", "N2"]);
         // After A: between A and B.
         let (_, d4, id) = add_item(&dr, &d, "N1", AddPlace::After, 10_000, 6_000).unwrap();
         let t = tree(&d4).unwrap();
-        let kids: Vec<&str> = t.nodes[0].kids.iter().map(|k| t.nodes[*k].id.as_str()).collect();
+        let kids: Vec<&str> = t.nodes[0]
+            .kids
+            .iter()
+            .map(|k| t.nodes[*k].id.as_str())
+            .collect();
         assert_eq!(kids, ["N1", id.as_str(), "N2"]);
         // Above the boss: a new top item, the boss under it, with a
         // connector now.
@@ -840,7 +890,11 @@ mod tests {
         let dr = relayout(&drawing(&models), &d, 10_000, 6_000).unwrap();
         let (dr2, d2) = remove_item(&dr, &d, "N1", 10_000, 6_000).unwrap();
         let t = tree(&d2).unwrap();
-        let kids: Vec<&str> = t.nodes[0].kids.iter().map(|k| t.nodes[*k].id.as_str()).collect();
+        let kids: Vec<&str> = t.nodes[0]
+            .kids
+            .iter()
+            .map(|k| t.nodes[*k].id.as_str())
+            .collect();
         assert_eq!(kids, ["N3", "N4", "N2"]);
         assert!(!d2.contains("\"N1\"") && !d2.contains("P1") && !d2.contains("X1\""));
         let (b, c) = read(&dr2);

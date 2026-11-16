@@ -900,7 +900,10 @@ fn histograms_paretos_and_boxes() {
 
 fn map_part(k: usize) -> String {
     use std::io::Read as _;
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/corpus/pptx/region_map.pptx");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/corpus/pptx/region_map.pptx"
+    );
     let mut z = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
     let mut s = String::new();
     z.by_name(&format!("ppt/charts/chartEx{k}.xml"))
@@ -938,12 +941,21 @@ fn value_maps_fill_regions_on_their_colour_scale() {
     // Ten countries with values and Czechia without.
     assert_eq!(fills.len(), 11, "{fills:?}");
     let has = |c: [u8; 3]| fills.iter().any(|f| f.0[..3] == c);
-    assert!(has([0x1F, 0x4E, 0x79]), "Germany (highest) at the max colour");
-    assert!(has([0xDE, 0xEB, 0xF7]), "Portugal (lowest) at the min colour");
+    assert!(
+        has([0x1F, 0x4E, 0x79]),
+        "Germany (highest) at the max colour"
+    );
+    assert!(
+        has([0xDE, 0xEB, 0xF7]),
+        "Portugal (lowest) at the min colour"
+    );
     assert!(has([0xD9, 0xD9, 0xD9]), "Czechia: no data");
     let t = texts(&m);
     // Colour bar labels and value labels where they fit.
-    assert!(t.contains(&"12".into()) && t.contains(&"95".into()), "{t:?}");
+    assert!(
+        t.contains(&"12".into()) && t.contains(&"95".into()),
+        "{t:?}"
+    );
     assert!(t.contains(&"Sales by country".into()), "{t:?}");
     // The map keeps its aspect: Europe is about as tall as wide in
     // Mercator, so it doesn't fill the whole 800 px width.
@@ -951,11 +963,12 @@ fn value_maps_fill_regions_on_their_colour_scale() {
         .iter()
         .filter_map(|m| match m {
             Mark::Prim {
-                prim: Prim::Fill {
-                    path,
-                    rule: crate::FillRule::EvenOdd,
-                    ..
-                },
+                prim:
+                    Prim::Fill {
+                        path,
+                        rule: crate::FillRule::EvenOdd,
+                        ..
+                    },
                 ..
             } => path.bounds().map(|b| b[2]),
             _ => None,
@@ -973,7 +986,10 @@ fn categorical_maps_colour_by_category_with_a_legend() {
     assert_eq!(fills.len(), 10, "{fills:?}");
     // Mercosur is the first category: accent 1.
     assert!(fills.iter().any(|f| f.0[..3] == [0x11, 0, 0]));
-    assert!(fills.iter().any(|f| f.0[..3] == [0x44, 0, 0]), "fourth category");
+    assert!(
+        fills.iter().any(|f| f.0[..3] == [0x44, 0, 0]),
+        "fourth category"
+    );
     let t = texts(&m);
     for c in ["Mercosur", "Andean", "Pacific", "Other", "Brazil"] {
         assert!(t.contains(&c.to_owned()), "{c}: {t:?}");
@@ -985,8 +1001,14 @@ fn maps_without_map_data_list_their_values() {
     let m = marks(&map_part(3), 600.0, 400.0);
     assert!(region_fills(&m).is_empty());
     let t = texts(&m);
-    assert!(t.contains(&"Map: no map data saved with this chart".into()), "{t:?}");
-    assert!(t.contains(&"Japan: 120".into()) && t.contains(&"Vietnam: 40".into()), "{t:?}");
+    assert!(
+        t.contains(&"Map: no map data saved with this chart".into()),
+        "{t:?}"
+    );
+    assert!(
+        t.contains(&"Japan: 120".into()) && t.contains(&"Vietnam: 40".into()),
+        "{t:?}"
+    );
 }
 
 #[test]
@@ -1003,10 +1025,18 @@ fn binary_caches_are_read_when_compressed_xml() {
     let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
     z.write_all(clear.as_bytes()).unwrap();
     let b64 = base64::engine::general_purpose::STANDARD.encode(z.finish().unwrap());
-    let binary = format!("{}<cx:binary>{b64}</cx:binary>{}", &xml[..start], &xml[end..]);
+    let binary = format!(
+        "{}<cx:binary>{b64}</cx:binary>{}",
+        &xml[..start],
+        &xml[end..]
+    );
     assert_eq!(region_fills(&marks(&binary, 800.0, 500.0)).len(), 11);
     // Something else: the values are listed.
-    let junk = format!("{}<cx:binary>AAECAwQFBgc=</cx:binary>{}", &xml[..start], &xml[end..]);
+    let junk = format!(
+        "{}<cx:binary>AAECAwQFBgc=</cx:binary>{}",
+        &xml[..start],
+        &xml[end..]
+    );
     let m = marks(&junk, 800.0, 500.0);
     assert!(region_fills(&m).is_empty());
     assert!(

@@ -528,7 +528,10 @@ fn region_maps_are_drawn_from_live_cells() {
     let items = scenes.items(&mut engine, &book, &d[0], 700.0, 420.0);
     assert_eq!(fills(&items), 11);
     let s = strings(&items);
-    assert!(s.iter().any(|x| x == "Sales by country") && s.iter().any(|x| x == "95"), "{s:?}");
+    assert!(
+        s.iter().any(|x| x == "Sales by country") && s.iter().any(|x| x == "95"),
+        "{s:?}"
+    );
     // Live: a new highest value tops the colour bar.
     book.set_input(0, 4, 1, "300").unwrap();
     let d = book.drawings(0);

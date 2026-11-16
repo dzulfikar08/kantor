@@ -260,12 +260,21 @@ fn hierarchies_lay_out_as_trees() {
         let mid = |t: &str| (b[t].x + b[t].cx / 2, b[t].y + b[t].cy / 2);
         if s == 7 {
             // Left to right: CEO, then CFO and CTO, then Dev and Ops.
-            assert!(mid("CEO").0 < mid("CTO").0 && mid("CTO").0 < mid("Dev").0, "{b:?}");
+            assert!(
+                mid("CEO").0 < mid("CTO").0 && mid("CTO").0 < mid("Dev").0,
+                "{b:?}"
+            );
             assert!(mid("Dev").1 < mid("Ops").1);
         } else {
-            assert!(mid("CEO").1 < mid("CTO").1 && mid("CTO").1 < mid("Dev").1, "{b:?}");
+            assert!(
+                mid("CEO").1 < mid("CTO").1 && mid("CTO").1 < mid("Dev").1,
+                "{b:?}"
+            );
             // CTO centred over Dev and Ops.
-            assert!((mid("CTO").0 - (mid("Dev").0 + mid("Ops").0) / 2).abs() < 2, "{b:?}");
+            assert!(
+                (mid("CTO").0 - (mid("Dev").0 + mid("Ops").0) / 2).abs() < 2,
+                "{b:?}"
+            );
         }
         for v in b.values() {
             assert!(v.x >= 0 && v.x + v.cx <= x.cx + 1, "{v:?}");

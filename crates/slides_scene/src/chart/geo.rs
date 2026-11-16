@@ -216,7 +216,7 @@ fn binary_xml(b64: &str) -> Option<String> {
             return Some(s.trim_start_matches('\u{feff}').to_owned());
         }
         // UTF-16 LE with or without a BOM.
-        if raw.len() % 2 == 0 {
+        if raw.len().is_multiple_of(2) {
             let units: Vec<u16> = raw
                 .chunks(2)
                 .map(|c| u16::from_le_bytes([c[0], c[1]]))
@@ -307,9 +307,11 @@ fn read_clear(clear: Node, map: &mut GeoMap) {
         ) else {
             continue;
         };
-        if let (Some(lat), Some(lon), Some(id)) =
-            (num(q, "latitude"), num(q, "longitude"), e.attribute("entityId"))
-        {
+        if let (Some(lat), Some(lon), Some(id)) = (
+            num(q, "latitude"),
+            num(q, "longitude"),
+            e.attribute("entityId"),
+        ) {
             point_ids.push(([lat, lon], id.to_owned()));
         }
     }
@@ -322,12 +324,17 @@ fn read_clear(clear: Node, map: &mut GeoMap) {
         let loc = local(res, "geoLocations").and_then(|l| local(l, "geoLocation"));
         let mut names: Vec<String> = q
             .map(|q| {
-                ["postalCode", "adminDistrict2", "adminDistrict1", "countryRegion"]
-                    .iter()
-                    .filter_map(|k| q.attribute(*k))
-                    .map(lower)
-                    .filter(|s| !s.is_empty())
-                    .collect()
+                [
+                    "postalCode",
+                    "adminDistrict2",
+                    "adminDistrict1",
+                    "countryRegion",
+                ]
+                .iter()
+                .filter_map(|k| q.attribute(*k))
+                .map(lower)
+                .filter(|s| !s.is_empty())
+                .collect()
             })
             .unwrap_or_default();
         let Some(loc) = loc else { continue };
@@ -536,10 +543,7 @@ impl Projector {
                 let f = f.clamp(-85f64.to_radians(), 85f64.to_radians());
                 [l, (std::f64::consts::FRAC_PI_4 + f / 2.0).tan().ln()]
             }
-            Projection::Miller => [
-                l,
-                1.25 * (std::f64::consts::FRAC_PI_4 + 0.4 * f).tan().ln(),
-            ],
+            Projection::Miller => [l, 1.25 * (std::f64::consts::FRAC_PI_4 + 0.4 * f).tan().ln()],
             Projection::Robinson => {
                 let a = lat.abs() / 5.0;
                 let i = (a.floor() as usize).min(17);

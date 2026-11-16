@@ -999,8 +999,8 @@ const NO_DATA: Rgb = Rgb([0xD9, 0xD9, 0xD9]);
 pub(super) fn region_map(chart: &Chart, g: &Group, map: &GeoMap, o: &mut Out, area: Rect) {
     let Some(s) = g.series.first() else { return };
     let points = map_points(s, map);
-    let drawable = map.regions.iter().any(|r| !r.rings.is_empty())
-        && points.iter().any(Option::is_some);
+    let drawable =
+        map.regions.iter().any(|r| !r.rings.is_empty()) && points.iter().any(Option::is_some);
     if !drawable {
         map_fallback(chart, s, map, o, area);
         return;
@@ -1048,11 +1048,21 @@ pub(super) fn region_map(chart: &Chart, g: &Group, map: &GeoMap, o: &mut Out, ar
     let shown: Vec<usize> = (0..map.regions.len())
         .filter(|r| !map.regions[*r].rings.is_empty())
         .collect();
-    let mut b = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    let mut b = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
     for r in &shown {
         for ring in &map.regions[*r].rings {
             for q in ring {
-                b = [b[0].min(q[0]), b[1].min(q[1]), b[2].max(q[0]), b[3].max(q[1])];
+                b = [
+                    b[0].min(q[0]),
+                    b[1].min(q[1]),
+                    b[2].max(q[0]),
+                    b[3].max(q[1]),
+                ];
             }
         }
     }
@@ -1067,9 +1077,19 @@ pub(super) fn region_map(chart: &Chart, g: &Group, map: &GeoMap, o: &mut Out, ar
                 .collect()
         })
         .collect();
-    let mut pb = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    let mut pb = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
     for q in projected.iter().flatten().flatten() {
-        pb = [pb[0].min(q[0]), pb[1].min(q[1]), pb[2].max(q[0]), pb[3].max(q[1])];
+        pb = [
+            pb[0].min(q[0]),
+            pb[1].min(q[1]),
+            pb[2].max(q[0]),
+            pb[3].max(q[1]),
+        ];
     }
     let margin = 4.0f32;
     let (pw, ph) = ((pb[2] - pb[0]).max(1e-9), (pb[3] - pb[1]).max(1e-9));
@@ -1077,14 +1097,19 @@ pub(super) fn region_map(chart: &Chart, g: &Group, map: &GeoMap, o: &mut Out, ar
         .min((plot[3] - 2.0 * margin).max(1.0) as f64 / ph);
     let ox = plot[0] as f64 + (plot[2] as f64 - pw * k) / 2.0;
     let oy = plot[1] as f64 + (plot[3] as f64 - ph * k) / 2.0;
-    let at = |q: &[f64; 2]| p((ox + (q[0] - pb[0]) * k) as f32, (oy + (pb[3] - q[1]) * k) as f32);
+    let at = |q: &[f64; 2]| {
+        p(
+            (ox + (q[0] - pb[0]) * k) as f32,
+            (oy + (pb[3] - q[1]) * k) as f32,
+        )
+    };
     let border = stroke_of(s.look.line.as_ref(), None).unwrap_or_else(|| white_line(0.75));
     let lbl = map.labels != RegionLabels::None;
     let mut labels = Vec::new();
     for (j, r) in shown.iter().enumerate() {
         let mut path = Path::default();
         // The biggest ring (for the label) and its area.
-        let mut big: Option<(f32, [f32; 4], P)> = None;
+        let mut big: Option<(f32, Vec<P>, P)> = None;
         for ring in &projected[j] {
             let pts: Vec<P> = ring.iter().map(&at).collect();
             let Some((first, rest)) = pts.split_first() else {
@@ -1097,11 +1122,7 @@ pub(super) fn region_map(chart: &Chart, g: &Group, map: &GeoMap, o: &mut Out, ar
             path.close();
             let (a, c) = ring_area_centroid(&pts);
             if big.as_ref().is_none_or(|b| a > b.0) {
-                let bb = pts.iter().fold(
-                    [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY],
-                    |m, q| [m[0].min(q.x), m[1].min(q.y), m[2].max(q.x), m[3].max(q.y)],
-                );
-                big = Some((a, bb, c));
+                big = Some((a, pts, c));
             }
         }
         if path.is_empty() {
@@ -1117,13 +1138,11 @@ pub(super) fn region_map(chart: &Chart, g: &Group, map: &GeoMap, o: &mut Out, ar
             at: Affine::IDENTITY,
         });
         o.stroke(path, border.clone());
-        if lbl
-            && let (Some((_, i)), Some(big)) = (fills[*r], big)
-        {
+        if lbl && let (Some((_, i)), Some(big)) = (fills[*r], big) {
             labels.push((i, fill, big.1, big.2));
         }
     }
-    for (i, fill, bb, c) in labels {
+    for (i, fill, ring, c) in labels {
         let Some(l) = series_labels(g, s, i) else {
             continue;
         };
@@ -1154,11 +1173,31 @@ pub(super) fn region_map(chart: &Chart, g: &Group, map: &GeoMap, o: &mut Out, ar
             font.color = contrast(&Fill::Solid(fill, 255));
         }
         let (tw, th) = o.measure(&text, &font, None);
-        if map.labels == RegionLabels::BestFit && (tw > bb[2] - bb[0] || th > bb[3] - bb[1]) {
+        // Best fit: only labels whose box lies inside the region.
+        let (x0, y0) = (c.x - tw / 2.0, c.y - th / 2.0);
+        let inside = [0.0, 0.5, 1.0].iter().all(|fx| {
+            [0.0, 0.5, 1.0]
+                .iter()
+                .all(|fy| point_in(&ring, p(x0 + tw * fx, y0 + th * fy)))
+        });
+        if map.labels == RegionLabels::BestFit && !inside {
             continue;
         }
         o.label_at(&text, &font, c, 0.5, 0.5);
     }
+}
+
+/// Whether `q` is inside the closed ring `pts` (even-odd).
+fn point_in(pts: &[P], q: P) -> bool {
+    let mut inside = false;
+    let n = pts.len();
+    for k in 0..n {
+        let (a, b) = (pts[k], pts[(k + 1) % n]);
+        if (a.y > q.y) != (b.y > q.y) && q.x < a.x + (q.y - a.y) / (b.y - a.y) * (b.x - a.x) {
+            inside = !inside;
+        }
+    }
+    inside
 }
 
 /// Area (absolute) and centroid of a closed ring.
@@ -1224,8 +1263,18 @@ fn map_legend(lg: &Legend, s: &Series, sc: &GeoScale, o: &mut Out, area: Rect) -
             );
         }
         for (v, t) in &texts {
-            let f = if hi > lo { ((hi - v) / (hi - lo)) as f32 } else { 0.5 };
-            o.label_at(t, &font, p(x + bar + gap, y + len * f.clamp(0.0, 1.0)), 0.0, 0.5);
+            let f = if hi > lo {
+                ((hi - v) / (hi - lo)) as f32
+            } else {
+                0.5
+            };
+            o.label_at(
+                t,
+                &font,
+                p(x + bar + gap, y + len * f.clamp(0.0, 1.0)),
+                0.0,
+                0.5,
+            );
         }
         if !lg.overlay {
             if lg.pos == LegendPos::L {
@@ -1244,7 +1293,12 @@ fn map_legend(lg: &Legend, s: &Series, sc: &GeoScale, o: &mut Out, area: Rect) -
         };
         for k in 0..steps {
             let v = lo + (hi - lo) * (k as f64 + 0.5) / steps as f64;
-            let r = [x + len * k as f32 / steps as f32, y, len / steps as f32 + 0.5, bar];
+            let r = [
+                x + len * k as f32 / steps as f32,
+                y,
+                len / steps as f32 + 0.5,
+                bar,
+            ];
             o.boxed(
                 Path::rect(r[0], r[1], r[2], r[3]),
                 r,
@@ -1253,8 +1307,18 @@ fn map_legend(lg: &Legend, s: &Series, sc: &GeoScale, o: &mut Out, area: Rect) -
             );
         }
         for (v, t) in &texts {
-            let f = if hi > lo { ((v - lo) / (hi - lo)) as f32 } else { 0.5 };
-            o.label_at(t, &font, p(x + len * f.clamp(0.0, 1.0), y + bar + gap), 0.5, 0.0);
+            let f = if hi > lo {
+                ((v - lo) / (hi - lo)) as f32
+            } else {
+                0.5
+            };
+            o.label_at(
+                t,
+                &font,
+                p(x + len * f.clamp(0.0, 1.0), y + bar + gap),
+                0.5,
+                0.0,
+            );
         }
         if !lg.overlay {
             if lg.pos == LegendPos::T {
