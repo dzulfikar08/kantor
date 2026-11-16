@@ -1,4 +1,5 @@
-//! Group, Ungroup, Regroup and Convert to Shapes (SmartArt), from the
+//! Group, Ungroup, Regroup, Convert to Shapes and Add Shape After /
+//! Before (SmartArt), from the
 //! keyboard (Ctrl+G, Ctrl+Shift+G), the palette and the canvas's
 //! right-click menu, as in PowerPoint. Selecting shapes inside groups
 //! (the second click) is in the view's mouse handling.
@@ -6,9 +7,20 @@
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::*;
 use kantor_ui::i18n;
-use slides_engine::{Inner, ShapeRef};
+use slides_engine::{AddPlace, Inner, ShapeRef};
 
 use crate::SlidesView;
+
+/// Messages slides_engine gives for SmartArt it can't change (shown in
+/// the status bar, translated).
+#[allow(dead_code)] // keys for the catalog scanner (shown through `report`)
+pub(crate) const ENGINE_MESSAGES: &[&str] = &[
+    i18n::tk(
+        "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes and cycles",
+    ),
+    i18n::tk("This SmartArt layout has one level: add shapes before or after"),
+    i18n::tk("A SmartArt keeps at least one item"),
+];
 
 impl SlidesView {
     /// Whether Group applies: two or more slide shapes selected.
@@ -39,6 +51,36 @@ impl SlidesView {
                 .sel_ref()
                 .and_then(|r| self.pres.shape(r))
                 .is_some_and(|s| s.smartart().is_some())
+    }
+
+    /// Whether Add Shape After / Before applies: a SmartArt (or one of its
+    /// shapes) selected whose layout Kantor lays out.
+    pub fn can_add_smartart_shape(&self) -> bool {
+        self.also.is_empty()
+            && self.editing.is_none()
+            && self.sel_ref().is_some_and(|r| {
+                (self.pres.in_smartart(r)
+                    || self.pres.shape(r).is_some_and(|s| s.smartart().is_some()))
+                    && self.pres.smartart_family(r).is_some()
+            })
+    }
+
+    /// PowerPoint's Add Shape After / Before on the selected SmartArt shape.
+    pub fn smartart_add_doc(
+        &mut self,
+        place: AddPlace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(r) = self.sel_ref() else {
+            self.set_status(i18n::t("Select a SmartArt shape"), cx);
+            return;
+        };
+        let res = self.pres.smartart_add_shape(r, place);
+        if let Some(new) = self.report(res, cx) {
+            self.select_at(Some(new), cx);
+            self.after_edit(window, cx);
+        }
     }
 
     /// Ctrl+G: group the selected shapes.
@@ -130,7 +172,19 @@ pub(crate) fn menu_items(
     };
     let v = v.read(cx);
     type Run = fn(&mut SlidesView, &mut Window, &mut Context<SlidesView>);
-    let items: [(bool, &str, Box<dyn Action>, Run); 4] = [
+    let items: [(bool, &str, Box<dyn Action>, Run); 6] = [
+        (
+            v.can_add_smartart_shape(),
+            i18n::t("Add Shape After"),
+            Box::new(crate::SmartArtAddAfter),
+            |v, w, cx| v.smartart_add_doc(AddPlace::After, w, cx),
+        ),
+        (
+            v.can_add_smartart_shape(),
+            i18n::t("Add Shape Before"),
+            Box::new(crate::SmartArtAddBefore),
+            |v, w, cx| v.smartart_add_doc(AddPlace::Before, w, cx),
+        ),
         (
             v.can_group(),
             i18n::t("Group"),

@@ -8,7 +8,8 @@
 //!   built in) resolved per cell by [`Table::cell_look`].
 //! - SmartArt (`dgm:relIds`): the data part; PowerPoint's pre-drawn shapes
 //!   are read on demand ([`crate::Presentation::diagram_drawing`]).
-//! - Charts (`c:chart`): the chart part (drawn elsewhere).
+//! - Charts (`c:chart`, and `cx:chart` in an `mc:AlternateContent`): the
+//!   chart part (drawn elsewhere).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,6 +25,8 @@ use crate::xml::*;
 pub const NS_DSP: &str = "http://schemas.microsoft.com/office/drawing/2008/diagram";
 pub const NS_DGM: &str = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
 pub const NS_C: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+/// Office 2016 charts (waterfall, treemap...: `cx:chart`).
+pub const NS_CX: &str = "http://schemas.microsoft.com/office/drawing/2014/chartex";
 const URI_TABLE: &str = "http://schemas.openxmlformats.org/drawingml/2006/table";
 
 /// Display content of a group or graphic frame. Compares by identity (as
@@ -120,6 +123,11 @@ pub struct DiagramDrawing {
     pub(crate) ranges: Vec<std::ops::Range<usize>>,
     /// Which data model points each shape's text comes from.
     pub(crate) links: Vec<crate::smartart::Link>,
+    /// The data model as Kantor changed it (items added or removed), and
+    /// whether the drawing XML is Kantor's (laid out again) rather than
+    /// the part's: both are saved even when no shape was edited since.
+    pub(crate) data_xml: Option<Arc<str>>,
+    pub(crate) rebuilt: bool,
 }
 
 /// A chart frame: the chart part (`c:chart r:id`).
@@ -273,9 +281,12 @@ pub enum Vert {
     Down,
     /// Turned 270° (`vert270`): reads upwards.
     Up,
-    /// East Asian vertical (`eaVert`, `mongolianVert`): lines run down,
-    /// CJK characters stand upright, other text is turned 90° clockwise.
+    /// East Asian vertical (`eaVert`): lines run down, CJK characters
+    /// stand upright, other text is turned 90° clockwise; lines stack
+    /// right to left.
     EaDown,
+    /// `mongolianVert`: as [`Vert::EaDown`], but lines stack left to right.
+    Mongolian,
     /// Stacked (`wordArtVert`, `wordArtVertRtl`): lines run down, every
     /// character upright.
     Stacked,
@@ -285,7 +296,8 @@ impl Vert {
     pub fn parse(v: Option<&str>) -> Option<Self> {
         Some(match v? {
             "vert" => Self::Down,
-            "eaVert" | "mongolianVert" => Self::EaDown,
+            "eaVert" => Self::EaDown,
+            "mongolianVert" => Self::Mongolian,
             "wordArtVert" | "wordArtVertRtl" => Self::Stacked,
             "vert270" => Self::Up,
             _ => Self::Horz,
@@ -294,7 +306,10 @@ impl Vert {
 
     /// Laid out turned 90° clockwise (lines run down the box).
     pub fn is_down(self) -> bool {
-        matches!(self, Self::Down | Self::EaDown | Self::Stacked)
+        matches!(
+            self,
+            Self::Down | Self::EaDown | Self::Mongolian | Self::Stacked
+        )
     }
 }
 
@@ -962,7 +977,7 @@ pub(crate) fn parse_graphic_frame(
             drawing: None,
         }));
     }
-    if let Some(c) = child(data, NS_C, "chart") {
+    if let Some(c) = child(data, NS_C, "chart").or_else(|| child(data, NS_CX, "chart")) {
         return Some(FrameContent::Chart(ChartRef {
             part: rel_part(r_attr(c, "id")),
         }));

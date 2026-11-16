@@ -274,8 +274,14 @@ impl Out<'_> {
 /// A rectangle `[x, y, w, h]`.
 type Rect = [f32; 4];
 
+#[path = "ex_draw.rs"]
+mod ex_draw;
+
+pub use ex_draw::squarify;
+
 /// The chart's marks in a `w` × `h` frame.
 pub fn layout(chart: &Chart, w: f32, h: f32, d: &Defaults, m: &mut dyn Measure) -> Vec<Mark> {
+    let chart = &*super::ex::expand(chart, d);
     let mut o = Out {
         marks: Vec::new(),
         d,
@@ -305,6 +311,35 @@ pub fn layout(chart: &Chart, w: f32, h: f32, d: &Defaults, m: &mut dyn Measure) 
     }
     if area[2] < 4.0 || area[3] < 4.0 {
         return o.marks;
+    }
+    let first = chart.groups.first();
+    let plot = manual_rect(chart.plot_layout, w, h).unwrap_or(area);
+    match first.map(|g| (g, &g.kind)) {
+        Some((_, Kind::Surface { .. })) => {
+            ex_draw::surface(chart, &mut o, plot);
+            return o.marks;
+        }
+        Some((g, Kind::OfPie(of))) => {
+            plot_back(chart, &mut o, plot);
+            ex_draw::of_pie(g, of, &mut o, plot);
+            return o.marks;
+        }
+        Some((g, Kind::Ex(x))) => match x.kind {
+            super::ex::ExKind::Funnel => {
+                ex_draw::funnel(chart, g, x, &mut o, plot);
+                return o.marks;
+            }
+            super::ex::ExKind::Treemap { .. } => {
+                ex_draw::treemap(chart, g, x, &mut o, plot);
+                return o.marks;
+            }
+            super::ex::ExKind::Sunburst => {
+                ex_draw::sunburst(chart, g, &mut o, plot);
+                return o.marks;
+            }
+            _ => {}
+        },
+        _ => {}
     }
     if chart
         .groups
@@ -411,6 +446,66 @@ pub fn legend_entries(chart: &Chart, d: &Defaults) -> Vec<Entry> {
         .map(|l| l.deleted.clone())
         .unwrap_or_default();
     let mut out = Vec::new();
+    if let Some(keys) = &chart.legend_keys {
+        return keys
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !deleted.contains(i))
+            .map(|(_, (text, fill))| Entry {
+                text: text.clone(),
+                fill: fill.clone(),
+                line: None,
+                line_key: false,
+                marker: None,
+            })
+            .collect();
+    }
+    if let Some(g) = chart.groups.first() {
+        match &g.kind {
+            Kind::Surface { .. } => {
+                out = ex_draw::surface_bands(chart)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(k, b)| Entry {
+                        text: ex_draw::band_label(chart, b),
+                        fill: ex_draw::band_fill(g, k, d),
+                        line: None,
+                        line_key: false,
+                        marker: None,
+                    })
+                    .collect();
+            }
+            Kind::Ex(x)
+                if matches!(
+                    x.kind,
+                    super::ex::ExKind::Treemap { .. } | super::ex::ExKind::Sunburst
+                ) =>
+            {
+                if let Some(s) = g.series.first() {
+                    out = super::ex::hierarchy(s)
+                        .into_iter()
+                        .enumerate()
+                        .map(|(k, n)| Entry {
+                            text: n.label,
+                            fill: Fill::Solid(auto_color(d, k), 255),
+                            line: None,
+                            line_key: false,
+                            marker: None,
+                        })
+                        .collect();
+                }
+            }
+            _ => {}
+        }
+        if !out.is_empty() {
+            return out
+                .into_iter()
+                .enumerate()
+                .filter(|(i, _)| !deleted.contains(i))
+                .map(|(_, e)| e)
+                .collect();
+        }
+    }
     let varied = chart.groups.len() == 1
         && chart.groups[0].series.len() == 1
         && (chart.groups[0].vary_colors
@@ -430,6 +525,15 @@ pub fn legend_entries(chart: &Chart, d: &Defaults) -> Vec<Entry> {
                     text: cat_label(s, i, None),
                     fill: st.fill,
                     line: st.line,
+                    line_key: false,
+                    marker: None,
+                });
+            }
+            if matches!(g.kind, Kind::OfPie(_)) {
+                out.push(Entry {
+                    text: tr("Other").to_owned(),
+                    fill: Fill::Solid(auto_color(d, n), 255),
+                    line: None,
                     line_key: false,
                     marker: None,
                 });
@@ -735,7 +839,7 @@ fn series_line(g: &Group, s: &Series, auto: Rgb) -> Option<Stroke> {
 /// A point's fill and outline (`c:dPt`, varied colours, the series').
 fn point_style(g: &Group, s: &Series, i: usize, d: &Defaults) -> Style {
     let varied = g.vary_colors
-        && (matches!(g.kind, Kind::Pie { .. }) || g.series.len() == 1)
+        && (matches!(g.kind, Kind::Pie { .. } | Kind::OfPie(_)) || g.series.len() == 1)
         && !is_line_kind(g);
     let base = if varied {
         let auto = auto_color(d, i);
@@ -1353,9 +1457,29 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
                     axes[vi].fmt = s.fmt.clone();
                 }
             }
+        } else if let Kind::Ex(x) = &g.kind {
+            // Box & whisker: its own categories and range.
+            let (lo, hi) = ex_draw::box_range(x);
+            let v = &mut axes[vi];
+            v.lo = v.lo.min(lo);
+            v.hi = v.hi.max(hi);
+            if v.fmt.is_none() {
+                v.fmt = g.series.iter().find_map(|s| s.fmt.clone());
+            }
+            let c = &mut axes[ci];
+            c.ncat = c.ncat.max(x.cats.len());
+            if c.labels.is_empty() {
+                c.labels = x.cats.clone();
+            }
+            c.between = true;
         } else {
             let v = &mut axes[vi];
-            if grouping.stacked() {
+            if let Some(ranges) = g.series.iter().find_map(|s| s.float.as_ref()) {
+                for (a, b) in ranges.ranges.iter().flatten() {
+                    v.lo = v.lo.min(a.min(*b));
+                    v.hi = v.hi.max(a.max(*b));
+                }
+            } else if grouping.stacked() {
                 let vals: Vec<&[Option<f64>]> =
                     g.series.iter().map(|s| s.vals.as_slice()).collect();
                 for (a, b) in stacked_values(&vals, grouping).into_iter().flatten() {
@@ -1628,7 +1752,8 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
                 stock_lines(g, ca, va, plot, o);
                 lines(g, ca, va, plot, Grouping::Standard, o, &mut labels)
             }
-            Kind::Pie { .. } | Kind::Radar { .. } => {}
+            Kind::Ex(ref x) => ex_draw::boxes(g, x, ca, va, plot, o),
+            Kind::Pie { .. } | Kind::Radar { .. } | Kind::Surface { .. } | Kind::OfPie(_) => {}
         }
     }
     // Axis lines, ticks and labels.
@@ -1943,13 +2068,21 @@ fn bars(
     let base_v = clamp(0.0);
     for (k, s) in g.series.iter().enumerate() {
         let slot = if grouping.stacked() { 0.0 } else { k as f32 };
+        // Waterfall connectors: from each bar's end to the next bar.
+        let joiner = s
+            .float
+            .as_ref()
+            .and_then(|f| f.connectors.as_ref())
+            .and_then(|l| stroke_of(l.line.as_ref(), Some((AXIS, 0.75))));
+        let mut prev: Option<(f32, f32)> = None;
         for (i, v) in s.vals.iter().enumerate() {
             let Some(v) = v else { continue };
             let (b0, b1) = stacks[k][i];
-            let (b0, b1) = if grouping.stacked() {
-                (b0, b1)
-            } else {
-                (base_v, b1)
+            let (b0, b1) = match s.float.as_ref().and_then(|f| f.ranges.get(i).copied()) {
+                Some(Some(r)) => r,
+                Some(None) => continue,
+                None if grouping.stacked() => (b0, b1),
+                None => (base_v, b1),
             };
             let u0 = i as f32 + gp * bw / 2.0 + slot * bw * (1.0 - ov);
             let u1 = u0 + bw;
@@ -1967,6 +2100,17 @@ fn bars(
                 &st.fill,
                 st.line,
             );
+            if let Some(j) = &joiner {
+                if let Some((c_end, v_end)) = prev {
+                    let c_start = c0.min(c1);
+                    if ca.vertical {
+                        o.line(p(v_end, c_end), p(v_end, c_start), j);
+                    } else {
+                        o.line(p(c_end, v_end), p(c_start, v_end), j);
+                    }
+                }
+                prev = Some((c0.max(c1), v1));
+            }
             if let Some(l) = series_labels(g, s, i)
                 && let Some(text) = label_text(&l, s, i, *v, None)
             {

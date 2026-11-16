@@ -44,9 +44,7 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Docs: SmartArt is drawn, on screen and in the PDF, from the shapes Word saved for it (with
   Slides' SmartArt code). Double-click a SmartArt shape to edit its text; it's saved to both the
   drawing and the SmartArt's data, so Word shows the edit too. Items can't be added or removed.
-- Docs: radar, bubble, stock and 3-D charts (drawn flat) are drawn too, as in Slides; only
-  surface, pie-of-pie and bar-of-pie charts and Office 2016 charts (waterfall, treemap…) are still
-  boxes.
+- Docs: radar, bubble, stock and 3-D charts (drawn flat) are drawn too, as in Slides.
 - Docs: with Track Changes on, inserting and deleting table columns is tracked as Word does it
   (each cell marked inserted or deleted, the column widths it changed kept as a formatting change),
   and tracked rows and cells are shaded as in Word (inserted light blue, deleted pink). Table, row
@@ -55,6 +53,32 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Docs: a field's code (Alt+F9, Shift+F9 and the code box) shows the codes of the fields nested in
   it in braces, as Word does (`IF { MERGEFIELD Amount } > 100 …`); typing braces in the code box
   nests fields.
+- Slides, Sheets and Docs: charts that were shown as a placeholder are drawn, on screen and in the
+  PDF: surface charts (as PowerPoint's 2-D contour view, filled bands or a wireframe, with the
+  value bands in the legend), pie of pie and bar of pie (the last points, or the ones chosen,
+  taken out of the pie into a smaller pie or a stacked bar, joined by series lines), and the
+  Office 2016 types: waterfall (with its totals and connector lines), funnel, treemap, sunburst,
+  histogram (Excel's automatic bins, a bin width or count, overflow and underflow bins), Pareto
+  and box & whisker (quartiles, whiskers, mean markers and outliers). Sheets draws them from the
+  live cells. They are kept as they were when saved; the newer types can be moved and resized in
+  Slides but their data isn't edited in Kantor yet. Map charts still show a placeholder.
+- Slides: SmartArt in the common layouts (Basic Block List, Vertical Bullet List, Basic Process,
+  Basic Cycle) is laid out again when its frame is resized, instead of being stretched, and items
+  can be added and removed: right-click a shape for *Add Shape After* or *Add Shape Before* (also
+  in the palette; the SmartArt frame alone adds after the last item), type into the new shape, or
+  press Delete on a shape to remove its item with its sub-items. The arrows of processes and
+  cycles follow, and the data model and drawing are saved so PowerPoint shows the same items. Other
+  layouts (hierarchies and the rest) keep PowerPoint's drawing, are scaled when resized, and say
+  so when you try to add or remove items.
+- Slides: East Asian vertical text uses the font's vertical glyph forms (the `vert` / `vrt2`
+  OpenType features): brackets, parentheses, the long vowel mark ー and the ideographic comma and
+  full stop are drawn in their vertical shapes, upright, on screen and in the PDF (fonts without
+  them keep the turned glyphs). `mongolianVert` text stacks its lines left to right, as
+  PowerPoint does.
+- Slides: SmartArt shapes can be turned with their turn handle, as in PowerPoint; the text turns
+  with the shape, the angle is saved on the SmartArt's item so PowerPoint keeps it, and a
+  SmartArt laid out again keeps the turned shapes turned. (Deleting a SmartArt shape removes its
+  item, in the layouts Kantor lays out.)
 
 ### Fixed
 

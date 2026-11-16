@@ -42,6 +42,12 @@ pub const ENGINE_STRINGS: &[&str] = &[
     tk("Click to add text"),
     tk("Chart Title"),
     tk("Series{}"),
+    // Chart legends and series Kantor names (slides_scene::chart).
+    tk("Waterfall: Increase"),
+    tk("Waterfall: Decrease"),
+    tk("Total"),
+    tk("Cumulative %"),
+    tk("Other"),
 ];
 
 /// Fixed phrases Docs and Slides use for content they can't keep or only

@@ -21,6 +21,7 @@
 //! part ([`Chart::parse`]), puts the cells each series refers to
 //! ([`SeriesRefs`]) in place of the caches, and lays it out with [`items`].
 
+pub mod ex;
 pub mod format;
 pub mod layout;
 pub mod model;

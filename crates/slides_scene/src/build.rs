@@ -557,13 +557,20 @@ impl Builder {
         };
         let mut runs = glyph_runs(&laid.layout);
         let origin = p(laid.dx, laid.dy);
-        if matches!(text.vert, Vert::EaDown | Vert::Stacked) {
+        if text.vert == Vert::Mongolian {
+            // Lines stack left to right: each line's place across the box
+            // mirrored (the box is `w` px across, the layout's height).
+            mirror_lines(&mut runs, &laid.layout, w, laid.dy);
+        }
+        if matches!(text.vert, Vert::EaDown | Vert::Mongolian | Vert::Stacked) {
             // East Asian vertical text: CJK characters (all characters when
-            // stacked) stand upright, each turned back about its centre.
+            // stacked) stand upright, each turned back about its centre;
+            // characters the font has vertical forms of (brackets, ー) take
+            // them and stand upright too.
             let all = text.vert == Vert::Stacked;
             let (upright, kept) = upright_glyphs(runs, all);
             runs = kept;
-            for run in upright {
+            for (run, substituted) in upright {
                 let g = &run.run.glyphs[0];
                 let size = run.run.font_size;
                 // The centre of the glyph's em box (ideographic: 0.88 em
@@ -577,7 +584,10 @@ impl Builder {
                 // up and right on the slide is back along the line and
                 // against the line advance here.
                 let (sx, sy) = match run.sample().chars().next() {
-                    Some('、' | '。' | '，' | '．') => (-size * 0.6, -size * 0.6),
+                    // A vertical form is already placed by the font.
+                    Some('、' | '。' | '，' | '．') if !substituted => {
+                        (-size * 0.6, -size * 0.6)
+                    }
                     _ => (0.0, 0.0),
                 };
                 let back = Affine::translate(-c.x, -c.y)
@@ -620,22 +630,61 @@ fn snap(mut t: Affine) -> Affine {
     t
 }
 
+/// `mongolianVert`: move each run's line to the mirrored place across
+/// the text box (`across` px; `dy` the layout's offset in it), so the first
+/// line is on the left once turned.
+fn mirror_lines(
+    runs: &mut [crate::TextRun],
+    layout: &crate::text::TextLayout,
+    across: f32,
+    dy: f32,
+) {
+    let Some(page) = layout.paged.pages.first() else {
+        return;
+    };
+    for tr in runs {
+        let b = tr.run.baseline;
+        let Some(line) = page
+            .lines
+            .iter()
+            .find(|l| b >= l.top - 0.01 && b <= l.top + l.height + 0.01)
+        else {
+            continue;
+        };
+        let moved = across - 2.0 * dy - line.top - line.height;
+        let delta = moved - line.top;
+        tr.run.baseline += delta;
+        for g in &mut tr.run.glyphs {
+            g.y += delta;
+        }
+    }
+}
+
 /// Split glyph runs into single-glyph runs of the glyphs that stand
-/// upright in vertical text (every glyph if `all`) and the runs of the
-/// rest (in pieces, so each piece keeps its glyphs in order).
+/// upright in vertical text (every glyph if `all`), each with whether it
+/// was swapped for the font's vertical form, and the runs of the rest (in
+/// pieces, so each piece keeps its glyphs in order).
 fn upright_glyphs(
     runs: Vec<crate::TextRun>,
     all: bool,
-) -> (Vec<crate::TextRun>, Vec<crate::TextRun>) {
+) -> (Vec<(crate::TextRun, bool)>, Vec<crate::TextRun>) {
     let mut up = Vec::new();
     let mut kept = Vec::new();
     for tr in runs {
-        let is_up = |g: &docs_layout::PositionedGlyph| {
-            all || tr
-                .text
+        let first = |g: &docs_layout::PositionedGlyph| {
+            tr.text
                 .get(g.cluster.clone())
                 .and_then(|s| s.chars().next())
-                .is_some_and(slides_engine::frame::upright_in_vertical)
+        };
+        // The font's vertical form of a glyph of East Asian text.
+        let vertical = |g: &docs_layout::PositionedGlyph| {
+            first(g)
+                .filter(|c| *c as u32 >= 0x2000)
+                .and_then(|_| crate::vert::vertical_glyph(&tr.run.font, g.id))
+        };
+        let is_up = |g: &docs_layout::PositionedGlyph| {
+            all || first(g).is_some_and(slides_engine::frame::upright_in_vertical)
+                || vertical(g).is_some()
         };
         if !tr.run.glyphs.iter().any(&is_up) {
             kept.push(tr);
@@ -670,8 +719,13 @@ fn upright_glyphs(
                 r.run.advance = g.advance;
                 r.run.underline = None;
                 r.run.text_range = g.cluster.clone();
-                r.run.glyphs = vec![g.clone()];
-                up.push(r);
+                let mut g2 = g.clone();
+                let v = vertical(g);
+                if let Some(id) = v {
+                    g2.id = id;
+                }
+                r.run.glyphs = vec![g2];
+                up.push((r, v.is_some()));
             } else {
                 rest.push(g.clone());
             }

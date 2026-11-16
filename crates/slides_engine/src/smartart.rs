@@ -12,9 +12,13 @@
 //! from; a shape showing several items (a list's bullets) maps one
 //! paragraph run per item, and keeps its paragraph count.
 //!
-//! Adding or removing items and changing the layout need PowerPoint's
-//! layout engine and aren't possible; *Convert to Shapes* turns the
-//! drawing into a group of ordinary shapes.
+//! In the layouts Kantor lays out itself ([`crate::smartart_layout`]:
+//! lists, bullet lists, processes, cycles) a resized SmartArt is laid out
+//! again and items can be added and removed; the new drawing and data
+//! model are kept on the frame ([`DiagramDrawing`]'s `data_xml`,
+//! `rebuilt`) and saved. Other layouts and layout changes need PowerPoint's
+//! layout engine; *Convert to Shapes* turns the drawing into a group of
+//! ordinary shapes.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -130,6 +134,14 @@ impl<'a> Model<'a> {
 
     /// Where the text `shown` of the shape drawing item `model_id` comes from.
     fn link(&self, model_id: Option<&str>, shown: &[String]) -> Link {
+        // Shapes Kantor added name their data item itself.
+        if let Some(m) = model_id
+            && let Some(p) = self.points.get(m)
+            && p.assoc.is_none()
+            && p.node.attribute("type").is_none_or(|t| t == "node")
+        {
+            return Link::One(m.to_owned());
+        }
         let Some(assoc) = model_id
             .and_then(|m| self.points.get(m))
             .and_then(|p| p.assoc)
@@ -314,7 +326,9 @@ impl Presentation {
             (frame.cx, frame.cy),
         )
     }
+}
 
+impl Presentation {
     /// The SmartArt drawing `r` is in, and the shape's index in it.
     fn smartart_of(&self, r: ShapeRef) -> Option<(&DiagramDrawing, usize)> {
         if r.is_top() {
@@ -361,24 +375,39 @@ impl Presentation {
                     continue;
                 };
                 let Some(dd) = &d.drawing else { continue };
-                let changed = dd.changed();
-                if changed.is_empty() {
+                if !dd.needs_save() {
                     continue;
                 }
-                out.push((
-                    dd.part.clone(),
-                    dd.drawing_with_edits(&changed).into_bytes(),
-                ));
-                if let Some(data) = &d.data
-                    && let Some(bytes) = self.part_bytes(data)
-                    && let Ok(text) = std::str::from_utf8(&bytes)
-                    && let Some(new) = data_with_edits(&self.color_ctx(i), data, text, dd, &changed)
-                {
-                    out.push((data.clone(), new.into_bytes()));
+                let Some((drawing, data)) = self.smartart_xml(i, d, dd) else {
+                    continue;
+                };
+                out.push((dd.part.clone(), drawing.into_bytes()));
+                if let (Some(part), Some(data)) = (&d.data, data) {
+                    out.push((part.clone(), data.into_bytes()));
                 }
             }
         }
         out
+    }
+
+    /// The drawing XML of SmartArt `d` on slide `slide` with its edited
+    /// shapes spliced in, and its data model with their text and
+    /// formatting (`None` when the data model is as in the file).
+    pub(crate) fn smartart_xml(
+        &self,
+        slide: usize,
+        d: &DiagramRef,
+        dd: &DiagramDrawing,
+    ) -> Option<(String, Option<String>)> {
+        let changed = dd.changed();
+        let data = d.data.as_ref().and_then(|part| {
+            let file = match &dd.data_xml {
+                Some(_) => String::new(),
+                None => String::from_utf8(self.part_bytes(part)?.to_vec()).ok()?,
+            };
+            dd.data_saved(&self.color_ctx(slide), part, &file, &changed)
+        });
+        Some((dd.drawing_with_edits(&changed), data))
     }
 
     /// PowerPoint's *Convert to Shapes*: SmartArt `r` becomes a group of
@@ -623,6 +652,8 @@ pub fn read_drawing(
         xml: Arc::from(xml),
         ranges,
         links,
+        data_xml: None,
+        rebuilt: false,
     })
 }
 
@@ -724,9 +755,34 @@ impl DiagramDrawing {
         xml
     }
 
+    /// Whether saving writes this SmartArt's parts: shapes were edited,
+    /// or Kantor laid it out again or changed its items.
+    pub fn needs_save(&self) -> bool {
+        self.rebuilt || self.data_xml.is_some() || !self.changed().is_empty()
+    }
+
+    /// The data model as saved with shapes `changed` edited: Kantor's own
+    /// (items added or removed) or else `file_xml` (part `data_part`, as
+    /// read) with their text and formatting; `None` when it is as in the
+    /// file.
+    pub fn data_saved(
+        &self,
+        colors: &ColorCtx,
+        data_part: &str,
+        file_xml: &str,
+        changed: &[usize],
+    ) -> Option<String> {
+        let base = self.data_xml.as_deref().unwrap_or(file_xml);
+        match data_with_edits(colors, data_part, base, self, changed) {
+            Some(new) => Some(new),
+            None => self.data_xml.is_some().then(|| base.to_owned()),
+        }
+    }
+
     /// The drawing and data model parts as saved after edits: the new
-    /// drawing XML, and the data model `data_xml` (part `data_part`) with
-    /// the edited text, when it changed.
+    /// drawing XML, and the data model (`data_xml`, part `data_part`, as
+    /// read, unless Kantor changed its items) with the edited text, when
+    /// it changed.
     pub fn saved_parts(
         &self,
         colors: &ColorCtx,
@@ -736,7 +792,7 @@ impl DiagramDrawing {
         let changed = self.changed();
         (
             self.drawing_with_edits(&changed),
-            data_with_edits(colors, data_part, data_xml, self, &changed),
+            self.data_saved(colors, data_part, data_xml, &changed),
         )
     }
 }
@@ -1028,6 +1084,17 @@ fn set_tx_xfrm(shape: &mut String, tb: &Xfrm) {
         tb.x, tb.y, tb.cx, tb.cy
     );
     shape.replace_range(open_end..close, &body);
+    // Its turn (`rot` on the start tag).
+    let tag = &shape[open..open_end];
+    let mut attrs = split_attrs(tag_attrs(tag));
+    attrs.retain(|(k, _)| k != "rot");
+    if tb.rot != 0 {
+        attrs.insert(0, ("rot".into(), tb.rot.to_string()));
+    }
+    let mut new = format!("<{}", tag_name(tag));
+    write_attrs(&mut new, &attrs);
+    new.push('>');
+    shape.replace_range(open..open_end, &new);
 }
 
 /// Edits recording on presentation item `pt` (`dgm:prSet`) that its shape
@@ -1061,6 +1128,15 @@ fn point_layout_edits(xml: &str, pt: Node, old: &Xfrm, new: &Xfrm) -> Vec<(Range
         let sy = get(&attrs, "custScaleY").unwrap_or(100_000) as f64 * ratio(new.cy, old.cy);
         set(&mut attrs, "custScaleX", sx.round() as i64);
         set(&mut attrs, "custScaleY", sy.round() as i64);
+    }
+    // A turn: PowerPoint's custom angle on the presentation item.
+    if new.rot != old.rot {
+        let ang = get(&attrs, "custAng").unwrap_or(0) + (new.rot - old.rot) as i64;
+        set(
+            &mut attrs,
+            "custAng",
+            ang.rem_euclid(360 * crate::model::ROT_PER_DEG as i64),
+        );
     }
     if (ncx - ocx).abs() > 0.5 || (ncy - ocy).abs() > 0.5 {
         let fx = get(&attrs, "custLinFactNeighborX").unwrap_or(0) as f64
@@ -1117,5 +1193,213 @@ fn point_paint_edits(xml: &str, pt: Node, paint: &PaintEdit) -> Vec<(Range<usize
                 .unwrap_or(pt.range().start + tag.len());
             vec![(at..at, buf)]
         }
+    }
+}
+
+// ── laying SmartArt out again, adding and removing items ───────────────────
+
+use crate::smartart_layout::{AddPlace, Family, LAYOUT_REFUSAL};
+
+impl Presentation {
+    /// The SmartArt frame `r` is, or is a shape of.
+    fn smartart_frame_of(&self, r: ShapeRef) -> Option<ShapeRef> {
+        if self.shape(r)?.smartart().is_some() {
+            return Some(r);
+        }
+        if r.is_top() {
+            return None;
+        }
+        let p = r.parent();
+        self.shape(p)?.smartart().is_some().then_some(p)
+    }
+
+    /// The layout family of SmartArt `r` (the frame or one of its
+    /// shapes), when Kantor lays it out itself.
+    pub fn smartart_family(&self, r: impl Into<ShapeRef>) -> Option<Family> {
+        let f = self.smartart_frame_of(r.into())?;
+        let (d, dd) = diagram_of(self.shape(f)?)?;
+        let (drawing, data) = self.smartart_xml(f.0, d, dd)?;
+        let data = match data {
+            Some(x) => x,
+            None => String::from_utf8(self.part_bytes(d.data.as_deref()?)?.to_vec()).ok()?,
+        };
+        crate::smartart_layout::family(&drawing, &data)
+    }
+
+    /// SmartArt frame `f`'s content after `op` changed its parts (current
+    /// drawing and data model XML in, new ones out), laid out in a
+    /// `size` frame.
+    fn smartart_redone(
+        &self,
+        f: ShapeRef,
+        size: (Emu, Emu),
+        op: impl FnOnce(&str, &str) -> anyhow::Result<(String, String)>,
+    ) -> anyhow::Result<crate::frame::Frame> {
+        let sh = self.shape(f).context("no such shape")?;
+        let (d, dd) = diagram_of(sh).context("Select a SmartArt")?;
+        let data_part = d.data.clone().context("SmartArt without data")?;
+        let (drawing, data) = self.smartart_xml(f.0, d, dd).context("SmartArt drawing")?;
+        let data = match data {
+            Some(x) => x,
+            None => String::from_utf8(
+                self.part_bytes(&data_part)
+                    .context("SmartArt data")?
+                    .to_vec(),
+            )?,
+        };
+        let (drawing, data) = op(&drawing, &data)?;
+        let rels = self
+            .part_bytes(&rels_name(&dd.part))
+            .and_then(|b| String::from_utf8(b.to_vec()).ok())
+            .map(|x| parse_rels(&x))
+            .unwrap_or_default();
+        let colors = self.color_ctx(f.0);
+        let mut nd = read_drawing(&dd.part, &drawing, &rels, &data_part, &data, &colors, size)
+            .context("SmartArt drawing")?;
+        nd.data_xml = Some(data.into());
+        nd.rebuilt = true;
+        Ok(crate::frame::Frame::new(FrameContent::Diagram(
+            DiagramRef {
+                data: Some(data_part),
+                drawing: Some(Arc::new(nd)),
+            },
+        )))
+    }
+
+    /// SmartArt frame `f` laid out again for size `size`, if Kantor lays
+    /// its layout out (`None`: scale it as before).
+    pub(crate) fn smartart_relaid(
+        &self,
+        f: ShapeRef,
+        size: (Emu, Emu),
+    ) -> Option<crate::frame::Frame> {
+        self.smartart_family(f)?;
+        self.smartart_redone(f, size, |drawing, data| {
+            Ok((
+                crate::smartart_layout::relayout(drawing, data, size.0, size.1)?,
+                data.to_owned(),
+            ))
+        })
+        .ok()
+    }
+
+    fn set_frame(
+        &mut self,
+        f: ShapeRef,
+        new: crate::frame::Frame,
+        focus: Focus,
+    ) -> anyhow::Result<()> {
+        self.record(Kind::Other, None, focus.clone(), false, |p| {
+            let s = p.slide_mut(f.0)?;
+            let sh = s.shape_at_mut(f.1, f.2).context("no such shape")?;
+            let ShapeKind::Other { frame, .. } = &mut sh.kind else {
+                bail!("Select a SmartArt");
+            };
+            *frame = new;
+            Ok(((), focus))
+        })
+    }
+
+    fn smartart_size(&self, f: ShapeRef) -> anyhow::Result<(Emu, Emu)> {
+        let x = self
+            .shape(f)
+            .and_then(|s| s.xfrm)
+            .context("This SmartArt has no position")?;
+        Ok((x.cx.max(1), x.cy.max(1)))
+    }
+
+    /// PowerPoint's *Add Shape After / Before / Above / Below* on SmartArt
+    /// shape `r`: a new empty item next to the one `r` shows, laid out
+    /// with the others. Returns the new item's shape.
+    pub fn smartart_add_shape(
+        &mut self,
+        r: impl Into<ShapeRef>,
+        place: AddPlace,
+    ) -> anyhow::Result<ShapeRef> {
+        let r: ShapeRef = r.into();
+        let f = self
+            .smartart_frame_of(r)
+            .context("Select a SmartArt shape")?;
+        if self.smartart_family(f).is_none() {
+            bail!(LAYOUT_REFUSAL);
+        }
+        let dd = self
+            .shape(f)
+            .and_then(|s| s.smartart())
+            .context("Select a SmartArt")?;
+        // The selected shape's item (the frame alone: after the last one).
+        let selected = if f == r {
+            dd.group.model_ids.iter().rev().flatten().next().cloned()
+        } else {
+            dd.group
+                .model_ids
+                .get(r.2.last().unwrap_or(0))
+                .cloned()
+                .flatten()
+        }
+        .context("Select an item's shape to add a shape next to it")?;
+        let size = self.smartart_size(f)?;
+        let mut node = String::new();
+        let new = self.smartart_redone(f, size, |drawing, data| {
+            let (d2, data2, id) =
+                crate::smartart_layout::add_item(drawing, data, &selected, place, size.0, size.1)?;
+            node = id;
+            Ok((d2, data2))
+        })?;
+        let at = match new.get() {
+            Some(FrameContent::Diagram(DiagramRef {
+                drawing: Some(dd), ..
+            })) => dd
+                .group
+                .model_ids
+                .iter()
+                .position(|m| m.as_deref() == Some(&node)),
+            _ => None,
+        };
+        let target = at.and_then(|i| f.child(i)).unwrap_or(f);
+        self.set_frame(f, new, Focus::at(target))?;
+        Ok(target)
+    }
+
+    /// Delete SmartArt shape `r`: the item it shows goes (with its
+    /// sub-items), and the others are laid out again.
+    pub fn smartart_delete_shape(&mut self, r: impl Into<ShapeRef>) -> anyhow::Result<()> {
+        let r: ShapeRef = r.into();
+        let f = self
+            .smartart_frame_of(r)
+            .context("Select a SmartArt shape")?;
+        if f == r {
+            bail!("Select a SmartArt shape to delete it");
+        }
+        if self.smartart_family(f).is_none() {
+            bail!(LAYOUT_REFUSAL);
+        }
+        let dd = self
+            .shape(f)
+            .and_then(|s| s.smartart())
+            .context("Select a SmartArt")?;
+        let selected = dd
+            .group
+            .model_ids
+            .get(r.2.last().unwrap_or(0))
+            .cloned()
+            .flatten()
+            .context("This SmartArt shape can't be deleted: it doesn't show an item")?;
+        let size = self.smartart_size(f)?;
+        let new = self.smartart_redone(f, size, |drawing, data| {
+            crate::smartart_layout::remove_item(drawing, data, &selected, size.0, size.1)
+        })?;
+        self.set_frame(f, new, Focus::at(f))
+    }
+}
+
+/// A SmartArt frame's data reference and drawing.
+fn diagram_of(sh: &Shape) -> Option<(&DiagramRef, &DiagramDrawing)> {
+    let ShapeKind::Other { frame, .. } = &sh.kind else {
+        return None;
+    };
+    match frame.get()? {
+        FrameContent::Diagram(d) => Some((d, d.drawing.as_deref()?)),
+        _ => None,
     }
 }

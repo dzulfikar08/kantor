@@ -468,12 +468,9 @@ fn scatter_area_and_unsupported() {
     );
     let m = marks(&area, 400.0, 300.0);
     assert_eq!(solid_boxes(&m).iter().filter(|b| b.0 == A2).count(), 2);
-    // Surface: not drawn (placeholder).
-    let surface = space(
-        r#"<c:surfaceChart><c:wireframe val="0"/></c:surfaceChart>"#,
-        "",
-    );
-    assert!(!parse(&surface).drawable());
+    // A region map (chartex) isn't drawn: placeholder.
+    let map = r#"<cx:chartSpace xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex"><cx:chart><cx:plotArea><cx:plotAreaRegion><cx:series layoutId="regionMap"/></cx:plotAreaRegion></cx:plotArea></cx:chart></cx:chartSpace>"#;
+    assert!(!parse(map).drawable());
 }
 
 #[test]
@@ -689,4 +686,212 @@ fn horizontal_bar_value_labels_sit_outside_the_plot() {
         (false, true),
         "low end of a reversed axis"
     );
+}
+
+const A3: Rgb = Rgb([0x33, 0, 0]);
+
+#[test]
+fn surface_charts_show_value_bands_from_above() {
+    let sers: String = (0..3)
+        .map(|j| {
+            let vals: Vec<f64> = (0..4).map(|i| (i * 10 + j * 5) as f64).collect();
+            ser(j, &format!("S{j}"), &["a", "b", "c", "d"], &vals, "")
+        })
+        .collect();
+    let xml = space(
+        &format!(
+            r#"<c:surfaceChart><c:wireframe val="0"/>{sers}<c:axId val="1"/><c:axId val="2"/><c:axId val="3"/></c:surfaceChart><c:catAx><c:axId val="1"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="2"/></c:catAx><c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorUnit val="10"/><c:crossAx val="1"/></c:valAx><c:serAx><c:axId val="3"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="2"/></c:serAx>"#
+        ),
+        r#"<c:autoTitleDeleted val="1"/><c:legend><c:legendPos val="r"/></c:legend>"#,
+    );
+    let m = marks(&xml, 500.0, 300.0);
+    let t = texts(&m);
+    // Bands of the major unit in the legend, series up the side.
+    for want in ["0-10", "30-40", "S0", "S2", "a", "d"] {
+        assert!(t.contains(&want.into()), "{want} in {t:?}");
+    }
+    let boxes = solid_boxes(&m);
+    assert!(drawn(&boxes, A1).len() == 1 && drawn(&boxes, A3).len() == 1);
+    // Wireframe: lines only.
+    let wire = xml.replace(r#"<c:wireframe val="0"/>"#, r#"<c:wireframe val="1"/>"#);
+    let m = marks(&wire, 500.0, 300.0);
+    assert!(drawn(&solid_boxes(&m), A1).is_empty());
+}
+
+#[test]
+fn pie_of_pie_takes_the_last_points_out() {
+    let cats = ["A", "B", "C", "D", "E"];
+    let pie = |ty: &str| {
+        space(
+            &format!(
+                r#"<c:ofPieChart><c:ofPieType val="{ty}"/><c:varyColors val="1"/>{}<c:gapWidth val="100"/><c:splitType val="pos"/><c:splitPos val="2"/><c:secondPieSize val="50"/><c:serLines/></c:ofPieChart>"#,
+                ser(0, "Share", &cats, &[4.0, 3.0, 1.0, 1.0, 1.0], "")
+            ),
+            r#"<c:autoTitleDeleted val="1"/><c:legend><c:legendPos val="b"/></c:legend>"#,
+        )
+    };
+    let m = marks(&pie("pie"), 600.0, 300.0);
+    let t = texts(&m);
+    assert!(t.contains(&"Other".into()), "{t:?}");
+    let boxes = solid_boxes(&m);
+    // D and E (accents 4, 5) in the right-hand pie.
+    let d = drawn(&boxes, Rgb([0x44, 0, 0]));
+    let a = drawn(&boxes, A1);
+    assert_eq!((d.len(), a.len()), (1, 1));
+    assert!(d[0][0] > a[0][2], "{d:?} right of {a:?}");
+    // Bar of pie: the taken points stacked in a bar.
+    let m = marks(&pie("bar"), 600.0, 300.0);
+    let d = drawn(&solid_boxes(&m), Rgb([0x44, 0, 0]));
+    let e = drawn(&solid_boxes(&m), Rgb([0x55, 0, 0]));
+    assert!((d[0][0] - e[0][0]).abs() < 0.01 && d[0][3] <= e[0][1] + 0.01);
+}
+
+const CX: &str = "http://schemas.microsoft.com/office/drawing/2014/chartex";
+
+fn chartex(layout: &str, data: &str, layout_pr: &str, labels: &str) -> String {
+    format!(
+        r#"<cx:chartSpace xmlns:cx="{CX}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><cx:chartData><cx:data id="0">{data}</cx:data></cx:chartData><cx:chart><cx:plotArea><cx:plotAreaRegion><cx:series layoutId="{layout}"><cx:tx><cx:txData><cx:v>Sales</cx:v></cx:txData></cx:tx>{labels}<cx:dataId val="0"/><cx:layoutPr>{layout_pr}</cx:layoutPr></cx:series></cx:plotAreaRegion><cx:axis id="0"><cx:catScaling gapWidth="0.5"/><cx:tickLabels/></cx:axis><cx:axis id="1"><cx:valScaling/><cx:majorGridlines/><cx:tickLabels/></cx:axis></cx:plotArea><cx:legend pos="t"/></cx:chart></cx:chartSpace>"#
+    )
+}
+
+fn cx_dim(cats: &[&[&str]], vals: &[f64]) -> String {
+    let lvl = |pts: Vec<String>| {
+        let body: String = pts
+            .iter()
+            .enumerate()
+            .map(|(i, p)| format!(r#"<cx:pt idx="{i}">{p}</cx:pt>"#))
+            .collect();
+        format!(r#"<cx:lvl ptCount="{}">{body}</cx:lvl>"#, pts.len())
+    };
+    let mut out = String::new();
+    if !cats.is_empty() {
+        out.push_str(r#"<cx:strDim type="cat"><cx:f>Sheet1!$A$2:$A$9</cx:f>"#);
+        for l in cats {
+            out.push_str(&lvl(l.iter().map(|s| s.to_string()).collect()));
+        }
+        out.push_str("</cx:strDim>");
+    }
+    out.push_str(r#"<cx:numDim type="val"><cx:f>Sheet1!$B$2:$B$9</cx:f>"#);
+    out.push_str(&lvl(vals.iter().map(|v| v.to_string()).collect()));
+    out.push_str("</cx:numDim>");
+    out
+}
+
+const VALUES: &str = r#"<cx:dataLabels pos="outEnd"><cx:visibility seriesName="0" categoryName="0" value="1"/></cx:dataLabels>"#;
+
+#[test]
+fn waterfalls_float_on_a_running_total() {
+    let xml = chartex(
+        "waterfall",
+        &cx_dim(&[&["Start", "Up", "Down", "End"]], &[10.0, 5.0, -3.0, 12.0]),
+        r#"<cx:subtotals><cx:idx val="0"/><cx:idx val="3"/></cx:subtotals>"#,
+        VALUES,
+    );
+    let m = marks(&xml, 500.0, 300.0);
+    let t = texts(&m);
+    for want in ["Increase", "Decrease", "Total", "Start", "End", "-3", "12"] {
+        assert!(t.contains(&want.into()), "{want} in {t:?}");
+    }
+    let boxes = solid_boxes(&m);
+    let up = drawn(&boxes, A1);
+    let down = drawn(&boxes, A2);
+    let totals = drawn(&boxes, A3);
+    assert_eq!((up.len(), down.len(), totals.len()), (1, 1, 2));
+    // "Up" floats from 10 to 15: its bottom is the first total's top.
+    assert!((up[0][3] - totals[0][1]).abs() < 0.5, "{up:?} {totals:?}");
+    // "Down" hangs from 15 down to 12: its top is Up's top.
+    assert!((down[0][1] - up[0][1]).abs() < 0.5);
+}
+
+#[test]
+fn funnels_treemaps_and_sunbursts() {
+    let f = chartex(
+        "funnel",
+        &cx_dim(&[&["Leads", "Calls", "Deals"]], &[100.0, 50.0, 10.0]),
+        "",
+        VALUES,
+    );
+    let m = marks(&f, 400.0, 300.0);
+    let bars = drawn(&solid_boxes(&m), A1);
+    assert_eq!(bars.len(), 3);
+    let widths: Vec<f32> = bars.iter().map(|b| b[2] - b[0]).collect();
+    assert!(widths[0] > widths[2] * 9.0, "{widths:?}");
+    assert!(texts(&m).contains(&"Leads".into()));
+
+    let cats: [&[&str]; 2] = [&["a", "b", "c", "d"], &["X", "X", "Y", "Y"]];
+    let data = cx_dim(&cats, &[4.0, 2.0, 1.0, 1.0]);
+    let t = chartex(
+        "treemap",
+        &data,
+        r#"<cx:parentLabelLayout val="banner"/>"#,
+        "",
+    );
+    let m = marks(&t, 400.0, 300.0);
+    let tx = texts(&m);
+    for want in ["X", "Y", "a", "b"] {
+        assert!(tx.contains(&want.into()), "{want} in {tx:?}");
+    }
+    let boxes = solid_boxes(&m);
+    // X's leaves take three quarters of the area.
+    let area = |c: Rgb| -> f32 {
+        drawn(&boxes, c)
+            .iter()
+            .map(|b| (b[2] - b[0]) * (b[3] - b[1]))
+            .sum()
+    };
+    let (x, y) = (area(A1), area(A2));
+    assert!((x / (x + y) - 0.75).abs() < 0.08, "{x} {y}");
+
+    let s = chartex("sunburst", &data, "", "");
+    let m = marks(&s, 400.0, 300.0);
+    assert!(texts(&m).contains(&"X".into()));
+    assert!(drawn(&solid_boxes(&m), A1).len() >= 3);
+}
+
+#[test]
+fn histograms_paretos_and_boxes() {
+    let vals = [1.0, 2.0, 2.5, 4.0, 6.0];
+    let h = chartex(
+        "clusteredColumn",
+        &cx_dim(&[], &vals),
+        r#"<cx:binning intervalClosed="r"><cx:binSize val="2"/></cx:binning>"#,
+        "",
+    );
+    let m = marks(&h, 400.0, 300.0);
+    let t = texts(&m);
+    assert!(
+        t.contains(&"[1, 3]".into()) && t.contains(&"(5, 7]".into()),
+        "{t:?}"
+    );
+
+    // Pareto: categories by frequency, with the cumulative line.
+    let data = cx_dim(&[&["x", "y", "x", "z", "x", "y"]], &[1.0; 6]);
+    let pareto = chartex("clusteredColumn", &data, "<cx:aggregation/>", "").replace(
+        "</cx:plotAreaRegion>",
+        r#"<cx:series layoutId="paretoLine" ownerIdx="0"><cx:axisId val="2"/></cx:series></cx:plotAreaRegion>"#,
+    );
+    let m = marks(&pareto, 400.0, 300.0);
+    let t = texts(&m);
+    let order: Vec<&String> = t
+        .iter()
+        .filter(|s| ["x", "y", "z"].contains(&s.as_str()))
+        .collect();
+    assert_eq!(order, ["x", "y", "z"]);
+    assert!(t.contains(&"100%".into()), "{t:?}");
+
+    let data = cx_dim(
+        &[&["a", "a", "a", "a", "b", "b", "b", "b"]],
+        &[1.0, 2.0, 3.0, 4.0, 10.0, 11.0, 12.0, 40.0],
+    );
+    let b = chartex(
+        "boxWhisker",
+        &data,
+        r#"<cx:visibility meanLine="1" meanMarker="1" nonoutliers="0" outliers="1"/><cx:statistics quartileMethod="exclusive"/>"#,
+        "",
+    );
+    let m = marks(&b, 400.0, 300.0);
+    let t = texts(&m);
+    assert!(t.contains(&"a".into()) && t.contains(&"b".into()), "{t:?}");
+    // The two boxes, after the legend key.
+    assert_eq!(drawn(&solid_boxes(&m), A1).len(), 2);
 }
