@@ -1832,9 +1832,11 @@ impl FieldKind {
                 && !l.fields.iter().any(|g| g.group_base == Some(f)),
             grouped: field.grouping.is_some() || field.group_base.is_some(),
             ranges: field.formula.is_none()
+                && field.calc_items.is_empty()
                 && field.group_base.is_none()
                 && (field.min.is_some() || field.grouping.is_some()),
             items: field.formula.is_none()
+                && field.calc_items.is_empty()
                 && field.grouping.is_none()
                 && field.group_base.is_none()
                 && field.min.is_none()
