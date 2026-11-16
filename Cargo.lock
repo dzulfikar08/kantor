@@ -7215,7 +7215,9 @@ dependencies = [
  "kantor_numfmt",
  "log",
  "roxmltree 0.21.2",
+ "skrifa 0.42.1",
  "slides_engine",
+ "zip 9.4.1",
 ]
 
 [[package]]

@@ -281,9 +281,12 @@ pub enum Vert {
     Down,
     /// Turned 270° (`vert270`): reads upwards.
     Up,
-    /// East Asian vertical (`eaVert`, `mongolianVert`): lines run down,
-    /// CJK characters stand upright, other text is turned 90° clockwise.
+    /// East Asian vertical (`eaVert`): lines run down, CJK characters
+    /// stand upright, other text is turned 90° clockwise; lines stack
+    /// right to left.
     EaDown,
+    /// `mongolianVert`: as [`Vert::EaDown`], but lines stack left to right.
+    Mongolian,
     /// Stacked (`wordArtVert`, `wordArtVertRtl`): lines run down, every
     /// character upright.
     Stacked,
@@ -293,7 +296,8 @@ impl Vert {
     pub fn parse(v: Option<&str>) -> Option<Self> {
         Some(match v? {
             "vert" => Self::Down,
-            "eaVert" | "mongolianVert" => Self::EaDown,
+            "eaVert" => Self::EaDown,
+            "mongolianVert" => Self::Mongolian,
             "wordArtVert" | "wordArtVertRtl" => Self::Stacked,
             "vert270" => Self::Up,
             _ => Self::Horz,
@@ -302,7 +306,10 @@ impl Vert {
 
     /// Laid out turned 90° clockwise (lines run down the box).
     pub fn is_down(self) -> bool {
-        matches!(self, Self::Down | Self::EaDown | Self::Stacked)
+        matches!(
+            self,
+            Self::Down | Self::EaDown | Self::Mongolian | Self::Stacked
+        )
     }
 }
 

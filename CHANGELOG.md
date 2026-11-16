@@ -42,6 +42,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   cycles follow, and the data model and drawing are saved so PowerPoint shows the same items. Other
   layouts (hierarchies and the rest) keep PowerPoint's drawing, are scaled when resized, and say
   so when you try to add or remove items.
+- Slides: East Asian vertical text uses the font's vertical glyph forms (the `vert` / `vrt2`
+  OpenType features): brackets, parentheses, the long vowel mark ー and the ideographic comma and
+  full stop are drawn in their vertical shapes, upright, on screen and in the PDF (fonts without
+  them keep the turned glyphs). `mongolianVert` text stacks its lines left to right, as
+  PowerPoint does.
 
 ### Fixed
 

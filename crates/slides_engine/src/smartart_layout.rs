@@ -119,11 +119,7 @@ fn view(data: &str) -> anyhow::Result<View> {
         v.sort_by_key(|k| k.0);
     }
     let doc_id = root.attribute("modelId").unwrap_or_default().to_owned();
-    fn subtree<'a>(
-        kids: &Kids<'a>,
-        id: &'a str,
-        out: &mut Vec<String>,
-    ) {
+    fn subtree<'a>(kids: &Kids<'a>, id: &'a str, out: &mut Vec<String>) {
         for (_, k, _) in kids.get(id).into_iter().flatten() {
             if out.len() < 10_000 && !out.iter().any(|o| o == k) {
                 out.push((*k).to_owned());
