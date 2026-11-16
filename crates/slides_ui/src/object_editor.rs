@@ -636,42 +636,66 @@ impl SlidesView {
                         tk("− Category"),
                         tk("Delete the current category"),
                         |v, w, cx| v.chart_category_op(ChartOp::Delete, w, cx),
-                    ))
-                    .child(tool(
-                        "chart-ser-left",
-                        None,
-                        tk("+ Series left"),
-                        tk("Insert a series left of the current cell"),
-                        |v, w, cx| v.chart_series_op(ChartOp::Before, w, cx),
-                    ))
-                    .child(tool(
-                        "chart-ser-right",
-                        None,
-                        tk("+ Series right"),
-                        tk("Insert a series right of the current cell"),
-                        |v, w, cx| v.chart_series_op(ChartOp::After, w, cx),
-                    ))
-                    .child(tool(
-                        "chart-ser-del",
-                        None,
-                        tk("− Series"),
-                        tk("Remove the series of the current cell"),
-                        |v, w, cx| v.chart_series_op(ChartOp::Delete, w, cx),
-                    ))
-                    .child(tool(
-                        "chart-ser-earlier",
-                        None,
-                        tk("◀ Move series"),
-                        tk("Move the series earlier in the plot order"),
-                        |v, w, cx| v.chart_series_op(ChartOp::Earlier, w, cx),
-                    ))
-                    .child(tool(
-                        "chart-ser-later",
-                        None,
-                        tk("Move series ▶"),
-                        tk("Move the series later in the plot order"),
-                        |v, w, cx| v.chart_series_op(ChartOp::Later, w, cx),
                     ));
+                // The Office 2016 types keep their series.
+                if self.pres.chart_series_fixed(e.slide, e.shape) {
+                    bar = bar.child(
+                        div()
+                            .px(SPACE_2)
+                            .text_color(t.fg_muted)
+                            .child(i18n::t("This type of chart keeps its series")),
+                    );
+                    let levels = self.pres.chart_data(e.slide, e.shape).is_some_and(|d| {
+                        d.categories
+                            .iter()
+                            .any(|c| c.contains(slides_engine::CATEGORY_LEVEL_SEP))
+                    });
+                    if levels {
+                        bar = bar.child(
+                            div()
+                                .px(SPACE_2)
+                                .text_color(t.fg_muted)
+                                .child(i18n::t("A category's levels are separated by \" / \"")),
+                        );
+                    }
+                } else {
+                    bar = bar
+                        .child(tool(
+                            "chart-ser-left",
+                            None,
+                            tk("+ Series left"),
+                            tk("Insert a series left of the current cell"),
+                            |v, w, cx| v.chart_series_op(ChartOp::Before, w, cx),
+                        ))
+                        .child(tool(
+                            "chart-ser-right",
+                            None,
+                            tk("+ Series right"),
+                            tk("Insert a series right of the current cell"),
+                            |v, w, cx| v.chart_series_op(ChartOp::After, w, cx),
+                        ))
+                        .child(tool(
+                            "chart-ser-del",
+                            None,
+                            tk("− Series"),
+                            tk("Remove the series of the current cell"),
+                            |v, w, cx| v.chart_series_op(ChartOp::Delete, w, cx),
+                        ))
+                        .child(tool(
+                            "chart-ser-earlier",
+                            None,
+                            tk("◀ Move series"),
+                            tk("Move the series earlier in the plot order"),
+                            |v, w, cx| v.chart_series_op(ChartOp::Earlier, w, cx),
+                        ))
+                        .child(tool(
+                            "chart-ser-later",
+                            None,
+                            tk("Move series ▶"),
+                            tk("Move the series later in the plot order"),
+                            |v, w, cx| v.chart_series_op(ChartOp::Later, w, cx),
+                        ));
+                }
             }
         }
         // Cell fill swatches (tables): the slide's theme colours and none.
