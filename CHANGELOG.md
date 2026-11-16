@@ -25,6 +25,9 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   and tracked rows and cells are shaded as in Word (inserted light blue, deleted pink). Table, row
   and cell property changes in files from Word open (they used to force Save As), show as a
   "Formatted Table" balloon, and can be accepted or rejected.
+- Docs: a field's code (Alt+F9, Shift+F9 and the code box) shows the codes of the fields nested in
+  it in braces, as Word does (`IF { MERGEFIELD Amount } > 100 …`); typing braces in the code box
+  nests fields.
 
 ### Fixed
 

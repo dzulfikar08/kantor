@@ -118,3 +118,42 @@ fn field_codes_replace_results_in_the_layout() {
     let laid = docs_pdf::lay_out(&doc, &mut engine);
     assert!(!laid.paged.pages.is_empty());
 }
+
+/// A field's code in the codes view shows the codes nested in it.
+#[test]
+fn field_codes_show_nested_codes() {
+    let mut doc = docs_engine::Document::open(&corpus("fields.docx")).unwrap();
+    let date = doc
+        .fields()
+        .into_iter()
+        .find(|f| f.kind() == "DATE")
+        .unwrap();
+    let cx = FieldContext {
+        now: NaiveDate::from_ymd_opt(2026, 11, 15)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap(),
+        offset: FixedOffset::east_opt(0).unwrap(),
+    };
+    let mut engine = Engine::new();
+    let code = "IF { DATE \\@ \"yyyy\" } = \"2026\" \"yes\" \"no\"";
+    assert!(doc.set_field_code(
+        date.begin,
+        code,
+        Selection::caret(date.begin),
+        &cx,
+        &mut |d| docs_pdf::field_pages(d, &mut engine)
+    ));
+    doc.set_field_codes(Some(docs_engine::CodeView {
+        all: true,
+        ids: Default::default(),
+    }));
+    let (paras, _, _) = docs_pdf::build::build(&doc);
+    let label = &paras[date.begin.para]
+        .objects
+        .iter()
+        .find(|o| o.index == date.begin.offset)
+        .unwrap()
+        .label;
+    assert_eq!(label, &format!("{{ {code} }}"));
+}

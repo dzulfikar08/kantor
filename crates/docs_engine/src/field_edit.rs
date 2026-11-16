@@ -155,7 +155,7 @@ impl Document {
         let mut paras = base;
         let p = &mut paras[at.para];
         let props = p.props_at(at.offset);
-        let begin = Arc::new(FieldMark::begin(&instr));
+        let begin = Arc::new(FieldMark::begin_nested(&instr));
         let id = Arc::as_ptr(&begin) as usize;
         let mut b = Run::text(OBJ, props.clone());
         b.object = Some(Object::Field(begin));
@@ -189,14 +189,15 @@ impl Document {
         let Some(span) = self.fields().into_iter().find(|s| s.begin == begin) else {
             return false;
         };
-        let instr = format!(" {} ", instr.trim());
-        if span.instr == instr {
+        if span.shown_code() == instr.trim() {
             return true;
         }
+        let instr = format!(" {} ", instr.trim());
         let mut paras = self.paragraphs.clone();
-        // Written as a complex field (a simple one's code is an attribute).
+        // Written as a complex field (a simple one's code is an attribute);
+        // fields typed in braces are nested in its code.
         let has_result = span.result().0 != span.end;
-        let new = Arc::new(match FieldMark::begin(&instr) {
+        let new = Arc::new(match FieldMark::begin_nested(&instr) {
             FieldMark::Begin { instr, code, .. } => FieldMark::Begin {
                 instr,
                 code,

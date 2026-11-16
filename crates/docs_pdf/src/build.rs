@@ -361,7 +361,7 @@ fn show_codes(
             .find(|o| o.index == s.begin.offset)
         {
             o.kind = ObjectKind::Text;
-            o.label = code(&s.instr);
+            o.label = code(&s.shown_code());
             o.width = 0.0;
             o.height = 0.0;
         }

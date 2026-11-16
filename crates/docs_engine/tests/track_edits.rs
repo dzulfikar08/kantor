@@ -303,6 +303,17 @@ fn write_tracked_samples() {
     d.update_fields(all, &cx, &mut |_| Box::new(NoPages));
     d.update_tables_of_contents(caret(1, 0), &cx, &mut |_| Box::new(NoPages));
     d.save_as(&out.join("fields-tracked.docx")).unwrap();
+    // A code typed with a nested field.
+    let mut d = start("fields.docx");
+    let date = d.fields().into_iter().find(|f| f.kind() == "DATE").unwrap();
+    d.set_field_code(
+        date.begin,
+        "IF { DATE \\@ \"yyyy\" } = \"2026\" \"yes\" \"no\"",
+        Selection::caret(date.begin),
+        &cx,
+        &mut |_| Box::new(NoPages),
+    );
+    d.save_as(&out.join("nested-field.docx")).unwrap();
     // Headers and notes.
     let mut d = start("notes.docx");
     let id = d

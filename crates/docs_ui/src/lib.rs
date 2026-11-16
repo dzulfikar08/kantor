@@ -1645,7 +1645,8 @@ impl DocsView {
             && self.codes().shows(f.mark_id())
         {
             let at = point(ev.position.x, ev.position.y + SPACE_5);
-            self.open_code_edit(Some(f.begin), &f.instr, at, window, cx);
+            let code = f.shown_code();
+            self.open_code_edit(Some(f.begin), &code, at, window, cx);
             return;
         }
         // Ctrl+click follows a hyperlink (Word's default).

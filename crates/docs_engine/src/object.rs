@@ -258,6 +258,164 @@ impl FieldMark {
         }
     }
 
+    /// The code as Word's field codes view shows it: the instruction with
+    /// the codes of the fields nested in it in braces
+    /// (`IF { MERGEFIELD Amount } > 100 "Big"`), trimmed. `None` for an end.
+    pub fn shown_code(&self) -> Option<String> {
+        let Self::Begin {
+            instr, code, simple, ..
+        } = self
+        else {
+            return None;
+        };
+        if *simple || !code.contains("instrText") {
+            return Some(instr.trim().to_owned());
+        }
+        let mut r = quick_xml::Reader::from_str(code);
+        let mut out = String::new();
+        // Fields open (this one is the first); inside a nested field's
+        // result nothing is shown.
+        let mut depth = 0usize;
+        let mut in_result: Vec<bool> = Vec::new();
+        let mut in_instr = false;
+        // Just after a nested field's opening brace.
+        let mut fresh = false;
+        loop {
+            match r.read_event() {
+                Ok(quick_xml::events::Event::Start(e)) | Ok(quick_xml::events::Event::Empty(e))
+                    if e.local_name().as_ref() == b"fldChar" =>
+                {
+                    let kind = e
+                        .attributes()
+                        .flatten()
+                        .find(|a| a.key.local_name().as_ref() == b"fldCharType")
+                        .map(|a| a.value.into_owned());
+                    match kind.as_deref() {
+                        Some(b"begin") => {
+                            depth += 1;
+                            in_result.push(false);
+                            if depth > 1 && !in_result[..depth - 1].iter().any(|x| *x) {
+                                let t = out.trim_end().len();
+                                out.truncate(t);
+                                out.push_str(if out.is_empty() { "{ " } else { " { " });
+                                fresh = true;
+                            }
+                        }
+                        Some(b"separate") => {
+                            if let Some(x) = in_result.last_mut() {
+                                *x = true;
+                            }
+                        }
+                        Some(b"end") => {
+                            in_result.pop();
+                            if depth > 1 && !in_result.iter().any(|x| *x) {
+                                let t = out.trim_end().len();
+                                out.truncate(t);
+                                out.push_str(" }");
+                            }
+                            depth = depth.saturating_sub(1);
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(quick_xml::events::Event::Start(e)) if e.local_name().as_ref() == b"instrText" => {
+                    in_instr = true;
+                }
+                Ok(quick_xml::events::Event::End(e)) if e.local_name().as_ref() == b"instrText" => {
+                    in_instr = false;
+                }
+                Ok(quick_xml::events::Event::Text(t)) if in_instr => {
+                    if !in_result.iter().any(|x| *x)
+                        && let Ok(v) = t.xml10_content()
+                    {
+                        out.push_str(if fresh { v.trim_start() } else { &v });
+                        fresh = fresh && v.trim().is_empty();
+                    }
+                }
+                Ok(quick_xml::events::Event::GeneralRef(g)) if in_instr => {
+                    if !in_result.iter().any(|x| *x) {
+                        match g.resolve_char_ref().ok().flatten() {
+                            Some(c) => out.push(c),
+                            None => out.push_str(match &*g as &[u8] {
+                                b"amp" => "&",
+                                b"lt" => "<",
+                                b"gt" => ">",
+                                b"quot" => "\"",
+                                b"apos" => "'",
+                                _ => "",
+                            }),
+                        }
+                    }
+                }
+                Ok(quick_xml::events::Event::Eof) | Err(_) => break,
+                _ => {}
+            }
+        }
+        Some(out.trim().to_owned())
+    }
+
+    /// A field's start from a code typed with nested fields in braces (as
+    /// [`FieldMark::shown_code`] shows them): the nested fields written as
+    /// fields in its code (without results: Word works them out when the
+    /// field is updated). Unbalanced braces are kept as text.
+    pub fn begin_nested(code: &str) -> Self {
+        let balanced = {
+            let mut d = 0i32;
+            code.chars().all(|c| {
+                d += match c {
+                    '{' => 1,
+                    '}' => -1,
+                    _ => 0,
+                };
+                d >= 0
+            }) && d == 0
+        };
+        if !balanced || !code.contains('{') {
+            return Self::begin(code);
+        }
+        let run = |t: &str| {
+            format!(
+                "<w:r><w:instrText xml:space=\"preserve\">{}</w:instrText></w:r>",
+                crate::xml::escape(t)
+            )
+        };
+        let mut xml = String::from("<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>");
+        let mut instr = String::new();
+        let mut depth = 0;
+        let mut piece = String::new();
+        let flush = |piece: &mut String, xml: &mut String, instr: &mut String, depth: i32| {
+            if !piece.is_empty() {
+                xml.push_str(&run(piece));
+                if depth == 0 {
+                    instr.push_str(piece);
+                }
+                piece.clear();
+            }
+        };
+        for c in code.chars() {
+            match c {
+                '{' => {
+                    flush(&mut piece, &mut xml, &mut instr, depth);
+                    xml.push_str("<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>");
+                    depth += 1;
+                }
+                '}' => {
+                    flush(&mut piece, &mut xml, &mut instr, depth);
+                    xml.push_str(FIELD_END);
+                    depth -= 1;
+                }
+                c => piece.push(c),
+            }
+        }
+        flush(&mut piece, &mut xml, &mut instr, depth);
+        Self::Begin {
+            instr,
+            code: xml.into(),
+            sep: None,
+            simple: false,
+        }
+    }
+
     /// A new complex field's start (no result yet).
     pub fn begin(instr: &str) -> Self {
         Self::Begin {
@@ -298,4 +456,40 @@ pub struct Opaque {
     pub xml: String,
     /// Placeholder text, e.g. `Floating image` or `Field: PAGE`.
     pub label: String,
+}
+
+#[cfg(test)]
+mod field_code_tests {
+    use super::*;
+
+    #[test]
+    fn nested_codes_are_shown_in_braces_and_typed_back() {
+        let code = "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+            <w:r><w:instrText xml:space=\"preserve\"> IF </w:instrText></w:r>\
+            <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+            <w:r><w:instrText xml:space=\"preserve\"> MERGEFIELD Amount </w:instrText></w:r>\
+            <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>250</w:t></w:r>\
+            <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+            <w:r><w:instrText xml:space=\"preserve\"> &gt; 100 &quot;Big&quot; &quot;Small&quot; </w:instrText></w:r>";
+        let mark = FieldMark::Begin {
+            instr: " IF  > 100 \"Big\" \"Small\" ".into(),
+            code: code.into(),
+            sep: None,
+            simple: false,
+        };
+        let shown = mark.shown_code().unwrap();
+        // The nested field's code, not its result.
+        assert_eq!(shown, "IF { MERGEFIELD Amount } > 100 \"Big\" \"Small\"");
+        // Typed back: the same code, the nested field a field again.
+        let typed = FieldMark::begin_nested(&shown);
+        assert_eq!(typed.shown_code().unwrap(), shown);
+        assert_eq!(typed.instr().unwrap(), "IF  > 100 \"Big\" \"Small\"");
+        // A plain code is its instruction.
+        assert_eq!(FieldMark::begin(" PAGE ").shown_code().unwrap(), "PAGE");
+        // Unbalanced braces stay text.
+        assert_eq!(
+            FieldMark::begin_nested("QUOTE {x").instr().unwrap(),
+            "QUOTE {x"
+        );
+    }
 }
