@@ -2,7 +2,7 @@
 
 424 public Office files, each opened, saved, reopened and exported to PDF by
 Kantor's engines, with the saved files checked by Microsoft's Open XML SDK.
-First run: 2026-11-15; second and third runs on main: 2026-11-16.
+First run: 2026-11-15; second, third and fourth runs on main: 2026-11-16.
 
 ## What was swept
 
@@ -248,6 +248,50 @@ in full as well: 157 saved files, 0 new Open XML SDK errors, all converted
 to PDF by LibreOffice.
 
 Results: `~/.cache/realworld-out/pre090-2026-11-16/`.
+
+## Fourth run, before v0.10.0 (2026-11-16)
+
+Rerun of all 424 files on main at `2d1388d` (after map charts drawn from
+Office's geography cache, SmartArt hierarchy relayout, Insert Slicer,
+timelines that filter and slicers that print in Sheets, Docs tracked
+cross-column merges, splits and field codes, column insert/delete in
+merged tables, Docs SmartArt editing, gradients and header object
+selection had merged), release build, compared file by file with the
+third run.
+
+| | third run (with its fix) | main, `2d1388d` |
+|---|---:|---:|
+| crash, panic or timeout | 0 | 0 |
+| refused to open | 6 | 6 |
+| saved file Office would repair | 0 | 0 |
+| content changed by a save | 0 | 0 |
+| page count changed by a save (Docs, Slides) | 0 of 199 | 0 of 199 |
+| ok | 418 | 418 |
+| slowest file | 8.4 s | 6.6 s |
+| all files' probe time added up | 144 s | 110 s |
+
+No regressions: the same kinds, errors, counts of cells, formulas,
+paragraphs, slides and shapes, and page counts as the third run, and no new
+Open XML SDK error. No file was flagged as more than twice as slow and over
+a second; the few small `.docx` that took about twice as long in the sweep
+(100–160 ms → 220–360 ms) took 39–60 ms each when run alone.
+
+The Office validation scenarios (`tools/fidelity/office_check.py`): 164
+saved files, 0 new Open XML SDK errors, all converted to PDF by
+LibreOffice. Two scenarios added with the new features failed on their own
+assumptions, not on Kantor's output, and were fixed:
+
+- `slicers_inserted_25_slicers.xlsx` selected the new pivot slicer as
+  "Product", but the file already has a Product slicer, so the new one is
+  named "Product 1" (as in Excel). The scenario now finds the slicers it
+  inserted by key, and changes the settings of its new Region slicer.
+- `edit_region_map.pptx` edited the data of the first chart frame, but a
+  map (chartex) chart has no editable data grid, and then duplicated a slide
+  whose map frame `group_edits` had just put in a group. The scenario now
+  picks a chart with editable data and looks inside groups for frames
+  Kantor can't copy.
+
+Results: `~/.cache/realworld-out/pre0100-2026-11-16/`.
 
 ## Left
 
