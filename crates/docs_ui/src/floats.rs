@@ -87,6 +87,13 @@ const LOCKED: &str = tk(
     "This text box has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet",
 );
 
+/// SmartArt edit messages from `docs_pdf::smartart` (translated with
+/// `t_dyn`).
+const SMARTART_MESSAGES: [&str; 2] = [
+    tk("This SmartArt shape shows several items: keep one line per item"),
+    tk("Kantor can't read this SmartArt's drawing"),
+];
+
 /// Word's Layout Options names in the interface language.
 fn option_label(o: LayoutOption) -> &'static str {
     match o {
@@ -609,7 +616,13 @@ impl DocsView {
                             }
                         }
                         Ok(None) => {}
-                        Err(why) => self.status = t_dyn(why).into(),
+                        Err(why) => {
+                            debug_assert!(
+                                SMARTART_MESSAGES.contains(&why)
+                                    || why.starts_with("This SmartArt text")
+                            );
+                            self.status = t_dyn(why).into();
+                        }
                     }
                 }
                 _ => {
