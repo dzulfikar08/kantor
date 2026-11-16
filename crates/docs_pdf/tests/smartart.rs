@@ -221,3 +221,55 @@ fn items_added_and_removed_and_laid_out_again() {
     assert_eq!(f.at.cx, at.cx * 2);
     assert_eq!(shown(&doc), before_resize);
 }
+
+/// SmartArt laid out again smaller: its text shrinks to fit its shapes
+/// (Word's autofit), and grows back when it's made bigger again.
+#[test]
+fn text_shrinks_to_fit_when_laid_out_again() {
+    let mut doc = open();
+    let (para, index) = anchor(&doc);
+    let f = doc.float_at(para, index).unwrap().clone();
+    let docs_engine::FloatKind::SmartArt { data, drawings } = &f.kind else {
+        panic!()
+    };
+    let drawing = drawings[0].1.clone();
+    let process = vec![
+        (data.clone(), pptx_part("ppt/diagrams/data3.xml").into()),
+        (
+            drawing.clone(),
+            pptx_part("ppt/diagrams/drawing3.xml").into(),
+        ),
+    ];
+    assert!(doc.set_float_parts(para, index, process));
+    let f = doc.float_at(para, index).unwrap().clone();
+    let full = f.at;
+    let mut small = full;
+    small.cx /= 5;
+    small.cy /= 5;
+    let parts = docs_pdf::smartart::relaid(&doc, &f, (small.cx, small.cy)).unwrap();
+    let xml = parts.iter().find(|p| p.0 == drawing).unwrap().1.clone();
+    assert!(xml.contains("fontScale=\""), "{xml}");
+    assert!(doc.set_float_placement_parts(para, index, small, parts));
+    // Every text fits its box.
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let it = laid
+        .floats
+        .iter()
+        .flatten()
+        .find(|it| it.float(&doc).unwrap().name == "Diagram 1")
+        .unwrap();
+    for b in it.boxes.iter().filter(|b| !b.layout.shown(0).is_empty()) {
+        assert!(
+            b.layout.height <= b.rect[3] + 0.5,
+            "{} in {:?}",
+            b.layout.height,
+            b.rect
+        );
+    }
+    // Made big again: the text is as written.
+    let f = doc.float_at(para, index).unwrap().clone();
+    let parts = docs_pdf::smartart::relaid(&doc, &f, (full.cx, full.cy)).unwrap();
+    let xml = parts.iter().find(|p| p.0 == drawing).unwrap().1.clone();
+    assert!(!xml.contains("fontScale=\""), "{xml}");
+}

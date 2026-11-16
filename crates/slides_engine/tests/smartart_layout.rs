@@ -331,3 +331,60 @@ fn hierarchy_shapes_are_added_above_below_and_deleted() {
         .unwrap();
     assert_eq!(drawn(&p, h).len(), n + 3);
 }
+
+/// The `fontScale` of each shape's text (100 000 = as written).
+fn scales(p: &Presentation, f: ShapeRef) -> Vec<(String, u32)> {
+    let g = &p.shape(f).unwrap().smartart().unwrap().group;
+    g.children
+        .iter()
+        .filter_map(|c| {
+            let t = c.text.as_ref().filter(|t| !t.is_empty())?;
+            Some((t.plain_text(), t.body.font_scale.unwrap_or(100_000)))
+        })
+        .collect()
+}
+
+#[test]
+fn text_shrinks_to_fit_when_laid_out_smaller_and_grows_back() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let f = frame(&p, 0);
+    assert!(scales(&p, f).iter().all(|(_, s)| *s == 100_000));
+    let a = find(&p, f, "A");
+    let end = text_ops::end(p.text_paras(a).unwrap());
+    p.insert_text(
+        a,
+        Selection::caret(end),
+        " is a much longer item name",
+        None,
+    )
+    .unwrap();
+    let orig = p.shape(f).unwrap().xfrm.unwrap();
+    // A third of the size: that text no longer fits as written.
+    let mut x = orig;
+    x.cx /= 3;
+    x.cy /= 3;
+    p.set_xfrm(f, x, false).unwrap();
+    let small = scales(&p, f);
+    assert!(small.iter().all(|(_, s)| *s < 100_000), "{small:?}");
+    // The blocks' text is one size, as Office keeps it.
+    assert!(small.iter().all(|(_, s)| *s == small[0].1), "{small:?}");
+    let bytes = p.to_bytes().unwrap();
+    let saved = parts(&bytes);
+    let drawing = &saved["ppt/diagrams/drawing1.xml"];
+    assert!(
+        drawing.contains(&format!("<a:normAutofit fontScale=\"{}\"/>", small[0].1)),
+        "{drawing}"
+    );
+    let back = Presentation::from_bytes(bytes).unwrap();
+    assert_eq!(scales(&back, frame(&back, 0)), small);
+    // Back to its size: the text is as written again.
+    p.set_xfrm(f, orig, false).unwrap();
+    assert!(
+        scales(&p, f).iter().all(|(_, s)| *s == 100_000),
+        "{:?}",
+        scales(&p, f)
+    );
+    // Undo goes back to the small layout with its small text.
+    p.undo();
+    assert_eq!(scales(&p, f), small);
+}

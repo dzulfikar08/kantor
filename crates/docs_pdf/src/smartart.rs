@@ -253,6 +253,32 @@ fn laid_out(
     Ok((sa, id))
 }
 
+/// Kantor's layout of `f` (drawing XML for `data`, a `size` EMU frame) with
+/// its text shrunk to fit the shapes, as Word's autofit does
+/// ([`slides_engine::smartart_fit`]).
+fn fitted(doc: &Document, sa: &SmartArt, drawing: String, data: &str, size: (i64, i64)) -> String {
+    slides_engine::smartart_fit::set_text_measure(slides_scene::text::text_height);
+    let painter = Painter::new(doc);
+    let Some(dd) = slides_engine::smartart::read_drawing(
+        &sa.drawing.part,
+        &drawing,
+        &[],
+        &sa.data,
+        data,
+        &painter.ctx(),
+        size,
+    ) else {
+        return drawing;
+    };
+    let base = ListStyle::default();
+    let minor = painter.minor_font();
+    let text = |shape: &slides_engine::Shape, x: &Xfrm, own: bool| match own {
+        true => slides_engine::render::free_shape_text_boxed(shape, &base, minor),
+        false => slides_engine::render::free_shape_text(shape, &base, minor, x),
+    };
+    slides_engine::smartart_fit::fit_text(&dd, &text).unwrap_or(drawing)
+}
+
 fn parts(sa: &SmartArt, drawing: String, data: Option<String>) -> Parts {
     let mut out = vec![(sa.drawing.part.clone(), Arc::from(drawing))];
     if let Some(d) = data {
@@ -282,6 +308,7 @@ pub fn add_item(doc: &Document, f: &Float, k: usize, after: bool) -> Result<Part
     let (drawing, data, _) =
         slides_engine::smartart_layout::add_item(&sa.drawing_xml, &sa.data_xml, &id, place, w, h)
             .map_err(|_| SELECT_ITEM)?;
+    let drawing = fitted(doc, &sa, drawing, &data, (w, h));
     Ok(parts(&sa, drawing, Some(data)))
 }
 
@@ -300,6 +327,7 @@ pub fn remove_item(doc: &Document, f: &Float, k: usize) -> Result<Parts, &'stati
                     SELECT_ITEM
                 }
             })?;
+    let drawing = fitted(doc, &sa, drawing, &data, (w, h));
     Ok(parts(&sa, drawing, Some(data)))
 }
 
@@ -310,6 +338,7 @@ pub fn relaid(doc: &Document, f: &Float, size: (i64, i64)) -> Option<Parts> {
     let drawing =
         slides_engine::smartart_layout::relayout(&sa.drawing_xml, &sa.data_xml, size.0, size.1)
             .ok()?;
+    let drawing = fitted(doc, &sa, drawing, &sa.data_xml, size);
     Some(parts(&sa, drawing, None))
 }
 
