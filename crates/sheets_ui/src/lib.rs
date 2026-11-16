@@ -601,6 +601,19 @@ impl TableDelegate for SheetGrid {
                 },
             ));
         }
+        // In a PivotTable or a table: Insert Slicer.
+        if self.book.pivot_at(self.sheet, cell.0, cell.1).is_some()
+            || self.book.table_at(self.sheet, cell.0, cell.1).is_some()
+        {
+            let view = self.view.clone();
+            menu = menu.separator().item(
+                PopupMenuItem::new(kantor_ui::i18n::t("Insert Slicer…")).on_click(
+                    move |_, window, cx| {
+                        let _ = view.update(cx, |v, cx| v.insert_slicer_doc(window, cx));
+                    },
+                ),
+            );
+        }
         let has_note = self.book.note_at(self.sheet, cell.0, cell.1).is_some();
         notes_ui::cell_menu_items(menu.separator(), cell, has_note, &self.view)
     }
@@ -1391,6 +1404,11 @@ pub struct SheetsView {
     tab_dialog: Option<sheet_tab_ui::TabDialog>,
     /// The Move Chart dialog (see [`move_chart_ui`]).
     move_chart: Option<move_chart_ui::MoveChartDialog>,
+    /// Insert Slicer, Slicer Settings and a timeline's level menu (see
+    /// [`slicer_ui`]).
+    insert_slicer: Option<slicer_ui::InsertSlicerDialog>,
+    slicer_settings: Option<slicer_ui::SlicerSettingsDialog>,
+    timeline_menu: Option<slicer_ui::TimelineMenu>,
     /// The notes of the cells last copied or cut, with the clipboard text
     /// they go with (Paste brings them while the clipboard holds it).
     note_clip: Option<(String, sheets_engine::NoteClip)>,
@@ -1451,6 +1469,9 @@ impl SheetsView {
             chart_tab: None,
             tab_dialog: None,
             move_chart: None,
+            insert_slicer: None,
+            slicer_settings: None,
+            timeline_menu: None,
             note_clip: None,
             chart_focus: cx.focus_handle(),
             bench: bench::ScrollBench::from_env(),
@@ -2998,6 +3019,9 @@ impl Render for SheetsView {
             .children(self.render_shape_editor(cx))
             .children(self.render_tab_dialog(cx))
             .children(self.render_move_chart(cx))
+            .children(self.render_insert_slicer(cx))
+            .children(self.render_slicer_settings(cx))
+            .children(self.render_timeline_menu(cx))
             .into_any_element()
     }
 }

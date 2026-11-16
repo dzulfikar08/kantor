@@ -624,6 +624,16 @@ impl SheetsView {
                             let _ = nv.update(cx, |this, cx| this.new_table_style_doc(w, cx));
                         }),
                 );
+                let iv = view.clone();
+                b = b.child(
+                    Button::new("table-insert-slicer")
+                        .small()
+                        .outline()
+                        .label(i18n::t("Insert Slicer…"))
+                        .on_click(move |_, w, cx| {
+                            let _ = iv.update(cx, |this, cx| this.insert_slicer_doc(w, cx));
+                        }),
+                );
                 let cv = view.clone();
                 b = b.child(
                     Button::new("table-convert")

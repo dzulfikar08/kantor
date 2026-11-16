@@ -216,8 +216,9 @@ pub fn slicer_xml(v: &SlicerView, w: f32, h: f32, multi: bool) -> String {
     s.group(w, h)
 }
 
-/// Timeline `v` drawn into `w` × `h` px (read-only): caption, the selected
-/// dates, the level and the periods (selected ones filled).
+/// Timeline `v` drawn into `w` × `h` px: caption and Clear Filter, the
+/// selected dates, the level, the periods (selected ones filled) and the
+/// scroll bar when not all of them fit.
 pub fn timeline_xml(v: &TimelineView, w: f32, h: f32) -> String {
     let c = &v.colors;
     let l = timeline_layout(v, w, h);
@@ -231,6 +232,29 @@ pub fn timeline_xml(v: &TimelineView, w: f32, h: f32) -> String {
             None,
             Some(text(&v.caption, c.header, 1100, "l")),
         );
+    }
+    if let Some([x, y, iw, ih]) = l.clear {
+        let ink = if v.filtered { c.header } else { c.no_data_text };
+        s.rect(
+            [x + 3.0, y + 4.0, iw - 9.0, ih - 9.0],
+            "funnel",
+            None,
+            Some(ink),
+            None,
+        );
+        if v.filtered {
+            s.rect(
+                [x + iw - 9.0, y + ih - 9.0, 8.0, 8.0],
+                "mathMultiply",
+                Some(0xC00000),
+                None,
+                None,
+            );
+        }
+    }
+    if let Some((bar, thumb)) = l.scroll {
+        s.rect(bar, "roundRect", Some(0xF2F2F2), None, None);
+        s.rect(thumb, "roundRect", Some(0xBFBFBF), None, None);
     }
     if let Some(label) = &v.label {
         s.rect(

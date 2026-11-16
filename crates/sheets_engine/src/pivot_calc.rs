@@ -314,6 +314,9 @@ pub(crate) struct PivotFilter {
     pub v2: String,
     /// Top 10: the top items (else the bottom ones).
     pub top: bool,
+    /// The timeline that set it (a date filter named after the timeline's
+    /// cache), which also filters a field on no axis.
+    pub name: Option<String>,
 }
 
 impl PivotFilter {
@@ -366,6 +369,7 @@ impl PivotFilter {
             v1,
             v2,
             top,
+            name: f.attribute("name").map(str::to_owned),
         })
     }
 
@@ -378,6 +382,9 @@ impl PivotFilter {
         );
         if let Some(m) = self.measure {
             out.push_str(&format!(" iMeasureFld=\"{m}\""));
+        }
+        if let Some(n) = &self.name {
+            out.push_str(&format!(" name=\"{}\"", esc(n)));
         }
         let arity = filter_arity(&self.kind);
         if matches!(family, FilterFamily::Label | FilterFamily::Date) && arity > 0 {
@@ -392,7 +399,12 @@ impl PivotFilter {
         }
         out.push_str("><autoFilter ref=\"A1\"><filterColumn colId=\"0\">");
         out.push_str(&self.criteria_xml(family));
-        out.push_str("</filterColumn></autoFilter></filter>");
+        out.push_str("</filterColumn></autoFilter>");
+        if self.name.is_some() && family == FilterFamily::Date {
+            // A timeline's: whole days, as Excel writes it.
+            out.push_str("<extLst><ext uri=\"{0605FD5F-26C8-4aeb-8148-2DB25E43C511}\" xmlns:x15=\"http://schemas.microsoft.com/office/spreadsheetml/2010/11/main\"><x15:pivotFilter useWholeDay=\"1\"/></ext></extLst>");
+        }
+        out.push_str("</filter>");
         out
     }
 
@@ -1321,6 +1333,7 @@ mod tests {
             v1: "Ap".into(),
             v2: String::new(),
             top: true,
+            name: None,
         };
         let x = f.xml(1);
         let doc = roxmltree::Document::parse(&x).unwrap();
@@ -1332,6 +1345,7 @@ mod tests {
             v1: "2".into(),
             v2: String::new(),
             top: false,
+            name: None,
         };
         let x = t.xml(2);
         assert!(x.contains("<top10 top=\"0\" val=\"2\""), "{x}");

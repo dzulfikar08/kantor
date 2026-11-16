@@ -555,6 +555,7 @@ impl Workbook {
                     o.shape = Some(Arc::new(crate::chart_edit::NewShape {
                         xml: xml.clone(),
                         name: d.name.clone(),
+                        slicer: None,
                     }));
                 }
                 DrawingKind::Other(_)

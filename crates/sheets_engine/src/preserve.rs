@@ -78,7 +78,11 @@ use roxmltree::{Document, Node};
 use crate::shift::{Moves, parse_range};
 
 mod rich_value;
+mod slicer_parts;
 pub(crate) use rich_value::{CellPicture, RichPicture, read as rich_pictures};
+pub(crate) use slicer_parts::{
+    CacheKind, CacheOut, SlicerOut, SlicerPlan, TimelineCacheOut, TimelineFilter, TimelineOut,
+};
 
 const NS_MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const NS_R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -262,6 +266,8 @@ pub(crate) struct Context<'a> {
     /// The pictures cells show (IMAGE formulas', placed in cells), saved as
     /// Excel's rich values (see `rich_value`).
     pub pictures: &'a [CellPicture],
+    /// Slicers and timelines as they should be saved (see `slicer_parts`).
+    pub slicers: &'a SlicerPlan,
 }
 
 /// A chart sheet to save (see `crate::chart_sheet`).
@@ -545,6 +551,13 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
                     }
                 }
             }
+            if ctx.slicers.active {
+                let before = b.clone();
+                if let Err(e) = slicer_parts::write(&mut b, ctx.slicers) {
+                    notes.push(format!("slicer changes are not saved: {e}"));
+                    b = before;
+                }
+            }
             b.write()
         });
         match polished {
@@ -603,6 +616,7 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
         Ok(true) => polish(&mut merged, tabs, full_calc, &mut polish_notes).and_then(|()| {
             apply_patches(&mut merged, ctx.patches)?;
             added = add_pivots(&mut merged, new_pivots)?;
+            slicer_parts::write(&mut merged, ctx.slicers).map_err(|e| format!("slicers: {e}"))?;
             // Pictures in cells (IMAGE formulas', placed ones): optional,
             // the rest is saved without them.
             let before = merged.clone();
@@ -6831,6 +6845,7 @@ mod tests {
             patches: &Patches::default(),
             chart_sheets: None,
             pictures: &[],
+            slicers: &SlicerPlan::default(),
         };
         let done = finish(out, original, &ctx);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());

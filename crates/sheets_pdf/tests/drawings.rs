@@ -362,3 +362,22 @@ fn image_formulas_print_their_picture_in_the_cell() {
     // The alt text isn't printed under it.
     assert!(page.texts.iter().all(|t| t.text != "Logo"));
 }
+
+#[test]
+fn slicers_and_timelines_print_as_they_show() {
+    let mut book = open("xlsx/25_slicers.xlsx");
+    let opts = only(&book, "Report");
+    let plan = Plan::new(&book, &opts, &mut Shaper::new());
+    // The Region slicer and the Date timeline.
+    assert_eq!(plan.sheets[0].drawings.items.len(), 2);
+    let all = texts(&export(&mut book, &opts)).join("\n");
+    for t in ["Region", "East", "North", "West", "Date", "MONTHS", "Jan"] {
+        assert!(all.contains(t), "{t} missing from {all}");
+    }
+    // The table slicer on Data prints its buttons too.
+    let opts = only(&book, "Data");
+    let all = texts(&export(&mut book, &opts)).join("\n");
+    for t in ["Product", "Apples", "Pears", "Plums"] {
+        assert!(all.contains(t), "{t} missing from {all}");
+    }
+}

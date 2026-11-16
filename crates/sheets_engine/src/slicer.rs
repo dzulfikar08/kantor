@@ -71,7 +71,16 @@ pub(crate) struct SlicerCache {
     pub hide_no_data: bool,
 }
 
-#[derive(Debug, Clone)]
+/// A slicer cache's settings (Slicer Settings' sorting and items with no
+/// data).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct CacheSettings {
+    pub descending: bool,
+    pub cross: Cross,
+    pub hide_no_data: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SlicerDef {
     pub sheet_id: u32,
     pub name: String,
@@ -369,13 +378,16 @@ pub struct SlicerView {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimelinePeriod {
     pub label: String,
+    /// Its first day and the first day of the next period (serials).
+    pub start: f64,
+    pub end: f64,
     /// The year (or year and quarter) above it, on the first period of a
     /// new one.
     pub group: Option<String>,
     pub selected: bool,
 }
 
-/// A timeline as it shows now (read-only).
+/// A timeline as it shows now.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimelineView {
     pub name: String,
@@ -385,10 +397,23 @@ pub struct TimelineView {
     pub label: Option<String>,
     /// `MONTHS`, `YEARS`...
     pub level: Option<String>,
+    /// 0 years, 1 quarters, 2 months, 3 days.
+    pub level_index: u32,
     /// From the first one scrolled to.
     pub periods: Vec<TimelinePeriod>,
+    /// How many periods are before the first one shown, and how many
+    /// there are in all (for the scroll bar).
+    pub before: usize,
+    pub total: usize,
+    /// Some dates are selected (Clear Filter is on).
+    pub filtered: bool,
+    /// Why it can't filter, if it can't.
+    pub problem: Option<String>,
     pub colors: SlicerColors,
 }
+
+/// The time levels' names, as Excel shows them.
+pub const LEVELS: [&str; 4] = ["YEARS", "QUARTERS", "MONTHS", "DAYS"];
 
 /// Where a slicer's parts go in a `w` × `h` px box (`[x, y, w, h]`).
 #[derive(Debug, Clone, PartialEq)]
@@ -441,22 +466,30 @@ pub fn slicer_layout(v: &SlicerView, w: f32, h: f32) -> SlicerLayout {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimelineLayout {
     pub header: Option<[f32; 4]>,
+    /// Clear Filter, in the header.
+    pub clear: Option<[f32; 4]>,
     pub label: [f32; 4],
     pub level: [f32; 4],
     /// The group (year) line above the periods.
     pub groups: [f32; 4],
     /// One per period that fits.
     pub periods: Vec<[f32; 4]>,
+    /// The scroll bar under the periods and its thumb, when not all of
+    /// them fit.
+    pub scroll: Option<([f32; 4], [f32; 4])>,
 }
 
 /// Width of a timeline period cell (px).
 const PERIOD: f32 = 42.0;
+/// Height of a timeline's scroll bar (px).
+const SCROLL: f32 = 7.0;
 
 pub fn timeline_layout(v: &TimelineView, w: f32, h: f32) -> TimelineLayout {
     let mut top = PAD;
-    let mut header = None;
+    let (mut header, mut clear) = (None, None);
     if v.show_header {
         header = Some([PAD, PAD, (w - 2.0 * PAD).max(0.0), HEADER]);
+        clear = Some([w - PAD - ICON, PAD + (HEADER - ICON) / 2.0, ICON, ICON]);
         top += HEADER;
     }
     let label = [PAD, top, (w - 2.0 * PAD) * 0.6, 20.0];
@@ -469,17 +502,28 @@ pub fn timeline_layout(v: &TimelineView, w: f32, h: f32) -> TimelineLayout {
     top += 22.0;
     let groups = [PAD, top, (w - 2.0 * PAD).max(0.0), 18.0];
     top += 18.0;
-    let ph = (h - top - PAD).clamp(10.0, 26.0);
     let n = ((w - 2.0 * PAD) / PERIOD).floor().max(0.0) as usize;
+    let scrolls = v.total > n.min(v.periods.len()) && n > 0;
+    let bottom = if scrolls { SCROLL + 4.0 } else { 0.0 };
+    let ph = (h - top - PAD - bottom).clamp(10.0, 26.0);
     let periods = (0..v.periods.len().min(n))
         .map(|k| [PAD + k as f32 * PERIOD, top, PERIOD - 2.0, ph])
         .collect();
+    let scroll = scrolls.then(|| {
+        let bar = [PAD, top + ph + 4.0, (w - 2.0 * PAD).max(0.0), SCROLL];
+        let total = v.total.max(1) as f32;
+        let tw = (bar[2] * n as f32 / total).clamp(12.0_f32.min(bar[2]), bar[2]);
+        let tx = bar[0] + (bar[2] - tw) * (v.before as f32 / (total - n as f32).max(1.0)).min(1.0);
+        (bar, [tx, bar[1], tw, SCROLL])
+    });
     TimelineLayout {
         header,
+        clear,
         label,
         level,
         groups,
         periods,
+        scroll,
     }
 }
 
@@ -546,16 +590,16 @@ fn colors(name: Option<&str>, t: &ironcalc_base::types::Theme) -> SlicerColors {
 /// An item of a pivot slicer: its shared item (`x` in the cache field's
 /// item list, `None` when the cache lists none), value and state.
 #[derive(Debug, Clone)]
-struct PivotItem {
-    x: Option<usize>,
-    value: Val,
-    selected: bool,
-    no_data: bool,
+pub(crate) struct PivotItem {
+    pub x: Option<usize>,
+    pub value: Val,
+    pub selected: bool,
+    pub no_data: bool,
 }
 
 /// A pivot slicer's connection: the pivot table it shows the state of (the
 /// first one present), its cache and the field.
-struct Conn {
+pub(crate) struct Conn {
     def: Arc<Def>,
     cache: Arc<Cache>,
     field: usize,
@@ -564,12 +608,42 @@ struct Conn {
 }
 
 impl Workbook {
-    fn slicer_def(&self, sheet_id: u32, name: &str) -> Option<&SlicerDef> {
+    /// Slicer `name` on the sheet with `sheet_id` (the file's or one made
+    /// in Kantor), with its settings now.
+    pub(crate) fn slicer_def(&self, sheet_id: u32, name: &str) -> Option<SlicerDef> {
+        let edits = self.edits();
+        if let Some(d) = edits.slicer_defs.get(&(sheet_id, name.to_lowercase())) {
+            return Some(d.clone());
+        }
         self.pivots
             .slicers
             .slicers
             .iter()
             .find(|s| s.sheet_id == sheet_id && s.name.eq_ignore_ascii_case(name))
+            .cloned()
+            .or_else(|| {
+                self.new_slicers()
+                    .into_iter()
+                    .find(|n| n.def.sheet_id == sheet_id && n.def.name.eq_ignore_ascii_case(name))
+                    .map(|n| n.def.clone())
+            })
+    }
+
+    /// Slicer cache `name` (the file's or one made in Kantor), with its
+    /// settings now.
+    pub(crate) fn slicer_cache(&self, name: &str) -> Option<SlicerCache> {
+        let mut c = self.pivots.slicers.cache(name).cloned().or_else(|| {
+            self.new_slicers()
+                .into_iter()
+                .find(|n| n.cache.name.eq_ignore_ascii_case(name))
+                .map(|n| n.cache.clone())
+        })?;
+        if let Some(set) = self.edits().slicer_caches.get(&name.to_lowercase()) {
+            c.descending = set.descending;
+            c.cross = set.cross;
+            c.hide_no_data = set.hide_no_data;
+        }
+        Some(c)
     }
 
     /// The pivot tables of `pivots` (`(sheetId, name)`) present now.
@@ -613,7 +687,7 @@ impl Workbook {
     /// A pivot slicer's items: the field's items with the selection of the
     /// first connected pivot table and the items the other fields' filters
     /// leave without data.
-    fn pivot_items(&self, c: &SlicerCache) -> Result<(Conn, Vec<PivotItem>)> {
+    pub(crate) fn pivot_items(&self, c: &SlicerCache) -> Result<(Conn, Vec<PivotItem>)> {
         let conn = self.conn(c)?;
         let (def, cache, f) = (&conn.def, &conn.cache, conn.field);
         let list = cache.fields[f].item_list().to_vec();
@@ -841,8 +915,8 @@ impl Workbook {
     fn slicer_view_now(&self, sheet_id: u32, name: &str) -> Option<SlicerView> {
         let s = self.slicer_def(sheet_id, name)?;
         let theme = &self.model.get_model().workbook.theme;
-        let c = self.pivots.slicers.cache(&s.cache);
-        let (items, problem) = match c.map(|c| (c, &c.source)) {
+        let c = self.slicer_cache(&s.cache);
+        let (items, problem) = match c.as_ref().map(|c| (c, &c.source)) {
             Some((c, CacheSource::Pivot { .. })) => match self.pivot_items(c) {
                 Ok((conn, items)) => {
                     let cache_problem = conn
@@ -890,14 +964,18 @@ impl Workbook {
         })
     }
 
-    /// The names of the slicers on the sheet with `sheet_id`.
+    /// The names of the slicers on the sheet with `sheet_id` (deleted ones
+    /// left out).
     pub fn slicer_names(&self, sheet_id: u32) -> Vec<String> {
-        self.pivots
-            .slicers
-            .slicers
+        let Some(sheet) = self.sheet_index_of(sheet_id) else {
+            return Vec::new();
+        };
+        self.drawings(sheet)
             .iter()
-            .filter(|s| s.sheet_id == sheet_id)
-            .map(|s| s.name.clone())
+            .filter_map(|d| match &*d.kind {
+                crate::drawing::DrawingKind::Slicer { name } => Some(name.clone()),
+                _ => None,
+            })
             .collect()
     }
 
@@ -919,13 +997,9 @@ impl Workbook {
         }
         let s = self
             .slicer_def(sheet_id, name)
-            .ok_or_else(|| anyhow!("there is no slicer {name}"))?
-            .clone();
+            .ok_or_else(|| anyhow!("there is no slicer {name}"))?;
         let c = self
-            .pivots
-            .slicers
-            .cache(&s.cache)
-            .cloned()
+            .slicer_cache(&s.cache)
             .ok_or_else(|| anyhow!("its slicer cache is missing"))?;
         let all = selected.iter().all(|s| *s);
         match &c.source {
@@ -1050,63 +1124,290 @@ impl Workbook {
         Ok(())
     }
 
-    /// Timeline `name` on the sheet with `sheet_id`, as the file saved it.
-    pub fn timeline_view(&self, sheet_id: u32, name: &str) -> Option<TimelineView> {
-        let t = self
+    /// A timeline's definition now (its level and scroll position as set
+    /// in Kantor).
+    pub(crate) fn timeline_def(&self, sheet_id: u32, name: &str) -> Option<TimelineDef> {
+        let mut t = self
             .pivots
             .slicers
             .timelines
             .iter()
-            .find(|t| t.sheet_id == sheet_id && t.name.eq_ignore_ascii_case(name))?;
-        let theme = &self.model.get_model().workbook.theme;
-        let c = self
-            .pivots
+            .find(|t| t.sheet_id == sheet_id && t.name.eq_ignore_ascii_case(name))?
+            .clone();
+        if let Some((level, scroll)) = self.edits().timelines.get(&(sheet_id, name.to_lowercase()))
+        {
+            t.level = *level;
+            t.scroll = *scroll;
+        }
+        Some(t)
+    }
+
+    fn timeline_cache(&self, name: &str) -> Option<&TimelineCache> {
+        self.pivots
             .slicers
             .timeline_caches
             .iter()
-            .find(|c| c.name.eq_ignore_ascii_case(&t.cache));
+            .find(|c| c.name.eq_ignore_ascii_case(name))
+    }
+
+    /// A timeline's pivot tables present now (the first one shows its
+    /// state) and its field's index in their cache.
+    pub(crate) fn timeline_conn(&self, c: &TimelineCache) -> Result<(Vec<usize>, usize)> {
+        let all = self.connected(&c.pivots);
+        let first = *all
+            .first()
+            .ok_or_else(|| anyhow!("its PivotTable is not in the workbook"))?;
+        let state = self.pivot_state();
+        let def = self.pivot_def(&state, first);
+        let cache = self.pivot_cache(&state, def.cache);
+        let field = cache
+            .fields
+            .iter()
+            .position(|f| f.name.eq_ignore_ascii_case(&c.source_name))
+            .ok_or_else(|| anyhow!("its field {} is not in the PivotTable", c.source_name))?;
+        if let Some(why) = cache
+            .unsupported
+            .clone()
+            .or_else(|| def.unsupported.clone())
+        {
+            bail!(why);
+        }
+        Ok((all, field))
+    }
+
+    /// The dates a timeline selects now (first and last day), `None` for
+    /// all: its pivot table's date filter on the field, else what the file
+    /// saved.
+    pub(crate) fn timeline_selection(&self, c: &TimelineCache) -> Option<(f64, f64)> {
+        let Ok((all, field)) = self.timeline_conn(c) else {
+            return c.selection;
+        };
+        let state = self.pivot_state();
+        let def = self.pivot_def(&state, all[0]);
+        let f = def
+            .filters
+            .iter()
+            .find(|f| f.fld == field && f.kind == "dateBetween")?;
+        let a = crate::pivot_calc::date_serial(&f.v1)?;
+        let b = crate::pivot_calc::date_serial(&f.v2)?;
+        Some((a.min(b).floor(), a.max(b).floor()))
+    }
+
+    /// The first and last day a timeline spans: its cache's bounds, else
+    /// its field's dates in the pivot table's source.
+    fn timeline_bounds(&self, c: &TimelineCache) -> Option<(f64, f64)> {
         // The cache's end date is the day after the last.
-        let bounds = c
-            .and_then(|c| c.bounds)
-            .map(|(a, b)| (a, (b - 1.0).max(a)))
-            .or_else(|| {
-                // The field's dates, from its pivot table's source.
-                let c = c?;
-                let all = self.connected(&c.pivots);
-                let state = self.pivot_state();
-                let def = self.pivot_def(&state, *all.first()?);
-                let cache = self.pivot_cache(&state, def.cache);
+        if let Some((a, b)) = c.bounds {
+            return Some((a, (b - 1.0).max(a)));
+        }
+        let all = self.connected(&c.pivots);
+        let state = self.pivot_state();
+        let def = self.pivot_def(&state, *all.first()?);
+        let cache = self.pivot_cache(&state, def.cache);
+        let f = cache
+            .fields
+            .iter()
+            .position(|f| f.name.eq_ignore_ascii_case(&c.source_name))?;
+        let dates: Vec<f64> = match &cache.records {
+            Some(r) => r
+                .iter()
+                .filter_map(|r| match r.get(f) {
+                    Some(Val::Date(d) | Val::Num(d)) => Some(*d),
+                    _ => None,
+                })
+                .collect(),
+            None => {
                 let (_, _, d) = self.read_source(&cache).ok()?;
                 let k = d
                     .names
                     .iter()
                     .position(|n| n.eq_ignore_ascii_case(&c.source_name))?;
-                let dates: Vec<f64> = d.rows.iter().filter_map(|r| r[k].number()).collect();
-                let lo = dates.iter().copied().fold(f64::INFINITY, f64::min);
-                let hi = dates.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-                lo.is_finite().then_some((lo, hi))
-            });
-        let selection = c.and_then(|c| c.selection);
+                d.rows.iter().filter_map(|r| r[k].number()).collect()
+            }
+        };
+        let lo = dates.iter().copied().fold(f64::INFINITY, f64::min);
+        let hi = dates.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        lo.is_finite().then(|| (lo.floor(), hi.floor()))
+    }
+
+    /// Timeline `name` on the sheet with `sheet_id`, as it shows now.
+    pub fn timeline_view(&self, sheet_id: u32, name: &str) -> Option<TimelineView> {
+        let t = self.timeline_def(sheet_id, name)?;
+        let theme = &self.model.get_model().workbook.theme;
+        let c = self.timeline_cache(&t.cache);
+        let bounds = c.and_then(|c| self.timeline_bounds(c));
+        let selection = c.and_then(|c| self.timeline_selection(c));
+        let problem = match c {
+            Some(c) => self.timeline_conn(c).err().map(|e| e.to_string()),
+            None => Some("its timeline cache is missing".to_owned()),
+        };
         let periods = match bounds {
             Some((lo, hi)) => periods(t.level, t.scroll.unwrap_or(lo).max(lo), hi, selection),
             None => Vec::new(),
         };
+        let before = bounds.map_or(0, |(lo, _)| {
+            let first = t.scroll.unwrap_or(lo).max(lo);
+            periods_between(t.level, lo, first)
+        });
+        let total = bounds.map_or(0, |(lo, hi)| periods_between(t.level, lo, hi) + 1);
         let label = t.show_selection_label.then(|| match selection {
             Some((a, b)) => range_label(t.level, a, b),
             None => "All Periods".to_owned(),
         });
         let level = t
             .show_time_level
-            .then(|| ["YEARS", "QUARTERS", "MONTHS", "DAYS"][t.level.min(3) as usize].to_owned());
+            .then(|| LEVELS[t.level.min(3) as usize].to_owned());
         Some(TimelineView {
             name: t.name.clone(),
             caption: t.caption.clone(),
             show_header: t.show_header,
             label,
             level,
+            level_index: t.level.min(3),
             periods,
+            before,
+            total,
+            filtered: selection.is_some(),
+            problem,
             colors: colors(t.style.as_deref(), theme),
         })
+    }
+
+    /// Filter timeline `name`'s pivot tables to the dates `range` (first
+    /// and last day, any order; `None`: Clear Filter), as Excel does: a
+    /// "between" date filter on the field, named after the timeline. One
+    /// undo step.
+    pub fn timeline_select(
+        &mut self,
+        sheet_id: u32,
+        name: &str,
+        range: Option<(f64, f64)>,
+    ) -> Result<()> {
+        let t = self
+            .timeline_def(sheet_id, name)
+            .ok_or_else(|| anyhow!("there is no timeline {name}"))?;
+        let c = self
+            .timeline_cache(&t.cache)
+            .cloned()
+            .ok_or_else(|| anyhow!("its timeline cache is missing"))?;
+        let (all, _) = self
+            .timeline_conn(&c)
+            .map_err(|e| anyhow!("can't filter with the timeline {}: {e}", t.caption))?;
+        let range = range.map(|(a, b)| (a.min(b).floor(), a.max(b).floor()));
+        if self.timeline_selection(&c) == range {
+            return Ok(());
+        }
+        let state = self.pivot_state();
+        let targets: Vec<(u32, String)> = all
+            .iter()
+            .map(|&i| {
+                let d = self.pivot_def(&state, i);
+                (d.sheet_id, d.name.to_lowercase())
+            })
+            .collect();
+        let mut caches: Vec<usize> = all
+            .iter()
+            .map(|&i| self.pivot_def(&state, i).cache)
+            .collect();
+        caches.sort_unstable();
+        caches.dedup();
+        let field = c.source_name.clone();
+        let filter_name = c.name.clone();
+        let adjust = move |d: &mut Def, cache: &Cache| {
+            if !targets
+                .iter()
+                .any(|(s, n)| *s == d.sheet_id && *n == d.name.to_lowercase())
+            {
+                return;
+            }
+            let Some(f) = cache
+                .fields
+                .iter()
+                .position(|cf| cf.name.eq_ignore_ascii_case(&field))
+            else {
+                return;
+            };
+            // A field keeps one date filter: the timeline's replaces it.
+            d.filters.retain(|x| {
+                x.fld != f
+                    || !matches!(
+                        crate::pivot_calc::filter_family(&x.kind),
+                        Some(crate::pivot_calc::FilterFamily::Date)
+                    )
+            });
+            if let Some((a, b)) = range {
+                d.filters.push(crate::pivot_calc::PivotFilter {
+                    fld: f,
+                    kind: "dateBetween".into(),
+                    measure: None,
+                    v1: crate::pivot::iso_of_serial(a),
+                    v2: crate::pivot::iso_of_serial(b),
+                    top: true,
+                    name: Some(filter_name.clone()),
+                });
+            }
+        };
+        self.rebuild_pivots(
+            &caches,
+            Rebuild {
+                adjust: Some(Box::new(adjust)),
+                ..Default::default()
+            },
+        )?;
+        Ok(())
+    }
+
+    /// Show timeline `name` by years (0), quarters (1), months (2) or days
+    /// (3), scrolled to its selection (else its first date). One undo step.
+    pub fn timeline_set_level(&mut self, sheet_id: u32, name: &str, level: u32) -> Result<()> {
+        let t = self
+            .timeline_def(sheet_id, name)
+            .ok_or_else(|| anyhow!("there is no timeline {name}"))?;
+        let level = level.min(3);
+        if level == t.level {
+            return Ok(());
+        }
+        let first = self
+            .timeline_cache(&t.cache)
+            .and_then(|c| self.timeline_selection(c).or(self.timeline_bounds(c)))
+            .map(|(a, _)| period_bounds(level, a).0);
+        let key = (sheet_id, t.name.to_lowercase());
+        self.own_edit(|e, _| {
+            e.timelines.insert(key, (level, first));
+        });
+        Ok(())
+    }
+
+    /// Scroll timeline `name` by `by` periods (back when negative), within
+    /// its dates. Not an undo step (Excel's scroll bar isn't one).
+    pub fn timeline_scroll(&mut self, sheet_id: u32, name: &str, by: i32) -> Result<()> {
+        let t = self
+            .timeline_def(sheet_id, name)
+            .ok_or_else(|| anyhow!("there is no timeline {name}"))?;
+        let Some((lo, hi)) = self
+            .timeline_cache(&t.cache)
+            .and_then(|c| self.timeline_bounds(c))
+        else {
+            return Ok(());
+        };
+        let mut at = period_bounds(t.level, t.scroll.unwrap_or(lo).max(lo)).0;
+        for _ in 0..by.unsigned_abs() {
+            let next = if by > 0 {
+                period_bounds(t.level, at).1
+            } else {
+                period_bounds(t.level, at - 1.0).0
+            };
+            if next < period_bounds(t.level, lo).0 || next > hi {
+                break;
+            }
+            at = next;
+        }
+        let key = (sheet_id, t.name.to_lowercase());
+        let level = t.level;
+        self.change_edits(|e, _| {
+            e.timelines.insert(key, (level, Some(at)));
+        });
+        Ok(())
     }
 
     /// Slicer caches whose pivot slicer items to write at a save, by part
@@ -1181,7 +1482,7 @@ fn file_items(c: &SlicerCache) -> Vec<SlicerItem> {
 
 /// `xml` (a slicer cache) with its `<tabular>` items `items` (`x`,
 /// selected, no data).
-fn with_items(xml: &str, items: &[(usize, bool, bool)]) -> Option<String> {
+pub(crate) fn with_items(xml: &str, items: &[(usize, bool, bool)]) -> Option<String> {
     let doc = Document::parse(xml).ok()?;
     let tabular = deep(doc.root_element(), "tabular")?;
     let prefix = {
@@ -1269,6 +1570,8 @@ fn periods(level: u32, from: f64, to: f64, selection: Option<(f64, f64)>) -> Vec
         let (label, group) = period_label(level, start);
         out.push(TimelinePeriod {
             label,
+            start,
+            end: next,
             group: (group != last_group && !group.is_empty()).then(|| group.clone()),
             selected: selection.is_some_and(|(a, b)| start <= b.floor() && next > a.floor()),
         });
@@ -1276,6 +1579,22 @@ fn periods(level: u32, from: f64, to: f64, selection: Option<(f64, f64)>) -> Vec
         at = next;
     }
     out
+}
+
+/// How many periods start after the one holding `from`, up to the one
+/// holding `to`.
+fn periods_between(level: u32, from: f64, to: f64) -> usize {
+    let mut at = period_bounds(level, from).0;
+    let mut n = 0;
+    while n < 100_000 {
+        let next = period_bounds(level, at).1;
+        if next > to {
+            break;
+        }
+        at = next;
+        n += 1;
+    }
+    n
 }
 
 /// `Jan - Mar 2026`, `2025 - 2026`, `Q1 - Q2 2026`...

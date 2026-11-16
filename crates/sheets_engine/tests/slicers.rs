@@ -211,3 +211,308 @@ fn a_table_slicer_filters_its_table() {
         ])
     );
 }
+
+fn serial(d: &str) -> f64 {
+    // Days since 1899-12-30.
+    let (y, m, day): (i64, i64, i64) = {
+        let v: Vec<i64> = d.split('-').map(|x| x.parse().unwrap()).collect();
+        (v[0], v[1], v[2])
+    };
+    let a = (14 - m) / 12;
+    let (y2, m2) = (y + 4800 - a, m + 12 * a - 3);
+    let jdn = day + (153 * m2 + 2) / 5 + 365 * y2 + y2 / 4 - y2 / 100 + y2 / 400 - 32045;
+    (jdn - 2_415_019) as f64
+}
+
+const TIMELINE: &str = "NativeTimeline_Date";
+
+#[test]
+fn a_timeline_filters_its_pivot_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = Workbook::open(fixture()).unwrap();
+    assert_eq!(serial("2026-01-01"), 46023.0);
+    // January to March, as a drag over three months sets it.
+    wb.timeline_select(
+        REPORT,
+        TIMELINE,
+        Some((serial("2026-01-01"), serial("2026-03-31"))),
+    )
+    .unwrap();
+    assert_eq!(pivot_values(&wb), ["348", "195", "270", "813", ""]);
+    let t = wb.timeline_view(REPORT, TIMELINE).unwrap();
+    assert_eq!(t.label.as_deref(), Some("Jan - Mar 2026"));
+    assert!(t.filtered);
+    assert_eq!(
+        t.periods.iter().map(|p| p.selected).collect::<Vec<_>>()[..4],
+        [true, true, true, false]
+    );
+    // The Region slicer still filters on top of it.
+    wb.slicer_select(REPORT, "Region", &[true, false, false])
+        .unwrap();
+    assert_eq!(pivot_values(&wb)[3], "309");
+    wb.undo().unwrap();
+    // Saved as Excel saves it: the pivot table's named date filter and the
+    // timeline cache's selection, naming that filter.
+    let (path, p) = save(&mut wb, dir.path(), "timeline-q1.xlsx");
+    let pivot = &p["xl/pivotTables/pivotTable1.xml"];
+    assert!(
+        pivot.contains("type=\"dateBetween\"") && pivot.contains("name=\"NativeTimeline_Date\""),
+        "{pivot}"
+    );
+    let cache = &p["xl/timelineCaches/timelineCache1.xml"];
+    assert!(
+        cache.contains(
+            "<selection startDate=\"2026-01-01T00:00:00\" endDate=\"2026-03-31T00:00:00\"/>"
+        ),
+        "{cache}"
+    );
+    assert!(cache.contains("filterType=\"dateBetween\""), "{cache}");
+    assert!(cache.contains("filterPivotName=\"PivotTable1\""), "{cache}");
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(pivot_values(&back), ["348", "195", "270", "813", ""]);
+    assert_eq!(
+        back.timeline_view(REPORT, TIMELINE)
+            .unwrap()
+            .label
+            .as_deref(),
+        Some("Jan - Mar 2026")
+    );
+    // Clear Filter, saved: no selection, no filter.
+    wb.timeline_select(REPORT, TIMELINE, None).unwrap();
+    assert_eq!(pivot_values(&wb)[3], "1068");
+    let (_, p2) = save(&mut wb, dir.path(), "timeline-all.xlsx");
+    let cache = &p2["xl/timelineCaches/timelineCache1.xml"];
+    assert!(
+        !cache.contains("<selection") && !cache.contains("pivotFilter"),
+        "{cache}"
+    );
+    assert!(!p2["xl/pivotTables/pivotTable1.xml"].contains("dateBetween"));
+    // Undo brings the filter back.
+    wb.undo().unwrap();
+    assert_eq!(pivot_values(&wb)[3], "813");
+}
+
+#[test]
+fn a_timeline_changes_its_level() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = Workbook::open(fixture()).unwrap();
+    wb.timeline_set_level(REPORT, TIMELINE, 1).unwrap();
+    let t = wb.timeline_view(REPORT, TIMELINE).unwrap();
+    assert_eq!(t.level.as_deref(), Some("QUARTERS"));
+    let labels: Vec<_> = t.periods.iter().map(|p| p.label.as_str()).collect();
+    assert_eq!(labels, ["Q1", "Q2", "Q3", "Q4"]);
+    // A quarter selected at that level.
+    let q2 = (t.periods[1].start, t.periods[1].end - 1.0);
+    wb.timeline_select(REPORT, TIMELINE, Some(q2)).unwrap();
+    assert_eq!(pivot_values(&wb)[0], "240");
+    let (path, p) = save(&mut wb, dir.path(), "timeline-quarters.xlsx");
+    assert!(p["xl/timelines/timeline1.xml"].contains("level=\"1\""));
+    let back = Workbook::open(&path).unwrap();
+    let t = back.timeline_view(REPORT, TIMELINE).unwrap();
+    assert_eq!(t.level.as_deref(), Some("QUARTERS"));
+    assert_eq!(t.label.as_deref(), Some("Q2 2026"));
+    // Days: more than fit; scrolling moves the first one.
+    wb.timeline_set_level(REPORT, TIMELINE, 3).unwrap();
+    let t = wb.timeline_view(REPORT, TIMELINE).unwrap();
+    assert_eq!(t.total, 365);
+    assert_eq!(t.periods[0].label, "1", "scrolled to the selection");
+    wb.timeline_scroll(REPORT, TIMELINE, 5).unwrap();
+    assert_eq!(wb.timeline_view(REPORT, TIMELINE).unwrap().before, 95);
+}
+
+fn drawing_names(wb: &Workbook, sheet: u32) -> Vec<String> {
+    wb.drawings(sheet)
+        .iter()
+        .map(|d| match &*d.kind {
+            DrawingKind::Slicer { name } => format!("slicer {name}"),
+            DrawingKind::Timeline { name } => format!("timeline {name}"),
+            k => format!("{k:?}"),
+        })
+        .collect()
+}
+
+#[test]
+fn insert_slicer_on_a_pivot_table() {
+    use sheets_engine::slicer_edit::SlicerSource;
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = Workbook::open(fixture()).unwrap();
+    let source = SlicerSource::Pivot {
+        sheet: 1,
+        name: "PivotTable1".into(),
+    };
+    let fields = wb.slicer_fields(&source).unwrap();
+    assert_eq!(fields, ["Region", "Product", "Date", "Units", "Revenue"]);
+    let (sheet, at) = wb.slicer_place(&source).unwrap();
+    assert_eq!(sheet, 1);
+    let keys = wb
+        .insert_slicers(sheet, &source, &["Product".into(), "Region".into()], at)
+        .unwrap();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(
+        drawing_names(&wb, 1),
+        [
+            "slicer Region",
+            "timeline NativeTimeline_Date",
+            "slicer Product 1",
+            "slicer Region 1"
+        ]
+    );
+    assert_eq!(
+        selected(&wb, REPORT, "Product 1"),
+        items(&[
+            ("Apples", true, false),
+            ("Pears", true, false),
+            ("Plums", true, false)
+        ])
+    );
+    // It filters, and the file's Region slicer sees it (no data greyed).
+    wb.slicer_select(REPORT, "Product 1", &[false, false, true])
+        .unwrap();
+    assert_eq!(pivot_values(&wb)[0], "270");
+    let s = wb.slicer_settings(REPORT, "Region 1").unwrap();
+    assert_eq!(s.cache_name, "Slicer_Region1");
+    // Saved with its parts, extensions and name; reopened as it was.
+    let (path, p) = save(&mut wb, dir.path(), "inserted.xlsx");
+    let wbx = &p["xl/workbook.xml"];
+    assert!(
+        wbx.contains("<definedName name=\"Slicer_Product1\">#N/A</definedName>"),
+        "{wbx}"
+    );
+    assert!(wbx.contains("Slicer_Region1"), "{wbx}");
+    let caches: Vec<&String> = p
+        .keys()
+        .filter(|k| k.starts_with("xl/slicerCaches/") && !k.contains("_rels"))
+        .collect();
+    assert_eq!(caches.len(), 4, "{caches:?}");
+    assert!(
+        p["xl/pivotCache/pivotCacheDefinition1.xml"].contains("pivotCacheId=\"1\""),
+        "the cache's Excel 2010 id"
+    );
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(
+        drawing_names(&back, 1),
+        [
+            "slicer Region",
+            "timeline NativeTimeline_Date",
+            "slicer Product 1",
+            "slicer Region 1"
+        ]
+    );
+    assert_eq!(
+        selected(&back, REPORT, "Product 1"),
+        items(&[
+            ("Apples", false, false),
+            ("Pears", false, false),
+            ("Plums", true, false)
+        ])
+    );
+    assert_eq!(pivot_values(&back)[0], "270");
+    // Saving again keeps one of each.
+    let (_, p2) = save(&mut wb, dir.path(), "inserted-again.xlsx");
+    assert_eq!(
+        p2.keys()
+            .filter(|k| k.starts_with("xl/slicerCaches/") && !k.contains("_rels"))
+            .count(),
+        4
+    );
+    assert_eq!(p2["xl/workbook.xml"].matches("Slicer_Product1").count(), 1);
+    // Undo the filter and the insert: the next save drops them again.
+    wb.undo().unwrap();
+    wb.undo().unwrap();
+    assert_eq!(
+        drawing_names(&wb, 1),
+        ["slicer Region", "timeline NativeTimeline_Date"]
+    );
+    let (_, p3) = save(&mut wb, dir.path(), "inserted-undone.xlsx");
+    assert!(!p3["xl/workbook.xml"].contains("Slicer_Product1"));
+    assert_eq!(
+        p3.keys()
+            .filter(|k| k.starts_with("xl/slicerCaches/") && !k.contains("_rels"))
+            .count(),
+        2
+    );
+    assert!(!p3.keys().any(|k| k == "xl/slicers/slicer3.xml"));
+}
+
+#[test]
+fn insert_slicer_on_a_table_and_delete_one() {
+    use sheets_engine::slicer_edit::SlicerSource;
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = Workbook::open(fixture()).unwrap();
+    let source = SlicerSource::Table("Sales".into());
+    let (sheet, at) = wb.slicer_place(&source).unwrap();
+    // Right of the table and of its Product slicer (G2:J13).
+    assert_eq!((sheet, at), (0, (0, 10)));
+    wb.insert_slicers(sheet, &source, &["Region".into()], at)
+        .unwrap();
+    wb.slicer_select(DATA, "Region 1", &[true, false, false])
+        .unwrap();
+    let hidden: Vec<u32> = (1..13).filter(|r| wb.is_row_hidden(0, *r)).collect();
+    assert_eq!(hidden, [2, 3, 5, 6, 8, 9, 11, 12]);
+    // Delete the file's Product slicer.
+    let key = wb
+        .drawings(0)
+        .into_iter()
+        .find(|d| matches!(&*d.kind, DrawingKind::Slicer { name } if name == "Product"))
+        .unwrap()
+        .key;
+    wb.delete_drawing(key).unwrap();
+    assert_eq!(wb.slicer_names(DATA), ["Region 1"]);
+    let (path, p) = save(&mut wb, dir.path(), "table-slicers.xlsx");
+    let wbx = &p["xl/workbook.xml"];
+    assert!(
+        !wbx.contains("Slicer_Product"),
+        "its name goes with its cache"
+    );
+    assert!(wbx.contains("Slicer_Region1"), "{wbx}");
+    let sheet1 = &p["xl/worksheets/sheet1.xml"];
+    assert_eq!(sheet1.matches("<x14:slicer ").count(), 1, "{sheet1}");
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(back.slicer_names(DATA), ["Region 1"]);
+    assert_eq!(
+        selected(&back, DATA, "Region 1"),
+        items(&[
+            ("East", true, false),
+            ("North", false, false),
+            ("West", false, false)
+        ])
+    );
+}
+
+#[test]
+fn slicer_settings_are_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = Workbook::open(fixture()).unwrap();
+    let mut s = wb.slicer_settings(REPORT, "Region").unwrap();
+    assert_eq!(s.style, "SlicerStyleLight1");
+    s.caption = "Area".into();
+    s.descending = true;
+    s.style = "SlicerStyleDark2".into();
+    s.columns = 2;
+    s.mark_no_data = false;
+    s.no_data_last = false;
+    wb.set_slicer_settings(REPORT, "Region", &s).unwrap();
+    let v = wb.slicer_view(REPORT, "Region").unwrap();
+    assert_eq!(v.caption, "Area");
+    assert_eq!(v.columns, 2);
+    let labels: Vec<_> = v.items.iter().map(|i| i.label.as_str()).collect();
+    assert_eq!(labels, ["West", "North", "East"]);
+    let (path, p) = save(&mut wb, dir.path(), "settings.xlsx");
+    let part = &p["xl/slicers/slicer2.xml"];
+    assert!(
+        part.contains("caption=\"Area\"") && part.contains("style=\"SlicerStyleDark2\""),
+        "{part}"
+    );
+    let cache = &p["xl/slicerCaches/slicerCache2.xml"];
+    assert!(
+        cache.contains("sortOrder=\"descending\"") && cache.contains("crossFilter=\"none\""),
+        "{cache}"
+    );
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(back.slicer_settings(REPORT, "Region").unwrap(), s);
+    // Undo, save: as the file had it.
+    wb.undo().unwrap();
+    let (_, p2) = save(&mut wb, dir.path(), "settings-undone.xlsx");
+    assert!(p2["xl/slicers/slicer2.xml"].contains("caption=\"Region\""));
+    assert!(!p2["xl/slicerCaches/slicerCache2.xml"].contains("sortOrder"));
+}

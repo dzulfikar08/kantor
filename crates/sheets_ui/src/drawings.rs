@@ -293,6 +293,8 @@ pub(crate) struct DrawLayer {
     placed_sig: u64,
     /// Slicers whose Multi-Select is on (for this session, as in Excel).
     pub(crate) slicer_multi: std::collections::HashSet<DrawingKey>,
+    /// A drag over a timeline's periods in progress (see `slicer_ui`).
+    pub(crate) timeline_drag: Option<crate::slicer_ui::TimelineDrag>,
 }
 
 /// Keys of note boxes drawn by the layer (never a drawing's index).
@@ -1096,7 +1098,16 @@ fn paint(
                 if let Some(key) = hit {
                     cx.stop_propagation();
                     layer.borrow_mut().selected = Some(key);
-                    let _ = view.update(cx, |this, cx| this.open_shape_panel(key, window, cx));
+                    let slicer = keys
+                        .iter()
+                        .position(|(k, _)| *k == key)
+                        .and_then(|i| slicers[i].as_ref())
+                        .map(|(kind, _)| kind.clone());
+                    let _ = view.update(cx, |this, cx| match slicer.as_deref() {
+                        Some(DrawingKind::Slicer { .. }) => this.slicer_settings_doc(window, cx),
+                        Some(_) => cx.notify(),
+                        None => this.open_shape_panel(key, window, cx),
+                    });
                 }
                 return;
             }
@@ -1128,9 +1139,11 @@ fn paint(
                 );
                 let size = (rect[2] as f32, rect[3] as f32);
                 let ctrl = e.modifiers.control || e.modifiers.platform;
+                let shift = e.modifiers.shift;
+                let origin = r.origin;
                 let hit = view
                     .update(cx, |this, cx| {
-                        this.slicer_click(key, kind, local, size, ctrl, window, cx)
+                        this.slicer_click(key, kind, local, size, (ctrl, shift, origin), window, cx)
                     })
                     .unwrap_or(false);
                 if hit {
@@ -1193,6 +1206,13 @@ fn paint(
     let layer3 = layer.clone();
     window.on_mouse_event(move |e: &MouseUpEvent, phase, window, cx| {
         if phase != DispatchPhase::Capture || e.button != MouseButton::Left {
+            return;
+        }
+        let timeline = layer3.borrow_mut().timeline_drag.take();
+        if let Some(t) = timeline {
+            let _ = view.update(cx, |this, cx| {
+                this.timeline_drag_end(t, e.position, window, cx)
+            });
             return;
         }
         let dragging = match layer3.borrow_mut().drag.as_mut() {

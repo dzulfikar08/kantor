@@ -1808,7 +1808,20 @@ impl Ctx<'_> {
         let today = crate::pivot_calc::today();
         for flt in &def.filters {
             let f = flt.fld;
-            if f >= def.fields.len() || !on_axis(f) {
+            if f >= def.fields.len() {
+                continue;
+            }
+            if !on_axis(f) {
+                // A timeline's date filter on a field on no axis filters
+                // the records by their dates.
+                if flt.name.is_some() && filter_family(&flt.kind) == Some(FilterFamily::Date) {
+                    recs.retain(|&r| match self.records[r].get(f) {
+                        Some(Val::Date(d) | Val::Num(d)) => {
+                            crate::pivot_calc::date_matches(&flt.kind, *d, &flt.v1, &flt.v2, today)
+                        }
+                        _ => false,
+                    });
+                }
                 continue;
             }
             let pass: Vec<bool> = match filter_family(&flt.kind) {

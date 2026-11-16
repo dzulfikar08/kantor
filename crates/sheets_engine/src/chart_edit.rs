@@ -228,6 +228,9 @@ pub(crate) struct NewShape {
     /// set when saved.
     pub xml: Arc<str>,
     pub name: String,
+    /// A slicer made in Kantor (Insert Slicer): `xml` is its anchor's
+    /// `mc:AlternateContent`.
+    pub slicer: Option<Arc<crate::slicer_edit::NewSlicer>>,
 }
 
 /// A picture on a worksheet copied with Move or Copy.
@@ -685,8 +688,13 @@ impl Workbook {
                         name: sh.name.clone(),
                         descr: String::new(),
                         anchor,
-                        kind: Arc::new(DrawingKind::Shape {
-                            xml: sh.xml.clone(),
+                        kind: Arc::new(match &sh.slicer {
+                            Some(s) => DrawingKind::Slicer {
+                                name: s.def.name.clone(),
+                            },
+                            None => DrawingKind::Shape {
+                                xml: sh.xml.clone(),
+                            },
                         }),
                         editable: true,
                         hidden: false,

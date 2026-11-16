@@ -1489,6 +1489,14 @@ impl Workbook {
                         .map_or(BASE_PREVIOUS, |i| i as u32);
                 }
             }
+            // Timelines' filters (named after their cache) aren't the
+            // panel's: they stay.
+            let timeline_filters: Vec<PivotFilter> = d
+                .filters
+                .iter()
+                .filter(|f| f.name.is_some())
+                .cloned()
+                .collect();
             d.filters = filters
                 .iter()
                 .filter_map(|(name, f)| {
@@ -1503,6 +1511,7 @@ impl Workbook {
                         v1: f.value1.clone(),
                         v2: f.value2.clone(),
                         top: f.top,
+                        name: None,
                     })
                 })
                 .filter(|f| {
@@ -1515,6 +1524,11 @@ impl Workbook {
                     ) || f.measure.is_some()
                 })
                 .collect();
+            for t in timeline_filters {
+                if !d.filters.iter().any(|f| f.fld == t.fld) {
+                    d.filters.push(t);
+                }
+            }
             d.style = StyleInfo {
                 name: wanted.style.name.clone(),
                 row_headers: wanted.style.row_headers,

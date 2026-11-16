@@ -79,7 +79,7 @@ export const en = {
   },
   keepH3: "Saving doesn't throw away what Kantor can't show yet",
   keepText:
-    "If a file holds something Kantor doesn't understand yet, such as a Word equation or an Excel timeline's date filter, Kantor leaves it as it was and writes it back when you save. When it can't do that safely, it saves to a new file or tells you what will be left out.",
+    "If a file holds something Kantor doesn't understand yet, such as a Word equation or an Excel form control, Kantor leaves it as it was and writes it back when you save. When it can't do that safely, it saves to a new file or tells you what will be left out.",
   more: [
     ["Print and export to PDF", "Docs and Slides save a PDF that looks like what you see on screen, and print it through your PDF viewer; Slides also prints notes pages and handouts. Sheets prints pages the way Excel does: paper size including F4, fit to width, print titles, headers and footers."],
     ["Offline, no account", "Your files stay on your computer. There is nothing to sign up for."],
@@ -272,7 +272,7 @@ export const id = {
   },
   keepH3: "Menyimpan tidak membuang yang belum bisa ditampilkan Kantor",
   keepText:
-    "Kalau file berisi sesuatu yang belum dipahami Kantor, misalnya persamaan di Word atau filter tanggal timeline di Excel, Kantor membiarkannya apa adanya dan menuliskannya kembali saat Anda menyimpan. Kalau itu tidak bisa dilakukan dengan aman, Kantor menyimpan ke file baru atau memberi tahu bagian mana yang tidak ikut tersimpan.",
+    "Kalau file berisi sesuatu yang belum dipahami Kantor, misalnya persamaan di Word atau kontrol formulir di Excel, Kantor membiarkannya apa adanya dan menuliskannya kembali saat Anda menyimpan. Kalau itu tidak bisa dilakukan dengan aman, Kantor menyimpan ke file baru atau memberi tahu bagian mana yang tidak ikut tersimpan.",
   more: [
     ["Cetak dan ekspor ke PDF", "Docs dan Slides menyimpan PDF yang sama dengan tampilan di layar dan mencetaknya lewat penampil PDF; Slides juga bisa mencetak halaman catatan dan handout. Sheets mencetak halaman seperti Excel: ukuran kertas termasuk F4, muat selebar halaman, judul cetak, header, dan footer."],
     ["Tanpa internet, tanpa akun", "File Anda tetap di komputer Anda. Tidak perlu mendaftar apa pun."],
