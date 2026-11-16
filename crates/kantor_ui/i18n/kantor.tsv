@@ -564,3 +564,7 @@ Remove Page Break	Hapus Hentian Halaman
 Sheets · remove the manual page break above or left of the active cell	Sheets · hapus hentian halaman manual di atas atau di kiri sel aktif
 Reset All Page Breaks	Reset Semua Hentian Halaman
 Sheets · remove every manual page break of this sheet	Sheets · hapus semua hentian halaman manual di lembar ini
+Let Formulas Download from the Internet	Izinkan Rumus Mengunduh dari Internet
+Sheets · IMAGE and WEBSERVICE (turn on or off)	Sheets · IMAGE dan WEBSERVICE (aktifkan atau nonaktifkan)
+Formulas may download from the internet (IMAGE, WEBSERVICE)	Rumus boleh mengunduh dari internet (IMAGE, WEBSERVICE)
+Formulas don't download from the internet: IMAGE and WEBSERVICE show #BLOCKED!	Rumus tidak mengunduh dari internet: IMAGE dan WEBSERVICE menampilkan #BLOCKED!

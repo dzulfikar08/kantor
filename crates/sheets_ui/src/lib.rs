@@ -81,9 +81,11 @@ mod table;
 mod table_ui;
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui_kit::component::{
     Sizable as _,
@@ -105,6 +107,8 @@ pub use notes_ui::NoteCommand;
 pub use page_setup::PageBreakOp;
 pub use sheet_tab_ui::TabCommand;
 mod toolbar;
+mod web_ui;
+pub use web_ui::{toggle_web_formulas, web_formulas_enabled};
 
 pub use ai::AiTarget;
 pub use calc::SheetsEvent;
@@ -382,6 +386,9 @@ pub struct SheetGrid {
     fonts: look::FontCache,
     /// [`Self::selection`] for its inputs, as it is asked for every cell.
     selection_memo: Cell<Option<(SelectionKey, Selection)>>,
+    /// GPUI images of IMAGE cells' pictures, by the address of their bytes
+    /// (the `Arc` is kept so the address stays theirs).
+    pictures: HashMap<usize, (Arc<Vec<u8>>, Arc<Image>)>,
     /// The window's scale factor: column widths and merged-cell offsets are
     /// snapped to its device pixels ([`look::snap`]).
     scale: f32,
@@ -437,6 +444,7 @@ impl SheetGrid {
             ref_spans: Vec::new(),
             fonts: look::FontCache::default(),
             selection_memo: Cell::new(None),
+            pictures: HashMap::new(),
             scale: 1.0,
             layout: row_layout::RowLayout::default(),
             validation: Default::default(),
@@ -822,6 +830,12 @@ impl TableDelegate for SheetGrid {
         } else {
             shown.text
         };
+        // An IMAGE formula's picture (or one placed in the cell) is drawn
+        // instead of its value (the alt text), as in Excel.
+        let picture = self.book.cell_image(sheet, vr, vc).cloned();
+        if picture.is_some() {
+            text.clear();
+        }
         // A formula typed in manual calculation has no value until F9.
         let pending = text.is_empty() && self.book.is_pending(sheet, vr, vc);
         if pending {
@@ -917,6 +931,18 @@ impl TableDelegate for SheetGrid {
                 cell.child(content.apply(div().absolute().left(-x).top(-y).w(w).h(h)))
             }
             None => content.apply(cell),
+        };
+        let cell = match &picture {
+            Some(image) => {
+                let (x, y, w, h) = geometry.unwrap_or((
+                    px(0.),
+                    px(0.),
+                    look::column_width(&self.book, sheet, col, self.scale),
+                    row_height,
+                ));
+                cell.child(self.picture_layer(image, (x, y, w, h)))
+            }
+            None => cell,
         };
         let validation = self.validation_layers(row, col, row_height, cx);
         // A note: its corner mark and hover target (the drawing layer draws
@@ -1298,6 +1324,8 @@ pub struct SheetsView {
     /// The notes of the cells last copied or cut, with the clipboard text
     /// they go with (Paste brings them while the clipboard holds it).
     note_clip: Option<(String, sheets_engine::NoteClip)>,
+    /// IMAGE and WEBSERVICE downloads (see [`web_ui`]).
+    web: web_ui::WebState,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1380,6 +1408,7 @@ impl SheetsView {
             disk_guard: None,
             saving: None,
             pending_save: None,
+            web: web_ui::WebState::default(),
             _subscriptions: subscriptions,
         };
         this.select_cell(0, 0, cx);
@@ -2684,6 +2713,8 @@ impl Render for SheetsView {
             self.bench_step(window, cx);
         }
         self.apply_pending_chart(window, cx);
+        self.sync_web_soon(window, cx);
+        let web_bar = self.render_web_bar(cx);
         self.sync_chart_panel(window, cx);
         self.sync_shape_panel(window, cx);
         let root = self.editor_actions(v_flex(), cx);
@@ -2744,6 +2775,8 @@ impl Render for SheetsView {
                     )
                 })
             })
+            // Excel's security bar for downloads (see `web_ui`).
+            .children(web_bar)
             // Formula bar: name box + input
             .when(chart_sheet.is_none(), |root| {
                 root.child(

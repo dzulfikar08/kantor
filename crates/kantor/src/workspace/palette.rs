@@ -1657,6 +1657,21 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: tk("Let Formulas Download from the Internet"),
+        detail: tk("Sheets · IMAGE and WEBSERVICE (turn on or off)"),
+        keys: "",
+        run: |ws, _, cx| {
+            let text = if sheets_ui::toggle_web_formulas(cx) {
+                i18n::t("Formulas may download from the internet (IMAGE, WEBSERVICE)")
+            } else {
+                i18n::t(
+                    "Formulas don't download from the internet: IMAGE and WEBSERVICE show #BLOCKED!",
+                )
+            };
+            ws.notice(text.into(), cx);
+        },
+    },
+    Command {
         title: tk("Check Spelling as You Type"),
         detail: tk("Docs, Slides · underline misspelled words in red"),
         keys: "",

@@ -9,6 +9,22 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Sheets: `IMAGE` and `WEBSERVICE` formulas download from the internet, as in Excel. Cells show
+  `#BUSY!` while they wait and update (with the cells that use them) when the answer arrives;
+  downloads are kept until Kantor quits, and `F9` fetches `WEBSERVICE` again. `IMAGE` takes
+  `https` addresses only and doesn't follow redirects; `WEBSERVICE` gives `#VALUE!` when it
+  can't get an answer, as Excel does.
+- Sheets: `IMAGE` pictures are drawn in their cells (fit, fill, original size, or a size you
+  give), and pictures Excel saved in a workbook, including "Place in Cell" pictures, show
+  without a connection and are kept when you save.
+- Sheets: a workbook opened from a file whose formulas download asks first with a bar above
+  the grid ("This workbook downloads pictures or data from the internet": *Allow* / *Block*),
+  once per file until Kantor quits, like Excel's security warning. *Let Formulas Download from
+  the Internet* in the command palette (or `[sheets] web_formulas = false` in `settings.toml`)
+  turns downloading off; the formulas then show `#BLOCKED!`. `kantor convert` never downloads.
+
 ## [0.8.0] - 2026-11-16
 
 Kantor now edits the parts of Office files it used to only show. In Docs: headers, footers and

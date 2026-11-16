@@ -729,7 +729,18 @@ What:
   `UserModel` has the same). Off by default (`kantor_set_web_enabled`):
   `#BLOCKED!`. Waiting: `#BUSY!`. An IMAGE cell's value is its alt text and
   `kantor_cell_image` gives what to draw (kept per evaluation). Both are in
-  the always-recalculated list of `kantor_recalc.rs`. The CUBE functions,
+  the always-recalculated list of `kantor_recalc.rs`. `kantor_refresh_web`
+  forgets WEBSERVICE answers and failures (F9), keeping pictures. Pictures
+  the file saved (Excel's rich values, read by the host):
+  `kantor_set_saved_picture` per cell, sized from the formula's literal
+  arguments; shown before any evaluation and by IMAGE whenever its own
+  download isn't there, while the cell keeps the formula it had in the file
+  (and the URL of its first evaluation); a picture placed in a cell (an
+  error value, no formula) shows while the cell is unchanged and is reset
+  to `#VALUE!` (the importer may read another error from its value
+  metadata). `kantor_saved_picture_cells` lists the cells still showing
+  them (for saving their rich values). Blocked, WEBSERVICE keeps the value
+  its cell had unless that was `#BUSY!`/`#BLOCKED!`. `WebKind` is `Hash`. The CUBE functions,
   RTD, STOCKHISTORY, TRANSLATE, DETECTLANGUAGE, COPILOT and PY return the
   value saved in their cell (the whole spill of a dynamic array) when the
   formula is that function call (through an implicit intersection), so a
@@ -748,7 +759,8 @@ Tests: `test/test_kantor_ets.rs`, `test/test_kantor_web.rs`, the function
 vector cases of `test/test_kantor_functions.rs`,
 `expressions/parser/tests/test_kantor_functions_export.rs`, and Kantor's
 `crates/sheets_engine/tests/functions.rs` (xlsx round trips, saved values
-of online functions).
+of online functions) and `crates/sheets_engine/tests/web_formulas.rs`
+(downloads from a local server, saved pictures).
 ## 26. Typed times and dates with times
 
 Why: Excel stores a typed `9:30`, `9:30 PM`, `14:05:30` or
