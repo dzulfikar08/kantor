@@ -9,6 +9,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-17
+
+Map charts are drawn in Sheets, Docs and Slides from the map data saved with them (a list of values
+when that data can't be read), and SmartArt hierarchies such as Organization Chart are laid out
+again when resized, with Add Shape and Delete. Sheets gets Insert Slicer and Slicer Settings,
+timelines that filter their PivotTables, and slicers and timelines in print and PDF. Docs tracks
+merging cells across columns, splitting cells and field code edits, inserts and deletes columns in
+tables with merged cells, adds and removes SmartArt items, draws gradient fills, glows and soft
+edges, and lets you select objects in headers and footers.
+
 ### Added
 
 - Map charts (Excel's filled region maps) are drawn in Sheets, Docs and Slides, on screen and in
@@ -1615,7 +1625,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/dzulfikar08/kantor/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/dzulfikar08/kantor/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/dzulfikar08/kantor/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/dzulfikar08/kantor/compare/v0.6.0...v0.7.0
