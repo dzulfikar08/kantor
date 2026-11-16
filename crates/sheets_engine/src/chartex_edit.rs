@@ -218,6 +218,7 @@ impl Workbook {
             from_file: true,
             kind_label: kind_label(&doc).to_owned(),
             fixed: false,
+            data_only: true,
             data_unknown: unknown,
             has_axes: false,
             series,

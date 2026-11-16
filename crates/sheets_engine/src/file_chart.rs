@@ -201,6 +201,7 @@ impl Workbook {
             from_file: true,
             kind_label: style.kind_label,
             fixed: style.fixed,
+            data_only: false,
             data_unknown: unknown,
             has_axes: style.has_axes,
             series: style.names,

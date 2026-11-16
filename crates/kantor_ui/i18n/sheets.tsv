@@ -1165,3 +1165,14 @@ Show	Tampilkan
 Selection Label	Label Pilihan
 Scrollbar	Bilah Gulir
 Time Level	Tingkat Waktu
+# Charts of the Office 2016 types
+Kantor can change only the data range of a {} chart: the series' names in its first row, then the categories, then one column of values per series.	Kantor hanya bisa mengubah rentang data grafik {}: nama seri di baris pertamanya, lalu kategori, lalu satu kolom nilai per seri.
+Waterfall	Air Terjun
+Funnel	Corong
+Treemap	Treemap
+Sunburst	Sunburst
+Histogram	Histogram
+Pareto	Pareto
+Box & Whisker	Kotak & Garis
+Map	Peta
+Office 2016	Office 2016

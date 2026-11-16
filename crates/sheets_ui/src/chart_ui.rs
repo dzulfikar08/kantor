@@ -393,7 +393,7 @@ impl SheetsView {
                 let spec = info.spec.clone();
                 let tv = view.clone();
                 let current = spec.kind;
-                let kind: AnyElement = if info.fixed {
+                let kind: AnyElement = if info.fixed || info.data_only {
                     Button::new("chart-kind")
                         .outline()
                         .small()
@@ -459,21 +459,37 @@ impl SheetsView {
                 let dv = view.clone();
                 let av = view.clone();
                 let mv = view.clone();
+                let styled = !info.data_only;
                 v_flex()
                     .gap(SPACE_4)
                     .child(row(i18n::t("Type"), kind, cx))
-                    .child(row(i18n::t("Title"), Input::new(&p.title).small(), cx))
-                    .child(row(i18n::t("Legend"), legend_button, cx))
+                    .when(styled, |d| {
+                        d.child(row(i18n::t("Title"), Input::new(&p.title).small(), cx))
+                            .child(row(i18n::t("Legend"), legend_button, cx))
+                    })
                     .when(info.has_axes, |d| {
                         d.child(row(i18n::t("Horizontal axis"), Input::new(&p.x_title).small(), cx))
                             .child(row(i18n::t("Vertical axis"), Input::new(&p.y_title).small(), cx))
                     })
-                    .child(colours)
-                    .child(self.render_label_options(&info, &view, cx))
+                    .when(styled, |d| {
+                        d.child(colours)
+                            .child(self.render_label_options(&info, &view, cx))
+                    })
                     .when(info.has_axes, |d| {
                         d.child(self.render_axis_options(&info, &view, cx))
                     })
-                    .when(!info.fixed, |d| {
+                    .when(info.data_only, |d| {
+                        d.child(row(i18n::t("Data"), Input::new(&p.range).small(), cx))
+                            .child(note(
+                                i18n::fill(
+                                    i18n::t("Kantor can change only the data range of a {} chart: the series' names in its first row, then the categories, then one column of values per series."),
+                                    &[&t_dyn(&info.kind_label)],
+                                ),
+                                false,
+                                cx,
+                            ))
+                    })
+                    .when(!info.fixed && !info.data_only, |d| {
                         d.child(row(
                             i18n::t("Series in"),
                             choices(
@@ -763,6 +779,15 @@ mod tests {
         tk("Bubble"),
         tk("Stock"),
         tk("Surface"),
+        tk("Waterfall"),
+        tk("Funnel"),
+        tk("Treemap"),
+        tk("Sunburst"),
+        tk("Histogram"),
+        tk("Pareto"),
+        tk("Box & Whisker"),
+        tk("Map"),
+        tk("Office 2016"),
         tk("Right"),
         tk("Top"),
         tk("Bottom"),

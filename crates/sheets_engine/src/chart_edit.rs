@@ -185,6 +185,9 @@ pub struct ChartInfo {
     /// Its type and data range can't be changed in Kantor (several plot
     /// types, 3-D, radar...).
     pub fixed: bool,
+    /// Only its data range can be changed (the Office 2016 types:
+    /// waterfall, treemap...).
+    pub data_only: bool,
     /// The data range isn't one block Kantor can read back (series on
     /// several sheets, literal values...): changing it replaces the series.
     pub data_unknown: bool,
@@ -473,6 +476,7 @@ impl Workbook {
             from_file: false,
             kind_label: spec.kind.label().to_owned(),
             fixed: false,
+            data_only: false,
             data_unknown: false,
             has_axes: spec.kind != ChartType::Pie,
             series: style.names,
