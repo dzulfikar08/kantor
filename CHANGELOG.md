@@ -9,6 +9,32 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Sheets: Insert Timeline, as in Excel. From the PivotTable menu, a PivotTable cell's right-click
+  menu or the command palette, pick the PivotTable's date fields and get one timeline each, placed
+  beside the PivotTable and spanning the field's years by months. Timeline Settings (right-click a
+  timeline) changes the caption, whether the header, selection label, scroll bar and time level
+  show, and the style. New timelines are saved in Excel's format, and deleting a timeline removes
+  its parts too.
+- Sheets: a timeline's scroll bar thumb can be dragged, and dragging across periods shows the
+  dates it will select as you go (the PivotTable filters when you let go).
+- Slides: the data of waterfall, funnel, treemap, sunburst, histogram, Pareto and box & whisker
+  charts is edited in the chart data panel like other charts' (values, category labels, series
+  names, categories added and deleted): the chart is redrawn and its embedded workbook gets the
+  same values, also when the chart reads its cells through Office's hidden `_xlchart` names.
+  Treemap and sunburst categories show their levels as one path (`Europe / North / Alpha`). Their
+  series can't be added, removed or reordered.
+- Sheets: charts of those types are selected, moved, resized and deleted like other charts, and
+  the Chart panel shows and changes their data range (series names in its first row, then the
+  category columns, then one column of values per series). Their type and other options stay as
+  the file has them.
+
+### Fixed
+
+- Sheets: the references of waterfall, treemap and the other newer chart types now follow rows
+  and columns inserted or deleted before a save.
+
 ## [0.10.0] - 2026-11-17
 
 Map charts are drawn in Sheets, Docs and Slides from the map data saved with them (a list of values
