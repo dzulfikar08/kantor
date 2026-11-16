@@ -144,7 +144,7 @@ const SMARTART_MESSAGES: [&str; 5] = [
     tk("This SmartArt shape doesn't show an item"),
     tk("A SmartArt keeps at least one item"),
     tk(
-        "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes and cycles",
+        "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes, cycles and hierarchies",
     ),
 ];
 

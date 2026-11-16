@@ -1,6 +1,6 @@
 //! SmartArt laid out by Kantor (tests/corpus/pptx/smartart.pptx from
 //! scripts/corpus/gen_pptx_smartart.py): resized SmartArt laid out again,
-//! items added and removed in lists, processes and cycles, refused in
+//! items added and removed in lists, processes, cycles and hierarchies, refused in
 //! other layouts; saved and read back.
 
 use std::collections::BTreeMap;
