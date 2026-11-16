@@ -178,8 +178,8 @@ fn autofit_edit(src: &str, bp: roxmltree::Node, scale: u32) -> Option<(Range<usi
         format!("<{prefix}normAutofit/>")
     };
     let r = bp.range();
-    if tag.ends_with("/>") {
-        let open = format!("{}>", &tag[..tag.len() - 2].trim_end());
+    if let Some(open) = tag.strip_suffix("/>") {
+        let open = format!("{}>", open.trim_end());
         return Some((r, format!("{open}{fit}</{name}>")));
     }
     let old = bp.children().find(|n| {

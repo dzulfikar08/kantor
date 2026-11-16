@@ -465,7 +465,7 @@ fn text_box_is_edited_in_place_with_formatting() {
     let xml = document_xml(&saved);
     // Both the shape and its VML fallback, formatted.
     assert_eq!(xml.matches("First point").count(), 2, "{xml}");
-    assert_eq!(xml.matches("<w:jc w:val=\"center\"/>").count() >= 2, true);
+    assert!(xml.matches("<w:jc w:val=\"center\"/>").count() >= 2);
     assert!(xml.contains("<w:b/>"), "{xml}");
     let p = parts(&saved);
     let numbering = String::from_utf8(p["word/numbering.xml"].clone()).unwrap();
