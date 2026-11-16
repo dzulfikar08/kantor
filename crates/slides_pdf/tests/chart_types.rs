@@ -124,8 +124,8 @@ fn chartex_frames_move_and_save() {
         .expect("the waterfall frame");
     assert!(pres.slides()[slide].shapes[i].movable());
     assert!(
-        pres.chart_data(slide, i).is_none(),
-        "not editable in the panel"
+        pres.chart_series_fixed(slide, i),
+        "its data is edited in the panel, its series stay"
     );
     let mut x = pres.slides()[slide].shapes[i].xfrm.unwrap();
     x.x += 91440;
