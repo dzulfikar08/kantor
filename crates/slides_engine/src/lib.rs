@@ -38,7 +38,7 @@ pub mod text_ops;
 pub mod theme;
 mod xml;
 
-pub use chart_edit::{ChartData, ChartSeries};
+pub use chart_edit::{CATEGORY_LEVEL_SEP, ChartData, ChartSeries};
 pub use clip::ShapeClip;
 pub use docs_engine::{LINE_BREAK, Position, Rgb, Selection, Toggle};
 pub use edit::{ShapeRef, image_ext, image_size, set_toggle};

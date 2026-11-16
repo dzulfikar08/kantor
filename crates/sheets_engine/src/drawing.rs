@@ -361,13 +361,24 @@ impl Drawings {
     /// The names of the slicers the opened file has anchors for on the
     /// sheet with `sheet_id`.
     pub(crate) fn opened_slicers(&self, sheet_id: u32) -> Vec<String> {
+        self.opened_names(sheet_id, false)
+    }
+
+    /// The names of the timelines the opened file has anchors for on the
+    /// sheet with `sheet_id`.
+    pub(crate) fn opened_timelines(&self, sheet_id: u32) -> Vec<String> {
+        self.opened_names(sheet_id, true)
+    }
+
+    fn opened_names(&self, sheet_id: u32, timelines: bool) -> Vec<String> {
         self.sheets
             .get(&sheet_id)
             .map(|objects| {
                 objects
                     .iter()
-                    .filter_map(|o| match &*o.kind {
-                        DrawingKind::Slicer { name } => Some(name.to_lowercase()),
+                    .filter_map(|o| match (&*o.kind, timelines) {
+                        (DrawingKind::Slicer { name }, false)
+                        | (DrawingKind::Timeline { name }, true) => Some(name.to_lowercase()),
                         _ => None,
                     })
                     .collect()
@@ -726,8 +737,8 @@ fn read_objects(
             Some(obj) => kind(obj, targets, &mut parts),
             None => DrawingKind::Other("anchor".into()),
         };
-        // Shapes of form controls and charts of the newer types (shown,
-        // not edited); other alternate content stays unseen.
+        // Shapes of form controls (shown, not edited) and charts of the
+        // newer types; other alternate content stays unseen.
         if alternate && !matches!(kind, DrawingKind::Shape { .. } | DrawingKind::Chart { .. }) {
             continue;
         }
@@ -749,13 +760,21 @@ fn read_objects(
             prints: child(a, NS_XDR, "clientData")
                 .and_then(|c| c.attribute("fPrintsWithSheet"))
                 .is_none_or(|v| v != "0" && v != "false"),
-            xml: xml[a.range()].to_owned(),
+            // An alternate anchor: its whole `mc:AlternateContent`.
+            xml: match a.parent().and_then(|c| c.parent()).filter(|_| alternate) {
+                Some(w) => xml[w.range()].to_owned(),
+                None => xml[a.range()].to_owned(),
+            },
             namespaces: namespaces.clone(),
             alternate,
         });
     }
+    // Objects are edited by their id: a chart of the newer types keeps
+    // its own (its choice and fallback anchors move together at a save),
+    // other alternate content isn't edited.
     for o in &mut out {
-        if o.alternate || o.id.is_some_and(|id| ids[&id] > 1) {
+        let chart = matches!(*o.kind, DrawingKind::Chart { .. });
+        if (o.alternate && !chart) || o.id.is_some_and(|id| ids[&id] > 1) {
             o.id = None;
         }
     }

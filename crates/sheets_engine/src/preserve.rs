@@ -5531,9 +5531,21 @@ fn file_chart_part(pkg: &Package, sheet_part: &str, cnvpr: u32) -> Result<Option
     };
     let doc = Document::parse(dxml).map_err(|e| format!("{drawing}: {e}"))?;
     let id = cnvpr.to_string();
+    // Anchors, and those of an `mc:AlternateContent` choice (a chart of
+    // the newer types).
     let rid = doc
         .root_element()
         .children()
+        .flat_map(|n| {
+            if n.is_element() && n.tag_name().name() == "AlternateContent" {
+                n.children()
+                    .filter(|c| c.is_element() && c.tag_name().name() == "Choice")
+                    .flat_map(|c| c.children())
+                    .collect()
+            } else {
+                vec![n]
+            }
+        })
         .filter(|a| crate::drawing::is_anchor(*a))
         .find(|a| crate::drawing::c_nv_pr(*a).and_then(|n| n.attribute("id")) == Some(&id))
         .and_then(|a| {
@@ -6440,7 +6452,7 @@ fn move_part(
         "vml"
     } else if is("officedocument.drawing+xml") {
         "drawing"
-    } else if is("drawingml.chart+xml") {
+    } else if is("drawingml.chart+xml") || is("ms-office.chartex+xml") {
         "chart"
     } else if is("spreadsheetml.pivotTable+xml") {
         "pivot"
@@ -6529,22 +6541,56 @@ fn move_part(
             let edited = edited.map(Vec::as_slice).unwrap_or_default();
             let root = doc.root_element();
             let mut seen = HashSet::new();
-            for anchor in root.children().filter(|n| crate::drawing::is_anchor(*n)) {
-                let id = crate::drawing::c_nv_pr(anchor)
-                    .and_then(|n| n.attribute("id")?.parse::<u32>().ok());
+            for top in root.children().filter(|n| n.is_element()) {
+                // An anchor, or the anchors of an `mc:AlternateContent`'s
+                // choice and fallback (a chart of the newer types: they
+                // move together, its choice's id names it).
+                let (anchors, wrapper): (Vec<Node>, Option<Node>) =
+                    if crate::drawing::is_anchor(top) {
+                        (vec![top], None)
+                    } else if top.tag_name().name() == "AlternateContent" {
+                        let list = top
+                            .children()
+                            .filter(|c| {
+                                c.is_element()
+                                    && matches!(c.tag_name().name(), "Choice" | "Fallback")
+                            })
+                            .flat_map(|c| c.children().filter(|a| crate::drawing::is_anchor(*a)))
+                            .collect();
+                        (list, Some(top))
+                    } else {
+                        continue;
+                    };
+                let Some(&first) = anchors.first() else {
+                    continue;
+                };
+                let id = crate::drawing::c_nv_pr(first)
+                    .and_then(|n| n.attribute("id")?.parse::<u32>().ok())
+                    .filter(|_| {
+                        wrapper.is_none()
+                            || first.descendants().any(|d| d.tag_name().name() == "chart")
+                    });
                 if let Some(e) = id.and_then(|id| edited.iter().find(|e| e.id == id)) {
                     seen.insert(e.id);
-                    let text = match e.anchor {
-                        Some(a) => placed_anchor(anchor, &a, xml, e.object.as_deref()),
-                        None => String::new(),
-                    };
-                    edits.push((anchor.range(), text));
+                    match (e.anchor, wrapper) {
+                        (None, Some(w)) => edits.push((w.range(), String::new())),
+                        (None, None) => edits.push((first.range(), String::new())),
+                        (Some(a), _) => {
+                            for (k, anchor) in anchors.iter().enumerate() {
+                                let object = if k == 0 { e.object.as_deref() } else { None };
+                                edits.push((
+                                    anchor.range(),
+                                    placed_anchor(*anchor, &a, xml, object),
+                                ));
+                            }
+                        }
+                    }
                     continue;
                 }
-                for corner in anchor
-                    .children()
-                    .filter(|n| n.is_element() && matches!(n.tag_name().name(), "from" | "to"))
-                {
+                for corner in anchors.iter().flat_map(|a| {
+                    a.children()
+                        .filter(|n| n.is_element() && matches!(n.tag_name().name(), "from" | "to"))
+                }) {
                     let (Some((rt, row)), Some((ct, col))) =
                         (child_number(corner, "row"), child_number(corner, "col"))
                     else {
@@ -6568,7 +6614,28 @@ fn move_part(
                     let wrapped = format!("<r {}>{}</r>", e.namespaces, e.xml);
                     let doc = Document::parse(&wrapped).ok()?;
                     let el = doc.root_element().first_element_child()?;
-                    Some(placed_anchor(el, &a, &wrapped, e.object.as_deref()))
+                    if el.tag_name().name() != "AlternateContent" {
+                        return Some(placed_anchor(el, &a, &wrapped, e.object.as_deref()));
+                    }
+                    // A chart of the newer types: its choice's and
+                    // fallback's anchors, placed.
+                    let base = el.range().start;
+                    let mut text = wrapped[el.range()].to_owned();
+                    let mut reps: Vec<(std::ops::Range<usize>, String)> = el
+                        .children()
+                        .flat_map(|c| c.children())
+                        .filter(|n| crate::drawing::is_anchor(*n))
+                        .enumerate()
+                        .map(|(k, an)| {
+                            let object = if k == 0 { e.object.as_deref() } else { None };
+                            (an.range(), placed_anchor(an, &a, &wrapped, object))
+                        })
+                        .collect();
+                    reps.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+                    for (r, t) in reps {
+                        text.replace_range(r.start - base..r.end - base, &t);
+                    }
+                    Some(text)
                 })
                 .collect();
             if !missing.is_empty() {

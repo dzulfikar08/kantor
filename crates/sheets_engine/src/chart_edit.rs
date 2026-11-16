@@ -185,6 +185,9 @@ pub struct ChartInfo {
     /// Its type and data range can't be changed in Kantor (several plot
     /// types, 3-D, radar...).
     pub fixed: bool,
+    /// Only its data range can be changed (the Office 2016 types:
+    /// waterfall, treemap...).
+    pub data_only: bool,
     /// The data range isn't one block Kantor can read back (series on
     /// several sheets, literal values...): changing it replaces the series.
     pub data_unknown: bool,
@@ -231,6 +234,8 @@ pub(crate) struct NewShape {
     /// A slicer made in Kantor (Insert Slicer): `xml` is its anchor's
     /// `mc:AlternateContent`.
     pub slicer: Option<Arc<crate::slicer_edit::NewSlicer>>,
+    /// A timeline made in Kantor (Insert Timeline), the same way.
+    pub timeline: Option<Arc<crate::slicer_edit::NewTimeline>>,
 }
 
 /// A picture on a worksheet copied with Move or Copy.
@@ -471,6 +476,7 @@ impl Workbook {
             from_file: false,
             kind_label: spec.kind.label().to_owned(),
             fixed: false,
+            data_only: false,
             data_unknown: false,
             has_axes: spec.kind != ChartType::Pie,
             series: style.names,
@@ -688,11 +694,14 @@ impl Workbook {
                         name: sh.name.clone(),
                         descr: String::new(),
                         anchor,
-                        kind: Arc::new(match &sh.slicer {
-                            Some(s) => DrawingKind::Slicer {
+                        kind: Arc::new(match (&sh.slicer, &sh.timeline) {
+                            (Some(s), _) => DrawingKind::Slicer {
                                 name: s.def.name.clone(),
                             },
-                            None => DrawingKind::Shape {
+                            (None, Some(t)) => DrawingKind::Timeline {
+                                name: t.def.name.clone(),
+                            },
+                            (None, None) => DrawingKind::Shape {
                                 xml: sh.xml.clone(),
                             },
                         }),

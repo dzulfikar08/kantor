@@ -479,7 +479,7 @@ fn chartex_charts_are_drawn_from_live_cells() {
         let d = book.drawings(k as u32);
         assert_eq!(d.len(), 1, "sheet {k}");
         assert!(matches!(*d[0].kind, DrawingKind::Chart { .. }));
-        assert!(!d[0].editable);
+        assert!(d[0].editable, "moved, resized and given a new data range");
         let items = scenes.items(&mut engine, &book, &d[0], 600.0, 360.0);
         assert!(
             !items

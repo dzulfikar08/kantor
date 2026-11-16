@@ -14,7 +14,9 @@ One chart per slide:
   (`ppt/charts/chartExN.xml`, scripts/corpus/chartex_parts.py) in an
   `mc:AlternateContent` whose fallback is PowerPoint's "This chart isn't
   available" box: waterfall, funnel, treemap, sunburst, histogram, Pareto,
-  box & whisker.
+  box & whisker. Each has its embedded workbook (`cx:externalData`) with
+  the data on sheet "Data"; the waterfall's references are defined names
+  (`_xlchart.v1.N`), as Office writes them.
 
 Regenerate with
 `uv run --with python-pptx==1.0.2 scripts/corpus/gen_pptx_chartex.py tests/corpus/pptx`.
@@ -133,13 +135,91 @@ for n in parts:
     if n.startswith("ppt/charts/chart"):
         parts[n] = re.sub(rb'(<c:(?:axId|crossAx) val=")-', rb"\1", parts[n])
 
+def embedded_xlsx(rows, names) -> bytes:
+    """A workbook with `rows` on sheet "Data" and defined `names`."""
+    def ref(r, c):
+        return f"{chr(65 + c)}{r + 1}"
+
+    def cell(r, c, v):
+        if isinstance(v, (int, float)):
+            return f'<c r="{ref(r, c)}"><v>{v}</v></c>'
+        return f'<c r="{ref(r, c)}" t="inlineStr"><is><t>{cxp.esc(str(v))}</t></is></c>'
+
+    data = "".join(
+        f'<row r="{r + 1}">' + "".join(cell(r, c, v) for c, v in enumerate(row)) + "</row>"
+        for r, row in enumerate(rows)
+    )
+    last = ref(len(rows) - 1, max(len(r) for r in rows) - 1)
+    main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    pkg = "http://schemas.openxmlformats.org/package/2006/relationships"
+    off = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    head = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    dn = "".join(f'<definedName name="{n}" hidden="1">{f}</definedName>' for n, f in names)
+    dn = f"<definedNames>{dn}</definedNames>" if dn else ""
+    files = {
+        "[Content_Types].xml": head
+        + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+        "</Types>",
+        "_rels/.rels": head
+        + f'<Relationships xmlns="{pkg}"><Relationship Id="rId1" Type="{off}/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+        "xl/workbook.xml": head
+        + f'<workbook xmlns="{main}" xmlns:r="{off}"><sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets>{dn}</workbook>',
+        "xl/_rels/workbook.xml.rels": head
+        + f'<Relationships xmlns="{pkg}"><Relationship Id="rId1" Type="{off}/worksheet" Target="worksheets/sheet1.xml"/>'
+        f'<Relationship Id="rId2" Type="{off}/styles" Target="styles.xml"/></Relationships>',
+        "xl/worksheets/sheet1.xml": head
+        + f'<worksheet xmlns="{main}"><dimension ref="A1:{last}"/><sheetData>{data}</sheetData></worksheet>',
+        "xl/styles.xml": head
+        + f'<styleSheet xmlns="{main}"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>'
+        '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>'
+        '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+        '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+        '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs></styleSheet>',
+    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, text in files.items():
+            info = zipfile.ZipInfo(name, date_time=FIXED)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            z.writestr(info, text)
+    return buf.getvalue()
+
+
 # Chartex slides.
 ct = parts["[Content_Types].xml"].decode()
+if 'Extension="xlsx"' not in ct:
+    ct = ct.replace(
+        "<Default ",
+        '<Default Extension="xlsx" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/><Default ',
+        1,
+    )
 first_ex = 5
 for i, (title, _rows, make, req) in enumerate(cxp.CHARTS):
     k = first_ex + i
     part = f"ppt/charts/chartEx{i + 1}.xml"
-    parts[part] = make().encode()
+    x = make()
+    names = []
+    if title == "Waterfall":
+        # Office's way: references through hidden defined names.
+        for f in re.findall(r"<cx:f>([^<]+)</cx:f>", x):
+            n = f"_xlchart.v1.{len(names)}"
+            names.append((n, f))
+            x = x.replace(f"<cx:f>{f}</cx:f>", f"<cx:f>{n}</cx:f>", 1)
+    x = x.replace("<cx:chartData>", '<cx:chartData><cx:externalData r:id="rId1" cx:autoUpdate="0"/>', 1)
+    parts[part] = x.encode()
+    book = f"ppt/embeddings/Microsoft_Excel_Worksheet_ex{i + 1}.xlsx"
+    parts[book] = embedded_xlsx(_rows, names)
+    parts[f"ppt/charts/_rels/chartEx{i + 1}.xml.rels"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/package" '
+        f'Target="../embeddings/Microsoft_Excel_Worksheet_ex{i + 1}.xlsx"/></Relationships>'
+    ).encode()
     ct = ct.replace("</Types>", f'<Override PartName="/{part}" ContentType="{cxp.CT_CHARTEX}"/></Types>')
     rels_name = f"ppt/slides/_rels/slide{k}.xml.rels"
     rels = parts[rels_name].decode()

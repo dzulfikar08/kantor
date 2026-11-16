@@ -103,6 +103,9 @@ impl Workbook {
     /// What the Chart panel shows for chart `key` whose part is `xml` (its
     /// references in the current rows and columns).
     pub(crate) fn xml_chart_info(&self, key: DrawingKey, xml: &str) -> Option<ChartInfo> {
+        if crate::chartex_edit::is_chartex(xml) {
+            return self.chartex_info(key, xml);
+        }
         let style = chart_style::read(xml).ok()?;
         // The data: the block every reference lies in, on one sheet.
         let mut sheet: Option<String> = None;
@@ -198,6 +201,7 @@ impl Workbook {
             from_file: true,
             kind_label: style.kind_label,
             fixed: style.fixed,
+            data_only: false,
             data_unknown: unknown,
             has_axes: style.has_axes,
             series: style.names,
@@ -236,6 +240,9 @@ impl Workbook {
         info: &ChartInfo,
         spec: &ChartSpec,
     ) -> Result<String> {
+        if crate::chartex_edit::is_chartex(&xml) {
+            return self.chartex_restyled(key, xml, info, spec);
+        }
         let mut xml = xml;
         let old = &info.spec;
         let spec = spec.clone();

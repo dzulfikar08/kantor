@@ -23,6 +23,9 @@ const NS_MC: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006
 const MS_REL: &str = "http://schemas.microsoft.com/office/2007/relationships/";
 const SLICER_CT: &str = "application/vnd.ms-excel.slicer+xml";
 const SLICER_CACHE_CT: &str = "application/vnd.ms-excel.slicerCache+xml";
+const TIMELINE_CT: &str = "application/vnd.ms-excel.timeline+xml";
+const TIMELINE_CACHE_CT: &str = "application/vnd.ms-excel.timelineCache+xml";
+const MS_REL_2011: &str = "http://schemas.microsoft.com/office/2011/relationships/";
 const HEAD: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n";
 
 /// Sheet extensions listing slicers: pivot table slicers (Excel 2010) and
@@ -38,6 +41,10 @@ const EXT_HIDE: &str = "{470722E0-AACD-4C17-9CDC-17EF765DBC7E}";
 const EXT_TABLE_CACHE: &str = "{2F2917AC-EB37-4324-AD4E-5DD8C200BD13}";
 /// A pivot cache's Excel 2010 id (`x14:pivotCacheDefinition`).
 const EXT_PIVOT_CACHE_ID: &str = "{725AE2AE-9491-48be-B2B4-4EB974FC3084}";
+/// The sheet extension listing timelines, and the workbook's listing
+/// timeline caches (Excel 2013).
+const EXT_SHEET_TIMELINE: &str = "{7E03D99C-DC04-49d9-9315-930204A7B6E9}";
+const EXT_WB_TIMELINE: &str = "{D0CA8CA8-9F24-4464-BF8E-62219DCF47F9}";
 
 /// What a save makes the slicer and timeline parts say.
 #[derive(Default)]
@@ -46,9 +53,10 @@ pub(crate) struct SlicerPlan {
     pub active: bool,
     pub slicers: Vec<SlicerOut>,
     pub caches: Vec<CacheOut>,
-    /// Timelines whose level or scroll position was set in Kantor.
+    /// Every timeline as it should be saved (the file's not deleted and
+    /// those made in Kantor).
     pub timelines: Vec<TimelineOut>,
-    /// Every timeline cache whose pivot table is present: its selection.
+    /// Every timeline cache (unused ones are removed by the save).
     pub timeline_caches: Vec<TimelineCacheOut>,
 }
 
@@ -94,16 +102,32 @@ pub(crate) struct CacheOut {
 
 #[derive(Debug, Clone)]
 pub(crate) struct TimelineOut {
+    pub sheet_id: u32,
     pub name: String,
+    pub cache: String,
+    pub caption: String,
     pub level: u32,
     pub scroll: Option<f64>,
+    pub show_header: bool,
+    pub show_selection_label: bool,
+    pub show_time_level: bool,
+    pub show_scrollbar: bool,
+    pub style: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct TimelineCacheOut {
     pub name: String,
+    pub source_name: String,
+    /// Its pivot tables, `(sheetId, name)`.
+    pub pivots: Vec<(u32, String)>,
+    /// First day and the day after the last it spans.
+    pub bounds: Option<(f64, f64)>,
     /// First and last day selected (`None`: all periods).
     pub selection: Option<(f64, f64)>,
+    /// Its pivot table is there to say what it selects (else its state is
+    /// kept as the file has it).
+    pub known: bool,
     pub filter: Option<TimelineFilter>,
 }
 
@@ -252,8 +276,8 @@ fn free_name(pkg: &Package, stem: &str) -> String {
         .expect("a free name")
 }
 
-/// How an extension lists its relationships: the list element (its
-/// namespace) and the items (always `x14`).
+/// How an extension lists its relationships: the list element and the
+/// items (with their namespaces).
 struct ExtSpec {
     uri: &'static str,
     /// The `ext`'s own namespace declaration.
@@ -261,6 +285,7 @@ struct ExtSpec {
     list: &'static str,
     list_ns: (&'static str, &'static str),
     item: &'static str,
+    item_ns: (&'static str, &'static str),
 }
 
 const SHEET_PIVOT: ExtSpec = ExtSpec {
@@ -269,6 +294,7 @@ const SHEET_PIVOT: ExtSpec = ExtSpec {
     list: "slicerList",
     list_ns: ("x14", NS_X14),
     item: "slicer",
+    item_ns: ("x14", NS_X14),
 };
 const SHEET_TABLE: ExtSpec = ExtSpec {
     uri: EXT_SHEET_TABLE,
@@ -276,6 +302,7 @@ const SHEET_TABLE: ExtSpec = ExtSpec {
     list: "slicerList",
     list_ns: ("x14", NS_X14),
     item: "slicer",
+    item_ns: ("x14", NS_X14),
 };
 const WB_PIVOT: ExtSpec = ExtSpec {
     uri: EXT_WB_PIVOT,
@@ -283,6 +310,7 @@ const WB_PIVOT: ExtSpec = ExtSpec {
     list: "slicerCaches",
     list_ns: ("x14", NS_X14),
     item: "slicerCache",
+    item_ns: ("x14", NS_X14),
 };
 const WB_TABLE: ExtSpec = ExtSpec {
     uri: EXT_WB_TABLE,
@@ -290,6 +318,23 @@ const WB_TABLE: ExtSpec = ExtSpec {
     list: "slicerCaches",
     list_ns: ("x15", NS_X15),
     item: "slicerCache",
+    item_ns: ("x14", NS_X14),
+};
+const SHEET_TIMELINE: ExtSpec = ExtSpec {
+    uri: EXT_SHEET_TIMELINE,
+    ext_ns: ("x15", NS_X15),
+    list: "timelineRefs",
+    list_ns: ("x15", NS_X15),
+    item: "timelineRef",
+    item_ns: ("x15", NS_X15),
+};
+const WB_TIMELINE: ExtSpec = ExtSpec {
+    uri: EXT_WB_TIMELINE,
+    ext_ns: ("x15", NS_X15),
+    list: "timelineCacheRefs",
+    list_ns: ("x15", NS_X15),
+    item: "timelineCacheRef",
+    item_ns: ("x15", NS_X15),
 };
 
 fn is_main(n: Node, name: &str) -> bool {
@@ -379,8 +424,9 @@ fn add_ext_item(full: &str, spec: &ExtSpec, rid: &str) -> Result<String, String>
         _ => (format!(" xmlns:r=\"{NS_R}\""), "r:".to_owned()),
     };
     let (lp, lns) = spec.list_ns;
+    let (ip, ins) = spec.item_ns;
     let item = format!(
-        "<x14:{}{r_decl} xmlns:x14=\"{NS_X14}\" {r}id=\"{}\"/>",
+        "<{ip}:{}{r_decl} xmlns:{ip}=\"{ins}\" {r}id=\"{}\"/>",
         spec.item,
         esc_attr(rid)
     );
@@ -1027,55 +1073,281 @@ pub(crate) fn write(pkg: &mut Package, plan: &SlicerPlan) -> Result<(), String> 
     write_timelines(pkg, &sheets, &wb, plan)
 }
 
-/// Timelines' levels and their caches' selections.
+/// A new `timeline` element.
+fn timeline_element(t: &TimelineOut) -> String {
+    let mut out = format!(
+        "<timeline name=\"{}\" cache=\"{}\" caption=\"{}\"",
+        esc_attr(&t.name),
+        esc_attr(&t.cache),
+        esc_attr(&t.caption)
+    );
+    for (k, v) in timeline_attrs(t).into_iter().skip(1) {
+        if let Some(v) = v {
+            out.push_str(&format!(" {k}=\"{}\"", esc_attr(&v)));
+        }
+    }
+    out.push_str("/>");
+    out
+}
+
+/// A timeline's attributes as the plan has them (`None`: the default,
+/// absent), after its caption.
+fn timeline_attrs(t: &TimelineOut) -> Vec<(&'static str, Option<String>)> {
+    let off = |on: bool| (!on).then(|| "0".to_owned());
+    vec![
+        ("caption", Some(t.caption.clone())),
+        ("showHeader", off(t.show_header)),
+        ("showSelectionLabel", off(t.show_selection_label)),
+        ("showTimeLevel", off(t.show_time_level)),
+        ("showHorizontalScrollbar", off(t.show_scrollbar)),
+        ("level", Some(t.level.to_string())),
+        ("selectionLevel", Some(t.level.to_string())),
+        ("scrollPosition", t.scroll.map(crate::pivot::iso_of_serial)),
+        ("style", t.style.clone()),
+    ]
+}
+
+/// The attributes of a package's `timeline` element `n` to change for the
+/// plan's `t` (none when they say the same).
+fn timeline_edits(xml: &str, n: Node, t: &TimelineOut) -> Vec<(Range<usize>, String)> {
+    let flag = |k: &str| !matches!(n.attribute(k), Some("0" | "false"));
+    let level: Option<u32> = n.attribute("level").and_then(|v| v.parse().ok());
+    let scroll = n
+        .attribute("scrollPosition")
+        .and_then(crate::pivot::serial_of_iso);
+    let mut sets: Vec<(&str, Option<String>)> = Vec::new();
+    let want = timeline_attrs(t);
+    let get = |k: &str| {
+        want.iter()
+            .find(|(w, _)| *w == k)
+            .and_then(|(_, v)| v.clone())
+    };
+    if n.attribute("caption")
+        .unwrap_or(n.attribute("name").unwrap_or_default())
+        != t.caption
+    {
+        sets.push(("caption", get("caption")));
+    }
+    for (k, on) in [
+        ("showHeader", t.show_header),
+        ("showSelectionLabel", t.show_selection_label),
+        ("showTimeLevel", t.show_time_level),
+        ("showHorizontalScrollbar", t.show_scrollbar),
+    ] {
+        if flag(k) != on {
+            sets.push((k, get(k)));
+        }
+    }
+    if level.map(|l| l.min(3)) != Some(t.level) {
+        sets.push(("level", get("level")));
+        sets.push(("selectionLevel", get("selectionLevel")));
+    }
+    if t.scroll.is_some() && scroll != t.scroll {
+        sets.push(("scrollPosition", get("scrollPosition")));
+    }
+    if n.attribute("style") != t.style.as_deref() {
+        sets.push(("style", get("style")));
+    }
+    attr_edits(xml, n, &sets)
+}
+
+/// A new timeline cache part (`source`: its pivot cache's Excel 2010 id).
+fn timeline_cache_xml(c: &TimelineCacheOut, source: u32) -> String {
+    let list: String = c
+        .pivots
+        .iter()
+        .map(|(tab, n)| format!("<pivotTable tabId=\"{tab}\" name=\"{}\"/>", esc_attr(n)))
+        .collect();
+    let bounds = c
+        .bounds
+        .map(|(a, b)| {
+            format!(
+                "<bounds startDate=\"{}\" endDate=\"{}\"/>",
+                crate::pivot::iso_of_serial(a),
+                crate::pivot::iso_of_serial(b)
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "{HEAD}<timelineCacheDefinition xmlns=\"{NS_X15}\" xmlns:mc=\"{NS_MC}\" mc:Ignorable=\"x\" xmlns:x=\"{NS_MAIN}\" name=\"{}\" sourceName=\"{}\"><pivotTables>{list}</pivotTables><state minimalRefreshVersion=\"6\" lastRefreshVersion=\"6\" pivotCacheId=\"{source}\" filterType=\"unknown\">{bounds}</state></timelineCacheDefinition>",
+        esc_attr(&c.name),
+        esc_attr(&c.source_name)
+    )
+}
+
+/// Timelines and their caches: the package's made to agree with the plan
+/// (settings, levels, deleted ones), new ones added, then the caches'
+/// selections.
 fn write_timelines(
     pkg: &mut Package,
     sheets: &[super::SheetEntry],
     wb: &str,
     plan: &SlicerPlan,
 ) -> Result<(), String> {
-    if !plan.timelines.is_empty() {
-        for sheet in sheets.iter().filter(|s| s.kind == SheetKind::Work) {
-            for r in read_rels(pkg, &sheet.part)?
-                .iter()
-                .filter(|r| r.short_kind() == "timeline" && !r.external)
+    let wanted = |sheet_id: u32, name: &str| {
+        plan.timelines
+            .iter()
+            .find(|t| t.sheet_id == sheet_id && t.name.eq_ignore_ascii_case(name))
+    };
+    let mut present: HashSet<(u32, String)> = HashSet::new();
+    for sheet in sheets.iter().filter(|s| s.kind == SheetKind::Work) {
+        let mut rels = read_rels(pkg, &sheet.part)?;
+        let mut gone_rels = HashSet::new();
+        for r in rels
+            .iter()
+            .filter(|r| r.short_kind() == "timeline" && !r.external)
+        {
+            let Some(part) = resolve(&sheet.part, &r.target) else {
+                continue;
+            };
+            let Some(xml) = pkg.text(&part)?.map(str::to_owned) else {
+                continue;
+            };
+            let doc = Document::parse(&xml).map_err(|e| format!("{part}: {e}"))?;
+            let mut edits = Vec::new();
+            let mut left = 0;
+            for n in doc
+                .root_element()
+                .children()
+                .filter(|c| c.is_element() && c.tag_name().name() == "timeline")
             {
-                let Some(part) = resolve(&sheet.part, &r.target) else {
-                    continue;
-                };
-                let Some(xml) = pkg.text(&part)?.map(str::to_owned) else {
-                    continue;
-                };
-                let doc = Document::parse(&xml).map_err(|e| format!("{part}: {e}"))?;
-                let mut edits = Vec::new();
-                for n in doc
-                    .root_element()
-                    .children()
-                    .filter(|c| c.is_element() && c.tag_name().name() == "timeline")
-                {
-                    let name = n.attribute("name").unwrap_or_default();
-                    let Some(t) = plan
-                        .timelines
-                        .iter()
-                        .find(|t| t.name.eq_ignore_ascii_case(name))
-                    else {
-                        continue;
-                    };
-                    let mut sets = vec![
-                        ("level", Some(t.level.to_string())),
-                        ("selectionLevel", Some(t.level.to_string())),
-                    ];
-                    if let Some(s) = t.scroll {
-                        sets.push(("scrollPosition", Some(crate::pivot::iso_of_serial(s))));
+                let name = n.attribute("name").unwrap_or_default();
+                match wanted(sheet.sheet_id, name) {
+                    None => edits.push((n.range(), String::new())),
+                    Some(t) => {
+                        left += 1;
+                        present.insert((sheet.sheet_id, name.to_lowercase()));
+                        edits.extend(timeline_edits(&xml, n, t));
                     }
-                    edits.extend(attr_edits(&xml, n, &sets));
-                }
-                if !edits.is_empty() {
-                    pkg.set(&part, apply_edits(&xml, edits).into_bytes());
                 }
             }
+            if left == 0 {
+                remove_part(pkg, &part)?;
+                gone_rels.insert(r.id.clone());
+            } else if !edits.is_empty() {
+                pkg.set(&part, apply_edits(&xml, edits).into_bytes());
+            }
+        }
+        if !gone_rels.is_empty() {
+            rels.retain(|r| !gone_rels.contains(&r.id));
+            pkg.set(&rels_part(&sheet.part), write_rels(&rels).into_bytes());
+            let xml = pkg.take_text(&sheet.part)?.ok_or("sheet part is missing")?;
+            let new = remove_ext_items(&xml, &[&SHEET_TIMELINE], &gone_rels)?;
+            pkg.set(&sheet.part, new.into_bytes());
+        }
+        // New timelines on this sheet: one part.
+        let add: Vec<&TimelineOut> = plan
+            .timelines
+            .iter()
+            .filter(|t| t.sheet_id == sheet.sheet_id)
+            .filter(|t| !present.contains(&(t.sheet_id, t.name.to_lowercase())))
+            .collect();
+        if add.is_empty() {
+            continue;
+        }
+        let part = free_name(pkg, "xl/timelines/timeline");
+        let body: String = add.iter().map(|t| timeline_element(t)).collect();
+        pkg.set(
+            &part,
+            format!(
+                "{HEAD}<timelines xmlns=\"{NS_X15}\" xmlns:mc=\"{NS_MC}\" mc:Ignorable=\"x\" xmlns:x=\"{NS_MAIN}\">{body}</timelines>"
+            )
+            .into_bytes(),
+        );
+        add_ct(pkg, &part, TIMELINE_CT)?;
+        let mut rels = read_rels(pkg, &sheet.part)?;
+        let rid = next_rid(&rels);
+        rels.push(Rel {
+            id: rid.clone(),
+            kind: format!("{MS_REL_2011}timeline"),
+            target: relative(&sheet.part, &part),
+            external: false,
+        });
+        pkg.set(&rels_part(&sheet.part), write_rels(&rels).into_bytes());
+        let xml = pkg.take_text(&sheet.part)?.ok_or("sheet part is missing")?;
+        pkg.set(
+            &sheet.part,
+            add_ext_item(&xml, &SHEET_TIMELINE, &rid)?.into_bytes(),
+        );
+    }
+    // Caches: the package's (unused ones go), then new ones.
+    let used: HashSet<String> = plan
+        .timelines
+        .iter()
+        .map(|t| t.cache.to_lowercase())
+        .collect();
+    let mut wb_rels = read_rels(pkg, wb)?;
+    let mut gone_rels = HashSet::new();
+    let mut gone_names = HashSet::new();
+    let mut have = HashSet::new();
+    for r in wb_rels
+        .iter()
+        .filter(|r| r.short_kind() == "timelineCache" && !r.external)
+    {
+        let Some(part) = resolve(wb, &r.target) else {
+            continue;
+        };
+        let Some(xml) = pkg.text(&part)?.map(str::to_owned) else {
+            continue;
+        };
+        let doc = Document::parse(&xml).map_err(|e| format!("{part}: {e}"))?;
+        let name = doc
+            .root_element()
+            .attribute("name")
+            .unwrap_or_default()
+            .to_lowercase();
+        if used.contains(&name) {
+            have.insert(name);
+        } else {
+            remove_part(pkg, &part)?;
+            gone_rels.insert(r.id.clone());
+            gone_names.insert(name);
         }
     }
+    let mut added = Vec::new();
+    for c in plan
+        .timeline_caches
+        .iter()
+        .filter(|c| used.contains(&c.name.to_lowercase()) && !have.contains(&c.name.to_lowercase()))
+    {
+        let (tab, name) = c
+            .pivots
+            .first()
+            .ok_or("a timeline cache without a PivotTable")?;
+        let source = pivot_cache_id(pkg, sheets, wb, &wb_rels, (*tab, name))?;
+        let part = free_name(pkg, "xl/timelineCaches/timelineCache");
+        pkg.set(&part, timeline_cache_xml(c, source).into_bytes());
+        add_ct(pkg, &part, TIMELINE_CACHE_CT)?;
+        let rid = next_rid(&wb_rels);
+        wb_rels.push(Rel {
+            id: rid.clone(),
+            kind: format!("{MS_REL_2011}timelineCache"),
+            target: relative(wb, &part),
+            external: false,
+        });
+        added.push(rid);
+    }
+    let names: Vec<String> = plan
+        .timeline_caches
+        .iter()
+        .filter(|c| used.contains(&c.name.to_lowercase()))
+        .map(|c| c.name.clone())
+        .collect();
+    let mut xml = pkg.text(wb)?.ok_or("workbook part is missing")?.to_owned();
+    let linked = !gone_rels.is_empty() || !added.is_empty();
+    if linked {
+        wb_rels.retain(|r| !gone_rels.contains(&r.id));
+        pkg.set(&rels_part(wb), write_rels(&wb_rels).into_bytes());
+        xml = remove_ext_items(&xml, &[&WB_TIMELINE], &gone_rels)?;
+        for rid in &added {
+            xml = add_ext_item(&xml, &WB_TIMELINE, rid)?;
+        }
+    }
+    let named = edit_names(&xml, &names, &gone_names)?;
+    if named != xml || linked {
+        pkg.set(wb, named.into_bytes());
+    }
+    // Selections.
     if plan.timeline_caches.is_empty() {
         return Ok(());
     }
@@ -1105,7 +1377,7 @@ fn patch_timeline_cache(xml: &str, plan: &SlicerPlan) -> Result<Option<String>, 
     let Some(t) = plan
         .timeline_caches
         .iter()
-        .find(|c| c.name.eq_ignore_ascii_case(name))
+        .find(|c| c.name.eq_ignore_ascii_case(name) && c.known)
     else {
         return Ok(None);
     };

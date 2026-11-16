@@ -25,9 +25,12 @@ use anyhow::{Context as _, bail};
 use roxmltree::Node;
 
 use crate::frame::NS_C;
+
+mod ex;
 use crate::history::{Focus, Kind};
 use crate::presentation::Presentation;
 use crate::xml::*;
+pub use ex::SEP as CATEGORY_LEVEL_SEP;
 
 /// A chart's data as a grid: categories down, series across.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -105,8 +108,12 @@ fn val_el<'a, 'i>(ser: Node<'a, 'i>) -> Option<Node<'a, 'i>> {
     kid(ser, "val").or_else(|| kid(ser, "yVal"))
 }
 
-/// The data a chart part shows.
+/// The data a chart part shows (a classic chart's or one of the Office
+/// 2016 types', see [`ex`]).
 pub fn read_chart_data(xml: &str) -> Option<ChartData> {
+    if ex::is_chartex(xml) {
+        return ex::read(xml);
+    }
     let doc = roxmltree::Document::parse(xml).ok()?;
     let sers = sers(&doc);
     let first = *sers.first()?;
@@ -924,6 +931,7 @@ fn patch_workbook(
     bytes: &[u8],
     cells: &[CellWrites],
     resize: Option<(Ref, Ref)>,
+    renames: &[(String, String)],
 ) -> anyhow::Result<Vec<u8>> {
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).context("embedded workbook")?;
     let text = |zip: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str| -> Option<String> {
@@ -1007,6 +1015,30 @@ fn patch_workbook(
         }
     }
     sheets.extend(tables);
+    // Defined names (`_xlchart.v1.0`) whose range grew or shrank.
+    if !renames.is_empty() {
+        let mut x = wb.clone();
+        let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+        for n in wdoc
+            .descendants()
+            .filter(|n| n.tag_name().name() == "definedName")
+        {
+            let Some((_, to)) = n
+                .attribute("name")
+                .and_then(|name| renames.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)))
+            else {
+                continue;
+            };
+            if let Some(t) = n.first_child().filter(|t| t.is_text()) {
+                edits.push((t.range(), esc(to)));
+            }
+        }
+        edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+        for (r, t) in edits {
+            x.replace_range(r, &t);
+        }
+        sheets.push(("xl/workbook.xml".to_owned(), x));
+    }
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -1023,6 +1055,35 @@ fn patch_workbook(
         }
     }
     Ok(out.finish()?.into_inner())
+}
+
+/// The defined names of a workbook (`xl/workbook.xml`): name -> formula.
+fn defined_names(bytes: &[u8]) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    let Ok(mut zip) = zip::ZipArchive::new(Cursor::new(bytes)) else {
+        return out;
+    };
+    let mut wb = String::new();
+    match zip.by_name("xl/workbook.xml") {
+        Ok(mut f) => {
+            if f.read_to_string(&mut wb).is_err() {
+                return out;
+            }
+        }
+        Err(_) => return out,
+    }
+    let Ok(doc) = roxmltree::Document::parse(&wb) else {
+        return out;
+    };
+    for n in doc
+        .descendants()
+        .filter(|n| n.tag_name().name() == "definedName")
+    {
+        if let (Some(name), Some(f)) = (n.attribute("name"), n.text()) {
+            out.insert(name.to_owned(), f.to_owned());
+        }
+    }
+    out
 }
 
 impl Presentation {
@@ -1043,6 +1104,13 @@ impl Presentation {
     pub fn chart_data(&self, slide: usize, shape: usize) -> Option<ChartData> {
         let (_, bytes) = self.chart_bytes(slide, shape)?;
         read_chart_data(std::str::from_utf8(&bytes).ok()?)
+    }
+
+    /// Whether a chart's series can't be added, removed or moved here
+    /// (the Office 2016 types: their data is edited, their series stay).
+    pub fn chart_series_fixed(&self, slide: usize, shape: usize) -> bool {
+        self.chart_bytes(slide, shape)
+            .is_some_and(|(_, b)| std::str::from_utf8(&b).is_ok_and(ex::is_chartex))
     }
 
     /// Bytes of a part as edited in Kantor (a chart or its workbook).
@@ -1274,11 +1342,6 @@ impl Presentation {
         change: SeriesChange,
     ) -> anyhow::Result<()> {
         let part = part.to_owned();
-        let old_box = data_box(xml);
-        let (mid, clears) = restructure(xml, change)?;
-        let (new_xml, mut cells) = rewrite_chart(&mid, data)?;
-        cells.extend(clears);
-        let resize = old_box.zip(data_box(&new_xml));
         // The embedded workbook, from the chart part's relationships.
         let rels = self
             .part_bytes(&rels_name(&part))
@@ -1289,16 +1352,44 @@ impl Presentation {
             .find(|r| r.kind() == "package" && !r.external)
             .and_then(|r| r.part(&part))
             .filter(|p| p.ends_with(".xlsx"));
-        let workbook = match wb_part {
-            Some(p) => {
-                let current = self
-                    .edited_part(&p)
-                    .or_else(|| self.part_bytes(&p))
-                    .context("the chart's workbook is missing")?;
-                let patched = patch_workbook(&current, &cells, resize)?;
+        let current = match &wb_part {
+            Some(p) => Some(
+                self.edited_part(p)
+                    .or_else(|| self.part_bytes(p))
+                    .context("the chart's workbook is missing")?,
+            ),
+            None => None,
+        };
+        let (new_xml, cells, resize, renames) = if ex::is_chartex(xml) {
+            if change != SeriesChange::Same {
+                bail!("Kantor can't add, remove or move the series of this type of chart");
+            }
+            let names = current
+                .as_deref()
+                .map(|b| defined_names(b))
+                .unwrap_or_default();
+            let old_box = ex::data_box(xml, &names);
+            let (new_xml, cells, renames) = ex::rewrite(xml, data, &names)?;
+            let mut after = names.clone();
+            for (k, v) in &renames {
+                after.insert(k.clone(), v.clone());
+            }
+            let resize = old_box.zip(ex::data_box(&new_xml, &after));
+            (new_xml, cells, resize, renames)
+        } else {
+            let old_box = data_box(xml);
+            let (mid, clears) = restructure(xml, change)?;
+            let (new_xml, mut cells) = rewrite_chart(&mid, data)?;
+            cells.extend(clears);
+            let resize = old_box.zip(data_box(&new_xml));
+            (new_xml, cells, resize, Vec::new())
+        };
+        let workbook = match (wb_part, current) {
+            (Some(p), Some(current)) => {
+                let patched = patch_workbook(&current, &cells, resize, &renames)?;
                 Some((p, Arc::new(patched)))
             }
-            None => None,
+            _ => None,
         };
         let edit = Arc::new(ChartEdit {
             xml: Arc::new(new_xml.into_bytes()),

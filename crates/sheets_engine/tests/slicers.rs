@@ -516,3 +516,247 @@ fn slicer_settings_are_saved() {
     assert!(p2["xl/slicers/slicer2.xml"].contains("caption=\"Region\""));
     assert!(!p2["xl/slicerCaches/slicerCache2.xml"].contains("sortOrder"));
 }
+
+#[test]
+fn insert_timeline_on_a_pivot_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = Workbook::open(fixture()).unwrap();
+    // Only Date holds dates.
+    assert_eq!(wb.timeline_fields(1, "PivotTable1").unwrap(), ["Date"]);
+    let (sheet, at) = wb.timeline_place(1, "PivotTable1").unwrap();
+    assert_eq!(sheet, 1);
+    let keys = wb
+        .insert_timelines(sheet, "PivotTable1", &["Date".into()], at)
+        .unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(wb.timeline_of(keys[0]).as_deref(), Some("Date"));
+    assert_eq!(
+        drawing_names(&wb, 1),
+        [
+            "slicer Region",
+            "timeline NativeTimeline_Date",
+            "timeline Date"
+        ]
+    );
+    let t = wb.timeline_view(REPORT, "Date").unwrap();
+    assert_eq!(t.level.as_deref(), Some("MONTHS"));
+    assert_eq!(t.label.as_deref(), Some("All Periods"));
+    assert_eq!(t.total, 12, "the field's whole year");
+    let s = wb.timeline_settings(REPORT, "Date").unwrap();
+    assert_eq!(s.cache_name, "NativeTimeline_Date1");
+    assert_eq!(s.source_name, "Date");
+    // It filters the pivot table as the file's timeline does.
+    wb.timeline_select(
+        REPORT,
+        "Date",
+        Some((serial("2026-01-01"), serial("2026-03-31"))),
+    )
+    .unwrap();
+    assert_eq!(pivot_values(&wb), ["348", "195", "270", "813", ""]);
+    // The file's timeline on the same field shows it (a field keeps one
+    // date filter).
+    assert_eq!(
+        wb.timeline_view(REPORT, TIMELINE).unwrap().label.as_deref(),
+        Some("Jan - Mar 2026")
+    );
+    // Saved with its parts, extensions and name; reopened as it was.
+    let (path, p) = save(&mut wb, dir.path(), "timeline-inserted.xlsx");
+    let wbx = &p["xl/workbook.xml"];
+    assert!(
+        wbx.contains("<definedName name=\"NativeTimeline_Date1\">#N/A</definedName>"),
+        "{wbx}"
+    );
+    assert_eq!(wbx.matches("timelineCacheRef ").count(), 2, "{wbx}");
+    let cache = &p["xl/timelineCaches/timelineCache2.xml"];
+    assert!(cache.contains("name=\"NativeTimeline_Date1\""), "{cache}");
+    assert!(
+        cache.contains(
+            "<bounds startDate=\"2026-01-01T00:00:00\" endDate=\"2027-01-01T00:00:00\"/>"
+        ),
+        "{cache}"
+    );
+    assert!(cache.contains("filterType=\"dateBetween\""), "{cache}");
+    assert!(cache.contains("pivotCacheId=\"1\""), "{cache}");
+    let part = &p["xl/timelines/timeline2.xml"];
+    assert!(
+        part.contains("name=\"Date\" cache=\"NativeTimeline_Date1\" caption=\"Date\""),
+        "{part}"
+    );
+    let sheet2 = &p["xl/worksheets/sheet2.xml"];
+    assert_eq!(sheet2.matches("x15:timelineRef ").count(), 2, "{sheet2}");
+    let drawing = &p["xl/drawings/drawing2.xml"];
+    assert!(drawing.contains("<tsle:timeslicer"), "{drawing}");
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(
+        drawing_names(&back, 1),
+        [
+            "slicer Region",
+            "timeline NativeTimeline_Date",
+            "timeline Date"
+        ]
+    );
+    assert_eq!(
+        back.timeline_view(REPORT, "Date").unwrap().label.as_deref(),
+        Some("Jan - Mar 2026")
+    );
+    assert_eq!(pivot_values(&back)[3], "813");
+    // Saving again keeps one of each.
+    let (_, p2) = save(&mut wb, dir.path(), "timeline-inserted-again.xlsx");
+    assert_eq!(
+        p2.keys()
+            .filter(|k| k.starts_with("xl/timelineCaches/") && !k.contains("_rels"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        p2["xl/workbook.xml"]
+            .matches("NativeTimeline_Date1")
+            .count(),
+        1
+    );
+    // Undo the filter and the insert: the next save drops them again.
+    wb.undo().unwrap();
+    wb.undo().unwrap();
+    assert_eq!(
+        drawing_names(&wb, 1),
+        ["slicer Region", "timeline NativeTimeline_Date"]
+    );
+    let (_, p3) = save(&mut wb, dir.path(), "timeline-undone.xlsx");
+    assert!(!p3["xl/workbook.xml"].contains("NativeTimeline_Date1"));
+    assert!(!p3.keys().any(|k| k == "xl/timelines/timeline2.xml"));
+    assert!(
+        !p3.keys()
+            .any(|k| k == "xl/timelineCaches/timelineCache2.xml")
+    );
+    assert_eq!(
+        p3["xl/worksheets/sheet2.xml"]
+            .matches("x15:timelineRef ")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn timeline_settings_are_saved_and_a_deleted_timeline_goes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = Workbook::open(fixture()).unwrap();
+    let mut s = wb.timeline_settings(REPORT, TIMELINE).unwrap();
+    assert_eq!(s.style, "TimeSlicerStyleLight1");
+    assert!(s.show_header && s.show_scrollbar);
+    s.caption = "Order date".into();
+    s.show_selection_label = false;
+    s.show_scrollbar = false;
+    s.style = "TimeSlicerStyleDark2".into();
+    wb.set_timeline_settings(REPORT, TIMELINE, &s).unwrap();
+    let v = wb.timeline_view(REPORT, TIMELINE).unwrap();
+    assert_eq!(v.caption, "Order date");
+    assert_eq!(v.label, None);
+    assert!(!v.show_scrollbar);
+    let (path, p) = save(&mut wb, dir.path(), "timeline-settings.xlsx");
+    let part = &p["xl/timelines/timeline1.xml"];
+    assert!(
+        part.contains("caption=\"Order date\"")
+            && part.contains("showSelectionLabel=\"0\"")
+            && part.contains("showHorizontalScrollbar=\"0\"")
+            && part.contains("style=\"TimeSlicerStyleDark2\""),
+        "{part}"
+    );
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(back.timeline_settings(REPORT, TIMELINE).unwrap(), s);
+    // Undone: as the file had it.
+    wb.undo().unwrap();
+    let (_, p2) = save(&mut wb, dir.path(), "timeline-settings-undone.xlsx");
+    let part = &p2["xl/timelines/timeline1.xml"];
+    assert!(
+        part.contains("caption=\"Date\"") && !part.contains("style="),
+        "{part}"
+    );
+    // Deleting the file's timeline takes its parts, extensions and name.
+    let key = wb
+        .drawings(1)
+        .into_iter()
+        .find(|d| matches!(&*d.kind, DrawingKind::Timeline { .. }))
+        .unwrap()
+        .key;
+    wb.delete_drawing(key).unwrap();
+    let (path, p3) = save(&mut wb, dir.path(), "timeline-deleted.xlsx");
+    assert!(
+        !p3.keys().any(|k| k.starts_with("xl/timeline")),
+        "{:?}",
+        p3.keys()
+    );
+    assert!(!p3["xl/workbook.xml"].contains("NativeTimeline_Date"));
+    assert!(!p3["xl/worksheets/sheet2.xml"].contains("timelineRef"));
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(drawing_names(&back, 1), ["slicer Region"]);
+}
+
+#[test]
+fn a_timeline_scrolls_to_a_period_and_previews_a_drag() {
+    let mut wb = Workbook::open(fixture()).unwrap();
+    wb.timeline_set_level(REPORT, TIMELINE, 3).unwrap();
+    wb.timeline_scroll_to(REPORT, TIMELINE, 40).unwrap();
+    let t = wb.timeline_view(REPORT, TIMELINE).unwrap();
+    assert_eq!(t.before, 40);
+    assert_eq!(t.periods[0].label, "10", "Feb 10");
+    assert_eq!(t.last_scroll(8), 357);
+    let p = t.with_selection((serial("2026-02-11"), serial("2026-02-12")));
+    assert_eq!(p.label.as_deref(), Some("11 - 12 Feb 2026"));
+    let sel: Vec<bool> = p.periods.iter().take(4).map(|p| p.selected).collect();
+    assert_eq!(sel, [false, true, true, false]);
+    // Only a preview: nothing is filtered.
+    assert_eq!(pivot_values(&wb)[3], "1068");
+}
+
+#[test]
+fn insert_timeline_on_a_new_pivot_table() {
+    use sheets_engine::PivotDestination;
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = Workbook::new_empty().unwrap();
+    let mut cells = vec![
+        (0, 0, "Day".to_string()),
+        (0, 1, "Item".to_string()),
+        (0, 2, "Amount".to_string()),
+    ];
+    for (r, (day, item, amount)) in [
+        ("2025-11-03", "Tea", "4"),
+        ("2025-12-14", "Cake", "9"),
+        ("2026-01-20", "Tea", "5"),
+        ("2026-02-02", "Cake", "7"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let r = r as u32 + 1;
+        cells.push((r, 0, day.to_string()));
+        cells.push((r, 1, item.to_string()));
+        cells.push((r, 2, amount.to_string()));
+    }
+    wb.set_inputs(0, &cells).unwrap();
+    let (sheet, _, _) = wb
+        .insert_pivot("Sheet1!$A$1:$C$5", 0, PivotDestination::NewSheet)
+        .unwrap();
+    let name = wb.pivot_tables(sheet)[0].name.clone();
+    assert_eq!(wb.timeline_fields(sheet, &name).unwrap(), ["Day"]);
+    let (s, at) = wb.timeline_place(sheet, &name).unwrap();
+    wb.insert_timelines(s, &name, &["Day".into()], at).unwrap();
+    let sid = wb.sheet_id(sheet);
+    let t = wb.timeline_view(sid, "Day").unwrap();
+    assert_eq!(t.total, 24, "two years of months");
+    assert_eq!(t.periods[0].group.as_deref(), Some("2025"));
+    let (path, p) = save(&mut wb, dir.path(), "timeline-new-pivot.xlsx");
+    let cache = p
+        .iter()
+        .find(|(k, _)| k.starts_with("xl/timelineCaches/") && !k.contains("_rels"))
+        .map(|(_, v)| v)
+        .unwrap();
+    assert!(
+        cache.contains("startDate=\"2025-01-01T00:00:00\" endDate=\"2027-01-01T00:00:00\""),
+        "{cache}"
+    );
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(
+        back.timeline_view(sid, "Day").unwrap().label.as_deref(),
+        Some("All Periods")
+    );
+}

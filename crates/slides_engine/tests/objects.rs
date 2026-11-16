@@ -293,3 +293,92 @@ fn categories_and_series_anywhere_and_reordered() {
     }
     assert_eq!(p.chart_data(s, k).unwrap(), d);
 }
+
+/// tests/corpus/pptx/chartex.pptx (scripts/corpus/gen_pptx_chartex.py):
+/// slides 5-11 hold one chart each of the Office 2016 types.
+fn chartex() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/pptx/chartex.pptx")
+}
+
+/// The chart frame on slide `s`.
+fn chart_on(p: &Presentation, s: usize) -> usize {
+    (0..p.slide(s).shapes.len())
+        .find(|&k| p.chart_data(s, k).is_some())
+        .unwrap_or_else(|| panic!("no chart on slide {}", s + 1))
+}
+
+#[test]
+fn edit_the_data_of_the_newer_chart_types() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = Presentation::open(&chartex()).unwrap();
+    // Waterfall (slide 5): its references are defined names.
+    let w = chart_on(&p, 4);
+    let d = p.chart_data(4, w).unwrap();
+    assert_eq!(
+        d.categories,
+        ["Start", "Sales", "Costs", "Tax", "Other", "End"]
+    );
+    assert_eq!(d.series[0].name, "Amount");
+    let mut e = d.clone();
+    e.series[0].values[1] = Some(70.0);
+    e.categories.push("Bonus".into());
+    e.series[0].values.push(Some(12.0));
+    p.set_chart_data(4, w, &e).unwrap();
+    assert_eq!(p.chart_data(4, w).unwrap(), e);
+    // Treemap (slide 7): categories are paths of their levels.
+    let t = chart_on(&p, 6);
+    let mut d = p.chart_data(6, t).unwrap();
+    assert_eq!(d.categories[0], "North / Alpha");
+    d.categories[0] = "North / Aleph".into();
+    d.series[0].values[0] = Some(31.0);
+    p.set_chart_data(6, t, &d).unwrap();
+    // Box & whisker (slide 11): two series with data of their own.
+    let b = chart_on(&p, 10);
+    let mut bx = p.chart_data(10, b).unwrap();
+    assert_eq!(bx.series.len(), 2);
+    bx.series[1].values[0] = Some(19.0);
+    p.set_chart_data(10, b, &bx).unwrap();
+    // Pareto (slide 10): the line has no data; series can't be added.
+    let pa = chart_on(&p, 9);
+    assert_eq!(p.chart_data(9, pa).unwrap().series.len(), 1);
+    assert!(p.add_chart_series(9, pa, "More").is_err());
+    // Undo and redo cover it.
+    p.undo();
+    assert_eq!(p.chart_data(10, b).unwrap().series[1].values[0], Some(20.0));
+    p.redo();
+    let out = dir.path().join("chartex.pptx");
+    p.save_as(&out).unwrap();
+    let back = Presentation::open(&out).unwrap();
+    assert_eq!(back.chart_data(4, w).unwrap(), e);
+    assert_eq!(back.chart_data(6, t).unwrap(), d);
+    assert_eq!(back.chart_data(10, b).unwrap(), bx);
+    let saved = parts(&std::fs::read(&out).unwrap());
+    // The waterfall's names cover one more row; its workbook has the cells.
+    let wb = parts(&saved["ppt/embeddings/Microsoft_Excel_Worksheet_ex1.xlsx"]);
+    let book = String::from_utf8(wb["xl/workbook.xml"].clone()).unwrap();
+    assert!(
+        book.contains(
+            r#"<definedName name="_xlchart.v1.0" hidden="1">Data!$A$2:$A$8</definedName>"#
+        ),
+        "{book}"
+    );
+    let sheet = String::from_utf8(wb["xl/worksheets/sheet1.xml"].clone()).unwrap();
+    assert!(sheet.contains(r#"<c r="B3"><v>70</v></c>"#), "{sheet}");
+    assert!(sheet.contains(">Bonus</t>"), "{sheet}");
+    // The treemap's block: region and store columns.
+    let wb = parts(&saved["ppt/embeddings/Microsoft_Excel_Worksheet_ex3.xlsx"]);
+    let sheet = String::from_utf8(wb["xl/worksheets/sheet1.xml"].clone()).unwrap();
+    assert!(sheet.contains(">Aleph</t>"), "{sheet}");
+    assert!(sheet.contains(r#"<c r="C2"><v>31</v></c>"#), "{sheet}");
+    // Only the edited charts and workbooks changed.
+    let orig = parts(&std::fs::read(chartex()).unwrap());
+    for n in [
+        "ppt/charts/chartEx2.xml",
+        "ppt/embeddings/Microsoft_Excel_Worksheet_ex2.xlsx",
+    ] {
+        assert_eq!(saved[n], orig[n], "{n}");
+    }
+    if let Ok(dir) = std::env::var("KANTOR_PIVOT_SAMPLES") {
+        std::fs::copy(&out, PathBuf::from(dir).join("chartex-edited.pptx")).unwrap();
+    }
+}

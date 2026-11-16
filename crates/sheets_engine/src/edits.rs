@@ -52,6 +52,9 @@ pub(crate) struct Edits {
     /// Timelines' level and first period shown, set in Kantor, by
     /// `(sheetId, lower-case name)`.
     pub timelines: HashMap<(u32, String), (u32, Option<f64>)>,
+    /// Timelines' settings changed in Kantor (Timeline Settings, styles,
+    /// what shows), by `(sheetId, lower-case name)`.
+    pub timeline_defs: HashMap<(u32, String), crate::slicer::TimelineDef>,
     /// Slicers' settings changed in Kantor (Slicer Settings, styles,
     /// columns), by `(sheetId, lower-case name)`.
     pub slicer_defs: HashMap<(u32, String), crate::slicer::SlicerDef>,

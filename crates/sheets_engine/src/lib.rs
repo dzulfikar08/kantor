@@ -15,6 +15,7 @@ mod chart_edit;
 mod chart_options;
 mod chart_sheet;
 mod chart_style;
+mod chartex_edit;
 mod cond_format;
 mod content_text;
 mod csv;
