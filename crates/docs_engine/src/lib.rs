@@ -36,6 +36,8 @@ pub mod rtf;
 pub mod section;
 pub mod style;
 pub mod table;
+pub mod table_merge;
+mod table_props;
 pub mod tabs;
 mod track;
 mod track_table;
@@ -66,6 +68,7 @@ pub use section::{
 pub use style::{
     HEADING_STYLES, Proofing, ResolvedLine, ResolvedPara, ResolvedRun, StyleSheet, font_stack,
 };
-pub use table::{Border, Borders, Table, VMerge};
+pub use table::{Border, Borders, Table, TableAlign, VMerge};
+pub use table_props::TableProps;
 pub use tabs::{TabKind, TabLeader, TabStop};
 pub use track_table::TableChange;

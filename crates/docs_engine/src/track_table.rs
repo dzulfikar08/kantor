@@ -15,7 +15,9 @@
 //! changes in files (`w:tblPrChange`, `w:trPrChange`, `w:tcPrChange`,
 //! `w:tblGridChange`) are shown as one formatting change per table and
 //! accepted (the record dropped) or rejected (the old properties back).
-//! Merged-cell changes (`w:cellMerge`) aren't modelled.
+//! Vertical merges (`w:cellMerge`, the cell's merge state now and before)
+//! are part of the table's property change too: accepted, the new state
+//! is written as `w:vMerge`; rejected, the old one comes back.
 
 use crate::document::{Document, Kind};
 use crate::model::{CellRef, Paragraph, Position, Selection};
@@ -73,6 +75,23 @@ pub(crate) fn clear_row_rev(row: &mut Row) {
 }
 
 impl Document {
+    /// With Track Changes on, `new` (a `w:tblPr`/`w:trPr`/`w:tcPr`
+    /// replacing `old`) with the old properties recorded as a change by the
+    /// user, as Word does; else `new` as is.
+    pub(crate) fn track_props(&self, old: Option<&str>, new: String, outer: &str) -> String {
+        if !self.track {
+            return new;
+        }
+        let change = format!("{outer}Change");
+        let tag = format!(
+            "w:id=\"{}\" w:author=\"{}\" w:date=\"{}\"",
+            self.max_rev_id() + 1,
+            xml::escape(&self.author),
+            now_utc()
+        );
+        record_prop(old, &new, outer, &change, &tag)
+    }
+
     /// A row revision element by the user.
     pub(crate) fn row_rev_el(&self, kind: RevKind, id: u64) -> String {
         let name = if kind == RevKind::Insert {
@@ -414,6 +433,7 @@ pub(crate) fn props_changed(t: &Table) -> Option<(String, String)> {
         recs.extend(prop_change(r.tr_pr.as_deref(), "trPrChange"));
         for c in &r.cells {
             recs.extend(prop_change(c.tc_pr.as_deref(), "tcPrChange"));
+            recs.extend(cell_merge(c));
         }
     }
     recs.first().map(|r| crate::fmt_track::who_when(r))
@@ -439,7 +459,43 @@ pub(crate) fn props_items(t: &Table) -> Vec<crate::fmt_track::FormatItem> {
     {
         out.push(F::CellProps);
     }
+    if t.rows
+        .iter()
+        .flat_map(|r| &r.cells)
+        .any(|c| cell_merge(c).is_some())
+    {
+        out.push(F::MergedCells);
+    }
     out
+}
+
+/// A cell's tracked merge (`w:cellMerge`), as written.
+pub(crate) fn cell_merge(cell: &Cell) -> Option<&str> {
+    let x = cell.tc_pr.as_deref()?;
+    let own = match x.find("<w:tcPrChange") {
+        Some(i) => &x[..i],
+        None => x,
+    };
+    el_in(own, "cellMerge")
+}
+
+/// Resolve a cell's tracked merge: accepted, its new state (`w:vMerge`);
+/// rejected, the old (`w:vMergeOrig`). Whether it had one.
+fn resolve_cell_merge(cell: &mut Cell, accept: bool) -> bool {
+    let Some(rec) = cell_merge(cell).and_then(xml::parse) else {
+        return false;
+    };
+    let state = crate::table::VMerge::from_annotation(rec.attr(if accept {
+        "vMerge"
+    } else {
+        "vMergeOrig"
+    }));
+    let x = cell.tc_pr.as_deref().unwrap_or("<w:tcPr></w:tcPr>");
+    let x =
+        crate::table_merge::set_tc_child(&strip_element(x, "cellMerge"), "vMerge", state.element());
+    cell.tc_pr = Some(x.into());
+    cell.refresh();
+    true
 }
 
 /// Accept or reject every property change of table `t`. Whether there
@@ -480,11 +536,19 @@ pub(crate) fn resolve_props(t: &mut Table, accept: bool) -> bool {
             any = true;
         }
         for c in &mut r.cells {
+            any |= resolve_cell_merge(c, accept);
             if let Some(x) = c.tc_pr.as_deref()
                 && prop_change(Some(x), "tcPrChange").is_some()
             {
                 c.tc_pr = Some(
-                    resolve_prop(x, "tcPr", "tcPrChange", accept, &["cellIns", "cellDel"]).into(),
+                    resolve_prop(
+                        x,
+                        "tcPr",
+                        "tcPrChange",
+                        accept,
+                        &["cellIns", "cellDel", "cellMerge"],
+                    )
+                    .into(),
                 );
                 c.refresh();
                 any = true;
@@ -843,5 +907,10 @@ impl Cell {
     /// Whether the cell is a tracked insertion or deletion.
     pub fn tracked(&self) -> Option<RevKind> {
         cell_rev(self).map(|r| r.0)
+    }
+
+    /// Whether the cell's merge state is a tracked change (`w:cellMerge`).
+    pub fn merge_tracked(&self) -> bool {
+        cell_merge(self).is_some()
     }
 }

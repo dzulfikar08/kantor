@@ -81,6 +81,10 @@ pub(crate) struct ChangeNote {
 /// Word's balloon text for a formatting change: "Formatted: Font: Bold".
 pub(crate) fn format_label(items: &[docs_engine::FormatItem]) -> String {
     use docs_engine::{Align, FormatItem as F};
+    // Cells merged down (`w:cellMerge`): Word's "Merged Cells".
+    if items.contains(&F::MergedCells) {
+        return t("Merged Cells").to_owned();
+    }
     // A table's, rows' or cells' properties: Word's "Formatted Table".
     if !items.is_empty()
         && items
@@ -118,6 +122,7 @@ pub(crate) fn format_label(items: &[docs_engine::FormatItem]) -> String {
             F::TableProps => t("Table").to_owned(),
             F::RowProps => t("Row").to_owned(),
             F::CellProps => t("Cell").to_owned(),
+            F::MergedCells => t("Merged Cells").to_owned(),
             F::Other => t("Other formatting").to_owned(),
         })
         .collect();

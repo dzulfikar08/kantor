@@ -29,7 +29,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::i18n::{self, t, t_dyn, tk};
 use kantor_ui::tokens::Elevation;
-use kantor_ui::{metrics::*, tokens};
+use kantor_ui::{components::section_label, metrics::*, tokens};
 
 use crate::{DocsView, Frame, Geometry, layout_color};
 
@@ -77,6 +77,8 @@ pub(crate) struct TextBoxEdit {
     at: Point<Pixels>,
     input: Entity<TextareaState>,
     locked: Option<String>,
+    /// What's edited (the popover's title).
+    owner: TextOwner,
     /// Focus the text when the double click's button goes up (the page
     /// takes the focus back on mouse down).
     focus_on_up: bool,
@@ -86,6 +88,53 @@ pub(crate) struct TextBoxEdit {
 const LOCKED: &str = tk(
     "This text box has pictures, tables or other objects; Kantor shows it and keeps it as it is, but can't edit it yet",
 );
+
+/// What the text popover edits: Word's names for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextOwner {
+    /// A text box (`wps:cNvSpPr/@txBox`, or VML's `v:textbox` on a
+    /// text box shape).
+    TextBox,
+    /// Text in a shape (a shape with text, or a group's shape).
+    Shape,
+    SmartArt,
+}
+
+impl TextOwner {
+    fn of(f: &docs_engine::Float, which: Option<usize>) -> Self {
+        match (&f.kind, which) {
+            (docs_engine::FloatKind::SmartArt { .. }, _) => Self::SmartArt,
+            (_, Some(_)) => Self::Shape,
+            _ if f.xml.contains("txBox=\"1\"") || f.xml.contains("o:spt=\"202\"") => Self::TextBox,
+            (docs_engine::FloatKind::Shape, None) => Self::Shape,
+            _ => Self::TextBox,
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::TextBox => t("Text box"),
+            Self::Shape => t("Shape text"),
+            Self::SmartArt => t("SmartArt text"),
+        }
+    }
+
+    fn placeholder(self) -> &'static str {
+        match self {
+            Self::TextBox => t("Write the text box's text"),
+            Self::Shape => t("Write the shape's text"),
+            Self::SmartArt => t("Write the SmartArt's text, one line per item"),
+        }
+    }
+
+    fn updated(self) -> &'static str {
+        match self {
+            Self::TextBox => t("Text box updated"),
+            Self::Shape => t("Shape text updated"),
+            Self::SmartArt => t("SmartArt text updated"),
+        }
+    }
+}
 
 /// SmartArt edit messages from `docs_pdf::smartart` (translated with
 /// `t_dyn`).
@@ -551,6 +600,7 @@ impl DocsView {
         let Some(f) = self.doc.float_at(sel.para, sel.index) else {
             return;
         };
+        let owner = TextOwner::of(f, which);
         let (text, locked) = match (&f.kind, which) {
             (docs_engine::FloatKind::SmartArt { .. }, Some(k)) => {
                 let Some((text, locked)) = docs_pdf::smartart::shape_text(&self.doc, f, k) else {
@@ -566,7 +616,7 @@ impl DocsView {
         let input = cx.new(|cx| {
             let mut s = TextareaState::new(window, cx)
                 .auto_grow(2, 8)
-                .placeholder(t("Write the text box's text"));
+                .placeholder(owner.placeholder());
             s.set_value(text, window, cx);
             s
         });
@@ -588,6 +638,7 @@ impl DocsView {
             at,
             input,
             locked,
+            owner,
             focus_on_up: true,
             _sub: sub,
         });
@@ -612,7 +663,7 @@ impl DocsView {
                         Ok(Some(parts)) => {
                             if self.doc.set_float_parts(para, index, parts) {
                                 self.float_edited(window, cx);
-                                self.status = t("SmartArt text updated").into();
+                                self.status = edit.owner.updated().into();
                             }
                         }
                         Ok(None) => {}
@@ -628,7 +679,7 @@ impl DocsView {
                 _ => {
                     if self.doc.set_text_box_text_in(para, index, edit.which, text) {
                         self.float_edited(window, cx);
-                        self.status = t("Text box updated").into();
+                        self.status = edit.owner.updated().into();
                     }
                 }
             }
@@ -691,7 +742,7 @@ impl DocsView {
             .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                 this.apply_text_box(window, cx);
             }))
-            .child(div().text_color(t.fg_muted).child(i18n::t("Text box")))
+            .child(section_label(edit.owner.title(), cx))
             .child(body)
             .child(h_flex().child(div().flex_1()).child(done));
         Some(deferred(
@@ -1172,6 +1223,55 @@ pub(crate) fn paint_float_selection(f: &Frame, g: &Geometry, page: usize, window
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The text popover is titled after what it edits.
+    #[std::prelude::v1::test]
+    fn text_popovers_name_what_they_edit() {
+        let corpus = |n: &str| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/corpus/docx")
+                .join(n)
+        };
+        let owners = |n: &str| {
+            let d = docs_engine::Document::open(&corpus(n)).unwrap();
+            let mut out = Vec::new();
+            for p in d.paragraphs() {
+                for (_, o) in p.objects() {
+                    if let Some(f) = o.float() {
+                        if f.text.is_some() {
+                            out.push(TextOwner::of(f, None));
+                        }
+                        if !f.boxes.is_empty()
+                            || matches!(f.kind, docs_engine::FloatKind::SmartArt { .. })
+                        {
+                            out.push(TextOwner::of(f, Some(0)));
+                        }
+                    }
+                }
+            }
+            out
+        };
+        let d = owners("diagrams.docx");
+        assert!(!d.is_empty());
+        assert!(d.contains(&TextOwner::SmartArt), "{d:?}");
+        assert!(d.contains(&TextOwner::Shape), "{d:?}");
+        // A rounded rectangle with text is a shape; Word's text boxes say so.
+        let d = docs_engine::Document::open(&corpus("floats.docx")).unwrap();
+        let f = d
+            .paragraphs()
+            .iter()
+            .flat_map(|p| p.objects())
+            .filter_map(|(_, o)| o.float())
+            .find(|f| f.text.is_some())
+            .unwrap();
+        assert_eq!(TextOwner::of(f, None), TextOwner::Shape);
+        let mut b = f.clone();
+        b.xml = f
+            .xml
+            .replacen("<wps:cNvSpPr/>", "<wps:cNvSpPr txBox=\"1\"/>", 1)
+            .into();
+        assert_eq!(TextOwner::of(&b, None), TextOwner::TextBox);
+    }
 
     fn drag(grab: Grab, keep_ratio: bool) -> FloatDrag {
         FloatDrag {

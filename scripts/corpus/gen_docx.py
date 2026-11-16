@@ -33,6 +33,10 @@ crates/docs_pdf/tests/.
   widths it changed in `w:tcPrChange` and `w:tblGridChange`), a deleted
   column (`w:cellDel`), a table property change (`w:tblPrChange`) and a
   row property change (`w:trPrChange`), as Word saves them.
+* tracked_merge.docx: a 2 × 2 table whose first column was merged down
+  with Track Changes on, as Word saves it: `w:cellMerge` with
+  `w:vMerge="rest"` on the top cell and `w:vMerge="cont"` (was not merged)
+  on the one below.
 * threads.docx: Word 365 threaded comments: a question with a reply (both
   on the same word), a resolved comment, with commentsExtended,
   commentsIds, commentsExtensible and people parts.
@@ -695,6 +699,30 @@ tbl = (
 d.element.body.insert(1, parse_xml(tbl))
 d.add_paragraph("After the table.")
 save(d, "tracked_cells.docx")
+
+# ── tracked_merge: the first column merged down, tracked (`w:cellMerge`),
+# by "Citra".
+d = Document()
+d.add_paragraph("Merged list")
+
+
+def mtc(text, merge=""):
+    return (f'<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/>{merge}</w:tcPr>'
+            f'<w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>')
+
+
+tbl = (
+    f'<w:tbl {W}><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>'
+    + "".join(f'<w:{s} w:val="single" w:sz="4" w:space="0" w:color="auto"/>' for s in ("top", "left", "bottom", "right", "insideH", "insideV"))
+    + '</w:tblBorders><w:tblLook w:val="04A0"/></w:tblPr>'
+    + '<w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>'
+    + "<w:tr>" + mtc("Fruit", f'<w:cellMerge w:id="201" w:vMerge="rest" {REVC}/>') + mtc("Apple") + "</w:tr>"
+    + "<w:tr>" + mtc("", f'<w:cellMerge w:id="202" w:vMerge="cont" {REVC}/>') + mtc("Pear") + "</w:tr>"
+    + "</w:tbl>"
+)
+d.element.body.insert(1, parse_xml(tbl))
+d.add_paragraph("After the table.")
+save(d, "tracked_merge.docx")
 
 # ── threads: Word 365 threaded comments (a reply, a resolved thread) with
 # commentsExtended / commentsIds / commentsExtensible / people parts.
