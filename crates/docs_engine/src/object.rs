@@ -347,19 +347,19 @@ impl FieldMark {
                         fresh = fresh && v.trim().is_empty();
                     }
                 }
-                Ok(quick_xml::events::Event::GeneralRef(g)) if in_instr => {
-                    if !in_result.iter().any(|x| *x) {
-                        match g.resolve_char_ref().ok().flatten() {
-                            Some(c) => out.push(c),
-                            None => out.push_str(match &*g as &[u8] {
-                                b"amp" => "&",
-                                b"lt" => "<",
-                                b"gt" => ">",
-                                b"quot" => "\"",
-                                b"apos" => "'",
-                                _ => "",
-                            }),
-                        }
+                Ok(quick_xml::events::Event::GeneralRef(g))
+                    if in_instr && !in_result.iter().any(|x| *x) =>
+                {
+                    match g.resolve_char_ref().ok().flatten() {
+                        Some(c) => out.push(c),
+                        None => out.push_str(match &*g as &[u8] {
+                            b"amp" => "&",
+                            b"lt" => "<",
+                            b"gt" => ">",
+                            b"quot" => "\"",
+                            b"apos" => "'",
+                            _ => "",
+                        }),
                     }
                 }
                 _ => {}

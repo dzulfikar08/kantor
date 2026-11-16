@@ -774,10 +774,10 @@ impl DocsView {
             Ok(parts) => {
                 if self.doc.set_float_parts(para, index, parts) {
                     self.float_edited(window, cx);
-                    self.status = t(match op {
-                        ItemEdit::Delete => "SmartArt shape deleted",
-                        _ => "SmartArt shape added",
-                    })
+                    self.status = match op {
+                        ItemEdit::Delete => t("SmartArt shape deleted"),
+                        _ => t("SmartArt shape added"),
+                    }
                     .into();
                 }
             }
