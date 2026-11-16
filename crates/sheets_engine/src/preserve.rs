@@ -2305,6 +2305,78 @@ pub(crate) fn pivot_sources(bytes: &[u8]) -> Result<Vec<PivotSource>, String> {
     Ok(out)
 }
 
+/// The slicer and timeline parts of a package, as `slicer::Slicers` reads
+/// them.
+#[derive(Default)]
+pub(crate) struct SlicerSources {
+    /// Slicer caches and timeline caches: `(part, xml)`.
+    pub caches: Vec<(String, String)>,
+    /// Slicer and timeline parts of each worksheet: `(sheetId, part, xml)`.
+    pub sheets: Vec<(u32, String, String)>,
+    /// The tables' `id` and `name` (table slicers name their table by id).
+    pub tables: Vec<(u32, String)>,
+}
+
+pub(crate) fn slicer_sources(bytes: &[u8]) -> Result<SlicerSources, String> {
+    let orig = Original::new(bytes)?;
+    let mut out = SlicerSources::default();
+    let mut names: Vec<&String> = orig.names.values().collect();
+    names.sort();
+    let has_any = names.iter().any(|n| {
+        let l = n.to_lowercase();
+        l.starts_with("xl/slicercaches/") || l.starts_with("xl/timelinecaches/")
+    });
+    if !has_any {
+        return Ok(out);
+    }
+    for n in &names {
+        let l = n.to_lowercase();
+        let cache = (l.starts_with("xl/slicercaches/") || l.starts_with("xl/timelinecaches/"))
+            && l.ends_with(".xml");
+        if cache && let Some(xml) = orig.text(n)? {
+            out.caches.push(((*n).clone(), xml));
+        }
+        if l.starts_with("xl/tables/")
+            && l.ends_with(".xml")
+            && let Some(xml) = orig.text(n)?
+            && let Ok(doc) = Document::parse(&xml)
+        {
+            let root = doc.root_element();
+            if let (Some(id), Some(name)) = (
+                root.attribute("id").and_then(|i| i.parse().ok()),
+                root.attribute("name"),
+            ) {
+                out.tables.push((id, name.to_owned()));
+            }
+        }
+    }
+    let Some(root) = orig.text("_rels/.rels")? else {
+        return Ok(out);
+    };
+    let root_rels = parse_rels(&root)?;
+    let (_, _, _, sheets) = workbook_sheets(&root_rels, &|name| orig.text(name))?;
+    for s in sheets.iter().filter(|s| s.kind == SheetKind::Work) {
+        let Some(sheet_rels) = orig.text(&rels_part(&s.part)).ok().flatten() else {
+            continue;
+        };
+        let Ok(sheet_rels) = parse_rels(&sheet_rels) else {
+            continue;
+        };
+        for r in sheet_rels
+            .iter()
+            .filter(|r| matches!(r.short_kind(), "slicer" | "timeline") && !r.external)
+        {
+            let Some(part) = resolve(&s.part, &r.target) else {
+                continue;
+            };
+            if let Some(xml) = orig.text(&part).ok().flatten() {
+                out.sheets.push((s.sheet_id, part, xml));
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Whether `node` and everything in it is plain SpreadsheetML: no element or
 /// attribute in another namespace (which [`write_node`] drops, e.g. `xr:uid`,
 /// as IronCalc's sheets don't declare them ignorable).

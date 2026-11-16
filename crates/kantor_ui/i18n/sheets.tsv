@@ -1125,3 +1125,8 @@ Row Subheading 2	Subjudul Baris 2
 Row Subheading 3	Subjudul Baris 3
 Grand Total Column	Kolom Total Keseluruhan
 Grand Total Row	Baris Total Keseluruhan
+# Slicers and timelines
+Timelines are shown as the file saved them: Kantor can't change their dates yet	Timeline ditampilkan seperti yang disimpan file: Kantor belum bisa mengubah tanggalnya
+The slicer {} can't filter: {}	Slicer {} tidak bisa memfilter: {}
+{}: filter cleared	{}: filter dihapus
+{}: {} selected	{}: {} dipilih

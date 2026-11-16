@@ -173,7 +173,23 @@ impl SheetGeometry for GridGeometry<'_> {
     fn scale(&self) -> (f64, f64) {
         self.scale
     }
+
+    fn hidden_extent(&self, from: (u32, u32), to: (u32, u32)) -> (f64, f64) {
+        let h = (from.0..to.0.min(from.0 + 10_000))
+            .filter(|r| self.row_height(*r) <= 0.0)
+            .count() as f64
+            * self.default_row;
+        let w = (from.1..to.1.min(from.1 + 1_000))
+            .filter(|c| self.col_width(*c) <= 0.0)
+            .count() as f64
+            * self.default_col;
+        (w, h)
+    }
 }
+
+/// A slicer or timeline's kind and where it shows on screen (one rect per
+/// pane).
+type SlicerHit = (Arc<DrawingKind>, Vec<Bounds<Pixels>>);
 
 /// The last column any of `drawings` reaches (for measuring columns).
 fn max_col(drawings: &[Drawing]) -> u32 {
@@ -275,6 +291,8 @@ pub(crate) struct DrawLayer {
     pub(crate) note_edit_rect: Option<Bounds<Pixels>>,
     /// What last frame's editors were placed from (a change repaints them).
     placed_sig: u64,
+    /// Slicers whose Multi-Select is on (for this session, as in Excel).
+    pub(crate) slicer_multi: std::collections::HashSet<DrawingKey>,
 }
 
 /// Keys of note boxes drawn by the layer (never a drawing's index).
@@ -885,6 +903,7 @@ fn paint(
         layer_mut
             .scenes
             .set_dark_text(t.dark.then(|| crate::look::rgb_of(t.fg)));
+        layer_mut.scenes.set_multi(layer_mut.slicer_multi.clone());
         let preview = layer_mut.preview.clone();
         let built: Vec<Arc<Vec<Item>>> = frame
             .placed
@@ -1041,6 +1060,23 @@ fn paint(
         .iter()
         .map(|p| (p.drawing.key, p.rect))
         .collect();
+    // Slicers and timelines: their kind and where they show on screen.
+    let slicers: Vec<Option<SlicerHit>> = frame
+        .placed
+        .iter()
+        .map(|p| {
+            matches!(
+                *p.drawing.kind,
+                DrawingKind::Slicer { .. } | DrawingKind::Timeline { .. }
+            )
+            .then(|| {
+                (
+                    p.drawing.kind.clone(),
+                    p.shown.iter().map(|(r, _)| *r).collect(),
+                )
+            })
+        })
+        .collect();
     let hits: Vec<(usize, Grip, Hitbox)> = frame.hitboxes;
     {
         let layer = layer.clone();
@@ -1081,6 +1117,27 @@ fn paint(
                 return;
             };
             let (key, rect) = keys[i];
+            // A slicer's buttons filter (its frame selects and moves it).
+            if grip == Grip::Move
+                && let Some((kind, rects)) = &slicers[i]
+                && let Some(r) = rects.iter().find(|r| r.contains(&e.position))
+            {
+                let local = (
+                    f32::from(e.position.x - r.origin.x),
+                    f32::from(e.position.y - r.origin.y),
+                );
+                let size = (rect[2] as f32, rect[3] as f32);
+                let ctrl = e.modifiers.control || e.modifiers.platform;
+                let hit = view
+                    .update(cx, |this, cx| {
+                        this.slicer_click(key, kind, local, size, ctrl, window, cx)
+                    })
+                    .unwrap_or(false);
+                if hit {
+                    cx.stop_propagation();
+                    return;
+                }
+            }
             // Double-click a shape: edit its text.
             if e.click_count >= 2 && grip == Grip::Move {
                 layer.borrow_mut().drag = None;

@@ -45,6 +45,7 @@ mod shape_edit;
 pub mod shape_format;
 mod sheet_tabs;
 mod shift;
+pub mod slicer;
 mod sort;
 mod table;
 mod table_edit;
@@ -221,6 +222,8 @@ struct Cache {
     hidden_rows: HashMap<u32, std::sync::Arc<std::collections::HashSet<u32>>>,
     /// Each sheet's notes at the cells they are on now (`notes`).
     notes: HashMap<u32, std::sync::Arc<notes::SheetNotes>>,
+    /// Slicers as they show, by `(sheetId, name)` (`slicer`).
+    slicers: HashMap<(u32, String), Option<slicer::SlicerView>>,
 }
 
 /// When formulas are recalculated, like Excel's calculation options.

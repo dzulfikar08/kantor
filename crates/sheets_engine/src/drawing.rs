@@ -94,6 +94,12 @@ pub trait SheetGeometry {
     fn row_at(&self, y: f64) -> u32;
     /// Grid units per Excel pixel, across and down.
     fn scale(&self) -> (f64, f64);
+    /// How wide and tall the hidden columns and rows of `from..to` (cells)
+    /// would be shown: an object that doesn't size with its cells keeps
+    /// them (Excel's "Move but don't size with cells").
+    fn hidden_extent(&self, _from: (u32, u32), _to: (u32, u32)) -> (f64, f64) {
+        (0.0, 0.0)
+    }
 }
 
 fn emu_px(emu: i64) -> f64 {
@@ -135,10 +141,14 @@ impl Anchor {
     pub fn rect(&self, g: &dyn SheetGeometry) -> [f64; 4] {
         let (sx, sy) = g.scale();
         match *self {
-            Anchor::TwoCell { from, to, .. } => {
+            Anchor::TwoCell { from, to, edit_as } => {
                 let (x0, y0) = from.point(g);
                 let (x1, y1) = to.point(g);
-                [x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0)]
+                let (hw, hh) = match edit_as {
+                    EditAs::TwoCell => (0.0, 0.0),
+                    _ => g.hidden_extent((from.row, from.col), (to.row, to.col)),
+                };
+                [x0, y0, (x1 - x0).max(0.0) + hw, (y1 - y0).max(0.0) + hh]
             }
             Anchor::OneCell { from, cx, cy } => {
                 let (x, y) = from.point(g);
@@ -241,6 +251,12 @@ pub enum DrawingKind {
     /// A shape, text box, connector or group: its element's XML, which
     /// declares the namespaces it uses (it parses on its own).
     Shape { xml: Arc<str> },
+    /// A slicer (`sle:slicer` in `mc:AlternateContent`), by name: see
+    /// [`crate::Workbook::slicer_view`].
+    Slicer { name: String },
+    /// A timeline (`tsle:timeslicer`), by name: see
+    /// [`crate::Workbook::timeline_view`].
+    Timeline { name: String },
     /// Something not drawn (a chart whose part is missing, an OLE
     /// object...): the element's name.
     Other(String),
@@ -588,6 +604,33 @@ fn kind(
                     crop: crop(fill),
                     part: part.into(),
                 },
+                None => other(),
+            }
+        }
+        // Excel 2010+ objects with a fallback shape: slicers and timelines.
+        "AlternateContent" => {
+            let choice = obj
+                .children()
+                .find(|c| c.is_element() && c.tag_name().name() == "Choice");
+            let data = choice.and_then(|c| {
+                c.descendants()
+                    .find(|d| d.is_element() && d.tag_name().name() == "graphicData")
+            });
+            let found = data.and_then(|d| {
+                d.children()
+                    .find(|c| {
+                        c.is_element() && matches!(c.tag_name().name(), "slicer" | "timeslicer")
+                    })
+                    .map(|c| {
+                        (
+                            c.tag_name().name() == "slicer",
+                            c.attribute("name").unwrap_or_default().to_owned(),
+                        )
+                    })
+            });
+            match found {
+                Some((true, name)) => DrawingKind::Slicer { name },
+                Some((false, name)) => DrawingKind::Timeline { name },
                 None => other(),
             }
         }

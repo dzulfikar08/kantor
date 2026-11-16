@@ -285,6 +285,15 @@ fn main() -> Result<()> {
         wb.save_as(o.join("pivots_23_pivot_settings.xlsx"))?;
         Ok(Some(settings.clone()))
     });
+    let slicers = corpus.join("xlsx/25_slicers.xlsx");
+    run.scenario("slicers_25_slicers.xlsx", |o| {
+        let mut wb = Workbook::open(&slicers)?;
+        // Report's Region slicer: East and North; Data's Product slicer: Pears.
+        wb.slicer_select(2, "Region", &[true, true, false])?;
+        wb.slicer_select(1, "Product", &[false, true, false])?;
+        wb.save_as(o.join("slicers_25_slicers.xlsx"))?;
+        Ok(Some(slicers.clone()))
+    });
 
     for src in files(&corpus.join("docx"), "docx")? {
         let stem = stem(&src);

@@ -1011,18 +1011,27 @@ pub(crate) struct Pivots {
     /// undoing a refresh after saving it brings these back).
     pub records: HashMap<String, Arc<Vec<u8>>>,
     pub refreshed: bool,
+    /// The file's slicers and timelines (see [`crate::slicer`]).
+    pub slicers: crate::slicer::Slicers,
 }
 
 impl Pivots {
     pub(crate) fn read(bytes: &[u8]) -> Self {
+        let slicers = crate::slicer::Slicers::read(bytes);
         let sources = match crate::preserve::pivot_sources(bytes) {
             Ok(s) => s,
             Err(e) => {
                 log::warn!("pivot tables not read: {e}");
-                return Self::default();
+                return Self {
+                    slicers,
+                    ..Self::default()
+                };
             }
         };
-        let mut out = Pivots::default();
+        let mut out = Pivots {
+            slicers,
+            ..Pivots::default()
+        };
         let mut cache_index: HashMap<String, usize> = HashMap::new();
         for s in sources {
             let cache = match cache_index.get(&s.cache_part) {
@@ -2200,6 +2209,10 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
             Level::Values => None,
         })
         .chain(def.page_fields.iter().map(|p| p.fld).filter(|&f| f < nf))
+        // A field on no axis with hidden items (a slicer's) filters too.
+        .chain((0..def.fields.len().min(nf)).filter(|&f| {
+            def.fields[f].axis.is_none() && def.fields[f].items.iter().any(|i| i.hidden)
+        }))
         .collect();
     let recs: Vec<usize> = (0..records.len())
         .filter(|&r| {
@@ -4748,6 +4761,7 @@ impl Workbook {
                 out.replaced.insert(rp.clone(), rec.into_bytes());
             }
         }
+        self.slicer_saves(&mut out.replaced);
         out
     }
 

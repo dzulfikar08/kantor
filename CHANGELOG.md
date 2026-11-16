@@ -23,9 +23,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   subheadings, blank rows, grand totals); right-click a style in the gallery to modify, duplicate
   (built-in ones too), delete or set it as the default for new pivot tables. Styles are saved as
   Excel saves them, and pivot tables follow a renamed style.
+- Sheets: slicers, as in Excel. Slicers in a file (for pivot tables and for tables) are drawn over
+  the sheet with their buttons, selected, not selected and greyed for items without data; click
+  an item to filter by it, Ctrl+click or the Multi-Select button to pick several, and Clear
+  Filter to show everything. A pivot table slicer filters every pivot table it is connected to
+  (also on a field that isn't in the layout), a table slicer filters its table's column, and the
+  slicer's state is saved back as Excel saves it. Timelines are drawn with their periods and the
+  dates the file selected (they can't be changed in Kantor yet).
 
 ### Changed
 
+- Sheets: a picture, chart or slicer set to move but not size with its cells keeps its size when
+  rows or columns under it are hidden (by a filter, for instance), as in Excel.
 - Sheets: a pivot table copied with its sheet keeps its name (`PivotTable1`), as in Excel, since
   pivot table names only need to be unique on their sheet.
 - Sheets: inner items of a compact pivot table are indented under their outer item, as Excel

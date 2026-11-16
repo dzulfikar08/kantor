@@ -455,3 +455,34 @@ fn image_formula_sizing_modes() {
         assert!((a - b).abs() < 1e-3, "{whole:?}");
     }
 }
+
+#[test]
+fn slicers_and_timelines_are_drawn_with_their_items() {
+    let mut book = Workbook::open(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/xlsx/25_slicers.xlsx"),
+    )
+    .unwrap();
+    let mut engine = Engine::new();
+    let mut scenes = DrawingScenes::default();
+    let drawn = |scenes: &mut DrawingScenes, engine: &mut Engine, book: &Workbook| {
+        book.drawings(1)
+            .into_iter()
+            .map(|d| strings(&scenes.items(engine, book, &d, 260.0, 220.0)))
+            .collect::<Vec<_>>()
+    };
+    let s = drawn(&mut scenes, &mut engine, &book);
+    for want in ["Region", "East", "North", "West"] {
+        assert!(s[0].iter().any(|t| t == want), "{want} in {:?}", s[0]);
+    }
+    for want in ["Date", "All Periods", "MONTHS", "Jan", "2026"] {
+        assert!(s[1].iter().any(|t| t == want), "{want} in {:?}", s[1]);
+    }
+    // A click on a button filters: the drawing follows.
+    let before = scenes
+        .items(&mut engine, &book, &book.drawings(1)[0], 260.0, 220.0)
+        .clone();
+    book.slicer_select(2, "Region", &[true, false, false])
+        .unwrap();
+    let after = scenes.items(&mut engine, &book, &book.drawings(1)[0], 260.0, 220.0);
+    assert!(!Arc::ptr_eq(&before, &after));
+}

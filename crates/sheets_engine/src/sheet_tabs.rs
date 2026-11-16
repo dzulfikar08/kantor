@@ -557,7 +557,9 @@ impl Workbook {
                         name: d.name.clone(),
                     }));
                 }
-                DrawingKind::Other(_) => continue,
+                DrawingKind::Other(_)
+                | DrawingKind::Slicer { .. }
+                | DrawingKind::Timeline { .. } => continue,
             }
             out.push(o);
         }
