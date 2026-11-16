@@ -724,6 +724,8 @@ enum Tok {
     Open,
     Close,
     Comma,
+    /// `[East]` after a field name (a calculated item's `Region[East]`).
+    Bracket(String),
 }
 
 fn tokens(src: &str) -> Result<Vec<Tok>, String> {
@@ -797,6 +799,18 @@ fn tokens(src: &str) -> Result<Vec<Tok>, String> {
                 }
             }
             out.push(Tok::Name(s));
+        } else if ch == '[' {
+            let rest: String = c[i + 1..].iter().collect();
+            let end = rest
+                .find(']')
+                .ok_or_else(|| "a [ isn't closed".to_owned())?;
+            let inner = rest[..end].trim();
+            let inner = match inner.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')) {
+                Some(q) => q.replace("''", "'"),
+                None => inner.to_owned(),
+            };
+            out.push(Tok::Bracket(inner));
+            i += end + 2;
         } else if ch.is_alphabetic() || ch == '_' {
             let start = i;
             while i < c.len() && (c[i].is_alphanumeric() || c[i] == '_' || c[i] == '.') {
@@ -843,6 +857,9 @@ struct Parser<'a> {
     at: usize,
     names: &'a [String],
     used: Vec<usize>,
+    /// Compiling a calculated item: the name of its field (`Region` in
+    /// `Region[East]`); `names` are then the field's items.
+    field: Option<&'a str>,
 }
 
 impl Parser<'_> {
@@ -859,6 +876,19 @@ impl Parser<'_> {
             }
             _ => None,
         }
+    }
+
+    /// An item of the calculated item's field, by name.
+    fn item(&mut self, name: &str) -> Result<Expr, String> {
+        let k = self
+            .names
+            .iter()
+            .position(|x| x.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("there is no item named {name}"))?;
+        if !self.used.contains(&k) {
+            self.used.push(k);
+        }
+        Ok(Expr::Field(k))
     }
 
     fn compare(&mut self) -> Result<Expr, String> {
@@ -941,6 +971,22 @@ impl Parser<'_> {
                 }
             }
             Tok::Name(n) => {
+                if let Some(Tok::Bracket(item)) = self.peek().cloned() {
+                    self.at += 1;
+                    let Some(field) = self.field else {
+                        return Err(format!("{n}[{item}] can't be used in a calculated field"));
+                    };
+                    if !field.eq_ignore_ascii_case(&n) {
+                        return Err(format!(
+                            "a calculated item can only use items of its own field ({field}), not {n}"
+                        ));
+                    }
+                    let item = item.trim();
+                    if item.starts_with(['+', '-']) {
+                        return Err("items by position (Region[+1]) aren't supported".into());
+                    }
+                    return self.item(item);
+                }
                 if self.peek() == Some(&Tok::Open) {
                     let upper = n.to_uppercase();
                     let f = FUNCTIONS
@@ -975,9 +1021,11 @@ impl Parser<'_> {
                 match n.to_uppercase().as_str() {
                     "TRUE" => Ok(Expr::Bool(true)),
                     "FALSE" => Ok(Expr::Bool(false)),
+                    _ if self.field.is_some() => Err(format!("there is no item named {n}")),
                     _ => Err(format!("there is no field named {n}")),
                 }
             }
+            Tok::Bracket(b) => Err(format!("[{b}] is out of place")),
             Tok::Op(o) => Err(format!("{o} is out of place")),
             Tok::Close => Err("a closing parenthesis is out of place".into()),
             Tok::Comma => Err("a comma is out of place".into()),
@@ -1016,6 +1064,21 @@ impl V {
 impl Formula {
     /// Compile `src` (with or without a leading `=`) against field `names`.
     pub(crate) fn compile(src: &str, names: &[String]) -> Result<Formula, String> {
+        Self::compile_in(src, names, None)
+    }
+
+    /// Compile a calculated item's formula of field `field` against the
+    /// field's item names (`East`, `'North East'`, `Region[East]`); `fields`
+    /// then index `items`.
+    pub(crate) fn compile_items(
+        src: &str,
+        field: &str,
+        items: &[String],
+    ) -> Result<Formula, String> {
+        Self::compile_in(src, items, Some(field))
+    }
+
+    fn compile_in(src: &str, names: &[String], field: Option<&str>) -> Result<Formula, String> {
         let src = src.trim().trim_start_matches('=');
         let toks = tokens(src)?;
         if toks.is_empty() {
@@ -1026,6 +1089,7 @@ impl Formula {
             at: 0,
             names,
             used: Vec::new(),
+            field,
         };
         let expr = p.compare()?;
         if p.at < p.toks.len() {

@@ -255,6 +255,9 @@ pub struct PivotSourceField {
     /// Its smallest and largest values (numbers and dates).
     pub min: Option<f64>,
     pub max: Option<f64>,
+    /// Its calculated items: `(name, formula with =)`. They are in `items`
+    /// too, after the source's.
+    pub calc_items: Vec<(String, String)>,
 }
 
 /// Excel's Report Layout.
@@ -978,6 +981,7 @@ impl Workbook {
                         .partial_cmp(&b.sort_key())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 });
+                values.extend(cf.calc_items.iter().map(|c| Val::Str(c.name.clone())));
                 values
             };
             let fd = def.fields.get(f);
@@ -1025,6 +1029,11 @@ impl Workbook {
                 dates,
                 min,
                 max,
+                calc_items: cf
+                    .calc_items
+                    .iter()
+                    .map(|c| (c.name.clone(), format!("={}", c.formula)))
+                    .collect(),
             });
         }
         let entry = |x: &i32| match *x {

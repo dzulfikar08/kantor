@@ -11,6 +11,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Sheets: calculated items in pivot tables, as in Excel. *Insert Calculated Item…* (the menu of a
+  row or column field in the PivotTable Fields panel) adds an item worked out from other items of
+  the same field (`=East+West`, `='North East'*2`, `=Region[North]*1.1`); each cell shows the
+  formula over the same row or column, and totals include it, as Excel's do. Calculated items can
+  be changed or deleted from the same card, are saved as Excel saves them, and pivot tables from a
+  file with calculated items can now be refreshed and rearranged (before, Kantor refused).
+
 - Sheets: custom table styles, as in Excel. *New Table Style…* (Table Design, the Table menu or
   the palette) names a style and formats each table element (whole table, first and second
   column and row stripes, first and last column, header and total rows, first and last header and

@@ -181,6 +181,12 @@ impl Workbook {
             _ => field,
         };
         let bf = &cache.fields[base];
+        if !bf.calc_items.is_empty() {
+            bail!(
+                "Cannot group that selection: {} has calculated items",
+                bf.name
+            );
+        }
         if !bf.database || bf.formula.is_some() {
             bail!(
                 "Cannot group that selection: {} isn't a field of the source",
@@ -360,6 +366,12 @@ impl Workbook {
             .ok_or_else(|| anyhow!("the PivotTable has no field {field}"))?;
         if items.is_empty() {
             bail!("choose the items to group");
+        }
+        if !cf.calc_items.is_empty() {
+            bail!(
+                "Cannot group that selection: {} has calculated items",
+                cf.name
+            );
         }
         if !cf.database || cf.range_grouped() {
             bail!(
@@ -576,6 +588,146 @@ impl Workbook {
             Ok(())
         };
         self.change_pivot_cache(&def, cache_change, |_, _| {})
+    }
+
+    /// Insert Calculated Item: add item `name` with `formula` (over the
+    /// items of the same field, e.g. `=East+West` or `='North East'*2`) to
+    /// row or column field `field` of the pivot table at `(row, col)`, or
+    /// change the formula of the calculated item of that name. The item is
+    /// worked out as Excel does: in each cell, the formula over the values
+    /// of the items it names; totals across the field include it. One undo
+    /// step.
+    pub fn set_pivot_calculated_item(
+        &mut self,
+        sheet: u32,
+        row: u32,
+        col: u32,
+        field: usize,
+        name: &str,
+        formula: &str,
+    ) -> Result<()> {
+        let (_, def, cache) = self.pivot_for_change(sheet, row, col)?;
+        let cf = cache
+            .fields
+            .get(field)
+            .ok_or_else(|| anyhow!("the PivotTable has no field {field}"))?;
+        let on_axis =
+            def.row_fields.contains(&(field as i32)) || def.col_fields.contains(&(field as i32));
+        if !on_axis {
+            bail!(
+                "Calculated items go in a row or column field: put {} in Rows or Columns first",
+                cf.name
+            );
+        }
+        if !cf.database || cf.formula.is_some() || cf.group.is_some() {
+            bail!(
+                "You cannot add a calculated item to a grouped field ({})",
+                cf.name
+            );
+        }
+        if def
+            .fields
+            .get(field)
+            .is_some_and(|f| !f.subtotals.is_empty())
+        {
+            bail!("Calculated items do not work with custom subtotals");
+        }
+        let name = name.trim().to_owned();
+        if name.is_empty() {
+            bail!("type a name for the calculated item");
+        }
+        let existing = cf
+            .calc_items
+            .iter()
+            .any(|c| c.name.eq_ignore_ascii_case(&name));
+        let taken = cf
+            .items
+            .iter()
+            .any(|v| v.label().eq_ignore_ascii_case(&name))
+            || cache
+                .fields
+                .iter()
+                .any(|f| f.name.eq_ignore_ascii_case(&name));
+        if taken && !existing {
+            bail!("The item name {name:?} is already in use");
+        }
+        let names: Vec<String> = cf.items.iter().map(Val::label).collect();
+        let compiled =
+            Formula::compile_items(formula, &cf.name, &names).map_err(|e| anyhow!("{e}"))?;
+        if compiled
+            .fields
+            .iter()
+            .any(|&k| names.get(k).is_some_and(|n| n.eq_ignore_ascii_case(&name)))
+        {
+            bail!("the formula of {name} can't use {name} itself");
+        }
+        let text = formula.trim().trim_start_matches('=').trim().to_owned();
+        let field_name = cf.name.clone();
+        self.change_pivot_cache(
+            &def,
+            move |c: &mut Cache| {
+                let f = c
+                    .fields
+                    .iter_mut()
+                    .find(|f| f.database && f.name.eq_ignore_ascii_case(&field_name))
+                    .ok_or_else(|| anyhow!("{field_name} is gone"))?;
+                match f
+                    .calc_items
+                    .iter_mut()
+                    .find(|c| c.name.eq_ignore_ascii_case(&name))
+                {
+                    Some(ci) => ci.formula = text.clone(),
+                    None => f.calc_items.push(crate::pivot::CalcItem {
+                        name: name.clone(),
+                        formula: text.clone(),
+                    }),
+                }
+                Ok(())
+            },
+            |_, _| {},
+        )
+    }
+
+    /// Delete calculated item `name` of field `field` (from every pivot
+    /// table on the cache). One undo step.
+    pub fn delete_pivot_calculated_item(
+        &mut self,
+        sheet: u32,
+        row: u32,
+        col: u32,
+        field: usize,
+        name: &str,
+    ) -> Result<()> {
+        let (_, def, cache) = self.pivot_for_change(sheet, row, col)?;
+        let cf = cache
+            .fields
+            .get(field)
+            .ok_or_else(|| anyhow!("the PivotTable has no field {field}"))?;
+        if !cf
+            .calc_items
+            .iter()
+            .any(|c| c.name.eq_ignore_ascii_case(name))
+        {
+            bail!("there is no calculated item {name:?} in {}", cf.name);
+        }
+        let field_name = cf.name.clone();
+        let n = name.to_owned();
+        self.change_pivot_cache(
+            &def,
+            move |c: &mut Cache| {
+                if let Some(f) = c
+                    .fields
+                    .iter_mut()
+                    .find(|f| f.database && f.name.eq_ignore_ascii_case(&field_name))
+                {
+                    f.calc_items.retain(|c| !c.name.eq_ignore_ascii_case(&n));
+                    let key = Val::Str(n.clone()).key();
+                    f.items.retain(|v| v.key() != key);
+                }
+                Ok(())
+            },
+            |_, _| {},
+        )
     }
 
     /// Check a calculated field's formula against the pivot table's fields.

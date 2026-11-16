@@ -1783,6 +1783,9 @@ pub(crate) fn card(cx: &App) -> Div {
 #[derive(Clone, Copy)]
 struct FieldKind {
     calculated: bool,
+    /// A source field on the rows or columns, not grouped (Insert
+    /// Calculated Item).
+    calc_items: bool,
     /// Grouped by ranges, or a grouping field.
     grouped: bool,
     /// Holds numbers or dates (Group… by ranges).
@@ -1799,6 +1802,11 @@ impl FieldKind {
         let on = |list: &[AxisEntry]| list.contains(&AxisEntry::Field(f));
         FieldKind {
             calculated: field.formula.is_some(),
+            calc_items: field.formula.is_none()
+                && field.grouping.is_none()
+                && field.group_base.is_none()
+                && (on(&l.rows) || on(&l.columns))
+                && !l.fields.iter().any(|g| g.group_base == Some(f)),
             grouped: field.grouping.is_some() || field.group_base.is_some(),
             ranges: field.formula.is_none()
                 && field.group_base.is_none()
@@ -1864,6 +1872,13 @@ fn field_menu(
             m,
             i18n::t("Ungroup"),
             Box::new(move |this, w, cx| this.ungroup_field(f, w, cx)),
+        );
+    }
+    if kind.calc_items {
+        m = act(
+            m,
+            i18n::t("Insert Calculated Item…"),
+            Box::new(move |this, w, cx| this.open_calc_item_card(f, w, cx)),
         );
     }
     m
