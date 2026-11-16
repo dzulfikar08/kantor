@@ -148,7 +148,9 @@ pub use print::{
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 pub use sort::SortKey;
 pub use table::{Elem as TableElementFormat, FillPattern, TableCellLook, TableInfo};
-pub use table_style_edit::{DEFAULT_TABLE_STYLE, TableElement, TableStyleSpec};
+pub use table_style_edit::{
+    DEFAULT_PIVOT_STYLE, DEFAULT_TABLE_STYLE, TableElement, TableStyleSpec,
+};
 pub use validation::{
     ErrorStyle, ListItem, Message, Validation, ValidationOperator, ValidationType,
 };

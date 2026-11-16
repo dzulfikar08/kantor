@@ -1106,6 +1106,9 @@ fn table_style(style: &CellStyle, tl: &sheets_engine::TableCellLook) -> CellStyl
     s.italic |= tl.italic;
     s.underline |= tl.underline;
     s.strikethrough |= tl.strike;
+    if s.indent == 0 {
+        s.indent = tl.indent;
+    }
     s
 }
 

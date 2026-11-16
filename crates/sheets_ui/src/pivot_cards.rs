@@ -22,7 +22,7 @@ use gpui_kit::component::{
     checkbox::Checkbox,
     h_flex,
     input::{Input, InputEvent, InputState},
-    menu::{DropdownMenu as _, PopupMenuItem},
+    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
     v_flex,
 };
 use gpui_kit::prelude::*;
@@ -1490,6 +1490,7 @@ impl SheetsView {
         let opts = l.style.clone();
         let current = opts.name.clone();
         let close = view.clone();
+        let new_view = view.clone();
         let out = crate::pivot::card(cx).child(
             h_flex()
                 .child(
@@ -1497,6 +1498,16 @@ impl SheetsView {
                         .flex_1()
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(i18n::t("PivotTable Style")),
+                )
+                .child(
+                    Button::new("pivot-style-new")
+                        .ghost()
+                        .xsmall()
+                        .icon(gpui_kit::assets::IconName::Plus)
+                        .label(i18n::t("New PivotTable Style…"))
+                        .on_click(move |_, w, cx| {
+                            let _ = new_view.update(cx, |this, cx| this.new_pivot_style_doc(w, cx));
+                        }),
                 )
                 .child(
                     Button::new("pivot-styles-close")
@@ -1549,10 +1560,14 @@ impl SheetsView {
                     });
                 }),
         );
-        for (i, name) in pivot_style_names().into_iter().enumerate() {
+        let custom = book.custom_pivot_styles();
+        let names = custom.iter().cloned().chain(pivot_style_names());
+        for (i, name) in names.enumerate() {
             let Some(cells) = book.pivot_style_preview(&name, &opts) else {
                 continue;
             };
+            let is_custom = custom.contains(&name);
+            let (menu_name, mv) = (name.clone(), view.clone());
             let selected = current.as_deref() == Some(name.as_str());
             let v = view.clone();
             let tip: SharedString = style_label(&name).into();
@@ -1598,6 +1613,11 @@ impl SheetsView {
                         let _ = v.update(cx, |this, cx| {
                             this.edit_layout(|l| l.style.name = Some(n), w, cx)
                         });
+                    })
+                    .context_menu(move |menu, _, _| {
+                        crate::table_style_ui::style_menu_for(
+                            menu, &menu_name, is_custom, true, &mv,
+                        )
                     }),
             );
         }
@@ -1617,7 +1637,7 @@ impl SheetsView {
 }
 
 /// `PivotStyleMedium9` → `Medium 9`.
-fn style_label(name: &str) -> String {
+pub(crate) fn style_label(name: &str) -> String {
     for (family, label) in [
         ("Light", tk("Light")),
         ("Medium", tk("Medium")),

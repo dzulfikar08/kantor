@@ -139,10 +139,12 @@ impl Workbook {
         cache_change: impl Fn(&mut Cache) -> Result<()> + 'static,
         adjust: impl Fn(&mut Def, &Cache) + 'static,
     ) -> Result<()> {
-        let name = def.name.clone();
+        // Pivot names are unique per sheet (as in Excel): a copied sheet's
+        // pivots keep theirs.
+        let (name, sheet_id) = (def.name.clone(), def.sheet_id);
         let change = Rebuild {
             adjust: Some(Box::new(move |d: &mut Def, c: &Cache| {
-                if d.name == name {
+                if d.name == name && d.sheet_id == sheet_id {
                     adjust(d, c);
                 }
             })),

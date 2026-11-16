@@ -17,6 +17,20 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   formula over the same row or column, and totals include it, as Excel's do. Calculated items can
   be changed or deleted from the same card, are saved as Excel saves them, and pivot tables from a
   file with calculated items can now be refreshed and rearranged (before, Kantor refused).
+- Sheets: custom PivotTable styles, as in Excel. *New PivotTable Style…* (the PivotTable Style
+  gallery or the palette) names a style and formats each part of a pivot table (whole table,
+  report filter labels and values, stripes, first column, header row, subtotal rows and columns,
+  subheadings, blank rows, grand totals); right-click a style in the gallery to modify, duplicate
+  (built-in ones too), delete or set it as the default for new pivot tables. Styles are saved as
+  Excel saves them, and pivot tables follow a renamed style.
+
+### Changed
+
+- Sheets: a pivot table copied with its sheet keeps its name (`PivotTable1`), as in Excel, since
+  pivot table names only need to be unique on their sheet.
+- Sheets: inner items of a compact pivot table are indented under their outer item, as Excel
+  draws them. Cells with an indent from their alignment (Format Cells) are now drawn indented in
+  the grid too, as in Excel (they already were in the PDF).
 
 - Sheets: custom table styles, as in Excel. *New Table Style…* (Table Design, the Table menu or
   the palette) names a style and formats each table element (whole table, first and second

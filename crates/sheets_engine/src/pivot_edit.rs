@@ -761,6 +761,7 @@ impl Workbook {
         let name = self.next_pivot_name();
         let captions = Captions::new();
         let def = Def {
+            indent: 1,
             part: format!("{NEW_PREFIX}pivotTable{k}.xml"),
             sheet_id,
             name: name.clone(),
@@ -787,7 +788,7 @@ impl Workbook {
             row_grand: true,
             col_grand: true,
             style: StyleInfo {
-                name: Some(STYLE.into()),
+                name: Some(self.default_pivot_style()),
                 row_headers: true,
                 col_headers: true,
                 row_stripes: false,
@@ -1575,7 +1576,9 @@ impl Workbook {
                 Some(l) => (**l).clone(),
                 None => crate::pivot::laid_of(&p.def),
             };
-            let name = self.next_pivot_name();
+            // The copy keeps its name, as in Excel (names are unique per
+            // sheet, and the copy is alone on its new sheet).
+            let name = p.def.name.clone();
             let k = self.pivots.defs.len() + 1;
             let mut def = laid.def.clone();
             def.part = format!("{NEW_PREFIX}pivotTable{k}.xml");

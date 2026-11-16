@@ -843,8 +843,17 @@ fn copying_a_sheet_brings_its_pivots() {
     arrange(&mut wb, s, &["Region"]);
     let copy = wb.copy_sheet(s, 99).unwrap();
     let p = wb.pivot_at(copy, 2, 0).unwrap();
-    assert_eq!(p.name, "PivotTable2");
+    // Excel keeps the name: pivot names are unique per sheet.
+    assert_eq!(p.name, "PivotTable1");
     assert_eq!(grid(&wb, copy, (2, 0, 6, 1)), grid(&wb, s, (2, 0, 6, 1)));
+    // A change made through the copy places fields on the copy only, even
+    // with the same name.
+    let region = field(&layout(&wb, copy), "Region");
+    wb.group_pivot_items(copy, 2, 0, region, &["East".into(), "West".into()])
+        .unwrap();
+    assert_eq!(layout(&wb, copy).rows.len(), 2);
+    assert_eq!(layout(&wb, s).rows.len(), 1);
+    assert!(wb.undo().unwrap());
     // Its own pivot: changing it leaves the original alone.
     let mut l = wb.pivot_layout(copy, 2, 0).unwrap();
     l.rows = vec![AxisEntry::Field(2)];
@@ -1052,4 +1061,143 @@ fn calculated_items_written_by_excel() {
             .refresh_problem
             .is_none()
     );
+}
+
+#[test]
+fn compact_inner_items_are_indented() {
+    let mut wb = data_book();
+    let s = new_pivot(&mut wb);
+    arrange(&mut wb, s, &["Region", "Product"]);
+    // Row 3 East (outer), row 4 Apples (inner), ... Grand Total last.
+    assert_eq!(wb.display_value(s, 3, 0), "East");
+    assert_eq!(wb.display_value(s, 4, 0), "Apples");
+    let indent =
+        |wb: &Workbook, r: u32, c: u32| wb.table_cell_look(s, r, c).map_or(0, |l| l.indent);
+    assert_eq!(indent(&wb, 3, 0), 0);
+    assert_eq!(indent(&wb, 4, 0), 1);
+    assert_eq!(indent(&wb, 4, 1), 0, "value cells aren't indented");
+    let last = wb.pivot_at(s, 2, 0).unwrap().area.bottom;
+    assert_eq!(indent(&wb, last, 0), 0, "Grand Total");
+    // Outline form: each field in its own column, no indent.
+    let mut l = layout(&wb, s);
+    l.layout = ReportLayout::Outline;
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert!((2..=last).all(|r| indent(&wb, r, 0) == 0 && indent(&wb, r, 1) == 0));
+}
+
+fn purple_pivot_style(name: &str) -> sheets_engine::TableStyleSpec {
+    use sheets_engine::{TableElement, TableElementFormat};
+    let mut spec = sheets_engine::TableStyleSpec::new(name);
+    spec.set_format(
+        TableElement::HeaderRow,
+        TableElementFormat {
+            fill: Some(0x7030A0),
+            font: Some(0xFFFFFF),
+            bold: Some(true),
+            ..Default::default()
+        },
+    );
+    spec.set_format(
+        TableElement::FirstRowSubheading,
+        TableElementFormat {
+            fill: Some(0xE4DFEC),
+            ..Default::default()
+        },
+    );
+    spec.set_format(
+        TableElement::TotalRow,
+        TableElementFormat {
+            italic: Some(true),
+            ..Default::default()
+        },
+    );
+    spec
+}
+
+#[test]
+fn custom_pivot_styles() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = data_book();
+    let s = new_pivot(&mut wb);
+    arrange(&mut wb, s, &["Region", "Product"]);
+    assert_eq!(wb.next_pivot_style_name(), "PivotTable Style 1");
+    wb.add_pivot_style(&purple_pivot_style("Purple"), false)
+        .unwrap();
+    assert!(
+        wb.add_pivot_style(&purple_pivot_style("purple"), false)
+            .is_err(),
+        "names are unique"
+    );
+    assert_eq!(wb.custom_pivot_styles(), vec!["Purple".to_string()]);
+    assert!(wb.custom_table_styles().is_empty(), "not a table style");
+    // Picked in the gallery: drawn with its elements.
+    let mut l = layout(&wb, s);
+    l.style.name = Some("Purple".into());
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    let look = |wb: &Workbook, r: u32, c: u32| wb.table_cell_look(s, r, c).unwrap();
+    assert_eq!(look(&wb, 2, 0).fill, Some(0x7030A0), "header row");
+    assert_eq!(
+        look(&wb, 3, 0).fill,
+        Some(0xE4DFEC),
+        "East: row subheading 1"
+    );
+    assert_eq!(look(&wb, 4, 0).fill, None, "Apples");
+    let last = wb.pivot_at(s, 2, 0).unwrap().area.bottom;
+    assert!(look(&wb, last, 0).italic, "grand total row");
+    let preview = wb.pivot_style_preview("Purple", &l.style).unwrap();
+    assert_eq!(preview[0][0].fill, Some(0x7030A0));
+    // Saved as Excel saves a PivotTable style.
+    let (path, p) = save(&mut wb, dir.path(), "pivot-style.xlsx");
+    let styles = &p["xl/styles.xml"];
+    assert!(
+        styles.contains("<tableStyle name=\"Purple\" table=\"0\" count=\"3\">"),
+        "{styles}"
+    );
+    assert!(styles.contains("type=\"firstRowSubheading\""), "{styles}");
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(back.custom_pivot_styles(), vec!["Purple".to_string()]);
+    assert_eq!(look(&back, 3, 0).fill, Some(0xE4DFEC));
+    assert_eq!(
+        back.pivot_style_spec("Purple")
+            .unwrap()
+            .format(sheets_engine::TableElement::FirstRowSubheading)
+            .fill,
+        Some(0xE4DFEC)
+    );
+    // Renamed: the pivot follows. Deleted: the pivot gets the default.
+    let mut spec = purple_pivot_style("Violet");
+    spec.set_format(
+        sheets_engine::TableElement::FirstRowSubheading,
+        Default::default(),
+    );
+    wb.modify_pivot_style("Purple", &spec, true).unwrap();
+    assert_eq!(layout(&wb, s).style.name.as_deref(), Some("Violet"));
+    assert_eq!(look(&wb, 3, 0).fill, None);
+    assert_eq!(wb.default_pivot_style(), "Violet");
+    wb.delete_pivot_style("Violet").unwrap();
+    assert_eq!(
+        layout(&wb, s).style.name.as_deref(),
+        Some("PivotStyleLight16")
+    );
+    assert!(wb.undo().unwrap());
+    assert_eq!(layout(&wb, s).style.name.as_deref(), Some("Violet"));
+    // A new pivot table gets the document's default.
+    let s2 = new_pivot(&mut wb);
+    assert_eq!(layout(&wb, s2).style.name.as_deref(), Some("Violet"));
+    assert!(wb.undo().unwrap());
+    // Built-in styles can be the start of a new one.
+    let dup = wb.pivot_style_spec("PivotStyleMedium9").unwrap();
+    assert!(
+        !dup.format(sheets_engine::TableElement::HeaderRow)
+            .is_empty()
+    );
+    // save → edit → save, save → undo → save.
+    let (_, p2) = save(&mut wb, dir.path(), "pivot-style2.xlsx");
+    assert!(p2["xl/styles.xml"].contains("name=\"Violet\""));
+    assert!(p2["xl/styles.xml"].contains("defaultPivotStyle=\"Violet\""));
+    assert!(wb.undo().unwrap());
+    let (_, p3) = save(&mut wb, dir.path(), "pivot-style3.xlsx");
+    assert!(p3["xl/styles.xml"].contains("name=\"Purple\""));
+    assert!(!p3["xl/styles.xml"].contains("Violet"));
+    assert!(p3["xl/pivotTables/pivotTable1.xml"].contains("pivotTableStyleInfo name=\"Purple\""));
 }

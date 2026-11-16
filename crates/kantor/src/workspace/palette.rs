@@ -1043,6 +1043,14 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.pivot_styles_doc(w, cx)),
     },
     Command {
+        title: tk("New PivotTable Style…"),
+        detail: tk(
+            "Sheets · make a PivotTable style of your own: a format for each part of the PivotTable",
+        ),
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.new_pivot_style_doc(w, cx)),
+    },
+    Command {
         title: tk("Insert Calculated Field…"),
         detail: tk("Sheets · add a field worked out from the PivotTable's other fields"),
         keys: "",

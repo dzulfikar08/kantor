@@ -102,7 +102,9 @@ pub(crate) struct InsertDialog {
 /// The PivotTable Fields panel.
 pub(crate) struct FieldPanel {
     sheet: u32,
-    /// The pivot shown (names are unique in a workbook).
+    /// The pivot shown: its sheet's id and its name (unique per sheet, as
+    /// in Excel; a copied sheet's pivots keep their names).
+    sheet_id: u32,
     name: String,
     /// Its layout, read at `revision`.
     pub(crate) layout: Option<PivotLayout>,
@@ -397,11 +399,13 @@ impl SheetsView {
                 self.selected = (row, col);
                 let name = {
                     let grid = self.table.read(cx).delegate();
-                    grid.book.pivot_at(sheet, row, col).map(|p| p.name)
+                    grid.book
+                        .pivot_at(sheet, row, col)
+                        .map(|p| (grid.book.sheet_id(sheet), p.name))
                 };
-                if let Some(name) = name {
+                if let Some((id, name)) = name {
                     self.status = tf("{}: choose its fields in the panel", &[&name]).into();
-                    self.open_panel(sheet, name);
+                    self.open_panel(sheet, id, name);
                 }
                 self.focus_grid(window, cx);
                 self.after_pivot_edit(window, cx);
@@ -559,7 +563,15 @@ impl SheetsView {
         });
         self.status = match result {
             Ok(name) => {
-                if self.pivot_panel.as_ref().is_some_and(|p| p.name == name) {
+                let sheet_id = {
+                    let grid = self.table.read(cx).delegate();
+                    grid.book.sheet_id(grid.sheet)
+                };
+                if self
+                    .pivot_panel
+                    .as_ref()
+                    .is_some_and(|p| p.name == name && p.sheet_id == sheet_id)
+                {
                     self.pivot_panel = None;
                 }
                 tf("{} deleted", &[&name]).into()
@@ -571,9 +583,10 @@ impl SheetsView {
 
     // -------------------------------------------------------------- the panel
 
-    fn open_panel(&mut self, sheet: u32, name: String) {
+    fn open_panel(&mut self, sheet: u32, sheet_id: u32, name: String) {
         self.pivot_panel = Some(FieldPanel {
             sheet,
+            sheet_id,
             name,
             layout: None,
             revision: None,
@@ -597,14 +610,18 @@ impl SheetsView {
             let grid = self.table.read(cx).delegate();
             grid.book
                 .pivot_at(grid.sheet, row, col)
-                .map(|p| (grid.sheet, p.name))
+                .map(|p| (grid.sheet, grid.book.sheet_id(grid.sheet), p.name))
         };
         match found {
-            Some((sheet, name)) => {
-                if self.pivot_panel.as_ref().is_some_and(|p| p.name == name) {
+            Some((sheet, id, name)) => {
+                if self
+                    .pivot_panel
+                    .as_ref()
+                    .is_some_and(|p| p.name == name && p.sheet_id == id)
+                {
                     self.pivot_panel = None;
                 } else {
-                    self.open_panel(sheet, name);
+                    self.open_panel(sheet, id, name);
                 }
             }
             None if self.pivot_panel.is_some() => self.pivot_panel = None,
@@ -646,15 +663,19 @@ impl SheetsView {
             let grid = self.table.read(cx).delegate();
             grid.book
                 .pivot_at(grid.sheet, row, col)
-                .map(|p| (grid.sheet, p.name))
+                .map(|p| (grid.sheet, grid.book.sheet_id(grid.sheet), p.name))
         };
-        let Some((sheet, name)) = found else {
+        let Some((sheet, id, name)) = found else {
             self.status = i18n::t("Select a cell in a PivotTable to see its fields").into();
             cx.notify();
             return;
         };
-        if self.pivot_panel.as_ref().is_none_or(|p| p.name != name) {
-            self.open_panel(sheet, name);
+        if self
+            .pivot_panel
+            .as_ref()
+            .is_none_or(|p| p.name != name || p.sheet_id != id)
+        {
+            self.open_panel(sheet, id, name);
         }
         self.sync_panel(cx);
         then(self, window, cx);
@@ -665,10 +686,9 @@ impl SheetsView {
         let p = self.pivot_panel.as_ref()?;
         let grid = self.table.read(cx).delegate();
         let sheets = grid.book.sheet_names().len() as u32;
-        // Its sheet first, then the others (an undo can move it).
-        std::iter::once(p.sheet)
-            .chain((0..sheets).filter(|s| *s != p.sheet))
-            .filter(|s| *s < sheets)
+        // Its sheet, by id (an undo or a tab move can change its index).
+        (0..sheets)
+            .filter(|s| grid.book.sheet_id(*s) == p.sheet_id)
             .find_map(|s| {
                 grid.book
                     .pivot_tables(s)
@@ -690,14 +710,17 @@ impl SheetsView {
             (
                 grid.book
                     .pivot_at(grid.sheet, row, col)
-                    .map(|p| (grid.sheet, p.name)),
+                    .map(|p| (grid.sheet, grid.book.sheet_id(grid.sheet), p.name)),
                 grid.book.revision(),
             )
         };
-        if let Some((sheet, name)) = here
-            && self.pivot_panel.as_ref().is_some_and(|p| p.name != name)
+        if let Some((sheet, id, name)) = here
+            && self
+                .pivot_panel
+                .as_ref()
+                .is_some_and(|p| p.name != name || p.sheet_id != id)
         {
-            self.open_panel(sheet, name);
+            self.open_panel(sheet, id, name);
         }
         if self.pivot_panel.as_ref().and_then(|p| p.revision) == Some(revision) {
             return;
