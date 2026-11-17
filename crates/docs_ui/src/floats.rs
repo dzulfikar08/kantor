@@ -1140,14 +1140,10 @@ impl DocsView {
                         let Some(bytes) = owner.image_bytes(rel_id) else {
                             continue;
                         };
-                        let Some((format, bytes)) = docs_engine::drawable_picture(bytes) else {
+                        let Some((format, bytes)) = crate::screen_picture(bytes, cx) else {
                             continue;
                         };
-                        let format = match format {
-                            docs_engine::ImageFormat::Jpeg => ImageFormat::Jpeg,
-                            _ => ImageFormat::Png,
-                        };
-                        let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes.to_vec()));
+                        let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes));
                         self.images.insert(base_key, i.clone());
                         i
                     }

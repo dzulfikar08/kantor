@@ -91,19 +91,26 @@ jobs:
         include:
           - { arch: aarch64, os: ubuntu-24.04-arm }
           - { arch: x86_64, os: ubuntu-24.04 }
-    # Ubuntu 24.04 sets the glibc baseline (2.39) for the tarballs and AppImages.
     runs-on: ${{ matrix.os }}
+    # AlmaLinux 9 sets the glibc baseline (2.34) for the tarballs and AppImages: Ubuntu 22.04+,
+    # Debian 12+, RHEL 9+.
+    container: almalinux:9
+    defaults:
+      run:
+        shell: bash
     env:
       VERSION: ${{ needs.check.outputs.version }}
       NAME: kantor-${{ needs.check.outputs.version }}-${{ matrix.arch }}-linux
       APPIMAGE: Kantor-${{ needs.check.outputs.version }}-${{ matrix.arch }}.AppImage
     steps:
+      - run: dnf install -y -q git-core
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: ./scripts/ci-deps.sh
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release
+          # Not the runner's own builds: their build scripts need glibc 2.39.
+          key: release-el9
           cache-on-failure: true
       # Same build as the nightly: release profile, vendored memory-patched gpui-pre-wgpu
       # via [patch.crates-io]. --locked: a release must build from the committed lockfile.
@@ -121,7 +128,7 @@ jobs:
       - name: AppImage
         run: |
           set -euo pipefail
-          ./scripts/package-appimage.sh target/release/kantor "dist/${APPIMAGE}"
+          MAX_GLIBC=2.34 ./scripts/package-appimage.sh target/release/kantor "dist/${APPIMAGE}"
           out="$("./dist/${APPIMAGE}" --appimage-extract-and-run --version)"
           case "$out" in *"${VERSION}"*) ;; *) echo "::error::the AppImage does not report the release version"; exit 1 ;; esac
       - uses: actions/upload-artifact@v4
@@ -313,7 +320,7 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | KANTOR_VERSION=${tag} sh
           \`\`\`
 
-          Verify downloads with \`sha256sum -c SHA256SUMS --ignore-missing\`. The Linux builds need glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40 or later).
+          Verify downloads with \`sha256sum -c SHA256SUMS --ignore-missing\`. The Linux builds need glibc 2.34 or newer (Ubuntu 22.04, Debian 12, RHEL 9, Fedora 35 or later).
           EOF
           gh release create "$tag" dist/kantor-*.tar.gz dist/Kantor*.dmg dist/Kantor*.AppImage \
             dist/Kantor-Setup-*.exe dist/Kantor-*.zip dist/SHA256SUMS \

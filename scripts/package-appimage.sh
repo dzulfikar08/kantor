@@ -10,8 +10,10 @@
 # run time and must match the host's drivers and compositor. The check below fails if the
 # binary starts linking anything else, so a new dependency is a decision, not an accident.
 #
-# glibc baseline: whatever the build host has. CI builds on Ubuntu 24.04 (glibc 2.39), so
-# the AppImage runs on Ubuntu 24.04+, Debian 13+, Fedora 40+, current Arch, … (not 22.04).
+# glibc baseline: whatever the build host has. CI builds in an AlmaLinux 9 container (glibc
+# 2.34), so the AppImage runs on Ubuntu 22.04+, Debian 12+, RHEL/Rocky/Alma 9+, Fedora 35+,
+# current Arch, … Set MAX_GLIBC=2.34 to fail when the binary needs a newer glibc than that
+# (CI does).
 # Running it needs FUSE 3 (fusermount3), present on desktop distros; without it:
 #   ./Kantor-x86_64.AppImage --appimage-extract-and-run
 set -euo pipefail
@@ -36,7 +38,17 @@ runtime_url="https://github.com/AppImage/type2-runtime/releases/download/2025110
 file -b "$bin" | grep -q "$(case $arch in x86_64) echo x86-64 ;; aarch64) echo aarch64 ;; esac)" \
   || { echo "error: $bin is not an $arch binary" >&2; exit 1; }
 
-# Shared libraries the binary may link (ldd names, no paths).
+# Newest glibc symbol version the binary needs.
+needs_glibc="$(objdump -T "$bin" | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)"
+echo "$bin needs glibc $needs_glibc"
+if [ -n "${MAX_GLIBC:-}" ] && [ "$(printf '%s\n%s\n' "$needs_glibc" "$MAX_GLIBC" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
+  echo "error: $bin needs glibc $needs_glibc, newer than MAX_GLIBC=$MAX_GLIBC" >&2
+  objdump -T "$bin" | grep -E "GLIBC_$needs_glibc\b" >&2 || true
+  exit 1
+fi
+
+# Shared libraries the binary links directly (its NEEDED entries: what those pull in is the
+# host's own business, e.g. EL 9's freetype brings harfbuzz and glib).
 allowed='linux-vdso.so.1 linux-gate.so.1 ld-linux-x86-64.so.2 ld-linux-aarch64.so.1
 libc.so.6 libm.so.6 libgcc_s.so.1 libdl.so.2 libpthread.so.0 librt.so.1
 libfontconfig.so.1 libfreetype.so.6 libexpat.so.1 libz.so.1 libbz2.so.1.0 libpng16.so.16
@@ -44,7 +56,7 @@ libbrotlidec.so.1 libbrotlicommon.so.1
 libxcb.so.1 libXau.so.6 libXdmcp.so.6 libbsd.so.0 libmd.so.0
 libxkbcommon.so.0 libxkbcommon-x11.so.0 libxcb-xkb.so.1'
 unexpected=""
-for lib in $(ldd "$bin" | awk '{ print $1 }' | xargs -n1 basename); do
+for lib in $(objdump -p "$bin" | awk '$1 == "NEEDED" { print $2 }'); do
   case " $(echo "$allowed" | tr '\n' ' ') " in *" $lib "*) ;; *) unexpected="$unexpected $lib" ;; esac
 done
 [ -z "$unexpected" ] || { echo "error: kantor links libraries the AppImage doesn't plan for:$unexpected (bundle them or add them to the list in $0)" >&2; exit 1; }

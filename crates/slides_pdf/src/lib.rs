@@ -287,7 +287,7 @@ fn stroke_path(surface: &mut Surface, path: &Path, s: &Stroke) {
 
 fn draw_picture(surface: &mut Surface, pic: &Picture, images: &mut Images) {
     let data: Arc<dyn AsRef<[u8]> + Send + Sync> = pic.data.clone();
-    let Some(image) = images.get(data) else {
+    let Some(image) = images.picture(data) else {
         return;
     };
     let [x, y, w, h] = pic.image_rect();
@@ -318,7 +318,7 @@ fn draw_picture(surface: &mut Surface, pic: &Picture, images: &mut Images) {
         pushed += 1;
     }
     surface.push_transform(&Transform::from_translate(x, y));
-    surface.draw_image(image, size);
+    image.draw(surface, size);
     surface.pop();
     for _ in 0..pushed {
         surface.pop();

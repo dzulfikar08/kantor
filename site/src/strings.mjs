@@ -126,7 +126,7 @@ export const en = {
   },
   linux: {
     name: "Linux",
-    req: "64-bit Linux. One file, nothing else to install.",
+    req: "64-bit Linux: Ubuntu 22.04, Debian 12, RHEL 9, Fedora 35 or newer (glibc 2.34). One file, nothing else to install.",
     buttonX64: "Download for most PCs",
     buttonX64Meta: "x86_64, Intel or AMD",
     buttonArm: "Download for ARM",
@@ -319,7 +319,7 @@ export const id = {
   },
   linux: {
     name: "Linux",
-    req: "Linux 64-bit. Satu file, tidak perlu memasang apa pun lagi.",
+    req: "Linux 64-bit: Ubuntu 22.04, Debian 12, RHEL 9, Fedora 35 atau yang lebih baru (glibc 2.34). Satu file, tidak perlu memasang apa pun lagi.",
     buttonX64: "Unduh untuk kebanyakan PC",
     buttonX64Meta: "x86_64, Intel atau AMD",
     buttonArm: "Unduh untuk ARM",

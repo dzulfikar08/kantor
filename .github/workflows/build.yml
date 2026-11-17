@@ -42,16 +42,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: aarch64, os: ubuntu-24.04-arm }
-          - { arch: x86_64, os: ubuntu-24.04 }
+          # Linux builds run in AlmaLinux 9 (glibc 2.34): the binaries then run on Ubuntu
+          # 22.04+, Debian 12+ and RHEL 9+, not only on what the runner has (24.04, glibc 2.39).
+          - { arch: aarch64, os: ubuntu-24.04-arm, container: "almalinux:9" }
+          - { arch: x86_64, os: ubuntu-24.04, container: "almalinux:9" }
           - { arch: aarch64, os: macos-15, platform: macos }
           - { arch: x86_64, os: windows-latest, platform: windows, winarch: x64 }
           - { arch: aarch64, os: windows-11-arm, platform: windows, winarch: arm64 }
     runs-on: ${{ matrix.os }}
+    # No container (empty) on macOS and Windows.
+    container: ${{ matrix.container || '' }}
     defaults:
       run:
         shell: bash
     steps:
+      # git first, so that checkout makes a real clone (git log below needs it).
+      - if: matrix.container
+        run: dnf install -y -q git-core
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -62,7 +69,9 @@ jobs:
         run: brew install librsvg
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release
+          # The container's builds apart: build scripts compiled on the runner (glibc 2.39)
+          # don't run in AlmaLinux 9.
+          key: release${{ matrix.container && '-el9' || '' }}
           cache-on-failure: true
       - name: Nightly channel and build stamp
         run: |
@@ -108,7 +117,7 @@ jobs:
           else
             ./scripts/package.sh "target/release/kantor" "dist/${name}"
             appimage="Kantor-${tag}-${{ matrix.arch }}.AppImage"
-            ./scripts/package-appimage.sh target/release/kantor "dist/${appimage}"
+            MAX_GLIBC=2.34 ./scripts/package-appimage.sh target/release/kantor "dist/${appimage}"
             ( cd dist && sha256sum "$appimage" > "$appimage.sha256" )
           fi
           echo "name=${name}" >> "$GITHUB_OUTPUT"

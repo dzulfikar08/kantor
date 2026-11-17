@@ -436,7 +436,8 @@ fn page_number_format_with_chapter_numbers() {
     assert_eq!(back.sections()[0].props.numbering(), n);
 }
 
-/// EMF and WMF pictures are drawn into the PDF (as pictures made from them).
+/// EMF and WMF pictures are drawn into the PDF as vector graphics: the
+/// only bitmap left is the one the EMF holds itself (the WMF has none).
 #[test]
 fn metafile_pictures_are_exported() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -444,5 +445,19 @@ fn metafile_pictures_are_exported() {
     let doc = Document::open(&path).unwrap();
     let mut engine = Engine::new();
     let pdf = docs_pdf::export(&doc, &mut engine).unwrap();
-    assert_eq!(count(&pdf, b"/Subtype/Image"), 2);
+    assert_eq!(count(&pdf, b"/Subtype/Image"), 1);
+    let mut images = docs_pdf::Images::default();
+    for name in ["chart.emf", "shapes.wmf"] {
+        let bytes = std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/corpus/metafile")
+                .join(name),
+        )
+        .unwrap();
+        let picture = images.picture(std::sync::Arc::new(bytes));
+        assert!(
+            matches!(picture, Some(docs_pdf::PdfPicture::Vector(_))),
+            "{name}"
+        );
+    }
 }

@@ -3,9 +3,9 @@
 //!
 //! Metafiles and PICTs are played into an SVG document (vector: paths,
 //! text, embedded bitmaps) and rasterised with resvg, the renderer GPUI
-//! already uses for SVG. Every app turns such a picture into PNG with
-//! [`to_png`] where it decodes pictures (screen and PDF), so the file keeps
-//! its original bytes.
+//! already uses for SVG. On screen the apps turn such a picture into PNG
+//! with [`to_png`] (off the UI thread); PDF export draws its [`usvg`] tree
+//! ([`Picture::tree`]) as vectors. The file keeps its original bytes.
 //!
 //! Coverage follows what Office and LibreOffice write: shapes, paths,
 //! arcs, text with its spacing and turn, hatches, pattern brushes,
@@ -25,6 +25,10 @@ mod rd;
 mod wmf;
 
 use std::sync::{Arc, OnceLock};
+
+/// The SVG tree library this crate reads its output with (for drawing a
+/// [`Picture`] as vectors, e.g. into a PDF).
+pub use resvg::usvg;
 
 /// Formats this crate reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,6 +81,18 @@ impl Picture {
         self.drawn == 0
     }
 
+    /// The picture as a parsed SVG tree (text already turned into
+    /// outlines), for drawing it as vectors. Loads the system fonts the
+    /// first time a picture with text needs them (see [`preload_fonts`]).
+    pub fn tree(&self) -> Option<usvg::Tree> {
+        parse(&self.svg, self.has_text)
+    }
+
+    /// Whether the picture has text (drawing it needs the system fonts).
+    pub fn has_text(&self) -> bool {
+        self.has_text
+    }
+
     /// Rasterised, its longer side at most `max_side` pixels (twice the
     /// natural size when that fits, for sharp zooming and printing).
     pub fn png(&self, max_side: u32) -> Option<Vec<u8>> {
@@ -92,15 +108,19 @@ impl Picture {
     }
 }
 
+fn system_fonts() -> &'static OnceLock<Arc<resvg::usvg::fontdb::Database>> {
+    static SYSTEM: OnceLock<Arc<resvg::usvg::fontdb::Database>> = OnceLock::new();
+    &SYSTEM
+}
+
 fn fonts(text: bool) -> Arc<resvg::usvg::fontdb::Database> {
     static EMPTY: OnceLock<Arc<resvg::usvg::fontdb::Database>> = OnceLock::new();
-    static SYSTEM: OnceLock<Arc<resvg::usvg::fontdb::Database>> = OnceLock::new();
     if !text {
         return EMPTY
             .get_or_init(|| Arc::new(resvg::usvg::fontdb::Database::new()))
             .clone();
     }
-    SYSTEM
+    system_fonts()
         .get_or_init(|| {
             let mut db = resvg::usvg::fontdb::Database::new();
             db.load_system_fonts();
@@ -140,14 +160,41 @@ fn fonts(text: bool) -> Arc<resvg::usvg::fontdb::Database> {
         .clone()
 }
 
-fn rasterise(svg: &str, w: u32, h: u32, text: bool) -> Option<Vec<u8>> {
-    let opts = resvg::usvg::Options {
+/// Load the system fonts pictures with text are drawn with, on a
+/// background thread, so that the first such picture doesn't wait for
+/// them (loading takes up to a second). Does nothing after the first call.
+pub fn preload_fonts() {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        let spawned = std::thread::Builder::new()
+            .name("metafile-fonts".into())
+            .spawn(|| {
+                fonts(true);
+            });
+        if let Err(e) = spawned {
+            log::warn!("metafile: fonts not preloaded: {e}");
+        }
+    });
+}
+
+/// Whether the system fonts are loaded (drawing a picture with text
+/// won't wait for them).
+pub fn fonts_ready() -> bool {
+    system_fonts().get().is_some()
+}
+
+fn parse(svg: &str, text: bool) -> Option<usvg::Tree> {
+    let opts = usvg::Options {
         fontdb: fonts(text),
         ..Default::default()
     };
-    let tree = resvg::usvg::Tree::from_str(svg, &opts)
+    usvg::Tree::from_str(svg, &opts)
         .map_err(|e| log::warn!("metafile: SVG not read: {e}"))
-        .ok()?;
+        .ok()
+}
+
+fn rasterise(svg: &str, w: u32, h: u32, text: bool) -> Option<Vec<u8>> {
+    let tree = parse(svg, text)?;
     let mut map = resvg::tiny_skia::Pixmap::new(w, h)?;
     let size = tree.size();
     let t = resvg::tiny_skia::Transform::from_scale(
