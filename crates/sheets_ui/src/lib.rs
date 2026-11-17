@@ -58,6 +58,7 @@ mod filter_menu;
 mod find;
 mod grid_ops;
 mod look;
+mod macros_ui;
 mod move_chart_ui;
 pub mod page_setup;
 pub mod pivot;
@@ -268,6 +269,7 @@ fn opened_status(book: &Workbook) -> String {
                 tk("1 sheet renamed (name not allowed in Excel)"),
                 tk("{} sheets renamed (names not allowed in Excel)"),
             ),
+            N::MacrosNotRun => kantor_ui::i18n::t("macros are kept but not run").to_owned(),
         });
     }
     s
@@ -2633,6 +2635,29 @@ impl SheetsView {
             };
             if path.extension().is_none() {
                 path.set_extension("xlsx");
+            }
+            // Excel's warning: a macro-free workbook leaves the macros out.
+            let asks = macros_ui::drops_macros(&path)
+                && this
+                    .update(cx, |this, cx| this.table.read(cx).delegate().book.has_macros())
+                    .unwrap_or(false);
+            if asks {
+                let (tx, rx) = futures::channel::oneshot::channel();
+                let tx = std::cell::RefCell::new(Some(tx));
+                let Ok(()) = this.update_in(cx, |_, window, cx| {
+                    macros_ui::confirm_macro_free(window, cx, move |choice, _, _| {
+                        if let Some(tx) = tx.borrow_mut().take() {
+                            let _ = tx.send(choice);
+                        }
+                    })
+                }) else {
+                    return false;
+                };
+                match rx.await {
+                    Ok(macros_ui::MacroChoice::Drop) => {}
+                    Ok(macros_ui::MacroChoice::KeepAsXlsm) => path = macros_ui::as_xlsm(&path),
+                    Ok(macros_ui::MacroChoice::Cancel) | Err(_) => return false,
+                }
             }
             let Ok(Some(done)) = this.update_in(cx, |this, window, cx| {
                 this.start_save(path, false, window, cx)

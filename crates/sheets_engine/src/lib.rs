@@ -767,6 +767,7 @@ impl Workbook {
             note_extras,
             mut cf_x14,
             pictures,
+            macros,
         } = extras
             .map(|h| h.join().unwrap_or_default())
             .unwrap_or_default();
@@ -831,6 +832,9 @@ impl Workbook {
                     .iter()
                     .map(|ws| (ws.sheet_id, ws.conditional_formatting.as_slice())),
             );
+        }
+        if macros {
+            imported.notes.push(ImportNote::MacrosNotRun);
         }
         let mut book = Self {
             calc,
@@ -918,6 +922,17 @@ impl Workbook {
     /// interface language.
     pub fn import_note_list(&self) -> &[ImportNote] {
         &self.origin.notes
+    }
+
+    /// Whether the workbook has macros (a VBA project) that a save as
+    /// `.xlsm` keeps and a save as `.xlsx` drops (as Excel warns). Reads the
+    /// file the workbook was opened from or last saved to.
+    pub fn has_macros(&self) -> bool {
+        self.origin
+            .xlsx
+            .as_ref()
+            .and_then(|s| s.bytes().ok())
+            .is_some_and(|b| preserve::has_macros(&b))
     }
 
     /// What the last save could not carry over from the original `.xlsx`
@@ -1629,6 +1644,9 @@ impl Workbook {
             chart_sheets: self.chart_sheet_plans(),
             pictures: self.cell_pictures(),
             slicers: self.slicer_plan(),
+            // A save as `.xlsx` drops them (see `prepare_save`).
+            keep_macros: true,
+            macro_enabled: false,
         }
     }
 }
@@ -1663,6 +1681,10 @@ struct XlsxParts {
     /// The pictures cells show (saved as rich values).
     pictures: Vec<preserve::CellPicture>,
     slicers: preserve::SlicerPlan,
+    /// Keep the original's macros (a save as `.xlsm`, a recovery copy).
+    keep_macros: bool,
+    /// A macro-enabled workbook (a save as `.xlsm`).
+    macro_enabled: bool,
 }
 
 /// IronCalc's `.xlsx` of `model`, with the parts of `original` it doesn't
@@ -1716,6 +1738,8 @@ fn build_xlsx(
         chart_sheets: parts.chart_sheets.as_deref(),
         pictures: &parts.pictures,
         slicers: &parts.slicers,
+        keep_macros: parts.keep_macros,
+        macro_enabled: parts.macro_enabled,
     };
     Ok(preserve::finish(written, original, &ctx))
 }
@@ -1735,6 +1759,8 @@ struct Extras {
     cf_x14: cf_x14::CfX14,
     /// Pictures Excel saved for IMAGE cells, by `(sheetId, row, col)`.
     pictures: HashMap<(u32, u32, u32), preserve::RichPicture>,
+    /// The package has a VBA project (macros).
+    macros: bool,
 }
 
 impl Extras {
@@ -1750,6 +1776,7 @@ impl Extras {
             note_extras: preserve::note_extras(bytes),
             cf_x14: cf_x14::read(&skeletons),
             pictures: preserve::rich_pictures(bytes),
+            macros: preserve::has_macros(bytes),
         }
     }
 }

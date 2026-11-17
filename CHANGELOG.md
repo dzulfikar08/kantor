@@ -17,6 +17,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   last. A sheet inserted or moved between them is counted, renaming either end renames it in the
   formula, and deleting an end sheet moves the reference to the next sheet in. They are saved as
   Excel writes them.
+- Sheets: workbooks with macros (`.xlsm`) keep their macros when saved, as `.xlsm`. Kantor doesn't
+  run them and says so when the workbook opens. Save As `.xlsx` warns, as Excel does, that a
+  macro-free workbook can't hold them, and offers to save as `.xlsm` instead. A workbook saved as
+  `.xlsm` is always a macro-enabled one, so Excel opens it.
 
 ## [0.11.0] - 2026-11-17
 
