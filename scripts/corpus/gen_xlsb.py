@@ -18,7 +18,16 @@ And tests/corpus/xls/features.xlsb, the same workbook with:
   E3:E4 a whole number between 1 and 10 with an input message;
 * A5 on a darkDown pattern fill (red on white);
 * a drawing on "Data" (BrtDrawing; drawings and charts are XML parts in
-  .xlsb too): a PNG picture and a column chart of Data!$B$3:$B$4.
+  .xlsb too): a PNG picture and a column chart of Data!$B$3:$B$4;
+* conditional formatting on "Data" (BrtBeginConditionalFormatting /
+  BrtBeginCFRule, [MS-XLSB] 2.4.34 and 2.4.23) with two differential
+  formats in styles.bin (BrtDXF, XFProps): in priority order, B3:B4 cell
+  value > 1000 (bold dark red on light red, stop if true), A3:A4 text
+  contains "orth" (green, "0.0%"), C3 the formula C3<1, H1:H5 a two-colour
+  scale, I1:I5 a data bar (bar only), J1:J5 3 traffic lights (icon only),
+  K1:K5 top 2, L1:L5 bottom 10 %, M1:M5 above average, N1:N5 duplicates,
+  O1:O5 blanks, P1:P5 dates yesterday, Q1:Q5 between 3 and 6, R1:R5 a
+  5-rating icon set.
 
 Regenerate with `python3 scripts/corpus/gen_xlsb.py`; `--check` compares
 with the files in the repository.
@@ -86,6 +95,15 @@ def xf(fmt=0, font_=0, fill_=0, border_=0, halign=0, valign=2, wrap=False):
     return rec(47, struct.pack("<HHHHHBBHBB", 0xFFFF, fmt, font_, fill_, border_, 0, 0, flags, 0, 0))
 
 
+def xfprop(ty, data):
+    return struct.pack("<HH", ty, len(data) + 4) + data
+
+
+def dxf(props):
+    # BrtDXF: fNewBorder and unused bits, then XFProps (reserved, cprops).
+    return rec(507, struct.pack("<HHH", 0, 0, len(props)) + b"".join(props))
+
+
 def styles(features=False):
     out = rec(278)  # BrtBeginStyleSheet
     out += rec(615, struct.pack("<I", 1)) + rec(44, struct.pack("<H", 164) + wide("#,##0.00")) + rec(616)
@@ -110,6 +128,15 @@ def styles(features=False):
     if features:
         out += xf(fill_=3)  # 6 striped
     out += rec(618)
+    if features:
+        out += rec(505, struct.pack("<I", 2))  # BrtBeginDXFs
+        out += dxf([xfprop(0x05, color_rgb(0x9C, 0, 0x06)), xfprop(0x19, struct.pack("<H", 700)),
+                    xfprop(0x00, bytes([1])), xfprop(0x02, color_rgb(0xFF, 0xC7, 0xCE))])
+        code = "0.0%".encode("utf-16-le")
+        out += dxf([xfprop(0x00, bytes([1])), xfprop(0x02, color_rgb(0xC6, 0xEF, 0xCE)),
+                    xfprop(0x26, struct.pack("<H", len(code) // 2) + code),
+                    xfprop(0x29, struct.pack("<H", 170))])
+        out += rec(506)  # BrtEndDXFs
     out += rec(279)  # BrtEndStyleSheet
     return out
 
@@ -182,8 +209,69 @@ def ptg_int(v):
     return bytes([0x1E]) + struct.pack("<H", v)
 
 
+def ptg_ref(r, c):
+    # PtgRef, row and column relative.
+    return bytes([0x24]) + struct.pack("<IH", r, c | 0xC000)
+
+
+def ptg_func(iftab):
+    return bytes([0x41]) + struct.pack("<H", iftab)
+
+
+def cf_block(ranges, rules):
+    out = rec(461, struct.pack("<III", len(rules), 0, len(ranges))
+              + b"".join(struct.pack("<IIII", r1, r2, c1, c2) for r1, r2, c1, c2 in ranges))
+    return out + b"".join(rules) + rec(462)
+
+
+def cf_rule(ty, template, pri, dxf_id=-1, param=0, flags=0, text=None, f1=b"", f2=b"",
+            body=b""):
+    fmlas = [f for f in (f1, f2) if f]
+    out = rec(463, struct.pack("<IIiiIIIH", ty, template, dxf_id, pri, param, 0, 0, flags)
+              + struct.pack("<III", len(f1), len(f2), 0) + nullable(text)
+              + b"".join(formula(f) for f in fmlas))
+    return out + body + rec(464)
+
+
+def cfvo(kind, num=0.0, gte=True):
+    return rec(471, struct.pack("<IdIII", kind, num, 1, 1 if gte else 0, 0))
+
+
+def conditional_formats():
+    gt, lt = bytes([0x0D]), bytes([0x09])
+    a3_text = (ptg_str("orth") + ptg_ref(2, 0) + bytes([0x42, 2]) + struct.pack("<H", 82)
+               + ptg_func(3) + ptg_func(38))  # NOT(ISERROR(SEARCH("orth",A3)))
+    yesterday = (ptg_ref(0, 15) + ptg_int(1) + ptg_func(285) + ptg_func(221) + ptg_int(1)
+                 + bytes([0x04, 0x0B]))  # FLOOR(P1,1)=TODAY()-1
+    blank = ptg_ref(0, 14) + ptg_func(118) + ptg_func(32) + ptg_int(0) + bytes([0x0B])  # LEN(TRIM(O1))=0
+    col = lambda c: [(0, 4, c, c)]  # noqa: E731
+    out = cf_block([(2, 3, 1, 1)], [cf_rule(1, 0, 1, 0, param=5, flags=0x2, f1=ptg_int(1000))])
+    out += cf_block([(2, 3, 0, 0)], [cf_rule(2, 8, 2, 1, param=0, text="orth", f1=a3_text)])
+    out += cf_block([(2, 2, 2, 2)], [cf_rule(2, 1, 3, 0, f1=ptg_ref(2, 2) + ptg_int(1) + lt)])
+    scale = (rec(469) + cfvo(2) + cfvo(3) + rec(564, color_rgb(0xF8, 0x69, 0x6B))
+             + rec(564, color_rgb(0x63, 0xBE, 0x7B)) + rec(470))
+    out += cf_block(col(7), [cf_rule(3, 2, 4, body=scale)])
+    bar = rec(467, bytes([10, 90, 0])) + cfvo(2) + cfvo(3) + rec(564, color_rgb(0x63, 0x8E, 0xC6)) + rec(468)
+    out += cf_block(col(8), [cf_rule(4, 3, 5, body=bar)])
+    lights = (rec(465, struct.pack("<IH", 3, 0x2)) + cfvo(4, 0) + cfvo(4, 33) + cfvo(4, 67)
+              + rec(466))
+    out += cf_block(col(9), [cf_rule(6, 4, 6, body=lights)])
+    out += cf_block(col(10), [cf_rule(5, 5, 7, 1, param=2)])
+    out += cf_block(col(11), [cf_rule(5, 5, 8, 0, param=10, flags=0x8 | 0x10)])
+    out += cf_block(col(12), [cf_rule(2, 0x19, 9, 1, flags=0x4)])
+    out += cf_block(col(13), [cf_rule(2, 0x1B, 10, 0)])
+    out += cf_block(col(14), [cf_rule(2, 9, 11, 1, f1=blank)])
+    out += cf_block(col(15), [cf_rule(2, 0x11, 12, 0, param=2, f1=yesterday)])
+    out += cf_block(col(16), [cf_rule(1, 0, 13, 0, param=1, f1=ptg_int(3), f2=ptg_int(6))])
+    rating = (rec(465, struct.pack("<IH", 15, 0)) + cfvo(4, 0) + cfvo(4, 20) + cfvo(4, 40)
+              + cfvo(4, 60) + cfvo(4, 80) + rec(466))
+    out += cf_block(col(17), [cf_rule(6, 4, 14, body=rating)])
+    return out
+
+
 def features_tail():
-    out = rec(573, bytes(14) + struct.pack("<I", 2))  # BrtBeginDVals
+    out = conditional_formats()
+    out += rec(573, bytes(14) + struct.pack("<I", 2))  # BrtBeginDVals
     # A list (valType 3) of literals (fStrLookup), blanks allowed, error shown.
     out += dval(3 | 0x80 | 0x100 | 0x80000, (2, 3, 3, 3), "Choose", "Pick Yes or No",
                 f1=ptg_str("Yes\0No"))

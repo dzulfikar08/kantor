@@ -670,3 +670,32 @@ fn excel95_formatting() {
     assert!(wb.row_height(0, 3) > 1.5 * wb.row_height(0, 2));
     assert_eq!(wb.display_value(1, 0, 0), "Plain text");
 }
+
+/// multisheet.xls: 3-D references are read with Kantor's own decoder (not
+/// calamine's text) and come in as live formulas.
+#[test]
+fn three_d_formulas() {
+    let mut wb = Workbook::open(corpus("multisheet.xls")).unwrap();
+    assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
+    let s = wb
+        .sheet_names()
+        .iter()
+        .position(|n| n == "Summary")
+        .unwrap() as u32;
+    let expect = [
+        ("=SUM(Jan:Mar!B2)", "60"),
+        ("=AVERAGE(Jan:Mar!B2:B3)", "11"),
+        ("=MAX(Jan:Mar!B2)", "30"),
+        ("=Feb!B2*2", "40"),
+        ("=COUNT(Jan:Mar!B2:B3)", "6"),
+        ("=SUM(Jan:Feb!B2,Mar!B3)", "33"),
+        ("=IF(SUM(Jan:Mar!B3)>5,\"many\",\"few\")", "many"),
+    ];
+    for (row, (formula, value)) in expect.iter().enumerate() {
+        assert_eq!(wb.input(s, row as u32, 1), *formula, "row {row}");
+        assert_eq!(wb.display_value(s, row as u32, 1), *value, "row {row}");
+    }
+    // Live: a change on a middle sheet reaches the totals.
+    wb.set_input(1, 1, 1, "25").unwrap();
+    assert_eq!(wb.display_value(s, 0, 1), "65");
+}

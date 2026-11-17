@@ -381,3 +381,23 @@ fn slicers_and_timelines_print_as_they_show() {
         assert!(all.contains(t), "{t} missing from {all}");
     }
 }
+
+/// Lines inside .ods groups (a line in a group in a group, a flipped
+/// connector in a group; tests/corpus/xls/odsdraw.ods) print in their own
+/// red, as the ungrouped zigzag does.
+#[test]
+fn grouped_lines_keep_their_colour() {
+    let mut book = open("xls/odsdraw.ods");
+    let doc = export(&mut book, &Options::default());
+    let mut content = String::new();
+    for obj in doc.objects.values() {
+        if let Ok(s) = obj.as_stream() {
+            let bytes = s
+                .decompressed_content()
+                .unwrap_or_else(|_| s.content.clone());
+            content.push_str(&String::from_utf8_lossy(&bytes));
+        }
+    }
+    // #C00000 strokes: Zigzag, Pair line, Joined link.
+    assert_eq!(content.matches("0.7529412 0 0 RG").count(), 3, "{content}");
+}

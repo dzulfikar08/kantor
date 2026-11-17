@@ -10,9 +10,17 @@ Sheet "Shapes", objects anchored to the sheet:
 * freeform shapes: a draw:path with lines and a cubic curve ("Wave"), a
   draw:polygon ("Arrow polygon"), a draw:polyline ("Zigzag"), a
   draw:regular-polygon with 6 corners ("Hexagon") and a 5-pointed star
-  ("Star");
+  ("Star"); a draw:path with an elliptical arc ("Arch", SVG's A);
+* custom shapes without a preset (draw:type="non-primitive"), drawn from
+  their draw:enhanced-path: "Pie" (a counter-clockwise arc A from a
+  rectangle and two points, its size from a draw:equation and a modifier),
+  "Ring" (two angle ellipses U, the inner one not filled) and "Rounded" (a
+  quadratic curve Q and quadrant X/Y corners);
 * a group (draw:g) of a rectangle and an ellipse ("Pair") with a group
   inside it holding a line ("Inner");
+* a group "Joined" of two rectangles and a red connector between them
+  (draw:connector, rising to the right: flipped vertically), as
+  LibreOffice writes a connector in a group;
 * a callout (draw:caption, "Callout") with text;
 * a rectangle inside a hyperlink (draw:a, "Linked box");
 * form controls (draw:control with office:forms): a button "Run", a
@@ -83,12 +91,21 @@ def content() -> str:
  <draw:polyline draw:name="Zigzag" draw:style-name="line" svg:x="9cm" svg:y="0.5cm" svg:width="4cm" svg:height="2cm" svg:viewBox="0 0 4000 2000" draw:points="0,2000 1000,0 2000,2000 3000,0 4000,2000"/>
  <draw:regular-polygon draw:name="Hexagon" draw:style-name="green" svg:x="0.5cm" svg:y="3cm" svg:width="2.5cm" svg:height="2.5cm" draw:corners="6"/>
  <draw:regular-polygon draw:name="Star" draw:style-name="orange" svg:x="3.5cm" svg:y="3cm" svg:width="2.5cm" svg:height="2.5cm" draw:corners="5" draw:concave="true" draw:sharpness="60%"/>
+ <draw:path draw:name="Arch" draw:style-name="blue" svg:x="7cm" svg:y="6.5cm" svg:width="2cm" svg:height="1cm" svg:viewBox="0 0 4000 2000" svg:d="M 0 2000 A 2000 2000 0 0 1 4000 2000 Z"/>
+ <draw:custom-shape draw:name="Pie" draw:style-name="orange" svg:x="13cm" svg:y="3cm" svg:width="2cm" svg:height="2cm"><draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="non-primitive" draw:modifiers="10800" draw:enhanced-path="M ?f0 ?f0 L 21600 ?f0 A 0 0 21600 21600 21600 ?f0 ?f0 0 Z N"><draw:equation draw:name="f0" draw:formula="$0 "/></draw:enhanced-geometry></draw:custom-shape>
+ <draw:custom-shape draw:name="Ring" draw:style-name="green" svg:x="13cm" svg:y="6cm" svg:width="2cm" svg:height="2cm"><draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="non-primitive" draw:enhanced-path="U 10800 10800 10800 10800 0 360 Z N U 10800 10800 5400 5400 0 360 Z F N"/></draw:custom-shape>
+ <draw:custom-shape draw:name="Rounded" draw:style-name="blue" svg:x="13cm" svg:y="9cm" svg:width="3cm" svg:height="2cm"><draw:enhanced-geometry svg:viewBox="0 0 3000 2000" draw:type="non-primitive" draw:enhanced-path="M 500 0 L 2500 0 X 3000 500 L 3000 1500 Y 2500 2000 L 500 2000 Q 0 2000 0 1500 L 0 500 Y 500 0 Z N"/></draw:custom-shape>
  <draw:g draw:name="Pair">
   <draw:rect draw:name="Pair square" draw:style-name="blue" svg:x="7cm" svg:y="3cm" svg:width="2cm" svg:height="2cm"/>
   <draw:ellipse draw:name="Pair circle" draw:style-name="green" svg:x="9.5cm" svg:y="3cm" svg:width="2cm" svg:height="2cm"/>
   <draw:g draw:name="Inner">
    <draw:line draw:name="Pair line" draw:style-name="line" svg:x1="7cm" svg:y1="5.5cm" svg:x2="11.5cm" svg:y2="5.5cm"/>
   </draw:g>
+ </draw:g>
+ <draw:g draw:name="Joined">
+  <draw:rect draw:name="Joined start" draw:style-name="blue" svg:x="7cm" svg:y="13cm" svg:width="1cm" svg:height="1cm"/>
+  <draw:rect draw:name="Joined end" draw:style-name="green" svg:x="11cm" svg:y="11cm" svg:width="1cm" svg:height="1cm"/>
+  <draw:connector draw:name="Joined link" draw:style-name="line" draw:type="standard" svg:x1="8cm" svg:y1="13.5cm" svg:x2="11cm" svg:y2="11.5cm"/>
  </draw:g>
  <draw:caption draw:name="Callout" draw:style-name="note" svg:x="0.5cm" svg:y="6.5cm" svg:width="4cm" svg:height="1.5cm" draw:caption-point-x="-1cm" draw:caption-point-y="2cm"><text:p>Look here</text:p></draw:caption>
  <draw:a xlink:type="simple" xlink:href="https://example.com/"><draw:rect draw:name="Linked box" draw:style-name="blue" svg:x="5cm" svg:y="6.5cm" svg:width="3cm" svg:height="1.5cm"><text:p>Link</text:p></draw:rect></draw:a>

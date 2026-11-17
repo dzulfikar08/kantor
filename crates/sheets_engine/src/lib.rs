@@ -33,6 +33,7 @@ pub mod notes;
 mod numfmt;
 mod ods;
 mod ods_drawing;
+mod ods_geom;
 mod ods_print;
 mod pivot;
 mod pivot_calc;

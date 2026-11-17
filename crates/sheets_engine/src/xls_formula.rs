@@ -356,7 +356,9 @@ fn decompile_in(rgce: &[u8], ctx: &Context, b12: bool) -> Option<String> {
                     a1(cell(rw, col, false, ctx.base))
                 } else {
                     let (r1, r2, c1, c2) = (row(&mut r)?, row(&mut r)?, r.u16()?, r.u16()?);
-                    area(cell(r1, c1, false, ctx.base), cell(r2, c2, false, ctx.base))
+                    let (a, b) = (cell(r1, c1, false, ctx.base), cell(r2, c2, false, ctx.base));
+                    // LibreOffice writes `Jan:Mar!B2` as the area B2:B2.
+                    if a == b { a1(a) } else { area(a, b) }
                 };
                 stack.push(format!("{prefix}{text}"));
             }

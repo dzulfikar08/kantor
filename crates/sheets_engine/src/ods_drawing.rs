@@ -924,6 +924,11 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
                 let ty = geom
                     .and_then(|g| g.attribute((NS_DRAW, "type")))
                     .unwrap_or("non-primitive");
+                // A shape without a preset Kantor knows: its own path.
+                let own = || {
+                    geom.and_then(crate::ods_geom::enhanced_geom)
+                        .map(|g| (g, Vec::new()))
+                };
                 match ty.strip_prefix("ooxml-") {
                     Some(p) if preset_name(p) => {
                         let adj = geom
@@ -937,12 +942,18 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
                             .unwrap_or_default();
                         (p.to_owned(), adj)
                     }
-                    Some(_) => {
-                        self.out.skipped.shapes += 1;
-                        return None;
-                    }
-                    None => match lo_preset(ty) {
-                        Some(p) => (p.to_owned(), Vec::new()),
+                    Some(_) => match own() {
+                        Some(g) => g,
+                        None => {
+                            self.out.skipped.shapes += 1;
+                            return None;
+                        }
+                    },
+                    None => match lo_preset(ty)
+                        .map(|p| (p.to_owned(), Vec::new()))
+                        .or_else(own)
+                    {
+                        Some(g) => g,
                         None => {
                             self.out.skipped.shapes += 1;
                             return None;
@@ -1656,8 +1667,8 @@ fn regular_polygon_geom(corners: usize, concave: Option<f64>) -> Option<String> 
 }
 
 /// An SVG path (`svg:d`) in the view box `vb` as `a:custGeom`: moves,
-/// lines, cubic and quadratic curves (their smooth forms too), closes;
-/// arcs become lines to their end. The path is filled unless it is open.
+/// lines, cubic and quadratic curves (their smooth forms too), elliptical
+/// arcs (as cubic pieces), closes. The path is filled unless it is open.
 fn svg_path_geom(d: &str, vb: [f64; 4]) -> Option<String> {
     // Tokens: command letters and numbers.
     let mut toks: Vec<Result<char, f64>> = Vec::new();
@@ -1819,10 +1830,22 @@ fn svg_path_geom(d: &str, vb: [f64; 4]) -> Option<String> {
                 (x, y) = e;
                 quad = Some(c);
             }
-            // Arcs: a line to the end.
+            // Elliptical arcs, as cubic pieces.
             _ => {
-                (x, y) = (bx + v[5], by + v[6]);
-                body.push_str(&format!("<a:lnTo>{}</a:lnTo>", p(x, y)));
+                let e = (bx + v[5], by + v[6]);
+                match crate::ods_geom::svg_arc(
+                    (x, y),
+                    v[0],
+                    v[1],
+                    v[2],
+                    v[3] != 0.0,
+                    v[4] != 0.0,
+                    e,
+                ) {
+                    Some(pieces) => body.push_str(&crate::ods_geom::cubics_xml(&pieces, (ox, oy))),
+                    None => body.push_str(&format!("<a:lnTo>{}</a:lnTo>", p(e.0, e.1))),
+                }
+                (x, y) = e;
             }
         }
         last_c = cubic;

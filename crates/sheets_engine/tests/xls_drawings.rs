@@ -442,6 +442,33 @@ fn ods_freeforms_groups_and_controls() {
     );
     assert_eq!(xml("Hexagon").matches("<a:lnTo>").count(), 5);
     assert_eq!(xml("Star").matches("<a:lnTo>").count(), 9);
+    // Arcs are curves, not lines to their end.
+    let arch = xml("Arch");
+    assert!(
+        arch.matches("<a:cubicBezTo>").count() == 2 && !arch.contains("<a:lnTo>"),
+        "{arch}"
+    );
+    // Custom shapes without a preset, from their enhanced path.
+    let pie = xml("Pie");
+    assert!(
+        pie.contains("<a:moveTo><a:pt x=\"10800\" y=\"10800\"/>") && pie.contains("<a:cubicBezTo>"),
+        "{pie}"
+    );
+    // Counter-clockwise from 0° to 90°: a quarter, ending at the top.
+    assert_eq!(pie.matches("<a:cubicBezTo>").count(), 1, "{pie}");
+    assert!(
+        pie.contains("<a:pt x=\"10800\" y=\"0\"/></a:cubicBezTo>"),
+        "{pie}"
+    );
+    let ring = xml("Ring");
+    assert_eq!(ring.matches("<a:path ").count(), 2, "{ring}");
+    assert_eq!(ring.matches("<a:cubicBezTo>").count(), 8, "{ring}");
+    assert!(ring.contains("fill=\"none\""), "{ring}");
+    let rounded = xml("Rounded");
+    assert!(
+        rounded.matches("<a:cubicBezTo>").count() == 3 && rounded.contains("<a:quadBezTo>"),
+        "{rounded}"
+    );
     let pair = xml("Pair");
     assert!(pair.starts_with("<xdr:grpSp"), "{pair}");
     assert_eq!(

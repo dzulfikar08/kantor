@@ -9,8 +9,9 @@
 //!   formats applied, formulas as their results) of **one** sheet.
 //! * **ODS / XLS / XLSB** are read-only imports via [calamine]. Values keep
 //!   their types; dates become date-formatted numbers. Formulas are imported
-//!   where calamine exposes them: XLS/XLSB formulas are already in Excel syntax,
-//!   ODS ones (`of:=SUM([.A1:.B2])`) are converted (references, `;` → `,`).
+//!   where calamine exposes them: XLS/XLSB formulas are already in Excel syntax
+//!   (XLS cell formulas are decoded by Kantor's own [`crate::xls_formula`]
+//!   first, as calamine's text loses 3-D references), ODS ones (`of:=SUM([.A1:.B2])`) are converted (references, `;` → `,`).
 //!   A formula that fails to evaluate in IronCalc while the file's cached value
 //!   was not an error is replaced by that cached value, and counted in
 //!   [`Workbook::import_notes`](crate::Workbook::import_notes).
@@ -26,8 +27,8 @@
 //! * **ODS** keeps its look too: [`crate::ods`] reads the cell styles,
 //!   number formats, merges, column widths, row heights, hidden rows,
 //!   columns and sheets, tab colours and frozen panes.
-//! * XLSB imports bring values and formulas only: no styles, merged cells,
-//!   column widths, comments or charts.
+//! * **XLSB** gets its formatting, layout, names, data validation and
+//!   conditional formatting from [`crate::xlsb`], its drawings as XML parts.
 
 use std::collections::HashMap;
 use std::fs;
@@ -52,8 +53,8 @@ pub enum ImportNote {
     FormulasKeptAsValues(usize),
     /// `.xls` data validation rules whose formula Kantor can't read.
     ValidationsSkipped(usize),
-    /// `.xls` conditional formats Kantor can't express (data bars, colour
-    /// scales, icon sets, formulas).
+    /// `.xls`/`.xlsb` conditional formats Kantor can't express (formulas it
+    /// can't read, Excel 2010-only forms).
     ConditionalFormatsSkipped(usize),
     /// The `.xls` formatting pass failed.
     FormattingNotImported,
@@ -485,6 +486,12 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
         let Some((r0, c0)) = range.start() else {
             continue;
         };
+        // `.xls`: Kantor's own decoding first (3-D references), calamine's
+        // text for the cells it can't read.
+        let own = xls
+            .as_ref()
+            .map(|x| x.cell_formulas(name))
+            .unwrap_or_default();
         for (r, c, formula) in range.used_cells() {
             if formula.is_empty() {
                 continue;
@@ -494,18 +501,24 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
                 .get_value((row as u32 - 1, col as u32 - 1))
                 .cloned()
                 .unwrap_or_default();
-            let formula = excel_formula(formula).map(|f| match format {
-                SourceFormat::Xls => repair_xls_ref3d(&f, &names),
-                _ => f,
-            });
-            let ok = formula.is_some_and(|f| {
+            let theirs = || {
+                excel_formula(formula).map(|f| match format {
+                    SourceFormat::Xls => repair_xls_ref3d(&f, &names),
+                    _ => f,
+                })
+            };
+            let mut set = |f: String| {
                 let volatile = is_volatile(&f);
                 let ok = model.set_user_input(sheet, row, col, f).is_ok();
                 if ok {
                     formulas.push((sheet, row, col, cached.clone(), volatile));
                 }
                 ok
-            });
+            };
+            let mine = own
+                .get(&(row as u32 - 1, col as u32 - 1))
+                .map(|f| format!("={f}"));
+            let ok = mine.is_some_and(&mut set) || theirs().is_some_and(&mut set);
             if !ok {
                 keep_cached(&mut model, sheet, row, col, &cached, date1904)?;
                 kept_values += 1;
@@ -558,6 +571,11 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
                     imported
                         .notes
                         .push(ImportNote::ValidationsSkipped(a.skipped_validations));
+                }
+                if a.skipped_cf > 0 {
+                    imported
+                        .notes
+                        .push(ImportNote::ConditionalFormatsSkipped(a.skipped_cf));
                 }
             }
             Err(e) => {
