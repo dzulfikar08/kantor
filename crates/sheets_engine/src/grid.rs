@@ -130,24 +130,56 @@ pub(crate) fn read_panes(
     out
 }
 
-/// Zoom attributes of a sheet view Kantor keeps (IronCalc drops them).
-const ZOOM_ATTRS: [&str; 4] = [
-    "zoomScale",
-    "zoomScaleNormal",
-    "zoomScalePageLayoutView",
-    "zoomScaleSheetLayoutView",
-];
+/// A sheet view's zooms in percent, as the file has them (IronCalc drops
+/// them): `zoomScale` is the view shown, the others remember each view's
+/// own zoom.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SheetZoom {
+    /// `zoomScale`: the zoom of the view shown.
+    pub(crate) scale: Option<u16>,
+    /// `zoomScaleNormal`.
+    pub(crate) normal: Option<u16>,
+    /// `zoomScalePageLayoutView` (kept, Kantor has no Page Layout view).
+    pub(crate) page_layout: Option<u16>,
+    /// `zoomScaleSheetLayoutView`: Page Break Preview's zoom.
+    pub(crate) sheet_layout: Option<u16>,
+}
 
-/// Sheets in Page Break Preview and each sheet view's zoom attributes,
-/// by `sheetId` ([`read_views`]).
-pub(crate) type ReadViews = (
-    std::collections::HashSet<u32>,
-    HashMap<u32, Vec<(&'static str, String)>>,
-);
+impl SheetZoom {
+    /// The attributes to write (`zoomScale` always).
+    pub(crate) fn attrs(&self) -> Vec<(&'static str, String)> {
+        let mut out = vec![("zoomScale", self.scale.unwrap_or(100).to_string())];
+        for (k, v) in [
+            ("zoomScaleNormal", self.normal),
+            ("zoomScalePageLayoutView", self.page_layout),
+            ("zoomScaleSheetLayoutView", self.sheet_layout),
+        ] {
+            if let Some(v) = v {
+                out.push((k, v.to_string()));
+            }
+        }
+        out
+    }
+}
+
+/// Smallest and largest zoom, in percent (Excel's).
+pub const SHEET_ZOOM_MIN: u16 = 10;
+pub const SHEET_ZOOM_MAX: u16 = 400;
+/// Page Break Preview's zoom the first time a sheet is shown in it (Excel's).
+pub const BREAK_PREVIEW_ZOOM: u16 = 60;
+
+/// A zoom attribute: a percentage, 0 (automatic) read as unset.
+fn zoom_attr(v: Option<&str>) -> Option<u16> {
+    let z: u16 = v?.trim().parse().ok()?;
+    (z != 0).then(|| z.clamp(SHEET_ZOOM_MIN, SHEET_ZOOM_MAX))
+}
+
+/// Sheets in Page Break Preview and each sheet view's zooms, by `sheetId`
+/// ([`read_views`]).
+pub(crate) type ReadViews = (std::collections::HashSet<u32>, HashMap<u32, SheetZoom>);
 
 /// Sheet views of a package, by `sheetId`: the sheets shown in Page Break
-/// Preview (`sheetView@view="pageBreakPreview"`) and each sheet's zoom
-/// attributes.
+/// Preview (`sheetView@view="pageBreakPreview"`) and each sheet's zooms.
 pub(crate) fn read_views(skeletons: &std::result::Result<Vec<(u32, String)>, String>) -> ReadViews {
     let mut breaks = std::collections::HashSet::new();
     let mut zooms = HashMap::new();
@@ -165,14 +197,17 @@ pub(crate) fn read_views(skeletons: &std::result::Result<Vec<(u32, String)>, Str
         else {
             continue;
         };
-        if view.attribute("view") == Some("pageBreakPreview") {
+        let pbp = view.attribute("view") == Some("pageBreakPreview");
+        if pbp {
             breaks.insert(*id);
         }
-        let zoom: Vec<(&'static str, String)> = ZOOM_ATTRS
-            .iter()
-            .filter_map(|a| Some((*a, view.attribute(*a)?.to_owned())))
-            .collect();
-        if !zoom.is_empty() {
+        let zoom = SheetZoom {
+            scale: zoom_attr(view.attribute("zoomScale")),
+            normal: zoom_attr(view.attribute("zoomScaleNormal")),
+            page_layout: zoom_attr(view.attribute("zoomScalePageLayoutView")),
+            sheet_layout: zoom_attr(view.attribute("zoomScaleSheetLayoutView")),
+        };
+        if zoom != SheetZoom::default() {
             zooms.insert(*id, zoom);
         }
     }
@@ -1091,7 +1126,9 @@ impl Workbook {
     }
 
     /// Show `sheet` in Page Break Preview (`on`) or Normal view. A view
-    /// change: saved, not undone (as in Excel). Returns whether it changed.
+    /// change: saved, not undone (as in Excel). Each view keeps its own
+    /// zoom; Page Break Preview starts at 60 %, as in Excel. Returns
+    /// whether it changed.
     pub fn set_break_preview(&mut self, sheet: u32, on: bool) -> bool {
         let id = self.sheet_id(sheet);
         let changed = if on {
@@ -1100,11 +1137,53 @@ impl Workbook {
             self.views.break_preview.remove(&id)
         };
         if changed {
+            let z = self.views.zoom.entry(id).or_default();
+            let current = z.scale.unwrap_or(100);
+            if on {
+                z.normal = Some(current);
+                let next = z.sheet_layout.unwrap_or(BREAK_PREVIEW_ZOOM);
+                z.sheet_layout = Some(next);
+                z.scale = Some(next);
+            } else {
+                z.sheet_layout = Some(current);
+                z.scale = Some(z.normal.unwrap_or(100));
+            }
             self.views.set.insert(id);
             self.history.view_changed = true;
             self.history.view_changes += 1;
         }
         changed
+    }
+
+    /// The zoom `sheet` is shown at, in percent (its current view's).
+    pub fn zoom(&self, sheet: u32) -> u16 {
+        self.views
+            .zoom
+            .get(&self.sheet_id(sheet))
+            .and_then(|z| z.scale)
+            .unwrap_or(100)
+    }
+
+    /// Zoom `sheet`'s current view to `percent` (10–400). A view change:
+    /// saved in the file, not undone (as in Excel). Returns whether it
+    /// changed.
+    pub fn set_zoom(&mut self, sheet: u32, percent: u16) -> bool {
+        let percent = percent.clamp(SHEET_ZOOM_MIN, SHEET_ZOOM_MAX);
+        if self.zoom(sheet) == percent {
+            return false;
+        }
+        let id = self.sheet_id(sheet);
+        let pbp = self.views.break_preview.contains(&id);
+        let z = self.views.zoom.entry(id).or_default();
+        z.scale = Some(percent);
+        if pbp {
+            z.sheet_layout = Some(percent);
+        } else {
+            z.normal = Some(percent);
+        }
+        self.history.view_changed = true;
+        self.history.view_changes += 1;
+        true
     }
 
     /// Save patches for sheet views: Page Break Preview on or off.
@@ -1120,7 +1199,7 @@ impl Workbook {
         }
         for (id, zoom) in &self.views.zoom {
             if ids.contains(id) {
-                out.sheets.entry(*id).or_default().view_attrs = zoom.clone();
+                out.sheets.entry(*id).or_default().view_attrs = zoom.attrs();
             }
         }
     }
@@ -1718,6 +1797,68 @@ mod tests {
         // Undo doesn't touch panes, as in Excel.
         back.undo().unwrap();
         assert_eq!(back.frozen(0), (1, 0));
+    }
+
+    #[test]
+    fn zoom_is_saved_per_sheet_and_per_view() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("zoom.xlsx");
+        let mut wb = book(&[(0, 0, "x")]);
+        wb.insert_sheet(1).unwrap();
+        wb.save_as(&path).unwrap();
+        assert_eq!((wb.zoom(0), wb.zoom(1)), (100, 100));
+        assert!(wb.set_zoom(1, 150));
+        assert!(!wb.set_zoom(1, 150), "no change");
+        assert!(wb.is_dirty());
+        // Clamped to Excel's 10–400 %.
+        assert!(wb.set_zoom(0, 5));
+        assert_eq!(wb.zoom(0), SHEET_ZOOM_MIN);
+        wb.set_zoom(0, 1000);
+        assert_eq!(wb.zoom(0), SHEET_ZOOM_MAX);
+        wb.set_zoom(0, 75);
+        wb.save_as(&path).unwrap();
+        let part = |n: u32| {
+            String::from_utf8(
+                crate::preserve::read_part(
+                    &std::fs::read(&path).unwrap(),
+                    &format!("xl/worksheets/sheet{n}.xml"),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        assert!(part(1).contains("zoomScale=\"75\""), "{}", part(1));
+        assert!(part(1).contains("zoomScaleNormal=\"75\""), "{}", part(1));
+        assert!(part(2).contains("zoomScale=\"150\""), "{}", part(2));
+        let mut back = Workbook::open(&path).unwrap();
+        assert_eq!((back.zoom(0), back.zoom(1)), (75, 150));
+        assert!(!back.is_dirty());
+        // Change it again: the new zoom replaces the file's.
+        back.set_zoom(1, 40);
+        back.save_as(&path).unwrap();
+        assert_eq!(part(2).matches("zoomScale=").count(), 1, "{}", part(2));
+        assert_eq!(Workbook::open(&path).unwrap().zoom(1), 40);
+        // Page Break Preview has its own zoom: 60 % the first time, as in
+        // Excel; Normal view gets its zoom back.
+        back.set_break_preview(0, true);
+        assert_eq!(back.zoom(0), BREAK_PREVIEW_ZOOM);
+        back.set_zoom(0, 80);
+        back.set_break_preview(0, false);
+        assert_eq!(back.zoom(0), 75);
+        back.set_break_preview(0, true);
+        assert_eq!(back.zoom(0), 80);
+        back.save_as(&path).unwrap();
+        let xml = part(1);
+        for a in [
+            "zoomScale=\"80\"",
+            "zoomScaleNormal=\"75\"",
+            "zoomScaleSheetLayoutView=\"80\"",
+        ] {
+            assert!(xml.contains(a), "{a}: {xml}");
+        }
+        let again = Workbook::open(&path).unwrap();
+        assert!(again.break_preview(0));
+        assert_eq!(again.zoom(0), 80);
     }
 
     #[test]

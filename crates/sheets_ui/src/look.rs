@@ -51,7 +51,20 @@ pub(crate) fn snap(len: f32, scale: f32) -> f32 {
     (dp.abs() - 0.5).ceil().copysign(dp).max(1.0) / scale
 }
 
-/// Width of a column as the grid lays it out (see [`snap`]); a hidden
+/// The zoom `sheet` is shown at, as a factor (1.0 = 100 %): every length of
+/// the grid (columns, rows, text, headers, objects) is drawn at it.
+pub(crate) fn zoom(book: &Workbook, sheet: u32) -> f32 {
+    f32::from(book.zoom(sheet)) / 100.0
+}
+
+/// The zoom a cell's text box was laid out for: its `base_size` is
+/// `FONT_BODY` at the sheet's zoom.
+fn zoom_of(base_size: Pixels) -> f32 {
+    base_size / FONT_BODY
+}
+
+/// Width of a column as the grid lays it out at the sheet's zoom (see
+/// [`snap`]); a hidden
 /// column has none, nor has one left of panes frozen on a scrolled sheet
 /// ([`Workbook::frozen_origin`]).
 pub(crate) fn column_width(book: &Workbook, sheet: u32, col: u32, scale: f32) -> Pixels {
@@ -63,7 +76,7 @@ pub(crate) fn column_width(book: &Workbook, sheet: u32, col: u32, scale: f32) ->
     if width <= 0.0 {
         return px(0.);
     }
-    px(snap(width, scale))
+    px(snap(width * zoom(book, sheet), scale))
 }
 
 /// Line height of cell text, relative to its size.
@@ -325,8 +338,9 @@ pub(crate) fn text_size(
     height: Pixels,
 ) -> Pixels {
     let scale = style.font_size.max(1) as f32 / default_font_size.max(1) as f32;
-    let fit = (height - px(2.)) / LINE_HEIGHT;
-    (base_size * scale).min(fit).max(px(6.))
+    let z = zoom_of(base_size);
+    let fit = (height - px(2.) * z) / LINE_HEIGHT;
+    (base_size * scale).min(fit).max(px(6.) * z).max(px(1.))
 }
 
 /// Repeat characters laid out for a fill gap (the rest is clipped).
@@ -347,6 +361,8 @@ impl Content<'_> {
         // tall rows while larger or wrapped text stays anchored to the
         // bottom edge.
         let slack = (self.height - size * LINE_HEIGHT).max(px(0.));
+        let z = zoom_of(self.base_size);
+        let (pad, v_pad) = (SPACE_3 * z, V_PAD * z);
         let text = div()
             .min_w_0()
             .w_full()
@@ -403,19 +419,19 @@ impl Content<'_> {
         // Excel's indent step: about three characters.
         let indent = self.base_size * 1.5 * s.indent.min(250) as f32;
         d.flex()
-            .px(SPACE_3)
+            .px(pad)
             .when(s.indent > 0 && self.align != HAlign::Center, |d| {
                 if self.align == HAlign::Right {
-                    d.pr(SPACE_3 + indent)
+                    d.pr(pad + indent)
                 } else {
-                    d.pl(SPACE_3 + indent)
+                    d.pl(pad + indent)
                 }
             })
             .map(|d| match s.valign {
-                VAlign::Top => d.items_start().pt(V_PAD.min(slack / 2.)),
+                VAlign::Top => d.items_start().pt(v_pad.min(slack / 2.)),
                 VAlign::Center => d.items_center(),
                 // Wrapped text may fill the box (its row was fitted to it).
-                VAlign::Bottom if s.wrap => d.items_end().pb((slack * 0.4).min(V_PAD)),
+                VAlign::Bottom if s.wrap => d.items_end().pb((slack * 0.4).min(v_pad)),
                 VAlign::Bottom => d.items_end().pb(slack * 0.4),
             })
             .child(text)

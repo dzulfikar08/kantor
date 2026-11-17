@@ -95,7 +95,7 @@ impl<'a> GridGeometry<'a> {
             MAX_COLS - 1,
             scale,
         )));
-        let default_row = f64::from(f32::from(look::row_height()));
+        let default_row = f64::from(f32::from(crate::row_layout::default_row(book, grid.sheet)));
         let excel_row = book.default_row_points(grid.sheet) * PX_PER_PT;
         Self {
             lefts,
@@ -399,6 +399,8 @@ struct Placed {
 
 /// What prepaint hands paint.
 pub(crate) struct Frame {
+    /// The sheet's zoom: objects built at 100 % are painted at it.
+    zoom: f32,
     placed: Vec<Placed>,
     /// Lines from note boxes to their cells' corners (box end, cell end).
     arrows: Vec<(Point<Pixels>, Point<Pixels>)>,
@@ -689,7 +691,7 @@ pub(crate) fn grid_panes(
     // between the header and the list.
     let frozen_h = px(geom.row_top(frozen_rows) as f32);
     let body_top = rows_vp.top() - table.pinned_rows_height;
-    let sheet_left = rows_vp.left() + ROW_GUTTER_WIDTH;
+    let sheet_left = rows_vp.left() + ROW_GUTTER_WIDTH * grid.zoom();
     let panes = layout_panes(
         PaneInput {
             sheet_left,
@@ -892,7 +894,9 @@ fn prepaint(
         }
     }
     Some(Frame {
+        zoom: grid.zoom(),
         placed,
+
         arrows,
         hitboxes,
         body,
@@ -919,6 +923,8 @@ fn paint(
             return;
         };
         let grid = table.read(cx).delegate();
+        // Objects are built at 100 % and painted at the sheet's zoom.
+        let z = f64::from(grid.zoom());
         let mut engine = painter.engine.borrow_mut();
         let started = std::time::Instant::now();
         // On a dark grid, shapes' default dark text is drawn in the theme's
@@ -957,8 +963,8 @@ fn paint(
                     &mut engine,
                     &grid.book,
                     drawing,
-                    p.rect[2] as f32,
-                    p.rect[3] as f32,
+                    (p.rect[2] / z) as f32,
+                    (p.rect[3] / z) as f32,
                 )
             })
             .collect();
@@ -1005,13 +1011,14 @@ fn paint(
         }
     }
     let other = t.fg_muted;
+    let zoom = frame.zoom;
     for (p, painted) in frame.placed.iter().zip(&book_items) {
         let Some(painted) = painted else { continue };
         for (r, clip) in &p.shown {
             window.with_content_mask(Some(ContentMask { bounds: *clip }), |window| {
                 paint_items(
                     painted,
-                    SceneView::px(r.origin, 1.0),
+                    SceneView::px(r.origin, zoom),
                     other,
                     &painter.bridge,
                     window,

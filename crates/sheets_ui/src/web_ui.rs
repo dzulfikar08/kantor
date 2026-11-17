@@ -335,7 +335,11 @@ impl crate::SheetGrid {
         image: &sheets_engine::web::CellImage,
         (x, y, w, h): (Pixels, Pixels, Pixels, Pixels),
     ) -> Div {
-        let [ix, iy, iw, ih] = sheets_scene::cell_image_rect(image, f32::from(w), f32::from(h));
+        // Placed at 100 % (a picture at its own size grows with the zoom).
+        let z = self.zoom();
+        let [ix, iy, iw, ih] =
+            sheets_scene::cell_image_rect(image, f32::from(w) / z, f32::from(h) / z).map(|v| v * z);
+
         let key = Arc::as_ptr(&image.data) as usize;
         let source = match self.pictures.get(&key) {
             Some((_, source)) => source.clone(),

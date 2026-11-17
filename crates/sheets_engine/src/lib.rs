@@ -74,7 +74,9 @@ pub use chart_options::{
 };
 pub use chart_sheet::sheet_name_problem;
 pub use drawing::Tab;
-pub use grid::{BUILTIN_LISTS, parse_custom_list};
+pub use grid::{
+    BREAK_PREVIEW_ZOOM, BUILTIN_LISTS, SHEET_ZOOM_MAX, SHEET_ZOOM_MIN, parse_custom_list,
+};
 pub use import::{ImportNote, SourceFormat};
 /// The borders a conditional formatting rule draws.
 pub use ironcalc_base::types::Border as CfBorder;
@@ -1806,8 +1808,8 @@ struct SheetViews {
     break_preview: std::collections::HashSet<u32>,
     /// Sheets whose view was changed (written on save even when Normal).
     set: std::collections::HashSet<u32>,
-    /// The file's zoom attributes of each sheet view (kept on save).
-    zoom: HashMap<u32, Vec<(&'static str, String)>>,
+    /// Each sheet view's zooms (from the file, then as set).
+    zoom: HashMap<u32, grid::SheetZoom>,
 }
 
 /// What an `.xlsx` has besides what IronCalc reads, for showing and saving it.

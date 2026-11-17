@@ -183,12 +183,16 @@ impl SheetsView {
 
     /// View ▸ Page Break Preview (`on`) or Normal, for the sheet on screen.
     pub fn set_break_preview(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // Each view has its own zoom (Page Break Preview starts at 60 %).
+        let old = self.sheet_zoom(cx);
         self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
             let sheet = grid.sheet;
             grid.book.set_break_preview(sheet, on);
             table.refresh(cx);
         });
+        self.zoom_changed(old, cx);
+
         self.break_layer.borrow_mut().drag = None;
         self.status = if on {
             i18n::t("Page Break Preview").into()

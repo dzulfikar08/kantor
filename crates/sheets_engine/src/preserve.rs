@@ -6631,12 +6631,14 @@ fn patch_sheet(full: &str, patch: &SheetPatch) -> Result<String, String> {
             if plain && a.name() == "view" && patch.break_preview.is_some() {
                 continue;
             }
+            // Zooms come from the workbook's live values.
+            if plain && patch.view_attrs.iter().any(|(k, _)| *k == a.name()) {
+                continue;
+            }
             write_attr_same(&mut out, a, view)?;
         }
         for (k, v) in &patch.view_attrs {
-            if view.attribute(*k).is_none() {
-                out.push_str(&format!(" {k}=\"{}\"", esc_attr(v)));
-            }
+            out.push_str(&format!(" {k}=\"{}\"", esc_attr(v)));
         }
         match patch.break_preview {
             Some(true) => out.push_str(" view=\"pageBreakPreview\""),

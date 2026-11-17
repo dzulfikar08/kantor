@@ -114,6 +114,7 @@ pub use page_setup::PageBreakOp;
 pub use sheet_tab_ui::TabCommand;
 mod toolbar;
 mod web_ui;
+mod zoom;
 pub use web_ui::{toggle_web_formulas, web_formulas_enabled};
 
 pub use ai::AiTarget;
@@ -369,6 +370,7 @@ pub fn init(cx: &mut App) {
     data_validation::bind_keys(cx);
     spell_ui::bind_keys(cx);
     notes_ui::bind_keys(cx);
+    zoom::bind_keys(cx);
     kantor_ui::spelling::init(cx);
 }
 
@@ -564,8 +566,15 @@ impl SheetGrid {
                 c = c.max(col);
             }
         }
-        self.rows = (r + 200).max(MIN_ROWS);
-        self.cols = (c + 10).max(MIN_COLS);
+        // Zoomed out, enough rows and columns to fill the window.
+        let more = 1.0 / self.zoom().min(1.0);
+        self.rows = (r + 200).max((MIN_ROWS as f32 * more) as u32);
+        self.cols = (c + 10).max((MIN_COLS as f32 * more) as u32);
+    }
+
+    /// The shown sheet's zoom, as a factor ([`look::zoom`]).
+    pub(crate) fn zoom(&self) -> f32 {
+        look::zoom(&self.book, self.sheet)
     }
 
     /// The formula's references with their colours, for the editors.
@@ -667,7 +676,7 @@ impl TableDelegate for SheetGrid {
     fn column(&self, col_ix: usize, _: &App) -> Column {
         if col_ix == 0 {
             Column::new("#", "")
-                .width(ROW_GUTTER_WIDTH)
+                .width(ROW_GUTTER_WIDTH * self.zoom())
                 .fixed_left()
                 .resizable(false)
                 .selectable(false)
@@ -679,7 +688,11 @@ impl TableDelegate for SheetGrid {
             let width = look::column_width(&self.book, self.sheet, col, self.scale);
             let frozen = col < self.book.frozen(self.sheet).1;
             // A hidden column has no width (and may have none).
-            let min_width = if width > px(0.) { px(24.) } else { px(0.) };
+            let min_width = if width > px(0.) {
+                px(24.) * self.zoom()
+            } else {
+                px(0.)
+            };
             Column::new(SharedString::from(name.clone()), name)
                 .width(width)
                 .min_width(min_width)
@@ -708,7 +721,7 @@ impl TableDelegate for SheetGrid {
                 .ok()?;
             return Some(look::column_width(&self.book, self.sheet, col, self.scale));
         }
-        grid_ops::fit_width(&self.book, self.sheet, col, window)
+        grid_ops::fit_width(&self.book, self.sheet, col, window).map(|w| w * self.zoom())
     }
 
     /// Column letters, centred; the columns of the selection are highlighted
@@ -716,7 +729,7 @@ impl TableDelegate for SheetGrid {
     fn render_th(
         &mut self,
         col_ix: usize,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let t = tokens(cx);
@@ -743,6 +756,8 @@ impl TableDelegate for SheetGrid {
         let hidden_right = self.book.is_column_hidden(self.sheet, col + 1);
         let cell = cell
             .id(("col-head", col_ix))
+            // Column letters zoom too, as in Excel.
+            .text_size(header_text_size(window, self.zoom()))
             .flex()
             .items_center()
             .justify_center()
@@ -812,12 +827,14 @@ impl TableDelegate for SheetGrid {
             };
             let gutter = div()
                 .id(("row-head", row_ix))
+                // Row numbers zoom too, as in Excel.
+                .text_size(header_text_size(window, self.zoom()))
                 .size_full()
                 .relative()
                 .flex()
                 .items_center()
                 .justify_end()
-                .px(SPACE_3)
+                .px(SPACE_3 * self.zoom())
                 .bg(if active {
                     t.grid_header_active
                 } else {
@@ -954,7 +971,7 @@ impl TableDelegate for SheetGrid {
                     &t,
                 )
             },
-            base_size: FONT_BODY,
+            base_size: FONT_BODY * self.zoom(),
             default_font_size: self.book.default_font_size(),
             family: self.fonts.for_style(style, cx),
             height: geometry.map_or(row_height, |g| g.3),
@@ -988,8 +1005,15 @@ impl TableDelegate for SheetGrid {
         };
         let cell = match filter_button {
             Some((scope, filtered, sorted)) => cell.child(filter_button_element(
-                scope, col, filtered, sorted, row_height, &self.view, &t,
+                scope,
+                col,
+                filtered,
+                sorted,
+                (row_height, self.zoom()),
+                &self.view,
+                &t,
             )),
+
             None => cell,
         };
         let cell = look::gridlines(cell, &look, &t);
@@ -1000,7 +1024,7 @@ impl TableDelegate for SheetGrid {
             .when(break_left, |d| d.child(page_break_line(true, t.fg_muted)));
         // Data bars and icons (not drawn across merged cells).
         let cell = match cond.as_ref().filter(|_| look.merge.is_none()) {
-            Some(c) => cell.children(cond_paint::layers(c)),
+            Some(c) => cell.children(cond_paint::layers(c, self.zoom())),
             None => cell,
         };
         let cell = match geometry {
@@ -1181,7 +1205,12 @@ impl TableDelegate for SheetGrid {
                     .filter(|e| e.cell == (row, col) && e.sheet == self.sheet),
                 |d, editor| {
                     let (fr, fc) = self.book.frozen(self.sheet);
-                    d.child(editor.render(self.ref_span_colors(&t), (row < fr, col < fc), cx))
+                    d.child(editor.render(
+                        self.ref_span_colors(&t),
+                        (row < fr, col < fc),
+                        self.zoom(),
+                        cx,
+                    ))
                 },
             )
             .into_any_element()
@@ -1225,16 +1254,17 @@ fn filter_button_element(
     col: u32,
     filtered: bool,
     sorted: Option<bool>,
-    row_height: Pixels,
+    (row_height, zoom): (Pixels, f32),
     view: &WeakEntity<SheetsView>,
     t: &kantor_ui::Tokens,
 ) -> AnyElement {
     let view = view.clone();
-    let size = (row_height - px(4.)).clamp(px(12.), px(18.));
+    // At the sheet's zoom, as Excel draws it.
+    let size = (row_height - px(4.) * zoom).clamp(px(12.) * zoom, px(18.) * zoom);
     div()
         .id(("filter-button", col as usize))
         .absolute()
-        .right(px(2.))
+        .right(px(2.) * zoom)
         .top((row_height - size) / 2.)
         .size(size)
         .flex()
@@ -1254,7 +1284,7 @@ fn filter_button_element(
                 (false, Some(true)) => gpui_kit::assets::IconName::ArrowDown,
                 (false, None) => gpui_kit::assets::IconName::ChevronDown,
             })
-            .size(size - px(5.)),
+            .size((size - px(5.) * zoom).max(px(1.))),
         )
         .on_mouse_down(MouseButton::Left, move |e, window, cx| {
             // Not a click on the cell.
@@ -1264,6 +1294,12 @@ fn filter_button_element(
             let _ = view.update(cx, |v, cx| v.open_filter_menu(scope, col, at, window, cx));
         })
         .into_any_element()
+}
+
+/// The column letters' and row numbers' text size at `zoom` (the table's
+/// small text at 100 %).
+fn header_text_size(window: &Window, zoom: f32) -> Pixels {
+    window.rem_size() * (0.875 * zoom)
 }
 
 /// A manual page break along a cell's top (or left, `vertical`) edge:
@@ -1451,6 +1487,8 @@ pub struct SheetsView {
     note_clip: Option<(String, sheets_engine::NoteClip)>,
     /// IMAGE and WEBSERVICE downloads (see [`web_ui`]).
     web: web_ui::WebState,
+    /// The zoom slider and the Zoom dialog ([`zoom`]).
+    zoom: zoom::ZoomState,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1543,6 +1581,7 @@ impl SheetsView {
             saving: None,
             pending_save: None,
             web: web_ui::WebState::default(),
+            zoom: Default::default(),
             _subscriptions: subscriptions,
         };
         this.select_cell(0, 0, cx);
@@ -2255,7 +2294,8 @@ impl SheetsView {
                     if (*w - snapped).abs() < px(0.01) {
                         (col, grid.book.column_width(sheet, col))
                     } else {
-                        (col, f64::from(f32::from(*w)))
+                        // Widths are kept at 100 %.
+                        (col, f64::from(f32::from(*w) / grid.zoom()))
                     }
                 })
                 .collect();
@@ -2845,6 +2885,8 @@ impl Render for SheetsView {
             Vec::new()
         };
         let tabs = self.render_sheet_tabs(cx);
+        let zoom_control = self.render_zoom_control(window, cx);
+        let zoom = self.sheet_zoom(cx);
         let chart_sheet = self.shown_chart_sheet(cx);
         let editing = self.editing.is_some();
         let width = self.width.get();
@@ -3011,46 +3053,55 @@ impl Render for SheetsView {
                         .w_full()
                         .items_start()
                         .child(
-                            self.validation_actions(self.grid_actions(div(), cx), cx)
-                                .flex_1()
-                                .min_w_0()
-                                .h_full()
-                                .key_context(GRID_CONTEXT)
-                                .on_action(cx.listener(Self::undo))
-                                .on_action(cx.listener(Self::redo))
-                                .on_action(cx.listener(Self::copy))
-                                .on_action(cx.listener(Self::cut))
-                                .on_action(cx.listener(Self::paste))
-                                .on_action(cx.listener(Self::extend_up))
-                                .on_action(cx.listener(Self::extend_down))
-                                .on_action(cx.listener(Self::extend_left))
-                                .on_action(cx.listener(Self::extend_right))
-                                .on_action(cx.listener(Self::toggle_bold))
-                                .on_action(cx.listener(Self::toggle_italic))
-                                .on_action(cx.listener(Self::toggle_underline))
-                                // A drag only extends the range if it started on a cell
-                                // (cells set `dragging` after this capture listener runs).
-                                .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
-                                    // A click on the grid ends a shape's or note's
-                                    // text edit (the editors' menus pop up outside
-                                    // them, so a click outside can't end it).
-                                    this.commit_shape_text(false, window, cx);
-                                    this.commit_note(false, window, cx);
-                                    this.dragging = false;
-                                    this.point_dragging = false;
-                                    this.reset_grid_drag(cx);
-                                }))
-                                .capture_any_mouse_up(cx.listener(|this, _, window, cx| {
-                                    this.dragging = false;
-                                    this.point_dragging = false;
-                                    this.end_grid_drag(window, cx);
-                                    this.row_resize_end(window, cx);
-                                }))
-                                .on_key_down(cx.listener(Self::on_grid_key))
-                                .relative()
-                                .child(DataTable::new(&self.table).bordered(false).small())
-                                .children(self.render_break_preview(cx))
-                                .child(self.render_drawings(cx)),
+                            self.validation_actions(
+                                zoom::zoom_actions(self.grid_actions(div(), cx), cx),
+                                cx,
+                            )
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .key_context(GRID_CONTEXT)
+                            .on_action(cx.listener(Self::undo))
+                            .on_action(cx.listener(Self::redo))
+                            .on_action(cx.listener(Self::copy))
+                            .on_action(cx.listener(Self::cut))
+                            .on_action(cx.listener(Self::paste))
+                            .on_action(cx.listener(Self::extend_up))
+                            .on_action(cx.listener(Self::extend_down))
+                            .on_action(cx.listener(Self::extend_left))
+                            .on_action(cx.listener(Self::extend_right))
+                            .on_action(cx.listener(Self::toggle_bold))
+                            .on_action(cx.listener(Self::toggle_italic))
+                            .on_action(cx.listener(Self::toggle_underline))
+                            // A drag only extends the range if it started on a cell
+                            // (cells set `dragging` after this capture listener runs).
+                            .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
+                                // A click on the grid ends a shape's or note's
+                                // text edit (the editors' menus pop up outside
+                                // them, so a click outside can't end it).
+                                this.commit_shape_text(false, window, cx);
+                                this.commit_note(false, window, cx);
+                                this.dragging = false;
+                                this.point_dragging = false;
+                                this.reset_grid_drag(cx);
+                            }))
+                            .capture_any_mouse_up(cx.listener(|this, _, window, cx| {
+                                this.dragging = false;
+                                this.point_dragging = false;
+                                this.end_grid_drag(window, cx);
+                                this.row_resize_end(window, cx);
+                            }))
+                            .on_key_down(cx.listener(Self::on_grid_key))
+                            .relative()
+                            .child(
+                                DataTable::new(&self.table)
+                                    .bordered(false)
+                                    .small()
+                                    .header_row_height(look::row_height() * zoom),
+                            )
+                            .children(self.render_break_preview(cx))
+                            .child(self.render_drawings(cx))
+                            .child(self.render_wheel_zoom(cx)),
                         )
                         .children(panel)
                         .children(table_panel)
@@ -3068,11 +3119,13 @@ impl Render for SheetsView {
                     .border_t_1()
                     .border_color(t.border)
                     .child(div().flex_1().min_w_0().child(tabs))
-                    .child(self.render_view_buttons(cx)),
+                    .child(self.render_view_buttons(cx))
+                    .when(chart_sheet.is_none(), |d| d.child(zoom_control)),
             )
             .children(completion)
             .children(self.render_find_bar(cx))
             .children(self.render_row_height_prompt(cx))
+            .children(self.render_zoom_dialog(cx))
             .children(self.render_alert(cx))
             .children(self.render_sort_panel(cx))
             .children(self.render_custom_lists(cx))
