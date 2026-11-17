@@ -886,6 +886,9 @@ impl Workbook {
         if !xls_drawings.is_empty() {
             book.import_drawings(&xls_drawings);
         }
+        if format == SourceFormat::Xlsb {
+            book.import_xlsb_drawings(path);
+        }
         // The file's cached values are right: no recalculation.
         book.sync_pivot_grids(false);
         Ok(book)
@@ -910,6 +913,21 @@ impl Workbook {
         }
         self.drawings = drawing::Drawings::read(&bytes);
         self.origin.xlsx = Some(XlsxSource::Bytes(bytes));
+    }
+
+    /// An `.xlsb`'s drawings and charts (XML parts in `.xlsb` too): shown
+    /// and saved from a package made of them, as for `.xls`.
+    fn import_xlsb_drawings(&mut self, path: &Path) {
+        let names = self.sheet_names();
+        let ids: HashMap<String, u32> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.clone(), self.sheet_id(i as u32)))
+            .collect();
+        if let Some(bytes) = xlsb::drawings_package(path, &|n| ids.get(n).copied()) {
+            self.drawings = drawing::Drawings::read(&bytes);
+            self.origin.xlsx = Some(XlsxSource::Bytes(bytes));
+        }
     }
 
     /// Where Save writes. `None` for new workbooks and for imports

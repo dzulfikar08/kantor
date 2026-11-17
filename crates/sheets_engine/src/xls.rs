@@ -793,16 +793,18 @@ struct SheetRules {
     geometry: crate::xls_drawing::Geometry,
 }
 
-/// A `DV` record (MS-XLS 2.4.107).
-struct RawDv {
-    flags: u32,
-    prompt_title: String,
-    error_title: String,
-    prompt: String,
-    error: String,
-    formula1: Vec<u8>,
-    formula2: Vec<u8>,
-    ranges: Vec<CellRange>,
+/// A `DV` record (MS-XLS 2.4.107), or an `.xlsb` `BrtDVal` (`b12`: its
+/// formulas are BIFF12 tokens).
+pub(crate) struct RawDv {
+    pub flags: u32,
+    pub prompt_title: String,
+    pub error_title: String,
+    pub prompt: String,
+    pub error: String,
+    pub formula1: Vec<u8>,
+    pub formula2: Vec<u8>,
+    pub ranges: Vec<CellRange>,
+    pub b12: bool,
 }
 
 /// A `DV` string: a lone NUL means none.
@@ -853,10 +855,11 @@ impl RawDv {
             formula1,
             formula2,
             ranges,
+            b12: false,
         })
     }
 
-    fn convert<'c>(
+    pub(crate) fn convert<'c>(
         self,
         ctx: &dyn Fn((u32, u32)) -> crate::xls_formula::Context<'c>,
     ) -> Option<Validation> {
@@ -893,7 +896,11 @@ impl RawDv {
             if rgce.is_empty() {
                 return Some(None);
             }
-            crate::xls_formula::decompile(rgce, &ctx).map(Some)
+            if self.b12 {
+                crate::xls_formula::decompile12(rgce, &ctx).map(Some)
+            } else {
+                crate::xls_formula::decompile(rgce, &ctx).map(Some)
+            }
         };
         let formula1 = if kind == ValidationType::List && f & 0x80 != 0 {
             // An explicit list: one string token, items split by NULs.

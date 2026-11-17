@@ -477,13 +477,9 @@ fn sheet_parts(zip: &mut zip::ZipArchive<std::fs::File>) -> Vec<(String, String)
 
 /// Apply an `.xlsb`'s formatting to `model`, whose sheets calamine filled
 /// in `names` order. Returns whether covered cells of merges were cleared
-/// (the model needs evaluating again), and the patterned fills by the
-/// model's fill index.
-pub(crate) fn apply(
-    path: &Path,
-    model: &mut Model<'_>,
-    names: &[String],
-) -> Result<(bool, Vec<Option<crate::FillPattern>>)> {
+/// (the model needs evaluating again), the patterned fills by the model's
+/// fill index and the data validation by model sheet.
+pub(crate) fn apply(path: &Path, model: &mut Model<'_>, names: &[String]) -> Result<Applied> {
     let file = std::fs::File::open(path)?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| anyhow!("{e}"))?;
     let theme = theme_colors(
@@ -499,7 +495,9 @@ pub(crate) fn apply(
     {
         *slot = f;
     }
-    let mut cleared = false;
+    let book = read_book(&mut zip);
+    let label_names: Vec<String> = book.names.iter().map(|n| n.name.clone()).collect();
+    let mut out = Applied::default();
     for (name, part_name) in sheet_parts(&mut zip) {
         let Some(sheet) = names.iter().position(|n| *n == name) else {
             continue;
@@ -507,12 +505,239 @@ pub(crate) fn apply(
         let Some(bin) = part(&mut zip, &part_name) else {
             continue;
         };
-        cleared |= apply_sheet(&bin, sheet as u32, model, &mut styles);
+        let mut dvs = Vec::new();
+        out.cleared |= apply_sheet(&bin, sheet as u32, model, &mut styles, &mut dvs);
+        let ctx = |base: (u32, u32)| crate::xls_formula::Context {
+            base,
+            sheets: &book.sheets,
+            xti: &book.xti,
+            names: &label_names,
+            formats: &[],
+        };
+        let list: Vec<crate::Validation> = dvs
+            .into_iter()
+            .filter_map(|dv| {
+                let v = dv.convert(&ctx);
+                out.skipped_validations += usize::from(v.is_none());
+                v
+            })
+            .collect();
+        if !list.is_empty() {
+            out.validations.push((sheet as u32, list));
+        }
     }
-    Ok((cleared, styles.patterns))
+    out.patterns = styles.patterns;
+    Ok(out)
 }
 
-fn apply_sheet(bin: &[u8], sheet: u32, model: &mut Model<'_>, styles: &mut Styles) -> bool {
+/// What [`apply`] brings back.
+#[derive(Default)]
+pub(crate) struct Applied {
+    /// Covered cells of merges were cleared.
+    pub cleared: bool,
+    /// Patterned fills by the model's fill index.
+    pub patterns: Vec<Option<crate::FillPattern>>,
+    /// Data validation by model sheet.
+    pub validations: Vec<(u32, Vec<crate::Validation>)>,
+    /// Rules whose formulas Kantor can't read.
+    pub skipped_validations: usize,
+}
+
+/// What `workbook.bin` says about sheets, external references and names.
+#[derive(Default)]
+struct Book {
+    /// Sheet names in `BrtBundleSh` order.
+    sheets: Vec<String>,
+    /// `BrtExternSheet` entries resolved to this workbook's sheets.
+    xti: Vec<Option<(u16, u16)>>,
+    names: Vec<RawName>,
+}
+
+/// A `BrtName`: its name, the sheet it is local to, whether it is built in
+/// and its formula's tokens.
+struct RawName {
+    name: String,
+    sheet: Option<u32>,
+    builtin: bool,
+    rgce: Vec<u8>,
+}
+
+fn read_book(zip: &mut zip::ZipArchive<std::fs::File>) -> Book {
+    let mut book = Book::default();
+    let Some(wb) = part(zip, "xl/workbook.bin") else {
+        return book;
+    };
+    // Which supporting links are this workbook (BrtSupSelf, BrtSupSame).
+    let mut sup: Vec<bool> = Vec::new();
+    let mut raw_xti: Vec<(u32, i32, i32)> = Vec::new();
+    for (ty, d) in records(&wb) {
+        match ty {
+            156 => {
+                let (_, at) = wide(d, 8);
+                book.sheets.push(wide(d, at).0);
+            }
+            357 | 358 => sup.push(true),
+            355 | 359 => sup.push(false),
+            362 => {
+                let n = u32_at(d, 0) as usize;
+                for i in 0..n.min(d.len() / 12) {
+                    let o = 4 + i * 12;
+                    raw_xti.push((
+                        u32_at(d, o),
+                        u32_at(d, o + 4) as i32,
+                        u32_at(d, o + 8) as i32,
+                    ));
+                }
+            }
+            // BrtName: flags, chKey, itab, name, then the formula's cce
+            // and tokens.
+            39 => {
+                let flags = u32_at(d, 0);
+                let itab = u32_at(d, 5);
+                let (name, at) = wide(d, 9);
+                let cce = u32_at(d, at) as usize;
+                let rgce = d
+                    .get(at + 4..(at + 4).saturating_add(cce))
+                    .unwrap_or_default()
+                    .to_vec();
+                book.names.push(RawName {
+                    name,
+                    sheet: (itab != 0xFFFF_FFFF).then_some(itab),
+                    builtin: flags & 0x20 != 0,
+                    rgce,
+                });
+            }
+            _ => {}
+        }
+    }
+    let count = book.sheets.len() as i32;
+    book.xti = raw_xti
+        .into_iter()
+        .map(|(sb, first, last)| {
+            let own = sup.get(sb as usize).copied().unwrap_or(false);
+            (own && 0 <= first && first <= last && last < count)
+                .then_some((first as u16, last as u16))
+        })
+        .collect();
+    book
+}
+
+/// A defined name of an `.xlsb`: its name (built-in ones as Excel names
+/// them, `Print_Area`), the model sheet it is local to and its formula.
+pub(crate) struct Name {
+    pub name: String,
+    pub sheet: Option<u32>,
+    pub builtin: bool,
+    pub formula: String,
+}
+
+/// The defined names of the `.xlsb` at `path`, their formulas decompiled
+/// (names Kantor can't read are left out). `names`: the model's sheets.
+pub(crate) fn defined_names(path: &Path, names: &[String]) -> Vec<Name> {
+    let Ok(file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let Ok(mut zip) = zip::ZipArchive::new(file) else {
+        return Vec::new();
+    };
+    let book = read_book(&mut zip);
+    let label_names: Vec<String> = book.names.iter().map(|n| n.name.clone()).collect();
+    let ctx = crate::xls_formula::Context {
+        base: (0, 0),
+        sheets: &book.sheets,
+        xti: &book.xti,
+        names: &label_names,
+        formats: &[],
+    };
+    book.names
+        .iter()
+        .filter_map(|n| {
+            let formula = crate::xls_formula::decompile12(&n.rgce, &ctx)?;
+            let sheet = match n.sheet {
+                Some(i) => Some(
+                    names
+                        .iter()
+                        .position(|x| Some(x) == book.sheets.get(i as usize))?
+                        as u32,
+                ),
+                None => None,
+            };
+            let name = n.name.trim_start_matches("_xlnm.").to_owned();
+            Some(Name {
+                builtin: n.builtin || n.name.starts_with("_xlnm."),
+                name,
+                sheet,
+                formula,
+            })
+        })
+        .collect()
+}
+
+/// A `BrtDVal`: flags as `DV`'s, the ranges (`UncheckedSqRfX`), the
+/// error and prompt titles and texts, then the two formulas.
+fn dval(d: &[u8]) -> Option<crate::xls::RawDv> {
+    let flags = u32_at(d, 0);
+    let n = u32_at(d, 4) as usize;
+    let mut at = 8usize;
+    let mut ranges = Vec::new();
+    for _ in 0..n.min(d.len() / 16) {
+        let (r1, r2, c1, c2) = (
+            u32_at(d, at),
+            u32_at(d, at + 4),
+            u32_at(d, at + 8),
+            u32_at(d, at + 12),
+        );
+        at += 16;
+        if r1 <= r2 && c1 <= c2 && r1 < MAX_ROWS && c1 < MAX_COLS {
+            ranges.push(crate::CellRange::from_corners(
+                (r1, c1),
+                (r2.min(MAX_ROWS - 1), c2.min(MAX_COLS - 1)),
+            ));
+        }
+    }
+    // XLNullableWideString: 0xFFFFFFFF for none.
+    let mut text = || {
+        if u32_at(d, at) == 0xFFFF_FFFF {
+            at += 4;
+            return String::new();
+        }
+        let (s, next) = wide(d, at);
+        at = next;
+        s
+    };
+    let error_title = text();
+    let error = text();
+    let prompt_title = text();
+    let prompt = text();
+    let mut formula = || {
+        let cce = u32_at(d, at) as usize;
+        let rgce = d.get(at + 4..(at + 4).checked_add(cce)?)?.to_vec();
+        let cb = u32_at(d, at + 4 + cce) as usize;
+        at += 8 + cce + cb;
+        Some(rgce)
+    };
+    let formula1 = formula().unwrap_or_default();
+    let formula2 = formula().unwrap_or_default();
+    (!ranges.is_empty()).then_some(crate::xls::RawDv {
+        flags,
+        prompt_title,
+        error_title,
+        prompt,
+        error,
+        formula1,
+        formula2,
+        ranges,
+        b12: true,
+    })
+}
+
+fn apply_sheet(
+    bin: &[u8],
+    sheet: u32,
+    model: &mut Model<'_>,
+    styles: &mut Styles,
+    dvs: &mut Vec<crate::xls::RawDv>,
+) -> bool {
     let mut cols: Vec<Col> = Vec::new();
     let mut rows: Vec<Row> = Vec::new();
     let mut merges: Vec<MergedCell> = Vec::new();
@@ -549,6 +774,8 @@ fn apply_sheet(bin: &[u8], sheet: u32, model: &mut Model<'_>, styles: &mut Style
                     cells.push((row, col, ixfe));
                 }
             }
+            // BrtDVal
+            64 => dvs.extend(dval(d)),
             // BrtColInfo: first, last, width (1/256 char), ixfe, flags.
             60 => {
                 let (first, last) = (u32_at(d, 0), u32_at(d, 4).min(MAX_COLS - 1));
@@ -676,4 +903,241 @@ mod tests {
         assert_eq!(tinted(0xFFFFFF, -0.5), 0x808080);
         assert_eq!(theme_colors(None)[4], 0x4472C4);
     }
+}
+
+/// The `.xlsx` package an `.xlsb`'s drawings are shown and saved from (as
+/// for `.xls`, see [`crate::xls_drawing::package`]): drawings and charts are
+/// XML in `.xlsb` too, so each sheet's drawing (`BrtDrawing`) and every
+/// part it links to (charts, pictures, chart styles…) is copied as it is,
+/// under a workbook listing the worksheets (by the `sheetId` `sheet_id`
+/// gives each name) with a stub worksheet part pointing at its drawing.
+/// `None`: no drawings.
+pub(crate) fn drawings_package(
+    path: &Path,
+    sheet_id: &dyn Fn(&str) -> Option<u32>,
+) -> Option<Vec<u8>> {
+    use std::io::Write as _;
+
+    use crate::xls_drawing::{esc, rels};
+
+    let file = std::fs::File::open(path).ok()?;
+    let mut zip = zip::ZipArchive::new(file).ok()?;
+    let types = part(&mut zip, "[Content_Types].xml")
+        .and_then(|b| String::from_utf8(b).ok())
+        .unwrap_or_default();
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut copied: Vec<String> = Vec::new();
+    let mut sheets_xml = String::new();
+    let mut wb_rels: Vec<(String, &str, String)> = Vec::new();
+    let mut any = false;
+    for (n, (name, part_name)) in sheet_parts(&mut zip).into_iter().enumerate() {
+        let Some(id) = sheet_id(&name) else {
+            continue;
+        };
+        let Some(bin) = part(&mut zip, &part_name) else {
+            continue;
+        };
+        // BrtDrawing: the relationship id of the sheet's drawing.
+        let rid = records(&bin)
+            .find(|(ty, _)| *ty == 550)
+            .map(|(_, d)| wide(d, 0).0);
+        let target = rid.and_then(|rid| {
+            let targets = rel_targets(&mut zip, &part_name);
+            targets.into_iter().find(|(i, _, _)| *i == rid)
+        });
+        let sheet_part = format!("xl/worksheets/sheet{}.xml", n + 1);
+        let mut body = String::from("<sheetData/>");
+        if let Some((_, _, drawing)) = target {
+            any = true;
+            // The drawing and everything it links to, as they are.
+            let mut queue = vec![drawing.clone()];
+            while let Some(p) = queue.pop() {
+                if copied.contains(&p) {
+                    continue;
+                }
+                let Some(bytes) = part(&mut zip, &p) else {
+                    continue;
+                };
+                copied.push(p.clone());
+                files.push((p.clone(), bytes));
+                let rels_name = rels_part(&p);
+                if let Some(r) = part(&mut zip, &rels_name) {
+                    files.push((rels_name, r));
+                    for (_, external, t) in rel_targets(&mut zip, &p) {
+                        if !external {
+                            queue.push(t);
+                        }
+                    }
+                }
+            }
+            body.push_str("<drawing r:id=\"rId1\"/>");
+            let rel = relative(&sheet_part, &drawing);
+            files.push((
+                rels_part(&sheet_part),
+                rels(&[("rId1".into(), "drawing", rel)]).into_bytes(),
+            ));
+        }
+        files.push((
+            sheet_part.clone(),
+            format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">{body}</worksheet>"
+            )
+            .into_bytes(),
+        ));
+        let rid = format!("rId{}", wb_rels.len() + 1);
+        wb_rels.push((
+            rid.clone(),
+            "worksheet",
+            format!("worksheets/sheet{}.xml", n + 1),
+        ));
+        sheets_xml.push_str(&format!(
+            "<sheet name=\"{}\" sheetId=\"{id}\" r:id=\"{rid}\"/>",
+            esc(&name)
+        ));
+    }
+    if !any {
+        return None;
+    }
+    files.push((
+        "xl/workbook.xml".into(),
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets>{sheets_xml}</sheets></workbook>"
+        )
+        .into_bytes(),
+    ));
+    files.push((
+        "xl/_rels/workbook.xml.rels".into(),
+        rels(&wb_rels).into_bytes(),
+    ));
+    files.push((
+        "_rels/.rels".into(),
+        rels(&[("rId1".into(), "officeDocument", "xl/workbook.xml".into())]).into_bytes(),
+    ));
+    // Content types: the file's defaults and overrides of the parts kept,
+    // and the new parts'.
+    let mut ct = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>",
+    );
+    if let Ok(doc) = roxmltree::Document::parse(&types) {
+        for n in doc.root_element().children().filter(|n| n.is_element()) {
+            match n.tag_name().name() {
+                "Default" => {
+                    let (Some(ext), Some(t)) =
+                        (n.attribute("Extension"), n.attribute("ContentType"))
+                    else {
+                        continue;
+                    };
+                    if !matches!(ext, "rels" | "xml" | "bin") {
+                        ct.push_str(&format!(
+                            "<Default Extension=\"{}\" ContentType=\"{}\"/>",
+                            esc(ext),
+                            esc(t)
+                        ));
+                    }
+                }
+                "Override" => {
+                    let (Some(p), Some(t)) = (n.attribute("PartName"), n.attribute("ContentType"))
+                    else {
+                        continue;
+                    };
+                    if copied.iter().any(|c| p.trim_start_matches('/') == c) {
+                        ct.push_str(&format!(
+                            "<Override PartName=\"{}\" ContentType=\"{}\"/>",
+                            esc(p),
+                            esc(t)
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    for (p, _) in &files {
+        if p.starts_with("xl/worksheets/sheet") && p.ends_with(".xml") {
+            ct.push_str(&format!(
+                "<Override PartName=\"/{p}\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
+            ));
+        }
+    }
+    ct.push_str("</Types>");
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default();
+    let mut ok =
+        out.start_file("[Content_Types].xml", opts).is_ok() && out.write_all(ct.as_bytes()).is_ok();
+    for (name, bytes) in &files {
+        ok &= out.start_file(name.as_str(), opts).is_ok() && out.write_all(bytes).is_ok();
+    }
+    match out.finish() {
+        Ok(c) if ok => Some(c.into_inner()),
+        _ => None,
+    }
+}
+
+/// `dir/_rels/name.rels` for part `dir/name`.
+fn rels_part(p: &str) -> String {
+    match p.rsplit_once('/') {
+        Some((dir, file)) => format!("{dir}/_rels/{file}.rels"),
+        None => format!("_rels/{p}.rels"),
+    }
+}
+
+/// The relationships of part `p`: id, whether external, and the target as a
+/// part name.
+fn rel_targets(zip: &mut zip::ZipArchive<std::fs::File>, p: &str) -> Vec<(String, bool, String)> {
+    let Some(xml) = part(zip, &rels_part(p)).and_then(|b| String::from_utf8(b).ok()) else {
+        return Vec::new();
+    };
+    let Ok(doc) = roxmltree::Document::parse(&xml) else {
+        return Vec::new();
+    };
+    let dir = p.rsplit_once('/').map_or("", |(d, _)| d);
+    doc.descendants()
+        .filter(|n| n.has_tag_name("Relationship"))
+        .filter_map(|r| {
+            let id = r.attribute("Id")?.to_owned();
+            let target = r.attribute("Target")?;
+            let external = r.attribute("TargetMode") == Some("External");
+            let resolved = if external {
+                target.to_owned()
+            } else {
+                resolve(dir, target)
+            };
+            Some((id, external, resolved))
+        })
+        .collect()
+}
+
+/// `target` (relative to `dir`, or absolute from the package root) as a
+/// part name.
+fn resolve(dir: &str, target: &str) -> String {
+    let mut parts: Vec<&str> = if let Some(abs) = target.strip_prefix('/') {
+        return abs.to_owned();
+    } else {
+        dir.split('/').filter(|s| !s.is_empty()).collect()
+    };
+    for seg in target.split('/') {
+        match seg {
+            ".." => {
+                parts.pop();
+            }
+            "." | "" => {}
+            s => parts.push(s),
+        }
+    }
+    parts.join("/")
+}
+
+/// Part `to` relative to part `from`'s folder.
+fn relative(from: &str, to: &str) -> String {
+    let from_dir: Vec<&str> = from.split('/').collect();
+    let from_dir = &from_dir[..from_dir.len().saturating_sub(1)];
+    let to_parts: Vec<&str> = to.split('/').collect();
+    let common = from_dir
+        .iter()
+        .zip(&to_parts)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut out: Vec<&str> = vec![".."; from_dir.len() - common];
+    out.extend(&to_parts[common..]);
+    out.join("/")
 }
