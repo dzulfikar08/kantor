@@ -531,6 +531,7 @@ impl<'a> Writer<'a> {
                     let _ = write!(out, "<w:r>{rpr}<w:br/></w:r>");
                 }
                 Inline::PageBreak => out.push_str("<w:r><w:br w:type=\"page\"/></w:r>"),
+                Inline::ColumnBreak => out.push_str("<w:r><w:br w:type=\"column\"/></w:r>"),
                 Inline::Field { instr, shown, c } => {
                     let rpr = self.rpr(c, &self.run_base(c, para_c));
                     let _ = write!(
@@ -832,6 +833,15 @@ impl<'a> Writer<'a> {
         );
         if let Some(n) = s.pgn_start {
             let _ = write!(out, "<w:pgNumType w:start=\"{}\"/>", n.max(0));
+        }
+        if s.cols > 1 {
+            let _ = write!(
+                out,
+                "<w:cols w:num=\"{}\"{} w:space=\"{}\"/>",
+                s.cols,
+                if s.line_between { " w:sep=\"1\"" } else { "" },
+                s.cols_space
+            );
         }
         if s.titlepg {
             out.push_str("<w:titlePg/>");

@@ -1382,7 +1382,7 @@ impl Reader {
                 0x09 => push_text(&mut items, vis, "\t"),
                 0x0B => push_text(&mut items, vis, &crate::LINE_BREAK.to_string()),
                 0x0C => push_text(&mut items, vis, &crate::PAGE_BREAK.to_string()),
-                0x0E => push_text(&mut items, vis, &crate::LINE_BREAK.to_string()),
+                0x0E => push_text(&mut items, vis, &crate::COLUMN_BREAK.to_string()),
                 0x1E => push_text(&mut items, vis, "\u{2011}"),
                 0x1F => push_text(&mut items, vis, "\u{AD}"),
                 0x01 if chp.special && !chp.data => {

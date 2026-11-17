@@ -14,6 +14,7 @@
 
 pub mod agent;
 mod code_track;
+pub mod columns;
 mod comment_thread;
 mod document;
 pub mod docx;
@@ -48,6 +49,7 @@ mod xml;
 pub use document::{
     Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, Toggle, is_import_path,
 };
+pub use columns::{COLUMN_BREAK, Column, ColumnPreset, Columns, ColumnsApply};
 pub use edit::TableEdit;
 pub use field_edit::{XrefKind, XrefTarget, XrefWhat, valid_bookmark_name};
 pub use fields::{

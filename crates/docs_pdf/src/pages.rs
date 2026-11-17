@@ -584,6 +584,7 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
             start: match s.props.start {
                 SectionStart::NextPage => SectionBreak::NextPage,
                 SectionStart::Continuous => SectionBreak::Continuous,
+                SectionStart::NextColumn => SectionBreak::NextColumn,
                 SectionStart::EvenPage => SectionBreak::EvenPage,
                 SectionStart::OddPage => SectionBreak::OddPage,
             },

@@ -126,6 +126,7 @@ pub enum Inline {
     Tab(CFmt),
     Break(CFmt),
     PageBreak,
+    ColumnBreak,
     Image(Pic),
     /// A field kept as a field (PAGE, NUMPAGES) with its shown result.
     Field {
@@ -231,6 +232,11 @@ pub struct SectFmt {
     /// Word `w:type` of the break that starts this section.
     pub brk: &'static str,
     pub pgn_start: Option<i32>,
+    /// Columns (`\\cols`), the space between them (`\\colsx`) and a line
+    /// between them (`\\linebetcol`).
+    pub cols: i32,
+    pub cols_space: i32,
+    pub line_between: bool,
     /// Headers (`.0 == false`) and footers defined in this section.
     pub hf: Vec<(bool, HfType, Vec<Block>)>,
 }
@@ -249,6 +255,9 @@ impl Default for SectFmt {
             titlepg: false,
             brk: "nextPage",
             pgn_start: None,
+            cols: 1,
+            cols_space: 720,
+            line_between: false,
             hf: Vec::new(),
         }
     }
@@ -1531,6 +1540,9 @@ impl Parser {
                 | "sbkeven"
                 | "sbkodd"
                 | "pgnstarts"
+                | "cols"
+                | "colsx"
+                | "linebetcol"
         );
         if section_word && self.sinks.len() > 1 {
             return;
@@ -1592,6 +1604,9 @@ impl Parser {
             "sbkeven" => self.sect.brk = "evenPage",
             "sbkodd" => self.sect.brk = "oddPage",
             "pgnstarts" => self.sect.pgn_start = Some(n),
+            "cols" => self.sect.cols = n.clamp(1, 45),
+            "colsx" => self.sect.cols_space = n.clamp(0, 31_680),
+            "linebetcol" => self.sect.line_between = true,
             "sect" if body && self.sinks.len() == 1 => {
                 let s = self.sect.clone();
                 // The next section keeps the settings but not the headers
@@ -1686,6 +1701,7 @@ impl Parser {
                 self.sink().inl.push(Inline::Break(c));
             }
             "page" if body => self.sink().inl.push(Inline::PageBreak),
+            "column" if body => self.sink().inl.push(Inline::ColumnBreak),
             "chpgn" if body => {
                 let c = self.stack.last().map(|s| s.c.clone()).unwrap_or_default();
                 self.sink().inl.push(Inline::Field {

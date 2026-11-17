@@ -270,12 +270,30 @@ fn sect_pr(sep: &super::sprm::Sep, refs: &str) -> String {
         let _ = write!(x, "<w:pgNumType w:start=\"{n}\"/>");
     }
     if sep.columns > 1 {
-        let _ = write!(
-            x,
-            "<w:cols w:num=\"{}\" w:space=\"{}\"/>",
-            sep.columns.min(45),
-            sep.column_space
-        );
+        let n = sep.columns.min(45) as usize;
+        let line = if sep.line_between { " w:sep=\"1\"" } else { "" };
+        let widths = &sep.column_widths;
+        if !sep.evenly && widths.len() >= n && widths[..n].iter().all(|c| c.0 > 0) {
+            let _ = write!(
+                x,
+                "<w:cols w:num=\"{n}\"{line} w:space=\"{}\" w:equalWidth=\"0\">",
+                sep.column_space
+            );
+            for (i, (w, s)) in widths[..n].iter().enumerate() {
+                if i + 1 < n {
+                    let _ = write!(x, "<w:col w:w=\"{w}\" w:space=\"{s}\"/>");
+                } else {
+                    let _ = write!(x, "<w:col w:w=\"{w}\"/>");
+                }
+            }
+            x.push_str("</w:cols>");
+        } else {
+            let _ = write!(
+                x,
+                "<w:cols w:num=\"{n}\"{line} w:space=\"{}\"/>",
+                sep.column_space
+            );
+        }
     }
     if sep.title_page {
         x.push_str("<w:titlePg/>");
@@ -718,6 +736,7 @@ impl W<'_> {
                 '\t' => "<w:tab/>",
                 LINE_BREAK => "<w:br/>",
                 PAGE_BREAK => "<w:br w:type=\"page\"/>",
+                crate::columns::COLUMN_BREAK => "<w:br w:type=\"column\"/>",
                 '\u{2011}' => "<w:noBreakHyphen/>",
                 '\u{AD}' => "<w:softHyphen/>",
                 _ => {

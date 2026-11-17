@@ -804,7 +804,7 @@ impl Document {
                 out.push('\n');
             }
         }
-        out.replace([LINE_BREAK, PAGE_BREAK], "\n")
+        out.replace([LINE_BREAK, PAGE_BREAK, crate::columns::COLUMN_BREAK], "\n")
             .replace(OBJECT, "")
     }
 

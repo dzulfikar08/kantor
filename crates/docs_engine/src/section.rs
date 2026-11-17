@@ -85,6 +85,8 @@ pub enum SectionStart {
     #[default]
     NextPage,
     Continuous,
+    /// At the top of the next column (`nextColumn`).
+    NextColumn,
     EvenPage,
     OddPage,
 }
@@ -262,6 +264,8 @@ pub struct SectionProps {
     pub num_format: NumFormat,
     /// Chapter numbers before page numbers: heading level and separator.
     pub chapter: Option<(u8, ChapterSep)>,
+    /// Text columns (`w:cols`).
+    pub columns: crate::columns::Columns,
 }
 
 impl SectionProps {
@@ -278,6 +282,7 @@ impl SectionProps {
             page_start: None,
             num_format: NumFormat::Decimal,
             chapter: None,
+            columns: crate::columns::Columns::one(),
         };
         let Some(el) = xml::parse(sect_pr) else {
             return s;
@@ -299,9 +304,11 @@ impl SectionProps {
                     s.footer_dist = n("footer").unwrap_or(s.footer_dist);
                 }
                 "titlePg" => s.title_page = c.on(),
+                "cols" => s.columns = crate::columns::Columns::from_el(c),
                 "type" => {
                     s.start = match c.attr("val") {
                         Some("continuous") => SectionStart::Continuous,
+                        Some("nextColumn") => SectionStart::NextColumn,
                         Some("evenPage") => SectionStart::EvenPage,
                         Some("oddPage") => SectionStart::OddPage,
                         _ => SectionStart::NextPage,

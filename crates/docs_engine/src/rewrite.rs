@@ -81,7 +81,7 @@ impl Document {
 }
 
 fn check_rewritable(p: &Paragraph) -> Result<(), String> {
-    if p.text.contains(PAGE_BREAK) {
+    if p.text.contains([PAGE_BREAK, crate::columns::COLUMN_BREAK]) {
         return Err("the selection has a page break; select text without it".into());
     }
     let objects = p
@@ -108,7 +108,7 @@ fn rebuild(template: &Paragraph, text: &str, keep_markers: bool) -> Paragraph {
     let text: String = text
         .replace("\r\n", "\n")
         .chars()
-        .filter(|&c| c != OBJECT && c != PAGE_BREAK)
+        .filter(|&c| c != OBJECT && c != PAGE_BREAK && c != crate::columns::COLUMN_BREAK)
         .map(|c| if c == '\n' { LINE_BREAK } else { c })
         .collect();
     let mut p = Paragraph {
