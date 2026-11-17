@@ -107,6 +107,9 @@ jobs:
       - name: Chartex docx fixture matches its generator
         run: python3 scripts/corpus/gen_docx_chartex.py --check
 
+      - name: Text box and formula docx fixtures match their generator
+        run: python3 scripts/corpus/gen_docx_more.py --check
+
       - name: Region map fixtures match their generator
         run: python3 scripts/corpus/gen_region_map.py --check
 
