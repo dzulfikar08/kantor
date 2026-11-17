@@ -327,11 +327,15 @@ fn xls_shapes_and_text_boxes() {
     let turned = xml(by("Turned arrow"));
     assert!(turned.contains(" rot=\""), "{turned}");
     assert!(by("Hidden shape").hidden);
-    // The group (shapes inside it) is still left out.
-    assert_eq!(
-        wb.import_notes(),
-        ["1 shape, text box or control not imported"]
-    );
+    // The group comes in as a group, its shapes in its child space.
+    let group = shapes
+        .iter()
+        .map(xml)
+        .find(|x| x.starts_with("<xdr:grpSp"))
+        .expect("a group");
+    assert!(group.contains("<a:chOff "), "{group}");
+    assert!(group.matches("<xdr:sp ").count() >= 2, "{group}");
+    assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
 }
 
 /// The radar chart of drawings.xls and drawings.ods is brought in as a
@@ -351,4 +355,54 @@ fn radar_charts_are_imported() {
         assert!(xml.contains("<c:radarStyle "), "{xml}");
         assert!(xml.matches("<c:ser>").count() == 2, "{xml}");
     }
+}
+
+/// chartopts.xls: data label number formats, a date axis with its bounds,
+/// and combinations with scatter and pie plots (scripts/corpus/gen_xls.py).
+#[test]
+fn chart_options_of_xls() {
+    let wb = Workbook::open(corpus("chartopts.xls")).unwrap();
+    assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
+    let charts: Vec<String> = wb
+        .drawings(0)
+        .iter()
+        .map(|d| chart_xml(d).to_owned())
+        .collect();
+    assert_eq!(charts.len(), 5, "every chart brought in");
+    let with = |title: &str| {
+        charts
+            .iter()
+            .find(|x| x.contains(&format!("<a:t>{title}</a:t>")))
+            .unwrap_or_else(|| panic!("no chart {title}"))
+    };
+    let labels = with("Labels");
+    assert!(
+        labels.contains("<c:dLbls><c:numFmt formatCode=\"0.0%\" sourceLinked=\"0\"/>"),
+        "{labels}"
+    );
+    let dates = with("Dates");
+    for want in [
+        "<c:dateAx>",
+        "<c:max val=\"46080\"/><c:min val=\"46030\"/>",
+        "<c:majorUnit val=\"14\"/><c:majorTimeUnit val=\"days\"/>",
+    ] {
+        assert!(dates.contains(want), "{want} in {dates}");
+    }
+    let line = with("Column and line");
+    assert!(line.contains("<c:barChart>") && line.contains("<c:lineChart>"));
+    let scatter = with("Column and scatter");
+    assert!(
+        scatter.contains("<c:barChart>") && scatter.contains("<c:scatterChart>"),
+        "{scatter}"
+    );
+    // The scatter plot on a hidden X axis spanning the four categories.
+    assert!(
+        scatter.contains("<c:axId val=\"500000003\"/><c:scaling><c:orientation val=\"minMax\"/><c:max val=\"4.5\"/><c:min val=\"0.5\"/></c:scaling><c:delete val=\"1\"/>"),
+        "{scatter}"
+    );
+    let pie = with("Column and pie");
+    assert!(
+        pie.contains("<c:barChart>") && pie.contains("<c:pieChart>"),
+        "{pie}"
+    );
 }

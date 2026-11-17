@@ -47,6 +47,12 @@ Files:
   connector, a group) as LibreOffice saves it in OpenDocument.
 * shapes.xls: the same workbook as LibreOffice saves it in Excel 97
   format (`--shapes-xls` writes only this file).
+* chartopts.xls: charts with more options, sheet "Data": a column chart
+  whose data labels have their own number format (0.0%), a line chart on a
+  date axis with its own bounds and major unit (every 14 days), a column
+  and line combination, a column and scatter combination and a column and
+  pie combination (LibreOffice puts the pie on the secondary axes).
+  `--chartopts-xls` writes only this file.
 * dates1904.xls: a workbook in the 1904 date system.
 * xlwt.xls: written directly as BIFF8 by xlwt (headless LibreOffice drops
   view settings): frozen rows and columns, the second sheet active, pattern
@@ -426,6 +432,81 @@ def drawings(path: Path) -> None:
     wb.save(path)
 
 
+def chartopts(path: Path) -> None:
+    from openpyxl.chart import BarChart, LineChart, PieChart, Reference, ScatterChart, Series
+    from openpyxl.chart.axis import DateAxis
+    from openpyxl.chart.label import DataLabelList
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws.append(["Quarter", "Share", "Units"])
+    for row in [("Q1", 0.125, 7), ("Q2", 0.25, 9), ("Q3", 0.4, 15), ("Q4", 0.225, 11)]:
+        ws.append(row)
+    share = Reference(ws, min_col=2, min_row=1, max_row=5)
+    units = Reference(ws, min_col=3, min_row=1, max_row=5)
+    quarters = Reference(ws, min_col=1, min_row=2, max_row=5)
+
+    labels = BarChart()
+    labels.type = "col"
+    labels.title = "Labels"
+    labels.add_data(share, titles_from_data=True)
+    labels.set_categories(quarters)
+    labels.dataLabels = DataLabelList()
+    labels.dataLabels.showVal = True
+    labels.dataLabels.numFmt = "0.0%"
+    ws.add_chart(labels, "E2")
+
+    ws["A8"] = "Day"
+    ws["B8"] = "Temp"
+    for i in range(10):
+        day = ws.cell(9 + i, 1, datetime.date(2026, 1, 1) + datetime.timedelta(days=7 * i))
+        day.number_format = "yyyy-mm-dd"
+        ws.cell(9 + i, 2, 20 + (i * 7) % 9)
+    dates = LineChart()
+    dates.title = "Dates"
+    dates.add_data(Reference(ws, min_col=2, min_row=8, max_row=18), titles_from_data=True)
+    dates.set_categories(Reference(ws, min_col=1, min_row=9, max_row=18))
+    dates.x_axis = DateAxis(crossAx=100)
+    dates.x_axis.number_format = "d-mmm"
+    dates.x_axis.baseTimeUnit = "days"
+    dates.x_axis.majorTimeUnit = "days"
+    dates.x_axis.majorUnit = 14
+    # 2026-01-08 to 2026-02-27: the first week's point is outside.
+    dates.x_axis.scaling.min = 46030
+    dates.x_axis.scaling.max = 46080
+    ws.add_chart(dates, "E20")
+
+    def columns(title):
+        c = BarChart()
+        c.title = title
+        c.add_data(units, titles_from_data=True)
+        c.set_categories(quarters)
+        return c
+
+    line_combo = columns("Column and line")
+    line = LineChart()
+    line.add_data(share, titles_from_data=True)
+    line_combo += line
+    ws.add_chart(line_combo, "E40")
+
+    scatter_combo = columns("Column and scatter")
+    xy = ScatterChart()
+    xy.series.append(Series(Reference(ws, min_col=2, min_row=2, max_row=5),
+                            Reference(ws, min_col=2, min_row=2, max_row=5), title="Points"))
+    xy.y_axis.axId = 100
+    xy.x_axis = scatter_combo.x_axis
+    scatter_combo += xy
+    ws.add_chart(scatter_combo, "N2")
+
+    pie_combo = columns("Column and pie")
+    pie = PieChart()
+    pie.add_data(share, titles_from_data=True)
+    pie_combo += pie
+    ws.add_chart(pie_combo, "N20")
+    wb.save(path)
+
+
 def make_chart_sheet(path: Path, name: str) -> None:
     """Turn worksheet `name` (holding one chart) into a BIFF8 chart sheet:
     its BOUNDSHEET type becomes 2 and its substream the chart's (the rest
@@ -792,6 +873,16 @@ def main() -> None:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     lo = Path(args[0] if args else Path.home() / ".cache/lo/lo.AppImage")
     OUT.mkdir(parents=True, exist_ok=True)
+    if "--chartopts-xls" in sys.argv:
+        tmp = Path(tempfile.mkdtemp(dir=Path.home() / ".cache" / "ktmp"))
+        try:
+            src = tmp / "chartopts.xlsx"
+            chartopts(src)
+            shutil.copy(convert(lo, src, "MS Excel 97", "xls", tmp), OUT / "chartopts.xls")
+            print(OUT / "chartopts.xls")
+        finally:
+            shutil.rmtree(tmp)
+        return
     if "--shapes-xls" in sys.argv:
         tmp = Path(tempfile.mkdtemp(dir=Path.home() / ".cache" / "ktmp"))
         try:
@@ -829,6 +920,9 @@ def main() -> None:
         out = convert(lo, src, "MS Excel 97", "xls", tmp)
         make_chart_sheet(out, "Overview")
         shutil.copy(out, OUT / "drawings.xls")
+        src = tmp / "chartopts.xlsx"
+        chartopts(src)
+        shutil.copy(convert(lo, src, "MS Excel 97", "xls", tmp), OUT / "chartopts.xls")
         src = tmp / "dates1904.xlsx"
         dates1904(src)
         shutil.copy(convert(lo, src, "MS Excel 97", "xls", tmp), OUT / "dates1904.xls")

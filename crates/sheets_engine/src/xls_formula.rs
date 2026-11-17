@@ -20,6 +20,8 @@ pub(crate) struct Context<'a> {
     pub xti: &'a [Option<(u16, u16)>],
     /// Defined names by `LBL` index (1-based in tokens).
     pub names: &'a [String],
+    /// The workbook's number formats (`FORMAT`), for charts' `IFmt`s.
+    pub formats: &'a [ironcalc_base::types::NumFmt],
 }
 
 /// BIFF8's grid: 65,536 rows by 256 columns.
@@ -336,6 +338,7 @@ mod tests {
             sheets: &SHEETS,
             xti: &[],
             names: &[],
+            formats: &[],
         }
     }
 

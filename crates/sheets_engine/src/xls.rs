@@ -510,6 +510,7 @@ impl XlsFormat {
                 sheets: &sheet_names,
                 xti: &g.xti,
                 names: &label_names,
+                formats: &g.formats,
             };
             let mut rules = SheetRules::default();
             let print = read_sheet(
@@ -586,6 +587,7 @@ impl XlsFormat {
             sheets: &sheet_names,
             xti: &g.xti,
             names: &label_names,
+            formats: &g.formats,
         };
         for (name, offset, state, kind) in &g.sheets {
             drawings.order.push((name.clone(), *kind == 2));
@@ -604,6 +606,9 @@ impl XlsFormat {
                 }
                 Err(_) => art_skipped.charts += 1,
             }
+        }
+        if g.date1904 {
+            drawings.shift_dates(DAYS_1904);
         }
         let mut notes = Vec::new();
         if skipped.validations > 0 {

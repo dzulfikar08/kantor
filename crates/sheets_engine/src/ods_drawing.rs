@@ -686,6 +686,7 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
             line,
             text: Vec::new(),
             anchor,
+            off: (0, 0),
             size: (emu(place.w), emu(place.h)),
             rot: place.rot,
         }
@@ -1090,7 +1091,8 @@ pub(crate) struct Shape {
     text: Vec<Para>,
     /// `bodyPr anchor`.
     anchor: &'static str,
-    /// EMU.
+    /// EMU (in a group, the group's coordinates).
+    off: (i64, i64),
     size: (i64, i64),
     /// Degrees clockwise.
     rot: f64,
@@ -1150,9 +1152,17 @@ impl Shape {
             }),
             text,
             anchor,
+            off: (0, 0),
             size: (0, 0),
             rot,
         }
+    }
+
+    /// Placed at `[x, y, w, h]` (inside a group).
+    pub(crate) fn placed(mut self, r: [i64; 4]) -> Self {
+        self.off = (r[0], r[1]);
+        self.size = (r[2], r[3]);
+        self
     }
 
     /// The `xdr:sp` (or `xdr:cxnSp`) element.
@@ -1221,7 +1231,9 @@ impl Shape {
             format!("<a:prstGeom prst=\"{}\">{av}</a:prstGeom>", esc(&self.prst))
         };
         let sppr = format!(
-            "<xdr:spPr><a:xfrm{rot}{flips}><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm>{geom}{fill}{ln}</xdr:spPr>",
+            "<xdr:spPr><a:xfrm{rot}{flips}><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm>{geom}{fill}{ln}</xdr:spPr>",
+            self.off.0,
+            self.off.1,
             self.size.0.max(0),
             self.size.1.max(0),
         );
@@ -1512,11 +1524,13 @@ fn read_chart(
                 .then_some(labels),
             points: Vec::new(),
             bubbles,
+            label_fmt: None,
         };
         match plots.iter_mut().find(|p| p.kind == kind) {
             Some(p) => p.series.push(series),
             None => plots.push(Plot {
                 kind,
+                secondary: false,
                 varied: matches!(kind, PlotKind::Pie { .. }),
                 series: vec![series],
             }),
@@ -1565,6 +1579,7 @@ fn read_chart(
             gridlines: [grid(x_axis), grid(y_axis)],
             three_d,
             scales: [scale(x_axis), scale(y_axis)],
+            extra: Default::default(),
         },
         size,
     ))
