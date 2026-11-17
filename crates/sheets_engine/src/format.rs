@@ -240,7 +240,7 @@ pub fn parse_rgb(hex: &str) -> Option<Rgb> {
         .flatten()
 }
 
-fn resolve(color: &Color, theme: &Theme) -> Option<Rgb> {
+pub(crate) fn resolve(color: &Color, theme: &Theme) -> Option<Rgb> {
     match color {
         Color::None => None,
         c => parse_rgb(&c.to_rgb(theme)),

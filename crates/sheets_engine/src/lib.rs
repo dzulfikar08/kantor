@@ -60,6 +60,7 @@ mod xls_drawing;
 mod xls_formula;
 mod xls_ftab;
 
+pub use grid::{BUILTIN_LISTS, parse_custom_list};
 pub use cf_edit::{
     COLOR_SCALES, CfBarAxis, CfBarDirection, CfBarOptions, CfCompare, CfFormat, CfIconRef,
     CfIconStep, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp, CfValue, CfValueKind,
@@ -345,6 +346,8 @@ pub struct Workbook {
     note_extras: HashMap<(u32, u32, u32), notes::NoteExtra>,
     /// The opened file's Excel 2010 conditional format extras.
     cf_x14: cf_x14::CfX14,
+    /// The user's custom lists (Kantor's settings), for fills.
+    custom_lists: Vec<Vec<String>>,
 }
 
 /// See [`Workbook::cached`].
@@ -673,6 +676,7 @@ impl Workbook {
             panes: HashMap::new(),
             note_extras: Default::default(),
             cf_x14: Default::default(),
+            custom_lists: Vec::new(),
         })
     }
 
@@ -871,6 +875,7 @@ impl Workbook {
             panes: HashMap::new(),
             note_extras,
             cf_x14,
+            custom_lists: Vec::new(),
         };
         book.apply_read_panes(&panes);
         book.set_saved_pictures(pictures);

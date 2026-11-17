@@ -249,6 +249,19 @@ patch of `import/conditional_formatting.rs`).
 Tests: Kantor's `crates/sheets_engine/tests/xls_cf12.rs`
 (`saved_as_xlsx_the_rules_are_excel_2007_rules`).
 
+## 15. A table's `dataDxfId` read from `dataDxfId`
+
+Why: the table-level `data_dxf_id` was read from `headerRowDxfId` (the
+column-level one was fixed with the tables patch), so a table whose header
+row has a format of its own showed it on every data row too once Kantor
+started drawing the tables' own formats over their style.
+
+What: `import/tables.rs` `load_table`: `data_dxf_id` reads the `<table>`'s
+`dataDxfId`.
+
+Tests: Kantor's `crates/sheets_engine/tests/table_styles.rs`
+(`table_dxfs_layer_between_style_and_cells`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

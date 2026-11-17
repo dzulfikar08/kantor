@@ -86,16 +86,16 @@ impl Kind {
 /// Colours offered for a data bar's border, negative bars and axis
 /// (besides the bar colours).
 const BAR_PALETTE: [(&str, u32); 10] = [
-    ("Black", 0x000000),
-    ("Gray", 0x808080),
-    ("Red", 0xFF0000),
-    ("Dark Red", 0xC00000),
-    ("Orange", 0xFFC000),
-    ("Yellow", 0xFFFF00),
-    ("Green", 0x00B050),
-    ("Blue", 0x0070C0),
-    ("Dark Blue", 0x002060),
-    ("Purple", 0x7030A0),
+    (tk("Black"), 0x000000),
+    (tk("Gray"), 0x808080),
+    (tk("Red"), 0xFF0000),
+    (tk("Dark Red"), 0xC00000),
+    (tk("Orange"), 0xFFC000),
+    (tk("Yellow"), 0xFFFF00),
+    (tk("Green"), 0x00B050),
+    (tk("Blue"), 0x0070C0),
+    (tk("Dark Blue"), 0x002060),
+    (tk("Purple"), 0x7030A0),
 ];
 
 /// The name Excel's icon list gives an icon set.

@@ -51,6 +51,7 @@ mod chart_options_ui;
 mod chart_sheet_ui;
 mod chart_ui;
 mod cond_paint;
+mod custom_lists_ui;
 mod data_validation;
 mod dialog;
 mod drawings;
@@ -443,7 +444,8 @@ struct Selection {
 }
 
 impl SheetGrid {
-    fn new(book: Workbook, view: WeakEntity<SheetsView>) -> Self {
+    fn new(mut book: Workbook, view: WeakEntity<SheetsView>) -> Self {
+        book.set_custom_lists(custom_lists_ui::user_lists());
         let mut grid = Self {
             book,
             sheet: 0,
@@ -1376,6 +1378,8 @@ pub struct SheetsView {
     filter_menu: Option<filter_menu::FilterMenu>,
     /// The Custom Sort panel.
     sort_panel: Option<filter_menu::SortPanel>,
+    /// The Custom Lists card ([`custom_lists_ui`]).
+    custom_lists: Option<custom_lists_ui::CustomListsDialog>,
     /// Charts and pictures over the grid (see [`drawings`]).
     drawings: Rc<RefCell<drawings::DrawLayer>>,
     /// Page Break Preview's pages and drags ([`break_preview`]).
@@ -1509,6 +1513,7 @@ impl SheetsView {
             validation_list_sub: None,
             filter_menu: None,
             sort_panel: None,
+            custom_lists: None,
             drawings: Rc::default(),
             break_layer: Rc::default(),
             break_drag_panes: Vec::new(),
@@ -3063,6 +3068,7 @@ impl Render for SheetsView {
             .children(self.render_row_height_prompt(cx))
             .children(self.render_alert(cx))
             .children(self.render_sort_panel(cx))
+            .children(self.render_custom_lists(cx))
             .children(self.render_filter_menu(cx))
             .children(self.render_pivot_dialog(cx))
             .children(self.render_page_setup(cx))
