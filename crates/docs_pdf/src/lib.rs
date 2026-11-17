@@ -19,6 +19,7 @@
 //! Kantor's own placeholders for content it can't draw (charts, shapes,
 //! unsupported picture formats: the space stays empty).
 
+pub mod blur;
 pub mod build;
 pub mod chart;
 pub mod floats;
@@ -351,6 +352,17 @@ fn float_scene(
                         bytes: bytes.clone(),
                     });
                 }
+            }
+            floats::FloatPrim::Blurred(b) => {
+                out.order.push((true, out.pictures.len()));
+                out.pictures.push(Picture {
+                    rect: b.rect,
+                    clip: None,
+                    turn: 0.0,
+                    flip: (false, false),
+                    format: ImageFormat::Png,
+                    bytes: b.png.clone(),
+                });
             }
             floats::FloatPrim::Placeholder(..) => {}
         }

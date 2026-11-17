@@ -213,7 +213,6 @@ Bookmark “{}” deleted	Penanda “{}” dihapus
 Choose what the cross-reference points to	Pilih yang dirujuk referensi silang
 Cross-reference	Referensi Silang
 Endnote number	Nomor catatan akhir
-Enter updates the field; Esc cancels	Enter memperbarui bidang; Esc membatalkan
 Entire caption	Seluruh keterangan
 Equation	Persamaan
 Field	Bidang
@@ -229,7 +228,6 @@ Heading text	Teks judul
 Insert Field	Sisipkan Bidang
 Insert as hyperlink	Sisipkan sebagai hyperlink
 Insert reference to	Sisipkan referensi ke
-New field: its code	Bidang baru: kodenya
 No field at the caret	Tidak ada bidang di posisi kursor
 Nothing of this kind in the document	Tidak ada yang seperti ini di dokumen
 Paragraph number	Nomor paragraf
@@ -243,8 +241,6 @@ The page number	Nomor halaman
 The time now	Waktu sekarang
 This document has no bookmarks	Dokumen ini tidak memiliki penanda
 Today's date	Tanggal hari ini
-Update	Perbarui
-e.g. DATE \@ "d MMMM yyyy"	mis. DATE \@ "d MMMM yyyy"
 # Tracked formatting changes (balloons in the markup column)
 Formatted: {}	Diformat: {}
 Font: Bold	Font: Tebal
@@ -325,4 +321,4 @@ An index of the XE entries	Indeks dari entri XE
 An index entry	Entri indeks
 The number of words	Jumlah kata
 The number of pages in the section	Jumlah halaman di bagian ini
-Type the field's code; F9 updates it	Ketik kode field; F9 memperbaruinya
+Type the field's code; F9 updates it	Ketik kode bidang; F9 memperbaruinya

@@ -2649,7 +2649,6 @@ impl Render for DocsView {
                 cx.listener(|this, _: &MouseUpEvent, window, cx| {
                     this.dragging = false;
                     this.float_mouse_up(window, cx);
-                    this.field_mouse_up(window, cx);
                 }),
             )
             .on_scroll(cx.listener(Self::on_scroll))

@@ -1005,6 +1005,35 @@ impl DocsView {
                 None => &self.doc,
             };
             for prim in &fp.prims {
+                if let FloatPrim::Blurred(b) = prim {
+                    // A blurred shadow: its own picture.
+                    let key = format!("blur:{}", b.key);
+                    // Moving a shape makes new ones: keep only a few.
+                    if !self.images.contains_key(&key)
+                        && self
+                            .images
+                            .keys()
+                            .filter(|k| k.starts_with("blur:"))
+                            .count()
+                            >= 32
+                    {
+                        self.images.retain(|k, _| !k.starts_with("blur:"));
+                    }
+                    let img = self
+                        .images
+                        .entry(key.clone())
+                        .or_insert_with(|| {
+                            Arc::new(gpui_kit::Image::from_bytes(
+                                ImageFormat::Png,
+                                b.png.to_vec(),
+                            ))
+                        })
+                        .clone();
+                    if let Some(data) = img.use_render_image(window, cx) {
+                        out.insert((fp.story.map_or(0, |s| s + 1), key), data);
+                    }
+                    continue;
+                }
                 let FloatPrim::Picture {
                     rel_id,
                     image,
@@ -1434,6 +1463,17 @@ pub(crate) fn paint_floats(
                         None => {
                             window.paint_quad(fill(rect(*clip), f.t.paper_selection.opacity(0.35)))
                         }
+                    }
+                }
+                FloatPrim::Blurred(b) => {
+                    let key = (fp.story.map_or(0, |s| s + 1), format!("blur:{}", b.key));
+                    if let Some(data) = f.float_images.get(&key) {
+                        let r = Bounds::from_corners(
+                            g.page_to_screen(page, b.rect[0], b.rect[1]),
+                            g.page_to_screen(page, b.rect[0] + b.rect[2], b.rect[1] + b.rect[3]),
+                        );
+                        let _ =
+                            window.paint_image(r, r, Corners::default(), data.clone(), 0, false);
                     }
                 }
                 FloatPrim::Placeholder(r, _) => {

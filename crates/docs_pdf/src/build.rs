@@ -470,6 +470,7 @@ pub fn float_spec(index: usize, f: &docs_engine::Float) -> docs_layout::FloatSpe
         polygon: f
             .wrap_polygon()
             .map(|p| p.into_iter().map(|(x, y)| [x, y]).collect()),
+        through: at.wrap == docs_engine::Wrap::Through,
         wrap: match at.wrap {
             docs_engine::Wrap::None => FloatWrap::None,
             docs_engine::Wrap::Square | docs_engine::Wrap::Tight | docs_engine::Wrap::Through => {

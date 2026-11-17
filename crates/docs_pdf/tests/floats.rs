@@ -152,10 +152,10 @@ fn groups_charts_turns_shadows_and_tight_wrap() {
         "{pic:?} in {rect:?}"
     );
     assert!((pic[2] - rect[2] / 2.0).abs() < 0.01);
-    // The shadow: translucent black fills drawn before the shape.
-    let shadow = g.iter().position(
-        |p| matches!(p, FloatPrim::Path(d) if d.fill.is_some_and(|c| c.0[3] < 255 && c.0[0] == 0)),
-    );
+    // The shadow: blurred (a picture of it), drawn before the shape.
+    let shadow = g
+        .iter()
+        .position(|p| matches!(p, FloatPrim::Blurred(b) if b.rect[2] > 0.0));
     let shape = g.iter().position(|p| {
         matches!(p, FloatPrim::Path(d) if d.fill.is_some_and(|c| c.0 == [0xBD, 0xD7, 0xEE, 255]))
     });

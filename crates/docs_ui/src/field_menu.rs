@@ -2,9 +2,9 @@
 //! popovers, as in Word:
 //!
 //! - Alt+F9 shows every field's code (`{ PAGEREF _Toc1 \h }`) instead of
-//!   its result, Shift+F9 the field at the caret; double-clicking a code
-//!   edits it, and Enter (or F9) updates the field. Ctrl+F9 starts a new
-//!   field from its code.
+//!   its result, Shift+F9 the field at the caret; a code is typed in its
+//!   braces ([`crate::code_inline`]) and F9 updates the field. Ctrl+F9
+//!   starts a new field there (the selection becomes its code).
 //! - Insert Field… lists common fields (dates with a format, page numbers,
 //!   document properties, references to bookmarks) and shows the code it
 //!   will insert, which can be edited.
@@ -13,9 +13,7 @@
 //!
 //! Every change is one undo step.
 
-use docs_engine::{
-    ChapterSep, CodeView, NumFormat, PageNumbering, Position, Selection, XrefKind, XrefWhat,
-};
+use docs_engine::{ChapterSep, CodeView, NumFormat, PageNumbering, Selection, XrefKind, XrefWhat};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
@@ -75,17 +73,6 @@ const NUM_FORMATS: [(&str, &str); 5] = [
 
 /// The open field popover.
 pub(crate) enum FieldMenu {
-    /// A field's code being written: an existing field's (`begin`) or a
-    /// new one's.
-    Code {
-        begin: Option<Position>,
-        input: Entity<InputState>,
-        at: Point<Pixels>,
-        /// Opened by a double click: focus the box again on mouse up (the
-        /// page takes focus on mouse down).
-        focus_on_up: bool,
-        _sub: Subscription,
-    },
     Insert {
         field: usize,
         format: usize,
@@ -299,103 +286,6 @@ impl DocsView {
         self.set_codes(v, cx);
         self.start_code(begin, None, cx);
         self.status = t("Type the field's code; F9 updates it").into();
-    }
-
-    /// Where to open a popover by the caret (window coordinates).
-    pub(crate) fn caret_point(&self) -> Point<Pixels> {
-        let g = self.geometry();
-        let h = self.sel.head;
-        match self.laid.caret(h.para, h.offset) {
-            Some(c) => {
-                let p = g.page_to_screen(c.page, c.x, c.top + c.height);
-                point(p.x, p.y + SPACE_3)
-            }
-            None => {
-                let b = self.viewport.get();
-                point(b.origin.x + SPACE_7, b.origin.y + SPACE_7)
-            }
-        }
-    }
-
-    /// Edit the code of the field starting at `begin` (or a new one).
-    pub(crate) fn open_code_edit(
-        &mut self,
-        begin: Option<Position>,
-        code: &str,
-        at: Point<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let input = cx.new(|cx| {
-            let mut s = InputState::new(window, cx).placeholder(t("e.g. DATE \\@ \"d MMMM yyyy\""));
-            s.set_value(code.trim().to_owned(), window, cx);
-            s
-        });
-        let sub = cx.subscribe_in(&input, window, |this, _, ev: &InputEvent, window, cx| {
-            if let InputEvent::PressEnter { .. } = ev {
-                this.apply_code_edit(window, cx);
-            }
-        });
-        input.update(cx, |s, cx| s.focus(window, cx));
-        self.field_menu = Some(FieldMenu::Code {
-            begin,
-            input,
-            at,
-            focus_on_up: true,
-            _sub: sub,
-        });
-        cx.notify();
-    }
-
-    /// Mouse up after the double click that opened the code box: give it
-    /// the focus back.
-    pub(crate) fn field_mouse_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(FieldMenu::Code {
-            input, focus_on_up, ..
-        }) = &mut self.field_menu
-            && std::mem::take(focus_on_up)
-        {
-            let input = input.clone();
-            input.update(cx, |s, cx| s.focus(window, cx));
-        }
-    }
-
-    /// Write the code being edited and update the field (one step).
-    fn apply_code_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(FieldMenu::Code { begin, input, .. }) = &self.field_menu else {
-            return;
-        };
-        let (begin, code) = (*begin, input.read(cx).value().to_string());
-        self.field_menu = None;
-        self.focus(window, cx);
-        if code.trim().is_empty() {
-            cx.notify();
-            return;
-        }
-        let engine = self.engine.clone();
-        let mut lay =
-            |d: &docs_engine::Document| docs_pdf::field_pages(d, &mut engine.borrow_mut());
-        match begin {
-            Some(b) => {
-                let id = self.doc.field_at(b).map(|f| f.mark_id());
-                let sel = self.sel;
-                if self.doc.set_field_code(b, &code, sel, &now(), &mut lay) {
-                    // The changed field shows its result.
-                    if let Some(id) = id {
-                        self.show_results_of(&[id], cx);
-                    }
-                    let new = self.doc.field_at(b).map(|f| f.mark_id());
-                    if let Some(new) = new {
-                        self.show_results_of(&[new], cx);
-                    }
-                    self.edited(sel, window, cx);
-                }
-            }
-            None => {
-                let sel = self.doc.insert_field(self.sel, &code, &now(), &mut lay);
-                self.edited(sel, window, cx);
-            }
-        }
     }
 
     /// Insert a field with `code` at the caret, updated.
@@ -786,36 +676,6 @@ impl DocsView {
         };
 
         let (body, at, anchor) = match menu {
-            FieldMenu::Code {
-                input, at, begin, ..
-            } => {
-                let v = view.clone();
-                let label = if begin.is_some() {
-                    t("Field code")
-                } else {
-                    t("New field: its code")
-                };
-                (
-                    panel("docs-field-code", REM * 24.)
-                        .child(title(label))
-                        .child(Input::new(input).small())
-                        .child(
-                            div()
-                                .text_color(tok.fg_muted)
-                                .child(t("Enter updates the field; Esc cancels")),
-                        )
-                        .child(h_flex().child(div().flex_1()).child(
-                            button("docs-field-code-ok".into(), t("Update").into(), true).on_click(
-                                move |_, window, cx| {
-                                    let _ =
-                                        v.update(cx, |this, cx| this.apply_code_edit(window, cx));
-                                },
-                            ),
-                        )),
-                    *at,
-                    Anchor::TopLeft,
-                )
-            }
             FieldMenu::Insert {
                 field,
                 format,

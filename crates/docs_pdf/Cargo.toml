@@ -20,10 +20,10 @@ slides_engine.workspace = true
 slides_scene.workspace = true
 roxmltree.workspace = true
 krilla = { version = "0.8", default-features = false, features = ["raster-images"] }
+# Blurred shadows: their PNGs.
+flate2 = "1"
 
 [dev-dependencies]
-# Builds PNG fixtures and inflates PDF streams in the tests.
-flate2 = "1"
 # Builds .docx fixtures.
 zip.workspace = true
 # Fixed dates for updating fields.
