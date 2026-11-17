@@ -375,6 +375,30 @@ fn main() -> Result<()> {
         wb.save_as(o.join("timeline_inserted_25_slicers.xlsx"))?;
         Ok(Some(slicers.clone()))
     });
+    run.scenario("sheets_v012_features.xlsx", |o| {
+        let mut wb = data_book()?;
+        sheets_v012_features(&mut wb)?;
+        let path = o.join("sheets_v012_features.xlsx");
+        wb.save_as(&path)?;
+        // The saved file is the next save's original.
+        let mut again = Workbook::open(&path)?;
+        again.set_input(0, 30, 0, "again")?;
+        again.save_as(&path)?;
+        Ok(None)
+    });
+    run.scenario("macros_kept.xlsm", |o| {
+        let path = o.join("macros_kept.xlsm");
+        std::fs::write(&path, xlsm_with_macros(o)?)?;
+        let mut wb = Workbook::open(&path)?;
+        anyhow::ensure!(wb.has_macros(), "the VBA project wasn't seen");
+        wb.set_input(0, 1, 0, "edited")?;
+        wb.save()?;
+        let mut again = Workbook::open(&path)?;
+        anyhow::ensure!(again.has_macros(), "the VBA project was lost by Save");
+        again.set_input(0, 2, 0, "again")?;
+        again.save()?;
+        Ok(None)
+    });
 
     for src in files(&corpus.join("docx"), "docx")? {
         let stem = stem(&src);
@@ -1182,6 +1206,247 @@ fn kantor_features_at(wb: &mut Workbook, sheet: u32, top: u32) -> Result<()> {
 
 /// A sheet AutoFilter and a table's filter, with values and conditions,
 /// and a sort.
+/// What v0.12 added to Sheets' saved markup: 3-D references, filter and
+/// sort by colour, Top 10, Excel 2010 data bar and icon set settings, rule
+/// number formats and borders, the IME mode of a validation, Page Break
+/// Preview and a manual break.
+fn sheets_v012_features(wb: &mut Workbook) -> Result<()> {
+    use sheets_engine::{
+        CfBarAxis, CfBarDirection, CfBarOptions, CfIconRef, CfValue, CfValueKind, SortLevel,
+        SortOn, StyleChange, default_icon_steps, outline_border,
+    };
+    // 3-D references over three month sheets.
+    for (i, name) in ["Jan", "Feb", "Mar"].into_iter().enumerate() {
+        let s = wb.insert_sheet(usize::MAX)?;
+        wb.rename_sheet(s, name)?;
+        wb.set_input(s, 1, 1, &format!("{}", (i + 1) * 10))?;
+        wb.set_input(s, 2, 1, &format!("{}", (i + 1) * 5))?;
+    }
+    wb.set_input(0, 0, 5, "=SUM(Jan:Mar!B2)")?;
+    wb.set_input(0, 1, 5, "=AVERAGE('Jan:Mar'!B2:B3)")?;
+    wb.set_input(0, 2, 5, "=COUNT(Jan:Mar!B2:B3)")?;
+
+    // Sort by cell colour, then filter by colour and Top 10.
+    let data = CellRange::from_corners((0, 0), (ROWS.len() as u32, 3));
+    let yellow = 0xFFFF00;
+    for r in [2, 5] {
+        wb.set_range_style(
+            0,
+            CellRange::from_corners((r, 0), (r, 0)),
+            StyleChange::Fill(Some(yellow)),
+        )?;
+    }
+    wb.toggle_filter(0, data)?;
+    let by_yellow = wb.color_filter(Some(yellow), false);
+    let FilterKind::Color { dxf, .. } = by_yellow.clone() else {
+        anyhow::bail!("not a colour filter: {by_yellow:?}");
+    };
+    wb.sort_range_by(
+        0,
+        data,
+        &[
+            SortLevel {
+                col: 0,
+                descending: false,
+                on: SortOn::CellColor { dxf },
+            },
+            SortLevel {
+                col: 1,
+                descending: false,
+                on: SortOn::List(vec!["Plums".into(), "Pears".into(), "Apples".into()]),
+            },
+        ],
+        true,
+    )?;
+    wb.set_column_filter(0, &FilterScope::Sheet, 0, Some(by_yellow))?;
+    wb.set_column_filter(
+        0,
+        &FilterScope::Sheet,
+        3,
+        Some(FilterKind::Top10 {
+            top: true,
+            percent: false,
+            value: 5.0,
+        }),
+    )?;
+
+    // Excel 2010 data bar and custom icon set; a rule with a number format
+    // and an outline border.
+    let rule = |spec, num_fmt: Option<&str>, border| CfRuleDef {
+        num_fmt: num_fmt.map(str::to_string),
+        border,
+        spec,
+        format: CfFormat::default(),
+        stop_if_true: false,
+    };
+    let rows = ROWS.len() as u32 + 1;
+    let bar = CfBarOptions {
+        min: CfValue::new(CfValueKind::Number, "0"),
+        max: CfValue::new(CfValueKind::Percent, "90"),
+        min_length: 10,
+        max_length: 90,
+        border: Some(0x00B050),
+        negative_fill: Some(0xC00000),
+        negative_border: Some(0x7030A0),
+        axis: CfBarAxis::Middle,
+        axis_color: 0x0070C0,
+        direction: CfBarDirection::RightToLeft,
+        bar_only: false,
+    };
+    wb.add_cf_rule(
+        0,
+        &format!("C2:C{rows}"),
+        &rule(
+            CfSpec::DataBar {
+                color: 0x638EC6,
+                gradient: true,
+                bar,
+            },
+            None,
+            None,
+        ),
+    )?;
+    let mut steps = default_icon_steps("3Arrows");
+    steps[1].value = CfValue::new(CfValueKind::Number, "60");
+    steps[1].gte = false;
+    steps[2].icon = CfIconRef {
+        set: "3Flags".into(),
+        index: 2,
+    };
+    steps[0].icon = CfIconRef {
+        set: "NoIcons".into(),
+        index: 0,
+    };
+    wb.add_cf_rule(
+        0,
+        &format!("D2:D{rows}"),
+        &rule(
+            CfSpec::IconSet {
+                set: "3Arrows".into(),
+                reverse: false,
+                show_value: true,
+                steps,
+            },
+            None,
+            None,
+        ),
+    )?;
+    wb.add_cf_rule(
+        0,
+        &format!("C2:C{rows}"),
+        &rule(
+            CfSpec::CellValue {
+                op: CfCompare::GreaterThan,
+                value: "5".into(),
+                value2: String::new(),
+            },
+            Some("0.00"),
+            Some(outline_border(0xC00000)),
+        ),
+    )?;
+    wb.add_cf_rule(
+        0,
+        &format!("B2:B{rows}"),
+        &rule(
+            CfSpec::Text {
+                op: CfTextOp::Equals,
+                text: "Plums".into(),
+            },
+            None,
+            Some(outline_border(0x0070C0)),
+        ),
+    )?;
+
+    // A validation with an IME mode.
+    wb.set_validation(
+        0,
+        &[CellRange::from_corners((1, 1), (8, 1))],
+        Validation {
+            ime_mode: Some("hiragana".into()),
+            kind: ValidationType::TextLength,
+            operator: ValidationOperator::LessThanOrEqual,
+            allow_blank: true,
+            dropdown: true,
+            prompt: None,
+            error: None,
+            formula1: Some(validation_operand(ValidationType::TextLength, "20")?),
+            formula2: None,
+            ranges: Vec::new(),
+        },
+    )?;
+
+    // Page Break Preview with a manual break.
+    wb.set_break_preview(0, true);
+    wb.insert_page_break(0, Some(5), None)?;
+    Ok(())
+}
+
+/// A synthetic `.xlsm`: a Kantor-saved workbook with a VBA project added
+/// the way Excel stores one.
+fn xlsm_with_macros(dir: &Path) -> Result<Vec<u8>> {
+    use std::io::Read as _;
+    let plain = dir.join("macros_plain.tmp.xlsx");
+    let mut wb = data_book()?;
+    wb.save_as(&plain)?;
+    let mut zin = zip::ZipArchive::new(std::fs::File::open(&plain)?)?;
+    let mut parts = Vec::new();
+    for i in 0..zin.len() {
+        let mut f = zin.by_index(i)?;
+        let name = f.name()?.to_string();
+        let mut data = Vec::new();
+        f.read_to_end(&mut data)?;
+        parts.push((name, data));
+    }
+    drop(zin);
+    std::fs::remove_file(&plain)?;
+    let edit = |parts: &mut Vec<(String, Vec<u8>)>, name: &str, f: &dyn Fn(String) -> String| {
+        if let Some(p) = parts.iter_mut().find(|p| p.0 == name) {
+            p.1 = f(String::from_utf8_lossy(&p.1).into_owned()).into_bytes();
+        }
+    };
+    edit(&mut parts, "[Content_Types].xml", &|s| {
+        s.replace(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+            "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+        )
+        .replace(
+            "</Types>",
+            "<Default Extension=\"bin\" ContentType=\"application/vnd.ms-office.vbaProject\"/></Types>",
+        )
+    });
+    edit(&mut parts, "xl/_rels/workbook.xml.rels", &|s| {
+        s.replace(
+            "</Relationships>",
+            "<Relationship Id=\"rId99\" Type=\"http://schemas.microsoft.com/office/2006/relationships/vbaProject\" Target=\"vbaProject.bin\"/></Relationships>",
+        )
+    });
+    edit(
+        &mut parts,
+        "xl/workbook.xml",
+        &|s| match s.find("<bookViews>") {
+            Some(at) => format!(
+                "{}<workbookPr codeName=\"ThisWorkbook\"/>{}",
+                &s[..at],
+                &s[at..]
+            ),
+            None => s,
+        },
+    );
+    // Not a real project: Kantor carries the part, it never reads it.
+    parts.push((
+        "xl/vbaProject.bin".into(),
+        b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1synthetic vba project".to_vec(),
+    ));
+    parts.sort_by_key(|p| p.0 != "[Content_Types].xml");
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default();
+    for (name, data) in &parts {
+        zip.start_file(name.as_str(), options)?;
+        zip.write_all(data)?;
+    }
+    Ok(zip.finish()?.into_inner())
+}
+
 fn filters(wb: &mut Workbook) -> Result<()> {
     let data = CellRange::from_corners((0, 0), (ROWS.len() as u32, 3));
     wb.sort_range(

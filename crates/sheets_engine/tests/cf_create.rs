@@ -443,9 +443,38 @@ fn text_equal_to_number_formats_and_borders() {
     let read = rules[0].def.clone().unwrap();
     assert_eq!(read.num_fmt, def.num_fmt);
     assert_eq!(read.border, def.border);
+    // Kantor reads that formula back as the rule it was made as.
+    assert_eq!(read.spec, def.spec);
+    assert_eq!(rules[0].summary, "Text equal to \"Ani\"");
     assert!(
         back.conditional(0, 3, 1)
             .and_then(|c| c.style.clone())
             .is_some()
     );
+
+    // Quotes in the text survive; other formulas stay formulas.
+    let quoted = CfSpec::Text {
+        op: CfTextOp::Equals,
+        text: "say \"hi\"".into(),
+    };
+    back.add_cf_rule(0, "C1:C3", &rule(quoted.clone())).unwrap();
+    let other = CfSpec::Formula {
+        formula: "=B1=\"a\"&\"b\"".into(),
+    };
+    back.add_cf_rule(0, "B1:B10", &rule(other.clone())).unwrap();
+    let elsewhere = CfSpec::Formula {
+        formula: "=C1=\"Ani\"".into(),
+    };
+    back.add_cf_rule(0, "B1:B10", &rule(elsewhere.clone()))
+        .unwrap();
+    back.save_as(&path).unwrap();
+    let again = Workbook::open(&path).unwrap();
+    let specs: Vec<CfSpec> = again
+        .cf_rules(0, None)
+        .into_iter()
+        .filter_map(|r| r.def.map(|d| d.spec))
+        .collect();
+    for want in [&def.spec, &quoted, &other, &elsewhere] {
+        assert!(specs.contains(want), "{want:?} not in {specs:?}");
+    }
 }

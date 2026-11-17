@@ -1014,9 +1014,26 @@ fn input(def: &CfRuleDef, num_fmt_id: &dyn Fn(&str) -> i32) -> Result<CfRuleInpu
     })
 }
 
+/// The text of a "Text that is equal to" rule saved as an expression rule:
+/// `formula` is `A1="text"` with `A1` the first cell of `range` (as
+/// IronCalc writes it, quotes in the text doubled).
+fn text_equals_of(range: &str, formula: &str) -> Option<String> {
+    let anchor = range.split_whitespace().next()?.split(':').next()?;
+    let rest = formula
+        .trim_start_matches('=')
+        .strip_prefix(anchor)?
+        .strip_prefix("=\"")?
+        .strip_suffix('"')?;
+    // Every quote inside must be doubled, or the formula is more than one
+    // string literal.
+    let text = rest.replace("\"\"", "");
+    (!text.contains('"')).then(|| rest.replace("\"\"", "\""))
+}
+
 /// The rule as Kantor edits it, and a one-line summary.
 fn describe(
     rule: &CfRule,
+    range: &str,
     dxf: Option<&Dxf>,
     model: &ironcalc_base::Model,
     look: Option<crate::cf_x14::BarLook>,
@@ -1156,15 +1173,24 @@ fn describe(
             formula,
             stop_if_true,
             ..
-        } => (
-            def(
-                CfSpec::Formula {
-                    formula: format!("={}", formula.trim_start_matches('=')),
-                },
-                *stop_if_true,
+        } => match text_equals_of(range, formula) {
+            // "Text that is equal to" is saved as the formula `A1="text"`:
+            // read it back as that rule.
+            Some(text) => {
+                let op = CfTextOp::Equals;
+                let summary = format!("Text {} \"{text}\"", op.label());
+                (def(CfSpec::Text { op, text }, *stop_if_true), summary)
+            }
+            None => (
+                def(
+                    CfSpec::Formula {
+                        formula: format!("={}", formula.trim_start_matches('=')),
+                    },
+                    *stop_if_true,
+                ),
+                format!("Formula: ={}", formula.trim_start_matches('=')),
             ),
-            format!("Formula: ={}", formula.trim_start_matches('=')),
-        ),
+        },
         CfRule::DataBar {
             min,
             max,
@@ -1434,7 +1460,7 @@ impl Workbook {
                     .flatten();
                 let look = matches!(v.cf_rule, CfRule::DataBar { .. })
                     .then(|| self.bar_look_of(self.sheet_id(sheet), &v.range, &v.cf_rule));
-                let (def, summary) = describe(&v.cf_rule, dxf.as_ref(), model, look);
+                let (def, summary) = describe(&v.cf_rule, &v.range, dxf.as_ref(), model, look);
                 let format = dxf
                     .as_ref()
                     .map(|d| CfFormat::from_dxf(d, model))
