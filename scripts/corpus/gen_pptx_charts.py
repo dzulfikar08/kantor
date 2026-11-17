@@ -12,7 +12,7 @@ One chart per slide, each with its embedded workbook:
   rewritten as `c:stockChart` the way PowerPoint writes one).
 - Slide 5 "Combo": clustered columns with a line on a secondary axis
   ("Revenue"; a column chart with a `c:lineChart` and second axes added).
-- Slide 6 "3-D pie": a 3-D pie ("Share"), drawn flat by Kantor.
+- Slide 6 "3-D pie": a 3-D pie ("Share").
 
 Regenerate with
 `uv run --with python-pptx==1.0.2 scripts/corpus/gen_pptx_charts.py tests/corpus/pptx`.

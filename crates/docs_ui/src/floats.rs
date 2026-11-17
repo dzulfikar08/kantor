@@ -699,7 +699,7 @@ impl DocsView {
 
     /// The Change Layout button of a selected SmartArt: the layouts Kantor
     /// lays out, by category (the names are Slides' catalog keys).
-    fn smartart_layout_button(&self, s: FloatSel, cx: &mut Context<Self>) -> Option<Button> {
+    fn smartart_layout_button(&self, s: FloatSel, cx: &mut Context<Self>) -> Option<AnyElement> {
         let f = self.doc.float_at(s.para, s.index)?;
         if !matches!(f.kind, docs_engine::FloatKind::SmartArt { .. }) {
             return None;
@@ -742,7 +742,8 @@ impl DocsView {
                         }
                     }
                     menu
-                }),
+                })
+                .into_any_element(),
         )
     }
 

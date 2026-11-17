@@ -557,8 +557,8 @@ pub(super) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Res
     }
     // Items without shapes (made elsewhere): copies of another item's.
     let mut add = String::new();
-    if let Some(tk) = (0..t.nodes.len())
-        .find(|k| t.drawn(*k) && list.iter().any(|s| s.role == TRole::Node(*k)))
+    if let Some(tk) =
+        (0..t.nodes.len()).find(|k| t.drawn(*k) && list.iter().any(|s| s.role == TRole::Node(*k)))
     {
         for k in (0..t.nodes.len()).filter(|k| !drawn[*k]) {
             let mine: Vec<&TShape> = list.iter().filter(|s| s.role == TRole::Node(tk)).collect();

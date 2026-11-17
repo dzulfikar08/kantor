@@ -543,11 +543,10 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
                 } else {
                     k as f32
                 };
-                for i in 0..n {
+                for (i, &(b0, b1)) in stacks[k].iter().enumerate().take(n) {
                     let Some(Some(_)) = s.vals.get(i) else {
                         continue;
                     };
-                    let (b0, b1) = stacks[k][i];
                     let b0 = if stacked { b0 } else { 0.0 };
                     let u0 = (i as f32 + gap * bw / 2.0 + lane * bw) * slot;
                     let u1 = u0 + bw * slot;
@@ -645,7 +644,11 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
                         let mut front: Vec<P3> = run.iter().map(|q| p3(q.0, q.1, z0)).collect();
                         front.extend(run.iter().rev().map(|q| p3(q.0, q.2, z0)));
                         // Sorted with the row's nearest end.
-                        let mid = if cam.sy >= 0.0 { run[run.len() - 1].0 } else { run[0].0 };
+                        let mid = if cam.sy >= 0.0 {
+                            run[run.len() - 1].0
+                        } else {
+                            run[0].0
+                        };
                         solids.push(Solid {
                             centre: p3(mid, h / 2.0, z0 - 1e-4),
                             faces: vec![Face {

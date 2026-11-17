@@ -393,8 +393,8 @@ fn known(e: &anyhow::Error) -> Option<&'static str> {
         RADIAL_LEVELS,
         RADIAL_KEEP,
     ]
-        .into_iter()
-        .find(|m| *m == msg)
+    .into_iter()
+    .find(|m| *m == msg)
 }
 
 pub const SELECT_ITEM: &str = "This SmartArt shape doesn't show an item";

@@ -40,10 +40,7 @@ pub fn change_layout(
         for (k, (id, parent)) in model.walk().into_iter().enumerate() {
             let id = id.as_str();
             let label = to == Family::LabeledHierarchy && parent.is_none() && k > 0;
-            if to == Family::RadialCycle
-                && centre.as_deref() != Some(id)
-                && parent != centre
-            {
+            if to == Family::RadialCycle && centre.as_deref() != Some(id) && parent != centre {
                 continue;
             }
             let t = tmpl(id);
@@ -80,14 +77,20 @@ pub fn change_layout(
             }
             match to {
                 Family::StepUp => {
-                    shapes.items.push_str(&scratch(id, "rect", NO_FILL, "t", &paras, ""));
+                    shapes
+                        .items
+                        .push_str(&scratch(id, "rect", NO_FILL, "t", &paras, ""));
                     if let Some(par) = model.par.get(id) {
-                        shapes.back.push_str(&scratch(par, "corner", ACCENT, "", "", ""));
+                        shapes
+                            .back
+                            .push_str(&scratch(par, "corner", ACCENT, "", "", ""));
                     }
                 }
                 Family::Venn => {
                     let fill = t.as_ref().and_then(|t| translucent(t));
-                    shapes.items.push_str(&node(&t, id, prst, &paras, fill.as_deref()));
+                    shapes
+                        .items
+                        .push_str(&node(&t, id, prst, &paras, fill.as_deref()));
                 }
                 _ => shapes.items.push_str(&node(&t, id, prst, &paras, None)),
             }
@@ -144,7 +147,8 @@ pub fn change_layout(
 }
 
 const NO_FILL: &str = "<a:noFill/><a:ln><a:noFill/></a:ln>";
-const ACCENT: &str = "<a:solidFill><a:schemeClr val=\"accent1\"/></a:solidFill><a:ln><a:noFill/></a:ln>";
+const ACCENT: &str =
+    "<a:solidFill><a:schemeClr val=\"accent1\"/></a:solidFill><a:ln><a:noFill/></a:ln>";
 
 #[derive(Default)]
 struct Shapes {
@@ -211,7 +215,9 @@ impl<'a> DataModel<'a> {
                 Some("doc") => doc_id = id.to_owned(),
                 None | Some("node" | "asst") => items.push(id.to_owned()),
                 Some("pres") => {
-                    if let Some(a) = child(p, NS_DGM, "prSet").and_then(|s| s.attribute("presAssocID")) {
+                    if let Some(a) =
+                        child(p, NS_DGM, "prSet").and_then(|s| s.attribute("presAssocID"))
+                    {
                         pres.insert(id.to_owned(), a.to_owned());
                     }
                 }
@@ -272,7 +278,12 @@ impl<'a> DataModel<'a> {
 
     /// Every item depth first, with its parent.
     fn walk(&self) -> Vec<(String, Option<String>)> {
-        fn go(m: &DataModel, id: &str, parent: Option<&str>, out: &mut Vec<(String, Option<String>)>) {
+        fn go(
+            m: &DataModel,
+            id: &str,
+            parent: Option<&str>,
+            out: &mut Vec<(String, Option<String>)>,
+        ) {
             if out.len() > 5_000 || out.iter().any(|o| o.0 == id) {
                 return;
             }
@@ -317,7 +328,9 @@ impl<'a> DataModel<'a> {
         let t = tmpl.as_deref().map(Template::of).unwrap_or_default();
         let pt = self.point(id);
         let body = pt.and_then(|p| child(p, NS_DGM, "t"));
-        let ps: Vec<Node> = body.map(|b| children(b, NS_A, "p").collect()).unwrap_or_default();
+        let ps: Vec<Node> = body
+            .map(|b| children(b, NS_A, "p").collect())
+            .unwrap_or_default();
         let text = |p: &Node| -> String {
             p.descendants()
                 .filter(|n| is(*n, NS_A, "t"))
@@ -332,7 +345,9 @@ impl<'a> DataModel<'a> {
             centred_ppr(&t.ppr)
         } else {
             let algn = if lvl == 2 { "ctr" } else { "l" };
-            format!("<a:pPr marL=\"114300\" lvl=\"1\" indent=\"-114300\" algn=\"{algn}\"><a:buChar char=\"•\"/></a:pPr>")
+            format!(
+                "<a:pPr marL=\"114300\" lvl=\"1\" indent=\"-114300\" algn=\"{algn}\"><a:buChar char=\"•\"/></a:pPr>"
+            )
         };
         let own_rpr = |r: Node| -> Option<String> {
             let rpr = child(r, NS_A, "rPr")?;
@@ -349,7 +364,10 @@ impl<'a> DataModel<'a> {
         for p in &ps {
             out.push_str("<a:p>");
             out.push_str(&ppr);
-            for r in p.children().filter(|n| is(*n, NS_A, "r") || is(*n, NS_A, "fld")) {
+            for r in p
+                .children()
+                .filter(|n| is(*n, NS_A, "r") || is(*n, NS_A, "fld"))
+            {
                 let s: String = r
                     .descendants()
                     .filter(|n| is(*n, NS_A, "t"))
@@ -390,10 +408,7 @@ impl<'a> DataModel<'a> {
                 );
                 if tag.ends_with("/>") {
                     let open = format!("{}>", tag.trim_end_matches("/>"));
-                    edits.push((
-                        root.range(),
-                        format!("{open}{ps}</{}>", tag_name(tag)),
-                    ));
+                    edits.push((root.range(), format!("{open}{ps}</{}>", tag_name(tag))));
                 } else {
                     let at = st + tag.len();
                     edits.push((at..at, ps));
@@ -435,7 +450,11 @@ fn centred_ppr(ppr: &str) -> String {
     if tag.contains(" algn=") || tag.contains(" lvl=") {
         return ppr.to_owned();
     }
-    let at = if tag.ends_with("/>") { end - 2 } else { end - 1 };
+    let at = if tag.ends_with("/>") {
+        end - 2
+    } else {
+        end - 1
+    };
     format!("{} algn=\"ctr\"{}", &ppr[..at], &ppr[at..])
 }
 
@@ -506,9 +525,7 @@ impl OldDrawing {
             format!("{root_tag}>")
         };
         let mut shapes = Vec::new();
-        if ok
-            && let Some(tree) = root.children().find(|n| is(*n, NS_DSP, "spTree"))
-        {
+        if ok && let Some(tree) = root.children().find(|n| is(*n, NS_DSP, "spTree")) {
             for n in tree.children().filter(|n| is(*n, NS_DSP, "sp")) {
                 let model = n.attribute("modelId").unwrap_or_default().to_owned();
                 let has_text = n
@@ -626,15 +643,8 @@ impl Template {
 /// style when there's no template.
 fn node(tmpl: &Option<String>, model: &str, prst: &str, paras: &str, fill: Option<&str>) -> String {
     let Some(t) = tmpl else {
-        return scratch(
-            model,
-            prst,
-            fill.unwrap_or(ACCENT),
-            "ctr",
-            paras,
-            "",
-        )
-        .replace("val=\"tx1\"", "val=\"lt1\"");
+        return scratch(model, prst, fill.unwrap_or(ACCENT), "ctr", paras, "")
+            .replace("val=\"tx1\"", "val=\"lt1\"");
     };
     let full = wrap_ns(t);
     let pre = wrap_pre();
@@ -645,7 +655,8 @@ fn node(tmpl: &Option<String>, model: &str, prst: &str, paras: &str, fill: Optio
         return scratch(model, prst, fill.unwrap_or(ACCENT), "ctr", paras, "");
     };
     let at = |r: Range<usize>| r.start - pre..r.end - pre;
-    let mut edits: Vec<(Range<usize>, String)> = vec![set_attrs(&full, sp, &[("modelId", model.to_owned())])];
+    let mut edits: Vec<(Range<usize>, String)> =
+        vec![set_attrs(&full, sp, &[("modelId", model.to_owned())])];
     edits[0].0 = at(edits[0].0.clone());
     let geom = format!("<a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>");
     match child(sp, NS_DSP, "spPr") {
@@ -667,7 +678,14 @@ fn node(tmpl: &Option<String>, model: &str, prst: &str, paras: &str, fill: Optio
                 }
             }
             if let Some(fill) = fill {
-                let fills = ["solidFill", "gradFill", "noFill", "pattFill", "blipFill", "grpFill"];
+                let fills = [
+                    "solidFill",
+                    "gradFill",
+                    "noFill",
+                    "pattFill",
+                    "blipFill",
+                    "grpFill",
+                ];
                 match sppr
                     .children()
                     .find(|c| fills.iter().any(|f| is(*c, NS_A, f)))
@@ -681,8 +699,14 @@ fn node(tmpl: &Option<String>, model: &str, prst: &str, paras: &str, fill: Optio
             }
         }
         None => {
-            let nv = child(sp, NS_DSP, "nvSpPr").map_or(sp.range().start + start_tag(&full, sp).len(), |n| n.range().end);
-            edits.push((at(nv..nv), format!("<dsp:spPr>{PLACE}{geom}{}</dsp:spPr>", fill.unwrap_or(""))));
+            let nv = child(sp, NS_DSP, "nvSpPr")
+                .map_or(sp.range().start + start_tag(&full, sp).len(), |n| {
+                    n.range().end
+                });
+            edits.push((
+                at(nv..nv),
+                format!("<dsp:spPr>{PLACE}{geom}{}</dsp:spPr>", fill.unwrap_or("")),
+            ));
         }
     }
     let body = child(sp, NS_DSP, "txBody");
@@ -690,7 +714,9 @@ fn node(tmpl: &Option<String>, model: &str, prst: &str, paras: &str, fill: Optio
         Some(b) => {
             let ps: Vec<Node> = children(b, NS_A, "p").collect();
             match (ps.first(), ps.last()) {
-                (Some(f), Some(l)) => edits.push((at(f.range().start..l.range().end), paras.to_owned())),
+                (Some(f), Some(l)) => {
+                    edits.push((at(f.range().start..l.range().end), paras.to_owned()))
+                }
                 _ => {
                     let end = b.range().end - format!("</{}>", tag_name(start_tag(&full, b))).len();
                     edits.push((at(end..end), paras.to_owned()));
@@ -782,23 +808,28 @@ fn dark(paras: &str) -> String {
 /// category, and a layout tree for its algorithm (PowerPoint and Word lay
 /// the built-in layouts out by their id).
 pub fn layout_def(f: Family) -> String {
-    const R: &str = "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"";
+    const R: &str =
+        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"";
     let (alg, params) = match f {
         Family::Blocks | Family::Matrix => (
             "snake",
             "<dgm:param type=\"grDir\" val=\"tL\"/><dgm:param type=\"flowDir\" val=\"row\"/><dgm:param type=\"contDir\" val=\"sameDir\"/><dgm:param type=\"off\" val=\"ctr\"/>",
         ),
         Family::Bullets => ("lin", "<dgm:param type=\"linDir\" val=\"fromT\"/>"),
-        Family::HorizontalBullets
-        | Family::Process
-        | Family::ContinuousBlock
-        | Family::StepUp => ("lin", "<dgm:param type=\"linDir\" val=\"fromL\"/>"),
-        Family::Cycle | Family::Venn => ("cycle", "<dgm:param type=\"stAng\" val=\"0\"/><dgm:param type=\"spanAng\" val=\"360\"/>"),
+        Family::HorizontalBullets | Family::Process | Family::ContinuousBlock | Family::StepUp => {
+            ("lin", "<dgm:param type=\"linDir\" val=\"fromL\"/>")
+        }
+        Family::Cycle | Family::Venn => (
+            "cycle",
+            "<dgm:param type=\"stAng\" val=\"0\"/><dgm:param type=\"spanAng\" val=\"360\"/>",
+        ),
         Family::RadialCycle => ("cycle", "<dgm:param type=\"ctrShpMap\" val=\"fNode\"/>"),
         Family::OrgChart | Family::Hierarchy | Family::LabeledHierarchy => {
             ("hierRoot", "<dgm:param type=\"hierAlign\" val=\"tCtrCH\"/>")
         }
-        Family::HorizontalHierarchy => ("hierRoot", "<dgm:param type=\"hierAlign\" val=\"lCtrCV\"/>"),
+        Family::HorizontalHierarchy => {
+            ("hierRoot", "<dgm:param type=\"hierAlign\" val=\"lCtrCV\"/>")
+        }
         Family::Pyramid => ("pyra", "<dgm:param type=\"linDir\" val=\"fromT\"/>"),
     };
     let sib = if f.arrows() {
@@ -832,9 +863,7 @@ mod tests {
     /// A Basic Block List data model: items `names` (with sub-items), a
     /// presentation item per item, and its drawing (a red box per item).
     fn blocks(names: &[(&str, &[&str])]) -> (String, String) {
-        let mut pts = format!(
-            r#"<dgm:pt modelId="D" type="doc"><dgm:prSet loTypeId="urn:microsoft.com/office/officeart/2005/8/layout/default" loCatId="list" qsTypeId="urn:microsoft.com/office/officeart/2005/8/quickstyle/simple1"/></dgm:pt>"#
-        );
+        let mut pts = r#"<dgm:pt modelId="D" type="doc"><dgm:prSet loTypeId="urn:microsoft.com/office/officeart/2005/8/layout/default" loCatId="list" qsTypeId="urn:microsoft.com/office/officeart/2005/8/quickstyle/simple1"/></dgm:pt>"#.to_owned();
         let mut cxns = String::new();
         let mut sps = String::new();
         for (i, (n, subs)) in names.iter().enumerate() {
@@ -907,7 +936,9 @@ mod tests {
         assert!(data2.contains("layout/process1") && data2.contains("loCatId=\"process\""));
         assert!(!data2.contains("type=\"pres\"") && !data2.contains("presOf"));
         assert!(data2.contains("qsTypeId"));
-        assert!(lo.contains("uniqueId=\"urn:microsoft.com/office/officeart/2005/8/layout/process1\""));
+        assert!(
+            lo.contains("uniqueId=\"urn:microsoft.com/office/officeart/2005/8/layout/process1\"")
+        );
         assert_eq!(super::super::family(&d2, &data2), Some(Family::Process));
         let s = shapes(&d2);
         let items: Vec<_> = s.iter().filter(|x| x.0.starts_with('N')).collect();
@@ -952,10 +983,16 @@ mod tests {
                     }
                 }
                 _ if f.sub_boxes() => {
-                    assert!(texts.contains(&"A") && texts.contains(&"a1|a2"), "{f:?} {texts:?}");
+                    assert!(
+                        texts.contains(&"A") && texts.contains(&"a1|a2"),
+                        "{f:?} {texts:?}"
+                    );
                 }
                 _ => {
-                    assert!(texts.contains(&"A|a1|a2") && texts.contains(&"B"), "{f:?} {texts:?}");
+                    assert!(
+                        texts.contains(&"A|a1|a2") && texts.contains(&"B"),
+                        "{f:?} {texts:?}"
+                    );
                 }
             }
             // Laid out again at another size, and items added.
@@ -988,14 +1025,21 @@ mod tests {
         assert!(d2.contains("<a:gd name=\"adj\" fmla=\"val "));
         // Text centred in the levels (the template didn't align it).
         assert_eq!(d2.matches("algn=\"ctr\"").count(), 3, "{d2}");
-        assert_eq!(centred("<a:p><a:pPr marL=\"1\"/><a:r/></a:p>"), "<a:p><a:pPr marL=\"1\" algn=\"ctr\"/><a:r/></a:p>");
-        assert_eq!(centred("<a:p><a:pPr algn=\"r\"><a:buNone/></a:pPr></a:p>"), "<a:p><a:pPr algn=\"r\"><a:buNone/></a:pPr></a:p>");
+        assert_eq!(
+            centred("<a:p><a:pPr marL=\"1\"/><a:r/></a:p>"),
+            "<a:p><a:pPr marL=\"1\" algn=\"ctr\"/><a:r/></a:p>"
+        );
+        assert_eq!(
+            centred("<a:p><a:pPr algn=\"r\"><a:buNone/></a:pPr></a:p>"),
+            "<a:p><a:pPr algn=\"r\"><a:buNone/></a:pPr></a:p>"
+        );
     }
 
     #[test]
     fn bullet_lists_get_sub_item_boxes_linked_to_their_items() {
         let (dr, data) = blocks(&[("North", &["Oslo", "Bergen"]), ("South", &[])]);
-        let (d2, data2, _) = change_layout(&dr, &data, Family::HorizontalBullets, 10_000, 6_000).unwrap();
+        let (d2, data2, _) =
+            change_layout(&dr, &data, Family::HorizontalBullets, 10_000, 6_000).unwrap();
         // One new presentation item, for North's sub-item box.
         assert_eq!(data2.matches("type=\"pres\"").count(), 1);
         assert!(data2.contains("presAssocID=\"N0\" presName=\"childText\""));

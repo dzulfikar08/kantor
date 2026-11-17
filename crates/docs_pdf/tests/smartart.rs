@@ -336,17 +336,15 @@ fn layout_changed_keeping_items() {
         t.sort();
         t
     };
-    let parts =
-        docs_pdf::smartart::change_layout(&doc, &f, slides_engine::SmartArtFamily::Pyramid)
-            .unwrap();
+    let parts = docs_pdf::smartart::change_layout(&doc, &f, slides_engine::SmartArtFamily::Pyramid)
+        .unwrap();
     assert!(doc.set_float_parts(para, index, parts));
     let pyramid = shown(&doc);
     assert_eq!(texts(&pyramid), texts(&before), "{before:?} → {pyramid:?}");
     let f = doc.float_at(para, index).unwrap().clone();
     assert!(docs_pdf::smartart::can_relayout(&doc, &f));
     let parts =
-        docs_pdf::smartart::change_layout(&doc, &f, slides_engine::SmartArtFamily::Matrix)
-            .unwrap();
+        docs_pdf::smartart::change_layout(&doc, &f, slides_engine::SmartArtFamily::Matrix).unwrap();
     assert!(doc.set_float_parts(para, index, parts));
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("layout.docx");

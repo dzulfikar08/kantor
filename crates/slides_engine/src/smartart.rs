@@ -16,9 +16,10 @@
 //! lists, bullet lists, processes, cycles) a resized SmartArt is laid out
 //! again and items can be added and removed; the new drawing and data
 //! model are kept on the frame ([`DiagramDrawing`]'s `data_xml`,
-//! `rebuilt`) and saved. Other layouts and layout changes need PowerPoint's
-//! layout engine; *Convert to Shapes* turns the drawing into a group of
-//! ordinary shapes.
+//! `rebuilt`) and saved. *Change Layout* draws any SmartArt again in one of
+//! those layouts (with a layout definition for the layout part, kept as
+//! `layout_xml`); other layouts are scaled. *Convert to Shapes* turns the
+//! drawing into a group of ordinary shapes.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;

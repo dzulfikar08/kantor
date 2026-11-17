@@ -487,7 +487,8 @@ fn layouts_change_keeping_items_and_text() {
     // The process (Plan, Build, Ship) becomes a pyramid, then a Venn.
     let f = frame(&p, 2);
     let before = drawn(&p, f);
-    p.smartart_change_layout(f, SmartArtFamily::Pyramid).unwrap();
+    p.smartart_change_layout(f, SmartArtFamily::Pyramid)
+        .unwrap();
     assert_eq!(p.smartart_family(f), Some(SmartArtFamily::Pyramid));
     let d = items(&p, f);
     assert_eq!(d.len(), 3, "{d:?}");
@@ -532,7 +533,10 @@ fn layouts_change_keeping_items_and_text() {
         std::fs::write(out, &bytes).unwrap();
     }
     let back = Presentation::from_bytes(bytes).unwrap();
-    assert_eq!(back.smartart_family(frame(&back, 5)), Some(SmartArtFamily::RadialCycle));
+    assert_eq!(
+        back.smartart_family(frame(&back, 5)),
+        Some(SmartArtFamily::RadialCycle)
+    );
     assert_eq!(items(&back, frame(&back, 5)), r);
     assert_eq!(drawn(&back, frame(&back, 4)).len(), 3);
 }

@@ -3,11 +3,16 @@
 //! removed: Basic Block List (`layout/default`, PowerPoint's `snake`
 //! algorithm), Vertical Bullet List (`layout/vList2`, `lin` with `tx`
 //! children), Basic Process (`layout/process1`, `lin` with arrows) and
-//! Basic Cycle (`layout/cycle2`, `cycle`); and the hierarchies
-//! Organization Chart, Hierarchy, Horizontal Hierarchy and Labeled
-//! Hierarchy (child module `tree`). The family comes from the data model's document item
-//! (`dgm:prSet/@loTypeId`); other layouts keep PowerPoint's drawing and are
-//! scaled.
+//! Basic Cycle (`layout/cycle2`, `cycle`); Horizontal Bullet List,
+//! Continuous Block Process (its arrow drawn for the document item), Step
+//! Up Process (a step drawn for each item's parent transition), Basic
+//! Venn, Basic Matrix and Basic Pyramid (trapezoids, adjusted to the
+//! triangle); and the hierarchies Organization Chart, Hierarchy,
+//! Horizontal Hierarchy, Labeled Hierarchy and Radial Cycle (child module
+//! `tree`). The family comes from the data model's document item
+//! (`dgm:prSet/@loTypeId`, [`LAYOUTS`]); other layouts keep PowerPoint's
+//! drawing and are scaled. Changing a SmartArt's layout: child module
+//! `convert`.
 //!
 //! Everything here works on the parts' XML: the data model (items in
 //! order, their sibling transitions and presentation items) and the
@@ -74,21 +79,96 @@ pub enum Family {
 /// category (`loCatId`, PowerPoint's gallery groups) and name, in gallery
 /// order.
 pub const LAYOUTS: &[(Family, &str, &str, &str)] = &[
-    (Family::Blocks, "urn:microsoft.com/office/officeart/2005/8/layout/default", "list", "Basic Block List"),
-    (Family::Bullets, "urn:microsoft.com/office/officeart/2005/8/layout/vList2", "list", "Vertical Bullet List"),
-    (Family::HorizontalBullets, "urn:microsoft.com/office/officeart/2005/8/layout/hList1", "list", "Horizontal Bullet List"),
-    (Family::Process, "urn:microsoft.com/office/officeart/2005/8/layout/process1", "process", "Basic Process"),
-    (Family::ContinuousBlock, "urn:microsoft.com/office/officeart/2005/8/layout/hProcess9", "process", "Continuous Block Process"),
-    (Family::StepUp, "urn:microsoft.com/office/officeart/2009/3/layout/StepUpProcess", "process", "Step Up Process"),
-    (Family::Cycle, "urn:microsoft.com/office/officeart/2005/8/layout/cycle2", "cycle", "Basic Cycle"),
-    (Family::RadialCycle, "urn:microsoft.com/office/officeart/2005/8/layout/radial6", "cycle", "Radial Cycle"),
-    (Family::OrgChart, "urn:microsoft.com/office/officeart/2005/8/layout/orgChart1", "hierarchy", "Organization Chart"),
-    (Family::Hierarchy, "urn:microsoft.com/office/officeart/2005/8/layout/hierarchy1", "hierarchy", "Hierarchy"),
-    (Family::HorizontalHierarchy, "urn:microsoft.com/office/officeart/2005/8/layout/hierarchy2", "hierarchy", "Horizontal Hierarchy"),
-    (Family::LabeledHierarchy, "urn:microsoft.com/office/officeart/2005/8/layout/hierarchy6", "hierarchy", "Labeled Hierarchy"),
-    (Family::Venn, "urn:microsoft.com/office/officeart/2005/8/layout/venn1", "relationship", "Basic Venn"),
-    (Family::Matrix, "urn:microsoft.com/office/officeart/2005/8/layout/matrix3", "matrix", "Basic Matrix"),
-    (Family::Pyramid, "urn:microsoft.com/office/officeart/2005/8/layout/pyramid1", "pyramid", "Basic Pyramid"),
+    (
+        Family::Blocks,
+        "urn:microsoft.com/office/officeart/2005/8/layout/default",
+        "list",
+        "Basic Block List",
+    ),
+    (
+        Family::Bullets,
+        "urn:microsoft.com/office/officeart/2005/8/layout/vList2",
+        "list",
+        "Vertical Bullet List",
+    ),
+    (
+        Family::HorizontalBullets,
+        "urn:microsoft.com/office/officeart/2005/8/layout/hList1",
+        "list",
+        "Horizontal Bullet List",
+    ),
+    (
+        Family::Process,
+        "urn:microsoft.com/office/officeart/2005/8/layout/process1",
+        "process",
+        "Basic Process",
+    ),
+    (
+        Family::ContinuousBlock,
+        "urn:microsoft.com/office/officeart/2005/8/layout/hProcess9",
+        "process",
+        "Continuous Block Process",
+    ),
+    (
+        Family::StepUp,
+        "urn:microsoft.com/office/officeart/2009/3/layout/StepUpProcess",
+        "process",
+        "Step Up Process",
+    ),
+    (
+        Family::Cycle,
+        "urn:microsoft.com/office/officeart/2005/8/layout/cycle2",
+        "cycle",
+        "Basic Cycle",
+    ),
+    (
+        Family::RadialCycle,
+        "urn:microsoft.com/office/officeart/2005/8/layout/radial6",
+        "cycle",
+        "Radial Cycle",
+    ),
+    (
+        Family::OrgChart,
+        "urn:microsoft.com/office/officeart/2005/8/layout/orgChart1",
+        "hierarchy",
+        "Organization Chart",
+    ),
+    (
+        Family::Hierarchy,
+        "urn:microsoft.com/office/officeart/2005/8/layout/hierarchy1",
+        "hierarchy",
+        "Hierarchy",
+    ),
+    (
+        Family::HorizontalHierarchy,
+        "urn:microsoft.com/office/officeart/2005/8/layout/hierarchy2",
+        "hierarchy",
+        "Horizontal Hierarchy",
+    ),
+    (
+        Family::LabeledHierarchy,
+        "urn:microsoft.com/office/officeart/2005/8/layout/hierarchy6",
+        "hierarchy",
+        "Labeled Hierarchy",
+    ),
+    (
+        Family::Venn,
+        "urn:microsoft.com/office/officeart/2005/8/layout/venn1",
+        "relationship",
+        "Basic Venn",
+    ),
+    (
+        Family::Matrix,
+        "urn:microsoft.com/office/officeart/2005/8/layout/matrix3",
+        "matrix",
+        "Basic Matrix",
+    ),
+    (
+        Family::Pyramid,
+        "urn:microsoft.com/office/officeart/2005/8/layout/pyramid1",
+        "pyramid",
+        "Basic Pyramid",
+    ),
 ];
 
 impl Family {
@@ -905,7 +985,8 @@ pub fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<Str
     let (mut arrows, mut steps) = (String::new(), String::new());
     type Want = fn(&Boxes) -> Option<Xfrm>;
     type Model = fn(&Item) -> Option<&str>;
-    let kinds: [(fn(Role) -> bool, &[bool], Want, Model, bool); 2] = [
+    type Kind<'a> = (fn(Role) -> bool, &'a [bool], Want, Model, bool);
+    let kinds: [Kind; 2] = [
         (
             |r| matches!(r, Role::Arrow(_)),
             &arrow_drawn,
@@ -980,7 +1061,10 @@ fn set_geom_adj(xml: &str, adj: &[(&str, i64)]) -> String {
     };
     let a = prefix_of(start_tag(&full, g));
     let r = g.range();
-    apply(xml, vec![(r.start - pre..r.end - pre, prst_geom(&a, prst, adj))])
+    apply(
+        xml,
+        vec![(r.start - pre..r.end - pre, prst_geom(&a, prst, adj))],
+    )
 }
 
 /// The DrawingML prefix (with its colon) of element source `src`.

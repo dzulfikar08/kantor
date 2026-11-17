@@ -30,9 +30,7 @@ pub(crate) const ENGINE_MESSAGES: &[&str] = &[
         "The top of this Labeled Hierarchy can't be deleted while it has several shapes under it",
     ),
     i18n::tk("The centre of a Radial Cycle has no shapes beside or above it: add shapes below it"),
-    i18n::tk(
-        "A Radial Cycle has two levels: add shapes before or after the ones round the centre",
-    ),
+    i18n::tk("A Radial Cycle has two levels: add shapes before or after the ones round the centre"),
     i18n::tk("The centre of this Radial Cycle can't be deleted while it has shapes round it"),
     i18n::tk("This SmartArt has no layout part to change"),
 ];
@@ -260,10 +258,9 @@ pub(crate) fn menu_items(
         return menu;
     };
     let v = v.read(cx);
-    let layouts = v.can_change_smartart_layout().then(|| {
-        v.sel_ref()
-            .and_then(|r| v.pres.smartart_family(r))
-    });
+    let layouts = v
+        .can_change_smartart_layout()
+        .then(|| v.sel_ref().and_then(|r| v.pres.smartart_family(r)));
     type Run = fn(&mut SlidesView, &mut Window, &mut Context<SlidesView>);
     let items: [(bool, &str, Box<dyn Action>, Run); 8] = [
         (
