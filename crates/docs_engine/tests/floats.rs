@@ -386,7 +386,7 @@ fn smartart_parts_are_read_and_edited_parts_saved() {
         .into_iter()
         .find(|f| f.2.name == "Diagram 1")
         .unwrap();
-    let FloatKind::SmartArt { data, drawings } = &f.kind else {
+    let FloatKind::SmartArt { data, drawings, .. } = &f.kind else {
         panic!("{:?}", f.kind)
     };
     assert_eq!(data, "word/diagrams/data1.xml");

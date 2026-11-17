@@ -7,7 +7,7 @@
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::*;
 use kantor_ui::i18n;
-use slides_engine::{AddPlace, Inner, ShapeRef};
+use slides_engine::{AddPlace, Inner, ShapeRef, SmartArtFamily};
 
 use crate::SlidesView;
 
@@ -16,7 +16,7 @@ use crate::SlidesView;
 #[allow(dead_code)] // keys for the catalog scanner (shown through `report`)
 pub(crate) const ENGINE_MESSAGES: &[&str] = &[
     i18n::tk(
-        "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes, cycles and hierarchies",
+        "Kantor can't lay out this SmartArt layout yet: choose another layout with Change Layout to add or remove items",
     ),
     i18n::tk("This SmartArt layout has one level: add shapes before or after"),
     i18n::tk("A SmartArt keeps at least one item"),
@@ -29,6 +29,43 @@ pub(crate) const ENGINE_MESSAGES: &[&str] = &[
     i18n::tk(
         "The top of this Labeled Hierarchy can't be deleted while it has several shapes under it",
     ),
+    i18n::tk("The centre of a Radial Cycle has no shapes beside or above it: add shapes below it"),
+    i18n::tk(
+        "A Radial Cycle has two levels: add shapes before or after the ones round the centre",
+    ),
+    i18n::tk("The centre of this Radial Cycle can't be deleted while it has shapes round it"),
+    i18n::tk("This SmartArt has no layout part to change"),
+];
+
+/// The SmartArt layouts gallery (PowerPoint's *Change Layout*): category
+/// headings and layouts, in `slides_engine::smartart_layout::LAYOUTS`
+/// order, with their names for the catalog.
+pub(crate) const LAYOUT_NAMES: &[(&str, &str)] = &[
+    ("list", i18n::tk("List")),
+    ("process", i18n::tk("Process")),
+    ("cycle", i18n::tk("Cycle")),
+    ("hierarchy", i18n::tk("Hierarchy")),
+    ("relationship", i18n::tk("Relationship")),
+    ("matrix", i18n::tk("Matrix")),
+    ("pyramid", i18n::tk("Pyramid")),
+];
+
+#[allow(dead_code)] // keys for the catalog scanner (shown with `t_dyn`)
+const LAYOUT_LABELS: &[&str] = &[
+    i18n::tk("Basic Block List"),
+    i18n::tk("Vertical Bullet List"),
+    i18n::tk("Horizontal Bullet List"),
+    i18n::tk("Basic Process"),
+    i18n::tk("Continuous Block Process"),
+    i18n::tk("Step Up Process"),
+    i18n::tk("Basic Cycle"),
+    i18n::tk("Radial Cycle"),
+    i18n::tk("Organization Chart"),
+    i18n::tk("Horizontal Hierarchy"),
+    i18n::tk("Labeled Hierarchy"),
+    i18n::tk("Basic Venn"),
+    i18n::tk("Basic Matrix"),
+    i18n::tk("Basic Pyramid"),
 ];
 
 impl SlidesView {
@@ -82,6 +119,37 @@ impl SlidesView {
                 .sel_ref()
                 .and_then(|r| self.pres.smartart_family(r))
                 .is_some_and(|f| f.is_tree())
+    }
+
+    /// Whether Change Layout applies: a SmartArt (or one of its shapes)
+    /// selected.
+    pub fn can_change_smartart_layout(&self) -> bool {
+        self.also.is_empty()
+            && self.editing.is_none()
+            && self.sel_ref().is_some_and(|r| {
+                self.pres.in_smartart(r)
+                    || self.pres.shape(r).is_some_and(|s| s.smartart().is_some())
+            })
+    }
+
+    /// PowerPoint's Change Layout on the selected SmartArt: its items in
+    /// layout `to`; the SmartArt stays selected.
+    pub fn smartart_layout_doc(
+        &mut self,
+        to: SmartArtFamily,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(r) = self.sel_ref() else {
+            self.set_status(i18n::t("Select a SmartArt shape"), cx);
+            return;
+        };
+        let frame = if r.is_top() { r } else { r.parent() };
+        let res = self.pres.smartart_change_layout(r, to);
+        if self.report(res, cx).is_some() {
+            self.select_at(Some(frame), cx);
+            self.after_edit(window, cx);
+        }
     }
 
     /// PowerPoint's Add Shape After / Before / Above / Below on the
@@ -185,12 +253,17 @@ impl SlidesView {
 pub(crate) fn menu_items(
     mut menu: PopupMenu,
     view: &WeakEntity<SlidesView>,
+    window: &mut Window,
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
     let Some(v) = view.upgrade() else {
         return menu;
     };
     let v = v.read(cx);
+    let layouts = v.can_change_smartart_layout().then(|| {
+        v.sel_ref()
+            .and_then(|r| v.pres.smartart_family(r))
+    });
     type Run = fn(&mut SlidesView, &mut Window, &mut Context<SlidesView>);
     let items: [(bool, &str, Box<dyn Action>, Run); 8] = [
         (
@@ -243,10 +316,16 @@ pub(crate) fn menu_items(
         ),
     ];
     let shown: Vec<_> = items.into_iter().filter(|i| i.0).collect();
-    if shown.is_empty() {
+    if shown.is_empty() && layouts.is_none() {
         return menu;
     }
     menu = menu.separator();
+    if let Some(current) = layouts {
+        let v = view.clone();
+        menu = menu.submenu(i18n::t("Change Layout"), window, cx, move |m, _, _| {
+            layout_menu(m, &v, current)
+        });
+    }
     for (_, label, action, run) in shown {
         let v = view.clone();
         menu = menu.item(PopupMenuItem::new(label).action(action).on_click(
@@ -254,6 +333,37 @@ pub(crate) fn menu_items(
                 let _ = v.update(cx, |v, cx| run(v, window, cx));
             },
         ));
+    }
+    menu
+}
+
+/// The Change Layout submenu: the layouts by category, the current one
+/// checked.
+fn layout_menu(
+    mut menu: PopupMenu,
+    view: &WeakEntity<SlidesView>,
+    current: Option<SmartArtFamily>,
+) -> PopupMenu {
+    for (cat, heading) in LAYOUT_NAMES {
+        let mine: Vec<_> = slides_engine::smartart_layout::LAYOUTS
+            .iter()
+            .filter(|l| l.2 == *cat)
+            .collect();
+        if mine.is_empty() {
+            continue;
+        }
+        menu = menu.item(PopupMenuItem::label(i18n::t_dyn(heading)));
+        for (family, _, _, name) in mine {
+            let v = view.clone();
+            let f = *family;
+            menu = menu.item(
+                PopupMenuItem::new(i18n::t_dyn(name))
+                    .checked(current == Some(f))
+                    .on_click(move |_, window, cx| {
+                        let _ = v.update(cx, |v, cx| v.smartart_layout_doc(f, window, cx));
+                    }),
+            );
+        }
     }
     menu
 }

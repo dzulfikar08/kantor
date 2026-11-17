@@ -1045,3 +1045,183 @@ fn binary_caches_are_read_when_compressed_xml() {
         texts(&m)
     );
 }
+
+fn chart_3d(group: &str, view: &str, axes: &str) -> String {
+    space(
+        &format!("{group}{axes}"),
+        &format!(r#"<c:autoTitleDeleted val="1"/><c:view3D>{view}</c:view3D><c:floor><c:spPr><a:solidFill><a:srgbClr val="ABCDEF"/></a:solidFill></c:spPr></c:floor>"#),
+    )
+}
+
+const AXES_3D: &str = r#"<c:catAx><c:axId val="1"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="2"/></c:catAx><c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:crossAx val="1"/></c:valAx><c:serAx><c:axId val="3"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="2"/></c:serAx>"#;
+
+/// Fills of colour `c` (any shade of it) as polygons' bounds.
+fn shades_of(m: &[Mark], c: Rgb) -> Vec<[f32; 4]> {
+    solid_boxes(m)
+        .into_iter()
+        .filter(|(x, _)| x.0[1] == x.0[2] && (x.0[0] > x.0[1]) == (c.0[0] > 0))
+        .filter(|(x, _)| x.0[0] != x.0[1] || c.0[0] == 0)
+        .map(|(_, b)| b)
+        .collect()
+}
+
+#[test]
+fn columns_3d_are_boxes_with_lit_tops_on_a_floor() {
+    let xml = chart_3d(
+        &format!(
+            r#"<c:bar3DChart><c:barDir val="col"/><c:grouping val="standard"/><c:varyColors val="0"/>{}{}<c:gapWidth val="150"/><c:gapDepth val="150"/><c:shape val="box"/><c:axId val="1"/><c:axId val="2"/><c:axId val="3"/></c:bar3DChart>"#,
+            ser(0, "First", &CATS, &[10.0, 20.0, 30.0], ""),
+            ser(1, "Second", &CATS, &[5.0, 8.0, 15.0], ""),
+        ),
+        r#"<c:rotX val="15"/><c:rotY val="20"/><c:depthPercent val="100"/><c:rAngAx val="0"/><c:perspective val="30"/>"#,
+        AXES_3D,
+    );
+    let chart = parse(&xml);
+    let v = chart.view3d.as_ref().unwrap();
+    assert_eq!(v.kind, Kind3D::Bar);
+    assert!(v.series_depth && !v.r_ang_ax);
+    let m = marks(&xml, 600.0, 400.0);
+    // The floor in its colour.
+    assert!(solid_boxes(&m).iter().any(|b| b.0 == Rgb([0xAB, 0xCD, 0xEF])));
+    // Six faces per column: the series' colour and lighter and darker
+    // shades of it.
+    let first: Vec<Rgb> = solid_boxes(&m)
+        .into_iter()
+        .map(|b| b.0)
+        .filter(|c| c.0[1] == c.0[2] && c.0[0] != c.0[1])
+        .collect();
+    assert!(first.len() >= 6 * 6, "{}", first.len());
+    assert!(first.iter().any(|c| c.0[1] > 0), "a lit top");
+    // Labels: categories, values and the series axis' names.
+    for t in ["Alpha", "Gamma", "0", "30", "First", "Second"] {
+        assert!(texts(&m).contains(&t.to_owned()), "{t} in {:?}", texts(&m));
+    }
+    // Everything inside the frame.
+    for (_, b) in solid_boxes(&m) {
+        assert!(b[0] >= -0.5 && b[1] >= -0.5 && b[2] <= 600.5 && b[3] <= 400.5, "{b:?}");
+    }
+    let _ = shades_of;
+}
+
+#[test]
+fn turning_the_view_moves_the_depth_the_other_way() {
+    let make = |rot_y: u32| {
+        chart_3d(
+            &format!(
+                r#"<c:bar3DChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>{}<c:gapWidth val="150"/><c:axId val="1"/><c:axId val="2"/><c:axId val="3"/></c:bar3DChart>"#,
+                ser(0, "First", &CATS, &[10.0, 20.0, 30.0], ""),
+            ),
+            &format!(r#"<c:rotX val="20"/><c:rotY val="{rot_y}"/><c:rAngAx val="0"/>"#),
+            AXES_3D,
+        )
+    };
+    // The floor's far edge is to the right seen from the right (rotY 30),
+    // to the left from the left (rotY 330).
+    let floor = |xml: &str| {
+        solid_boxes(&marks(xml, 600.0, 400.0))
+            .into_iter()
+            .find(|b| b.0 == Rgb([0xAB, 0xCD, 0xEF]))
+            .unwrap()
+            .1
+    };
+    let (r, l) = (floor(&make(30)), floor(&make(330)));
+    assert!((r[0] + r[2]) / 2.0 > 0.0 && (l[0] + l[2]) / 2.0 > 0.0);
+    assert_ne!(r, l);
+}
+
+#[test]
+fn pie_3d_is_tilted_with_an_edge() {
+    let xml = chart_3d(
+        &format!(
+            r#"<c:pie3DChart><c:varyColors val="1"/>{}</c:pie3DChart>"#,
+            ser(0, "First", &CATS, &[10.0, 20.0, 30.0], ""),
+        ),
+        r#"<c:rotX val="30"/><c:rotY val="0"/><c:rAngAx val="0"/>"#,
+        "",
+    );
+    let m = marks(&xml, 600.0, 400.0);
+    let tops: Vec<[f32; 4]> = [A1, A2, Rgb([0x33, 0, 0])]
+        .iter()
+        .flat_map(|c| drawn(&solid_boxes(&m), *c))
+        .collect();
+    assert_eq!(tops.len(), 3, "{tops:?}");
+    // Wider than tall: tilted.
+    let x0 = tops.iter().map(|b| b[0]).fold(f32::MAX, f32::min);
+    let x1 = tops.iter().map(|b| b[2]).fold(f32::MIN, f32::max);
+    let y0 = tops.iter().map(|b| b[1]).fold(f32::MAX, f32::min);
+    let y1 = tops.iter().map(|b| b[3]).fold(f32::MIN, f32::max);
+    assert!(x1 - x0 > 1.5 * (y1 - y0), "{tops:?}");
+    // The edge: darker shades below.
+    assert!(solid_boxes(&m).iter().any(|b| b.0.0[0] < 0x11 && b.0.0[0] > 0));
+}
+
+#[test]
+fn lines_areas_and_surfaces_3d_are_drawn() {
+    for (tag, extra) in [
+        ("line3DChart", r#"<c:grouping val="standard"/>"#),
+        ("area3DChart", r#"<c:grouping val="standard"/>"#),
+        ("area3DChart", r#"<c:grouping val="stacked"/>"#),
+        ("surface3DChart", r#"<c:wireframe val="0"/>"#),
+        ("bar3DChart", r#"<c:barDir val="bar"/><c:grouping val="stacked"/><c:overlap val="100"/>"#),
+    ] {
+        let xml = chart_3d(
+            &format!(
+                r#"<c:{tag}>{extra}<c:varyColors val="0"/>{}{}<c:axId val="1"/><c:axId val="2"/><c:axId val="3"/></c:{tag}>"#,
+                ser(0, "First", &CATS, &[10.0, 20.0, 30.0], ""),
+                ser(1, "Second", &CATS, &[5.0, 8.0, 15.0], ""),
+            ),
+            r#"<c:rotX val="15"/><c:rotY val="20"/><c:rAngAx val="1"/>"#,
+            AXES_3D,
+        );
+        let m = marks(&xml, 600.0, 400.0);
+        let fills = solid_boxes(&m).len();
+        assert!(fills > 8, "{tag}: {fills}");
+        assert!(texts(&m).contains(&"Beta".to_owned()), "{tag}: {:?}", texts(&m));
+    }
+}
+
+#[test]
+fn date_axes_space_categories_by_date() {
+    // 1, 2 and 6 January 2025 on a date axis (days): the third column
+    // sits five days from the first, not one category.
+    let dates = [45_658.0, 45_659.0, 45_663.0];
+    let pts: String = dates
+        .iter()
+        .enumerate()
+        .map(|(i, v)| format!(r#"<c:pt idx="{i}"><c:v>{v}</c:v></c:pt>"#))
+        .collect();
+    let cat = format!(
+        r#"<c:cat><c:numRef><c:f>S!A2:A4</c:f><c:numCache><c:formatCode>d-mmm</c:formatCode><c:ptCount val="3"/>{pts}</c:numCache></c:numRef></c:cat>"#
+    );
+    let series = format!(
+        r#"<c:ser><c:idx val="0"/><c:order val="0"/>{cat}{}</c:ser>"#,
+        nums("val", &[1.0, 2.0, 3.0], "General")
+    );
+    let axes = |base: &str| {
+        format!(
+            r#"<c:dateAx><c:axId val="1"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:numFmt formatCode="d-mmm" sourceLinked="1"/><c:crossAx val="2"/>{base}</c:dateAx><c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:crossAx val="1"/></c:valAx>"#
+        )
+    };
+    let chart = |base: &str| {
+        space(
+            &format!(
+                r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>{series}<c:axId val="1"/><c:axId val="2"/></c:barChart>{}"#,
+                axes(base)
+            ),
+            r#"<c:autoTitleDeleted val="1"/>"#,
+        )
+    };
+    let m = marks(&chart(r#"<c:baseTimeUnit val="days"/>"#), 600.0, 400.0);
+    let b = drawn(&solid_boxes(&m), A1);
+    assert_eq!(b.len(), 3, "{b:?}");
+    let mid = |r: &[f32; 4]| (r[0] + r[2]) / 2.0;
+    let step = mid(&b[1]) - mid(&b[0]);
+    assert!(((mid(&b[2]) - mid(&b[0])) / step - 5.0).abs() < 0.01, "{b:?}");
+    // A label per day, the missing days too.
+    assert!(texts(&m).contains(&"4-Jan".to_owned()), "{:?}", texts(&m));
+    // Months as the base unit: all in one place.
+    let m = marks(&chart(r#"<c:baseTimeUnit val="months"/>"#), 600.0, 400.0);
+    let b = drawn(&solid_boxes(&m), A1);
+    assert!(b.iter().all(|r| (mid(r) - mid(&b[0])).abs() < 0.01), "{b:?}");
+    assert!(texts(&m).contains(&"1-Jan".to_owned()), "{:?}", texts(&m));
+}

@@ -254,7 +254,7 @@ fn view(data: &str) -> anyhow::Result<View> {
     })
 }
 
-pub const LAYOUT_REFUSAL: &str = "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes, cycles and hierarchies";
+pub const LAYOUT_REFUSAL: &str = "Kantor can't lay out this SmartArt layout yet: choose another layout with Change Layout to add or remove items";
 
 /// The family of a SmartArt (drawing and data model XML), if Kantor lays
 /// it out: a known layout whose items each have one shape (and, in a
