@@ -25,6 +25,7 @@ krilla = { version = "0.8", default-features = false, features = ["raster-images
 flate2 = "1"
 
 [dev-dependencies]
+kantor_ooxml.workspace = true
 # Builds .docx fixtures.
 zip.workspace = true
 # Fixed dates for updating fields.

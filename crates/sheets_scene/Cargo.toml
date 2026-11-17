@@ -16,6 +16,7 @@ slides_engine.workspace = true
 slides_scene.workspace = true
 
 [dev-dependencies]
+kantor_ooxml.workspace = true
 tempfile.workspace = true
 
 [lints]

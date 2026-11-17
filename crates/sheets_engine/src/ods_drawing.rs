@@ -26,8 +26,8 @@
 //!   `draw:polygon`, `draw:polyline`, `draw:regular-polygon`) as their path
 //!   (`a:custGeom`; arcs become lines), callouts (`draw:caption`), shapes
 //!   inside hyperlinks (`draw:a`) and dimension lines (`draw:measure`, as
-//!   lines). Groups (`draw:g`) stay groups (`xdr:grpSp`; charts inside them
-//!   are left out). Form controls (`draw:control` with their
+//!   lines). Groups (`draw:g`) stay groups (`xdr:grpSp`, charts inside them
+//!   too). Form controls (`draw:control` with their
 //!   `office:forms` element) are drawn the way Excel draws its form
 //!   controls (a button, a check box with its label, a list box with its
 //!   value...), not run. An embedded object that isn't a chart shows its
@@ -219,6 +219,7 @@ struct StyleSet<'a, 'i> {
     defaults: HashMap<&'a str, Node<'a, 'i>>,
     markers: HashMap<&'a str, Node<'a, 'i>>,
     gradients: HashMap<&'a str, Node<'a, 'i>>,
+    hatches: HashMap<&'a str, Node<'a, 'i>>,
 }
 
 impl<'a, 'i> StyleSet<'a, 'i> {
@@ -228,6 +229,7 @@ impl<'a, 'i> StyleSet<'a, 'i> {
             defaults: HashMap::new(),
             markers: HashMap::new(),
             gradients: HashMap::new(),
+            hatches: HashMap::new(),
         };
         for doc in docs {
             for n in doc.descendants().filter(|n| n.is_element()) {
@@ -254,6 +256,11 @@ impl<'a, 'i> StyleSet<'a, 'i> {
                     (Some(NS_DRAW), "gradient") => {
                         if let Some(name) = n.attribute((NS_DRAW, "name")) {
                             set.gradients.insert(name, n);
+                        }
+                    }
+                    (Some(NS_DRAW), "hatch") => {
+                        if let Some(name) = n.attribute((NS_DRAW, "name")) {
+                            set.hatches.insert(name, n);
                         }
                     }
                     _ => {}
@@ -491,7 +498,7 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
         out: &mut Vec<Object>,
         top: bool,
     ) {
-        let Some(item) = self.member(n, false) else {
+        let Some(item) = self.member(n) else {
             return;
         };
         let [ix, iy, w, h] = item.rect;
@@ -540,9 +547,8 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
 
     /// One drawing element as an object with its box (`[x, y, w, h]` px,
     /// in its table's or cell's coordinates); `None` when it's left out
-    /// (counted in `skipped`). `inner`: inside a group, where charts aren't
-    /// drawn.
-    fn member(&mut self, n: Node<'a, 'i>, inner: bool) -> Option<Item> {
+    /// (counted in `skipped`).
+    fn member(&mut self, n: Node<'a, 'i>) -> Option<Item> {
         let tag = n.tag_name();
         if tag.namespace() != Some(NS_DRAW) {
             return None;
@@ -552,7 +558,7 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
             let c = n
                 .children()
                 .find(|c| c.is_element() && c.tag_name().namespace() == Some(NS_DRAW))?;
-            return self.member(c, inner);
+            return self.member(c);
         }
         let name = n.attribute((NS_DRAW, "name")).map(str::to_owned);
         let descr = n
@@ -571,7 +577,7 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
             let members: Vec<Item> = n
                 .children()
                 .filter(|c| c.is_element())
-                .filter_map(|c| self.member(c, true))
+                .filter_map(|c| self.member(c))
                 .collect();
             if members.is_empty() {
                 return None;
@@ -630,10 +636,6 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
             }
         };
         let (kind, (w, h)) = kind?;
-        if inner && matches!(kind, ObjectKind::Chart(_)) {
-            self.out.skipped.charts += 1;
-            return None;
-        }
         Some(Item {
             kind,
             rect: [place.x, place.y, w, h],
@@ -791,7 +793,33 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
                     None => Fill::None,
                 }
             }
-            // Bitmaps and hatches: their colour, if any.
+            // Hatches: the DrawingML pattern nearest to them (as
+            // LibreOffice writes Office's patterns), over the fill colour
+            // when the hatch has a solid background.
+            Some("hatch") => {
+                let hatch =
+                    g(NS_DRAW, "fill-hatch-name").and_then(|name| self.styles.hatches.get(name));
+                let bg = (g(NS_DRAW, "fill-hatch-solid") == Some("true"))
+                    .then(|| g(NS_DRAW, "fill-color").and_then(rgb))
+                    .flatten();
+                match hatch {
+                    Some(h) => Fill::Pattern {
+                        prst: hatch_preset(
+                            h.attribute((NS_DRAW, "style")).unwrap_or("single"),
+                            h.attribute((NS_DRAW, "rotation"))
+                                .and_then(angle_degrees)
+                                .unwrap_or(0.0),
+                            h.attribute((NS_DRAW, "distance"))
+                                .and_then(px)
+                                .unwrap_or(4.0),
+                        ),
+                        fg: h.attribute((NS_DRAW, "color")).and_then(rgb).unwrap_or(0),
+                        bg,
+                    },
+                    None => bg.map_or(Fill::None, Fill::Solid),
+                }
+            }
+            // Bitmaps: their colour, if any.
             Some(_) => g(NS_DRAW, "fill-color")
                 .and_then(rgb)
                 .map_or(Fill::None, Fill::Solid),
@@ -1316,6 +1344,46 @@ enum Fill {
     /// Start and end colours and the ODF angle (degrees anticlockwise from
     /// a top-to-bottom blend).
     Gradient(u32, u32, f64),
+    /// A DrawingML pattern preset in a foreground colour, over a
+    /// background colour (`None`: see-through).
+    Pattern {
+        prst: &'static str,
+        fg: u32,
+        bg: Option<u32>,
+    },
+}
+
+/// The DrawingML pattern nearest to an ODF hatch: `style` (`single`,
+/// `double`, `triple`), its lines' angle (degrees anticlockwise from
+/// horizontal) and their distance (px). Close lines give the dark or
+/// narrow presets, wide ones the plain ones.
+pub(crate) fn hatch_preset(style: &str, degrees: f64, distance: f64) -> &'static str {
+    let a = degrees.rem_euclid(180.0);
+    // 0: horizontal, 1: rising (/), 2: vertical, 3: falling (\).
+    let dir = ((a + 22.5) / 45.0).floor() as i64 % 4;
+    let close = distance <= 2.5;
+    let mid = distance <= 5.0;
+    match style {
+        "double" | "triple" => match dir {
+            0 | 2 if close || mid => "smGrid",
+            0 | 2 => "lgGrid",
+            _ => "diagCross",
+        },
+        _ => match (dir, close, mid) {
+            (0, true, _) => "narHorz",
+            (0, _, true) => "ltHorz",
+            (0, ..) => "horz",
+            (2, true, _) => "narVert",
+            (2, _, true) => "ltVert",
+            (2, ..) => "vert",
+            (1, true, _) => "dkUpDiag",
+            (1, _, true) => "ltUpDiag",
+            (1, ..) => "upDiag",
+            (_, true, _) => "dkDnDiag",
+            (_, _, true) => "ltDnDiag",
+            _ => "dnDiag",
+        },
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1394,6 +1462,18 @@ fn solid(c: u32) -> String {
 }
 
 impl Shape {
+    /// The shape filled with pattern `prst` (a filled shape only).
+    pub(crate) fn with_pattern(mut self, prst: &'static str, fg: u32, bg: u32) -> Self {
+        if !matches!(self.fill, Fill::None) {
+            self.fill = Fill::Pattern {
+                prst,
+                fg,
+                bg: Some(bg),
+            };
+        }
+        self
+    }
+
     /// A shape from another importer (`.xls`): a preset, solid fill,
     /// outline and plain text (lines split at `\n`), sized by its anchor.
     #[allow(clippy::too_many_arguments)]
@@ -1486,6 +1566,13 @@ impl Shape {
         let fill = match &self.fill {
             Fill::None => "<a:noFill/>".to_owned(),
             Fill::Solid(c) => solid(*c),
+            Fill::Pattern { prst, fg, bg } => format!(
+                "<a:pattFill prst=\"{prst}\"><a:fgClr><a:srgbClr val=\"{fg:06X}\"/></a:fgClr><a:bgClr>{}</a:bgClr></a:pattFill>",
+                match bg {
+                    Some(c) => format!("<a:srgbClr val=\"{c:06X}\"/>"),
+                    None => "<a:srgbClr val=\"FFFFFF\"><a:alpha val=\"0\"/></a:srgbClr>".into(),
+                }
+            ),
             Fill::Gradient(a, b, angle) => {
                 // ODF 0°: start colour at the top; DrawingML `lin ang`
                 // turns clockwise from left to right.

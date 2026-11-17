@@ -95,6 +95,13 @@ pub fn fill_paint(fill: &Fill, how: PathFill, w: f32, h: f32, turn: &Affine) -> 
     match fill {
         Fill::None | Fill::Picture(_) => None,
         Fill::Solid(c, a) => Some(Paint::Solid(shade(rgba(*c, *a), how))),
+        Fill::Pattern(pf) => Some(Paint::Pattern {
+            fg: shade(rgba(pf.fg.0, pf.fg.1), how),
+            bg: shade(rgba(pf.bg.0, pf.bg.1), how),
+            bits: pf.bits(),
+            origin: p(0.0, 0.0),
+            cell: 1.0,
+        }),
         Fill::Gradient(g) => {
             let stops = stops(g, how);
             if stops.len() == 1 {
@@ -118,6 +125,120 @@ pub fn fill_paint(fill: &Fill, how: PathFill, w: f32, h: f32, turn: &Affine) -> 
             })
         }
     }
+}
+
+/// A pattern's two colours mixed by its share of foreground bits.
+pub fn mix(fg: Rgba, bg: Rgba, bits: &[u8; 8]) -> Rgba {
+    let k = kantor_ooxml::pattern::coverage(bits);
+    let m = |i: usize| (bg.0[i] as f32 + (fg.0[i] as f32 - bg.0[i] as f32) * k).round() as u8;
+    Rgba([m(0), m(1), m(2), m(3)])
+}
+
+/// Most rectangles a pattern is drawn with on screen (beyond that, its
+/// mixed colour).
+pub const PATTERN_CELLS: usize = 60_000;
+
+/// The foreground cells of a pattern inside `path` (item coordinates), as
+/// rectangles `[x, y, w, h]`, for renderers without tiling patterns (the
+/// screen). Each row of cells is sampled at its middle against the
+/// outline, so edges step by one cell; runs of cells on a row are one
+/// rectangle and identical runs on the next rows extend it. `None` when
+/// there would be more than `limit` rectangles.
+pub fn pattern_cells(
+    path: &Path,
+    even_odd: bool,
+    bits: &[u8; 8],
+    origin: P,
+    cell: f32,
+    limit: usize,
+) -> Option<Vec<[f32; 4]>> {
+    let cell = cell.max(0.05);
+    let polys: Vec<Vec<P>> = path
+        .flatten(0.25)
+        .into_iter()
+        .map(|(p, _)| p)
+        .filter(|p| p.len() > 2)
+        .collect();
+    let all = polys.iter().flatten();
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for q in all {
+        x0 = x0.min(q.x);
+        y0 = y0.min(q.y);
+        x1 = x1.max(q.x);
+        y1 = y1.max(q.y);
+    }
+    if x0 >= x1 || y0 >= y1 {
+        return Some(Vec::new());
+    }
+    let row0 = ((y0 - origin.y) / cell).floor() as i64;
+    let row1 = ((y1 - origin.y) / cell).ceil() as i64;
+    let mut out: Vec<[f32; 4]> = Vec::new();
+    // Rectangles of the previous row (index into `out`) by their x range.
+    let mut open: Vec<(i64, i64, usize)> = Vec::new();
+    let mut xs: Vec<(f32, i32)> = Vec::new();
+    for row in row0..row1 {
+        let top = origin.y + row as f32 * cell;
+        let yc = top + cell / 2.0;
+        xs.clear();
+        for poly in &polys {
+            for i in 0..poly.len() {
+                let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+                if (a.y <= yc) != (b.y <= yc) {
+                    let x = a.x + (yc - a.y) / (b.y - a.y) * (b.x - a.x);
+                    xs.push((x, if b.y > a.y { 1 } else { -1 }));
+                }
+            }
+        }
+        xs.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let bits_row = bits[row.rem_euclid(8) as usize];
+        let mut next: Vec<(i64, i64, usize)> = Vec::new();
+        let mut wind = 0;
+        for w in 0..xs.len() {
+            let before = wind;
+            wind += xs[w].1;
+            let inside = |n: i32| if even_odd { n & 1 != 0 } else { n != 0 };
+            if inside(before) || !inside(wind) || w + 1 >= xs.len() {
+                continue;
+            }
+            // Entering: the span runs to where we leave.
+            let (sa, mut sb, mut n) = (xs[w].0, xs[w].0, wind);
+            for e in &xs[w + 1..] {
+                n += e.1;
+                sb = e.0;
+                if !inside(n) {
+                    break;
+                }
+            }
+            // Columns whose centre lies in the span.
+            let c0 = ((sa - origin.x) / cell - 0.5).ceil() as i64;
+            let c1 = ((sb - origin.x) / cell - 0.5).floor() as i64;
+            let mut c = c0;
+            while c <= c1 {
+                if bits_row >> c.rem_euclid(8) & 1 == 0 {
+                    c += 1;
+                    continue;
+                }
+                let start = c;
+                while c <= c1 && bits_row >> c.rem_euclid(8) & 1 == 1 {
+                    c += 1;
+                }
+                let end = c; // exclusive
+                if let Some(&(_, _, i)) = open.iter().find(|o| o.0 == start && o.1 == end) {
+                    out[i][3] += cell;
+                    next.push((start, end, i));
+                } else {
+                    if out.len() >= limit {
+                        return None;
+                    }
+                    let x = origin.x + start as f32 * cell;
+                    out.push([x, top, (end - start) as f32 * cell, cell]);
+                    next.push((start, end, out.len() - 1));
+                }
+            }
+        }
+        open = next;
+    }
+    Some(out)
 }
 
 /// Dash lengths for a line of `width` (absolute), `None` for solid.
@@ -216,6 +337,70 @@ mod tests {
 
     fn near(a: P, b: P) -> bool {
         (a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3
+    }
+
+    #[test]
+    fn pattern_cells_follow_the_bitmap_and_the_outline() {
+        let bits = kantor_ooxml::pattern::bits("ltVert");
+        // Vertical lines every 4 cells (columns 3 and 7): one tall
+        // rectangle each, rows merged.
+        let r = pattern_cells(
+            &Path::rect(0.0, 0.0, 16.0, 8.0),
+            false,
+            &bits,
+            p(0.0, 0.0),
+            1.0,
+            100,
+        )
+        .unwrap();
+        assert_eq!(
+            r,
+            vec![
+                [3.0, 0.0, 1.0, 8.0],
+                [7.0, 0.0, 1.0, 8.0],
+                [11.0, 0.0, 1.0, 8.0],
+                [15.0, 0.0, 1.0, 8.0]
+            ]
+        );
+        // A circle keeps cells inside it only.
+        let solid = [0xff; 8];
+        let c = pattern_cells(
+            &Path::ellipse(10.0, 10.0, 10.0, 10.0),
+            false,
+            &solid,
+            p(0.0, 0.0),
+            1.0,
+            1000,
+        )
+        .unwrap();
+        let area: f32 = c.iter().map(|r| r[2] * r[3]).sum();
+        assert!((area - std::f32::consts::PI * 100.0).abs() < 12.0, "{area}");
+        assert!(c.iter().all(|r| r[0] >= 0.0 && r[0] + r[2] <= 20.0));
+        // Too many: None.
+        assert!(
+            pattern_cells(
+                &Path::rect(0.0, 0.0, 100.0, 100.0),
+                false,
+                &kantor_ooxml::pattern::bits("pct50"),
+                p(0.0, 0.0),
+                1.0,
+                10
+            )
+            .is_none()
+        );
+        // A pattern fill's paint keeps its colours and bitmap.
+        let f = Fill::Pattern(std::sync::Arc::new(slides_engine::PatternFill {
+            prst: "smGrid".into(),
+            fg: (Rgb([255, 0, 0]), 255),
+            bg: (Rgb([0, 0, 255]), 255),
+        }));
+        let Some(Paint::Pattern { fg, bg, bits, .. }) =
+            fill_paint(&f, PathFill::Norm, 10.0, 10.0, &Affine::IDENTITY)
+        else {
+            panic!()
+        };
+        assert_eq!((fg, bg), (Rgba([255, 0, 0, 255]), Rgba([0, 0, 255, 255])));
+        assert_eq!(bits, kantor_ooxml::pattern::bits("smGrid"));
     }
 
     /// Position (0..1) of `q` along a linear gradient.

@@ -395,11 +395,25 @@ impl SheetDrawings {
                     use std::hash::{Hash, Hasher};
                     let mut h = std::collections::hash_map::DefaultHasher::new();
                     xml.hash(&mut h);
+                    let charts = if media
+                        .iter()
+                        .any(|m| m.1 == sheets_engine::drawing::GROUP_CHART)
+                    {
+                        let theme = sheets_scene::ChartTheme::new(self.theme.as_deref());
+                        let current = d.key.index >= sheets_engine::NEW_CHART_BASE;
+                        let (charts, read) =
+                            sheets_scene::group_charts(&theme, media, Some(book), current);
+                        read.hash(&mut h);
+                        charts
+                    } else {
+                        Vec::new()
+                    };
                     OverlayKind::Shape {
                         key: d.key,
                         hash: h.finish(),
                         xml: xml.clone(),
                         media: media.clone(),
+                        charts: Arc::new(charts),
                         theme: self.theme.clone(),
                     }
                 }

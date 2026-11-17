@@ -330,6 +330,19 @@ impl Painter {
                     .collect(),
             },
             slides_scene::Paint::Solid(c) => slides_scene::Paint::Solid(faded(c)),
+            slides_scene::Paint::Pattern {
+                fg,
+                bg,
+                bits,
+                origin,
+                cell,
+            } => slides_scene::Paint::Pattern {
+                fg: faded(fg),
+                bg: faded(bg),
+                bits,
+                origin,
+                cell,
+            },
         };
         for sub in &o.paths {
             let segs: Vec<Seg> = sub.cmds.iter().map(|c| xform.seg(c)).collect();
@@ -764,7 +777,9 @@ impl Painter {
             })
         });
         let fill = match own {
-            Some(n) if n.tag_name().name() == "gradFill" => cx.full_fill(n, &|_| None)?,
+            Some(n) if matches!(n.tag_name().name(), "gradFill" | "pattFill") => {
+                cx.full_fill(n, &|_| None)?
+            }
             Some(_) => return None,
             None => {
                 let r = style.and_then(|s| child(s, "fillRef"))?;
@@ -773,7 +788,10 @@ impl Painter {
                 cx.style_fill(idx, ph)?
             }
         };
-        if !matches!(fill, slides_engine::Fill::Gradient(_)) {
+        if !matches!(
+            fill,
+            slides_engine::Fill::Gradient(_) | slides_engine::Fill::Pattern(_)
+        ) {
             return None;
         }
         let [x, y, w, h] = rect;
@@ -801,6 +819,19 @@ impl Painter {
                 rx,
                 ry,
                 stops,
+            },
+            slides_scene::Paint::Pattern {
+                fg,
+                bg,
+                bits,
+                origin,
+                cell,
+            } => slides_scene::Paint::Pattern {
+                fg,
+                bg,
+                bits,
+                origin: at(origin),
+                cell,
             },
             solid => solid,
         })
@@ -1122,6 +1153,36 @@ pub fn gradient_pieces(segs: &[Seg], g: &slides_scene::Paint) -> Vec<(Vec<Seg>, 
     let mut out = Vec::new();
     match g {
         Paint::Solid(c) => out.push((segs.to_vec(), GradientPiece::Solid(*c))),
+        Paint::Pattern {
+            fg,
+            bg,
+            bits,
+            origin,
+            cell,
+        } => match slides_scene::paint::pattern_cells(
+            &path,
+            false,
+            bits,
+            *origin,
+            *cell,
+            slides_scene::paint::PATTERN_CELLS,
+        ) {
+            Some(cells) => {
+                out.push((segs.to_vec(), GradientPiece::Solid(*bg)));
+                let mut fs = Vec::with_capacity(cells.len() * 5);
+                for [x, y, w, h] in cells {
+                    fs.push(Seg::Move([x, y]));
+                    fs.push(Seg::Line([x + w, y]));
+                    fs.push(Seg::Line([x + w, y + h]));
+                    fs.push(Seg::Line([x, y + h]));
+                    fs.push(Seg::Close);
+                }
+                if !fs.is_empty() {
+                    out.push((fs, GradientPiece::Solid(*fg)));
+                }
+            }
+            None => out.push((segs.to_vec(), GradientPiece::Solid(g.main_color()))),
+        },
         Paint::Linear { from, to, stops } if stops.len() >= 2 => {
             let len = to.minus(*from).len().max(1e-4);
             let u = to.minus(*from).scale(1.0 / len);
@@ -1395,6 +1456,75 @@ fn box_areas(f: &Float, g: Node, map: &ChildMap, depth: usize, out: &mut Vec<Opt
                     continue;
                 };
                 box_areas(f, c, &ChildMap::of(gp, r), depth + 1, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The charts inside a group or canvas (`graphicFrame` with `c:chart`):
+/// relationship id and box on the page, with the group at `rect`.
+pub fn group_chart_rects(f: &Float, rect: [f32; 4]) -> Vec<(String, [f32; 4])> {
+    let FloatKind::Group { canvas } = f.kind else {
+        return Vec::new();
+    };
+    if f.group_charts.is_empty() {
+        return Vec::new();
+    }
+    let src = f.graphic_xml().map(wrap);
+    let Some(doc) = src
+        .as_deref()
+        .and_then(|x| roxmltree::Document::parse(x).ok())
+    else {
+        return Vec::new();
+    };
+    let Some(g) = doc
+        .root_element()
+        .first_element_child()
+        .and_then(|data| data.first_element_child())
+    else {
+        return Vec::new();
+    };
+    let map = if canvas {
+        ChildMap {
+            off: (0.0, 0.0),
+            k: (
+                rect[2] / f.read.cx.max(1) as f32,
+                rect[3] / f.read.cy.max(1) as f32,
+            ),
+            at: (rect[0], rect[1]),
+        }
+    } else {
+        ChildMap::of(child(g, "grpSpPr"), rect)
+    };
+    let mut out = Vec::new();
+    chart_frames(g, &map, 0, &mut out);
+    out
+}
+
+fn chart_frames(g: Node, map: &ChildMap, depth: usize, out: &mut Vec<(String, [f32; 4])>) {
+    if depth > 16 {
+        return;
+    }
+    for c in g.children().filter(|c| c.is_element()) {
+        match c.tag_name().name() {
+            "graphicFrame" => {
+                let rel = c
+                    .descendants()
+                    .find(|d| d.tag_name().name() == "chart")
+                    .and_then(|d| d.attributes().find(|a| a.name() == "id"))
+                    .map(|a| a.value().to_owned());
+                // Its `xfrm` is its own child (no `spPr`).
+                if let (Some(rel), Some((r, _))) = (rel, map.child_rect(Some(c))) {
+                    out.push((rel, r));
+                }
+            }
+            "grpSp" => {
+                let gp = child(c, "grpSpPr");
+                let Some((r, _)) = map.child_rect(gp) else {
+                    continue;
+                };
+                chart_frames(c, &ChildMap::of(gp, r), depth + 1, out);
             }
             _ => {}
         }

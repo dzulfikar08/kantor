@@ -285,7 +285,11 @@ impl Builder {
         };
         let look = &shape.look;
         // The fill and line as shown: edits in Kantor replace what was read.
-        let fill = if shape.paint.fill.is_some() {
+        let fill = if let (Some(slides_engine::Paint::Pattern { .. }), Some(f)) =
+            (&shape.paint.fill, &look.fill_as_read)
+        {
+            f.clone()
+        } else if shape.paint.fill.is_some() {
             look.fill.map_or(Fill::None, |c| Fill::Solid(c, 255))
         } else {
             look.fill_as_read

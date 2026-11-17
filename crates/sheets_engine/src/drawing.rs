@@ -230,8 +230,13 @@ impl Anchor {
     }
 }
 
-/// A picture a shape element names: `r:embed` id, image extension, bytes.
+/// A picture a shape element names: `r:embed` id, image extension, bytes;
+/// or a chart inside a group: its `c:chart r:id`, [`GROUP_CHART`] and the
+/// chart part's XML.
 pub type MediaItem = (String, String, Arc<[u8]>);
+
+/// The "extension" of a [`MediaItem`] that is a chart inside a group.
+pub const GROUP_CHART: &str = "chart";
 
 /// The pictures a shape element names.
 pub type ShapeMedia = Arc<[MediaItem]>;
@@ -686,7 +691,9 @@ fn kind(
 }
 
 /// The pictures inside a shape element (a group's): each `r:embed` id with
-/// its image's extension and bytes (`None`: one isn't there).
+/// its image's extension and bytes (`None`: one isn't there); and the
+/// charts inside a group, each `c:chart r:id` with the extension
+/// [`GROUP_CHART`] and the chart part's XML.
 fn shape_media(
     obj: Node,
     targets: &HashMap<String, (String, String)>,
@@ -711,6 +718,19 @@ fn shape_media(
             .filter(|e| e.len() <= 4 && !e.contains('/'))
             .unwrap_or_else(|| "png".into());
         out.push((rid.to_owned(), ext, data));
+    }
+    for c in obj.descendants().filter(|d| is(*d, NS_C, "chart")) {
+        let Some(rid) = r_id(c, "id") else {
+            continue;
+        };
+        if out.iter().any(|(r, _, _)| r == rid) {
+            continue;
+        }
+        let (kind, part) = targets.get(rid)?;
+        if kind != "chart" {
+            return None;
+        }
+        out.push((rid.to_owned(), GROUP_CHART.into(), parts.get(part)?.clone()));
     }
     Some(out)
 }

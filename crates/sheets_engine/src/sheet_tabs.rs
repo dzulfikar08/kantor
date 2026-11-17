@@ -552,7 +552,27 @@ impl Workbook {
                 }
                 DrawingKind::Shape { xml, .. } => {
                     // Pictures inside a group come with their images.
-                    let media = self.shape_media(d.key);
+                    let made_here = d.key.index >= crate::chart_edit::NEW_CHART_BASE;
+                    let media = self.shape_media(d.key).map(|m| {
+                        // Charts inside the group read the copy's cells.
+                        m.into_iter()
+                            .map(|(id, ext, data)| {
+                                if ext != crate::drawing::GROUP_CHART {
+                                    return (id, ext, data);
+                                }
+                                let xml = String::from_utf8_lossy(&data).into_owned();
+                                let now = if made_here {
+                                    xml
+                                } else {
+                                    self.refs_now(&xml, &crate::shift::Layout::default())
+                                };
+                                let now = crate::chart_style::map_formulas(&now, |f| {
+                                    crate::move_chart::rename_sheet_in(f, source, copy)
+                                });
+                                (id, ext, now.into_bytes().into())
+                            })
+                            .collect::<Vec<_>>()
+                    });
                     let pics =
                         xml.contains(":pic>") || xml.contains(":pic ") || xml.contains("<pic");
                     if pics && media.is_none() {

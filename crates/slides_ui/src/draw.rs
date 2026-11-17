@@ -18,6 +18,9 @@
 //!   gradients are drawn as 32 nested ellipses (solid colour steps), so
 //!   translucent radial gradients come out a little denser.
 //! - Picture fills of non-rectangular shapes fill the shape's box.
+//! - Pattern fills are their foreground cells as rectangles (edges step by
+//!   one cell); a shape needing more than
+//!   [`slides_scene::paint::PATTERN_CELLS`] of them shows the mixed colour.
 //!
 //! Slide content is painted in the file's own colours; only chrome
 //! (selection, handles, placeholders for objects Kantor can't draw) uses
@@ -390,6 +393,22 @@ impl Painter {
                             even_odd,
                             bg: rgba_hsla(*c).into(),
                         }),
+                        Paint::Pattern {
+                            fg,
+                            bg,
+                            bits,
+                            origin,
+                            cell,
+                        } => pattern_prims(
+                            path,
+                            segs,
+                            t,
+                            even_odd,
+                            (*fg, *bg),
+                            bits,
+                            (*origin, *cell),
+                            &mut prims,
+                        ),
                         _ => gradient_bands(&segs, paint, t, even_odd, &mut prims),
                     }
                 }
@@ -552,6 +571,56 @@ fn band_params([x, y, w, h]: [f32; 4], u: P, s0: f32, s1: f32) -> (f32, f32, f32
     (r.to_degrees() + 90.0, pct(s0), pct(s1))
 }
 
+/// A pattern fill as GPUI primitives: the background colour, then the
+/// foreground cells as one path (the mixed colour for huge shapes).
+#[allow(clippy::too_many_arguments)]
+fn pattern_prims(
+    path: &slides_scene::Path,
+    segs: Vec<Seg>,
+    t: &Affine,
+    even_odd: bool,
+    (fg, bg): (SRgba, SRgba),
+    bits: &[u8; 8],
+    (origin, cell): (P, f32),
+    out: &mut Vec<GPrim>,
+) {
+    let Some(cells) = slides_scene::paint::pattern_cells(
+        path,
+        even_odd,
+        bits,
+        origin,
+        cell,
+        slides_scene::paint::PATTERN_CELLS,
+    ) else {
+        out.push(GPrim::Fill {
+            segs,
+            even_odd,
+            bg: rgba_hsla(slides_scene::paint::mix(fg, bg, bits)).into(),
+        });
+        return;
+    };
+    out.push(GPrim::Fill {
+        segs,
+        even_odd,
+        bg: rgba_hsla(bg).into(),
+    });
+    let mut fs = Vec::with_capacity(cells.len() * 5);
+    for [x, y, w, h] in cells {
+        fs.push(Seg::Move(t.apply(pt(x, y))));
+        fs.push(Seg::Line(t.apply(pt(x + w, y))));
+        fs.push(Seg::Line(t.apply(pt(x + w, y + h))));
+        fs.push(Seg::Line(t.apply(pt(x, y + h))));
+        fs.push(Seg::Close);
+    }
+    if !fs.is_empty() {
+        out.push(GPrim::Fill {
+            segs: fs,
+            even_odd: false,
+            bg: rgba_hsla(fg).into(),
+        });
+    }
+}
+
 /// A gradient fill as GPUI primitives (see the module docs).
 fn gradient_bands(segs: &[Seg], paint: &Paint, t: &Affine, even_odd: bool, out: &mut Vec<GPrim>) {
     let path = slides_scene::Path {
@@ -559,7 +628,7 @@ fn gradient_bands(segs: &[Seg], paint: &Paint, t: &Affine, even_odd: bool, out: 
     };
     let polys: Vec<Vec<P>> = path.flatten(0.25).into_iter().map(|(p, _)| p).collect();
     match paint {
-        Paint::Solid(_) => {}
+        Paint::Solid(_) | Paint::Pattern { .. } => {}
         Paint::Linear { from, to, stops } => {
             let (a, b) = (t.apply(*from), t.apply(*to));
             let len = b.minus(a).len().max(1e-4);

@@ -6117,7 +6117,8 @@ fn chart_anchor_range(xml: &str, cnvpr: u32, rid: &str) -> Option<std::ops::Rang
 
 /// The anchor of a new chart in a drawing whose SpreadsheetDrawing prefix is
 /// `p` (`xdr:` or empty).
-/// A copied group's pictures (`c.media`) as image parts of `drawing`, with
+/// A copied group's pictures and charts (`c.media`) as image and chart
+/// parts of `drawing`, with
 /// relationships whose ids follow from the shape's `cNvPr id` (the same at
 /// every save); returns the shape's element with its `r:embed`s pointing
 /// at them (`None`: no pictures).
@@ -6136,7 +6137,24 @@ fn shape_media(
     let mut map: Vec<(String, String)> = Vec::new();
     for (i, (old, ext, data)) in c.media.iter().enumerate() {
         let id = format!("rIdKm{cnvpr}x{i}");
-        if !rels.iter().any(|r| r.id == id) {
+        if ext == crate::drawing::GROUP_CHART && !rels.iter().any(|r| r.id == id) {
+            // A chart inside a copied group: a chart part of its own.
+            let part = (1..)
+                .map(|n| format!("xl/charts/chart{n}.xml"))
+                .find(|n| !pkg.has(n))
+                .expect("a free name");
+            pkg.set(&part, data.to_vec());
+            ct.push_str(&format!(
+                "<Override PartName=\"/{}\" ContentType=\"{CHART_CT}\"/>",
+                esc_attr(&part)
+            ));
+            rels.push(Rel {
+                id: id.clone(),
+                kind: format!("{REL_BASE}chart"),
+                target: relative(drawing, &part),
+                external: false,
+            });
+        } else if !rels.iter().any(|r| r.id == id) {
             let ext = ext.to_lowercase();
             let part = (1..)
                 .map(|n| format!("xl/media/image{n}.{ext}"))
@@ -6163,7 +6181,7 @@ fn shape_media(
     for n in doc.descendants().filter(|n| n.is_element()) {
         for a in n.attributes() {
             if a.namespace() == Some(NS_R)
-                && matches!(a.name(), "embed" | "link")
+                && matches!(a.name(), "embed" | "link" | "id")
                 && let Some((_, new)) = map.iter().find(|(o, _)| o == a.value())
             {
                 edits.push(a.range_value());

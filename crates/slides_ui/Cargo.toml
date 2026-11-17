@@ -22,6 +22,7 @@ log.workspace = true
 # Stroke caps and joins for GPUI paths (the version GPUI uses).
 lyon_tessellation = "1"
 slides_engine.workspace = true
+kantor_ooxml.workspace = true
 slides_pdf.workspace = true
 slides_scene.workspace = true
 

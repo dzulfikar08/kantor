@@ -25,6 +25,7 @@
 
 mod layout;
 pub mod officeart;
+pub mod pattern;
 
 pub use layout::{needs_spreadsheet_layout, spreadsheet_layout};
 

@@ -204,6 +204,25 @@ fn rule(r: FillRule) -> KFillRule {
 fn fill_path(surface: &mut Surface, path: &Path, paint: &Paint, r: FillRule) {
     let Some(kp) = kpath(path) else { return };
     let f = match paint {
+        Paint::Pattern {
+            fg,
+            bg,
+            bits,
+            origin,
+            cell,
+        } => {
+            docs_pdf::fill_pattern(
+                surface,
+                &kp,
+                rule(r),
+                *fg,
+                *bg,
+                bits,
+                (origin.x, origin.y),
+                *cell,
+            );
+            return;
+        }
         Paint::Solid(c) => Fill {
             rule: rule(r),
             ..fill(*c)

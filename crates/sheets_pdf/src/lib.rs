@@ -539,6 +539,8 @@ pub enum OverlayKind {
         hash: u64,
         xml: Arc<str>,
         media: sheets_engine::drawing::ShapeMedia,
+        /// Charts inside a group, with their data now.
+        charts: Arc<sheets_scene::GroupCharts>,
         theme: Option<Arc<str>>,
     },
 }

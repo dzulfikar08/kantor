@@ -147,6 +147,11 @@ fn shade(fill: &Fill, k: f32) -> Fill {
         Fill::Gradient(_) => fill
             .main_color()
             .map_or(Fill::None, |c| Fill::Solid(f(c), 255)),
+        Fill::Pattern(pf) => Fill::Pattern(std::sync::Arc::new(slides_engine::PatternFill {
+            prst: pf.prst.clone(),
+            fg: (f(pf.fg.0), pf.fg.1),
+            bg: (f(pf.bg.0), pf.bg.1),
+        })),
         other => other.clone(),
     }
 }

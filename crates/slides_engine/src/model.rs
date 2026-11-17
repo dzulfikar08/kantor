@@ -659,6 +659,14 @@ pub enum Paint {
     /// A theme colour (`accent1`, `tx1`, `bg1`, ...).
     Scheme(String),
     Rgb(Rgb),
+    /// A pattern fill (`a:pattFill`): a preset of
+    /// [`kantor_ooxml::pattern`] in a foreground and a background colour
+    /// (each a `Scheme` or `Rgb`).
+    Pattern {
+        prst: String,
+        fg: Box<Paint>,
+        bg: Box<Paint>,
+    },
 }
 
 /// Fill and outline edits of a shape, written into its `p:spPr` (the rest
