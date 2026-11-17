@@ -42,8 +42,20 @@ pub enum ChartType {
     Area,
     StackedArea,
     Scatter,
-    /// A chart from a file whose type isn't one of these (combo, 3-D,
-    /// doughnut, 100% stacked...): see [`ChartInfo::kind_label`].
+    /// Series of several types, on the primary or the secondary axis
+    /// ([`ChartSpec::series_types`]).
+    Combo,
+    // Excel 2016's chart types (`cx:chartSpace`): only charts from a file
+    // have them, and they change only among themselves.
+    Waterfall,
+    Funnel,
+    Treemap,
+    Sunburst,
+    Histogram,
+    Pareto,
+    BoxWhisker,
+    /// A chart from a file whose type isn't one of these (doughnut, 100%
+    /// stacked, radar...): see [`ChartInfo::kind_label`].
     Other,
 }
 
@@ -61,6 +73,78 @@ impl ChartType {
         ChartType::Scatter,
     ];
 
+    /// The types the Chart panel offers for a chart with axes and series
+    /// (Insert Chart's, and Combo).
+    pub const PANEL: [ChartType; 11] = [
+        ChartType::Column,
+        ChartType::StackedColumn,
+        ChartType::Bar,
+        ChartType::StackedBar,
+        ChartType::Line,
+        ChartType::StackedLine,
+        ChartType::Pie,
+        ChartType::Area,
+        ChartType::StackedArea,
+        ChartType::Scatter,
+        ChartType::Combo,
+    ];
+
+    /// Excel 2016's types, which change among themselves.
+    pub const EX: [ChartType; 7] = [
+        ChartType::Waterfall,
+        ChartType::Funnel,
+        ChartType::Treemap,
+        ChartType::Sunburst,
+        ChartType::Histogram,
+        ChartType::Pareto,
+        ChartType::BoxWhisker,
+    ];
+
+    /// The types a series of a combo chart can have.
+    pub const COMBO: [ChartType; 6] = [
+        ChartType::Column,
+        ChartType::StackedColumn,
+        ChartType::Line,
+        ChartType::StackedLine,
+        ChartType::Area,
+        ChartType::StackedArea,
+    ];
+
+    /// Whether Excel has a 3-D form of this type.
+    pub fn has_3d(self) -> bool {
+        matches!(
+            self,
+            ChartType::Column
+                | ChartType::StackedColumn
+                | ChartType::Bar
+                | ChartType::StackedBar
+                | ChartType::Line
+                | ChartType::Area
+                | ChartType::StackedArea
+                | ChartType::Pie
+        )
+    }
+
+    /// One of Excel 2016's types.
+    pub fn is_ex(self) -> bool {
+        ChartType::EX.contains(&self)
+    }
+
+    /// The name of its 3-D form ("3-D Clustered Column").
+    pub fn label_3d(self) -> &'static str {
+        match self {
+            ChartType::Column => "3-D Clustered Column",
+            ChartType::StackedColumn => "3-D Stacked Column",
+            ChartType::Bar => "3-D Clustered Bar",
+            ChartType::StackedBar => "3-D Stacked Bar",
+            ChartType::Line => "3-D Line",
+            ChartType::Area => "3-D Area",
+            ChartType::StackedArea => "3-D Stacked Area",
+            ChartType::Pie => "3-D Pie",
+            other => other.label(),
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             ChartType::Column => "Column",
@@ -73,11 +157,27 @@ impl ChartType {
             ChartType::Area => "Area",
             ChartType::StackedArea => "Stacked Area",
             ChartType::Scatter => "Scatter",
+            ChartType::Combo => "Combo",
+            ChartType::Waterfall => "Waterfall",
+            ChartType::Funnel => "Funnel",
+            ChartType::Treemap => "Treemap",
+            ChartType::Sunburst => "Sunburst",
+            ChartType::Histogram => "Histogram",
+            ChartType::Pareto => "Pareto",
+            ChartType::BoxWhisker => "Box & Whisker",
             ChartType::Other => "Other",
         }
     }
 
-    fn stacked(self) -> bool {
+    /// The type a combo's series start from when they're put into one plot.
+    pub(crate) fn flat(self) -> ChartType {
+        match self {
+            ChartType::Combo => ChartType::Column,
+            k => k,
+        }
+    }
+
+    pub(crate) fn stacked(self) -> bool {
         matches!(
             self,
             ChartType::StackedColumn
@@ -85,6 +185,25 @@ impl ChartType {
                 | ChartType::StackedLine
                 | ChartType::StackedArea
         )
+    }
+}
+
+/// A series' type and axis in a combo chart (Excel's Change Chart Type ▸
+/// Combo).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SeriesType {
+    /// One of [`ChartType::COMBO`].
+    pub kind: ChartType,
+    /// On the secondary axis.
+    pub secondary: bool,
+}
+
+impl Default for SeriesType {
+    fn default() -> Self {
+        SeriesType {
+            kind: ChartType::Column,
+            secondary: false,
+        }
     }
 }
 
@@ -151,6 +270,12 @@ pub struct ChartSpec {
     /// Options of the horizontal and vertical axes.
     pub x_axis: AxisOptions,
     pub y_axis: AxisOptions,
+    /// `kind`'s 3-D form (see [`ChartType::has_3d`]).
+    pub three_d: bool,
+    /// Each series' type and axis, in series order, when `kind` is
+    /// [`ChartType::Combo`] (else empty; missing ones: Clustered Column on
+    /// the primary axis).
+    pub series_types: Vec<SeriesType>,
 }
 
 impl ChartSpec {
@@ -170,6 +295,8 @@ impl ChartSpec {
             labels: Vec::new(),
             x_axis: AxisOptions::default(),
             y_axis: AxisOptions::default(),
+            three_d: false,
+            series_types: Vec::new(),
         }
     }
 }
@@ -185,8 +312,8 @@ pub struct ChartInfo {
     /// Its type and data range can't be changed in Kantor (several plot
     /// types, 3-D, radar...).
     pub fixed: bool,
-    /// Only its data range can be changed (the Office 2016 types:
-    /// waterfall, treemap...).
+    /// One of the Office 2016 types (waterfall, treemap...): its type
+    /// (among them), title, legend and data change, nothing else.
     pub data_only: bool,
     /// The data range isn't one block Kantor can read back (series on
     /// several sheets, literal values...): changing it replaces the series.
@@ -222,6 +349,8 @@ pub(crate) struct NewChart {
     /// A shape or text box (inserted, or copied with its sheet), not a
     /// chart.
     pub shape: Option<Arc<NewShape>>,
+    /// What `xml` links to (a moved chart's workbook and user shapes).
+    pub links: Option<Arc<crate::preserve::ChartLinks>>,
 }
 
 /// A shape or text box made in Kantor (Insert ▸ Shapes, a copied sheet's).
@@ -236,6 +365,9 @@ pub(crate) struct NewShape {
     pub slicer: Option<Arc<crate::slicer_edit::NewSlicer>>,
     /// A timeline made in Kantor (Insert Timeline), the same way.
     pub timeline: Option<Arc<crate::slicer_edit::NewTimeline>>,
+    /// Pictures inside a copied group: their `r:embed` ids in `xml` and
+    /// their images (extension, bytes).
+    pub media: Vec<(String, String, Arc<[u8]>)>,
 }
 
 /// A picture on a worksheet copied with Move or Copy.
@@ -405,6 +537,8 @@ impl Workbook {
             labels: Vec::new(),
             x_axis: AxisOptions::default(),
             y_axis: AxisOptions::default(),
+            three_d: false,
+            series_types: Vec::new(),
         };
         // Beside the data: two columns to its right, 8 columns × 15 rows.
         let col = (data.right + 2).min(MAX_COLS - 9);
@@ -437,6 +571,7 @@ impl Workbook {
                 xml: None,
                 picture: None,
                 shape: None,
+                links: None,
             });
         });
         Ok(DrawingKey {
@@ -472,9 +607,11 @@ impl Workbook {
         let spec = self.chart_spec(key)?;
         let sheet = self.sheet_index_of(key.sheet_id)?;
         let style = chart_style::read(&self.chart_xml(sheet, &spec)).ok()?;
+        let mut spec = spec;
+        spec.series_types = style.series_types.clone();
         Some(ChartInfo {
             from_file: false,
-            kind_label: spec.kind.label().to_owned(),
+            kind_label: style.kind_label.clone(),
             fixed: false,
             data_only: false,
             data_unknown: false,
@@ -542,15 +679,25 @@ impl Workbook {
         if self.chart_spec(key).as_ref() == Some(&spec) {
             return Ok(());
         }
-        if spec.kind == ChartType::Other {
+        if spec.kind == ChartType::Other || spec.kind.is_ex() {
             bail!("Pick a chart type");
         }
         let mut spec = spec;
+        spec.three_d &= spec.kind.has_3d();
+        if spec.kind != ChartType::Combo {
+            spec.series_types.clear();
+        }
         // Positions the new type doesn't have go back to its default.
-        let ok = LabelPos::for_group(group_tag(spec.kind), spec.kind.stacked());
-        for l in &mut spec.labels {
-            l.pos = l.pos.filter(|p| ok.contains(p));
-            l.percent &= spec.kind == ChartType::Pie;
+        if spec.kind != ChartType::Combo {
+            let ok = if spec.three_d {
+                &[][..]
+            } else {
+                LabelPos::for_group(group_tag(spec.kind), spec.kind.stacked())
+            };
+            for l in &mut spec.labels {
+                l.pos = l.pos.filter(|p| ok.contains(p));
+                l.percent &= spec.kind == ChartType::Pie;
+            }
         }
         let sheet = self
             .sheet_index_of(key.sheet_id)
@@ -703,6 +850,7 @@ impl Workbook {
                             },
                             (None, None) => DrawingKind::Shape {
                                 xml: sh.xml.clone(),
+                                media: sh.media.clone().into(),
                             },
                         }),
                         editable: true,
@@ -827,7 +975,11 @@ impl Workbook {
     pub(crate) fn chart_xml(&self, sheet: u32, spec: &ChartSpec) -> String {
         let data_sheet = self.data_sheet_index(sheet, spec);
         let series = self.series_xml(data_sheet, spec);
-        let kind = spec.kind;
+        // A combo starts as a column chart (`styled` regroups its series).
+        let kind = match spec.kind {
+            ChartType::Combo => ChartType::Column,
+            k => k,
+        };
         let mut sers = String::new();
         let take = if kind == ChartType::Pie {
             1
@@ -912,7 +1064,7 @@ impl Workbook {
             ChartType::Scatter => format!(
                 "<c:scatterChart><c:scatterStyle val=\"lineMarker\"/><c:varyColors val=\"0\"/>{sers}{axes_ids}</c:scatterChart>"
             ),
-            ChartType::Other => unreachable!("Other is never set on a chart made in Kantor"),
+            _ => unreachable!("only Insert Chart's types are made from a spec"),
         };
         let horizontal = matches!(kind, ChartType::Bar | ChartType::StackedBar);
         let (cat_pos, val_pos) = if horizontal { ("l", "b") } else { ("b", "l") };
@@ -980,6 +1132,12 @@ impl Workbook {
                     _ => String::new(),
                 },
                 shape: c.shape.as_ref().map(|s| s.xml.to_string()),
+                links: c.links.clone(),
+                media: c
+                    .shape
+                    .as_ref()
+                    .map(|s| s.media.clone())
+                    .unwrap_or_default(),
                 picture: c.picture.as_ref().map(|p| crate::preserve::PictureSave {
                     data: p.data.clone(),
                     ext: p.ext.clone(),
@@ -995,6 +1153,11 @@ impl Workbook {
 /// Kantor: the generated part has neither).
 fn styled(xml: String, spec: &ChartSpec) -> String {
     let mut xml = xml;
+    if (spec.kind == ChartType::Combo || spec.three_d)
+        && let Ok(x) = chart_style::set_type(&xml, spec.kind, spec.three_d, &spec.series_types)
+    {
+        xml = x;
+    }
     if spec.kind != ChartType::Pie {
         for (horizontal, text) in [(true, &spec.x_title), (false, &spec.y_title)] {
             if let Ok(x) = chart_style::set_axis_title(&xml, horizontal, text) {
@@ -1036,7 +1199,7 @@ fn group_tag(kind: ChartType) -> &'static str {
         ChartType::Area | ChartType::StackedArea => "areaChart",
         ChartType::Pie => "pieChart",
         ChartType::Scatter => "scatterChart",
-        ChartType::Other => "",
+        _ => "",
     }
 }
 

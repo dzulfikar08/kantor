@@ -135,19 +135,175 @@ fn type_changes_round_trip() {
     assert!(bar.contains("<c:axPos val=\"l\"/>") && bar.contains("<c:axPos val=\"b\"/>"));
 }
 
-#[test]
-fn combo_charts_are_fixed() {
-    let combo = BAR.replace(
+fn combo_xml() -> String {
+    BAR.replace(
         "<c:gapWidth val=\"219\"/><c:axId val=\"11\"/><c:axId val=\"22\"/></c:barChart>",
         "<c:gapWidth val=\"219\"/><c:axId val=\"11\"/><c:axId val=\"22\"/></c:barChart><c:lineChart><c:grouping val=\"standard\"/><c:varyColors val=\"0\"/><c:axId val=\"11\"/><c:axId val=\"22\"/></c:lineChart>",
-    );
+    )
+}
+
+#[test]
+fn combo_charts_change() {
+    let combo = combo_xml();
     let s = read(&combo).unwrap();
-    assert!(s.fixed);
-    assert_eq!(s.kind, ChartType::Other);
-    assert!(set_kind(&combo, ChartType::Line).is_err());
+    assert!(!s.fixed);
+    assert_eq!(s.kind, ChartType::Combo);
+    // A radar beside a column stays as it is.
+    let odd = combo.replace("lineChart", "radarChart");
+    assert!(read(&odd).unwrap().fixed);
+    assert!(set_type(&odd, ChartType::Line, false, &[]).is_err());
     // Titles and colours still work.
     parses(&set_title(&combo, "x").unwrap());
     parses(&set_color(&combo, 0, SeriesColor::Rgb([1, 2, 3])).unwrap());
+    // Into one line plot: the empty line plot goes.
+    let line = set_type(&combo, ChartType::Line, false, &[]).unwrap();
+    parses(&line);
+    assert_eq!(line.matches("<c:lineChart>").count(), 1, "{line}");
+    assert!(!line.contains("<c:barChart>"));
+    keeps_extras(&line);
+}
+
+#[test]
+fn combo_series_types_and_secondary_axis() {
+    let types = [
+        SeriesType {
+            kind: ChartType::Column,
+            secondary: false,
+        },
+        SeriesType {
+            kind: ChartType::Line,
+            secondary: true,
+        },
+    ];
+    let x = set_type(BAR, ChartType::Combo, false, &types).unwrap();
+    parses(&x);
+    keeps_extras(&x);
+    let s = read(&x).unwrap();
+    assert_eq!(s.kind, ChartType::Combo);
+    assert_eq!(s.series_types, types);
+    // The red series is still red, the line on its own value axis at the
+    // right, crossing at the maximum, with a hidden category axis.
+    assert_eq!(s.colors[0], SeriesColor::Rgb([255, 0, 0]));
+    assert_eq!(x.matches("<c:valAx>").count(), 2, "{x}");
+    assert!(x.contains("<c:axPos val=\"r\"/>") && x.contains("<c:crosses val=\"max\"/>"));
+    assert!(x.contains("<c:delete val=\"1\"/>"));
+    // Series keep their order and names.
+    assert_eq!(s.names, ["Sales", "Costs"]);
+    // Both on the primary axis: the secondary axes go.
+    let both = [
+        types[0],
+        SeriesType {
+            secondary: false,
+            ..types[1]
+        },
+    ];
+    let y = set_type(&x, ChartType::Combo, false, &both).unwrap();
+    assert_eq!(y.matches("<c:valAx>").count(), 1, "{y}");
+    assert_eq!(read(&y).unwrap().series_types, both);
+    // Back to a plain column chart.
+    let z = set_type(&x, ChartType::Column, false, &[]).unwrap();
+    let s = read(&z).unwrap();
+    assert_eq!(s.kind, ChartType::Column);
+    assert_eq!(z.matches("<c:valAx>").count(), 1, "{z}");
+    assert_eq!(s.colors[0], SeriesColor::Rgb([255, 0, 0]));
+    keeps_extras(&z);
+}
+
+#[test]
+fn three_d_forms() {
+    let x = set_type(BAR, ChartType::StackedColumn, true, &[]).unwrap();
+    parses(&x);
+    keeps_extras(&x);
+    let s = read(&x).unwrap();
+    assert_eq!((s.kind, s.three_d), (ChartType::StackedColumn, true));
+    assert_eq!(s.kind_label, "3-D Stacked Column");
+    assert!(x.contains("<c:bar3DChart>") && x.contains("<c:view3D>"));
+    assert!(x.contains("<c:shape val=\"box\"/>"));
+    assert!(!x.contains("<c:overlap"), "{x}");
+    // 3-D line: a series axis.
+    let l = set_type(&x, ChartType::Line, true, &[]).unwrap();
+    parses(&l);
+    assert!(
+        l.contains("<c:line3DChart>") && l.contains("<c:serAx>"),
+        "{l}"
+    );
+    assert_eq!(l.matches("<c:axId val=").count(), 6, "{l}");
+    // Pie.
+    let p = set_type(&l, ChartType::Pie, true, &[]).unwrap();
+    assert!(p.contains("<c:pie3DChart>") && !p.contains("Ax>"), "{p}");
+    assert!(read(&p).unwrap().three_d);
+    // And flat again.
+    let f = set_type(&l, ChartType::Column, false, &[]).unwrap();
+    parses(&f);
+    assert!(
+        !f.contains("3D") && !f.contains("serAx") && !f.contains("view3D"),
+        "{f}"
+    );
+    let s = read(&f).unwrap();
+    assert_eq!((s.kind, s.three_d), (ChartType::Column, false));
+    keeps_extras(&f);
+}
+
+#[test]
+fn label_text_formatting() {
+    let font = LabelFont {
+        size: Some(12.0),
+        bold: Some(true),
+        italic: None,
+        color: Some([0x11, 0x22, 0x33]),
+    };
+    let labels = DataLabels {
+        value: true,
+        font,
+        ..Default::default()
+    };
+    let x = set_labels(BAR, 0, &labels).unwrap();
+    parses(&x);
+    assert!(
+        x.contains("<a:defRPr sz=\"1200\" b=\"1\"><a:solidFill><a:srgbClr val=\"112233\"/>"),
+        "{x}"
+    );
+    assert_eq!(read(&x).unwrap().labels[0], labels);
+    // Back to the chart's text.
+    let plain = DataLabels {
+        value: true,
+        ..Default::default()
+    };
+    let y = set_labels(&x, 0, &plain).unwrap();
+    assert!(!y.contains("srgbClr val=\"112233\""));
+    assert_eq!(read(&y).unwrap().labels[0], plain);
+}
+
+#[test]
+fn minor_units_and_date_axes() {
+    let mut a = read(BAR).unwrap().axes[1].0.clone();
+    a.minor = Some(0.25);
+    let x = set_axis_options(BAR, false, &a).unwrap();
+    assert!(x.contains("<c:minorUnit val=\"0.25\"/>"), "{x}");
+    assert_eq!(read(&x).unwrap().axes[1].0.minor, Some(0.25));
+    let mut h = read(BAR).unwrap().axes[0].0.clone();
+    assert_eq!(h.axis_type, AxisType::Auto);
+    h.axis_type = AxisType::Date;
+    h.base_unit = Some(TimeUnit::Months);
+    h.major = Some(3.0);
+    h.major_time = Some(TimeUnit::Months);
+    let d = set_axis_options(BAR, true, &h).unwrap();
+    parses(&d);
+    keeps_extras(&d);
+    assert!(d.contains("<c:dateAx>") && !d.contains("<c:catAx>"), "{d}");
+    assert!(d.contains("<c:auto val=\"0\"/><c:lblOffset val=\"100\"/><c:baseTimeUnit val=\"months\"/><c:majorUnit val=\"3\"/><c:majorTimeUnit val=\"months\"/>"), "{d}");
+    assert!(!d.contains("lblAlgn") && !d.contains("noMultiLvlLbl"));
+    assert_eq!(read(&d).unwrap().axes[0].0, h);
+    // A text axis.
+    let mut t = h.clone();
+    t.axis_type = AxisType::Text;
+    let c = set_axis_options(&d, true, &t).unwrap();
+    parses(&c);
+    assert!(
+        c.contains("<c:catAx>") && c.contains("<c:auto val=\"0\"/>") && !c.contains("TimeUnit"),
+        "{c}"
+    );
+    assert_eq!(read(&c).unwrap().axes[0].0.axis_type, AxisType::Text);
 }
 
 #[test]

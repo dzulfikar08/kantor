@@ -830,6 +830,7 @@ fn prepaint(
                 anchor,
                 kind: Arc::new(DrawingKind::Shape {
                     xml: crate::notes_ui::note_shape_xml(note, colors).into(),
+                    media: Default::default(),
                 }),
                 // A hovered note goes when the pointer leaves its cell:
                 // only shown ones are moved and resized.
@@ -921,8 +922,15 @@ fn paint(
                 let shown;
                 let drawing = match &preview {
                     Some((k, xml)) if *k == p.drawing.key => {
+                        let media = match &*p.drawing.kind {
+                            DrawingKind::Shape { media, .. } => media.clone(),
+                            _ => Default::default(),
+                        };
                         shown = Drawing {
-                            kind: Arc::new(DrawingKind::Shape { xml: xml.clone() }),
+                            kind: Arc::new(DrawingKind::Shape {
+                                xml: xml.clone(),
+                                media,
+                            }),
                             ..p.drawing.clone()
                         };
                         &shown

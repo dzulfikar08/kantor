@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use pivot_check::{REL, parts, targets};
 use roxmltree::Document;
 use sheets_engine::drawing::{DrawingKey, DrawingKind};
-use sheets_engine::{CellRange, ChartType, LegendPos, SeriesColor, Workbook};
+use sheets_engine::{CellRange, ChartType, LegendPos, SeriesColor, SeriesType, Workbook};
 
 fn scratch(name: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("chart_restyle");
@@ -91,7 +91,9 @@ fn file_charts_show_in_the_panel() {
     assert_eq!(info.spec.kind, ChartType::Column);
     assert!(info.has_axes);
     let combo = wb.chart_info(chart_key(&wb, "Combo")).unwrap();
-    assert!(combo.fixed);
+    assert!(!combo.fixed);
+    assert_eq!(combo.spec.kind, ChartType::Combo);
+    assert_eq!(combo.spec.series_types.len(), combo.series.len());
 }
 
 #[test]
@@ -266,14 +268,46 @@ fn every_type_from_a_file_chart_draws_and_saves() {
 }
 
 #[test]
-fn combo_charts_take_titles_but_not_types() {
+fn combo_charts_change_type_and_axes() {
     let mut wb = Workbook::open(corpus("20_charts.xlsx")).unwrap();
     let key = chart_key(&wb, "Combo");
-    let mut spec = wb.chart_info(key).unwrap().spec;
-    spec.kind = ChartType::Pie;
-    assert!(wb.set_chart(key, spec.clone()).is_err());
-    spec.kind = ChartType::Other;
+    let info = wb.chart_info(key).unwrap();
+    let mut spec = info.spec.clone();
     spec.title = "Combo title".into();
-    wb.set_chart(key, spec).unwrap();
-    assert_eq!(wb.chart_info(key).unwrap().spec.title, "Combo title");
+    // Every series a line, the last on the secondary axis.
+    let n = info.series.len();
+    spec.series_types = (0..n)
+        .map(|i| SeriesType {
+            kind: if i == 0 {
+                ChartType::Column
+            } else {
+                ChartType::Line
+            },
+            secondary: i + 1 == n,
+        })
+        .collect();
+    wb.set_chart(key, spec.clone()).unwrap();
+    let after = wb.chart_info(key).unwrap();
+    assert_eq!(after.spec.title, "Combo title");
+    assert_eq!(after.spec.series_types, spec.series_types);
+    let xml = shown_xml(&wb, key);
+    assert!(xml.contains("<c:crosses val=\"max\"/>"), "{xml}");
+    // A pie, then 3-D.
+    spec.kind = ChartType::Pie;
+    spec.three_d = true;
+    spec.series_types.clear();
+    wb.set_chart(key, spec.clone()).unwrap();
+    let after = wb.chart_info(key).unwrap();
+    assert_eq!(
+        (after.spec.kind, after.spec.three_d),
+        (ChartType::Pie, true)
+    );
+    assert_eq!(after.kind_label, "3-D Pie");
+    let path = scratch("combo-changed.xlsx");
+    wb.save_as(&path).unwrap();
+    assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
+    assert!(sheets_engine::package_problems(&std::fs::read(&path).unwrap()).is_empty());
+    let back = Workbook::open(&path).unwrap();
+    let k = chart_key(&back, "3-D Pie");
+    assert_eq!(back.chart_info(k).unwrap().spec.kind, ChartType::Pie);
 }

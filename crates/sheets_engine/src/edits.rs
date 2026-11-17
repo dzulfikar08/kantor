@@ -46,6 +46,10 @@ pub(crate) struct Edits {
     /// Shapes and text boxes of the file whose text was edited in Kantor:
     /// their element's XML now (see [`crate::drawing::DrawingKind::Shape`]).
     pub shape_texts: HashMap<crate::drawing::DrawingKey, Arc<str>>,
+    /// Picture fills set in Kantor on shapes of the file: `r:embed` id
+    /// (`rIdKf<cNvPr id>`), extension, bytes. A save adds the image and
+    /// the drawing's relationship.
+    pub shape_pictures: HashMap<crate::drawing::DrawingKey, (String, String, Arc<[u8]>)>,
     /// The workbook's custom table styles once one was made, changed or
     /// deleted in Kantor (`None`: as opened).
     pub table_styles: Option<Arc<crate::table_style_edit::StyleSet>>,

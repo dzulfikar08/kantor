@@ -64,8 +64,12 @@ pub use cf_edit::{
     COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,
     DATA_BAR_COLORS, ICON_SETS, outline_border, sqref_of,
 };
-pub use chart_edit::{ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor};
-pub use chart_options::{AxisOptions, DataLabels, DisplayUnits, LabelPos};
+pub use chart_edit::{
+    ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor, SeriesType,
+};
+pub use chart_options::{
+    AxisOptions, AxisType, DataLabels, DisplayUnits, LabelFont, LabelPos, TimeUnit,
+};
 pub use chart_sheet::sheet_name_problem;
 pub use drawing::Tab;
 pub use import::{ImportNote, SourceFormat};
@@ -76,7 +80,7 @@ pub use notes::{CellNote, NoteBox, NoteRun, SheetNotes};
 pub use preserve::package_problems;
 pub use recovery::{SaveJob, Saved, XlsxOutput, XlsxSnapshot, write_file_atomic};
 pub use shape_edit::ShapePreset;
-pub use shape_format::{OutlineEdit, ShapeFill, TextAnchor};
+pub use shape_format::{OutlineEdit, ShadowPreset, ShapeFill, TextAnchor};
 pub use sheet_tabs::{STANDARD_COLORS, TabColor, theme_tints};
 pub use table_edit::{TableOptions, TotalFunc, table_style_names, valid_table_name};
 pub use validation_edit::{
@@ -471,7 +475,7 @@ impl XlsxSource {
         }
     }
 
-    fn bytes(&self) -> Result<Cow<'_, [u8]>, String> {
+    pub(crate) fn bytes(&self) -> Result<Cow<'_, [u8]>, String> {
         match self {
             XlsxSource::Bytes(b) => Ok(Cow::Borrowed(b)),
             XlsxSource::File {
@@ -1516,6 +1520,14 @@ impl CellRange {
 }
 
 impl Workbook {
+    /// The package last opened or saved (`None`: none, or it can't be read
+    /// any more).
+    pub(crate) fn origin_bytes(&self) -> Option<Cow<'_, [u8]>> {
+        self.origin.xlsx.as_ref()?.bytes().ok()
+    }
+}
+
+impl Workbook {
     /// The `sheetId` of the sheet at index `sheet`.
     pub fn sheet_id(&self, sheet: u32) -> u32 {
         self.model
@@ -1643,6 +1655,7 @@ impl Workbook {
                 self.note_patches(&mut p);
                 self.chart_sheet_tab_patches(&mut p);
                 self.table_style_patches(&mut p);
+                self.shape_picture_patches(&mut p);
                 p
             },
             chart_sheets: self.chart_sheet_plans(),

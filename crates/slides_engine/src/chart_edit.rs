@@ -1106,11 +1106,13 @@ impl Presentation {
         read_chart_data(std::str::from_utf8(&bytes).ok()?)
     }
 
-    /// Whether a chart's series can't be added, removed or moved here
-    /// (the Office 2016 types: their data is edited, their series stay).
+    /// Whether a chart's series can't be added, removed or moved here (the
+    /// Office 2016 types that plot one series: waterfall, funnel, treemap,
+    /// sunburst, histogram, Pareto).
     pub fn chart_series_fixed(&self, slide: usize, shape: usize) -> bool {
-        self.chart_bytes(slide, shape)
-            .is_some_and(|(_, b)| std::str::from_utf8(&b).is_ok_and(ex::is_chartex))
+        self.chart_bytes(slide, shape).is_some_and(|(_, b)| {
+            std::str::from_utf8(&b).is_ok_and(|x| ex::is_chartex(x) && ex::series_fixed(x))
+        })
     }
 
     /// Bytes of a part as edited in Kantor (a chart or its workbook).
@@ -1361,15 +1363,16 @@ impl Presentation {
             None => None,
         };
         let (new_xml, cells, resize, renames) = if ex::is_chartex(xml) {
-            if change != SeriesChange::Same {
-                bail!("Kantor can't add, remove or move the series of this type of chart");
-            }
             let names = current
                 .as_deref()
                 .map(|b| defined_names(b))
                 .unwrap_or_default();
             let old_box = ex::data_box(xml, &names);
-            let (new_xml, cells, renames) = ex::rewrite(xml, data, &names)?;
+            let (mid, clears) = ex::restructure(xml, change, &names)?;
+            let (new_xml, mut cells, renames) = ex::rewrite(&mid, data, &names)?;
+            let mut all = clears;
+            all.append(&mut cells);
+            let cells = all;
             let mut after = names.clone();
             for (k, v) in &renames {
                 after.insert(k.clone(), v.clone());

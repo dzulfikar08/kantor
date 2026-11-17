@@ -469,6 +469,7 @@ impl Workbook {
                         xml: o.xml,
                         picture: o.picture,
                         shape: o.shape,
+                        links: o.links,
                     });
                 }
             });
@@ -515,6 +516,7 @@ impl Workbook {
                 picture: None,
                 shape: None,
                 spec: crate::ChartSpec::placeholder(),
+                links: None,
             };
             match &*d.kind {
                 DrawingKind::Chart {
@@ -531,7 +533,8 @@ impl Workbook {
                     if let Some(i) = self.chart_info(d.key) {
                         o.spec = i.spec;
                     }
-                    o.xml = Some(crate::move_chart::without_links(&now).into());
+                    o.links = self.chart_links_of(d.key).map(Arc::new);
+                    o.xml = Some(crate::move_chart::keep_links(&now, o.links.as_deref()).into());
                 }
                 DrawingKind::Picture { part, data, crop } => {
                     let ext = part
@@ -547,9 +550,12 @@ impl Workbook {
                         descr: d.descr.clone(),
                     }));
                 }
-                DrawingKind::Shape { xml } => {
-                    // Pictures inside a group would need their media parts.
-                    if xml.contains(":pic>") || xml.contains(":pic ") || xml.contains("<pic") {
+                DrawingKind::Shape { xml, .. } => {
+                    // Pictures inside a group come with their images.
+                    let media = self.shape_media(d.key);
+                    let pics =
+                        xml.contains(":pic>") || xml.contains(":pic ") || xml.contains("<pic");
+                    if pics && media.is_none() {
                         continue;
                     }
                     o.shape = Some(Arc::new(crate::chart_edit::NewShape {
@@ -557,6 +563,7 @@ impl Workbook {
                         name: d.name.clone(),
                         slicer: None,
                         timeline: None,
+                        media: media.unwrap_or_default(),
                     }));
                 }
                 DrawingKind::Other(_)
@@ -586,7 +593,8 @@ impl Workbook {
         let (xml, _) = self
             .file_chart_now(key)
             .ok_or_else(|| anyhow!("Kantor can't copy this chart sheet"))?;
-        let xml = crate::move_chart::without_links(&xml);
+        let links = self.chart_links_of(key);
+        let xml = crate::move_chart::keep_links(&xml, links.as_ref());
         let name = self.copy_name(&list[i].name);
         let tab = list[i].tab.clone();
         let mut order = self.slots();
@@ -596,6 +604,7 @@ impl Workbook {
             self.drawings.chart_sheet_count(),
             xml.clone(),
             tab.as_deref(),
+            links.as_ref(),
         );
         let new = self.drawings.add_chart_sheet(parts);
         order.insert(pos, Slot::Chart(new));
@@ -690,4 +699,5 @@ struct CopiedObject {
     picture: Option<Arc<crate::chart_edit::NewPicture>>,
     shape: Option<Arc<crate::chart_edit::NewShape>>,
     spec: crate::ChartSpec,
+    links: Option<Arc<crate::preserve::ChartLinks>>,
 }

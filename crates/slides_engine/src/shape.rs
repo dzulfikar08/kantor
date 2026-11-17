@@ -71,6 +71,39 @@ pub(crate) fn parse_shape(n: Node, cx: &ParseCtx) -> Shape {
 
 /// A shape inside a group whose fill is `grp_fill` (for `a:grpFill`).
 /// SmartArt drawings (`dsp:`) use the same elements in their own namespace.
+/// The outer shadow and 3-D look of a shape's `spPr`.
+fn effects(sp: Node, cx: &ParseCtx) -> crate::model::Effects {
+    let mut out = crate::model::Effects::default();
+    if let Some(sh) = child(sp, NS_A, "effectLst").and_then(|e| child(e, NS_A, "outerShdw")) {
+        let (color, alpha) = sh
+            .children()
+            .filter(|c| c.is_element())
+            .find_map(|c| cx.colors.color_alpha(c))
+            .unwrap_or((Rgb([0, 0, 0]), 255));
+        out.shadow = Some(crate::model::OuterShadow {
+            blur: attr_i64(sh, "blurRad").unwrap_or(0).max(0),
+            dist: attr_i64(sh, "dist").unwrap_or(0).max(0),
+            dir: attr_i64(sh, "dir").unwrap_or(0),
+            color,
+            alpha,
+        });
+    }
+    if let Some(d) = child(sp, NS_A, "sp3d") {
+        out.bevel = child(d, NS_A, "bevelT").map(|b| attr_i64(b, "w").unwrap_or(76_200).max(0));
+        let h = attr_i64(d, "extrusionH").unwrap_or(0);
+        if h > 0 {
+            let color = child(d, NS_A, "extrusionClr").and_then(|c| {
+                c.children()
+                    .filter(|c| c.is_element())
+                    .find_map(|c| cx.colors.color_alpha(c))
+                    .map(|(c, _)| c)
+            });
+            out.extrusion = Some((h, color));
+        }
+    }
+    out
+}
+
 pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) -> Shape {
     let src = cx.src;
     let base = n.range().start;
@@ -192,6 +225,7 @@ pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) ->
             None => style_color("lnRef"),
         };
         look.line = ln_color.map(|c| (c, width));
+        look.effects = effects(sp, cx);
         let base = themed.map(|t| t.2).unwrap_or_default();
         look.line_style = match ln {
             Some(l) => cx.colors.line_style(l, &base),
@@ -570,6 +604,38 @@ fn parse_para(p: Node, cx: &ParseCtx, locked: &mut Option<String>) -> TextPara {
             }
             (true, "endParaRPr") => {
                 para.end = Some(Arc::from(raw(src, c)));
+            }
+            // Equations (`a14:m`, alone or as an `mc:AlternateContent`
+            // choice whose fallback holds their text): shown as their
+            // linear text, kept as they are.
+            (_, "AlternateContent" | "m") => {
+                if locked.is_none() {
+                    *locked = Some("equations".into());
+                }
+                let fallback = c
+                    .children()
+                    .find(|f| f.is_element() && f.tag_name().name() == "Fallback");
+                let runs: Vec<Node> = fallback
+                    .map(|f| f.children().filter(|r| is(*r, NS_A, "r")).collect())
+                    .unwrap_or_default();
+                let math = c.descendants().find(|d| {
+                    d.is_element() && matches!(d.tag_name().name(), "oMathPara" | "oMath")
+                });
+                let props = runs
+                    .first()
+                    .and_then(|r| child(*r, NS_A, "rPr"))
+                    .or_else(|| c.descendants().find(|d| is(*d, NS_A, "rPr")))
+                    .map(|r| run_props(r, cx))
+                    .unwrap_or_default();
+                let t = match math {
+                    Some(m) => crate::omml::linear(m),
+                    None => runs
+                        .iter()
+                        .filter_map(|r| child(*r, NS_A, "t"))
+                        .filter_map(|t| t.text())
+                        .collect(),
+                };
+                push_run(&mut para, &t.replace(['\n', '\r'], " "), props);
             }
             (_, other) => {
                 if locked.is_none() {

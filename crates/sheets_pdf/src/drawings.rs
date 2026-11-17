@@ -35,7 +35,7 @@ pub enum PrintKind {
     /// are in the current rows and columns (made in Kantor).
     Chart(Arc<Chart>, bool),
     /// A shape's element XML (see `DrawingKind::Shape`).
-    Shape(Arc<str>),
+    Shape(Arc<str>, sheets_engine::drawing::ShapeMedia),
 }
 
 /// An object to print and where it is on the sheet.
@@ -254,14 +254,16 @@ fn print_kind(
                 *current_refs,
             )
         }
-        DrawingKind::Shape { xml } => PrintKind::Shape(xml.clone()),
+        DrawingKind::Shape { xml, media } => PrintKind::Shape(xml.clone(), media.clone()),
         DrawingKind::Slicer { name } => PrintKind::Shape(
             sheets_scene::slicer::slicer_xml(&book.slicer_view(d.key.sheet_id, name)?, w, h, false)
                 .into(),
+            Default::default(),
         ),
         DrawingKind::Timeline { name } => PrintKind::Shape(
             sheets_scene::slicer::timeline_xml(&book.timeline_view(d.key.sheet_id, name)?, w, h)
                 .into(),
+            Default::default(),
         ),
         DrawingKind::Other(_) => return None,
     })
@@ -389,7 +391,7 @@ impl SheetDrawings {
                         defaults: defaults.clone(),
                     }
                 }
-                PrintKind::Shape(xml) => {
+                PrintKind::Shape(xml, media) => {
                     use std::hash::{Hash, Hasher};
                     let mut h = std::collections::hash_map::DefaultHasher::new();
                     xml.hash(&mut h);
@@ -397,6 +399,7 @@ impl SheetDrawings {
                         key: d.key,
                         hash: h.finish(),
                         xml: xml.clone(),
+                        media: media.clone(),
                         theme: self.theme.clone(),
                     }
                 }

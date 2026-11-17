@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use docs_layout::Engine;
 use sheets_engine::Workbook;
-use sheets_engine::drawing::{Drawing, DrawingKey, DrawingKind, RefData, RefValue};
+use sheets_engine::drawing::{Drawing, DrawingKey, DrawingKind, RefData, RefValue, ShapeMedia};
 use sheets_engine::web::CellImage;
 use slides_engine::theme::{ClrMap, ColorCtx, ListStyle, Theme};
 use slides_engine::{EMU_PER_PX, Fill, Rgb, Xfrm};
@@ -231,10 +231,11 @@ pub fn shape_items(
     engine: &mut Engine,
     theme: &ChartTheme,
     xml: &str,
+    media: &ShapeMedia,
     w: f32,
     h: f32,
 ) -> Vec<Item> {
-    shape_items_on(builder, engine, theme, xml, w, h, None)
+    shape_items_on(builder, engine, theme, xml, media, w, h, None)
 }
 
 /// Relative luminance of a colour (0 black, 1 white).
@@ -260,11 +261,13 @@ fn unfilled(shape: &slides_engine::Shape) -> bool {
 /// default text colour (dark) is drawn in it when the shape has no fill
 /// and the dark text would vanish into the grid; text with a colour of
 /// its own keeps it.
+#[allow(clippy::too_many_arguments)]
 pub fn shape_items_on(
     builder: &Builder,
     engine: &mut Engine,
     theme: &ChartTheme,
     xml: &str,
+    media: &ShapeMedia,
     w: f32,
     h: f32,
     dark_text: Option<Rgb>,
@@ -274,7 +277,22 @@ pub fn shape_items_on(
         map: &theme.map,
         ph: None,
     };
-    let Some(mut shape) = slides_engine::sheet_shape::parse(&format!("<r>{xml}</r>"), colors)
+    // Part names a picture cache can key on: the id, the bytes' hash and
+    // the extension (which says how to decode it).
+    let names: Vec<(String, String)> = media
+        .iter()
+        .map(|(id, ext, data)| {
+            let mut h = DefaultHasher::new();
+            data.hash(&mut h);
+            (id.clone(), format!("{id}-{:x}.{ext}", h.finish()))
+        })
+        .collect();
+    let ids: Vec<(&str, &str)> = names
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let Some(mut shape) =
+        slides_engine::sheet_shape::parse_with_media(&format!("<r>{xml}</r>"), colors, &ids)
     else {
         return placeholder(w, h);
     };
@@ -301,7 +319,11 @@ pub fn shape_items_on(
         slides_engine::render::free_shape_text(s, &base, minor.as_deref(), x)
     };
     let mut out = Vec::new();
-    builder.free_shape(engine, &shape, &xfrm, &text, &mut out);
+    let pictures = |part: &str| {
+        let i = names.iter().position(|(_, n)| n == part)?;
+        Some(Arc::new(media[i].2.to_vec()))
+    };
+    builder.free_shape(engine, &shape, &xfrm, &text, &pictures, &mut out);
     out
 }
 
@@ -565,6 +587,7 @@ impl DrawingScenes {
             engine,
             &theme,
             xml,
+            &ShapeMedia::default(),
             w,
             h,
             self.dark_text,
@@ -610,10 +633,15 @@ impl DrawingScenes {
                 };
                 return self.shape_cached(engine, book, d.key, &xml, w, h);
             }
-            DrawingKind::Shape { xml } => {
+            DrawingKind::Shape { xml, media } => {
                 let hash = {
                     let mut h = DefaultHasher::new();
                     xml.hash(&mut h);
+                    media.len().hash(&mut h);
+                    for (id, _, data) in media.iter() {
+                        id.hash(&mut h);
+                        data.len().hash(&mut h);
+                    }
                     h.finish()
                 };
                 let key = (d.key, q(w), q(h));
@@ -628,6 +656,7 @@ impl DrawingScenes {
                     engine,
                     &theme,
                     xml,
+                    media,
                     w,
                     h,
                     self.dark_text,

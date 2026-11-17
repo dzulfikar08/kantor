@@ -47,6 +47,25 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   run them and says so when the workbook opens. Save As `.xlsx` warns, as Excel does, that a
   macro-free workbook can't hold them, and offers to save as `.xlsm` instead. A workbook saved as
   `.xlsm` is always a macro-enabled one, so Excel opens it.
+- Sheets Chart panel: combo charts. Pick Combo as the type and give each series its own type
+  (clustered or stacked column, line, area) and, with Secondary Axis, its own value axis on the
+  right, as in Excel's Change Chart Type ▸ Combo. Combo charts from a file change the same way.
+- Sheets Chart panel: the 3-D forms of column, bar, line, area and pie charts (the 3-D box), for
+  charts made in Kantor and charts from a file; 3-D charts from a file can now change type and data.
+- Sheets Chart panel: data label text (size, bold, italic, colour), an axis' minor unit, and a
+  category axis' type (automatic, text or date) with a date axis' base, major and minor time units.
+- Sheets Chart panel: waterfall, funnel, treemap, sunburst, histogram, Pareto and box & whisker
+  charts change their title, legend and type (among these types), and take their series from rows.
+- Slides chart data: box & whisker charts get series added, removed and moved up or down.
+- Sheets: Move Chart keeps a chart's link to its data workbook and its user shapes (text boxes and
+  pictures drawn on the chart); a sheet copied with Move or Copy keeps them on its charts too, and
+  brings pictures inside groups.
+- Sheets shapes: picture fills, outer shadows and 3-D effects (bevel and extrusion, drawn
+  approximately) are drawn on screen and in the PDF; Format Shape sets a picture fill
+  (*Picture fill…*) and Excel's outer shadow presets (Effects ▸ Shadow).
+- Sheets shapes: text linked to a cell (`=A1` typed into a shape in Excel) shows the cell's value
+  as it is now and follows the cell when rows or columns move; fields are kept, and equations show
+  as their linear text (`x=(−b±√(b^2−4ac))/(2a)`). Kantor doesn't edit such text and says so.
 
 ### Changed
 

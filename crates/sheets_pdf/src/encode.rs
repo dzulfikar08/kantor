@@ -419,6 +419,7 @@ fn overlay_items(
             key,
             hash,
             xml,
+            media,
             theme,
         } => {
             let q = |v: f32| (v.max(0.0) * 4.0).round() as u32;
@@ -432,7 +433,7 @@ fn overlay_items(
             let look = sheets_scene::ChartTheme::new(theme.as_deref());
             let builder = slides_scene::Builder::new();
             let items = Arc::new(sheets_scene::shape_items(
-                &builder, engine, &look, xml, w, h,
+                &builder, engine, &look, xml, media, w, h,
             ));
             if charts.len() >= MAX_CHARTS {
                 charts.clear();

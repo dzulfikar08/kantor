@@ -470,7 +470,9 @@ impl Workbook {
                         name,
                         slicer: Some(Arc::new(n)),
                         timeline: None,
+                        media: Vec::new(),
                     })),
+                    links: None,
                 });
                 keys.push(DrawingKey {
                     sheet_id,
@@ -795,7 +797,9 @@ impl Workbook {
                         name,
                         slicer: None,
                         timeline: Some(Arc::new(n)),
+                        media: Vec::new(),
                     })),
+                    links: None,
                 });
                 keys.push(DrawingKey {
                     sheet_id,

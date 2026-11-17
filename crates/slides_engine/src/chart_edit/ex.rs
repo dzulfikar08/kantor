@@ -13,7 +13,13 @@
 //!
 //! Treemap and sunburst categories are paths, outermost level first,
 //! joined with [`SEP`] (`Europe / North / Alpha`); trailing empty levels
-//! are left out. Series can't be added, removed or moved here.
+//! are left out.
+//!
+//! Series are added, removed and moved ([`restructure`]) on the types that
+//! plot several (box & whisker), as PowerPoint's *Select Data* does: a new
+//! series gets its own data block (the categories of the series it copies,
+//! values in the workbook's next column or row) and takes its place in the
+//! plot order; a removed one takes its data block (and cells) with it.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -21,7 +27,7 @@ use std::ops::Range;
 use anyhow::{Context as _, bail};
 use roxmltree::{Document, Node};
 
-use super::{CellValue, CellWrites, ChartData, ChartSeries, Ref, fmt_num};
+use super::{CellValue, CellWrites, ChartData, ChartSeries, Ref, SeriesChange, fmt_num};
 use crate::frame::NS_CX;
 use crate::xml::*;
 
@@ -392,6 +398,213 @@ pub(super) fn rewrite(
     Ok((out, stale, renames))
 }
 
+/// Whether a chartex part's series can't be added, removed or moved (its
+/// type plots one series).
+pub(super) fn series_fixed(xml: &str) -> bool {
+    Document::parse(xml).is_ok_and(|d| !many_series(&d))
+}
+
+/// Whether a chartex part's type plots several series (box & whisker);
+/// the others plot one.
+fn many_series(doc: &Document) -> bool {
+    doc.descendants()
+        .filter(|n| is(*n, NS_CX, "series"))
+        .any(|s| s.attribute("layoutId") == Some("boxWhisker"))
+}
+
+/// A chartex part with a series added, removed or moved (`change`); the
+/// workbook cells to empty. The new series' data and name are written by
+/// [`rewrite`] next.
+pub(super) fn restructure(
+    xml: &str,
+    change: SeriesChange,
+    names: &HashMap<String, String>,
+) -> anyhow::Result<(String, Vec<CellWrites>)> {
+    let doc = Document::parse(xml).context("chart XML")?;
+    let pairs = data_series(&doc);
+    let mut clears: Vec<CellWrites> = Vec::new();
+    if change != SeriesChange::Same && !many_series(&doc) {
+        bail!("This type of chart shows one series");
+    }
+    let n = pairs.len();
+    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+    match change {
+        SeriesChange::Same => return Ok((xml.to_owned(), clears)),
+        SeriesChange::Inserted(k) => {
+            if n == 0 {
+                bail!("the chart has no series");
+            }
+            let k = k.min(n);
+            let (template, block) = pairs[k.min(n - 1)];
+            let refs = |d: Node| {
+                dim(d, "val")
+                    .and_then(formula)
+                    .and_then(|f| f.text())
+                    .and_then(|t| resolve(t, names))
+            };
+            // The new values go beside the last series' (columns move
+            // right, rows down).
+            let last = pairs
+                .iter()
+                .filter_map(|(s, d)| Some((*s, refs(*d)?.cells)))
+                .max_by_key(|(_, r)| (r.c0, r.r0));
+            let (dc, dr) = match &last {
+                Some((_, v)) if v.r0 == v.r1 && v.c0 != v.c1 => (0, 1),
+                _ => (1, 0),
+            };
+            let new_val = last.as_ref().map(|(_, v)| v.shifted(dc, dr));
+            let new_name = last.as_ref().and_then(|(s, _)| {
+                cx(*s, "tx")
+                    .and_then(|t| cx(t, "txData"))
+                    .and_then(formula)
+                    .and_then(|f| f.text())
+                    .and_then(|t| resolve(t, names))
+                    .map(|a| a.cells.shifted(dc, dr))
+            });
+            let id = doc
+                .descendants()
+                .filter(|n| is(*n, NS_CX, "data"))
+                .filter_map(|d| d.attribute("id")?.parse::<u32>().ok())
+                .max()
+                .map_or(0, |m| m + 1);
+            // The data block: the template's categories, its own values.
+            let mut data = raw(xml, block).to_owned();
+            let base = block.range().start;
+            let mut local: Vec<(Range<usize>, String)> = Vec::new();
+            if let Some(a) = block.attributes().find(|a| a.name() == "id") {
+                let r = a.range_value();
+                local.push((r.start - base..r.end - base, id.to_string()));
+            }
+            if let Some(vd) = dim(block, "val") {
+                if let (Some(t), Some(v)) = (
+                    formula(vd)
+                        .and_then(|f| f.first_child())
+                        .filter(|t| t.is_text()),
+                    &new_val,
+                ) {
+                    let r = t.range();
+                    local.push((r.start - base..r.end - base, esc(&v.write())));
+                }
+                if let Some(l) = levels(vd).first() {
+                    let r = l.range();
+                    local.push((r.start - base..r.end - base, new_lvl(xml, *l, &[])));
+                }
+            }
+            local.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+            for (r, t) in local {
+                data.replace_range(r, &t);
+            }
+            let after = doc
+                .descendants()
+                .rfind(|n| is(*n, NS_CX, "data"))
+                .map_or(block.range().end, |d| d.range().end);
+            edits.push((after..after, data));
+            // The series: the template's look, no ID of its own yet.
+            let mut ser = raw(xml, template).to_owned();
+            let base = template.range().start;
+            let mut local: Vec<(Range<usize>, String)> = Vec::new();
+            if let Some(a) = template.attributes().find(|a| a.name() == "uniqueId") {
+                // ` uniqueId="{...}"`: from the space before it.
+                let r = a.range();
+                let start = xml[..r.start].trim_end().len();
+                local.push((start - base..r.end - base, String::new()));
+            }
+            if let Some(a) = template.attributes().find(|a| a.name() == "formatIdx") {
+                let next = doc
+                    .descendants()
+                    .filter(|n| is(*n, NS_CX, "series"))
+                    .filter_map(|s| s.attribute("formatIdx")?.parse::<u32>().ok())
+                    .max()
+                    .map_or(0, |m| m + 1);
+                let r = a.range_value();
+                local.push((r.start - base..r.end - base, next.to_string()));
+            }
+            if let Some(d) = cx(template, "dataId")
+                && let Some(a) = d.attributes().find(|a| a.name() == "val")
+            {
+                let r = a.range_value();
+                local.push((r.start - base..r.end - base, id.to_string()));
+            }
+            if let Some(td) = cx(template, "tx").and_then(|t| cx(t, "txData"))
+                && let Some(t) = formula(td)
+                    .and_then(|f| f.first_child())
+                    .filter(|t| t.is_text())
+                && let Some(r) = &new_name
+            {
+                let rr = t.range();
+                local.push((rr.start - base..rr.end - base, esc(&r.write())));
+            }
+            for c in template
+                .children()
+                .filter(|c| is(*c, NS_CX, "dataPt") || is(*c, NS_CX, "extLst"))
+            {
+                let r = c.range();
+                local.push((r.start - base..r.end - base, String::new()));
+            }
+            local.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+            for (r, t) in local {
+                ser.replace_range(r, &t);
+            }
+            let at = if k == n {
+                pairs[n - 1].0.range().end
+            } else {
+                template.range().start
+            };
+            edits.push((at..at, ser));
+        }
+        SeriesChange::Removed(k) => {
+            if n <= 1 {
+                bail!("A chart needs at least one series");
+            }
+            let (gone, block) = *pairs.get(k).context("no such series")?;
+            edits.push((gone.range(), String::new()));
+            let shared = pairs
+                .iter()
+                .enumerate()
+                .any(|(i, (_, d))| i != k && d.range() == block.range());
+            if !shared {
+                edits.push((block.range(), String::new()));
+                let mut refs: Vec<Ref> = Vec::new();
+                if let Some(a) = dim(block, "val")
+                    .and_then(formula)
+                    .and_then(|f| f.text())
+                    .and_then(|t| resolve(t, names))
+                {
+                    refs.push(a.cells);
+                }
+                if let Some(a) = cx(gone, "tx")
+                    .and_then(|t| cx(t, "txData"))
+                    .and_then(formula)
+                    .and_then(|f| f.text())
+                    .and_then(|t| resolve(t, names))
+                {
+                    refs.push(a.cells);
+                }
+                for r in refs {
+                    clears.push((r.clone(), vec![CellValue::Empty; r.cells().len()]));
+                }
+            }
+        }
+        SeriesChange::Moved { from, to } => {
+            let (a, b) = (
+                pairs.get(from).context("no such series")?.0,
+                pairs.get(to).context("no such series")?.0,
+            );
+            if from == to {
+                return Ok((xml.to_owned(), clears));
+            }
+            edits.push((a.range(), raw(xml, b).to_owned()));
+            edits.push((b.range(), raw(xml, a).to_owned()));
+        }
+    }
+    edits.sort_by_key(|(r, _)| std::cmp::Reverse((r.start, r.end)));
+    let mut out = xml.to_owned();
+    for (r, t) in edits {
+        out.replace_range(r, &t);
+    }
+    Ok((out, clears))
+}
+
 /// The block every reference of a chartex part lies in (one sheet).
 pub(super) fn data_box(xml: &str, names: &HashMap<String, String>) -> Option<Ref> {
     let doc = Document::parse(xml).ok()?;
@@ -476,5 +689,50 @@ mod tests {
         let mut two = read(TREE).unwrap();
         two.series.push(two.series[0].clone());
         assert!(rewrite(TREE, &two, &names).is_err());
+    }
+
+    const BOX: &str = r#"<cx:chartSpace xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex"><cx:chartData><cx:data id="0"><cx:strDim type="cat"><cx:f>Data!$A$2:$A$3</cx:f><cx:lvl ptCount="2"><cx:pt idx="0">Mon</cx:pt><cx:pt idx="1">Tue</cx:pt></cx:lvl></cx:strDim><cx:numDim type="val"><cx:f>Data!$B$2:$B$3</cx:f><cx:lvl ptCount="2" formatCode="General"><cx:pt idx="0">1</cx:pt><cx:pt idx="1">2</cx:pt></cx:lvl></cx:numDim></cx:data><cx:data id="1"><cx:strDim type="cat"><cx:f>Data!$A$2:$A$3</cx:f><cx:lvl ptCount="2"><cx:pt idx="0">Mon</cx:pt><cx:pt idx="1">Tue</cx:pt></cx:lvl></cx:strDim><cx:numDim type="val"><cx:f>Data!$C$2:$C$3</cx:f><cx:lvl ptCount="2" formatCode="General"><cx:pt idx="0">3</cx:pt><cx:pt idx="1">4</cx:pt></cx:lvl></cx:numDim></cx:data></cx:chartData><cx:chart><cx:plotArea><cx:plotAreaRegion><cx:series layoutId="boxWhisker" uniqueId="{A}" formatIdx="0"><cx:tx><cx:txData><cx:f>Data!$B$1</cx:f><cx:v>Morning</cx:v></cx:txData></cx:tx><cx:dataId val="0"/><cx:layoutPr><cx:statistics quartileMethod="exclusive"/></cx:layoutPr></cx:series><cx:series layoutId="boxWhisker" uniqueId="{B}" formatIdx="1"><cx:tx><cx:txData><cx:f>Data!$C$1</cx:f><cx:v>Evening</cx:v></cx:txData></cx:tx><cx:dataId val="1"/><cx:layoutPr><cx:statistics quartileMethod="exclusive"/></cx:layoutPr></cx:series></cx:plotAreaRegion></cx:plotArea></cx:chart></cx:chartSpace>"#;
+
+    #[test]
+    fn box_whisker_series_added_removed_and_moved() {
+        let names = HashMap::new();
+        assert!(!series_fixed(BOX) && series_fixed(TREE));
+        assert!(restructure(TREE, SeriesChange::Inserted(1), &names).is_err());
+        // Added in the middle: its own block, values in column D.
+        let (mid, clears) = restructure(BOX, SeriesChange::Inserted(1), &names).unwrap();
+        assert!(clears.is_empty());
+        Document::parse(&mid).unwrap();
+        assert!(mid.contains("<cx:data id=\"2\">"), "{mid}");
+        assert!(mid.contains("<cx:f>Data!$D$2:$D$3</cx:f>"), "{mid}");
+        assert!(mid.contains("<cx:f>Data!$D$1</cx:f>"), "{mid}");
+        assert_eq!(mid.matches("uniqueId").count(), 2, "{mid}");
+        let mut d = read(BOX).unwrap();
+        d.series.insert(
+            1,
+            ChartSeries {
+                name: "Noon".into(),
+                values: vec![Some(5.0), Some(6.0)],
+            },
+        );
+        let (xml, cells, _) = rewrite(&mid, &d, &names).unwrap();
+        assert_eq!(read(&xml).unwrap(), d);
+        assert!(
+            cells
+                .iter()
+                .any(|(r, v)| r.write() == "Data!$D$1" && v == &[CellValue::Text("Noon".into())])
+        );
+        // Removed: its block and cells go.
+        let (gone, clears) = restructure(&xml, SeriesChange::Removed(0), &names).unwrap();
+        assert!(
+            !gone.contains("<cx:data id=\"0\">") && !gone.contains("Morning"),
+            "{gone}"
+        );
+        assert!(clears.iter().any(|(r, _)| r.write() == "Data!$B$2:$B$3"));
+        assert_eq!(read(&gone).unwrap().series.len(), 2);
+        // Moved: the plot order swaps.
+        let (m, _) = restructure(BOX, SeriesChange::Moved { from: 0, to: 1 }, &names).unwrap();
+        let r = read(&m).unwrap();
+        assert_eq!(r.series[0].name, "Evening");
+        assert_eq!(r.series[1].name, "Morning");
     }
 }

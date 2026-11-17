@@ -338,7 +338,7 @@ fn edit_the_data_of_the_newer_chart_types() {
     assert_eq!(bx.series.len(), 2);
     bx.series[1].values[0] = Some(19.0);
     p.set_chart_data(10, b, &bx).unwrap();
-    // Pareto (slide 10): the line has no data; series can't be added.
+    // Pareto (slide 10): the line has no data; it plots one series.
     let pa = chart_on(&p, 9);
     assert_eq!(p.chart_data(9, pa).unwrap().series.len(), 1);
     assert!(p.add_chart_series(9, pa, "More").is_err());
@@ -380,5 +380,50 @@ fn edit_the_data_of_the_newer_chart_types() {
     }
     if let Ok(dir) = std::env::var("KANTOR_PIVOT_SAMPLES") {
         std::fs::copy(&out, PathBuf::from(dir).join("chartex-edited.pptx")).unwrap();
+    }
+}
+
+#[test]
+fn box_and_whisker_series_added_moved_and_removed() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = Presentation::open(&chartex()).unwrap();
+    let b = chart_on(&p, 10);
+    assert!(!p.chart_series_fixed(10, b));
+    assert!(
+        p.chart_series_fixed(4, chart_on(&p, 4)),
+        "a waterfall has one series"
+    );
+    p.add_chart_series(10, b, "Night").unwrap();
+    let mut d = p.chart_data(10, b).unwrap();
+    assert_eq!(d.series.len(), 3);
+    assert_eq!(d.series[2].name, "Night");
+    d.series[2].values = (0..d.categories.len()).map(|i| Some(i as f64)).collect();
+    p.set_chart_data(10, b, &d).unwrap();
+    p.move_chart_series(10, b, 2, true).unwrap();
+    let names: Vec<String> = p
+        .chart_data(10, b)
+        .unwrap()
+        .series
+        .iter()
+        .map(|s| s.name.clone())
+        .collect();
+    assert_eq!(names, ["Morning", "Night", "Evening"]);
+    p.remove_chart_series(10, b, 0).unwrap();
+    let after = p.chart_data(10, b).unwrap();
+    assert_eq!(after.series.len(), 2);
+    assert_eq!(after.series[0].name, "Night");
+    let out = dir.path().join("box-series.pptx");
+    p.save_as(&out).unwrap();
+    let back = Presentation::open(&out).unwrap();
+    assert_eq!(back.chart_data(10, b).unwrap(), after);
+    let saved = parts(&std::fs::read(&out).unwrap());
+    let part = String::from_utf8(saved["ppt/charts/chartEx7.xml"].clone()).unwrap();
+    roxmltree::Document::parse(&part).unwrap();
+    assert_eq!(part.matches("layoutId=\"boxWhisker\"").count(), 2, "{part}");
+    let wb = parts(&saved["ppt/embeddings/Microsoft_Excel_Worksheet_ex7.xlsx"]);
+    let sheet = String::from_utf8(wb["xl/worksheets/sheet1.xml"].clone()).unwrap();
+    assert!(sheet.contains(">Night</t>"), "{sheet}");
+    if let Ok(dir) = std::env::var("KANTOR_PIVOT_SAMPLES") {
+        std::fs::copy(&out, PathBuf::from(dir).join("box-series.pptx")).unwrap();
     }
 }
