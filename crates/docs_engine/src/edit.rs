@@ -726,8 +726,8 @@ impl Document {
     }
 
     /// Largest `wp:docPr` id in the document (new pictures need unique ids).
-    fn max_doc_pr(&self) -> u32 {
-        let mut max = 0;
+    pub(crate) fn max_doc_pr(&self) -> u32 {
+        let mut max = self.doc_pr_floor;
         for p in &self.paragraphs {
             for (_, o) in p.objects() {
                 match o {

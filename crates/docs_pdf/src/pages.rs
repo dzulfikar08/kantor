@@ -772,10 +772,19 @@ fn float_item(
         };
         (Arc::new(sl), x, y + dy)
     };
-    let text = f
-        .text
-        .as_ref()
-        .map(|tb| lay_box(tb, floats::text_area(f, rect), None));
+    let mut rect = rect;
+    let text = f.text.as_ref().map(|tb| {
+        let area = floats::text_area(f, rect);
+        let laid = lay_box(tb, area, None);
+        // "Resize shape to fit text": as tall as the text and margins
+        // (while it's typed in, too; leaving the box stores the size).
+        let need = laid.0.height + (rect[3] - area[3]);
+        if tb.auto_fit && (need - rect[3]).abs() > 0.5 {
+            rect[3] = need.max(1.0);
+            return lay_box(tb, floats::text_area(f, rect), None);
+        }
+        laid
+    });
     let mut boxes = Vec::new();
     if !f.boxes.is_empty() {
         for (k, area) in floats::group_text_areas(f, rect).into_iter().enumerate() {

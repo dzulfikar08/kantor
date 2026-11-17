@@ -331,6 +331,9 @@ pub struct TextBox {
     pub insets: [i64; 4],
     /// `a:bodyPr/@anchor`: top, middle or bottom.
     pub v_align: FloatAlign,
+    /// "Resize shape to fit text" (`a:spAutoFit`): the shape is as tall
+    /// as its text and inner margins.
+    pub auto_fit: bool,
 }
 
 impl std::fmt::Debug for TextBox {
@@ -1517,6 +1520,14 @@ pub(crate) fn text_box_xml(xml_src: &str) -> Option<(&str, [i64; 4], FloatAlign)
         _ => FloatAlign::Start,
     };
     Some((inner, insets, v_align))
+}
+
+/// Whether a shape's text box resizes the shape to fit its text
+/// (`a:bodyPr/a:spAutoFit`; Word's VML fallback says `mso-fit-shape-to-text`).
+pub(crate) fn text_box_auto_fit(xml_src: &str) -> bool {
+    let choice = choice_part(xml_src);
+    element_range(choice, "bodyPr")
+        .is_some_and(|r| next_start_tag(&choice[r], "spAutoFit").is_some())
 }
 
 // ── writing ────────────────────────────────────────────────────────────────

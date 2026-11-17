@@ -396,8 +396,8 @@ impl DocsView {
 
     /// Edit the text `which` of object `sel` where it's drawn, caret at
     /// the window point `p` (Word's text box editing). `false` when it
-    /// can't be (SmartArt, turned text, pictures or tables in it): the
-    /// text popover edits it instead.
+    /// can't be (SmartArt, turned text): the text popover edits it
+    /// instead.
     fn text_in_place(
         &mut self,
         page: usize,
@@ -413,9 +413,7 @@ impl DocsView {
         let Some(f) = self.doc.float_at(sel.para, sel.index) else {
             return false;
         };
-        if matches!(f.kind, docs_engine::FloatKind::SmartArt { .. })
-            || f.text_locked_in(which).is_some()
-        {
+        if matches!(f.kind, docs_engine::FloatKind::SmartArt { .. }) {
             return false;
         }
         let turned = match which {

@@ -66,6 +66,10 @@ pub struct PartEdit {
     created: bool,
     /// A text box's anchor paragraph as it was before the edit.
     owner: Option<Paragraph>,
+    /// A "Resize shape to fit text" box's height for its new text (EMU),
+    /// worked out by the layout: [`Document::finish_part`] sizes the
+    /// shape to it, as Word does when the text changes.
+    pub fit_height: Option<i64>,
 }
 
 impl PartEdit {
@@ -117,6 +121,7 @@ impl Document {
                 para,
                 created,
                 owner: None,
+                fit_height: None,
             },
             doc,
         ))
@@ -140,21 +145,32 @@ impl Document {
                 para: None,
                 created: false,
                 owner: None,
+                fit_height: None,
             },
             doc,
         ))
     }
 
-    /// Start editing a text box in place. `None` when there's no such
-    /// text box or Kantor can't edit it ([`crate::Float::text_locked_in`]).
+    /// Start editing a text box in place, pictures and tables in it
+    /// included. `None` when there's no such text box.
     pub fn edit_text_box(&mut self, b: BoxRef) -> Option<(PartEdit, Document)> {
         let owner = self.box_owner(b.story)?;
         let f = owner.float_at(b.para, b.index)?;
-        f.text_box_in(b.which)?;
-        if f.text_locked_in(b.which).is_some() {
-            return None;
-        }
+        let tb = f.text_box_in(b.which)?;
+        // New pictures and tables fit the box's text area, as in Word.
+        let text_width = {
+            let (w, _) = f.at.size_px();
+            let w_tw = (w * 15.0).round() as i64;
+            let ins = (tb.insets[0] + tb.insets[2]) / 635;
+            (w_tw - ins).max(720) as u32
+        };
+        let media = owner.media.clone();
         let para = owner.paragraphs.get(b.para)?.clone();
+        let floor = self
+            .stories
+            .iter()
+            .map(|s| s.doc.max_doc_pr())
+            .fold(self.max_doc_pr(), u32::max);
         let stem = match b.story {
             Some(s) => self.stories.get(s).map(|st| media_stem(&st.part))?,
             None => String::new(),
@@ -168,6 +184,16 @@ impl Document {
         doc.field_props = Some(props);
         doc.numbering = numbering;
         doc.media_stem = stem;
+        doc.doc_pr_floor = floor;
+        for (id, m) in media {
+            doc.media.entry(id).or_insert(m);
+        }
+        doc.page = crate::PageGeometry {
+            width: text_width,
+            margin_left: 0,
+            margin_right: 0,
+            ..doc.page
+        };
         doc.track = track;
         doc.author = author;
         Some((
@@ -177,6 +203,7 @@ impl Document {
                 para: None,
                 created: false,
                 owner: Some(para),
+                fit_height: None,
             },
             doc,
         ))
@@ -300,10 +327,17 @@ impl Document {
             return false;
         };
         let pictures = std::mem::take(&mut doc.new_media);
+        doc.doc_pr_floor = 0;
+        if let Some(was) = old_box(&old, b) {
+            doc.page = was.page;
+        }
         let mut para = old.clone();
         if changed && let Some(d) = box_in_para(&mut para, b.index, b.which) {
             *d = doc;
             mark_edited(&mut para, b.index, b.which);
+            if let Some(cy) = e.fit_height {
+                fit_shape(&mut para, b.index, b.which, cy);
+            }
         }
         let Some(owner) = (match b.story {
             Some(s) => self.stories.get_mut(s).map(|st| &mut st.doc),
@@ -319,6 +353,15 @@ impl Document {
             return false;
         }
         *slot = para;
+        for m in &pictures {
+            owner.media.insert(
+                m.rel_id.clone(),
+                crate::docx::Media {
+                    part: m.part.clone(),
+                    bytes: Some(m.bytes.clone()),
+                },
+            );
+        }
         owner.new_media.extend(pictures);
         match b.story {
             Some(s) => {
@@ -433,6 +476,27 @@ fn mark_edited(p: &mut Paragraph, index: usize, which: Option<usize>) {
                         g.edited = true;
                     }
                 }
+            }
+            return;
+        }
+        start += run.len;
+    }
+}
+
+/// Size a "Resize shape to fit text" shape at `index` of `p` to the
+/// height `cy` (EMU) its text needs.
+fn fit_shape(p: &mut Paragraph, index: usize, which: Option<usize>, cy: i64) {
+    let mut start = 0;
+    for run in &mut p.runs {
+        if start == index
+            && let Some(crate::Object::Float(f)) = &mut run.object
+        {
+            if which.is_none()
+                && f.text.as_ref().is_some_and(|t| t.auto_fit)
+                && cy > 0
+                && (f.at.cy - cy).abs() > crate::object::EMU_PER_PX as i64 / 2
+            {
+                Arc::make_mut(f).at.cy = cy;
             }
             return;
         }

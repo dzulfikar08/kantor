@@ -1128,7 +1128,16 @@ pub fn text_area(f: &Float, rect: [f32; 4]) -> [f32; 4] {
         .and_then(|d| d.root_element().first_element_child())
         .and_then(Geometry::from_xml)
         .unwrap_or_else(|| Geometry::preset("rect"));
-    let (cx, cy) = (f.at.cx.max(0) as f64, f.at.cy.max(0) as f64);
+    // The box as drawn (a "Resize shape to fit text" shape grows with its
+    // text: see `pages::float_item`).
+    let (cx, cy) = if rect[2] > 0.0 || rect[3] > 0.0 {
+        (
+            (rect[2].max(0.0) * EMU_PER_PX) as f64,
+            (rect[3].max(0.0) * EMU_PER_PX) as f64,
+        )
+    } else {
+        (f.at.cx.max(0) as f64, f.at.cy.max(0) as f64)
+    };
     let tr = outline(&geometry, cx, cy).text_rect;
     let px = |v: f64| v as f32 / EMU_PER_PX;
     let [l, t, r, b] = insets(f);

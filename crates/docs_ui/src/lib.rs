@@ -1006,17 +1006,6 @@ impl DocsView {
         }
     }
 
-    /// Whether a text box is being edited: Kantor keeps pictures and
-    /// tables out of it (it can't edit a box holding them), and says so.
-    fn no_objects_here(&mut self, cx: &mut Context<Self>) -> bool {
-        if !matches!(self.part_target(), Some(part::PartTarget::TextBox(_))) {
-            return false;
-        }
-        self.status = t("Pictures and tables can't go in a text box in Kantor yet").into();
-        cx.notify();
-        true
-    }
-
     /// Insert a `rows` × `cols` table at the caret.
     pub fn insert_table_doc(
         &mut self,
@@ -1026,9 +1015,6 @@ impl DocsView {
         cx: &mut Context<Self>,
     ) {
         self.table_picker = None;
-        if self.no_objects_here(cx) {
-            return;
-        }
         match self.doc.insert_table(self.sel, rows, cols) {
             Some(sel) => self.edited(sel, window, cx),
             None => {
@@ -1062,9 +1048,6 @@ impl DocsView {
 
     /// Ask for a PNG or JPEG and insert it at the caret.
     pub fn insert_image_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.no_objects_here(cx) {
-            return;
-        }
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
