@@ -1833,7 +1833,11 @@ impl Document {
                 .chars()
                 .filter(|&c| c != OBJECT)
                 .map(|c| {
-                    if c == '\t' || c == LINE_BREAK || c == PAGE_BREAK || c == crate::columns::COLUMN_BREAK {
+                    if c == '\t'
+                        || c == LINE_BREAK
+                        || c == PAGE_BREAK
+                        || c == crate::columns::COLUMN_BREAK
+                    {
                         ' '
                     } else {
                         c

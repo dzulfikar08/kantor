@@ -2633,11 +2633,7 @@ impl PagedDocument {
         let mut flow = Flow {
             setup: sections[0].setup,
             paras,
-            orig: if columns {
-                layouts.clone()
-            } else {
-                Vec::new()
-            },
+            orig: if columns { layouts.clone() } else { Vec::new() },
             layouts,
             excl: Vec::new(),
             pre,
@@ -3143,7 +3139,11 @@ impl PagedDocument {
                 }
                 // Leaving the columns: as if from the first (down) or last
                 // (up) column, so the next page's first column is next.
-                let edge = if down { region[0] } else { region[region.len() - 1] };
+                let edge = if down {
+                    region[0]
+                } else {
+                    region[region.len() - 1]
+                };
                 x = x - col[0] + edge[0];
             }
         }
@@ -4453,7 +4453,10 @@ mod column_tests {
     fn text_fills_one_column_then_the_next() {
         let s = PageSetup::a4();
         let cols = two_columns(None);
-        let doc = lay(&short(200), &[section(0, SectionBreak::NextPage, cols.clone())]);
+        let doc = lay(
+            &short(200),
+            &[section(0, SectionBreak::NextPage, cols.clone())],
+        );
         let page = &doc.pages[0];
         let in_first = page.lines.iter().filter(|l| l.x == s.margin_left).count();
         let in_second = page
@@ -4465,15 +4468,14 @@ mod column_tests {
         assert_eq!(in_first, in_second, "a full page has two full columns");
         assert_eq!(in_first + in_second, page.lines.len());
         // The second column starts at the top, right after the first.
-        let first_of_second = page
-            .lines
-            .iter()
-            .find(|l| l.x > s.margin_left)
-            .unwrap();
+        let first_of_second = page.lines.iter().find(|l| l.x > s.margin_left).unwrap();
         assert_eq!(first_of_second.top, s.margin_top);
         assert_eq!(first_of_second.para, in_first);
         // Twice as much text per page as without columns.
-        let one = lay(&short(200), &[section(0, SectionBreak::NextPage, Vec::new())]);
+        let one = lay(
+            &short(200),
+            &[section(0, SectionBreak::NextPage, Vec::new())],
+        );
         assert!(doc.pages.len() * 2 <= one.pages.len() + 1);
         // The column boxes and the line between them.
         assert_eq!(page.columns.len(), 1);
@@ -4495,7 +4497,11 @@ mod column_tests {
         let doc = lay(&paras, &[section(0, SectionBreak::NextPage, cols.clone())]);
         assert_eq!(doc.pages.len(), 1);
         let page = &doc.pages[0];
-        let b = page.lines.iter().find(|l| l.para == 1 && l.line == 1).unwrap();
+        let b = page
+            .lines
+            .iter()
+            .find(|l| l.para == 1 && l.line == 1)
+            .unwrap();
         assert_eq!(b.x, s.margin_left + cols[1].0);
         assert_eq!(b.top, s.margin_top);
         assert_eq!(left(page, 2), s.margin_left + cols[1].0);
@@ -4527,9 +4533,21 @@ mod column_tests {
         );
         assert_eq!(doc.pages.len(), 1);
         let page = &doc.pages[0];
-        let firsts = page.lines.iter().filter(|l| l.para < 11 && l.x == s.margin_left).count();
-        let seconds = page.lines.iter().filter(|l| l.para < 11 && l.x > s.margin_left).count();
-        assert_eq!((firsts, seconds), (6, 5), "balanced, the first column longer");
+        let firsts = page
+            .lines
+            .iter()
+            .filter(|l| l.para < 11 && l.x == s.margin_left)
+            .count();
+        let seconds = page
+            .lines
+            .iter()
+            .filter(|l| l.para < 11 && l.x > s.margin_left)
+            .count();
+        assert_eq!(
+            (firsts, seconds),
+            (6, 5),
+            "balanced, the first column longer"
+        );
         // The next section starts under the longer column, full width.
         let bottom = page
             .lines
@@ -4576,8 +4594,16 @@ mod column_tests {
             &[section(0, SectionBreak::NextPage, cols.clone())],
         );
         let page = &doc.pages[0];
-        let narrow: Vec<&PlacedLine> = page.lines.iter().filter(|l| l.x < s.margin_left + 100.0).collect();
-        let wide: Vec<&PlacedLine> = page.lines.iter().filter(|l| l.x > s.margin_left + 100.0).collect();
+        let narrow: Vec<&PlacedLine> = page
+            .lines
+            .iter()
+            .filter(|l| l.x < s.margin_left + 100.0)
+            .collect();
+        let wide: Vec<&PlacedLine> = page
+            .lines
+            .iter()
+            .filter(|l| l.x > s.margin_left + 100.0)
+            .collect();
         assert!(!narrow.is_empty() && !wide.is_empty());
         assert!(narrow.iter().all(|l| l.width <= 150.5));
         assert!(wide.iter().all(|l| l.width > 300.0));
@@ -4593,14 +4619,25 @@ mod column_tests {
     fn down_and_up_move_between_columns() {
         let s = PageSetup::a4();
         let cols = two_columns(None);
-        let doc = lay(&short(200), &[section(0, SectionBreak::NextPage, cols.clone())]);
+        let doc = lay(
+            &short(200),
+            &[section(0, SectionBreak::NextPage, cols.clone())],
+        );
         let page = &doc.pages[0];
-        let last_first = page.lines.iter().filter(|l| l.x == s.margin_left).last().unwrap().para;
+        let last_first = page
+            .lines
+            .iter()
+            .filter(|l| l.x == s.margin_left)
+            .last()
+            .unwrap()
+            .para;
         let x = s.margin_left + 2.0;
         let down = doc.vertical(last_first, 0, x, true).unwrap();
         assert_eq!(down.0, last_first + 1, "top of the next column");
         assert_eq!(doc.caret(down.0, down.1).unwrap().page, 0);
-        let up = doc.vertical(last_first + 1, 0, x + cols[1].0, false).unwrap();
+        let up = doc
+            .vertical(last_first + 1, 0, x + cols[1].0, false)
+            .unwrap();
         assert_eq!(up.0, last_first);
         // Off the last column, on to the next page's first column.
         let last = page.lines.last().unwrap().para;

@@ -38,7 +38,9 @@ fn columns_land_where_libreoffice_puts_them() {
     let s = doc.sections();
     assert_eq!(s.len(), 4);
     assert_eq!(
-        s.iter().map(|s| s.props.columns.count()).collect::<Vec<_>>(),
+        s.iter()
+            .map(|s| s.props.columns.count())
+            .collect::<Vec<_>>(),
         vec![1, 2, 1, 2]
     );
     let mut engine = Engine::new();
@@ -59,7 +61,11 @@ fn columns_land_where_libreoffice_puts_them() {
         .expect("Item 21 after its break");
     let (x2, top21) = (line21.x, line21.top);
     assert!(x2 > left + 200.0);
-    assert_eq!(top21, at(&doc, paged, "Item 1").2, "column two starts level with one");
+    assert_eq!(
+        top21,
+        at(&doc, paged, "Item 1").2,
+        "column two starts level with one"
+    );
     assert_eq!(at(&doc, paged, "Item 66").0, 0);
     // Page 2: balanced before the continuous break, 67-98 | 99-130.
     let (p, x, top67) = at(&doc, paged, "Item 67");
@@ -123,7 +129,11 @@ fn saving_keeps_the_column_markup() {
         r#"<w:cols w:num="2" w:sep="1" w:space="720"/>"#,
         r#"<w:cols w:num="2" w:space="720" w:equalWidth="0"><w:col w:w="2600" w:space="720"/><w:col w:w="5706"/></w:cols>"#,
     ] {
-        assert_eq!(before.matches(cols).count(), after.matches(cols).count(), "{cols}");
+        assert_eq!(
+            before.matches(cols).count(),
+            after.matches(cols).count(),
+            "{cols}"
+        );
     }
     assert!(after.contains(r#"<w:br w:type="column"/>"#));
 

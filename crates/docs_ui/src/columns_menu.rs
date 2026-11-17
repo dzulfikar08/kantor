@@ -173,11 +173,13 @@ impl DocsView {
             }),
         );
         for e in widths.iter().chain(&spacings) {
-            subs.push(cx.subscribe_in(e, window, |this, _, ev: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter { .. } = ev {
-                    this.more_columns_apply(window, cx);
-                }
-            }));
+            subs.push(
+                cx.subscribe_in(e, window, |this, _, ev: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter { .. } = ev {
+                        this.more_columns_apply(window, cx);
+                    }
+                }),
+            );
         }
         let cols = self.section_columns();
         let apply = if !self.sel.is_empty() {
@@ -219,7 +221,14 @@ impl DocsView {
                     let s = lay
                         .get(k + 1)
                         .map_or(0, |next| next.0.saturating_sub(x + w));
-                    (format_cm(w), if k + 1 < n { format_cm(s) } else { String::new() })
+                    (
+                        format_cm(w),
+                        if k + 1 < n {
+                            format_cm(s)
+                        } else {
+                            String::new()
+                        },
+                    )
                 }
                 None => (String::new(), String::new()),
             };
@@ -475,24 +484,28 @@ impl DocsView {
         };
         let v = view.clone();
         let equal_enabled = n > 1 && n <= ROWS;
-        let equal = check("docs-columns-equal", "Equal column width", m.equal, equal_enabled)
-            .when(equal_enabled, |d| {
-                let on = m.equal;
-                d.on_click(move |_, window, cx| {
-                    let _ = v.update(cx, |this, cx| this.set_more_equal(!on, window, cx));
-                })
-            });
+        let equal = check(
+            "docs-columns-equal",
+            "Equal column width",
+            m.equal,
+            equal_enabled,
+        )
+        .when(equal_enabled, |d| {
+            let on = m.equal;
+            d.on_click(move |_, window, cx| {
+                let _ = v.update(cx, |this, cx| this.set_more_equal(!on, window, cx));
+            })
+        });
         let v = view.clone();
-        let line = check("docs-columns-sep", "Line between", m.sep, n > 1).on_click(
-            move |_, _, cx| {
+        let line =
+            check("docs-columns-sep", "Line between", m.sep, n > 1).on_click(move |_, _, cx| {
                 let _ = v.update(cx, |this, cx| {
                     if let Some(m) = this.columns_menu.as_mut().and_then(|m| m.more.as_mut()) {
                         m.sep = !m.sep;
                     }
                     cx.notify();
                 });
-            },
-        );
+            });
         // Width and spacing, one row per column (only the first editable
         // when they're equal: the others follow it).
         let mut grid = v_flex().px(SPACE_4).gap(SPACE_2).child(
@@ -582,7 +595,9 @@ impl DocsView {
             .bg(t.accent)
             .text_color(t.accent_fg)
             .child(i18n::t("Apply"))
-            .tooltip(|window, cx| Tooltip::new(i18n::t("Apply these columns  Enter")).build(window, cx))
+            .tooltip(|window, cx| {
+                Tooltip::new(i18n::t("Apply these columns  Enter")).build(window, cx)
+            })
             .on_click(move |_, window, cx| {
                 let _ = v.update(cx, |this, cx| this.more_columns_apply(window, cx));
             });
@@ -593,7 +608,11 @@ impl DocsView {
                 h_flex()
                     .px(SPACE_4)
                     .gap(SPACE_3)
-                    .child(div().text_color(t.fg_muted).child(i18n::t("Number of columns")))
+                    .child(
+                        div()
+                            .text_color(t.fg_muted)
+                            .child(i18n::t("Number of columns")),
+                    )
                     .child(div().w(REM * 4.).child(Input::new(&m.number).small())),
             )
             .child(heading(i18n::t("Width and spacing"), cx))

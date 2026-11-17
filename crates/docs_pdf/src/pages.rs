@@ -492,14 +492,13 @@ fn with_endnotes(
 /// A section's text width, px: its first column's when it has columns
 /// (footnotes and endnotes are as wide as their column).
 fn section_width(sections: &[Section], si: usize) -> f32 {
-    sections
-        .get(si)
-        .map_or(PageSetup::a4().content_width(), |s| {
-            match section_columns(s).first() {
-                Some(&(_, w)) => w,
-                None => build::geometry_setup(&s.props.page).content_width(),
-            }
-        })
+    sections.get(si).map_or(
+        PageSetup::a4().content_width(),
+        |s| match section_columns(s).first() {
+            Some(&(_, w)) => w,
+            None => build::geometry_setup(&s.props.page).content_width(),
+        },
+    )
 }
 
 /// A section's columns (left edge from the margin, width; px), empty
@@ -509,7 +508,10 @@ pub fn section_columns(s: &Section) -> Vec<(f32, f32)> {
         return Vec::new();
     }
     let g = s.props.page;
-    let text = g.width.saturating_sub(g.margin_left + g.margin_right).max(1440);
+    let text = g
+        .width
+        .saturating_sub(g.margin_left + g.margin_right)
+        .max(1440);
     s.props
         .columns
         .layout(text)

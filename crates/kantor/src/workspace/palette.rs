@@ -1557,7 +1557,9 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: tk("Docs · number of columns, widths and spacing, line between, apply to"),
         keys: "",
         run: |ws, window, cx| {
-            ws.with_docs(window, cx, |v, w, cx| v.toggle_columns_menu(None, true, w, cx))
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.toggle_columns_menu(None, true, w, cx)
+            })
         },
     },
     Command {

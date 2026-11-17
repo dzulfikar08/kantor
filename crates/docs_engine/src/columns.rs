@@ -193,10 +193,7 @@ impl Columns {
                 space: k.num::<i64>("space").unwrap_or(0).max(0) as u32,
             })
             .collect();
-        let flag = |name: &str| {
-            c.attr(name)
-                .map(|v| !matches!(v, "0" | "false" | "off"))
-        };
+        let flag = |name: &str| c.attr(name).map(|v| !matches!(v, "0" | "false" | "off"));
         // Without `w:equalWidth`, `w:col` children mean their own widths.
         let equal = flag("equalWidth").unwrap_or(cols.is_empty()) || cols.is_empty();
         let num = c
@@ -253,7 +250,10 @@ impl Columns {
         self.cols
             .iter()
             .map(|c| {
-                let at = (x.round() as u32, ((c.width as f64 * scale).round() as u32).max(1));
+                let at = (
+                    x.round() as u32,
+                    ((c.width as f64 * scale).round() as u32).max(1),
+                );
                 x += (c.width as f64 + c.space as f64) * scale;
                 at
             })
@@ -351,7 +351,12 @@ impl Document {
     /// breaks (falling back to the caret's section where a break can't go,
     /// e.g. right after a table). One undo step; returns the selection to
     /// keep.
-    pub fn set_columns(&mut self, sel: Selection, cols: &Columns, apply: ColumnsApply) -> Selection {
+    pub fn set_columns(
+        &mut self,
+        sel: Selection,
+        cols: &Columns,
+        apply: ColumnsApply,
+    ) -> Selection {
         let sel = self.clamp_selection(sel);
         let (start, end) = sel.ordered();
         let before = self.side_state();
@@ -389,12 +394,22 @@ impl Document {
         let after = self.side_state();
         let (Some(&a), Some(&b)) = (old.keys().next(), old.keys().next_back()) else {
             if before != after {
-                self.push_command(0, Vec::new(), Vec::new(), sel, Some(Box::new((before, after))));
+                self.push_command(
+                    0,
+                    Vec::new(),
+                    Vec::new(),
+                    sel,
+                    Some(Box::new((before, after))),
+                );
             }
             return sel;
         };
         let olds: Vec<Paragraph> = (a..=b)
-            .map(|i| old.get(&i).cloned().unwrap_or_else(|| self.paragraphs[i].clone()))
+            .map(|i| {
+                old.get(&i)
+                    .cloned()
+                    .unwrap_or_else(|| self.paragraphs[i].clone())
+            })
             .collect();
         let news: Vec<Paragraph> = self.paragraphs[a..=b].to_vec();
         let hf = (before != after).then(|| Box::new((before, after)));
@@ -424,7 +439,12 @@ impl Document {
         self.set_sect_xml(&sections, si, xml);
     }
 
-    fn set_section_cols(&mut self, si: usize, cols: &Columns, old: &mut BTreeMap<usize, Paragraph>) {
+    fn set_section_cols(
+        &mut self,
+        si: usize,
+        cols: &Columns,
+        old: &mut BTreeMap<usize, Paragraph>,
+    ) {
         let sections = self.sections();
         if sections[si].props.columns == *cols {
             return;
@@ -486,7 +506,8 @@ mod tests {
 
     #[std::prelude::v1::test]
     fn reads_equal_and_unequal_columns() {
-        let c = Columns::parse(r#"<w:sectPr><w:cols w:num="2" w:space="708" w:sep="1"/></w:sectPr>"#);
+        let c =
+            Columns::parse(r#"<w:sectPr><w:cols w:num="2" w:space="708" w:sep="1"/></w:sectPr>"#);
         assert_eq!((c.count(), c.space, c.sep, c.equal), (2, 708, true, true));
         assert_eq!(c.layout(9000), vec![(0, 4146), (4854, 4146)]);
         let u = Columns::parse(
@@ -531,7 +552,11 @@ mod tests {
     fn doc(n: usize) -> Document {
         let mut d = Document::new();
         let text: Vec<String> = (0..n).map(|i| format!("Paragraph {i}")).collect();
-        d.insert_text(Selection::caret(Position::new(0, 0)), &text.join("\n"), None);
+        d.insert_text(
+            Selection::caret(Position::new(0, 0)),
+            &text.join("\n"),
+            None,
+        );
         d
     }
 
@@ -546,7 +571,11 @@ mod tests {
         assert_eq!(d.section_columns(0).count(), 1);
 
         // This point forward: a continuous break before paragraph 3.
-        d.set_columns(caret, &Columns::equal(3, 720), ColumnsApply::ThisPointForward);
+        d.set_columns(
+            caret,
+            &Columns::equal(3, 720),
+            ColumnsApply::ThisPointForward,
+        );
         let s = d.sections();
         assert_eq!(s.len(), 2);
         assert_eq!(s[0].paras, 0..3);
@@ -567,7 +596,9 @@ mod tests {
         assert_eq!(s.len(), 3);
         assert_eq!(s[1].paras, 2..4);
         assert_eq!(
-            s.iter().map(|s| s.props.columns.count()).collect::<Vec<_>>(),
+            s.iter()
+                .map(|s| s.props.columns.count())
+                .collect::<Vec<_>>(),
             vec![1, 2, 1]
         );
         assert_eq!(s[2].props.start, crate::SectionStart::Continuous);

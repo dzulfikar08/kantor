@@ -956,7 +956,9 @@ fn an_index_with_columns_gets_a_section_of_its_own() {
     assert_eq!(s.len(), 3);
     assert_eq!(s[1].paras, 3..4);
     assert_eq!(
-        s.iter().map(|s| s.props.columns.count()).collect::<Vec<_>>(),
+        s.iter()
+            .map(|s| s.props.columns.count())
+            .collect::<Vec<_>>(),
         vec![1, 2, 1]
     );
     assert_eq!(s[1].props.start, docs_engine::SectionStart::Continuous);
