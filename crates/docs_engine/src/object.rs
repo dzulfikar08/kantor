@@ -588,6 +588,34 @@ pub struct Opaque {
     pub label: String,
 }
 
+/// Where text read from a field's code goes ([`FieldMark::code_with_results`]):
+/// the outer code, a nested field's code, or its result.
+#[allow(clippy::too_many_arguments)]
+fn push_code_text(
+    out: &mut String,
+    sub_code: &mut String,
+    sub_result: &mut String,
+    in_result: &[bool],
+    depth: usize,
+    in_instr: bool,
+    in_t: bool,
+    v: &str,
+) {
+    match depth {
+        1 if in_instr && !in_result[0] => out.push_str(v),
+        d if d >= 2 && !in_result[0] => {
+            if in_result[1] {
+                if in_t {
+                    sub_result.push_str(v);
+                }
+            } else if d == 2 && in_instr {
+                sub_code.push_str(v);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod field_code_tests {
     use super::*;
@@ -621,33 +649,5 @@ mod field_code_tests {
             FieldMark::begin_nested("QUOTE {x").instr().unwrap(),
             "QUOTE {x"
         );
-    }
-}
-
-/// Where text read from a field's code goes ([`FieldMark::code_with_results`]):
-/// the outer code, a nested field's code, or its result.
-#[allow(clippy::too_many_arguments)]
-fn push_code_text(
-    out: &mut String,
-    sub_code: &mut String,
-    sub_result: &mut String,
-    in_result: &[bool],
-    depth: usize,
-    in_instr: bool,
-    in_t: bool,
-    v: &str,
-) {
-    match depth {
-        1 if in_instr && !in_result[0] => out.push_str(v),
-        d if d >= 2 && !in_result[0] => {
-            if in_result[1] {
-                if in_t {
-                    sub_result.push_str(v);
-                }
-            } else if d == 2 && in_instr {
-                sub_code.push_str(v);
-            }
-        }
-        _ => {}
     }
 }

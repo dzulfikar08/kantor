@@ -9,6 +9,28 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Docs: text boxes holding pictures and tables are edited where they're drawn, like any other text
+  box, and pictures and tables can be inserted into a text box.
+- Docs: text boxes set to "Resize shape to fit text" are as tall as their text, and grow or shrink
+  as you type in them.
+- Docs: formula fields (`= expression`, with bookmarks, table cells such as `B2*C2` and
+  `SUM(ABOVE)`, and `\#` number formats), `IF`, `COMPARE`, `STYLEREF`, `LISTNUM`, `SET` and a simple
+  `INDEX` are worked out by F9; fields nested in a field's code are worked out first.
+- Docs: a table of contents limited to a bookmark (`\b`) and one built from `TC` entries (`\f`).
+- Docs: Ctrl+F9 puts a new field's braces in the text and you type its code there, as in Word;
+  Insert Field lists more fields (formulas, IF, SEQ, STYLEREF, TOC, INDEX and others) with a code
+  to start from.
+- Docs: Through wrapping lets text into the hollows of the wrap polygon.
+- Docs: Word 97-2003 `.doc` files bring in floating objects in headers and footers, comment dates,
+  nested tables and tracked changes (as revisions you can accept or reject), and freeform shapes
+  drawn with guide formulas.
+
+### Changed
+
+- Docs: shadows are drawn blurred, and 3-D extrusions and bevels are approximated.
+
 ## [0.11.0] - 2026-11-17
 
 Docs text boxes are edited in place with their formatting, undo and Track Changes, as in Word.

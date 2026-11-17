@@ -195,10 +195,7 @@ fn box_blur(px: &mut [f32], w: usize, h: usize, r: usize) {
     let n = (2 * r + 1) as f32;
     for y in 0..h {
         let row = &px[y * w..(y + 1) * w];
-        let mut acc = 0.0;
-        for i in 0..=r.min(w - 1) {
-            acc += row[i];
-        }
+        let mut acc: f32 = row[..=r.min(w - 1)].iter().sum();
         for x in 0..w {
             tmp[y * w + x] = acc / n;
             if x + r + 1 < w {

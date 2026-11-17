@@ -1395,8 +1395,8 @@ fn listnum_values(
             Some(n) => c[level] = n,
             None => c[level] += 1,
         }
-        for k in level + 1..10 {
-            c[k] = 0;
+        for x in &mut c[level + 1..] {
+            *x = 0;
         }
         out.insert(
             s.id(),

@@ -257,7 +257,7 @@ impl WrapArea {
                 }
             }
             xs.sort_by(f32::total_cmp);
-            parts.extend(xs.chunks_exact(2).map(|c| (c[0], c[1])));
+            parts.extend(xs.as_chunks::<2>().0.iter().map(|c| (c[0], c[1])));
         }
         // Edges crossing the band take their stretch too.
         for i in 0..n {

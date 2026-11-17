@@ -706,7 +706,9 @@ impl Reader {
         let body = self.story(0, main_end, true);
         let mut comments = Vec::new();
         let dates: Vec<Option<String>> = self.tbl(ATRD_EXTRA).map_or_else(Vec::new, |x| {
-            x.chunks_exact(18)
+            x.as_chunks::<18>()
+                .0
+                .iter()
                 .map(|c| dttm(u32::from_le_bytes([c[0], c[1], c[2], c[3]])))
                 .collect()
         });
