@@ -7722,6 +7722,10 @@ mod tests {
         wb.save_as(&path).unwrap();
         let saved =
             || String::from_utf8(read_part(&std::fs::read(&path).unwrap(), part).unwrap()).unwrap();
+        // For the Office validator: KANTOR_VIEWS_OUT=/path/out.xlsx.
+        if let Ok(out) = std::env::var("KANTOR_VIEWS_OUT") {
+            std::fs::copy(&path, out).unwrap();
+        }
         let xml = saved();
         for a in [
             "zoomScale=\"85\"",

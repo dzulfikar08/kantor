@@ -253,14 +253,14 @@ def pictures(ids):
     n = len(ids)
     bg = gid("9", 99)
     pres.append((bg, gid("D", 0), "bkgdShp", 0, 1))
-    shapes.append(sp(bg, "roundRect", (0, 0, W, H), [], fill="accent1"))
+    shapes.append(sp(bg, "roundRect", (0, 0, W, H), [""], fill="accent1"))
     m = W * 0.03
     cw = (W - 2 * m) / (n + 0.1 * (n - 1))
     for k, (node, _sib, _kids, text, _subs) in enumerate(ids):
         x = m + k * cw * 1.1
         img, txt = gid("9", 2 * k), gid("9", 2 * k + 1)
         pres.append((img, node, "imagNode", k, n))
-        pic = sp(img, "roundRect", (x + cw * 0.05, H * 0.08, cw * 0.9, H * 0.48), [], fill="accent1")
+        pic = sp(img, "roundRect", (x + cw * 0.05, H * 0.08, cw * 0.9, H * 0.48), [""], fill="accent1")
         if k == 0:
             pic = pic.replace(
                 '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill><a:ln',
