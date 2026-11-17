@@ -1726,7 +1726,7 @@ fn calc_formulas(
                     .iter()
                     .find(|c| Val::Str(c.name.clone()).key() == v.key())
                 {
-                    out.insert(k, Formula::compile_items(&ci.formula, &cf.name, &names));
+                    out.insert(k, Formula::compile_items(&ci.formula, &cf.name, &names, Some(k)));
                 }
             }
             out

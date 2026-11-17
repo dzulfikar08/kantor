@@ -1040,6 +1040,42 @@ fn calculated_items() {
     assert!(p3["xl/pivotCache/pivotCacheDefinition1.xml"].contains("formula=\"East+West\""));
 }
 
+/// Calculated items naming items by position: `Region[2]` (the second
+/// item), `Region[-1]` / `Region[+1]` (before / after the calculated item).
+#[test]
+fn calculated_items_by_position() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = data_book();
+    let s = new_pivot(&mut wb);
+    arrange(&mut wb, s, &["Region"]);
+    let region = field(&layout(&wb, s), "Region");
+    // Items: East 417, North 396, West 255, then the calculated ones.
+    wb.set_pivot_calculated_item(s, 2, 0, region, "Second", "=Region[2]*2")
+        .unwrap();
+    wb.set_pivot_calculated_item(s, 2, 0, region, "Before", "=Region[-1]+Region[1]")
+        .unwrap();
+    assert_eq!(
+        grid(&wb, s, (2, 0, 7, 1))[4..6],
+        rows(&[&["Second", "792"], &["Before", "1209"]])[..]
+    );
+    assert!(
+        wb.set_pivot_calculated_item(s, 2, 0, region, "Past", "=Region[+1]")
+            .is_err(),
+        "nothing after a new item"
+    );
+    assert!(
+        wb.set_pivot_calculated_item(s, 2, 0, region, "Nine", "=Region[9]")
+            .is_err()
+    );
+    // Saved with the position as Excel writes it, read back the same.
+    let (path, p) = save(&mut wb, dir.path(), "calc_positions.xlsx");
+    let cache = &p["xl/pivotCache/pivotCacheDefinition1.xml"];
+    assert!(cache.contains("Region[-1]+Region[1]"), "{cache}");
+    let mut back = Workbook::open(&path).unwrap();
+    assert_eq!(back.refresh_pivot(s, 2, 0).unwrap(), 1);
+    assert_eq!(grid(&back, s, (2, 0, 8, 1)), grid(&wb, s, (2, 0, 8, 1)));
+}
+
 #[test]
 fn calculated_items_written_by_excel() {
     // A cache and table as Excel writes them: the item is a shared item

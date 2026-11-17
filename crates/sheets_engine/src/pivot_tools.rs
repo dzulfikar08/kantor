@@ -654,8 +654,9 @@ impl Workbook {
             bail!("The item name {name:?} is already in use");
         }
         let names: Vec<String> = cf.items.iter().map(Val::label).collect();
+        let at = names.iter().position(|n| n.eq_ignore_ascii_case(&name));
         let compiled =
-            Formula::compile_items(formula, &cf.name, &names).map_err(|e| anyhow!("{e}"))?;
+            Formula::compile_items(formula, &cf.name, &names, at).map_err(|e| anyhow!("{e}"))?;
         if compiled
             .fields
             .iter()

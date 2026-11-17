@@ -872,6 +872,8 @@ struct Parser<'a> {
     /// Compiling a calculated item: the name of its field (`Region` in
     /// `Region[East]`); `names` are then the field's items.
     field: Option<&'a str>,
+    /// The calculated item's own place in `names` (for `Region[+1]`).
+    me: Option<usize>,
 }
 
 impl Parser<'_> {
@@ -901,6 +903,39 @@ impl Parser<'_> {
             self.used.push(k);
         }
         Ok(Expr::Field(k))
+    }
+
+    /// An item by position (Excel's `Region[2]`: the second item;
+    /// `Region[+1]` / `Region[-1]`: the item after / before the calculated
+    /// item), counting the field's items in order. `None`: not a position.
+    fn position(&self, text: &str) -> Result<Option<usize>, String> {
+        let relative = text.starts_with(['+', '-']);
+        let Ok(n) = text.replace(' ', "").parse::<i64>() else {
+            return Ok(None);
+        };
+        // The field's real items (blanks are its subtotal rows).
+        let items: Vec<usize> = (0..self.names.len())
+            .filter(|&k| self.names[k] != "\u{0}")
+            .collect();
+        let at = if relative {
+            let me = match self.me {
+                Some(k) => items.iter().position(|&x| x == k),
+                // A new item goes after the others.
+                None => Some(items.len()),
+            }
+            .ok_or("the calculated item isn't in its field")? as i64;
+            me + n
+        } else {
+            n - 1
+        };
+        if n == 0 && relative {
+            return Err(format!("[{text}] is the calculated item itself"));
+        }
+        usize::try_from(at)
+            .ok()
+            .and_then(|i| items.get(i).copied())
+            .map(Some)
+            .ok_or_else(|| format!("there is no item at position [{text}]"))
     }
 
     fn compare(&mut self) -> Result<Expr, String> {
@@ -994,8 +1029,14 @@ impl Parser<'_> {
                         ));
                     }
                     let item = item.trim();
-                    if item.starts_with(['+', '-']) {
-                        return Err("items by position (Region[+1]) aren't supported".into());
+                    if self.names.iter().any(|x| x.eq_ignore_ascii_case(item)) {
+                        return self.item(item);
+                    }
+                    if let Some(k) = self.position(item)? {
+                        if !self.used.contains(&k) {
+                            self.used.push(k);
+                        }
+                        return Ok(Expr::Field(k));
                     }
                     return self.item(item);
                 }
@@ -1076,21 +1117,29 @@ impl V {
 impl Formula {
     /// Compile `src` (with or without a leading `=`) against field `names`.
     pub(crate) fn compile(src: &str, names: &[String]) -> Result<Formula, String> {
-        Self::compile_in(src, names, None)
+        Self::compile_in(src, names, None, None)
     }
 
     /// Compile a calculated item's formula of field `field` against the
-    /// field's item names (`East`, `'North East'`, `Region[East]`); `fields`
-    /// then index `items`.
+    /// field's item names (`East`, `'North East'`, `Region[East]`, or by
+    /// position `Region[2]`, `Region[+1]`); `fields` then index `items`.
+    /// `at`: the calculated item's own place in `items` (`None`: a new one,
+    /// after them).
     pub(crate) fn compile_items(
         src: &str,
         field: &str,
         items: &[String],
+        at: Option<usize>,
     ) -> Result<Formula, String> {
-        Self::compile_in(src, items, Some(field))
+        Self::compile_in(src, items, Some(field), at)
     }
 
-    fn compile_in(src: &str, names: &[String], field: Option<&str>) -> Result<Formula, String> {
+    fn compile_in(
+        src: &str,
+        names: &[String],
+        field: Option<&str>,
+        at: Option<usize>,
+    ) -> Result<Formula, String> {
         let src = src.trim().trim_start_matches('=');
         let toks = tokens(src)?;
         if toks.is_empty() {
@@ -1102,6 +1151,7 @@ impl Formula {
             names,
             used: Vec::new(),
             field,
+            me: at,
         };
         let expr = p.compare()?;
         if p.at < p.toks.len() {
