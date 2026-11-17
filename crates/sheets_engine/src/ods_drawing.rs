@@ -542,18 +542,30 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
         };
         match first.tag_name().name() {
             "image" => {
-                let href = first.attribute((NS_XLINK, "href")).unwrap_or_default();
-                let data = self.bytes(href);
-                let ext = data.as_deref().and_then(|d| {
-                    if d.starts_with(b"\x89PNG") {
-                        Some("png")
-                    } else if d.starts_with(&[0xFF, 0xD8]) {
-                        Some("jpeg")
-                    } else {
-                        None
+                // LibreOffice may give several images (an SVG, then a PNG
+                // fallback): the first one Kantor draws everywhere, else an
+                // SVG (shown on screen).
+                let mut found = None;
+                let mut svg = None;
+                for img in n.children().filter(|c| {
+                    c.is_element()
+                        && c.tag_name().namespace() == Some(NS_DRAW)
+                        && c.tag_name().name() == "image"
+                }) {
+                    let href = img.attribute((NS_XLINK, "href")).unwrap_or_default();
+                    let Some(data) = self.bytes(href) else {
+                        continue;
+                    };
+                    match picture_ext(&data) {
+                        Some("svg") => svg = svg.or(Some(("svg", data))),
+                        Some(ext) => {
+                            found = Some((ext, data));
+                            break;
+                        }
+                        None => {}
                     }
-                });
-                let (Some(data), Some(ext)) = (data, ext) else {
+                }
+                let Some((ext, data)) = found.or(svg) else {
                     self.out.skipped.pictures += 1;
                     return None;
                 };
@@ -1465,6 +1477,28 @@ fn read_chart(
         },
         size,
     ))
+}
+
+/// The part extension of a picture Kantor shows, by its signature.
+fn picture_ext(d: &[u8]) -> Option<&'static str> {
+    if d.starts_with(b"\x89PNG") {
+        Some("png")
+    } else if d.starts_with(&[0xFF, 0xD8]) {
+        Some("jpeg")
+    } else if d.starts_with(b"GIF8") {
+        Some("gif")
+    } else if let Some(kind) = kantor_metafile::kind(d) {
+        Some(match kind {
+            kantor_metafile::Kind::Emf => "emf",
+            kantor_metafile::Kind::Wmf => "wmf",
+            kantor_metafile::Kind::Pict => "pict",
+            kantor_metafile::Kind::Bmp => "bmp",
+        })
+    } else {
+        let head = String::from_utf8_lossy(&d[..d.len().min(512)]);
+        (head.contains("<svg") || (head.trim_start().starts_with("<?xml") && head.contains("svg")))
+            .then_some("svg")
+    }
 }
 
 #[cfg(test)]

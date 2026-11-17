@@ -264,6 +264,20 @@ pub(crate) enum FloatBody {
         crop: [i64; 4],
     },
     Shape(Box<FloatShape>),
+    /// A group: its own coordinates (left, top, right, bottom) and its
+    /// shapes placed in them, back to front.
+    Group {
+        rect: [i32; 4],
+        children: Vec<GroupChild>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct GroupChild {
+    /// Left, top, right, bottom in the group's coordinates.
+    pub anchor: [i32; 4],
+    pub name: Option<String>,
+    pub body: FloatBody,
 }
 
 /// A shape's outline.
@@ -1060,12 +1074,9 @@ impl Reader {
                 // FBSE: 36 bytes, a name, then the blip record.
                 let name = *d.get(body + 33)? as usize;
                 let blip = body + 36 + name;
-                if let Some(len) = u32_at(d, blip + 4) {
-                    let bytes = d.get(blip + 8..(blip + 8 + len as usize).min(end))?;
-                    found = sniff_image(bytes);
-                }
+                found = blip_record(d.get(blip..end)?);
             } else if (0xF018..=0xF117).contains(&typ) {
-                found = sniff_image(d.get(body..next)?);
+                found = blip_record(d.get(p..next)?).or_else(|| sniff_image(d.get(body..next)?));
             }
             if found.is_some() || next <= p {
                 break;
@@ -1073,7 +1084,7 @@ impl Reader {
             p = next;
         }
         let Some((ext, bytes)) = found else {
-            self.note("pictures in formats other than PNG and JPEG not imported");
+            self.note("TIFF pictures not imported");
             return None;
         };
         let scale = |v: u32, m: u32| if m == 0 { v } else { v * m / 1000 };
@@ -1089,13 +1100,50 @@ impl Reader {
             self.note("floating pictures and shapes not imported");
             return None;
         };
-        if shape.group() {
-            self.note("grouped shapes not imported");
-            return None;
-        }
         let z = shape.order;
         let name = shape.text(0x380);
         let descr = shape.text(0x381);
+        let body = self.float_body(&shape, spa.spid, 0)?;
+        Some(Floating {
+            spa,
+            z,
+            name,
+            descr,
+            body,
+        })
+    }
+
+    /// What a shape of the drawing (`spid`) draws; groups bring their
+    /// shapes (and groups) along.
+    fn float_body(&mut self, shape: &art::Shape, spid: u32, depth: usize) -> Option<FloatBody> {
+        if shape.group() {
+            let rect = shape.group_rect.filter(|r| r[2] > r[0] && r[3] > r[1]);
+            let mut children = Vec::new();
+            if depth < 8
+                && let Some(rect) = rect
+            {
+                for id in shape.children.clone() {
+                    let Some(child) = self.drawing.shapes.get(&id).cloned() else {
+                        continue;
+                    };
+                    let Some(anchor) = child.child_anchor else {
+                        continue;
+                    };
+                    if let Some(body) = self.float_body(&child, id, depth + 1) {
+                        children.push(GroupChild {
+                            anchor,
+                            name: child.text(0x380),
+                            body,
+                        });
+                    }
+                }
+                if !children.is_empty() {
+                    return Some(FloatBody::Group { rect, children });
+                }
+            }
+            self.note("grouped shapes not imported");
+            return None;
+        }
         let fixed = |v: u32| (f64::from(v as i32) / 65536.0 * 100_000.0).round() as i64;
         let body = if let Some(pib) = shape.prop(0x104).filter(|_| shape.typ != 202) {
             let i = (pib as usize).checked_sub(1)?;
@@ -1116,7 +1164,7 @@ impl Reader {
                     }
                 }
                 _ => {
-                    self.note("pictures in formats other than PNG and JPEG not imported");
+                    self.note("TIFF pictures not imported");
                     return None;
                 }
             }
@@ -1154,7 +1202,7 @@ impl Reader {
             };
             let range = boxes
                 .iter()
-                .find(|t| t.2 == spa.spid)
+                .find(|t| t.2 == spid)
                 .or_else(|| {
                     let i = (shape.txid? >> 16) as usize;
                     boxes.get(i.checked_sub(1)?)
@@ -1202,13 +1250,7 @@ impl Reader {
                 },
             }))
         };
-        Some(Floating {
-            spa,
-            z,
-            name,
-            descr,
-            body,
-        })
+        Some(body)
     }
 
     /// The blocks of the text `start..end`.
@@ -1484,6 +1526,17 @@ fn hyperlink_url(instr: &str) -> Option<String> {
         None => rest.split_whitespace().next()?,
     };
     (!url.is_empty()).then(|| url.to_owned())
+}
+
+/// The picture of an OfficeArt BLIP record (header included): PNG, JPEG,
+/// EMF, WMF, PICT or BMP (TIFF isn't drawn: `None`).
+pub(crate) fn blip_record(rec: &[u8]) -> Option<(&'static str, Vec<u8>)> {
+    let inst = u16_at(rec, 0)? >> 4;
+    let typ = u16_at(rec, 2)?;
+    let len = u32_at(rec, 4)? as usize;
+    let body = rec.get(8..8usize.saturating_add(len).min(rec.len()))?;
+    let blip = kantor_metafile::office_art_blip(typ, inst, body)?;
+    (blip.ext != "tiff").then_some((blip.ext, blip.data))
 }
 
 /// PNG or JPEG bytes inside a blip (after its one or two UIDs and tag).

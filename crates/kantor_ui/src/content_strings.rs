@@ -85,11 +85,11 @@ pub const CONTENT_ITEMS: &[&str] = &[
     tk("floating objects in headers and footers not imported"),
     tk("grouped shapes not imported"),
     tk("freeform shapes not imported"),
-    tk("pictures in formats other than PNG and JPEG not imported"),
+    tk("TIFF pictures not imported"),
     tk("hidden text left out"),
     tk("embedded objects not imported"),
     tk("nested tables flattened"),
-    tk("1 EMF/WMF picture shown as a box"),
+    tk("1 TIFF picture shown as a box"),
 ];
 
 /// Phrases with a detail in them (an XML element or part name, kept as is).
@@ -98,7 +98,7 @@ pub const CONTENT_TEMPLATES: &[&str] = &[
     tk("a missing slide part ({})"),
     tk("speaker notes that can't be read ({})"),
     // A count (slides_engine::ppt).
-    tk("{} EMF/WMF pictures shown as boxes"),
+    tk("{} TIFF pictures shown as boxes"),
 ];
 
 /// One phrase in the interface language (as it is when unknown, e.g. an
@@ -177,12 +177,12 @@ mod tests {
         assert_eq!(id("<w:ruby>"), "<w:ruby>");
         // A template starting with its detail.
         assert_eq!(
-            id("3 EMF/WMF pictures shown as boxes"),
-            "3 gambar EMF/WMF ditampilkan sebagai kotak"
+            id("3 TIFF pictures shown as boxes"),
+            "3 gambar TIFF ditampilkan sebagai kotak"
         );
         assert_eq!(
-            id("1 EMF/WMF picture shown as a box"),
-            "1 gambar EMF/WMF ditampilkan sebagai kotak"
+            id("1 TIFF picture shown as a box"),
+            "1 gambar TIFF ditampilkan sebagai kotak"
         );
         assert_eq!(id("nested tables flattened"), "tabel bersarang diratakan");
     }

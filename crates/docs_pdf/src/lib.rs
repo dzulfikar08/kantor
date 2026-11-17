@@ -241,10 +241,7 @@ fn add_page(
             .entry((doc_key, img.rel_id.clone()))
             .or_insert_with(|| {
                 let bytes = doc.image_bytes(&img.rel_id)?;
-                match ImageFormat::sniff(&bytes) {
-                    ImageFormat::Other => None,
-                    format => Some((format, bytes)),
-                }
+                docs_engine::drawable_picture(bytes)
             });
         if let Some((format, bytes)) = found {
             let [x, y, w, h] = o.rect;
@@ -336,10 +333,7 @@ fn float_scene(
                 let key = (it.story.map_or(0, |s| s + 1), rel_id.clone());
                 let found = pictures.entry(key).or_insert_with(|| {
                     let bytes = owner.image_bytes(&rel_id)?;
-                    match ImageFormat::sniff(&bytes) {
-                        ImageFormat::Other => None,
-                        format => Some((format, bytes)),
-                    }
+                    docs_engine::drawable_picture(bytes)
                 });
                 if let Some((format, bytes)) = found {
                     out.order.push((true, out.pictures.len()));
@@ -566,7 +560,11 @@ impl Images {
                     Some("jpeg") => Image::from_jpeg(data.into(), true),
                     Some("gif") => Image::from_gif(data.into(), true),
                     Some("webp") => Image::from_webp(data.into(), true),
-                    _ => Err("not PNG, JPEG, GIF or WebP".into()),
+                    // WMF, EMF, PICT and BMP are drawn as PNG.
+                    _ => match kantor_metafile::to_png((*data).as_ref(), 3000) {
+                        Some(png) => Image::from_png(png.into(), true),
+                        None => Err("not PNG, JPEG, GIF, WebP, WMF, EMF, PICT or BMP".into()),
+                    },
                 };
                 made.map_err(|e| log::warn!("PDF export: picture left out: {e}"))
                     .ok()

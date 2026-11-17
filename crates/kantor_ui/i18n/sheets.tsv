@@ -901,8 +901,8 @@ formatting not imported (not an Excel 97-2003 file)	pemformatan tidak diimpor (b
 {} data validation rules not imported (condition not supported)	{} aturan validasi data tidak diimpor (kondisi tidak didukung)
 1 conditional formatting rule not imported (condition not supported)	1 aturan pemformatan bersyarat tidak diimpor (kondisi tidak didukung)
 {} conditional formatting rules not imported (condition not supported)	{} aturan pemformatan bersyarat tidak diimpor (kondisi tidak didukung)
-1 picture not imported (EMF, WMF, PICT, BMP or TIFF format)	1 gambar tidak diimpor (format EMF, WMF, PICT, BMP, atau TIFF)
-{} pictures not imported (EMF, WMF, PICT, BMP or TIFF format)	{} gambar tidak diimpor (format EMF, WMF, PICT, BMP, atau TIFF)
+1 picture not imported (TIFF or another format Kantor can't read)	1 gambar tidak diimpor (TIFF atau format lain yang tidak dapat dibaca Kantor)
+{} pictures not imported (TIFF or another format Kantor can't read)	{} gambar tidak diimpor (TIFF atau format lain yang tidak dapat dibaca Kantor)
 1 chart not imported (radar, surface, bubble, bar of pie or combination charts)	1 bagan tidak diimpor (bagan radar, permukaan, gelembung, batang dari pai, atau kombinasi)
 {} charts not imported (radar, surface, bubble, bar of pie or combination charts)	{} bagan tidak diimpor (bagan radar, permukaan, gelembung, batang dari pai, atau kombinasi)
 1 3-D chart shown flat	1 bagan 3-D ditampilkan datar

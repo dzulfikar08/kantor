@@ -367,3 +367,26 @@ fn corrupted_streams_never_panic() {
         let _ = ppt::convert_streams(&doc[..cut], &user, &pics);
     }
 }
+
+/// EMF and WMF pictures (metafiles.ppt, from scripts/corpus/gen_metafiles.py)
+/// are kept and drawn, with no import note.
+#[test]
+fn metafile_pictures() {
+    let p = open("metafiles.ppt");
+    let parts: Vec<String> = p
+        .slide(0)
+        .shapes
+        .iter()
+        .filter_map(|s| match &s.kind {
+            ShapeKind::Picture { part, .. } => part.clone(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(parts.len(), 2, "{parts:?}");
+    for part in &parts {
+        let bytes = p.part_bytes(part).unwrap();
+        assert!(kantor_metafile::kind(&bytes).is_some(), "{part}");
+        assert!(kantor_metafile::to_png(&bytes, 256).is_some(), "{part}");
+    }
+    assert!(p.import_notes().is_empty(), "{:?}", p.import_notes());
+}

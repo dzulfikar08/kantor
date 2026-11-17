@@ -11,6 +11,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Windows metafile pictures (WMF, EMF and EMF+), Mac PICT pictures and BMPs are drawn in Docs,
+  Slides and Sheets, on screen and in PDFs, instead of an empty box: from `.docx`, `.pptx` and
+  `.xlsx` files and from `.doc`, `.ppt`, `.xls`, `.ods` and `.rtf` imports (which used to leave
+  them out). The file keeps the original picture.
+- `.ods` imports bring GIF and SVG pictures too.
+- `.doc` imports bring grouped shapes as groups, and LibreOffice's rounded rectangles, ellipses and
+  other shapes with arcs keep their curves instead of becoming rectangles.
+
 - Docs: text boxes holding pictures and tables are edited where they're drawn, like any other text
   box, and pictures and tables can be inserted into a text box.
 - Docs: text boxes set to "Resize shape to fit text" are as tall as their text, and grow or shrink

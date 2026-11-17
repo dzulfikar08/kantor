@@ -79,6 +79,13 @@ pub(crate) struct Shape {
     pub txid: Option<u32>,
     /// Drawing order in its group.
     pub order: usize,
+    /// A group's shapes (ids, back to front).
+    pub children: Vec<u32>,
+    /// A group's own coordinates (`OfficeArtFSPGR`): left, top, right,
+    /// bottom.
+    pub group_rect: Option<[i32; 4]>,
+    /// A shape's place in its group's coordinates (`OfficeArtChildAnchor`).
+    pub child_anchor: Option<[i32; 4]>,
 }
 
 impl Shape {
@@ -168,7 +175,7 @@ pub(crate) fn drawing(dgg: &[u8], word: &[u8]) -> Drawing {
             // ids are unique across both).
             if label <= 1 && u16_at(b, 2) == Some(0xF002) {
                 let mut order = 0;
-                shapes(&b[8..end], &mut d.shapes, &mut order);
+                let _ = shapes(&b[8..end], &mut d.shapes, &mut order);
             }
             b = &b[end..];
             continue;
@@ -193,13 +200,6 @@ pub(crate) fn drawing(dgg: &[u8], word: &[u8]) -> Drawing {
 }
 
 fn fbse_blip(body: &[u8], word: &[u8]) -> Blip {
-    let Some(&kind) = body.first() else {
-        return Blip::Other;
-    };
-    // btWin32: 5 JPEG, 6 PNG.
-    if !matches!(kind, 5 | 6) {
-        return Blip::Other;
-    }
     let name = body.get(33).copied().unwrap_or(0) as usize;
     let rec = if body.len() > 36 + name + 8 {
         body.get(36 + name..)
@@ -210,25 +210,36 @@ fn fbse_blip(body: &[u8], word: &[u8]) -> Blip {
             word.get(at..at.checked_add(size)?.min(word.len()))
         })
     };
-    let Some(rec) = rec else {
-        return Blip::Other;
-    };
-    let Some(len) = u32_at(rec, 4) else {
-        return Blip::Other;
-    };
-    let data = rec.get(8..8usize.saturating_add(len as usize).min(rec.len()));
-    match data.and_then(super::sniff_image) {
+    match rec.and_then(super::blip_record) {
         Some((ext, bytes)) => Blip::Image(ext, bytes),
         None => Blip::Other,
     }
 }
 
-/// The shapes of a drawing container, by id (groups and their children).
-fn shapes(b: &[u8], out: &mut HashMap<u32, Shape>, order: &mut usize) {
+/// The shapes of a drawing container, by id (groups and their children);
+/// returns the ids of the shapes and groups directly in `b`.
+fn shapes(b: &[u8], out: &mut HashMap<u32, Shape>, order: &mut usize) -> Vec<u32> {
+    let rect = |body: &[u8]| -> Option<[i32; 4]> {
+        Some([
+            i32_at(body, 0)?,
+            i32_at(body, 4)?,
+            i32_at(body, 8)?,
+            i32_at(body, 12)?,
+        ])
+    };
+    let mut ids = Vec::new();
     for r in records(b) {
         match r.typ {
             // Group container: its first shape is the group itself.
-            0xF003 => shapes(r.body, out, order),
+            0xF003 => {
+                let inner = shapes(r.body, out, order);
+                if let Some((&group, rest)) = inner.split_first() {
+                    if let Some(g) = out.get_mut(&group) {
+                        g.children = rest.to_vec();
+                    }
+                    ids.push(group);
+                }
+            }
             0xF004 => {
                 let mut s = Shape {
                     order: *order,
@@ -243,6 +254,8 @@ fn shapes(b: &[u8], out: &mut HashMap<u32, Shape>, order: &mut usize) {
                             spid = u32_at(c.body, 0);
                             s.flags = u32_at(c.body, 4).unwrap_or(0);
                         }
+                        0xF009 => s.group_rect = rect(c.body),
+                        0xF00F => s.child_anchor = rect(c.body),
                         0xF00B | 0xF121 | 0xF122 => read_props(&c, &mut s),
                         0xF00D => s.txid = u32_at(c.body, 0),
                         _ => {}
@@ -254,12 +267,14 @@ fn shapes(b: &[u8], out: &mut HashMap<u32, Shape>, order: &mut usize) {
                 }
                 if let Some(id) = spid {
                     out.insert(id, s);
+                    ids.push(id);
                 }
             }
-            _ if r.ver == 0xF => shapes(r.body, out, order),
+            _ if r.ver == 0xF => ids.extend(shapes(r.body, out, order)),
             _ => {}
         }
     }
+    ids
 }
 
 fn read_props(r: &Rec, s: &mut Shape) {
@@ -395,8 +410,6 @@ pub(crate) fn cust_geom(s: &Shape) -> Option<String> {
         bottom = pts.iter().map(|p| p.1).max().unwrap_or(1).max(top + 1);
     }
     let pt = |p: (i64, i64)| format!("<a:pt x=\"{}\" y=\"{}\"/>", p.0 - left, p.1 - top);
-    let mut path = String::new();
-    let mut it = pts.iter().copied();
     let segs: Vec<u16> = s
         .complex
         .get(&0x146)
@@ -405,69 +418,250 @@ pub(crate) fn cust_geom(s: &Shape) -> Option<String> {
             (0..n).filter_map(|k| u16_at(b, 6 + k * 2)).collect()
         })
         .unwrap_or_default();
-    let mut no_fill = false;
-    if segs.is_empty() {
-        let first = it.next()?;
-        path.push_str(&format!("<a:moveTo>{}</a:moveTo>", pt(first)));
-        for p in it.by_ref() {
-            path.push_str(&format!("<a:lnTo>{}</a:lnTo>", pt(p)));
-        }
-    } else {
-        for &seg in &segs {
-            let kind = seg >> 13;
-            let count = (seg & 0x1FFF) as usize;
-            match kind {
-                0 => {
-                    for _ in 0..count.max(1) {
-                        let Some(p) = it.next() else { break };
-                        path.push_str(&format!("<a:lnTo>{}</a:lnTo>", pt(p)));
+    // A second try reads LibreOffice's arcs (see below) when the segments
+    // leave vertices over.
+    let mut arcs_left = 0usize;
+    let mut tried = false;
+    let (path, no_fill) = loop {
+        let mut path = String::new();
+        let mut it = pts.iter().copied().peekable();
+        let mut no_fill = false;
+        let mut cur = (0i64, 0i64);
+        let cubic = |path: &mut String, a: (f64, f64), b: (f64, f64), c: (f64, f64)| {
+            let r = |p: (f64, f64)| (p.0.round() as i64, p.1.round() as i64);
+            path.push_str(&format!(
+                "<a:cubicBezTo>{}{}{}</a:cubicBezTo>",
+                pt(r(a)),
+                pt(r(b)),
+                pt(r(c))
+            ));
+        };
+        if segs.is_empty() {
+            let first = it.next()?;
+            path.push_str(&format!("<a:moveTo>{}</a:moveTo>", pt(first)));
+            for p in it.by_ref() {
+                path.push_str(&format!("<a:lnTo>{}</a:lnTo>", pt(p)));
+            }
+        } else {
+            for &seg in &segs {
+                let kind = seg >> 13;
+                let count = (seg & 0x1FFF) as usize;
+                match kind {
+                    0 => {
+                        for _ in 0..count.max(1) {
+                            let Some(p) = it.next() else { break };
+                            // LibreOffice writes its arcs (ODF's arcangleto) as
+                            // a "line" with two vertices: the radii, then the
+                            // start angle and the sweep in degrees.
+                            if arcs_left > 0
+                                && p.0 >= 0
+                                && p.1 >= 0
+                                && let Some(&q) = it.peek()
+                                && q.0.abs() <= 360
+                                && q.1.abs() <= 360
+                            {
+                                it.next();
+                                arcs_left -= 1;
+                                let (rx, ry) = (p.0 as f64, p.1 as f64);
+                                let start = (q.0 as f64).to_radians();
+                                let sweep = (q.1 as f64).to_radians();
+                                let cx = cur.0 as f64 - rx * start.cos();
+                                let cy = cur.1 as f64 - ry * start.sin();
+                                let at = |t: f64| (cx + rx * t.cos(), cy + ry * t.sin());
+                                let n = (sweep.abs() / std::f64::consts::FRAC_PI_2).ceil().max(1.0)
+                                    as usize;
+                                let step = sweep / n as f64;
+                                let k = 4.0 / 3.0 * (step / 4.0).tan();
+                                let mut t = start;
+                                for _ in 0..n {
+                                    let u = t + step;
+                                    let (p0, p3) = (at(t), at(u));
+                                    cubic(
+                                        &mut path,
+                                        (p0.0 - k * rx * t.sin(), p0.1 + k * ry * t.cos()),
+                                        (p3.0 + k * rx * u.sin(), p3.1 - k * ry * u.cos()),
+                                        p3,
+                                    );
+                                    t = u;
+                                }
+                                let end = at(t);
+                                cur = (end.0.round() as i64, end.1.round() as i64);
+                                continue;
+                            }
+                            path.push_str(&format!("<a:lnTo>{}</a:lnTo>", pt(p)));
+                            cur = p;
+                        }
                     }
+                    1 => {
+                        for _ in 0..count.max(1) {
+                            let (Some(a), Some(b), Some(c)) = (it.next(), it.next(), it.next())
+                            else {
+                                break;
+                            };
+                            path.push_str(&format!(
+                                "<a:cubicBezTo>{}{}{}</a:cubicBezTo>",
+                                pt(a),
+                                pt(b),
+                                pt(c)
+                            ));
+                            cur = c;
+                        }
+                    }
+                    2 => {
+                        if let Some(p) = it.next() {
+                            path.push_str(&format!("<a:moveTo>{}</a:moveTo>", pt(p)));
+                            cur = p;
+                        }
+                    }
+                    3 => path.push_str("<a:close/>"),
+                    4 => break,
+                    5 => {
+                        // Escapes: a code and how many times it repeats.
+                        let code = (seg >> 8) & 0x1F;
+                        let n = (seg & 0xFF) as usize;
+                        match code {
+                            // ArcTo, Arc, ClockwiseArcTo, ClockwiseArc: the
+                            // ellipse's box (two corners), then points on the
+                            // rays where the arc starts and ends.
+                            3..=6 => {
+                                for _ in 0..n.max(1) {
+                                    let (Some(a), Some(b), Some(st), Some(en)) =
+                                        (it.next(), it.next(), it.next(), it.next())
+                                    else {
+                                        break;
+                                    };
+                                    let line_to = matches!(code, 3 | 5);
+                                    let clockwise = matches!(code, 5 | 6);
+                                    cur = arc(
+                                        &mut path, &pt, &cubic, a, b, st, en, clockwise, line_to,
+                                    );
+                                }
+                            }
+                            // EllipticalQuadrantX/Y: quarter ellipses to each
+                            // point, starting along x (or y), then alternating.
+                            7 | 8 => {
+                                let mut x_first = code == 7;
+                                for _ in 0..n.max(1) {
+                                    let Some(p) = it.next() else { break };
+                                    let (c, e) =
+                                        ((cur.0 as f64, cur.1 as f64), (p.0 as f64, p.1 as f64));
+                                    const K: f64 = 0.552_284_75;
+                                    let (c1, c2) = if x_first {
+                                        ((c.0 + K * (e.0 - c.0), c.1), (e.0, e.1 + K * (c.1 - e.1)))
+                                    } else {
+                                        ((c.0, c.1 + K * (e.1 - c.1)), (e.0 + K * (c.0 - e.0), e.1))
+                                    };
+                                    cubic(&mut path, c1, c2, e);
+                                    cur = p;
+                                    x_first = !x_first;
+                                }
+                            }
+                            // QuadraticBezier: a control point and an end.
+                            9 => {
+                                for _ in 0..n.max(1) {
+                                    let (Some(a), Some(b)) = (it.next(), it.next()) else {
+                                        break;
+                                    };
+                                    path.push_str(&format!(
+                                        "<a:quadBezTo>{}{}</a:quadBezTo>",
+                                        pt(a),
+                                        pt(b)
+                                    ));
+                                    cur = b;
+                                }
+                            }
+                            0xA => no_fill = true,
+                            // NoLine, AutoLine, AutoCurve, CornerLine and the
+                            // like change no geometry.
+                            0xB..=0x14 => {}
+                            _ => {
+                                for _ in 0..n {
+                                    it.next();
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                1 => {
-                    for _ in 0..count.max(1) {
-                        let (Some(a), Some(b), Some(c)) = (it.next(), it.next(), it.next()) else {
-                            break;
-                        };
-                        path.push_str(&format!(
-                            "<a:cubicBezTo>{}{}{}</a:cubicBezTo>",
-                            pt(a),
-                            pt(b),
-                            pt(c)
-                        ));
-                    }
-                }
-                2 => {
-                    if let Some(p) = it.next() {
-                        path.push_str(&format!("<a:moveTo>{}</a:moveTo>", pt(p)));
-                    }
-                }
-                3 => path.push_str("<a:close/>"),
-                4 => break,
-                5 => {
-                    // Escapes: a code and the vertices they use.
-                    let code = (seg >> 8) & 0x1F;
-                    if code == 0xA {
-                        no_fill = true;
-                    }
-                    for _ in 0..(seg & 0xFF) {
-                        it.next();
-                    }
-                }
-                _ => {}
             }
         }
-    }
-    // Vertices the segments don't account for (LibreOffice writes its
-    // arcs that way): the path can't be trusted.
-    if !path.starts_with("<a:moveTo>") || (!segs.is_empty() && it.next().is_some()) {
-        return None;
-    }
+        let rest = it.count();
+        if path.starts_with("<a:moveTo>") && (segs.is_empty() || rest == 0) {
+            break (path, no_fill);
+        }
+        // Vertices the segments don't account for: the path can't be
+        // trusted, unless they are LibreOffice's arcs.
+        if tried || segs.is_empty() || rest == 0 {
+            return None;
+        }
+        tried = true;
+        arcs_left = rest;
+    };
     let fill = if no_fill { " fill=\"none\"" } else { "" };
     Some(format!(
         "<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l=\"0\" t=\"0\" r=\"r\" b=\"b\"/><a:pathLst><a:path w=\"{}\" h=\"{}\"{fill}>{path}</a:path></a:pathLst></a:custGeom>",
         right - left,
         bottom - top
     ))
+}
+
+/// An escape arc ([MS-ODRAW] msopathEscapeArcTo and friends) as cubic
+/// Béziers: the ellipse in the box `a`–`b`, from the ray through `st` to
+/// the ray through `en`, counterclockwise on the page unless `clockwise`;
+/// starts with a line (`line_to`) or a move. Returns where it ends.
+#[allow(clippy::too_many_arguments)]
+fn arc(
+    path: &mut String,
+    pt: &dyn Fn((i64, i64)) -> String,
+    cubic: &dyn Fn(&mut String, (f64, f64), (f64, f64), (f64, f64)),
+    a: (i64, i64),
+    b: (i64, i64),
+    st: (i64, i64),
+    en: (i64, i64),
+    clockwise: bool,
+    line_to: bool,
+) -> (i64, i64) {
+    let (cx, cy) = ((a.0 + b.0) as f64 / 2.0, (a.1 + b.1) as f64 / 2.0);
+    let (rx, ry) = (
+        ((b.0 - a.0) as f64 / 2.0).abs().max(1e-9),
+        ((b.1 - a.1) as f64 / 2.0).abs().max(1e-9),
+    );
+    let ang = |p: (i64, i64)| ((p.1 as f64 - cy) / ry).atan2((p.0 as f64 - cx) / rx);
+    let (a0, a1) = (ang(st), ang(en));
+    let tau = std::f64::consts::TAU;
+    // y grows downwards: counterclockwise on the page is a falling angle.
+    let mut sweep = a1 - a0;
+    if clockwise {
+        while sweep <= 0.0 {
+            sweep += tau;
+        }
+    } else {
+        while sweep >= 0.0 {
+            sweep -= tau;
+        }
+    }
+    let at = |t: f64| (cx + rx * t.cos(), cy + ry * t.sin());
+    let r = |p: (f64, f64)| (p.0.round() as i64, p.1.round() as i64);
+    let start = r(at(a0));
+    let tag = if line_to { "lnTo" } else { "moveTo" };
+    path.push_str(&format!("<a:{tag}>{}</a:{tag}>", pt(start)));
+    let n = (sweep.abs() / std::f64::consts::FRAC_PI_2).ceil().max(1.0) as usize;
+    let step = sweep / n as f64;
+    let k = 4.0 / 3.0 * (step / 4.0).tan();
+    let mut t = a0;
+    for _ in 0..n {
+        let u = t + step;
+        let (p0, p3) = (at(t), at(u));
+        let (d0, d3) = ((-rx * t.sin(), ry * t.cos()), (-rx * u.sin(), ry * u.cos()));
+        cubic(
+            path,
+            (p0.0 + k * d0.0, p0.1 + k * d0.1),
+            (p3.0 - k * d3.0, p3.1 - k * d3.1),
+            p3,
+        );
+        t = u;
+    }
+    r(at(t))
 }
 
 /// A line end of `lineStartArrowhead` / `lineEndArrowhead`.

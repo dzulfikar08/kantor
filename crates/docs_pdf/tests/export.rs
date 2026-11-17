@@ -435,3 +435,14 @@ fn page_number_format_with_chapter_numbers() {
     back.undo();
     assert_eq!(back.sections()[0].props.numbering(), n);
 }
+
+/// EMF and WMF pictures are drawn into the PDF (as pictures made from them).
+#[test]
+fn metafile_pictures_are_exported() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/docx/metafiles.docx");
+    let doc = Document::open(&path).unwrap();
+    let mut engine = Engine::new();
+    let pdf = docs_pdf::export(&doc, &mut engine).unwrap();
+    assert_eq!(count(&pdf, b"/Subtype/Image"), 2);
+}

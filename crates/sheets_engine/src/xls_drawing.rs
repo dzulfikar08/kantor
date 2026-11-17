@@ -12,8 +12,8 @@
 //!   of the row height, turned into EMU from the sheet's column widths and
 //!   row heights ([`Geometry`]); `fMove`/`fSize` become `editAs`. Pictures
 //!   take their BLIP (`pib`), name, alternative text and cropping from the
-//!   shape's properties. PNG and JPEG pictures are kept; metafiles (EMF,
-//!   WMF, PICT), DIB and TIFF are left out with an import note.
+//!   shape's properties. PNG, JPEG, EMF, WMF, PICT and DIB (as BMP) pictures
+//!   are kept; TIFF is left out with an import note.
 //! * **Charts** ([`Chart`]): `SERIES` with their `AI` references (formula
 //!   tokens decompiled by [`crate::xls_formula`]) and names, the chart group
 //!   types (`BAR` vertical, horizontal, stacked and 100%, `LINE`, `AREA`,
@@ -169,9 +169,9 @@ fn art(mut b: &[u8]) -> Vec<Art<'_>> {
 
 /// A picture of the BLIP store.
 pub(crate) enum Blip {
-    /// PNG or JPEG: its extension and bytes.
+    /// A picture Kantor draws: its extension and bytes.
     Image { ext: &'static str, data: Vec<u8> },
-    /// A format Kantor doesn't show (metafiles, DIB, TIFF).
+    /// A format Kantor doesn't show (TIFF).
     Unsupported,
 }
 
@@ -199,22 +199,19 @@ fn fbse_blip(body: &[u8]) -> Option<Blip> {
     let name_len = *body.get(33)? as usize;
     let rest = body.get(36 + name_len..)?;
     let blip = art(rest).into_iter().next()?;
-    // Bitmaps: one or two 16-byte ids by instance, then a tag byte.
-    let (ext, two_ids) = match blip.typ {
-        0xF01D | 0xF02A => ("jpeg", matches!(blip.inst, 0x46B | 0x6E3)),
-        0xF01E => ("png", blip.inst == 0x6E1),
-        0xF01A..=0xF01C | 0xF01F | 0xF029 => return Some(Blip::Unsupported),
-        _ => return None,
-    };
-    let data = blip.body.get(if two_ids { 33 } else { 17 }..)?;
-    let ok = match ext {
-        "png" => data.starts_with(b"\x89PNG"),
-        _ => data.starts_with(&[0xFF, 0xD8]),
-    };
-    ok.then(|| Blip::Image {
-        ext,
-        data: data.to_vec(),
-    })
+    if !(0xF018..=0xF117).contains(&blip.typ) {
+        return None;
+    }
+    // Metafiles and DIBs are kept as they are (EMF, WMF, PICT, BMP parts)
+    // and drawn through kantor_metafile; TIFF isn't drawn.
+    match kantor_metafile::office_art_blip(blip.typ, blip.inst, blip.body) {
+        Some(b) if b.ext != "tiff" => Some(Blip::Image {
+            ext: b.ext,
+            data: b.data,
+        }),
+        Some(_) => Some(Blip::Unsupported),
+        None => None,
+    }
 }
 
 /// A shape of a sheet's drawing that has client data (an `OBJ`).
@@ -1641,7 +1638,7 @@ pub(crate) fn package(
         rels(&[("rId1".into(), "officeDocument", "xl/workbook.xml".into())]).into_bytes(),
     ));
     let mut types = String::from(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"png\" ContentType=\"image/png\"/><Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"png\" ContentType=\"image/png\"/><Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/><Default Extension=\"emf\" ContentType=\"image/x-emf\"/><Default Extension=\"wmf\" ContentType=\"image/x-wmf\"/><Default Extension=\"pict\" ContentType=\"image/pict\"/><Default Extension=\"bmp\" ContentType=\"image/bmp\"/><Default Extension=\"gif\" ContentType=\"image/gif\"/><Default Extension=\"svg\" ContentType=\"image/svg+xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>",
     );
     for (part, kind) in &p.overrides {
         types.push_str(&format!(

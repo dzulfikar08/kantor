@@ -61,7 +61,7 @@ pub enum ImportNote {
     OdsValidationsSkipped(usize),
     /// `.ods` conditional formats with a condition Kantor can't express.
     OdsConditionalFormatsSkipped(usize),
-    /// `.xls`/`.ods` pictures in a format Kantor doesn't read (EMF, WMF, PICT, BMP, TIFF).
+    /// `.xls`/`.ods` pictures in a format Kantor doesn't read (TIFF and the like).
     PicturesSkipped(usize),
     /// `.xls`/`.ods` charts of a type Kantor doesn't draw.
     ChartsSkipped(usize),
@@ -109,7 +109,7 @@ impl std::fmt::Display for ImportNote {
             ),
             Self::PicturesSkipped(n) => write!(
                 f,
-                "{n} picture{} not imported (EMF, WMF, PICT, BMP or TIFF format)",
+                "{n} picture{} not imported (TIFF or another format Kantor can't read)",
                 s(n)
             ),
             Self::ChartsSkipped(n) => write!(

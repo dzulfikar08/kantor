@@ -49,12 +49,12 @@ floating pictures and shapes not imported	gambar dan bentuk mengambang tidak dii
 floating objects in headers and footers not imported	objek mengambang di header dan footer tidak diimpor
 grouped shapes not imported	bentuk yang dikelompokkan tidak diimpor
 freeform shapes not imported	bentuk bebas tidak diimpor
-pictures in formats other than PNG and JPEG not imported	gambar berformat selain PNG dan JPEG tidak diimpor
+TIFF pictures not imported	gambar TIFF tidak diimpor
 hidden text left out	teks tersembunyi tidak disertakan
 embedded objects not imported	objek tersemat tidak diimpor
 nested tables flattened	tabel bersarang diratakan
-1 EMF/WMF picture shown as a box	1 gambar EMF/WMF ditampilkan sebagai kotak
-{} EMF/WMF pictures shown as boxes	{} gambar EMF/WMF ditampilkan sebagai kotak
+1 TIFF picture shown as a box	1 gambar TIFF ditampilkan sebagai kotak
+{} TIFF pictures shown as boxes	{} gambar TIFF ditampilkan sebagai kotak
 Group{}	Grup{}
 Map: no map data saved with this chart	Peta: tidak ada data peta yang tersimpan bersama bagan ini
 Map: the map data saved with this chart can't be read	Peta: data peta yang tersimpan bersama bagan ini tidak bisa dibaca

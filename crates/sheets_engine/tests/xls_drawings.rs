@@ -256,3 +256,33 @@ fn files_without_drawings_have_none() {
     assert!(!wb.has_drawings());
     assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
 }
+
+/// EMF and WMF pictures of `.xls` and `.ods` (metafiles.*, from
+/// scripts/corpus/gen_metafiles.py) are kept as they are.
+#[test]
+fn metafile_pictures_are_imported() {
+    for name in ["metafiles.xls", "metafiles.ods"] {
+        let wb = Workbook::open(corpus(name)).unwrap();
+        assert!(
+            wb.import_notes().is_empty(),
+            "{name}: {:?}",
+            wb.import_notes()
+        );
+        let pics: Vec<_> = wb
+            .drawings(0)
+            .iter()
+            .filter_map(|d| match &*d.kind {
+                DrawingKind::Picture { data, part, .. } => Some((part.clone(), data.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pics.len(), 2, "{name}");
+        for (part, data) in pics {
+            assert!(kantor_metafile::kind(&data).is_some(), "{name}: {part}");
+            assert!(
+                kantor_metafile::to_png(&data, 256).is_some(),
+                "{name}: {part}"
+            );
+        }
+    }
+}
