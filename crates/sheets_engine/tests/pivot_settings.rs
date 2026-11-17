@@ -1120,6 +1120,32 @@ fn calculated_items_by_position() {
     let mut back = Workbook::open(&path).unwrap();
     assert_eq!(back.refresh_pivot(s, 2, 0).unwrap(), 1);
     assert_eq!(grid(&back, s, (2, 0, 8, 1)), grid(&wb, s, (2, 0, 8, 1)));
+    // Sorted by value, smallest first: positions count in the order shown
+    // (West 255, North 396, East 417, then the calculated items, listed by
+    // name), as in Excel: `Region[1]` is West, Before's `Region[-1]` East.
+    let mut l = layout(&wb, s);
+    l.fields[region].settings.sort = PivotSort::Ascending;
+    l.fields[region].settings.sort_by_value = Some(0);
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    assert_eq!(
+        grid(&wb, s, (2, 0, 8, 1))[1..7],
+        rows(&[
+            &["West", "255"],
+            &["North", "396"],
+            &["East", "417"],
+            &["Before", "672"],
+            &["Second", "792"],
+            &["Grand Total", "2532"],
+        ])[..]
+    );
+    // A new one by position: the first shown (West), not the first listed.
+    wb.set_pivot_calculated_item(s, 2, 0, region, "Lowest", "=Region[1]")
+        .unwrap();
+    let g = grid(&wb, s, (2, 0, 9, 1));
+    assert!(
+        g.contains(&vec!["Lowest".to_string(), "255".to_string()]),
+        "{g:?}"
+    );
 }
 
 #[test]

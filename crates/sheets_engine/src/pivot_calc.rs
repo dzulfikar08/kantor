@@ -874,6 +874,9 @@ struct Parser<'a> {
     field: Option<&'a str>,
     /// The calculated item's own place in `names` (for `Region[+1]`).
     me: Option<usize>,
+    /// The items as shown (sorted), as places in `names`, for positions;
+    /// `None`: as listed.
+    order: Option<&'a [usize]>,
 }
 
 impl Parser<'_> {
@@ -913,10 +916,18 @@ impl Parser<'_> {
         let Ok(n) = text.replace(' ', "").parse::<i64>() else {
             return Ok(None);
         };
-        // The field's real items (blanks are its subtotal rows).
-        let items: Vec<usize> = (0..self.names.len())
-            .filter(|&k| self.names[k] != "\u{0}")
-            .collect();
+        // The field's real items (blanks are its subtotal rows), in the
+        // order they show in, as Excel counts them.
+        let items: Vec<usize> = match self.order {
+            Some(o) => o
+                .iter()
+                .copied()
+                .filter(|&k| self.names.get(k).is_some_and(|n| n != "\u{0}"))
+                .collect(),
+            None => (0..self.names.len())
+                .filter(|&k| self.names[k] != "\u{0}")
+                .collect(),
+        };
         let at = if relative {
             let me = match self.me {
                 Some(k) => items.iter().position(|&x| x == k),
@@ -1117,21 +1128,23 @@ impl V {
 impl Formula {
     /// Compile `src` (with or without a leading `=`) against field `names`.
     pub(crate) fn compile(src: &str, names: &[String]) -> Result<Formula, String> {
-        Self::compile_in(src, names, None, None)
+        Self::compile_in(src, names, None, None, None)
     }
 
     /// Compile a calculated item's formula of field `field` against the
     /// field's item names (`East`, `'North East'`, `Region[East]`, or by
     /// position `Region[2]`, `Region[+1]`); `fields` then index `items`.
     /// `at`: the calculated item's own place in `items` (`None`: a new one,
-    /// after them).
+    /// after them). `order`: the items as they show (sorted), as places in
+    /// `items`; positions count in that order (`None`: as listed).
     pub(crate) fn compile_items(
         src: &str,
         field: &str,
         items: &[String],
         at: Option<usize>,
+        order: Option<&[usize]>,
     ) -> Result<Formula, String> {
-        Self::compile_in(src, items, Some(field), at)
+        Self::compile_in(src, items, Some(field), at, order)
     }
 
     fn compile_in(
@@ -1139,6 +1152,7 @@ impl Formula {
         names: &[String],
         field: Option<&str>,
         at: Option<usize>,
+        order: Option<&[usize]>,
     ) -> Result<Formula, String> {
         let src = src.trim().trim_start_matches('=');
         let toks = tokens(src)?;
@@ -1152,6 +1166,7 @@ impl Formula {
             used: Vec::new(),
             field,
             me: at,
+            order,
         };
         let expr = p.compare()?;
         if p.at < p.toks.len() {

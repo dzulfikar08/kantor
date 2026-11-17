@@ -7720,9 +7720,8 @@ mod tests {
         assert!(wb.break_preview(0));
         wb.set_input(0, 1, 1, "y").unwrap();
         wb.save_as(&path).unwrap();
-        let saved = || {
-            String::from_utf8(read_part(&std::fs::read(&path).unwrap(), part).unwrap()).unwrap()
-        };
+        let saved =
+            || String::from_utf8(read_part(&std::fs::read(&path).unwrap(), part).unwrap()).unwrap();
         let xml = saved();
         for a in [
             "zoomScale=\"85\"",
@@ -7737,7 +7736,10 @@ mod tests {
         wb.set_break_preview(0, false);
         wb.save_as(&path).unwrap();
         let xml = saved();
-        assert!(!xml.contains("pageBreakPreview") && xml.contains("zoomScale=\"85\""), "{xml}");
+        assert!(
+            !xml.contains("pageBreakPreview") && xml.contains("zoomScale=\"85\""),
+            "{xml}"
+        );
     }
 
     #[test]

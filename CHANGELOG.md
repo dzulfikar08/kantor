@@ -17,6 +17,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   as in Excel; the zoom a sheet was saved with is kept.
 - Sheets: an icon set's threshold can show "No Cell Icon" (Edit Formatting Rule), and files that
   use it show no icon there instead of a grey circle.
+- Sheets: pivot calculated items that name items by position (`Region[2]`) count them in the order
+  they show in when the field is sorted by value, as Excel does.
 - Windows metafile pictures (WMF, EMF and EMF+), Mac PICT pictures and BMPs are drawn in Docs,
   Slides and Sheets, on screen and in PDFs, instead of an empty box: from `.docx`, `.pptx` and
   `.xlsx` files and from `.doc`, `.ppt`, `.xls`, `.ods` and `.rtf` imports (which used to leave
