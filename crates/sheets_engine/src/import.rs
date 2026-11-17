@@ -485,6 +485,12 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
         let Some((r0, c0)) = range.start() else {
             continue;
         };
+        // `.xls`: Kantor's own decoding first (3-D references), calamine's
+        // text for the cells it can't read.
+        let own = xls
+            .as_ref()
+            .map(|x| x.cell_formulas(name))
+            .unwrap_or_default();
         for (r, c, formula) in range.used_cells() {
             if formula.is_empty() {
                 continue;
@@ -494,18 +500,24 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
                 .get_value((row as u32 - 1, col as u32 - 1))
                 .cloned()
                 .unwrap_or_default();
-            let formula = excel_formula(formula).map(|f| match format {
-                SourceFormat::Xls => repair_xls_ref3d(&f, &names),
-                _ => f,
-            });
-            let ok = formula.is_some_and(|f| {
+            let theirs = || {
+                excel_formula(formula).map(|f| match format {
+                    SourceFormat::Xls => repair_xls_ref3d(&f, &names),
+                    _ => f,
+                })
+            };
+            let mut set = |f: String| {
                 let volatile = is_volatile(&f);
                 let ok = model.set_user_input(sheet, row, col, f).is_ok();
                 if ok {
                     formulas.push((sheet, row, col, cached.clone(), volatile));
                 }
                 ok
-            });
+            };
+            let mine = own
+                .get(&(row as u32 - 1, col as u32 - 1))
+                .map(|f| format!("={f}"));
+            let ok = mine.is_some_and(&mut set) || theirs().is_some_and(&mut set);
             if !ok {
                 keep_cached(&mut model, sheet, row, col, &cached, date1904)?;
                 kept_values += 1;

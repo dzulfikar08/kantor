@@ -583,6 +583,74 @@ impl XlsFormat {
         self.globals.sheets.iter().position(|s| s.0 == name)
     }
 
+    /// The cell formulas of sheet `name` decoded by Kantor
+    /// ([`crate::xls_formula`]), by 0-based `(row, column)`, without `=`.
+    /// calamine's text can't be used for 3-D references
+    /// (`SUM(Jan:Mar!B2)`); cells Kantor's decoder can't read (shared and
+    /// array formulas, add-in functions, other workbooks…) are left out
+    /// for calamine's. Empty for Excel 5/95 files (other tokens).
+    pub(crate) fn cell_formulas(&self, name: &str) -> HashMap<(u32, u32), String> {
+        let mut out = HashMap::new();
+        let g = &self.globals;
+        let Some(ix) = self.sheet_named(name) else {
+            return out;
+        };
+        if g.biff5.is_some() {
+            return out;
+        }
+        let sheet_names: Vec<String> = g.sheets.iter().map(|s| s.0.clone()).collect();
+        let label_names: Vec<String> = g
+            .labels
+            .iter()
+            .map(|l| {
+                if l.builtin.is_some() {
+                    String::new()
+                } else {
+                    l.name.clone()
+                }
+            })
+            .collect();
+        let mut rec = Records::at(&self.stream, g.sheets[ix].1);
+        let mut depth = 0;
+        while let Some((typ, d)) = rec.next() {
+            match typ {
+                0x0809 => depth += 1,
+                0x000A => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                // FORMULA: row, column, XF, value (8), flags, chn (4),
+                // then the parsed formula (cce, rgce).
+                0x0006 if depth == 1 => {
+                    let mut b = Bytes::new(d);
+                    let (Some(r), Some(c)) = (b.u16(), b.u16()) else {
+                        continue;
+                    };
+                    let Some(rgce) = b.skip(16).and_then(|_| {
+                        let cce = b.u16()? as usize;
+                        b.take(cce)
+                    }) else {
+                        continue;
+                    };
+                    let ctx = crate::xls_formula::Context {
+                        base: (u32::from(r), u32::from(c)),
+                        sheets: &sheet_names,
+                        xti: &g.xti,
+                        names: &label_names,
+                        formats: &g.formats,
+                    };
+                    if let Some(f) = crate::xls_formula::decompile(rgce, &ctx) {
+                        out.insert((u32::from(r), u32::from(c)), f);
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
     /// Apply the formatting to `model`, whose sheets calamine filled in
     /// `names` order: cell formats, layout, notes and conditional formats
     /// go into the model; print settings and data validation come back.

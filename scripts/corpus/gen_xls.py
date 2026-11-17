@@ -63,6 +63,12 @@ Files:
   formatting, an accented name). `--biff5` writes only this file
   (`--biff5 --check` compares).
 * dates1904.xls: a workbook in the 1904 date system.
+* multisheet.xls: 3-D references (PtgRef3d / PtgArea3d over a range of
+  sheets): sheets "Jan", "Feb", "Mar" with numbers in B2:B3 and "Summary"
+  with SUM(Jan:Mar!B2), AVERAGE(Jan:Mar!B2:B3), MAX(Jan:Mar!B2),
+  Feb!B2*2, COUNT(Jan:Mar!B2:B3), SUM(Jan:Feb!B2,Mar!B3) and
+  IF(SUM(Jan:Mar!B3)>5,"many","few"). `--multisheet-xls` writes only this
+  file.
 * xlwt.xls: written directly as BIFF8 by xlwt (headless LibreOffice drops
   view settings): frozen rows and columns, the second sheet active, pattern
   fills, an unlocked cell, page breaks, header and footer, centring,
@@ -513,6 +519,28 @@ def chartopts(path: Path) -> None:
     pie.add_data(share, titles_from_data=True)
     pie_combo += pie
     ws.add_chart(pie_combo, "N20")
+    wb.save(path)
+
+
+def multisheet(path: Path) -> None:
+    wb = Workbook()
+    for i, name in enumerate(["Jan", "Feb", "Mar"]):
+        ws = wb.active if i == 0 else wb.create_sheet()
+        ws.title = name
+        ws["A2"], ws["B2"] = "Sales", 10 * (i + 1)
+        ws["A3"], ws["B3"] = "Returns", i + 1
+    ws = wb.create_sheet("Summary")
+    for row, (label, formula) in enumerate([
+        ("Total", "=SUM(Jan:Mar!B2)"),
+        ("Average", "=AVERAGE(Jan:Mar!B2:B3)"),
+        ("Best", "=MAX(Jan:Mar!B2)"),
+        ("Feb x2", "=Feb!B2*2"),
+        ("Count", "=COUNT(Jan:Mar!B2:B3)"),
+        ("Mixed", "=SUM(Jan:Feb!B2,Mar!B3)"),
+        ("Returns", '=IF(SUM(Jan:Mar!B3)>5,"many","few")'),
+    ], start=1):
+        ws.cell(row, 1, label)
+        ws.cell(row, 2, formula)
     wb.save(path)
 
 
@@ -1032,6 +1060,16 @@ def main() -> None:
         finally:
             shutil.rmtree(tmp)
         return
+    if "--multisheet-xls" in sys.argv:
+        tmp = Path(tempfile.mkdtemp(dir=Path.home() / ".cache" / "ktmp"))
+        try:
+            src = tmp / "multisheet.xlsx"
+            multisheet(src)
+            shutil.copy(convert(lo, src, "MS Excel 97", "xls", tmp), OUT / "multisheet.xls")
+            print(OUT / "multisheet.xls")
+        finally:
+            shutil.rmtree(tmp)
+        return
     if "--shapes-xls" in sys.argv:
         tmp = Path(tempfile.mkdtemp(dir=Path.home() / ".cache" / "ktmp"))
         try:
@@ -1072,6 +1110,9 @@ def main() -> None:
         src = tmp / "chartopts.xlsx"
         chartopts(src)
         shutil.copy(convert(lo, src, "MS Excel 97", "xls", tmp), OUT / "chartopts.xls")
+        src = tmp / "multisheet.xlsx"
+        multisheet(src)
+        shutil.copy(convert(lo, src, "MS Excel 97", "xls", tmp), OUT / "multisheet.xls")
         src = tmp / "dates1904.xlsx"
         dates1904(src)
         shutil.copy(convert(lo, src, "MS Excel 97", "xls", tmp), OUT / "dates1904.xls")
