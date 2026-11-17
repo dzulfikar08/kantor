@@ -788,9 +788,17 @@ impl<'a> Model<'a> {
             OpPowerKind { left, right } => self.handle_arithmetic(left, right, cell, &power),
             FunctionKind { kind, args } => match self.resolve_table_args(args, cell) {
                 // KANTOR PATCH (tables)
-                Some(args) => self.evaluate_function(kind, &args, cell),
-                None => self.evaluate_function(kind, args, cell),
+                Some(args) => match self.kantor_spread_3d(kind, &args) {
+                    Some(args) => self.evaluate_function(kind, &args, cell),
+                    None => self.evaluate_function(kind, &args, cell),
+                },
+                // KANTOR PATCH (3-D references)
+                None => match self.kantor_spread_3d(kind, args) {
+                    Some(args) => self.evaluate_function(kind, &args, cell),
+                    None => self.evaluate_function(kind, args, cell),
+                },
             },
+            Range3DKind(_) => self.kantor_3d_elsewhere(cell),
             NamedFunctionKind { name, args, id } => {
                 let lambda_result = if let Some(var_id) = id {
                     // Bound by LET — look up the variable, which should be a Lambda.

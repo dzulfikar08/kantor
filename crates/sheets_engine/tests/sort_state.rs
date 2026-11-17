@@ -57,6 +57,7 @@ fn a_sheet_filter_remembers_its_sort() {
     let sort = SortState {
         keys: keys.to_vec(),
         by_value: true,
+        levels: keys.iter().map(|&k| k.into()).collect(),
     };
     assert_eq!(f.sort.as_ref(), Some(&sort));
     assert_eq!(f.sorted(1), Some(true));

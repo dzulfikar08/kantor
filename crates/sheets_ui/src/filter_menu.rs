@@ -30,8 +30,8 @@ use kantor_ui::i18n::{self, t, t_dyn, tf};
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{
-    CellRange, ColumnKind, Condition, FilterKind, FilterOp, FilterScope, FilterValue, SortKey,
-    Workbook, column_name, date_serial,
+    CellRange, ColumnKind, ColumnLooks, Condition, FilterKind, FilterOp, FilterScope, FilterValue,
+    Rgb, SortKey, SortLevel, SortOn, Workbook, column_name, date_serial,
 };
 
 use crate::SheetsView;
@@ -68,7 +68,61 @@ pub(crate) enum Cond {
     NotContains,
     Before,
     After,
+    /// Excel's Top 10 (items or percent, top or bottom).
+    Top,
+    Bottom,
+    TopPercent,
+    BottomPercent,
+    AboveAverage,
+    BelowAverage,
+    /// A dynamic date filter (`today`, `thisMonth`, `Q1`...).
+    Dyn(&'static str),
 }
+
+/// The dynamic date filters the menu offers, in Excel's order.
+const DATE_CONDS: [Cond; 41] = [
+    Cond::None,
+    Cond::Equals,
+    Cond::Before,
+    Cond::After,
+    Cond::Between,
+    Cond::Dyn("tomorrow"),
+    Cond::Dyn("today"),
+    Cond::Dyn("yesterday"),
+    Cond::Dyn("nextWeek"),
+    Cond::Dyn("thisWeek"),
+    Cond::Dyn("lastWeek"),
+    Cond::Dyn("nextMonth"),
+    Cond::Dyn("thisMonth"),
+    Cond::Dyn("lastMonth"),
+    Cond::Dyn("nextQuarter"),
+    Cond::Dyn("thisQuarter"),
+    Cond::Dyn("lastQuarter"),
+    Cond::Dyn("nextYear"),
+    Cond::Dyn("thisYear"),
+    Cond::Dyn("lastYear"),
+    Cond::Dyn("yearToDate"),
+    Cond::Dyn("Q1"),
+    Cond::Dyn("Q2"),
+    Cond::Dyn("Q3"),
+    Cond::Dyn("Q4"),
+    Cond::Dyn("M1"),
+    Cond::Dyn("M2"),
+    Cond::Dyn("M3"),
+    Cond::Dyn("M4"),
+    Cond::Dyn("M5"),
+    Cond::Dyn("M6"),
+    Cond::Dyn("M7"),
+    Cond::Dyn("M8"),
+    Cond::Dyn("M9"),
+    Cond::Dyn("M10"),
+    Cond::Dyn("M11"),
+    Cond::Dyn("M12"),
+    Cond::AboveAverage,
+    Cond::BelowAverage,
+    Cond::Top,
+    Cond::Bottom,
+];
 
 impl Cond {
     fn label(self) -> &'static str {
@@ -87,6 +141,16 @@ impl Cond {
             Cond::NotContains => t("Does not contain"),
             Cond::Before => t("Before"),
             Cond::After => t("After"),
+            Cond::Top => t("Top N items"),
+            Cond::Bottom => t("Bottom N items"),
+            Cond::TopPercent => t("Top N percent"),
+            Cond::BottomPercent => t("Bottom N percent"),
+            Cond::AboveAverage => t("Above Average"),
+            Cond::BelowAverage => t("Below Average"),
+            Cond::Dyn(k) => sheets_engine::PIVOT_FILTER_TYPES
+                .iter()
+                .find(|(key, _, _)| *key == k)
+                .map_or(k, |(_, label, _)| i18n::t_dyn(label)),
         }
     }
 
@@ -110,15 +174,23 @@ impl Cond {
                 Cond::Less,
                 Cond::LessEq,
                 Cond::Between,
+                Cond::Top,
+                Cond::Bottom,
+                Cond::TopPercent,
+                Cond::BottomPercent,
+                Cond::AboveAverage,
+                Cond::BelowAverage,
             ],
-            ColumnKind::Date => &[
-                Cond::None,
-                Cond::Equals,
-                Cond::Before,
-                Cond::After,
-                Cond::Between,
-            ],
+            ColumnKind::Date => &DATE_CONDS,
         }
+    }
+
+    /// Whether the condition takes a typed value.
+    pub(crate) fn needs_value(self) -> bool {
+        !matches!(
+            self,
+            Cond::None | Cond::AboveAverage | Cond::BelowAverage | Cond::Dyn(_)
+        )
     }
 
     /// The filter for this condition with `a` (and `b` for between), or why
@@ -126,8 +198,12 @@ impl Cond {
     fn filter(self, kind: ColumnKind, a: &str, b: &str) -> Result<Option<FilterKind>, String> {
         let a = a.trim();
         let b = b.trim();
-        if self == Cond::None {
-            return Ok(None);
+        match self {
+            Cond::None => return Ok(None),
+            Cond::AboveAverage => return Ok(Some(FilterKind::Dynamic("aboveAverage".into()))),
+            Cond::BelowAverage => return Ok(Some(FilterKind::Dynamic("belowAverage".into()))),
+            Cond::Dyn(k) => return Ok(Some(FilterKind::Dynamic(k.into()))),
+            _ => {}
         }
         if a.is_empty() {
             return Err(t("Type a value for the condition").into());
@@ -152,8 +228,30 @@ impl Cond {
             }))
         };
         let esc = |s: &str| s.replace('~', "~~").replace('*', "~*").replace('?', "~?");
+        let top10 = |top: bool, percent: bool| -> Result<Option<FilterKind>, String> {
+            let n = a
+                .parse::<f64>()
+                .ok()
+                .filter(|n| *n >= 1.0 && (!percent || *n <= 100.0) && (percent || *n <= 500.0))
+                .ok_or_else(|| {
+                    if percent {
+                        t("Type a percent from 1 to 100").to_owned()
+                    } else {
+                        t("Type a number of items from 1 to 500").to_owned()
+                    }
+                })?;
+            Ok(Some(FilterKind::Top10 {
+                top,
+                percent,
+                value: n,
+            }))
+        };
         match self {
-            Cond::None => Ok(None),
+            Cond::None | Cond::AboveAverage | Cond::BelowAverage | Cond::Dyn(_) => Ok(None),
+            Cond::Top => top10(true, false),
+            Cond::Bottom => top10(false, false),
+            Cond::TopPercent => top10(true, true),
+            Cond::BottomPercent => top10(false, true),
             Cond::Equals => one(FilterOp::Equal, value(a)?),
             Cond::NotEquals => one(FilterOp::NotEqual, value(a)?),
             Cond::Greater | Cond::After => one(FilterOp::GreaterThan, value(a)?),
@@ -187,8 +285,32 @@ impl Cond {
 
     /// The condition (and its values as typed) a column filter shows as.
     fn from_filter(kind: &FilterKind, column: ColumnKind) -> Option<(Cond, String, String)> {
-        let FilterKind::Custom { and, conditions } = kind else {
-            return None;
+        let (and, conditions) = match kind {
+            FilterKind::Custom { and, conditions } => (and, conditions),
+            FilterKind::Top10 {
+                top,
+                percent,
+                value,
+            } => {
+                let cond = match (top, percent) {
+                    (true, false) => Cond::Top,
+                    (false, false) => Cond::Bottom,
+                    (true, true) => Cond::TopPercent,
+                    (false, true) => Cond::BottomPercent,
+                };
+                return Some((cond, value.to_string(), String::new()));
+            }
+            FilterKind::Dynamic(k) => {
+                let cond = match k.as_str() {
+                    "aboveAverage" => Cond::AboveAverage,
+                    "belowAverage" => Cond::BelowAverage,
+                    k => *DATE_CONDS
+                        .iter()
+                        .find(|c| matches!(c, Cond::Dyn(d) if *d == k))?,
+                };
+                return Some((cond, String::new(), String::new()));
+            }
+            _ => return None,
         };
         let shown = |v: &str| match column {
             ColumnKind::Date => v
@@ -256,10 +378,91 @@ pub(crate) struct FilterMenu {
     cond: Cond,
     value1: Entity<InputState>,
     value2: Entity<InputState>,
-    /// A filter Kantor keeps but can't edit (top 10, colours...).
+    /// A filter Kantor keeps but can't edit, or one by colour or icon (the
+    /// value list doesn't show it).
     other: bool,
+    /// The colours and icons the column shows (Filter by Color).
+    looks: ColumnLooks,
+    /// The column's filter by colour or icon, if it has one.
+    by_look: Option<FilterKind>,
     error: Option<SharedString>,
     _subs: Vec<Subscription>,
+}
+
+/// A colour or icon picked in the filter menu or the sort panel.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum LookPick {
+    Fill(Option<Rgb>),
+    Font(Option<Rgb>),
+    Icon(String, Option<u32>),
+}
+
+/// A row of swatches (or icons) to filter by, `current` marked.
+fn look_row(
+    id: &'static str,
+    label: &'static str,
+    picks: Vec<(LookPick, AnyElement)>,
+    current: Option<LookPick>,
+    view: WeakEntity<SheetsView>,
+    t: &tokens::Tokens,
+) -> impl IntoElement {
+    h_flex()
+        .gap(SPACE_2)
+        .flex_wrap()
+        .child(
+            div()
+                .w(px(64.))
+                .text_size(FONT_SMALL)
+                .text_color(t.fg_muted)
+                .child(label),
+        )
+        .children(picks.into_iter().enumerate().map(|(i, (pick, look))| {
+            let v = view.clone();
+            let on = current.as_ref() == Some(&pick);
+            div()
+                .id((id, i))
+                .size(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(RADIUS_SM)
+                .border_1()
+                .border_color(if on { t.accent } else { t.border })
+                .cursor_pointer()
+                .hover(|s| s.bg(t.accent_soft))
+                .child(look)
+                .on_click(move |_, w, cx| {
+                    let pick = pick.clone();
+                    let _ = v.update(cx, |this, cx| this.filter_menu_by_look(pick, w, cx));
+                })
+        }))
+}
+
+/// A swatch of `color` (`None`: none, a crossed box).
+fn swatch(color: Option<Rgb>, t: &tokens::Tokens) -> AnyElement {
+    match color {
+        Some(c) => div()
+            .size(px(14.))
+            .rounded(px(2.))
+            .bg(rgb(c))
+            .into_any_element(),
+        None => div()
+            .size(px(14.))
+            .rounded(px(2.))
+            .border_1()
+            .border_color(t.fg_dim)
+            .into_any_element(),
+    }
+}
+
+/// A font colour sample: an "A" in `color` (`None`: automatic).
+fn font_sample(color: Option<Rgb>, t: &tokens::Tokens) -> AnyElement {
+    div()
+        .text_size(FONT_SMALL)
+        .font_weight(FontWeight::BOLD)
+        .text_color(color.map_or(t.fg, |c| rgb(c).into()))
+        .child("A")
+        .into_any_element()
 }
 
 /// Levels of the Custom Sort panel.
@@ -267,8 +470,34 @@ pub(crate) struct SortPanel {
     sheet: u32,
     range: CellRange,
     header: bool,
-    levels: Vec<SortKey>,
+    levels: Vec<PanelLevel>,
 }
+
+/// A level of the sort panel: the column, its order and what it sorts on.
+#[derive(Clone)]
+pub(crate) struct PanelLevel {
+    key: SortKey,
+    on: PanelOn,
+    /// The column's colours and icons (Sort On choices).
+    looks: ColumnLooks,
+}
+
+/// What a level sorts on (Excel's Sort On and Order).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum PanelOn {
+    Values,
+    Look(LookPick),
+    /// One of Excel's built-in custom lists ([`CUSTOM_LISTS`]).
+    List(usize),
+}
+
+/// Excel's built-in custom lists.
+pub(crate) const CUSTOM_LISTS: [&str; 4] = [
+    "Sun, Mon, Tue, Wed, Thu, Fri, Sat",
+    "Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday",
+    "Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec",
+    "January, February, March, April, May, June, July, August, September, October, November, December",
+];
 
 impl SheetsView {
     /// Open the filter menu of column `col` of `scope`, at a window position.
@@ -283,6 +512,11 @@ impl SheetsView {
         if self.editing.is_some() || self.blocked(cx) {
             return;
         }
+        let looks = self.table.update(cx, |table, _| {
+            let grid = table.delegate_mut();
+            let sheet = grid.sheet;
+            grid.book.filter_looks(sheet, &scope, col)
+        });
         let grid = self.table.read(cx).delegate();
         let (book, sheet) = (&grid.book, grid.sheet);
         let Some(info) = book.filter(sheet, &scope) else {
@@ -297,7 +531,13 @@ impl SheetsView {
             .as_ref()
             .and_then(|k| Cond::from_filter(k, kind))
             .unwrap_or((Cond::None, String::new(), String::new()));
-        let other = matches!(current, Some(FilterKind::Other(_)));
+        let other = matches!(
+            current,
+            Some(FilterKind::Other(_) | FilterKind::Color { .. } | FilterKind::Icon { .. })
+        );
+        let by_look = current
+            .clone()
+            .filter(|k| matches!(k, FilterKind::Color { .. } | FilterKind::Icon { .. }));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(t("Search")));
         let value1 = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder(kind)));
         let value2 = cx.new(|cx| InputState::new(window, cx).placeholder(t("and")));
@@ -327,6 +567,8 @@ impl SheetsView {
             value1,
             value2,
             other,
+            looks,
+            by_look,
             error: None,
             _subs: subs,
         });
@@ -399,6 +641,25 @@ impl SheetsView {
         self.filter_menu = None;
         self.book_op(window, cx, move |b, _| {
             let (shown, total) = b.set_column_filter(sheet, &scope, col, filter)?;
+            Ok(tf("{} of {} rows shown", &[&shown, &total]))
+        });
+        self.focus_grid(window, cx);
+    }
+
+    /// Filter by a colour (`font`: the font's) or an icon, as picked in
+    /// the menu's Filter by Color.
+    fn filter_menu_by_look(&mut self, pick: LookPick, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.filter_menu.take() else {
+            return;
+        };
+        let (sheet, scope, col) = (menu.sheet, menu.scope, menu.col);
+        self.book_op(window, cx, move |b, _| {
+            let kind = match pick {
+                LookPick::Fill(c) => b.color_filter(c, false),
+                LookPick::Font(c) => b.color_filter(c, true),
+                LookPick::Icon(set, id) => FilterKind::Icon { set, id },
+            };
+            let (shown, total) = b.set_column_filter(sheet, &scope, col, Some(kind))?;
             Ok(tf("{} of {} rows shown", &[&shown, &total]))
         });
         self.focus_grid(window, cx);
@@ -573,11 +834,53 @@ impl SheetsView {
             sheet,
             range,
             header,
-            levels: vec![SortKey {
-                col: col.clamp(range.left, range.right),
-                descending: false,
-            }],
+            levels: Vec::new(),
         });
+        self.add_sort_level(col.clamp(range.left, range.right), cx);
+        cx.notify();
+    }
+
+    /// A new level of the sort panel, by the values of column `col`.
+    fn add_sort_level(&mut self, col: u32, cx: &mut Context<Self>) {
+        let Some((sheet, range)) = self.sort_panel.as_ref().map(|p| (p.sheet, p.range)) else {
+            return;
+        };
+        let looks = self.sort_looks(sheet, range, col, cx);
+        if let Some(p) = self.sort_panel.as_mut() {
+            p.levels.push(PanelLevel {
+                key: SortKey {
+                    col,
+                    descending: false,
+                },
+                on: PanelOn::Values,
+                looks,
+            });
+        }
+    }
+
+    fn sort_looks(
+        &mut self,
+        sheet: u32,
+        range: CellRange,
+        col: u32,
+        cx: &mut Context<Self>,
+    ) -> ColumnLooks {
+        self.table.update(cx, |table, _| {
+            table.delegate_mut().book.column_looks(sheet, range, col)
+        })
+    }
+
+    /// Level `i` sorts column `col` now (by its values).
+    fn set_sort_level_column(&mut self, i: usize, col: u32, cx: &mut Context<Self>) {
+        let Some((sheet, range)) = self.sort_panel.as_ref().map(|p| (p.sheet, p.range)) else {
+            return;
+        };
+        let looks = self.sort_looks(sheet, range, col, cx);
+        if let Some(l) = self.sort_panel.as_mut().and_then(|p| p.levels.get_mut(i)) {
+            l.key.col = col;
+            l.on = PanelOn::Values;
+            l.looks = looks;
+        }
         cx.notify();
     }
 
@@ -592,7 +895,30 @@ impl SheetsView {
             levels,
         } = p;
         self.book_op(window, cx, move |b, _| {
-            let n = b.sort_range(sheet, range, &levels, header)?;
+            let levels: Vec<SortLevel> = levels
+                .iter()
+                .map(|l| SortLevel {
+                    col: l.key.col,
+                    descending: l.key.descending,
+                    on: match &l.on {
+                        PanelOn::Values => SortOn::Values,
+                        PanelOn::Look(LookPick::Fill(c)) => SortOn::CellColor {
+                            dxf: b.color_dxf(*c, false),
+                        },
+                        PanelOn::Look(LookPick::Font(c)) => SortOn::FontColor {
+                            dxf: b.color_dxf(*c, true),
+                        },
+                        PanelOn::Look(LookPick::Icon(set, id)) => SortOn::Icon {
+                            set: set.clone(),
+                            id: *id,
+                        },
+                        PanelOn::List(i) => {
+                            SortOn::List(CUSTOM_LISTS[*i].split(", ").map(str::to_owned).collect())
+                        }
+                    },
+                })
+                .collect();
+            let n = b.sort_range_by(sheet, range, &levels, header)?;
             Ok(tf("Sorted {} rows by {} levels", &[&n, &levels.len()]))
         });
         self.focus_grid(window, cx);
@@ -682,7 +1008,7 @@ impl SheetsView {
                     .child(cond_label),
             )
             .child(cond_button)
-            .when(menu.cond != Cond::None, |d| {
+            .when(menu.cond.needs_value(), |d| {
                 d.child(Input::new(&menu.value1).small())
             })
             .when(menu.cond == Cond::Between, |d| {
@@ -766,6 +1092,78 @@ impl SheetsView {
             .book
             .filter(menu.sheet, &menu.scope)
             .is_some_and(|f| f.is_filtered(menu.col));
+        // Filter by Color: the fills, font colours and icons the column shows.
+        let current_look = {
+            let book = &self.table.read(cx).delegate().book;
+            match &menu.by_look {
+                Some(FilterKind::Color { font: false, dxf }) => {
+                    Some(LookPick::Fill(book.dxf_color(*dxf, false)))
+                }
+                Some(FilterKind::Color { font: true, dxf }) => {
+                    Some(LookPick::Font(book.dxf_color(*dxf, true)))
+                }
+                Some(FilterKind::Icon { set, id }) => Some(LookPick::Icon(set.clone(), *id)),
+                _ => None,
+            }
+        };
+        let l = &menu.looks;
+        let show_fills = l.fills.len() > 1;
+        let show_fonts = l.fonts.len() > 1;
+        let show_icons = !l.icons.is_empty();
+        let has_looks = show_fills || show_fonts || show_icons;
+        let looks = v_flex()
+            .gap(SPACE_2)
+            .child(
+                div()
+                    .text_size(FONT_SMALL)
+                    .text_color(t.fg_muted)
+                    .child(i18n::t("Filter by Color")),
+            )
+            .when(show_fills, |d| {
+                d.child(look_row(
+                    "filter-fill",
+                    i18n::t("Cell Color"),
+                    l.fills
+                        .iter()
+                        .map(|c| (LookPick::Fill(*c), swatch(*c, &t)))
+                        .collect(),
+                    current_look.clone(),
+                    view.clone(),
+                    &t,
+                ))
+            })
+            .when(show_fonts, |d| {
+                d.child(look_row(
+                    "filter-font",
+                    i18n::t("Font Color"),
+                    l.fonts
+                        .iter()
+                        .map(|c| (LookPick::Font(*c), font_sample(*c, &t)))
+                        .collect(),
+                    current_look.clone(),
+                    view.clone(),
+                    &t,
+                ))
+            })
+            .when(show_icons, |d| {
+                d.child(look_row(
+                    "filter-icon",
+                    i18n::t("Cell Icon"),
+                    l.icons
+                        .iter()
+                        .map(|(set, id, icon)| {
+                            let look = match icon {
+                                Some(i) => crate::cond_paint::icon_element(*i).into_any_element(),
+                                None => swatch(None, &t),
+                            };
+                            (LookPick::Icon(set.clone(), *id), look)
+                        })
+                        .collect(),
+                    current_look.clone(),
+                    view.clone(),
+                    &t,
+                ))
+            });
         let buttons = h_flex()
             .gap(SPACE_2)
             .child(
@@ -827,9 +1225,14 @@ impl SheetsView {
                     div()
                         .text_size(FONT_SMALL)
                         .text_color(t.fg_dim)
-                        .child(i18n::t("This column has a filter Kantor keeps but can't edit (top 10, colour or dynamic). Choosing values replaces it.")),
+                        .child(if menu.by_look.is_some() {
+                            i18n::t("This column is filtered by colour or icon. Choosing values replaces it.")
+                        } else {
+                            i18n::t("This column has a filter Kantor keeps but can't edit. Choosing values replaces it.")
+                        }),
                 )
             })
+            .when(has_looks, |d| d.child(looks).child(div().h(GRID_LINE).bg(t.border)))
             .child(Input::new(&menu.search).small())
             .child(list)
             .when_some(menu.error.clone(), |d, e| {
@@ -859,13 +1262,156 @@ impl SheetsView {
         let columns: Vec<(u32, String)> = (p.range.left..=p.range.right.min(p.range.left + 200))
             .map(|c| (c, col_label(c)))
             .collect();
-        let levels = p.levels.iter().enumerate().map(|(i, k)| {
+        let levels = p.levels.iter().enumerate().map(|(i, level)| {
             let cols = columns.clone();
             let v = view.clone();
             let v2 = view.clone();
             let v3 = view.clone();
-            let key = *k;
-            h_flex()
+            let v4 = view.clone();
+            let key = level.key;
+            let on = level.on.clone();
+            let looks = level.looks.clone();
+            let on_label: SharedString = match &on {
+                PanelOn::Values => i18n::t("Cell Values").into(),
+                PanelOn::Look(LookPick::Fill(_)) => i18n::t("Cell Color").into(),
+                PanelOn::Look(LookPick::Font(_)) => i18n::t("Font Color").into(),
+                PanelOn::Look(LookPick::Icon(..)) => i18n::t("Cell Icon").into(),
+                PanelOn::List(n) => CUSTOM_LISTS[*n].into(),
+            };
+            let order_label: SharedString = match (&on, key.descending) {
+                (PanelOn::Values, false) => "A → Z".into(),
+                (PanelOn::Values, true) => "Z → A".into(),
+                (PanelOn::List(_), false) => i18n::t("List order").into(),
+                (PanelOn::List(_), true) => i18n::t("Reverse list order").into(),
+                (_, false) => i18n::t("On Top").into(),
+                (_, true) => i18n::t("On Bottom").into(),
+            };
+            let pick_look = match &on {
+                PanelOn::Look(p) => Some(p.clone()),
+                _ => None,
+            };
+            let set_on = move |v: &WeakEntity<SheetsView>, on: PanelOn, cx: &mut App| {
+                let _ = v.update(cx, |this, cx| {
+                    if let Some(l) = this.sort_panel.as_mut().and_then(|p| p.levels.get_mut(i)) {
+                        l.on = on;
+                    }
+                    cx.notify();
+                });
+            };
+            let menu_looks = looks.clone();
+            let on_button = Button::new(("sort-on", i))
+                .outline()
+                .small()
+                .label(on_label)
+                .dropdown_caret(true)
+                .dropdown_menu(move |mut m, _, _| {
+                    let entry = |m: gpui_kit::component::menu::PopupMenu,
+                                 label: SharedString,
+                                 checked: bool,
+                                 next: PanelOn| {
+                        let v = v4.clone();
+                        m.item(
+                            PopupMenuItem::new(label)
+                                .checked(checked)
+                                .on_click(move |_, _, cx| set_on(&v, next.clone(), cx)),
+                        )
+                    };
+                    m = entry(
+                        m,
+                        i18n::t("Cell Values").into(),
+                        on == PanelOn::Values,
+                        PanelOn::Values,
+                    );
+                    if let Some(c) = menu_looks.fills.first() {
+                        m = entry(
+                            m,
+                            i18n::t("Cell Color").into(),
+                            matches!(on, PanelOn::Look(LookPick::Fill(_))),
+                            PanelOn::Look(LookPick::Fill(
+                                menu_looks
+                                    .fills
+                                    .iter()
+                                    .copied()
+                                    .find(Option::is_some)
+                                    .unwrap_or(*c),
+                            )),
+                        );
+                    }
+                    if let Some(c) = menu_looks.fonts.first() {
+                        m = entry(
+                            m,
+                            i18n::t("Font Color").into(),
+                            matches!(on, PanelOn::Look(LookPick::Font(_))),
+                            PanelOn::Look(LookPick::Font(
+                                menu_looks
+                                    .fonts
+                                    .iter()
+                                    .copied()
+                                    .find(Option::is_some)
+                                    .unwrap_or(*c),
+                            )),
+                        );
+                    }
+                    if let Some((set, id, _)) = menu_looks.icons.first() {
+                        m = entry(
+                            m,
+                            i18n::t("Cell Icon").into(),
+                            matches!(on, PanelOn::Look(LookPick::Icon(..))),
+                            PanelOn::Look(LookPick::Icon(set.clone(), *id)),
+                        );
+                    }
+                    for (n, list) in CUSTOM_LISTS.iter().enumerate() {
+                        m = entry(m, (*list).into(), on == PanelOn::List(n), PanelOn::List(n));
+                    }
+                    m
+                });
+            // The colour or icon a Cell Color / Font Color / Cell Icon level puts first.
+            let look_choices: Vec<(LookPick, AnyElement)> = match &pick_look {
+                Some(LookPick::Fill(_)) => looks
+                    .fills
+                    .iter()
+                    .map(|c| (LookPick::Fill(*c), swatch(*c, &t)))
+                    .collect(),
+                Some(LookPick::Font(_)) => looks
+                    .fonts
+                    .iter()
+                    .map(|c| (LookPick::Font(*c), font_sample(*c, &t)))
+                    .collect(),
+                Some(LookPick::Icon(..)) => looks
+                    .icons
+                    .iter()
+                    .map(|(set, id, icon)| {
+                        let look = match icon {
+                            Some(ic) => crate::cond_paint::icon_element(*ic).into_any_element(),
+                            None => swatch(None, &t),
+                        };
+                        (LookPick::Icon(set.clone(), *id), look)
+                    })
+                    .collect(),
+                None => Vec::new(),
+            };
+            let picks = h_flex().gap(SPACE_1).pl(px(72.)).children(
+                look_choices
+                    .into_iter()
+                    .enumerate()
+                    .map(|(n, (pick, look))| {
+                        let v = view.clone();
+                        let chosen = pick_look.as_ref() == Some(&pick);
+                        div()
+                            .id(("sort-look", i * 64 + n))
+                            .size(px(20.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(RADIUS_SM)
+                            .border_1()
+                            .border_color(if chosen { t.accent } else { t.border })
+                            .cursor_pointer()
+                            .child(look)
+                            .on_click(move |_, _, cx| set_on(&v, PanelOn::Look(pick.clone()), cx))
+                    }),
+            );
+            let row = h_flex()
                 .gap(SPACE_2)
                 .child(
                     div()
@@ -892,10 +1438,7 @@ impl SheetsView {
                                     PopupMenuItem::new(name).checked(c == key.col).on_click(
                                         move |_, _, cx| {
                                             let _ = v.update(cx, |this, cx| {
-                                                if let Some(p) = this.sort_panel.as_mut() {
-                                                    p.levels[i].col = c;
-                                                }
-                                                cx.notify();
+                                                this.set_sort_level_column(i, c, cx);
                                             });
                                         },
                                     ),
@@ -904,15 +1447,16 @@ impl SheetsView {
                             m
                         }),
                 )
+                .child(on_button)
                 .child(
                     Button::new(("sort-dir", i))
                         .outline()
                         .small()
-                        .label(if key.descending { "Z → A" } else { "A → Z" })
+                        .label(order_label)
                         .on_click(move |_, _, cx| {
                             let _ = v2.update(cx, |this, cx| {
                                 if let Some(p) = this.sort_panel.as_mut() {
-                                    p.levels[i].descending = !p.levels[i].descending;
+                                    p.levels[i].key.descending = !p.levels[i].key.descending;
                                 }
                                 cx.notify();
                             });
@@ -932,7 +1476,11 @@ impl SheetsView {
                                 cx.notify();
                             });
                         }),
-                )
+                );
+            v_flex()
+                .gap(SPACE_1)
+                .child(row)
+                .when(pick_look.is_some(), |d| d.child(picks))
         });
         let header_view = view.clone();
         let add_view = view.clone();
@@ -975,13 +1523,11 @@ impl SheetsView {
                                 .on_click(move |_, _, cx| {
                                     let _ = add_view.update(cx, |this, cx| {
                                         if let Some(p) = this.sort_panel.as_mut() {
-                                            let next = p.levels.last().map_or(p.range.left, |k| {
-                                                (k.col + 1).min(p.range.right)
+                                            let next = p.levels.last().map_or(p.range.left, |l| {
+                                                (l.key.col + 1).min(p.range.right)
                                             });
-                                            p.levels.push(SortKey {
-                                                col: next,
-                                                descending: false,
-                                            });
+                                            let _ = p;
+                                            this.add_sort_level(next, cx);
                                         }
                                         cx.notify();
                                     });

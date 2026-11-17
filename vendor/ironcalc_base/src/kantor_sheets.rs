@@ -34,8 +34,16 @@ pub(crate) struct DeletedSheet {
 
 /// Replace references to sheet `index` (written with a sheet name) by
 /// `#REF!`. Returns whether anything changed.
-fn cut_sheet_refs(node: &mut Node, index: u32) -> bool {
+fn cut_sheet_refs(node: &mut Node, index: u32, names: &[String]) -> bool {
     match node {
+        // KANTOR PATCH (3-D references): an end on the sheet moves inwards.
+        Node::Range3DKind(r) => match crate::kantor_3d::cut_3d(r, index, names) {
+            Some(changed) => changed,
+            None => {
+                *node = Node::ErrorKind(Error::REF);
+                true
+            }
+        },
         Node::ReferenceKind {
             sheet_name: Some(_),
             sheet_index,
@@ -55,21 +63,21 @@ fn cut_sheet_refs(node: &mut Node, index: u32) -> bool {
         | Node::OpProductKind { left, right, .. }
         | Node::OpPowerKind { left, right }
         | Node::CompareKind { left, right, .. } => {
-            let a = cut_sheet_refs(left, index);
-            cut_sheet_refs(right, index) || a
+            let a = cut_sheet_refs(left, index, names);
+            cut_sheet_refs(right, index, names) || a
         }
         Node::FunctionKind { args, .. } | Node::NamedFunctionKind { args, .. } => args
             .iter_mut()
-            .fold(false, |c, a| cut_sheet_refs(a, index) || c),
-        Node::LambdaDefKind { body, .. } => cut_sheet_refs(body, index),
+            .fold(false, |c, a| cut_sheet_refs(a, index, names) || c),
+        Node::LambdaDefKind { body, .. } => cut_sheet_refs(body, index, names),
         Node::LambdaCallKind { lambda, args } => {
-            let a = cut_sheet_refs(lambda, index);
+            let a = cut_sheet_refs(lambda, index, names);
             args.iter_mut()
-                .fold(a, |c, arg| cut_sheet_refs(arg, index) || c)
+                .fold(a, |c, arg| cut_sheet_refs(arg, index, names) || c)
         }
-        Node::UnaryKind { right, .. } => cut_sheet_refs(right, index),
+        Node::UnaryKind { right, .. } => cut_sheet_refs(right, index, names),
         Node::ImplicitIntersection { child, .. } | Node::SpillRangeOperator { child } => {
-            cut_sheet_refs(child, index)
+            cut_sheet_refs(child, index, names)
         }
         _ => false,
     }
@@ -85,6 +93,7 @@ impl Model<'_> {
         let worksheet = Box::new(self.workbook.worksheet(index)?.clone());
         let (name, sheet_id) = (worksheet.name.clone(), worksheet.sheet_id);
         let mut formulas = Vec::new();
+        let sheet_names = &self.workbook.get_worksheet_names();
         // Formulas are R1C1, parsed in their own sheet's context.
         self.parser.set_lexer_mode(LexerMode::R1C1);
         let mut rewritten: Vec<(usize, Vec<String>)> = Vec::new();
@@ -103,7 +112,7 @@ impl Model<'_> {
                 .iter()
                 .map(|f| {
                     let mut node = self.parser.parse(f, &context);
-                    if cut_sheet_refs(&mut node, index) {
+                    if cut_sheet_refs(&mut node, index, sheet_names) {
                         changed = true;
                         to_rc_format(&node)
                     } else {
@@ -148,7 +157,7 @@ impl Model<'_> {
             let had_equals = dn.formula.trim_start().starts_with('=');
             let body = dn.formula.strip_prefix('=').unwrap_or(&dn.formula);
             let mut node = self.parse_internal_formula(body, &context);
-            let formula = if cut_sheet_refs(&mut node, index) {
+            let formula = if cut_sheet_refs(&mut node, index, sheet_names) {
                 let text = to_english_string(&node, &context);
                 if had_equals {
                     format!("={text}")

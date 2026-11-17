@@ -819,7 +819,6 @@ Text filter	Filter teks
 (Select All Search Results)	(Pilih Semua Hasil Pencarian)
 {} more: search to narrow	{} lagi: cari untuk mempersempit
 Clear filter	Hapus filter
-This column has a filter Kantor keeps but can't edit (top 10, colour or dynamic). Choosing values replaces it.	Kolom ini memiliki filter yang disimpan Kantor tetapi tidak dapat diedit (10 teratas, warna, atau dinamis). Memilih nilai akan menggantinya.
 Column {}	Kolom {}
 Sort by	Urutkan menurut
 Then by	Lalu menurut
@@ -1176,3 +1175,40 @@ Pareto	Pareto
 Box & Whisker	Kotak & Garis
 Map	Peta
 Office 2016	Office 2016
+macros are kept but not run	makro tetap disimpan tetapi tidak dijalankan
+The following features cannot be saved in macro-free workbooks: VB project	Fitur berikut tidak bisa disimpan di buku kerja tanpa makro: proyek VB
+An .xlsx workbook can't hold macros: saving as .xlsx leaves them out. To keep them, save it as a macro-enabled workbook (.xlsm).	Buku kerja .xlsx tidak bisa memuat makro: menyimpan sebagai .xlsx membuangnya. Agar makro tetap ada, simpan sebagai buku kerja dengan makro (.xlsm).
+Save Without Macros	Simpan Tanpa Makro
+Save as .xlsm	Simpan sebagai .xlsm
+Top N items	N item teratas
+Bottom N items	N item terbawah
+Top N percent	N persen teratas
+Bottom N percent	N persen terbawah
+Above Average	Di Atas Rata-rata
+Below Average	Di Bawah Rata-rata
+Type a percent from 1 to 100	Ketik persen dari 1 sampai 100
+Type a number of items from 1 to 500	Ketik jumlah item dari 1 sampai 500
+Filter by Color	Filter menurut Warna
+Cell Color	Warna Sel
+Font Color	Warna Font
+Cell Icon	Ikon Sel
+Cell Values	Nilai Sel
+List order	Urutan daftar
+Reverse list order	Urutan daftar terbalik
+On Top	Di Atas
+On Bottom	Di Bawah
+This column is filtered by colour or icon. Choosing values replaces it.	Kolom ini difilter menurut warna atau ikon. Memilih nilai akan menggantinya.
+This column has a filter Kantor keeps but can't edit. Choosing values replaces it.	Kolom ini punya filter yang disimpan Kantor tetapi tidak bisa diubah. Memilih nilai akan menggantinya.
+e.g. 0.00% (none: the cell's own)	mis. 0.00% (kosong: format sel itu sendiri)
+Border (outline)	Batas (garis luar)
+IME mode	Mode IME
+No Control	Tanpa Kontrol
+Off (English mode)	Mati (mode Inggris)
+Disable	Nonaktifkan
+Hiragana	Hiragana
+Full-width katakana	Katakana lebar penuh
+Half-width katakana	Katakana setengah lebar
+Full-width alphanumeric	Alfanumerik lebar penuh
+Half-width alphanumeric	Alfanumerik setengah lebar
+Full-width hangul	Hangul lebar penuh
+Half-width hangul	Hangul setengah lebar

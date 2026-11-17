@@ -19,7 +19,7 @@ use gpui_kit::*;
 use kantor_ui::i18n::{t, t_dyn, tf, tk};
 use kantor_ui::metrics::*;
 use sheets_engine::{
-    ErrorStyle, Message, Validation, ValidationOperator, ValidationType, list_source,
+    ErrorStyle, IME_MODES, Message, Validation, ValidationOperator, ValidationType, list_source,
     list_source_text, sqref_of, validation_operand, validation_operand_text,
 };
 
@@ -61,6 +61,21 @@ const OPERATORS: [(ValidationOperator, &str); 8] = [
         ValidationOperator::LessThanOrEqual,
         tk("less than or equal to"),
     ),
+];
+
+/// Excel's IME mode labels, in [`IME_MODES`] order.
+const IME_LABELS: [&str; 11] = [
+    tk("No Control"),
+    tk("On"),
+    tk("Off (English mode)"),
+    tk("Disable"),
+    tk("Hiragana"),
+    tk("Full-width katakana"),
+    tk("Half-width katakana"),
+    tk("Full-width alphanumeric"),
+    tk("Half-width alphanumeric"),
+    tk("Full-width hangul"),
+    tk("Half-width hangul"),
 ];
 
 /// The messages `sheets_engine::validation_edit` gives back, translated
@@ -113,6 +128,8 @@ pub(crate) struct DvDialog {
     kind: ValidationType,
     op: ValidationOperator,
     allow_blank: bool,
+    /// The IME mode, an index into [`IME_MODES`] (0: no control).
+    ime: usize,
     dropdown: bool,
     show_prompt: bool,
     show_error: bool,
@@ -163,6 +180,7 @@ impl SheetsView {
             formula1: None,
             formula2: None,
             ranges: Vec::new(),
+            ime_mode: None,
         });
         let mk = |window: &mut Window, cx: &mut Context<Self>, value: String, ph: &str| {
             let e = cx.new(|cx| InputState::new(window, cx).placeholder(ph.to_owned()));
@@ -277,6 +295,11 @@ impl SheetsView {
             kind: v.kind,
             op: v.operator,
             allow_blank: v.allow_blank,
+            ime: v
+                .ime_mode
+                .as_deref()
+                .and_then(|m| IME_MODES.iter().position(|(k, _)| *k == m))
+                .unwrap_or(0),
             dropdown: v.dropdown,
             show_prompt: v.prompt.is_some(),
             show_error: v.error.is_some(),
@@ -360,6 +383,7 @@ impl SheetsView {
                 formula1,
                 formula2,
                 ranges: Vec::new(),
+                ime_mode: (d.ime > 0).then(|| IME_MODES[d.ime].0.to_owned()),
             },
         ))
     }
@@ -590,8 +614,34 @@ impl SheetsView {
                             });
                         })
                 });
+                let ime_view = view.clone();
+                let ime_now = d.ime;
+                let ime = Button::new("dv-ime")
+                    .outline()
+                    .small()
+                    .label(t_dyn(IME_LABELS[d.ime]))
+                    .dropdown_caret(true)
+                    .dropdown_menu(move |mut m, _, _| {
+                        for (n, label) in IME_LABELS.iter().enumerate() {
+                            let v = ime_view.clone();
+                            m = m.item(
+                                PopupMenuItem::new(t_dyn(label))
+                                    .checked(n == ime_now)
+                                    .on_click(move |_, _, cx| {
+                                        let _ = v.update(cx, |this, cx| {
+                                            if let Some(d) = this.dv_dialog.as_mut() {
+                                                d.ime = n;
+                                            }
+                                            cx.notify();
+                                        });
+                                    }),
+                            );
+                        }
+                        m
+                    });
                 b.child(opts)
                     .child(row(t("Applies to"), Input::new(&d.applies).small(), cx))
+                    .child(row(t("IME mode"), ime, cx))
                     .children(same)
             }
             Tab::Input => v_flex()

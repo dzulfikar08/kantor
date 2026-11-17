@@ -73,6 +73,8 @@ pub enum ImportNote {
     DrawingsNotImported,
     /// Sheets whose names Excel doesn't allow, renamed.
     SheetsRenamed(usize),
+    /// An `.xlsm` (or `.xlsx`) with a VBA project: kept, not run.
+    MacrosNotRun,
 }
 
 impl std::fmt::Display for ImportNote {
@@ -125,6 +127,7 @@ impl std::fmt::Display for ImportNote {
             Self::SheetsRenamed(n) => {
                 write!(f, "{n} sheets renamed (names not allowed in Excel)")
             }
+            Self::MacrosNotRun => f.write_str("macros are kept but not run"),
         }
     }
 }

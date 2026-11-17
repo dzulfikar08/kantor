@@ -19,6 +19,8 @@ fn scratch(name: &str) -> PathBuf {
 
 fn plain(spec: CfSpec) -> CfRuleDef {
     CfRuleDef {
+        num_fmt: None,
+        border: None,
         spec,
         format: CfFormat::default(),
         stop_if_true: false,

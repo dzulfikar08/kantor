@@ -220,6 +220,7 @@ fn prefix_bound_variables(node: &mut Node, bound: &mut Vec<String>) {
         | Node::DefinedNameKind(_)
         | Node::TableNameKind(_)
         | Node::TableRefKind(_)
+        | Node::Range3DKind(_)
         | Node::ErrorKind(_)
         | Node::ParseErrorKind { .. }
         | Node::EmptyArgKind => {}
@@ -843,6 +844,7 @@ fn stringify(
                 | DefinedNameKind(_)
                 | TableNameKind(_)
                 | TableRefKind(_)
+                | Range3DKind(_)
                 | NamedVariableKind { .. }
                 | WrongRangeKind { .. } => stringify(
                     left,
@@ -889,6 +891,7 @@ fn stringify(
                 | DefinedNameKind(_)
                 | TableNameKind(_)
                 | TableRefKind(_)
+                | Range3DKind(_)
                 | NamedVariableKind { .. }
                 | WrongRangeKind { .. } => stringify(
                     right,
@@ -986,6 +989,8 @@ fn stringify(
         TableNameKind(value) => value.to_string(),
         // KANTOR PATCH (tables)
         TableRefKind(t) => crate::kantor_tables::table_ref_text(t, export_to_excel),
+        // KANTOR PATCH (3-D references)
+        Range3DKind(r) => crate::kantor_3d::stringify_3d(r, context),
         DefinedNameKind((name, ..)) => name.to_string(),
         NamedVariableKind { name, id: _ } => name.to_string(),
         UnaryKind { kind, right } => match kind {
@@ -1008,6 +1013,7 @@ fn stringify(
                     | DefinedNameKind(_)
                     | TableNameKind(_)
                 | TableRefKind(_)
+                | Range3DKind(_)
                     | NamedVariableKind { .. }
                     | ImplicitIntersection { .. }
                     | SpillRangeOperator { .. }
@@ -1216,6 +1222,8 @@ pub(crate) fn rename_sheet_in_node(node: &mut Node, sheet_index: u32, new_name: 
                 *sheet_name = Some(new_name.to_owned());
             }
         }
+        // KANTOR PATCH (3-D references)
+        Node::Range3DKind(r) => crate::kantor_3d::rename_3d(r, sheet_index, new_name),
         Node::WrongReferenceKind { sheet_name, .. } => {
             if let Some(name) = sheet_name {
                 if name.to_uppercase() == new_name.to_uppercase() {
@@ -1410,6 +1418,7 @@ pub(crate) fn rename_defined_name_in_node(
         Node::WrongRangeKind { .. } => {}
         Node::TableNameKind(_) => {}
         Node::TableRefKind(_) => {}
+        Node::Range3DKind(_) => {}
         Node::NamedVariableKind { .. } => {}
         Node::LambdaDefKind {
             parameters: _,

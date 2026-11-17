@@ -26,6 +26,27 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Docs: Word 97-2003 `.doc` files bring in floating objects in headers and footers, comment dates,
   nested tables and tracked changes (as revisions you can accept or reject), and freeform shapes
   drawn with guide formulas.
+- Sheets: 3-D references such as `=SUM(Jan:Mar!B2)` or `=AVERAGE('Week 1:Week 4'!B2:D9)` are
+  worked out, as in Excel: SUM, AVERAGE, COUNT, COUNTA, MAX, MIN, PRODUCT, STDEV and VAR (and
+  their A, .P and .S forms) read the same cells on every sheet from the first named sheet to the
+  last. A sheet inserted or moved between them is counted, renaming either end renames it in the
+  formula, and deleting an end sheet moves the reference to the next sheet in. They are saved as
+  Excel writes them.
+- Sheets: the filter menu filters by colour and icon (Filter by Color: cell colours, font colours and
+  conditional formatting icons the column shows), by top or bottom N items or percent, above or below
+  average, and by Excel's dynamic dates (today, this week, last month, a quarter, a month...), and
+  these filters from files can now be changed. Custom Sort sorts by cell colour, font colour or icon
+  (on top or on bottom) and by Excel's custom lists of days and months, and Reapply sorts by them
+  again, as Excel does.
+- Sheets: conditional formatting rules can set a number format and an outline border, rules with
+  number formats or borders from a file can be edited (the borders are kept), and "Text that is
+  equal to" joins the specific-text rules.
+- Sheets: Data Validation keeps and sets Excel's IME mode (Hiragana, Off (English mode)...), which
+  Excel uses to switch the input method for the cells.
+- Sheets: workbooks with macros (`.xlsm`) keep their macros when saved, as `.xlsm`. Kantor doesn't
+  run them and says so when the workbook opens. Save As `.xlsx` warns, as Excel does, that a
+  macro-free workbook can't hold them, and offers to save as `.xlsm` instead. A workbook saved as
+  `.xlsm` is always a macro-enabled one, so Excel opens it.
 
 ### Changed
 

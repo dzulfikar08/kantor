@@ -286,6 +286,15 @@ fn to_string_moved(
             );
             format!("{s1}:{s2}")
         }
+        // KANTOR PATCH (3-D references): they keep pointing at the same cells.
+        Range3DKind(r) => crate::kantor_3d::stringify_3d(
+            r,
+            Some(&CellReferenceRC {
+                sheet: move_context.source_sheet_name.to_string(),
+                column: move_context.column,
+                row: move_context.row,
+            }),
+        ),
         WrongReferenceKind {
             sheet_name,
             absolute_row,

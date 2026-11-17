@@ -268,6 +268,12 @@ pub(crate) struct Context<'a> {
     pub pictures: &'a [CellPicture],
     /// Slicers and timelines as they should be saved (see `slicer_parts`).
     pub slicers: &'a SlicerPlan,
+    /// Keep the original's macros (a save as `.xlsm`, a recovery copy),
+    /// see [`with_macros`].
+    pub keep_macros: bool,
+    /// Write a macro-enabled workbook (`.xlsm`), macros or not: Excel
+    /// refuses an `.xlsm` whose workbook part is an `.xlsx` one.
+    pub macro_enabled: bool,
 }
 
 /// A chart sheet to save (see `crate::chart_sheet`).
@@ -568,7 +574,20 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
             }
         }
     };
-    let done = |bytes: Vec<u8>, notes: Vec<String>, added: Vec<AddedPivot>| {
+    // The original's macros, put back in the end (a save as `.xlsm`).
+    let vba_source = if ctx.keep_macros { original } else { None };
+    let done = |bytes: Vec<u8>, mut notes: Vec<String>, added: Vec<AddedPivot>| {
+        let bytes = match with_macros(&bytes, vba_source, ctx.macro_enabled) {
+            Ok(Some(with)) => {
+                notes.retain(|n| !n.contains("vbaProject"));
+                with
+            }
+            Err(e) => {
+                notes.push(format!("the macros are not kept: {e}"));
+                bytes
+            }
+            Ok(None) => bytes,
+        };
         let tables = Package::read(&bytes)
             .map(|p| {
                 p.parts()
@@ -1015,6 +1034,183 @@ pub(crate) fn asks_full_calc(reader: impl Read + std::io::Seek) -> bool {
     let tag = &xml[at..];
     let tag = &tag[..tag.find('>').unwrap_or(tag.len())];
     tag.contains("fullCalcOnLoad=\"1\"") || tag.contains("fullCalcOnLoad=\"true\"")
+}
+
+// ------------------------------------------------------------------ macros
+
+/// Content type of a macro-enabled workbook's main part (`.xlsm`).
+const XLSM_MAIN_CT: &str = "application/vnd.ms-excel.sheet.macroEnabled.main+xml";
+const XLSX_MAIN_CT: &str =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml";
+const VBA_PROJECT_CT: &str = "application/vnd.ms-office.vbaProject";
+
+/// Whether `bytes` (an `.xlsx`/`.xlsm` package) holds a VBA project.
+pub(crate) fn has_macros(bytes: &[u8]) -> bool {
+    vba_project(bytes).ok().flatten().is_some()
+}
+
+/// The original's VBA project: its relationship (from the workbook) and
+/// its part name.
+fn vba_project(bytes: &[u8]) -> Result<Option<(Rel, String, Original<'_>)>, String> {
+    let orig = Original::new(bytes)?;
+    let Some(root) = orig.text("_rels/.rels")? else {
+        return Ok(None);
+    };
+    let root_rels = parse_rels(&root)?;
+    let Some(wb) = root_rels
+        .iter()
+        .find(|r| r.short_kind() == "officeDocument" && !r.external)
+        .and_then(|r| resolve("", &r.target))
+    else {
+        return Ok(None);
+    };
+    let Some(xml) = orig.text(&rels_part(&wb))? else {
+        return Ok(None);
+    };
+    let found = parse_rels(&xml)?
+        .into_iter()
+        .filter(|r| !r.external && r.short_kind() == "vbaProject")
+        .find_map(|r| resolve(&wb, &r.target).map(|part| (r, part)));
+    Ok(found.map(|(r, part)| (r, part, orig)))
+}
+
+/// `bytes` with the VBA project of `original` (if any) put back, as a
+/// macro-enabled workbook (`.xlsm`), as Excel keeps macros in a workbook it
+/// didn't run them in; with `enabled`, a macro-enabled workbook even without
+/// one. The project's digital signature is not kept: the workbook changed.
+/// `Ok(None)`: nothing to change.
+fn with_macros(
+    bytes: &[u8],
+    original: Option<&[u8]>,
+    enabled: bool,
+) -> Result<Option<Vec<u8>>, String> {
+    let vba = match original {
+        Some(o) => vba_project(o)?,
+        None => None,
+    };
+    if vba.is_none() && !enabled {
+        return Ok(None);
+    }
+    let mut pkg = Package::read(bytes)?;
+    if let Some((rel, vba_part, orig)) = vba {
+        add_vba(&mut pkg, &rel, &vba_part, &orig)?;
+    }
+    let types = pkg
+        .text(CONTENT_TYPES)?
+        .ok_or("no content types")?
+        .to_owned();
+    let main = format!("ContentType=\"{XLSX_MAIN_CT}\"");
+    if !types.contains(&main) && !types.contains(XLSM_MAIN_CT) {
+        return Err("the workbook's content type is not a workbook's".into());
+    }
+    let types = types.replace(&main, &format!("ContentType=\"{XLSM_MAIN_CT}\""));
+    pkg.set(CONTENT_TYPES, types.into_bytes());
+    Ok(Some(pkg.write()?))
+}
+
+/// Put the VBA project `vba_part` of `orig` (linked by `rel`) into `pkg`,
+/// with the workbook's code name.
+fn add_vba(pkg: &mut Package, rel: &Rel, vba_part: &str, orig: &Original) -> Result<(), String> {
+    let data = orig
+        .get(vba_part)?
+        .ok_or("the VBA project part is missing")?;
+    // The workbook's code name, which the project's ThisWorkbook module goes by.
+    let code_name = orig.text(&rel_source_workbook(orig)?)?.and_then(|xml| {
+        let doc = Document::parse(&xml).ok()?;
+        let pr = doc
+            .root_element()
+            .children()
+            .find(|c| is_main(*c, "workbookPr"))?;
+        pr.attribute("codeName").map(str::to_owned)
+    });
+
+    let root_rels = parse_rels(pkg.text("_rels/.rels")?.ok_or("no _rels/.rels")?)?;
+    let wb = root_rels
+        .iter()
+        .find(|r| r.short_kind() == "officeDocument" && !r.external)
+        .and_then(|r| resolve("", &r.target))
+        .ok_or("no workbook part")?;
+    let mut wb_rels = match pkg.text(&rels_part(&wb))? {
+        Some(x) => parse_rels(x)?,
+        None => Vec::new(),
+    };
+    wb_rels.retain(|r| r.short_kind() != "vbaProject");
+    let id = IdAlloc::new(&wb_rels).next();
+    wb_rels.push(Rel {
+        id,
+        kind: rel.kind.clone(),
+        target: relative(&wb, vba_part),
+        external: false,
+    });
+    pkg.set(&rels_part(&wb), write_rels(&wb_rels).into_bytes());
+    pkg.set(vba_part, data);
+
+    if let Some(code_name) = code_name {
+        let xml = pkg.text(&wb)?.ok_or("workbook part is missing")?.to_owned();
+        let doc = Document::parse(&xml).map_err(|e| format!("{wb}: {e}"))?;
+        let root = doc.root_element();
+        let edit = match root.children().find(|c| is_main(*c, "workbookPr")) {
+            Some(pr) if pr.attribute("codeName").is_some() => None,
+            Some(pr) => {
+                let at = pr.range().start + "<workbookPr".len();
+                (xml[pr.range().start..].starts_with("<workbookPr"))
+                    .then(|| (at..at, format!(" codeName=\"{}\"", esc_attr(&code_name))))
+            }
+            None => {
+                // CT_Workbook: fileVersion, fileSharing, workbookPr, ...
+                let after = root
+                    .children()
+                    .rfind(|c| is_main(*c, "fileVersion") || is_main(*c, "fileSharing"));
+                let at = match after {
+                    Some(n) => n.range().end,
+                    None => {
+                        let first = root
+                            .children()
+                            .find(|c| c.is_element())
+                            .ok_or("the workbook part is empty")?;
+                        first.range().start
+                    }
+                };
+                Some((
+                    at..at,
+                    format!("<workbookPr codeName=\"{}\"/>", esc_attr(&code_name)),
+                ))
+            }
+        };
+        if let Some(edit) = edit {
+            let new = apply_edits(&xml, vec![edit]);
+            drop(doc);
+            pkg.set(&wb, new.into_bytes());
+        }
+    }
+
+    let mut types = pkg
+        .text(CONTENT_TYPES)?
+        .ok_or("no content types")?
+        .to_owned();
+    let ct = ContentTypes::parse(&types)?;
+    if ct.of(vba_part) != Some(VBA_PROJECT_CT) {
+        let at = types.rfind("</Types>").ok_or("content types not closed")?;
+        types.insert_str(
+            at,
+            &format!(
+                "<Override PartName=\"/{}\" ContentType=\"{VBA_PROJECT_CT}\"/>",
+                esc_attr(vba_part)
+            ),
+        );
+    }
+    pkg.set(CONTENT_TYPES, types.into_bytes());
+    Ok(())
+}
+
+/// The workbook part of `orig`.
+fn rel_source_workbook(orig: &Original) -> Result<String, String> {
+    let root = orig.text("_rels/.rels")?.ok_or("no _rels/.rels")?;
+    parse_rels(&root)?
+        .iter()
+        .find(|r| r.short_kind() == "officeDocument" && !r.external)
+        .and_then(|r| resolve("", &r.target))
+        .ok_or_else(|| "no workbook part".to_owned())
 }
 
 // ------------------------------------------------------------------ packages
@@ -6913,6 +7109,8 @@ mod tests {
             chart_sheets: None,
             pictures: &[],
             slicers: &SlicerPlan::default(),
+            keep_macros: false,
+            macro_enabled: false,
         };
         let done = finish(out, original, &ctx);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());

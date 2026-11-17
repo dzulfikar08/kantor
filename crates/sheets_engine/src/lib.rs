@@ -23,6 +23,7 @@ pub mod drawing;
 mod edits;
 mod file_chart;
 mod filter;
+mod filter_by;
 mod hide;
 mod icons;
 mod import;
@@ -61,13 +62,15 @@ mod xls_ftab;
 
 pub use cf_edit::{
     COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,
-    DATA_BAR_COLORS, ICON_SETS, sqref_of,
+    DATA_BAR_COLORS, ICON_SETS, outline_border, sqref_of,
 };
 pub use chart_edit::{ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor};
 pub use chart_options::{AxisOptions, DataLabels, DisplayUnits, LabelPos};
 pub use chart_sheet::sheet_name_problem;
 pub use drawing::Tab;
 pub use import::{ImportNote, SourceFormat};
+/// The borders a conditional formatting rule draws.
+pub use ironcalc_base::types::Border as CfBorder;
 pub use move_chart::{ChartPlace, MovedChart};
 pub use notes::{CellNote, NoteBox, NoteRun, SheetNotes};
 pub use preserve::package_problems;
@@ -252,6 +255,7 @@ pub use filter::{
     ColumnFilter, ColumnKind, Condition, DateGroup, FilterInfo, FilterKind, FilterOp, FilterScope,
     FilterValue, SortState, checked_values, date_serial, ymd,
 };
+pub use filter_by::{ColumnLooks, SortLevel, SortOn};
 pub use format::{
     AlignDetail, BorderLine, BorderPreset, Borders, CellStyle, HAlign, LineStyle, NumberFormat,
     Rgb, StyleChange, VAlign, ValueKind,
@@ -285,7 +289,7 @@ pub use table_style_edit::{
     DEFAULT_PIVOT_STYLE, DEFAULT_TABLE_STYLE, TableElement, TableStyleSpec,
 };
 pub use validation::{
-    ErrorStyle, ListItem, Message, Validation, ValidationOperator, ValidationType,
+    ErrorStyle, IME_MODES, ListItem, Message, Validation, ValidationOperator, ValidationType,
 };
 
 const LOCALE: &str = "en";
@@ -767,6 +771,7 @@ impl Workbook {
             note_extras,
             mut cf_x14,
             pictures,
+            macros,
         } = extras
             .map(|h| h.join().unwrap_or_default())
             .unwrap_or_default();
@@ -831,6 +836,9 @@ impl Workbook {
                     .iter()
                     .map(|ws| (ws.sheet_id, ws.conditional_formatting.as_slice())),
             );
+        }
+        if macros {
+            imported.notes.push(ImportNote::MacrosNotRun);
         }
         let mut book = Self {
             calc,
@@ -918,6 +926,17 @@ impl Workbook {
     /// interface language.
     pub fn import_note_list(&self) -> &[ImportNote] {
         &self.origin.notes
+    }
+
+    /// Whether the workbook has macros (a VBA project) that a save as
+    /// `.xlsm` keeps and a save as `.xlsx` drops (as Excel warns). Reads the
+    /// file the workbook was opened from or last saved to.
+    pub fn has_macros(&self) -> bool {
+        self.origin
+            .xlsx
+            .as_ref()
+            .and_then(|s| s.bytes().ok())
+            .is_some_and(|b| preserve::has_macros(&b))
     }
 
     /// What the last save could not carry over from the original `.xlsx`
@@ -1629,6 +1648,9 @@ impl Workbook {
             chart_sheets: self.chart_sheet_plans(),
             pictures: self.cell_pictures(),
             slicers: self.slicer_plan(),
+            // A save as `.xlsx` drops them (see `prepare_save`).
+            keep_macros: true,
+            macro_enabled: false,
         }
     }
 }
@@ -1663,6 +1685,10 @@ struct XlsxParts {
     /// The pictures cells show (saved as rich values).
     pictures: Vec<preserve::CellPicture>,
     slicers: preserve::SlicerPlan,
+    /// Keep the original's macros (a save as `.xlsm`, a recovery copy).
+    keep_macros: bool,
+    /// A macro-enabled workbook (a save as `.xlsm`).
+    macro_enabled: bool,
 }
 
 /// IronCalc's `.xlsx` of `model`, with the parts of `original` it doesn't
@@ -1716,6 +1742,8 @@ fn build_xlsx(
         chart_sheets: parts.chart_sheets.as_deref(),
         pictures: &parts.pictures,
         slicers: &parts.slicers,
+        keep_macros: parts.keep_macros,
+        macro_enabled: parts.macro_enabled,
     };
     Ok(preserve::finish(written, original, &ctx))
 }
@@ -1735,6 +1763,8 @@ struct Extras {
     cf_x14: cf_x14::CfX14,
     /// Pictures Excel saved for IMAGE cells, by `(sheetId, row, col)`.
     pictures: HashMap<(u32, u32, u32), preserve::RichPicture>,
+    /// The package has a VBA project (macros).
+    macros: bool,
 }
 
 impl Extras {
@@ -1750,6 +1780,7 @@ impl Extras {
             note_extras: preserve::note_extras(bytes),
             cf_x14: cf_x14::read(&skeletons),
             pictures: preserve::rich_pictures(bytes),
+            macros: preserve::has_macros(bytes),
         }
     }
 }
@@ -2047,12 +2078,17 @@ mod tests {
 
     #[test]
     fn unknown_error_codes_are_not_written() {
-        // Q1 Summary!B6 is a 3-D reference IronCalc evaluates to #ERROR!.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("multi.xlsx");
         let mut wb = Workbook::open(corpus("02_multi_sheet.xlsx")).unwrap();
         // Opening shows Excel's cached values; IronCalc's own come with a recalculation.
         wb.recalculate();
+        // Q1 Summary!B6 is a 3-D reference (`SUM(Jan:Mar!B2:B4)`), worked out
+        // as Excel does; B5 adds the same cells one by one.
+        assert_eq!(wb.display_value(3, 5, 1), wb.display_value(3, 4, 1));
+        // A formula IronCalc can't read evaluates to #ERROR!.
+        wb.set_input(3, 7, 1, "=1+*2").unwrap();
+        assert_eq!(wb.display_value(3, 7, 1), "#ERROR!");
         wb.save_as(&path).unwrap();
         let parts = preserve::parts_of(&fs::read(&path).unwrap());
         assert!(

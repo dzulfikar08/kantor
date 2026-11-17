@@ -101,7 +101,27 @@ pub struct Validation {
     pub formula2: Option<String>,
     /// The cells it applies to (`sqref`).
     pub ranges: Vec<CellRange>,
+    /// The input method (IME) mode Excel switches to for the cells
+    /// (`imeMode`: `off`, `on`, `disabled`, `hiragana`, `fullKatakana`...);
+    /// `None`: no control. Kept and set, not acted on (Kantor leaves the
+    /// input method to the system).
+    pub ime_mode: Option<String>,
 }
+
+/// Excel's IME modes ([`Validation::ime_mode`]), with Excel's labels.
+pub const IME_MODES: [(&str, &str); 11] = [
+    ("noControl", "No Control"),
+    ("on", "On"),
+    ("off", "Off (English mode)"),
+    ("disabled", "Disable"),
+    ("hiragana", "Hiragana"),
+    ("fullKatakana", "Full-width katakana"),
+    ("halfKatakana", "Half-width katakana"),
+    ("fullAlpha", "Full-width alphanumeric"),
+    ("halfAlpha", "Half-width alphanumeric"),
+    ("fullHangul", "Full-width hangul"),
+    ("halfHangul", "Half-width hangul"),
+];
 
 /// An item of a list validation's drop-down.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -314,6 +334,10 @@ fn parse_rule(
         formula1: (!empty(&formula1)).then(|| formula1.unwrap_or_default()),
         formula2: (!empty(&formula2)).then(|| formula2.unwrap_or_default()),
         ranges: Vec::new(),
+        ime_mode: dv
+            .attribute("imeMode")
+            .filter(|m| *m != "noControl")
+            .map(str::to_owned),
     };
     (!sqref.trim().is_empty()).then_some(Raw {
         sheet_id,

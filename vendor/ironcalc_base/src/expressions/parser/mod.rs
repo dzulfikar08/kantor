@@ -92,12 +92,12 @@ fn get_table_column_by_name(table_column_name: &str, table: &Table) -> Option<i3
 pub type DefinedNameS = (String, Option<u32>, String);
 
 pub(crate) struct Reference<'a> {
-    sheet_name: &'a Option<String>,
-    sheet_index: u32,
-    absolute_row: bool,
-    absolute_column: bool,
-    row: i32,
-    column: i32,
+    pub(crate) sheet_name: &'a Option<String>,
+    pub(crate) sheet_index: u32,
+    pub(crate) absolute_row: bool,
+    pub(crate) absolute_column: bool,
+    pub(crate) row: i32,
+    pub(crate) column: i32,
 }
 
 #[derive(PartialEq, Clone, Debug)]
@@ -142,6 +142,28 @@ pub struct CompletionContext {
 
 /// KANTOR PATCH (tables): `Sales[[#Totals],[Units]]` and friends. Names
 /// are the table's and its columns' own spelling.
+/// KANTOR PATCH (3-D references): `Jan:Mar!B2` or `'Q 1:Q 4'!A1:B2`, the
+/// same cell or range on every sheet from `sheet1` to `sheet2` (by their
+/// position in the workbook, endpoints included). Rows and columns are kept
+/// as in [`Node::RangeKind`]. See `crate::kantor_3d`.
+#[derive(PartialEq, Clone, Debug)]
+pub struct Range3D {
+    pub sheet_name1: String,
+    pub sheet_index1: u32,
+    pub sheet_name2: String,
+    pub sheet_index2: u32,
+    pub absolute_row1: bool,
+    pub absolute_column1: bool,
+    pub row1: i32,
+    pub column1: i32,
+    pub absolute_row2: bool,
+    pub absolute_column2: bool,
+    pub row2: i32,
+    pub column2: i32,
+    /// Written as one cell (`Jan:Mar!B2`), not a range.
+    pub is_cell: bool,
+}
+
 #[derive(PartialEq, Clone, Debug)]
 pub struct TableRef {
     pub table: String,
@@ -240,6 +262,8 @@ pub enum Node {
     /// KANTOR PATCH (tables): a structured reference, resolved against the
     /// table's current range when evaluated (see `crate::kantor_tables`).
     TableRefKind(Box<TableRef>),
+    /// KANTOR PATCH (3-D references), see [`Range3D`].
+    Range3DKind(Box<Range3D>),
     NamedVariableKind {
         name: String,
         id: Option<u32>,
@@ -546,6 +570,28 @@ impl<'a> Parser<'a> {
         } else {
             TokenType::Backslash
         }
+    }
+
+    /// KANTOR PATCH (3-D references): `None` when `sheet` isn't a 3-D
+    /// sheet span (`Jan:Mar`; `:` can't be in a sheet name), else the two
+    /// sheets, `Some(None)` if either doesn't exist.
+    fn kantor_sheets_3d(
+        &self,
+        sheet: &Option<String>,
+    ) -> Option<Option<(String, u32, String, u32)>> {
+        let name = sheet.as_ref()?;
+        let (first, last) = name.split_once(':')?;
+        if self.get_sheet_index_by_name(name).is_some() {
+            return None;
+        }
+        let found = match (
+            self.get_sheet_index_by_name(first),
+            self.get_sheet_index_by_name(last),
+        ) {
+            (Some(i1), Some(i2)) => Some((first.to_string(), i1, last.to_string(), i2)),
+            _ => None,
+        };
+        Some(found)
     }
 
     fn get_sheet_index_by_name(&self, name: &str) -> Option<u32> {
@@ -928,6 +974,35 @@ impl<'a> Parser<'a> {
                 } else {
                     column - context.column
                 };
+                // KANTOR PATCH (3-D references)
+                if let Some(found) = self.kantor_sheets_3d(&sheet) {
+                    return match found {
+                        Some((sheet_name1, sheet_index1, sheet_name2, sheet_index2)) => {
+                            Node::Range3DKind(Box::new(Range3D {
+                                sheet_name1,
+                                sheet_index1,
+                                sheet_name2,
+                                sheet_index2,
+                                absolute_row1: absolute_row,
+                                absolute_column1: absolute_column,
+                                row1: row,
+                                column1: column,
+                                absolute_row2: absolute_row,
+                                absolute_column2: absolute_column,
+                                row2: row,
+                                column2: column,
+                                is_cell: true,
+                            }))
+                        }
+                        None => Node::WrongReferenceKind {
+                            sheet_name: sheet,
+                            row,
+                            column,
+                            absolute_row,
+                            absolute_column,
+                        },
+                    };
+                }
                 match sheet_index {
                     Some(index) => Node::ReferenceKind {
                         sheet_name: sheet,
@@ -988,6 +1063,39 @@ impl<'a> Parser<'a> {
                     };
                 }
 
+                // KANTOR PATCH (3-D references)
+                if let Some(found) = self.kantor_sheets_3d(&sheet) {
+                    return match found {
+                        Some((sheet_name1, sheet_index1, sheet_name2, sheet_index2)) => {
+                            Node::Range3DKind(Box::new(Range3D {
+                                sheet_name1,
+                                sheet_index1,
+                                sheet_name2,
+                                sheet_index2,
+                                absolute_row1,
+                                absolute_column1,
+                                row1,
+                                column1,
+                                absolute_row2,
+                                absolute_column2,
+                                row2,
+                                column2,
+                                is_cell: false,
+                            }))
+                        }
+                        None => Node::WrongRangeKind {
+                            sheet_name: sheet,
+                            row1,
+                            column1,
+                            row2,
+                            column2,
+                            absolute_column1,
+                            absolute_column2,
+                            absolute_row1,
+                            absolute_row2,
+                        },
+                    };
+                }
                 match sheet_index {
                     Some(index) => Node::RangeKind {
                         sheet_name: sheet,

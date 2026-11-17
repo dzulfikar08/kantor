@@ -790,6 +790,7 @@ impl RawDv {
             text: self.prompt,
         };
         Some(Validation {
+            ime_mode: None,
             kind,
             operator,
             allow_blank: f & 0x100 != 0,

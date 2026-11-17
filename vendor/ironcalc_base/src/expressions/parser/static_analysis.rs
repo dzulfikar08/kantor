@@ -75,6 +75,7 @@ pub fn add_implicit_intersection(node: &mut Node, add: bool) {
         | Node::NamedFunctionKind { .. }
         | Node::ArrayKind(_)
         | Node::ReferenceKind { .. }
+        | Node::Range3DKind(_)
         | Node::LambdaDefKind { .. }
         | Node::LambdaCallKind { .. } => {}
         Node::ImplicitIntersection { child, .. } => {
@@ -242,6 +243,7 @@ pub fn remove_redundant_implicit_intersection(node: &mut Node, add: bool) {
         | Node::ArrayKind(_)
         | Node::ReferenceKind { .. }
         | Node::RangeKind { .. }
+        | Node::Range3DKind(_)
         | Node::OpRangeKind { .. }
         | Node::DefinedNameKind(_)
         | Node::NamedVariableKind { .. }
@@ -377,6 +379,8 @@ pub(crate) fn run_static_analysis_on_node(node: &Node) -> StaticResult {
             StaticResult::Unknown
         }
         Node::ReferenceKind { .. } => StaticResult::Scalar,
+        // KANTOR PATCH (3-D references): read by SUM and friends, else #VALUE!
+        Node::Range3DKind(_) => StaticResult::Scalar,
 
         // binary operations
         Node::OpConcatenateKind { left, right }

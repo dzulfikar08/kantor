@@ -58,6 +58,7 @@ mod test_gcd_lcm;
 mod test_general;
 mod test_inverted_ranges;
 mod test_issue_623;
+mod test_kantor_3d; // KANTOR PATCH (3-D references)
 mod test_kantor_ets; // KANTOR PATCH (functions)
 mod test_kantor_functions; // KANTOR PATCH (functions)
 mod test_kantor_web; // KANTOR PATCH (functions)

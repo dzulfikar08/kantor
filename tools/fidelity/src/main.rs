@@ -997,6 +997,8 @@ fn kantor_features_at(wb: &mut Workbook, sheet: u32, top: u32) -> Result<()> {
     let names = format!("A{}:A{}", top + 2, top + 1 + ROWS.len() as u32);
     let rev = format!("D{}:D{}", top + 2, top + 1 + ROWS.len() as u32);
     let f = |spec| CfRuleDef {
+        num_fmt: None,
+        border: None,
         spec,
         format: CfFormat::PRESETS[0].1,
         stop_if_true: false,
@@ -1052,6 +1054,8 @@ fn kantor_features_at(wb: &mut Workbook, sheet: u32, top: u32) -> Result<()> {
         wb.add_cf_rule(sheet, range, &f(spec))?;
     }
     let plain = |spec| CfRuleDef {
+        num_fmt: None,
+        border: None,
         spec,
         format: CfFormat::default(),
         stop_if_true: false,
@@ -1082,6 +1086,7 @@ fn kantor_features_at(wb: &mut Workbook, sheet: u32, top: u32) -> Result<()> {
     )?;
     // Data validation: a whole number with messages, a list.
     let whole = Validation {
+        ime_mode: None,
         kind: ValidationType::Whole,
         operator: ValidationOperator::Between,
         allow_blank: true,
@@ -1102,6 +1107,7 @@ fn kantor_features_at(wb: &mut Workbook, sheet: u32, top: u32) -> Result<()> {
         ranges: Vec::new(),
     };
     let list = Validation {
+        ime_mode: None,
         kind: ValidationType::List,
         operator: ValidationOperator::Between,
         allow_blank: true,

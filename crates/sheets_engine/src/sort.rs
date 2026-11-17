@@ -16,6 +16,7 @@ use anyhow::{Result, anyhow, bail};
 use ironcalc_base::Model;
 use ironcalc_base::types::{Cell, FormulaValue, SpillValue};
 
+use crate::filter_by::SortLevel;
 use crate::{CellRange, Workbook};
 
 /// A cell's value as sorting and filtering compare it.
@@ -127,6 +128,29 @@ impl Workbook {
         keys: &[SortKey],
         header: bool,
     ) -> Result<usize> {
+        let levels: Vec<SortLevel> = keys.iter().map(|&k| k.into()).collect();
+        self.sort_range_by(sheet, range, &levels, header)
+    }
+
+    /// [`Self::sort_range`] by levels that may sort by a cell or font colour,
+    /// an icon or a custom list (Excel's Sort dialog; see `filter_by`).
+    pub fn sort_range_by(
+        &mut self,
+        sheet: u32,
+        range: CellRange,
+        levels: &[SortLevel],
+        header: bool,
+    ) -> Result<usize> {
+        let resolved: Vec<crate::filter_by::ResolvedLevel> =
+            levels.iter().map(|l| self.resolve_level(l)).collect();
+        let keys: Vec<SortKey> = resolved
+            .iter()
+            .map(|l| SortKey {
+                col: l.col,
+                descending: l.descending,
+            })
+            .collect();
+        let keys = &keys[..];
         if keys.is_empty() {
             bail!("nothing to sort by");
         }
@@ -150,14 +174,27 @@ impl Workbook {
         let visible: Vec<u32> = (range.top..=range.bottom)
             .filter(|r| !hidden.contains(r))
             .collect();
-        let model = self.model.get_model();
         // Every row's key values side by side, and the rows sorted as
         // positions among them: one allocation, not one per row.
         let width = keys.len();
-        let values: Vec<CellValue> = visible
+        let values: Vec<CellValue> = if resolved
             .iter()
-            .flat_map(|&r| keys.iter().map(move |k| cell_value(model, sheet, r, k.col)))
-            .collect();
+            .all(|l| matches!(l.on, crate::filter_by::Resolved::Values))
+        {
+            let model = self.model.get_model();
+            visible
+                .iter()
+                .flat_map(|&r| keys.iter().map(move |k| cell_value(model, sheet, r, k.col)))
+                .collect()
+        } else {
+            let mut v = Vec::with_capacity(visible.len() * width);
+            for &r in &visible {
+                for l in &resolved {
+                    v.push(self.sort_value(l, sheet, r));
+                }
+            }
+            v
+        };
         let mut rows: Vec<u32> = (0..visible.len() as u32).collect();
         rows.sort_by(|&a, &b| {
             let (a, b) = (a as usize * width, b as usize * width);
@@ -177,7 +214,7 @@ impl Workbook {
         {
             // Already in order: the sort is still remembered, as in Excel.
             self.model.pause_evaluation();
-            let r = self.remember_sort(sheet, range, keys);
+            let r = self.remember_sort(sheet, range, levels);
             self.end_batch(*r.as_ref().unwrap_or(&0));
             r?;
             return Ok(count);
@@ -214,7 +251,7 @@ impl Workbook {
             .map_err(|e| anyhow!("{e}"));
         // The filter it fills remembers it (`<sortState>`).
         let remembered = match r {
-            Ok(()) => self.remember_sort(sheet, range, keys),
+            Ok(()) => self.remember_sort(sheet, range, levels),
             Err(_) => Ok(0),
         };
         self.end_batch(u32::from(r.is_ok()) + *remembered.as_ref().unwrap_or(&0));

@@ -819,6 +819,46 @@ or columns are inserted again (an undo; new empty cells don't show them).
 Tests: `test/test_kantor_web.rs`
 (`saved_pictures_follow_inserted_and_deleted_rows_and_columns`).
 
+## 29. 3-D references
+
+Why: Excel formulas such as `=SUM(Jan:Mar!B2)` or `=AVERAGE('Q 1:Q 4'!A1:B9)`
+read the same cell or range on every sheet from one sheet to another. IronCalc
+couldn't parse them (`#ERROR!`), so workbooks that total their monthly sheets
+showed errors after a recalculation. Marked `KANTOR PATCH (3-D references)`.
+
+What: `Node::Range3DKind(Box<Range3D>)` (`expressions/parser/mod.rs`), built
+when a reference's sheet name holds a `:` (no sheet name can) and both sheets
+exist (else `#REF!`); the lexer reads the unquoted `Jan:Mar!B2` as one sheet
+name. `src/kantor_3d.rs` writes it back (`Jan:Mar!B2`, quoted as one name
+`'Q 1:Q 4'!A1` when either needs quotes; also the internal R1C1 form), spreads
+it into one range per sheet for the functions Excel lets read it (SUM, AVERAGE,
+AVERAGEA, COUNT, COUNTA, MAX, MAXA, MIN, MINA, PRODUCT, STDEV*, VAR*;
+`Model::kantor_spread_3d`, called from `evaluate_node_in_context`), and is
+`#VALUE!` anywhere else, as in Excel. The sheets are kept by name, so sheets
+inserted or moved between the two ends count and ones moved out don't (formulas
+are parsed again after every sheet change); renaming an end renames it
+(`rename_sheet_in_node`); deleting an end moves it one sheet inwards and deleting
+the only sheet left makes it `#REF!` (`cut_sheet_refs` in `kantor_sheets.rs`).
+Inserting or deleting rows and columns leaves it as it is. Partial recalc
+(§19) reads it as a range on each sheet.
+
+Tests: `test/test_kantor_3d.rs`; vendor/ironcalc
+`export/test/test_kantor_3d.rs` (saved as Excel writes it and read back).
+
+## 30. Differential formats for filters and sorts by colour
+
+Why: Excel's AutoFilter by colour (`<colorFilter dxfId>`) and sort by colour
+(`<sortCondition sortBy="cellColor" dxfId>`) name the colour by a
+differential format. Kantor makes these filters and sorts, so it needs to add
+one.
+
+What: `UserModel::kantor_dxf_index` (`user_model/common.rs`) returns an equal
+format's index or appends one to `styles.dxfs`. Not an undoable edit: an unused
+format changes nothing. Kantor saves the formats it added after the file's own
+(as for conditional formats it makes).
+
+Tests: Kantor's `crates/sheets_engine/tests/filter_by.rs`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

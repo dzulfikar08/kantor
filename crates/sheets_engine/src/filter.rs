@@ -94,8 +94,25 @@ pub enum FilterKind {
         and: bool,
         conditions: Vec<Condition>,
     },
-    /// A filter Kantor keeps but doesn't evaluate (top 10, dynamic, colour,
-    /// icon): the `<filterColumn>` as the file had it.
+    /// The top (or bottom) `value` items, or `value` percent of the rows:
+    /// `<top10>`.
+    Top10 {
+        top: bool,
+        percent: bool,
+        value: f64,
+    },
+    /// Excel's dynamic filters by type: `aboveAverage`, `belowAverage` and
+    /// the dates (`today`, `thisMonth`, `Q1`, `M3`...): `<dynamicFilter>`.
+    Dynamic(String),
+    /// Cells with the fill (or, with `font`, the font) colour of
+    /// differential format `dxf` (one without a colour: "No Fill" /
+    /// "Automatic"): `<colorFilter>`.
+    Color { font: bool, dxf: u32 },
+    /// Cells showing icon `id` of icon set `set` (`None`: no icon):
+    /// `<iconFilter>`.
+    Icon { set: String, id: Option<u32> },
+    /// A filter Kantor keeps but doesn't evaluate: the `<filterColumn>` as
+    /// the file had it.
     Other(String),
 }
 
@@ -119,12 +136,13 @@ pub struct FilterInfo {
     pub sort: Option<SortState>,
 }
 
-/// A remembered sort: its levels (absolute columns) and whether all of them
-/// sort by value (Kantor can't sort by colour, icon or a custom list).
+/// A remembered sort: its levels (absolute columns), by value or by colour,
+/// icon or custom list (`levels`), and whether all of them sort by value.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SortState {
     pub keys: Vec<SortKey>,
     pub by_value: bool,
+    pub levels: Vec<crate::filter_by::SortLevel>,
 }
 
 /// The `<sortState>` remembered in an `<autoFilter>` element.
@@ -133,46 +151,32 @@ pub(crate) fn parse_sort(filter: &str) -> Option<SortState> {
     let sort = sort?;
     let doc = roxmltree::Document::parse(&sort).ok()?;
     let root = doc.root_element();
-    let mut by_value = root
+    if root
         .attribute("columnSort")
-        .is_none_or(|v| v == "0" || v == "false");
-    let mut keys = Vec::new();
-    for c in root
+        .is_some_and(|v| v != "0" && v != "false")
+    {
+        return None;
+    }
+    let levels: Vec<crate::filter_by::SortLevel> = root
         .children()
         .filter(|n| n.tag_name().name() == "sortCondition")
-    {
-        let range = crate::shift::parse_range(c.attribute("ref")?)?.area();
-        by_value &= c.attribute("sortBy").is_none_or(|v| v == "value")
-            && c.attribute("customList").is_none();
-        keys.push(SortKey {
-            col: range.left,
-            descending: matches!(c.attribute("descending"), Some("1" | "true")),
-        });
-    }
-    (!keys.is_empty()).then_some(SortState { keys, by_value })
-}
-
-/// A `<sortState>` for `data` (the rows sorted, without the header) sorted
-/// by `keys`, as Excel writes it.
-pub(crate) fn sort_state_xml(data: CellRange, keys: &[SortKey]) -> String {
-    let mut x = format!(
-        "<sortState ref=\"{}:{}\">",
-        cell_name(data.top, data.left),
-        cell_name(data.bottom, data.right)
-    );
-    for k in keys {
-        x.push_str("<sortCondition");
-        if k.descending {
-            x.push_str(" descending=\"1\"");
-        }
-        x.push_str(&format!(
-            " ref=\"{}:{}\"/>",
-            cell_name(data.top, k.col),
-            cell_name(data.bottom, k.col)
-        ));
-    }
-    x.push_str("</sortState>");
-    x
+        .map(crate::filter_by::parse_level)
+        .collect::<Option<_>>()?;
+    let keys = levels
+        .iter()
+        .map(|l| SortKey {
+            col: l.col,
+            descending: l.descending,
+        })
+        .collect();
+    let by_value = levels
+        .iter()
+        .all(|l| l.on == crate::filter_by::SortOn::Values);
+    (!levels.is_empty()).then_some(SortState {
+        keys,
+        by_value,
+        levels,
+    })
 }
 
 impl FilterInfo {
@@ -328,6 +332,47 @@ fn parse_kind(n: Node, xml: &str) -> FilterKind {
                 conditions,
             }
         }
+        Some("top10") => {
+            let f = child.expect("checked");
+            let Some(value) = f.attribute("val").and_then(|v| v.parse().ok()) else {
+                return other();
+            };
+            let on = |a: &str, default: bool| {
+                f.attribute(a).map_or(default, |v| v == "1" || v == "true")
+            };
+            FilterKind::Top10 {
+                top: on("top", true),
+                percent: on("percent", false),
+                value,
+            }
+        }
+        Some("dynamicFilter") => {
+            let f = child.expect("checked");
+            match f.attribute("type") {
+                Some(t) if crate::filter_by::dynamic_known(t) => FilterKind::Dynamic(t.to_owned()),
+                _ => other(),
+            }
+        }
+        Some("colorFilter") => {
+            let f = child.expect("checked");
+            let Some(dxf) = f.attribute("dxfId").and_then(|v| v.parse().ok()) else {
+                return other();
+            };
+            FilterKind::Color {
+                font: matches!(f.attribute("cellColor"), Some("0" | "false")),
+                dxf,
+            }
+        }
+        Some("iconFilter") => {
+            let f = child.expect("checked");
+            let Some(set) = f.attribute("iconSet") else {
+                return other();
+            };
+            FilterKind::Icon {
+                set: set.to_owned(),
+                id: f.attribute("iconId").and_then(|v| v.parse().ok()),
+            }
+        }
         _ => other(),
     }
 }
@@ -335,6 +380,32 @@ fn parse_kind(n: Node, xml: &str) -> FilterKind {
 fn column_xml(c: &ColumnFilter) -> String {
     match &c.kind {
         FilterKind::Other(xml) => xml.clone(),
+        FilterKind::Top10 {
+            top,
+            percent,
+            value,
+        } => format!(
+            "<filterColumn colId=\"{}\"><top10{}{} val=\"{value}\"/></filterColumn>",
+            c.col,
+            if *top { "" } else { " top=\"0\"" },
+            if *percent { " percent=\"1\"" } else { "" },
+        ),
+        FilterKind::Dynamic(t) => format!(
+            "<filterColumn colId=\"{}\"><dynamicFilter type=\"{}\"/></filterColumn>",
+            c.col,
+            esc(t)
+        ),
+        FilterKind::Color { font, dxf } => format!(
+            "<filterColumn colId=\"{}\"><colorFilter dxfId=\"{dxf}\"{}/></filterColumn>",
+            c.col,
+            if *font { " cellColor=\"0\"" } else { "" }
+        ),
+        FilterKind::Icon { set, id } => format!(
+            "<filterColumn colId=\"{}\"><iconFilter iconSet=\"{}\"{}/></filterColumn>",
+            c.col,
+            esc(set),
+            id.map(|i| format!(" iconId=\"{i}\"")).unwrap_or_default()
+        ),
         FilterKind::Values {
             values,
             blanks,
@@ -487,7 +558,12 @@ fn condition_matches(c: &Condition, p: &Probe) -> bool {
 /// (filters Kantor doesn't evaluate keep it as it is).
 pub(crate) fn passes(kind: &FilterKind, p: &Probe, visible: bool) -> bool {
     match kind {
-        FilterKind::Other(_) => visible,
+        // Evaluated with the column (see `filter_by`).
+        FilterKind::Other(_)
+        | FilterKind::Top10 { .. }
+        | FilterKind::Dynamic(_)
+        | FilterKind::Color { .. }
+        | FilterKind::Icon { .. } => visible,
         FilterKind::Values {
             values,
             blanks,
@@ -525,7 +601,7 @@ pub(crate) fn passes(kind: &FilterKind, p: &Probe, visible: bool) -> bool {
 // ---------------------------------------------------------------- workbook
 
 impl Workbook {
-    fn probe(&self, sheet: u32, row: u32, col: u32) -> Probe {
+    pub(crate) fn probe(&self, sheet: u32, row: u32, col: u32) -> Probe {
         let value = cell_value(self.model.get_model(), sheet, row, col);
         let is_date = matches!(value, CellValue::Number(_))
             && self
@@ -616,23 +692,37 @@ impl Workbook {
             return Vec::new();
         };
         let offset = col.saturating_sub(f.area.left);
-        let others: Vec<&ColumnFilter> = f.columns.iter().filter(|c| c.col != offset).collect();
-        let own = f.columns.iter().find(|c| c.col == offset).map(|c| &c.kind);
+        let others: Vec<(u32, crate::filter_by::Test)> = f
+            .columns
+            .iter()
+            .filter(|c| c.col != offset)
+            .map(|c| {
+                let at = f.area.left + c.col;
+                (at, self.column_test_shown(sheet, f.area, at, &c.kind))
+            })
+            .collect();
+        let own = f
+            .columns
+            .iter()
+            .find(|c| c.col == offset)
+            .map(|c| self.column_test_shown(sheet, f.area, col, &c.kind));
         let hidden = self.hidden_rows(sheet);
         let mut seen: HashSet<String> = HashSet::new();
         let mut items: Vec<(CellValue, String, bool)> = Vec::new();
         let mut blanks: Option<bool> = None;
         for row in f.area.top + 1..=f.area.bottom {
             let visible = !hidden.contains(&row);
-            let through = others.iter().all(|c| {
-                let p = self.probe(sheet, row, f.area.left + c.col);
-                passes(&c.kind, &p, visible)
-            });
+            let through = others
+                .iter()
+                .all(|(at, t)| self.passes_shown(t, sheet, row, *at, visible));
             if !through {
                 continue;
             }
+            let checked = match &own {
+                None => true,
+                Some(t) => self.passes_shown(t, sheet, row, col, visible),
+            };
             let p = self.probe(sheet, row, col);
-            let checked = own.is_none_or(|k| passes(k, &p, visible));
             if matches!(p.value, CellValue::Blank) {
                 blanks = Some(blanks.unwrap_or(false) || checked);
                 continue;
@@ -715,13 +805,13 @@ impl Workbook {
     }
 
     /// Re-apply `scope`'s filter (Excel's Reapply), e.g. after edits, and
-    /// the sort it remembers (by value only).
+    /// the sort it remembers (by value, colour, icon or custom list).
     pub fn reapply_filter(&mut self, sheet: u32, scope: &FilterScope) -> Result<(usize, usize)> {
         let f = self
             .filter(sheet, scope)
             .ok_or_else(|| anyhow!("no filter here"))?;
         let shown = self.apply_filter(sheet, scope, f.columns)?;
-        if let Some(sort) = f.sort.filter(|s| s.by_value)
+        if let Some(sort) = f.sort
             && let Some(f) = self.filter(sheet, scope)
         {
             let data = match scope {
@@ -736,7 +826,7 @@ impl Workbook {
                 }),
             };
             if let Some(data) = data.filter(|d| d.top <= d.bottom) {
-                self.sort_range(sheet, data, &sort.keys, false)?;
+                self.sort_range_by(sheet, data, &sort.levels, false)?;
             }
         }
         Ok(shown)
@@ -749,9 +839,9 @@ impl Workbook {
         &mut self,
         sheet: u32,
         data: CellRange,
-        keys: &[SortKey],
+        levels: &[crate::filter_by::SortLevel],
     ) -> Result<u32> {
-        let sort = sort_state_xml(data, keys);
+        let sort = crate::filter_by::sort_state_xml(data, levels);
         if let Some(t) = self.table_at(sheet, data.top, data.left) {
             let rows = t.data_range();
             if rows.top != data.top || rows.left != data.left || rows.right != data.right {
@@ -826,12 +916,18 @@ impl Workbook {
         let mut changes: Vec<(i32, bool)> = Vec::new();
         let mut shown = 0;
         let total = (f.area.bottom - f.area.top) as usize;
+        let tests: Vec<(u32, crate::filter_by::Test)> = columns
+            .iter()
+            .map(|c| {
+                let at = f.area.left + c.col;
+                (at, self.column_test(sheet, f.area, at, &c.kind))
+            })
+            .collect();
         for row in f.area.top + 1..=f.area.bottom {
             let visible = !hidden.contains(&row);
-            let pass = columns.iter().all(|c| {
-                let p = self.probe(sheet, row, f.area.left + c.col);
-                passes(&c.kind, &p, visible)
-            });
+            let pass = tests
+                .iter()
+                .all(|(at, t)| self.passes_test(t, sheet, row, *at, visible));
             if pass {
                 shown += 1;
             }
@@ -1175,7 +1271,27 @@ mod tests {
                 }],
             }
         );
-        assert!(matches!(cols[2].kind, FilterKind::Other(_)));
+        assert_eq!(
+            cols[2].kind,
+            FilterKind::Top10 {
+                top: true,
+                percent: false,
+                value: 5.0
+            }
+        );
+        assert_eq!(to_xml("A1:D9", &cols), xml);
+        // Colour, icon and dynamic filters, as Excel writes them.
+        let xml = r#"<autoFilter ref="A1:D9"><filterColumn colId="0"><colorFilter dxfId="2" cellColor="0"/></filterColumn><filterColumn colId="1"><iconFilter iconSet="3Arrows" iconId="2"/></filterColumn><filterColumn colId="2"><dynamicFilter type="thisMonth"/></filterColumn><filterColumn colId="3"><top10 top="0" percent="1" val="20"/></filterColumn></autoFilter>"#;
+        let cols = parse_columns(xml);
+        assert_eq!(cols[0].kind, FilterKind::Color { font: true, dxf: 2 });
+        assert_eq!(
+            cols[1].kind,
+            FilterKind::Icon {
+                set: "3Arrows".into(),
+                id: Some(2)
+            }
+        );
+        assert_eq!(cols[2].kind, FilterKind::Dynamic("thisMonth".into()));
         assert_eq!(to_xml("A1:D9", &cols), xml);
     }
 

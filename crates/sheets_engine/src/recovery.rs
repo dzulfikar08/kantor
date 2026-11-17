@@ -277,7 +277,14 @@ impl Workbook {
             .and_then(|e| e.to_str())
             .unwrap_or_default();
         let kind = match SourceFormat::from_extension(ext) {
-            Some(SourceFormat::Xlsx) => SaveKind::Xlsx(Box::new(self.xlsx_snapshot())),
+            Some(SourceFormat::Xlsx) => {
+                let mut snapshot = self.xlsx_snapshot();
+                // Macros go only into a macro-enabled workbook, as in Excel.
+                let xlsm = ext.eq_ignore_ascii_case("xlsm");
+                snapshot.parts.keep_macros = xlsm;
+                snapshot.parts.macro_enabled = xlsm;
+                SaveKind::Xlsx(Box::new(snapshot))
+            }
             Some(SourceFormat::Csv { delimiter }) => {
                 let delimiter = match self.origin.format {
                     SourceFormat::Csv { delimiter: d } if delimiter != b'\t' && d != b'\t' => d,
