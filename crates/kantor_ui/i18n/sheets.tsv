@@ -1166,7 +1166,7 @@ Selection Label	Label Pilihan
 Scrollbar	Bilah Gulir
 Time Level	Tingkat Waktu
 # Charts of the Office 2016 types
-Kantor can change only the data range of a {} chart: the series' names in its first row, then the categories, then one column of values per series.	Kantor hanya bisa mengubah rentang data grafik {}: nama seri di baris pertamanya, lalu kategori, lalu satu kolom nilai per seri.
+A {} chart's data: the series' names first, then the categories, then the values of each series.	Data bagan {}: nama seri dulu, lalu kategori, lalu nilai tiap seri.
 Waterfall	Air Terjun
 Funnel	Corong
 Treemap	Treemap
@@ -1176,3 +1176,22 @@ Pareto	Pareto
 Box & Whisker	Kotak & Garis
 Map	Peta
 Office 2016	Office 2016
+3-D	3-D
+3-D Bar	Batang 3-D
+3-D Clustered Column	Kolom Berkelompok 3-D
+3-D Stacked Column	Kolom Bertumpuk 3-D
+3-D Clustered Bar	Batang Berkelompok 3-D
+3-D Stacked Bar	Batang Bertumpuk 3-D
+3-D Stacked Area	Area Bertumpuk 3-D
+Series chart type	Jenis bagan seri
+Secondary Axis	Sumbu Sekunder
+Minor unit	Unit minor
+The minor unit must be more than 0.	Unit minor harus lebih dari 0.
+The units must be more than 0.	Unit harus lebih dari 0.
+Text size	Ukuran teks
+Axis Type	Jenis Sumbu
+Text axis	Sumbu teks
+Date axis	Sumbu tanggal
+Base unit	Unit dasar
+Major unit in	Unit mayor dalam
+Minor unit in	Unit minor dalam

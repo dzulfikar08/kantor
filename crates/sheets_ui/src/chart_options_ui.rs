@@ -1,8 +1,10 @@
 //! The Chart panel's Data Labels and Axis sections (Excel's Format Data
 //! Labels and Format Axis, the common options): what labels show, where
-//! they sit and their number format, for all series or one; an axis'
-//! bounds, major unit, logarithmic scale, reverse order, number format and
-//! display units. Each change is one undo step through `set_chart`.
+//! they sit, their number format and text (size, bold, italic, colour),
+//! for all series or one; an axis' bounds, major and minor units,
+//! logarithmic scale, reverse order, number format, display units, and a
+//! category axis' type (text or date) with a date axis' time units. Each
+//! change is one undo step through `set_chart`.
 
 use gpui_kit::component::{
     Sizable as _,
@@ -17,7 +19,9 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::i18n::{self, t_dyn, tf};
 use kantor_ui::metrics::*;
-use sheets_engine::{AxisOptions, ChartInfo, ChartSpec, DataLabels, DisplayUnits};
+use sheets_engine::{
+    AxisOptions, AxisType, ChartInfo, ChartSpec, DataLabels, DisplayUnits, LabelFont, TimeUnit,
+};
 
 use crate::SheetsView;
 use crate::dialog::{self, row};
@@ -80,6 +84,7 @@ impl SheetsView {
         set(&p.ax_min, num_text(a.min), window, cx);
         set(&p.ax_max, num_text(a.max), window, cx);
         set(&p.ax_major, num_text(a.major), window, cx);
+        set(&p.ax_minor, num_text(a.minor), window, cx);
         set(&p.ax_fmt, a.num_fmt.clone().unwrap_or_default(), window, cx);
     }
 
@@ -130,11 +135,22 @@ impl SheetsView {
             if axis.major.is_some_and(|u| u <= 0.0) {
                 return Err(i18n::t("The major unit must be more than 0.").into());
             }
+            axis.minor = number(&p.ax_minor, "Minor unit")?;
+            if axis.minor.is_some_and(|u| u <= 0.0) {
+                return Err(i18n::t("The minor unit must be more than 0.").into());
+            }
             if axis.log_base.is_some() && axis.min.is_some_and(|m| m <= 0.0) {
                 return Err(i18n::t(
                     "Negative or zero values can't be plotted on a logarithmic scale.",
                 )
                 .into());
+            }
+        }
+        if !value_axis && axis.axis_type == AxisType::Date {
+            axis.major = number(&p.ax_major, "Major unit")?;
+            axis.minor = number(&p.ax_minor, "Minor unit")?;
+            if axis.major.is_some_and(|u| u <= 0.0) || axis.minor.is_some_and(|u| u <= 0.0) {
+                return Err(i18n::t("The units must be more than 0.").into());
             }
         }
         let fmt = text(&p.ax_fmt);
@@ -340,6 +356,111 @@ impl SheetsView {
                 Input::new(&p.label_fmt).small(),
                 cx,
             ))
+            .child(self.render_label_font(&l.font, view, cx))
+    }
+
+    /// The labels' text: size, bold, italic, colour.
+    fn render_label_font(&self, font: &LabelFont, view: &WeakEntity<SheetsView>, cx: &App) -> Div {
+        let t = kantor_ui::tokens(cx);
+        let font = *font;
+        let sv = view.clone();
+        let size = Button::new("chart-label-size")
+            .outline()
+            .small()
+            .label(
+                font.size
+                    .map_or(i18n::t("Automatic").to_owned(), |s| format!("{s}")),
+            )
+            .dropdown_caret(true)
+            .dropdown_menu(move |mut m, _, _| {
+                let opts = std::iter::once(None).chain(
+                    [8.0, 9.0, 10.0, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0]
+                        .into_iter()
+                        .map(Some),
+                );
+                for sz in opts {
+                    let v = sv.clone();
+                    let label = sz.map_or(i18n::t("Automatic").to_owned(), |s: f32| format!("{s}"));
+                    m = m.item(PopupMenuItem::new(label).checked(sz == font.size).on_click(
+                        move |_, w, cx| {
+                            let _ = v.update(cx, |this, cx| {
+                                this.edit_labels(w, cx, move |l| l.font.size = sz)
+                            });
+                        },
+                    ));
+                }
+                m
+            });
+        let flag =
+            |id: &'static str, label: &'static str, on: bool, set: fn(&mut LabelFont, bool)| {
+                let v = view.clone();
+                Checkbox::new(id)
+                    .label(label)
+                    .checked(on)
+                    .on_click(move |on, w, cx| {
+                        let on = *on;
+                        let _ = v.update(cx, |this, cx| {
+                            this.edit_labels(w, cx, move |l| set(&mut l.font, on))
+                        });
+                    })
+            };
+        let mut swatches = h_flex().gap(SPACE_1).flex_wrap();
+        let options = std::iter::once(None)
+            .chain(crate::chart_ui::SERIES_SWATCHES.iter().copied().map(Some))
+            .chain(std::iter::once(Some([0, 0, 0])));
+        for (k, c) in options.enumerate() {
+            let v = view.clone();
+            swatches = swatches.child(
+                div()
+                    .id(("chart-label-colour", k))
+                    .size(px(16.))
+                    .rounded(RADIUS_SM)
+                    .border_2()
+                    .border_color(if font.color == c { t.accent } else { t.border })
+                    .bg(match c {
+                        Some([r, g, b]) => crate::look::hsla(
+                            (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
+                        ),
+                        None => t.surface,
+                    })
+                    .when(c.is_none(), |d| {
+                        d.child(
+                            div()
+                                .text_size(FONT_CAPTION)
+                                .text_color(t.fg_dim)
+                                .flex()
+                                .justify_center()
+                                .child("A"),
+                        )
+                    })
+                    .cursor_pointer()
+                    .on_click(move |_, w, cx| {
+                        let _ = v.update(cx, |this, cx| {
+                            this.edit_labels(w, cx, move |l| l.font.color = c)
+                        });
+                    }),
+            );
+        }
+        v_flex()
+            .gap(SPACE_2)
+            .child(row(i18n::t("Text size"), size, cx))
+            .child(
+                h_flex()
+                    .gap(SPACE_4)
+                    .child(flag(
+                        "chart-label-bold",
+                        i18n::t("Bold"),
+                        font.bold == Some(true),
+                        |f, on| f.bold = Some(on),
+                    ))
+                    .child(flag(
+                        "chart-label-italic",
+                        i18n::t("Italic"),
+                        font.italic == Some(true),
+                        |f, on| f.italic = Some(on),
+                    )),
+            )
+            .child(row(i18n::t("Text colour"), swatches, cx))
     }
 
     /// The Axis section.
@@ -446,6 +567,66 @@ impl SheetsView {
                 }
                 m
             });
+        let date = !value && a.axis_type == AxisType::Date;
+        let tyv = view.clone();
+        let axis_type = a.axis_type;
+        let type_button = Button::new("chart-axis-type")
+            .outline()
+            .small()
+            .label(t_dyn(axis_type.label()))
+            .dropdown_caret(true)
+            .dropdown_menu(move |mut m, _, _| {
+                for ty in AxisType::ALL {
+                    let v = tyv.clone();
+                    m = m.item(
+                        PopupMenuItem::new(t_dyn(ty.label()))
+                            .checked(ty == axis_type)
+                            .on_click(move |_, w, cx| {
+                                let _ = v.update(cx, |this, cx| {
+                                    this.edit_axis(w, cx, move |a| {
+                                        a.axis_type = ty;
+                                        if ty != AxisType::Date {
+                                            a.base_unit = None;
+                                            a.major_time = None;
+                                            a.minor_time = None;
+                                            a.major = None;
+                                            a.minor = None;
+                                        }
+                                    })
+                                });
+                            }),
+                    );
+                }
+                m
+            });
+        let time_button = |id: &'static str,
+                           cur: Option<TimeUnit>,
+                           set: fn(&mut AxisOptions, Option<TimeUnit>)| {
+            let v = view.clone();
+            Button::new(id)
+                .outline()
+                .small()
+                .label(cur.map_or(i18n::t("Automatic"), |u| t_dyn(u.label())))
+                .dropdown_caret(true)
+                .dropdown_menu(move |mut m, _, _| {
+                    let opts = std::iter::once(None).chain(TimeUnit::ALL.into_iter().map(Some));
+                    for u in opts {
+                        let v = v.clone();
+                        m = m.item(
+                            PopupMenuItem::new(
+                                u.map_or(i18n::t("Automatic"), |u| t_dyn(u.label())),
+                            )
+                            .checked(u == cur)
+                            .on_click(move |_, w, cx| {
+                                let _ = v.update(cx, |this, cx| {
+                                    this.edit_axis(w, cx, move |a| set(a, u))
+                                });
+                            }),
+                        );
+                    }
+                    m
+                })
+        };
         v_flex()
             .gap(SPACE_2)
             .child(kantor_ui::components::section_label(
@@ -461,8 +642,47 @@ impl SheetsView {
                         Input::new(&p.ax_major).small(),
                         cx,
                     ))
+                    .child(row(
+                        i18n::t("Minor unit"),
+                        Input::new(&p.ax_minor).small(),
+                        cx,
+                    ))
                     .child(row(i18n::t("Display units"), units_button, cx))
                     .child(log)
+            })
+            .when(!value, |d| {
+                d.child(row(i18n::t("Axis Type"), type_button, cx))
+            })
+            .when(date, |d| {
+                d.child(row(
+                    i18n::t("Base unit"),
+                    time_button("chart-axis-base", a.base_unit, |a, u| a.base_unit = u),
+                    cx,
+                ))
+                .child(row(
+                    i18n::t("Major unit"),
+                    Input::new(&p.ax_major).small(),
+                    cx,
+                ))
+                .child(row(
+                    i18n::t("Major unit in"),
+                    time_button("chart-axis-major-time", a.major_time, |a, u| {
+                        a.major_time = u
+                    }),
+                    cx,
+                ))
+                .child(row(
+                    i18n::t("Minor unit"),
+                    Input::new(&p.ax_minor).small(),
+                    cx,
+                ))
+                .child(row(
+                    i18n::t("Minor unit in"),
+                    time_button("chart-axis-minor-time", a.minor_time, |a, u| {
+                        a.minor_time = u
+                    }),
+                    cx,
+                ))
             })
             .child(reverse)
             .child(row(
@@ -504,6 +724,13 @@ mod tests {
         tk("Minimum"),
         tk("Maximum"),
         tk("Major unit"),
+        tk("Minor unit"),
+        tk("Automatic"),
+        tk("Text axis"),
+        tk("Date axis"),
+        tk("Days"),
+        tk("Months"),
+        tk("Years"),
     ];
 
     #[std::prelude::v1::test]
@@ -512,6 +739,12 @@ mod tests {
             assert!(ENGINE_LABELS.contains(&p.label()), "{}", p.label());
         }
         for u in DisplayUnits::ALL {
+            assert!(ENGINE_LABELS.contains(&u.label()), "{}", u.label());
+        }
+        for a in AxisType::ALL {
+            assert!(ENGINE_LABELS.contains(&a.label()), "{}", a.label());
+        }
+        for u in TimeUnit::ALL {
             assert!(ENGINE_LABELS.contains(&u.label()), "{}", u.label());
         }
         for s in ENGINE_LABELS {

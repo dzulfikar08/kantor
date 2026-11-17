@@ -15,8 +15,10 @@ use std::ops::Range;
 use anyhow::{Result, anyhow, bail};
 use roxmltree::{Document, Node};
 
-use crate::chart_edit::{ChartType, LegendPos};
-use crate::chart_options::{AxisOptions, DataLabels, DisplayUnits, LabelPos, num_text};
+use crate::chart_edit::{ChartType, LegendPos, SeriesType};
+use crate::chart_options::{
+    AxisOptions, AxisType, DataLabels, DisplayUnits, LabelFont, LabelPos, TimeUnit, num_text,
+};
 
 pub(crate) const NS_C: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
 const NS_A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -117,6 +119,32 @@ const CAT_AX: &[&str] = &[
     "tickLblSkip",
     "tickMarkSkip",
     "noMultiLvlLbl",
+    "extLst",
+];
+const DATE_AX: &[&str] = &[
+    "axId",
+    "scaling",
+    "delete",
+    "axPos",
+    "majorGridlines",
+    "minorGridlines",
+    "title",
+    "numFmt",
+    "majorTickMark",
+    "minorTickMark",
+    "tickLblPos",
+    "spPr",
+    "txPr",
+    "crossAx",
+    "crosses",
+    "crossesAt",
+    "auto",
+    "lblOffset",
+    "baseTimeUnit",
+    "majorUnit",
+    "majorTimeUnit",
+    "minorUnit",
+    "minorTimeUnit",
     "extLst",
 ];
 const VAL_AX: &[&str] = &[
@@ -241,10 +269,12 @@ pub(crate) fn esc(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn splice(src: &str, mut edits: Vec<Edit>) -> String {
-    edits.sort_by_key(|(r, _)| std::cmp::Reverse((r.start, r.end)));
+/// Apply `edits` (insertions at one place keep their order).
+fn splice(src: &str, edits: Vec<Edit>) -> String {
+    let mut edits: Vec<(usize, Edit)> = edits.into_iter().enumerate().collect();
+    edits.sort_by_key(|(i, (r, _))| std::cmp::Reverse((r.start, r.end, *i)));
     let mut out = src.to_owned();
-    for (r, t) in edits {
+    for (_, (r, t)) in edits {
         out.replace_range(r, &t);
     }
     out
@@ -537,9 +567,13 @@ pub(crate) struct Style {
     pub kind: ChartType,
     /// What to call it (for `Other`: "Combo", "3-D Column"...).
     pub kind_label: String,
-    /// Kantor can't change its type or series (several plot types, 3-D,
-    /// radar, stock...).
+    /// Kantor can't change its type or series (radar, stock, 100% stacked
+    /// 3-D...).
     pub fixed: bool,
+    /// The 3-D form of `kind`.
+    pub three_d: bool,
+    /// A combo's series' types and axes (empty for other types).
+    pub series_types: Vec<SeriesType>,
     pub title: String,
     pub legend: LegendPos,
     pub x_title: String,
@@ -569,25 +603,66 @@ fn grouping(g: Node) -> &'static str {
     }
 }
 
-fn kind_of(groups: &[Node]) -> (ChartType, String, bool) {
+/// A plot type's series type in a combo chart (`None`: it can't be part
+/// of one: bars, pies, scatter, 100% stacked, 3-D...).
+fn combo_kind(g: Node) -> Option<ChartType> {
+    let st = grouping(g);
+    Some(match (g.tag_name().name(), st) {
+        ("barChart", _) if val(g, "barDir") == Some("bar") => return None,
+        ("barChart", "") => ChartType::Column,
+        ("barChart", "stacked") => ChartType::StackedColumn,
+        ("lineChart", "") => ChartType::Line,
+        ("lineChart", "stacked") => ChartType::StackedLine,
+        ("areaChart", "") => ChartType::Area,
+        ("areaChart", "stacked") => ChartType::StackedArea,
+        _ => return None,
+    })
+}
+
+/// The chart's type, its name, whether Kantor can't change its type or
+/// series, and whether it's 3-D.
+fn kind_of(groups: &[Node]) -> (ChartType, String, bool, bool) {
     if groups.len() != 1 {
-        return (ChartType::Other, "Combo".into(), true);
+        if groups.len() > 1 && groups.iter().all(|g| combo_kind(*g).is_some()) {
+            return (ChartType::Combo, "Combo".into(), false, false);
+        }
+        return (ChartType::Other, "Combo".into(), true, false);
     }
     let g = groups[0];
     let tag = g.tag_name().name();
     let st = grouping(g);
+    let bar = val(g, "barDir") == Some("bar");
+    // 3-D forms Kantor changes (100% stacked ones stay as they are).
+    let three = match (tag, st) {
+        ("bar3DChart", "" | "stacked") => Some(match (bar, st) {
+            (false, "") => ChartType::Column,
+            (false, _) => ChartType::StackedColumn,
+            (true, "") => ChartType::Bar,
+            (true, _) => ChartType::StackedBar,
+        }),
+        ("line3DChart", "") => Some(ChartType::Line),
+        ("area3DChart", "") => Some(ChartType::Area),
+        ("area3DChart", "stacked") => Some(ChartType::StackedArea),
+        ("pie3DChart", _) => Some(ChartType::Pie),
+        _ => None,
+    };
+    if let Some(k) = three {
+        let label = if tag == "bar3DChart" && val(g, "grouping") == Some("standard") {
+            if bar { "3-D Bar" } else { "3-D Column" }
+        } else {
+            k.label_3d()
+        };
+        return (k, label.to_owned(), false, true);
+    }
     let (kind, label) = match tag {
-        "barChart" => {
-            let bar = val(g, "barDir") == Some("bar");
-            match (bar, st) {
-                (false, "") => (ChartType::Column, ""),
-                (false, "stacked") => (ChartType::StackedColumn, ""),
-                (false, _) => (ChartType::Other, "100% Stacked Column"),
-                (true, "") => (ChartType::Bar, ""),
-                (true, "stacked") => (ChartType::StackedBar, ""),
-                (true, _) => (ChartType::Other, "100% Stacked Bar"),
-            }
-        }
+        "barChart" => match (bar, st) {
+            (false, "") => (ChartType::Column, ""),
+            (false, "stacked") => (ChartType::StackedColumn, ""),
+            (false, _) => (ChartType::Other, "100% Stacked Column"),
+            (true, "") => (ChartType::Bar, ""),
+            (true, "stacked") => (ChartType::StackedBar, ""),
+            (true, _) => (ChartType::Other, "100% Stacked Bar"),
+        },
         "lineChart" => match st {
             "" => (ChartType::Line, ""),
             "stacked" => (ChartType::StackedLine, ""),
@@ -604,7 +679,6 @@ fn kind_of(groups: &[Node]) -> (ChartType, String, bool) {
         "bar3DChart" => (ChartType::Other, "3-D Column"),
         "line3DChart" => (ChartType::Other, "3-D Line"),
         "area3DChart" => (ChartType::Other, "3-D Area"),
-        "pie3DChart" => (ChartType::Other, "3-D Pie"),
         "ofPieChart" => (ChartType::Other, "Pie of Pie"),
         "radarChart" => (ChartType::Other, "Radar"),
         "bubbleChart" => (ChartType::Other, "Bubble"),
@@ -617,7 +691,7 @@ fn kind_of(groups: &[Node]) -> (ChartType, String, bool) {
     } else {
         kind.label().to_owned()
     };
-    (kind, label, !CONVERTIBLE.contains(&tag))
+    (kind, label, !CONVERTIBLE.contains(&tag), false)
 }
 
 /// Text of a `c:title` (rich text runs, or a cell's cached text).
@@ -681,13 +755,24 @@ fn family(group_tag: &str) -> Family {
 }
 
 /// Every series, in document order, with its group's element name.
+/// Every series, in `c:order` (Excel's series order; document order
+/// for ties), with its group's element name.
 fn all_series<'a, 'i>(plot: Node<'a, 'i>) -> Vec<(Node<'a, 'i>, &'a str)> {
-    groups(plot)
+    let mut v: Vec<(Node<'a, 'i>, &'a str)> = groups(plot)
         .into_iter()
         .flat_map(|g| {
             let tag = g.tag_name().name();
             kids(g, "ser").map(move |s| (s, tag))
         })
+        .collect();
+    v.sort_by_key(|(s, _)| val(*s, "order").and_then(|o| o.parse::<u32>().ok()));
+    v
+}
+
+/// A plot type's axis ids.
+fn ax_ids(g: Node) -> Vec<String> {
+    kids(g, "axId")
+        .filter_map(|a| a.attribute("val").map(str::to_owned))
         .collect()
 }
 
@@ -758,7 +843,7 @@ pub(crate) fn read(xml: &str) -> Result<Style> {
     let doc = Document::parse(xml)?;
     let (chart, plot) = plot_area(&doc)?;
     let gs = groups(plot);
-    let (kind, kind_label, fixed) = kind_of(&gs);
+    let (kind, kind_label, fixed, three_d) = kind_of(&gs);
     let title = kid(chart, "title");
     let legend = match kid(chart, "legend") {
         None => LegendPos::None,
@@ -775,6 +860,21 @@ pub(crate) fn read(xml: &str) -> Result<Style> {
         kind,
         kind_label,
         fixed,
+        three_d,
+        series_types: if kind != ChartType::Combo {
+            Vec::new()
+        } else {
+            let primary = gs.first().map(|g| ax_ids(*g)).unwrap_or_default();
+            sers.iter()
+                .map(|(s, _)| {
+                    let g = group_of(*s);
+                    SeriesType {
+                        kind: g.and_then(combo_kind).unwrap_or(ChartType::Column),
+                        secondary: g.is_some_and(|g| ax_ids(g) != primary),
+                    }
+                })
+                .collect()
+        },
         title: title_text(title),
         legend,
         x_title: title_text(h.and_then(|a| kid(a, "title"))),
@@ -1175,6 +1275,7 @@ pub(crate) fn set_color(xml: &str, index: usize, color: SeriesColor) -> Result<S
 
 fn tag_of(k: ChartType) -> &'static str {
     match k {
+        ChartType::Combo => "barChart",
         ChartType::Column | ChartType::StackedColumn | ChartType::Bar | ChartType::StackedBar => {
             "barChart"
         }
@@ -1182,7 +1283,7 @@ fn tag_of(k: ChartType) -> &'static str {
         ChartType::Area | ChartType::StackedArea => "areaChart",
         ChartType::Pie => "pieChart",
         ChartType::Scatter => "scatterChart",
-        ChartType::Other => "barChart",
+        _ => "barChart",
     }
 }
 
@@ -1468,8 +1569,8 @@ pub(crate) fn set_kind(xml: &str, to: ChartType) -> Result<String> {
     let doc = Document::parse(xml)?;
     let (_, plot) = plot_area(&doc)?;
     let gs = groups(plot);
-    let (now, _, fixed) = kind_of(&gs);
-    if fixed {
+    let (now, _, fixed, three_d) = kind_of(&gs);
+    if fixed || three_d || gs.len() != 1 {
         bail!("Kantor can't change this chart's type");
     }
     if now == to {
@@ -1669,8 +1770,8 @@ pub(crate) fn set_series(xml: &str, series: &[NewSeries]) -> Result<String> {
     let doc = Document::parse(xml)?;
     let (_, plot) = plot_area(&doc)?;
     let gs = groups(plot);
-    let (_, _, fixed) = kind_of(&gs);
-    if fixed {
+    let (_, _, fixed, three_d) = kind_of(&gs);
+    if fixed || three_d || gs.len() != 1 {
         bail!("Kantor can't change this chart's data range");
     }
     let g = gs[0];
@@ -1810,8 +1911,77 @@ fn labels_of(d: Node) -> Option<DataLabels> {
             .filter(|f| !matches!(f.attribute("sourceLinked"), Some("1" | "true")))
             .and_then(|f| f.attribute("formatCode"))
             .map(str::to_owned),
+        font: label_font(d),
     };
     l.shown().then_some(l)
+}
+
+/// The default run properties of a `c:txPr` (`a:p/a:pPr/a:defRPr`).
+fn def_rpr<'a, 'i>(holder: Node<'a, 'i>) -> Option<Node<'a, 'i>> {
+    let tx = kid(holder, "txPr")?;
+    let p = akid(tx, "p")?;
+    akid(akid(p, "pPr")?, "defRPr")
+}
+
+fn label_font(d: Node) -> LabelFont {
+    let Some(r) = def_rpr(d) else {
+        return LabelFont::default();
+    };
+    let flag = |name: &str| r.attribute(name).map(|v| matches!(v, "1" | "true"));
+    LabelFont {
+        size: r
+            .attribute("sz")
+            .and_then(|v| v.parse::<f32>().ok())
+            .map(|v| v / 100.0),
+        bold: flag("b"),
+        italic: flag("i"),
+        color: akid(r, "solidFill")
+            .and_then(|f| akid(f, "srgbClr"))
+            .and_then(|c| c.attribute("val"))
+            .filter(|v| v.len() == 6)
+            .and_then(|v| u32::from_str_radix(v, 16).ok())
+            .map(|n| [(n >> 16) as u8, (n >> 8) as u8, n as u8]),
+    }
+}
+
+/// A `c:txPr` giving labels `font` (its body properties kept from `old`).
+fn label_txpr(src: &str, at: Node, old: Option<Node>, font: &LabelFont) -> String {
+    let p = prefix_of(src, at);
+    let (a, decl) = a_ns(at);
+    let body = old
+        .and_then(|t| akid(t, "bodyPr"))
+        .map(|b| raw(src, b).to_owned())
+        .unwrap_or_else(|| format!("<{a}bodyPr/>"));
+    let mut attrs = String::new();
+    if let Some(sz) = font.size {
+        attrs.push_str(&format!(" sz=\"{}\"", (sz * 100.0).round() as i64));
+    }
+    if let Some(b) = font.bold {
+        attrs.push_str(&format!(" b=\"{}\"", u8::from(b)));
+    }
+    if let Some(i) = font.italic {
+        attrs.push_str(&format!(" i=\"{}\"", u8::from(i)));
+    }
+    let fill = font
+        .color
+        .map(|c| {
+            format!(
+                "<{a}solidFill><{a}srgbClr val=\"{}\"/></{a}solidFill>",
+                hex(c)
+            )
+        })
+        .unwrap_or_default();
+    let rpr = if fill.is_empty() {
+        format!("<{a}defRPr{attrs}/>")
+    } else {
+        format!("<{a}defRPr{attrs}>{fill}</{a}defRPr>")
+    };
+    declare(
+        &format!(
+            "<{p}txPr>{body}<{a}lstStyle/><{a}p><{a}pPr>{rpr}</{a}pPr><{a}endParaRPr lang=\"en-US\"/></{a}p></{p}txPr>"
+        ),
+        &decl,
+    )
 }
 
 /// The labels series `ser` of group `g` shows.
@@ -1905,6 +2075,17 @@ pub(crate) fn set_labels(xml: &str, index: usize, labels: &DataLabels) -> Result
                     .map(|n| raw(xml, n).to_owned())
                     .unwrap_or_else(|| flag("showBubbleSize", false)),
             ),
+            "txPr" if base.map(label_font).unwrap_or_default() != labels.font => {
+                let old = old
+                    .filter(|o| !on(*o, "delete"))
+                    .or(base)
+                    .and_then(|b| kid(b, "txPr"));
+                if labels.font.is_default() {
+                    None
+                } else {
+                    Some(label_txpr(xml, ser, old, &labels.font))
+                }
+            }
             "dLbl" | "spPr" | "txPr" | "separator" | "showLeaderLines" | "leaderLines"
             | "extLst" => {
                 // Copied from the series' own labels, else from the group's.
@@ -1983,10 +2164,23 @@ fn axis_options(ax: Node) -> AxisOptions {
             .filter(|v| v.is_finite())
     };
     let value = is_value_axis(ax);
+    let date = ax.tag_name().name() == "dateAx";
+    let units = value || date;
+    let time = |name: &str| val(ax, name).and_then(TimeUnit::from_code).filter(|_| date);
     AxisOptions {
         min: f(scaling, "min").filter(|_| value),
         max: f(scaling, "max").filter(|_| value),
-        major: f(Some(ax), "majorUnit").filter(|u| value && *u > 0.0),
+        major: f(Some(ax), "majorUnit").filter(|u| units && *u > 0.0),
+        minor: f(Some(ax), "minorUnit").filter(|u| units && *u > 0.0),
+        axis_type: match (ax.tag_name().name(), val(ax, "auto")) {
+            (_, Some("1" | "true")) | ("valAx" | "serAx", _) => AxisType::Auto,
+            ("dateAx", _) => AxisType::Date,
+            ("catAx", Some(_)) => AxisType::Text,
+            _ => AxisType::Auto,
+        },
+        base_unit: time("baseTimeUnit"),
+        major_time: time("majorTimeUnit"),
+        minor_time: time("minorTimeUnit"),
         log_base: f(scaling, "logBase").filter(|b| value && *b >= 2.0),
         reverse: scaling.and_then(|s| val(s, "orientation")) == Some("maxMin"),
         num_fmt: kid(ax, "numFmt")
@@ -2010,9 +2204,65 @@ fn primary_axis_options(plot: Node) -> [(AxisOptions, bool); 2] {
     })
 }
 
+/// Make the primary category axis a text axis (`c:catAx`, not automatic),
+/// a date axis (`c:dateAx`) or automatic (`c:auto` on, its element kept).
+fn set_axis_type(xml: &str, horizontal: bool, to: AxisType) -> Result<String> {
+    let doc = Document::parse(xml)?;
+    let (_, plot) = plot_area(&doc)?;
+    let (h, v) = primary_axes(plot);
+    let Some(ax) = (if horizontal { h } else { v }) else {
+        return Ok(xml.to_owned());
+    };
+    let tag = ax.tag_name().name();
+    if !matches!(tag, "catAx" | "dateAx") || axis_options(ax).axis_type == to {
+        return Ok(xml.to_owned());
+    }
+    let p = prefix_of(xml, ax);
+    let auto = |on: bool| Some(Some(format!("<{p}auto val=\"{}\"/>", u8::from(on))));
+    let text = match (to, tag) {
+        (AxisType::Auto, _) => {
+            let order = if tag == "dateAx" { DATE_AX } else { CAT_AX };
+            rebuild(xml, ax, tag, order, AX_ORDER, &mut |slot| {
+                if slot == "auto" { auto(true) } else { None }
+            })
+        }
+        (AxisType::Text, _) => {
+            rebuild(xml, ax, "catAx", CAT_AX, AX_ORDER, &mut |slot| match slot {
+                "auto" => auto(false),
+                "lblAlgn" if kid(ax, slot).is_none() => {
+                    Some(Some(format!("<{p}lblAlgn val=\"ctr\"/>")))
+                }
+                "lblOffset" if kid(ax, slot).is_none() => {
+                    Some(Some(format!("<{p}lblOffset val=\"100\"/>")))
+                }
+                "noMultiLvlLbl" if kid(ax, slot).is_none() => {
+                    Some(Some(format!("<{p}noMultiLvlLbl val=\"0\"/>")))
+                }
+                _ => None,
+            })
+        }
+        (AxisType::Date, _) => rebuild(
+            xml,
+            ax,
+            "dateAx",
+            DATE_AX,
+            AX_ORDER,
+            &mut |slot| match slot {
+                "auto" => auto(false),
+                "lblOffset" if kid(ax, slot).is_none() => {
+                    Some(Some(format!("<{p}lblOffset val=\"100\"/>")))
+                }
+                _ => None,
+            },
+        ),
+    };
+    Ok(splice(xml, vec![(ax.range(), text)]))
+}
+
 /// Set the options of the horizontal or vertical primary axis. Only the
 /// parts that change are rewritten.
 pub(crate) fn set_axis_options(xml: &str, horizontal: bool, new: &AxisOptions) -> Result<String> {
+    let xml = &set_axis_type(xml, horizontal, new.axis_type)?;
     let doc = Document::parse(xml)?;
     let (_, plot) = plot_area(&doc)?;
     let (h, v) = primary_axes(plot);
@@ -2024,9 +2274,11 @@ pub(crate) fn set_axis_options(xml: &str, horizontal: bool, new: &AxisOptions) -
         return Ok(xml.to_owned());
     }
     let value = is_value_axis(ax);
+    let date = ax.tag_name().name() == "dateAx";
     let order: &[&str] = match ax.tag_name().name() {
         "valAx" => VAL_AX,
         "catAx" => CAT_AX,
+        "dateAx" => DATE_AX,
         _ => AX_ORDER,
     };
     let p = prefix_of(xml, ax);
@@ -2080,13 +2332,30 @@ pub(crate) fn set_axis_options(xml: &str, horizontal: bool, new: &AxisOptions) -
             None => insert_ordered(xml, ax, "numFmt", order, &text),
         });
     }
-    if value && old.major != new.major {
-        let unit = kid(ax, "majorUnit");
-        match new.major {
-            Some(u) => edits.push(set_val(xml, ax, "majorUnit", order, &num_text(u))),
-            None => {
-                if let Some(n) = unit {
-                    edits.push((n.range(), String::new()));
+    // Units in schema order (insertions at one place keep it).
+    let num = |v: Option<f64>| v.map(num_text);
+    let time = |v: Option<TimeUnit>| v.map(|u| u.code().to_owned());
+    let mut slots = vec![
+        ("majorUnit", num(old.major), num(new.major)),
+        ("minorUnit", num(old.minor), num(new.minor)),
+    ];
+    if date {
+        slots = vec![
+            ("baseTimeUnit", time(old.base_unit), time(new.base_unit)),
+            ("majorUnit", num(old.major), num(new.major)),
+            ("majorTimeUnit", time(old.major_time), time(new.major_time)),
+            ("minorUnit", num(old.minor), num(new.minor)),
+            ("minorTimeUnit", time(old.minor_time), time(new.minor_time)),
+        ];
+    }
+    for (name, was, now) in slots {
+        if (value || date) && was != now {
+            match now {
+                Some(v) => edits.push(set_val(xml, ax, name, order, &v)),
+                None => {
+                    if let Some(n) = kid(ax, name) {
+                        edits.push((n.range(), String::new()));
+                    }
                 }
             }
         }
@@ -2131,6 +2400,9 @@ pub(crate) fn set_axis_options(xml: &str, horizontal: bool, new: &AxisOptions) -
     }
     Ok(splice(xml, edits))
 }
+
+mod types;
+pub(crate) use types::set_type;
 
 #[cfg(test)]
 mod tests;

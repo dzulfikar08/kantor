@@ -1731,7 +1731,7 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
                     out
                 }
                 (Some(s), true) => {
-                    let u = s.unit / 5.0;
+                    let u = a.ax.minor_unit.unwrap_or(s.unit / 5.0);
                     let n = ((s.max - s.min) / u).round().clamp(0.0, 2000.0) as usize;
                     (0..=n).map(|i| s.min + i as f64 * u).collect()
                 }

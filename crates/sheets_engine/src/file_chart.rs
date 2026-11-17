@@ -170,13 +170,15 @@ impl Workbook {
             labels: style.labels.clone(),
             x_axis: style.axes[0].0.clone(),
             y_axis: style.axes[1].0.clone(),
+            three_d: style.three_d,
+            series_types: style.series_types.clone(),
         };
         // Can the range give these series back? (Else a new range replaces
         // them, and the panel says so.)
         if !unknown && !style.fixed {
             let sheet_now = self.chart_home(key)?;
             let mut probe = spec.clone();
-            if probe.kind == ChartType::Other {
+            if matches!(probe.kind, ChartType::Other | ChartType::Combo) {
                 probe.kind = ChartType::Column;
             }
             let ds = self.data_sheet_index(sheet_now, &probe);
@@ -250,16 +252,21 @@ impl Workbook {
         let data_changed = old.data != spec.data
             || old.by_rows != spec.by_rows
             || old.data_sheet != spec.data_sheet;
+        let type_changed = spec.kind != old.kind
+            || spec.three_d != old.three_d
+            || (spec.kind == ChartType::Combo && spec.series_types != old.series_types);
+        if (type_changed && (info.fixed || spec.kind == ChartType::Other || spec.kind.is_ex()))
+            || (data_changed && info.fixed)
+        {
+            bail!(
+                "Kantor can't change the type or data of a {} chart",
+                info.kind_label
+            );
+        }
         if data_changed {
-            if info.fixed {
-                bail!(
-                    "Kantor can't change the data of a {} chart",
-                    info.kind_label
-                );
-            }
             self.check_chart_data(sheet, &spec)?;
             let mut probe = spec.clone();
-            if probe.kind == ChartType::Other {
+            if matches!(probe.kind, ChartType::Other | ChartType::Combo) {
                 probe.kind = ChartType::Column;
             }
             let ds = self.data_sheet_index(sheet, &probe);
@@ -267,16 +274,14 @@ impl Workbook {
             if series.is_empty() {
                 bail!("The data range makes no series");
             }
+            // The new series go into one 2-D plot, then get their types.
+            if old.three_d || old.kind == ChartType::Combo {
+                xml = chart_style::set_type(&xml, old.kind.flat(), false, &[])?;
+            }
             xml = chart_style::set_series(&xml, &series)?;
         }
-        if spec.kind != old.kind {
-            if info.fixed || spec.kind == ChartType::Other {
-                bail!(
-                    "Kantor can't change the type of a {} chart",
-                    info.kind_label
-                );
-            }
-            xml = chart_style::drop_bad_positions(&chart_style::set_kind(&xml, spec.kind)?);
+        if type_changed || (data_changed && (spec.three_d || spec.kind == ChartType::Combo)) {
+            xml = chart_style::set_type(&xml, spec.kind, spec.three_d, &spec.series_types)?;
         }
         if spec.title != old.title {
             xml = chart_style::set_title(&xml, &spec.title)?;

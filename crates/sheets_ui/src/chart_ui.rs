@@ -6,15 +6,19 @@
 //!   charts ([`crate::drawings`]).
 //! * The Chart panel beside the grid, for the selected chart (made in
 //!   Kantor or from the file): type, title, legend position, axis titles,
-//!   series colours, series from rows or columns, data range, delete. Each
+//!   series colours, series from rows or columns, data range, delete; the
+//!   3-D form of a type, and a combo's type and axis per series. Each
 //!   change is one undo step (`sheets_engine::chart_edit`; a file's chart
-//!   part is changed in place, `sheets_engine::file_chart`). Combo, 3-D and
-//!   other types Kantor can't make keep their type and data range.
+//!   part is changed in place, `sheets_engine::file_chart`). The Office
+//!   2016 types (waterfall, treemap...) change type among themselves,
+//!   title, legend and data; types Kantor can't make (radar, stock...)
+//!   keep their type and data range.
 
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::{
     Disableable as _, Sizable as _,
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     h_flex,
     input::{self, Input, InputEvent, InputState},
     menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
@@ -25,7 +29,7 @@ use gpui_kit::*;
 use kantor_ui::i18n::{self, t_dyn, tf};
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::drawing::DrawingKey;
-use sheets_engine::{ChartInfo, ChartSpec, ChartType, LegendPos, SeriesColor};
+use sheets_engine::{ChartInfo, ChartSpec, ChartType, LegendPos, SeriesColor, SeriesType};
 
 use crate::SheetsView;
 use crate::dialog::{self, choices, note, row};
@@ -56,6 +60,7 @@ pub(crate) struct ChartPanel {
     pub(crate) ax_min: Entity<InputState>,
     pub(crate) ax_max: Entity<InputState>,
     pub(crate) ax_major: Entity<InputState>,
+    pub(crate) ax_minor: Entity<InputState>,
     pub(crate) ax_fmt: Entity<InputState>,
     /// The series the data label options apply to (`None`: all).
     pub(crate) label_target: Option<usize>,
@@ -125,9 +130,10 @@ impl SheetsView {
         let ax_min = auto(window, cx);
         let ax_max = auto(window, cx);
         let ax_major = auto(window, cx);
+        let ax_minor = auto(window, cx);
         let mut subs = Vec::new();
         for input in [
-            &title, &x_title, &y_title, &label_fmt, &ax_min, &ax_max, &ax_major, &ax_fmt,
+            &title, &x_title, &y_title, &label_fmt, &ax_min, &ax_max, &ax_major, &ax_minor, &ax_fmt,
         ] {
             subs.push(
                 cx.subscribe_in(input, window, |this, _, e: &InputEvent, w, cx| {
@@ -154,6 +160,7 @@ impl SheetsView {
             ax_min,
             ax_max,
             ax_major,
+            ax_minor,
             ax_fmt,
             label_target: None,
             horizontal_axis: false,
@@ -393,7 +400,13 @@ impl SheetsView {
                 let spec = info.spec.clone();
                 let tv = view.clone();
                 let current = spec.kind;
-                let kind: AnyElement = if info.fixed || info.data_only {
+                let kinds: Vec<ChartType> = if info.data_only {
+                    ChartType::EX.to_vec()
+                } else {
+                    ChartType::PANEL.to_vec()
+                };
+                let n_series = info.series.len();
+                let kind: AnyElement = if info.fixed || current == ChartType::Other {
                     Button::new("chart-kind")
                         .outline()
                         .small()
@@ -408,7 +421,7 @@ impl SheetsView {
                         .label(t_dyn(&info.kind_label).to_owned())
                         .dropdown_caret(true)
                         .dropdown_menu(move |mut m, _, _| {
-                            for k in ChartType::ALL {
+                            for k in kinds.iter().copied() {
                                 let v = tv.clone();
                                 m = m.item(
                                     PopupMenuItem::new(t_dyn(k.label()))
@@ -417,6 +430,13 @@ impl SheetsView {
                                             let _ = v.update(cx, |this, cx| {
                                                 this.edit_chart(w, cx, |s| {
                                                     s.kind = k;
+                                                    if k == ChartType::Combo {
+                                                        s.three_d = false;
+                                                        if s.series_types.is_empty() {
+                                                            s.series_types =
+                                                                combo_default(n_series);
+                                                        }
+                                                    }
                                                     Ok(())
                                                 })
                                             });
@@ -427,6 +447,22 @@ impl SheetsView {
                         })
                         .into_any_element()
                 };
+                let three_d = (!info.fixed && !info.data_only && current.has_3d()).then(|| {
+                    let v = view.clone();
+                    Checkbox::new("chart-3d")
+                        .label(i18n::t("3-D"))
+                        .checked(spec.three_d)
+                        .on_click(move |on, w, cx| {
+                            let on = *on;
+                            let _ = v.update(cx, |this, cx| {
+                                this.edit_chart(w, cx, |s| {
+                                    s.three_d = on;
+                                    Ok(())
+                                })
+                            });
+                        })
+                });
+                let combo = (current == ChartType::Combo).then(|| series_types(&info, &view, cx));
                 let lv = view.clone();
                 let legend = spec.legend;
                 let legend_button = Button::new("chart-legend")
@@ -463,10 +499,10 @@ impl SheetsView {
                 v_flex()
                     .gap(SPACE_4)
                     .child(row(i18n::t("Type"), kind, cx))
-                    .when(styled, |d| {
-                        d.child(row(i18n::t("Title"), Input::new(&p.title).small(), cx))
-                            .child(row(i18n::t("Legend"), legend_button, cx))
-                    })
+                    .children(three_d)
+                    .children(combo)
+                    .child(row(i18n::t("Title"), Input::new(&p.title).small(), cx))
+                    .child(row(i18n::t("Legend"), legend_button, cx))
                     .when(info.has_axes, |d| {
                         d.child(row(i18n::t("Horizontal axis"), Input::new(&p.x_title).small(), cx))
                             .child(row(i18n::t("Vertical axis"), Input::new(&p.y_title).small(), cx))
@@ -479,17 +515,16 @@ impl SheetsView {
                         d.child(self.render_axis_options(&info, &view, cx))
                     })
                     .when(info.data_only, |d| {
-                        d.child(row(i18n::t("Data"), Input::new(&p.range).small(), cx))
-                            .child(note(
+                        d.child(note(
                                 i18n::fill(
-                                    i18n::t("Kantor can change only the data range of a {} chart: the series' names in its first row, then the categories, then one column of values per series."),
+                                    i18n::t("A {} chart's data: the series' names first, then the categories, then the values of each series."),
                                     &[&t_dyn(&info.kind_label)],
                                 ),
                                 false,
                                 cx,
                             ))
                     })
-                    .when(!info.fixed && !info.data_only, |d| {
+                    .when(!info.fixed, |d| {
                         d.child(row(
                             i18n::t("Series in"),
                             choices(
@@ -614,7 +649,7 @@ impl SheetsView {
 }
 
 /// Excel's standard colours, offered for series.
-const SERIES_SWATCHES: [[u8; 3]; 10] = [
+pub(crate) const SERIES_SWATCHES: [[u8; 3]; 10] = [
     [0xC0, 0x00, 0x00],
     [0xFF, 0x00, 0x00],
     [0xFF, 0xC0, 0x00],
@@ -709,6 +744,98 @@ fn series_colours(info: &ChartInfo, view: &WeakEntity<SheetsView>, cx: &App) -> 
     list
 }
 
+/// Excel's Clustered Column - Line: every series a column, the last a
+/// line.
+fn combo_default(n: usize) -> Vec<SeriesType> {
+    (0..n)
+        .map(|i| SeriesType {
+            kind: if i + 1 == n && n > 1 {
+                ChartType::Line
+            } else {
+                ChartType::Column
+            },
+            secondary: false,
+        })
+        .collect()
+}
+
+/// A combo chart's series: each one's type and axis (Excel's Change Chart
+/// Type ▸ Combo).
+fn series_types(info: &ChartInfo, view: &WeakEntity<SheetsView>, cx: &App) -> Div {
+    let t = tokens(cx);
+    let n = info.series.len();
+    let mut list = v_flex()
+        .gap(SPACE_2)
+        .child(kantor_ui::components::section_label(
+            i18n::t("Series chart type"),
+            cx,
+        ));
+    for (i, name) in info.series.iter().enumerate().take(24) {
+        let cur = info.spec.series_types.get(i).copied().unwrap_or_default();
+        let label = if name.trim().is_empty() {
+            tf("Series {}", &[&(i + 1)])
+        } else {
+            name.clone()
+        };
+        let set = move |s: &mut ChartSpec, f: &dyn Fn(&mut SeriesType)| {
+            if s.series_types.len() < n {
+                s.series_types.resize(n, SeriesType::default());
+            }
+            f(&mut s.series_types[i]);
+        };
+        let kv = view.clone();
+        let kind = Button::new(("chart-series-kind", i))
+            .outline()
+            .xsmall()
+            .label(t_dyn(cur.kind.label()))
+            .dropdown_caret(true)
+            .dropdown_menu(move |mut m, _, _| {
+                for k in ChartType::COMBO {
+                    let v = kv.clone();
+                    m = m.item(
+                        PopupMenuItem::new(t_dyn(k.label()))
+                            .checked(k == cur.kind)
+                            .on_click(move |_, w, cx| {
+                                let _ = v.update(cx, |this, cx| {
+                                    this.edit_chart(w, cx, |s| {
+                                        set(s, &|t| t.kind = k);
+                                        Ok(())
+                                    })
+                                });
+                            }),
+                    );
+                }
+                m
+            });
+        let av = view.clone();
+        let secondary = Checkbox::new(("chart-series-secondary", i))
+            .label(i18n::t("Secondary Axis"))
+            .checked(cur.secondary)
+            .on_click(move |on, w, cx| {
+                let on = *on;
+                let _ = av.update(cx, |this, cx| {
+                    this.edit_chart(w, cx, |s| {
+                        set(s, &|t| t.secondary = on);
+                        Ok(())
+                    })
+                });
+            });
+        list = list.child(
+            v_flex()
+                .gap(SPACE_1)
+                .child(
+                    div()
+                        .text_size(FONT_SMALL)
+                        .text_color(t.fg_muted)
+                        .truncate()
+                        .child(label),
+                )
+                .child(h_flex().gap(SPACE_3).child(kind).child(secondary)),
+        );
+    }
+    list
+}
+
 /// A chart type's item in the Insert Chart menu.
 fn menu_label(k: ChartType) -> &'static str {
     match k {
@@ -722,7 +849,7 @@ fn menu_label(k: ChartType) -> &'static str {
         ChartType::Area => i18n::t("Area Chart"),
         ChartType::StackedArea => i18n::t("Stacked Area Chart"),
         ChartType::Scatter => i18n::t("Scatter Chart"),
-        ChartType::Other => i18n::t("Other Chart"),
+        _ => i18n::t("Other Chart"),
     }
 }
 
@@ -771,6 +898,12 @@ mod tests {
         tk("100% Stacked Area"),
         tk("Doughnut"),
         tk("3-D Column"),
+        tk("3-D Bar"),
+        tk("3-D Clustered Column"),
+        tk("3-D Stacked Column"),
+        tk("3-D Clustered Bar"),
+        tk("3-D Stacked Bar"),
+        tk("3-D Stacked Area"),
         tk("3-D Line"),
         tk("3-D Area"),
         tk("3-D Pie"),
@@ -796,8 +929,9 @@ mod tests {
 
     #[std::prelude::v1::test]
     fn engine_labels_are_translated() {
-        for k in ChartType::ALL {
+        for k in ChartType::PANEL.into_iter().chain(ChartType::EX) {
             assert!(ENGINE_LABELS.contains(&k.label()), "{}", k.label());
+            assert!(ENGINE_LABELS.contains(&k.label_3d()), "{}", k.label_3d());
         }
         for l in LegendPos::ALL {
             assert!(indonesian(l.label()).is_some(), "{}", l.label());

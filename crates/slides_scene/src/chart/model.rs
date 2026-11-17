@@ -619,6 +619,8 @@ pub struct Axis {
     pub min: Option<f64>,
     pub max: Option<f64>,
     pub major_unit: Option<f64>,
+    /// `c:minorUnit` (minor gridlines; else a fifth of the major unit).
+    pub minor_unit: Option<f64>,
     pub log_base: Option<f64>,
     /// Format code and whether it's linked to the source.
     pub num_fmt: Option<(String, bool)>,
@@ -704,6 +706,7 @@ impl Axis {
             min: None,
             max: None,
             major_unit: None,
+            minor_unit: None,
             log_base: None,
             num_fmt: None,
             major_grid: None,
@@ -751,6 +754,7 @@ impl Axis {
             min: scaling.and_then(|s| val_f(s, "min")),
             max: scaling.and_then(|s| val_f(s, "max")),
             major_unit: val_f(n, "majorUnit").filter(|u| *u > 0.0),
+            minor_unit: val_f(n, "minorUnit").filter(|u| *u > 0.0),
             log_base: scaling
                 .and_then(|s| val_f(s, "logBase"))
                 .filter(|b| *b >= 2.0),

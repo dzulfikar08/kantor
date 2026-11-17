@@ -88,6 +88,25 @@ pub struct DataLabels {
     pub pos: Option<LabelPos>,
     /// `None`: linked to the source.
     pub num_fmt: Option<String>,
+    /// The labels' text formatting (Excel's Home ▸ Font on selected
+    /// labels): unset parts follow the chart.
+    pub font: LabelFont,
+}
+
+/// Text formatting of data labels (`c:txPr`'s default run properties).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LabelFont {
+    /// Points.
+    pub size: Option<f32>,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub color: Option<[u8; 3]>,
+}
+
+impl LabelFont {
+    pub fn is_default(&self) -> bool {
+        *self == LabelFont::default()
+    }
 }
 
 impl DataLabels {
@@ -168,15 +187,72 @@ impl DisplayUnits {
     }
 }
 
+/// The time unit of a date axis' base, major and minor units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeUnit {
+    Days,
+    Months,
+    Years,
+}
+
+impl TimeUnit {
+    pub const ALL: [TimeUnit; 3] = [TimeUnit::Days, TimeUnit::Months, TimeUnit::Years];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TimeUnit::Days => "Days",
+            TimeUnit::Months => "Months",
+            TimeUnit::Years => "Years",
+        }
+    }
+
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            TimeUnit::Days => "days",
+            TimeUnit::Months => "months",
+            TimeUnit::Years => "years",
+        }
+    }
+
+    pub(crate) fn from_code(c: &str) -> Option<Self> {
+        TimeUnit::ALL.into_iter().find(|u| u.code() == c)
+    }
+}
+
+/// Excel's Axis Type of a category axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AxisType {
+    /// Automatically select based on data.
+    #[default]
+    Auto,
+    Text,
+    Date,
+}
+
+impl AxisType {
+    pub const ALL: [AxisType; 3] = [AxisType::Auto, AxisType::Text, AxisType::Date];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            AxisType::Auto => "Automatic",
+            AxisType::Text => "Text axis",
+            AxisType::Date => "Date axis",
+        }
+    }
+}
+
 /// Options of an axis (Excel's Format Axis: Bounds, Units, Logarithmic
-/// scale, reverse order, Number, Display units). Bounds, units, the log
-/// scale and display units apply to value axes only.
+/// scale, reverse order, Number, Display units, Axis Type). Bounds, the
+/// log scale and display units apply to value axes only; units to value
+/// and date axes; the axis type and time units to category axes.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AxisOptions {
     /// `None`: automatic.
     pub min: Option<f64>,
     pub max: Option<f64>,
     pub major: Option<f64>,
+    /// Minor unit (value and date axes).
+    pub minor: Option<f64>,
     /// Logarithmic scale with this base.
     pub log_base: Option<f64>,
     /// Values (categories) in reverse order.
@@ -184,6 +260,13 @@ pub struct AxisOptions {
     /// `None`: linked to the source.
     pub num_fmt: Option<String>,
     pub units: DisplayUnits,
+    /// A category axis' type (Excel's Axis Type).
+    pub axis_type: AxisType,
+    /// A date axis' base unit (`None`: automatic) and the time units of
+    /// its major and minor units.
+    pub base_unit: Option<TimeUnit>,
+    pub major_time: Option<TimeUnit>,
+    pub minor_time: Option<TimeUnit>,
 }
 
 /// A number as written in chart XML (`10`, `0.25`).

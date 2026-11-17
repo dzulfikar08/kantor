@@ -73,6 +73,7 @@ fn labels(pos: Option<LabelPos>) -> DataLabels {
         percent: false,
         pos,
         num_fmt: Some("#,##0.0".into()),
+        font: Default::default(),
     }
 }
 
@@ -85,6 +86,7 @@ fn axis() -> AxisOptions {
         reverse: false,
         num_fmt: Some("0.0".into()),
         units: DisplayUnits::Thousands,
+        ..AxisOptions::default()
     }
 }
 

@@ -637,13 +637,13 @@ impl SlidesView {
                         tk("Delete the current category"),
                         |v, w, cx| v.chart_category_op(ChartOp::Delete, w, cx),
                     ));
-                // The Office 2016 types keep their series.
+                // Office 2016 types that plot one series keep it.
                 if self.pres.chart_series_fixed(e.slide, e.shape) {
                     bar = bar.child(
                         div()
                             .px(SPACE_2)
                             .text_color(t.fg_muted)
-                            .child(i18n::t("This type of chart keeps its series")),
+                            .child(i18n::t("This type of chart shows one series")),
                     );
                     let levels = self.pres.chart_data(e.slide, e.shape).is_some_and(|d| {
                         d.categories

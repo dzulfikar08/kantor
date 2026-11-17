@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use pivot_check::parts;
 use sheets_engine::drawing::{Anchor, DrawingKind};
-use sheets_engine::{CellRange, Workbook};
+use sheets_engine::{CellRange, ChartType, LegendPos, Workbook};
 
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/xlsx/25_chartex.xlsx")
@@ -76,14 +76,11 @@ fn the_chart_panel_shows_and_changes_their_data_range() {
         xml.contains("<cx:lvl ptCount=\"4\" formatCode=\"General\">"),
         "{xml}"
     );
-    // Other options aren't Kantor's to change on these.
+    // Series colours aren't Kantor's to change on these.
     let mut other = spec.clone();
-    other.title = "Deals".into();
+    other.colors = vec![sheets_engine::SeriesColor::Rgb([1, 2, 3])];
     let err = wb.set_chart(key, other).unwrap_err().to_string();
-    assert!(
-        err.contains("only the data range of a Funnel chart"),
-        "{err}"
-    );
+    assert!(err.contains("can't change that on a Funnel chart"), "{err}");
     // The treemap (sheet 2) over more rows: its two category columns grow.
     wb.set_input(2, 7, 0, "West").unwrap();
     wb.set_input(2, 7, 1, "Eta").unwrap();
@@ -162,6 +159,86 @@ fn the_chart_panel_shows_and_changes_their_data_range() {
     let (_, p2) = save(&mut wb, dir.path(), "chartex-undone.xlsx");
     assert!(p2["xl/charts/chartEx2.xml"].contains("<cx:f>Funnel!$B$2:$B$6</cx:f>"));
     assert!(p2["xl/drawings/drawing7.xml"].contains("AlternateContent"));
+}
+
+#[test]
+fn title_legend_type_and_rows_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = Workbook::open(fixture()).unwrap();
+    // The waterfall (sheet 0): a new title, no legend, then a funnel.
+    let key = wb.drawings(0)[0].key;
+    let info = wb.chart_info(key).unwrap();
+    assert_eq!(info.spec.kind, ChartType::Waterfall);
+    assert_eq!(info.spec.title, "Cash flow");
+    assert_eq!(info.spec.legend, LegendPos::Top);
+    let mut spec = info.spec.clone();
+    spec.title = "Money & more".into();
+    spec.legend = LegendPos::None;
+    spec.kind = ChartType::Funnel;
+    wb.set_chart(key, spec.clone()).unwrap();
+    let info = wb.chart_info(key).unwrap();
+    assert_eq!(info.spec, spec);
+    assert_eq!(info.kind_label, "Funnel");
+    // Every Office 2016 type in turn (the Pareto line comes and goes).
+    for kind in ChartType::EX {
+        spec.kind = kind;
+        wb.set_chart(key, spec.clone()).unwrap();
+        assert_eq!(wb.chart_info(key).unwrap().spec.kind, kind);
+    }
+    spec.kind = ChartType::Pareto;
+    wb.set_chart(key, spec.clone()).unwrap();
+    // Not a classic type.
+    let mut bad = spec.clone();
+    bad.kind = ChartType::Column;
+    assert!(wb.set_chart(key, bad).is_err());
+    // The box & whisker (sheet 6) laid out with series in rows.
+    for (r, row) in [
+        ["Day", "Mon", "Tue"],
+        ["Morning", "12", "10"],
+        ["Evening", "20", "30"],
+    ]
+    .iter()
+    .enumerate()
+    {
+        for (c, v) in row.iter().enumerate() {
+            wb.set_input(6, 20 + r as u32, c as u32, v).unwrap();
+        }
+    }
+    let bkey = wb.drawings(6)[0].key;
+    let mut b = wb.chart_info(bkey).unwrap().spec;
+    b.by_rows = true;
+    b.data = CellRange::from_corners((20, 0), (22, 2));
+    wb.set_chart(bkey, b).unwrap();
+    let bi = wb.chart_info(bkey).unwrap();
+    assert!(bi.spec.by_rows);
+    assert_eq!(bi.spec.data.name(), "A21:C23");
+    let (path, p) = save(&mut wb, dir.path(), "chartex-styled.xlsx");
+    let part = &p["xl/charts/chartEx1.xml"];
+    assert!(part.contains("<cx:v>Money &amp; more</cx:v>"), "{part}");
+    assert!(!part.contains("<cx:legend"), "{part}");
+    assert!(part.contains("layoutId=\"paretoLine\""), "{part}");
+    assert!(part.contains("<cx:units unit=\"percentage\"/>"), "{part}");
+    let boxes = &p["xl/charts/chartEx7.xml"];
+    assert!(
+        boxes.contains("<cx:f>'Box and whisker'!$B$22:$C$22</cx:f>"),
+        "{boxes}"
+    );
+    assert!(
+        boxes.contains("<cx:f>'Box and whisker'!$B$21:$C$21</cx:f>"),
+        "{boxes}"
+    );
+    let back = Workbook::open(&path).unwrap();
+    let i = back.chart_info(back.drawings(0)[0].key).unwrap();
+    assert_eq!(
+        (i.spec.kind, i.spec.title.as_str()),
+        (ChartType::Pareto, "Money & more")
+    );
+    assert!(
+        back.chart_info(back.drawings(6)[0].key)
+            .unwrap()
+            .spec
+            .by_rows
+    );
 }
 
 #[test]
