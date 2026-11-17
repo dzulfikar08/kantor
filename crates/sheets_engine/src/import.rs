@@ -9,8 +9,9 @@
 //!   formats applied, formulas as their results) of **one** sheet.
 //! * **ODS / XLS / XLSB** are read-only imports via [calamine]. Values keep
 //!   their types; dates become date-formatted numbers. Formulas are imported
-//!   where calamine exposes them: XLS/XLSB formulas are already in Excel syntax,
-//!   ODS ones (`of:=SUM([.A1:.B2])`) are converted (references, `;` → `,`).
+//!   where calamine exposes them: XLS/XLSB formulas are already in Excel syntax
+//!   (XLS cell formulas are decoded by Kantor's own [`crate::xls_formula`]
+//!   first, as calamine's text loses 3-D references), ODS ones (`of:=SUM([.A1:.B2])`) are converted (references, `;` → `,`).
 //!   A formula that fails to evaluate in IronCalc while the file's cached value
 //!   was not an error is replaced by that cached value, and counted in
 //!   [`Workbook::import_notes`](crate::Workbook::import_notes).
@@ -26,8 +27,8 @@
 //! * **ODS** keeps its look too: [`crate::ods`] reads the cell styles,
 //!   number formats, merges, column widths, row heights, hidden rows,
 //!   columns and sheets, tab colours and frozen panes.
-//! * XLSB imports bring values and formulas only: no styles, merged cells,
-//!   column widths, comments or charts.
+//! * **XLSB** gets its formatting, layout, names, data validation and
+//!   conditional formatting from [`crate::xlsb`], its drawings as XML parts.
 
 use std::collections::HashMap;
 use std::fs;
@@ -52,8 +53,8 @@ pub enum ImportNote {
     FormulasKeptAsValues(usize),
     /// `.xls` data validation rules whose formula Kantor can't read.
     ValidationsSkipped(usize),
-    /// `.xls` conditional formats Kantor can't express (data bars, colour
-    /// scales, icon sets, formulas).
+    /// `.xls`/`.xlsb` conditional formats Kantor can't express (formulas it
+    /// can't read, Excel 2010-only forms).
     ConditionalFormatsSkipped(usize),
     /// The `.xls` formatting pass failed.
     FormattingNotImported,

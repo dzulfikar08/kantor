@@ -9,6 +9,20 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Sheets: `.xlsb` imports bring their conditional formatting (cell value, formula, text, date, blank,
+  error, duplicate, above/below average and top/bottom rules, colour scales, data bars and icon
+  sets, with their formats), saved into the new `.xlsx`.
+- Sheets: `.ods` imports draw custom shapes from their own geometry (curves, arcs and their
+  formulas) instead of leaving them out, and arcs in freehand shapes are drawn as arcs, not straight
+  lines.
+
+### Fixed
+
+- Sheets: `.xls` formulas with 3-D references (`SUM(Jan:Mar!B2)`) come in as formulas instead of
+  values.
+
 ## [0.12.0] - 2026-11-17
 
 A release that closes most of Kantor's known gaps. Sheets gets 3-D references (`SUM(Jan:Mar!B2)`),

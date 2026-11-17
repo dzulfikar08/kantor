@@ -242,7 +242,7 @@ impl Reader {
                     r.colors.push(c);
                 }
             }
-            465 | 467 | 469 | 470 | 466 | 468 | 471 => {}
+            465..=471 => {}
             _ => return false,
         }
         true
