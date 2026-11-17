@@ -27,6 +27,8 @@ fn corpus(name: &str) -> PathBuf {
 
 fn rule(spec: CfSpec) -> CfRuleDef {
     CfRuleDef {
+        num_fmt: None,
+        border: None,
         spec,
         format: CfFormat::PRESETS[0].1,
         stop_if_true: false,
@@ -186,6 +188,8 @@ fn highlight_rules_show_undo_and_save() {
 fn bars_scales_icons_save_and_read_back() {
     let mut wb = data_book();
     let plain = |spec| CfRuleDef {
+        num_fmt: None,
+        border: None,
         spec,
         format: CfFormat::default(),
         stop_if_true: false,
@@ -405,4 +409,33 @@ fn moving_a_shown_rule_skips_rules_not_shown() {
     let four = wb.cf_rules(0, sel)[1].index;
     wb.move_cf_rule_within(0, four, false, sel).unwrap();
     assert_eq!(order(&wb), ["3", "2", "1", "4"]);
+}
+
+#[test]
+fn text_equal_to_number_formats_and_borders() {
+    let mut wb = data_book();
+    let mut def = rule(CfSpec::Text {
+        op: CfTextOp::Equals,
+        text: "Ani".into(),
+    });
+    def.num_fmt = Some("0.00%".into());
+    def.border = Some(sheets_engine::outline_border(0xC00000));
+    wb.add_cf_rule(0, "B1:B10", &def).unwrap();
+    // "Ani" (B1, B4) gets the fill; "Budi" doesn't.
+    assert!(wb.conditional(0, 0, 1).and_then(|c| c.style.clone()).is_some());
+    assert!(wb.conditional(0, 1, 1).is_none_or(|c| c.style.is_none()));
+    let rules = wb.cf_rules(0, None);
+    assert_eq!(rules[0].def.as_ref(), Some(&def));
+
+    let path = scratch("text_equal_numfmt_border.xlsx");
+    wb.save_as(&path).unwrap();
+    check_cf(&path);
+    // Excel has no "equal to" text rule: it's saved as the formula Excel
+    // uses for one (`B1="Ani"`), with its number format and borders.
+    let mut back = Workbook::open(&path).unwrap();
+    let rules = back.cf_rules(0, None);
+    let read = rules[0].def.clone().unwrap();
+    assert_eq!(read.num_fmt, def.num_fmt);
+    assert_eq!(read.border, def.border);
+    assert!(back.conditional(0, 3, 1).and_then(|c| c.style.clone()).is_some());
 }

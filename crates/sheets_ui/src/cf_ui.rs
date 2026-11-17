@@ -110,6 +110,10 @@ pub(crate) struct CfDialog {
     icons_only: bool,
     format: CfFormat,
     stop: bool,
+    /// The rule's number format (Format Cells' Number tab), typed.
+    num_fmt: Entity<InputState>,
+    /// The borders the rule draws (kept from the file, or an outline).
+    border: Option<sheets_engine::CfBorder>,
     range: Entity<InputState>,
     value: Entity<InputState>,
     value2: Entity<InputState>,
@@ -182,7 +186,8 @@ impl SheetsView {
         let text = mk(window, cx, "", t("text to look for"));
         let rank = mk(window, cx, "10", "");
         let formula = mk(window, cx, "", t("e.g. =$B2>100"));
-        let subs = [&range, &value, &value2, &text, &rank, &formula]
+        let num_fmt = mk(window, cx, "", t("e.g. 0.00% (none: the cell's own)"));
+        let subs = [&range, &value, &value2, &text, &rank, &formula, &num_fmt]
             .into_iter()
             .map(|e| {
                 cx.subscribe_in(e, window, |this, _, ev: &InputEvent, w, cx| match ev {
@@ -217,6 +222,8 @@ impl SheetsView {
             icons_only: false,
             format: CfFormat::PRESETS[0].1,
             stop: false,
+            num_fmt,
+            border: None,
             range,
             value,
             value2,
@@ -257,9 +264,11 @@ impl SheetsView {
         d.edit = Some(index);
         d.format = def.format;
         d.stop = def.stop_if_true;
+        d.border = def.border.clone();
         let set = |e: &Entity<InputState>, v: &str, window: &mut Window, cx: &mut Context<Self>| {
             e.update(cx, |i, cx| i.set_value(v.to_owned(), window, cx));
         };
+        set(&d.num_fmt, def.num_fmt.as_deref().unwrap_or(""), window, cx);
         match &def.spec {
             CfSpec::CellValue { op, value, value2 } => {
                 d.kind = Kind::CellValue;
@@ -394,6 +403,8 @@ impl SheetsView {
                 CfFormat::default()
             },
             stop_if_true: d.stop && d.kind.has_format(),
+            num_fmt: d.kind.has_format().then(|| d.num_fmt.read(cx).value().trim().to_owned()).filter(|c| !c.is_empty()),
+            border: d.border.clone().filter(|_| d.kind.has_format()),
             spec,
         });
         let res = def.and_then(|def| {
@@ -436,6 +447,8 @@ impl SheetsView {
             spec,
             format: CfFormat::default(),
             stop_if_true: false,
+            num_fmt: None,
+            border: None,
         };
         let res = self.table.update(cx, |table, cx| {
             let r = table.delegate_mut().book.add_cf_rule(sheet, &range, &def);
@@ -1012,6 +1025,23 @@ impl SheetsView {
                         |f, v| f.strike = v,
                     )),
             )
+            .child(row(t("Number format"), Input::new(&d.num_fmt).small().into_any_element(), cx))
+            .child({
+                let bv = view.clone();
+                let color = current.font.unwrap_or(0x000000);
+                Checkbox::new("cf-border")
+                    .label(t("Border (outline)"))
+                    .checked(d.border.is_some())
+                    .on_click(move |on, _, cx| {
+                        let on = *on;
+                        let _ = bv.update(cx, |this, cx| {
+                            if let Some(d) = this.cf_dialog.as_mut() {
+                                d.border = on.then(|| sheets_engine::outline_border(color));
+                            }
+                            cx.notify();
+                        });
+                    })
+            })
             .child(
                 Checkbox::new("cf-stop")
                     .label(t("Stop if true (rules below don't apply to these cells)"))

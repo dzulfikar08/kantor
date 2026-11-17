@@ -230,6 +230,8 @@ fn a_copy_has_the_sheets_cells_formats_notes_and_rules() {
     wb.set_validation(0, &[CellRange::from_corners((5, 0), (9, 0))], list_rule())
         .unwrap();
     let cf = sheets_engine::CfRuleDef {
+        num_fmt: None,
+        border: None,
         spec: sheets_engine::CfSpec::CellValue {
             op: sheets_engine::CfCompare::GreaterThan,
             value: "7".into(),

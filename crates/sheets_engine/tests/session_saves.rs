@@ -74,6 +74,8 @@ fn an_edit_saved_then_undone_is_undone_in_the_next_save() {
         0,
         "B2:B6",
         &CfRuleDef {
+            num_fmt: None,
+            border: None,
             spec: CfSpec::CellValue {
                 op: CfCompare::GreaterThan,
                 value: "20".into(),

@@ -1589,6 +1589,8 @@ mod invalidation {
 
     fn rule(spec: CfSpec) -> CfRuleDef {
         CfRuleDef {
+            num_fmt: None,
+            border: None,
             spec,
             format: CfFormat {
                 fill: Some(0xFF_C7_CE),

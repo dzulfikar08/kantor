@@ -23,6 +23,9 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   these filters from files can now be changed. Custom Sort sorts by cell colour, font colour or icon
   (on top or on bottom) and by Excel's custom lists of days and months, and Reapply sorts by them
   again, as Excel does.
+- Sheets: conditional formatting rules can set a number format and an outline border, rules with
+  number formats or borders from a file can be edited (the borders are kept), and "Text that is
+  equal to" joins the specific-text rules.
 - Sheets: workbooks with macros (`.xlsm`) keep their macros when saved, as `.xlsm`. Kantor doesn't
   run them and says so when the workbook opens. Save As `.xlsx` warns, as Excel does, that a
   macro-free workbook can't hold them, and offers to save as `.xlsm` instead. A workbook saved as

@@ -16,7 +16,9 @@ use ironcalc_base::cf_types::{
     CfRule, CfRuleInput, Cfvo, ColorScaleThreshold, IconThreshold, PeriodType, TextOperator,
     ValueOperator, icon_set_icons,
 };
-use ironcalc_base::types::{Color, Dxf, DxfFont, Fill};
+use ironcalc_base::types::{
+    Border, BorderItem, BorderStyle, Color, Dxf, DxfFont, Fill, NumFmt,
+};
 
 use crate::cond_format::parse_sqref;
 use crate::format::{Rgb, parse_rgb};
@@ -98,14 +100,17 @@ pub enum CfTextOp {
     DoesNotContain,
     BeginsWith,
     EndsWith,
+    /// The whole text (any case).
+    Equals,
 }
 
 impl CfTextOp {
-    pub const ALL: [CfTextOp; 4] = [
+    pub const ALL: [CfTextOp; 5] = [
         CfTextOp::Contains,
         CfTextOp::DoesNotContain,
         CfTextOp::BeginsWith,
         CfTextOp::EndsWith,
+        CfTextOp::Equals,
     ];
 
     pub fn label(self) -> &'static str {
@@ -114,6 +119,7 @@ impl CfTextOp {
             CfTextOp::DoesNotContain => "not containing",
             CfTextOp::BeginsWith => "beginning with",
             CfTextOp::EndsWith => "ending with",
+            CfTextOp::Equals => "equal to",
         }
     }
 
@@ -123,6 +129,7 @@ impl CfTextOp {
             CfTextOp::DoesNotContain => TextOperator::DoesNotContain,
             CfTextOp::BeginsWith => TextOperator::BeginsWith,
             CfTextOp::EndsWith => TextOperator::EndsWith,
+            CfTextOp::Equals => TextOperator::Equals,
         }
     }
 }
@@ -408,6 +415,29 @@ pub struct CfRuleDef {
     pub spec: CfSpec,
     pub format: CfFormat,
     pub stop_if_true: bool,
+    /// The number format the rule shows its cells with (`0.00%`).
+    pub num_fmt: Option<String>,
+    /// The borders it draws, as the file (or Format Cells) had them.
+    pub border: Option<Border>,
+}
+
+/// A rule's border all round (Format Cells' Outline): thin, `color`.
+pub fn outline_border(color: Rgb) -> Border {
+    let side = || {
+        Some(BorderItem {
+            style: BorderStyle::Thin,
+            color: Color::Rgb(format!("#{:06X}", color & 0xFF_FFFF)),
+        })
+    };
+    Border {
+        diagonal_up: false,
+        diagonal_down: false,
+        left: side(),
+        right: side(),
+        top: side(),
+        bottom: side(),
+        diagonal: None,
+    }
 }
 
 /// A rule of a sheet, as Manage Rules lists it.
@@ -451,8 +481,17 @@ fn shown_operand(f: &str) -> String {
     format!("={t}")
 }
 
-fn input(def: &CfRuleDef) -> Result<CfRuleInput> {
-    let format = def.format.dxf();
+fn input(def: &CfRuleDef, num_fmt_id: &dyn Fn(&str) -> i32) -> Result<CfRuleInput> {
+    let mut format = def.format.dxf();
+    format.num_fmt = def
+        .num_fmt
+        .as_ref()
+        .filter(|c| !c.trim().is_empty())
+        .map(|code| NumFmt {
+            num_fmt_id: num_fmt_id(code),
+            format_code: code.clone(),
+        });
+    format.border = def.border.clone();
     let stop_if_true = def.stop_if_true;
     Ok(match &def.spec {
         CfSpec::CellValue { op, value, value2 } => {
@@ -620,11 +659,15 @@ fn describe(
     let format = dxf
         .map(|d| CfFormat::from_dxf(d, model))
         .unwrap_or_default();
+    let num_fmt = dxf.and_then(|d| d.num_fmt.as_ref()).map(|n| n.format_code.clone());
+    let border = dxf.and_then(|d| d.border.clone());
     let def = |spec: CfSpec, stop: bool| {
         Some(CfRuleDef {
             spec,
             format,
             stop_if_true: stop,
+            num_fmt: num_fmt.clone(),
+            border: border.clone(),
         })
     };
     match rule {
@@ -659,7 +702,7 @@ fn describe(
                 TextOperator::DoesNotContain => Some(CfTextOp::DoesNotContain),
                 TextOperator::BeginsWith => Some(CfTextOp::BeginsWith),
                 TextOperator::EndsWith => Some(CfTextOp::EndsWith),
-                TextOperator::Equals => None,
+                TextOperator::Equals => Some(CfTextOp::Equals),
             };
             match op {
                 Some(op) => (
@@ -763,6 +806,8 @@ fn describe(
             let c = parse_rgb(&positive_color.to_rgb(&model.workbook.theme)).unwrap_or(0x638EC6);
             (
                 Some(CfRuleDef {
+                    num_fmt: None,
+                    border: None,
                     spec: CfSpec::DataBar {
                         color: c,
                         gradient: *is_gradient,
@@ -781,6 +826,8 @@ fn describe(
             let n = thresholds.len();
             (
                 (colors.len() == n && (2..=3).contains(&n)).then(|| CfRuleDef {
+                    num_fmt: None,
+                    border: None,
                     spec: CfSpec::ColorScale { colors },
                     format: CfFormat::default(),
                     stop_if_true: false,
@@ -872,6 +919,29 @@ impl Workbook {
             .collect()
     }
 
+    /// The id a rule's number format `code` goes by: the one the workbook
+    /// already gives it, else a new one past every id in use.
+    fn dxf_num_fmt_id(&self, code: &str) -> i32 {
+        let styles = &self.model.get_model().workbook.styles;
+        let dxf_fmts = styles.dxfs.iter().filter_map(|d| d.num_fmt.as_ref());
+        if let Some(n) = styles
+            .num_fmts
+            .iter()
+            .chain(dxf_fmts.clone())
+            .find(|n| n.format_code == code)
+        {
+            return n.num_fmt_id;
+        }
+        styles
+            .num_fmts
+            .iter()
+            .chain(dxf_fmts)
+            .map(|n| n.num_fmt_id + 1)
+            .max()
+            .unwrap_or(0)
+            .max(164)
+    }
+
     fn check_sqref(&self, range: &str) -> Result<String> {
         let ranges = parse_sqref(&range.replace(',', " ").replace('$', "").to_uppercase());
         if ranges.is_empty() {
@@ -891,7 +961,7 @@ impl Workbook {
     /// as Excel does. One undo step.
     pub fn add_cf_rule(&mut self, sheet: u32, range: &str, rule: &CfRuleDef) -> Result<()> {
         let range = self.check_sqref(range)?;
-        let input = input(rule)?;
+        let input = input(rule, &|code| self.dxf_num_fmt_id(code))?;
         self.batch(|wb| {
             wb.model
                 .add_conditional_formatting(sheet, &range, input)
@@ -912,7 +982,7 @@ impl Workbook {
         rule: &CfRuleDef,
     ) -> Result<()> {
         let range = self.check_sqref(range)?;
-        let input = input(rule)?;
+        let input = input(rule, &|code| self.dxf_num_fmt_id(code))?;
         self.batch(|wb| {
             wb.model
                 .update_conditional_formatting(sheet, index as u32, &range, input)

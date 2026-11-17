@@ -60,9 +60,11 @@ mod xls_drawing;
 mod xls_formula;
 mod xls_ftab;
 
+/// The borders a conditional formatting rule draws.
+pub use ironcalc_base::types::Border as CfBorder;
 pub use cf_edit::{
     COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,
-    DATA_BAR_COLORS, ICON_SETS, sqref_of,
+    DATA_BAR_COLORS, ICON_SETS, outline_border, sqref_of,
 };
 pub use chart_edit::{ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor};
 pub use chart_options::{AxisOptions, DataLabels, DisplayUnits, LabelPos};
