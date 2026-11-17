@@ -65,6 +65,14 @@ pub fn change_layout(
             let t = tmpl(id);
             let subs = model.subs(id);
             let mut paras = lvl0(id);
+            // Text beside a picture starts at the left (vList4's and
+            // bList2's `parTxLTRAlign`).
+            if matches!(
+                to,
+                Family::VerticalPictureList | Family::BendingPictureAccentList
+            ) {
+                paras = paras.replace("algn=\"ctr\"", "algn=\"l\"");
+            }
             if !to.sub_boxes() {
                 for s in &subs {
                     // Bullets in shapes narrower at their edges, centred.
@@ -287,6 +295,9 @@ struct DataModel<'a> {
     pres: HashMap<String, String>,
     /// Presentation items that are pictures (not templates for items).
     pics: std::collections::HashSet<String>,
+    /// Presentation items that are sub-item boxes (templates for items
+    /// only when nothing else shows them).
+    subs: std::collections::HashSet<String>,
 }
 
 impl<'a> DataModel<'a> {
@@ -312,6 +323,7 @@ impl<'a> DataModel<'a> {
         let mut items: Vec<String> = Vec::new();
         let mut pres = HashMap::new();
         let mut pics = std::collections::HashSet::new();
+        let mut subs = std::collections::HashSet::new();
         for p in doc.descendants().filter(|n| is(*n, NS_DGM, "pt")) {
             let Some(id) = p.attribute("modelId") else {
                 continue;
@@ -329,6 +341,12 @@ impl<'a> DataModel<'a> {
                         super::is_picture_name(&n) || grid && n == "rect1"
                     }) {
                         pics.insert(id.to_owned());
+                    }
+                    if set
+                        .and_then(|s| s.attribute("presName"))
+                        .is_some_and(|n| n.to_ascii_lowercase().contains("child"))
+                    {
+                        subs.insert(id.to_owned());
                     }
                 }
                 _ => {}
@@ -384,6 +402,7 @@ impl<'a> DataModel<'a> {
             par,
             pres,
             pics,
+            subs,
         })
     }
 
@@ -453,7 +472,10 @@ impl<'a> DataModel<'a> {
             return centred(&t.paras);
         }
         let ppr = if lvl == 0 {
-            centred_ppr(&t.ppr)
+            // A bulleted template (a sub-item box) gives no bullets to
+            // the item's own text.
+            let bulleted = t.ppr.contains("buChar") || t.ppr.contains("buAutoNum");
+            centred_ppr(if bulleted { "" } else { &t.ppr })
         } else {
             let algn = if lvl == 2 { "ctr" } else { "l" };
             format!(
@@ -681,7 +703,18 @@ impl OldDrawing {
         }
         // Picture placeholders show no item's text: never templates.
         let shapes = || self.shapes.iter().filter(|s| !m.pics.contains(&s.1));
-        best(shapes().filter(|s| target(&s.1) == id))
+        // Nor sub-item boxes, unless nothing else showed the item (their
+        // text is bullets).
+        // A filled shape first: the item's own, else another item's.
+        let mine = || shapes().filter(|s| target(&s.1) == id);
+        let not_sub = |s: &&(String, String, u8)| !m.subs.contains(&s.1);
+        let filled = |s: &&(String, String, u8)| s.2 >= 2;
+        best(mine().filter(not_sub).filter(filled))
+            .or_else(|| best(shapes().filter(not_sub).filter(filled)))
+            .or_else(|| best(mine().filter(filled)))
+            .or_else(|| best(shapes().filter(filled)))
+            .or_else(|| best(mine().filter(not_sub)))
+            .or_else(|| best(mine()))
             .or_else(|| best(shapes()))
             .map(|s| s.0.clone())
     }
