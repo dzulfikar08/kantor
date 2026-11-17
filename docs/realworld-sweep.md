@@ -3,7 +3,7 @@
 424 public Office files, each opened, saved, reopened and exported to PDF by
 Kantor's engines, with the saved files checked by Microsoft's Open XML SDK.
 First run: 2026-11-15; second, third and fourth runs on main: 2026-11-16;
-fifth run, before v0.11.0: 2026-11-17.
+fifth run, before v0.11.0, and sixth, before v0.12.0: 2026-11-17.
 
 ## What was swept
 
@@ -329,6 +329,69 @@ deletes the file's own timeline.
 
 Results: `~/.cache/realworld-out/pre0110-2026-11-17/`.
 
+## Sixth run, before v0.12.0 (2026-11-17)
+
+Rerun of all 424 files on main at `13d5337` (after 3-D references, macros
+kept in `.xlsm`, filter and sort by colour and icon, the icon set and data
+bar editor, Page Break Preview, table formats, the shared WMF/EMF/PICT
+renderer used by every importer and by PDF export, `.doc` groups, revisions
+and nested tables, `.xls` shapes, charts, Excel 5/95 formatting and pattern
+fills, `.ods` freehand shapes, groups and form controls, `.xlsb`
+formatting, drawings and names, computed Docs fields, SmartArt Change
+Layout and 3-D charts drawn in 3-D had merged), release build, compared file
+by file with the fifth run.
+
+| | fifth run | main, `13d5337` |
+|---|---:|---:|
+| crash, panic or timeout | 0 | 0 |
+| refused to open | 6 | 6 |
+| saved file Office would repair | 0 | 0 |
+| content changed by a save | 0 | 0 |
+| page count changed by a save (Docs, Slides) | 0 of 199 | 0 of 199 |
+| ok | 418 | 418 |
+| slowest file | 4.4 s | 4.2 s |
+| all files' probe time added up | 64 s | 64 s |
+
+No regressions: every file has the same kind, error and counts of cells,
+formulas, paragraphs, slides and shapes as in the fifth run, and no new Open
+XML SDK error. The `.xlsb` refused by calamine is still refused (calamine
+can't read its workbook part). What changed:
+
+- **Import notes went away** for 12 files: 7 Excel 5/95 `.xls` no longer say
+  "formatting not imported", 4 `.ppt` no longer show an EMF/WMF picture as a
+  box, and the `.ods` with a polygon (tdf137216) imports it now. The 3
+  `.xlsm` with a VBA project say "macros are kept but not run".
+- **Printed pages of 5 workbooks changed**, each because more of the file is
+  read now: 3 Excel 5/95 `.xls` print with their own fonts and row heights
+  (t_giat 72 → 76 pages, LibreOffice 76; t_akun 74 → 76, LibreOffice 74,
+  which lays the columns out wider than Excel's default width; t_output
+  2088 → 2184), and 2 `.xlsb` print their formatting and pictures
+  (picture.xlsb 1 → 2 pages, LibreOffice 2; 51519.xlsb 1 → 2, LibreOffice 6).
+- **Timing:** no file was more than twice as slow and over a second. Timed
+  alone (min of 5–15 runs, alternating with a probe built from the fifth
+  run's commit), the big workbooks took the same time (0.91–1.01×) and the
+  `.doc` files flagged as slower in the sweep were not. The 4 `.ppt` whose
+  EMF pictures are drawn now spend 15–30 ms more printing (each print draws
+  the picture), the only real cost of the metafile renderer seen here.
+  Pattern fills cost nothing measurable (the 9 MB `.xls`: 3.6 s → 3.3 s).
+
+The Office validation scenarios (`tools/fidelity/office_check.py`): 189
+saved files, 0 new Open XML SDK errors, all converted to PDF by LibreOffice.
+Two scenarios were added for markup v0.12 writes:
+`sheets_v012_features.xlsx` (3-D references, a colour filter, Top 10, sort by
+cell colour and a custom list, an Excel 2010 data bar with every setting, a
+custom icon set with No Cell Icon, rule number formats and borders, a
+"Text that is equal to" rule, a validation IME mode, Page Break Preview and
+a manual break, saved twice) and `macros_kept.xlsm` (a workbook with a VBA
+project edited and saved twice as `.xlsm`).
+
+Fixed in this run: a "Text that is equal to" rule is saved as the formula
+Excel uses for one (`B2="Plums"`, Excel has no such text rule), and opened
+again it was an ordinary formula rule; it is read back as "Text that is
+equal to" now (`cf_create::text_equal_to_number_formats_and_borders`).
+
+Results: `~/.cache/realworld-out/pre0120-2026-11-17/`.
+
 ## Left
 
 Refused (6):
@@ -337,5 +400,12 @@ Refused (6):
 - 2 `.docx` from docx4j's tests that aren't valid WordprocessingML.
 - 1 `.xlsb` that calamine can't read (an error, not a crash).
 
-One `.ods` (tdf137216) has a polygon shape that isn't imported (an import
-note says so).
+Import notes left (content Kantor doesn't bring in): formulas kept as their
+values in 6 `.xls`/`.ods` files (64 formulas; the 11 in POI's
+55906-MultiSheetRefs.xls are 3-D references such as
+`SUM(Sheet1:Sheet3!A1:B2)`, which Sheets works out since v0.12, but the
+formula text calamine gives for them doesn't give the file's results, so
+they stay values), 2 controls in SimpleWithAutofilter.xls, the
+formatting of one damaged `.xls` (cfb_dir_short_chunk_panic), and 13 `.ods`
+sheet names Excel doesn't allow (renamed). The `.ods` polygon of tdf137216
+imports since v0.12.
