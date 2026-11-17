@@ -358,6 +358,6 @@ mod tests {
         // A shading for the gradient, a tiling pattern for the hatch: no image.
         assert!(text.contains("/ShadingType"), "no gradient shading");
         assert!(text.contains("/PatternType 1"), "no tiling pattern");
-        assert!(!text.contains("/Subtype /Image"), "drawn as a bitmap");
+        assert!(!text.contains("/Subtype/Image"), "drawn as a bitmap");
     }
 }
