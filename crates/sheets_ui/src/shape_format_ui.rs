@@ -421,7 +421,7 @@ impl SheetsView {
             .child(choice(
                 "shape-no-fill",
                 tk("No fill"),
-                look.fill.is_none(),
+                look.fill.is_none() && !look.picture,
                 act(|x| fmt::set_fill(x, ShapeFill::None)),
             ))
             .child(choice(

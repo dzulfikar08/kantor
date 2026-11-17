@@ -277,7 +277,20 @@ pub fn shape_items_on(
         map: &theme.map,
         ph: None,
     };
-    let ids: Vec<&str> = media.iter().map(|(id, _, _)| id.as_str()).collect();
+    // Part names a picture cache can key on: the id, the bytes' hash and
+    // the extension (which says how to decode it).
+    let names: Vec<(String, String)> = media
+        .iter()
+        .map(|(id, ext, data)| {
+            let mut h = DefaultHasher::new();
+            data.hash(&mut h);
+            (id.clone(), format!("{id}-{:x}.{ext}", h.finish()))
+        })
+        .collect();
+    let ids: Vec<(&str, &str)> = names
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
     let Some(mut shape) =
         slides_engine::sheet_shape::parse_with_media(&format!("<r>{xml}</r>"), colors, &ids)
     else {
@@ -307,10 +320,8 @@ pub fn shape_items_on(
     };
     let mut out = Vec::new();
     let pictures = |part: &str| {
-        media
-            .iter()
-            .find(|(id, _, _)| id == part)
-            .map(|(_, _, data)| Arc::new(data.to_vec()))
+        let i = names.iter().position(|(_, n)| n == part)?;
+        Some(Arc::new(media[i].2.to_vec()))
     };
     builder.free_shape(engine, &shape, &xfrm, &text, &pictures, &mut out);
     out

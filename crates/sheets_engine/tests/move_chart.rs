@@ -372,10 +372,17 @@ fn linked_book() -> PathBuf {
         let mut text = String::from_utf8_lossy(&b).into_owned();
         match name.as_str() {
             "xl/charts/chart1.xml" => {
-                text = text.replace(
-                    "</c:chartSpace>",
-                    &format!("<c:externalData xmlns:r=\"{R}\" r:id=\"rId1\"><c:autoUpdate val=\"0\"/></c:externalData><c:userShapes xmlns:r=\"{R}\" r:id=\"rId2\"/></c:chartSpace>"),
-                );
+                // CT_ChartSpace: externalData before printSettings,
+                // userShapes after it.
+                text = text
+                    .replace(
+                        "<c:printSettings>",
+                        &format!("<c:externalData xmlns:r=\"{R}\" r:id=\"rId1\"><c:autoUpdate val=\"0\"/></c:externalData><c:printSettings>"),
+                    )
+                    .replace(
+                        "</c:chartSpace>",
+                        &format!("<c:userShapes xmlns:r=\"{R}\" r:id=\"rId2\"/></c:chartSpace>"),
+                    );
             }
             "[Content_Types].xml" => {
                 text = text.replace(

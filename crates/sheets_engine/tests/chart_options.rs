@@ -296,3 +296,83 @@ fn new_chart_labels_and_axis_read_back() {
     assert_eq!(got.y_axis.units, DisplayUnits::Hundreds);
     assert!(got.labels[0].category);
 }
+
+#[test]
+fn label_text_minor_units_date_axes_combo_and_3d_save() {
+    use sheets_engine::{AxisType, LabelFont, SeriesType, TimeUnit};
+    let mut wb = Workbook::open(corpus("20_charts.xlsx")).unwrap();
+    let key = chart_key(&wb, "Column");
+    let mut spec = wb.chart_info(key).unwrap().spec;
+    spec.labels = vec![DataLabels {
+        value: true,
+        font: LabelFont {
+            size: Some(12.0),
+            bold: Some(true),
+            italic: Some(false),
+            color: Some([0xC0, 0, 0]),
+        },
+        ..DataLabels::default()
+    }];
+    spec.y_axis.minor = Some(5.0);
+    spec.x_axis.axis_type = AxisType::Date;
+    spec.x_axis.base_unit = Some(TimeUnit::Months);
+    wb.set_chart(key, spec.clone()).unwrap();
+    let info = wb.chart_info(key).unwrap();
+    assert_eq!(info.spec.labels[0].font, spec.labels[0].font);
+    assert_eq!(info.spec.y_axis.minor, Some(5.0));
+    assert_eq!(info.spec.x_axis.base_unit, Some(TimeUnit::Months));
+    // A combo with a secondary axis, then (another chart) 3-D.
+    let mut combo = info.spec.clone();
+    combo.kind = ChartType::Combo;
+    combo.series_types = (0..info.series.len())
+        .map(|i| SeriesType {
+            kind: if i == 0 {
+                ChartType::Column
+            } else {
+                ChartType::Line
+            },
+            secondary: i > 0,
+        })
+        .collect();
+    wb.set_chart(key, combo).unwrap();
+    let line = chart_key(&wb, "Line");
+    let mut l = wb.chart_info(line).unwrap().spec;
+    l.three_d = true;
+    wb.set_chart(line, l).unwrap();
+    assert_eq!(wb.chart_info(line).unwrap().kind_label, "3-D Line");
+    // A chart made in Kantor as a combo and as a 3-D pie.
+    let made = wb
+        .insert_chart(
+            0,
+            sheets_engine::CellRange::from_corners((0, 0), (4, 2)),
+            ChartType::Column,
+        )
+        .unwrap();
+    let mut m = wb.chart_spec(made).unwrap();
+    m.kind = ChartType::Combo;
+    m.series_types = vec![
+        SeriesType::default(),
+        SeriesType {
+            kind: ChartType::Area,
+            secondary: true,
+        },
+    ];
+    wb.set_chart(made, m.clone()).unwrap();
+    assert_eq!(wb.chart_info(made).unwrap().kind_label, "Combo");
+    m.kind = ChartType::Pie;
+    m.three_d = true;
+    wb.set_chart(made, m).unwrap();
+    assert_eq!(wb.chart_info(made).unwrap().kind_label, "3-D Pie");
+    let path = scratch("label-minor-date-combo-3d.xlsx");
+    wb.save_as(&path).unwrap();
+    assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
+    assert!(sheets_engine::package_problems(&std::fs::read(&path).unwrap()).is_empty());
+    let back = Workbook::open(&path).unwrap();
+    assert!(
+        back.drawings(0)
+            .iter()
+            .filter_map(|d| back.chart_info(d.key))
+            .any(|i| i.spec.kind == ChartType::Combo
+                && i.spec.series_types.iter().any(|t| t.secondary))
+    );
+}

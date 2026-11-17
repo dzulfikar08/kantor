@@ -30,18 +30,18 @@ pub fn parse(xml: &str, colors: ColorCtx) -> Option<Shape> {
 }
 
 /// [`parse`], with pictures: picture fills and a group's pictures whose
-/// `r:embed` is one of `ids` get that id as their part name (the caller
-/// has the bytes).
-pub fn parse_with_media(xml: &str, colors: ColorCtx, ids: &[&str]) -> Option<Shape> {
+/// `r:embed` is one of `ids` (`(id, part name)`) get that part name (the
+/// caller has the bytes).
+pub fn parse_with_media(xml: &str, colors: ColorCtx, ids: &[(&str, &str)]) -> Option<Shape> {
     let doc = Document::parse(xml).ok()?;
     let el = doc.root_element().first_element_child()?;
     let rels: Vec<crate::xml::Rel> = ids
         .iter()
-        .map(|id| crate::xml::Rel {
+        .map(|(id, part)| crate::xml::Rel {
             id: (*id).to_owned(),
             ty: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
                 .to_owned(),
-            target: (*id).to_owned(),
+            target: (*part).to_owned(),
             external: false,
         })
         .collect();
@@ -210,14 +210,14 @@ mod tests {
             ph: None,
         };
         let xml = r#"<r xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><xdr:sp macro="" textlink="$A$1"><xdr:nvSpPr><xdr:cNvPr id="2" name="S"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:blipFill><a:blip r:embed="rId7"/><a:stretch><a:fillRect/></a:stretch></a:blipFill><a:effectLst><a:outerShdw blurRad="50800" dist="38100" dir="2700000" algn="tl"><a:srgbClr val="000000"><a:alpha val="40000"/></a:srgbClr></a:outerShdw></a:effectLst><a:sp3d extrusionH="76200"><a:bevelT w="63500" h="25400"/></a:sp3d></xdr:spPr><xdr:txBody><a:bodyPr/><a:lstStyle/><a:p><a:fld id="{1}" type="TxLink"><a:rPr lang="en-US"/><a:t>42</a:t></a:fld></a:p><a:p><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main"><mc:Choice Requires="a14"><a14:m><m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:oMath><m:f><m:num><m:r><m:t>a</m:t></m:r></m:num><m:den><m:r><m:t>b+c</m:t></m:r></m:den></m:f></m:oMath></m:oMathPara></a14:m></mc:Choice><mc:Fallback><a:r><a:rPr lang="en-US"/><a:t>a/(b+c)</a:t></a:r></mc:Fallback></mc:AlternateContent></a:p></xdr:txBody></xdr:sp></r>"#;
-        let s = parse_with_media(xml, cx, &["rId7"]).unwrap();
+        let s = parse_with_media(xml, cx, &[("rId7", "rId7.png")]).unwrap();
         let fx = &s.look.effects;
         let sh = fx.shadow.unwrap();
         assert_eq!((sh.dist, sh.dir, sh.alpha), (38100, 2_700_000, 102));
         assert_eq!(fx.bevel, Some(63500));
         assert_eq!(fx.extrusion, Some((76200, None)));
         match &s.look.fill_as_read {
-            Some(crate::fill::Fill::Picture(b)) => assert_eq!(b.part.as_deref(), Some("rId7")),
+            Some(crate::fill::Fill::Picture(b)) => assert_eq!(b.part.as_deref(), Some("rId7.png")),
             f => panic!("{f:?}"),
         }
         let t = s.text.as_ref().unwrap();
