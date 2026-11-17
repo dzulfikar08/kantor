@@ -46,8 +46,7 @@ pub(crate) fn confirm_macro_free(
         return;
     }
     let title: SharedString =
-        t("The following features cannot be saved in macro-free workbooks: VB project")
-            .into();
+        t("The following features cannot be saved in macro-free workbooks: VB project").into();
     let detail: SharedString = t(
         "An .xlsx workbook can't hold macros: saving as .xlsx leaves them out. To keep them, save it as a macro-enabled workbook (.xlsm).")
     .into();
@@ -71,7 +70,9 @@ pub(crate) fn confirm_macro_free(
                 let answer = answer.clone();
                 move |_, window, cx| {
                     let answer = answer.clone();
-                    window.defer(cx, move |window, cx| answer(MacroChoice::Cancel, window, cx));
+                    window.defer(cx, move |window, cx| {
+                        answer(MacroChoice::Cancel, window, cx)
+                    });
                     true
                 }
             })

@@ -60,8 +60,6 @@ mod xls_drawing;
 mod xls_formula;
 mod xls_ftab;
 
-/// The borders a conditional formatting rule draws.
-pub use ironcalc_base::types::Border as CfBorder;
 pub use cf_edit::{
     COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,
     DATA_BAR_COLORS, ICON_SETS, outline_border, sqref_of,
@@ -71,6 +69,8 @@ pub use chart_options::{AxisOptions, DataLabels, DisplayUnits, LabelPos};
 pub use chart_sheet::sheet_name_problem;
 pub use drawing::Tab;
 pub use import::{ImportNote, SourceFormat};
+/// The borders a conditional formatting rule draws.
+pub use ironcalc_base::types::Border as CfBorder;
 pub use move_chart::{ChartPlace, MovedChart};
 pub use notes::{CellNote, NoteBox, NoteRun, SheetNotes};
 pub use preserve::package_problems;
@@ -255,6 +255,7 @@ pub use filter::{
     ColumnFilter, ColumnKind, Condition, DateGroup, FilterInfo, FilterKind, FilterOp, FilterScope,
     FilterValue, SortState, checked_values, date_serial, ymd,
 };
+pub use filter_by::{ColumnLooks, SortLevel, SortOn};
 pub use format::{
     AlignDetail, BorderLine, BorderPreset, Borders, CellStyle, HAlign, LineStyle, NumberFormat,
     Rgb, StyleChange, VAlign, ValueKind,
@@ -282,7 +283,6 @@ pub use print::{
     PrintColumns, PrintComments, PrintOptions, SheetPrint, join_sections, split_sections,
 };
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
-pub use filter_by::{ColumnLooks, SortLevel, SortOn};
 pub use sort::SortKey;
 pub use table::{Elem as TableElementFormat, FillPattern, TableCellLook, TableInfo};
 pub use table_style_edit::{

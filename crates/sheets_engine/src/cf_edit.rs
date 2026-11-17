@@ -16,9 +16,7 @@ use ironcalc_base::cf_types::{
     CfRule, CfRuleInput, Cfvo, ColorScaleThreshold, IconThreshold, PeriodType, TextOperator,
     ValueOperator, icon_set_icons,
 };
-use ironcalc_base::types::{
-    Border, BorderItem, BorderStyle, Color, Dxf, DxfFont, Fill, NumFmt,
-};
+use ironcalc_base::types::{Border, BorderItem, BorderStyle, Color, Dxf, DxfFont, Fill, NumFmt};
 
 use crate::cond_format::parse_sqref;
 use crate::format::{Rgb, parse_rgb};
@@ -659,7 +657,9 @@ fn describe(
     let format = dxf
         .map(|d| CfFormat::from_dxf(d, model))
         .unwrap_or_default();
-    let num_fmt = dxf.and_then(|d| d.num_fmt.as_ref()).map(|n| n.format_code.clone());
+    let num_fmt = dxf
+        .and_then(|d| d.num_fmt.as_ref())
+        .map(|n| n.format_code.clone());
     let border = dxf.and_then(|d| d.border.clone());
     let def = |spec: CfSpec, stop: bool| {
         Some(CfRuleDef {

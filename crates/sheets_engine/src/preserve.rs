@@ -1111,15 +1111,18 @@ fn with_macros(
 /// Put the VBA project `vba_part` of `orig` (linked by `rel`) into `pkg`,
 /// with the workbook's code name.
 fn add_vba(pkg: &mut Package, rel: &Rel, vba_part: &str, orig: &Original) -> Result<(), String> {
-    let data = orig.get(vba_part)?.ok_or("the VBA project part is missing")?;
+    let data = orig
+        .get(vba_part)?
+        .ok_or("the VBA project part is missing")?;
     // The workbook's code name, which the project's ThisWorkbook module goes by.
-    let code_name = orig
-        .text(&rel_source_workbook(orig)?)?
-        .and_then(|xml| {
-            let doc = Document::parse(&xml).ok()?;
-            let pr = doc.root_element().children().find(|c| is_main(*c, "workbookPr"))?;
-            pr.attribute("codeName").map(str::to_owned)
-        });
+    let code_name = orig.text(&rel_source_workbook(orig)?)?.and_then(|xml| {
+        let doc = Document::parse(&xml).ok()?;
+        let pr = doc
+            .root_element()
+            .children()
+            .find(|c| is_main(*c, "workbookPr"))?;
+        pr.attribute("codeName").map(str::to_owned)
+    });
 
     let root_rels = parse_rels(pkg.text("_rels/.rels")?.ok_or("no _rels/.rels")?)?;
     let wb = root_rels

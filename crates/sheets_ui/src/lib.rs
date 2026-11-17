@@ -2639,7 +2639,9 @@ impl SheetsView {
             // Excel's warning: a macro-free workbook leaves the macros out.
             let asks = macros_ui::drops_macros(&path)
                 && this
-                    .update(cx, |this, cx| this.table.read(cx).delegate().book.has_macros())
+                    .update(cx, |this, cx| {
+                        this.table.read(cx).delegate().book.has_macros()
+                    })
                     .unwrap_or(false);
             if asks {
                 let (tx, rx) = futures::channel::oneshot::channel();

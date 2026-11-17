@@ -7,9 +7,7 @@ mod pivot_check;
 use std::path::{Path, PathBuf};
 
 use pivot_check::parts;
-use sheets_engine::{
-    CellRange, FilterKind, FilterScope, SortLevel, SortOn, StyleChange, Workbook,
-};
+use sheets_engine::{CellRange, FilterKind, FilterScope, SortLevel, SortOn, StyleChange, Workbook};
 
 fn scratch(name: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("filter_by");
@@ -185,7 +183,9 @@ fn custom_list_sort_is_remembered() {
     let levels_now: Vec<String> = (1..=8).map(|r| wb.display_value(0, r, 2)).collect();
     assert_eq!(
         levels_now,
-        ["Low", "Low", "Low", "Medium", "Medium", "High", "High", "High"]
+        [
+            "Low", "Low", "Low", "Medium", "Medium", "High", "High", "High"
+        ]
     );
     let path = scratch("list.xlsx");
     wb.save_as(&path).unwrap();

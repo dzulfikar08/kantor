@@ -80,10 +80,17 @@ pub(crate) enum Test {
 pub enum SortOn {
     Values,
     /// Cells with the fill colour of a differential format first.
-    CellColor { dxf: u32 },
-    FontColor { dxf: u32 },
+    CellColor {
+        dxf: u32,
+    },
+    FontColor {
+        dxf: u32,
+    },
     /// Cells showing this icon first.
-    Icon { set: String, id: Option<u32> },
+    Icon {
+        set: String,
+        id: Option<u32>,
+    },
     /// By position in the list (Excel's custom lists: `Low,Medium,High`).
     List(Vec<String>),
 }
@@ -295,13 +302,7 @@ impl Workbook {
         }
     }
 
-    fn column_test_values(
-        &self,
-        sheet: u32,
-        area: CellRange,
-        col: u32,
-        kind: &FilterKind,
-    ) -> Test {
+    fn column_test_values(&self, sheet: u32, area: CellRange, col: u32, kind: &FilterKind) -> Test {
         let numbers = |wb: &Workbook| -> Vec<f64> {
             let model = wb.model.get_model();
             (area.top + 1..=area.bottom)
@@ -353,9 +354,7 @@ impl Workbook {
                 }
             }
             FilterKind::Dynamic(t) => Test::Date(t.clone(), crate::pivot_calc::today()),
-            FilterKind::Other(_) | FilterKind::Color { .. } | FilterKind::Icon { .. } => {
-                Test::Keep
-            }
+            FilterKind::Other(_) | FilterKind::Color { .. } | FilterKind::Icon { .. } => Test::Keep,
             other => Test::Plain(other.clone()),
         }
     }
@@ -399,8 +398,9 @@ impl Workbook {
             Test::AtMost(c) => number(self).is_some_and(|n| n <= *c),
             Test::Above(c) => number(self).is_some_and(|n| n > *c),
             Test::Below(c) => number(self).is_some_and(|n| n < *c),
-            Test::Date(t, today) => number(self)
-                .is_some_and(|n| crate::pivot_calc::date_matches(t, n, "", "", *today)),
+            Test::Date(t, today) => {
+                number(self).is_some_and(|n| crate::pivot_calc::date_matches(t, n, "", "", *today))
+            }
             Test::Fill(_) | Test::Font(_) | Test::Icon(_) | Test::Keep => visible,
             Test::None => false,
         }
@@ -408,12 +408,7 @@ impl Workbook {
 
     /// A row's sort key for `level` over cell `(row, col)`: the cell's value,
     /// or its rank (0 first) for colours, icons and lists.
-    pub(crate) fn sort_value(
-        &mut self,
-        level: &ResolvedLevel,
-        sheet: u32,
-        row: u32,
-    ) -> CellValue {
+    pub(crate) fn sort_value(&mut self, level: &ResolvedLevel, sheet: u32, row: u32) -> CellValue {
         let col = level.col;
         match &level.on {
             Resolved::Values => cell_value(self.model.get_model(), sheet, row, col),
@@ -539,7 +534,10 @@ pub(crate) fn parse_level(c: roxmltree::Node) -> Option<SortLevel> {
         (Some("cellColor"), _) => SortOn::CellColor { dxf: dxf()? },
         (Some("fontColor"), _) => SortOn::FontColor { dxf: dxf()? },
         (Some("icon"), _) => SortOn::Icon {
-            set: c.attribute("iconSet").unwrap_or("3TrafficLights1").to_owned(),
+            set: c
+                .attribute("iconSet")
+                .unwrap_or("3TrafficLights1")
+                .to_owned(),
             id: c.attribute("iconId").and_then(|v| v.parse().ok()),
         },
         (_, Some(list)) => SortOn::List(list.split(',').map(str::to_owned).collect()),

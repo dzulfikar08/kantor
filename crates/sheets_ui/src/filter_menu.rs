@@ -30,8 +30,8 @@ use kantor_ui::i18n::{self, t, t_dyn, tf};
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{
-    CellRange, ColumnKind, ColumnLooks, Rgb, SortLevel, SortOn, Condition, FilterKind, FilterOp, FilterScope, FilterValue, SortKey,
-    Workbook, column_name, date_serial,
+    CellRange, ColumnKind, ColumnLooks, Condition, FilterKind, FilterOp, FilterScope, FilterValue,
+    Rgb, SortKey, SortLevel, SortOn, Workbook, column_name, date_serial,
 };
 
 use crate::SheetsView;
@@ -304,7 +304,9 @@ impl Cond {
                 let cond = match k.as_str() {
                     "aboveAverage" => Cond::AboveAverage,
                     "belowAverage" => Cond::BelowAverage,
-                    k => *DATE_CONDS.iter().find(|c| matches!(c, Cond::Dyn(d) if *d == k))?,
+                    k => *DATE_CONDS
+                        .iter()
+                        .find(|c| matches!(c, Cond::Dyn(d) if *d == k))?,
                 };
                 return Some((cond, String::new(), String::new()));
             }
@@ -910,9 +912,9 @@ impl SheetsView {
                             set: set.clone(),
                             id: *id,
                         },
-                        PanelOn::List(i) => SortOn::List(
-                            CUSTOM_LISTS[*i].split(", ").map(str::to_owned).collect(),
-                        ),
+                        PanelOn::List(i) => {
+                            SortOn::List(CUSTOM_LISTS[*i].split(", ").map(str::to_owned).collect())
+                        }
                     },
                 })
                 .collect();
@@ -1308,9 +1310,11 @@ impl SheetsView {
                                  checked: bool,
                                  next: PanelOn| {
                         let v = v4.clone();
-                        m.item(PopupMenuItem::new(label).checked(checked).on_click(
-                            move |_, _, cx| set_on(&v, next.clone(), cx),
-                        ))
+                        m.item(
+                            PopupMenuItem::new(label)
+                                .checked(checked)
+                                .on_click(move |_, _, cx| set_on(&v, next.clone(), cx)),
+                        )
                     };
                     m = entry(
                         m,
@@ -1324,7 +1328,12 @@ impl SheetsView {
                             i18n::t("Cell Color").into(),
                             matches!(on, PanelOn::Look(LookPick::Fill(_))),
                             PanelOn::Look(LookPick::Fill(
-                                menu_looks.fills.iter().copied().find(Option::is_some).unwrap_or(*c),
+                                menu_looks
+                                    .fills
+                                    .iter()
+                                    .copied()
+                                    .find(Option::is_some)
+                                    .unwrap_or(*c),
                             )),
                         );
                     }
@@ -1334,7 +1343,12 @@ impl SheetsView {
                             i18n::t("Font Color").into(),
                             matches!(on, PanelOn::Look(LookPick::Font(_))),
                             PanelOn::Look(LookPick::Font(
-                                menu_looks.fonts.iter().copied().find(Option::is_some).unwrap_or(*c),
+                                menu_looks
+                                    .fonts
+                                    .iter()
+                                    .copied()
+                                    .find(Option::is_some)
+                                    .unwrap_or(*c),
                             )),
                         );
                     }
@@ -1347,12 +1361,7 @@ impl SheetsView {
                         );
                     }
                     for (n, list) in CUSTOM_LISTS.iter().enumerate() {
-                        m = entry(
-                            m,
-                            (*list).into(),
-                            on == PanelOn::List(n),
-                            PanelOn::List(n),
-                        );
+                        m = entry(m, (*list).into(), on == PanelOn::List(n), PanelOn::List(n));
                     }
                     m
                 });
@@ -1381,25 +1390,27 @@ impl SheetsView {
                     .collect(),
                 None => Vec::new(),
             };
-            let picks = h_flex()
-                .gap(SPACE_1)
-                .pl(px(72.))
-                .children(look_choices.into_iter().enumerate().map(|(n, (pick, look))| {
-                    let v = view.clone();
-                    let chosen = pick_look.as_ref() == Some(&pick);
-                    div()
-                        .id(("sort-look", i * 64 + n))
-                        .size(px(20.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(RADIUS_SM)
-                        .border_1()
-                        .border_color(if chosen { t.accent } else { t.border })
-                        .cursor_pointer()
-                        .child(look)
-                        .on_click(move |_, _, cx| set_on(&v, PanelOn::Look(pick.clone()), cx))
-                }));
+            let picks = h_flex().gap(SPACE_1).pl(px(72.)).children(
+                look_choices
+                    .into_iter()
+                    .enumerate()
+                    .map(|(n, (pick, look))| {
+                        let v = view.clone();
+                        let chosen = pick_look.as_ref() == Some(&pick);
+                        div()
+                            .id(("sort-look", i * 64 + n))
+                            .size(px(20.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(RADIUS_SM)
+                            .border_1()
+                            .border_color(if chosen { t.accent } else { t.border })
+                            .cursor_pointer()
+                            .child(look)
+                            .on_click(move |_, _, cx| set_on(&v, PanelOn::Look(pick.clone()), cx))
+                    }),
+            );
             let row = h_flex()
                 .gap(SPACE_2)
                 .child(

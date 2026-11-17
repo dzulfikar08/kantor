@@ -422,7 +422,11 @@ fn text_equal_to_number_formats_and_borders() {
     def.border = Some(sheets_engine::outline_border(0xC00000));
     wb.add_cf_rule(0, "B1:B10", &def).unwrap();
     // "Ani" (B1, B4) gets the fill; "Budi" doesn't.
-    assert!(wb.conditional(0, 0, 1).and_then(|c| c.style.clone()).is_some());
+    assert!(
+        wb.conditional(0, 0, 1)
+            .and_then(|c| c.style.clone())
+            .is_some()
+    );
     assert!(wb.conditional(0, 1, 1).is_none_or(|c| c.style.is_none()));
     let rules = wb.cf_rules(0, None);
     assert_eq!(rules[0].def.as_ref(), Some(&def));
@@ -437,5 +441,9 @@ fn text_equal_to_number_formats_and_borders() {
     let read = rules[0].def.clone().unwrap();
     assert_eq!(read.num_fmt, def.num_fmt);
     assert_eq!(read.border, def.border);
-    assert!(back.conditional(0, 3, 1).and_then(|c| c.style.clone()).is_some());
+    assert!(
+        back.conditional(0, 3, 1)
+            .and_then(|c| c.style.clone())
+            .is_some()
+    );
 }

@@ -403,7 +403,11 @@ impl SheetsView {
                 CfFormat::default()
             },
             stop_if_true: d.stop && d.kind.has_format(),
-            num_fmt: d.kind.has_format().then(|| d.num_fmt.read(cx).value().trim().to_owned()).filter(|c| !c.is_empty()),
+            num_fmt: d
+                .kind
+                .has_format()
+                .then(|| d.num_fmt.read(cx).value().trim().to_owned())
+                .filter(|c| !c.is_empty()),
             border: d.border.clone().filter(|_| d.kind.has_format()),
             spec,
         });
@@ -1025,7 +1029,11 @@ impl SheetsView {
                         |f, v| f.strike = v,
                     )),
             )
-            .child(row(t("Number format"), Input::new(&d.num_fmt).small().into_any_element(), cx))
+            .child(row(
+                t("Number format"),
+                Input::new(&d.num_fmt).small().into_any_element(),
+                cx,
+            ))
             .child({
                 let bv = view.clone();
                 let color = current.font.unwrap_or(0x000000);

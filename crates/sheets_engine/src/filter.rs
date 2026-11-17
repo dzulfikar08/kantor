@@ -96,7 +96,11 @@ pub enum FilterKind {
     },
     /// The top (or bottom) `value` items, or `value` percent of the rows:
     /// `<top10>`.
-    Top10 { top: bool, percent: bool, value: f64 },
+    Top10 {
+        top: bool,
+        percent: bool,
+        value: f64,
+    },
     /// Excel's dynamic filters by type: `aboveAverage`, `belowAverage` and
     /// the dates (`today`, `thisMonth`, `Q1`, `M3`...): `<dynamicFilter>`.
     Dynamic(String),
@@ -334,8 +338,7 @@ fn parse_kind(n: Node, xml: &str) -> FilterKind {
                 return other();
             };
             let on = |a: &str, default: bool| {
-                f.attribute(a)
-                    .map_or(default, |v| v == "1" || v == "true")
+                f.attribute(a).map_or(default, |v| v == "1" || v == "true")
             };
             FilterKind::Top10 {
                 top: on("top", true),

@@ -88,10 +88,7 @@ fn assert_has_macros(path: &Path) {
         ct.contains("application/vnd.ms-excel.sheet.macroEnabled.main+xml"),
         "{ct}"
     );
-    assert!(
-        !ct.contains("spreadsheetml.sheet.main+xml"),
-        "{ct}"
-    );
+    assert!(!ct.contains("spreadsheetml.sheet.main+xml"), "{ct}");
     assert!(ct.contains("application/vnd.ms-office.vbaProject"), "{ct}");
     let rels = text(&parts, "xl/_rels/workbook.xml.rels");
     assert!(

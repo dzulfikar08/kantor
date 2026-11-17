@@ -177,22 +177,24 @@ impl Workbook {
         // Every row's key values side by side, and the rows sorted as
         // positions among them: one allocation, not one per row.
         let width = keys.len();
-        let values: Vec<CellValue> =
-            if resolved.iter().all(|l| matches!(l.on, crate::filter_by::Resolved::Values)) {
-                let model = self.model.get_model();
-                visible
-                    .iter()
-                    .flat_map(|&r| keys.iter().map(move |k| cell_value(model, sheet, r, k.col)))
-                    .collect()
-            } else {
-                let mut v = Vec::with_capacity(visible.len() * width);
-                for &r in &visible {
-                    for l in &resolved {
-                        v.push(self.sort_value(l, sheet, r));
-                    }
+        let values: Vec<CellValue> = if resolved
+            .iter()
+            .all(|l| matches!(l.on, crate::filter_by::Resolved::Values))
+        {
+            let model = self.model.get_model();
+            visible
+                .iter()
+                .flat_map(|&r| keys.iter().map(move |k| cell_value(model, sheet, r, k.col)))
+                .collect()
+        } else {
+            let mut v = Vec::with_capacity(visible.len() * width);
+            for &r in &visible {
+                for l in &resolved {
+                    v.push(self.sort_value(l, sheet, r));
                 }
-                v
-            };
+            }
+            v
+        };
         let mut rows: Vec<u32> = (0..visible.len() as u32).collect();
         rows.sort_by(|&a, &b| {
             let (a, b) = (a as usize * width, b as usize * width);
