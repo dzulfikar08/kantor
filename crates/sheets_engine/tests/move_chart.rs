@@ -345,3 +345,244 @@ fn every_chart_moves_after_its_options_change() {
     wb.save_as(&path).unwrap();
     assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
 }
+
+const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0x0D, 0x49, 0x48, 0x44, 0x52, 0, 0, 0,
+    1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1F, 0x15, 0xC4, 0x89, 0, 0, 0, 0x0D, 0x49, 0x44, 0x41, 0x54,
+    0x78, 0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0xF0, 0x1F, 0, 0x05, 0x00, 0x01, 0xFF, 0x89, 0x99, 0x3D,
+    0x1D, 0, 0, 0, 0, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+];
+
+/// 20_charts.xlsx with chart1 linked to an outside workbook
+/// (`c:externalData`) and holding user shapes (a text box and a picture,
+/// `c:userShapes`), and a group with a picture on the first sheet.
+fn linked_book() -> PathBuf {
+    use std::io::Write as _;
+    let src = std::fs::read(corpus("20_charts.xlsx")).unwrap();
+    let mut zin = zip::ZipArchive::new(std::io::Cursor::new(src)).unwrap();
+    let path = scratch("linked.xlsx");
+    let mut out = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    let opts = zip::write::SimpleFileOptions::default();
+    for i in 0..zin.len() {
+        let mut e = zin.by_index(i).unwrap();
+        let name = e.name().unwrap().into_owned();
+        let mut b = Vec::new();
+        e.read_to_end(&mut b).unwrap();
+        let mut text = String::from_utf8_lossy(&b).into_owned();
+        match name.as_str() {
+            "xl/charts/chart1.xml" => {
+                text = text.replace(
+                    "</c:chartSpace>",
+                    &format!("<c:externalData xmlns:r=\"{R}\" r:id=\"rId1\"><c:autoUpdate val=\"0\"/></c:externalData><c:userShapes xmlns:r=\"{R}\" r:id=\"rId2\"/></c:chartSpace>"),
+                );
+            }
+            "[Content_Types].xml" => {
+                text = text.replace(
+                    "</Types>",
+                    "<Override PartName=\"/xl/drawings/drawing9.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.drawingml.chartshapes+xml\"/></Types>",
+                );
+            }
+            "xl/drawings/drawing1.xml" => {
+                text = text.replace(
+                    "</xdr:wsDr>",
+                    &format!("<xdr:twoCellAnchor><xdr:from><xdr:col>12</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>2</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>15</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>8</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id=\"90\" name=\"Logo group\"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr><xdr:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"1800000\" cy=\"1100000\"/><a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"1800000\" cy=\"1100000\"/></a:xfrm></xdr:grpSpPr><xdr:sp><xdr:nvSpPr><xdr:cNvPr id=\"91\" name=\"Box\"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"1800000\" cy=\"1100000\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val=\"DDEEFF\"/></a:solidFill></xdr:spPr></xdr:sp><xdr:pic><xdr:nvPicPr><xdr:cNvPr id=\"92\" name=\"Logo\"/><xdr:cNvPicPr/></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r=\"{R}\" r:embed=\"rId90\"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x=\"100000\" y=\"100000\"/><a:ext cx=\"600000\" cy=\"600000\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic></xdr:grpSp><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>"),
+                );
+            }
+            "xl/drawings/_rels/drawing1.xml.rels" => {
+                text = text.replace(
+                    "</Relationships>",
+                    &format!("<Relationship Id=\"rId90\" Type=\"{R}/image\" Target=\"../media/image7.png\"/></Relationships>"),
+                );
+            }
+            _ => {}
+        }
+        out.start_file(name.clone(), opts).unwrap();
+        if name.ends_with(".xml") || name.ends_with(".rels") {
+            out.write_all(text.as_bytes()).unwrap();
+        } else {
+            out.write_all(&b).unwrap();
+        }
+    }
+    let add = |out: &mut zip::ZipWriter<std::fs::File>, name: &str, data: &[u8]| {
+        out.start_file(name, opts).unwrap();
+        out.write_all(data).unwrap();
+    };
+    add(
+        &mut out,
+        "xl/charts/_rels/chart1.xml.rels",
+        format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"{R}/oleObject\" Target=\"file:///C:/Data/Sales%20source.xlsx\" TargetMode=\"External\"/><Relationship Id=\"rId2\" Type=\"{R}/chartUserShapes\" Target=\"../drawings/drawing9.xml\"/></Relationships>").as_bytes(),
+    );
+    add(
+        &mut out,
+        "xl/drawings/drawing9.xml",
+        format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<c:userShapes xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:cdr=\"http://schemas.openxmlformats.org/drawingml/2006/chartDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"{R}\"><cdr:relSizeAnchor><cdr:from><cdr:x>0.05</cdr:x><cdr:y>0.05</cdr:y></cdr:from><cdr:to><cdr:x>0.2</cdr:x><cdr:y>0.2</cdr:y></cdr:to><cdr:pic><cdr:nvPicPr><cdr:cNvPr id=\"2\" name=\"Stamp\"/><cdr:cNvPicPr/></cdr:nvPicPr><cdr:blipFill><a:blip r:embed=\"rId1\"/><a:stretch><a:fillRect/></a:stretch></cdr:blipFill><cdr:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></cdr:spPr></cdr:pic></cdr:relSizeAnchor></c:userShapes>").as_bytes(),
+    );
+    add(
+        &mut out,
+        "xl/drawings/_rels/drawing9.xml.rels",
+        format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"{R}/image\" Target=\"../media/image8.png\"/></Relationships>").as_bytes(),
+    );
+    add(&mut out, "xl/media/image7.png", PNG);
+    add(&mut out, "xl/media/image8.png", PNG);
+    out.finish().unwrap();
+    path
+}
+
+/// The chart part `chart` links to, by relationship type: target part (or
+/// external target).
+fn chart_rels(p: &BTreeMap<String, String>, chart: &str) -> BTreeMap<String, String> {
+    let (dir, file) = chart.rsplit_once('/').unwrap();
+    let doc = Document::parse(&p[&format!("{dir}/_rels/{file}.rels")]).unwrap();
+    doc.root_element()
+        .children()
+        .filter(|n| n.is_element())
+        .map(|r| {
+            let kind = r
+                .attribute("Type")
+                .unwrap()
+                .rsplit('/')
+                .next()
+                .unwrap()
+                .to_owned();
+            let t = r.attribute("Target").unwrap();
+            let t = if r.attribute("TargetMode") == Some("External") {
+                t.to_owned()
+            } else {
+                format!("xl/{}", t.trim_start_matches("../"))
+            };
+            (kind, t)
+        })
+        .collect()
+}
+
+fn check_links(p: &BTreeMap<String, String>, chart: &str) {
+    assert!(p[chart].contains("<c:userShapes"), "{}", p[chart]);
+    assert!(p[chart].contains("<c:externalData"), "{}", p[chart]);
+    let rels = chart_rels(p, chart);
+    assert_eq!(rels["oleObject"], "file:///C:/Data/Sales%20source.xlsx");
+    let us = &rels["chartUserShapes"];
+    assert!(p[us].contains("name=\"Stamp\""), "{us}");
+    let pics = chart_rels(p, us);
+    assert!(p.contains_key(&pics["image"]), "{pics:?}");
+    assert!(p["[Content_Types].xml"].contains(&format!("PartName=\"/{us}\"")));
+}
+
+#[test]
+fn moved_charts_keep_their_links() {
+    let src = linked_book();
+    let mut wb = Workbook::open(&src).unwrap();
+    let key = wb
+        .drawings(0)
+        .iter()
+        .find(|d| matches!(&*d.kind, DrawingKind::Chart { part, .. } if &**part == "xl/charts/chart1.xml"))
+        .unwrap()
+        .key;
+    // To a new chart sheet.
+    let MovedChart::ChartSheet(k) = wb
+        .move_chart(key, ChartPlace::NewSheet("Linked".into()))
+        .unwrap()
+    else {
+        panic!()
+    };
+    let path = scratch("linked-sheet.xlsx");
+    wb.save_as(&path).unwrap();
+    assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
+    assert!(sheets_engine::package_problems(&std::fs::read(&path).unwrap()).is_empty());
+    let p = parts(&path);
+    assert!(
+        chart_sheet_charts(&p)
+            .iter()
+            .any(|x| x.contains("<c:userShapes"))
+    );
+    let moved = p
+        .keys()
+        .find(|n| n.starts_with("xl/charts/kantorcs") && !n.contains("_rels"))
+        .expect("the chart sheet's chart");
+    check_links(&p, moved);
+    // Back onto the second worksheet: still linked.
+    let cs = wb.chart_sheet_drawings(k)[0].key;
+    wb.move_chart(cs, ChartPlace::ObjectIn(1)).unwrap();
+    let path = scratch("linked-object.xlsx");
+    wb.save_as(&path).unwrap();
+    assert!(sheets_engine::package_problems(&std::fs::read(&path).unwrap()).is_empty());
+    let p = parts(&path);
+    let back = Workbook::open(&path).unwrap();
+    let part = back
+        .drawings(1)
+        .iter()
+        .find_map(|d| match &*d.kind {
+            DrawingKind::Chart { part, xml, .. } if xml.contains("userShapes") => {
+                Some(part.to_string())
+            }
+            _ => None,
+        })
+        .expect("the moved chart on sheet 2");
+    check_links(&p, &part);
+}
+
+#[test]
+fn copied_sheets_bring_group_pictures_and_chart_links() {
+    let src = linked_book();
+    let mut wb = Workbook::open(&src).unwrap();
+    let before = wb.drawings(0).len();
+    let copy = wb.copy_sheet(0, 2).unwrap();
+    assert_eq!(
+        wb.drawings(copy).len(),
+        before,
+        "the group and the linked chart came too"
+    );
+    let path = scratch("linked-copy.xlsx");
+    wb.save_as(&path).unwrap();
+    assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
+    assert!(sheets_engine::package_problems(&std::fs::read(&path).unwrap()).is_empty());
+    let p = parts(&path);
+    let back = Workbook::open(&path).unwrap();
+    let group = back
+        .drawings(copy)
+        .into_iter()
+        .find(|d| d.name == "Logo group")
+        .expect("the copied group");
+    assert!(matches!(&*group.kind, DrawingKind::Shape { .. }));
+    // Its picture's r:embed points at an image of the copy's drawing.
+    let drawing = p
+        .iter()
+        .filter(|(n, x)| {
+            n.starts_with("xl/drawings/drawing") && n.ends_with(".xml") && x.contains("Logo group")
+        })
+        .map(|(n, _)| n.clone())
+        .find(|n| n != "xl/drawings/drawing1.xml")
+        .expect("the copy's drawing");
+    let doc = Document::parse(&p[&drawing]).unwrap();
+    let embed = doc
+        .descendants()
+        .find(|n| n.has_tag_name("blip") && n.ancestors().any(|a| a.has_tag_name("grpSp")))
+        .and_then(|b| b.attribute((R, "embed")))
+        .unwrap()
+        .to_owned();
+    let (dir, file) = drawing.rsplit_once('/').unwrap();
+    let rels = Document::parse(&p[&format!("{dir}/_rels/{file}.rels")]).unwrap();
+    let target = rels
+        .descendants()
+        .find(|r| r.attribute("Id") == Some(embed.as_str()))
+        .and_then(|r| r.attribute("Target"))
+        .unwrap();
+    assert!(
+        p.contains_key(&format!("xl/{}", target.trim_start_matches("../"))),
+        "{target}"
+    );
+    // The copied chart keeps its links too.
+    let linked: Vec<&String> = p
+        .iter()
+        .filter(|(n, x)| n.starts_with("xl/charts/") && x.contains("<c:userShapes"))
+        .map(|(n, _)| n)
+        .collect();
+    assert_eq!(linked.len(), 2, "{linked:?}");
+    for c in linked {
+        check_links(&p, c);
+    }
+    // Saved again: still one picture per group, no new relationships.
+    let path2 = scratch("linked-copy2.xlsx");
+    wb.save_as(&path2).unwrap();
+    assert!(sheets_engine::package_problems(&std::fs::read(&path2).unwrap()).is_empty());
+}

@@ -349,6 +349,8 @@ pub(crate) struct NewChart {
     /// A shape or text box (inserted, or copied with its sheet), not a
     /// chart.
     pub shape: Option<Arc<NewShape>>,
+    /// What `xml` links to (a moved chart's workbook and user shapes).
+    pub links: Option<Arc<crate::preserve::ChartLinks>>,
 }
 
 /// A shape or text box made in Kantor (Insert ▸ Shapes, a copied sheet's).
@@ -363,6 +365,9 @@ pub(crate) struct NewShape {
     pub slicer: Option<Arc<crate::slicer_edit::NewSlicer>>,
     /// A timeline made in Kantor (Insert Timeline), the same way.
     pub timeline: Option<Arc<crate::slicer_edit::NewTimeline>>,
+    /// Pictures inside a copied group: their `r:embed` ids in `xml` and
+    /// their images (extension, bytes).
+    pub media: Vec<(String, String, Arc<[u8]>)>,
 }
 
 /// A picture on a worksheet copied with Move or Copy.
@@ -566,6 +571,7 @@ impl Workbook {
                 xml: None,
                 picture: None,
                 shape: None,
+                links: None,
             });
         });
         Ok(DrawingKey {
@@ -1125,6 +1131,12 @@ impl Workbook {
                     _ => String::new(),
                 },
                 shape: c.shape.as_ref().map(|s| s.xml.to_string()),
+                links: c.links.clone(),
+                media: c
+                    .shape
+                    .as_ref()
+                    .map(|s| s.media.clone())
+                    .unwrap_or_default(),
                 picture: c.picture.as_ref().map(|p| crate::preserve::PictureSave {
                     data: p.data.clone(),
                     ext: p.ext.clone(),

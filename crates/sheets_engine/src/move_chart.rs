@@ -10,6 +10,10 @@
 //! are added to the session's list (`Drawings::add_chart_sheet`) and shown
 //! by the history states that list them; a save writes their parts as a
 //! chart sheet put back from its parts (`preserve::ChartSheetPlan`).
+//!
+//! What the chart links to goes with it: its external data (a linked or
+//! embedded workbook) and its user shapes (`preserve::ChartLinks`, copies
+//! of those parts under new names).
 
 use std::sync::Arc;
 
@@ -76,6 +80,7 @@ pub(crate) fn chart_sheet_parts(
     k: usize,
     chart_xml: String,
     tab: Option<&str>,
+    links: Option<&crate::preserve::ChartLinks>,
 ) -> NewChartSheet {
     let t = tag(k);
     let part = format!("xl/chartsheets/kantor{t}.xml");
@@ -98,7 +103,7 @@ pub(crate) fn chart_sheet_parts(
         let (dir, f) = p.rsplit_once('/').unwrap_or(("", p));
         format!("{dir}/_rels/{f}.rels")
     };
-    let bundle = vec![
+    let mut bundle = vec![
         BundlePart {
             name: part.clone(),
             data: sheet_xml.clone().into_bytes(),
@@ -137,6 +142,18 @@ pub(crate) fn chart_sheet_parts(
                 .into(),
         },
     ];
+    if let Some(l) = links {
+        bundle.push(BundlePart {
+            name: rels_of(&chart_part),
+            data: l.rels_xml(&chart_part).into_bytes(),
+            content_type: RELS_CT.into(),
+        });
+        bundle.extend(l.parts.iter().map(|p| BundlePart {
+            name: p.name.clone(),
+            data: p.data.clone(),
+            content_type: p.content_type.clone(),
+        }));
+    }
     NewChartSheet {
         name: name.to_owned(),
         part,
@@ -149,7 +166,35 @@ pub(crate) fn chart_sheet_parts(
 }
 
 /// `xml` without what links to other parts (`c:externalData`,
-/// `c:userShapes`): a moved or copied chart part has no relationships.
+/// `c:userShapes`) unless `links` has their relationship.
+pub(crate) fn keep_links(xml: &str, links: Option<&crate::preserve::ChartLinks>) -> String {
+    let ids = links.map(|l| l.ids()).unwrap_or_default();
+    let Ok(doc) = Document::parse(xml) else {
+        return xml.to_owned();
+    };
+    let mut cut: Vec<std::ops::Range<usize>> = doc
+        .descendants()
+        .filter(|n| {
+            n.is_element()
+                && n.tag_name().namespace() == Some(crate::chart_style::NS_C)
+                && matches!(n.tag_name().name(), "externalData" | "userShapes")
+                && !n
+                    .attribute((NS_R, "id"))
+                    .is_some_and(|id| ids.iter().any(|i| i == id))
+        })
+        .map(|n| n.range())
+        .collect();
+    cut.sort_by_key(|r| std::cmp::Reverse(r.start));
+    let mut out = xml.to_owned();
+    for r in cut {
+        out.replace_range(r, "");
+    }
+    out
+}
+
+/// `xml` without what links to other parts (`c:externalData`,
+/// `c:userShapes`): a chart part with no relationships.
+#[cfg(test)]
 pub(crate) fn without_links(xml: &str) -> String {
     let Ok(doc) = Document::parse(xml) else {
         return xml.to_owned();
@@ -202,6 +247,42 @@ enum From {
 }
 
 impl Workbook {
+    /// What chart `key`'s part links to (its workbook, user shapes), as
+    /// copies a moved or copied chart can carry.
+    pub(crate) fn chart_links_of(&self, key: DrawingKey) -> Option<crate::preserve::ChartLinks> {
+        let t = tag(key.index ^ key.sheet_id as usize);
+        if let Some(k) = chart_sheet_of_key(key.sheet_id) {
+            let p = self.drawings.chart_sheet_parts(k)?;
+            let (part, _) = p.charts.get(key.index)?;
+            return crate::preserve::chart_links(&p.bundle, part, &t);
+        }
+        if key.index >= NEW_CHART_BASE {
+            let l = self.new_chart(key)?.links?;
+            // Copies again, under names of their own.
+            return crate::preserve::chart_links(&l.as_bundle(), crate::preserve::LINKED_CHART, &t);
+        }
+        let sheet = self.sheet_index_of(key.sheet_id)?;
+        let part = self
+            .drawings(sheet)
+            .into_iter()
+            .find(|d| d.key == key)
+            .and_then(|d| match &*d.kind {
+                crate::drawing::DrawingKind::Chart { part, .. } => Some(part.to_string()),
+                _ => None,
+            })?;
+        let bytes = self.origin_bytes()?;
+        crate::preserve::package_chart_links(&bytes, &part, &t)
+    }
+
+    /// The pictures inside shape `key` (a group's), to copy with it
+    /// (`None`: one can't be found).
+    pub(crate) fn shape_media(&self, key: DrawingKey) -> Option<Vec<(String, String, Arc<[u8]>)>> {
+        if key.index >= NEW_CHART_BASE {
+            return Some(self.new_chart(key)?.shape?.media.clone());
+        }
+        self.drawings.shape_media(key)
+    }
+
     /// The name Move Chart suggests for a new sheet: `Chart` and the first
     /// number no sheet has.
     pub fn next_chart_sheet_name(&self) -> String {
@@ -248,7 +329,8 @@ impl Workbook {
                     .0
             }
         };
-        let xml = without_links(&xml);
+        let links = self.chart_links_of(key).map(Arc::new);
+        let xml = keep_links(&xml, links.as_deref());
         match to {
             ChartPlace::NewSheet(name) => {
                 let name = name.trim().to_owned();
@@ -263,7 +345,7 @@ impl Workbook {
                     .ok_or_else(|| anyhow!("no sheet"))?;
                 let after = self.worksheets_before(Tab::Sheet(sheet));
                 let k = self.drawings.chart_sheet_count();
-                let parts = chart_sheet_parts(&name, k, xml.clone(), None);
+                let parts = chart_sheet_parts(&name, k, xml.clone(), None, links.as_deref());
                 let k = self.drawings.add_chart_sheet(parts);
                 let mut list = self.chart_sheets_now();
                 list.push(ChartSheetNow {
@@ -328,6 +410,7 @@ impl Workbook {
                     xml: Some(xml.into()),
                     picture: None,
                     shape: None,
+                    links,
                 };
                 match from {
                     From::File => {

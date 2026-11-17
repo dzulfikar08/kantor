@@ -471,7 +471,7 @@ impl XlsxSource {
         }
     }
 
-    fn bytes(&self) -> Result<Cow<'_, [u8]>, String> {
+    pub(crate) fn bytes(&self) -> Result<Cow<'_, [u8]>, String> {
         match self {
             XlsxSource::Bytes(b) => Ok(Cow::Borrowed(b)),
             XlsxSource::File {
@@ -1497,6 +1497,14 @@ impl CellRange {
             width: (self.right - self.left) as i32 + 1,
             height: (self.bottom - self.top) as i32 + 1,
         }
+    }
+}
+
+impl Workbook {
+    /// The package last opened or saved (`None`: none, or it can't be read
+    /// any more).
+    pub(crate) fn origin_bytes(&self) -> Option<Cow<'_, [u8]>> {
+        self.origin.xlsx.as_ref()?.bytes().ok()
     }
 }
 

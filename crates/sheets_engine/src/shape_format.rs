@@ -373,6 +373,7 @@ impl Workbook {
                         name: s.name.clone(),
                         slicer: s.slicer.clone(),
                         timeline: s.timeline.clone(),
+                        media: s.media.clone(),
                     }));
                 }
             });

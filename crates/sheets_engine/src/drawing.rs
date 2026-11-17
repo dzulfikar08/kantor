@@ -281,6 +281,9 @@ pub(crate) struct Object {
     /// Inside `mc:AlternateContent` (a form control's shape): shown, never
     /// edited.
     alternate: bool,
+    /// A shape's pictures (a group's `xdr:pic`s): `r:embed` id, image
+    /// extension and bytes; `None` when one can't be found.
+    media: Option<Vec<(String, String, Arc<[u8]>)>>,
 }
 
 /// An object on a sheet as it is now.
@@ -675,6 +678,36 @@ fn kind(
     }
 }
 
+/// The pictures inside a shape element (a group's): each `r:embed` id with
+/// its image's extension and bytes (`None`: one isn't there).
+fn shape_media(
+    obj: Node,
+    targets: &HashMap<String, (String, String)>,
+    parts: &HashMap<String, Arc<[u8]>>,
+) -> Option<Vec<(String, String, Arc<[u8]>)>> {
+    let mut out: Vec<(String, String, Arc<[u8]>)> = Vec::new();
+    for b in obj.descendants().filter(|d| is(*d, NS_A, "blip")) {
+        let Some(rid) = r_id(b, "embed") else {
+            continue;
+        };
+        if out.iter().any(|(r, _, _)| r == rid) {
+            continue;
+        }
+        let (kind, part) = targets.get(rid)?;
+        if kind != "image" {
+            return None;
+        }
+        let data = parts.get(part)?.clone();
+        let ext = part
+            .rsplit_once('.')
+            .map(|(_, e)| e.to_lowercase())
+            .filter(|e| e.len() <= 4 && !e.contains('/'))
+            .unwrap_or_else(|| "png".into());
+        out.push((rid.to_owned(), ext, data));
+    }
+    Some(out)
+}
+
 /// The objects of a drawing part.
 fn read_objects(
     xml: &str,
@@ -730,10 +763,14 @@ fn read_objects(
         if let Some(id) = id {
             *ids.entry(id).or_default() += 1;
         }
+        let mut media = Some(Vec::new());
         let kind = match object_element(a) {
-            Some(obj) if is_shape(obj) => DrawingKind::Shape {
-                xml: standalone(&xml[obj.range()], &in_scope(obj)).into(),
-            },
+            Some(obj) if is_shape(obj) => {
+                media = shape_media(obj, targets, &parts);
+                DrawingKind::Shape {
+                    xml: standalone(&xml[obj.range()], &in_scope(obj)).into(),
+                }
+            }
             Some(obj) => kind(obj, targets, &mut parts),
             None => DrawingKind::Other("anchor".into()),
         };
@@ -767,6 +804,7 @@ fn read_objects(
             },
             namespaces: namespaces.clone(),
             alternate,
+            media,
         });
     }
     // Objects are edited by their id: a chart of the newer types keeps
@@ -931,6 +969,11 @@ impl Drawings {
             Some(k) => self.chart_sheets.get(k)?.objects.get(key.index),
             None => self.sheets.get(&key.sheet_id)?.get(key.index),
         }
+    }
+
+    /// The pictures inside shape `key` of the file (see `Object::media`).
+    pub(crate) fn shape_media(&self, key: DrawingKey) -> Option<Vec<(String, String, Arc<[u8]>)>> {
+        self.object(key)?.media.clone()
     }
 
     /// A chart of the file: its frame's `cNvPr id` and its part's XML as

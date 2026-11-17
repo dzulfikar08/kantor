@@ -372,7 +372,9 @@ impl Workbook {
                     name,
                     slicer: None,
                     timeline: None,
+                    media: Vec::new(),
                 })),
+                links: None,
             });
         });
         Ok(DrawingKey {

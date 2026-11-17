@@ -77,8 +77,10 @@ use roxmltree::{Document, Node};
 
 use crate::shift::{Moves, parse_range};
 
+mod chart_links;
 mod rich_value;
 mod slicer_parts;
+pub(crate) use chart_links::{ChartLinks, LINKED_CHART, chart_links, package_chart_links};
 pub(crate) use rich_value::{CellPicture, RichPicture, read as rich_pictures};
 pub(crate) use slicer_parts::{
     CacheKind, CacheOut, SlicerOut, SlicerPlan, TimelineCacheOut, TimelineFilter, TimelineOut,
@@ -365,6 +367,12 @@ pub(crate) struct ChartSave {
     /// A shape or text box instead of a chart: its element (its `cNvPr
     /// id` is set here).
     pub shape: Option<String>,
+    /// What the chart part links to (a moved chart's workbook and user
+    /// shapes).
+    pub links: Option<std::sync::Arc<ChartLinks>>,
+    /// Pictures inside a copied group shape: its `r:embed` ids and their
+    /// image (extension, bytes).
+    pub media: Vec<(String, String, std::sync::Arc<[u8]>)>,
 }
 
 /// A picture to add to a drawing (see [`ChartSave::picture`]).
@@ -5718,12 +5726,17 @@ fn write_charts(
                     (Some(pic), _) => pkg.set(&sv.part, pic.data.to_vec()),
                     _ => pkg.set(&sv.part, c.xml.clone().into_bytes()),
                 }
-                dxml.replace_range(range, &object_anchor(&prefix, c, sv.cnvpr, &sv.rid));
+                let media = shape_media(pkg, &mut ct, &drawing, &mut drawing_rels, c, sv.cnvpr);
+                dxml.replace_range(
+                    range,
+                    &object_anchor(&prefix, c, sv.cnvpr, &sv.rid, media.as_deref()),
+                );
                 written.push((c.id, sv.clone()));
                 continue;
             }
             if let Some(obj) = &c.shape {
-                anchors.push_str(&object_anchor(&prefix, c, next_id, ""));
+                let media = shape_media(pkg, &mut ct, &drawing, &mut drawing_rels, c, next_id);
+                anchors.push_str(&object_anchor(&prefix, c, next_id, "", media.as_deref()));
                 written.push((
                     c.id,
                     SavedChart {
@@ -5761,6 +5774,9 @@ fn write_charts(
                         "<Override PartName=\"/{}\" ContentType=\"{CHART_CT}\"/>",
                         esc_attr(&part)
                     ));
+                    if let Some(links) = &c.links {
+                        chart_links::write_links(pkg, &mut ct, &part, links);
+                    }
                     (part, "chart")
                 }
             };
@@ -5771,7 +5787,7 @@ fn write_charts(
                 target: relative(&drawing, &part),
                 external: false,
             });
-            anchors.push_str(&object_anchor(&prefix, c, next_id, &rid));
+            anchors.push_str(&object_anchor(&prefix, c, next_id, &rid, None));
             written.push((
                 c.id,
                 SavedChart {
@@ -5825,7 +5841,70 @@ fn chart_anchor_range(xml: &str, cnvpr: u32, rid: &str) -> Option<std::ops::Rang
 
 /// The anchor of a new chart in a drawing whose SpreadsheetDrawing prefix is
 /// `p` (`xdr:` or empty).
-fn object_anchor(p: &str, c: &ChartSave, id: u32, rid: &str) -> String {
+/// A copied group's pictures (`c.media`) as image parts of `drawing`, with
+/// relationships whose ids follow from the shape's `cNvPr id` (the same at
+/// every save); returns the shape's element with its `r:embed`s pointing
+/// at them (`None`: no pictures).
+fn shape_media(
+    pkg: &mut Package,
+    ct: &mut String,
+    drawing: &str,
+    rels: &mut Vec<Rel>,
+    c: &ChartSave,
+    cnvpr: u32,
+) -> Option<String> {
+    let xml = c.shape.as_ref()?;
+    if c.media.is_empty() {
+        return None;
+    }
+    let mut map: Vec<(String, String)> = Vec::new();
+    for (i, (old, ext, data)) in c.media.iter().enumerate() {
+        let id = format!("rIdKm{cnvpr}x{i}");
+        if !rels.iter().any(|r| r.id == id) {
+            let ext = ext.to_lowercase();
+            let part = (1..)
+                .map(|n| format!("xl/media/image{n}.{ext}"))
+                .find(|n| !pkg.has(n))
+                .expect("a free name");
+            pkg.set(&part, data.to_vec());
+            ct.push_str(&format!(
+                "<Override PartName=\"/{}\" ContentType=\"{}\"/>",
+                esc_attr(&part),
+                image_ct(&ext)
+            ));
+            rels.push(Rel {
+                id: id.clone(),
+                kind: format!("{REL_BASE}image"),
+                target: relative(drawing, &part),
+                external: false,
+            });
+        }
+        map.push((old.clone(), id));
+    }
+    let doc = Document::parse(xml).ok()?;
+    let mut edits: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut texts: Vec<String> = Vec::new();
+    for n in doc.descendants().filter(|n| n.is_element()) {
+        for a in n.attributes() {
+            if a.namespace() == Some(NS_R)
+                && matches!(a.name(), "embed" | "link")
+                && let Some((_, new)) = map.iter().find(|(o, _)| o == a.value())
+            {
+                edits.push(a.range_value());
+                texts.push(new.clone());
+            }
+        }
+    }
+    let mut out = xml.clone();
+    let mut all: Vec<_> = edits.into_iter().zip(texts).collect();
+    all.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+    for (r, t) in all {
+        out.replace_range(r, &t);
+    }
+    Some(out)
+}
+
+fn object_anchor(p: &str, c: &ChartSave, id: u32, rid: &str, shape: Option<&str>) -> String {
     let (open, close) = match c.anchor {
         crate::drawing::Anchor::TwoCell { edit_as, .. } => {
             let e = match edit_as {
@@ -5847,7 +5926,7 @@ fn object_anchor(p: &str, c: &ChartSave, id: u32, rid: &str) -> String {
             format!("</{p}absoluteAnchor>"),
         ),
     };
-    if let Some(obj) = &c.shape {
+    if let Some(obj) = shape.or(c.shape.as_deref()) {
         return format!(
             "{open}{pos}{obj}<{p}clientData/>{close}",
             pos = c.anchor.position_xml(p),
