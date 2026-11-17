@@ -11,6 +11,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Pattern fills (Office's "Pattern fill": 5 %, diagonal stripes, checks, bricks… in two colours)
+  are drawn as patterns in shapes, text boxes and chart bars and areas on screen and in the PDF in
+  Sheets, Docs and Slides, instead of a plain colour. Sheets' Format Shape and the Slides Fill
+  menu offer the 48 patterns with their foreground and background colours.
+- Charts inside groups are drawn in place in Sheets and Docs (Slides already drew them), move and
+  resize with their group, are kept on save, and come along when a worksheet is copied with Move
+  or Copy. `.xls` and `.ods` imports bring charts inside groups instead of leaving them out, and
+  patterned shapes from `.xls` (Excel's patterns) and hatched ones from `.ods` come in as patterns.
+
 - Sheets: `.xlsb` imports bring their conditional formatting (cell value, formula, text, date, blank,
   error, duplicate, above/below average and top/bottom rules, colour scales, data bars and icon
   sets, with their formats), saved into the new `.xlsx`.

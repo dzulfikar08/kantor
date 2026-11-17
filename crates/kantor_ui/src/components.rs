@@ -92,18 +92,6 @@ impl IconButtonExt for Button {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::tip_text;
-
-    #[std::prelude::v1::test]
-    fn tip_text_adds_the_shortcut_when_there_is_one() {
-        assert_eq!(tip_text("Bold", Some("Ctrl+B")), "Bold · Ctrl+B");
-        assert_eq!(tip_text("Insert table", None), "Insert table");
-        assert_eq!(tip_text("Strikethrough", Some("")), "Strikethrough");
-    }
-}
-
 /// A pattern fill's 8 × 8 tile (DrawingML `a:pattFill`; bit `i` of a row's
 /// byte is column `i` from the left) filling its box: the background
 /// colour, then the foreground bits `unit` px square. For the Pattern fill
@@ -204,3 +192,15 @@ pub const PATTERN_NAMES: [&str; 54] = [
     tk("Cross"),
     tk("Diagonal cross"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::tip_text;
+
+    #[std::prelude::v1::test]
+    fn tip_text_adds_the_shortcut_when_there_is_one() {
+        assert_eq!(tip_text("Bold", Some("Ctrl+B")), "Bold · Ctrl+B");
+        assert_eq!(tip_text("Insert table", None), "Insert table");
+        assert_eq!(tip_text("Strikethrough", Some("")), "Strikethrough");
+    }
+}
