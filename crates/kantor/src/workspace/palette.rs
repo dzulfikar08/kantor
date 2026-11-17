@@ -1291,6 +1291,16 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: tk("Add Assistant"),
+        detail: tk("Slides · the selected SmartArt shape"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_slides(window, cx, |v, w, cx| {
+                v.smartart_add_doc(slides_engine::AddPlace::Assistant, w, cx)
+            })
+        },
+    },
+    Command {
         title: tk("Bulleted List"),
         detail: tk("Docs · lists"),
         keys: "Ctrl Shift 8",

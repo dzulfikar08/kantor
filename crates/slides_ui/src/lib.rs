@@ -135,6 +135,7 @@ actions!(
         SmartArtAddBefore,
         SmartArtAddAbove,
         SmartArtAddBelow,
+        SmartArtAddAssistant,
     ]
 );
 
@@ -2989,6 +2990,7 @@ impl Render for SlidesView {
             SmartArtAddBefore => |v, w, cx| v.smartart_add_doc(slides_engine::AddPlace::Before, w, cx),
             SmartArtAddAbove => |v, w, cx| v.smartart_add_doc(slides_engine::AddPlace::Above, w, cx),
             SmartArtAddBelow => |v, w, cx| v.smartart_add_doc(slides_engine::AddPlace::Below, w, cx),
+            SmartArtAddAssistant => |v, w, cx| v.smartart_add_doc(slides_engine::AddPlace::Assistant, w, cx),
         ]);
         let notes_pane = self.render_notes(cx);
         let root = root

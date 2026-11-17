@@ -318,6 +318,64 @@ pub fn add_item(doc: &Document, f: &Float, k: usize, after: bool) -> Result<Part
     Ok(parts(&sa, drawing, Some(data)))
 }
 
+/// Word's *Add Assistant* on Organization Chart shape `k`: an assistant
+/// of the item it shows, the others laid out with it.
+pub fn add_assistant(doc: &Document, f: &Float, k: usize) -> Result<Parts, &'static str> {
+    let (sa, id) = laid_out(doc, f, Some(k))?;
+    let id = id.ok_or(SELECT_ITEM)?;
+    let (w, h) = (f.at.cx.max(1), f.at.cy.max(1));
+    let (drawing, data, _) = slides_engine::smartart_layout::add_item(
+        &sa.drawing_xml,
+        &sa.data_xml,
+        &id,
+        slides_engine::AddPlace::Assistant,
+        w,
+        h,
+    )
+    .map_err(|e| known(&e).unwrap_or(SELECT_ITEM))?;
+    let drawing = fitted(doc, &sa, drawing, &data, (w, h));
+    Ok(parts(&sa, drawing, Some(data)))
+}
+
+/// Whether SmartArt shape `k` of `f` shows an Organization Chart's item
+/// (Word's *Layout* and *Add Assistant* apply), and the layout set on it.
+pub fn org_item(doc: &Document, f: &Float, k: usize) -> Option<Option<slides_engine::OrgLayout>> {
+    let (sa, id) = laid_out(doc, f, Some(k)).ok()?;
+    if slides_engine::smartart_layout::family(&sa.drawing_xml, &sa.data_xml)
+        != Some(slides_engine::SmartArtFamily::OrgChart)
+    {
+        return None;
+    }
+    Some(slides_engine::smartart_layout::org_layout(
+        &sa.data_xml,
+        &id?,
+    ))
+}
+
+/// Word's *Layout* on Organization Chart shape `k`: how the children of
+/// the item it shows hang under it; laid out again.
+pub fn set_org_layout(
+    doc: &Document,
+    f: &Float,
+    k: usize,
+    layout: slides_engine::OrgLayout,
+) -> Result<Parts, &'static str> {
+    let (sa, id) = laid_out(doc, f, Some(k))?;
+    let id = id.ok_or(SELECT_ITEM)?;
+    let (w, h) = (f.at.cx.max(1), f.at.cy.max(1));
+    let (drawing, data) = slides_engine::smartart_layout::set_org_layout(
+        &sa.drawing_xml,
+        &sa.data_xml,
+        &id,
+        layout,
+        w,
+        h,
+    )
+    .map_err(|e| known(&e).unwrap_or(SELECT_ITEM))?;
+    let drawing = fitted(doc, &sa, drawing, &data, (w, h));
+    Ok(parts(&sa, drawing, Some(data)))
+}
+
 /// Delete the item SmartArt shape `k` shows (with its sub-items); the
 /// others are laid out again.
 pub fn remove_item(doc: &Document, f: &Float, k: usize) -> Result<Parts, &'static str> {
@@ -382,10 +440,13 @@ pub const NO_LAYOUT_PART: &str = "This SmartArt has no layout part to change";
 /// A refusal Slides' layout explains itself (a Labeled Hierarchy's).
 fn known(e: &anyhow::Error) -> Option<&'static str> {
     use slides_engine::smartart_layout::{
-        LABEL_LEVELS, RADIAL_CENTRE, RADIAL_KEEP, RADIAL_LEVELS, TOP_ALONE, TOP_KEEP,
+        ASSISTANT_ORG, LABEL_LEVELS, ORG_ONLY, RADIAL_CENTRE, RADIAL_KEEP, RADIAL_LEVELS,
+        TOP_ALONE, TOP_KEEP,
     };
     let msg = e.to_string();
     [
+        ASSISTANT_ORG,
+        ORG_ONLY,
         LABEL_LEVELS,
         TOP_ALONE,
         TOP_KEEP,

@@ -517,7 +517,7 @@ fn org_branch(t: &Tree, k: usize) -> Branch {
                 let mut cb = org_branch(t, *c);
                 let ox = cursor - cb.x0;
                 cb.shift(ox, y);
-                cursor = ox + cb.x1 + g;
+                cursor = cb.x1 + g;
                 row.push((ox, cb));
             }
             let first = row.first().map_or(0.0, |r| r.0);
@@ -574,7 +574,7 @@ fn place_org(t: &Tree, w: f64, h: f64) -> (Vec<Xfrm>, Vec<Option<Vec<(Emu, Emu)>
         let mut b = org_branch(t, *r);
         let ox = cursor - b.x0;
         b.shift(ox, 0.0);
-        cursor = ox + b.x1 + ORG_GAP;
+        cursor = b.x1 + ORG_GAP;
         match &mut all {
             Some(a) => a.take(b),
             None => all = Some(b),

@@ -7,7 +7,7 @@
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::*;
 use kantor_ui::i18n;
-use slides_engine::{AddPlace, Inner, ShapeRef, SmartArtFamily};
+use slides_engine::{AddPlace, Inner, OrgLayout, ShapeRef, SmartArtFamily};
 
 use crate::SlidesView;
 
@@ -33,6 +33,8 @@ pub(crate) const ENGINE_MESSAGES: &[&str] = &[
     i18n::tk("A Radial Cycle has two levels: add shapes before or after the ones round the centre"),
     i18n::tk("The centre of this Radial Cycle can't be deleted while it has shapes round it"),
     i18n::tk("This SmartArt has no layout part to change"),
+    i18n::tk("Only an Organization Chart has assistants"),
+    i18n::tk("Only an Organization Chart's shapes have a hanging layout"),
 ];
 
 /// The SmartArt layouts gallery (PowerPoint's *Change Layout*): category
@@ -66,6 +68,20 @@ const LAYOUT_LABELS: &[&str] = &[
     i18n::tk("Basic Matrix"),
     i18n::tk("Basic Pyramid"),
     i18n::tk("Horizontal Picture List"),
+    i18n::tk("Picture Accent List"),
+    i18n::tk("Bending Picture Accent List"),
+    i18n::tk("Vertical Picture List"),
+    i18n::tk("Picture Caption List"),
+    i18n::tk("Titled Picture Blocks"),
+    i18n::tk("Picture Grid"),
+];
+
+#[allow(dead_code)] // keys for the catalog scanner (shown with `t_dyn`)
+const ORG_LAYOUT_LABELS: &[&str] = &[
+    i18n::tk("Standard"),
+    i18n::tk("Both"),
+    i18n::tk("Left Hanging"),
+    i18n::tk("Right Hanging"),
 ];
 
 impl SlidesView {
@@ -119,6 +135,33 @@ impl SlidesView {
                 .sel_ref()
                 .and_then(|r| self.pres.smartart_family(r))
                 .is_some_and(|f| f.is_tree())
+    }
+
+    /// Whether an Organization Chart's Layout and Add Assistant apply: one
+    /// of its shapes selected.
+    pub fn can_edit_org_chart(&self) -> bool {
+        self.can_add_smartart_shape()
+            && self
+                .sel_ref()
+                .is_some_and(|r| self.pres.smartart_is_org_item(r))
+    }
+
+    /// PowerPoint's Layout on the selected Organization Chart shape: how
+    /// its item's children hang under it.
+    pub fn smartart_org_layout_doc(
+        &mut self,
+        layout: OrgLayout,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(r) = self.sel_ref().filter(|_| self.can_edit_org_chart()) else {
+            self.set_status(i18n::t("Select an Organization Chart shape"), cx);
+            return;
+        };
+        let res = self.pres.smartart_set_org_layout(r, layout);
+        if self.report(res, cx).is_some() {
+            self.after_edit(window, cx);
+        }
     }
 
     /// Whether Change Layout applies: a SmartArt (or one of its shapes)
@@ -263,8 +306,11 @@ pub(crate) fn menu_items(
     let layouts = v
         .can_change_smartart_layout()
         .then(|| v.sel_ref().and_then(|r| v.pres.smartart_family(r)));
+    let org = v
+        .can_edit_org_chart()
+        .then(|| v.sel_ref().and_then(|r| v.pres.smartart_org_layout(r)));
     type Run = fn(&mut SlidesView, &mut Window, &mut Context<SlidesView>);
-    let items: [(bool, &str, Box<dyn Action>, Run); 8] = [
+    let items: [(bool, &str, Box<dyn Action>, Run); 9] = [
         (
             v.can_add_smartart_shape(),
             i18n::t("Add Shape After"),
@@ -288,6 +334,12 @@ pub(crate) fn menu_items(
             i18n::t("Add Shape Below"),
             Box::new(crate::SmartArtAddBelow),
             |v, w, cx| v.smartart_add_doc(AddPlace::Below, w, cx),
+        ),
+        (
+            org.is_some(),
+            i18n::t("Add Assistant"),
+            Box::new(crate::SmartArtAddAssistant),
+            |v, w, cx| v.smartart_add_doc(AddPlace::Assistant, w, cx),
         ),
         (
             v.can_group(),
@@ -323,6 +375,22 @@ pub(crate) fn menu_items(
         let v = view.clone();
         menu = menu.submenu(i18n::t("Change Layout"), window, cx, move |m, _, _| {
             layout_menu(m, &v, current)
+        });
+    }
+    if let Some(current) = org {
+        let v = view.clone();
+        menu = menu.submenu(i18n::t("Layout"), window, cx, move |mut m, _, _| {
+            for l in OrgLayout::ALL {
+                let v = v.clone();
+                m = m.item(
+                    PopupMenuItem::new(i18n::t_dyn(l.name()))
+                        .checked(current == Some(l))
+                        .on_click(move |_, window, cx| {
+                            let _ = v.update(cx, |v, cx| v.smartart_org_layout_doc(l, window, cx));
+                        }),
+                );
+            }
+            m
         });
     }
     for (_, label, action, run) in shown {

@@ -596,3 +596,202 @@ fn picture_lists_take_items_with_placeholders() {
         Some(SmartArtFamily::HorizontalPictures)
     );
 }
+
+/// The shape whose text starts with `text`.
+fn find_start(p: &Presentation, f: ShapeRef, text: &str) -> ShapeRef {
+    let i = drawn(p, f)
+        .iter()
+        .position(|(t, _)| t.starts_with(text))
+        .unwrap_or_else(|| panic!("{text} in {:?}", drawn(p, f)));
+    f.child(i).unwrap()
+}
+
+/// Lay SmartArt `f` out again: a little wider.
+fn widen(p: &mut Presentation, f: ShapeRef) -> slides_engine::Xfrm {
+    let mut x = p.shape(f).unwrap().xfrm.unwrap();
+    x.cx += x.cx / 10;
+    p.set_xfrm(f, x, false).unwrap();
+    x
+}
+
+#[test]
+fn org_chart_assistants_and_hanging_layouts() {
+    use slides_engine::OrgLayout;
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let f = frame(&p, 10);
+    assert_eq!(p.smartart_family(f), Some(SmartArtFamily::OrgChart));
+    // As drawn by the generator, then laid out again by Kantor: the same
+    // places (the generator places them as Kantor does).
+    let before = items(&p, f);
+    let x = widen(&mut p, f);
+    let b = items(&p, f);
+    // (Wider: as tall as before, moved right by half the extra width.)
+    let dx = (x.cx - x.cx * 10 / 11) / 2;
+    for (t, v) in &before {
+        let w = b[t];
+        assert!(
+            (v.cy - w.cy).abs() <= 2 && (v.y - w.y).abs() <= 2 && (v.x + dx - w.x).abs() <= 2,
+            "{t}: {v:?} {w:?}"
+        );
+    }
+    let mid = |t: &str| b[t].x + b[t].cx / 2;
+    let (ceo, aide) = (b["CEO"], b["Aide"]);
+    // The assistant between the CEO and its reports, left of the line
+    // down from the CEO.
+    assert!(aide.y > ceo.y + ceo.cy && aide.y + aide.cy < b["Sales"].y);
+    assert!(aide.x + aide.cx < mid("CEO"));
+    // Sales (Left Hanging): North and South in a column on its left.
+    let sales = b["Sales"];
+    assert!(
+        b["North"].x < sales.x && b["North"].x == b["South"].x,
+        "{b:?}"
+    );
+    assert!(b["South"].y > b["North"].y);
+    // Ops (Both): Plant and Fleet either side of the line down from it.
+    assert_eq!(b["Plant"].y, b["Fleet"].y);
+    assert!(b["Plant"].x + b["Plant"].cx < mid("Ops") && b["Fleet"].x > mid("Ops"));
+    assert!(b["Depot"].y > b["Plant"].y);
+    // Labs (PowerPoint's initial layout, one leaf): Research hangs right.
+    assert!(b["Research"].x > b["Labs"].x && b["Research"].y > b["Labs"].y);
+    // The layout menu: set and read per shape.
+    let s = find(&p, f, "Sales");
+    assert!(p.smartart_is_org_item(s));
+    assert!(!p.smartart_is_org_item(f));
+    assert_eq!(p.smartart_org_layout(s), Some(OrgLayout::LeftHanging));
+    assert_eq!(p.smartart_org_layout(find(&p, f, "Labs")), None);
+    p.smartart_set_org_layout(s, OrgLayout::Standard).unwrap();
+    let b = items(&p, f);
+    assert_eq!(b["North"].y, b["South"].y);
+    assert!(b["North"].x < b["South"].x);
+    // Undone: hanging on the left again.
+    p.undo();
+    assert_eq!(
+        p.smartart_org_layout(find(&p, f, "Sales")),
+        Some(OrgLayout::LeftHanging)
+    );
+    // Add Assistant on Ops, typed into.
+    let new = p
+        .smartart_add_shape(find(&p, f, "Ops"), AddPlace::Assistant)
+        .unwrap();
+    let end = text_ops::end(p.text_paras(new).unwrap());
+    p.insert_text(new, Selection::caret(end), "Clerk", None)
+        .unwrap();
+    let b = items(&p, f);
+    assert!(
+        b["Clerk"].y > b["Ops"].y && b["Clerk"].y < b["Plant"].y,
+        "{b:?}"
+    );
+    // Only Organization Charts have assistants.
+    let h = frame(&p, 6);
+    assert!(
+        p.smartart_add_shape(find(&p, h, "CFO"), AddPlace::Assistant)
+            .is_err()
+    );
+    // Saved and read back.
+    let bytes = p.to_bytes().unwrap();
+    if let Ok(out) = std::env::var("KANTOR_SMARTART_ORG_OUT") {
+        std::fs::write(out, &bytes).unwrap();
+    }
+    let data = &parts(&bytes)["ppt/diagrams/data11.xml"];
+    assert_eq!(data.matches("type=\"asst\"").count(), 2, "{data}");
+    let back = Presentation::from_bytes(bytes).unwrap();
+    let f = frame(&back, 10);
+    assert_eq!(back.smartart_family(f), Some(SmartArtFamily::OrgChart));
+    assert_eq!(
+        back.smartart_org_layout(find(&back, f, "Ops")),
+        Some(OrgLayout::Both)
+    );
+}
+
+#[test]
+fn picture_layouts_lay_out_and_take_items_with_placeholders() {
+    let fams = [
+        (SmartArtFamily::PictureAccentList, "image"),
+        (SmartArtFamily::BendingPictureAccentList, "adorn"),
+        (SmartArtFamily::VerticalPictureList, "img"),
+        (SmartArtFamily::PictureCaptionList, "pictRect"),
+        (SmartArtFamily::TitledPictureBlocks, "Image"),
+        (SmartArtFamily::PictureGrid, "rect1"),
+    ];
+    for (k, (fam, pic)) in fams.into_iter().enumerate() {
+        let slide = 11 + k;
+        let mut p = Presentation::open(&corpus()).unwrap();
+        let f = frame(&p, slide);
+        assert_eq!(p.smartart_family(f), Some(fam), "slide {slide}");
+        let x = widen(&mut p, f);
+        let n0 = drawn(&p, f).len();
+        for (t, v) in drawn(&p, f) {
+            assert!(
+                v.x >= -1 && v.y >= -1 && v.x + v.cx <= x.cx + 1 && v.y + v.cy <= x.cy + 1,
+                "{fam:?} {t} {v:?}"
+            );
+        }
+        // An item after Forest: the same shapes as Forest's, its picture an
+        // empty placeholder.
+        p.smartart_add_shape(find_start(&p, f, "Forest"), AddPlace::After)
+            .unwrap_or_else(|e| panic!("{fam:?}: {e}"));
+        let per_item = (n0 - 0) / 3;
+        assert_eq!(drawn(&p, f).len(), n0 + per_item, "{fam:?}");
+        assert_eq!(p.smartart_family(f), Some(fam), "{fam:?}");
+        let saved = parts(&p.to_bytes().unwrap());
+        let i = slide + 1;
+        let data = &saved[&format!("ppt/diagrams/data{i}.xml")];
+        assert_eq!(
+            data.matches(&format!("presName=\"{pic}\"")).count(),
+            4,
+            "{fam:?}"
+        );
+        let drawing = &saved[&format!("ppt/diagrams/drawing{i}.xml")];
+        assert_eq!(drawing.matches("r:embed=").count(), 1, "{fam:?}");
+        // Lake's picture goes with it.
+        p.delete_shape(find_start(&p, f, "Lake")).unwrap();
+        assert_eq!(drawn(&p, f).len(), n0, "{fam:?}");
+        let saved = parts(&p.to_bytes().unwrap());
+        assert!(!saved[&format!("ppt/diagrams/drawing{i}.xml")].contains("r:embed="));
+        if let Ok(dir) = std::env::var("KANTOR_SMARTART_PICS_OUT") {
+            std::fs::write(format!("{dir}/pics{slide}.pptx"), p.to_bytes().unwrap()).unwrap();
+        }
+    }
+}
+
+#[test]
+fn bending_picture_list_text_sits_on_its_bar() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let f = frame(&p, 12);
+    widen(&mut p, f);
+    let d = drawn(&p, f);
+    // Lake's text shape (parentText) over the left of its bar, the round
+    // picture at the bar's right end.
+    let lake = d.iter().find(|(t, _)| t == "Lake").unwrap().1;
+    let bar = d
+        .iter()
+        .filter(|(t, b)| t.is_empty() && b.y == lake.y && b.cy == lake.cy)
+        .map(|x| x.1)
+        .next()
+        .unwrap_or_else(|| panic!("{d:?}"));
+    assert_eq!(bar.x, lake.x);
+    assert!(lake.cx < bar.cx);
+}
+
+#[test]
+fn layouts_change_into_picture_layouts() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let f = frame(&p, 1);
+    for fam in [
+        SmartArtFamily::PictureAccentList,
+        SmartArtFamily::BendingPictureAccentList,
+        SmartArtFamily::VerticalPictureList,
+        SmartArtFamily::PictureCaptionList,
+        SmartArtFamily::TitledPictureBlocks,
+        SmartArtFamily::PictureGrid,
+    ] {
+        p.smartart_change_layout(f, fam).unwrap();
+        assert_eq!(p.smartart_family(f), Some(fam));
+        let texts: Vec<String> = drawn(&p, f).into_iter().map(|d| d.0).collect();
+        assert!(
+            texts.iter().any(|t| t.starts_with("North"))
+                && texts.iter().any(|t| t.contains("Oslo")),
+            "{fam:?} {texts:?}"
+        );
+    }
+}

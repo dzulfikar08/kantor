@@ -138,7 +138,7 @@ impl TextOwner {
 
 /// SmartArt edit messages from `docs_pdf::smartart` (translated with
 /// `t_dyn`).
-const SMARTART_MESSAGES: [&str; 12] = [
+const SMARTART_MESSAGES: [&str; 14] = [
     tk("This SmartArt shape shows several items: keep one line per item"),
     tk("Kantor can't read this SmartArt's drawing"),
     tk("This SmartArt shape doesn't show an item"),
@@ -155,6 +155,8 @@ const SMARTART_MESSAGES: [&str; 12] = [
     tk("A Radial Cycle has two levels: add shapes before or after the ones round the centre"),
     tk("The centre of this Radial Cycle can't be deleted while it has shapes round it"),
     tk("This SmartArt has no layout part to change"),
+    tk("Only an Organization Chart has assistants"),
+    tk("Only an Organization Chart's shapes have a hanging layout"),
 ];
 
 /// A change to a SmartArt's items from its text popover.
@@ -163,6 +165,10 @@ pub(crate) enum ItemEdit {
     AddBefore,
     AddAfter,
     Delete,
+    /// An Organization Chart's Add Assistant.
+    AddAssistant,
+    /// An Organization Chart's Layout.
+    OrgLayout(slides_engine::OrgLayout),
 }
 
 /// Word's Layout Options names in the interface language.
@@ -936,6 +942,8 @@ impl DocsView {
             ItemEdit::AddBefore => docs_pdf::smartart::add_item(&self.doc, f, k, false),
             ItemEdit::AddAfter => docs_pdf::smartart::add_item(&self.doc, f, k, true),
             ItemEdit::Delete => docs_pdf::smartart::remove_item(&self.doc, f, k),
+            ItemEdit::AddAssistant => docs_pdf::smartart::add_assistant(&self.doc, f, k),
+            ItemEdit::OrgLayout(l) => docs_pdf::smartart::set_org_layout(&self.doc, f, k, l),
         };
         match r {
             Ok(parts) => {
@@ -943,6 +951,7 @@ impl DocsView {
                     self.float_edited(window, cx);
                     self.status = match op {
                         ItemEdit::Delete => t("SmartArt shape deleted"),
+                        ItemEdit::OrgLayout(_) => t("Organization Chart layout changed"),
                         _ => t("SmartArt shape added"),
                     }
                     .into();
@@ -1042,41 +1051,74 @@ impl DocsView {
         }
         let t = tokens(cx);
         let view = cx.entity().downgrade();
-        [
+        let mut ops = vec![
             (
-                "docs-smartart-add-before",
+                "docs-smartart-add-before".into(),
                 tk("Add Shape Before"),
                 ItemEdit::AddBefore,
+                false,
             ),
             (
-                "docs-smartart-add-after",
+                "docs-smartart-add-after".into(),
                 tk("Add Shape After"),
                 ItemEdit::AddAfter,
+                false,
             ),
-            ("docs-smartart-delete", tk("Delete Shape"), ItemEdit::Delete),
-        ]
-        .into_iter()
-        .map(|(id, label, op)| {
-            let v = view.clone();
-            div()
-                .id(id)
-                .flex_none()
-                .h(CONTROL_SM)
-                .px(SPACE_2)
-                .flex()
-                .items_center()
-                .rounded(RADIUS_MD)
-                .cursor_pointer()
-                .border_1()
-                .border_color(t.border)
-                .hover(|s| s.bg(t.hover))
-                .child(t_dyn(label).to_owned())
-                .on_click(move |_, window, cx| {
-                    let _ = v.update(cx, |this, cx| this.smartart_item_doc(op, window, cx));
-                })
-                .into_any_element()
-        })
-        .collect()
+            (
+                "docs-smartart-delete".into(),
+                tk("Delete Shape"),
+                ItemEdit::Delete,
+                false,
+            ),
+        ];
+        // An Organization Chart's shape: Add Assistant and its Layout
+        // (the one set marked).
+        let org = self
+            .doc
+            .float_at(edit.sel.para, edit.sel.index)
+            .zip(edit.which)
+            .and_then(|(f, k)| docs_pdf::smartart::org_item(&self.doc, f, k));
+        if let Some(current) = org {
+            ops.push((
+                "docs-smartart-add-assistant".into(),
+                tk("Add Assistant"),
+                ItemEdit::AddAssistant,
+                false,
+            ));
+            for l in slides_engine::OrgLayout::ALL {
+                ops.push((
+                    SharedString::from(format!("docs-smartart-org-{}", l.name())),
+                    l.name(),
+                    ItemEdit::OrgLayout(l),
+                    current == Some(l),
+                ));
+            }
+        }
+        ops.into_iter()
+            .map(
+                |(id, label, op, on): (SharedString, &str, ItemEdit, bool)| {
+                    let v = view.clone();
+                    div()
+                        .id(id)
+                        .when(on, |d| d.bg(t.selected))
+                        .flex_none()
+                        .h(CONTROL_SM)
+                        .px(SPACE_2)
+                        .flex()
+                        .items_center()
+                        .rounded(RADIUS_MD)
+                        .cursor_pointer()
+                        .border_1()
+                        .border_color(t.border)
+                        .hover(|s| s.bg(t.hover))
+                        .child(t_dyn(label).to_owned())
+                        .on_click(move |_, window, cx| {
+                            let _ = v.update(cx, |this, cx| this.smartart_item_doc(op, window, cx));
+                        })
+                        .into_any_element()
+                },
+            )
+            .collect()
     }
 
     /// Decoded pictures of the floating objects about to be painted, by
