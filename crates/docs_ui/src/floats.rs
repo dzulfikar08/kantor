@@ -1486,11 +1486,26 @@ pub(crate) fn paint_floats(
                 }
             }
         }
+        // Pictures in text boxes (decoded with the headers' ones).
+        let pictures = |window: &mut Window, l: &docs_pdf::StoryLayout, (x, y): (f32, f32)| {
+            for o in l.paged.objects(0) {
+                if let Some(data) = f.hf_images.get(&(l.key(), o.para, o.index)) {
+                    let [ox, oy, w, h] = o.rect;
+                    let b = Bounds::from_corners(
+                        g.page_to_screen(page, x + ox, y + oy),
+                        g.page_to_screen(page, x + ox + w, y + oy + h),
+                    );
+                    let _ = window.paint_image(b, b, Corners::default(), data.clone(), 0, false);
+                }
+            }
+        };
         if let Some((l, x, y)) = &fp.text {
             paint_text(window, l, (*x, *y));
+            pictures(window, l, (*x, *y));
         }
         for (l, x, y) in &fp.labels {
             paint_text(window, l, (*x, *y));
+            pictures(window, l, (*x, *y));
         }
         for tt in &fp.turned {
             let Some(img) = tt.image(z * window.scale_factor()) else {

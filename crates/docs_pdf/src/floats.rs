@@ -185,7 +185,16 @@ impl Painter {
                 let geom = geom_doc
                     .as_ref()
                     .and_then(|d| d.root_element().first_element_child());
-                let size = (f.at.cx.max(0) as f64, f.at.cy.max(0) as f64);
+                // At the size it's drawn (a "Resize shape to fit text"
+                // shape is as tall as its text).
+                let size = if rect[2] > 0.0 || rect[3] > 0.0 {
+                    (
+                        (rect[2].max(0.0) * EMU_PER_PX) as f64,
+                        (rect[3].max(0.0) * EMU_PER_PX) as f64,
+                    )
+                } else {
+                    (f.at.cx.max(0) as f64, f.at.cy.max(0) as f64)
+                };
                 let k = 1.0 / EMU_PER_PX;
                 self.shape(sp_root, style_root, geom, size, rect, (k, k), &mut out);
             }
