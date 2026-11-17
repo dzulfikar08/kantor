@@ -317,6 +317,8 @@ pub enum FloatKind {
     SmartArt {
         data: String,
         drawings: Vec<(String, String)>,
+        /// The layout definition part (`r:lo`), if any.
+        layout: Option<String>,
     },
     /// Other content: placed, shown as a box.
     Other(String),
@@ -1458,14 +1460,12 @@ pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> 
     } else if uri.contains("wordprocessingCanvas") {
         FloatKind::Group { canvas: true }
     } else if uri.contains("diagram") {
-        match data
-            .and_then(|d| find(d, "relIds"))
-            .and_then(|c| c.attr("dm"))
-            .and_then(rel_part)
-        {
+        let ids = data.and_then(|d| find(d, "relIds"));
+        match ids.and_then(|c| c.attr("dm")).and_then(rel_part) {
             Some(part) => FloatKind::SmartArt {
                 data: part,
                 drawings: Vec::new(),
+                layout: ids.and_then(|c| c.attr("lo")).and_then(rel_part),
             },
             None => FloatKind::Other("SmartArt".into()),
         }

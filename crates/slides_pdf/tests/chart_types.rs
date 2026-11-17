@@ -142,3 +142,38 @@ fn chartex_frames_move_and_save() {
     let scene = Builder::new().slide(&mut engine, &back, slide, &Default::default());
     assert!(words(&scene.items).iter().any(|w| w == "Cash flow"));
 }
+
+/// 3-D charts in 3-D and a date axis (tests/corpus/pptx/charts3d.pptx from
+/// scripts/corpus/gen_pptx_charts3d.py): drawn with their labels, many
+/// shaded faces each, on the slide and in the PDF.
+#[test]
+fn charts_3d_and_date_axes_are_drawn() {
+    let pres = Presentation::open(&corpus("charts3d.pptx")).unwrap();
+    assert_eq!(pres.len(), 8);
+    let mut engine = Engine::new();
+    let expect: [&[&str]; 8] = [
+        &["North", "Centre", "2024", "8"],
+        &["North", "2024", "2026"],
+        &["West", "25"],
+        &["South", "2025"],
+        &["East", "2026"],
+        &["West", "6-8"],
+        &["North", "Centre"],
+        &["2025-01-01", "2025-01-04", "2025-01-13"],
+    ];
+    for (k, want) in expect.iter().enumerate() {
+        let scene = Builder::new().slide(&mut engine, &pres, k, &Default::default());
+        let fills = scene
+            .items
+            .iter()
+            .filter(|i| matches!(i.prim, Prim::Fill { .. }))
+            .count();
+        assert!(fills >= 9, "slide {}: {fills} fills", k + 1);
+        let w = words(&scene.items);
+        for t in *want {
+            assert!(w.iter().any(|x| x == t), "slide {}: {t} in {w:?}", k + 1);
+        }
+    }
+    let (pdf, _) = slides_pdf::export(&pres, &mut engine).unwrap();
+    assert!(pdf.starts_with(b"%PDF"));
+}

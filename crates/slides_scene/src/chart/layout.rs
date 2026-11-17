@@ -277,6 +277,9 @@ type Rect = [f32; 4];
 #[path = "ex_draw.rs"]
 mod ex_draw;
 
+#[path = "three_d.rs"]
+mod three_d;
+
 pub use ex_draw::squarify;
 
 /// The chart's marks in a `w` × `h` frame.
@@ -314,6 +317,11 @@ pub fn layout(chart: &Chart, w: f32, h: f32, d: &Defaults, m: &mut dyn Measure) 
     }
     let first = chart.groups.first();
     let plot = manual_rect(chart.plot_layout, w, h).unwrap_or(area);
+    // 3-D charts in 3-D (one 3-D chart type per chart, as Office allows).
+    if chart.view3d.is_some() {
+        three_d::draw(chart, &mut o, area);
+        return o.marks;
+    }
     match first.map(|g| (g, &g.kind)) {
         Some((_, Kind::Surface { .. })) => {
             ex_draw::surface(chart, &mut o, plot);
@@ -1269,6 +1277,8 @@ struct Ax<'a> {
     between: bool,
     /// Format of the tick labels.
     fmt: Option<String>,
+    /// A date axis: each category's place (units from the first, centred).
+    slots: Option<Vec<f64>>,
 }
 
 impl Ax<'_> {
@@ -1298,6 +1308,14 @@ impl Ax<'_> {
             plot[1] + plot[3] * (1.0 - f)
         } else {
             plot[0] + plot[2] * f
+        }
+    }
+
+    /// Where category `i` sits (its centre, in category units).
+    fn slot(&self, i: usize) -> f64 {
+        match &self.slots {
+            Some(s) => s.get(i).copied().unwrap_or(i as f64 + 0.5),
+            None => i as f64 + 0.5,
         }
     }
 
@@ -1438,6 +1456,7 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
             labels: Vec::new(),
             between: true,
             fmt: None,
+            slots: None,
         });
         axes.len() - 1
     }
@@ -1546,6 +1565,33 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
                 c.labels = (0..c.ncat)
                     .map(|i| cat_label(s, i, fmt.as_deref()))
                     .collect();
+                // A date axis: categories at their dates, a unit apart.
+                if c.ax.kind == AxisKind::Date
+                    && let Some(ds) = super::date_axis::slots(
+                        &s.cat_nums,
+                        c.ax.base_unit,
+                        c.ax.major_unit.map(|u| (u, c.ax.major_time_unit)),
+                    )
+                {
+                    let code = fmt
+                        .or_else(|| s.cat_fmt.clone())
+                        .filter(|f| is_date_code(f))
+                        .unwrap_or_else(|| "m/d/yyyy".into());
+                    c.ncat = ds.count;
+                    c.labels = ds
+                        .starts
+                        .iter()
+                        .zip(&ds.labelled)
+                        .map(|(d, on)| {
+                            if *on {
+                                format_number(*d, Some(&code))
+                            } else {
+                                String::new()
+                            }
+                        })
+                        .collect();
+                    c.slots = Some(ds.at);
+                }
             }
             // Bars always sit between ticks; others as the value axis says.
             let between =
@@ -2112,7 +2158,7 @@ fn bars(
                 None if grouping.stacked() => (b0, b1),
                 None => (base_v, b1),
             };
-            let u0 = i as f32 + gp * bw / 2.0 + slot * bw * (1.0 - ov);
+            let u0 = (ca.slot(i) - 0.5) as f32 + gp * bw / 2.0 + slot * bw * (1.0 - ov);
             let u1 = u0 + bw;
             let (c0, c1) = (ca.px(u0 as f64, plot), ca.px(u1 as f64, plot));
             let (v0, v1) = (va.px(clamp(b0), plot), va.px(clamp(b1), plot));
@@ -2234,7 +2280,7 @@ fn lines(
     });
     let clamp = |v: f64| v.clamp(sc.min, sc.max);
     let at = |i: usize, v: f64| {
-        let c = ca.px(i as f64 + 0.5, plot);
+        let c = ca.px(ca.slot(i), plot);
         let y = va.px(clamp(v), plot);
         if ca.vertical { p(y, c) } else { p(c, y) }
     };
@@ -2477,7 +2523,7 @@ fn stock_lines(g: &Group, ca: &Ax, va: &Ax, plot: Rect, o: &mut Out) {
     let n = g.series.iter().map(|s| s.vals.len()).max().unwrap_or(0);
     let y = |v: f64| va.px(v.clamp(sc.min, sc.max), plot);
     let at = |i: usize, v: f64| {
-        let c = ca.px(i as f64 + 0.5, plot);
+        let c = ca.px(ca.slot(i), plot);
         if ca.vertical { p(y(v), c) } else { p(c, y(v)) }
     };
     let text = o.d.text;

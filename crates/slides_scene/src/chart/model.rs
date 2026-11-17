@@ -641,6 +641,30 @@ pub struct Axis {
     pub cross_between: Option<String>,
     /// Display units (`c:dispUnits`): values shown divided by this.
     pub disp_units: Option<DispUnits>,
+    /// Date axes: the unit categories are spaced by (`c:baseTimeUnit`;
+    /// `None`: chosen from the dates, as Excel does) and the unit of
+    /// `major_unit` (`c:majorTimeUnit`).
+    pub base_unit: Option<TimeUnit>,
+    pub major_time_unit: Option<TimeUnit>,
+}
+
+/// A date axis' time unit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TimeUnit {
+    Days,
+    Months,
+    Years,
+}
+
+impl TimeUnit {
+    fn parse(v: Option<&str>) -> Option<Self> {
+        Some(match v? {
+            "days" => Self::Days,
+            "months" => Self::Months,
+            "years" => Self::Years,
+            _ => return None,
+        })
+    }
 }
 
 /// A value axis' display units.
@@ -721,6 +745,8 @@ impl Axis {
             crosses_at: None,
             cross_between: None,
             disp_units: None,
+            base_unit: None,
+            major_time_unit: None,
         }
     }
 
@@ -781,6 +807,8 @@ impl Axis {
             crosses_at: val_f(n, "crossesAt"),
             cross_between: val(n, "crossBetween").map(str::to_owned),
             disp_units: kid(n, "dispUnits").and_then(DispUnits::parse),
+            base_unit: TimeUnit::parse(val(n, "baseTimeUnit")),
+            major_time_unit: TimeUnit::parse(val(n, "majorTimeUnit")),
         })
     }
 }
@@ -827,6 +855,91 @@ pub struct Chart {
     /// Legend entries given by the chart type rather than its series
     /// (a waterfall's Increase / Decrease / Total).
     pub legend_keys: Option<Vec<(String, Fill)>>,
+    /// A 3-D chart's view, walls and floor (`c:view3D`...); `None` for
+    /// 2-D charts.
+    pub view3d: Option<View3D>,
+}
+
+/// Which 3-D chart a [`View3D`] is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind3D {
+    Bar,
+    Line,
+    Area,
+    Pie,
+    Surface,
+}
+
+/// How a 3-D chart is seen (`c:view3D`), its walls and floor.
+#[derive(Clone, Debug, PartialEq)]
+pub struct View3D {
+    pub kind: Kind3D,
+    /// Turned about the horizontal axis (degrees, -90..90; positive: seen
+    /// from above) and about the vertical axis (0..360).
+    pub rot_x: f32,
+    pub rot_y: f32,
+    /// Field of view (degrees; 0: no perspective).
+    pub perspective: f32,
+    /// `c:rAngAx`: axes at right angles (an oblique view, no perspective).
+    pub r_ang_ax: bool,
+    /// Depth as a % of the base, height as a % of it (`None`: automatic).
+    pub depth_percent: f32,
+    pub h_percent: Option<f32>,
+    /// Gap between rows of series, % of a bar's depth (`c:gapDepth`).
+    pub gap_depth: f32,
+    /// Series one behind the other (`c:grouping val=standard` columns,
+    /// lines, standard areas: a series axis).
+    pub series_depth: bool,
+    pub floor: Look,
+    pub side_wall: Look,
+    pub back_wall: Look,
+}
+
+impl View3D {
+    fn parse(chart: Node, plot: Node, cx: &ColorCtx) -> Option<Self> {
+        let g = plot
+            .children()
+            .find(|c| c.is_element() && c.tag_name().name().ends_with("3DChart"))?;
+        let name = g.tag_name().name();
+        let grouping = val(g, "grouping");
+        let kind = match name {
+            "bar3DChart" => Kind3D::Bar,
+            "line3DChart" => Kind3D::Line,
+            "area3DChart" => Kind3D::Area,
+            "pie3DChart" => Kind3D::Pie,
+            "surface3DChart" => Kind3D::Surface,
+            _ => return None,
+        };
+        let v = kid(chart, "view3D");
+        let num = |k: &str| v.and_then(|v| val_f(v, k));
+        let pie = kind == Kind3D::Pie;
+        let r_ang_ax = v
+            .and_then(|v| flag(v, "rAngAx"))
+            .unwrap_or(matches!(kind, Kind3D::Bar) && grouping != Some("standard"));
+        Some(View3D {
+            kind,
+            rot_x: num("rotX")
+                .unwrap_or(if pie { 30.0 } else { 15.0 })
+                .clamp(-90.0, 90.0) as f32,
+            rot_y: num("rotY")
+                .unwrap_or(if pie { 0.0 } else { 20.0 })
+                .rem_euclid(360.0) as f32,
+            // ST_Perspective counts half degrees.
+            perspective: (num("perspective").unwrap_or(30.0).clamp(0.0, 240.0) / 2.0) as f32,
+            r_ang_ax,
+            depth_percent: num("depthPercent").unwrap_or(100.0).clamp(20.0, 2000.0) as f32,
+            h_percent: num("hPercent").map(|h| h.clamp(5.0, 500.0) as f32),
+            gap_depth: val_f(g, "gapDepth").unwrap_or(150.0).clamp(0.0, 500.0) as f32,
+            series_depth: match kind {
+                Kind3D::Line | Kind3D::Surface => true,
+                Kind3D::Bar | Kind3D::Area => grouping == Some("standard"),
+                Kind3D::Pie => false,
+            },
+            floor: Look::parse(kid(chart, "floor"), cx),
+            side_wall: Look::parse(kid(chart, "sideWall"), cx),
+            back_wall: Look::parse(kid(chart, "backWall"), cx),
+        })
+    }
 }
 
 /// Cached strings of a `c:strRef`/`c:strLit`/`c:multiLvlStrRef` (by
@@ -1186,6 +1299,7 @@ impl Chart {
             style,
             unsupported,
             legend_keys: None,
+            view3d: View3D::parse(chart, plot, cx),
         })
     }
 

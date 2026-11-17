@@ -220,6 +220,7 @@ impl SlidesView {
 pub(crate) fn context_menu(
     mut menu: PopupMenu,
     view: &WeakEntity<SlidesView>,
+    window: &mut Window,
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
     let Some(v) = view.upgrade() else {
@@ -267,7 +268,7 @@ pub(crate) fn context_menu(
             },
         ));
     }
-    crate::groups::menu_items(menu, view, cx)
+    crate::groups::menu_items(menu, view, window, cx)
 }
 
 #[cfg(test)]

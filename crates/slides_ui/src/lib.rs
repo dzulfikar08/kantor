@@ -2898,7 +2898,7 @@ impl Render for SlidesView {
             .children(self.find.bar(cx))
             .context_menu({
                 let view = cx.entity().downgrade();
-                move |menu, _, cx| spell::context_menu(menu, &view, cx)
+                move |menu, window, cx| spell::context_menu(menu, &view, window, cx)
             });
 
         let strip = div()

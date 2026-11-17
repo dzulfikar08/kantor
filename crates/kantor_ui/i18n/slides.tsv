@@ -110,7 +110,7 @@ Group	Kelompokkan
 Ungroup	Pisahkan Kelompok
 Regroup	Kelompokkan Ulang
 Convert to Shapes	Konversi ke Bentuk
-Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes, cycles and hierarchies	Kantor belum bisa menata tata letak SmartArt ini: item hanya bisa ditambah atau dihapus pada daftar, proses, siklus, dan hierarki
+Kantor can't lay out this SmartArt layout yet: choose another layout with Change Layout to add or remove items	Kantor belum bisa menata tata letak SmartArt ini: pilih tata letak lain lewat Ubah Tata Letak untuk menambah atau menghapus item
 This SmartArt layout has one level: add shapes before or after	Tata letak SmartArt ini hanya punya satu tingkat: tambahkan bentuk sebelum atau sesudahnya
 A SmartArt keeps at least one item	SmartArt harus memiliki minimal satu item
 Add Shape After	Tambahkan Bentuk Setelahnya
@@ -131,3 +131,29 @@ The top of this Labeled Hierarchy can't be deleted while it has several shapes u
 # Chart data of the newer chart types
 This type of chart shows one series	Jenis bagan ini menampilkan satu seri
 A category's levels are separated by " / "	Tingkat sebuah kategori dipisahkan dengan " / "
+The centre of a Radial Cycle has no shapes beside or above it: add shapes below it	Pusat Siklus Radial tidak punya bentuk di samping atau di atasnya: tambahkan bentuk di bawahnya
+A Radial Cycle has two levels: add shapes before or after the ones round the centre	Siklus Radial punya dua tingkat: tambahkan bentuk sebelum atau sesudah bentuk di sekeliling pusat
+The centre of this Radial Cycle can't be deleted while it has shapes round it	Pusat Siklus Radial ini tidak bisa dihapus selama ada bentuk di sekelilingnya
+This SmartArt has no layout part to change	SmartArt ini tidak punya bagian tata letak untuk diubah
+Change Layout	Ubah Tata Letak
+Process	Proses
+Cycle	Siklus
+Hierarchy	Hierarki
+Relationship	Hubungan
+Matrix	Matriks
+Pyramid	Piramida
+Basic Block List	Daftar Blok Dasar
+Vertical Bullet List	Daftar Poin Vertikal
+Horizontal Bullet List	Daftar Poin Horizontal
+Basic Process	Proses Dasar
+Continuous Block Process	Proses Blok Berkelanjutan
+Step Up Process	Proses Naik Bertahap
+Basic Cycle	Siklus Dasar
+Radial Cycle	Siklus Radial
+Organization Chart	Bagan Organisasi
+Horizontal Hierarchy	Hierarki Horizontal
+Labeled Hierarchy	Hierarki Berlabel
+Basic Venn	Venn Dasar
+Basic Matrix	Matriks Dasar
+Basic Pyramid	Piramida Dasar
+SmartArt layout changed	Tata letak SmartArt diubah

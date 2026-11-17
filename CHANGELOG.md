@@ -24,7 +24,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   cells, column widths and row heights, not just values and formulas.
 - `.doc` imports bring grouped shapes as groups, and LibreOffice's rounded rectangles, ellipses and
   other shapes with arcs keep their curves instead of becoming rectangles.
-
+- Slides and Docs: Change Layout for SmartArt (right-click in Slides, the SmartArt button beside a
+  selected SmartArt in Docs): lists, processes, cycles, hierarchies, Venn, matrix and pyramid, the
+  items, their text and formatting kept.
+- Slides and Docs: more SmartArt layouts are laid out again when resized and take new items:
+  Horizontal Bullet List, Continuous Block Process, Step Up Process, Radial Cycle, Basic Venn, Basic
+  Matrix and Basic Pyramid.
+- Sheets, Docs and Slides: 3-D charts are drawn in 3-D, on screen and in PDFs: columns and bars as
+  boxes (side by side, stacked or one series behind another), lines as ribbons, areas as slabs,
+  pies tilted with their edge, surfaces as a mesh, with floor, walls and gridlines, turned and in
+  perspective as the chart says.
+- Sheets, Docs and Slides: date axes space their categories by date (days, months or years, as the
+  axis says or as Excel picks), leaving room for missing dates, with labels at each major unit.
 - Docs: text boxes holding pictures and tables are edited where they're drawn, like any other text
   box, and pictures and tables can be inserted into a text box.
 - Docs: text boxes set to "Resize shape to fit text" are as tall as their text, and grow or shrink

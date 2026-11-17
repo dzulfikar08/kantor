@@ -12,15 +12,17 @@
 //!   slide text, so the PDF embeds the fonts and the text can be copied.
 //!
 //! Drawn: bar / column (clustered, stacked, 100 %), line, area, pie,
-//! doughnut, scatter, and combinations of them on shared or secondary
-//! axes. Anything else (radar, bubble, stock, surface, 3-D...) keeps the
-//! placeholder box.
+//! doughnut, scatter, radar, bubble, stock, surface, the Office 2016
+//! types, combinations of them on shared or secondary axes, and the 3-D
+//! charts in 3-D (`layout`'s `three_d`). Date axes space categories by
+//! date ([`date_axis`]).
 //!
 //! The model and layout know nothing of slides beyond [`Defaults`]. Sheets
 //! draws charts embedded in worksheets with the same code: it parses the
 //! part ([`Chart::parse`]), puts the cells each series refers to
 //! ([`SeriesRefs`]) in place of the caches, and lays it out with [`items`].
 
+pub mod date_axis;
 pub mod ex;
 pub mod format;
 pub mod geo;

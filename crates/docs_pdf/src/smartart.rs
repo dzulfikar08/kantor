@@ -39,7 +39,7 @@ fn current(doc: &Document, f: &Float, name: &str) -> Option<String> {
 /// The SmartArt object `f` shows (`doc` is the main document), if its
 /// file has a drawing for it.
 pub fn read(doc: &Document, f: &Float, painter: &Painter) -> Option<SmartArt> {
-    let FloatKind::SmartArt { data, drawings } = &f.kind else {
+    let FloatKind::SmartArt { data, drawings, .. } = &f.kind else {
         return None;
     };
     let data_xml = current(doc, f, data)?;
@@ -287,6 +287,12 @@ fn parts(sa: &SmartArt, drawing: String, data: Option<String>) -> Parts {
     out
 }
 
+/// The layout family of SmartArt `f`, when Kantor lays it out.
+pub fn family(doc: &Document, f: &Float) -> Option<slides_engine::SmartArtFamily> {
+    let sa = read(doc, f, &Painter::new(doc))?;
+    slides_engine::smartart_layout::family(&sa.drawing_xml, &sa.data_xml)
+}
+
 /// Whether Kantor lays SmartArt `f` out (items can be added and removed,
 /// and it's laid out again when resized).
 pub fn can_relayout(doc: &Document, f: &Float) -> bool {
@@ -342,13 +348,53 @@ pub fn relaid(doc: &Document, f: &Float, size: (i64, i64)) -> Option<Parts> {
     Some(parts(&sa, drawing, None))
 }
 
+/// Word's *Change Layout*: SmartArt `f` drawn in layout `to` (its items,
+/// text and formatting kept), laid out for the object's size, with the
+/// new layout's definition in its layout part. The edited parts to store
+/// with the object ([`Document::set_float_parts`]).
+pub fn change_layout(
+    doc: &Document,
+    f: &Float,
+    to: slides_engine::SmartArtFamily,
+) -> Result<Parts, &'static str> {
+    let Some(sa) = read(doc, f, &Painter::new(doc)) else {
+        return Err("Kantor can't read this SmartArt's drawing");
+    };
+    let FloatKind::SmartArt {
+        layout: Some(layout),
+        ..
+    } = &f.kind
+    else {
+        return Err(NO_LAYOUT_PART);
+    };
+    let (w, h) = (f.at.cx.max(1), f.at.cy.max(1));
+    let (drawing, data, lo) =
+        slides_engine::smartart_layout::change_layout(&sa.drawing_xml, &sa.data_xml, to, w, h)
+            .map_err(|_| "Kantor can't read this SmartArt's drawing")?;
+    let drawing = fitted(doc, &sa, drawing, &data, (w, h));
+    let mut out = parts(&sa, drawing, Some(data));
+    out.push((layout.clone(), Arc::from(lo)));
+    Ok(out)
+}
+
+pub const NO_LAYOUT_PART: &str = "This SmartArt has no layout part to change";
+
 /// A refusal Slides' layout explains itself (a Labeled Hierarchy's).
 fn known(e: &anyhow::Error) -> Option<&'static str> {
-    use slides_engine::smartart_layout::{LABEL_LEVELS, TOP_ALONE, TOP_KEEP};
+    use slides_engine::smartart_layout::{
+        LABEL_LEVELS, RADIAL_CENTRE, RADIAL_KEEP, RADIAL_LEVELS, TOP_ALONE, TOP_KEEP,
+    };
     let msg = e.to_string();
-    [LABEL_LEVELS, TOP_ALONE, TOP_KEEP]
-        .into_iter()
-        .find(|m| *m == msg)
+    [
+        LABEL_LEVELS,
+        TOP_ALONE,
+        TOP_KEEP,
+        RADIAL_CENTRE,
+        RADIAL_LEVELS,
+        RADIAL_KEEP,
+    ]
+    .into_iter()
+    .find(|m| *m == msg)
 }
 
 pub const SELECT_ITEM: &str = "This SmartArt shape doesn't show an item";

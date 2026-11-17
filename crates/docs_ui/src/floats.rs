@@ -138,19 +138,23 @@ impl TextOwner {
 
 /// SmartArt edit messages from `docs_pdf::smartart` (translated with
 /// `t_dyn`).
-const SMARTART_MESSAGES: [&str; 8] = [
+const SMARTART_MESSAGES: [&str; 12] = [
     tk("This SmartArt shape shows several items: keep one line per item"),
     tk("Kantor can't read this SmartArt's drawing"),
     tk("This SmartArt shape doesn't show an item"),
     tk("A SmartArt keeps at least one item"),
     tk(
-        "Kantor can't lay out this SmartArt layout yet: items can only be added or removed in lists, processes, cycles and hierarchies",
+        "Kantor can't lay out this SmartArt layout yet: choose another layout with Change Layout to add or remove items",
     ),
     tk(
         "A Labeled Hierarchy's labels take no shapes above or below them: add labels before or after them",
     ),
     tk("The top of a Labeled Hierarchy has no shapes beside it: add shapes below or above it"),
     tk("The top of this Labeled Hierarchy can't be deleted while it has several shapes under it"),
+    tk("The centre of a Radial Cycle has no shapes beside or above it: add shapes below it"),
+    tk("A Radial Cycle has two levels: add shapes before or after the ones round the centre"),
+    tk("The centre of this Radial Cycle can't be deleted while it has shapes round it"),
+    tk("This SmartArt has no layout part to change"),
 ];
 
 /// A change to a SmartArt's items from its text popover.
@@ -663,6 +667,86 @@ impl DocsView {
         }
     }
 
+    /// Word's Change Layout on the selected SmartArt: its items in layout
+    /// `to` (one undo step).
+    pub(crate) fn smartart_layout_doc(
+        &mut self,
+        to: slides_engine::SmartArtFamily,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(s) = self.layout_target() else {
+            return;
+        };
+        let Some(f) = self.doc.float_at(s.para, s.index) else {
+            return;
+        };
+        match docs_pdf::smartart::change_layout(&self.doc, f, to) {
+            Ok(parts) => {
+                if self.doc.set_float_parts(s.para, s.index, parts) {
+                    self.float_edited(window, cx);
+                    self.status = t("SmartArt layout changed").into();
+                }
+            }
+            Err(why) => {
+                debug_assert!(SMARTART_MESSAGES.contains(&why), "{why}");
+                self.status = t_dyn(why).into();
+            }
+        }
+        self.focus(window, cx);
+        cx.notify();
+    }
+
+    /// The Change Layout button of a selected SmartArt: the layouts Kantor
+    /// lays out, by category (the names are Slides' catalog keys).
+    fn smartart_layout_button(&self, s: FloatSel, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let f = self.doc.float_at(s.para, s.index)?;
+        if !matches!(f.kind, docs_engine::FloatKind::SmartArt { .. }) {
+            return None;
+        }
+        let current = docs_pdf::smartart::family(&self.doc, f);
+        let view = cx.entity().downgrade();
+        Some(
+            Button::new("docs-smartart-layout")
+                .outline()
+                .xsmall()
+                .icon(Lucide::Shapes)
+                .tooltip(t("Change Layout"))
+                .dropdown_menu(move |mut menu, _, _| {
+                    let cats = [
+                        ("list", tk("List")),
+                        ("process", tk("Process")),
+                        ("cycle", tk("Cycle")),
+                        ("hierarchy", tk("Hierarchy")),
+                        ("relationship", tk("Relationship")),
+                        ("matrix", tk("Matrix")),
+                        ("pyramid", tk("Pyramid")),
+                    ];
+                    for (cat, heading) in cats {
+                        menu = menu.item(PopupMenuItem::label(t_dyn(heading)));
+                        for (family, _, _, name) in slides_engine::smartart_layout::LAYOUTS
+                            .iter()
+                            .filter(|l| l.2 == cat)
+                        {
+                            let v = view.clone();
+                            let to = *family;
+                            menu = menu.item(
+                                PopupMenuItem::new(t_dyn(name))
+                                    .checked(current == Some(to))
+                                    .on_click(move |_, window, cx| {
+                                        let _ = v.update(cx, |this, cx| {
+                                            this.smartart_layout_doc(to, window, cx);
+                                        });
+                                    }),
+                            );
+                        }
+                    }
+                    menu
+                })
+                .into_any_element(),
+        )
+    }
+
     /// The Layout Options button beside the selected object.
     pub(crate) fn render_layout_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let s = self.layout_target()?;
@@ -717,12 +801,17 @@ impl DocsView {
                 }
                 menu
             });
+        let smartart = self.smartart_layout_button(s, cx);
         Some(
             div()
                 .absolute()
                 .left(at.x - origin.x + SPACE_3)
                 .top(at.y - origin.y)
+                .flex()
+                .flex_col()
+                .gap(SPACE_2)
                 .child(button)
+                .children(smartart)
                 .into_any_element(),
         )
     }

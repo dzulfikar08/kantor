@@ -561,6 +561,7 @@ pub(crate) fn parse(space: Node, cx: &ColorCtx) -> Option<Chart> {
         style: 2,
         unsupported,
         legend_keys: None,
+        view3d: None,
     })
 }
 

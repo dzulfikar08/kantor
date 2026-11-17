@@ -19,6 +19,9 @@ image.workspace = true
 # Turned text (text boxes here, shapes in Slides): glyph runs as Slides
 # scenes hold them, glyph outlines and their fill (the versions GPUI uses).
 slides_scene.workspace = true
+# SmartArt layouts (Change Layout's gallery); turned-text tests build a
+# Slides scene with it.
+slides_engine.workspace = true
 swash = "0.2.10"
 kantor_core.workspace = true
 kantor_spell.workspace = true
@@ -32,8 +35,6 @@ skrifa = "0.44"
 [dev-dependencies]
 # Headless GPUI text system for the font-bridge test (as in docs_layout's gpui_compare).
 gpui_wgpu = { package = "gpui-pre-wgpu", version = "0.3.11" }
-# Turned-text tests build a Slides scene (the rasteriser moved here from Slides).
-slides_engine.workspace = true
 
 [lints]
 workspace = true

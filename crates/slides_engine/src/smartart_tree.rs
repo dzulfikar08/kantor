@@ -79,6 +79,16 @@ impl Tree {
         }
     }
 
+    /// Whether item `k` is drawn: a Radial Cycle draws its first top-level
+    /// item and that item's children only.
+    fn drawn(&self, k: usize) -> bool {
+        if self.family != Family::RadialCycle {
+            return true;
+        }
+        let centre = self.roots.first().copied();
+        Some(k) == centre || (self.nodes[k].parent.is_some() && self.nodes[k].parent == centre)
+    }
+
     fn parent_id(&self, k: usize) -> &str {
         match self.nodes[k].parent {
             Some(p) => &self.nodes[p].id,
@@ -247,8 +257,67 @@ const GAP_LEVELS: f64 = 0.5;
 const LABEL_COLUMN: f64 = 0.2;
 const BAND_PAD: f64 = 0.4;
 
+/// A Radial Cycle's circles in a `w` × `h` frame: the centre, its
+/// children round it (items not drawn get an empty box at the centre).
+fn place_radial(t: &Tree, w: f64, h: f64) -> Vec<Xfrm> {
+    let m = w.min(h);
+    let (cx, cy) = (w / 2.0, h / 2.0);
+    let ring: Vec<usize> = t
+        .roots
+        .first()
+        .map(|c| t.nodes[*c].kids.clone())
+        .unwrap_or_default();
+    let n = ring.len() as f64;
+    // Outer circles: at most 30 % of the frame, apart from each other.
+    let mut d = m * 0.3;
+    let mut rr = (m - d) / 2.0;
+    if n > 1.0 {
+        let chord = 2.0 * rr * (std::f64::consts::PI / n).sin();
+        d = d.min(chord * 0.85);
+        rr = (m - d) / 2.0;
+    }
+    // The centre: as big as the room inside the ring allows.
+    let dc = ((rr - d / 2.0) * 2.0 * 0.8).min(m * 0.42).max(d);
+    let circle = |x: f64, y: f64, d: f64| Xfrm::new(r(x - d / 2.0), r(y - d / 2.0), r(d), r(d));
+    let mut out = vec![Xfrm::new(r(cx), r(cy), 0, 0); t.nodes.len()];
+    if let Some(c) = t.roots.first() {
+        out[*c] = circle(cx, cy, dc);
+    }
+    for (i, k) in ring.iter().enumerate() {
+        let a = (-90.0 + 360.0 * i as f64 / n.max(1.0)).to_radians();
+        out[*k] = circle(cx + rr * a.cos(), cy + rr * a.sin(), d);
+    }
+    out
+}
+
+/// The spoke from a Radial Cycle's centre circle `p` to circle `c`: edge to
+/// edge.
+fn spoke(p: &Xfrm, c: &Xfrm) -> Vec<(Emu, Emu)> {
+    let (px, py) = p.center();
+    let (qx, qy) = c.center();
+    let (dx, dy) = (qx - px, qy - py);
+    let len = (dx * dx + dy * dy).sqrt().max(1.0);
+    let (ux, uy) = (dx / len, dy / len);
+    let (rp, rc) = (p.cx as f64 / 2.0, c.cx as f64 / 2.0);
+    vec![
+        (r(px + ux * rp), r(py + uy * rp)),
+        (r(qx - ux * rc), r(qy - uy * rc)),
+    ]
+}
+
+/// The connector from parent box `p` to child box `c`.
+fn link_pts(t: &Tree, p: &Xfrm, c: &Xfrm) -> Vec<(Emu, Emu)> {
+    match t.family {
+        Family::RadialCycle => spoke(p, c),
+        f => elbow(f == Family::HorizontalHierarchy, p, c),
+    }
+}
+
 /// Each item's box in a `w` × `h` frame.
 fn place(t: &Tree, w: f64, h: f64) -> Vec<Xfrm> {
+    if t.family == Family::RadialCycle {
+        return place_radial(t, w, h);
+    }
     let n = t.nodes.len();
     let mut leaves = vec![0usize; n];
     fn count(t: &Tree, k: usize, leaves: &mut [usize]) -> usize {
@@ -382,14 +451,6 @@ fn polyline_geom(pts: &[(Emu, Emu)], a: &str) -> (Xfrm, String) {
     (Xfrm::new(x0, y0, w, h), geom)
 }
 
-/// The DrawingML prefix (with its colon) of element source `src`.
-fn prefix_of(src: &str) -> String {
-    let tag = tag_name(src.trim_start());
-    tag.split_once(':')
-        .map(|(p, _)| format!("{p}:"))
-        .unwrap_or_default()
-}
-
 /// A connector shape for `model` when the drawing has none to copy.
 fn new_connector(model: &str) -> String {
     format!(
@@ -460,12 +521,17 @@ pub(super) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Res
     let t = tree(data)?;
     let (list, tree_end) = tshapes(drawing, &t)?;
     let boxes = place(&t, w as f64, h as f64);
-    let horizontal = t.family == Family::HorizontalHierarchy;
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     // Items: their shapes moved and scaled with the box round them all.
+    // Items the layout doesn't draw lose their shapes (and count as drawn).
     let mut drawn = vec![false; t.nodes.len()];
     for (k, b) in boxes.iter().enumerate() {
         let mine: Vec<&TShape> = list.iter().filter(|s| s.role == TRole::Node(k)).collect();
+        if !t.drawn(k) {
+            drawn[k] = true;
+            edits.extend(mine.iter().map(|s| (s.range.clone(), String::new())));
+            continue;
+        }
         let olds: Vec<Xfrm> = mine
             .iter()
             .filter_map(|s| s.xfrm.as_ref().map(|x| x.1))
@@ -491,7 +557,9 @@ pub(super) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Res
     }
     // Items without shapes (made elsewhere): copies of another item's.
     let mut add = String::new();
-    if let Some(tk) = drawn.iter().position(|d| *d) {
+    if let Some(tk) =
+        (0..t.nodes.len()).find(|k| t.drawn(*k) && list.iter().any(|s| s.role == TRole::Node(*k)))
+    {
         for k in (0..t.nodes.len()).filter(|k| !drawn[*k]) {
             let mine: Vec<&TShape> = list.iter().filter(|s| s.role == TRole::Node(tk)).collect();
             let olds: Vec<Xfrm> = mine
@@ -519,12 +587,12 @@ pub(super) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Res
             edits.push((s.range.clone(), String::new()));
             continue;
         };
-        if has_conn[k] {
+        if has_conn[k] || !t.drawn(k) {
             edits.push((s.range.clone(), String::new()));
             continue;
         }
         has_conn[k] = true;
-        let pts = elbow(horizontal, &boxes[p], &boxes[k]);
+        let pts = link_pts(&t, &boxes[p], &boxes[k]);
         edits.push((
             s.range.clone(),
             draw_connector(&drawing[s.range.clone()], &pts),
@@ -538,14 +606,14 @@ pub(super) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Res
         let (Some(p), false, Some(par)) = (n.parent, has_conn[k], n.par.as_deref()) else {
             continue;
         };
+        if !t.drawn(k) {
+            continue;
+        }
         let base = match template {
             Some(x) => copy_shape(x, par),
             None => new_connector(par),
         };
-        add.push_str(&draw_connector(
-            &base,
-            &elbow(horizontal, &boxes[p], &boxes[k]),
-        ));
+        add.push_str(&draw_connector(&base, &link_pts(&t, &boxes[p], &boxes[k])));
     }
     // New shapes go first (behind the items): connectors under the boxes
     // (but over a Labeled Hierarchy's bands).
@@ -584,6 +652,13 @@ pub const TOP_ALONE: &str =
     "The top of a Labeled Hierarchy has no shapes beside it: add shapes below or above it";
 pub const TOP_KEEP: &str =
     "The top of this Labeled Hierarchy can't be deleted while it has several shapes under it";
+/// Radial Cycle messages (translated by the apps).
+pub const RADIAL_CENTRE: &str =
+    "The centre of a Radial Cycle has no shapes beside or above it: add shapes below it";
+pub const RADIAL_LEVELS: &str =
+    "A Radial Cycle has two levels: add shapes before or after the ones round the centre";
+pub const RADIAL_KEEP: &str =
+    "The centre of this Radial Cycle can't be deleted while it has shapes round it";
 
 fn is_par_of(c: Node) -> bool {
     c.attribute("type").is_none_or(|t| t == "parOf")
@@ -611,6 +686,15 @@ pub(super) fn add_item(
         && matches!(place, AddPlace::After | AddPlace::Before)
     {
         bail!(TOP_ALONE);
+    }
+    if t.family == Family::RadialCycle {
+        let centre = t.roots.first() == Some(&k);
+        if centre && place != AddPlace::Below {
+            bail!(RADIAL_CENTRE);
+        }
+        if !centre && matches!(place, AddPlace::Above | AddPlace::Below) {
+            bail!(RADIAL_LEVELS);
+        }
     }
     let doc = Document::parse(data).context("SmartArt data")?;
     let dgm = doc
@@ -734,6 +818,9 @@ pub(super) fn remove_item(
     // up beside it and become labels.
     if t.family == Family::LabeledHierarchy && t.roots.contains(&k) && me.kids.len() != 1 {
         bail!(TOP_KEEP);
+    }
+    if t.family == Family::RadialCycle && t.roots.first() == Some(&k) && !me.kids.is_empty() {
+        bail!(RADIAL_KEEP);
     }
     let parent = t.parent_id(k).to_owned();
     let doc = Document::parse(data).context("SmartArt data")?;

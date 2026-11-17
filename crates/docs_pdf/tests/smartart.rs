@@ -153,7 +153,7 @@ fn items_added_and_removed_and_laid_out_again() {
         slides_engine::smartart_layout::LAYOUT_REFUSAL
     );
     // Give it a Basic Process (data model and drawing).
-    let docs_engine::FloatKind::SmartArt { data, drawings } = &f.kind else {
+    let docs_engine::FloatKind::SmartArt { data, drawings, .. } = &f.kind else {
         panic!()
     };
     assert_eq!(drawings.len(), 1);
@@ -229,7 +229,7 @@ fn text_shrinks_to_fit_when_laid_out_again() {
     let mut doc = open();
     let (para, index) = anchor(&doc);
     let f = doc.float_at(para, index).unwrap().clone();
-    let docs_engine::FloatKind::SmartArt { data, drawings } = &f.kind else {
+    let docs_engine::FloatKind::SmartArt { data, drawings, .. } = &f.kind else {
         panic!()
     };
     let drawing = drawings[0].1.clone();
@@ -283,7 +283,7 @@ fn labeled_hierarchy_takes_labels() {
     let mut doc = open();
     let (para, index) = anchor(&doc);
     let f = doc.float_at(para, index).unwrap().clone();
-    let docs_engine::FloatKind::SmartArt { data, drawings } = &f.kind else {
+    let docs_engine::FloatKind::SmartArt { data, drawings, .. } = &f.kind else {
         panic!()
     };
     let labeled = vec![
@@ -307,4 +307,60 @@ fn labeled_hierarchy_takes_labels() {
         docs_pdf::smartart::add_item(&doc, &f, ceo, true).unwrap_err(),
         slides_engine::smartart_layout::TOP_ALONE
     );
+}
+
+/// Word's Change Layout: the fixture's SmartArt (a layout Kantor doesn't
+/// lay out) as a Basic Pyramid, then a Basic Matrix: same items and text,
+/// laid out by Kantor (items can be added), the layout part rewritten;
+/// one undo step each.
+#[test]
+fn layout_changed_keeping_items() {
+    let mut doc = open();
+    let (para, index) = anchor(&doc);
+    let f = doc.float_at(para, index).unwrap().clone();
+    let docs_engine::FloatKind::SmartArt {
+        layout: Some(layout),
+        ..
+    } = &f.kind
+    else {
+        panic!("a layout part")
+    };
+    let layout = layout.clone();
+    let before = shown(&doc);
+    let texts = |v: &[String]| {
+        let mut t: Vec<String> = v
+            .iter()
+            .flat_map(|s| s.split('|').map(str::to_owned))
+            .filter(|s| !s.is_empty())
+            .collect();
+        t.sort();
+        t
+    };
+    let parts = docs_pdf::smartart::change_layout(&doc, &f, slides_engine::SmartArtFamily::Pyramid)
+        .unwrap();
+    assert!(doc.set_float_parts(para, index, parts));
+    let pyramid = shown(&doc);
+    assert_eq!(texts(&pyramid), texts(&before), "{before:?} → {pyramid:?}");
+    let f = doc.float_at(para, index).unwrap().clone();
+    assert!(docs_pdf::smartart::can_relayout(&doc, &f));
+    let parts =
+        docs_pdf::smartart::change_layout(&doc, &f, slides_engine::SmartArtFamily::Matrix).unwrap();
+    assert!(doc.set_float_parts(para, index, parts));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("layout.docx");
+    std::fs::write(&path, doc.to_docx_bytes().unwrap()).unwrap();
+    if let Ok(out) = std::env::var("KANTOR_SA_OUT") {
+        std::fs::copy(&path, PathBuf::from(out).join("smartart-layout.docx")).unwrap();
+    }
+    let back = Document::open(&path).unwrap();
+    assert_eq!(shown(&back), shown(&doc));
+    assert!(
+        back.current_part_xml(&layout)
+            .unwrap()
+            .contains("layout/matrix3")
+    );
+    doc.undo();
+    assert_eq!(shown(&doc), pyramid);
+    doc.undo();
+    assert_eq!(shown(&doc), before);
 }

@@ -16,9 +16,10 @@
 //! lists, bullet lists, processes, cycles) a resized SmartArt is laid out
 //! again and items can be added and removed; the new drawing and data
 //! model are kept on the frame ([`DiagramDrawing`]'s `data_xml`,
-//! `rebuilt`) and saved. Other layouts and layout changes need PowerPoint's
-//! layout engine; *Convert to Shapes* turns the drawing into a group of
-//! ordinary shapes.
+//! `rebuilt`) and saved. *Change Layout* draws any SmartArt again in one of
+//! those layouts (with a layout definition for the layout part, kept as
+//! `layout_xml`); other layouts are scaled. *Convert to Shapes* turns the
+//! drawing into a group of ordinary shapes.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -134,18 +135,24 @@ impl<'a> Model<'a> {
 
     /// Where the text `shown` of the shape drawing item `model_id` comes from.
     fn link(&self, model_id: Option<&str>, shown: &[String]) -> Link {
-        // Shapes Kantor added name their data item itself.
-        if let Some(m) = model_id
-            && let Some(p) = self.points.get(m)
-            && p.assoc.is_none()
-            && p.node.attribute("type").is_none_or(|t| t == "node")
+        // Shapes Kantor added name their data item itself (showing its
+        // text, or its text and its sub-items').
+        let direct = model_id
+            .and_then(|m| self.points.get_key_value(m))
+            .filter(|(_, p)| {
+                p.assoc.is_none() && p.node.attribute("type").is_none_or(|t| t == "node")
+            })
+            .map(|(k, _)| *k);
+        if let Some(m) = direct
+            && (shown.is_empty() || self.points[m].paras == shown)
         {
             return Link::One(m.to_owned());
         }
-        let Some(assoc) = model_id
-            .and_then(|m| self.points.get(m))
-            .and_then(|p| p.assoc)
-        else {
+        let Some(assoc) = direct.or_else(|| {
+            model_id
+                .and_then(|m| self.points.get(m))
+                .and_then(|p| p.assoc)
+        }) else {
             return Link::None;
         };
         let Some(a) = self.points.get(assoc) else {
@@ -178,7 +185,10 @@ impl<'a> Model<'a> {
                 return Link::Many(out);
             }
         }
-        Link::None
+        match direct {
+            Some(m) => Link::One(m.to_owned()),
+            None => Link::None,
+        }
     }
 }
 
@@ -295,6 +305,7 @@ impl Presentation {
         };
         let new = crate::frame::Frame::new(FrameContent::Diagram(DiagramRef {
             data: d.data.clone(),
+            layout: d.layout.clone(),
             drawing: Some(Arc::new(dd)),
         }));
         *frame = new.clone();
@@ -384,6 +395,9 @@ impl Presentation {
                 out.push((dd.part.clone(), drawing.into_bytes()));
                 if let (Some(part), Some(data)) = (&d.data, data) {
                     out.push((part.clone(), data.into_bytes()));
+                }
+                if let (Some(part), Some(lo)) = (&d.layout, &dd.layout_xml) {
+                    out.push((part.clone(), lo.as_bytes().to_vec()));
                 }
             }
         }
@@ -654,6 +668,7 @@ pub fn read_drawing(
         links,
         data_xml: None,
         rebuilt: false,
+        layout_xml: None,
     })
 }
 
@@ -1264,12 +1279,52 @@ impl Presentation {
         }
         nd.data_xml = Some(data.into());
         nd.rebuilt = true;
+        nd.layout_xml = dd.layout_xml.clone();
         Ok(crate::frame::Frame::new(FrameContent::Diagram(
             DiagramRef {
                 data: Some(data_part),
+                layout: d.layout.clone(),
                 drawing: Some(Arc::new(nd)),
             },
         )))
+    }
+
+    /// PowerPoint's *Layouts* gallery: SmartArt `r` (the frame or one of
+    /// its shapes) drawn in layout `to`, its items, text and their
+    /// formatting kept ([`crate::smartart_layout::change_layout`]). The
+    /// layout part gets the new layout's definition on save.
+    pub fn smartart_change_layout(
+        &mut self,
+        r: impl Into<ShapeRef>,
+        to: Family,
+    ) -> anyhow::Result<()> {
+        let f = self
+            .smartart_frame_of(r.into())
+            .context("Select a SmartArt")?;
+        let (d, _) = self
+            .shape(f)
+            .and_then(diagram_of)
+            .context("Select a SmartArt")?;
+        if d.layout.is_none() {
+            bail!("This SmartArt has no layout part to change");
+        }
+        let size = self.smartart_size(f)?;
+        let new = self.smartart_redone(f, size, |drawing, data| {
+            let (d2, data2, _) =
+                crate::smartart_layout::change_layout(drawing, data, to, size.0, size.1)?;
+            Ok((d2, data2))
+        })?;
+        let Some(FrameContent::Diagram(nd)) = new.get() else {
+            bail!("Select a SmartArt");
+        };
+        let mut dd = nd.drawing.as_deref().context("SmartArt drawing")?.clone();
+        dd.layout_xml = Some(crate::smartart_layout::layout_def(to).into());
+        let new = crate::frame::Frame::new(FrameContent::Diagram(DiagramRef {
+            data: nd.data.clone(),
+            layout: nd.layout.clone(),
+            drawing: Some(Arc::new(dd)),
+        }));
+        self.set_frame(f, new, Focus::at(f))
     }
 
     /// SmartArt frame `f` laid out again for size `size`, if Kantor lays
