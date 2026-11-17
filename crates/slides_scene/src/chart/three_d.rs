@@ -227,6 +227,107 @@ fn cuboid(a: P3, b: P3, fill: &Fill, line: &Option<Stroke>) -> Solid {
     }
 }
 
+/// A column of another shape than a box (`c:shape`): a cylinder, a cone or
+/// a pyramid, or a slice of one. `axis` maps (position along the value
+/// axis, across the category, depth) to the chart's space; the footprint
+/// is `a0..a1` × `z0..z1`, the solid runs from `v0` to `v1` along the value
+/// axis, and its width there is the footprint's times `r0` and `r1`.
+#[allow(clippy::too_many_arguments)]
+fn turned(
+    axis: &dyn Fn(f32, f32, f32) -> P3,
+    shape: BarShape,
+    (a0, a1): (f32, f32),
+    (z0, z1): (f32, f32),
+    (v0, v1): (f32, f32),
+    (r0, r1): (f32, f32),
+    fill: &Fill,
+    line: &Option<Stroke>,
+) -> Solid {
+    let round = matches!(
+        shape,
+        BarShape::Cylinder | BarShape::Cone | BarShape::ConeToMax
+    );
+    let sides = if round { 32 } else { 4 };
+    let (ca, cz) = ((a0 + a1) / 2.0, (z0 + z1) / 2.0);
+    let (ra, rz) = ((a1 - a0).abs() / 2.0, (z1 - z0).abs() / 2.0);
+    // A pyramid's corners are the box's: angles 45°, 135°...
+    let (start, reach) = if round {
+        (0.0f32, 1.0f32)
+    } else {
+        (std::f32::consts::FRAC_PI_4, std::f32::consts::SQRT_2)
+    };
+    let ring = |v: f32, r: f32| -> Vec<P3> {
+        (0..sides)
+            .map(|k| {
+                let t = start + k as f32 / sides as f32 * std::f32::consts::TAU;
+                axis(
+                    v,
+                    ca + ra * r * reach * t.cos(),
+                    cz + rz * r * reach * t.sin(),
+                )
+            })
+            .collect()
+    };
+    let (lo, hi) = (ring(v0, r0), ring(v1, r1));
+    // Lit from the front left: a side's shade by which way it faces.
+    let light = (-0.45f32).atan2(-0.9);
+    let side_line = if round { None } else { line.clone() };
+    let mut faces = Vec::new();
+    for k in 0..sides {
+        let j = (k + 1) % sides;
+        let mid = start + (k as f32 + 0.5) / sides as f32 * std::f32::consts::TAU;
+        let lit = (mid - light).cos();
+        faces.push(Face {
+            pts: vec![lo[k], lo[j], hi[j], hi[k]],
+            fill: shade(fill, -0.28 + 0.26 * lit),
+            line: side_line.clone(),
+        });
+    }
+    if r0 > 1e-4 {
+        faces.push(Face {
+            pts: lo.clone(),
+            fill: shade(fill, -0.3),
+            line: line.clone(),
+        });
+    }
+    if r1 > 1e-4 {
+        faces.push(Face {
+            pts: hi.clone(),
+            fill: shade(fill, 0.2),
+            line: line.clone(),
+        });
+    }
+    Solid {
+        centre: axis((v0 + v1) / 2.0, ca, cz),
+        faces,
+    }
+}
+
+/// Where a data label goes: beside a point of the chart's space.
+enum Spot {
+    /// Above (or, `true`, beside on the right of) the point.
+    Out(P3, bool),
+    Centre(P3),
+}
+
+fn draw_labels(o: &mut Out, cam: &Cam, labels: Vec<(Labels, String, Spot)>) {
+    for (l, text, spot) in labels {
+        let font = label_font(o, &l);
+        let (at, ax, ay) = match spot {
+            Spot::Out(q, false) => {
+                let s = cam.at(q);
+                (p(s.x, s.y - 3.0), 0.5, 1.0)
+            }
+            Spot::Out(q, true) => {
+                let s = cam.at(q);
+                (p(s.x + 4.0, s.y), 0.0, 0.5)
+            }
+            Spot::Centre(q) => (cam.at(q), 0.5, 0.5),
+        };
+        o.label_at(&text, &font, moved(&l, at, o.size), ax, ay);
+    }
+}
+
 fn path_of(cam: &Cam, pts: &[P3]) -> Path {
     let mut path = Path::default();
     for (i, q) in pts.iter().enumerate() {
@@ -528,6 +629,18 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
         let m = (row_d - depth) / 2.0;
         (z0 + m, z0 + m + depth)
     };
+    let mut labels: Vec<(Labels, String, Spot)> = Vec::new();
+    // Each category's stack: its lowest and highest value.
+    let tops: Vec<(f64, f64)> = (0..n)
+        .map(|i| {
+            stacks
+                .iter()
+                .fold((0.0f64, 0.0f64), |(a, b), st| match st.get(i) {
+                    Some(&(x, y)) => (a.min(x.min(y)), b.max(x.max(y))),
+                    None => (a, b),
+                })
+        })
+        .collect();
     match v.kind {
         Kind3D::Bar => {
             let across = if v.series_depth || stacked {
@@ -552,11 +665,65 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
                     let u1 = u0 + bw * slot;
                     let (f0, f1) = (frac(b0), frac(b1));
                     let st = point_style(g, s, i, o.d);
-                    let a = at(u0, f0.min(f1), z0);
-                    let b = at(u1, f0.max(f1), z1);
-                    let lo3 = p3(a.x.min(b.x), a.y.min(b.y), z0);
-                    let hi3 = p3(a.x.max(b.x), a.y.max(b.y), z1);
-                    solids.push(cuboid(lo3, hi3, &st.fill, &st.line));
+                    let shape = v.shape_of(s.idx);
+                    if shape == BarShape::Box {
+                        let a = at(u0, f0.min(f1), z0);
+                        let b = at(u1, f0.max(f1), z1);
+                        let lo3 = p3(a.x.min(b.x), a.y.min(b.y), z0);
+                        let hi3 = p3(a.x.max(b.x), a.y.max(b.y), z1);
+                        solids.push(cuboid(lo3, hi3, &st.fill, &st.line));
+                    } else {
+                        // Cones and pyramids narrow towards their tip: the
+                        // value's end (a stack's top), or the axis' end.
+                        let up = f1 >= f0;
+                        let base = if stacked { frac(0.0) } else { f0 };
+                        let tip = match shape {
+                            BarShape::ConeToMax | BarShape::PyramidToMax => {
+                                if up {
+                                    1.0
+                                } else {
+                                    0.0
+                                }
+                            }
+                            _ if stacked => frac(if up { tops[i].1 } else { tops[i].0 }),
+                            _ => f1,
+                        };
+                        let r = |f: f32| {
+                            if shape == BarShape::Cylinder || (tip - base).abs() < 1e-6 {
+                                1.0
+                            } else {
+                                (1.0 - (f - base) / (tip - base)).clamp(0.0, 1.0)
+                            }
+                        };
+                        let axis = |f: f32, c: f32, z: f32| at(c, f, z);
+                        solids.push(turned(
+                            &axis,
+                            shape,
+                            (u0, u1),
+                            (z0, z1),
+                            (f0, f1),
+                            (r(f0), r(f1)),
+                            &st.fill,
+                            &st.line,
+                        ));
+                    }
+                    if let Some(l) = series_labels(g, s, i)
+                        && let Some(text) = label_text(&l, s, i, s.vals[i].unwrap_or(0.0), None)
+                    {
+                        let cm = (u0 + u1) / 2.0;
+                        let zm = (z0 + z1) / 2.0;
+                        let pos = l
+                            .pos
+                            .clone()
+                            .unwrap_or_else(|| if stacked { "ctr" } else { "outEnd" }.into());
+                        let spot = match pos.as_str() {
+                            "ctr" => Spot::Centre(at(cm, (f0 + f1) / 2.0, z0)),
+                            "inEnd" => Spot::Centre(at(cm, f1 - (f1 - f0) * 0.12, z0)),
+                            "inBase" => Spot::Centre(at(cm, f0 + (f1 - f0) * 0.12, z0)),
+                            _ => Spot::Out(at(cm, f1, zm), horizontal),
+                        };
+                        labels.push((l, text, spot));
+                    }
                 }
             }
         }
@@ -584,6 +751,19 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
                         Some(((i as f32 + 0.5) * slot, frac(b1) * h, lo * h))
                     })
                     .collect();
+                for (i, q) in pts.iter().enumerate() {
+                    let Some(q) = q else { continue };
+                    if let Some(l) = series_labels(g, s, i)
+                        && let Some(text) = label_text(&l, s, i, s.vals[i].unwrap_or(0.0), None)
+                    {
+                        let spot = if l.pos.as_deref() == Some("ctr") && area {
+                            Spot::Centre(p3(q.0, (q.1 + q.2) / 2.0, z0))
+                        } else {
+                            Spot::Out(p3(q.0, q.1, (z0 + z1) / 2.0), false)
+                        };
+                        labels.push((l, text, spot));
+                    }
+                }
                 let thick = h * 0.02;
                 for i in 0..n.saturating_sub(1) {
                     let (Some(a), Some(b)) = (pts[i], pts[i + 1]) else {
@@ -758,6 +938,7 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
         Kind3D::Pie => {}
     }
     draw_solids(o, &cam, solids);
+    draw_labels(o, &cam, labels);
     // Axis labels.
     let col = |f: &TextFont| f.clone();
     if show(va) {
@@ -916,6 +1097,55 @@ fn pie3d(g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
         let mut pts = vec![sl.centre];
         pts.extend(arc(sl.centre, sl.a0, sl.a0 + sl.sweep, 0.0));
         boxed(o, &pts, &sl.style.fill, sl.style.line.clone());
-        let _ = sl.i;
+    }
+    // Data labels: inside the slice's top, or outside its rim.
+    let total: f64 = s.vals.iter().flatten().filter(|v| **v > 0.0).sum();
+    for sl in &slices {
+        let Some(l) = series_labels(g, s, sl.i) else {
+            continue;
+        };
+        let val = s.vals.get(sl.i).copied().flatten().unwrap_or(0.0);
+        let pc = (total > 0.0).then(|| val / total);
+        let Some(text) = label_text(&l, s, sl.i, val, pc) else {
+            continue;
+        };
+        let font = label_font(o, &l);
+        let mid = (sl.a0 + sl.sweep / 2.0).to_radians();
+        let (sx, cy) = (mid.sin(), mid.cos());
+        let (at, ax, ay) = if l.pos.as_deref() == Some("outEnd") {
+            // The front half's rim is lower by the edge's thickness.
+            let dy = if cy < 0.0 { t * -cy } else { 0.0 };
+            let q = p(
+                sl.centre.x + (rx + 6.0) * sx,
+                sl.centre.y - (ry + 6.0) * cy + dy,
+            );
+            let ax = if sx > 0.2 {
+                0.0
+            } else if sx < -0.2 {
+                1.0
+            } else {
+                0.5
+            };
+            let ay = if cy > 0.2 {
+                1.0
+            } else if cy < -0.2 {
+                0.0
+            } else {
+                0.5
+            };
+            (q, ax, ay)
+        } else {
+            let k = if l.pos.as_deref() == Some("inEnd") {
+                0.75
+            } else {
+                0.6
+            };
+            (
+                p(sl.centre.x + rx * k * sx, sl.centre.y - ry * k * cy),
+                0.5,
+                0.5,
+            )
+        };
+        o.label_at(&text, &font, moved(&l, at, o.size), ax, ay);
     }
 }

@@ -189,23 +189,22 @@ fn story_layout(
     index: usize,
     width: f32,
     (page, pages, section_pages): (&str, &str, &str),
+    style_refs: &[String],
     layout: &mut LayoutFn,
 ) -> StoryLayout {
     let sd = &doc.stories()[index].doc;
+    // STYLEREF fields show what the page has ([`docs_engine::style_ref_results`]).
+    let paras = if style_refs.is_empty() {
+        sd.paragraphs().to_vec()
+    } else {
+        docs_engine::with_style_ref_results(sd.paragraphs(), style_refs)
+    };
     let marks = Marks {
         pages: Some([page.to_owned(), pages.to_owned(), section_pages.to_owned()]),
         codes: doc.field_codes().cloned(),
         ..Marks::default()
     };
-    lay_story(
-        sd,
-        sd.paragraphs().to_vec(),
-        width,
-        &marks,
-        layout,
-        index,
-        None,
-    )
+    lay_story(sd, paras, width, &marks, layout, index, None)
 }
 
 /// A footnote or endnote laid out at `width` px, numbered `label`.
@@ -548,7 +547,7 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         let Some(i) = story else { return 0.0 };
         *heights
             .entry((i, width.to_bits()))
-            .or_insert_with(|| story_layout(doc, i, width, ("1", "1", "1"), layout).height)
+            .or_insert_with(|| story_layout(doc, i, width, ("1", "1", "1"), &[], layout).height)
     };
     let mut flows = Vec::with_capacity(sections.len());
     let mut stories = Vec::with_capacity(sections.len());
@@ -644,7 +643,25 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
     for page in &paged.pages {
         *in_section.entry(page.section).or_default() += 1;
     }
-    let mut cache: HashMap<(usize, String, String, u32), Arc<StoryLayout>> = HashMap::new();
+    type Key = (usize, String, String, u32, Vec<String>);
+    let mut cache: HashMap<Key, Arc<StoryLayout>> = HashMap::new();
+    // The body paragraphs on each page (for STYLEREF in headers and footers).
+    let mut on_page = Vec::with_capacity(paged.pages.len());
+    let mut last_para = 0;
+    for page in &paged.pages {
+        let paras: Vec<usize> = page
+            .lines
+            .iter()
+            .filter(|l| !l.repeat)
+            .map(|l| l.para)
+            .collect();
+        let range = match (paras.iter().min(), paras.iter().max()) {
+            (Some(&a), Some(&b)) => (a, b),
+            _ => (last_para, last_para),
+        };
+        last_para = range.1;
+        on_page.push(range);
+    }
     let labels = page_labels(doc, &sections, &paged);
     let mut furniture = Vec::with_capacity(paged.pages.len());
     for (pi, page) in paged.pages.iter().enumerate() {
@@ -670,14 +687,23 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
                 .copied()
                 .unwrap_or(1)
                 .to_string();
+            let refs =
+                docs_engine::style_ref_results(doc, doc.stories()[i].doc.paragraphs(), on_page[pi]);
             let l = cache
-                .entry((i, number.clone(), section_pages.clone(), width.to_bits()))
+                .entry((
+                    i,
+                    number.clone(),
+                    section_pages.clone(),
+                    width.to_bits(),
+                    refs.clone(),
+                ))
                 .or_insert_with(|| {
                     Arc::new(story_layout(
                         doc,
                         i,
                         width,
                         (&number, &total, &section_pages),
+                        &refs,
                         layout,
                     ))
                 })

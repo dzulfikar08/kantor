@@ -1279,10 +1279,13 @@ impl SheetsView {
         for k in (0..n).rev() {
             let shown = if d.reverse { n - 1 - k } else { k };
             let icon = d.icon_steps[shown].icon.clone();
-            let icon_el = book
-                .set_icon(&icon.set, u32::from(icon.index))
-                .map(|i| crate::cond_paint::icon_element(i).into_any_element())
-                .unwrap_or_else(|| div().size(px(14.)).into_any_element());
+            let icon_el = if icon.is_none() {
+                div().child(t("No Cell Icon")).into_any_element()
+            } else {
+                book.set_icon(&icon.set, u32::from(icon.index))
+                    .map(|i| crate::cond_paint::icon_element(i).into_any_element())
+                    .unwrap_or_else(|| div().size(px(14.)).into_any_element())
+            };
             let picker: AnyElement = if rating {
                 div().w(px(40.)).child(icon_el).into_any_element()
             } else {
@@ -1300,16 +1303,26 @@ impl SheetsView {
                     .dropdown_menu(move |mut m, _, _| {
                         m = m.scrollable(true).max_h(px(320.));
                         for (c, ic) in list.iter().zip(icons.iter()) {
-                            let Some(ic) = *ic else { continue };
+                            if ic.is_none() && !c.is_none() {
+                                continue;
+                            }
+                            let ic = *ic;
                             let v = v.clone();
                             let c = c.clone();
-                            let label =
-                                format!("{} {}", t_dyn(icon_set_label(&c.set)), c.index + 1);
+                            let label = if c.is_none() {
+                                t("No Cell Icon").to_string()
+                            } else {
+                                format!("{} {}", t_dyn(icon_set_label(&c.set)), c.index + 1)
+                            };
                             m = m.item(
                                 PopupMenuItem::element(move |_, _| {
                                     h_flex()
                                         .gap(SPACE_3)
-                                        .child(crate::cond_paint::icon_element(ic))
+                                        .child(match ic {
+                                            Some(ic) => crate::cond_paint::icon_element(ic)
+                                                .into_any_element(),
+                                            None => div().size(px(14.)).into_any_element(),
+                                        })
                                         .child(label.clone())
                                 })
                                 .on_click(move |_, _, cx| {

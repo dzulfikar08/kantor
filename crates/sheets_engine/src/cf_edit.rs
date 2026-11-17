@@ -469,6 +469,31 @@ pub struct CfIconRef {
     pub index: u8,
 }
 
+impl CfIconRef {
+    /// Excel's "No Cell Icon" (`<x14:cfIcon iconSet="NoIcons" iconId="0"/>`).
+    pub fn none() -> Self {
+        CfIconRef {
+            set: NO_ICONS.to_owned(),
+            index: 0,
+        }
+    }
+
+    pub fn is_none(&self) -> bool {
+        self.set == NO_ICONS
+    }
+
+    /// The model's icon and colour for it (no colour: no icon).
+    fn model_icon(&self) -> Option<(ironcalc_base::cf_types::Icon, Color)> {
+        if self.is_none() {
+            return Some((ironcalc_base::cf_types::Icon::Circle, Color::None));
+        }
+        icon_set_icons(&self.set).and_then(|v| v.into_iter().nth(self.index as usize))
+    }
+}
+
+/// The icon "set" Excel names "No Cell Icon" with.
+pub const NO_ICONS: &str = "NoIcons";
+
 /// One icon of an icon set rule and the value from which it shows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CfIconStep {
@@ -498,10 +523,11 @@ const ICON_SOURCES: [&str; 16] = [
     "3Stars",
 ];
 
-/// Every icon offered for a single step, each once (set, index).
+/// Every icon offered for a single step, each once (set, index), after
+/// "No Cell Icon" ([`CfIconRef::none`]).
 pub fn icon_choices() -> Vec<CfIconRef> {
     let mut seen = Vec::new();
-    let mut out = Vec::new();
+    let mut out = vec![CfIconRef::none()];
     for set in ICON_SOURCES {
         let Some(icons) = icon_set_icons(set) else {
             continue;
@@ -969,8 +995,8 @@ fn input(def: &CfRuleDef, num_fmt_id: &dyn Fn(&str) -> i32) -> Result<CfRuleInpu
                     } else {
                         &s.icon
                     };
-                    let (icon, color) = icon_set_icons(&pick.set)
-                        .and_then(|v| v.into_iter().nth(pick.index as usize))
+                    let (icon, color) = pick
+                        .model_icon()
                         .ok_or_else(|| anyhow!("unknown icon {}/{}", pick.set, pick.index))?;
                     out.push(IconThreshold {
                         icon,
@@ -1246,10 +1272,10 @@ fn describe(
             let choices = icon_choices();
             let find = |p: &(ironcalc_base::cf_types::Icon, Color)| {
                 choices.iter().find(|c| {
-                    icon_set_icons(&c.set)
-                        .and_then(|v| v.into_iter().nth(c.index as usize))
-                        .as_ref()
-                        == Some(p)
+                    if p.1 == Color::None {
+                        return c.is_none();
+                    }
+                    c.model_icon().as_ref() == Some(p)
                 })
             };
             let mut steps = Vec::with_capacity(thresholds.len());

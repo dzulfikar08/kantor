@@ -721,6 +721,7 @@ impl DocsView {
                         ("relationship", tk("Relationship")),
                         ("matrix", tk("Matrix")),
                         ("pyramid", tk("Pyramid")),
+                        ("picture", tk("Picture")),
                     ];
                     for (cat, heading) in cats {
                         menu = menu.item(PopupMenuItem::label(t_dyn(heading)));

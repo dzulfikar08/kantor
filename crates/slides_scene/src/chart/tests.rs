@@ -1251,3 +1251,91 @@ fn date_axes_space_categories_by_date() {
     );
     assert!(texts(&m).contains(&"1-Jan".to_owned()), "{:?}", texts(&m));
 }
+
+const LABELS_3D: &str = r#"<c:dLbls><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls>"#;
+
+#[test]
+fn columns_3d_take_their_shape_and_show_data_labels() {
+    let make = |shape: &str, per_series: &str| {
+        chart_3d(
+            &format!(
+                r#"<c:bar3DChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>{}{}{LABELS_3D}<c:gapWidth val="150"/><c:shape val="{shape}"/><c:axId val="1"/><c:axId val="2"/><c:axId val="3"/></c:bar3DChart>"#,
+                ser(0, "First", &CATS, &[10.0, 20.0, 30.0], ""),
+                ser(1, "Second", &CATS, &[5.0, 8.0, 15.0], per_series),
+            ),
+            r#"<c:rotX val="15"/><c:rotY val="20"/><c:rAngAx val="1"/>"#,
+            AXES_3D,
+        )
+    };
+    let chart = parse(&make("cylinder", r#"<c:shape val="pyramid"/>"#));
+    let v = chart.view3d.as_ref().unwrap();
+    assert_eq!(v.shape, BarShape::Cylinder);
+    assert_eq!(v.shape_of(1), BarShape::Pyramid);
+    assert_eq!(v.shape_of(0), BarShape::Cylinder);
+    let faces = |xml: &str| solid_boxes(&marks(xml, 600.0, 400.0)).len();
+    let boxes = faces(&make("box", ""));
+    // A cylinder's side is many faces; a pyramid's four.
+    let cyl = faces(&make("cylinder", ""));
+    let pyr = faces(&make("pyramid", ""));
+    assert!(cyl > boxes * 3, "{cyl} vs {boxes}");
+    assert!(pyr <= boxes, "{pyr} vs {boxes}");
+    // A cone narrows to its tip: its top row of faces is narrower than its
+    // base's.
+    for shape in [
+        "box",
+        "cylinder",
+        "cone",
+        "coneToMax",
+        "pyramid",
+        "pyramidToMax",
+    ] {
+        let m = marks(&make(shape, ""), 600.0, 400.0);
+        for t in ["10", "30", "5", "15"] {
+            assert!(
+                texts(&m).contains(&t.to_owned()),
+                "{shape}: {t} in {:?}",
+                texts(&m)
+            );
+        }
+        for (_, b) in solid_boxes(&m) {
+            assert!(
+                b[0] >= -0.5 && b[1] >= -0.5 && b[2] <= 600.5 && b[3] <= 400.5,
+                "{shape}: {b:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn labels_on_3d_lines_and_pies() {
+    let line = chart_3d(
+        &format!(
+            r#"<c:line3DChart><c:grouping val="standard"/><c:varyColors val="0"/>{}{LABELS_3D}<c:axId val="1"/><c:axId val="2"/><c:axId val="3"/></c:line3DChart>"#,
+            ser(0, "First", &CATS, &[11.0, 22.0, 33.0], ""),
+        ),
+        r#"<c:rotX val="15"/><c:rotY val="20"/><c:rAngAx val="0"/>"#,
+        AXES_3D,
+    );
+    let m = marks(&line, 600.0, 400.0);
+    for t in ["11", "22", "33"] {
+        assert!(texts(&m).contains(&t.to_owned()), "{t} in {:?}", texts(&m));
+    }
+    let pie = |pos: &str| {
+        chart_3d(
+            &format!(
+                r#"<c:pie3DChart><c:varyColors val="1"/>{}<c:dLbls>{pos}<c:showLegendKey val="0"/><c:showVal val="0"/><c:showCatName val="1"/><c:showSerName val="0"/><c:showPercent val="1"/><c:showBubbleSize val="0"/></c:dLbls></c:pie3DChart>"#,
+                ser(0, "First", &CATS, &[10.0, 20.0, 30.0], ""),
+            ),
+            r#"<c:rotX val="30"/><c:rotY val="0"/><c:rAngAx val="0"/>"#,
+            "",
+        )
+    };
+    for pos in ["", r#"<c:dLblPos val="outEnd"/>"#] {
+        let m = marks(&pie(pos), 600.0, 400.0);
+        assert!(
+            texts(&m).contains(&"Gamma, 50%".to_owned()),
+            "{pos}: {:?}",
+            texts(&m)
+        );
+    }
+}

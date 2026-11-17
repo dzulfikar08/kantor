@@ -50,7 +50,10 @@ pub use document::{
 };
 pub use edit::TableEdit;
 pub use field_edit::{XrefKind, XrefTarget, XrefWhat, valid_bookmark_name};
-pub use fields::{CodeView, FieldContext, FieldSpan, Instr, LinkTarget, PageLookup};
+pub use fields::{
+    CodeView, FieldContext, FieldSpan, Instr, LinkTarget, PageLookup, style_ref_results,
+    with_style_ref_results,
+};
 pub use float::{Float, FloatKind, LayoutOption, Placement, Wrap};
 pub use fmt_track::FormatItem;
 pub use model::{

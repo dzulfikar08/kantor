@@ -46,6 +46,7 @@ pub(crate) const LAYOUT_NAMES: &[(&str, &str)] = &[
     ("relationship", i18n::tk("Relationship")),
     ("matrix", i18n::tk("Matrix")),
     ("pyramid", i18n::tk("Pyramid")),
+    ("picture", i18n::tk("Picture")),
 ];
 
 #[allow(dead_code)] // keys for the catalog scanner (shown with `t_dyn`)
@@ -64,6 +65,7 @@ const LAYOUT_LABELS: &[&str] = &[
     i18n::tk("Basic Venn"),
     i18n::tk("Basic Matrix"),
     i18n::tk("Basic Pyramid"),
+    i18n::tk("Horizontal Picture List"),
 ];
 
 impl SlidesView {

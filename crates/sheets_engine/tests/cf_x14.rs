@@ -332,3 +332,46 @@ fn icon_set_thresholds_and_custom_icons() {
         back.set_icon("3Flags", 2)
     );
 }
+
+/// Excel's "No Cell Icon" for a threshold: no icon drawn there, saved as
+/// the `NoIcons` set and read back as it.
+#[test]
+fn no_cell_icon_per_threshold() {
+    use sheets_engine::{CfIconRef, default_icon_steps, icon_choices};
+    assert_eq!(icon_choices()[0], CfIconRef::none());
+    let mut wb = numbers();
+    let mut steps = default_icon_steps("3TrafficLights1");
+    steps[1].icon = CfIconRef::none();
+    let spec = CfSpec::IconSet {
+        set: "3TrafficLights1".into(),
+        reverse: false,
+        show_value: true,
+        steps,
+    };
+    wb.add_cf_rule(0, "B1:B10", &plain(spec)).unwrap();
+    // 10..100: the lowest third red, the middle none, the top green.
+    assert_eq!(
+        wb.conditional(0, 0, 1).and_then(|c| c.icon),
+        wb.set_icon("3TrafficLights1", 0)
+    );
+    assert!(wb.conditional(0, 4, 1).and_then(|c| c.icon).is_none());
+    assert_eq!(
+        wb.conditional(0, 9, 1).and_then(|c| c.icon),
+        wb.set_icon("3TrafficLights1", 2)
+    );
+    let path = scratch("no-cell-icon.xlsx");
+    wb.save_as(&path).unwrap();
+    let sheet = &parts(&path)["xl/worksheets/sheet1.xml"];
+    assert!(
+        sheet.contains(r#"<x14:cfIcon iconSet="NoIcons" iconId="0"/>"#),
+        "{sheet}"
+    );
+    let mut back = Workbook::open(&path).unwrap();
+    let def = back.cf_rules(0, None)[0].def.clone().expect("editable");
+    let CfSpec::IconSet { steps, .. } = &def.spec else {
+        panic!("{def:?}")
+    };
+    assert!(steps[1].icon.is_none(), "{steps:?}");
+    assert_eq!(steps[2].icon.set, "3TrafficLights1");
+    assert!(back.conditional(0, 4, 1).and_then(|c| c.icon).is_none());
+}

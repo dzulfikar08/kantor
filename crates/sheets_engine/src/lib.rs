@@ -343,6 +343,8 @@ pub struct Workbook {
     /// Top-left cells of frozen panes frozen on a scrolled sheet, by
     /// `sheetId` (`grid::set_frozen_at`).
     panes: HashMap<u32, (u32, u32)>,
+    /// Sheet views: which sheets are in Page Break Preview.
+    views: SheetViews,
     /// Notes the opened file shows all the time, `(sheetId, row, col)`.
     note_extras: HashMap<(u32, u32, u32), notes::NoteExtra>,
     /// The opened file's Excel 2010 conditional format extras.
@@ -675,6 +677,7 @@ impl Workbook {
             saved_charts: HashMap::new(),
             touched: Default::default(),
             panes: HashMap::new(),
+            views: SheetViews::default(),
             note_extras: Default::default(),
             cf_x14: Default::default(),
             custom_lists: Vec::new(),
@@ -778,6 +781,7 @@ impl Workbook {
             mut prints,
             pivots,
             panes,
+            views,
             note_extras,
             mut cf_x14,
             pictures,
@@ -874,6 +878,11 @@ impl Workbook {
             saved_charts: HashMap::new(),
             touched,
             panes: HashMap::new(),
+            views: SheetViews {
+                break_preview: views.0,
+                set: Default::default(),
+                zoom: views.1,
+            },
             note_extras,
             cf_x14,
             custom_lists: Vec::new(),
@@ -1654,6 +1663,7 @@ impl Workbook {
                 let mut p = preserve::Patches::default();
                 self.print_patches(&mut p);
                 self.pane_patches(&mut p);
+                self.view_patches(&mut p);
                 self.table_patches(&mut p);
                 self.cf_patches(&mut p);
                 self.validation_patches(&mut p);
@@ -1768,6 +1778,17 @@ fn build_xlsx(
     Ok(preserve::finish(written, original, &ctx))
 }
 
+/// Per-sheet view settings Kantor keeps (by `sheetId`).
+#[derive(Default)]
+struct SheetViews {
+    /// Sheets in Page Break Preview.
+    break_preview: std::collections::HashSet<u32>,
+    /// Sheets whose view was changed (written on save even when Normal).
+    set: std::collections::HashSet<u32>,
+    /// The file's zoom attributes of each sheet view (kept on save).
+    zoom: HashMap<u32, Vec<(&'static str, String)>>,
+}
+
 /// What an `.xlsx` has besides what IronCalc reads, for showing and saving it.
 #[derive(Default)]
 struct Extras {
@@ -1777,6 +1798,8 @@ struct Extras {
     pivots: pivot::Pivots,
     /// Top-left cells of frozen panes (`grid::read_panes`).
     panes: HashMap<u32, (u32, u32)>,
+    /// Sheets in Page Break Preview and zooms (`grid::read_views`).
+    views: grid::ReadViews,
     /// Notes' shown state, boxes and formatted text (`preserve::note_extras`).
     note_extras: HashMap<(u32, u32, u32), notes::NoteExtra>,
     /// Excel 2010 conditional format extras (`cf_x14`).
@@ -1797,6 +1820,7 @@ impl Extras {
             prints: print::Prints::read(bytes, &skeletons),
             pivots: pivot::Pivots::read(bytes),
             panes: grid::read_panes(&skeletons),
+            views: grid::read_views(&skeletons),
             note_extras: preserve::note_extras(bytes),
             cf_x14: cf_x14::read(&skeletons),
             pictures: preserve::rich_pictures(bytes),

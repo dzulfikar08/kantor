@@ -441,3 +441,45 @@ fn text_boxes_with_pictures_tables_and_fit_to_text() {
         "{text}"
     );
 }
+
+/// While a "Resize shape to fit text" box is edited it is drawn as tall as
+/// its text; `fit_text_box_live` gives its shape that height in the main
+/// document, so the body text wraps around the box as it grows.
+#[test]
+fn growing_fit_to_text_box_rewraps_the_body_live() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/docx/textboxes.docx");
+    let mut doc = Document::open(&path).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let rich = laid.floats[0]
+        .iter()
+        .find(|it| it.float(&doc).unwrap().name == "Rich box")
+        .unwrap();
+    let b = docs_engine::BoxRef {
+        story: rich.story,
+        para: rich.para,
+        index: rich.index,
+        which: None,
+    };
+    let cy = (rich.rect[3] * docs_engine::object::EMU_PER_PX).round() as i64;
+    // Narrowed body lines: those beside the box.
+    let full = laid.paged.pages[0]
+        .lines
+        .iter()
+        .map(|l| l.width)
+        .fold(0.0f32, f32::max);
+    let narrow = |laid: &docs_pdf::Layout| {
+        laid.paged.pages[0]
+            .lines
+            .iter()
+            .filter(|l| l.width < full - 1.0)
+            .count()
+    };
+    let before = narrow(&laid);
+    assert!(doc.fit_text_box_live(b, cy));
+    assert!(!doc.fit_text_box_live(b, cy), "already that tall");
+    let laid2 = docs_pdf::lay_out(&doc, &mut engine);
+    let after = narrow(&laid2);
+    assert!(after > before, "{before} → {after}");
+}

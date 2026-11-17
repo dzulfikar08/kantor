@@ -695,7 +695,19 @@ impl DocsView {
         let (laid, texts) = match &mut self.part {
             Some(s) => {
                 s.main.swap_part(&s.edit, &mut self.doc);
-                let laid = lay(&s.main);
+                let mut laid = lay(&s.main);
+                // A "Resize shape to fit text" box that grew (or shrank) as
+                // it is typed in: the text around it wraps around its new
+                // size now, not only when the box is left.
+                if let part::PartTarget::TextBox(b) = s.target
+                    && b.which.is_none()
+                    && let Some((_, it)) = part::box_item(&laid.floats, b, s.page)
+                {
+                    let cy = (it.rect[3] * docs_engine::object::EMU_PER_PX).round() as i64;
+                    if s.main.fit_text_box_live(b, cy) {
+                        laid = lay(&s.main);
+                    }
+                }
                 s.main.swap_part(&s.edit, &mut self.doc);
                 let texts = s.main.paragraphs().iter().map(|p| p.text.clone()).collect();
                 (laid, texts)

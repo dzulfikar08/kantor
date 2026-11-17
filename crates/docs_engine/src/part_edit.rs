@@ -485,7 +485,7 @@ fn mark_edited(p: &mut Paragraph, index: usize, which: Option<usize>) {
 
 /// Size a "Resize shape to fit text" shape at `index` of `p` to the
 /// height `cy` (EMU) its text needs.
-fn fit_shape(p: &mut Paragraph, index: usize, which: Option<usize>, cy: i64) {
+fn fit_shape(p: &mut Paragraph, index: usize, which: Option<usize>, cy: i64) -> bool {
     let mut start = 0;
     for run in &mut p.runs {
         if start == index
@@ -497,10 +497,30 @@ fn fit_shape(p: &mut Paragraph, index: usize, which: Option<usize>, cy: i64) {
                 && (f.at.cy - cy).abs() > crate::object::EMU_PER_PX as i64 / 2
             {
                 Arc::make_mut(f).at.cy = cy;
+                return true;
             }
-            return;
+            return false;
         }
         start += run.len;
+    }
+    false
+}
+
+impl Document {
+    /// While "Resize shape to fit text" box `b` is edited: give its shape
+    /// height `cy` (EMU) in this (the main) document, so the text around
+    /// it wraps around its new size as it grows. Not an edit of its own:
+    /// leaving the box saves the size ([`PartEdit::fit_height`]) or puts
+    /// the paragraph back. Returns whether the size changed.
+    pub fn fit_text_box_live(&mut self, b: BoxRef, cy: i64) -> bool {
+        let owner = match b.story {
+            Some(s) => self.stories.get_mut(s).map(|st| &mut st.doc),
+            None => Some(&mut *self),
+        };
+        let Some(p) = owner.and_then(|o| o.paragraphs.get_mut(b.para)) else {
+            return false;
+        };
+        fit_shape(p, b.index, b.which, cy)
     }
 }
 

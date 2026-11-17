@@ -73,6 +73,9 @@ pub enum Family {
     /// Radial Cycle: the first item in a circle at the centre, its
     /// sub-items round it, a spoke to each.
     RadialCycle,
+    /// Horizontal Picture List: on a background, a column per item, a
+    /// picture over the item's text.
+    HorizontalPictures,
 }
 
 /// The SmartArt layouts Kantor lays out: family, layout id (`loTypeId`),
@@ -152,6 +155,12 @@ pub const LAYOUTS: &[(Family, &str, &str, &str)] = &[
         "Labeled Hierarchy",
     ),
     (
+        Family::HorizontalPictures,
+        "urn:microsoft.com/office/officeart/2005/8/layout/pList2",
+        "picture",
+        "Horizontal Picture List",
+    ),
+    (
         Family::Venn,
         "urn:microsoft.com/office/officeart/2005/8/layout/venn1",
         "relationship",
@@ -210,6 +219,11 @@ impl Family {
     /// the item's shape).
     fn sub_boxes(self) -> bool {
         matches!(self, Family::Bullets | Family::HorizontalBullets)
+    }
+
+    /// Each item has a picture (placeholder) besides its text.
+    pub fn pictures(self) -> bool {
+        self == Family::HorizontalPictures
     }
 
     /// A hierarchy (laid out by the `tree` module).
@@ -357,6 +371,9 @@ pub fn family(drawing: &str, data: &str) -> Option<Family> {
         if !v.family.sub_boxes() && count(Role::Sub(i)) > 0 {
             return None;
         }
+        if count(Role::Pic(i)) > 1 || !v.family.pictures() && count(Role::Pic(i)) > 0 {
+            return None;
+        }
     }
     if count(Role::Back) > 1 {
         return None;
@@ -369,6 +386,8 @@ pub fn family(drawing: &str, data: &str) -> Option<Family> {
 enum Role {
     Node(usize),
     Sub(usize),
+    /// The item's picture (placeholder) of a picture layout.
+    Pic(usize),
     Arrow(usize),
     /// Drawn for the item's parent transition: a Step Up Process's step.
     Deco(usize),
@@ -391,8 +410,11 @@ impl View {
                 return Role::Deco(i);
             }
             if it.id == target {
-                return if name.to_ascii_lowercase().contains("child") {
+                let name = name.to_ascii_lowercase();
+                return if name.contains("child") {
                     Role::Sub(i)
+                } else if is_picture_name(&name) {
+                    Role::Pic(i)
                 } else {
                     Role::Node(i)
                 };
@@ -410,10 +432,16 @@ impl View {
     /// The top-level item a shape belongs to.
     fn item_of(&self, model_id: &str) -> Option<usize> {
         match self.role(model_id) {
-            Role::Node(i) | Role::Sub(i) | Role::Arrow(i) | Role::Deco(i) => Some(i),
+            Role::Node(i) | Role::Sub(i) | Role::Pic(i) | Role::Arrow(i) | Role::Deco(i) => Some(i),
             Role::Back | Role::Other => None,
         }
     }
+}
+
+/// Whether a presentation item named `name` (lower case) is a picture
+/// placeholder (`imagNode`, `Image`, `pictRect`...).
+fn is_picture_name(name: &str) -> bool {
+    name.contains("imag") || name.contains("pict")
 }
 
 /// A drawing shape: where it is in the XML and what it shows.
@@ -490,6 +518,7 @@ fn shapes(drawing: &str, v: &View) -> anyhow::Result<(Vec<DShape>, usize)> {
 struct Boxes {
     node: Xfrm,
     sub: Option<Xfrm>,
+    pic: Option<Xfrm>,
     arrow: Option<Xfrm>,
     deco: Option<Xfrm>,
     node_adj: Vec<(&'static str, i64)>,
@@ -498,7 +527,8 @@ struct Boxes {
 
 /// The box of the shape drawn for the whole diagram, if the family has one.
 fn back_box(family: Family, w: f64, h: f64) -> Option<Xfrm> {
-    (family == Family::ContinuousBlock).then(|| Xfrm::new(0, 0, r(w), r(h)))
+    matches!(family, Family::ContinuousBlock | Family::HorizontalPictures)
+        .then(|| Xfrm::new(0, 0, r(w), r(h)))
 }
 
 /// An adjust value of `len` EMU on a shape `b`: a share of its shorter
@@ -627,6 +657,33 @@ fn boxes(family: Family, subs: &[bool], sub_ratio: f64, w: f64, h: f64) -> Vec<B
                     Boxes {
                         node: Xfrm::new(r(x), r(y0), r(cw), r(hh)),
                         sub: has.then(|| Xfrm::new(r(x), r(hh), r(cw), r(h - hh))),
+                        ..Boxes::default()
+                    }
+                })
+                .collect()
+        }
+        Family::HorizontalPictures => {
+            // On the background (back_box): columns with a margin of 3 %
+            // of the width and gaps a tenth of a column; in each, the
+            // picture over the top half and the text under it.
+            let margin = w * 0.03;
+            let cw = (w - 2.0 * margin) / (nf + 0.1 * (nf - 1.0));
+            let top = h * 0.08;
+            let ph = h * 0.5;
+            let ty = top + ph;
+            let th = h - h * 0.06 - ty;
+            (0..n)
+                .map(|i| {
+                    let x = margin + i as f64 * cw * 1.1;
+                    let inset = cw * 0.05;
+                    Boxes {
+                        pic: Some(Xfrm::new(
+                            r(x + inset),
+                            r(top),
+                            r(cw - 2.0 * inset),
+                            r(ph - h * 0.02),
+                        )),
+                        node: Xfrm::new(r(x), r(ty), r(cw), r(th)),
                         ..Boxes::default()
                     }
                 })
@@ -882,7 +939,7 @@ fn copy_shape(xml: &str, model: &str) -> String {
 }
 
 /// The namespaces a drawing shape copied out of its part uses.
-const DRAWING_NS: &str = "xmlns:dsp=\"http://schemas.microsoft.com/office/drawing/2008/diagram\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:dgm=\"http://schemas.openxmlformats.org/drawingml/2006/diagram\"";
+const DRAWING_NS: &str = "xmlns:dsp=\"http://schemas.microsoft.com/office/drawing/2008/diagram\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:dgm=\"http://schemas.openxmlformats.org/drawingml/2006/diagram\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"";
 
 fn wrap_ns(s: &str) -> String {
     format!("<w {DRAWING_NS}>{s}</w>")
@@ -938,6 +995,7 @@ pub fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<Str
         let target = match s.role {
             Role::Node(i) => lay.get(i).map(|b| b.node),
             Role::Sub(i) => lay.get(i).and_then(|b| b.sub),
+            Role::Pic(i) => lay.get(i).and_then(|b| b.pic),
             Role::Arrow(i) => once(lay.get(i).and_then(|b| b.arrow), &mut arrow_drawn[i]),
             Role::Deco(i) => once(lay.get(i).and_then(|b| b.deco), &mut deco_drawn[i]),
             Role::Back => once(back, &mut back_drawn),
@@ -945,7 +1003,7 @@ pub fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<Str
         };
         // Items' shapes keep a turn given them; arrows turn with the layout.
         let target = target.map(|b| match (s.role, &s.xfrm) {
-            (Role::Node(_) | Role::Sub(_), Some((_, old))) => Xfrm {
+            (Role::Node(_) | Role::Sub(_) | Role::Pic(_), Some((_, old))) => Xfrm {
                 rot: old.rot,
                 flip_h: old.flip_h,
                 flip_v: old.flip_v,
@@ -1176,6 +1234,24 @@ pub fn add_item(
     let par = new_id(data, 2);
     let sib = new_id(data, 3);
     let cxn = new_id(data, 4);
+    let (list, _) = shapes(drawing, &v)?;
+    // A picture layout: the new item's picture placeholder, a copy of
+    // another item's (its picture taken out), with a presentation item
+    // naming it as the item's picture.
+    let pic_tmpl = list
+        .iter()
+        .find(|s| s.role == Role::Pic(i))
+        .or_else(|| list.iter().find(|s| matches!(s.role, Role::Pic(_))))
+        .filter(|_| v.family.pictures());
+    let pic = pic_tmpl.map(|t| {
+        let id = new_id(data, 5);
+        let name = v
+            .pres
+            .get(&t.model)
+            .map_or("imagNode", |p| p.1.as_str())
+            .to_owned();
+        (id, name, t)
+    });
     let body = |pre: &str| {
         format!(
             "<{dgm}t><{a}bodyPr/><{a}lstStyle/><{a}p><{a}endParaRPr lang=\"en-US\"/></{a}p></{dgm}t>{pre}"
@@ -1184,10 +1260,13 @@ pub fn add_item(
     let pts = format!(
         "<{dgm}pt modelId=\"{node}\"><{dgm}prSet phldrT=\"[Text]\"/><{dgm}spPr/>{}</{dgm}pt>\
          <{dgm}pt modelId=\"{par}\" type=\"parTrans\" cxnId=\"{cxn}\"><{dgm}prSet/><{dgm}spPr/>{}</{dgm}pt>\
-         <{dgm}pt modelId=\"{sib}\" type=\"sibTrans\" cxnId=\"{cxn}\"><{dgm}prSet/><{dgm}spPr/>{}</{dgm}pt>",
+         <{dgm}pt modelId=\"{sib}\" type=\"sibTrans\" cxnId=\"{cxn}\"><{dgm}prSet/><{dgm}spPr/>{}</{dgm}pt>{}",
         body(""),
         body(""),
-        body("")
+        body(""),
+        pic.as_ref().map_or(String::new(), |(id, name, _)| format!(
+            "<{dgm}pt modelId=\"{id}\" type=\"pres\"><{dgm}prSet presAssocID=\"{node}\" presName=\"{name}\" presStyleLbl=\"fgImgPlace1\"/><{dgm}spPr/></{dgm}pt>"
+        ))
     );
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     let pt_lst = doc
@@ -1219,17 +1298,48 @@ pub fn add_item(
     ));
     let data2 = apply(data, edits);
     // The drawing: a copy of the selected item's shape.
-    let (list, _) = shapes(drawing, &v)?;
     let template = list
         .iter()
         .find(|s| s.role == Role::Node(i))
         .or_else(|| list.iter().find(|s| matches!(s.role, Role::Node(_))))
         .context("This SmartArt has no shape to copy")?;
-    let copy = copy_shape(&drawing[template.range.clone()], &node);
+    let mut copy = copy_shape(&drawing[template.range.clone()], &node);
+    if let Some((id, _, t)) = &pic {
+        copy.insert_str(0, &placeholder(&drawing[t.range.clone()], id));
+    }
     let insert = template.range.end;
     let drawing2 = apply(drawing, vec![(insert..insert, copy)]);
     let drawing3 = relayout(&drawing2, &data2, w, h)?;
     Ok((drawing3, data2, node))
+}
+
+/// The fill an empty picture placeholder shows.
+const PLACEHOLDER_FILL: &str =
+    "<a:solidFill><a:schemeClr val=\"accent1\"><a:tint val=\"50000\"/></a:schemeClr></a:solidFill>";
+
+/// A copy of picture shape `xml` drawing presentation item `model`, as an
+/// empty placeholder: its picture fill (if any) replaced by the
+/// placeholder's tint.
+fn placeholder(xml: &str, model: &str) -> String {
+    let s = copy_shape(xml, model);
+    let full = wrap_ns(&s);
+    let pre = wrap_pre();
+    let Ok(doc) = Document::parse(&full) else {
+        return s;
+    };
+    let Some(sp_pr) = doc.descendants().find(|n| is(*n, NS_DSP, "spPr")) else {
+        return s;
+    };
+    match child(sp_pr, NS_A, "blipFill") {
+        Some(b) => {
+            let r = b.range();
+            apply(
+                &s,
+                vec![(r.start - pre..r.end - pre, PLACEHOLDER_FILL.to_owned())],
+            )
+        }
+        None => s,
+    }
 }
 
 /// The parts with the item whose drawing shape is `selected` removed (with
@@ -1375,6 +1485,88 @@ mod tests {
         assert!(c[0].node.y < c[1].node.y && c[2].node.y > c[1].node.y);
         assert!(c.iter().all(|b| b.arrow.is_some()));
         assert_eq!(c[0].arrow.unwrap().rot, 45 * 60_000);
+    }
+
+    /// A Horizontal Picture List (`pList2`) as PowerPoint writes it: a
+    /// background, per item a picture (the first one filled with a
+    /// picture) and the item's text.
+    fn picture_list(n: usize) -> (String, String) {
+        let mut pts = r#"<dgm:pt modelId="D" type="doc"><dgm:prSet loTypeId="urn:microsoft.com/office/officeart/2005/8/layout/pList2" loCatId="picture"/></dgm:pt><dgm:pt modelId="BG" type="pres"><dgm:prSet presAssocID="D" presName="bkgdShp"/></dgm:pt>"#.to_owned();
+        let mut cxns = String::new();
+        let mut sps = r#"<dsp:sp modelId="BG"><dsp:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></a:xfrm><a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom></dsp:spPr></dsp:sp>"#.to_owned();
+        for i in 0..n {
+            pts += &format!(
+                r#"<dgm:pt modelId="N{i}"><dgm:prSet/><dgm:t><a:bodyPr/><a:p><a:r><a:t>Item {i}</a:t></a:r></a:p></dgm:t></dgm:pt><dgm:pt modelId="P{i}" type="parTrans" cxnId="X{i}"/><dgm:pt modelId="S{i}" type="sibTrans" cxnId="X{i}"/><dgm:pt modelId="I{i}" type="pres"><dgm:prSet presAssocID="N{i}" presName="imagNode"/></dgm:pt><dgm:pt modelId="V{i}" type="pres"><dgm:prSet presAssocID="N{i}" presName="node"/></dgm:pt>"#
+            );
+            cxns += &format!(
+                r#"<dgm:cxn modelId="X{i}" srcId="D" destId="N{i}" srcOrd="{i}" destOrd="0" parTransId="P{i}" sibTransId="S{i}"/>"#
+            );
+            let fill = if i == 0 {
+                r#"<a:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></a:blipFill>"#
+            } else {
+                r#"<a:solidFill><a:schemeClr val="accent1"><a:tint val="50000"/></a:schemeClr></a:solidFill>"#
+            };
+            sps += &format!(
+                r#"<dsp:sp modelId="I{i}"><dsp:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="10" cy="10"/></a:xfrm><a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom>{fill}</dsp:spPr></dsp:sp><dsp:sp modelId="V{i}"><dsp:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="10" cy="10"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:schemeClr val="accent1"/></a:solidFill></dsp:spPr><dsp:txBody><a:bodyPr/><a:p><a:r><a:t>Item {i}</a:t></a:r></a:p></dsp:txBody><dsp:txXfrm><a:off x="0" y="0"/><a:ext cx="10" cy="10"/></dsp:txXfrm></dsp:sp>"#
+            );
+        }
+        let data = format!(
+            r#"<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dgm:ptLst>{pts}</dgm:ptLst><dgm:cxnLst>{cxns}</dgm:cxnLst></dgm:dataModel>"#
+        );
+        let drawing = format!(
+            r#"<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dsp:spTree><dsp:nvGrpSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvGrpSpPr/></dsp:nvGrpSpPr><dsp:grpSpPr/>{sps}</dsp:spTree></dsp:drawing>"#
+        );
+        (drawing, data)
+    }
+
+    fn boxes_of(drawing: &str, data: &str) -> Vec<(Role, Xfrm)> {
+        let v = view(data).unwrap();
+        shapes(drawing, &v)
+            .unwrap()
+            .0
+            .into_iter()
+            .filter_map(|s| Some((s.role, s.xfrm?.1)))
+            .collect()
+    }
+
+    #[test]
+    fn picture_lists_keep_their_pictures_and_placeholders() {
+        let (dr, data) = picture_list(3);
+        assert_eq!(family(&dr, &data), Some(Family::HorizontalPictures));
+        let d2 = relayout(&dr, &data, 12_000, 4_000).unwrap();
+        let b = boxes_of(&d2, &data);
+        let get = |r: Role| b.iter().find(|x| x.0 == r).unwrap().1;
+        assert_eq!(get(Role::Back), Xfrm::new(0, 0, 12_000, 4_000));
+        for i in 0..3 {
+            let (pic, node) = (get(Role::Pic(i)), get(Role::Node(i)));
+            // The picture over the text, in the same column, in the frame.
+            assert!(pic.y + pic.cy <= node.y, "{pic:?} {node:?}");
+            assert!(pic.x >= node.x && pic.x + pic.cx <= node.x + node.cx);
+            assert!(node.y + node.cy <= 4_000 && node.x + node.cx <= 12_000);
+        }
+        assert!(get(Role::Node(0)).x < get(Role::Node(1)).x);
+        // The first item's picture is kept.
+        assert!(d2.contains(r#"r:embed="rId1""#));
+        // Added after the item with a picture: an empty placeholder, named
+        // as the new item's picture by a presentation item.
+        let (d3, data3, id) = add_item(&d2, &data, "V0", AddPlace::After, 12_000, 4_000).unwrap();
+        assert_eq!(family(&d3, &data3), Some(Family::HorizontalPictures));
+        assert_eq!(d3.matches("r:embed=\"rId1\"").count(), 1, "{d3}");
+        assert!(
+            data3.contains(&format!("presAssocID=\"{id}\" presName=\"imagNode\"")),
+            "{data3}"
+        );
+        let b = boxes_of(&d3, &data3);
+        assert_eq!(b.iter().filter(|x| matches!(x.0, Role::Pic(_))).count(), 4);
+        let v = view(&data3).unwrap();
+        assert_eq!(v.items[1].id, id);
+        assert!(b.iter().any(|x| x.0 == Role::Pic(1)));
+        // Deleting the first item takes its picture with it.
+        let (d4, data4) = remove_item(&d3, &data3, "V0", 12_000, 4_000).unwrap();
+        assert!(!d4.contains("rId1") && !data4.contains("\"I0\""), "{d4}");
+        assert_eq!(family(&d4, &data4), Some(Family::HorizontalPictures));
+        let b = boxes_of(&d4, &data4);
+        assert_eq!(b.iter().filter(|x| matches!(x.0, Role::Pic(_))).count(), 3);
     }
 
     #[test]

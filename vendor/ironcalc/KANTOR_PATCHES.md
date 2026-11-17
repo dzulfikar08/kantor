@@ -262,6 +262,19 @@ What: `import/tables.rs` `load_table`: `data_dxf_id` reads the `<table>`'s
 Tests: Kantor's `crates/sheets_engine/tests/table_styles.rs`
 (`table_dxfs_layer_between_style_and_cells`).
 
+## 16. "No Cell Icon" in custom icon sets
+
+Why: Excel 2010 custom icon sets name "No Cell Icon" as
+`<x14:cfIcon iconSet="NoIcons" iconId="0"/>`; the unknown set fell back to
+a grey circle, so cells Excel leaves without an icon got one.
+
+What: `import/conditional_formatting.rs` `icon_from_excel_id` reads the
+`NoIcons` set as `(Icon::Circle, Color::None)`: a threshold without a
+colour, which Kantor draws as no icon (and writes back as `NoIcons`).
+
+Tests: Kantor's `crates/sheets_engine/tests/cf_x14.rs`
+(`no_cell_icon_per_threshold`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

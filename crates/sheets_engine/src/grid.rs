@@ -130,6 +130,55 @@ pub(crate) fn read_panes(
     out
 }
 
+/// Zoom attributes of a sheet view Kantor keeps (IronCalc drops them).
+const ZOOM_ATTRS: [&str; 4] = [
+    "zoomScale",
+    "zoomScaleNormal",
+    "zoomScalePageLayoutView",
+    "zoomScaleSheetLayoutView",
+];
+
+/// Sheets in Page Break Preview and each sheet view's zoom attributes,
+/// by `sheetId` ([`read_views`]).
+pub(crate) type ReadViews = (
+    std::collections::HashSet<u32>,
+    HashMap<u32, Vec<(&'static str, String)>>,
+);
+
+/// Sheet views of a package, by `sheetId`: the sheets shown in Page Break
+/// Preview (`sheetView@view="pageBreakPreview"`) and each sheet's zoom
+/// attributes.
+pub(crate) fn read_views(skeletons: &std::result::Result<Vec<(u32, String)>, String>) -> ReadViews {
+    let mut breaks = std::collections::HashSet::new();
+    let mut zooms = HashMap::new();
+    let Ok(list) = skeletons else {
+        return (breaks, zooms);
+    };
+    for (id, xml) in list {
+        if !xml.contains("pageBreakPreview") && !xml.contains("zoomScale") {
+            continue;
+        }
+        let Ok(doc) = roxmltree::Document::parse(xml) else {
+            continue;
+        };
+        let Some(view) = el(doc.root_element(), "sheetViews").and_then(|v| el(v, "sheetView"))
+        else {
+            continue;
+        };
+        if view.attribute("view") == Some("pageBreakPreview") {
+            breaks.insert(*id);
+        }
+        let zoom: Vec<(&'static str, String)> = ZOOM_ATTRS
+            .iter()
+            .filter_map(|a| Some((*a, view.attribute(*a)?.to_owned())))
+            .collect();
+        if !zoom.is_empty() {
+            zooms.insert(*id, zoom);
+        }
+    }
+    (breaks, zooms)
+}
+
 fn el<'a, 'i>(n: roxmltree::Node<'a, 'i>, name: &str) -> Option<roxmltree::Node<'a, 'i>> {
     n.children()
         .find(|c| c.is_element() && c.tag_name().name() == name)
@@ -1035,6 +1084,47 @@ impl Workbook {
         }
     }
 
+    /// Whether `sheet` is shown in Page Break Preview (saved in the file as
+    /// the sheet view's `view`, as Excel does).
+    pub fn break_preview(&self, sheet: u32) -> bool {
+        self.views.break_preview.contains(&self.sheet_id(sheet))
+    }
+
+    /// Show `sheet` in Page Break Preview (`on`) or Normal view. A view
+    /// change: saved, not undone (as in Excel). Returns whether it changed.
+    pub fn set_break_preview(&mut self, sheet: u32, on: bool) -> bool {
+        let id = self.sheet_id(sheet);
+        let changed = if on {
+            self.views.break_preview.insert(id)
+        } else {
+            self.views.break_preview.remove(&id)
+        };
+        if changed {
+            self.views.set.insert(id);
+            self.history.view_changed = true;
+            self.history.view_changes += 1;
+        }
+        changed
+    }
+
+    /// Save patches for sheet views: Page Break Preview on or off.
+    pub(crate) fn view_patches(&self, out: &mut crate::preserve::Patches) {
+        let ids: std::collections::HashSet<u32> = (0..self.sheet_names().len() as u32)
+            .map(|s| self.sheet_id(s))
+            .collect();
+        for &id in self.views.break_preview.union(&self.views.set) {
+            if ids.contains(&id) {
+                out.sheets.entry(id).or_default().break_preview =
+                    Some(self.views.break_preview.contains(&id));
+            }
+        }
+        for (id, zoom) in &self.views.zoom {
+            if ids.contains(id) {
+                out.sheets.entry(*id).or_default().view_attrs = zoom.clone();
+            }
+        }
+    }
+
     /// After opening: panes the file froze on a scrolled sheet. IronCalc
     /// read their splits counted from the sheet view's `topLeftCell`; make
     /// them count from A1 and remember the top-left cell.
@@ -1628,6 +1718,48 @@ mod tests {
         // Undo doesn't touch panes, as in Excel.
         back.undo().unwrap();
         assert_eq!(back.frozen(0), (1, 0));
+    }
+
+    #[test]
+    fn page_break_preview_is_saved_per_sheet() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("views.xlsx");
+        let mut wb = book(&[(0, 0, "x")]);
+        wb.insert_sheet(1).unwrap();
+        wb.save_as(&path).unwrap();
+        assert!(!wb.break_preview(0) && !wb.break_preview(1));
+        assert!(wb.set_break_preview(1, true));
+        assert!(!wb.set_break_preview(1, true), "no change");
+        assert!(wb.is_dirty());
+        wb.save_as(&path).unwrap();
+        let part = |n: u32| {
+            String::from_utf8(
+                crate::preserve::read_part(
+                    &std::fs::read(&path).unwrap(),
+                    &format!("xl/worksheets/sheet{n}.xml"),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        assert!(part(2).contains("view=\"pageBreakPreview\""), "{}", part(2));
+        assert!(!part(1).contains("pageBreakPreview"), "{}", part(1));
+        let mut back = Workbook::open(&path).unwrap();
+        assert!(back.break_preview(1) && !back.break_preview(0));
+        assert!(!back.is_dirty());
+        // Saved again untouched: still there; then back to Normal.
+        back.set_input(0, 1, 1, "z").unwrap();
+        back.save_as(&path).unwrap();
+        assert!(Workbook::open(&path).unwrap().break_preview(1));
+        assert!(back.set_break_preview(1, false));
+        // Frozen panes and the view together.
+        assert!(back.set_frozen_at(0, (10, 2), (14, 4)).unwrap());
+        back.set_break_preview(0, true);
+        back.save_as(&path).unwrap();
+        let again = Workbook::open(&path).unwrap();
+        assert!(again.break_preview(0) && !again.break_preview(1));
+        assert_eq!(again.frozen_origin(0), (10, 2));
+        assert!(!part(2).contains("pageBreakPreview"), "{}", part(2));
     }
 
     #[test]

@@ -25,14 +25,19 @@ slide, in the layout families Kantor lays out itself:
   same tree, then the level labels "Board", "Managers", "Staff" (the
   document's later top-level items), each a band across the diagram with
   its text at the left, drawn behind the tree.
+- Slide 10 "Picture list": Horizontal Picture List (`layout/pList2`),
+  "Lake", "Forest", "Desert" on a background, each a picture placeholder
+  over its text; Lake's holds a picture (a small generated PNG).
 
 Regenerate with
 `uv run --with python-pptx==1.0.2 scripts/corpus/gen_pptx_smartart.py tests/corpus/pptx`.
 """
 import io
 import math
+import struct
 import sys
 import zipfile
+import zlib
 from pathlib import Path
 
 from pptx import Presentation
@@ -224,6 +229,51 @@ def pyramid(ids):
     return pres, shapes
 
 
+def png(w, h):
+    """A small blue-to-green gradient PNG (stdlib only, deterministic)."""
+    rows = b"".join(
+        b"\x00" + b"".join(bytes((40, 90 + 120 * x // w, 200 - 100 * y // h)) for x in range(w)) for y in range(h)
+    )
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(rows, 9))
+        + chunk(b"IEND", b"")
+    )
+
+
+def pictures(ids):
+    """pList2: a background for the document item, then per item its
+    picture placeholder (the first holding a picture) and its text."""
+    pres, shapes = [], []
+    n = len(ids)
+    bg = gid("9", 99)
+    pres.append((bg, gid("D", 0), "bkgdShp", 0, 1))
+    shapes.append(sp(bg, "roundRect", (0, 0, W, H), [""], fill="accent1"))
+    m = W * 0.03
+    cw = (W - 2 * m) / (n + 0.1 * (n - 1))
+    for k, (node, _sib, _kids, text, _subs) in enumerate(ids):
+        x = m + k * cw * 1.1
+        img, txt = gid("9", 2 * k), gid("9", 2 * k + 1)
+        pres.append((img, node, "imagNode", k, n))
+        pic = sp(img, "roundRect", (x + cw * 0.05, H * 0.08, cw * 0.9, H * 0.48), [""], fill="accent1")
+        if k == 0:
+            pic = pic.replace(
+                '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill><a:ln',
+                f'<a:blipFill><a:blip xmlns:r="{REL[:-1]}" r:embed="rIdImg1"/>'
+                '<a:stretch><a:fillRect/></a:stretch></a:blipFill><a:ln',
+                1,
+            )
+        shapes.append(pic)
+        pres.append((txt, node, "node", k, n))
+        shapes.append(sp(txt, "rect", (x, H * 0.58, cw, H * 0.36), [text]))
+    return pres, shapes
+
+
 def connector(model, pts):
     """An elbow line through `pts` (frame EMUs) as PowerPoint draws a
     hierarchy's connectors: a custGeom path without fill."""
@@ -400,6 +450,7 @@ SLIDES = [
     ("Hierarchy", "hierarchy1", "hier", None, None),
     ("Horizontal hierarchy", "hierarchy2", "horiz", None, None),
     ("Labeled hierarchy", "hierarchy6", "label", None, None),
+    ("Picture list", "pList2", "picture", [("Lake", []), ("Forest", []), ("Desert", [])], pictures),
 ]
 
 for title, *_ in SLIDES:
@@ -458,6 +509,15 @@ for k, (title, lo, cat, items, shapes_of) in enumerate(SLIDES):
     parts[f"ppt/diagrams/quickStyle{i}.xml"] = style.encode()
     parts[f"ppt/diagrams/colors{i}.xml"] = colors.encode()
     parts[f"ppt/diagrams/drawing{i}.xml"] = drawing.encode()
+    if "rIdImg1" in drawing:
+        parts[f"ppt/diagrams/_rels/drawing{i}.xml.rels"] = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            f'<Relationship Id="rIdImg1" Type="{REL}image" Target="../media/smartart_pic1.png"/></Relationships>'
+        ).encode()
+        parts["ppt/media/smartart_pic1.png"] = png(64, 48)
+        if 'Extension="png"' not in ct:
+            ct = ct.replace("</Types>", '<Default Extension="png" ContentType="image/png"/></Types>')
 parts["[Content_Types].xml"] = ct.encode()
 
 FIXED = (2026, 11, 16, 0, 0, 0)

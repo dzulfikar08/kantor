@@ -12,6 +12,10 @@ as raw WordprocessingML (deterministic: same bytes every run):
   a simple `INDEX`, and tables of contents limited to a bookmark (`\\b`)
   and built from `TC` entries (`\\f`). Every result is saved wrong on
   purpose ("0"), so tests see Kantor work it out.
+* styleref_index.docx: a header with `STYLEREF "Heading 1"` over four
+  pages (two chapters, a page without a heading, the index page), and an
+  `INDEX \\h "A"` of `XE` entries with sub-entries and a cross-reference
+  (`\\t "See Apples"`). Results saved wrong ("0").
 
 Regenerate with `python3 scripts/corpus/gen_docx_more.py tests/corpus/docx`;
 `--check` compares with the files in that folder instead.
@@ -68,7 +72,7 @@ SECT = (
 )
 
 
-def package(body, media=(), numbering=None):
+def package(body, media=(), numbering=None, header=None):
     """A .docx's bytes: `body` inside w:body, `media` = [(rId, name, bytes)]."""
     rels = [
         '<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
@@ -81,6 +85,12 @@ def package(body, media=(), numbering=None):
         '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
         '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
     )
+    sect = SECT
+    if header:
+        rels.append(
+            '<Relationship Id="rIdHeader1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>'
+        )
+        sect = SECT.replace("<w:sectPr>", '<w:sectPr><w:headerReference w:type="default" r:id="rIdHeader1"/>')
     if numbering:
         rels.append(
             '<Relationship Id="rIdNumbering" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>'
@@ -96,13 +106,19 @@ def package(body, media=(), numbering=None):
         '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
         '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
         "</Relationships>",
-        "word/document.xml": f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {NS}><w:body>{body}{SECT}</w:body></w:document>',
+        "word/document.xml": f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {NS}><w:body>{body}{sect}</w:body></w:document>',
         "word/_rels/document.xml.rels": '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + "".join(rels) + "</Relationships>",
         "word/styles.xml": STYLES,
     }
     if numbering:
         files["word/numbering.xml"] = numbering
+    if header:
+        files["word/header1.xml"] = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr {NS}>{header}</w:hdr>'
+        files["[Content_Types].xml"] = files["[Content_Types].xml"].replace(
+            "</Types>",
+            '<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>',
+        )
     for _, name, data in media:
         files[f"word/media/{name}"] = data
     out = io.BytesIO()
@@ -295,7 +311,29 @@ def formulas():
     return package(body, numbering=NUMBERING)
 
 
-FILES = {"textboxes.docx": textboxes, "formulas.docx": formulas}
+# ── styleref_index.docx ────────────────────────────────────────────────────
+
+PAGE_BREAK = '<w:r><w:br w:type="page"/></w:r>'
+
+
+def styleref_index():
+    h1 = lambda t: f'<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>{text(t)}</w:p>'
+    xe = lambda t, extra="": fld(f'XE "{t}"{extra}', "")
+    body = (
+        h1("Alpha chapter")
+        + "<w:p>" + text("Apples grow here.") + xe("Apples") + xe("Fruit:Apples") + "</w:p>"
+        + "<w:p>" + text("Zebras too.") + xe("Zebras") + PAGE_BREAK + "</w:p>"
+        + "<w:p>" + text("Still the first chapter, no heading on this page.") + xe("Bananas")
+        + xe("Fruit", ' \\t "See Apples"') + PAGE_BREAK + "</w:p>"
+        + h1("Beta chapter")
+        + "<w:p>" + text("Apples again.") + xe("Apples") + xe("Avocados") + PAGE_BREAK + "</w:p>"
+        + "<w:p>" + fld('INDEX \\h "A" \\e ", "', "stale") + "</w:p>"
+    )
+    header = "<w:p>" + text("Chapter: ") + fld('STYLEREF "Heading 1"') + "</w:p>"
+    return package(body, header=header)
+
+
+FILES = {"textboxes.docx": textboxes, "formulas.docx": formulas, "styleref_index.docx": styleref_index}
 
 
 def main():

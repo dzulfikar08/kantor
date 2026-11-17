@@ -1698,10 +1698,13 @@ struct Ctx<'a> {
 }
 
 /// The calculated items of each field of `def` (matched to `cache`),
-/// compiled against the field's item names.
+/// compiled against the field's item names; `order` gives a field's items
+/// as they show when that differs from their list (sorted by values), for
+/// items named by position.
 fn calc_formulas(
     def: &Def,
     cache: &Cache,
+    order: &dyn Fn(usize) -> Option<Vec<usize>>,
 ) -> Vec<HashMap<usize, std::result::Result<Formula, String>>> {
     def.fields
         .iter()
@@ -1722,6 +1725,7 @@ fn calc_formulas(
                         .map_or_else(|| "\u{0}".to_owned(), Val::label)
                 })
                 .collect();
+            let shown = order(f);
             for (k, it) in fd.items.iter().enumerate() {
                 let Some(v) = it.x.and_then(|x| cf.items.get(x)) else {
                     continue;
@@ -1733,7 +1737,13 @@ fn calc_formulas(
                 {
                     out.insert(
                         k,
-                        Formula::compile_items(&ci.formula, &cf.name, &names, Some(k)),
+                        Formula::compile_items(
+                            &ci.formula,
+                            &cf.name,
+                            &names,
+                            Some(k),
+                            shown.as_deref(),
+                        ),
                     );
                 }
             }
@@ -1765,6 +1775,41 @@ type Agg = Option<std::result::Result<f64, &'static str>>;
 type Group<'a> = (usize, Vec<usize>, Option<usize>, &'a Field);
 
 impl Ctx<'_> {
+    /// Field `f`'s items in the order they show when sorted by a value
+    /// field (as places in its item list; calculated items, which have no
+    /// records, last), over all records. `None`: they show as listed.
+    fn shown_order(&self, f: usize) -> Option<Vec<usize>> {
+        let field = self.def.fields.get(f)?;
+        let d = field.sort_by.filter(|d| *d < self.def.data_fields.len())?;
+        let desc = field.sort.as_deref() == Some("descending");
+        let mut by_item: Vec<Vec<usize>> = vec![Vec::new(); field.items.len()];
+        for (r, p) in self.pos.get(f)?.iter().enumerate() {
+            if let Some(p) = *p {
+                by_item[p].push(r);
+            }
+        }
+        let mut keyed: Vec<(f64, usize)> = (0..field.items.len())
+            .filter(|&k| field.items[k].t.is_none())
+            .map(|k| {
+                let key = match self.summarise(d, None, &by_item[k]) {
+                    Some(Ok(x)) => x,
+                    _ => f64::NAN,
+                };
+                (key, k)
+            })
+            .collect();
+        keyed.sort_by(|a, b| match (a.0.is_nan(), b.0.is_nan()) {
+            (true, true) => std::cmp::Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            _ => {
+                let o = a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal);
+                if desc { o.reverse() } else { o }
+            }
+        });
+        Some(keyed.into_iter().map(|(_, k)| k).collect())
+    }
+
     fn is_calc(&self, f: usize, k: usize) -> bool {
         self.calc.get(f).is_some_and(|m| m.contains_key(&k))
     }
@@ -2216,8 +2261,11 @@ pub(crate) fn lay_out(def: &Def, cache: &Cache, records: &[Vec<Val>], top: u32, 
             .iter()
             .map(|c| c.formula.as_ref().map(|f| Formula::compile(f, &names)))
             .collect(),
-        calc: calc_formulas(def, cache),
+        calc: Vec::new(),
     };
+    let calc = calc_formulas(def, cache, &|f| ctx.shown_order(f));
+    let mut ctx = ctx;
+    ctx.calc = calc;
     let pos = &ctx.pos;
     let row_lv = levels(&def.row_fields, nf);
     let col_lv = levels(&def.col_fields, nf);

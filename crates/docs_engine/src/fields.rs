@@ -1116,61 +1116,41 @@ impl<'a> Eval<'a> {
 
     /// `STYLEREF "Style"` (or a heading level): the nearest paragraph in
     /// that style above the field, else below it. In headers and footers
-    /// it depends on the page: the saved result stays.
+    /// it depends on the page: the saved result stays here, and the page
+    /// layout works it out per page ([`style_ref_results`]).
     fn style_ref(&self, span: &FieldSpan, i: &Instr) -> Outcome {
         if self.doc.field_props.is_some() {
             return Outcome::Keep;
         }
-        let Some(want) = i.args.first() else {
-            return Outcome::Keep;
-        };
-        let level: Option<u8> = want.trim().parse().ok();
-        let matches = |p: &Paragraph| -> bool {
-            if let Some(l) = level {
-                return self.doc.style_level(p) == Some(l)
-                    && p.props.style.as_deref().is_some_and(|s| {
-                        self.doc
-                            .styles
-                            .get(s)
-                            .is_some_and(|st| st.name.to_ascii_lowercase().starts_with("heading"))
-                    });
-            }
-            p.props.style.as_deref().is_some_and(|id| {
-                id.eq_ignore_ascii_case(want)
-                    || self
-                        .doc
-                        .styles
-                        .get(id)
-                        .is_some_and(|st| st.name.eq_ignore_ascii_case(want))
-            }) || (want.eq_ignore_ascii_case("normal") && p.props.style.is_none())
-        };
         let here = span.begin.para.min(self.paras.len().saturating_sub(1));
-        let found = (0..=here)
-            .rev()
-            .chain(here + 1..self.paras.len())
-            .find(|&k| {
-                matches(&self.paras[k]) && !crate::field_calc::para_text(&self.paras[k]).is_empty()
-            });
-        let Some(k) = found else {
-            return Outcome::Text("Error! No text of specified style in document.".into());
-        };
-        if i.has("n") || i.has("r") || i.has("w") {
-            let markers = self.doc.list_markers_of(self.paras);
-            let m = markers.get(k).cloned().flatten().unwrap_or_default();
-            return Outcome::Text(m.trim().trim_end_matches(['.', ')']).to_owned());
+        let order = (0..=here).rev().chain(here + 1..self.paras.len());
+        match style_ref_text(self.doc, self.paras, i, order) {
+            Some(Some(t)) => Outcome::Text(t),
+            Some(None) => Outcome::Text("Error! No text of specified style in document.".into()),
+            None => Outcome::Keep,
         }
-        Outcome::Text(i.cased(&crate::field_calc::para_text(&self.paras[k])))
     }
 
     /// `INDEX`: the `XE` entries in alphabetical order with the pages
-    /// they're on (needs the layout), one per line (`\e` sets the
-    /// separator, `Main:Sub` entries go under their main entry).
+    /// they're on (needs the layout), one per line: `\e` sets the
+    /// separator before the pages and `\l` between them, `Main:Sub`
+    /// entries go under their main entry, an entry with `\t` shows its
+    /// cross-reference ("See ...") instead of pages, and `\h` puts a
+    /// heading before each letter's entries (the `A` in it replaced by the
+    /// letter; empty: a blank line).
     fn index(&self, i: &Instr) -> Outcome {
         let Some(pages) = self.pages else {
             return Outcome::Keep;
         };
         let sep = i.arg("e").unwrap_or(", ");
-        let mut entries: std::collections::BTreeMap<(String, String), (String, String, Vec<u32>)> =
+        let page_sep = i.arg("l").unwrap_or(", ");
+        struct Entry {
+            main: String,
+            sub: String,
+            pages: Vec<u32>,
+            see: Option<String>,
+        }
+        let mut entries: std::collections::BTreeMap<(String, String), Entry> =
             std::collections::BTreeMap::new();
         for s in spans(self.paras) {
             let xi = Instr::parse(&s.instr);
@@ -1184,38 +1164,86 @@ impl<'a> Eval<'a> {
                 Some((m, s)) => (m.trim().to_owned(), s.trim().to_owned()),
                 None => (text.trim().to_owned(), String::new()),
             };
-            let page = pages.page_of(s.begin).map(|p| pages.page_number(p));
             let e = entries
                 .entry((main.to_lowercase(), sub.to_lowercase()))
-                .or_insert_with(|| (main, sub, Vec::new()));
+                .or_insert_with(|| Entry {
+                    main,
+                    sub,
+                    pages: Vec::new(),
+                    see: None,
+                });
+            if let Some(t) = xi.arg("t") {
+                e.see = Some(t.to_owned());
+                continue;
+            }
+            let page = pages.page_of(s.begin).map(|p| pages.page_number(p));
             if let Some(p) = page
-                && !e.2.contains(&p)
+                && !e.pages.contains(&p)
             {
-                e.2.push(p);
+                e.pages.push(p);
             }
         }
         if entries.is_empty() {
             return Outcome::Text("No index entries found.".into());
         }
+        let heading = i.arg("h");
         let mut lines = Vec::new();
         let mut last_main = String::new();
-        for ((main_key, _), (main, sub, pages)) in &entries {
-            let mut pages = pages.clone();
+        let mut last_letter: Option<String> = None;
+        for ((main_key, _), e) in &entries {
+            if let Some(h) = heading {
+                let letter: String = e
+                    .main
+                    .chars()
+                    .next()
+                    .map(|c| {
+                        if c.is_alphabetic() {
+                            c.to_uppercase().collect()
+                        } else {
+                            // Numbers and symbols go under one heading.
+                            "#".to_owned()
+                        }
+                    })
+                    .unwrap_or_default();
+                if last_letter.as_deref() != Some(letter.as_str()) {
+                    if h.is_empty() {
+                        if last_letter.is_some() {
+                            lines.push(String::new());
+                        }
+                    } else {
+                        lines.push(h.replace('A', &letter));
+                    }
+                    last_letter = Some(letter);
+                }
+            }
+            let mut pages = e.pages.clone();
             pages.sort_unstable();
-            let nums = pages
+            let mut tail = pages
                 .iter()
                 .map(|p| i.number(*p))
                 .collect::<Vec<_>>()
-                .join(", ");
-            if sub.is_empty() {
-                lines.push(format!("{main}{sep}{nums}"));
+                .join(page_sep);
+            if let Some(see) = &e.see {
+                if !tail.is_empty() {
+                    tail.push_str(". ");
+                }
+                tail.push_str(see);
+            }
+            // A cross-reference alone follows a full stop, as Word writes it.
+            let sep = if pages.is_empty() && e.see.is_some() {
+                ". "
+            } else {
+                sep
+            };
+            if e.sub.is_empty() {
+                lines.push(format!("{}{sep}{tail}", e.main));
             } else {
                 if *main_key != last_main
                     && !entries.contains_key(&(main_key.clone(), String::new()))
                 {
-                    lines.push(main.clone());
+                    lines.push(e.main.clone());
                 }
-                lines.push(format!("    {sub}{sep}{nums}"));
+                lines.push(format!("    {}{sep}{tail}", e.sub));
             }
             last_main = main_key.clone();
         }
@@ -1404,6 +1432,115 @@ fn listnum_values(
         );
     }
     out
+}
+
+/// Whether paragraph `p` is in the style `STYLEREF` names (`want`: a
+/// style's id or name, or a heading level).
+fn style_ref_matches(doc: &Document, want: &str, p: &Paragraph) -> bool {
+    if let Ok(l) = want.trim().parse::<u8>() {
+        return doc.style_level(p) == Some(l)
+            && p.props.style.as_deref().is_some_and(|s| {
+                doc.styles
+                    .get(s)
+                    .is_some_and(|st| st.name.to_ascii_lowercase().starts_with("heading"))
+            });
+    }
+    p.props.style.as_deref().is_some_and(|id| {
+        id.eq_ignore_ascii_case(want)
+            || doc
+                .styles
+                .get(id)
+                .is_some_and(|st| st.name.eq_ignore_ascii_case(want))
+    }) || (want.eq_ignore_ascii_case("normal") && p.props.style.is_none())
+}
+
+/// What `STYLEREF` field `i` shows, searching `paras` (of `doc`) in
+/// `order`: the first paragraph in its style with text (or its list
+/// number, `\n`). `None`: no style named; `Some(None)`: none found.
+fn style_ref_text(
+    doc: &Document,
+    paras: &[Paragraph],
+    i: &Instr,
+    order: impl Iterator<Item = usize>,
+) -> Option<Option<String>> {
+    let want = i.args.first()?;
+    let mut order = order;
+    let Some(k) = order.find(|&k| {
+        paras.get(k).is_some_and(|p| {
+            style_ref_matches(doc, want, p) && !crate::field_calc::para_text(p).is_empty()
+        })
+    }) else {
+        return Some(None);
+    };
+    if i.has("n") || i.has("r") || i.has("w") {
+        let markers = doc.list_markers_of(paras);
+        let m = markers.get(k).cloned().flatten().unwrap_or_default();
+        return Some(Some(m.trim().trim_end_matches(['.', ')']).to_owned()));
+    }
+    Some(Some(i.cased(&crate::field_calc::para_text(&paras[k]))))
+}
+
+/// What each `STYLEREF` field of a header or footer (`story`'s
+/// paragraphs) shows on a page whose body text is `doc`'s paragraphs
+/// `first..=last`, as Word works it out: the first paragraph in the style
+/// on the page (the last with `\l`), else the nearest one before the page,
+/// else after it. In the order of the story's fields; empty when it has
+/// none.
+pub fn style_ref_results(
+    doc: &Document,
+    story: &[Paragraph],
+    (first, last): (usize, usize),
+) -> Vec<String> {
+    let fields: Vec<Instr> = spans(story)
+        .iter()
+        .map(|s| Instr::parse(&s.instr))
+        .filter(|i| i.kind == "STYLEREF")
+        .collect();
+    if fields.is_empty() {
+        return Vec::new();
+    }
+    let body = doc.paragraphs();
+    let n = body.len();
+    let (first, last) = (
+        first.min(n.saturating_sub(1)),
+        last.min(n.saturating_sub(1)),
+    );
+    fields
+        .iter()
+        .map(|i| {
+            let on_page: Box<dyn Iterator<Item = usize>> = if i.has("l") {
+                Box::new((first..=last).rev())
+            } else {
+                Box::new(first..=last)
+            };
+            let order = on_page.chain((0..first).rev()).chain(last + 1..n);
+            match style_ref_text(doc, body, i, order) {
+                Some(Some(t)) => t,
+                Some(None) => "Error! No text of specified style in document.".into(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
+/// `story` with its `STYLEREF` fields' results set to `results` (from
+/// [`style_ref_results`], in the same order).
+pub fn with_style_ref_results(story: &[Paragraph], results: &[String]) -> Vec<Paragraph> {
+    let mut paras = story.to_vec();
+    let mut k = 0;
+    // One at a time: a result's length moves the later fields.
+    loop {
+        let refs: Vec<FieldSpan> = spans(&paras)
+            .into_iter()
+            .filter(|s| Instr::parse(&s.instr).kind == "STYLEREF")
+            .collect();
+        let (Some(span), Some(text)) = (refs.get(k), results.get(k)) else {
+            break;
+        };
+        set_result(&mut paras, span, text);
+        k += 1;
+    }
+    paras
 }
 
 // ── changing results ───────────────────────────────────────────────────────

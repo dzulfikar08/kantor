@@ -223,7 +223,8 @@ struct IconStep {
     cfvo: Cfvo,
     formula: Option<CfFormula>,
     gte: bool,
-    icon: CfIcon,
+    /// `None`: Excel's "No Cell Icon".
+    icon: Option<CfIcon>,
 }
 
 /// What a rule needs from its whole range.
@@ -805,7 +806,9 @@ impl Workbook {
                     let steps = thresholds
                         .into_iter()
                         .map(|t: IconThreshold| {
-                            let icon = icon_of(self.model.get_model(), &t.icon, &t.color);
+                            // A threshold without a colour: "No Cell Icon".
+                            let icon = (t.color != ironcalc_base::types::Color::None)
+                                .then(|| icon_of(self.model.get_model(), &t.icon, &t.color));
                             let formula = match &t.cfvo {
                                 Cfvo::Formula(f) => {
                                     self.model.cf_parse(sheet, f, anchor.0, anchor.1)
@@ -859,7 +862,7 @@ impl Workbook {
                                 cfvo,
                                 formula,
                                 gte,
-                                icon: CfIcon {
+                                icon: Some(CfIcon {
                                     shape,
                                     // Excel's quarters are dark grey.
                                     color: if matches!(shape, IconShape::Pie { .. }) {
@@ -867,7 +870,7 @@ impl Workbook {
                                     } else {
                                         base.color
                                     },
-                                },
+                                }),
                             }
                         })
                         .collect();
@@ -1151,6 +1154,8 @@ impl Workbook {
         let mut overlay = Overlay::default();
         let mut bar = None;
         let mut icon: Option<CfIcon> = None;
+        // An icon set has spoken (perhaps with "No Cell Icon").
+        let mut iconed = false;
         let mut show_value = true;
         for (index, rule) in rules.iter().enumerate() {
             if !rule.bounds.contains(row, col) || !rule.areas.iter().any(|a| a.contains(row, col)) {
@@ -1325,14 +1330,15 @@ impl Workbook {
                 } => match v {
                     Value::Number(n) => {
                         let agg = self.aggregate(sheet, index, rule);
-                        if icon.is_none() && !steps.is_empty() {
+                        if !iconed && !steps.is_empty() {
                             let mut at = 0;
                             for (i, (s, t)) in steps.iter().zip(&agg.stops).enumerate() {
                                 if n > *t || (n == *t && s.gte) {
                                     at = i;
                                 }
                             }
-                            icon = Some(steps[at].icon);
+                            icon = steps[at].icon;
+                            iconed = true;
                             show_value &= *show;
                         }
                         true

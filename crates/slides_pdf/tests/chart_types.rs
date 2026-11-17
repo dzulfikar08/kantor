@@ -149,9 +149,9 @@ fn chartex_frames_move_and_save() {
 #[test]
 fn charts_3d_and_date_axes_are_drawn() {
     let pres = Presentation::open(&corpus("charts3d.pptx")).unwrap();
-    assert_eq!(pres.len(), 8);
+    assert_eq!(pres.len(), 10);
     let mut engine = Engine::new();
-    let expect: [&[&str]; 8] = [
+    let expect: [&[&str]; 10] = [
         &["North", "Centre", "2024", "8"],
         &["North", "2024", "2026"],
         &["West", "25"],
@@ -160,6 +160,10 @@ fn charts_3d_and_date_axes_are_drawn() {
         &["West", "6-8"],
         &["North", "Centre"],
         &["2025-01-01", "2025-01-04", "2025-01-13"],
+        // Cylinders, cones and pyramids with their values.
+        &["North", "4", "9", "2026"],
+        // Labels outside a 3-D pie.
+        &["North, 16%", "Centre, 20%"],
     ];
     for (k, want) in expect.iter().enumerate() {
         let scene = Builder::new().slide(&mut engine, &pres, k, &Default::default());

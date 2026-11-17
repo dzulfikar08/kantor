@@ -11,6 +11,22 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- 3-D charts show their data labels, and cylinder, cone and pyramid columns and bars are drawn in
+  their shape instead of as boxes (Slides, Sheets and Docs, on screen and in PDFs).
+- Sheets: Page Break Preview is saved in the file for each sheet and the sheet opens in it again,
+  as in Excel; the zoom a sheet was saved with is kept.
+- Sheets: an icon set's threshold can show "No Cell Icon" (Edit Formatting Rule), and files that
+  use it show no icon there instead of a grey circle.
+- Sheets: pivot calculated items that name items by position (`Region[2]`) count them in the order
+  they show in when the field is sorted by value, as Excel does.
+- Slides and Docs: Horizontal Picture List SmartArt is laid out again when resized and takes new
+  items, each with an empty picture placeholder; deleting an item takes its picture with it.
+- Docs: `STYLEREF` in a header or footer shows each page's own heading (the first on the page, else
+  the last before it), as Word does.
+- Docs: an index (`INDEX`) has letter headings (`\h`), cross-references (`XE \t "See …"`) and its
+  own page number separator (`\l`).
+- Docs: the text beside a "Resize shape to fit text" box wraps around it as the box grows while you
+  type in it, not only when you leave the box.
 - Windows metafile pictures (WMF, EMF and EMF+), Mac PICT pictures and BMPs are drawn in Docs,
   Slides and Sheets, on screen and in PDFs, instead of an empty box: from `.docx`, `.pptx` and
   `.xlsx` files and from `.doc`, `.ppt`, `.xls`, `.ods` and `.rtf` imports (which used to leave
