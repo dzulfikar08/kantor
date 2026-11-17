@@ -89,7 +89,7 @@ mod temp {
 }
 
 /// The `iIconSet` names, in `KPISets`'s order ([MS-XLS] 2.5.156).
-const ICON_SETS: [&str; 17] = [
+pub(crate) const ICON_SETS: [&str; 17] = [
     "3Arrows",
     "3ArrowsGray",
     "3Flags",

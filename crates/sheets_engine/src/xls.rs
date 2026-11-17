@@ -61,7 +61,7 @@ use crate::print::{HeaderFooter, Margins, PageSetup, Paper, PrintOptions, SheetP
 use crate::validation::{ErrorStyle, Message, Validation, ValidationOperator, ValidationType};
 use crate::{CellRange, MAX_COLS, MAX_ROWS};
 
-mod cf12;
+pub(crate) mod cf12;
 
 /// Days between the 1900 and 1904 date systems' day zero.
 pub(crate) const DAYS_1904: f64 = 1462.0;

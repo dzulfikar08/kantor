@@ -21,6 +21,8 @@ use ironcalc_base::types::{
 use crate::xls::{DEFAULT_PALETTE, FIXED_COLOURS, border_style, rgb_color};
 use crate::{MAX_COLS, MAX_ROWS};
 
+mod cf;
+
 /// Records of a part.
 struct Records<'a> {
     b: &'a [u8],
@@ -64,6 +66,12 @@ fn u8_at(b: &[u8], o: usize) -> u8 {
 fn u16_at(b: &[u8], o: usize) -> u16 {
     b.get(o..o + 2)
         .map_or(0, |s| u16::from_le_bytes([s[0], s[1]]))
+}
+
+fn f64_at(b: &[u8], o: usize) -> f64 {
+    b.get(o..o + 8).map_or(0.0, |s| {
+        f64::from_le_bytes([s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7]])
+    })
 }
 
 fn u32_at(b: &[u8], o: usize) -> u32 {
@@ -222,6 +230,8 @@ struct Styles {
     borders: Vec<Border>,
     xfs: Vec<Xf>,
     made: HashMap<u32, i32>,
+    /// Differential formats (`BrtDXF`), for conditional formatting.
+    dxfs: Vec<ironcalc_base::types::Dxf>,
 }
 
 impl Styles {
@@ -235,6 +245,7 @@ impl Styles {
             borders: Vec::new(),
             xfs: Vec::new(),
             made: HashMap::new(),
+            dxfs: Vec::new(),
         };
         let mut in_cell_xfs = false;
         for (ty, d) in records(bin) {
@@ -295,6 +306,8 @@ impl Styles {
                         diagonal_up: up,
                     });
                 }
+                // BrtDXF
+                507 => s.dxfs.push(cf::dxf(d, theme, &s.formats)),
                 617 => in_cell_xfs = true,
                 618 => in_cell_xfs = false,
                 47 if in_cell_xfs => s.xfs.push(Xf {
@@ -506,7 +519,8 @@ pub(crate) fn apply(path: &Path, model: &mut Model<'_>, names: &[String]) -> Res
             continue;
         };
         let mut dvs = Vec::new();
-        out.cleared |= apply_sheet(&bin, sheet as u32, model, &mut styles, &mut dvs);
+        let mut cfs = cf::Reader::default();
+        out.cleared |= apply_sheet(&bin, sheet as u32, model, &mut styles, &mut dvs, &mut cfs);
         let ctx = |base: (u32, u32)| crate::xls_formula::Context {
             base,
             sheets: &book.sheets,
@@ -525,6 +539,32 @@ pub(crate) fn apply(path: &Path, model: &mut Model<'_>, names: &[String]) -> Res
         if !list.is_empty() {
             out.validations.push((sheet as u32, list));
         }
+        // Rules by priority (smallest first); each rule added goes to the
+        // top, so the last one is added first.
+        let mut rules: Vec<(i32, String, ironcalc_base::cf_types::CfRuleInput)> = Vec::new();
+        for block in cfs.blocks {
+            let Some(first) = block.ranges.first() else {
+                out.skipped_cf += block.rules.len();
+                continue;
+            };
+            let sqref = crate::cf_edit::sqref_of(&block.ranges);
+            let ctx = ctx((first.top, first.left));
+            for rule in block.rules {
+                match rule.convert(&ctx, &styles.dxfs, &theme) {
+                    Some(input) => rules.push((rule.priority(), sqref.clone(), input)),
+                    None => out.skipped_cf += 1,
+                }
+            }
+        }
+        rules.sort_by_key(|(p, _, _)| *p);
+        for (_, sqref, input) in rules.into_iter().rev() {
+            if model
+                .add_conditional_formatting(sheet as u32, &sqref, input)
+                .is_err()
+            {
+                out.skipped_cf += 1;
+            }
+        }
     }
     out.patterns = styles.patterns;
     Ok(out)
@@ -541,6 +581,8 @@ pub(crate) struct Applied {
     pub validations: Vec<(u32, Vec<crate::Validation>)>,
     /// Rules whose formulas Kantor can't read.
     pub skipped_validations: usize,
+    /// Conditional formatting rules Kantor can't express.
+    pub skipped_cf: usize,
 }
 
 /// What `workbook.bin` says about sheets, external references and names.
@@ -737,6 +779,7 @@ fn apply_sheet(
     model: &mut Model<'_>,
     styles: &mut Styles,
     dvs: &mut Vec<crate::xls::RawDv>,
+    cfs: &mut cf::Reader,
 ) -> bool {
     let mut cols: Vec<Col> = Vec::new();
     let mut rows: Vec<Row> = Vec::new();
@@ -776,6 +819,9 @@ fn apply_sheet(
             }
             // BrtDVal
             64 => dvs.extend(dval(d)),
+            461..=471 | 564 => {
+                cfs.record(ty, d);
+            }
             // BrtColInfo: first, last, width (1/256 char), ixfe, flags.
             60 => {
                 let (first, last) = (u32_at(d, 0), u32_at(d, 4).min(MAX_COLS - 1));

@@ -559,6 +559,11 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
                         .notes
                         .push(ImportNote::ValidationsSkipped(a.skipped_validations));
                 }
+                if a.skipped_cf > 0 {
+                    imported
+                        .notes
+                        .push(ImportNote::ConditionalFormatsSkipped(a.skipped_cf));
+                }
             }
             Err(e) => {
                 log::warn!("{}: formatting not read: {e}", path.display());

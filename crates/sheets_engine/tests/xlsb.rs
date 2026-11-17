@@ -108,3 +108,67 @@ fn xlsb_names_validation_and_drawings() {
     assert_eq!(back.sheet_validations(0).len(), 2);
     assert_eq!(back.display_value(1, 3, 0), "2221.75");
 }
+
+/// features.xlsb's conditional formatting (see gen_xlsb.py): every rule
+/// comes in as Kantor's own kind, in priority order, with its format.
+#[test]
+fn xlsb_conditional_formatting() {
+    let mut wb = Workbook::open(format!(
+        "{}/../../tests/corpus/xls/features.xlsb",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let rules = wb.cf_rules(0, None);
+    let got: Vec<(String, String)> = rules
+        .iter()
+        .map(|r| (r.range.clone(), r.summary.clone()))
+        .collect();
+    let ranges: Vec<&str> = got.iter().map(|(r, _)| r.as_str()).collect();
+    assert_eq!(
+        ranges,
+        [
+            "B3:B4", "A3:A4", "C3", "H1:H5", "I1:I5", "J1:J5", "K1:K5", "L1:L5", "M1:M5", "N1:N5",
+            "O1:O5", "P1:P5", "Q1:Q5", "R1:R5"
+        ],
+        "{got:#?}"
+    );
+    let summary = |range: &str| got.iter().find(|(r, _)| r == range).unwrap().1.clone();
+    assert_eq!(summary("B3:B4"), "Cell value greater than 1000");
+    assert_eq!(summary("A3:A4"), "Text containing \"orth\"");
+    assert_eq!(summary("C3"), "Formula: =C3<1");
+    assert_eq!(summary("Q1:Q5"), "Cell value between 3 and 6");
+    for (range, kind) in [
+        ("H1:H5", "color scale"),
+        ("I1:I5", "data bar"),
+        ("J1:J5", "icon set"),
+        ("K1:K5", "top 2"),
+        ("L1:L5", "bottom 10%"),
+        ("M1:M5", "above average"),
+        ("N1:N5", "duplicate"),
+        ("O1:O5", "blank"),
+        ("P1:P5", "yesterday"),
+        ("R1:R5", "rating"),
+    ] {
+        assert!(
+            summary(range).to_lowercase().contains(kind),
+            "{range}: {}",
+            summary(range)
+        );
+    }
+    assert!(rules[0].stop_if_true);
+    // The differential formats (BrtDXF) are drawn: 1234.5 > 1000 on light
+    // red, "North" contains "orth" on green, "South" doesn't.
+    let fill = |wb: &mut Workbook, r: u32, c: u32| {
+        wb.conditional(0, r, c)
+            .and_then(|x| x.style.as_ref().and_then(|s| s.fill))
+    };
+    assert_eq!(fill(&mut wb, 2, 1), Some(0xFFC7CE));
+    assert_eq!(fill(&mut wb, 2, 0), Some(0xC6EFCE));
+    assert_eq!(fill(&mut wb, 3, 0), None);
+    // Saved as .xlsx and read back, the rules stay.
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("cf.xlsx");
+    wb.save_as(&out).unwrap();
+    let back = Workbook::open(&out).unwrap();
+    assert_eq!(back.cf_rules(0, None).len(), 14);
+}
