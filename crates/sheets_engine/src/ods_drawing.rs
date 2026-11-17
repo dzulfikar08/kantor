@@ -321,16 +321,29 @@ pub(crate) struct Reader<'a, 'i, R: std::io::Read + std::io::Seek> {
 }
 
 /// Column widths and row heights of a table as the file has them, px:
-/// runs of `(first, count, px)` in order.
-#[derive(Default)]
+/// runs of `(first, count, px)` in order, and the size (Excel px) of the
+/// columns and rows the file leaves unsized.
 pub(crate) struct Spans {
     pub cols: Vec<(u32, u32, f64)>,
     pub rows: Vec<(u32, u32, f64)>,
+    default_col: f64,
+    default_row: f64,
 }
 
-/// LibreOffice's default column width (0.889 in) and row height (0.178 in).
-const DEFAULT_COL_PX: f64 = 85.344;
-const DEFAULT_ROW_PX: f64 = 17.088;
+impl Default for Spans {
+    fn default() -> Self {
+        Spans {
+            cols: Vec::new(),
+            rows: Vec::new(),
+            default_col: DEFAULT_COL_PX,
+            default_row: DEFAULT_ROW_PX,
+        }
+    }
+}
+
+/// Excel's default column (8.43 characters: 64 px) and row (15 pt).
+const DEFAULT_COL_PX: f64 = 64.0;
+const DEFAULT_ROW_PX: f64 = 20.0;
 
 impl Spans {
     /// Px before line `at` and the line under `pos`, with the offset into it.
@@ -384,18 +397,40 @@ impl Spans {
         }
     }
 
+    /// Spans for a sheet of `model`: columns and rows the file leaves
+    /// unsized get the sheet's own defaults (not LibreOffice's 0.889 in by
+    /// 0.178 in), as the grid and the printout draw them, so an object
+    /// keeps its size and shape.
+    pub(crate) fn for_sheet(model: &ironcalc_base::Model<'_>, sheet: u32) -> Self {
+        let ws = model.workbook.worksheet(sheet).ok();
+        // IronCalc's px are 9 per character, Excel's 7 plus 5 of padding.
+        let default_col = model
+            .get_column_width(sheet, crate::MAX_COLS as i32)
+            .map_or(DEFAULT_COL_PX, |w| w / 9.0 * 7.0 + 5.0);
+        let default_row = ws
+            .and_then(|ws| ws.default_row_height)
+            .unwrap_or(crate::rows::DEFAULT_ROW_POINTS)
+            * 96.0
+            / 72.0;
+        Spans {
+            default_col,
+            default_row,
+            ..Spans::default()
+        }
+    }
+
     pub(crate) fn origin(&self, col: u32, row: u32) -> (f64, f64) {
         (
-            Self::start(&self.cols, col, DEFAULT_COL_PX),
-            Self::start(&self.rows, row, DEFAULT_ROW_PX),
+            Self::start(&self.cols, col, self.default_col),
+            Self::start(&self.rows, row, self.default_row),
         )
     }
 
     /// The cell corner and offset (as Excel px) at (`x`, `y`) px from the
     /// sheet's top left.
     pub(crate) fn marker_at(&self, x: f64, y: f64) -> Marker {
-        let (col, dx) = Self::find(&self.cols, x, DEFAULT_COL_PX, crate::MAX_COLS - 1);
-        let (row, dy) = Self::find(&self.rows, y, DEFAULT_ROW_PX, crate::MAX_ROWS - 1);
+        let (col, dx) = Self::find(&self.cols, x, self.default_col, crate::MAX_COLS - 1);
+        let (row, dy) = Self::find(&self.rows, y, self.default_row, crate::MAX_ROWS - 1);
         Marker {
             col,
             col_off: emu(dx),

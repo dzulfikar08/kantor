@@ -49,15 +49,18 @@ pub(crate) fn card(
 }
 
 /// Where a dialog card sits: centred horizontally, below the toolbar and
-/// formula bar. Clicks around the card reach the grid.
+/// formula bar, over a backdrop that keeps the sheet around it from taking
+/// hover and clicks while it is open (modal, as Excel's dialogs).
 pub(crate) fn place(card: impl IntoElement) -> Div {
-    h_flex()
-        .absolute()
-        .top(CONTROL_LG * 2. + SPACE_5)
-        .left_0()
-        .right_0()
-        .justify_center()
-        .child(card)
+    kantor_ui::overlay::backdrop().child(
+        h_flex()
+            .absolute()
+            .top(CONTROL_LG * 2. + SPACE_5)
+            .left_0()
+            .right_0()
+            .justify_center()
+            .child(card),
+    )
 }
 
 /// `label` on the left (fixed width), the control filling the rest.

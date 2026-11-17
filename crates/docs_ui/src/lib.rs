@@ -1919,7 +1919,7 @@ impl DocsView {
         } else {
             i18n::t("Insert table").to_owned()
         };
-        Some(deferred(
+        Some(kantor_ui::overlay::popover(
             anchored().position(at).child(
                 v_flex()
                     .id("docs-table-picker")

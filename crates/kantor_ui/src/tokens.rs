@@ -25,6 +25,10 @@ pub struct Tokens {
     pub fg_dim: Hsla,
     pub border: Hsla,
     pub border_strong: Hsla,
+    /// Outlines of controls the user must find to use (checkbox and radio
+    /// boxes, input fields): at least 3:1 against every surface they sit
+    /// on (WCAG 1.4.11), unlike `border`, which only separates areas.
+    pub control_border: Hsla,
     pub hover: Hsla,
     pub selected: Hsla,
     pub accent: Hsla,
@@ -81,6 +85,34 @@ fn alpha(rgb: Rgb, a: f32) -> Hsla {
     h
 }
 
+/// WCAG relative luminance (sRGB channels linearised).
+fn relative_luminance(rgb: Rgb) -> f32 {
+    let ch = |s: u32| {
+        let v = ((rgb >> s) & 0xff) as f32 / 255.0;
+        if v <= 0.040_45 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * ch(16) + 0.7152 * ch(8) + 0.0722 * ch(0)
+}
+
+/// WCAG contrast ratio of two colours (1 to 21).
+pub fn contrast(a: Rgb, b: Rgb) -> f32 {
+    let (la, lb) = (relative_luminance(a), relative_luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// The palette's foreground blended over its background, the least that
+/// reaches `ratio` against every colour of `on` (all of them when it can't).
+fn contrasting(p: &Palette, on: &[Rgb], ratio: f32) -> Rgb {
+    (10..=100)
+        .map(|k| mix(p.background, p.foreground, k as f32 / 100.0))
+        .find(|c| on.iter().all(|s| contrast(*c, *s) >= ratio))
+        .unwrap_or(p.foreground)
+}
+
 fn luminance(rgb: Rgb) -> f32 {
     let ch = |s: u32| ((rgb >> s) & 0xff) as f32 / 255.0;
     0.2126 * ch(16) + 0.7152 * ch(8) + 0.0722 * ch(0)
@@ -96,6 +128,21 @@ pub enum Elevation {
 impl Tokens {
     pub fn from_palette(p: &Palette) -> Self {
         let on_bg = |a: f32| c(mix(p.background, p.foreground, a));
+        // Where controls sit: the document, chrome, cards and menus (the
+        // amounts below), with a little margin over 3:1 for rounding.
+        let surfaces: Vec<Rgb> = if p.dark {
+            [0.0, 0.03, 0.05, 0.07]
+                .iter()
+                .map(|a| mix(p.background, p.foreground, *a))
+                .collect()
+        } else {
+            [0.0, 0.025, 0.035]
+                .iter()
+                .map(|a| mix(p.background, p.foreground, *a))
+                .chain([0xffffff])
+                .collect()
+        };
+        let control_border = c(contrasting(p, &surfaces, 3.1));
         // Sheets headers sit between chrome and surface, a step above the cells.
         let header = mix(
             p.background,
@@ -130,6 +177,7 @@ impl Tokens {
             fg_dim: alpha(p.foreground, 0.42),
             border,
             border_strong,
+            control_border,
             hover: alpha(p.foreground, 0.06),
             selected: alpha(p.accent, if p.dark { 0.16 } else { 0.12 }),
             accent: c(p.accent),
@@ -214,7 +262,8 @@ pub fn apply_palette(p: &Palette, cx: &mut App) {
         k.background = t.bg;
         k.foreground = t.fg;
         k.border = t.border;
-        k.input = t.border;
+        // Checkbox and radio boxes and input fields are outlined in it.
+        k.input = t.control_border;
         k.ring = t.accent;
         k.caret = t.fg;
         k.selection = alpha(p.accent, 0.35);
@@ -306,6 +355,68 @@ mod tests {
             );
             assert_ne!(t.grid_header_active, t.grid_header);
             assert_eq!(t.grid_header_active.a, 1.0);
+        }
+    }
+
+    fn rgb_of(h: Hsla) -> Rgb {
+        let r = gpui_kit::Rgba::from(h);
+        let ch = |v: f32| (v * 255.0).round() as u32;
+        (ch(r.r) << 16) | (ch(r.g) << 8) | ch(r.b)
+    }
+
+    /// An unchecked checkbox's box (GPUI Kit draws it in the `input`
+    /// colour) stands 3:1 apart from the document, chrome, cards and menus
+    /// in dark and light themes (it was 1.3:1 in dark ones).
+    #[std::prelude::v1::test]
+    fn control_borders_reach_three_to_one() {
+        let themes = [
+            Palette::default(),
+            light(),
+            // Catppuccin Mocha and Latte, Nord-like, Gruvbox-like.
+            Palette {
+                dark: true,
+                background: 0x1e1e2e,
+                foreground: 0xcdd6f4,
+                ..Palette::default()
+            },
+            Palette {
+                dark: false,
+                background: 0xeff1f5,
+                foreground: 0x4c4f69,
+                ..Palette::default()
+            },
+            Palette {
+                dark: true,
+                background: 0x2e3440,
+                foreground: 0xd8dee9,
+                ..Palette::default()
+            },
+            Palette {
+                dark: true,
+                background: 0x282828,
+                foreground: 0xd4be98,
+                ..Palette::default()
+            },
+        ];
+        for p in themes {
+            let t = Tokens::from_palette(&p);
+            let border = rgb_of(t.control_border);
+            for (name, s) in [
+                ("bg", t.bg),
+                ("chrome", t.chrome),
+                ("surface", t.surface),
+                ("elevated", t.elevated),
+            ] {
+                let r = contrast(border, rgb_of(s));
+                assert!(
+                    r >= 3.0,
+                    "{name} {r:.2}, dark={} {:06x}",
+                    p.dark,
+                    p.background
+                );
+            }
+            // Still quieter than text.
+            assert!(contrast(border, p.background) < contrast(p.foreground, p.background));
         }
     }
 }

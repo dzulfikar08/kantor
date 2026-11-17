@@ -536,7 +536,7 @@ impl SheetsView {
                     }),
             );
         }
-        Some(deferred(anchored().position(m.at).child(list)).into_any_element())
+        Some(kantor_ui::overlay::popover(anchored().position(m.at).child(list)).into_any_element())
     }
 
     // ------------------------------------------------------- Insert Slicer

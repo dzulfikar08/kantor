@@ -423,7 +423,7 @@ impl DocsView {
             .child(buttons)
             .child(heading(i18n::t("Default tab stops (cm)"), cx))
             .child(default_row);
-        Some(deferred(
+        Some(kantor_ui::overlay::popover(
             anchored()
                 .position(menu.at)
                 .snap_to_window_with_margin(SPACE_4)

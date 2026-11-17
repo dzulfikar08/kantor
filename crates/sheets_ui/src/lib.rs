@@ -1080,7 +1080,10 @@ impl TableDelegate for SheetGrid {
         let mut note_layers = self
             .book
             .note_at(sheet, row, col)
-            .map(|_| notes_ui::layers((sheet, row, col), &self.view, &t))
+            .map(|_| {
+                let zoom = look::zoom(&self.book, sheet);
+                notes_ui::layers((sheet, row, col), &self.view, &t, zoom)
+            })
             .unwrap_or_default();
         if note_edited {
             note_layers.push(notes_ui::anchor_layer(&self.note_anchor));

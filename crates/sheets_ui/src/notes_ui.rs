@@ -75,12 +75,15 @@ pub(crate) type NoteAnchor = Rc<Cell<Option<Bounds<Pixels>>>>;
 
 /// The layers a cell with a note gets: its corner mark and a hover target
 /// that shows the note (the box itself is drawn by the drawing layer).
+/// The mark is `zoom` times its size at 100 %, as Excel's.
 pub(crate) fn layers(
     (sheet, row, col): (u32, u32, u32),
     view: &WeakEntity<SheetsView>,
     t: &kantor_ui::Tokens,
+    zoom: f32,
 ) -> Vec<AnyElement> {
     let mark_color = t.danger;
+    let mark_side = MARK * zoom;
     let mark = canvas(
         |_, _, _| {},
         move |b: Bounds<Pixels>, _, window, _| {
@@ -89,9 +92,9 @@ pub(crate) fn layers(
             let mut p = PathBuilder::fill();
             p.add_polygon(
                 &[
-                    point(right - MARK, top),
+                    point(right - mark_side, top),
                     point(right, top),
-                    point(right, top + MARK),
+                    point(right, top + mark_side),
                 ],
                 true,
             );
@@ -782,11 +785,13 @@ impl SheetsView {
             cx,
         );
         let label = tf("Note on {}", &[&sheets_engine::cell_name(ed.row, ed.col)]);
+        // The text types at the sheet's zoom, as the box it fills shows it.
+        let zoom = crate::look::zoom(&self.table.read(cx).delegate().book, ed.sheet);
         let panel = div()
             .id("sheets-note-editor")
             .key_context(NOTE_CONTEXT)
             .occlude()
-            .w(px(340.))
+            .w(px(340.) * zoom.max(1.0))
             .p(SPACE_3)
             .flex()
             .flex_col()
@@ -803,7 +808,11 @@ impl SheetsView {
             }))
             .child(div().text_color(t.fg_muted).child(label))
             .child(bar)
-            .child(Textarea::new(&ed.input).small());
+            .child(
+                Textarea::new(&ed.input)
+                    .small()
+                    .text_size(FONT_SMALL * zoom),
+            );
         Some(
             deferred(
                 anchored()

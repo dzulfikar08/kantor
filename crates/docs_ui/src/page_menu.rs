@@ -356,7 +356,7 @@ impl DocsView {
             .child(presets)
             .child(heading(i18n::t("Custom margins (cm)"), &t, cx))
             .child(custom);
-        Some(deferred(
+        Some(kantor_ui::overlay::popover(
             anchored()
                 .position(menu.at)
                 .anchor(Anchor::TopRight)

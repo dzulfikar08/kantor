@@ -277,6 +277,10 @@ impl SheetsView {
     pub(crate) fn render_shape_editor(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let ed = self.shape_edit.as_ref()?;
         let tok = kantor_ui::tokens(cx);
+        let zoom = {
+            let grid = self.table.read(cx).delegate();
+            crate::look::zoom(&grid.book, grid.sheet)
+        };
         let rect = self.drawings.borrow().screen_rect(ed.key);
         // Below the shape, so it shows the text as it's formatted.
         let (at, w) = match rect {
@@ -321,7 +325,12 @@ impl SheetsView {
             }))
             .child(div().text_color(tok.fg_muted).child(t("Edit Text")))
             .children(bar)
-            .child(Textarea::new(&ed.input).small());
+            // The text types at the sheet's zoom, as the shape shows it.
+            .child(
+                Textarea::new(&ed.input)
+                    .small()
+                    .text_size(FONT_SMALL * zoom),
+            );
         Some(
             deferred(
                 anchored()

@@ -16,6 +16,7 @@ pub mod i18n;
 pub mod keys;
 pub mod metafile;
 pub mod metrics;
+pub mod overlay;
 pub mod perf;
 pub mod read_only;
 pub mod spelling;
