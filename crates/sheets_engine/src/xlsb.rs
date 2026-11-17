@@ -215,6 +215,10 @@ struct Styles {
     formats: Vec<NumFmt>,
     fonts: Vec<Font>,
     fills: Vec<Color>,
+    /// The fills that are patterns, by `styles.bin` fill index.
+    fill_patterns: Vec<Option<crate::FillPattern>>,
+    /// Patterned fills by the model's fill index.
+    patterns: Vec<Option<crate::FillPattern>>,
     borders: Vec<Border>,
     xfs: Vec<Xf>,
     made: HashMap<u32, i32>,
@@ -226,6 +230,8 @@ impl Styles {
             formats: Vec::new(),
             fonts: Vec::new(),
             fills: Vec::new(),
+            fill_patterns: Vec::new(),
+            patterns: Vec::new(),
             borders: Vec::new(),
             xfs: Vec::new(),
             made: HashMap::new(),
@@ -260,6 +266,14 @@ impl Styles {
                     let fore = color(d, 4, theme);
                     let back = color(d, 12, theme);
                     s.fills.push(fill_color(pattern, fore, back));
+                    s.fill_patterns
+                        .push(
+                            crate::xls::pattern_name(pattern).map(|kind| crate::FillPattern {
+                                kind: kind.to_owned(),
+                                fg: fore.unwrap_or(0),
+                                bg: Some(back.unwrap_or(0xFFFFFF)),
+                            }),
+                        );
                 }
                 // BrtBorder: flags, then top, bottom, left, right, diagonal.
                 46 => {
@@ -312,9 +326,26 @@ impl Styles {
         };
         let style = self.convert(xf);
         let styles = &mut model.workbook.styles;
-        let s = styles
-            .get_style_index(&style)
-            .unwrap_or_else(|| styles.create_new_style(&style));
+        let pattern = self.fill_patterns.get(xf.fill as usize).cloned().flatten();
+        let s = match pattern {
+            // A fill of its own, which the pattern is found by.
+            Some(p) => {
+                let s = styles.create_new_style(&style);
+                styles.fills.push(style.fill.clone());
+                let fill = styles.fills.len() - 1;
+                if let Some(x) = styles.cell_xfs.get_mut(s as usize) {
+                    x.fill_id = fill as i32;
+                }
+                if self.patterns.len() <= fill {
+                    self.patterns.resize(fill + 1, None);
+                }
+                self.patterns[fill] = Some(p);
+                s
+            }
+            None => styles
+                .get_style_index(&style)
+                .unwrap_or_else(|| styles.create_new_style(&style)),
+        };
         self.made.insert(ix, s);
         s
     }
@@ -446,8 +477,13 @@ fn sheet_parts(zip: &mut zip::ZipArchive<std::fs::File>) -> Vec<(String, String)
 
 /// Apply an `.xlsb`'s formatting to `model`, whose sheets calamine filled
 /// in `names` order. Returns whether covered cells of merges were cleared
-/// (the model needs evaluating again).
-pub(crate) fn apply(path: &Path, model: &mut Model<'_>, names: &[String]) -> Result<bool> {
+/// (the model needs evaluating again), and the patterned fills by the
+/// model's fill index.
+pub(crate) fn apply(
+    path: &Path,
+    model: &mut Model<'_>,
+    names: &[String],
+) -> Result<(bool, Vec<Option<crate::FillPattern>>)> {
     let file = std::fs::File::open(path)?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| anyhow!("{e}"))?;
     let theme = theme_colors(
@@ -473,7 +509,7 @@ pub(crate) fn apply(path: &Path, model: &mut Model<'_>, names: &[String]) -> Res
         };
         cleared |= apply_sheet(&bin, sheet as u32, model, &mut styles);
     }
-    Ok(cleared)
+    Ok((cleared, styles.patterns))
 }
 
 fn apply_sheet(bin: &[u8], sheet: u32, model: &mut Model<'_>, styles: &mut Styles) -> bool {

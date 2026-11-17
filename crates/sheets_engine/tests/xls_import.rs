@@ -255,8 +255,16 @@ fn frozen_panes_active_tab_and_patterns() {
     assert!(head.bold);
     assert_eq!(head.font_color, Some(0xFFFFFF));
     assert_eq!(head.fill, Some(0x000080));
-    // A 25 % grey pattern, black on white, shows as one mixed colour.
+    // A 25 % grey pattern, black on white: one mixed colour for what
+    // draws fills as colours, and the pattern itself for the grid and PDF.
     assert_eq!(wb.cell_style(0, 1, 4).fill, Some(0xBFBFBF));
+    let p = wb.fill_pattern(0, 1, 4).expect("a pattern");
+    assert_eq!(
+        (p.kind.as_str(), p.fg, p.bg),
+        ("lightGray", 0, Some(0xFFFFFF))
+    );
+    assert!(wb.fill_pattern(0, 0, 1).is_none(), "a solid fill");
+    assert!(wb.fill_pattern(0, 2, 2).is_none());
     assert!(wb.show_gridlines(0));
     assert!(!wb.show_gridlines(1));
     assert!(wb.column_width(0, 0) > wb.column_width(0, 1));

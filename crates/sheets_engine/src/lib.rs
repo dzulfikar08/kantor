@@ -765,7 +765,10 @@ impl Workbook {
                     },
                 ),
             },
-            _ => table::CustomStyles::default(),
+            _ => table::CustomStyles {
+                patterns: std::mem::take(&mut imported.patterns),
+                ..Default::default()
+            },
         };
         let mut model = UserModel::from_model(model);
         model.kantor_stop_send_queue();

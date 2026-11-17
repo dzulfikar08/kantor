@@ -619,6 +619,7 @@ impl XlsFormat {
         }
         notes.extend(art_skipped.notes());
         Applied {
+            patterns: std::mem::take(&mut styles.patterns),
             prints,
             cleared,
             validations,
@@ -630,6 +631,8 @@ impl XlsFormat {
 
 /// What [`XlsFormat::apply`] brings back.
 pub(crate) struct Applied {
+    /// Patterned fills by the model's fill index (see [`crate::FillPattern`]).
+    pub patterns: Vec<Option<crate::FillPattern>>,
     /// Each sheet's print settings, by model sheet.
     pub prints: Vec<SheetPrint>,
     /// Values changed (covered cells of merges were cleared).
@@ -1246,6 +1249,9 @@ struct StyleMap<'g> {
     g: &'g Globals,
     /// By XF index; -1 until first used.
     map: Vec<i32>,
+    /// Patterned fills, by the model's fill index (the model keeps one
+    /// colour per fill: the pattern's colours mixed).
+    patterns: Vec<Option<crate::FillPattern>>,
 }
 
 impl<'g> StyleMap<'g> {
@@ -1261,6 +1267,7 @@ impl<'g> StyleMap<'g> {
         Self {
             g,
             map: vec![-1; g.xfs.len()],
+            patterns: Vec::new(),
         }
     }
 
@@ -1276,9 +1283,26 @@ impl<'g> StyleMap<'g> {
             Some(xf) => {
                 let style = self.convert(xf);
                 let styles = &mut model.workbook.styles;
-                styles
-                    .get_style_index(&style)
-                    .unwrap_or_else(|| styles.create_new_style(&style))
+                match pattern_of(xf, &self.g.palette) {
+                    // A pattern: a fill of its own, so that the pattern
+                    // can be found from the cell's fill.
+                    Some(p) => {
+                        let s = styles.create_new_style(&style);
+                        styles.fills.push(style.fill.clone());
+                        let fill = styles.fills.len() - 1;
+                        if let Some(x) = styles.cell_xfs.get_mut(s as usize) {
+                            x.fill_id = fill as i32;
+                        }
+                        if self.patterns.len() <= fill {
+                            self.patterns.resize(fill + 1, None);
+                        }
+                        self.patterns[fill] = Some(p);
+                        s
+                    }
+                    None => styles
+                        .get_style_index(&style)
+                        .unwrap_or_else(|| styles.create_new_style(&style)),
+                }
             }
             None => 0,
         };
@@ -1398,6 +1422,43 @@ pub(crate) fn border_style(dg: u8) -> Option<BorderStyle> {
         11 => BorderStyle::DashDotDot,
         12 => BorderStyle::MediumDashDotDot,
         13 => BorderStyle::SlantDashDot,
+        _ => return None,
+    })
+}
+
+/// An XF's fill pattern (`fls` 2 to 18) as Excel names it, with its
+/// colours; `None` for no fill and solid fills.
+fn pattern_of(xf: &Xf, p: &Palette) -> Option<crate::FillPattern> {
+    let kind = pattern_name(u32::from(xf.pattern))?;
+    // System colours: 64 is window text (black), 65 the background (white).
+    Some(crate::FillPattern {
+        kind: kind.to_owned(),
+        fg: p.rgb(xf.fore).unwrap_or(0x000000),
+        bg: Some(p.rgb(xf.back).unwrap_or(0xFFFFFF)),
+    })
+}
+
+/// Excel's name of fill pattern `fls` (BIFF and `.xlsb`), for 2 to 18;
+/// `None` for no fill (0), solid (1) and unknown codes.
+pub(crate) fn pattern_name(fls: u32) -> Option<&'static str> {
+    Some(match fls {
+        2 => "mediumGray",
+        3 => "darkGray",
+        4 => "lightGray",
+        5 => "darkHorizontal",
+        6 => "darkVertical",
+        7 => "darkDown",
+        8 => "darkUp",
+        9 => "darkGrid",
+        10 => "darkTrellis",
+        11 => "lightHorizontal",
+        12 => "lightVertical",
+        13 => "lightDown",
+        14 => "lightUp",
+        15 => "lightGrid",
+        16 => "lightTrellis",
+        17 => "gray125",
+        18 => "gray0625",
         _ => return None,
     })
 }

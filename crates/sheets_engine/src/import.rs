@@ -315,6 +315,8 @@ pub(crate) struct Imported {
     pub validations: Vec<(u32, Vec<crate::Validation>)>,
     /// Pictures and charts (`.xls`, `.ods`).
     pub drawings: crate::xls_drawing::XlsDrawings,
+    /// Patterned cell fills by the model's fill index (`.xls`, `.xlsb`).
+    pub patterns: Vec<Option<crate::FillPattern>>,
 }
 
 /// Read an `.ods` / `.xls` / `.xlsb` file via calamine (and `.xls`
@@ -511,6 +513,7 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
         imported.validations = applied.validations;
         imported.notes.extend(applied.notes);
         imported.drawings = applied.drawings;
+        imported.patterns = applied.patterns;
         // The active tab counts every sheet; the model has worksheets only.
         imported.active_sheet = x
             .globals
@@ -522,7 +525,10 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
     }
     if format == SourceFormat::Xlsb {
         match crate::xlsb::apply(path, &mut model, &names) {
-            Ok(c) => replaced |= c,
+            Ok((c, patterns)) => {
+                replaced |= c;
+                imported.patterns = patterns;
+            }
             Err(e) => {
                 log::warn!("{}: formatting not read: {e}", path.display());
                 imported.notes.push(ImportNote::FormattingNotImported);

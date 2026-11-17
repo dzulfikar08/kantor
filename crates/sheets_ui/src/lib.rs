@@ -975,10 +975,20 @@ impl TableDelegate for SheetGrid {
         if spans.iter().any(|s| s.hides_grid_right(col)) {
             look.grid_right = false;
         }
-        let cell = div()
-            .size_full()
-            .relative()
-            .when_some(style.fill, |d, fill| d.bg(look::hsla(fill)));
+        // A patterned fill from the file: its background and its dots
+        // (unless a conditional format gives the cell a look of its own).
+        let pattern = cond
+            .as_ref()
+            .is_none_or(|c| c.style.is_none())
+            .then(|| self.book.fill_pattern(sheet, vr, vc))
+            .flatten();
+        let cell = div().size_full().relative();
+        let cell = match &pattern {
+            Some(p) => cell
+                .when_some(p.bg, |d, bg| d.bg(look::hsla(bg)))
+                .child(cond_paint::pattern_layer(p.clone(), self.scale)),
+            None => cell.when_some(style.fill, |d, fill| d.bg(look::hsla(fill))),
+        };
         let cell = match filter_button {
             Some((scope, filtered, sorted)) => cell.child(filter_button_element(
                 scope, col, filtered, sorted, row_height, &self.view, &t,
