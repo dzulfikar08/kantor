@@ -34,8 +34,8 @@ pub struct ChartLabel {
     pub rect: [f32; 4],
 }
 
-/// The chart a floating object at `rect` shows, if it is one Kantor can
-/// draw. `anchor` is its anchor (story, paragraph, byte index).
+/// The chart a floating object at `rect` shows (or the charts inside a
+/// group), if it is one Kantor can draw. `anchor` is its anchor (story, paragraph, byte index).
 pub fn chart_draw(
     doc: &Document,
     f: &Float,
@@ -45,8 +45,49 @@ pub fn chart_draw(
     layout: &mut LayoutFn,
 ) -> Option<ChartDraw> {
     let FloatKind::Chart { part, .. } = &f.kind else {
-        return None;
+        return group_charts(doc, f, anchor, rect, painter, layout);
     };
+    chart_part_draw(doc, part, anchor, rect, painter, layout)
+}
+
+/// The charts inside a group or canvas, as one drawing (`None`: none
+/// Kantor can draw).
+fn group_charts(
+    doc: &Document,
+    f: &Float,
+    anchor: (Option<usize>, usize, usize),
+    rect: [f32; 4],
+    painter: &Painter,
+    layout: &mut LayoutFn,
+) -> Option<ChartDraw> {
+    let mut all: Option<ChartDraw> = None;
+    for (rel, r) in crate::floats::group_chart_rects(f, rect) {
+        let Some((_, part)) = f.group_charts.iter().find(|(id, _)| *id == rel) else {
+            continue;
+        };
+        let Some(d) = chart_part_draw(doc, part, anchor, r, painter, layout) else {
+            continue;
+        };
+        match &mut all {
+            Some(a) => {
+                a.prims.extend(d.prims);
+                a.labels.extend(d.labels);
+            }
+            None => all = Some(d),
+        }
+    }
+    all
+}
+
+/// Chart part `part` drawn into `rect` (page px).
+fn chart_part_draw(
+    doc: &Document,
+    part: &str,
+    anchor: (Option<usize>, usize, usize),
+    rect: [f32; 4],
+    painter: &Painter,
+    layout: &mut LayoutFn,
+) -> Option<ChartDraw> {
     let xml = doc.part_xml(part)?;
     let [x0, y0, w, h] = rect;
     if w < 2.0 || h < 2.0 {

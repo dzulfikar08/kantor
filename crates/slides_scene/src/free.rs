@@ -3,7 +3,8 @@
 //! fills, lines, arrowheads and text as slide shapes; picture fills and a
 //! group's pictures from bytes the caller has (`pictures`); outer shadows;
 //! 3-D effects drawn approximately: an extrusion as darker copies behind
-//! the shape, a bevel as shading over it.
+//! the shape, a bevel as shading over it. Charts inside groups are drawn
+//! by the caller ([`Charts`]).
 
 use std::sync::Arc;
 
@@ -21,6 +22,10 @@ use crate::{
 /// Picture bytes by the part name a shape's picture has.
 pub type Pictures<'a> = &'a dyn Fn(&str) -> Option<Arc<Vec<u8>>>;
 
+/// A chart inside a group, by its part name, drawn into `w` × `h` px (its
+/// own coordinates); `None`: a box Kantor can't draw.
+pub type Charts<'a> = &'a dyn Fn(&mut Engine, &str, f32, f32) -> Option<Vec<Item>>;
+
 fn darker(c: Rgb, f: f32) -> Rgb {
     Rgb(c.0.map(|x| (x as f32 * f).round().clamp(0.0, 255.0) as u8))
 }
@@ -36,6 +41,22 @@ impl Builder {
         xfrm: &Xfrm,
         text: &dyn Fn(&Shape, &Xfrm) -> Option<RenderText>,
         pictures: Pictures,
+        out: &mut Vec<Item>,
+    ) {
+        self.free_shape_with(engine, shape, xfrm, text, pictures, &|_, _, _, _| None, out);
+    }
+
+    /// [`Builder::free_shape`], with the charts inside groups from
+    /// `charts`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn free_shape_with(
+        &self,
+        engine: &mut Engine,
+        shape: &Shape,
+        xfrm: &Xfrm,
+        text: &dyn Fn(&Shape, &Xfrm) -> Option<RenderText>,
+        pictures: Pictures,
+        charts: Charts,
         out: &mut Vec<Item>,
     ) {
         let (w, h) = (px(xfrm.cx), px(xfrm.cy));
@@ -247,15 +268,26 @@ impl Builder {
                     self.push_text(engine, &rt, &local, &text_transform(xfrm), None, out);
                 }
             }
-            ShapeKind::Other { frame, .. } => {
-                if let Some(FrameContent::Group(g)) = frame.get() {
+            ShapeKind::Other { frame, .. } => match frame.get() {
+                Some(FrameContent::Group(g)) => {
                     for child in &g.children {
                         let Some(own) = child.xfrm else { continue };
                         let at = compose(xfrm, &g.child_box, &own);
-                        self.free_shape(engine, child, &at, text, pictures, out);
+                        self.free_shape_with(engine, child, &at, text, pictures, charts, out);
                     }
                 }
-            }
+                Some(FrameContent::Chart(c)) => {
+                    let drawn = c.part.as_deref().and_then(|p| charts(engine, p, w, h));
+                    match drawn {
+                        Some(items) => out.extend(items.into_iter().map(|i| Item {
+                            transform: i.transform.then(t),
+                            ..i
+                        })),
+                        None => push(out, Prim::Unsupported { w, h }),
+                    }
+                }
+                _ => {}
+            },
             ShapeKind::Picture { part, .. } => {
                 let look = &shape.look;
                 if let Some(pic) = part.as_deref().and_then(|part| {

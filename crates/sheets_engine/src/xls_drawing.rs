@@ -487,7 +487,7 @@ pub(crate) fn sheet_objects(
             skipped.shapes += 1;
             continue;
         };
-        let Some(kind) = b.kind(i, false, skipped) else {
+        let Some(kind) = b.kind(i, skipped) else {
             continue;
         };
         out.push(Object {
@@ -511,9 +511,36 @@ struct Build<'a> {
 }
 
 impl Build<'_> {
+    /// `s` with the pattern fill of `shape` (OfficeArt `fillType` 1 with
+    /// its 8 × 8 bitmap, or a texture that is one), as the DrawingML
+    /// preset it is.
+    fn with_pattern(
+        &self,
+        s: crate::ods_drawing::Shape,
+        shape: &Shape,
+    ) -> crate::ods_drawing::Shape {
+        let prop = |id: u16| shape.props.get(&id).copied();
+        if !matches!(prop(0x180), Some(1 | 2)) {
+            return s;
+        }
+        let bits = prop(0x186)
+            .and_then(|p| (p as usize).checked_sub(1))
+            .and_then(|b| match self.blips.get(b)? {
+                Some(Blip::Image { data, .. }) => kantor_ooxml::pattern::from_bmp(data),
+                _ => None,
+            });
+        let Some((preset, swapped)) = bits.and_then(|b| kantor_ooxml::pattern::from_bits(&b))
+        else {
+            return s;
+        };
+        let fg = prop(0x181).and_then(color).unwrap_or(0xFFFFFF);
+        let bg = prop(0x183).and_then(color).unwrap_or(0xFFFFFF);
+        let (fg, bg) = if swapped { (bg, fg) } else { (fg, bg) };
+        s.with_pattern(preset.prst, fg, bg)
+    }
+
     /// Shape `i` as an object (`None`: left out and counted in `skipped`).
-    /// `inner`: inside a group, where charts aren't drawn.
-    fn kind(&self, i: usize, inner: bool, skipped: &mut Skipped) -> Option<ObjectKind> {
+    fn kind(&self, i: usize, skipped: &mut Skipped) -> Option<ObjectKind> {
         let (shape, obj) = &self.pairs[i];
         if let Some(ch) = shape.group {
             let mut members = Vec::new();
@@ -523,7 +550,7 @@ impl Build<'_> {
                     skipped.shapes += 1;
                     continue;
                 };
-                let Some(kind) = self.kind(c, true, skipped) else {
+                let Some(kind) = self.kind(c, skipped) else {
                     continue;
                 };
                 members.push(Member {
@@ -558,10 +585,6 @@ impl Build<'_> {
                     }
                 }
             }
-            0x05 if inner => {
-                skipped.charts += 1;
-                return None;
-            }
             0x05 => match obj.chart.as_deref().map(|c| parse_chart(c, self.ctx)) {
                 Some(Ok(c)) => {
                     skipped.flat += usize::from(c.three_d);
@@ -573,7 +596,9 @@ impl Build<'_> {
                 }
             },
             // Line, rectangle, oval, arc, text box, AutoShape.
-            0x01..=0x04 | 0x06 | 0x1E => match office_shape(shape, ot, obj.text.as_ref()) {
+            0x01..=0x04 | 0x06 | 0x1E => match office_shape(shape, ot, obj.text.as_ref())
+                .map(|s| self.with_pattern(s, shape))
+            {
                 Some(s) => ObjectKind::Shape(Box::new(s)),
                 None => {
                     skipped.shapes += 1;
@@ -2091,7 +2116,18 @@ impl Parts {
                     .name
                     .map(str::to_owned)
                     .unwrap_or_else(|| format!("Chart {i}"));
-                frame(id, &name, &descr, hidden, &rid)
+                let f = frame(id, &name, &descr, hidden, &rid);
+                // Inside a group its place is its own (a sheet's is the anchor's).
+                match el.rect {
+                    Some(_) => f.replacen(
+                        "<xdr:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/></xdr:xfrm>",
+                        &xfrm(el.rect)
+                            .replacen("<a:xfrm>", "<xdr:xfrm>", 1)
+                            .replacen("</a:xfrm>", "</xdr:xfrm>", 1),
+                        1,
+                    ),
+                    None => f,
+                }
             }
             ObjectKind::Shape(shape) => {
                 let name = el

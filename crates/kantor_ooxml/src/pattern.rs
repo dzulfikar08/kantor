@@ -324,6 +324,42 @@ pub fn from_bits(bits: &[u8; 8]) -> Option<(&'static Preset, bool)> {
     None
 }
 
+/// An 8 × 8 one-bit-per-pixel BMP (an OfficeArt pattern fill's bitmap,
+/// as `kantor_metafile` hands DIBs on: a `BM` file) as a bitmap, its set
+/// bits the darker of its two palette colours (Office's pattern bitmaps are
+/// black on white; the shape's own colours replace them).
+pub fn from_bmp(data: &[u8]) -> Option<[u8; 8]> {
+    let u32_at = |i: usize| Some(u32::from_le_bytes(data.get(i..i + 4)?.try_into().ok()?));
+    let i32_at = |i: usize| u32_at(i).map(|v| v as i32);
+    if data.get(..2)? != b"BM" {
+        return None;
+    }
+    let pixels = u32_at(10)? as usize;
+    let header = u32_at(14)? as usize;
+    let (w, h) = (i32_at(18)?, i32_at(22)?);
+    let bpp = u16::from_le_bytes(data.get(28..30)?.try_into().ok()?);
+    if w != 8 || h.abs() != 8 || bpp != 1 {
+        return None;
+    }
+    let pal = 14 + header;
+    let lum = |k: usize| -> Option<u32> {
+        let p = data.get(pal + 4 * k..pal + 4 * k + 3)?;
+        Some(p[0] as u32 * 11 + p[1] as u32 * 59 + p[2] as u32 * 30)
+    };
+    // Set bits: the darker colour's pixels.
+    let dark_is_one = lum(1)? < lum(0)?;
+    let mut out = [0u8; 8];
+    for (row, o) in out.iter_mut().enumerate() {
+        // Rows are bottom-up unless the height is negative, 4 bytes each.
+        let src = if h > 0 { 7 - row } else { row };
+        let b = *data.get(pixels + src * 4)?;
+        // Most significant bit = leftmost pixel; ours is the least.
+        let b = if dark_is_one { b } else { !b };
+        *o = b.reverse_bits();
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,6 +375,34 @@ mod tests {
         assert_eq!(bits("nope"), bits("pct5"));
         assert!(on(&bits("ltVert"), 3, 5) && !on(&bits("ltVert"), 2, 5));
         assert_eq!(coverage(&bits("pct50")), 0.5);
+    }
+
+    #[test]
+    fn office_pattern_bitmaps_decode() {
+        // A bottom-up 8 × 8 1-bpp BMP, palette black (0) and white (1), of
+        // `ltUpDiag` with black pixels set.
+        let bits = bits("ltUpDiag");
+        let mut bmp = b"BM".to_vec();
+        bmp.extend(0u32.to_le_bytes()); // size
+        bmp.extend(0u32.to_le_bytes());
+        bmp.extend(62u32.to_le_bytes()); // pixels at
+        bmp.extend(40u32.to_le_bytes());
+        bmp.extend(8i32.to_le_bytes());
+        bmp.extend(8i32.to_le_bytes());
+        bmp.extend(1u16.to_le_bytes());
+        bmp.extend(1u16.to_le_bytes());
+        bmp.extend([0u8; 24]);
+        bmp.extend([0, 0, 0, 0, 255, 255, 255, 0]);
+        for row in (0..8).rev() {
+            // Black (index 0) where the bit is set.
+            bmp.extend([!bits[row].reverse_bits(), 0, 0, 0]);
+        }
+        assert_eq!(from_bmp(&bmp), Some(bits));
+        assert_eq!(
+            from_bits(&from_bmp(&bmp).unwrap()).unwrap().0.prst,
+            "ltUpDiag"
+        );
+        assert_eq!(from_bmp(b"BMnope"), None);
     }
 
     #[test]

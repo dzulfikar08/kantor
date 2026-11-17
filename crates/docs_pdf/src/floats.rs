@@ -1462,6 +1462,75 @@ fn box_areas(f: &Float, g: Node, map: &ChildMap, depth: usize, out: &mut Vec<Opt
     }
 }
 
+/// The charts inside a group or canvas (`graphicFrame` with `c:chart`):
+/// relationship id and box on the page, with the group at `rect`.
+pub fn group_chart_rects(f: &Float, rect: [f32; 4]) -> Vec<(String, [f32; 4])> {
+    let FloatKind::Group { canvas } = f.kind else {
+        return Vec::new();
+    };
+    if f.group_charts.is_empty() {
+        return Vec::new();
+    }
+    let src = f.graphic_xml().map(wrap);
+    let Some(doc) = src
+        .as_deref()
+        .and_then(|x| roxmltree::Document::parse(x).ok())
+    else {
+        return Vec::new();
+    };
+    let Some(g) = doc
+        .root_element()
+        .first_element_child()
+        .and_then(|data| data.first_element_child())
+    else {
+        return Vec::new();
+    };
+    let map = if canvas {
+        ChildMap {
+            off: (0.0, 0.0),
+            k: (
+                rect[2] / f.read.cx.max(1) as f32,
+                rect[3] / f.read.cy.max(1) as f32,
+            ),
+            at: (rect[0], rect[1]),
+        }
+    } else {
+        ChildMap::of(child(g, "grpSpPr"), rect)
+    };
+    let mut out = Vec::new();
+    chart_frames(g, &map, 0, &mut out);
+    out
+}
+
+fn chart_frames(g: Node, map: &ChildMap, depth: usize, out: &mut Vec<(String, [f32; 4])>) {
+    if depth > 16 {
+        return;
+    }
+    for c in g.children().filter(|c| c.is_element()) {
+        match c.tag_name().name() {
+            "graphicFrame" => {
+                let rel = c
+                    .descendants()
+                    .find(|d| d.tag_name().name() == "chart")
+                    .and_then(|d| d.attributes().find(|a| a.name() == "id"))
+                    .map(|a| a.value().to_owned());
+                // Its `xfrm` is its own child (no `spPr`).
+                if let (Some(rel), Some((r, _))) = (rel, map.child_rect(Some(c))) {
+                    out.push((rel, r));
+                }
+            }
+            "grpSp" => {
+                let gp = child(c, "grpSpPr");
+                let Some((r, _)) = map.child_rect(gp) else {
+                    continue;
+                };
+                chart_frames(c, &ChildMap::of(gp, r), depth + 1, out);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Inner margins of a text box, px: left, top, right, bottom.
 pub fn insets(f: &Float) -> [f32; 4] {
     f.text

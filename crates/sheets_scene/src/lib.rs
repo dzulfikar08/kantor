@@ -223,9 +223,50 @@ pub fn live_chart(base: &Chart, book: &Workbook, current: bool) -> (Chart, u64) 
     (chart, h.finish())
 }
 
+/// The charts inside a group, by their `r:id`, parsed, with the cells'
+/// values now when `book` is given (`current`: their references are in
+/// the current rows and columns, a group made in Kantor), else the values
+/// cached in their parts; and a hash of what was read.
+pub type GroupCharts = Vec<(String, Arc<Chart>)>;
+
+/// The charts among a group's `media` (see [`GroupCharts`]).
+pub fn group_charts(
+    theme: &ChartTheme,
+    media: &ShapeMedia,
+    book: Option<&Workbook>,
+    current: bool,
+) -> (GroupCharts, u64) {
+    let mut h = DefaultHasher::new();
+    let mut out = Vec::new();
+    for (id, ext, data) in media.iter() {
+        if ext != sheets_engine::drawing::GROUP_CHART {
+            continue;
+        }
+        let Some(base) = std::str::from_utf8(data)
+            .ok()
+            .and_then(|x| theme.parse(x))
+            .filter(Chart::drawable)
+        else {
+            continue;
+        };
+        let chart = match book {
+            Some(b) => {
+                let (c, k) = live_chart(&base, b, current);
+                k.hash(&mut h);
+                c
+            }
+            None => base,
+        };
+        id.hash(&mut h);
+        out.push((id.clone(), Arc::new(chart)));
+    }
+    (out, h.finish())
+}
+
 /// The items of a shape, text box, connector or group (its element's XML,
 /// see `DrawingKind::Shape`) drawn into `w` × `h` px; a placeholder box
 /// when it can't be read. Its own turn and flips apply inside the box.
+/// Charts inside a group show the values cached in their parts.
 pub fn shape_items(
     builder: &Builder,
     engine: &mut Engine,
@@ -235,7 +276,8 @@ pub fn shape_items(
     w: f32,
     h: f32,
 ) -> Vec<Item> {
-    shape_items_on(builder, engine, theme, xml, media, w, h, None)
+    let charts = group_charts(theme, media, None, false).0;
+    shape_items_on(builder, engine, theme, xml, media, &charts, w, h, None)
 }
 
 /// Relative luminance of a colour (0 black, 1 white).
@@ -268,6 +310,7 @@ pub fn shape_items_on(
     theme: &ChartTheme,
     xml: &str,
     media: &ShapeMedia,
+    charts: &[(String, Arc<Chart>)],
     w: f32,
     h: f32,
     dark_text: Option<Rgb>,
@@ -279,9 +322,13 @@ pub fn shape_items_on(
     };
     // Part names a picture cache can key on: the id, the bytes' hash and
     // the extension (which says how to decode it).
+    // Charts inside a group: named by their id.
     let names: Vec<(String, String)> = media
         .iter()
         .map(|(id, ext, data)| {
+            if ext == sheets_engine::drawing::GROUP_CHART {
+                return (id.clone(), format!("{CHART_PART}{id}"));
+            }
             let mut h = DefaultHasher::new();
             data.hash(&mut h);
             (id.clone(), format!("{id}-{:x}.{ext}", h.finish()))
@@ -323,9 +370,26 @@ pub fn shape_items_on(
         let i = names.iter().position(|(_, n)| n == part)?;
         Some(Arc::new(media[i].2.to_vec()))
     };
-    builder.free_shape(engine, &shape, &xfrm, &text, &pictures, &mut out);
+    let defaults = &theme.defaults;
+    let group_chart = |engine: &mut Engine, part: &str, w: f32, h: f32| {
+        let id = part.strip_prefix(CHART_PART)?;
+        let (_, chart) = charts.iter().find(|(i, _)| i == id)?;
+        Some(chart_items(engine, chart, defaults, w, h))
+    };
+    builder.free_shape_with(
+        engine,
+        &shape,
+        &xfrm,
+        &text,
+        &pictures,
+        &group_chart,
+        &mut out,
+    );
     out
 }
+
+/// The part name a chart inside a group is known by while drawn.
+const CHART_PART: &str = "kantor-group-chart:";
 
 /// `items` moved by `(x, y)`.
 pub fn translated(items: &[Item], x: f32, y: f32) -> Vec<Item> {
@@ -588,6 +652,7 @@ impl DrawingScenes {
             &theme,
             xml,
             &ShapeMedia::default(),
+            &[],
             w,
             h,
             self.dark_text,
@@ -634,6 +699,9 @@ impl DrawingScenes {
                 return self.shape_cached(engine, book, d.key, &xml, w, h);
             }
             DrawingKind::Shape { xml, media } => {
+                let theme = self.theme(book);
+                let current = d.key.index >= sheets_engine::NEW_CHART_BASE;
+                let (charts, read) = group_charts(&theme, media, Some(book), current);
                 let hash = {
                     let mut h = DefaultHasher::new();
                     xml.hash(&mut h);
@@ -642,6 +710,7 @@ impl DrawingScenes {
                         id.hash(&mut h);
                         data.len().hash(&mut h);
                     }
+                    read.hash(&mut h);
                     h.finish()
                 };
                 let key = (d.key, q(w), q(h));
@@ -650,13 +719,13 @@ impl DrawingScenes {
                 {
                     return items.clone();
                 }
-                let theme = self.theme(book);
                 let items = Arc::new(shape_items_on(
                     &self.shapes,
                     engine,
                     &theme,
                     xml,
                     media,
+                    &charts,
                     w,
                     h,
                     self.dark_text,

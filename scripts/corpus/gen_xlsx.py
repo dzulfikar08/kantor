@@ -952,6 +952,7 @@ FEATURE_FILES = [
     "25_chartex.xlsx",
     "25_slicers.xlsx",
     "26_region_map.xlsx",
+    "27_patterns_group_charts.xlsx",
 ]
 
 

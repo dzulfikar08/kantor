@@ -24,6 +24,7 @@
 mod build;
 pub mod chart;
 mod free;
+pub use free::Charts;
 pub mod geom;
 pub mod paint;
 pub mod table;

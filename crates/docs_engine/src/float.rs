@@ -372,6 +372,9 @@ pub struct Float {
     /// edited in Kantor: its drawing and data model), by name: written in
     /// place of the originals on save.
     pub parts: Vec<(String, Arc<str>)>,
+    /// Charts inside a group or canvas (`c:chart` in a graphic frame): the
+    /// relationship id and the chart part's name.
+    pub group_charts: Vec<(String, String)>,
 }
 
 /// The text box of one shape in a group.
@@ -1392,6 +1395,18 @@ pub(crate) fn placement(anchor: &El) -> Placement {
     }
 }
 
+/// The relationship ids of the charts (`c:chart r:id`) under `el`.
+fn group_chart_rels<'e>(el: &'e El, out: &mut Vec<&'e str>) {
+    for c in &el.children {
+        if c.name == "chart"
+            && let Some(id) = c.attr("id")
+        {
+            out.push(id);
+        }
+        group_chart_rels(c, out);
+    }
+}
+
 /// First descendant with local name `name`.
 fn find<'e>(el: &'e El, name: &str) -> Option<&'e El> {
     el.children.iter().find_map(|c| {
@@ -1472,7 +1487,20 @@ pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> 
     } else {
         FloatKind::Other("Drawing".into())
     };
+    let group_charts = match kind {
+        FloatKind::Group { .. } => {
+            let mut v = Vec::new();
+            if let Some(d) = data {
+                group_chart_rels(d, &mut v);
+            }
+            v.into_iter()
+                .filter_map(|id| Some((id.to_owned(), rel_part(id)?)))
+                .collect()
+        }
+        _ => Vec::new(),
+    };
     Some(Float {
+        group_charts,
         xml: xml_src.into(),
         read: at,
         at,
