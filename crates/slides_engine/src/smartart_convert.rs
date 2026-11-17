@@ -61,6 +61,7 @@ pub fn change_layout(
     } else {
         for (i, id) in model.top.iter().enumerate() {
             let id = id.as_str();
+            let item_start = shapes.items.len();
             let t = tmpl(id);
             let subs = model.subs(id);
             let mut paras = lvl0(id);
@@ -92,42 +93,76 @@ pub fn change_layout(
                         .items
                         .push_str(&node(&t, id, prst, &paras, fill.as_deref()));
                 }
-                Family::HorizontalPictures => {
+                f if f.pictures() => {
                     // The item's picture placeholder (empty: Kantor doesn't
                     // carry pictures across layouts), then its text.
                     let pid = new_id(data, 300 + i as u32);
-                    shapes.items.push_str(&scratch(
+                    let pic = scratch(
                         &pid,
-                        "roundRect",
+                        picture_geometry(f),
                         "<a:solidFill><a:schemeClr val=\"accent1\"><a:tint val=\"50000\"/></a:schemeClr></a:solidFill><a:ln><a:solidFill><a:schemeClr val=\"lt1\"/></a:solidFill></a:ln>",
                         "",
                         "",
                         "",
-                    ));
+                    );
                     new_pres.push_str(&format!(
-                        "<{d}pt modelId=\"{pid}\" type=\"pres\"><{d}prSet presAssocID=\"{id}\" presName=\"imagNode\" presStyleLbl=\"fgImgPlace1\" presStyleIdx=\"{i}\" presStyleCnt=\"{n}\"/><{d}spPr/></{d}pt>",
+                        "<{d}pt modelId=\"{pid}\" type=\"pres\"><{d}prSet presAssocID=\"{id}\" presName=\"{name}\" presStyleLbl=\"{lbl}\" presStyleIdx=\"{i}\" presStyleCnt=\"{n}\"/><{d}spPr/></{d}pt>",
                         d = model.dgm,
-                        n = model.top.len()
+                        n = model.top.len(),
+                        name = f.picture_name(),
+                        lbl = f.picture_style(),
                     ));
-                    shapes.items.push_str(&node(&t, id, prst, &paras, None));
+                    let text = if text_only(f) {
+                        // A caption: text without a shape of its own.
+                        scratch(id, "rect", NO_FILL, "ctr", &paras, "")
+                    } else {
+                        node(&t, id, prst, &paras, None)
+                    };
+                    // The picture over the item's shape (behind its text
+                    // in a Horizontal Picture List).
+                    if f == Family::HorizontalPictures {
+                        shapes.items.push_str(&pic);
+                        shapes.items.push_str(&text);
+                    } else {
+                        shapes.items.push_str(&text);
+                        shapes.items.push_str(&pic);
+                    }
                 }
                 _ => shapes.items.push_str(&node(&t, id, prst, &paras, None)),
             }
-            if to.sub_boxes() && !subs.is_empty() {
+            if to.sub_boxes() && (!subs.is_empty() || to.always_sub()) {
                 let pid = new_id(data, 100 + i as u32);
-                let sub_paras: String = subs.iter().map(|s| model.paras(s, &t, 1)).collect();
-                shapes.items.push_str(&scratch(
-                    &pid,
-                    "rect",
-                    "<a:solidFill><a:schemeClr val=\"accent1\"><a:alpha val=\"90000\"/><a:tint val=\"40000\"/></a:schemeClr></a:solidFill><a:ln><a:noFill/></a:ln>",
-                    "t",
-                    &sub_paras,
-                    "",
-                ));
+                let mut sub_paras: String = subs.iter().map(|s| model.paras(s, &t, 1)).collect();
+                if sub_paras.is_empty() {
+                    sub_paras = "<a:p><a:pPr marL=\"114300\" lvl=\"1\" indent=\"-114300\" algn=\"l\"><a:buChar char=\"•\"/></a:pPr><a:endParaRPr lang=\"en-US\"/></a:p>".to_owned();
+                }
+                let (sub, lbl) = match to {
+                    // The item's main box (Picture Accent List): in the
+                    // item's own style.
+                    Family::PictureAccentList => {
+                        (node(&t, &pid, "rect", &sub_paras, None), "node1")
+                    }
+                    Family::BendingPictureAccentList => (
+                        scratch(&pid, "round2SameRect", LIGHT, "t", &sub_paras, ""),
+                        "bgAcc1",
+                    ),
+                    Family::TitledPictureBlocks => (
+                        scratch(&pid, "rect", ACCENT_BOX, "t", &sub_paras, ""),
+                        "fgAcc1",
+                    ),
+                    _ => (scratch(&pid, "rect", LIGHT, "t", &sub_paras, ""), "revTx"),
+                };
+                // Under the item's shapes, except a box over its picture.
+                if to == Family::TitledPictureBlocks {
+                    shapes.items.push_str(&sub);
+                } else {
+                    shapes.items.insert_str(item_start, &sub);
+                }
                 new_pres.push_str(&format!(
-                    "<{d}pt modelId=\"{pid}\" type=\"pres\"><{d}prSet presAssocID=\"{id}\" presName=\"childText\" presStyleLbl=\"revTx\" presStyleIdx=\"{i}\" presStyleCnt=\"{n}\"/><{d}spPr/></{d}pt>",
+                    "<{d}pt modelId=\"{pid}\" type=\"pres\"><{d}prSet presAssocID=\"{id}\" presName=\"{name}\" presStyleLbl=\"{lbl}\" presStyleIdx=\"{i}\" presStyleCnt=\"{n}\"/><{d}spPr/></{d}pt>",
                     d = model.dgm,
-                    n = model.top.len()
+                    n = model.top.len(),
+                    name = to.sub_name(),
                 ));
             }
         }
@@ -177,6 +212,9 @@ pub fn change_layout(
 }
 
 const NO_FILL: &str = "<a:noFill/><a:ln><a:noFill/></a:ln>";
+const LIGHT: &str = "<a:solidFill><a:schemeClr val=\"accent1\"><a:alpha val=\"90000\"/><a:tint val=\"40000\"/></a:schemeClr></a:solidFill><a:ln><a:noFill/></a:ln>";
+/// A foreground accent box: light, outlined.
+const ACCENT_BOX: &str = "<a:solidFill><a:schemeClr val=\"accent1\"><a:alpha val=\"90000\"/><a:tint val=\"40000\"/></a:schemeClr></a:solidFill><a:ln><a:solidFill><a:schemeClr val=\"accent1\"/></a:solidFill></a:ln>";
 const ACCENT: &str =
     "<a:solidFill><a:schemeClr val=\"accent1\"/></a:solidFill><a:ln><a:noFill/></a:ln>";
 
@@ -188,13 +226,37 @@ struct Shapes {
     arrows: String,
 }
 
+/// A picture layout's item text is a caption: no shape of its own
+/// (`revTx`).
+fn text_only(f: Family) -> bool {
+    matches!(
+        f,
+        Family::PictureAccentList | Family::PictureCaptionList | Family::PictureGrid
+    )
+}
+
+/// Each picture layout's shape for its pictures.
+fn picture_geometry(f: Family) -> &'static str {
+    match f {
+        Family::HorizontalPictures | Family::VerticalPictureList => "roundRect",
+        Family::BendingPictureAccentList => "ellipse",
+        _ => "rect",
+    }
+}
+
 /// Each layout's shape for its items.
 fn geometry(f: Family) -> &'static str {
     match f {
         Family::Blocks
         | Family::HorizontalBullets
         | Family::OrgChart
-        | Family::HorizontalPictures => "rect",
+        | Family::HorizontalPictures
+        | Family::PictureAccentList
+        | Family::BendingPictureAccentList
+        | Family::PictureCaptionList
+        | Family::TitledPictureBlocks
+        | Family::PictureGrid => "rect",
+        Family::VerticalPictureList => "roundRect",
         Family::Cycle | Family::RadialCycle | Family::Venn => "ellipse",
         Family::Pyramid => "trapezoid",
         Family::StepUp => "rect",
@@ -240,6 +302,13 @@ impl<'a> DataModel<'a> {
         let dgm = prefix(NS_DGM);
         let a = prefix(NS_A);
         let mut doc_id = String::new();
+        let grid = doc
+            .descendants()
+            .find(|n| is(*n, NS_DGM, "pt") && n.attribute("type") == Some("doc"))
+            .and_then(|p| child(p, NS_DGM, "prSet"))
+            .and_then(|p| p.attribute("loTypeId"))
+            .and_then(Family::of)
+            == Some(Family::PictureGrid);
         let mut items: Vec<String> = Vec::new();
         let mut pres = HashMap::new();
         let mut pics = std::collections::HashSet::new();
@@ -255,10 +324,10 @@ impl<'a> DataModel<'a> {
                     if let Some(a) = set.and_then(|s| s.attribute("presAssocID")) {
                         pres.insert(id.to_owned(), a.to_owned());
                     }
-                    if set
-                        .and_then(|s| s.attribute("presName"))
-                        .is_some_and(|n| super::is_picture_name(&n.to_ascii_lowercase()))
-                    {
+                    if set.and_then(|s| s.attribute("presName")).is_some_and(|n| {
+                        let n = n.to_ascii_lowercase();
+                        super::is_picture_name(&n) || grid && n == "rect1"
+                    }) {
                         pics.insert(id.to_owned());
                     }
                 }
@@ -864,7 +933,16 @@ pub fn layout_def(f: Family) -> String {
         | Family::Process
         | Family::ContinuousBlock
         | Family::StepUp
-        | Family::HorizontalPictures => ("lin", "<dgm:param type=\"linDir\" val=\"fromL\"/>"),
+        | Family::HorizontalPictures
+        | Family::PictureAccentList => ("lin", "<dgm:param type=\"linDir\" val=\"fromL\"/>"),
+        Family::VerticalPictureList => ("lin", "<dgm:param type=\"linDir\" val=\"fromT\"/>"),
+        Family::BendingPictureAccentList
+        | Family::PictureCaptionList
+        | Family::TitledPictureBlocks
+        | Family::PictureGrid => (
+            "snake",
+            "<dgm:param type=\"grDir\" val=\"tL\"/><dgm:param type=\"flowDir\" val=\"row\"/><dgm:param type=\"contDir\" val=\"sameDir\"/><dgm:param type=\"off\" val=\"ctr\"/>",
+        ),
         Family::Cycle | Family::Venn => (
             "cycle",
             "<dgm:param type=\"stAng\" val=\"0\"/><dgm:param type=\"spanAng\" val=\"360\"/>",

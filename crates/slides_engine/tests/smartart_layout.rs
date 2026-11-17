@@ -265,6 +265,12 @@ fn hierarchies_lay_out_as_trees() {
                 "{b:?}"
             );
             assert!(mid("Dev").1 < mid("Ops").1);
+        } else if s == 5 {
+            // An Organization Chart as PowerPoint starts it: Dev and Ops
+            // (leaves) hang on CTO's right, one under the other.
+            assert!(mid("CEO").1 < mid("CTO").1 && mid("CTO").1 < mid("Dev").1);
+            assert!(b["Dev"].x > b["CTO"].x && b["Dev"].x == b["Ops"].x, "{b:?}");
+            assert!(mid("Dev").1 < mid("Ops").1);
         } else {
             assert!(
                 mid("CEO").1 < mid("CTO").1 && mid("CTO").1 < mid("Dev").1,

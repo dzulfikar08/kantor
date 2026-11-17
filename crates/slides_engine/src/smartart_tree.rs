@@ -36,6 +36,66 @@ struct TNode {
     /// Its place among its siblings (`srcOrd`).
     ord: i64,
     depth: usize,
+    /// An Organization Chart's assistant (`type="asst"`).
+    asst: bool,
+    /// How an Organization Chart hangs its children (`hierBranch` of its
+    /// `hierRoot` presentation item; `None`: PowerPoint's initial layout).
+    branch: Option<OrgLayout>,
+}
+
+/// How an Organization Chart item's children hang under it (PowerPoint's
+/// *Layout* menu on an Org Chart shape; `dgm:hierBranch`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OrgLayout {
+    /// Side by side under it (`std`).
+    Standard,
+    /// In two columns, either side of a line down from it (`hang`).
+    Both,
+    /// In a column on the left of a line down from it (`l`).
+    LeftHanging,
+    /// In a column on the right of a line down from it (`r`).
+    RightHanging,
+}
+
+impl OrgLayout {
+    pub const ALL: [OrgLayout; 4] = [
+        OrgLayout::Standard,
+        OrgLayout::Both,
+        OrgLayout::LeftHanging,
+        OrgLayout::RightHanging,
+    ];
+
+    /// PowerPoint's name for it.
+    pub fn name(self) -> &'static str {
+        match self {
+            OrgLayout::Standard => "Standard",
+            OrgLayout::Both => "Both",
+            OrgLayout::LeftHanging => "Left Hanging",
+            OrgLayout::RightHanging => "Right Hanging",
+        }
+    }
+
+    /// A `hierBranch` value (`init`: none; no value: `std`).
+    fn of(val: Option<&str>) -> Option<Self> {
+        match val {
+            None | Some("std") => Some(OrgLayout::Standard),
+            Some("hang") => Some(OrgLayout::Both),
+            Some("l") => Some(OrgLayout::LeftHanging),
+            Some("r") => Some(OrgLayout::RightHanging),
+            _ => None,
+        }
+    }
+
+    /// Its `hierBranch` element (PowerPoint writes Standard without a
+    /// value: `std` is the default).
+    fn element(self, dgm: &str) -> String {
+        match self {
+            OrgLayout::Standard => format!("<{dgm}hierBranch/>"),
+            OrgLayout::Both => format!("<{dgm}hierBranch val=\"hang\"/>"),
+            OrgLayout::LeftHanging => format!("<{dgm}hierBranch val=\"l\"/>"),
+            OrgLayout::RightHanging => format!("<{dgm}hierBranch val=\"r\"/>"),
+        }
+    }
 }
 
 struct Tree {
@@ -115,6 +175,28 @@ fn tree(data: &str) -> anyhow::Result<Tree> {
         .filter(|p| matches!(p.attribute("type"), None | Some("node" | "asst")))
         .filter_map(|p| p.attribute("modelId"))
         .collect();
+    let assts: Vec<&str> = pts
+        .iter()
+        .filter(|p| p.attribute("type") == Some("asst"))
+        .filter_map(|p| p.attribute("modelId"))
+        .collect();
+    // Each item's `hierBranch`, from its `hierRoot` presentation item.
+    let branches: HashMap<&str, Option<OrgLayout>> = pts
+        .iter()
+        .filter(|p| p.attribute("type") == Some("pres"))
+        .filter_map(|p| {
+            let set = child(*p, NS_DGM, "prSet")?;
+            if !set.attribute("presName")?.starts_with("hierRoot") {
+                return None;
+            }
+            let hb = child(set, NS_DGM, "presLayoutVars")
+                .and_then(|v| child(v, NS_DGM, "hierBranch"))?;
+            Some((
+                set.attribute("presAssocID")?,
+                OrgLayout::of(hb.attribute("val")),
+            ))
+        })
+        .collect();
     // (srcOrd, dest, parTrans, sibTrans, cxn) per source.
     type Edge<'a> = (
         i64,
@@ -154,9 +236,12 @@ fn tree(data: &str) -> anyhow::Result<Tree> {
         labels: Vec::new(),
         pres: HashMap::new(),
     };
+    #[allow(clippy::too_many_arguments)]
     fn walk(
         t: &mut Tree,
         kids: &HashMap<&str, Vec<Edge>>,
+        assts: &[&str],
+        branches: &HashMap<&str, Option<OrgLayout>>,
         src: &str,
         parent: Option<usize>,
         depth: usize,
@@ -175,6 +260,8 @@ fn tree(data: &str) -> anyhow::Result<Tree> {
                 cxn: cxn.map(str::to_owned),
                 ord: *ord,
                 depth,
+                asst: assts.contains(dst) && parent.is_some(),
+                branch: branches.get(dst).copied().flatten(),
             });
             match parent {
                 Some(p) => t.nodes[p].kids.push(k),
@@ -185,10 +272,10 @@ fn tree(data: &str) -> anyhow::Result<Tree> {
                 }
                 None => t.roots.push(k),
             }
-            walk(t, kids, dst, Some(k), depth + 1);
+            walk(t, kids, assts, branches, dst, Some(k), depth + 1);
         }
     }
-    walk(&mut t, &kids, &doc_id, None, 0);
+    walk(&mut t, &kids, &assts, &branches, &doc_id, None, 0);
     if t.nodes.is_empty() {
         bail!("This SmartArt has no items");
     }
@@ -311,6 +398,209 @@ fn link_pts(t: &Tree, p: &Xfrm, c: &Xfrm) -> Vec<(Emu, Emu)> {
         Family::RadialCycle => spoke(p, c),
         f => elbow(f == Family::HorizontalHierarchy, p, c),
     }
+}
+
+/// Organization Chart proportions, from `orgChart1`'s constraints: boxes
+/// half as tall as wide, levels, siblings and hanging rows 0.21 box widths
+/// apart.
+const ORG_H: f64 = 0.5;
+const ORG_GAP: f64 = 0.21;
+
+/// An Organization Chart item's branch in box widths, its own box's top
+/// left at (0, 0): each item's box (top left), each child's connector
+/// and how far the branch reaches.
+struct Branch {
+    at: Vec<(usize, f64, f64)>,
+    links: Vec<(usize, Vec<(f64, f64)>)>,
+    x0: f64,
+    x1: f64,
+    y1: f64,
+}
+
+impl Branch {
+    fn shift(&mut self, dx: f64, dy: f64) {
+        for a in &mut self.at {
+            a.1 += dx;
+            a.2 += dy;
+        }
+        for (_, pts) in &mut self.links {
+            for p in pts {
+                p.0 += dx;
+                p.1 += dy;
+            }
+        }
+        self.x0 += dx;
+        self.x1 += dx;
+        self.y1 += dy;
+    }
+
+    fn take(&mut self, o: Branch) {
+        self.x0 = self.x0.min(o.x0);
+        self.x1 = self.x1.max(o.x1);
+        self.y1 = self.y1.max(o.y1);
+        self.at.extend(o.at);
+        self.links.extend(o.links);
+    }
+}
+
+impl Tree {
+    /// How Organization Chart item `k`'s children hang: as set, else
+    /// PowerPoint's initial layout (`init`): side by side under the top
+    /// item and under items with grandchildren, else hanging on the right.
+    fn org_layout(&self, k: usize) -> OrgLayout {
+        let n = &self.nodes[k];
+        if let Some(b) = n.branch {
+            return b;
+        }
+        if n.depth > 0
+            && !n.kids.is_empty()
+            && n.kids.iter().all(|c| self.nodes[*c].kids.is_empty())
+        {
+            OrgLayout::RightHanging
+        } else {
+            OrgLayout::Standard
+        }
+    }
+}
+
+/// Children `list` of an Organization Chart item in rows of two either
+/// side of the line down from the middle of its box, from height `y` on
+/// (an item's assistants, or children laid out Both); `y` moves past them.
+fn org_pairs(t: &Tree, list: &[usize], y: &mut f64, b: &mut Branch) {
+    let g = ORG_GAP;
+    for row in list.chunks(2) {
+        let mut h: f64 = 0.0;
+        for (j, c) in row.iter().enumerate() {
+            let mut cb = org_branch(t, *c);
+            let ox = if j == 0 {
+                0.5 - g / 2.0 - cb.x1
+            } else {
+                0.5 + g / 2.0 - cb.x0
+            };
+            cb.shift(ox, *y);
+            let mid = *y + ORG_H / 2.0;
+            let end = if j == 0 { ox + 1.0 } else { ox };
+            h = h.max(cb.y1 - *y);
+            b.links
+                .push((*c, vec![(0.5, ORG_H), (0.5, mid), (end, mid)]));
+            b.take(cb);
+        }
+        *y += h + g;
+    }
+}
+
+/// Organization Chart item `k`'s branch: its assistants either side of the
+/// line down from it, then its other children as its layout says.
+fn org_branch(t: &Tree, k: usize) -> Branch {
+    let g = ORG_GAP;
+    let mut b = Branch {
+        at: vec![(k, 0.0, 0.0)],
+        links: Vec::new(),
+        x0: 0.0,
+        x1: 1.0,
+        y1: ORG_H,
+    };
+    let (assts, kids): (Vec<usize>, Vec<usize>) =
+        t.nodes[k].kids.iter().partition(|c| t.nodes[**c].asst);
+    let mut y = ORG_H + g;
+    org_pairs(t, &assts, &mut y, &mut b);
+    if kids.is_empty() {
+        return b;
+    }
+    match t.org_layout(k) {
+        OrgLayout::Standard => {
+            // Side by side, centred under it; elbows bending halfway down
+            // the gap over them.
+            let mut cursor = 0.0;
+            let mut row = Vec::new();
+            for c in &kids {
+                let mut cb = org_branch(t, *c);
+                let ox = cursor - cb.x0;
+                cb.shift(ox, y);
+                cursor = ox + cb.x1 + g;
+                row.push((ox, cb));
+            }
+            let first = row.first().map_or(0.0, |r| r.0);
+            let last = row.last().map_or(0.0, |r| r.0);
+            let dx = 0.5 - (first + last + 1.0) / 2.0;
+            let bend = y - g / 2.0;
+            for (c, (ox, mut cb)) in kids.iter().zip(row) {
+                cb.shift(dx, 0.0);
+                let cx = ox + dx + 0.5;
+                b.links
+                    .push((*c, vec![(0.5, ORG_H), (0.5, bend), (cx, bend), (cx, y)]));
+                b.take(cb);
+            }
+        }
+        OrgLayout::Both => org_pairs(t, &kids, &mut y, &mut b),
+        side => {
+            // A column beside a line down from it: from near its left
+            // (right) edge (`rootConnector`, a fifth of the box), a quarter
+            // of a box in; from its middle, past its assistants, when it
+            // has some (`alignOff` 0.65).
+            let right = side == OrgLayout::RightHanging;
+            let (stem, align): (f64, f64) = match (assts.is_empty(), right) {
+                (false, _) => (0.5, 0.65),
+                (true, true) => (0.1, 0.25),
+                (true, false) => (0.9, 0.25),
+            };
+            for c in &kids {
+                let mut cb = org_branch(t, *c);
+                let ox = if right {
+                    align.max(stem + g / 2.0 - cb.x0)
+                } else {
+                    (-align).min(stem - g / 2.0 - cb.x1)
+                };
+                cb.shift(ox, y);
+                let mid = y + ORG_H / 2.0;
+                let end = if right { ox } else { ox + 1.0 };
+                b.links
+                    .push((*c, vec![(stem, ORG_H), (stem, mid), (end, mid)]));
+                y = cb.y1 + g;
+                b.take(cb);
+            }
+        }
+    }
+    b
+}
+
+/// An Organization Chart in a `w` × `h` frame: each item's box and each
+/// child's connector (frame EMUs), scaled to fit and centred.
+#[allow(clippy::type_complexity)]
+fn place_org(t: &Tree, w: f64, h: f64) -> (Vec<Xfrm>, Vec<Option<Vec<(Emu, Emu)>>>) {
+    let mut all: Option<Branch> = None;
+    let mut cursor = 0.0;
+    for r in &t.roots {
+        let mut b = org_branch(t, *r);
+        let ox = cursor - b.x0;
+        b.shift(ox, 0.0);
+        cursor = ox + b.x1 + ORG_GAP;
+        match &mut all {
+            Some(a) => a.take(b),
+            None => all = Some(b),
+        }
+    }
+    let n = t.nodes.len();
+    let Some(all) = all else {
+        return (vec![Xfrm::new(0, 0, 1, 1); n], vec![None; n]);
+    };
+    let (bw, bh) = ((all.x1 - all.x0).max(1e-9), all.y1.max(1e-9));
+    let k = (w / bw).min(h / bh);
+    let ox = (w - bw * k) / 2.0 - all.x0 * k;
+    let oy = (h - bh * k) / 2.0;
+    let mut boxes = vec![Xfrm::new(r(w / 2.0), r(h / 2.0), 1, 1); n];
+    for (i, x, y) in &all.at {
+        boxes[*i] = Xfrm::new(r(ox + x * k), r(oy + y * k), r(k), r(k * ORG_H));
+    }
+    let mut links = vec![None; n];
+    for (c, pts) in all.links {
+        links[c] = Some(
+            pts.iter()
+                .map(|(x, y)| (r(ox + x * k), r(oy + y * k)))
+                .collect(),
+        );
+    }
+    (boxes, links)
 }
 
 /// Each item's box in a `w` × `h` frame.
@@ -520,7 +810,18 @@ fn union(xs: &[Xfrm]) -> Option<Xfrm> {
 pub(super) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<String> {
     let t = tree(data)?;
     let (list, tree_end) = tshapes(drawing, &t)?;
-    let boxes = place(&t, w as f64, h as f64);
+    let (boxes, links) = if t.family == Family::OrgChart {
+        place_org(&t, w as f64, h as f64)
+    } else {
+        (place(&t, w as f64, h as f64), Vec::new())
+    };
+    let link = |p: usize, k: usize| {
+        links
+            .get(k)
+            .cloned()
+            .flatten()
+            .unwrap_or_else(|| link_pts(&t, &boxes[p], &boxes[k]))
+    };
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     // Items: their shapes moved and scaled with the box round them all.
     // Items the layout doesn't draw lose their shapes (and count as drawn).
@@ -592,7 +893,7 @@ pub(super) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Res
             continue;
         }
         has_conn[k] = true;
-        let pts = link_pts(&t, &boxes[p], &boxes[k]);
+        let pts = link(p, k);
         edits.push((
             s.range.clone(),
             draw_connector(&drawing[s.range.clone()], &pts),
@@ -613,7 +914,7 @@ pub(super) fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Res
             Some(x) => copy_shape(x, par),
             None => new_connector(par),
         };
-        add.push_str(&draw_connector(&base, &link_pts(&t, &boxes[p], &boxes[k])));
+        add.push_str(&draw_connector(&base, &link(p, k)));
     }
     // New shapes go first (behind the items): connectors under the boxes
     // (but over a Labeled Hierarchy's bands).
@@ -652,6 +953,9 @@ pub const TOP_ALONE: &str =
     "The top of a Labeled Hierarchy has no shapes beside it: add shapes below or above it";
 pub const TOP_KEEP: &str =
     "The top of this Labeled Hierarchy can't be deleted while it has several shapes under it";
+/// Organization Chart messages (translated by the apps).
+pub const ASSISTANT_ORG: &str = "Only an Organization Chart has assistants";
+pub const ORG_ONLY: &str = "Only an Organization Chart's shapes have a hanging layout";
 /// Radial Cycle messages (translated by the apps).
 pub const RADIAL_CENTRE: &str =
     "The centre of a Radial Cycle has no shapes beside or above it: add shapes below it";
@@ -678,6 +982,9 @@ pub(super) fn add_item(
     let k = t
         .node_of(selected)
         .context("Select an item's shape to add a shape next to it")?;
+    if place == AddPlace::Assistant && t.family != Family::OrgChart {
+        bail!(ASSISTANT_ORG);
+    }
     if t.labels.contains(&k) && matches!(place, AddPlace::Above | AddPlace::Below) {
         bail!(LABEL_LEVELS);
     }
@@ -716,8 +1023,12 @@ pub(super) fn add_item(
     let body = format!(
         "<{dgm}t><{a}bodyPr/><{a}lstStyle/><{a}p><{a}endParaRPr lang=\"en-US\"/></{a}p></{dgm}t>"
     );
+    // An assistant, or a shape added beside one: an assistant.
+    let asst = place == AddPlace::Assistant
+        || t.nodes[k].asst && matches!(place, AddPlace::After | AddPlace::Before);
+    let kind = if asst { " type=\"asst\"" } else { "" };
     let pts = format!(
-        "<{dgm}pt modelId=\"{node}\"><{dgm}prSet phldrT=\"[Text]\"/><{dgm}spPr/>{body}</{dgm}pt>\
+        "<{dgm}pt modelId=\"{node}\"{kind}><{dgm}prSet phldrT=\"[Text]\"/><{dgm}spPr/>{body}</{dgm}pt>\
          <{dgm}pt modelId=\"{par}\" type=\"parTrans\" cxnId=\"{cxn}\"><{dgm}prSet/><{dgm}spPr/>{body}</{dgm}pt>\
          <{dgm}pt modelId=\"{sib}\" type=\"sibTrans\" cxnId=\"{cxn}\"><{dgm}prSet/><{dgm}spPr/>{body}</{dgm}pt>"
     );
@@ -748,7 +1059,7 @@ pub(super) fn add_item(
             }
             (parent, ord)
         }
-        AddPlace::Below => {
+        AddPlace::Below | AddPlace::Assistant => {
             let ord = me
                 .kids
                 .iter()
@@ -795,6 +1106,102 @@ pub(super) fn add_item(
     let drawing2 = apply(drawing, vec![(at..at, copies)]);
     let drawing3 = relayout(&drawing2, &data2, w, h)?;
     Ok((drawing3, data2, node))
+}
+
+/// The layout set on the Organization Chart item drawn by `selected` (a
+/// `modelId`): `None` when it has PowerPoint's initial layout, or isn't an
+/// Organization Chart's item.
+pub fn org_layout(data: &str, selected: &str) -> Option<OrgLayout> {
+    let t = tree(data).ok().filter(|t| t.family == Family::OrgChart)?;
+    t.nodes[t.node_of(selected)?].branch
+}
+
+/// PowerPoint's *Layout* (Standard, Both, Left Hanging, Right Hanging) on
+/// the Organization Chart item drawn by `selected`: how its children hang
+/// under it, kept in its `hierRoot` presentation item's `hierBranch` (one
+/// is added if it has none). Returns the drawing laid out again and the
+/// data model.
+pub fn set_org_layout(
+    drawing: &str,
+    data: &str,
+    selected: &str,
+    layout: OrgLayout,
+    w: Emu,
+    h: Emu,
+) -> anyhow::Result<(String, String)> {
+    let t = tree(data)?;
+    if t.family != Family::OrgChart {
+        bail!(ORG_ONLY);
+    }
+    let k = t
+        .node_of(selected)
+        .context("Select an item's shape to change its layout")?;
+    let me = &t.nodes[k];
+    let doc = Document::parse(data).context("SmartArt data")?;
+    let dgm = doc
+        .root_element()
+        .tag_name()
+        .namespace()
+        .and_then(|ns| doc.root_element().lookup_prefix(ns))
+        .map(|p| format!("{p}:"))
+        .unwrap_or_default();
+    let el = layout.element(&dgm);
+    let vars = format!("<{dgm}presLayoutVars>{el}</{dgm}presLayoutVars>");
+    let set = doc
+        .descendants()
+        .filter(|n| is(*n, NS_DGM, "pt") && n.attribute("type") == Some("pres"))
+        .filter_map(|p| child(p, NS_DGM, "prSet"))
+        .find(|s| {
+            s.attribute("presAssocID") == Some(me.id.as_str())
+                && s.attribute("presName")
+                    .is_some_and(|n| n.starts_with("hierRoot"))
+        });
+    // An element's content goes after its start tag (a self-closing one
+    // gets an end tag).
+    let fill = |n: Node, content: &str| -> (Range<usize>, String) {
+        let tag = start_tag(data, n);
+        let st = n.range().start;
+        if tag.ends_with("/>") {
+            let open = tag.trim_end_matches("/>").trim_end();
+            (
+                st..st + tag.len(),
+                format!("{open}>{content}</{}>", tag_name(tag)),
+            )
+        } else {
+            (st + tag.len()..st + tag.len(), content.to_owned())
+        }
+    };
+    let edit = match set {
+        Some(set) => match child(set, NS_DGM, "presLayoutVars") {
+            Some(v) => match child(v, NS_DGM, "hierBranch") {
+                Some(hb) => (hb.range(), el),
+                None => fill(v, &el),
+            },
+            None => fill(set, &vars),
+        },
+        None => {
+            let lst = doc
+                .descendants()
+                .find(|n| is(*n, NS_DGM, "ptLst"))
+                .context("SmartArt data without items")?;
+            let at = lst.range().end - format!("</{}>", tag_name(start_tag(data, lst))).len();
+            let name = match (me.parent, me.asst) {
+                (None, _) => "hierRoot1",
+                (Some(_), true) => "hierRoot3",
+                (Some(_), false) => "hierRoot2",
+            };
+            (
+                at..at,
+                format!(
+                    "<{dgm}pt modelId=\"{}\" type=\"pres\"><{dgm}prSet presAssocID=\"{}\" presName=\"{name}\" presStyleCnt=\"0\">{vars}</{dgm}prSet><{dgm}spPr/></{dgm}pt>",
+                    new_id(data, 8),
+                    me.id
+                ),
+            )
+        }
+    };
+    let data2 = apply(data, vec![edit]);
+    Ok((relayout(drawing, &data2, w, h)?, data2))
 }
 
 /// Remove the item drawn by `selected`: its children move up to its
@@ -893,14 +1300,24 @@ mod tests {
     /// A data model: `edges` (parent index or None for the document, child
     /// index); item i is "Ni".
     fn data(lo: &str, edges: &[(Option<usize>, usize)]) -> String {
+        data_asst(lo, edges, &[])
+    }
+
+    /// [`data`] with items `assts` assistants.
+    fn data_asst(lo: &str, edges: &[(Option<usize>, usize)], assts: &[usize]) -> String {
         let mut pts = format!(
             r#"<dgm:pt modelId="D" type="doc"><dgm:prSet loTypeId="urn:microsoft.com/office/officeart/2005/8/layout/{lo}"/></dgm:pt>"#
         );
         let mut cxns = String::new();
         let mut ords: HashMap<Option<usize>, usize> = HashMap::new();
         for (p, c) in edges {
+            let kind = if assts.contains(c) {
+                r#" type="asst""#
+            } else {
+                ""
+            };
             pts += &format!(
-                r#"<dgm:pt modelId="N{c}"><dgm:prSet/><dgm:t><a:bodyPr/><a:p><a:r><a:t>Item {c}</a:t></a:r></a:p></dgm:t></dgm:pt><dgm:pt modelId="P{c}" type="parTrans" cxnId="X{c}"/><dgm:pt modelId="S{c}" type="sibTrans" cxnId="X{c}"/>"#
+                r#"<dgm:pt modelId="N{c}"{kind}><dgm:prSet/><dgm:t><a:bodyPr/><a:p><a:r><a:t>Item {c}</a:t></a:r></a:p></dgm:t></dgm:pt><dgm:pt modelId="P{c}" type="parTrans" cxnId="X{c}"/><dgm:pt modelId="S{c}" type="sibTrans" cxnId="X{c}"/>"#
             );
             let o = ords.entry(*p).or_default();
             let src = p.map_or("D".to_owned(), |p| format!("N{p}"));
@@ -953,32 +1370,154 @@ mod tests {
         (Some(1), 4),
     ];
 
-    #[test]
-    fn org_charts_centre_parents_over_children_with_elbow_connectors() {
-        let d = data("orgChart1", ORG);
-        let models: Vec<String> = (0..5).map(|i| format!("N{i}")).collect();
-        let out = relayout(&drawing(&models), &d, 10_000, 6_000).unwrap();
-        let (b, c) = read(&out);
-        let mid = |x: &Xfrm| x.x + x.cx / 2;
-        // Levels top to bottom; the boss over A and B, A over its two.
-        assert!(b["N0"].y < b["N1"].y && b["N1"].y < b["N3"].y);
-        assert_eq!(b["N1"].y, b["N2"].y);
-        assert!((mid(&b["N1"]) - (mid(&b["N3"]) + mid(&b["N4"])) / 2).abs() <= 1);
-        assert!((mid(&b["N0"]) - (mid(&b["N1"]) + mid(&b["N2"])) / 2).abs() <= 1);
-        // Inside the frame, 10:6.
-        for x in b.values() {
+    /// Item boxes and connectors of an Organization Chart laid out in a
+    /// 10 000 × 6 000 frame.
+    fn org(d: &str, n: usize) -> (HashMap<String, Xfrm>, Vec<(String, Xfrm)>) {
+        let models: Vec<String> = (0..n).map(|i| format!("N{i}")).collect();
+        let out = relayout(&drawing(&models), d, 10_000, 6_000).unwrap();
+        let r = read(&out);
+        for x in r.0.values() {
             assert!(
-                x.x >= 0 && x.y >= 0 && x.x + x.cx <= 10_000 && x.y + x.cy <= 6_000,
+                x.x >= -1 && x.y >= -1 && x.x + x.cx <= 10_001 && x.y + x.cy <= 6_001,
                 "{x:?}"
             );
-            assert!((x.cy as f64 / x.cx as f64 - 0.6).abs() < 0.01);
         }
-        // A connector per item with a parent, from the parent's bottom to
-        // the child's top.
+        r
+    }
+
+    fn conn<'a>(c: &'a [(String, Xfrm)], m: &str) -> &'a Xfrm {
+        &c.iter().find(|(x, _)| x == m).unwrap().1
+    }
+
+    #[test]
+    fn org_charts_hang_leaves_on_the_right_as_powerpoint_starts_them() {
+        let d = data("orgChart1", ORG);
+        let (b, c) = org(&d, 5);
+        let mid = |x: &Xfrm| x.x + x.cx / 2;
+        // The boss over A and B, side by side, the boss centred over them.
+        assert!(b["N0"].y < b["N1"].y);
+        assert_eq!(b["N1"].y, b["N2"].y);
+        assert!((mid(&b["N0"]) - (mid(&b["N1"]) + mid(&b["N2"])) / 2).abs() <= 1);
+        // Boxes twice as wide as tall (orgChart1's constraints).
+        for x in b.values() {
+            assert!((x.cy as f64 / x.cx as f64 - 0.5).abs() < 0.01, "{x:?}");
+        }
+        // A's children are leaves: they hang on its right, a quarter of a
+        // box in, one under the other, 0.21 box widths apart.
+        let (a, a1, a2) = (b["N1"], b["N3"], b["N4"]);
+        assert_eq!(a1.x, a2.x);
+        assert!((a1.x - (a.x + a.cx / 4)).abs() <= 1, "{a:?} {a1:?}");
+        assert!((a1.y - (a.y + a.cy + (a.cx as f64 * 0.21) as i64)).abs() <= 2);
+        assert!(a2.y > a1.y + a1.cy);
+        // Its connectors: down from near A's left edge, then right into
+        // the child's left side.
+        let p3 = conn(&c, "P3");
+        assert!((p3.x - (a.x + a.cx / 10)).abs() <= 1, "{p3:?}");
+        assert!((p3.y - (a.y + a.cy)).abs() <= 1);
+        assert!((p3.x + p3.cx - a1.x).abs() <= 1);
+        assert!((p3.y + p3.cy - (a1.y + a1.cy / 2)).abs() <= 1);
+        // The boss's: elbows from its bottom to the children's tops,
+        // bending halfway down the gap.
+        let p1 = conn(&c, "P1");
+        assert!((p1.y - (b["N0"].y + b["N0"].cy)).abs() <= 1);
+        assert!((p1.y + p1.cy - a.y).abs() <= 1);
         assert_eq!(c.len(), 4);
-        let a1 = c.iter().find(|(m, _)| m == "P3").unwrap().1;
-        assert_eq!(a1.y, b["N1"].y + b["N1"].cy);
-        assert_eq!(a1.y + a1.cy, b["N3"].y);
+    }
+
+    #[test]
+    fn assistants_sit_beside_the_line_down_from_their_manager() {
+        // The boss with an assistant (N1) and two reports.
+        let d = data_asst(
+            "orgChart1",
+            &[(None, 0), (Some(0), 1), (Some(0), 2), (Some(0), 3)],
+            &[1],
+        );
+        let (b, c) = org(&d, 4);
+        let (boss, asst, x) = (b["N0"], b["N1"], b["N2"]);
+        let stem = boss.x + boss.cx / 2;
+        // Between the boss and its reports, left of the line down.
+        assert!(asst.y > boss.y + boss.cy && asst.y + asst.cy < x.y);
+        assert!(asst.x + asst.cx < stem);
+        assert_eq!(b["N2"].y, b["N3"].y);
+        // Its connector: down the line, then left into its right side.
+        let p1 = conn(&c, "P1");
+        assert!((p1.x + p1.cx - stem).abs() <= 1, "{p1:?} {stem}");
+        assert!((p1.x - (asst.x + asst.cx)).abs() <= 1);
+        assert!((p1.y + p1.cy - (asst.y + asst.cy / 2)).abs() <= 1);
+        // The reports' elbows bend under the assistant.
+        let p2 = conn(&c, "P2");
+        assert!((p2.y - (boss.y + boss.cy)).abs() <= 1 && (p2.y + p2.cy - x.y).abs() <= 1);
+    }
+
+    #[test]
+    fn org_layouts_standard_both_left_and_right_hanging() {
+        // The boss over three leaves: set its layout each way.
+        let d = data(
+            "orgChart1",
+            &[(None, 0), (Some(0), 1), (Some(0), 2), (Some(0), 3)],
+        );
+        let models: Vec<String> = (0..4).map(|i| format!("N{i}")).collect();
+        let dr = relayout(&drawing(&models), &d, 10_000, 6_000).unwrap();
+        assert_eq!(org_layout(&d, "N0"), None);
+        let set = |l: OrgLayout| {
+            let (dr2, d2) = set_org_layout(&dr, &d, "N0", l, 10_000, 6_000).unwrap();
+            assert_eq!(org_layout(&d2, "N0"), Some(l));
+            (read(&dr2).0, d2)
+        };
+        // Left Hanging: a column left of the line down from near its
+        // right edge.
+        let (b, d2) = set(OrgLayout::LeftHanging);
+        assert!(d2.contains(r#"<dgm:hierBranch val="l"/>"#), "{d2}");
+        assert!(d2.contains(r#"presAssocID="N0" presName="hierRoot1""#));
+        let boss = b["N0"];
+        for k in ["N1", "N2", "N3"] {
+            assert!(b[k].x + b[k].cx < boss.x + boss.cx * 9 / 10, "{k}");
+            assert_eq!(b[k].x, b["N1"].x);
+        }
+        assert!(b["N1"].y < b["N2"].y && b["N2"].y < b["N3"].y);
+        // Changed again: the same presentation item is rewritten.
+        let (dr3, d3) = set_org_layout(&dr, &d2, "N0", OrgLayout::Both, 10_000, 6_000).unwrap();
+        assert_eq!(d3.matches("hierBranch").count(), 1);
+        let b = read(&dr3).0;
+        let stem = b["N0"].x + b["N0"].cx / 2;
+        // Both: two to a row either side of the line.
+        assert!(b["N1"].x + b["N1"].cx < stem && b["N2"].x > stem);
+        assert_eq!(b["N1"].y, b["N2"].y);
+        assert!(b["N3"].y > b["N1"].y && b["N3"].x == b["N1"].x);
+        // Right Hanging on the boss.
+        let (b, _) = set(OrgLayout::RightHanging);
+        assert!(b["N1"].x > b["N0"].x && b["N1"].x == b["N3"].x);
+        // Standard: side by side, written as PowerPoint does (no value).
+        let (b, d5) = set(OrgLayout::Standard);
+        assert!(d5.contains("<dgm:hierBranch/>"));
+        assert!(b["N1"].y == b["N3"].y && b["N1"].x < b["N2"].x);
+        // Not an Organization Chart.
+        let h = data("hierarchy1", ORG);
+        assert!(set_org_layout(&dr, &h, "N0", OrgLayout::Both, 10, 10).is_err());
+    }
+
+    #[test]
+    fn add_assistant_to_an_org_chart_item() {
+        let d = data("orgChart1", ORG);
+        let models: Vec<String> = (0..5).map(|i| format!("N{i}")).collect();
+        let dr = relayout(&drawing(&models), &d, 10_000, 6_000).unwrap();
+        let (dr2, d2, id) = add_item(&dr, &d, "N0", AddPlace::Assistant, 10_000, 6_000).unwrap();
+        assert!(
+            d2.contains(&format!(r#"modelId="{id}" type="asst""#)),
+            "{d2}"
+        );
+        let t = tree(&d2).unwrap();
+        let k = t.nodes.iter().position(|n| n.id == id).unwrap();
+        assert!(t.nodes[k].asst && t.nodes[t.nodes[k].parent.unwrap()].id == "N0");
+        let b = read(&dr2).0;
+        assert!(b[&id].y > b["N0"].y && b[&id].y < b["N1"].y);
+        // A shape added after an assistant is an assistant too.
+        let (_, d3, id2) = add_item(&dr2, &d2, &id, AddPlace::After, 10_000, 6_000).unwrap();
+        assert!(d3.contains(&format!(r#"modelId="{id2}" type="asst""#)));
+        // Only Organization Charts have assistants.
+        let h = data("hierarchy1", ORG);
+        let e = add_item(&dr, &h, "N0", AddPlace::Assistant, 10, 10).unwrap_err();
+        assert_eq!(e.to_string(), ASSISTANT_ORG);
     }
 
     #[test]

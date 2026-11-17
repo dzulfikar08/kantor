@@ -76,6 +76,25 @@ pub enum Family {
     /// Horizontal Picture List: on a background, a column per item, a
     /// picture over the item's text.
     HorizontalPictures,
+    /// Picture Accent List: a column per item, a small picture at its top
+    /// left beside the item's text, its sub-items in a box under them.
+    PictureAccentList,
+    /// Bending Picture Accent List: items in rows, each a box with its
+    /// sub-items over a bar with its text, a round picture at the bar's
+    /// end.
+    BendingPictureAccentList,
+    /// Vertical Picture List: a bar per item, top down, its picture at the
+    /// left and its text beside it.
+    VerticalPictureList,
+    /// Picture Caption List: pictures in rows, each item's text under its
+    /// picture.
+    PictureCaptionList,
+    /// Titled Picture Blocks: blocks in rows, the item's text over its
+    /// picture, its sub-items in a box over the picture's right side.
+    TitledPictureBlocks,
+    /// Picture Grid: square pictures in rows, each item's text over its
+    /// picture.
+    PictureGrid,
 }
 
 /// The SmartArt layouts Kantor lays out: family, layout id (`loTypeId`),
@@ -161,6 +180,42 @@ pub const LAYOUTS: &[(Family, &str, &str, &str)] = &[
         "Horizontal Picture List",
     ),
     (
+        Family::PictureAccentList,
+        "urn:microsoft.com/office/officeart/2005/8/layout/hList2",
+        "picture",
+        "Picture Accent List",
+    ),
+    (
+        Family::BendingPictureAccentList,
+        "urn:microsoft.com/office/officeart/2005/8/layout/bList2",
+        "picture",
+        "Bending Picture Accent List",
+    ),
+    (
+        Family::VerticalPictureList,
+        "urn:microsoft.com/office/officeart/2005/8/layout/vList4",
+        "picture",
+        "Vertical Picture List",
+    ),
+    (
+        Family::PictureCaptionList,
+        "urn:microsoft.com/office/officeart/2005/8/layout/pList1",
+        "picture",
+        "Picture Caption List",
+    ),
+    (
+        Family::TitledPictureBlocks,
+        "urn:microsoft.com/office/officeart/2008/layout/TitledPictureBlocks",
+        "picture",
+        "Titled Picture Blocks",
+    ),
+    (
+        Family::PictureGrid,
+        "urn:microsoft.com/office/officeart/2008/layout/PictureGrid",
+        "picture",
+        "Picture Grid",
+    ),
+    (
         Family::Venn,
         "urn:microsoft.com/office/officeart/2005/8/layout/venn1",
         "relationship",
@@ -218,12 +273,82 @@ impl Family {
     /// Items' sub-items go in a box of their own (else they're bullets in
     /// the item's shape).
     fn sub_boxes(self) -> bool {
-        matches!(self, Family::Bullets | Family::HorizontalBullets)
+        matches!(
+            self,
+            Family::Bullets
+                | Family::HorizontalBullets
+                | Family::PictureAccentList
+                | Family::BendingPictureAccentList
+                | Family::TitledPictureBlocks
+        )
+    }
+
+    /// Every item has a sub-item box, empty or not (it's part of the
+    /// item's look).
+    fn always_sub(self) -> bool {
+        matches!(
+            self,
+            Family::PictureAccentList
+                | Family::BendingPictureAccentList
+                | Family::TitledPictureBlocks
+        )
     }
 
     /// Each item has a picture (placeholder) besides its text.
     pub fn pictures(self) -> bool {
-        self == Family::HorizontalPictures
+        matches!(
+            self,
+            Family::HorizontalPictures
+                | Family::PictureAccentList
+                | Family::BendingPictureAccentList
+                | Family::VerticalPictureList
+                | Family::PictureCaptionList
+                | Family::TitledPictureBlocks
+                | Family::PictureGrid
+        )
+    }
+
+    /// The presentation name (`presName`) of an item's picture, as the
+    /// layout definition names it.
+    fn picture_name(self) -> &'static str {
+        match self {
+            Family::PictureAccentList => "image",
+            Family::BendingPictureAccentList => "adorn",
+            Family::VerticalPictureList => "img",
+            Family::PictureCaptionList => "pictRect",
+            Family::TitledPictureBlocks => "Image",
+            Family::PictureGrid => "rect1",
+            _ => "imagNode",
+        }
+    }
+
+    /// The style label (`presStyleLbl`) of an item's picture.
+    fn picture_style(self) -> &'static str {
+        match self {
+            Family::BendingPictureAccentList => "fgAccFollowNode1",
+            Family::TitledPictureBlocks => "bgImgPlace1",
+            Family::PictureGrid => "alignImgPlace1",
+            _ => "fgImgPlace1",
+        }
+    }
+
+    /// The presentation name of an item's sub-item box.
+    fn sub_name(self) -> &'static str {
+        match self {
+            Family::PictureAccentList => "childNode",
+            Family::BendingPictureAccentList => "childRect",
+            Family::TitledPictureBlocks => "ChildText",
+            _ => "childText",
+        }
+    }
+
+    /// An item's text goes in a shape of its own, over the item's shape
+    /// (`parentText` over `parentRect`, `text` over `box`).
+    fn text_shapes(self) -> bool {
+        matches!(
+            self,
+            Family::BendingPictureAccentList | Family::VerticalPictureList
+        )
     }
 
     /// A hierarchy (laid out by the `tree` module).
@@ -246,6 +371,9 @@ pub enum AddPlace {
     Before,
     Above,
     Below,
+    /// An Organization Chart's *Add Assistant*: an assistant of the
+    /// selected item.
+    Assistant,
 }
 
 /// A top-level item of the data model.
@@ -374,6 +502,9 @@ pub fn family(drawing: &str, data: &str) -> Option<Family> {
         if count(Role::Pic(i)) > 1 || !v.family.pictures() && count(Role::Pic(i)) > 0 {
             return None;
         }
+        if count(Role::Text(i)) > 1 {
+            return None;
+        }
     }
     if count(Role::Back) > 1 {
         return None;
@@ -388,6 +519,8 @@ enum Role {
     Sub(usize),
     /// The item's picture (placeholder) of a picture layout.
     Pic(usize),
+    /// The item's text, drawn over its shape (`Family::text_shapes`).
+    Text(usize),
     Arrow(usize),
     /// Drawn for the item's parent transition: a Step Up Process's step.
     Deco(usize),
@@ -413,8 +546,14 @@ impl View {
                 let name = name.to_ascii_lowercase();
                 return if name.contains("child") {
                     Role::Sub(i)
-                } else if is_picture_name(&name) {
+                } else if is_picture_name(&name)
+                    || self.family == Family::PictureGrid && name == "rect1"
+                {
                     Role::Pic(i)
+                } else if self.family.text_shapes()
+                    && matches!(name.as_str(), "parenttext" | "text")
+                {
+                    Role::Text(i)
                 } else {
                     Role::Node(i)
                 };
@@ -432,16 +571,22 @@ impl View {
     /// The top-level item a shape belongs to.
     fn item_of(&self, model_id: &str) -> Option<usize> {
         match self.role(model_id) {
-            Role::Node(i) | Role::Sub(i) | Role::Pic(i) | Role::Arrow(i) | Role::Deco(i) => Some(i),
+            Role::Node(i)
+            | Role::Sub(i)
+            | Role::Pic(i)
+            | Role::Text(i)
+            | Role::Arrow(i)
+            | Role::Deco(i) => Some(i),
             Role::Back | Role::Other => None,
         }
     }
 }
 
 /// Whether a presentation item named `name` (lower case) is a picture
-/// placeholder (`imagNode`, `Image`, `pictRect`...).
+/// placeholder (`imagNode`, `Image`, `pictRect`, `img`, `adorn`...;
+/// Picture Grid's `rect1` is told apart by its layout).
 fn is_picture_name(name: &str) -> bool {
-    name.contains("imag") || name.contains("pict")
+    name.contains("imag") || name.contains("pict") || matches!(name, "img" | "adorn")
 }
 
 /// A drawing shape: where it is in the XML and what it shows.
@@ -517,6 +662,8 @@ fn shapes(drawing: &str, v: &View) -> anyhow::Result<(Vec<DShape>, usize)> {
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Boxes {
     node: Xfrm,
+    /// The item's text box, when not all of its shape.
+    tx: Option<Xfrm>,
     sub: Option<Xfrm>,
     pic: Option<Xfrm>,
     arrow: Option<Xfrm>,
@@ -689,6 +836,120 @@ fn boxes(family: Family, subs: &[bool], sub_ratio: f64, w: f64, h: f64) -> Vec<B
                 })
                 .collect()
         }
+        Family::PictureAccentList => {
+            // A column per item (gaps a tenth of a column): the picture a
+            // square at the top left, the item's text beside it, the box
+            // with its sub-items under them.
+            let cw = w / (nf + 0.1 * (nf - 1.0));
+            let p = (cw * 0.3).min(h * 0.3);
+            let gap = p * 0.1;
+            (0..n)
+                .map(|i| {
+                    let x = i as f64 * cw * 1.1;
+                    Boxes {
+                        pic: Some(Xfrm::new(r(x), 0, r(p), r(p))),
+                        node: Xfrm::new(r(x + p + gap), 0, r(cw - p - gap), r(p)),
+                        sub: Some(Xfrm::new(r(x), r(p + gap), r(cw), r(h - p - gap))),
+                        ..Boxes::default()
+                    }
+                })
+                .collect()
+        }
+        Family::BendingPictureAccentList => {
+            // bList2's composite (w × 1.06 w, gaps 0.08 w across and
+            // 0.16 w between rows): the sub-item box over 65 % of it (92.3 %
+            // wide), the bar under it as tall as 43 % of the box, its text
+            // over 65 % of the bar's width, the round picture (35 % of the
+            // bar's width) in the bottom right corner.
+            grid(n, 1.06, 0.08, 0.16, w, h)
+                .into_iter()
+                .map(|c| {
+                    let (x, y, cw, ch) = (c.x as f64, c.y as f64, c.cx as f64, c.cy as f64);
+                    let sh = ch * 0.65;
+                    let th = sh * 0.43;
+                    let d = cw * 0.923 * 0.35;
+                    Boxes {
+                        sub: Some(Xfrm::new(r(x), r(y), r(cw * 0.923), r(sh))),
+                        node: Xfrm::new(r(x), r(y + sh), r(cw * 0.923), r(th)),
+                        tx: Some(Xfrm::new(r(x), r(y + sh), r(cw * 0.65), r(th))),
+                        pic: Some(Xfrm::new(r(x + cw - d), r(y + ch - d), r(d), r(d))),
+                        ..Boxes::default()
+                    }
+                })
+                .collect()
+        }
+        Family::VerticalPictureList => {
+            // vList4: rows top down, a tenth of a row apart; the picture
+            // 20 % of the row's width and 80 % of its height, a tenth of
+            // its height in from the top left; the text right of it.
+            let rh = h / (nf + 0.1 * (nf - 1.0));
+            (0..n)
+                .map(|i| {
+                    let y = i as f64 * rh * 1.1;
+                    let (pl, pw) = (rh * 0.1, w * 0.2);
+                    let tl = (pl + pw).min(w);
+                    Boxes {
+                        node: Xfrm::new(0, r(y), r(w), r(rh)),
+                        pic: Some(Xfrm::new(r(pl), r(y + rh * 0.1), r(pw), r(rh * 0.8))),
+                        tx: Some(Xfrm::new(r(tl), r(y), r(w - tl), r(rh))),
+                        ..Boxes::default()
+                    }
+                })
+                .collect()
+        }
+        Family::PictureCaptionList => {
+            // pList1's composite (w × 1.06 w, in rows): the picture over
+            // the top 80 %, the caption under it.
+            grid(n, 1.06, 0.08, 0.16, w, h)
+                .into_iter()
+                .map(|c| {
+                    let ph = c.cy as f64 * 0.8;
+                    Boxes {
+                        pic: Some(Xfrm::new(c.x, c.y, c.cx, r(ph))),
+                        node: Xfrm::new(c.x, c.y + r(ph), c.cx, c.cy - r(ph)),
+                        ..Boxes::default()
+                    }
+                })
+                .collect()
+        }
+        Family::TitledPictureBlocks => {
+            // Blocks 1.3787 : 1 in rows: the title across the top fifth,
+            // the picture under it (70 % wide), the sub-item box over the
+            // picture's right side.
+            grid(n, 1.0 / 1.3787, 0.1, 0.15, w, h)
+                .into_iter()
+                .map(|c| {
+                    let (x, y, cw, ch) = (c.x as f64, c.y as f64, c.cx as f64, c.cy as f64);
+                    let th = ch * 0.2;
+                    Boxes {
+                        node: Xfrm::new(r(x), r(y), r(cw), r(th)),
+                        pic: Some(Xfrm::new(r(x), r(y + th), r(cw * 0.7), r(ch - th))),
+                        sub: Some(Xfrm::new(
+                            r(x + cw * 0.6),
+                            r(y + th + (ch - th) * 0.25),
+                            r(cw * 0.4),
+                            r((ch - th) * 0.6),
+                        )),
+                        ..Boxes::default()
+                    }
+                })
+                .collect()
+        }
+        Family::PictureGrid => {
+            // PictureGrid's composite (w : h 0.7568): the text over a
+            // square picture.
+            grid(n, 1.0 / 0.7568, 0.06, 0.06, w, h)
+                .into_iter()
+                .map(|c| {
+                    let th = c.cy - c.cx.min(c.cy);
+                    Boxes {
+                        node: Xfrm::new(c.x, c.y, c.cx, th),
+                        pic: Some(Xfrm::new(c.x, c.y + th, c.cx, c.cy - th)),
+                        ..Boxes::default()
+                    }
+                })
+                .collect()
+        }
         Family::ContinuousBlock => {
             // Boxes in a row over the middle of the arrow (back_box), the
             // arrow's head clear of the last one.
@@ -841,6 +1102,37 @@ fn boxes(family: Family, subs: &[bool], sub_ratio: f64, w: f64, h: f64) -> Vec<B
                 .collect()
         }
     }
+}
+
+/// `n` cells `aspect` times as tall as wide in rows (PowerPoint's `snake`
+/// algorithm), `gx` and `gy` cell widths apart across and down: the
+/// column count giving the biggest cells, the rows centred in a `w` × `h`
+/// frame and the last row centred under the others.
+fn grid(n: usize, aspect: f64, gx: f64, gy: f64, w: f64, h: f64) -> Vec<Xfrm> {
+    let mut best = (0.0, 1usize);
+    for c in 1..=n.max(1) {
+        let rows = n.div_ceil(c) as f64;
+        let cf = c as f64;
+        let cw = (w / (cf + gx * (cf - 1.0))).min(h / (aspect * rows + gy * (rows - 1.0)));
+        if cw > best.0 + 1e-6 {
+            best = (cw, c);
+        }
+    }
+    let (cw, c) = best;
+    let ch = cw * aspect;
+    let rows = n.div_ceil(c);
+    let total_h = rows as f64 * ch + (rows as f64 - 1.0) * gy * cw;
+    let y0 = (h - total_h) / 2.0;
+    (0..n)
+        .map(|i| {
+            let (row, col) = (i / c, i % c);
+            let in_row = if row + 1 == rows { n - row * c } else { c } as f64;
+            let row_w = in_row * cw + (in_row - 1.0) * gx * cw;
+            let x = (w - row_w) / 2.0 + col as f64 * cw * (1.0 + gx);
+            let y = y0 + row as f64 * (ch + gy * cw);
+            Xfrm::new(r(x), r(y), r(cw), r(ch))
+        })
+        .collect()
 }
 
 /// `a:off`/`a:ext` element body (and `rot`) of `x`, written as the
@@ -996,6 +1288,7 @@ pub fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<Str
             Role::Node(i) => lay.get(i).map(|b| b.node),
             Role::Sub(i) => lay.get(i).and_then(|b| b.sub),
             Role::Pic(i) => lay.get(i).and_then(|b| b.pic),
+            Role::Text(i) => lay.get(i).map(|b| b.tx.unwrap_or(b.node)),
             Role::Arrow(i) => once(lay.get(i).and_then(|b| b.arrow), &mut arrow_drawn[i]),
             Role::Deco(i) => once(lay.get(i).and_then(|b| b.deco), &mut deco_drawn[i]),
             Role::Back => once(back, &mut back_drawn),
@@ -1003,7 +1296,7 @@ pub fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<Str
         };
         // Items' shapes keep a turn given them; arrows turn with the layout.
         let target = target.map(|b| match (s.role, &s.xfrm) {
-            (Role::Node(_) | Role::Sub(_) | Role::Pic(_), Some((_, old))) => Xfrm {
+            (Role::Node(_) | Role::Sub(_) | Role::Pic(_) | Role::Text(_), Some((_, old))) => Xfrm {
                 rot: old.rot,
                 flip_h: old.flip_h,
                 flip_v: old.flip_v,
@@ -1019,10 +1312,17 @@ pub fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<Str
         };
         if let Some((range, old)) = &s.xfrm {
             if let Some((trange, told)) = &s.tx {
-                edits.push((
-                    trange.clone(),
-                    write_box(drawing, trange, &follow(old, &new, told)),
-                ));
+                // The layout's own text box for the item, when it has one
+                // (unless a shape of its own shows the text).
+                let own = match s.role {
+                    Role::Node(i) if !list.iter().any(|t| t.role == Role::Text(i)) => {
+                        lay.get(i).and_then(|b| b.tx)
+                    }
+                    Role::Text(_) => Some(new),
+                    _ => None,
+                };
+                let tx = own.unwrap_or_else(|| follow(old, &new, told));
+                edits.push((trange.clone(), write_box(drawing, trange, &tx)));
             }
             edits.push((range.clone(), write_box(drawing, range, &new)));
         }
@@ -1210,6 +1510,9 @@ pub fn add_item(
         return tree::add_item(drawing, data, selected, place, w, h);
     }
     let v = view(data)?;
+    if place == AddPlace::Assistant {
+        bail!(tree::ASSISTANT_ORG);
+    }
     if matches!(place, AddPlace::Above | AddPlace::Below) {
         bail!("This SmartArt layout has one level: add shapes before or after");
     }
@@ -1248,10 +1551,24 @@ pub fn add_item(
         let name = v
             .pres
             .get(&t.model)
-            .map_or("imagNode", |p| p.1.as_str())
+            .map_or(v.family.picture_name(), |p| p.1.as_str())
             .to_owned();
         (id, name, t)
     });
+    // The item's other shapes the layout always draws: its sub-item box
+    // (empty) and its text over its shape, copies of the selected item's.
+    let extra: Vec<(String, String, &DShape)> = [
+        (6, Role::Sub(i), v.family.always_sub()),
+        (7, Role::Text(i), v.family.text_shapes()),
+    ]
+    .into_iter()
+    .filter(|e| e.2)
+    .filter_map(|(salt, role, _)| {
+        let t = list.iter().find(|s| s.role == role)?;
+        let name = v.pres.get(&t.model)?.1.clone();
+        Some((new_id(data, salt), name, t))
+    })
+    .collect();
     let body = |pre: &str| {
         format!(
             "<{dgm}t><{a}bodyPr/><{a}lstStyle/><{a}p><{a}endParaRPr lang=\"en-US\"/></{a}p></{dgm}t>{pre}"
@@ -1264,9 +1581,20 @@ pub fn add_item(
         body(""),
         body(""),
         body(""),
-        pic.as_ref().map_or(String::new(), |(id, name, _)| format!(
-            "<{dgm}pt modelId=\"{id}\" type=\"pres\"><{dgm}prSet presAssocID=\"{node}\" presName=\"{name}\" presStyleLbl=\"fgImgPlace1\"/><{dgm}spPr/></{dgm}pt>"
-        ))
+        pic.iter()
+            .map(|(id, name, _)| (id, name, v.family.picture_style()))
+            .chain(extra.iter().map(|(id, name, _)| (id, name, "")))
+            .map(|(id, name, lbl)| {
+                let lbl = if lbl.is_empty() {
+                    String::new()
+                } else {
+                    format!(" presStyleLbl=\"{lbl}\"")
+                };
+                format!(
+                    "<{dgm}pt modelId=\"{id}\" type=\"pres\"><{dgm}prSet presAssocID=\"{node}\" presName=\"{name}\"{lbl}/><{dgm}spPr/></{dgm}pt>"
+                )
+            })
+            .collect::<String>()
     );
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     let pt_lst = doc
@@ -1304,6 +1632,13 @@ pub fn add_item(
         .or_else(|| list.iter().find(|s| matches!(s.role, Role::Node(_))))
         .context("This SmartArt has no shape to copy")?;
     let mut copy = copy_shape(&drawing[template.range.clone()], &node);
+    for (id, _, t) in &extra {
+        let c = copy_shape(&drawing[t.range.clone()], id);
+        match t.role {
+            Role::Text(_) => copy.push_str(&c),
+            _ => copy.insert_str(0, &c),
+        }
+    }
     if let Some((id, _, t)) = &pic {
         copy.insert_str(0, &placeholder(&drawing[t.range.clone()], id));
     }
@@ -1455,7 +1790,10 @@ pub use convert::{change_layout, layout_def};
 
 #[path = "smartart_tree.rs"]
 mod tree;
-pub use tree::{LABEL_LEVELS, RADIAL_CENTRE, RADIAL_KEEP, RADIAL_LEVELS, TOP_ALONE, TOP_KEEP};
+pub use tree::{
+    ASSISTANT_ORG, LABEL_LEVELS, ORG_ONLY, OrgLayout, RADIAL_CENTRE, RADIAL_KEEP, RADIAL_LEVELS,
+    TOP_ALONE, TOP_KEEP, org_layout, set_org_layout,
+};
 
 #[cfg(test)]
 mod tests {
