@@ -138,15 +138,19 @@ const ZOOM_ATTRS: [&str; 4] = [
     "zoomScaleSheetLayoutView",
 ];
 
+/// Sheets in Page Break Preview and each sheet view's zoom attributes,
+/// by `sheetId` ([`read_views`]).
+pub(crate) type ReadViews = (
+    std::collections::HashSet<u32>,
+    HashMap<u32, Vec<(&'static str, String)>>,
+);
+
 /// Sheet views of a package, by `sheetId`: the sheets shown in Page Break
 /// Preview (`sheetView@view="pageBreakPreview"`) and each sheet's zoom
 /// attributes.
 pub(crate) fn read_views(
     skeletons: &std::result::Result<Vec<(u32, String)>, String>,
-) -> (
-    std::collections::HashSet<u32>,
-    HashMap<u32, Vec<(&'static str, String)>>,
-) {
+) -> ReadViews {
     let mut breaks = std::collections::HashSet::new();
     let mut zooms = HashMap::new();
     let Ok(list) = skeletons else {

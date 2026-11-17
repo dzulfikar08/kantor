@@ -1799,10 +1799,7 @@ struct Extras {
     /// Top-left cells of frozen panes (`grid::read_panes`).
     panes: HashMap<u32, (u32, u32)>,
     /// Sheets in Page Break Preview and zooms (`grid::read_views`).
-    views: (
-        std::collections::HashSet<u32>,
-        HashMap<u32, Vec<(&'static str, String)>>,
-    ),
+    views: grid::ReadViews,
     /// Notes' shown state, boxes and formatted text (`preserve::note_extras`).
     note_extras: HashMap<(u32, u32, u32), notes::NoteExtra>,
     /// Excel 2010 conditional format extras (`cf_x14`).

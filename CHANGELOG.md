@@ -25,6 +25,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   the last before it), as Word does.
 - Docs: an index (`INDEX`) has letter headings (`\h`), cross-references (`XE \t "See …"`) and its
   own page number separator (`\l`).
+- Docs: the text beside a "Resize shape to fit text" box wraps around it as the box grows while you
+  type in it, not only when you leave the box.
 - Windows metafile pictures (WMF, EMF and EMF+), Mac PICT pictures and BMPs are drawn in Docs,
   Slides and Sheets, on screen and in PDFs, instead of an empty box: from `.docx`, `.pptx` and
   `.xlsx` files and from `.doc`, `.ppt`, `.xls`, `.ods` and `.rtf` imports (which used to leave
