@@ -213,3 +213,69 @@ fn codes_in_the_text_take_a_caret_and_keep_the_result() {
         .unwrap();
     assert_eq!(g.shown_code(), code);
 }
+
+/// `STYLEREF` in a header shows each page's heading (the first on the
+/// page, else the last before it), and `INDEX` has letter headings and
+/// cross-references (tests/corpus/docx/styleref_index.docx from
+/// scripts/corpus/gen_docx_more.py; pages from page breaks).
+#[test]
+fn style_refs_in_headers_follow_the_page_and_the_index_has_headings() {
+    let mut doc = Document::open(&corpus("styleref_index.docx")).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    assert_eq!(laid.paged.pages.len(), 4);
+    let header = |laid: &docs_pdf::Layout, page: usize| -> String {
+        laid.furniture[page]
+            .iter()
+            .find(|p| p.kind == docs_engine::HfKind::Header)
+            .map(|p| p.layout.paras[0].text.replace('\u{FFFC}', ""))
+            .unwrap_or_default()
+    };
+    assert_eq!(header(&laid, 0), "Chapter: Alpha chapter");
+    assert_eq!(
+        header(&laid, 1),
+        "Chapter: Alpha chapter",
+        "no heading: the one before"
+    );
+    assert_eq!(header(&laid, 2), "Chapter: Beta chapter");
+    assert_eq!(header(&laid, 3), "Chapter: Beta chapter");
+    // The header itself keeps its saved result.
+    let story = doc.stories()[laid.furniture[0][0].layout.story]
+        .doc
+        .paragraphs()[0]
+        .text
+        .replace('\u{FFFC}', "");
+    assert_eq!(story, "Chapter: 0");
+
+    let cx = FieldContext {
+        now: NaiveDate::from_ymd_opt(2026, 11, 17)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap(),
+        offset: FixedOffset::east_opt(0).unwrap(),
+    };
+    let all = Selection {
+        anchor: Position::new(0, 0),
+        head: doc.end(),
+    };
+    doc.update_fields(all, &cx, &mut |d| docs_pdf::field_pages(d, &mut engine));
+    let last = doc.len() - 1;
+    let index = doc.paragraph(last).text.replace('\u{FFFC}', "");
+    let lines: Vec<&str> = index.split('\u{2028}').collect();
+    assert_eq!(
+        lines,
+        [
+            "A",
+            "Apples, 1, 3",
+            "Avocados, 3",
+            "B",
+            "Bananas, 2",
+            "F",
+            "Fruit. See Apples",
+            "    Apples, 1",
+            "Z",
+            "Zebras, 1",
+        ],
+        "{index:?}"
+    );
+}
