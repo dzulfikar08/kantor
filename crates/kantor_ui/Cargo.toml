@@ -10,6 +10,7 @@ repository.workspace = true
 kantor_numfmt.workspace = true
 gpui-kit.workspace = true
 kantor_core.workspace = true
+kantor_metafile.workspace = true
 kantor_spell.workspace = true
 log.workspace = true
 kantor_theme.workspace = true

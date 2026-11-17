@@ -14,6 +14,7 @@ pub mod find_bar;
 pub mod fonts;
 pub mod i18n;
 pub mod keys;
+pub mod metafile;
 pub mod metrics;
 pub mod perf;
 pub mod read_only;

@@ -23,7 +23,7 @@
 //! (selection, handles, placeholders for objects Kantor can't draw) uses
 //! theme tokens.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -31,6 +31,7 @@ use std::sync::Arc;
 use docs_layout::parley::FontData;
 use docs_ui::FontBridge;
 use gpui_kit::*;
+use kantor_ui::metafile::MetafilePng;
 use lyon_tessellation::{LineCap as LCap, LineJoin as LJoin};
 use slides_engine::{EMU_PER_PX, LineCap, LineJoin, Presentation, RenderText, Rgb, Slide, Xfrm};
 use slides_scene::{
@@ -163,6 +164,9 @@ pub(crate) enum GPrim {
 pub struct Painted {
     pub(crate) prims: Vec<GPrim>,
     pub background: Rgb,
+    /// Some picture is still rendering in the background and shows a
+    /// placeholder: prepare it again on a later frame instead of keeping it.
+    pub loading: bool,
 }
 
 type TurnKey = (Arc<str>, i32, bool, i64, [i32; 4], u8);
@@ -186,6 +190,9 @@ pub struct Painter {
     /// address can't be reused while cached and an edit (copy on write)
     /// always gets a new one.
     scenes: RefCell<HashMap<SceneKey, SceneEntry>>,
+    /// A picture of the scene being prepared is still rendering in the
+    /// background (a placeholder is drawn): don't keep that scene.
+    pending: Cell<bool>,
 }
 
 impl Painter {
@@ -198,6 +205,7 @@ impl Painter {
             turned: RefCell::default(),
             evicted: RefCell::default(),
             scenes: RefCell::default(),
+            pending: Cell::new(false),
         }
     }
 
@@ -259,7 +267,7 @@ impl Painter {
         }
         let scene = self.scene(pres, slide, &opts);
         let painted = Rc::new(self.prepare(&scene, cx));
-        if opts.preview.is_none() {
+        if opts.preview.is_none() && !painted.loading {
             let mut cache = self.scenes.borrow_mut();
             if cache.len() > 400 {
                 cache.clear();
@@ -283,9 +291,16 @@ impl Painter {
             "tif" | "tiff" => Some(ImageFormat::Tiff),
             _ => None,
         };
-        // WMF, EMF and PICT (and BMPs GPUI can't read) are drawn as PNG.
+        // WMF, EMF and PICT (and BMPs GPUI can't read) are drawn as PNG,
+        // rendered in the background: a placeholder until then.
         let converted = match kantor_metafile::kind(data) {
-            Some(_) => kantor_metafile::to_png(data, 2048).map(|png| (ImageFormat::Png, png)),
+            Some(_) => match kantor_ui::metafile::metafile_png(data, 2048, cx) {
+                MetafilePng::Loading => {
+                    self.pending.set(true);
+                    return None;
+                }
+                MetafilePng::Ready(png) => png.map(|png| (ImageFormat::Png, png.as_ref().clone())),
+            },
             None => format.map(|f| (f, data.as_ref().clone())),
         };
         let decoded = converted.and_then(|(format, bytes)| {
@@ -361,6 +376,7 @@ impl Painter {
         background: Rgb,
         cx: &App,
     ) -> Painted {
+        self.pending.set(false);
         let mut prims = Vec::with_capacity(items.len());
         for item in items {
             let t = &item.transform;
@@ -460,7 +476,11 @@ impl Painter {
                 }
             }
         }
-        Painted { prims, background }
+        Painted {
+            prims,
+            background,
+            loading: self.pending.get(),
+        }
     }
 }
 

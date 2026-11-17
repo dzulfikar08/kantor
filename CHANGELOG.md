@@ -115,6 +115,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ### Changed
 
 - Docs: shadows are drawn blurred, and 3-D extrusions and bevels are approximated.
+- The Linux AppImages and tarballs run on older systems: they need glibc 2.34 (Ubuntu 22.04,
+  Debian 12, RHEL 9, Fedora 35 or later) instead of 2.39 (Ubuntu 24.04).
+- WMF, EMF and PICT pictures go into PDFs (Docs, Slides and Sheets) as vector graphics, so their
+  lines and text stay sharp at any zoom, instead of as bitmaps.
+- WMF, EMF and PICT pictures are drawn in the background: opening a document with one no longer
+  holds up the window while the fonts its text needs are loaded (a placeholder shows for a moment).
 
 ## [0.11.0] - 2026-11-17
 

@@ -25,6 +25,7 @@ pub mod chart;
 pub mod floats;
 pub mod pages;
 pub mod smartart;
+pub mod vector;
 
 pub use floats::FloatItem;
 pub use pages::{Layout, Placed, StoryLayout, lay_out_with};
@@ -138,6 +139,15 @@ impl TextRun {
 /// A picture's format and file bytes.
 type PictureData = (ImageFormat, Arc<[u8]>);
 
+/// A picture's bytes as the PDF writer takes them: PNG and JPEG as they
+/// are, WMF, EMF, PICT and BMP too (drawn by [`Images::picture`] when the
+/// PDF is written, off the UI thread); `None` for what Kantor can't draw.
+fn pdf_picture_data(bytes: Arc<[u8]>) -> Option<PictureData> {
+    let format = ImageFormat::sniff(&bytes);
+    (format != ImageFormat::Other || kantor_metafile::kind(&bytes).is_some())
+        .then_some((format, bytes))
+}
+
 /// A whole document ready to encode: page size (px) and pages.
 #[derive(Clone, Debug)]
 pub struct Scene {
@@ -241,7 +251,7 @@ fn add_page(
             .entry((doc_key, img.rel_id.clone()))
             .or_insert_with(|| {
                 let bytes = doc.image_bytes(&img.rel_id)?;
-                docs_engine::drawable_picture(bytes)
+                pdf_picture_data(bytes)
             });
         if let Some((format, bytes)) = found {
             let [x, y, w, h] = o.rect;
@@ -333,7 +343,7 @@ fn float_scene(
                 let key = (it.story.map_or(0, |s| s + 1), rel_id.clone());
                 let found = pictures.entry(key).or_insert_with(|| {
                     let bytes = owner.image_bytes(&rel_id)?;
-                    docs_engine::drawable_picture(bytes)
+                    pdf_picture_data(bytes)
                 });
                 if let Some((format, bytes)) = found {
                     out.order.push((true, out.pictures.len()));
@@ -521,6 +531,25 @@ pub fn write(scene: &Scene) -> Result<Vec<u8>> {
 pub struct Images {
     skip: HashSet<*const u8>,
     made: HashMap<*const u8, Option<Image>>,
+    vectors: HashMap<*const u8, Option<Arc<kantor_metafile::usvg::Tree>>>,
+}
+
+/// A picture ready to draw into a PDF.
+#[derive(Clone)]
+pub enum PdfPicture {
+    Raster(Image),
+    /// A metafile (WMF, EMF, PICT) drawn as vector graphics.
+    Vector(Arc<kantor_metafile::usvg::Tree>),
+}
+
+impl PdfPicture {
+    /// Draw it stretched to `size` (pt) at the current origin.
+    pub fn draw(self, surface: &mut Surface, size: Size) {
+        match self {
+            Self::Raster(image) => surface.draw_image(image, size),
+            Self::Vector(tree) => vector::draw_tree(surface, &tree, size),
+        }
+    }
 }
 
 impl Images {
@@ -530,7 +559,39 @@ impl Images {
         Self {
             skip,
             made: HashMap::new(),
+            vectors: HashMap::new(),
         }
+    }
+
+    /// The picture in `data`: WMF, EMF and PICT as vector graphics (as a
+    /// bitmap when they can't be read that way), the rest as [`Images::get`].
+    pub fn picture(&mut self, data: Arc<dyn AsRef<[u8]> + Send + Sync>) -> Option<PdfPicture> {
+        let bytes: &[u8] = (*data).as_ref();
+        let key = bytes.as_ptr();
+        if self.skip.contains(&key) {
+            return None;
+        }
+        if matches!(
+            kantor_metafile::kind(bytes),
+            Some(
+                kantor_metafile::Kind::Wmf
+                    | kantor_metafile::Kind::Emf
+                    | kantor_metafile::Kind::Pict
+            )
+        ) {
+            let tree = self
+                .vectors
+                .entry(key)
+                .or_insert_with(|| {
+                    let pic = kantor_metafile::render(bytes).filter(|p| !p.is_empty())?;
+                    pic.tree().map(Arc::new)
+                })
+                .clone();
+            if let Some(tree) = tree {
+                return Some(PdfPicture::Vector(tree));
+            }
+        }
+        self.get(data).map(PdfPicture::Raster)
     }
 
     /// The address of the bytes `image` was made from (to skip it next
@@ -801,7 +862,7 @@ fn turn_about(deg: f32, (sx, sy): (f32, f32), (mx, my): (f32, f32)) -> Transform
 
 fn draw_picture(surface: &mut Surface, pic: &Picture, images: &mut Images) {
     let data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(pic.bytes.clone());
-    let image = images.get(data);
+    let image = images.picture(data);
     let [x, y, w, h] = pic.rect;
     let (Some(image), Some(size)) = (image, Size::from_wh(w * TO_PT, h * TO_PT)) else {
         return;
@@ -827,7 +888,7 @@ fn draw_picture(surface: &mut Surface, pic: &Picture, images: &mut Images) {
         surface.push_clip_path(c, &krilla::paint::FillRule::NonZero);
     }
     surface.push_transform(&Transform::from_translate(x * TO_PT, y * TO_PT));
-    surface.draw_image(image, size);
+    image.draw(surface, size);
     surface.pop();
     if clip.is_some() {
         surface.pop();

@@ -1774,14 +1774,10 @@ impl DocsView {
                         let Some(bytes) = self.doc.image_bytes(&img.rel_id) else {
                             continue;
                         };
-                        let Some((format, bytes)) = docs_engine::drawable_picture(bytes) else {
+                        let Some((format, bytes)) = screen_picture(bytes, cx) else {
                             continue;
                         };
-                        let format = match format {
-                            docs_engine::ImageFormat::Jpeg => ImageFormat::Jpeg,
-                            _ => ImageFormat::Png,
-                        };
-                        let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes.to_vec()));
+                        let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes));
                         self.images.insert(img.rel_id.clone(), i.clone());
                         i
                     }
@@ -1837,14 +1833,10 @@ impl DocsView {
                             let Some(bytes) = story.image_bytes(&img.rel_id) else {
                                 continue;
                             };
-                            let Some((format, bytes)) = docs_engine::drawable_picture(bytes) else {
+                            let Some((format, bytes)) = screen_picture(bytes, cx) else {
                                 continue;
                             };
-                            let format = match format {
-                                docs_engine::ImageFormat::Jpeg => ImageFormat::Jpeg,
-                                _ => ImageFormat::Png,
-                            };
-                            let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes.to_vec()));
+                            let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes));
                             self.images.insert(key, i.clone());
                             i
                         }
@@ -1960,6 +1952,21 @@ impl DocsView {
                     i18n::fill(msg, &[&kantor_ui::content_strings::content_list(what)])
                 })),
         )
+    }
+}
+
+/// A picture's bytes as GPUI draws them: PNG and JPEG as they are; WMF,
+/// EMF, PICT and BMP rendered to PNG in the background (`None` until
+/// then, so a placeholder shows, and for pictures Kantor can't draw).
+pub(crate) fn screen_picture(bytes: Arc<[u8]>, cx: &App) -> Option<(ImageFormat, Vec<u8>)> {
+    use kantor_ui::metafile::{MetafilePng, metafile_png};
+    match docs_engine::ImageFormat::sniff(&bytes) {
+        docs_engine::ImageFormat::Jpeg => Some((ImageFormat::Jpeg, bytes.to_vec())),
+        docs_engine::ImageFormat::Png => Some((ImageFormat::Png, bytes.to_vec())),
+        docs_engine::ImageFormat::Other => match metafile_png(&bytes, 2048, cx) {
+            MetafilePng::Ready(png) => png.map(|p| (ImageFormat::Png, p.as_ref().clone())),
+            MetafilePng::Loading => None,
+        },
     }
 }
 

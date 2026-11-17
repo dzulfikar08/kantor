@@ -4197,6 +4197,7 @@ dependencies = [
  "gpui-kit",
  "gpui-pre-wgpu",
  "kantor_core",
+ "kantor_metafile",
  "kantor_numfmt",
  "kantor_spell",
  "kantor_theme",

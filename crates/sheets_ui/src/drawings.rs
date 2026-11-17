@@ -365,6 +365,10 @@ impl DrawLayer {
             return Some(p.clone());
         }
         let p = Rc::new(painter.prepare_items(&items, slides_engine::Rgb([255, 255, 255]), cx));
+        // A picture still rendering in the background: prepare again later.
+        if p.loading {
+            return Some(p);
+        }
         if self.prepared.len() > 512 {
             self.prepared.clear();
         }
