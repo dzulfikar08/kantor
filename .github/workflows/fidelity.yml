@@ -119,6 +119,9 @@ jobs:
       - name: .xlsb fixture matches its generator
         run: python3 scripts/corpus/gen_xlsb.py --check
 
+      - name: .ods drawings fixture matches its generator
+        run: python3 scripts/corpus/gen_ods_drawings.py --check
+
       - name: Region map fixtures match their generator
         run: python3 scripts/corpus/gen_region_map.py --check
 

@@ -888,23 +888,6 @@ fn apply_sheet(
     cleared
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn records_and_tints() {
-        // Type 0x8C 0x01 = 140, size 2.
-        let b = [0x8C, 0x01, 0x02, 0xAA, 0xBB, 0x00, 0x00];
-        let v: Vec<(u32, Vec<u8>)> = records(&b).map(|(t, d)| (t, d.to_vec())).collect();
-        assert_eq!(v, [(140, vec![0xAA, 0xBB]), (0, vec![])]);
-        assert_eq!(tinted(0x4472C4, 0.0), 0x4472C4);
-        assert_eq!(tinted(0x000000, 0.5), 0x808080);
-        assert_eq!(tinted(0xFFFFFF, -0.5), 0x808080);
-        assert_eq!(theme_colors(None)[4], 0x4472C4);
-    }
-}
-
 /// The `.xlsx` package an `.xlsb`'s drawings are shown and saved from (as
 /// for `.xls`, see [`crate::xls_drawing::package`]): drawings and charts are
 /// XML in `.xlsb` too, so each sheet's drawing (`BrtDrawing`) and every
@@ -1140,4 +1123,21 @@ fn relative(from: &str, to: &str) -> String {
     let mut out: Vec<&str> = vec![".."; from_dir.len() - common];
     out.extend(&to_parts[common..]);
     out.join("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn records_and_tints() {
+        // Type 0x8C 0x01 = 140, size 2.
+        let b = [0x8C, 0x01, 0x02, 0xAA, 0xBB, 0x00, 0x00];
+        let v: Vec<(u32, Vec<u8>)> = records(&b).map(|(t, d)| (t, d.to_vec())).collect();
+        assert_eq!(v, [(140, vec![0xAA, 0xBB]), (0, vec![])]);
+        assert_eq!(tinted(0x4472C4, 0.0), 0x4472C4);
+        assert_eq!(tinted(0x000000, 0.5), 0x808080);
+        assert_eq!(tinted(0xFFFFFF, -0.5), 0x808080);
+        assert_eq!(theme_colors(None)[4], 0x4472C4);
+    }
 }
