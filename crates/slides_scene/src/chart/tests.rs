@@ -1049,7 +1049,9 @@ fn binary_caches_are_read_when_compressed_xml() {
 fn chart_3d(group: &str, view: &str, axes: &str) -> String {
     space(
         &format!("{group}{axes}"),
-        &format!(r#"<c:autoTitleDeleted val="1"/><c:view3D>{view}</c:view3D><c:floor><c:spPr><a:solidFill><a:srgbClr val="ABCDEF"/></a:solidFill></c:spPr></c:floor>"#),
+        &format!(
+            r#"<c:autoTitleDeleted val="1"/><c:view3D>{view}</c:view3D><c:floor><c:spPr><a:solidFill><a:srgbClr val="ABCDEF"/></a:solidFill></c:spPr></c:floor>"#
+        ),
     )
 }
 
@@ -1082,7 +1084,11 @@ fn columns_3d_are_boxes_with_lit_tops_on_a_floor() {
     assert!(v.series_depth && !v.r_ang_ax);
     let m = marks(&xml, 600.0, 400.0);
     // The floor in its colour.
-    assert!(solid_boxes(&m).iter().any(|b| b.0 == Rgb([0xAB, 0xCD, 0xEF])));
+    assert!(
+        solid_boxes(&m)
+            .iter()
+            .any(|b| b.0 == Rgb([0xAB, 0xCD, 0xEF]))
+    );
     // Six faces per column: the series' colour and lighter and darker
     // shades of it.
     let first: Vec<Rgb> = solid_boxes(&m)
@@ -1098,7 +1104,10 @@ fn columns_3d_are_boxes_with_lit_tops_on_a_floor() {
     }
     // Everything inside the frame.
     for (_, b) in solid_boxes(&m) {
-        assert!(b[0] >= -0.5 && b[1] >= -0.5 && b[2] <= 600.5 && b[3] <= 400.5, "{b:?}");
+        assert!(
+            b[0] >= -0.5 && b[1] >= -0.5 && b[2] <= 600.5 && b[3] <= 400.5,
+            "{b:?}"
+        );
     }
     let _ = shades_of;
 }
@@ -1152,7 +1161,11 @@ fn pie_3d_is_tilted_with_an_edge() {
     let y1 = tops.iter().map(|b| b[3]).fold(f32::MIN, f32::max);
     assert!(x1 - x0 > 1.5 * (y1 - y0), "{tops:?}");
     // The edge: darker shades below.
-    assert!(solid_boxes(&m).iter().any(|b| b.0.0[0] < 0x11 && b.0.0[0] > 0));
+    assert!(
+        solid_boxes(&m)
+            .iter()
+            .any(|b| b.0.0[0] < 0x11 && b.0.0[0] > 0)
+    );
 }
 
 #[test]
@@ -1162,7 +1175,10 @@ fn lines_areas_and_surfaces_3d_are_drawn() {
         ("area3DChart", r#"<c:grouping val="standard"/>"#),
         ("area3DChart", r#"<c:grouping val="stacked"/>"#),
         ("surface3DChart", r#"<c:wireframe val="0"/>"#),
-        ("bar3DChart", r#"<c:barDir val="bar"/><c:grouping val="stacked"/><c:overlap val="100"/>"#),
+        (
+            "bar3DChart",
+            r#"<c:barDir val="bar"/><c:grouping val="stacked"/><c:overlap val="100"/>"#,
+        ),
     ] {
         let xml = chart_3d(
             &format!(
@@ -1176,7 +1192,11 @@ fn lines_areas_and_surfaces_3d_are_drawn() {
         let m = marks(&xml, 600.0, 400.0);
         let fills = solid_boxes(&m).len();
         assert!(fills > 8, "{tag}: {fills}");
-        assert!(texts(&m).contains(&"Beta".to_owned()), "{tag}: {:?}", texts(&m));
+        assert!(
+            texts(&m).contains(&"Beta".to_owned()),
+            "{tag}: {:?}",
+            texts(&m)
+        );
     }
 }
 
@@ -1216,12 +1236,18 @@ fn date_axes_space_categories_by_date() {
     assert_eq!(b.len(), 3, "{b:?}");
     let mid = |r: &[f32; 4]| (r[0] + r[2]) / 2.0;
     let step = mid(&b[1]) - mid(&b[0]);
-    assert!(((mid(&b[2]) - mid(&b[0])) / step - 5.0).abs() < 0.01, "{b:?}");
+    assert!(
+        ((mid(&b[2]) - mid(&b[0])) / step - 5.0).abs() < 0.01,
+        "{b:?}"
+    );
     // A label per day, the missing days too.
     assert!(texts(&m).contains(&"4-Jan".to_owned()), "{:?}", texts(&m));
     // Months as the base unit: all in one place.
     let m = marks(&chart(r#"<c:baseTimeUnit val="months"/>"#), 600.0, 400.0);
     let b = drawn(&solid_boxes(&m), A1);
-    assert!(b.iter().all(|r| (mid(r) - mid(&b[0])).abs() < 0.01), "{b:?}");
+    assert!(
+        b.iter().all(|r| (mid(r) - mid(&b[0])).abs() < 0.01),
+        "{b:?}"
+    );
     assert!(texts(&m).contains(&"1-Jan".to_owned()), "{:?}", texts(&m));
 }

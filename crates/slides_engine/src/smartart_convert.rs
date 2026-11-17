@@ -69,7 +69,13 @@ pub fn change_layout(
             let mut paras = lvl0(id);
             if !to.sub_boxes() {
                 for s in &subs {
-                    paras.push_str(&model.paras(s, &t, 1));
+                    // Bullets in shapes narrower at their edges, centred.
+                    let lvl = if matches!(to, Family::Pyramid | Family::Venn | Family::Cycle) {
+                        2
+                    } else {
+                        1
+                    };
+                    paras.push_str(&model.paras(s, &t, lvl));
                 }
             }
             match to {
@@ -303,7 +309,7 @@ impl<'a> DataModel<'a> {
     }
 
     /// Item `id`'s paragraphs for a drawing shape at level `lvl` (0: the
-    /// item's own shape; 1: bullets), formatted as `tmpl` (the shape that
+    /// item's own shape; 1: bullets; 2: centred bullets), formatted as `tmpl` (the shape that
     /// showed it, if any) where the data model's runs have no formatting
     /// of their own. The template's own paragraphs when they show the
     /// same text (they keep all of their formatting).
@@ -320,12 +326,13 @@ impl<'a> DataModel<'a> {
         };
         let mine: Vec<String> = ps.iter().map(text).collect();
         if lvl == 0 && !t.paras.is_empty() && t.texts == mine {
-            return t.paras;
+            return centred(&t.paras);
         }
         let ppr = if lvl == 0 {
-            t.ppr.clone()
+            centred_ppr(&t.ppr)
         } else {
-            "<a:pPr marL=\"114300\" lvl=\"1\" indent=\"-114300\" algn=\"l\"><a:buChar char=\"•\"/></a:pPr>".to_owned()
+            let algn = if lvl == 2 { "ctr" } else { "l" };
+            format!("<a:pPr marL=\"114300\" lvl=\"1\" indent=\"-114300\" algn=\"{algn}\"><a:buChar char=\"•\"/></a:pPr>")
         };
         let own_rpr = |r: Node| -> Option<String> {
             let rpr = child(r, NS_A, "rPr")?;
@@ -416,6 +423,46 @@ impl<'a> DataModel<'a> {
     }
 }
 
+/// Paragraph properties `ppr` (XML, may be empty) centred unless they
+/// say how to align: SmartArt text is centred in its shapes unless
+/// formatted otherwise.
+fn centred_ppr(ppr: &str) -> String {
+    if ppr.is_empty() {
+        return "<a:pPr algn=\"ctr\"/>".to_owned();
+    }
+    let end = tag_end(ppr).unwrap_or(ppr.len());
+    let tag = &ppr[..end];
+    if tag.contains(" algn=") || tag.contains(" lvl=") {
+        return ppr.to_owned();
+    }
+    let at = if tag.ends_with("/>") { end - 2 } else { end - 1 };
+    format!("{} algn=\"ctr\"{}", &ppr[..at], &ppr[at..])
+}
+
+/// Paragraphs `paras` (XML, `a:` prefix) with [`centred_ppr`] applied.
+fn centred(paras: &str) -> String {
+    let mut out = String::new();
+    let mut rest = paras;
+    while let Some(i) = rest.find("<a:p>") {
+        out.push_str(&rest[..i + 5]);
+        rest = &rest[i + 5..];
+        if rest.starts_with("<a:pPr") {
+            let end = rest
+                .find("</a:pPr>")
+                .map(|j| j + 8)
+                .filter(|j| !tag_end(rest).is_some_and(|t| rest[..t].ends_with("/>") && t < *j))
+                .or_else(|| tag_end(rest))
+                .unwrap_or(rest.len());
+            out.push_str(&centred_ppr(&rest[..end]));
+            rest = &rest[end..];
+        } else {
+            out.push_str(&centred_ppr(""));
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// An edit setting several attributes of element `n`'s start tag.
 fn set_attrs(src: &str, n: Node, kv: &[(&str, String)]) -> (Range<usize>, String) {
     let tag = start_tag(src, n);
@@ -437,7 +484,9 @@ fn set_attrs(src: &str, n: Node, kv: &[(&str, String)]) -> (Range<usize>, String
 struct OldDrawing {
     root: String,
     /// Each shape's XML and the data item it shows.
-    shapes: Vec<(String, String, bool)>,
+    /// Each shape's XML, the item it shows and how good a template it is
+    /// (filled: 2, unfilled with text: 1).
+    shapes: Vec<(String, String, u8)>,
 }
 
 impl OldDrawing {
@@ -467,8 +516,19 @@ impl OldDrawing {
                     .any(|t| is(t, NS_A, "t") && t.text().is_some_and(|s| !s.trim().is_empty()));
                 // Shapes drawing lines (connectors) aren't templates.
                 let line = n.descendants().any(|g| is(g, NS_A, "custGeom"));
+                let filled = child(n, NS_DSP, "spPr").is_some_and(|sp| {
+                    ["solidFill", "gradFill", "pattFill", "blipFill"]
+                        .iter()
+                        .any(|f| child(sp, NS_A, f).is_some())
+                });
                 if !line {
-                    shapes.push((src[n.range()].to_owned(), model, has_text));
+                    shapes.push((
+                        src[n.range()].to_owned(),
+                        model,
+                        // An item drawn as a background and a text box
+                        // (Hierarchy): the background, drawn first.
+                        2 * u8::from(filled) + u8::from(has_text && !filled),
+                    ));
                 }
             }
         }
@@ -478,18 +538,21 @@ impl OldDrawing {
         })
     }
 
-    /// The shape that showed item `id` (with text, if one did), else the
-    /// first that showed an item.
+    /// The shape that showed item `id` (a filled one, with text, if
+    /// there's one), else the best of the others.
     fn template(&self, id: &str, m: &DataModel) -> Option<String> {
         let target = |model: &str| m.pres.get(model).map_or(model, String::as_str).to_owned();
-        let mine: Vec<&(String, String, bool)> =
-            self.shapes.iter().filter(|s| target(&s.1) == id).collect();
-        mine.iter()
-            .copied()
-            .find(|s| s.2)
-            .or(mine.first().copied())
-            .or_else(|| self.shapes.iter().find(|s| s.2))
-            .or(self.shapes.first())
+        // The first of the best (max_by_key keeps the last).
+        fn best<'s>(
+            it: impl Iterator<Item = &'s (String, String, u8)>,
+        ) -> Option<&'s (String, String, u8)> {
+            it.fold(None, |b: Option<&(String, String, u8)>, s| match b {
+                Some(b) if b.2 >= s.2 => Some(b),
+                _ => Some(s),
+            })
+        }
+        best(self.shapes.iter().filter(|s| target(&s.1) == id))
+            .or_else(|| best(self.shapes.iter()))
             .map(|s| s.0.clone())
     }
 }
@@ -923,6 +986,10 @@ mod tests {
         assert!((mid(&s[0].2) - mid(&s[2].2)).abs() <= 1);
         // The top is a triangle: its adjust value is the most there is.
         assert!(d2.contains("<a:gd name=\"adj\" fmla=\"val "));
+        // Text centred in the levels (the template didn't align it).
+        assert_eq!(d2.matches("algn=\"ctr\"").count(), 3, "{d2}");
+        assert_eq!(centred("<a:p><a:pPr marL=\"1\"/><a:r/></a:p>"), "<a:p><a:pPr marL=\"1\" algn=\"ctr\"/><a:r/></a:p>");
+        assert_eq!(centred("<a:p><a:pPr algn=\"r\"><a:buNone/></a:pPr></a:p>"), "<a:p><a:pPr algn=\"r\"><a:buNone/></a:pPr></a:p>");
     }
 
     #[test]

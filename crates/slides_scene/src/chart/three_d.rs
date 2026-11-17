@@ -72,10 +72,7 @@ impl Cam {
         if self.oblique {
             // Front face square on, depth receding up and to the side.
             let k = 0.5;
-            return (
-                p(x + z * self.sy * k, -(y + z * self.sx * k)),
-                z2,
-            );
+            return (p(x + z * self.sy * k, -(y + z * self.sx * k)), z2);
         }
         let f = self.eye.map_or(1.0, |e| e / (e + z2));
         (p(x1 * f, -y2 * f), z2)
@@ -137,12 +134,19 @@ fn shade(fill: &Fill, k: f32) -> Fill {
     let f = |c: Rgb| {
         Rgb(c.0.map(|v| {
             let v = v as f32;
-            (if k >= 0.0 { v + (255.0 - v) * k } else { v * (1.0 + k) }).round() as u8
+            (if k >= 0.0 {
+                v + (255.0 - v) * k
+            } else {
+                v * (1.0 + k)
+            })
+            .round() as u8
         }))
     };
     match fill {
         Fill::Solid(c, a) => Fill::Solid(f(*c), *a),
-        Fill::Gradient(_) => fill.main_color().map_or(Fill::None, |c| Fill::Solid(f(c), 255)),
+        Fill::Gradient(_) => fill
+            .main_color()
+            .map_or(Fill::None, |c| Fill::Solid(f(c), 255)),
         other => other.clone(),
     }
 }
@@ -165,12 +169,60 @@ fn cuboid(a: P3, b: P3, fill: &Fill, line: &Option<Stroke>) -> Solid {
     Solid {
         centre: p3((a.x + b.x) / 2.0, (a.y + b.y) / 2.0, (a.z + b.z) / 2.0),
         faces: vec![
-            face([c(false, false, true), c(true, false, true), c(true, true, true), c(false, true, true)], -0.1),
-            face([c(false, false, false), c(true, false, false), c(true, false, true), c(false, false, true)], -0.3),
-            face([c(false, false, false), c(false, true, false), c(false, true, true), c(false, false, true)], -0.2),
-            face([c(true, false, false), c(true, true, false), c(true, true, true), c(true, false, true)], -0.2),
-            face([c(false, true, false), c(true, true, false), c(true, true, true), c(false, true, true)], 0.2),
-            face([c(false, false, false), c(true, false, false), c(true, true, false), c(false, true, false)], 0.0),
+            face(
+                [
+                    c(false, false, true),
+                    c(true, false, true),
+                    c(true, true, true),
+                    c(false, true, true),
+                ],
+                -0.1,
+            ),
+            face(
+                [
+                    c(false, false, false),
+                    c(true, false, false),
+                    c(true, false, true),
+                    c(false, false, true),
+                ],
+                -0.3,
+            ),
+            face(
+                [
+                    c(false, false, false),
+                    c(false, true, false),
+                    c(false, true, true),
+                    c(false, false, true),
+                ],
+                -0.2,
+            ),
+            face(
+                [
+                    c(true, false, false),
+                    c(true, true, false),
+                    c(true, true, true),
+                    c(true, false, true),
+                ],
+                -0.2,
+            ),
+            face(
+                [
+                    c(false, true, false),
+                    c(true, true, false),
+                    c(true, true, true),
+                    c(false, true, true),
+                ],
+                0.2,
+            ),
+            face(
+                [
+                    c(false, false, false),
+                    c(true, false, false),
+                    c(true, true, false),
+                    c(false, true, false),
+                ],
+                0.0,
+            ),
         ],
     }
 }
@@ -192,7 +244,12 @@ fn path_of(cam: &Cam, pts: &[P3]) -> Path {
 fn draw_face(o: &mut Out, cam: &Cam, f: &Face) {
     let path = path_of(cam, &f.pts);
     let Some(b) = path.bounds() else { return };
-    o.boxed(path, [b[0], b[1], b[2] - b[0], b[3] - b[1]], &f.fill, f.line.clone());
+    o.boxed(
+        path,
+        [b[0], b[1], b[2] - b[0], b[3] - b[1]],
+        &f.fill,
+        f.line.clone(),
+    );
 }
 
 fn draw_solids(o: &mut Out, cam: &Cam, mut solids: Vec<Solid>) {
@@ -200,7 +257,9 @@ fn draw_solids(o: &mut Out, cam: &Cam, mut solids: Vec<Solid>) {
     for mut s in solids {
         let mid = |f: &Face| {
             let n = f.pts.len().max(1) as f32;
-            let c = f.pts.iter().fold(p3(0.0, 0.0, 0.0), |a, q| p3(a.x + q.x, a.y + q.y, a.z + q.z));
+            let c = f.pts.iter().fold(p3(0.0, 0.0, 0.0), |a, q| {
+                p3(a.x + q.x, a.y + q.y, a.z + q.z)
+            });
             cam.depth(p3(c.x / n, c.y / n, c.z / n))
         };
         s.faces.sort_by(|a, b| mid(b).total_cmp(&mid(a)));
@@ -240,7 +299,9 @@ fn cat_labels(g: &Group, n: usize, ax: Option<&Axis>) -> Vec<String> {
 /// Draw a 3-D chart (`chart.view3d` set) in `area`.
 pub(super) fn draw(chart: &Chart, o: &mut Out, area: Rect) {
     let Some(v) = &chart.view3d else { return };
-    let Some(g) = chart.groups.first() else { return };
+    let Some(g) = chart.groups.first() else {
+        return;
+    };
     let plot = manual_rect(chart.plot_layout, o.size[0], o.size[1]).unwrap_or(area);
     match v.kind {
         Kind3D::Pie => pie3d(g, v, o, plot),
@@ -254,7 +315,13 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
     if n == 0 || ser.is_empty() {
         return;
     }
-    let horizontal = matches!(g.kind, Kind::Bar { horizontal: true, .. });
+    let horizontal = matches!(
+        g.kind,
+        Kind::Bar {
+            horizontal: true,
+            ..
+        }
+    );
     let grouping = group_grouping(g);
     let rows = if v.series_depth { ser.len() } else { 1 };
     // The box: 1 across, its depth by depthPercent (a row of series as deep
@@ -263,11 +330,22 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
     let row_d = slot * v.depth_percent / 100.0 * (1.0 + v.gap_depth / 300.0);
     let d = (row_d * rows as f32).clamp(0.02, 3.0);
     let h = 0.6 * v.h_percent.map_or(1.0, |h| h / 100.0);
-    let (w, h) = if horizontal { (1.0, h.max(0.3) * 1.2) } else { (1.0, h) };
+    let (w, h) = if horizontal {
+        (1.0, h.max(0.3) * 1.2)
+    } else {
+        (1.0, h)
+    };
     // Values and their scale.
     let vals: Vec<&[Option<f64>]> = ser.iter().map(|s| s.vals.as_slice()).collect();
     let stacked = !v.series_depth && grouping.stacked();
-    let stacks = stacked_values(&vals, if v.series_depth { Grouping::Standard } else { grouping });
+    let stacks = stacked_values(
+        &vals,
+        if v.series_depth {
+            Grouping::Standard
+        } else {
+            grouping
+        },
+    );
     let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
     for (a, b) in stacks.iter().flatten() {
         lo = lo.min(a.min(*b));
@@ -279,7 +357,16 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
     let va = chart.axes.iter().find(|a| a.kind == AxisKind::Val);
     let percent = !v.series_depth && grouping == Grouping::PercentStacked;
     let sc = if percent {
-        auto_scale(0.0, 1.0, Fixed { min: Some(0.0), max: Some(1.0), unit: None }, 5)
+        auto_scale(
+            0.0,
+            1.0,
+            Fixed {
+                min: Some(0.0),
+                max: Some(1.0),
+                unit: None,
+            },
+            5,
+        )
     } else {
         auto_scale(
             lo,
@@ -308,10 +395,21 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
     // Labels: categories under the front edge, values beside the wall,
     // series beside the floor's side (a series axis).
     let base = o.base.size_pt.unwrap_or(18.0);
-    let ca = chart.axes.iter().find(|a| matches!(a.kind, AxisKind::Cat | AxisKind::Date));
+    let ca = chart
+        .axes
+        .iter()
+        .find(|a| matches!(a.kind, AxisKind::Cat | AxisKind::Date));
     let sa = chart.axes.iter().find(|a| a.kind == AxisKind::Ser);
-    let cfont = o.font(&ca.map(|a| a.font.clone()).unwrap_or_default(), base * 0.9, false);
-    let vfont = o.font(&va.map(|a| a.font.clone()).unwrap_or_default(), base * 0.9, false);
+    let cfont = o.font(
+        &ca.map(|a| a.font.clone()).unwrap_or_default(),
+        base * 0.9,
+        false,
+    );
+    let vfont = o.font(
+        &va.map(|a| a.font.clone()).unwrap_or_default(),
+        base * 0.9,
+        false,
+    );
     let cats = cat_labels(g, n, ca);
     let fmt = va
         .and_then(|a| a.num_fmt.as_ref())
@@ -326,12 +424,17 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
         .collect();
     let show = |a: Option<&Axis>| a.is_none_or(|a| !a.delete && a.tick_lbl_pos != "none");
     let vw = if show(va) {
-        ticks.iter().map(|t| o.measure(&t.1, &vfont, None).0).fold(0.0, f32::max)
+        ticks
+            .iter()
+            .map(|t| o.measure(&t.1, &vfont, None).0)
+            .fold(0.0, f32::max)
     } else {
         0.0
     };
     let ch = if show(ca) {
-        cats.iter().map(|t| o.measure(t, &cfont, None).1).fold(0.0, f32::max)
+        cats.iter()
+            .map(|t| o.measure(t, &cfont, None).1)
+            .fold(0.0, f32::max)
     } else {
         0.0
     };
@@ -340,8 +443,13 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
         .enumerate()
         .map(|(k, s)| s.name.clone().unwrap_or_else(|| format!("Series{}", k + 1)))
         .collect();
-    let sw = if v.series_depth && show(sa) && v.kind != Kind3D::Surface || v.kind == Kind3D::Surface && show(sa) {
-        names.iter().map(|t| o.measure(t, &cfont, None).0).fold(0.0, f32::max)
+    let sw = if v.series_depth && show(sa) && v.kind != Kind3D::Surface
+        || v.kind == Kind3D::Surface && show(sa)
+    {
+        names
+            .iter()
+            .map(|t| o.measure(t, &cfont, None).0)
+            .fold(0.0, f32::max)
     } else {
         0.0
     };
@@ -364,11 +472,21 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
             &v.back_wall,
         ),
         (
-            vec![p3(wall_x, 0.0, 0.0), p3(wall_x, 0.0, d), p3(wall_x, h, d), p3(wall_x, h, 0.0)],
+            vec![
+                p3(wall_x, 0.0, 0.0),
+                p3(wall_x, 0.0, d),
+                p3(wall_x, h, d),
+                p3(wall_x, h, 0.0),
+            ],
             &v.side_wall,
         ),
         (
-            vec![p3(0.0, floor_y, 0.0), p3(w, floor_y, 0.0), p3(w, floor_y, d), p3(0.0, floor_y, d)],
+            vec![
+                p3(0.0, floor_y, 0.0),
+                p3(w, floor_y, 0.0),
+                p3(w, floor_y, d),
+                p3(0.0, floor_y, d),
+            ],
             &v.floor,
         ),
     ];
@@ -412,13 +530,23 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
     };
     match v.kind {
         Kind3D::Bar => {
-            let across = if v.series_depth || stacked { 1.0 } else { ser.len() as f32 };
+            let across = if v.series_depth || stacked {
+                1.0
+            } else {
+                ser.len() as f32
+            };
             let bw = 1.0 / (across + gap);
             for (k, s) in ser.iter().enumerate() {
                 let (z0, z1) = row_z(if v.series_depth { k } else { 0 });
-                let lane = if v.series_depth || stacked { 0.0 } else { k as f32 };
+                let lane = if v.series_depth || stacked {
+                    0.0
+                } else {
+                    k as f32
+                };
                 for i in 0..n {
-                    let Some(Some(_)) = s.vals.get(i) else { continue };
+                    let Some(Some(_)) = s.vals.get(i) else {
+                        continue;
+                    };
                     let (b0, b1) = stacks[k][i];
                     let b0 = if stacked { b0 } else { 0.0 };
                     let u0 = (i as f32 + gap * bw / 2.0 + lane * bw) * slot;
@@ -441,7 +569,12 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
                 let fill = if area {
                     st.fill.clone()
                 } else {
-                    Fill::Solid(st.line.as_ref().map_or(auto_color(o.d, s.idx), |l| rgb_of(l.color)), 255)
+                    Fill::Solid(
+                        st.line
+                            .as_ref()
+                            .map_or(auto_color(o.d, s.idx), |l| rgb_of(l.color)),
+                        255,
+                    )
                 };
                 let edge = if area { st.line.clone() } else { None };
                 let pts: Vec<Option<(f32, f32, f32)>> = (0..n)
@@ -449,44 +582,93 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
                         s.vals.get(i).copied().flatten()?;
                         let (b0, b1) = stacks[k][i];
                         let lo = if stacked { frac(b0) } else { frac(0.0) };
-                        Some(((i as f32 + 0.5) * slot, frac(b1), lo))
+                        Some(((i as f32 + 0.5) * slot, frac(b1) * h, lo * h))
                     })
                     .collect();
                 let thick = h * 0.02;
                 for i in 0..n.saturating_sub(1) {
-                    let (Some(a), Some(b)) = (pts[i], pts[i + 1]) else { continue };
+                    let (Some(a), Some(b)) = (pts[i], pts[i + 1]) else {
+                        continue;
+                    };
                     let mut faces = Vec::new();
                     // The top (a ribbon, or the area's top).
                     faces.push(Face {
-                        pts: vec![p3(a.0, a.1, z0), p3(b.0, b.1, z0), p3(b.0, b.1, z1), p3(a.0, a.1, z1)],
+                        pts: vec![
+                            p3(a.0, a.1, z0),
+                            p3(b.0, b.1, z0),
+                            p3(b.0, b.1, z1),
+                            p3(a.0, a.1, z1),
+                        ],
                         fill: shade(&fill, 0.15),
                         line: edge.clone(),
                     });
-                    let (fa, fb) = if area { (a.2, b.2) } else { (a.1 - thick, b.1 - thick) };
-                    // The front (an area down to its base; a ribbon's edge).
-                    faces.push(Face {
-                        pts: vec![p3(a.0, a.1, z0), p3(b.0, b.1, z0), p3(b.0, fb, z0), p3(a.0, fa, z0)],
-                        fill: fill.clone(),
-                        line: edge.clone(),
-                    });
-                    faces.push(Face {
-                        pts: vec![p3(a.0, fa, z0), p3(b.0, fb, z0), p3(b.0, fb, z1), p3(a.0, fa, z1)],
-                        fill: shade(&fill, -0.3),
-                        line: None,
-                    });
-                    let _ = (horizontal, len_c);
+                    let (fa, fb) = if area {
+                        (a.2, b.2)
+                    } else {
+                        (a.1 - thick, b.1 - thick)
+                    };
+                    // A ribbon's front edge (an area's front is one face, below).
+                    if !area {
+                        faces.push(Face {
+                            pts: vec![
+                                p3(a.0, a.1, z0),
+                                p3(b.0, b.1, z0),
+                                p3(b.0, fb, z0),
+                                p3(a.0, fa, z0),
+                            ],
+                            fill: fill.clone(),
+                            line: edge.clone(),
+                        });
+                    }
+                    // The underside: a ribbon's, an area's seen from below.
+                    if !area || v.rot_x < 0.0 {
+                        faces.push(Face {
+                            pts: vec![
+                                p3(a.0, fa, z0),
+                                p3(b.0, fb, z0),
+                                p3(b.0, fb, z1),
+                                p3(a.0, fa, z1),
+                            ],
+                            fill: shade(&fill, -0.3),
+                            line: None,
+                        });
+                    }
                     solids.push(Solid {
                         centre: p3((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0, (z0 + z1) / 2.0),
                         faces,
                     });
                 }
                 if area {
+                    // The front, one face from the first point to the last.
+                    let run: Vec<(f32, f32, f32)> = pts.iter().flatten().copied().collect();
+                    if run.len() >= 2 {
+                        let mut front: Vec<P3> = run.iter().map(|q| p3(q.0, q.1, z0)).collect();
+                        front.extend(run.iter().rev().map(|q| p3(q.0, q.2, z0)));
+                        // Sorted with the row's nearest end.
+                        let mid = if cam.sy >= 0.0 { run[run.len() - 1].0 } else { run[0].0 };
+                        solids.push(Solid {
+                            centre: p3(mid, h / 2.0, z0 - 1e-4),
+                            faces: vec![Face {
+                                pts: front,
+                                fill: fill.clone(),
+                                line: edge.clone(),
+                            }],
+                        });
+                    }
                     // The ends.
-                    for e in [pts.iter().flatten().next(), pts.iter().flatten().last()].into_iter().flatten() {
+                    for e in [pts.iter().flatten().next(), pts.iter().flatten().last()]
+                        .into_iter()
+                        .flatten()
+                    {
                         solids.push(Solid {
                             centre: p3(e.0, (e.1 + e.2) / 2.0, (z0 + z1) / 2.0),
                             faces: vec![Face {
-                                pts: vec![p3(e.0, e.2, z0), p3(e.0, e.1, z0), p3(e.0, e.1, z1), p3(e.0, e.2, z1)],
+                                pts: vec![
+                                    p3(e.0, e.2, z0),
+                                    p3(e.0, e.1, z0),
+                                    p3(e.0, e.1, z1),
+                                    p3(e.0, e.2, z1),
+                                ],
                                 fill: shade(&fill, -0.2),
                                 line: edge.clone(),
                             }],
@@ -496,20 +678,38 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
             }
         }
         Kind3D::Surface => {
-            let wireframe = matches!(g.kind, Kind::Surface { wireframe: true, .. });
+            let wireframe = matches!(
+                g.kind,
+                Kind::Surface {
+                    wireframe: true,
+                    ..
+                }
+            );
             let bands = ex_draw::surface_bands(chart);
             let band_of = |x: f64| {
                 bands
                     .iter()
                     .position(|(a, b)| x >= *a && x <= *b)
-                    .unwrap_or(if x < sc.min { 0 } else { bands.len().saturating_sub(1) })
+                    .unwrap_or(if x < sc.min {
+                        0
+                    } else {
+                        bands.len().saturating_sub(1)
+                    })
             };
             let cell_d = d / ser.len().max(1) as f32;
             let zc = |k: usize| (k as f32 + 0.5) * cell_d;
-            for k in 0..ser.len().saturating_sub(1).max(if ser.len() == 1 { 0 } else { 1 }) {
+            for k in 0..ser
+                .len()
+                .saturating_sub(1)
+                .max(if ser.len() == 1 { 0 } else { 1 })
+            {
                 for i in 0..n.saturating_sub(1) {
-                    let get = |k: usize, i: usize| ser.get(k).and_then(|s| s.vals.get(i).copied().flatten());
-                    let (Some(a), Some(b), Some(c), Some(e)) = (get(k, i), get(k, i + 1), get(k + 1, i + 1), get(k + 1, i)) else {
+                    let get = |k: usize, i: usize| {
+                        ser.get(k).and_then(|s| s.vals.get(i).copied().flatten())
+                    };
+                    let (Some(a), Some(b), Some(c), Some(e)) =
+                        (get(k, i), get(k, i + 1), get(k + 1, i + 1), get(k + 1, i))
+                    else {
                         continue;
                     };
                     let x = |i: usize| (i as f32 + 0.5) * slot;
@@ -521,22 +721,34 @@ fn boxed3d(chart: &Chart, g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
                     ];
                     let mean = (a + b + c + e) / 4.0;
                     let fill = ex_draw::band_fill(g, band_of(mean), o.d);
-                    let line_c = fill.main_color().map_or(GRID, |c| {
-                        Rgb(c.0.map(|v| (v as f32 * 0.7) as u8))
-                    });
+                    let line_c = fill
+                        .main_color()
+                        .map_or(GRID, |c| Rgb(c.0.map(|v| (v as f32 * 0.7) as u8)));
                     let face = Face {
                         pts: pts.clone(),
                         fill: if wireframe { Fill::None } else { fill },
                         line: Some(Stroke {
                             width: 0.75,
-                            color: rgba(if wireframe { line_c } else { Rgb([255, 255, 255]) }, 200),
+                            color: rgba(
+                                if wireframe {
+                                    line_c
+                                } else {
+                                    Rgb([255, 255, 255])
+                                },
+                                200,
+                            ),
                             dash: None,
                             cap: LineCap::Flat,
                             join: LineJoin::Round,
                         }),
                     };
-                    let c3 = pts.iter().fold(p3(0.0, 0.0, 0.0), |s, q| p3(s.x + q.x / 4.0, s.y + q.y / 4.0, s.z + q.z / 4.0));
-                    solids.push(Solid { centre: c3, faces: vec![face] });
+                    let c3 = pts.iter().fold(p3(0.0, 0.0, 0.0), |s, q| {
+                        p3(s.x + q.x / 4.0, s.y + q.y / 4.0, s.z + q.z / 4.0)
+                    });
+                    solids.push(Solid {
+                        centre: c3,
+                        faces: vec![face],
+                    });
                 }
             }
         }
@@ -679,7 +891,12 @@ fn pie3d(g: &Group, v: &View3D, o: &mut Out, plot: Rect) {
                 let mut bottom = arc(sl.centre, b1, b0, t);
                 let mut pts = top;
                 pts.append(&mut bottom);
-                sides.push((0.0, pts, shade(&sl.style.fill, -0.25), sl.style.line.clone()));
+                sides.push((
+                    0.0,
+                    pts,
+                    shade(&sl.style.fill, -0.25),
+                    sl.style.line.clone(),
+                ));
             }
         }
     }

@@ -183,8 +183,14 @@ mod tests {
         assert_eq!(s.labelled, [true, false, true, false]);
         assert_eq!(s.starts[2], serial(2025, 3, 1));
         // Chosen by Excel's rule: monthly dates → months.
-        assert_eq!(auto_unit(&[serial(2025, 1, 1), serial(2025, 3, 1)]), TimeUnit::Months);
-        assert_eq!(auto_unit(&[serial(2020, 6, 1), serial(2024, 6, 1)]), TimeUnit::Years);
+        assert_eq!(
+            auto_unit(&[serial(2025, 1, 1), serial(2025, 3, 1)]),
+            TimeUnit::Months
+        );
+        assert_eq!(
+            auto_unit(&[serial(2020, 6, 1), serial(2024, 6, 1)]),
+            TimeUnit::Years
+        );
         // Days with years as the major unit: labels on 1 January only.
         let d = [Some(serial(2024, 12, 30)), Some(serial(2025, 1, 2))];
         let s = slots(&d, Some(TimeUnit::Days), Some((1.0, Some(TimeUnit::Years)))).unwrap();

@@ -918,8 +918,12 @@ impl View3D {
             .unwrap_or(matches!(kind, Kind3D::Bar) && grouping != Some("standard"));
         Some(View3D {
             kind,
-            rot_x: num("rotX").unwrap_or(if pie { 30.0 } else { 15.0 }).clamp(-90.0, 90.0) as f32,
-            rot_y: num("rotY").unwrap_or(if pie { 0.0 } else { 20.0 }).rem_euclid(360.0) as f32,
+            rot_x: num("rotX")
+                .unwrap_or(if pie { 30.0 } else { 15.0 })
+                .clamp(-90.0, 90.0) as f32,
+            rot_y: num("rotY")
+                .unwrap_or(if pie { 0.0 } else { 20.0 })
+                .rem_euclid(360.0) as f32,
             // ST_Perspective counts half degrees.
             perspective: (num("perspective").unwrap_or(30.0).clamp(0.0, 240.0) / 2.0) as f32,
             r_ang_ax,
