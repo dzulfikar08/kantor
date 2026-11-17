@@ -9,6 +9,19 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-17
+
+A release that closes most of Kantor's known gaps. Sheets gets 3-D references (`SUM(Jan:Mar!B2)`),
+macros kept in `.xlsm` files, filtering and sorting by colour, icon, top 10, dates and custom lists,
+the full conditional formatting editor (icon sets, data bars, number formats, borders), Page Break
+Preview, combo and 3-D charts made in the Chart panel, picture fills, shadows and cell-linked
+shape text. Docs computes formula and other fields, edits text boxes with pictures and tables,
+lets text into wrap polygons, blurs shadows and imports `.doc` revisions, nested tables and groups.
+SmartArt layouts can be changed, with more layouts laid out again, and 3-D charts are drawn in 3-D
+in every app. WMF/EMF pictures are drawn everywhere and exported to PDF as vectors, `.xls`, `.ods`
+and `.xlsb` imports bring much more, and the Linux builds now run on glibc 2.34 (Ubuntu 22.04,
+Debian 12, RHEL 9).
+
 ### Added
 
 - 3-D charts show their data labels, and cylinder, cone and pyramid columns and bars are drawn in
@@ -1817,7 +1830,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/dzulfikar08/kantor/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/dzulfikar08/kantor/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/dzulfikar08/kantor/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/dzulfikar08/kantor/compare/v0.8.0...v0.9.0
