@@ -968,7 +968,6 @@ fn place_notes(
         })
     };
     for (pi, page) in paged.pages.iter_mut().enumerate() {
-        let s = page.setup;
         // Each column's notes under it (the whole text width without
         // columns).
         let columns = std::mem::take(&mut page.note_columns);
