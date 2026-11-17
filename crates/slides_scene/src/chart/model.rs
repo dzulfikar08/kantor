@@ -893,9 +893,48 @@ pub struct View3D {
     pub floor: Look,
     pub side_wall: Look,
     pub back_wall: Look,
+    /// 3-D columns' and bars' shape (`c:bar3DChart/c:shape`), and the
+    /// series that have their own (`c:ser/c:shape`, by `c:idx`).
+    pub shape: BarShape,
+    pub series_shapes: Vec<(usize, BarShape)>,
+}
+
+/// The shape of 3-D columns and bars (`ST_Shape`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BarShape {
+    #[default]
+    Box,
+    Cylinder,
+    Cone,
+    /// A cone cut off at the value, its tip at the axis' maximum.
+    ConeToMax,
+    Pyramid,
+    PyramidToMax,
+}
+
+impl BarShape {
+    fn parse(v: Option<&str>) -> Option<Self> {
+        Some(match v? {
+            "box" => BarShape::Box,
+            "cylinder" => BarShape::Cylinder,
+            "cone" => BarShape::Cone,
+            "coneToMax" => BarShape::ConeToMax,
+            "pyramid" => BarShape::Pyramid,
+            "pyramidToMax" => BarShape::PyramidToMax,
+            _ => return None,
+        })
+    }
 }
 
 impl View3D {
+    /// The shape of series `idx`'s columns.
+    pub fn shape_of(&self, idx: usize) -> BarShape {
+        self.series_shapes
+            .iter()
+            .find(|(i, _)| *i == idx)
+            .map_or(self.shape, |(_, s)| *s)
+    }
+
     fn parse(chart: Node, plot: Node, cx: &ColorCtx) -> Option<Self> {
         let g = plot
             .children()
@@ -938,6 +977,13 @@ impl View3D {
             floor: Look::parse(kid(chart, "floor"), cx),
             side_wall: Look::parse(kid(chart, "sideWall"), cx),
             back_wall: Look::parse(kid(chart, "backWall"), cx),
+            shape: BarShape::parse(val(g, "shape")).unwrap_or_default(),
+            series_shapes: kids(g, "ser")
+                .filter_map(|s| {
+                    let idx = val(s, "idx")?.parse().ok()?;
+                    Some((idx, BarShape::parse(val(s, "shape"))?))
+                })
+                .collect(),
         })
     }
 }

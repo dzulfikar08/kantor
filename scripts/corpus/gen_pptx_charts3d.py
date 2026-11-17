@@ -16,6 +16,10 @@ one):
 - Slide 6 "3-D surface": three series × five categories.
 - Slide 7 "3-D pie": exploded slice, tilted 40°.
 - Slide 8 "Date axis": columns on a date axis (days) with dates missing.
+- Slide 9 "3-D shapes": cylinder, cone and pyramid columns (`c:shape` per
+  series), with value data labels.
+- Slide 10 "3-D pie labels": a 3-D pie with category and percent labels
+  outside the slices.
 
 Regenerate with
 `uv run --with python-pptx==1.0.2 scripts/corpus/gen_pptx_charts3d.py tests/corpus/pptx`.
@@ -63,6 +67,8 @@ slide("3-D surface", XL_CHART_TYPE.COLUMN_CLUSTERED, CATS, SERIES)
 slide("3-D pie", XL_CHART_TYPE.PIE, CATS, SERIES[:1])
 DATES = [datetime.date(2025, 1, d) for d in (1, 2, 3, 6, 7, 8, 9, 13)]
 slide("Date axis", XL_CHART_TYPE.COLUMN_CLUSTERED, DATES, [("Visits", (5, 7, 6, 9, 8, 7, 10, 12))])
+slide("3-D shapes", XL_CHART_TYPE.COLUMN_CLUSTERED, CATS, SERIES)
+slide("3-D pie labels", XL_CHART_TYPE.PIE, CATS, SERIES[:1])
 
 buf = io.BytesIO()
 prs.save(buf)
@@ -153,6 +159,38 @@ x = re.sub(rb'(<c:(?:axId|crossAx) val=")-'.decode(), r"\1", x)
 x = re.sub(r'<c:baseTimeUnit val="\w+"/>', "", x)
 x = re.sub(r"(<c:dateAx>.*?)(<c:lblOffset val=\"\d+\"/>)", r'\1\2<c:baseTimeUnit val="days"/>', x, count=1, flags=re.S)
 assert "<c:dateAx>" in x and "baseTimeUnit" in x, "date axis"
+parts[name] = x.encode()
+
+# Slide 9: one shape per series, value labels on all of them.
+VAL_LABELS = (
+    '<c:dLbls><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/>'
+    '<c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls>'
+)
+rewrite(9, "barChart", "bar3DChart", "clustered", view(15, 20, 1),
+        '<c:gapDepth val="150"/><c:shape val="box"/>', False, BAR_STRIP + (r"<c:dLbls>.*?</c:dLbls>",))
+name = chart_of(9)
+x = parts[name].decode()
+for shape in ("cylinder", "cone", "pyramid"):
+    x = re.sub(r"(</c:val>)(</c:ser>)", rf'\1<c:shape val="{shape}"/>\2', x, count=1)
+x = x.replace("<c:gapDepth", VAL_LABELS + "<c:gapDepth", 1)
+assert VAL_LABELS in x, "labels"
+assert x.count("<c:shape ") == 4, "shapes"
+parts[name] = x.encode()
+
+# Slide 10: a 3-D pie, category name and percent outside the slices.
+name = chart_of(10)
+x = parts[name].decode()
+x = x.replace("<c:pieChart>", "<c:pie3DChart>").replace("</c:pieChart>", "</c:pie3DChart>")
+x = re.sub(r"<c:firstSliceAng val=\"\d+\"/>", "", x)
+x = re.sub(r"<c:dLbls>.*?</c:dLbls>", "", x, flags=re.S)
+x = x.replace("<c:plotArea>", '<c:view3D><c:rotX val="30"/><c:rotY val="0"/><c:rAngAx val="0"/></c:view3D><c:plotArea>', 1)
+x = x.replace(
+    "</c:ser>",
+    '</c:ser><c:dLbls><c:dLblPos val="outEnd"/><c:showLegendKey val="0"/><c:showVal val="0"/>'
+    '<c:showCatName val="1"/><c:showSerName val="0"/><c:showPercent val="1"/><c:showBubbleSize val="0"/>'
+    '<c:showLeaderLines val="1"/></c:dLbls>',
+    1,
+)
 parts[name] = x.encode()
 
 for n in parts:

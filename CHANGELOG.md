@@ -11,6 +11,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- 3-D charts show their data labels, and cylinder, cone and pyramid columns and bars are drawn in
+  their shape instead of as boxes (Slides, Sheets and Docs, on screen and in PDFs).
 - Windows metafile pictures (WMF, EMF and EMF+), Mac PICT pictures and BMPs are drawn in Docs,
   Slides and Sheets, on screen and in PDFs, instead of an empty box: from `.docx`, `.pptx` and
   `.xlsx` files and from `.doc`, `.ppt`, `.xls`, `.ods` and `.rtf` imports (which used to leave
