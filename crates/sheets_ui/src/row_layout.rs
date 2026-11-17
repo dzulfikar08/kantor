@@ -49,6 +49,8 @@ struct Key {
     sheet: u32,
     revision: (u64, u64),
     scale: u32,
+    /// The sheet's zoom, in percent.
+    zoom: u16,
     rows: u32,
     preview: Option<(u32, u32)>,
     /// Rows above panes frozen on a scrolled sheet (out of sight).
@@ -85,10 +87,15 @@ impl Default for RowLayout {
     }
 }
 
-/// Logical pixels per point of row height on `sheet`: the sheet's default
-/// row height is drawn as Kantor's default row.
+/// Logical pixels per point of row height on `sheet` at its zoom: the
+/// sheet's default row height is drawn as Kantor's default row at 100 %.
 pub(crate) fn px_per_point(book: &Workbook, sheet: u32) -> f64 {
-    f64::from(f32::from(look::row_height())) / book.default_row_points(sheet)
+    f64::from(f32::from(default_row(book, sheet))) / book.default_row_points(sheet)
+}
+
+/// A default-height row of `sheet` at its zoom.
+pub(crate) fn default_row(book: &Workbook, sheet: u32) -> Pixels {
+    look::row_height() * look::zoom(book, sheet)
 }
 
 impl RowLayout {
@@ -99,6 +106,7 @@ impl RowLayout {
             sheet,
             revision: book.revision(),
             scale: scale.to_bits(),
+            zoom: book.zoom(sheet),
             rows,
             preview: self.preview.map(|(r, h)| (r, h.to_bits())),
             above_panes: book.frozen_origin(sheet).0,
@@ -113,7 +121,7 @@ impl RowLayout {
         // Fitted heights hold for the same sheet at the same scale; any
         // other change to the workbook makes them stale (but still the best
         // guess until re-measured).
-        let reset = old.sheet != sheet || old.scale != key.scale;
+        let reset = old.sheet != sheet || old.scale != key.scale || old.zoom != key.zoom;
         if old.revision != key.revision || reset {
             self.generation += 1;
         }
@@ -129,8 +137,9 @@ impl RowLayout {
         self.fitted.resize(n, 0);
         self.fitted_at.resize(n, 0);
         let spec = book.row_spec(key.sheet);
-        let k = f64::from(f32::from(look::row_height())) / spec.default_points;
-        let default_dp = device_px(f32::from(look::row_height()), scale);
+        let row = default_row(book, key.sheet);
+        let k = f64::from(f32::from(row)) / spec.default_points;
+        let default_dp = device_px(f32::from(row), scale);
         let mut heights = vec![default_dp; n];
         let mut fixed = vec![false; n];
         for e in spec.rows.iter().filter(|e| (e.row as usize) < n) {
@@ -180,7 +189,7 @@ impl RowLayout {
         cx: &App,
     ) -> bool {
         let scale = self.heights.borrow().scale();
-        let default_dp = device_px(f32::from(look::row_height()), scale);
+        let default_dp = device_px(f32::from(default_row(book, sheet)), scale);
         let mut changed = false;
         for &r in rows {
             if r >= self.fixed.len() || self.fixed[r] || self.fitted_at[r] == self.generation {
@@ -211,9 +220,9 @@ impl RowLayout {
     }
 }
 
-/// The height (logical px) row `row` needs for its wrapped text and larger
-/// fonts, drawn as [`look::Content`] draws them; 0 when nothing in it needs
-/// more than a plain row.
+/// The height (logical px, at the sheet's zoom) row `row` needs for its
+/// wrapped text and larger fonts, drawn as [`look::Content`] draws them; 0
+/// when nothing in it needs more than a plain row.
 pub(crate) fn fit_row_height(
     book: &Workbook,
     sheet: u32,
@@ -228,14 +237,15 @@ pub(crate) fn fit_row_height(
     }
     let default_size = book.default_font_size().max(1) as f32;
     let base = window.text_style();
+    let z = look::zoom(book, sheet);
     let mut tallest: f32 = 0.0;
     for cell in cells.into_iter().take(FIT_MAX_CELLS) {
         let s = &cell.style;
-        let size = FONT_BODY * (s.font_size.max(1) as f32 / default_size);
+        let size = FONT_BODY * z * (s.font_size.max(1) as f32 / default_size);
         let line = f32::from(size) * look::LINE_HEIGHT;
         let lines = if s.wrap {
             let width = look::column_width(book, sheet, cell.col, window.scale_factor())
-                - SPACE_3 * 2.
+                - SPACE_3 * z * 2.
                 - GRID_LINE;
             let mut run = base.to_run(cell.text.len());
             if let Some(family) = fonts.for_style(s, cx) {
@@ -266,7 +276,7 @@ pub(crate) fn fit_row_height(
         } else {
             1
         };
-        tallest = tallest.max(lines as f32 * line + 2. * FIT_PAD);
+        tallest = tallest.max(lines as f32 * line + 2. * FIT_PAD * z);
     }
     tallest
 }

@@ -17,6 +17,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Sheets: `.ods` imports draw custom shapes from their own geometry (curves, arcs and their
   formulas) instead of leaving them out, and arcs in freehand shapes are drawn as arcs, not straight
   lines.
+- Sheets: zoom, as in Excel. Each sheet has its own zoom from 10 % to 400 %, set with the slider
+  by the sheet tabs (its − and + buttons step by 10 %, the percentage opens the Zoom dialog),
+  Ctrl+mouse wheel, Ctrl+= and Ctrl+-, or the command palette (Zoom In, Zoom Out, Zoom to 100%,
+  Zoom to Selection, Zoom…). Cells, text, column letters and row numbers, charts, pictures,
+  shapes, notes, slicers and Page Break Preview all zoom, and the cell editor matches. The zoom is
+  saved in the file and a sheet opens at its saved zoom; Page Break Preview keeps a zoom of its own
+  and starts at 60 %, as in Excel. Printing and PDFs don't change with the zoom.
 
 ### Fixed
 

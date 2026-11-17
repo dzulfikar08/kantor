@@ -155,6 +155,9 @@ impl SheetsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        // Laid out at 100 %, drawn at the sheet's zoom.
+        let z = self.sheet_zoom(cx);
+        let (x, y, w, h) = (x / z, y / z, w / z, h / z);
         let name = match kind {
             DrawingKind::Slicer { name } => name.clone(),
             DrawingKind::Timeline { name } => {
@@ -258,6 +261,7 @@ impl SheetsView {
             return false;
         };
         let l = timeline_layout(&view, w, h);
+        let z = self.sheet_zoom(cx);
         if l.clear.is_some_and(|r| inside(r, x, y)) {
             if view.filtered {
                 self.timeline_select(key, name, None, window, cx);
@@ -269,8 +273,8 @@ impl SheetsView {
                 key,
                 name: name.to_owned(),
                 at: point(
-                    origin.x + px(l.level[0] + l.level[2] - 120.0),
-                    origin.y + px(l.level[1] + l.level[3]),
+                    origin.x + px((l.level[0] + l.level[2]) * z - 120.0),
+                    origin.y + px((l.level[1] + l.level[3]) * z),
                 ),
                 level: view.level_index,
             });
@@ -292,9 +296,9 @@ impl SheetsView {
                 layer.timeline_scroll = Some(TimelineScroll {
                     key,
                     name: name.to_owned(),
-                    press_x: f32::from(origin.x) + x,
+                    press_x: f32::from(origin.x) + x * z,
                     before: view.before,
-                    track: (bar[2] - thumb[2]).max(1.0),
+                    track: ((bar[2] - thumb[2]) * z).max(1.0),
                     range: view.last_scroll(l.periods.len()),
                 });
                 drop(layer);
@@ -406,7 +410,8 @@ impl SheetsView {
             .book
             .timeline_view(d.key.sheet_id, &d.name)?;
         let l = timeline_layout(&view, d.size.0, d.size.1);
-        let x = f32::from(at.x - d.origin.x);
+        let x = f32::from(at.x - d.origin.x) / self.sheet_zoom(cx);
+
         // The period under the pointer, else the nearest end.
         let k = l
             .periods

@@ -274,8 +274,9 @@ impl SheetGrid {
         if self.book.value_kind(sheet, row, col) != ValueKind::Number {
             return None;
         }
-        let size = look::text_size(style, self.book.default_font_size(), FONT_BODY, height);
-        let room = width - f32::from(SPACE_3) * 2.0;
+        let z = self.zoom();
+        let size = look::text_size(style, self.book.default_font_size(), FONT_BODY * z, height);
+        let room = width - f32::from(SPACE_3 * z) * 2.0;
         // Digits are about half an em wide: short numbers fit unmeasured.
         if text.chars().count() as f32 * f32::from(size) * 0.45 <= room {
             return None;
@@ -309,7 +310,8 @@ impl SheetGrid {
         window: &mut Window,
         cx: &App,
     ) -> Rc<Vec<Span>> {
-        let (revision, sheet, scale) = (self.book.revision(), self.sheet, self.scale);
+        // The zoom is part of the key: spans are measured in grid px.
+        let (revision, sheet, scale) = (self.book.revision(), self.sheet, self.scale * self.zoom());
         let mut cache = std::mem::take(&mut self.overflow);
         let spans = cache.row(revision, sheet, scale, row, || {
             self.compute_spans(row, window, cx)
@@ -327,20 +329,21 @@ impl SheetGrid {
         let height = px(self.layout.heights.borrow().height(row as usize) as f32);
         let default_font_size = self.book.default_font_size();
         let base = window.text_style();
+        let z = self.zoom();
         let mut candidates = Vec::new();
         for &col in &filled {
             let own = self.spill_width(col);
             let Some(text) = self.spill_text(row, col, cx) else {
                 continue;
             };
-            let size = look::text_size(&text.style, default_font_size, FONT_BODY, height);
+            let size = look::text_size(&text.style, default_font_size, FONT_BODY * z, height);
             // Padding, and the indent the cell draws before (or after) it.
             let indent = if text.align == HAlign::Center {
                 0.0
             } else {
-                f32::from(FONT_BODY) * 1.5 * text.style.indent.min(250) as f32
+                f32::from(FONT_BODY * z) * 1.5 * text.style.indent.min(250) as f32
             };
-            let pad = f32::from(SPACE_3) * 2.0 + indent;
+            let pad = f32::from(SPACE_3 * z) * 2.0 + indent;
             // No glyph is wider than its size: short text fits unmeasured.
             if text.text.chars().count() as f32 * f32::from(size) + pad <= own {
                 continue;
@@ -398,9 +401,10 @@ impl SheetGrid {
             style: &text.style,
             align: text.align,
             color: text.color,
-            base_size: FONT_BODY,
+            base_size: FONT_BODY * self.zoom(),
             default_font_size: self.book.default_font_size(),
             family: text.family,
+
             height,
             fill: None,
             spill: true,

@@ -955,6 +955,21 @@ where
         cx.notify();
     }
 
+    /// KANTOR PATCH (zoom): scale both scroll offsets by `k`, so the cell at
+    /// the top left stays there when every length is scaled by `k`.
+    pub fn scale_scroll(&mut self, k: f32, cx: &mut Context<Self>) {
+        let v = self.vertical_scroll_handle.0.borrow().base_handle.offset();
+        self.vertical_scroll_handle
+            .0
+            .borrow()
+            .base_handle
+            .set_offset(point(v.x, v.y * k));
+        let h = self.horizontal_scroll_handle.offset();
+        self.horizontal_scroll_handle
+            .set_offset(point(h.x * k, h.y));
+        cx.notify();
+    }
+
     /// KANTOR PATCH (frozen rows taller than the window): the most height
     /// the pinned rows may take, leaving room for the rows that scroll.
     fn pinned_rows_cap(&self) -> f64 {

@@ -121,6 +121,7 @@ impl CellEditor {
         &self,
         refs: Vec<(Range<usize>, Hsla)>,
         frozen: (bool, bool),
+        zoom: f32,
         cx: &App,
     ) -> impl IntoElement + use<> {
         let t = tokens(cx);
@@ -151,8 +152,10 @@ impl CellEditor {
                         Input::new(&self.input)
                             .appearance(false)
                             .small()
-                            // Text starts where the cell's own text does.
-                            .px(SPACE_3 - CELL_OUTLINE)
+                            // Text starts where the cell's own text does, at
+                            // the size the sheet's zoom gives it.
+                            .px((SPACE_3 * zoom - CELL_OUTLINE).max(px(0.)))
+                            .text_size(FONT_BODY * zoom)
                             .w_full()
                             .text_color(refs_text_color(&refs, t.fg)),
                     )
@@ -163,6 +166,7 @@ impl CellEditor {
             rows: self.rows.clone(),
             cols: self.cols.clone(),
             frozen,
+            font_size: FONT_BODY * zoom,
             child: Some(editor.into_any_element()),
         }
     }
@@ -176,6 +180,8 @@ struct Overlay {
     cols: VirtualListScrollHandle,
     /// Whether the cell is in the frozen rows / frozen columns.
     frozen: (bool, bool),
+    /// The input's text size (the cell's at the sheet's zoom).
+    font_size: Pixels,
     child: Option<AnyElement>,
 }
 
@@ -243,19 +249,19 @@ impl Element for Overlay {
         let Some(child) = self.child.take() else {
             return;
         };
-        // The cell's text style (the table sets the same size as the input).
+        // The cell's text style, at the input's size.
         let text: SharedString = self.input.read(cx).value().replace('\n', " ").into();
         let text_width = if text.is_empty() {
             px(0.)
         } else {
             let style = window.text_style();
-            let font_size = style.font_size.to_pixels(window.rem_size());
             let run = style.to_run(text.len());
             window
                 .text_system()
-                .shape_line(text, font_size, &[run], None)
+                .shape_line(text, self.font_size, &[run], None)
                 .width
         };
+
         let body = self.body(cell);
         let mut width = cell.size.width.max(text_width + SPACE_3 * 2. + CARET_ROOM);
         if let Some(body) = body {

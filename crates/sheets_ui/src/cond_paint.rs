@@ -18,11 +18,12 @@ const ICON: Pixels = px(13.);
 const BAR_INSET: Pixels = px(3.);
 
 /// The layers drawn under the cell's text: the data bar and its axis, then
-/// the icon. `None` when the rule only changes the cell's format.
-pub(crate) fn layers(c: &Conditional) -> Vec<AnyElement> {
+/// the icon, at the sheet's zoom `zoom`. `None` when the rule only changes
+/// the cell's format.
+pub(crate) fn layers(c: &Conditional, zoom: f32) -> Vec<AnyElement> {
     let mut out = Vec::new();
     if let Some(bar) = c.bar {
-        out.extend(bar_layers(bar));
+        out.extend(bar_layers(bar, zoom));
     }
     if let Some(icon) = c.icon {
         out.push(
@@ -30,10 +31,10 @@ pub(crate) fn layers(c: &Conditional) -> Vec<AnyElement> {
                 .absolute()
                 .top_0()
                 .bottom_0()
-                .left(px(3.))
+                .left(px(3.) * zoom)
                 .flex()
                 .items_center()
-                .child(icon_element(icon))
+                .child(icon_sized(icon, ICON * zoom))
                 .into_any_element(),
         );
     }
@@ -62,7 +63,7 @@ pub(crate) fn text_backdrop<'a>(
     }
 }
 
-fn bar_layers(bar: DataBar) -> Vec<AnyElement> {
+fn bar_layers(bar: DataBar, zoom: f32) -> Vec<AnyElement> {
     let color = hsla(bar.color);
     // Excel's gradient fades from the bar colour to near white at the end
     // away from the axis.
@@ -81,8 +82,8 @@ fn bar_layers(bar: DataBar) -> Vec<AnyElement> {
     let mut out = vec![
         div()
             .absolute()
-            .top(BAR_INSET)
-            .bottom(BAR_INSET)
+            .top(BAR_INSET * zoom)
+            .bottom(BAR_INSET * zoom)
             .left(relative(bar.from))
             .w(relative(width))
             .bg(fill)
@@ -108,11 +109,16 @@ fn bar_layers(bar: DataBar) -> Vec<AnyElement> {
 }
 
 pub(crate) fn icon_element(icon: CfIcon) -> impl IntoElement {
+    icon_sized(icon, ICON)
+}
+
+/// An icon `size` px square.
+fn icon_sized(icon: CfIcon, size: Pixels) -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |b, _, window, _| paint_icon(icon, b, window),
     )
-    .size(ICON)
+    .size(size)
     .flex_none()
 }
 
