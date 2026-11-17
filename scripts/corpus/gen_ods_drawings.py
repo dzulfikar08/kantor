@@ -18,6 +18,9 @@ Sheet "Shapes", objects anchored to the sheet:
   quadratic curve Q and quadrant X/Y corners);
 * a group (draw:g) of a rectangle and an ellipse ("Pair") with a group
   inside it holding a line ("Inner");
+* a group "Joined" of two rectangles and a red connector between them
+  (draw:connector, rising to the right: flipped vertically), as
+  LibreOffice writes a connector in a group;
 * a callout (draw:caption, "Callout") with text;
 * a rectangle inside a hyperlink (draw:a, "Linked box");
 * form controls (draw:control with office:forms): a button "Run", a
@@ -98,6 +101,11 @@ def content() -> str:
   <draw:g draw:name="Inner">
    <draw:line draw:name="Pair line" draw:style-name="line" svg:x1="7cm" svg:y1="5.5cm" svg:x2="11.5cm" svg:y2="5.5cm"/>
   </draw:g>
+ </draw:g>
+ <draw:g draw:name="Joined">
+  <draw:rect draw:name="Joined start" draw:style-name="blue" svg:x="7cm" svg:y="13cm" svg:width="1cm" svg:height="1cm"/>
+  <draw:rect draw:name="Joined end" draw:style-name="green" svg:x="11cm" svg:y="11cm" svg:width="1cm" svg:height="1cm"/>
+  <draw:connector draw:name="Joined link" draw:style-name="line" draw:type="standard" svg:x1="8cm" svg:y1="13.5cm" svg:x2="11cm" svg:y2="11.5cm"/>
  </draw:g>
  <draw:caption draw:name="Callout" draw:style-name="note" svg:x="0.5cm" svg:y="6.5cm" svg:width="4cm" svg:height="1.5cm" draw:caption-point-x="-1cm" draw:caption-point-y="2cm"><text:p>Look here</text:p></draw:caption>
  <draw:a xlink:type="simple" xlink:href="https://example.com/"><draw:rect draw:name="Linked box" draw:style-name="blue" svg:x="5cm" svg:y="6.5cm" svg:width="3cm" svg:height="1.5cm"><text:p>Link</text:p></draw:rect></draw:a>
