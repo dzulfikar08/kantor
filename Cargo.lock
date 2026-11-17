@@ -1625,6 +1625,7 @@ dependencies = [
  "docx-rs",
  "encoding_rs",
  "kantor_core",
+ "kantor_metafile",
  "kantor_ooxml",
  "log",
  "quick-xml 0.41.0",
@@ -1653,6 +1654,7 @@ dependencies = [
  "docs_engine",
  "docs_layout",
  "flate2",
+ "kantor_metafile",
  "krilla",
  "log",
  "roxmltree 0.21.2",
@@ -4132,6 +4134,16 @@ dependencies = [
 [[package]]
 name = "kantor_mem"
 version = "0.11.0"
+
+[[package]]
+name = "kantor_metafile"
+version = "0.11.0"
+dependencies = [
+ "base64 0.22.1",
+ "flate2",
+ "log",
+ "resvg 0.46.0",
+]
 
 [[package]]
 name = "kantor_numfmt"
@@ -7021,6 +7033,7 @@ dependencies = [
  "ironcalc",
  "ironcalc_base",
  "kantor_mem",
+ "kantor_metafile",
  "kantor_numfmt",
  "kantor_ooxml",
  "log",
@@ -7223,6 +7236,7 @@ dependencies = [
  "cfb",
  "docs_engine",
  "flate2",
+ "kantor_metafile",
  "kantor_ooxml",
  "roxmltree 0.21.2",
  "tempfile",
@@ -7272,6 +7286,7 @@ dependencies = [
  "gpui-kit",
  "image",
  "kantor_core",
+ "kantor_metafile",
  "kantor_spell",
  "kantor_ui",
  "log",

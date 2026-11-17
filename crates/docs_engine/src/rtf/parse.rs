@@ -976,7 +976,26 @@ impl Parser {
     }
 
     fn end_pict(&mut self) {
-        let pict = std::mem::take(&mut self.pict);
+        let mut pict = std::mem::take(&mut self.pict);
+        if pict.data.is_empty() && (1..=6).contains(&pict.kind) {
+            return;
+        }
+        // Metafiles and DIBs are brought in as PNG (an RTF picture has no
+        // file of its own to keep); their picw/pich are in 0.01 mm.
+        let metafile = matches!(pict.kind, 3..=5);
+        let converted = match pict.kind {
+            3..=5 => kantor_metafile::to_png(&pict.data, 2048),
+            6 => kantor_metafile::dib_to_png(&pict.data),
+            _ => None,
+        };
+        if let Some(png) = converted {
+            pict.data = png;
+            pict.kind = 1;
+            if metafile {
+                pict.picw = (i64::from(pict.picw) * 96 / 2540) as i32;
+                pict.pich = (i64::from(pict.pich) * 96 / 2540) as i32;
+            }
+        }
         if pict.kind == 0 || pict.kind > 2 {
             self.notes
                 .insert("pictures in formats other than PNG and JPEG were left out");
@@ -1431,9 +1450,11 @@ impl Parser {
                 match w {
                     "pngblip" => self.pict.kind = 1,
                     "jpegblip" => self.pict.kind = 2,
-                    "emfblip" | "wmetafile" | "macpict" | "dibitmap" | "wbitmap" | "pmmetafile" => {
-                        self.pict.kind = 3
-                    }
+                    "emfblip" => self.pict.kind = 3,
+                    "wmetafile" => self.pict.kind = 4,
+                    "macpict" => self.pict.kind = 5,
+                    "dibitmap" => self.pict.kind = 6,
+                    "wbitmap" | "pmmetafile" => self.pict.kind = 7,
                     "picw" => self.pict.picw = n,
                     "pich" => self.pict.pich = n,
                     "picwgoal" => self.pict.wgoal = n,

@@ -52,10 +52,8 @@ fn corners(a: &Anchor) -> ((u32, u32), (u32, u32)) {
 #[test]
 fn ods_pictures_and_charts_are_imported() {
     let wb = Workbook::open(corpus("drawings.ods")).unwrap();
-    assert_eq!(
-        wb.import_notes(),
-        ["1 chart not imported (radar, surface, bubble, bar of pie or combination charts)"]
-    );
+    // The radar chart comes in too.
+    assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
     assert_eq!(wb.sheet_names(), ["Data", "Charts", "Overview"]);
 
     let on_data = wb.drawings(0);
@@ -115,6 +113,7 @@ fn ods_pictures_and_charts_are_imported() {
         (ChartType::Pie, "Pie", "Pie"),
         (ChartType::Other, "Doughnut", "Doughnut"),
         (ChartType::Scatter, "Scatter", "Scatter"),
+        (ChartType::Other, "Radar", "Radar"),
     ];
     assert_eq!(kinds.len(), want.len(), "{kinds:?}");
     for (got, want) in kinds.iter().zip(want) {

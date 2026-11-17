@@ -45,6 +45,8 @@ Files:
   Pictures/; "Overview" stays a worksheet holding one chart).
 * shapes.ods: tests/corpus/xlsx/23_shapes.xlsx (shapes, text boxes, a
   connector, a group) as LibreOffice saves it in OpenDocument.
+* shapes.xls: the same workbook as LibreOffice saves it in Excel 97
+  format (`--shapes-xls` writes only this file).
 * dates1904.xls: a workbook in the 1904 date system.
 * xlwt.xls: written directly as BIFF8 by xlwt (headless LibreOffice drops
   view settings): frozen rows and columns, the second sheet active, pattern
@@ -787,8 +789,19 @@ def main() -> None:
         cf12_book(out)
         print(out)
         return
-    lo = Path(sys.argv[1] if len(sys.argv) > 1 else Path.home() / ".cache/lo/lo.AppImage")
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    lo = Path(args[0] if args else Path.home() / ".cache/lo/lo.AppImage")
     OUT.mkdir(parents=True, exist_ok=True)
+    if "--shapes-xls" in sys.argv:
+        tmp = Path(tempfile.mkdtemp(dir=Path.home() / ".cache" / "ktmp"))
+        try:
+            shapes = tmp / "shapes.xlsx"
+            shutil.copy(ROOT / "tests" / "corpus" / "xlsx" / "23_shapes.xlsx", shapes)
+            shutil.copy(convert(lo, shapes, "MS Excel 97", "xls", tmp), OUT / "shapes.xls")
+            print(OUT / "shapes.xls")
+        finally:
+            shutil.rmtree(tmp)
+        return
     tmp = Path(tempfile.mkdtemp(dir=Path.home() / ".cache" / "ktmp"))
     try:
         src = tmp / "formatted.xlsx"
@@ -812,6 +825,7 @@ def main() -> None:
         shapes = tmp / "shapes.xlsx"
         shutil.copy(ROOT / "tests" / "corpus" / "xlsx" / "23_shapes.xlsx", shapes)
         shutil.copy(convert(lo, shapes, "calc8", "ods", tmp), OUT / "shapes.ods")
+        shutil.copy(convert(lo, shapes, "MS Excel 97", "xls", tmp), OUT / "shapes.xls")
         out = convert(lo, src, "MS Excel 97", "xls", tmp)
         make_chart_sheet(out, "Overview")
         shutil.copy(out, OUT / "drawings.xls")

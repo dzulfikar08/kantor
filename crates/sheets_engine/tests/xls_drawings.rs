@@ -88,10 +88,8 @@ fn check_pictures(wb: &Workbook) {
 #[test]
 fn pictures_and_charts_are_imported() {
     let wb = Workbook::open(corpus("drawings.xls")).unwrap();
-    assert_eq!(
-        wb.import_notes(),
-        ["1 chart not imported (radar, surface, bubble, bar of pie or combination charts)"]
-    );
+    // The radar chart comes in too.
+    assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
     assert_eq!(wb.sheet_names(), ["Data", "Charts"]);
     assert_eq!(wb.tabs(), [Tab::Sheet(0), Tab::Sheet(1), Tab::Chart(0)]);
     check_pictures(&wb);
@@ -135,6 +133,7 @@ fn pictures_and_charts_are_imported() {
         (ChartType::Pie, "Pie", "Pie"),
         (ChartType::Other, "Doughnut", "Doughnut"),
         (ChartType::Scatter, "Scatter", "Scatter"),
+        (ChartType::Other, "Radar", "Radar"),
     ];
     assert_eq!(kinds.len(), want.len(), "{kinds:?}");
     for (got, want) in kinds.iter().zip(want) {
@@ -210,7 +209,7 @@ fn imported_drawings_save_to_xlsx_and_reopen() {
     let info = back.chart_info(on_data[0].key).unwrap();
     assert_eq!(info.spec.title, "Sales by quarter");
     assert_eq!(info.spec.data, CellRange::from_corners((1, 0), (5, 2)));
-    assert_eq!(back.drawings(1).len(), 6);
+    assert_eq!(back.drawings(1).len(), 7);
     assert_eq!(back.chart_sheet_drawings(0).len(), 1);
 
     // Saved again: the same parts.
@@ -255,4 +254,101 @@ fn files_without_drawings_have_none() {
     let wb = Workbook::open(corpus("features.xls")).unwrap();
     assert!(!wb.has_drawings());
     assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
+}
+
+/// EMF and WMF pictures of `.xls` and `.ods` (metafiles.*, from
+/// scripts/corpus/gen_metafiles.py) are kept as they are.
+#[test]
+fn metafile_pictures_are_imported() {
+    for name in ["metafiles.xls", "metafiles.ods"] {
+        let wb = Workbook::open(corpus(name)).unwrap();
+        assert!(
+            wb.import_notes().is_empty(),
+            "{name}: {:?}",
+            wb.import_notes()
+        );
+        let pics: Vec<_> = wb
+            .drawings(0)
+            .iter()
+            .filter_map(|d| match &*d.kind {
+                DrawingKind::Picture { data, part, .. } => Some((part.clone(), data.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pics.len(), 2, "{name}");
+        for (part, data) in pics {
+            assert!(kantor_metafile::kind(&data).is_some(), "{name}: {part}");
+            assert!(
+                kantor_metafile::to_png(&data, 256).is_some(),
+                "{name}: {part}"
+            );
+        }
+    }
+}
+
+/// Shapes and text boxes of an `.xls` (shapes.xls: 23_shapes.xlsx as
+/// LibreOffice saves it in Excel 97 format, from scripts/corpus/gen_xls.py).
+#[test]
+fn xls_shapes_and_text_boxes() {
+    let wb = Workbook::open(corpus("shapes.xls")).unwrap();
+    let shapes = wb.drawings(0);
+    let xml = |d: &Drawing| match &*d.kind {
+        DrawingKind::Shape { xml, .. } => xml.to_string(),
+        k => panic!("not a shape: {k:?}"),
+    };
+    let names: Vec<&str> = shapes.iter().map(|d| d.name.as_str()).collect();
+    for want in [
+        "Revenue box",
+        "Gradient oval",
+        "Dashed frame",
+        "Arrow line",
+        "Turned arrow",
+        "Notes box",
+        "Note callout",
+        "Hidden shape",
+    ] {
+        assert!(names.contains(&want), "{want} in {names:?}");
+    }
+    let by = |n: &str| shapes.iter().find(|d| d.name == n).unwrap();
+    let revenue = xml(by("Revenue box"));
+    assert!(revenue.contains("prst=\"rect\""), "{revenue}");
+    assert!(revenue.contains("<a:t>Revenue</a:t>"), "{revenue}");
+    // LibreOffice writes its shapes as freeforms: the oval's path, curved.
+    let oval = xml(by("Gradient oval"));
+    assert!(
+        oval.contains("<a:custGeom>") && oval.contains("<a:cubicBezTo>"),
+        "{oval}"
+    );
+    assert!(oval.contains("<a:t>Gradient</a:t>"), "{oval}");
+    let frame = xml(by("Dashed frame"));
+    assert!(frame.contains("<a:prstDash val=\"dash\"/>"), "{frame}");
+    let line = xml(by("Arrow line"));
+    assert!(line.starts_with("<xdr:cxnSp"), "{line}");
+    let turned = xml(by("Turned arrow"));
+    assert!(turned.contains(" rot=\""), "{turned}");
+    assert!(by("Hidden shape").hidden);
+    // The group (shapes inside it) is still left out.
+    assert_eq!(
+        wb.import_notes(),
+        ["1 shape, text box or control not imported"]
+    );
+}
+
+/// The radar chart of drawings.xls and drawings.ods is brought in as a
+/// radar chart.
+#[test]
+fn radar_charts_are_imported() {
+    for name in ["drawings.xls", "drawings.ods"] {
+        let wb = Workbook::open(corpus(name)).unwrap();
+        let radar = (0..wb.sheet_names().len() as u32)
+            .flat_map(|s| wb.drawings(s))
+            .filter_map(|d| match &*d.kind {
+                DrawingKind::Chart { xml, .. } => Some(xml.to_string()),
+                _ => None,
+            })
+            .find(|x| x.contains("<c:radarChart>"));
+        let xml = radar.unwrap_or_else(|| panic!("{name}: no radar chart"));
+        assert!(xml.contains("<c:radarStyle "), "{xml}");
+        assert!(xml.matches("<c:ser>").count() == 2, "{xml}");
+    }
 }

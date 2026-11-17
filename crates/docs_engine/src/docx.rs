@@ -2459,14 +2459,15 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         let Some(rel) = rels.get(id) else { continue };
         let part = resolve(&document_part, &rel.target);
         let data = zip_bytes(&mut zip, &part)?;
-        let drawable = data.as_deref().map(ImageFormat::sniff);
+        // PNG and JPEG, and the pictures Kantor draws as PNG (WMF, EMF, PICT, BMP).
+        let drawable = data.as_deref().is_some_and(|d| {
+            ImageFormat::sniff(d) != ImageFormat::Other || kantor_metafile::kind(d).is_some()
+        });
         media.insert(
             id.clone(),
             Media {
                 part,
-                bytes: data
-                    .filter(|_| matches!(drawable, Some(ImageFormat::Png | ImageFormat::Jpeg)))
-                    .map(Into::into),
+                bytes: data.filter(|_| drawable).map(Into::into),
             },
         );
     }
@@ -2604,14 +2605,15 @@ fn read_story(
         let Some(rel) = rels.get(id) else { continue };
         let part = resolve(name, &rel.target);
         let data = zip_bytes(zip, &part)?;
-        let drawable = data.as_deref().map(ImageFormat::sniff);
+        // PNG and JPEG, and the pictures Kantor draws as PNG (WMF, EMF, PICT, BMP).
+        let drawable = data.as_deref().is_some_and(|d| {
+            ImageFormat::sniff(d) != ImageFormat::Other || kantor_metafile::kind(d).is_some()
+        });
         media.insert(
             id.clone(),
             Media {
                 part,
-                bytes: data
-                    .filter(|_| matches!(drawable, Some(ImageFormat::Png | ImageFormat::Jpeg)))
-                    .map(Into::into),
+                bytes: data.filter(|_| drawable).map(Into::into),
             },
         );
     }

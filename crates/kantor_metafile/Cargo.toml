@@ -1,0 +1,17 @@
+[package]
+name = "kantor_metafile"
+description = "Kantor: Windows metafiles (WMF, EMF, EMF+), PICT and BMP pictures turned into SVG and PNG (no GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+base64.workspace = true
+flate2 = "1"
+log.workspace = true
+# Same version and features GPUI already builds: no new crates in the tree.
+resvg = { version = "0.46", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "raster-images"] }
+
+[lints]
+workspace = true

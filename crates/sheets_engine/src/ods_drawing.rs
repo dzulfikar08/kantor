@@ -542,18 +542,30 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
         };
         match first.tag_name().name() {
             "image" => {
-                let href = first.attribute((NS_XLINK, "href")).unwrap_or_default();
-                let data = self.bytes(href);
-                let ext = data.as_deref().and_then(|d| {
-                    if d.starts_with(b"\x89PNG") {
-                        Some("png")
-                    } else if d.starts_with(&[0xFF, 0xD8]) {
-                        Some("jpeg")
-                    } else {
-                        None
+                // LibreOffice may give several images (an SVG, then a PNG
+                // fallback): the first one Kantor draws everywhere, else an
+                // SVG (shown on screen).
+                let mut found = None;
+                let mut svg = None;
+                for img in n.children().filter(|c| {
+                    c.is_element()
+                        && c.tag_name().namespace() == Some(NS_DRAW)
+                        && c.tag_name().name() == "image"
+                }) {
+                    let href = img.attribute((NS_XLINK, "href")).unwrap_or_default();
+                    let Some(data) = self.bytes(href) else {
+                        continue;
+                    };
+                    match picture_ext(&data) {
+                        Some("svg") => svg = svg.or(Some(("svg", data))),
+                        Some(ext) => {
+                            found = Some((ext, data));
+                            break;
+                        }
+                        None => {}
                     }
-                });
-                let (Some(data), Some(ext)) = (data, ext) else {
+                }
+                let Some((ext, data)) = found.or(svg) else {
                     self.out.skipped.pictures += 1;
                     return None;
                 };
@@ -1053,6 +1065,16 @@ struct Run {
     font: Option<String>,
 }
 
+/// An outline for [`Shape::simple`].
+pub(crate) struct SimpleLine {
+    pub color: u32,
+    /// EMU.
+    pub width: i64,
+    pub dash: bool,
+    pub head: Option<&'static str>,
+    pub tail: Option<&'static str>,
+}
+
 /// A shape, line or text box to write as `xdr:sp` / `xdr:cxnSp`.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Shape {
@@ -1079,6 +1101,60 @@ fn solid(c: u32) -> String {
 }
 
 impl Shape {
+    /// A shape from another importer (`.xls`): a preset, solid fill,
+    /// outline and plain text (lines split at `\n`), sized by its anchor.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn simple(
+        prst: &str,
+        line_shape: bool,
+        flip: (bool, bool),
+        tx_box: bool,
+        fill: Option<u32>,
+        line: Option<SimpleLine>,
+        text: &str,
+        align: Option<&'static str>,
+        anchor: &'static str,
+        rot: f64,
+    ) -> Self {
+        let text = if text.is_empty() {
+            Vec::new()
+        } else {
+            text.trim_end_matches('\n')
+                .split('\n')
+                .map(|l| Para {
+                    align,
+                    runs: vec![Run {
+                        text: l.to_owned(),
+                        size: None,
+                        bold: false,
+                        italic: false,
+                        color: None,
+                        font: None,
+                    }],
+                })
+                .collect()
+        };
+        Shape {
+            prst: prst.to_owned(),
+            adj: Vec::new(),
+            line_shape,
+            flip,
+            tx_box,
+            fill: fill.map_or(Fill::None, Fill::Solid),
+            line: line.map(|l| Line {
+                color: l.color,
+                width: l.width,
+                dash: l.dash,
+                head: l.head,
+                tail: l.tail,
+            }),
+            text,
+            anchor,
+            size: (0, 0),
+            rot,
+        }
+    }
+
     /// The `xdr:sp` (or `xdr:cxnSp`) element.
     pub(crate) fn xml(&self, id: usize, name: &str, descr: &str, hidden: &str) -> String {
         let rot = (self.rot * 60_000.0).round() as i64;
@@ -1138,11 +1214,16 @@ impl Shape {
                     .unwrap_or_default(),
             ),
         };
+        // A custom path (`a:custGeom`, from `.xls` freeforms) or a preset.
+        let geom = if self.prst.starts_with('<') {
+            self.prst.clone()
+        } else {
+            format!("<a:prstGeom prst=\"{}\">{av}</a:prstGeom>", esc(&self.prst))
+        };
         let sppr = format!(
-            "<xdr:spPr><a:xfrm{rot}{flips}><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm><a:prstGeom prst=\"{}\">{av}</a:prstGeom>{fill}{ln}</xdr:spPr>",
+            "<xdr:spPr><a:xfrm{rot}{flips}><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm>{geom}{fill}{ln}</xdr:spPr>",
             self.size.0.max(0),
             self.size.1.max(0),
-            esc(&self.prst)
         );
         if self.line_shape {
             return format!(
@@ -1328,6 +1409,10 @@ fn read_chart(
                 first_angle,
             },
             "scatter" => PlotKind::Scatter,
+            "bubble" => PlotKind::Bubble,
+            "radar" => PlotKind::Radar { filled: false },
+            "filled-radar" => PlotKind::Radar { filled: true },
+            "stock" => PlotKind::Stock,
             _ => return Err(Unsupported),
         })
     };
@@ -1347,12 +1432,26 @@ fn read_chart(
         } else {
             kind_of(sclass)?
         };
-        let Some(values) = s
+        let Some(mut values) = s
             .attribute((NS_CHART, "values-cell-range-address"))
             .and_then(|r| excel_ref(r, rename))
         else {
             continue;
         };
+        // Bubbles: the values are the sizes; the first domain holds the y
+        // values, the second the x values.
+        let domains: Vec<String> = s
+            .children()
+            .filter(|c| c.has_tag_name((NS_CHART, "domain")))
+            .filter_map(|d| d.attribute((NS_TABLE, "cell-range-address")))
+            .filter_map(|r| excel_ref(r, rename))
+            .collect();
+        let mut bubbles = None;
+        if kind == PlotKind::Bubble
+            && let Some(y) = domains.first()
+        {
+            bubbles = Some(std::mem::replace(&mut values, y.clone()));
+        }
         let name = s
             .attribute((NS_CHART, "label-cell-address"))
             .and_then(|r| excel_ref(r, rename))
@@ -1368,7 +1467,9 @@ fn read_chart(
                 })
             });
         let style = s.attribute((NS_CHART, "style-name"));
-        let scats = if matches!(kind, PlotKind::Scatter) {
+        let scats = if kind == PlotKind::Bubble {
+            domains.get(1).cloned().or_else(|| cats.clone())
+        } else if matches!(kind, PlotKind::Scatter) {
             ch(s, "domain")
                 .and_then(|d| d.attribute((NS_TABLE, "cell-range-address")))
                 .and_then(|r| excel_ref(r, rename))
@@ -1409,6 +1510,8 @@ fn read_chart(
                 == Some("none"),
             labels: (labels.value || labels.percent || labels.category || labels.series)
                 .then_some(labels),
+            points: Vec::new(),
+            bubbles,
         };
         match plots.iter_mut().find(|p| p.kind == kind) {
             Some(p) => p.series.push(series),
@@ -1465,6 +1568,28 @@ fn read_chart(
         },
         size,
     ))
+}
+
+/// The part extension of a picture Kantor shows, by its signature.
+fn picture_ext(d: &[u8]) -> Option<&'static str> {
+    if d.starts_with(b"\x89PNG") {
+        Some("png")
+    } else if d.starts_with(&[0xFF, 0xD8]) {
+        Some("jpeg")
+    } else if d.starts_with(b"GIF8") {
+        Some("gif")
+    } else if let Some(kind) = kantor_metafile::kind(d) {
+        Some(match kind {
+            kantor_metafile::Kind::Emf => "emf",
+            kantor_metafile::Kind::Wmf => "wmf",
+            kantor_metafile::Kind::Pict => "pict",
+            kantor_metafile::Kind::Bmp => "bmp",
+        })
+    } else {
+        let head = String::from_utf8_lossy(&d[..d.len().min(512)]);
+        (head.contains("<svg") || (head.trim_start().starts_with("<?xml") && head.contains("svg")))
+            .then_some("svg")
+    }
 }
 
 #[cfg(test)]

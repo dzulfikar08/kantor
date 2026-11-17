@@ -16,8 +16,8 @@
 //! and character formatting, placeholders, pictures, groups, tables),
 //! hidden slides and speaker notes. Transitions, animations, sounds,
 //! embedded fonts and macros are left out; OLE objects show their preview
-//! picture. EMF/WMF pictures are kept in the package (PowerPoint shows them
-//! after Save) and appear in Kantor as a grey box.
+//! picture. EMF, WMF and PICT pictures are kept as they are (Kantor draws them
+//! with `kantor_metafile`); TIFF pictures appear as a grey box.
 //!
 //! Every offset and length comes from the file, so all reads are checked
 //! ([`rec`]); a malformed file gives an error, never a panic.
@@ -33,7 +33,7 @@ use std::io::{Cursor, Read as _, Write as _};
 use anyhow::{Context as _, anyhow, bail};
 
 use draw::{Part, Props, Shape};
-use rec::{Cur, Rec, rt};
+use rec::{Rec, rt};
 use text::{Styles, Text, tx};
 
 /// EMUs per master unit (576 per inch).
@@ -399,86 +399,12 @@ fn read_blips(dgg: Option<&Rec>, pictures: &[u8]) -> Vec<Option<Blip>> {
 }
 
 fn read_blip(r: &Rec) -> Option<Blip> {
-    let two_uids = r.inst & 1 == 1;
-    let uids = if two_uids { 32 } else { 16 };
-    let mut c = r.cur();
-    let (ext, metafile, renderable) = match r.ty {
-        0xF01A => ("emf", true, false),
-        0xF01B => ("wmf", true, false),
-        0xF01C => ("pict", true, false),
-        0xF01D | 0xF02A => ("jpeg", false, true),
-        0xF01E => ("png", false, true),
-        0xF01F => ("bmp", false, true),
-        0xF029 => ("tiff", false, false),
-        _ => return None,
-    };
-    c.skip(uids)?;
-    if metafile {
-        let raw_size = c.u32()? as usize;
-        c.skip(16 + 8)?;
-        let saved = c.u32()? as usize;
-        let compression = c.u8()?;
-        c.skip(1)?;
-        let data = c.bytes(saved.min(c.rest().len()))?;
-        let data = if compression == 0 {
-            let mut out = Vec::new();
-            flate2::read::ZlibDecoder::new(data)
-                .take(raw_size.min(256 << 20) as u64)
-                .read_to_end(&mut out)
-                .ok()?;
-            out
-        } else {
-            data.to_vec()
-        };
-        return Some(Blip {
-            ext,
-            data,
-            renderable,
-        });
-    }
-    c.skip(1)?; // tag
-    let data = c.rest();
-    let data = if ext == "bmp" {
-        dib_to_bmp(data)?
-    } else {
-        data.to_vec()
-    };
+    let blip = kantor_metafile::office_art_blip(r.ty, r.inst, r.data)?;
     Some(Blip {
-        ext,
-        data,
-        renderable,
+        ext: blip.ext,
+        renderable: blip.ext != "tiff",
+        data: blip.data,
     })
-}
-
-/// A DIB as a `.bmp` file (adds the file header).
-fn dib_to_bmp(dib: &[u8]) -> Option<Vec<u8>> {
-    let mut c = Cur::new(dib);
-    let header = c.u32()?;
-    let (bits, used) = if header >= 40 {
-        let mut c = Cur::new(dib);
-        c.skip(14)?;
-        let bits = c.u16()?;
-        c.skip(16)?;
-        (bits, c.u32()?)
-    } else {
-        (24, 0)
-    };
-    let colors = if used > 0 {
-        used.min(256)
-    } else if bits <= 8 {
-        1 << bits
-    } else {
-        0
-    };
-    let offset = 14 + header + colors * 4;
-    let total = 14 + dib.len() as u32;
-    let mut v = Vec::with_capacity(total as usize);
-    v.extend_from_slice(b"BM");
-    v.extend_from_slice(&total.to_le_bytes());
-    v.extend_from_slice(&[0; 4]);
-    v.extend_from_slice(&offset.to_le_bytes());
-    v.extend_from_slice(dib);
-    Some(v)
 }
 
 /// [`convert`] from the three streams (for tests that damage them).
@@ -1225,7 +1151,7 @@ impl<'a> Package<'_, 'a> {
         let mut notes = Vec::new();
         if media.hidden > 0 {
             notes.push(format!(
-                "{} EMF/WMF picture{} shown as {}",
+                "{} TIFF picture{} shown as {}",
                 media.hidden,
                 if media.hidden == 1 { "" } else { "s" },
                 if media.hidden == 1 { "a box" } else { "boxes" }

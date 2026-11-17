@@ -15,7 +15,8 @@ const NS: &str = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2
     xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
     xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
     xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\" \
-    xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\"";
+    xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\" \
+    xmlns:wpg=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\"";
 const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml";
 
@@ -808,11 +809,57 @@ impl W<'_> {
         };
         self.pictures += 1;
         let n = self.pictures;
-        let (graphic, default_name) = match &f.body {
+        let Some((el, default_name)) = self.drawing_el(&f.body, [0, 0, cx, cy], n, None, true)
+        else {
+            return String::new();
+        };
+        let uri = match &f.body {
+            FloatBody::Picture { .. } => "http://schemas.openxmlformats.org/drawingml/2006/picture",
+            FloatBody::Shape(_) => {
+                "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+            }
+            FloatBody::Group { .. } => {
+                "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+            }
+        };
+        let graphic = format!("<a:graphicData uri=\"{uri}\">{el}</a:graphicData>");
+        let name = f.name.clone().unwrap_or(default_name);
+        let descr = f
+            .descr
+            .as_deref()
+            .map(|d| format!(" descr=\"{}\"", esc(d)))
+            .unwrap_or_default();
+        format!(
+            "<w:r>{}<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+             relativeHeight=\"{}\" behindDoc=\"{}\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+             <wp:simplePos x=\"0\" y=\"0\"/><wp:positionH relativeFrom=\"{rel_h}\"><wp:posOffset>{}</wp:posOffset></wp:positionH>\
+             <wp:positionV relativeFrom=\"{rel_v}\"><wp:posOffset>{}</wp:posOffset></wp:positionV>\
+             <wp:extent cx=\"{cx}\" cy=\"{cy}\"/><wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>{wrap_el}\
+             <wp:docPr id=\"{n}\" name=\"{}\"{descr}/><wp:cNvGraphicFramePr/><a:graphic>{graphic}</a:graphic></wp:anchor></w:drawing></w:r>",
+            wrap("w:rPr", &self.rpr(c, istd)),
+            251_658_240 + f.z * 1024,
+            u8::from(f.spa.below && f.spa.wr == 3),
+            i64::from(l) * 635,
+            i64::from(t) * 635,
+            esc(&name),
+        )
+    }
+
+    /// One object of a floating drawing at `[x, y, cx, cy]` (EMU, or the
+    /// group's coordinates inside a group): `pic:pic`, `wps:wsp`, or a
+    /// group (`wpg:wgp` at the top, `wpg:grpSp` inside another). Returns
+    /// the element and its default name.
+    fn drawing_el(
+        &mut self,
+        body: &FloatBody,
+        [x, y, cx, cy]: [i64; 4],
+        n: u32,
+        child_name: Option<&str>,
+        top: bool,
+    ) -> Option<(String, String)> {
+        Some(match body {
             FloatBody::Picture { media, crop } => {
-                let Some(id) = self.media_rel(*media) else {
-                    return String::new();
-                };
+                let id = self.media_rel(*media)?;
                 let src = if crop.iter().any(|v| *v != 0) {
                     format!(
                         "<a:srcRect l=\"{}\" t=\"{}\" r=\"{}\" b=\"{}\"/>",
@@ -823,11 +870,11 @@ impl W<'_> {
                 };
                 (
                     format!(
-                        "<a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
-                         <pic:pic><pic:nvPicPr><pic:cNvPr id=\"{n}\" name=\"Picture {n}\"/><pic:cNvPicPr/></pic:nvPicPr>\
+                        "<pic:pic><pic:nvPicPr><pic:cNvPr id=\"{n}\" name=\"{}\"/><pic:cNvPicPr/></pic:nvPicPr>\
                          <pic:blipFill><a:blip r:embed=\"{id}\"/>{src}<a:stretch><a:fillRect/></a:stretch></pic:blipFill>\
-                         <pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>\
-                         <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData>"
+                         <pic:spPr><a:xfrm><a:off x=\"{x}\" y=\"{y}\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>\
+                         <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>",
+                        esc(child_name.unwrap_or(&format!("Picture {n}")))
                     ),
                     format!("Picture {n}"),
                 )
@@ -877,11 +924,18 @@ impl W<'_> {
                     None => String::new(),
                 };
                 let [il, it, ir, ib] = s.insets;
+                // Shapes inside a group carry their own id and name.
+                let cnv = match (top, child_name) {
+                    (true, _) => String::new(),
+                    (false, name) => format!(
+                        "<wps:cNvPr id=\"{n}\" name=\"{}\"/>",
+                        esc(name.unwrap_or(&format!("Shape {n}")))
+                    ),
+                };
                 (
                     format!(
-                        "<a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
-                         <wps:wsp><wps:cNvSpPr{}/><wps:spPr><a:xfrm{rot}{flips}><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>\
-                         {}{fill}{ln}</wps:spPr>{text}<wps:bodyPr rot=\"0\" vert=\"horz\" wrap=\"square\" lIns=\"{il}\" tIns=\"{it}\" rIns=\"{ir}\" bIns=\"{ib}\" anchor=\"{}\"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData>",
+                        "<wps:wsp>{cnv}<wps:cNvSpPr{}/><wps:spPr><a:xfrm{rot}{flips}><a:off x=\"{x}\" y=\"{y}\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>\
+                         {}{fill}{ln}</wps:spPr>{text}<wps:bodyPr rot=\"0\" vert=\"horz\" wrap=\"square\" lIns=\"{il}\" tIns=\"{it}\" rIns=\"{ir}\" bIns=\"{ib}\" anchor=\"{}\"><a:noAutofit/></wps:bodyPr></wps:wsp>",
                         if s.text_box { " txBox=\"1\"" } else { "" },
                         s.geom,
                         s.anchor
@@ -893,27 +947,40 @@ impl W<'_> {
                     },
                 )
             }
-        };
-        let name = f.name.clone().unwrap_or(default_name);
-        let descr = f
-            .descr
-            .as_deref()
-            .map(|d| format!(" descr=\"{}\"", esc(d)))
-            .unwrap_or_default();
-        format!(
-            "<w:r>{}<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
-             relativeHeight=\"{}\" behindDoc=\"{}\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
-             <wp:simplePos x=\"0\" y=\"0\"/><wp:positionH relativeFrom=\"{rel_h}\"><wp:posOffset>{}</wp:posOffset></wp:positionH>\
-             <wp:positionV relativeFrom=\"{rel_v}\"><wp:posOffset>{}</wp:posOffset></wp:positionV>\
-             <wp:extent cx=\"{cx}\" cy=\"{cy}\"/><wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>{wrap_el}\
-             <wp:docPr id=\"{n}\" name=\"{}\"{descr}/><wp:cNvGraphicFramePr/><a:graphic>{graphic}</a:graphic></wp:anchor></w:drawing></w:r>",
-            wrap("w:rPr", &self.rpr(c, istd)),
-            251_658_240 + f.z * 1024,
-            u8::from(f.spa.below && f.spa.wr == 3),
-            i64::from(l) * 635,
-            i64::from(t) * 635,
-            esc(&name),
-        )
+            FloatBody::Group { rect, children } => {
+                let [l, t, r, b] = *rect;
+                let mut out = String::new();
+                if top {
+                    out.push_str("<wpg:wgp>");
+                } else {
+                    let _ = write!(
+                        out,
+                        "<wpg:grpSp><wpg:cNvPr id=\"{n}\" name=\"{}\"/>",
+                        esc(child_name.unwrap_or(&format!("Group {n}")))
+                    );
+                }
+                let _ = write!(
+                    out,
+                    "<wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x=\"{x}\" y=\"{y}\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/>\
+                     <a:chOff x=\"{l}\" y=\"{t}\"/><a:chExt cx=\"{}\" cy=\"{}\"/></a:xfrm></wpg:grpSpPr>",
+                    i64::from(r) - i64::from(l),
+                    i64::from(b) - i64::from(t)
+                );
+                for c in children {
+                    self.pictures += 1;
+                    let m = self.pictures;
+                    let [cl, ct, cr, cb] = c.anchor.map(i64::from);
+                    let place = [cl.min(cr), ct.min(cb), (cr - cl).abs(), (cb - ct).abs()];
+                    if let Some((el, _)) =
+                        self.drawing_el(&c.body, place, m, c.name.as_deref(), false)
+                    {
+                        out.push_str(&el);
+                    }
+                }
+                out.push_str(if top { "</wpg:wgp>" } else { "</wpg:grpSp>" });
+                (out, format!("Group {n}"))
+            }
+        })
     }
 
     fn table(&mut self, rows: &[Row]) -> String {
@@ -1342,7 +1409,11 @@ fn zip(w: &W, document: &str) -> Result<Vec<u8>> {
          <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
          <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
          <Default Extension=\"png\" ContentType=\"image/png\"/>\
-         <Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/>",
+         <Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/>\
+         <Default Extension=\"emf\" ContentType=\"image/x-emf\"/>\
+         <Default Extension=\"wmf\" ContentType=\"image/x-wmf\"/>\
+         <Default Extension=\"pict\" ContentType=\"image/pict\"/>\
+         <Default Extension=\"bmp\" ContentType=\"image/bmp\"/>",
     );
     let _ = write!(
         ct,

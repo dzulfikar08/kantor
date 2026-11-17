@@ -283,8 +283,13 @@ impl Painter {
             "tif" | "tiff" => Some(ImageFormat::Tiff),
             _ => None,
         };
-        let decoded = format.and_then(|format| {
-            Image::from_bytes(format, data.as_ref().clone())
+        // WMF, EMF and PICT (and BMPs GPUI can't read) are drawn as PNG.
+        let converted = match kantor_metafile::kind(data) {
+            Some(_) => kantor_metafile::to_png(data, 2048).map(|png| (ImageFormat::Png, png)),
+            None => format.map(|f| (f, data.as_ref().clone())),
+        };
+        let decoded = converted.and_then(|(format, bytes)| {
+            Image::from_bytes(format, bytes)
                 .to_image_data(cx.svg_renderer())
                 .map_err(|e| log::warn!("slides: can't decode {part}: {e:#}"))
                 .ok()

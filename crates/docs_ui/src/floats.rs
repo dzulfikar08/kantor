@@ -1051,10 +1051,12 @@ impl DocsView {
                         let Some(bytes) = owner.image_bytes(rel_id) else {
                             continue;
                         };
-                        let format = match docs_engine::ImageFormat::sniff(&bytes) {
-                            docs_engine::ImageFormat::Png => ImageFormat::Png,
+                        let Some((format, bytes)) = docs_engine::drawable_picture(bytes) else {
+                            continue;
+                        };
+                        let format = match format {
                             docs_engine::ImageFormat::Jpeg => ImageFormat::Jpeg,
-                            docs_engine::ImageFormat::Other => continue,
+                            _ => ImageFormat::Png,
                         };
                         let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes.to_vec()));
                         self.images.insert(base_key, i.clone());

@@ -59,6 +59,7 @@ mod xls;
 mod xls_drawing;
 mod xls_formula;
 mod xls_ftab;
+mod xlsb;
 
 pub use cf_edit::{
     COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,

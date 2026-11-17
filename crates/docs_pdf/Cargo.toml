@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+kantor_metafile.workspace = true
 anyhow.workspace = true
 docs_engine.workspace = true
 docs_layout.workspace = true

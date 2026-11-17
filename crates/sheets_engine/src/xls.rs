@@ -215,7 +215,7 @@ impl<'a> Bytes<'a> {
 }
 
 /// The 56 colours of BIFF8's default palette (indices 8-63).
-const DEFAULT_PALETTE: [u32; 56] = [
+pub(crate) const DEFAULT_PALETTE: [u32; 56] = [
     0x000000, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF, 0xFFFF00, 0xFF00FF, 0x00FFFF, 0x800000,
     0x008000, 0x000080, 0x808000, 0x800080, 0x008080, 0xC0C0C0, 0x808080, 0x9999FF, 0x993366,
     0xFFFFCC, 0xCCFFFF, 0x660066, 0xFF8080, 0x0066CC, 0xCCCCFF, 0x000080, 0xFF00FF, 0xFFFF00,
@@ -226,7 +226,7 @@ const DEFAULT_PALETTE: [u32; 56] = [
 ];
 
 /// The colours of indices 0-7 (fixed, whatever the palette).
-const FIXED_COLOURS: [u32; 8] = [
+pub(crate) const FIXED_COLOURS: [u32; 8] = [
     0x000000, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF, 0xFFFF00, 0xFF00FF, 0x00FFFF,
 ];
 
@@ -247,7 +247,7 @@ impl Palette {
     }
 }
 
-fn rgb_color(rgb: u32) -> Color {
+pub(crate) fn rgb_color(rgb: u32) -> Color {
     Color::Rgb(format!("#{rgb:06X}"))
 }
 
@@ -1378,7 +1378,7 @@ fn convert_font(f: &XlsFont, p: &Palette) -> Font {
     }
 }
 
-fn border_style(dg: u8) -> Option<BorderStyle> {
+pub(crate) fn border_style(dg: u8) -> Option<BorderStyle> {
     Some(match dg {
         1 => BorderStyle::Thin,
         2 => BorderStyle::Medium,
@@ -1688,16 +1688,31 @@ fn read_sheet(
                 rules.objects.push(crate::xls_drawing::RawObj {
                     ot: cmo.map(|c| c.0),
                     chart: None,
+                    text: None,
                 });
             }
             0x00EC => rules.drawing.extend_from_slice(d),
             0x01B6 => {
                 let data = d.to_vec();
                 let bounds = rec.bounds().to_vec();
-                if let Some(id) = note_obj.take()
-                    && let Some(text) = txo_text(&data, &bounds)
+                if let Some(id) = note_obj.take() {
+                    if let Some(text) = txo_text(&data, &bounds) {
+                        texts.insert(id, text);
+                    }
+                } else if let Some(obj) = rules.objects.last_mut()
+                    && obj.text.is_none()
                 {
-                    texts.insert(id, text);
+                    // A text box's or shape's text, and its alignment
+                    // (grbit: horizontal in bits 1-3, vertical in 4-6).
+                    let grbit = u16::from_le_bytes([
+                        data.first().copied().unwrap_or(0),
+                        data.get(1).copied().unwrap_or(0),
+                    ]);
+                    obj.text = txo_text(&data, &bounds).map(|t| crate::xls_drawing::ObjText {
+                        text: t,
+                        h_align: ((grbit >> 1) & 7) as u8,
+                        v_align: ((grbit >> 4) & 7) as u8,
+                    });
                 }
             }
             0x001C => {

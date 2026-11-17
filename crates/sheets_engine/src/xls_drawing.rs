@@ -12,8 +12,8 @@
 //!   of the row height, turned into EMU from the sheet's column widths and
 //!   row heights ([`Geometry`]); `fMove`/`fSize` become `editAs`. Pictures
 //!   take their BLIP (`pib`), name, alternative text and cropping from the
-//!   shape's properties. PNG and JPEG pictures are kept; metafiles (EMF,
-//!   WMF, PICT), DIB and TIFF are left out with an import note.
+//!   shape's properties. PNG, JPEG, EMF, WMF, PICT and DIB (as BMP) pictures
+//!   are kept; TIFF is left out with an import note.
 //! * **Charts** ([`Chart`]): `SERIES` with their `AI` references (formula
 //!   tokens decompiled by [`crate::xls_formula`]) and names, the chart group
 //!   types (`BAR` vertical, horizontal, stacked and 100%, `LINE`, `AREA`,
@@ -34,6 +34,8 @@ use std::io::Write as _;
 
 use ironcalc_base::types::Worksheet;
 
+use kantor_ooxml::officeart::{arrowhead, color, cust_geom, preset};
+
 use crate::drawing::{Anchor, EMU_PER_PX, EditAs, Marker, RefData, RefValue};
 use crate::xls::{Bytes, Records};
 use crate::xls_formula::{Context, decompile};
@@ -43,6 +45,16 @@ use crate::xls_formula::{Context, decompile};
 pub(crate) struct RawObj {
     pub ot: Option<u16>,
     pub chart: Option<Vec<(u16, Vec<u8>)>>,
+    /// The `TXO` after a text box's or shape's `OBJ`.
+    pub text: Option<ObjText>,
+}
+
+/// A text box's text (`TXO`) and its alignment: horizontal 1 left,
+/// 2 centre, 3 right, 4 justify; vertical 1 top, 2 middle, 3 bottom.
+pub(crate) struct ObjText {
+    pub text: String,
+    pub h_align: u8,
+    pub v_align: u8,
 }
 
 /// A sheet's column widths and row heights in Excel's pixels.
@@ -169,9 +181,9 @@ fn art(mut b: &[u8]) -> Vec<Art<'_>> {
 
 /// A picture of the BLIP store.
 pub(crate) enum Blip {
-    /// PNG or JPEG: its extension and bytes.
+    /// A picture Kantor draws: its extension and bytes.
     Image { ext: &'static str, data: Vec<u8> },
-    /// A format Kantor doesn't show (metafiles, DIB, TIFF).
+    /// A format Kantor doesn't show (TIFF).
     Unsupported,
 }
 
@@ -199,22 +211,19 @@ fn fbse_blip(body: &[u8]) -> Option<Blip> {
     let name_len = *body.get(33)? as usize;
     let rest = body.get(36 + name_len..)?;
     let blip = art(rest).into_iter().next()?;
-    // Bitmaps: one or two 16-byte ids by instance, then a tag byte.
-    let (ext, two_ids) = match blip.typ {
-        0xF01D | 0xF02A => ("jpeg", matches!(blip.inst, 0x46B | 0x6E3)),
-        0xF01E => ("png", blip.inst == 0x6E1),
-        0xF01A..=0xF01C | 0xF01F | 0xF029 => return Some(Blip::Unsupported),
-        _ => return None,
-    };
-    let data = blip.body.get(if two_ids { 33 } else { 17 }..)?;
-    let ok = match ext {
-        "png" => data.starts_with(b"\x89PNG"),
-        _ => data.starts_with(&[0xFF, 0xD8]),
-    };
-    ok.then(|| Blip::Image {
-        ext,
-        data: data.to_vec(),
-    })
+    if !(0xF018..=0xF117).contains(&blip.typ) {
+        return None;
+    }
+    // Metafiles and DIBs are kept as they are (EMF, WMF, PICT, BMP parts)
+    // and drawn through kantor_metafile; TIFF isn't drawn.
+    match kantor_metafile::office_art_blip(blip.typ, blip.inst, blip.body) {
+        Some(b) if b.ext != "tiff" => Some(Blip::Image {
+            ext: b.ext,
+            data: b.data,
+        }),
+        Some(_) => Some(Blip::Unsupported),
+        None => None,
+    }
 }
 
 /// A shape of a sheet's drawing that has client data (an `OBJ`).
@@ -229,6 +238,13 @@ struct Shape {
     hidden: bool,
     /// Inside a group (placed relative to it): not shown.
     grouped: bool,
+    /// The shape type (`msosptX`, the `FSP`'s instance) and its flags.
+    typ: u16,
+    flags: u32,
+    /// Simple properties by id (fill, line, rotation…) and complex ones'
+    /// data (name, vertices…).
+    props: HashMap<u16, u32>,
+    complex: HashMap<u16, Vec<u8>>,
 }
 
 /// The shapes with client data in the order of their `OBJ`s.
@@ -249,6 +265,15 @@ fn shapes(drawing: &[u8]) -> Vec<Shape> {
                     let mut data = false;
                     for c in art(r.body) {
                         match c.typ {
+                            0xF00A => {
+                                s.typ = c.inst;
+                                s.flags = u32::from_le_bytes(
+                                    c.body
+                                        .get(4..8)
+                                        .and_then(|b| b.try_into().ok())
+                                        .unwrap_or([0; 4]),
+                                );
+                            }
                             0xF00B | 0xF122 => properties(&c, &mut s),
                             0xF010 => {
                                 let mut b = Bytes::new(c.body);
@@ -277,48 +302,32 @@ fn shapes(drawing: &[u8]) -> Vec<Shape> {
 /// What `shape` takes from an `OfficeArtFOPT`: the picture, cropping,
 /// name, description and whether it is hidden.
 fn properties(r: &Art<'_>, shape: &mut Shape) {
-    let n = r.inst as usize;
-    let Some(table) = r.body.get(..n * 6) else {
-        return;
+    kantor_ooxml::officeart::read_fopt(
+        r.inst as usize,
+        r.body,
+        &mut shape.props,
+        &mut shape.complex,
+    );
+    let text = |id: u16| {
+        let units: Vec<u16> = shape
+            .complex
+            .get(&id)?
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .take_while(|&u| u != 0)
+            .collect();
+        Some(String::from_utf16_lossy(&units)).filter(|s| !s.trim().is_empty())
     };
-    let mut complex = n * 6;
-    for p in table.as_chunks::<6>().0 {
-        let opid = u16::from_le_bytes([p[0], p[1]]);
-        let op = u32::from_le_bytes([p[2], p[3], p[4], p[5]]);
-        let id = opid & 0x3FFF;
-        if opid & 0x8000 != 0 {
-            // Complex: `op` bytes after the table, in order.
-            let data = r.body.get(complex..complex.saturating_add(op as usize));
-            complex = complex.saturating_add(op as usize);
-            let text = || {
-                let units: Vec<u16> = data?
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                    .take_while(|&u| u != 0)
-                    .collect();
-                Some(String::from_utf16_lossy(&units)).filter(|s| !s.is_empty())
-            };
-            match id {
-                0x0380 => shape.name = text(),
-                0x0381 => shape.descr = text(),
-                _ => {}
-            }
-            continue;
-        }
-        let frac = || (op as i32) as f32 / 65536.0;
-        match id {
-            0x0100 => shape.crop[1] = frac(),
-            0x0101 => shape.crop[3] = frac(),
-            0x0102 => shape.crop[0] = frac(),
-            0x0103 => shape.crop[2] = frac(),
-            0x0104 => shape.pib = Some(op),
-            // Group shape booleans: fHidden with its "use" bit.
-            0x03BF => shape.hidden = op & 0x0002_0000 != 0 && op & 0x2 != 0,
-            _ => {}
-        }
-    }
+    shape.name = text(0x0380);
+    shape.descr = text(0x0381);
+    let prop = |id: u16| shape.props.get(&id).copied();
+    let frac = |id: u16| prop(id).map_or(0.0, |op| (op as i32) as f32 / 65536.0);
+    shape.crop = [frac(0x0102), frac(0x0100), frac(0x0103), frac(0x0101)];
+    shape.pib = prop(0x0104);
+    // Group shape booleans: fHidden with its "use" bit.
+    shape.hidden = prop(0x03BF).is_some_and(|op| op & 0x0002_0000 != 0 && op & 0x2 != 0);
 }
 
 /// An object of a sheet, read.
@@ -423,6 +432,14 @@ pub(crate) fn sheet_objects(
                     continue;
                 }
             },
+            // Line, rectangle, oval, arc, text box, AutoShape.
+            0x01..=0x04 | 0x06 | 0x1E => match office_shape(&shape, ot, obj.text.as_ref()) {
+                Some(s) => ObjectKind::Shape(Box::new(s)),
+                None => {
+                    skipped.shapes += 1;
+                    continue;
+                }
+            },
             _ => {
                 skipped.shapes += 1;
                 continue;
@@ -437,6 +454,78 @@ pub(crate) fn sheet_objects(
         });
     }
     out
+}
+
+/// A drawing object (`OBJ` type `ot`) as a DrawingML shape: its
+/// geometry from the object type (or the AutoShape's type), its fill,
+/// outline, flips, turn and text from the OfficeArt properties and `TXO`.
+fn office_shape(
+    shape: &Shape,
+    ot: u16,
+    text: Option<&ObjText>,
+) -> Option<crate::ods_drawing::Shape> {
+    let prop = |id: u16| shape.props.get(&id).copied();
+    // A boolean property set: the value bit and its "use" bit 16 above.
+    let flag = |id: u16, bit: u32| {
+        prop(id).and_then(|v| (v & (1 << (bit + 16)) != 0).then_some(v & (1 << bit) != 0))
+    };
+    let custom;
+    let prst = match ot {
+        0x01 => "line",
+        0x02 | 0x06 => "rect",
+        0x03 => "ellipse",
+        0x04 => "arc",
+        _ => match preset(shape.typ) {
+            Some(p) => p,
+            // Freeforms (LibreOffice writes all its shapes that way): their
+            // path as `a:custGeom`.
+            None => {
+                custom = cust_geom(&shape.props, &shape.complex)?;
+                custom.as_str()
+            }
+        },
+    };
+    let line_shape = prst == "line" || prst == "straightConnector1";
+    let tx_box = ot == 0x06 || shape.typ == 202;
+    let filled = flag(0x1BF, 4).unwrap_or(!line_shape && prst != "arc");
+    let fill = filled.then(|| prop(0x181).and_then(color).unwrap_or(0xFFFFFF));
+    let lined = flag(0x1FF, 3).unwrap_or(true);
+    let line = lined.then(|| crate::ods_drawing::SimpleLine {
+        color: prop(0x1C0).and_then(color).unwrap_or(0),
+        width: prop(0x1CB).map_or(9525, i64::from),
+        dash: prop(0x1CE).is_some_and(|d| d != 0),
+        head: prop(0x1D0).and_then(arrowhead),
+        tail: prop(0x1D1).and_then(arrowhead),
+    });
+    let rot = prop(0x04).map_or(0.0, |v| f64::from(v as i32) / 65536.0);
+    let (align, anchor) = match text {
+        Some(t) => (
+            match t.h_align {
+                2 => Some("ctr"),
+                3 => Some("r"),
+                4 => Some("just"),
+                _ => None,
+            },
+            match t.v_align {
+                2 => "ctr",
+                3 => "b",
+                _ => "t",
+            },
+        ),
+        None => (None, "t"),
+    };
+    Some(crate::ods_drawing::Shape::simple(
+        prst,
+        line_shape,
+        (shape.flags & 0x40 != 0, shape.flags & 0x80 != 0),
+        tx_box,
+        fill,
+        line,
+        text.map_or("", |t| t.text.as_str()),
+        align,
+        anchor,
+        rot,
+    ))
 }
 
 /// The records of the substream starting at `offset` (a chart sheet's),
@@ -529,6 +618,21 @@ pub(crate) enum PlotKind {
         first_angle: u16,
     },
     Scatter,
+    /// Bubbles: a scatter chart with sizes.
+    Bubble,
+    /// `filled`: the area under each series filled (`RADARAREA`).
+    Radar {
+        filled: bool,
+    },
+    /// A 3-D surface (`SURF`), shown in Kantor as its contour view.
+    Surface,
+    /// Pie of pie or bar of pie (`BOPPOP`).
+    OfPie {
+        bar: bool,
+    },
+    /// High-low-close (or open-high-low-close) series (`.ods` stock
+    /// charts).
+    Stock,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -543,6 +647,10 @@ pub(crate) struct Series {
     pub no_line: bool,
     pub no_marker: bool,
     pub labels: Option<Labels>,
+    /// Points with their own fill (`DATAFORMAT` with a point index).
+    pub points: Vec<(u16, u32)>,
+    /// A bubble chart's sizes: a reference.
+    pub bubbles: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -562,6 +670,8 @@ struct RawSeries {
     /// Its formatting applies to the whole series (`DATAFORMAT` `xi`
     /// 0xFFFF).
     whole: bool,
+    /// Or to this point.
+    point: Option<u16>,
 }
 
 /// A `TEXT` block while its records are read.
@@ -760,6 +870,7 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
                         }
                         1 => s.values = f,
                         2 => s.s.cats = f,
+                        3 => s.s.bubbles = f,
                         _ => {}
                     }
                 }
@@ -839,10 +950,28 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
             }
             DATAFORMAT if top == Some(SERIES) => {
                 if let Some(s) = series.last_mut() {
-                    s.whole = b.u16() == Some(0xFFFF);
+                    let xi = b.u16();
+                    s.whole = xi == Some(0xFFFF);
+                    s.point = xi.filter(|&x| x != 0xFFFF);
                 }
             }
             // AREAFORMAT, LINEFORMAT, MARKERFORMAT of a series.
+            // A point's own fill.
+            0x100A
+                if top == Some(DATAFORMAT)
+                    && in_series
+                    && series.last().is_some_and(|s| s.point.is_some()) =>
+            {
+                let r = (|| Some((rgb(&mut b)?, b.skip(4)?, b.u16()?, b.u16()?)))();
+                if let (Some(s), Some((fore, _, fls, flags))) = (series.last_mut(), r)
+                    && flags & 1 == 0
+                    && fls == 1
+                    && let Some(i) = s.point
+                    && s.s.points.len() < 4096
+                {
+                    s.s.points.push((i, fore));
+                }
+            }
             0x100A | 0x1007 | 0x1009 if top == Some(DATAFORMAT) && in_series => {
                 let Some(s) = series.last_mut().filter(|s| s.whole) else {
                     continue;
@@ -925,8 +1054,17 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
                     })(),
                     0x101B => {
                         let bubbles = b.skip(4).and_then(|_| b.u16()).is_some_and(|f| f & 1 != 0);
-                        (!bubbles).then_some(PlotKind::Scatter)
+                        Some(if bubbles {
+                            PlotKind::Bubble
+                        } else {
+                            PlotKind::Scatter
+                        })
                     }
+                    0x103E => Some(PlotKind::Radar { filled: false }),
+                    0x1040 => Some(PlotKind::Radar { filled: true }),
+                    0x103F => Some(PlotKind::Surface),
+                    // BOPPOP: pst 1 pie of pie, 2 bar of pie.
+                    0x1061 => b.u8().map(|pst| PlotKind::OfPie { bar: pst == 2 }),
                     _ => None,
                 };
             }
@@ -1058,10 +1196,14 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
     let mut horizontal = false;
     let mut scatter = false;
     let mut pie = false;
+    let mut surface = false;
     for p in &chart.plots {
         let mut sers = String::new();
-        let is_pie = matches!(p.kind, PlotKind::Pie { .. });
-        let lines = matches!(p.kind, PlotKind::Line { .. } | PlotKind::Scatter);
+        let is_pie = matches!(p.kind, PlotKind::Pie { .. } | PlotKind::OfPie { .. });
+        let lines = matches!(
+            p.kind,
+            PlotKind::Line { .. } | PlotKind::Scatter | PlotKind::Radar { filled: false }
+        );
         for s in &p.series {
             sers.push_str(&format!(
                 "<c:ser><c:idx val=\"{idx}\"/><c:order val=\"{idx}\"/>"
@@ -1074,7 +1216,7 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
                 Some(Text::Ref(f)) => sers.push_str(&format!("<c:tx>{}</c:tx>", str_ref(f, data))),
                 None => {}
             }
-            let line = if s.no_line {
+            let line = if s.no_line || p.kind == PlotKind::Stock {
                 Some("<a:ln w=\"28575\"><a:noFill/></a:ln>".to_owned())
             } else {
                 s.line.filter(|_| lines).map(|c| {
@@ -1103,16 +1245,40 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
                 .filter(|l| l.value || l.percent || l.category || l.series)
                 .map(|l| dlbls(&l, p.kind))
                 .unwrap_or_default();
+            // Points with their own colour come before the labels.
+            let mut dpts = String::new();
+            for (i, c) in &s.points {
+                dpts.push_str(&format!("<c:dPt><c:idx val=\"{i}\"/>"));
+                match p.kind {
+                    PlotKind::Bar { .. } => dpts.push_str("<c:invertIfNegative val=\"0\"/>"),
+                    PlotKind::Bubble => dpts.push_str("<c:bubble3D val=\"0\"/>"),
+                    _ => {}
+                }
+                dpts.push_str(&format!("<c:spPr>{}</c:spPr></c:dPt>", solid(*c)));
+            }
+            let dlbls = format!("{dpts}{dlbls}");
             match p.kind {
-                PlotKind::Scatter => {
+                PlotKind::Scatter | PlotKind::Bubble => {
+                    if p.kind == PlotKind::Bubble {
+                        sers.push_str("<c:invertIfNegative val=\"0\"/>");
+                    }
                     sers.push_str(&dlbls);
                     if let Some(x) = &s.cats {
                         sers.push_str(&format!("<c:xVal>{}</c:xVal>", num_ref(x, data)));
                     }
-                    sers.push_str(&format!(
-                        "<c:yVal>{}</c:yVal><c:smooth val=\"0\"/>",
-                        num_ref(&s.values, data)
-                    ));
+                    sers.push_str(&format!("<c:yVal>{}</c:yVal>", num_ref(&s.values, data)));
+                    if p.kind == PlotKind::Bubble {
+                        // Without sizes every bubble is the same.
+                        let size = match &s.bubbles {
+                            Some(b) => num_ref(b, data),
+                            None => num_ref(&s.values, data),
+                        };
+                        sers.push_str(&format!(
+                            "<c:bubbleSize>{size}</c:bubbleSize><c:bubble3D val=\"0\"/>"
+                        ));
+                    } else {
+                        sers.push_str("<c:smooth val=\"0\"/>");
+                    }
                 }
                 _ => {
                     if matches!(p.kind, PlotKind::Bar { .. }) {
@@ -1184,6 +1350,39 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
                     "<c:scatterChart><c:scatterStyle val=\"lineMarker\"/><c:varyColors val=\"{varied}\"/>{sers}{axes_ids}</c:scatterChart>"
                 )
             }
+            PlotKind::Bubble => {
+                scatter = true;
+                format!(
+                    "<c:bubbleChart><c:varyColors val=\"{varied}\"/>{sers}<c:bubbleScale val=\"100\"/><c:showNegBubbles val=\"0\"/>{axes_ids}</c:bubbleChart>"
+                )
+            }
+            PlotKind::Radar { filled } => {
+                let style = if filled { "filled" } else { "marker" };
+                format!(
+                    "<c:radarChart><c:radarStyle val=\"{style}\"/><c:varyColors val=\"{varied}\"/>{sers}{axes_ids}</c:radarChart>"
+                )
+            }
+            PlotKind::Surface => {
+                surface = true;
+                format!(
+                    "<c:surfaceChart><c:wireframe val=\"0\"/>{sers}{axes_ids}<c:axId val=\"500000003\"/></c:surfaceChart>"
+                )
+            }
+            PlotKind::Stock => format!(
+                "<c:stockChart>{sers}<c:hiLowLines/>{}{axes_ids}</c:stockChart>",
+                if p.series.len() >= 4 {
+                    "<c:upDownBars><c:gapWidth val=\"150\"/><c:upBars/><c:downBars/></c:upDownBars>"
+                } else {
+                    ""
+                }
+            ),
+            PlotKind::OfPie { bar } => {
+                pie = true;
+                let ty = if bar { "bar" } else { "pie" };
+                format!(
+                    "<c:ofPieChart><c:ofPieType val=\"{ty}\"/><c:varyColors val=\"{varied}\"/>{sers}<c:gapWidth val=\"100\"/><c:secondPieSize val=\"75\"/><c:serLines/></c:ofPieChart>"
+                )
+            }
         });
     }
     let title = |t: &Option<String>| {
@@ -1223,7 +1422,13 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
     } else {
         format!(
             "<c:catAx><c:axId val=\"500000001\"/>{cat_scaling}<c:delete val=\"0\"/><c:axPos val=\"{cat_pos}\"/>{cat_grid}{cat_title}{tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>\
-<c:valAx><c:axId val=\"500000002\"/>{val_scaling}<c:delete val=\"0\"/><c:axPos val=\"{val_pos}\"/>{val_grid}{val_title}{tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"between\"/>{val_unit}</c:valAx>"
+<c:valAx><c:axId val=\"500000002\"/>{val_scaling}<c:delete val=\"0\"/><c:axPos val=\"{val_pos}\"/>{val_grid}{val_title}{tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"between\"/>{val_unit}</c:valAx>{}",
+            // A surface chart's series axis.
+            if surface {
+                "<c:serAx><c:axId val=\"500000003\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"b\"/><c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/></c:serAx>"
+            } else {
+                ""
+            }
         )
     };
     let title = match &chart.title {
@@ -1278,6 +1483,11 @@ fn dlbls(l: &Labels, kind: PlotKind) -> String {
             true,
         ),
         PlotKind::Scatter => ("scatterChart", false, false),
+        PlotKind::Bubble => ("bubbleChart", false, false),
+        PlotKind::Radar { .. } => ("radarChart", false, false),
+        PlotKind::Surface => ("surfaceChart", false, false),
+        PlotKind::OfPie { .. } => ("ofPieChart", false, true),
+        PlotKind::Stock => ("stockChart", false, false),
     };
     let ok = crate::chart_options::LabelPos::for_group(tag, stacked);
     let pos = l
@@ -1641,7 +1851,7 @@ pub(crate) fn package(
         rels(&[("rId1".into(), "officeDocument", "xl/workbook.xml".into())]).into_bytes(),
     ));
     let mut types = String::from(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"png\" ContentType=\"image/png\"/><Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"png\" ContentType=\"image/png\"/><Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/><Default Extension=\"emf\" ContentType=\"image/x-emf\"/><Default Extension=\"wmf\" ContentType=\"image/x-wmf\"/><Default Extension=\"pict\" ContentType=\"image/pict\"/><Default Extension=\"bmp\" ContentType=\"image/bmp\"/><Default Extension=\"gif\" ContentType=\"image/gif\"/><Default Extension=\"svg\" ContentType=\"image/svg+xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>",
     );
     for (part, kind) in &p.overrides {
         types.push_str(&format!(
@@ -1691,6 +1901,58 @@ mod tests {
         let mut f = vec![11, 0];
         f.extend(rgce);
         assert_eq!(chart_ref(&f, &ctx).as_deref(), Some("Data!$B$2:$B$5"));
+    }
+
+    /// A bubble chart with its sizes, and a point with its own fill.
+    #[test]
+    fn bubbles_and_point_colours() {
+        let sheets = ["Data".to_owned()];
+        let xti = [Some((0, 0))];
+        let ctx = Context {
+            base: (0, 0),
+            sheets: &sheets,
+            xti: &xti,
+            names: &[],
+        };
+        let u16s = |v: &[u16]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        let ai = |id: u8, col: u8| {
+            let mut a = vec![id, 2, 0, 0, 0, 0, 11, 0];
+            a.extend([0x3B, 0, 0, 1, 0, 4, 0, col, 0xC0, col, 0xC0]);
+            a
+        };
+        // AREAFORMAT: fore 0xC00000, back, solid (fls 1), not automatic.
+        let mut area = vec![0xC0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0];
+        area.extend(u16s(&[1, 0, 0, 0]));
+        let mut cf = vec![0u8; 16];
+        cf.extend(u16s(&[0, 0]));
+        let recs: Vec<(u16, Vec<u8>)> = vec![
+            (0x1002, vec![0; 16]),
+            (BEGIN, vec![]),
+            (SERIES, vec![0; 12]),
+            (BEGIN, vec![]),
+            (0x1051, ai(1, 1)),
+            (0x1051, ai(2, 0)),
+            (0x1051, ai(3, 2)),
+            (DATAFORMAT, u16s(&[2, 0, 0, 0])),
+            (BEGIN, vec![]),
+            (0x100A, area),
+            (END, vec![]),
+            (END, vec![]),
+            (CHARTFORMAT, cf),
+            (BEGIN, vec![]),
+            (0x101B, u16s(&[100, 1, 1])),
+            (END, vec![]),
+            (END, vec![]),
+        ];
+        let chart = parse_chart(&recs, &ctx).unwrap();
+        assert_eq!(chart.plots[0].kind, PlotKind::Bubble);
+        let s = &chart.plots[0].series[0];
+        assert_eq!(s.bubbles.as_deref(), Some("Data!$C$2:$C$5"));
+        assert_eq!(s.points, [(2, 0xC00000)]);
+        let xml = chart_xml(&chart, &|_| None);
+        assert!(xml.contains("<c:bubbleChart>"), "{xml}");
+        assert!(xml.contains("<c:bubbleSize>"), "{xml}");
+        assert!(xml.contains("<c:dPt><c:idx val=\"2\"/><c:bubble3D val=\"0\"/><c:spPr><a:solidFill><a:srgbClr val=\"C00000\"/>"), "{xml}");
     }
 
     #[test]

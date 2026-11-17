@@ -347,12 +347,16 @@ fn floating_pictures_and_text_boxes() {
     // floats.docx as LibreOffice saves it in Word 97 format: two pictures,
     // a text box, and shapes as freeforms drawn with guide formulas.
     let doc = open("floats.doc");
-    assert_eq!(
-        doc.import_notes(),
-        ["some freeform shapes drawn as rectangles"]
-    );
+    // LibreOffice's arcs (the rounded rectangle, the ellipse) are followed.
+    assert!(doc.import_notes().is_empty(), "{:?}", doc.import_notes());
     let f = floats(&doc);
     assert_eq!(f.len(), 6, "{f:?}");
+    assert!(
+        f.iter()
+            .filter(|x| x.xml.contains("custGeom"))
+            .any(|x| x.xml.contains("cubicBezTo")),
+        "arcs as curves"
+    );
     // The freeforms' paths, their guides worked out: inside their boxes.
     for x in f.iter().filter(|x| x.xml.contains("custGeom")) {
         let xml = &*x.xml;
@@ -639,4 +643,93 @@ fn header_floating_objects_come_in() {
             .iter()
             .any(|p| p.objects().any(|(_, o)| matches!(o, Object::Float(_))))
     }));
+}
+
+/// EMF and WMF pictures (metafiles.doc, from scripts/corpus/gen_metafiles.py)
+/// come in as they are and are drawn as PNG.
+#[test]
+fn metafile_pictures() {
+    let doc = open("metafiles.doc");
+    let imgs: Vec<_> = doc
+        .paragraphs()
+        .iter()
+        .flat_map(|p| p.objects().map(|(_, o)| o.clone()).collect::<Vec<_>>())
+        .filter_map(|o| match o {
+            Object::Image(i) => Some(i),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(imgs.len(), 2, "{:?}", doc.import_notes());
+    for img in &imgs {
+        let bytes = doc.image_bytes(&img.rel_id).expect("picture bytes");
+        assert!(kantor_metafile::kind(&bytes).is_some(), "{}", img.rel_id);
+        let (format, png) = docs_engine::drawable_picture(bytes).expect("drawn");
+        assert_eq!(format, docs_engine::ImageFormat::Png);
+        assert!(png.starts_with(b"\x89PNG"));
+    }
+    assert!(
+        !doc.import_notes().iter().any(|n| n.contains("picture")),
+        "{:?}",
+        doc.import_notes()
+    );
+}
+
+/// A .docx keeps its EMF and WMF parts and draws them.
+#[test]
+fn docx_metafiles_are_drawn() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/docx/metafiles.docx");
+    let doc = Document::open(&path).unwrap();
+    let mut n = 0;
+    for p in doc.paragraphs() {
+        for (_, o) in p.objects() {
+            if let Object::Image(i) = o {
+                let bytes = doc.image_bytes(&i.rel_id).expect("kept");
+                assert!(docs_engine::drawable_picture(bytes).is_some());
+                n += 1;
+            }
+        }
+    }
+    assert_eq!(n, 2);
+}
+
+/// Grouped shapes (drawings.doc: drawings.docx as LibreOffice saves it in
+/// Word 97 format) come in as groups with their shapes.
+#[test]
+fn grouped_shapes() {
+    use docs_engine::FloatKind;
+    let doc = open("drawings.doc");
+    assert!(doc.import_notes().is_empty(), "{:?}", doc.import_notes());
+    let f = floats(&doc);
+    let groups: Vec<_> = f
+        .iter()
+        .filter(|x| matches!(x.kind, FloatKind::Group { .. }))
+        .collect();
+    assert_eq!(groups.len(), 2, "{f:?}");
+    for g in &groups {
+        let xml = &*g.xml;
+        assert!(
+            xml.contains("<wpg:wgp>") && xml.contains("<a:chExt "),
+            "{xml}"
+        );
+        assert!(xml.matches("<wps:wsp>").count() >= 2, "{xml}");
+    }
+    // The chart LibreOffice saved as an EMF picture.
+    assert!(
+        f.iter()
+            .any(|x| matches!(&x.kind, FloatKind::Picture { part, .. } if part.ends_with(".emf")))
+    );
+    // Saved as .docx and opened again: still groups.
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("drawings.docx");
+    let mut doc = doc;
+    doc.save_as(&out).unwrap();
+    let again = Document::open(&out).unwrap();
+    assert_eq!(
+        floats(&again)
+            .iter()
+            .filter(|x| matches!(x.kind, FloatKind::Group { .. }))
+            .count(),
+        2
+    );
 }

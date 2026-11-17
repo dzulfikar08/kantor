@@ -1774,10 +1774,12 @@ impl DocsView {
                         let Some(bytes) = self.doc.image_bytes(&img.rel_id) else {
                             continue;
                         };
-                        let format = match docs_engine::ImageFormat::sniff(&bytes) {
-                            docs_engine::ImageFormat::Png => ImageFormat::Png,
+                        let Some((format, bytes)) = docs_engine::drawable_picture(bytes) else {
+                            continue;
+                        };
+                        let format = match format {
                             docs_engine::ImageFormat::Jpeg => ImageFormat::Jpeg,
-                            docs_engine::ImageFormat::Other => continue,
+                            _ => ImageFormat::Png,
                         };
                         let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes.to_vec()));
                         self.images.insert(img.rel_id.clone(), i.clone());
@@ -1835,10 +1837,12 @@ impl DocsView {
                             let Some(bytes) = story.image_bytes(&img.rel_id) else {
                                 continue;
                             };
-                            let format = match docs_engine::ImageFormat::sniff(&bytes) {
-                                docs_engine::ImageFormat::Png => ImageFormat::Png,
+                            let Some((format, bytes)) = docs_engine::drawable_picture(bytes) else {
+                                continue;
+                            };
+                            let format = match format {
                                 docs_engine::ImageFormat::Jpeg => ImageFormat::Jpeg,
-                                docs_engine::ImageFormat::Other => continue,
+                                _ => ImageFormat::Png,
                             };
                             let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes.to_vec()));
                             self.images.insert(key, i.clone());

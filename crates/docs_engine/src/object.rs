@@ -162,6 +162,18 @@ impl ImageFormat {
     }
 }
 
+/// A picture as Kantor draws it: PNG and JPEG as they are; WMF, EMF, PICT
+/// and BMP pictures rendered to PNG (the file keeps the original).
+pub fn drawable_picture(
+    bytes: std::sync::Arc<[u8]>,
+) -> Option<(ImageFormat, std::sync::Arc<[u8]>)> {
+    match ImageFormat::sniff(&bytes) {
+        ImageFormat::Other => kantor_metafile::to_png(&bytes, 2048)
+            .map(|png| (ImageFormat::Png, std::sync::Arc::from(png))),
+        format => Some((format, bytes)),
+    }
+}
+
 /// Pixel size of a PNG or JPEG from its header.
 pub fn image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     match ImageFormat::sniff(bytes) {

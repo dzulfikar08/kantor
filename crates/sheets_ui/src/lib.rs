@@ -249,13 +249,13 @@ fn opened_status(book: &Workbook) -> String {
             ),
             N::PicturesSkipped(n) => plural(
                 n,
-                tk("1 picture not imported (EMF, WMF, PICT, BMP or TIFF format)"),
-                tk("{} pictures not imported (EMF, WMF, PICT, BMP or TIFF format)"),
+                tk("1 picture not imported (TIFF or another format Kantor can't read)"),
+                tk("{} pictures not imported (TIFF or another format Kantor can't read)"),
             ),
             N::ChartsSkipped(n) => plural(
                 n,
-                tk("1 chart not imported (radar, surface, bubble, bar of pie or combination charts)"),
-                tk("{} charts not imported (radar, surface, bubble, bar of pie or combination charts)"),
+                tk("1 chart not imported (combination or other types Kantor doesn't draw)"),
+                tk("{} charts not imported (combination or other types Kantor doesn't draw)"),
             ),
             N::ChartsShownFlat(n) => plural(n, tk("1 3-D chart shown flat"), tk("{} 3-D charts shown flat")),
             N::ShapesSkipped(n) => plural(
