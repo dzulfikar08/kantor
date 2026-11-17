@@ -400,6 +400,21 @@ fn main() -> Result<()> {
         Ok(None)
     });
 
+    run.scenario("sheets_v013_features.xlsx", |o| {
+        let src = corpus.join("xlsx/27_patterns_group_charts.xlsx");
+        let mut wb = Workbook::open(&src)?;
+        sheets_v013_features(&mut wb)?;
+        let path = o.join("sheets_v013_features.xlsx");
+        wb.save_as(&path)?;
+        // The saved file is the next save's original: zoom and the copied
+        // group's chart carried again.
+        let mut again = Workbook::open(&path)?;
+        anyhow::ensure!(again.zoom(0) == 85, "zoom {} after Save", again.zoom(0));
+        again.set_zoom(1, 120);
+        again.set_input(0, 30, 0, "again")?;
+        again.save_as(&path)?;
+        Ok(Some(src))
+    });
     for src in files(&corpus.join("docx"), "docx")? {
         let stem = stem(&src);
         run.scenario(&format!("rt_{stem}.docx"), |o| {
@@ -611,6 +626,25 @@ fn main() -> Result<()> {
         Ok(None)
     });
 
+    run.scenario("columns_edited.docx", |o| {
+        let src = corpus.join("docx/columns.docx");
+        let mut doc = Document::open(&src)?;
+        columns_edits(&mut doc);
+        let path = o.join("columns_edited.docx");
+        doc.save_as(&path)?;
+        let mut again = Document::open(&path)?;
+        again.insert_text(Selection::caret(Position::new(0, 0)), "Again. ", None);
+        again.save_as(&path)?;
+        Ok(Some(src))
+    });
+    run.scenario("new_doc_columns.docx", |o| {
+        let mut doc = Document::new();
+        let end = doc.end();
+        doc.insert_text(Selection::caret(end), "Title\nFirst\nSecond\nThird", None);
+        columns_edits(&mut doc);
+        doc.save_as(&o.join("new_doc_columns.docx"))?;
+        Ok(None)
+    });
     for src in files(&corpus.join("pptx"), "pptx")? {
         let stem = stem(&src);
         run.scenario(&format!("rt_{stem}.pptx"), |o| {
@@ -802,6 +836,17 @@ fn main() -> Result<()> {
         Ok(Some(src))
     });
 
+    run.scenario("org_chart_edits.pptx", |o| {
+        let src = corpus.join("pptx/smartart.pptx");
+        let mut p = Presentation::open(&src)?;
+        org_chart_edits(&mut p)?;
+        let path = o.join("org_chart_edits.pptx");
+        p.save_as(&path)?;
+        let mut again = Presentation::open(&path)?;
+        again.set_notes_text(0, "Saved twice.")?;
+        again.save_as(&path)?;
+        Ok(Some(src))
+    });
     run.scenario("new_deck.pptx", |o| {
         let mut p = Presentation::new();
         let i = p.new_slide(Some(0))?;
@@ -1210,6 +1255,109 @@ fn kantor_features_at(wb: &mut Workbook, sheet: u32, top: u32) -> Result<()> {
 /// sort by colour, Top 10, Excel 2010 data bar and icon set settings, rule
 /// number formats and borders, the IME mode of a validation, Page Break
 /// Preview and a manual break.
+/// v0.13 markup: zoom per sheet (`zoomScale`, a Page Break Preview zoom),
+/// a pattern fill set on a shape, and a sheet whose group holds a chart
+/// copied.
+fn sheets_v013_features(wb: &mut Workbook) -> Result<()> {
+    use sheets_engine::ShapeFill;
+    use sheets_engine::shape_format as fmt;
+    wb.set_zoom(0, 85);
+    let s = wb.insert_sheet(1)?;
+    wb.set_inputs(s, &[(0, 0, "Zoomed".to_string())])?;
+    wb.set_break_preview(s, true);
+    wb.set_zoom(s, 70);
+    let oval = wb
+        .drawings(0)
+        .into_iter()
+        .find(|d| d.name == "Checker oval")
+        .context("Checker oval")?;
+    let sheets_engine::drawing::DrawingKind::Shape { xml, .. } = &*oval.kind else {
+        anyhow::bail!("Checker oval is not a shape");
+    };
+    let xml = fmt::set_fill(
+        xml,
+        ShapeFill::Pattern {
+            prst: "lgCheck",
+            fg: [0x1f, 0x4e, 0x79],
+            bg: [0xff, 0xff, 0xff],
+        },
+    )?;
+    wb.set_shape_xml(oval.key, &xml)?;
+    let copy = wb.copy_sheet(0, 2)?;
+    wb.set_zoom(copy, 200);
+    Ok(())
+}
+
+/// Two columns with a line between from the second paragraph on (a
+/// continuous section break), a column break, then three columns for the
+/// whole document's last section.
+fn columns_edits(doc: &mut Document) {
+    use docs_engine::{Columns, ColumnsApply};
+    let at = Selection::caret(Position::new(doc.end().para.min(1), 0));
+    let mut two = Columns::equal(2, 720);
+    two.sep = true;
+    let sel = doc.set_columns(at, &two, ColumnsApply::ThisPointForward);
+    doc.insert_column_break(sel);
+    let end = doc.end();
+    doc.set_columns(
+        Selection::caret(end),
+        &Columns::equal(3, 360),
+        ColumnsApply::ThisSection,
+    );
+}
+
+/// An Organization Chart given an assistant and a hanging layout, a
+/// Hierarchy changed to an Organization Chart with an assistant, and a
+/// pattern fill on a new shape.
+fn org_chart_edits(p: &mut Presentation) -> Result<()> {
+    use slides_engine::{AddPlace, OrgLayout, Paint, SmartArtFamily, text_ops};
+    fn frame(p: &Presentation, slide: usize) -> Result<ShapeRef> {
+        let i = p
+            .slide(slide)
+            .shapes
+            .iter()
+            .position(|s| s.smartart().is_some())
+            .context("SmartArt")?;
+        Ok((slide, i).into())
+    }
+    fn find(p: &Presentation, f: ShapeRef, text: &str) -> Result<ShapeRef> {
+        let g = &p
+            .shape(f)
+            .context("frame")?
+            .smartart()
+            .context("SmartArt")?
+            .group;
+        let i = g
+            .children
+            .iter()
+            .position(|c| c.text.as_ref().is_some_and(|t| t.plain_text() == text))
+            .with_context(|| format!("{text} in the SmartArt"))?;
+        f.child(i).context("child")
+    }
+    let f = frame(p, 10)?;
+    anyhow::ensure!(p.smartart_family(f) == Some(SmartArtFamily::OrgChart));
+    let new = p.smartart_add_shape(find(p, f, "Ops")?, AddPlace::Assistant)?;
+    let end = text_ops::end(p.text_paras(new).context("text")?);
+    p.insert_text(new, Selection::caret(end), "Clerk", None)?;
+    p.smartart_set_org_layout(find(p, f, "Sales")?, OrgLayout::RightHanging)?;
+    let h = frame(p, 6)?;
+    p.smartart_change_layout(h, SmartArtFamily::OrgChart)?;
+    let h = frame(p, 6)?;
+    let new = p.smartart_add_shape(find(p, h, "CFO")?, AddPlace::Assistant)?;
+    let end = text_ops::end(p.text_paras(new).context("text")?);
+    p.insert_text(new, Selection::caret(end), "Analyst", None)?;
+    let k = p.add_text_box(0)?;
+    p.set_fill(
+        (0, k),
+        Paint::Pattern {
+            prst: "dkUpDiag".into(),
+            fg: Box::new(Paint::Scheme("accent1".into())),
+            bg: Box::new(Paint::Rgb(Rgb([255, 255, 255]))),
+        },
+    )?;
+    Ok(())
+}
+
 fn sheets_v012_features(wb: &mut Workbook) -> Result<()> {
     use sheets_engine::{
         CfBarAxis, CfBarDirection, CfBarOptions, CfIconRef, CfValue, CfValueKind, SortLevel,
