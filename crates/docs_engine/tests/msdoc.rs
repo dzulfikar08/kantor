@@ -345,12 +345,25 @@ fn floating_pictures_and_text_boxes() {
     use docs_engine::float::{Place, RelH, RelV};
     use docs_engine::{FloatKind, Wrap};
     // floats.docx as LibreOffice saves it in Word 97 format: two pictures,
-    // a text box, and shapes as freeforms drawn with guide formulas (left
-    // out with a note).
+    // a text box, and shapes as freeforms drawn with guide formulas.
     let doc = open("floats.doc");
-    assert_eq!(doc.import_notes(), ["freeform shapes not imported"]);
+    assert_eq!(
+        doc.import_notes(),
+        ["some freeform shapes drawn as rectangles"]
+    );
     let f = floats(&doc);
-    assert_eq!(f.len(), 3, "{f:?}");
+    assert_eq!(f.len(), 6, "{f:?}");
+    // The freeforms' paths, their guides worked out: inside their boxes.
+    for x in f.iter().filter(|x| x.xml.contains("custGeom")) {
+        let xml = &*x.xml;
+        assert!(xml.contains("<a:path w=\""), "{xml}");
+        let pts: Vec<i64> = xml
+            .split("<a:pt x=\"")
+            .skip(1)
+            .filter_map(|s| s.split('"').next()?.parse().ok())
+            .collect();
+        assert!(!pts.is_empty() && pts.iter().all(|&v| v >= 0), "{pts:?}");
+    }
     let pictures: Vec<_> = f
         .iter()
         .filter(|x| matches!(x.kind, FloatKind::Picture { .. }))
@@ -375,10 +388,10 @@ fn floating_pictures_and_text_boxes() {
     assert!(matches!(pictures[1].at.v.1, Place::Offset(_)));
     let text_box = f
         .iter()
-        .find(|x| x.kind == FloatKind::Shape)
+        .find(|x| x.kind == FloatKind::Shape && float_texts(x).len() == 2)
         .expect("the text box");
     assert_eq!(float_texts(text_box), ["Text box", "with two paragraphs"]);
-    save_and_reopen(doc, 3);
+    save_and_reopen(doc, 6);
 }
 
 fn float_texts(f: &docs_engine::Float) -> Vec<String> {

@@ -32,8 +32,7 @@
 //!   in SttbfAtnBkmk) and dates (AtrdExtra, Word 2002 and later).
 //!
 //! Not imported (listed in [`Imported::notes`]): floating objects in
-//! text boxes and notes, grouped shapes, freeform shapes drawn
-//! with guide formulas, WMF/EMF pictures and embedded objects, hidden text.
+//! text boxes and notes, grouped shapes, WMF/EMF pictures and embedded objects, hidden text.
 //!
 //! Tracked insertions and deletions (`sprmCFRMarkIns` / `sprmCFRMarkDel`
 //! with their authors from SttbfRMark and dates) come in as revisions
@@ -1125,8 +1124,10 @@ impl Reader {
                 None => match art::cust_geom(&shape) {
                     Some(g) => g,
                     None if shape.typ == 0 || shape.typ == 4095 => {
-                        self.note("freeform shapes not imported");
-                        return None;
+                        // A path Kantor can't follow: its box, so the
+                        // shape (and its text) still comes in.
+                        self.note("some freeform shapes drawn as rectangles");
+                        "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>".to_owned()
                     }
                     None => "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>".to_owned(),
                 },
