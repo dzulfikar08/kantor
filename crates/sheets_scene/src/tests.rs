@@ -576,3 +576,70 @@ fn slicers_and_timelines_are_drawn_with_their_items() {
     let after = scenes.items(&mut engine, &book, &book.drawings(1)[0], 260.0, 220.0);
     assert!(!Arc::ptr_eq(&before, &after));
 }
+
+#[test]
+fn shadows_pictures_and_3d_are_drawn() {
+    let theme = ChartTheme::new(None);
+    let builder = Builder::default();
+    let mut engine = Engine::new();
+    let base = |sp: &str| {
+        format!(
+            r#"<xdr:sp xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" macro=""><xdr:nvSpPr><xdr:cNvPr id="2" name="S"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>{sp}</xdr:spPr></xdr:sp>"#
+        )
+    };
+    let none = ShapeMedia::default();
+    let plain = shape_items(
+        &builder,
+        &mut engine,
+        &theme,
+        &base(r#"<a:solidFill><a:srgbClr val="4472C4"/></a:solidFill>"#),
+        &none,
+        100.0,
+        50.0,
+    );
+    let fills = |items: &[Item]| count(items, |p| matches!(p, Prim::Fill { .. }));
+    // An outer shadow: a fill under the shape (and blur edges).
+    let shadow = shape_items(
+        &builder,
+        &mut engine,
+        &theme,
+        &base(
+            r#"<a:solidFill><a:srgbClr val="4472C4"/></a:solidFill><a:effectLst><a:outerShdw blurRad="50800" dist="38100" dir="2700000"><a:srgbClr val="000000"><a:alpha val="40000"/></a:srgbClr></a:outerShdw></a:effectLst>"#,
+        ),
+        &none,
+        100.0,
+        50.0,
+    );
+    assert_eq!(fills(&shadow), fills(&plain) + 1);
+    assert!(count(&shadow, |p| matches!(p, Prim::Stroke { .. })) >= 3);
+    // Bevel and extrusion: shading over it, darker copies behind it.
+    let three = shape_items(
+        &builder,
+        &mut engine,
+        &theme,
+        &base(
+            r#"<a:solidFill><a:srgbClr val="4472C4"/></a:solidFill><a:sp3d extrusionH="76200"><a:bevelT/></a:sp3d>"#,
+        ),
+        &none,
+        100.0,
+        50.0,
+    );
+    assert!(fills(&three) > fills(&plain) + 2, "{}", fills(&three));
+    assert!(three.iter().any(|i| matches!(
+        &i.prim,
+        Prim::Fill {
+            paint: slides_scene::Paint::Linear { .. },
+            ..
+        }
+    )));
+    // A picture fill, from the bytes the drawing has.
+    let pic = base(
+        r#"<a:blipFill><a:blip r:embed="rId3"/><a:stretch><a:fillRect/></a:stretch></a:blipFill>"#,
+    );
+    let media: ShapeMedia =
+        vec![("rId3".to_owned(), "png".to_owned(), Arc::from(&b"png"[..]))].into();
+    let with = shape_items(&builder, &mut engine, &theme, &pic, &media, 100.0, 50.0);
+    assert_eq!(count(&with, |p| matches!(p, Prim::Picture(_))), 1);
+    let without = shape_items(&builder, &mut engine, &theme, &pic, &none, 100.0, 50.0);
+    assert_eq!(count(&without, |p| matches!(p, Prim::Picture(_))), 0);
+}

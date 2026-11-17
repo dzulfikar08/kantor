@@ -77,7 +77,7 @@ pub use notes::{CellNote, NoteBox, NoteRun, SheetNotes};
 pub use preserve::package_problems;
 pub use recovery::{SaveJob, Saved, XlsxOutput, XlsxSnapshot, write_file_atomic};
 pub use shape_edit::ShapePreset;
-pub use shape_format::{OutlineEdit, ShapeFill, TextAnchor};
+pub use shape_format::{OutlineEdit, ShadowPreset, ShapeFill, TextAnchor};
 pub use sheet_tabs::{STANDARD_COLORS, TabColor, theme_tints};
 pub use table_edit::{TableOptions, TotalFunc, table_style_names, valid_table_name};
 pub use validation_edit::{
@@ -1636,6 +1636,7 @@ impl Workbook {
                 self.note_patches(&mut p);
                 self.chart_sheet_tab_patches(&mut p);
                 self.table_style_patches(&mut p);
+                self.shape_picture_patches(&mut p);
                 p
             },
             chart_sheets: self.chart_sheet_plans(),

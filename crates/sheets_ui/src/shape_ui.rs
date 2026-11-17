@@ -132,6 +132,16 @@ impl SheetsView {
         let (text, paras) = {
             let book = &self.table.read(cx).delegate().book;
             let Some(text) = book.shape_text(key) else {
+                if book
+                    .shape_xml(key)
+                    .is_some_and(|x| sheets_engine::shape_format::text_has_fields(&x))
+                {
+                    self.status = t(
+                        "This shape's text has a cell link, fields or equations: Kantor shows and keeps them but can't edit them",
+                    )
+                    .into();
+                    cx.notify();
+                }
                 return;
             };
             let paras = book

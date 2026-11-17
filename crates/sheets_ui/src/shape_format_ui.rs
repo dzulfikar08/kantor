@@ -1,7 +1,8 @@
 //! The Format Shape panel, as Excel's pane for shapes, text boxes and
-//! lines: Fill (no fill, solid colour with transparency, gradient), Line
-//! (no line, colour, width, dash type, begin and end arrows) and the
-//! text's vertical alignment. Right-click a shape (or the Shapes menu, or
+//! lines: Fill (no fill, solid colour with transparency, gradient,
+//! picture), Line (no line, colour, width, dash type, begin and end
+//! arrows), Effects (Excel's outer shadow presets) and the text's vertical
+//! alignment. Right-click a shape (or the Shapes menu, or
 //! the command palette) opens it; each change is one undo step.
 
 use gpui_kit::assets::IconName as Lucide;
@@ -20,7 +21,7 @@ use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 use sheets_engine::drawing::DrawingKey;
 use sheets_engine::shape_format::{self as fmt, ARROWS, DASHES};
-use sheets_engine::{OutlineEdit, ShapeFill, TextAnchor};
+use sheets_engine::{OutlineEdit, ShadowPreset, ShapeFill, TextAnchor};
 use slides_engine::fill::{ArrowKind, Dash, Fill};
 use slides_engine::{Anchor, ShapeKind};
 
@@ -63,6 +64,12 @@ pub(crate) struct ShapeLook {
     /// Holds text: vertical alignment applies.
     pub has_text: bool,
     pub anchor: Option<TextAnchor>,
+    /// A picture fill.
+    pub picture: bool,
+    /// Its outer shadow preset (`None`: none, or not a preset).
+    pub shadow: Option<ShadowPreset>,
+    /// It has a shadow (preset or not).
+    pub shadowed: bool,
 }
 
 fn dash_name(d: &Dash) -> &'static str {
@@ -113,6 +120,7 @@ pub(crate) fn shape_look(xml: &str, theme_xml: Option<&str>) -> Option<ShapeLook
         Some(Fill::Picture(_)) => (None, false, 255),
         None => (look.fill.map(|c| c.0), false, 255),
     };
+    let picture = matches!(look.fill_as_read, Some(Fill::Picture(_)));
     // Lines, arcs and connectors are open paths: arrows apply.
     let is_line = matches!(s.kind, ShapeKind::Shape { .. })
         && (fmt::is_connector(xml)
@@ -141,6 +149,9 @@ pub(crate) fn shape_look(xml: &str, theme_xml: Option<&str>) -> Option<ShapeLook
         is_line,
         has_text,
         anchor: has_text.then(|| anchor.unwrap_or(TextAnchor::Top)),
+        picture,
+        shadow: fmt::shadow_of(xml),
+        shadowed: look.effects.shadow.is_some(),
     })
 }
 
@@ -441,6 +452,46 @@ impl SheetsView {
                     )
                 }),
             ));
+        let pv = view.clone();
+        let fills = fills.child(
+            Button::new("shape-picture-fill")
+                .small()
+                .when(look.picture, |b| b.primary())
+                .when(!look.picture, |b| b.outline())
+                .label(i18n::t("Picture fill…"))
+                .on_click(move |_, w, cx| {
+                    let _ = pv.update(cx, |this, cx| this.pick_shape_picture(w, cx));
+                }),
+        );
+        let sv = view.clone();
+        let current_shadow = look.shadow;
+        let shadow_label = match (look.shadow, look.shadowed) {
+            (Some(p), _) => i18n::t_dyn(p.label()).to_owned(),
+            (None, true) => i18n::t("Custom").to_owned(),
+            (None, false) => i18n::t("No shadow").to_owned(),
+        };
+        let shadow = Button::new("shape-shadow")
+            .outline()
+            .small()
+            .label(shadow_label)
+            .dropdown_caret(true)
+            .dropdown_menu(move |mut m, _, _| {
+                let opts = std::iter::once(None).chain(ShadowPreset::ALL.into_iter().map(Some));
+                for p in opts {
+                    let v = sv.clone();
+                    let label = p.map_or(i18n::t("No shadow"), |p| i18n::t_dyn(p.label()));
+                    m = m.item(
+                        PopupMenuItem::new(label)
+                            .checked(p == current_shadow)
+                            .on_click(move |_, w, cx| {
+                                let _ = v.update(cx, |this, cx| {
+                                    this.format_shape(w, cx, move |x| fmt::set_shadow(x, p))
+                                });
+                            }),
+                    );
+                }
+                m
+            });
         let gradient = look.gradient;
         let fv = view.clone();
         let fill_colour = swatch_popover(
@@ -669,6 +720,8 @@ impl SheetsView {
                         ))
                     })
             })
+            .child(section(tk("Effects")))
+            .child(row(i18n::t("Shadow"), shadow, cx))
             .when_some(anchors, |d, a| {
                 d.child(section(tk("Text Box")))
                     .child(
@@ -687,6 +740,54 @@ impl SheetsView {
                     )
             })
             .into_any_element()
+    }
+}
+
+impl SheetsView {
+    /// Picture fill: pick a picture file for the selected shape.
+    fn pick_shape_picture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((key, _)) = self.selected_shape(cx) else {
+            return;
+        };
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(i18n::t("Fill with a picture (PNG, JPEG, GIF or BMP)").into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                let res = std::fs::read(&path)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|bytes| {
+                        this.table.update(cx, |table, cx| {
+                            let r = table
+                                .delegate_mut()
+                                .book
+                                .set_shape_picture(key, bytes, &ext);
+                            table.refresh(cx);
+                            r
+                        })
+                    });
+                if let Err(e) = res {
+                    this.status = format!("{e:#}").into();
+                }
+                this.update_title(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }
 
@@ -736,6 +837,25 @@ mod tests {
         assert!(l.is_line && !l.has_text);
         assert_eq!(l.tail, "triangle");
         assert_eq!(l.head, "none");
+    }
+
+    #[std::prelude::v1::test]
+    fn shadows_read_back() {
+        let rect = ShapePreset::Rectangle.xml("R");
+        assert_eq!(shape_look(&rect, None).unwrap().shadow, None);
+        for p in ShadowPreset::ALL {
+            let x = fmt::set_shadow(&rect, Some(p)).unwrap();
+            let l = shape_look(&x, None).unwrap();
+            assert_eq!(l.shadow, Some(p));
+            assert!(l.shadowed);
+            assert!(i18n::indonesian(p.label()).is_some(), "{}", p.label());
+        }
+        let x = fmt::set_shadow(
+            &fmt::set_shadow(&rect, Some(ShadowPreset::Top)).unwrap(),
+            None,
+        )
+        .unwrap();
+        assert!(!shape_look(&x, None).unwrap().shadowed);
     }
 
     #[std::prelude::v1::test]

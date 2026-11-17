@@ -230,6 +230,9 @@ impl Anchor {
     }
 }
 
+/// Pictures a shape element names: `r:embed` id, image extension, bytes.
+pub type ShapeMedia = Arc<[(String, String, Arc<[u8]>)]>;
+
 /// What an object is.
 #[derive(Clone, Debug)]
 pub enum DrawingKind {
@@ -250,8 +253,9 @@ pub enum DrawingKind {
         crop: [f32; 4],
     },
     /// A shape, text box, connector or group: its element's XML, which
-    /// declares the namespaces it uses (it parses on its own).
-    Shape { xml: Arc<str> },
+    /// declares the namespaces it uses (it parses on its own), and the
+    /// pictures its `r:embed`s name (picture fills, a group's pictures).
+    Shape { xml: Arc<str>, media: ShapeMedia },
     /// A slicer (`sle:slicer` in `mc:AlternateContent`), by name: see
     /// [`crate::Workbook::slicer_view`].
     Slicer { name: String },
@@ -708,6 +712,23 @@ fn shape_media(
     Some(out)
 }
 
+/// `media` with a picture fill set in Kantor (`(r:embed id, extension,
+/// bytes)`) in place of one with its id.
+pub(crate) fn with_picture(
+    media: &ShapeMedia,
+    pic: Option<&(String, String, Arc<[u8]>)>,
+) -> ShapeMedia {
+    match pic {
+        None => media.clone(),
+        Some(p) => media
+            .iter()
+            .filter(|(rid, _, _)| *rid != p.0)
+            .cloned()
+            .chain(std::iter::once(p.clone()))
+            .collect(),
+    }
+}
+
 /// The objects of a drawing part.
 fn read_objects(
     xml: &str,
@@ -769,6 +790,7 @@ fn read_objects(
                 media = shape_media(obj, targets, &parts);
                 DrawingKind::Shape {
                     xml: standalone(&xml[obj.range()], &in_scope(obj)).into(),
+                    media: media.clone().unwrap_or_default().into(),
                 }
             }
             Some(obj) => kind(obj, targets, &mut parts),
@@ -971,6 +993,11 @@ impl Drawings {
         }
     }
 
+    /// The `cNvPr id` of object `key` of the file (when unique).
+    pub(crate) fn object_id(&self, key: DrawingKey) -> Option<u32> {
+        self.object(key)?.id
+    }
+
     /// The pictures inside shape `key` of the file (see `Object::media`).
     pub(crate) fn shape_media(&self, key: DrawingKey) -> Option<Vec<(String, String, Arc<[u8]>)>> {
         self.object(key)?.media.clone()
@@ -1012,20 +1039,50 @@ impl Drawings {
             let object = text_touched.contains(key).then(|| match texts.get(key) {
                 Some(x) => x.to_string(),
                 None => match &*obj.kind {
-                    DrawingKind::Shape { xml } => xml.to_string(),
+                    DrawingKind::Shape { xml, .. } => xml.to_string(),
                     _ => String::new(),
                 },
+            });
+            // A text link names its cell as the file had it: moved to now.
+            let object = object.filter(|o| !o.is_empty()).map(|o| {
+                moved_textlink(
+                    &o,
+                    &Layout::default().moves_to(now),
+                    key.sheet_id,
+                    &self.names,
+                )
             });
             out.entry(key.sheet_id).or_default().push(SaveEdit {
                 id,
                 anchor: current_anchor(obj, *key, edits, now),
                 xml: obj.xml.clone(),
                 namespaces: obj.namespaces.to_string(),
-                object: object.filter(|o| !o.is_empty()),
+                object,
             });
         }
         out
     }
+}
+
+/// Shape element `xml` with its `textlink` reference moved by `moves`.
+fn moved_textlink(xml: &str, moves: &Moves, home: u32, names: &HashMap<String, u32>) -> String {
+    let Ok(doc) = Document::parse(xml) else {
+        return xml.to_owned();
+    };
+    let Some(at) = doc
+        .root_element()
+        .attributes()
+        .find(|a| a.name() == "textlink" && !a.value().trim().is_empty())
+    else {
+        return xml.to_owned();
+    };
+    let v = moves.formula(at.value(), Some(home), names);
+    if v == at.value() {
+        return xml.to_owned();
+    }
+    let mut out = xml.to_owned();
+    out.replace_range(at.range_value(), &esc(&v));
+    out
 }
 
 /// Where an object is in the state with `edits` and `now` (`None`: deleted).
@@ -1094,7 +1151,84 @@ impl Workbook {
         let sheet_id = self.sheet_id(sheet);
         let mut out = self.file_drawings(sheet_id);
         out.extend(self.new_chart_drawings(sheet_id));
+        // Shapes whose text is linked to a cell show the cell as it is now.
+        for d in &mut out {
+            if let DrawingKind::Shape { xml, media } = &*d.kind
+                && let Some(live) = self.linked_text_xml(sheet, xml)
+            {
+                d.kind = Arc::new(DrawingKind::Shape {
+                    xml: live.into(),
+                    media: media.clone(),
+                });
+            }
+        }
         out
+    }
+
+    /// A shape element whose text is linked to a cell (`textlink="$A$1"`,
+    /// Excel's `=A1` typed in a shape) with the cell's text now in its
+    /// `TxLink` field (`None`: not linked, or nothing changes). The
+    /// reference is as the file has it, moved to the current rows and
+    /// columns.
+    fn linked_text_xml(&self, sheet: u32, xml: &str) -> Option<String> {
+        if !xml.contains("textlink=\"") || xml.contains("textlink=\"\"") {
+            return None;
+        }
+        let doc = Document::parse(xml).ok()?;
+        let root = doc.root_element();
+        let link = root.attribute("textlink")?.trim().trim_start_matches('=');
+        if link.is_empty() {
+            return None;
+        }
+        let names: HashMap<String, u32> = self
+            .sheet_names()
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.to_lowercase(), self.sheet_id(i as u32)))
+            .collect();
+        let moves = Layout::default()
+            .moves_to(&self.history.layout())
+            .with_renames(self.renamed_since_open());
+        let now = moves.formula(link, Some(self.sheet_id(sheet)), &names);
+        let token = crate::shift::references(&now).into_iter().next()?;
+        let target = match &token.sheet {
+            Some(s) => self
+                .sheet_names()
+                .iter()
+                .position(|n| n.eq_ignore_ascii_case(s))? as u32,
+            None => sheet,
+        };
+        let a = token.range.area();
+        let text = self.display_value(target, a.top, a.left);
+        let t = doc
+            .descendants()
+            .filter(|n| n.tag_name().name() == "fld" && n.attribute("type") == Some("TxLink"))
+            .find_map(|f| f.children().find(|c| c.tag_name().name() == "t"))?;
+        let esc = text
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+        let range = match t.first_child().filter(|c| c.is_text()) {
+            Some(c) if c.text() == Some(text.as_str()) => return None,
+            Some(c) => c.range(),
+            None if xml[t.range()].ends_with("/>") => {
+                let q = &xml[t.range().start + 1..];
+                let name: String = q
+                    .chars()
+                    .take_while(|c| !c.is_whitespace() && *c != '/' && *c != '>')
+                    .collect();
+                let mut out = xml.to_owned();
+                out.replace_range(t.range(), &format!("<{name}>{esc}</{name}>"));
+                return Some(out);
+            }
+            None => {
+                let at = t.range().start + xml[t.range()].find('>')? + 1;
+                at..at
+            }
+        };
+        let mut out = xml.to_owned();
+        out.replace_range(range, &esc);
+        Some(out)
     }
 
     fn file_drawings(&self, sheet_id: u32) -> Vec<Drawing> {
@@ -1115,11 +1249,12 @@ impl Workbook {
                     descr: obj.descr.clone(),
                     anchor: current_anchor(obj, key, &edits, &now)?,
                     kind: match (&*obj.kind, restyled.file_charts.contains_key(&key)) {
-                        (DrawingKind::Shape { .. }, _)
+                        (DrawingKind::Shape { media, .. }, _)
                             if restyled.shape_texts.contains_key(&key) =>
                         {
                             Arc::new(DrawingKind::Shape {
                                 xml: restyled.shape_texts[&key].clone(),
+                                media: with_picture(media, restyled.shape_pictures.get(&key)),
                             })
                         }
                         (DrawingKind::Chart { part, .. }, true) => {

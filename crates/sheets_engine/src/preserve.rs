@@ -291,6 +291,10 @@ const RELS_CT: &str = "application/vnd.openxmlformats-package.relationships+xml"
 /// [`apply_patches`]). Sheets and names not listed are left as they are.
 #[derive(Default)]
 pub(crate) struct Patches {
+    /// Picture fills set in Kantor on shapes of the file: `sheetId`,
+    /// `r:embed` id, image extension and bytes. The image and the
+    /// drawing's relationship are added unless the drawing has the id.
+    pub shape_pictures: Vec<(u32, String, String, std::sync::Arc<[u8]>)>,
     /// By `sheetId`.
     pub sheets: HashMap<u32, SheetPatch>,
     /// Built-in defined names `(sheetId, name, formula)`: written for that
@@ -428,7 +432,8 @@ pub(crate) struct SheetPatch {
 
 impl Patches {
     fn is_empty(&self) -> bool {
-        self.sheets.is_empty()
+        self.shape_pictures.is_empty()
+            && self.sheets.is_empty()
             && self.names.is_empty()
             && self.tables.is_empty()
             && self.charts.is_empty()
@@ -4757,6 +4762,55 @@ fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
     if !patches.notes.is_empty() {
         write_notes(pkg, &sheets, &patches.notes)?;
     }
+    if !patches.shape_pictures.is_empty() {
+        let mut ct = String::new();
+        for (id, rid, ext, data) in &patches.shape_pictures {
+            let Some(sheet) = sheets
+                .iter()
+                .find(|s| s.sheet_id == *id && s.kind == SheetKind::Work)
+            else {
+                continue;
+            };
+            let Some(drawing) = sheet_drawing_part(pkg, &sheet.part)? else {
+                continue;
+            };
+            let rels_name = rels_part(&drawing);
+            let mut rels = match pkg.text(&rels_name)? {
+                Some(x) => parse_rels(x)?,
+                None => Vec::new(),
+            };
+            if rels.iter().any(|r| r.id == *rid) {
+                continue;
+            }
+            let ext = ext.to_lowercase();
+            let part = (1..)
+                .map(|n| format!("xl/media/image{n}.{ext}"))
+                .find(|n| !pkg.has(n))
+                .expect("a free name");
+            pkg.set(&part, data.to_vec());
+            ct.push_str(&format!(
+                "<Override PartName=\"/{}\" ContentType=\"{}\"/>",
+                esc_attr(&part),
+                image_ct(&ext)
+            ));
+            rels.push(Rel {
+                id: rid.clone(),
+                kind: format!("{REL_BASE}image"),
+                target: relative(&drawing, &part),
+                external: false,
+            });
+            pkg.set(&rels_name, write_rels(&rels).into_bytes());
+        }
+        if !ct.is_empty() {
+            let mut types = pkg
+                .text(CONTENT_TYPES)?
+                .ok_or("no content types")?
+                .to_owned();
+            let at = types.rfind("</Types>").ok_or("content types not closed")?;
+            types.insert_str(at, &ct);
+            pkg.set(CONTENT_TYPES, types.into_bytes());
+        }
+    }
     if let Some(ts) = &patches.table_styles {
         let wb_rels = parse_rels(pkg.text(&rels_part(&wb))?.unwrap_or_default())?;
         let part = wb_rels
@@ -5513,6 +5567,26 @@ pub(crate) fn parse_anchor(text: &str) -> Option<[u32; 8]> {
 /// The chart part of the frame with `cNvPr id` `cnvpr` in the drawing of
 /// the worksheet or chart sheet part `sheet_part` (`None` when there is
 /// none: the frame was deleted, or the package is IronCalc's own).
+/// The drawing part of worksheet `sheet_part` (`None`: it has none).
+fn sheet_drawing_part(pkg: &Package, sheet_part: &str) -> Result<Option<String>, String> {
+    let rels = match pkg.text(&rels_part(sheet_part))? {
+        Some(x) => parse_rels(x)?,
+        None => return Ok(None),
+    };
+    let Some(xml) = pkg.text(sheet_part)? else {
+        return Ok(None);
+    };
+    let sk = Skeleton::new(xml);
+    let doc = Document::parse(&sk.xml).map_err(|e| e.to_string())?;
+    Ok(doc
+        .root_element()
+        .children()
+        .find(|c| is_main(*c, "drawing"))
+        .and_then(|d| d.attribute((NS_R, "id")))
+        .and_then(|rid| rels.iter().find(|r| r.id == rid && !r.external))
+        .and_then(|r| resolve(sheet_part, &r.target)))
+}
+
 fn file_chart_part(pkg: &Package, sheet_part: &str, cnvpr: u32) -> Result<Option<String>, String> {
     let rels = match pkg.text(&rels_part(sheet_part))? {
         Some(x) => parse_rels(x)?,
@@ -6665,6 +6739,17 @@ fn move_part(
                         }
                     }
                     continue;
+                }
+                // A shape's text linked to a cell follows the cell.
+                for n in anchors.iter().flat_map(|a| a.descendants()) {
+                    if let Some(at) = n.attributes().find(|x| x.name() == "textlink")
+                        && !at.value().trim().is_empty()
+                    {
+                        let v = moves.formula(at.value(), Some(home), &m.sheets);
+                        if v != at.value() {
+                            edits.push((at.range_value(), esc_attr(&v)));
+                        }
+                    }
                 }
                 for corner in anchors.iter().flat_map(|a| {
                     a.children()

@@ -85,7 +85,7 @@ fn shapes_are_read_with_their_text() {
     assert_eq!(text("Button 1"), None);
     // Each element parses on its own.
     for d in shapes(&wb, 0) {
-        let DrawingKind::Shape { xml } = &*d.kind else {
+        let DrawingKind::Shape { xml, .. } = &*d.kind else {
             unreachable!()
         };
         roxmltree::Document::parse(xml).unwrap_or_else(|e| panic!("{}: {e}", d.name));
@@ -342,14 +342,141 @@ fn formatted_shapes_save_in_place() {
         assert_eq!(el(&original), el(&saved), "{n}");
     }
     let back = Workbook::open(&path).unwrap();
-    let DrawingKind::Shape { xml } = &*named(&back, 0, "Dashed frame").kind else {
+    let DrawingKind::Shape { xml, .. } = &*named(&back, 0, "Dashed frame").kind else {
         panic!()
     };
     assert!(xml.contains("anchor=\"ctr\""));
     // One undo step each.
     assert!(wb.undo().unwrap());
-    let DrawingKind::Shape { xml } = &*named(&wb, 0, "Arrow line").kind else {
+    let DrawingKind::Shape { xml, .. } = &*named(&wb, 0, "Arrow line").kind else {
         panic!()
     };
     assert!(!xml.contains("stealth"));
+}
+
+const PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0x0D, 0x49, 0x48, 0x44, 0x52, 0, 0, 0,
+    1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1F, 0x15, 0xC4, 0x89, 0, 0, 0, 0x0D, 0x49, 0x44, 0x41, 0x54,
+    0x78, 0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0xF0, 0x1F, 0, 0x05, 0x00, 0x01, 0xFF, 0x89, 0x99, 0x3D,
+    0x1D, 0, 0, 0, 0, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+];
+
+/// The image a drawing's `r:embed` id reaches, in a saved package.
+fn embedded(p: &BTreeMap<String, String>, drawing: &str, rid: &str) -> Option<String> {
+    let (dir, file) = drawing.rsplit_once('/').unwrap();
+    let rels = roxmltree::Document::parse(&p[&format!("{dir}/_rels/{file}.rels")]).unwrap();
+    let t = rels
+        .descendants()
+        .find(|r| r.attribute("Id") == Some(rid))?
+        .attribute("Target")?
+        .to_owned();
+    let part = format!("xl/{}", t.trim_start_matches("../"));
+    p.contains_key(&part).then_some(part)
+}
+
+#[test]
+fn picture_fills_and_shadows_save() {
+    use sheets_engine::shape_format as fmt;
+    let mut wb = Workbook::open(corpus("23_shapes.xlsx")).unwrap();
+    let key = named(&wb, 0, "Revenue box").key;
+    wb.set_shape_picture(key, PNG.to_vec(), "png").unwrap();
+    wb.edit_shape(key, |x| {
+        fmt::set_shadow(x, Some(sheets_engine::ShadowPreset::BottomRight))
+    })
+    .unwrap();
+    let DrawingKind::Shape { xml, media } = &*named(&wb, 0, "Revenue box").kind else {
+        panic!()
+    };
+    assert!(xml.contains("<a:blipFill"), "{xml}");
+    assert!(xml.contains("dir=\"2700000\""), "{xml}");
+    assert!(
+        media
+            .iter()
+            .any(|(_, ext, d)| ext == "png" && &d[..] == PNG)
+    );
+    assert!(wb.set_shape_picture(key, vec![1, 2], "tiff").is_err());
+    // A new shape too.
+    let new = wb.insert_shape(0, ShapePreset::Rectangle, 2, 8).unwrap();
+    wb.set_shape_picture(new, PNG.to_vec(), "png").unwrap();
+    let path = scratch("picture-fill.xlsx");
+    wb.save_as(&path).unwrap();
+    assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
+    assert!(sheets_engine::package_problems(&std::fs::read(&path).unwrap()).is_empty());
+    let p = parts(&path);
+    let drawing = p
+        .iter()
+        .find(|(n, x)| n.starts_with("xl/drawings/drawing") && x.contains("Revenue box"))
+        .map(|(n, _)| n.clone())
+        .unwrap();
+    let doc = roxmltree::Document::parse(&p[&drawing]).unwrap();
+    let embeds: Vec<String> = doc
+        .descendants()
+        .filter(|n| n.has_tag_name("blip"))
+        .filter_map(|n| {
+            n.attributes()
+                .find(|a| a.name() == "embed")
+                .map(|a| a.value().to_owned())
+        })
+        .collect();
+    assert!(embeds.len() >= 2, "{embeds:?}");
+    for rid in &embeds {
+        assert!(embedded(&p, &drawing, rid).is_some(), "{rid}");
+    }
+    // Opened again: the fill is there with its picture.
+    let back = Workbook::open(&path).unwrap();
+    let DrawingKind::Shape { media, .. } = &*named(&back, 0, "Revenue box").kind else {
+        panic!()
+    };
+    assert!(media.iter().any(|(_, _, d)| &d[..] == PNG));
+    // Saved again: no second copy of the relationship.
+    let path2 = scratch("picture-fill2.xlsx");
+    let mut back = back;
+    back.save_as(&path2).unwrap();
+    assert!(sheets_engine::package_problems(&std::fs::read(&path2).unwrap()).is_empty());
+}
+
+#[test]
+fn linked_text_and_equations_show_and_stay() {
+    let mut wb = Workbook::open(corpus("23_shapes.xlsx")).unwrap();
+    let key = named(&wb, 0, "Revenue box").key;
+    wb.set_input(0, 0, 0, "Live value").unwrap();
+    // `=A1` typed into the shape, as Excel saves it; and an equation.
+    wb.edit_shape(key, |x| {
+        let start = x.find("<a:p>").unwrap();
+        let end = x.rfind("</a:p>").unwrap() + "</a:p>".len();
+        let mut out = x.to_owned();
+        out.replace_range(
+            start..end,
+            "<a:p><a:fld id=\"{AB12CD34-0000-4000-8000-000000000001}\" type=\"TxLink\"><a:rPr lang=\"en-US\"/><a:pPr/><a:t>old</a:t></a:fld></a:p><a:p><mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" xmlns:a14=\"http://schemas.microsoft.com/office/drawing/2010/main\"><mc:Choice Requires=\"a14\"><a14:m><m:oMathPara xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\"><m:oMath><m:sSup><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup></m:oMath></m:oMathPara></a14:m></mc:Choice><mc:Fallback><a:r><a:rPr lang=\"en-US\"/><a:t>x^2</a:t></a:r></mc:Fallback></mc:AlternateContent></a:p>",
+        );
+        Ok(out.replacen("textlink=\"\"", "textlink=\"$A$1\"", 1))
+    })
+    .unwrap();
+    let DrawingKind::Shape { xml, .. } = &*named(&wb, 0, "Revenue box").kind else {
+        panic!()
+    };
+    assert!(xml.contains("<a:t>Live value</a:t>"), "{xml}");
+    // Text with fields isn't edited as plain lines (that would lose them).
+    assert!(wb.shape_text(key).is_none());
+    assert!(wb.set_shape_text(key, "plain").is_err());
+    // A row inserted above: the link follows its cell.
+    wb.insert_rows(0, 0, 1).unwrap();
+    wb.set_input(0, 1, 0, "Moved value").unwrap();
+    let DrawingKind::Shape { xml, .. } = &*named(&wb, 0, "Revenue box").kind else {
+        panic!()
+    };
+    assert!(xml.contains("<a:t>Moved value</a:t>"), "{xml}");
+    let path = scratch("linked.xlsx");
+    wb.save_as(&path).unwrap();
+    assert!(sheets_engine::package_problems(&std::fs::read(&path).unwrap()).is_empty());
+    let p = parts(&path);
+    let d = p.values().find(|x| x.contains("Revenue box")).unwrap();
+    assert!(
+        d.contains("type=\"TxLink\"") && d.contains("<a14:m>"),
+        "{d}"
+    );
+    assert!(
+        d.contains("textlink=\"$A$2\""),
+        "the link follows its cell: {d}"
+    );
 }

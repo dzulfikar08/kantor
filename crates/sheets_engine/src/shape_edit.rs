@@ -179,6 +179,22 @@ pub fn takes_text(xml: &str) -> bool {
     })
 }
 
+/// Whether a shape's text has fields (a link to a cell, `a:fld`) or
+/// equations: shown, kept, not edited in Kantor (typing would lose them).
+pub fn text_has_fields(xml: &str) -> bool {
+    Document::parse(xml).is_ok_and(|d| {
+        text_body(d.root_element()).is_some_and(|tb| {
+            tb.descendants().any(|n| {
+                n.is_element() && matches!(n.tag_name().name(), "fld" | "AlternateContent" | "m")
+            })
+        })
+    }) || Document::parse(xml).is_ok_and(|d| {
+        d.root_element()
+            .attribute("textlink")
+            .is_some_and(|t| !t.trim().is_empty())
+    })
+}
+
 /// A shape element's text: its paragraphs, one per line (line breaks
 /// inside a paragraph too).
 pub fn plain_text(xml: &str) -> Option<String> {
@@ -389,7 +405,7 @@ impl Workbook {
         let sheet = self.sheet_index_of(key.sheet_id)?;
         let d = self.drawings(sheet).into_iter().find(|d| d.key == key)?;
         match &*d.kind {
-            DrawingKind::Shape { xml } => Some((xml.clone(), d.editable)),
+            DrawingKind::Shape { xml, .. } => Some((xml.clone(), d.editable)),
             _ => None,
         }
     }
@@ -398,7 +414,7 @@ impl Workbook {
     /// be edited).
     pub fn shape_text(&self, key: DrawingKey) -> Option<String> {
         let (xml, editable) = self.shape_now(key)?;
-        if !editable || !takes_text(&xml) {
+        if !editable || !takes_text(&xml) || text_has_fields(&xml) {
             return None;
         }
         plain_text(&xml)
@@ -412,6 +428,9 @@ impl Workbook {
             .ok_or_else(|| anyhow!("this object has no text"))?;
         if !editable || !takes_text(&xml) {
             bail!("this object's text can't be edited");
+        }
+        if text_has_fields(&xml) {
+            bail!("Kantor can't edit text with fields or equations");
         }
         if plain_text(&xml).as_deref() == Some(text) {
             return Ok(());

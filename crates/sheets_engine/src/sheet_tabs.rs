@@ -550,7 +550,7 @@ impl Workbook {
                         descr: d.descr.clone(),
                     }));
                 }
-                DrawingKind::Shape { xml } => {
+                DrawingKind::Shape { xml, .. } => {
                     // Pictures inside a group come with their images.
                     let media = self.shape_media(d.key);
                     let pics =

@@ -537,6 +537,7 @@ pub enum OverlayKind {
         key: sheets_engine::drawing::DrawingKey,
         hash: u64,
         xml: Arc<str>,
+        media: sheets_engine::drawing::ShapeMedia,
         theme: Option<Arc<str>>,
     },
 }

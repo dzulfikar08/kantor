@@ -695,6 +695,32 @@ pub struct Look {
     pub line_style: crate::fill::LineStyle,
     /// Cropping and opacity of a picture.
     pub picture: crate::fill::PictureLook,
+    /// Shadow and 3-D effects (drawn for worksheet shapes).
+    pub effects: Effects,
+}
+
+/// A shape's outer shadow and 3-D look (`a:effectLst/a:outerShdw`,
+/// `a:sp3d`), as read.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Effects {
+    pub shadow: Option<OuterShadow>,
+    /// `a:bevelT`'s width (EMU).
+    pub bevel: Option<Emu>,
+    /// `a:sp3d extrusionH` (EMU) and `a:extrusionClr`.
+    pub extrusion: Option<(Emu, Option<Rgb>)>,
+}
+
+/// `a:outerShdw`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct OuterShadow {
+    /// Blur radius and distance (EMU).
+    pub blur: Emu,
+    pub dist: Emu,
+    /// Direction, 60000ths of a degree clockwise from the x axis.
+    pub dir: i64,
+    pub color: Rgb,
+    /// 255 = opaque.
+    pub alpha: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

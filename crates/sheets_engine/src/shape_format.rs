@@ -1,7 +1,8 @@
 //! Format Shape for worksheet shapes and text boxes, as Excel's pane sets
 //! them: the fill (no fill, a solid colour with transparency, a gradient),
-//! the outline (no line, colour, width, dash, arrowheads) and where the
-//! text sits (top, middle, bottom).
+//! the outline (no line, colour, width, dash, arrowheads), where the text
+//! sits (top, middle, bottom), a picture fill ([`Workbook::set_shape_picture`])
+//! and Excel's outer shadow presets ([`set_shadow`]).
 //!
 //! Each edit rewrites only the elements it changes inside the shape's
 //! `spPr` (or the `bodyPr` attribute), in the schema's order; the rest of
@@ -16,7 +17,7 @@ use crate::chart_edit::{NEW_CHART_BASE, NewShape};
 use crate::drawing::DrawingKey;
 use std::sync::Arc;
 
-pub use crate::shape_edit::{plain_text, takes_text};
+pub use crate::shape_edit::{plain_text, takes_text, text_has_fields};
 
 /// Whether a shape element is a connector (`xdr:cxnSp`: lines and arrows).
 pub fn is_connector(xml: &str) -> bool {
@@ -50,6 +51,168 @@ pub enum ShapeFill {
         rgb: [u8; 3],
         vertical: bool,
     },
+}
+
+/// Excel's outer shadow presets (Format Shape ▸ Effects ▸ Shadow ▸
+/// Outer), as Excel writes them: 40% black, 4 pt blur, 3 pt away.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShadowPreset {
+    BottomRight,
+    Bottom,
+    BottomLeft,
+    Right,
+    Center,
+    Left,
+    TopRight,
+    Top,
+    TopLeft,
+}
+
+impl ShadowPreset {
+    pub const ALL: [ShadowPreset; 9] = [
+        ShadowPreset::BottomRight,
+        ShadowPreset::Bottom,
+        ShadowPreset::BottomLeft,
+        ShadowPreset::Right,
+        ShadowPreset::Center,
+        ShadowPreset::Left,
+        ShadowPreset::TopRight,
+        ShadowPreset::Top,
+        ShadowPreset::TopLeft,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ShadowPreset::BottomRight => "Offset: Bottom Right",
+            ShadowPreset::Bottom => "Offset: Bottom",
+            ShadowPreset::BottomLeft => "Offset: Bottom Left",
+            ShadowPreset::Right => "Offset: Right",
+            ShadowPreset::Center => "Offset: Center",
+            ShadowPreset::Left => "Offset: Left",
+            ShadowPreset::TopRight => "Offset: Top Right",
+            ShadowPreset::Top => "Offset: Top",
+            ShadowPreset::TopLeft => "Offset: Top Left",
+        }
+    }
+
+    /// `dir` (60000ths of a degree) and `algn`.
+    fn dir(self) -> (i64, &'static str) {
+        match self {
+            ShadowPreset::BottomRight => (2_700_000, "tl"),
+            ShadowPreset::Bottom => (5_400_000, "t"),
+            ShadowPreset::BottomLeft => (8_100_000, "tr"),
+            ShadowPreset::Right => (0, "l"),
+            ShadowPreset::Center => (0, "ctr"),
+            ShadowPreset::Left => (10_800_000, "r"),
+            ShadowPreset::TopRight => (18_900_000, "bl"),
+            ShadowPreset::Top => (16_200_000, "b"),
+            ShadowPreset::TopLeft => (13_500_000, "br"),
+        }
+    }
+
+    fn xml(self, a: &str) -> String {
+        let (dir, algn) = self.dir();
+        let color = format!("<{a}srgbClr val=\"000000\"><{a}alpha val=\"40000\"/></{a}srgbClr>");
+        if self == ShadowPreset::Center {
+            return format!(
+                "<{a}outerShdw blurRad=\"63500\" sx=\"102000\" sy=\"102000\" algn=\"ctr\" rotWithShape=\"0\">{color}</{a}outerShdw>"
+            );
+        }
+        format!(
+            "<{a}outerShdw blurRad=\"50800\" dist=\"38100\" dir=\"{dir}\" algn=\"{algn}\" rotWithShape=\"0\">{color}</{a}outerShdw>"
+        )
+    }
+}
+
+/// The outer shadow preset of a shape element (`None`: no shadow of its
+/// own, or one that isn't a preset).
+pub fn shadow_of(xml: &str) -> Option<ShadowPreset> {
+    let doc = Document::parse(xml).ok()?;
+    let sh = sp_pr(doc.root_element())?
+        .children()
+        .find(|c| is_a(*c, "effectLst"))?
+        .children()
+        .find(|c| is_a(*c, "outerShdw"))?;
+    let num = |k: &str| {
+        sh.attribute(k)
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0)
+    };
+    if num("dist") == 0 {
+        return Some(ShadowPreset::Center);
+    }
+    let dir = num("dir");
+    ShadowPreset::ALL
+        .into_iter()
+        .filter(|p| *p != ShadowPreset::Center)
+        .find(|p| p.dir().0 == dir)
+}
+
+/// Effects in `effectLst`, in schema order.
+const EFFECTS: [&str; 8] = [
+    "blur",
+    "fillOverlay",
+    "glow",
+    "innerShdw",
+    "outerShdw",
+    "prstShdw",
+    "reflection",
+    "softEdge",
+];
+
+/// `xml` (a shape element) with Excel's outer shadow `preset` (`None`: no
+/// shadow, which Excel writes as an empty `effectLst` so the shape
+/// style's shadow doesn't show either). Other effects stay.
+pub fn set_shadow(xml: &str, preset: Option<ShadowPreset>) -> Result<String> {
+    with_sp_pr(xml, |xml, sp, a| {
+        let new = preset.map(|p| p.xml(a)).unwrap_or_default();
+        let mut out = xml.to_owned();
+        match sp.children().find(|c| is_a(*c, "effectLst")) {
+            Some(list) if xml[list.range()].ends_with("/>") => {
+                out.replace_range(list.range(), &format!("<{a}effectLst>{new}</{a}effectLst>"));
+            }
+            Some(list) => match list.children().find(|c| is_a(*c, "outerShdw")) {
+                Some(old) => out.replace_range(old.range(), &new),
+                None => {
+                    let at = insert_at(xml, list, &EFFECTS[5..]);
+                    out.insert_str(at, &new);
+                }
+            },
+            None => {
+                let at = insert_at(xml, sp, &["effectDag", "scene3d", "sp3d", "extLst"]);
+                out.insert_str(at, &format!("<{a}effectLst>{new}</{a}effectLst>"));
+            }
+        }
+        Ok(out)
+    })
+}
+
+/// `xml` (a shape element) filled with the picture its relationship `rid`
+/// names, stretched over the shape (Excel's Picture or texture fill).
+pub fn set_picture_fill(xml: &str, rid: &str) -> Result<String> {
+    with_sp_pr(xml, |xml, sp, a| {
+        const NS_R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+        let (r, decl) = match sp.lookup_prefix(NS_R) {
+            Some(p) if !p.is_empty() => (format!("{p}:"), String::new()),
+            _ => ("r:".to_owned(), format!(" xmlns:r=\"{NS_R}\"")),
+        };
+        let new = format!(
+            "<{a}blipFill rotWithShape=\"1\"><{a}blip{decl} {r}embed=\"{rid}\"/><{a}stretch><{a}fillRect/></{a}stretch></{a}blipFill>"
+        );
+        let mut out = xml.to_owned();
+        match sp.children().find(|c| FILLS.iter().any(|f| is_a(*c, f))) {
+            Some(old) => out.replace_range(old.range(), &new),
+            None => {
+                let at = insert_at(
+                    xml,
+                    sp,
+                    &["ln", "effectLst", "effectDag", "scene3d", "sp3d", "extLst"],
+                );
+                out.insert_str(at, &new);
+            }
+        }
+        Ok(out)
+    })
 }
 
 /// Excel's dash types (Format Shape ▸ Line ▸ Dash type).
@@ -383,6 +546,76 @@ impl Workbook {
             });
         }
         Ok(())
+    }
+
+    /// Fill shape `key` with a picture (`data`, a PNG, JPEG or GIF file's
+    /// bytes; `ext` its extension). One undo step; a save adds the image
+    /// to the package.
+    pub fn set_shape_picture(&mut self, key: DrawingKey, data: Vec<u8>, ext: &str) -> Result<()> {
+        let ext = ext.trim_start_matches('.').to_lowercase();
+        if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp") {
+            bail!("Kantor can fill a shape with a PNG, JPEG, GIF or BMP picture");
+        }
+        let xml = self
+            .shape_xml(key)
+            .ok_or_else(|| anyhow!("Kantor can't change this object"))?;
+        let data: Arc<[u8]> = data.into();
+        if key.index >= NEW_CHART_BASE {
+            let rid = "rIdKpic".to_owned();
+            let new: Arc<str> = set_picture_fill(&xml, &rid)?.into();
+            let id = (key.index - NEW_CHART_BASE) as u32;
+            self.own_edit(|e, _| {
+                if let Some(c) = e
+                    .charts
+                    .iter_mut()
+                    .find(|c| c.id == id && c.sheet_id == key.sheet_id)
+                    && let Some(s) = &c.shape
+                {
+                    let mut media: Vec<_> =
+                        s.media.iter().filter(|m| m.0 != rid).cloned().collect();
+                    media.push((rid.clone(), ext.clone(), data.clone()));
+                    c.shape = Some(Arc::new(NewShape {
+                        xml: new,
+                        name: s.name.clone(),
+                        slicer: s.slicer.clone(),
+                        timeline: s.timeline.clone(),
+                        media,
+                    }));
+                }
+            });
+            return Ok(());
+        }
+        let cnvpr = self
+            .drawings
+            .object_id(key)
+            .ok_or_else(|| anyhow!("Kantor can't change this shape"))?;
+        let rid = format!("rIdKf{cnvpr}");
+        let new: Arc<str> = set_picture_fill(&xml, &rid)?.into();
+        self.own_edit(|e, _| {
+            e.shape_texts.insert(key, new);
+            e.shape_pictures.insert(key, (rid, ext, data));
+        });
+        Ok(())
+    }
+
+    /// Picture fills set on shapes of the file in the current state, for a
+    /// save.
+    pub(crate) fn shape_picture_patches(&self, out: &mut crate::preserve::Patches) {
+        let edits = self.edits();
+        let mut keys: Vec<&DrawingKey> = edits.shape_pictures.keys().collect();
+        keys.sort_by_key(|k| (k.sheet_id, k.index));
+        for k in keys {
+            // Only while the shape still uses it.
+            let (rid, ext, data) = &edits.shape_pictures[k];
+            if edits
+                .shape_texts
+                .get(k)
+                .is_some_and(|x| x.contains(&format!("\"{rid}\"")))
+            {
+                out.shape_pictures
+                    .push((k.sheet_id, rid.clone(), ext.clone(), data.clone()));
+            }
+        }
     }
 
     /// Apply `f` to shape `key`'s element (one undo step).

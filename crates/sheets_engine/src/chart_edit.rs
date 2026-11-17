@@ -850,6 +850,7 @@ impl Workbook {
                             },
                             (None, None) => DrawingKind::Shape {
                                 xml: sh.xml.clone(),
+                                media: sh.media.clone().into(),
                             },
                         }),
                         editable: true,
