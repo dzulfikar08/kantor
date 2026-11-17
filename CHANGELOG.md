@@ -38,6 +38,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   own as Word makes it.
 - `.doc` and `.rtf` imports keep their sections' columns: unequal widths and the line between
   (`.doc`), the number and spacing of columns (`.rtf`), and column breaks.
+- Slides and Docs: Organization Chart SmartArt is laid out as PowerPoint does. Boxes are twice as
+  wide as tall, with PowerPoint's spacing. Assistants sit beside the line down from their manager.
+  A manager whose people have no one under them hangs them in a column on the right, as PowerPoint
+  starts an org chart. Right-click an Org Chart shape for *Layout* (*Standard*, *Both*, *Left
+  Hanging*, *Right Hanging*) and *Add Assistant*; in Docs they're in the SmartArt text popover.
+  Layouts set in PowerPoint are read from the file and kept.
+- Slides and Docs: six more picture SmartArt layouts are laid out again when resized, take new
+  items (with an empty picture placeholder) and deleted ones, and are in Change Layout: Picture
+  Accent List, Bending Picture Accent List, Vertical Picture List, Picture Caption List, Titled
+  Picture Blocks and Picture Grid. Pictures already in them are kept.
 
 ### Fixed
 

@@ -54,5 +54,5 @@ pub use history::Focus;
 pub use model::*;
 pub use presentation::{Layout, Master, Presentation, Slide, package_problems};
 pub use render::{Layer, RenderPara, RenderRun, RenderShape, RenderText};
-pub use smartart_layout::{AddPlace, Family as SmartArtFamily};
+pub use smartart_layout::{AddPlace, Family as SmartArtFamily, OrgLayout};
 pub use table_edit::TableOp;

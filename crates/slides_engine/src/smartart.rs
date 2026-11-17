@@ -140,7 +140,10 @@ impl<'a> Model<'a> {
         let direct = model_id
             .and_then(|m| self.points.get_key_value(m))
             .filter(|(_, p)| {
-                p.assoc.is_none() && p.node.attribute("type").is_none_or(|t| t == "node")
+                p.assoc.is_none()
+                    && p.node
+                        .attribute("type")
+                        .is_none_or(|t| t == "node" || t == "asst")
             })
             .map(|(k, _)| *k);
         if let Some(m) = direct
@@ -1213,7 +1216,7 @@ fn point_paint_edits(xml: &str, pt: Node, paint: &PaintEdit) -> Vec<(Range<usize
 
 // ── laying SmartArt out again, adding and removing items ───────────────────
 
-use crate::smartart_layout::{AddPlace, Family, LAYOUT_REFUSAL};
+use crate::smartart_layout::{AddPlace, Family, LAYOUT_REFUSAL, OrgLayout};
 
 impl Presentation {
     /// The SmartArt frame `r` is, or is a shape of.
@@ -1420,6 +1423,67 @@ impl Presentation {
         let target = at.and_then(|i| f.child(i)).unwrap_or(f);
         self.set_frame(f, new, Focus::at(target))?;
         Ok(target)
+    }
+
+    /// The data item SmartArt shape `r` shows (not the frame).
+    fn smartart_item_of(&self, r: ShapeRef) -> Option<(ShapeRef, String)> {
+        let f = self.smartart_frame_of(r)?;
+        if f == r {
+            return None;
+        }
+        let dd = self.shape(f)?.smartart()?;
+        let id = dd.group.model_ids.get(r.2.last().unwrap_or(0))?.clone()?;
+        Some((f, id))
+    }
+
+    /// Whether SmartArt shape `r` shows an Organization Chart's item (its
+    /// *Layout* and *Add Assistant* apply).
+    pub fn smartart_is_org_item(&self, r: impl Into<ShapeRef>) -> bool {
+        let r: ShapeRef = r.into();
+        self.smartart_family(r) == Some(Family::OrgChart) && self.smartart_item_of(r).is_some()
+    }
+
+    /// The hanging layout set on the Organization Chart item SmartArt shape
+    /// `r` shows (`None`: PowerPoint's initial layout).
+    pub fn smartart_org_layout(&self, r: impl Into<ShapeRef>) -> Option<OrgLayout> {
+        let (f, id) = self.smartart_item_of(r.into())?;
+        let (d, dd) = diagram_of(self.shape(f)?)?;
+        let (_, data) = self.smartart_xml(f.0, d, dd)?;
+        let data = match data {
+            Some(x) => x,
+            None => String::from_utf8(self.part_bytes(d.data.as_deref()?)?.to_vec()).ok()?,
+        };
+        crate::smartart_layout::org_layout(&data, &id)
+    }
+
+    /// PowerPoint's *Layout* on an Organization Chart shape `r`: how the
+    /// children of the item it shows hang under it; laid out again.
+    pub fn smartart_set_org_layout(
+        &mut self,
+        r: impl Into<ShapeRef>,
+        layout: OrgLayout,
+    ) -> anyhow::Result<()> {
+        let r: ShapeRef = r.into();
+        let (f, id) = self
+            .smartart_item_of(r)
+            .context("Select an Organization Chart shape")?;
+        let size = self.smartart_size(f)?;
+        let new = self.smartart_redone(f, size, |drawing, data| {
+            crate::smartart_layout::set_org_layout(drawing, data, &id, layout, size.0, size.1)
+        })?;
+        // The same shape stays selected (its item keeps its place).
+        let at = match new.get() {
+            Some(FrameContent::Diagram(DiagramRef {
+                drawing: Some(dd), ..
+            })) => dd
+                .group
+                .model_ids
+                .iter()
+                .position(|m| m.as_deref() == Some(&id)),
+            _ => None,
+        };
+        let target = at.and_then(|i| f.child(i)).unwrap_or(f);
+        self.set_frame(f, new, Focus::at(target))
     }
 
     /// Delete SmartArt shape `r`: the item it shows goes (with its

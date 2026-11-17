@@ -364,3 +364,76 @@ fn layout_changed_keeping_items() {
     doc.undo();
     assert_eq!(shown(&doc), before);
 }
+
+/// Word's Organization Chart *Layout* and *Add Assistant*: the Slides
+/// corpus's org chart (slide 11: an assistant, Left Hanging and Both
+/// branches) in the fixture's SmartArt object.
+#[test]
+fn org_chart_layouts_and_assistants() {
+    use slides_engine::OrgLayout;
+    let mut doc = open();
+    let (para, index) = anchor(&doc);
+    let f = doc.float_at(para, index).unwrap().clone();
+    let docs_engine::FloatKind::SmartArt { data, drawings, .. } = &f.kind else {
+        panic!()
+    };
+    let org = vec![
+        (data.clone(), pptx_part("ppt/diagrams/data11.xml").into()),
+        (
+            drawings[0].1.clone(),
+            pptx_part("ppt/diagrams/drawing11.xml").into(),
+        ),
+    ];
+    assert!(doc.set_float_parts(para, index, org));
+    let f = doc.float_at(para, index).unwrap().clone();
+    // The drawing shape showing text `t`.
+    let at = |doc: &Document, t: &str| {
+        let mut engine = Engine::new();
+        let laid = docs_pdf::lay_out(doc, &mut engine);
+        let it = laid
+            .floats
+            .iter()
+            .flatten()
+            .find(|it| it.float(doc).unwrap().name == "Diagram 1")
+            .unwrap();
+        it.boxes
+            .iter()
+            .find(|b| b.layout.paras.len() == 1 && b.layout.shown(0) == t)
+            .unwrap_or_else(|| panic!("{t}: {:?}", shown(doc)))
+            .which
+    };
+    let sales = at(&doc, "Sales");
+    assert_eq!(
+        docs_pdf::smartart::org_item(&doc, &f, sales),
+        Some(Some(OrgLayout::LeftHanging))
+    );
+    let parts =
+        docs_pdf::smartart::set_org_layout(&doc, &f, sales, OrgLayout::RightHanging).unwrap();
+    assert!(doc.set_float_parts(para, index, parts));
+    let f = doc.float_at(para, index).unwrap().clone();
+    assert_eq!(
+        docs_pdf::smartart::org_item(&doc, &f, at(&doc, "Sales")),
+        Some(Some(OrgLayout::RightHanging))
+    );
+    let n = shown(&doc).len();
+    let parts = docs_pdf::smartart::add_assistant(&doc, &f, at(&doc, "Ops")).unwrap();
+    assert!(doc.set_float_parts(para, index, parts));
+    // A new box (its connector has no text).
+    assert_eq!(shown(&doc).len(), n + 1);
+    // Not an Organization Chart: no Layout, no assistants.
+    let labeled = vec![
+        (data.clone(), pptx_part("ppt/diagrams/data9.xml").into()),
+        (
+            drawings[0].1.clone(),
+            pptx_part("ppt/diagrams/drawing9.xml").into(),
+        ),
+    ];
+    assert!(doc.set_float_parts(para, index, labeled));
+    let f = doc.float_at(para, index).unwrap().clone();
+    let ceo = at(&doc, "CEO");
+    assert_eq!(docs_pdf::smartart::org_item(&doc, &f, ceo), None);
+    assert_eq!(
+        docs_pdf::smartart::add_assistant(&doc, &f, ceo).unwrap_err(),
+        slides_engine::smartart_layout::ASSISTANT_ORG
+    );
+}
