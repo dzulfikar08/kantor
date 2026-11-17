@@ -1057,6 +1057,22 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: tk("Page Break Preview"),
+        detail: tk("Sheets · show where the pages break; drag the breaks and the print area"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.set_break_preview(true, w, cx))
+        },
+    },
+    Command {
+        title: tk("Normal View"),
+        detail: tk("Sheets · leave Page Break Preview"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.set_break_preview(false, w, cx))
+        },
+    },
+    Command {
         title: tk("Insert PivotTable…"),
         detail: tk("Sheets · summarise the table, selection or data around the active cell"),
         keys: "",

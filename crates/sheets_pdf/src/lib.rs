@@ -33,6 +33,7 @@
 //! those set not to print are left out, and so are shapes and text boxes
 //! (Kantor can't draw them yet).
 
+pub mod break_preview;
 pub mod drawings;
 mod encode;
 mod extract;

@@ -459,8 +459,13 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .xsmall()
             .icon(Lucide::Snowflake)
             .dropdown_caret(true)
-            .tooltip(i18n::t("Freeze panes, hide rows and columns"))
-            .dropdown_menu(move |menu, _, _| view_items(menu, &view_view)),
+            .tooltip(i18n::t("Page Break Preview, freeze panes, hide rows and columns"))
+            .dropdown_menu(move |menu, _, cx| {
+                let pbp = view_view
+                    .upgrade()
+                    .is_some_and(|v| v.read(cx).in_break_preview(cx));
+                view_items(menu, &view_view, pbp)
+            }),
     );
     // Conditional formatting.
     let cf_view = cx.entity().downgrade();
@@ -670,9 +675,21 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
     row
 }
 
-/// The View menu: Excel's Freeze Panes choices, then Hide / Unhide.
-fn view_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>) -> PopupMenu {
+/// The View menu: Normal and Page Break Preview, Excel's Freeze Panes
+/// choices, then Hide / Unhide.
+fn view_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>, pbp: bool) -> PopupMenu {
     use crate::GridCommand as G;
+    for (label, on) in [(tk("Normal"), false), (tk("Page Break Preview"), true)] {
+        let view = view.clone();
+        menu = menu.item(
+            PopupMenuItem::new(i18n::t(label))
+                .checked(pbp == on)
+                .on_click(move |_, window, cx| {
+                    let _ = view.update(cx, |v, cx| v.set_break_preview(on, window, cx));
+                }),
+        );
+    }
+    menu = menu.separator();
     let items: [(&str, &str, G); 8] = [
         (tk("Freeze Panes"), "", G::FreezePanes),
         (tk("Freeze Top Row"), "", G::FreezeTopRow),

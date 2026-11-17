@@ -200,6 +200,7 @@ fn bars_scales_icons_save_and_read_back() {
         &plain(CfSpec::DataBar {
             color: 0x638EC6,
             gradient: true,
+            bar: Default::default(),
         }),
     )
     .unwrap();
@@ -218,6 +219,7 @@ fn bars_scales_icons_save_and_read_back() {
             set: "3Arrows".into(),
             reverse: false,
             show_value: true,
+            steps: Vec::new(),
         }),
     )
     .unwrap();

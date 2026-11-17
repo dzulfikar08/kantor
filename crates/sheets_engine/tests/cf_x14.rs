@@ -62,6 +62,7 @@ fn fixture(tag: &str) -> PathBuf {
         &plain(CfSpec::DataBar {
             color: 0x638EC6,
             gradient: false,
+            bar: Default::default(),
         }),
     )
     .unwrap();
@@ -70,8 +71,8 @@ fn fixture(tag: &str) -> PathBuf {
     let file = scratch(&format!("excel2010-{tag}.xlsx"));
     patch_sheet(&kantor, &file, |x| {
         let x = x.replacen(
-            r#"<x14:dataBar minLength="0" maxLength="100" gradient="0">"#,
-            r#"<x14:dataBar minLength="10" maxLength="80" gradient="0" border="1" axisPosition="none">"#,
+            r#"minLength="0" maxLength="100" gradient="0">"#,
+            r#"minLength="10" maxLength="80" gradient="0" border="1" axisPosition="none">"#,
             1,
         );
         let x = x.replacen(
@@ -112,6 +113,7 @@ fn edited_sheet_keeps_excel_2010_extras() {
         &plain(CfSpec::DataBar {
             color: 0xFF0000,
             gradient: true,
+            bar: Default::default(),
         }),
     )
     .unwrap();
@@ -161,6 +163,7 @@ fn a_changed_bar_drops_the_file_look() {
     def.spec = CfSpec::DataBar {
         color: 0x00FF00,
         gradient: false,
+        bar: Default::default(),
     };
     wb.update_cf_rule(0, bar.index, "A1:A10", &def).unwrap();
     let b = wb.conditional(0, 9, 0).unwrap().bar.unwrap();
@@ -169,4 +172,157 @@ fn a_changed_bar_drops_the_file_look() {
     wb.save_as(&path).unwrap();
     let sheet = &parts(&path)["xl/worksheets/sheet1.xml"];
     assert!(!sheet.contains("FF00B050"), "{sheet}");
+}
+
+fn numbers() -> Workbook {
+    let mut wb = Workbook::new_empty().unwrap();
+    let cells: Vec<(u32, u32, String)> = (0..10u32)
+        .flat_map(|i| {
+            [
+                (i, 0, (i as i32 - 3).to_string()),
+                (i, 1, (i * 10).to_string()),
+            ]
+        })
+        .collect();
+    wb.set_inputs(0, &cells).unwrap();
+    wb
+}
+
+/// Edit Formatting Rule's data bar settings: drawn, saved as Excel 2010
+/// markup, read back the same, undone with the rule.
+#[test]
+fn data_bar_settings_round_trip() {
+    use sheets_engine::{CfBarAxis, CfBarDirection, CfBarOptions, CfValue, CfValueKind};
+    let mut wb = numbers();
+    let bar = CfBarOptions {
+        min: CfValue::new(CfValueKind::Number, "-5"),
+        max: CfValue::new(CfValueKind::Percent, "90"),
+        min_length: 10,
+        max_length: 90,
+        border: Some(0x00B050),
+        negative_fill: Some(0xC00000),
+        negative_border: Some(0x7030A0),
+        axis: CfBarAxis::Middle,
+        axis_color: 0x0070C0,
+        direction: CfBarDirection::RightToLeft,
+        bar_only: true,
+    };
+    let spec = CfSpec::DataBar {
+        color: 0x638EC6,
+        gradient: false,
+        bar: bar.clone(),
+    };
+    wb.add_cf_rule(0, "A1:A10", &plain(spec.clone())).unwrap();
+    let rules = wb.cf_rules(0, None);
+    assert_eq!(rules[0].def.as_ref().unwrap().spec, spec);
+    // Drawn right to left: a positive bar ends at the right edge.
+    let top = wb.conditional(0, 9, 0).unwrap();
+    let b = top.bar.unwrap();
+    assert!(!top.show_value, "bar only");
+    assert!(b.to <= 0.5 + 1e-4 && b.from < 0.5, "{b:?}");
+    assert_eq!(b.border, Some(0x00B050));
+    let low = wb.conditional(0, 0, 0).unwrap().bar.unwrap();
+    assert_eq!(low.color, 0xC00000, "negative fill");
+    assert_eq!(low.border, Some(0x7030A0));
+    assert_eq!(low.axis_color, Some(0x0070C0));
+
+    let path = scratch("bar-settings.xlsx");
+    wb.save_as(&path).unwrap();
+    let sheet = &parts(&path)["xl/worksheets/sheet1.xml"];
+    for want in [
+        r#"minLength="10" maxLength="90""#,
+        r#"direction="rightToLeft""#,
+        r#"axisPosition="middle""#,
+        r#"negativeBarBorderColorSameAsPositive="0""#,
+        "FF7030A0",
+        "FF0070C0",
+    ] {
+        assert!(sheet.contains(want), "{want}: {sheet}");
+    }
+    assert!(roxmltree::Document::parse(sheet).is_ok());
+    let back = Workbook::open(&path).unwrap();
+    let rules = back.cf_rules(0, None);
+    assert_eq!(rules[0].def.as_ref().unwrap().spec, spec, "read back");
+
+    // Undone: no rule; redone: the look again.
+    wb.undo().unwrap();
+    assert!(wb.cf_rules(0, None).is_empty());
+    wb.redo().unwrap();
+    assert_eq!(wb.conditional(0, 9, 0).unwrap().bar.unwrap().border, Some(0x00B050));
+
+    // Changing only the border (the model rule stays the same) changes it.
+    let r = &wb.cf_rules(0, None)[0];
+    let mut def = r.def.clone().unwrap();
+    if let CfSpec::DataBar { bar, .. } = &mut def.spec {
+        bar.border = None;
+    }
+    wb.update_cf_rule(0, r.index, "A1:A10", &def).unwrap();
+    assert_eq!(wb.conditional(0, 9, 0).unwrap().bar.unwrap().border, None);
+    wb.undo().unwrap();
+    assert_eq!(wb.conditional(0, 9, 0).unwrap().bar.unwrap().border, Some(0x00B050));
+}
+
+/// Icon thresholds (type, value, `>` or `>=`) and icons picked one by
+/// one: a custom icon set in Excel 2010 markup.
+#[test]
+fn icon_set_thresholds_and_custom_icons() {
+    use sheets_engine::{CfIconRef, CfValue, CfValueKind, default_icon_steps};
+    let mut wb = numbers();
+    let mut steps = default_icon_steps("3Arrows");
+    steps[1].value = CfValue::new(CfValueKind::Number, "30");
+    steps[1].gte = false;
+    steps[2].value = CfValue::new(CfValueKind::Formula, "=$C$1");
+    let named = CfSpec::IconSet {
+        set: "3Arrows".into(),
+        reverse: false,
+        show_value: false,
+        steps: steps.clone(),
+    };
+    wb.set_input(0, 0, 2, "70").unwrap();
+    wb.add_cf_rule(0, "B1:B10", &plain(named.clone())).unwrap();
+    let def = wb.cf_rules(0, None)[0].def.clone().unwrap();
+    assert_eq!(def.spec, named);
+    // 30 is not > 30: the lowest icon; 40 the middle one; 70 the top.
+    let icon = |wb: &mut Workbook, r: u32| wb.conditional(0, r, 1).unwrap().icon.unwrap();
+    assert_eq!(icon(&mut wb, 3), wb.set_icon("3Arrows", 0).unwrap());
+    assert_eq!(icon(&mut wb, 4), wb.set_icon("3Arrows", 1).unwrap());
+    assert_eq!(icon(&mut wb, 7), wb.set_icon("3Arrows", 2).unwrap());
+
+    // The top icon from another set: a custom set.
+    steps[2].icon = CfIconRef {
+        set: "3Flags".into(),
+        index: 2,
+    };
+    let custom = CfSpec::IconSet {
+        set: "3Arrows".into(),
+        reverse: false,
+        show_value: true,
+        steps,
+    };
+    let index = wb.cf_rules(0, None)[0].index;
+    wb.update_cf_rule(0, index, "B1:B10", &plain(custom.clone()))
+        .unwrap();
+    assert_eq!(icon(&mut wb, 7), wb.set_icon("3Flags", 2).unwrap());
+    let path = scratch("custom-icons.xlsx");
+    wb.save_as(&path).unwrap();
+    let sheet = &parts(&path)["xl/worksheets/sheet1.xml"];
+    assert!(sheet.contains(r#"custom="1""#), "{sheet}");
+    assert!(
+        sheet.contains(r#"<x14:cfIcon iconSet="3Flags" iconId="2"/>"#),
+        "{sheet}"
+    );
+    assert!(sheet.contains(r#"gte="0""#), "{sheet}");
+    assert!(roxmltree::Document::parse(sheet).is_ok());
+    let mut back = Workbook::open(&path).unwrap();
+    let def = back.cf_rules(0, None)[0].def.clone().expect("editable");
+    let CfSpec::IconSet { steps, .. } = &def.spec else {
+        panic!("{def:?}")
+    };
+    assert_eq!(steps[2].icon.set, "3Flags");
+    assert_eq!(steps[1].value, CfValue::new(CfValueKind::Number, "30"));
+    assert!(!steps[1].gte);
+    assert_eq!(
+        back.conditional(0, 7, 1).unwrap().icon,
+        back.set_icon("3Flags", 2)
+    );
 }

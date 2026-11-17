@@ -32,6 +32,15 @@ pub(crate) enum Axis {
     None,
 }
 
+/// Which way a data bar grows (`direction`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Direction {
+    #[default]
+    Context,
+    LeftToRight,
+    RightToLeft,
+}
+
 /// How a data bar is drawn beyond its colours.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct BarLook {
@@ -45,6 +54,7 @@ pub(crate) struct BarLook {
     pub negative_fill: Option<Color>,
     pub axis: Axis,
     pub axis_color: Option<Color>,
+    pub direction: Direction,
 }
 
 impl BarLook {
@@ -57,7 +67,162 @@ impl BarLook {
         negative_fill: None,
         axis: Axis::Automatic,
         axis_color: None,
+        direction: Direction::Context,
     };
+
+    /// Its `<x14:dataBar>` element with `gradient` and the ends `min` and
+    /// `max` (IronCalc's form, `None`: automatic), as Excel 2010 writes it.
+    pub(crate) fn x14_xml(
+        &self,
+        gradient: bool,
+        min: Option<&ironcalc_base::cf_types::Cfvo>,
+        max: Option<&ironcalc_base::cf_types::Cfvo>,
+        negative_fill: &Color,
+    ) -> String {
+        let pct = |f: f32| (f * 100.0).round().clamp(0.0, 100.0) as u32;
+        let mut x = format!(
+            "<x14:dataBar xmlns:xm=\"{NS_XM}\" minLength=\"{}\" maxLength=\"{}\"",
+            pct(self.min_len),
+            pct(self.max_len)
+        );
+        if !gradient {
+            x.push_str(" gradient=\"0\"");
+        }
+        if self.border.is_some() {
+            x.push_str(" border=\"1\"");
+        }
+        match self.direction {
+            Direction::Context => {}
+            Direction::LeftToRight => x.push_str(" direction=\"leftToRight\""),
+            Direction::RightToLeft => x.push_str(" direction=\"rightToLeft\""),
+        }
+        if self.border.is_some() && self.negative_border.is_some() {
+            x.push_str(" negativeBarBorderColorSameAsPositive=\"0\"");
+        }
+        match self.axis {
+            Axis::Automatic => {}
+            Axis::Middle => x.push_str(" axisPosition=\"middle\""),
+            Axis::None => x.push_str(" axisPosition=\"none\""),
+        }
+        x.push('>');
+        let cfvo = |c: Option<&ironcalc_base::cf_types::Cfvo>, auto: &str| {
+            use ironcalc_base::cf_types::Cfvo;
+            let f = |t: &str, v: String| {
+                format!("<x14:cfvo type=\"{t}\"><xm:f>{}</xm:f></x14:cfvo>", escape(&v))
+            };
+            match c {
+                None => format!("<x14:cfvo type=\"{auto}\"/>"),
+                Some(Cfvo::Min) => "<x14:cfvo type=\"min\"/>".into(),
+                Some(Cfvo::Max) => "<x14:cfvo type=\"max\"/>".into(),
+                Some(Cfvo::Number(n)) => f("num", n.to_string()),
+                Some(Cfvo::Percent(n)) => f("percent", n.to_string()),
+                Some(Cfvo::Percentile(n)) => f("percentile", n.to_string()),
+                Some(Cfvo::Formula(s)) => f("formula", s.clone()),
+            }
+        };
+        x.push_str(&cfvo(min, "autoMin"));
+        x.push_str(&cfvo(max, "autoMax"));
+        if let Some(c) = &self.border {
+            x.push_str(&color_xml("borderColor", c));
+        }
+        x.push_str(&color_xml("negativeFillColor", negative_fill));
+        if self.border.is_some()
+            && let Some(c) = &self.negative_border
+        {
+            x.push_str(&color_xml("negativeBorderColor", c));
+        }
+        x.push_str(&color_xml(
+            "axisColor",
+            self.axis_color
+                .as_ref()
+                .unwrap_or(&Color::Rgb("#000000".into())),
+        ));
+        x.push_str("</x14:dataBar>");
+        x
+    }
+}
+
+fn escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// `<x14:NAME rgb=… />` (or theme and tint).
+fn color_xml(name: &str, c: &Color) -> String {
+    match c {
+        Color::Rgb(s) => format!(
+            "<x14:{name} rgb=\"FF{}\"/>",
+            s.trim_start_matches('#').to_uppercase()
+        ),
+        Color::Theme(t, tint) if *tint == 0.0 => format!("<x14:{name} theme=\"{t}\"/>"),
+        Color::Theme(t, tint) => format!("<x14:{name} theme=\"{t}\" tint=\"{tint}\"/>"),
+        Color::None => format!("<x14:{name} rgb=\"FF000000\"/>"),
+    }
+}
+
+/// An icon set rule as Excel 2010 writes a custom one (icons picked one by
+/// one): the whole `<x14:conditionalFormatting>` for `range`.
+pub(crate) fn custom_icons_xml(
+    range: &str,
+    set: &str,
+    show_value: bool,
+    steps: &[(ironcalc_base::cf_types::Cfvo, bool, String, u8)],
+) -> String {
+    use ironcalc_base::cf_types::Cfvo;
+    let mut x = format!(
+        "<x14:conditionalFormatting xmlns:xm=\"{NS_XM}\"><x14:cfRule type=\"iconSet\" priority=\"1\" id=\"{{{}}}\"><x14:iconSet iconSet=\"{set}\"",
+        guid(range, steps.len())
+    );
+    if !show_value {
+        x.push_str(" showValue=\"0\"");
+    }
+    x.push_str(" custom=\"1\">");
+    for (cfvo, gte, _, _) in steps {
+        let (t, v) = match cfvo {
+            Cfvo::Min => ("min", None),
+            Cfvo::Max => ("max", None),
+            Cfvo::Number(n) => ("num", Some(n.to_string())),
+            Cfvo::Percent(n) => ("percent", Some(n.to_string())),
+            Cfvo::Percentile(n) => ("percentile", Some(n.to_string())),
+            Cfvo::Formula(f) => ("formula", Some(f.clone())),
+        };
+        let gte = if *gte { "" } else { " gte=\"0\"" };
+        match v {
+            Some(v) => x.push_str(&format!(
+                "<x14:cfvo type=\"{t}\"{gte}><xm:f>{}</xm:f></x14:cfvo>",
+                escape(&v)
+            )),
+            None => x.push_str(&format!("<x14:cfvo type=\"{t}\"{gte}/>")),
+        }
+    }
+    for (_, _, icon_set, id) in steps {
+        x.push_str(&format!(
+            "<x14:cfIcon iconSet=\"{icon_set}\" iconId=\"{id}\"/>"
+        ));
+    }
+    x.push_str(&format!(
+        "</x14:iconSet></x14:cfRule><xm:sqref>{range}</xm:sqref></x14:conditionalFormatting>"
+    ));
+    x
+}
+
+/// A stable GUID for a rule Kantor writes.
+fn guid(range: &str, n: usize) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in range.bytes().chain(n.to_le_bytes()) {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!(
+        "{:08X}-{:04X}-4{:03X}-8{:03X}-{:012X}",
+        (h >> 32) as u32,
+        (h >> 16) as u16,
+        (h & 0xFFF) as u16,
+        ((h >> 20) & 0xFFF) as u16,
+        h & 0xFFFF_FFFF_FFFF
+    )
 }
 
 /// One x14 rule of the opened file.
@@ -240,6 +405,11 @@ pub(crate) fn read(skeletons: &Result<Vec<(u32, String)>, String>) -> CfX14 {
                                 _ => Axis::Automatic,
                             },
                             axis_color: child(bar, "axisColor").and_then(color_of),
+                            direction: match bar.attribute("direction") {
+                                Some("leftToRight") => Direction::LeftToRight,
+                                Some("rightToLeft") => Direction::RightToLeft,
+                                _ => Direction::Context,
+                            },
                         };
                         out.bars.insert((*sheet_id, main), (None, look));
                     }

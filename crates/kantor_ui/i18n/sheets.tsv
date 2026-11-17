@@ -1246,3 +1246,9 @@ Offset: Top Right	Offset: Kanan Atas
 Offset: Top	Offset: Atas
 Offset: Top Left	Offset: Kiri Atas
 Effects	Efek
+Page {}	Halaman {}
+Page Break Preview	Pratinjau Hentian Halaman
+Normal view	Tampilan normal
+Page break moved	Hentian halaman dipindahkan
+Print area changed	Area cetak diubah
+Page Break Preview, freeze panes, hide rows and columns	Pratinjau Hentian Halaman, bekukan panel, sembunyikan baris dan kolom

@@ -344,3 +344,35 @@ fn manual_page_breaks() {
     let sheet = &parts(&reset)["xl/worksheets/sheet1.xml"];
     assert!(!sheet.contains("Breaks"), "{sheet}");
 }
+
+/// Page Break Preview's drags: a manual break moved, an automatic one made
+/// manual, one dragged off the range removed, and the print area set; each
+/// one undo step.
+#[test]
+fn page_break_preview_drags() {
+    let mut wb = data_book();
+    wb.insert_page_break(0, Some(4), None).unwrap();
+    // Move the manual break at row 4 to row 6.
+    wb.move_page_break(0, true, Some(4), Some(6)).unwrap();
+    assert_eq!(wb.print_settings(0).row_breaks, vec![6]);
+    // An automatic break (no manual one at 9) dragged to 8 becomes manual.
+    wb.move_page_break(0, true, Some(9), Some(8)).unwrap();
+    assert_eq!(wb.print_settings(0).row_breaks, vec![6, 8]);
+    // Dragged off the range: gone.
+    wb.move_page_break(0, true, Some(6), None).unwrap();
+    assert_eq!(wb.print_settings(0).row_breaks, vec![8]);
+    wb.move_page_break(0, false, None, Some(2)).unwrap();
+    assert_eq!(wb.print_settings(0).col_breaks, vec![2]);
+    assert!(wb.undo().unwrap());
+    assert!(wb.print_settings(0).col_breaks.is_empty());
+    assert!(wb.undo().unwrap());
+    assert_eq!(wb.print_settings(0).row_breaks, vec![6, 8]);
+    let area = vec![CellRange::from_corners((0, 0), (9, 2))];
+    wb.set_print_area(0, area.clone()).unwrap();
+    assert_eq!(wb.print_settings(0).print_area, area);
+    let path = scratch("pbp-area.xlsx");
+    wb.save_as(&path).unwrap();
+    let back = Workbook::open(&path).unwrap();
+    assert_eq!(back.print_settings(0).print_area, area);
+    assert_eq!(back.print_settings(0).row_breaks, vec![6, 8]);
+}

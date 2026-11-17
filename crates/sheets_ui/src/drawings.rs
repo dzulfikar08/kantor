@@ -376,11 +376,11 @@ impl DrawLayer {
 /// One horizontal pane of the grid: where sheet x = 0 is on screen and
 /// what it shows.
 #[derive(Clone, Copy, Debug)]
-struct Pane {
-    clip: Bounds<Pixels>,
-    origin_x: Pixels,
+pub(crate) struct Pane {
+    pub(crate) clip: Bounds<Pixels>,
+    pub(crate) origin_x: Pixels,
     /// Where sheet y = 0 would be on screen in this pane.
-    origin_y: Pixels,
+    pub(crate) origin_y: Pixels,
 }
 
 /// An object placed on screen this frame.
@@ -403,7 +403,7 @@ pub(crate) struct Frame {
     interactive: bool,
 }
 
-fn screen_rect(pane: &Pane, [x, y, w, h]: [f64; 4]) -> Bounds<Pixels> {
+pub(crate) fn screen_rect(pane: &Pane, [x, y, w, h]: [f64; 4]) -> Bounds<Pixels> {
     Bounds::new(
         point(pane.origin_x + px(x as f32), pane.origin_y + px(y as f32)),
         size(px(w as f32), px(h as f32)),
@@ -660,27 +660,14 @@ fn layout_panes(p: PaneInput, frozen_cols: bool, frozen_rows: bool) -> Vec<Pane>
     panes
 }
 
-/// Lay the objects out on screen and register their hitboxes.
-fn prepaint(
-    layer: &Rc<RefCell<DrawLayer>>,
-    table: &Entity<TableState<SheetGrid>>,
-    interactive: bool,
-    window: &mut Window,
-    cx: &mut App,
-) -> Option<Frame> {
-    let _span = kantor_ui::perf::span("sheet drawings");
-    if layer.borrow().painter.is_none() {
-        let (engine, bridge) = docs_ui::shared_text(cx);
-        layer.borrow_mut().painter = Some(Rc::new(Painter::new(engine, bridge)));
-    }
-    let table = table.read(cx);
+/// The grid's panes on screen (see [`layout_panes`]) and the bounds of its
+/// body (under the column letters, right of the row numbers), for layers
+/// drawn over the cells. `None` before the grid is laid out.
+pub(crate) fn grid_panes(
+    table: &TableState<SheetGrid>,
+    geom: &GridGeometry,
+) -> Option<(Vec<Pane>, Bounds<Pixels>)> {
     let grid = table.delegate();
-    let drawings = layer.borrow_mut().drawings(&grid.book, grid.sheet);
-    let notes = grid.book.notes_now(grid.sheet);
-    if drawings.is_empty() && notes.is_empty() {
-        layer.borrow_mut().note_edit_rect = None;
-        return None;
-    }
     // Where the body is: the rows' viewport and the scrolling columns.
     let (rows_vp, top) = {
         let h = table.vertical_scroll_handle.0.borrow();
@@ -692,14 +679,6 @@ fn prepaint(
     if rows_vp.size.width <= px(0.) || rows_vp.size.height <= px(0.) {
         return None;
     }
-    let heights = grid.layout.heights.clone();
-    let rows = heights.borrow();
-    let note_cols = notes
-        .values()
-        .map(|n| n.place_or_default().anchor(n.row, n.col)[4] + 1)
-        .max()
-        .unwrap_or(0);
-    let geom = GridGeometry::new(grid, Some(table), &rows, max_col(&drawings).max(note_cols));
     let (frozen_rows, frozen) = grid.book.frozen(grid.sheet);
     let frozen_w = px(geom.col_left(frozen) as f32);
     // The list scrolls the rows below the frozen ones, which the table pins
@@ -727,6 +706,39 @@ fn prepaint(
         point(sheet_left, body_top),
         point(cols_vp.right(), rows_vp.bottom()),
     );
+    Some((panes, body))
+}
+
+/// Lay the objects out on screen and register their hitboxes.
+fn prepaint(
+    layer: &Rc<RefCell<DrawLayer>>,
+    table: &Entity<TableState<SheetGrid>>,
+    interactive: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<Frame> {
+    let _span = kantor_ui::perf::span("sheet drawings");
+    if layer.borrow().painter.is_none() {
+        let (engine, bridge) = docs_ui::shared_text(cx);
+        layer.borrow_mut().painter = Some(Rc::new(Painter::new(engine, bridge)));
+    }
+    let table = table.read(cx);
+    let grid = table.delegate();
+    let drawings = layer.borrow_mut().drawings(&grid.book, grid.sheet);
+    let notes = grid.book.notes_now(grid.sheet);
+    if drawings.is_empty() && notes.is_empty() {
+        layer.borrow_mut().note_edit_rect = None;
+        return None;
+    }
+    let heights = grid.layout.heights.clone();
+    let rows = heights.borrow();
+    let note_cols = notes
+        .values()
+        .map(|n| n.place_or_default().anchor(n.row, n.col)[4] + 1)
+        .max()
+        .unwrap_or(0);
+    let geom = GridGeometry::new(grid, Some(table), &rows, max_col(&drawings).max(note_cols));
+    let (panes, body) = grid_panes(table, &geom)?;
     let drag = layer.borrow().drag;
     let selected = layer.borrow().selected;
     let mut placed = Vec::new();

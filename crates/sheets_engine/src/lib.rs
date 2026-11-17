@@ -61,8 +61,9 @@ mod xls_formula;
 mod xls_ftab;
 
 pub use cf_edit::{
-    COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp,
-    DATA_BAR_COLORS, ICON_SETS, outline_border, sqref_of,
+    COLOR_SCALES, CfBarAxis, CfBarDirection, CfBarOptions, CfCompare, CfFormat, CfIconRef,
+    CfIconStep, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp, CfValue, CfValueKind,
+    DATA_BAR_COLORS, ICON_SETS, default_icon_steps, icon_choices, outline_border, sqref_of,
 };
 pub use chart_edit::{
     ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor, SeriesType,

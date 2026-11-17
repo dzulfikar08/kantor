@@ -21,8 +21,9 @@ use gpui_kit::*;
 use kantor_ui::i18n::{t, t_dyn, tf, tk};
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{
-    COLOR_SCALES, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfSpec, CfTextOp, DATA_BAR_COLORS,
-    ICON_SETS, sqref_of,
+    COLOR_SCALES, CfBarAxis, CfBarDirection, CfBarOptions, CfCompare, CfFormat,
+    CfIconStep, CfPeriod, CfRuleDef, CfSpec, CfTextOp, CfValueKind, DATA_BAR_COLORS,
+    ICON_SETS, default_icon_steps, sqref_of,
 };
 
 use crate::SheetsView;
@@ -82,6 +83,84 @@ impl Kind {
     }
 }
 
+/// Colours offered for a data bar's border, negative bars and axis
+/// (besides the bar colours).
+const BAR_PALETTE: [(&str, u32); 10] = [
+    ("Black", 0x000000),
+    ("Gray", 0x808080),
+    ("Red", 0xFF0000),
+    ("Dark Red", 0xC00000),
+    ("Orange", 0xFFC000),
+    ("Yellow", 0xFFFF00),
+    ("Green", 0x00B050),
+    ("Blue", 0x0070C0),
+    ("Dark Blue", 0x002060),
+    ("Purple", 0x7030A0),
+];
+
+/// The name Excel's icon list gives an icon set.
+fn icon_set_label(set: &str) -> &'static str {
+    match ICON_SETS.iter().find(|(_, n)| *n == set) {
+        Some((label, _)) => label,
+        None => match set {
+            "4ArrowsGray" => tk("4 Arrows (Gray)"),
+            "5ArrowsGray" => tk("5 Arrows (Gray)"),
+            "3TrafficLights2" => tk("3 Traffic Lights (Rimmed)"),
+            "4RedToBlack" => tk("Red To Black"),
+            "3Stars" => tk("3 Stars"),
+            _ => tk("Icon"),
+        },
+    }
+}
+
+/// A small colour square (`None`: an empty box).
+fn swatch(c: Option<u32>, cx: &App) -> Div {
+    let t = tokens(cx);
+    div()
+        .flex_none()
+        .size(px(16.))
+        .rounded(RADIUS_SM)
+        .border_1()
+        .border_color(t.border_strong)
+        .bg(c.map(crate::look::hsla).unwrap_or(t.surface))
+}
+
+/// A dropdown button whose items each change the rule card.
+fn menu_of(
+    id: impl Into<ElementId>,
+    label: String,
+    items: Vec<MenuChoice>,
+    view: &WeakEntity<SheetsView>,
+) -> AnyElement {
+    let v = view.clone();
+    let items = std::rc::Rc::new(items);
+    Button::new(id)
+        .outline()
+        .small()
+        .label(label)
+        .dropdown_caret(true)
+        .dropdown_menu(move |mut m, _, _| {
+            for (i, (label, checked, _)) in items.iter().enumerate() {
+                let v = v.clone();
+                let items = items.clone();
+                m = m.item(
+                    PopupMenuItem::new(label.clone())
+                        .checked(*checked)
+                        .on_click(move |_, _, cx| {
+                            let _ = v.update(cx, |this, cx| {
+                                if let Some(d) = this.cf_dialog.as_mut() {
+                                    (items[i].2)(d);
+                                }
+                                cx.notify();
+                            });
+                        }),
+                );
+            }
+            m
+        })
+        .into_any_element()
+}
+
 /// Fill and font colours offered for a custom format.
 const SWATCHES: [u32; 12] = [
     0xFFC7CE, 0xFFEB9C, 0xC6EFCE, 0xDDEBF7, 0xFCE4D6, 0xEDEDED, 0x9C0006, 0x9C5700, 0x006100,
@@ -108,6 +187,17 @@ pub(crate) struct CfDialog {
     icon_set: usize,
     reverse: bool,
     icons_only: bool,
+    /// A data bar's settings beyond its colour (the typed values are in
+    /// `bar_min`, `bar_max`, `bar_short` and `bar_long`).
+    bar: CfBarOptions,
+    bar_min: Entity<InputState>,
+    bar_max: Entity<InputState>,
+    bar_short: Entity<InputState>,
+    bar_long: Entity<InputState>,
+    /// An icon set's icons and thresholds, lowest first (values typed in
+    /// `icon_values`, same places).
+    icon_steps: Vec<CfIconStep>,
+    icon_values: Vec<Entity<InputState>>,
     format: CfFormat,
     stop: bool,
     /// The rule's number format (Format Cells' Number tab), typed.
@@ -187,8 +277,23 @@ impl SheetsView {
         let rank = mk(window, cx, "10", "");
         let formula = mk(window, cx, "", t("e.g. =$B2>100"));
         let num_fmt = mk(window, cx, "", t("e.g. 0.00% (none: the cell's own)"));
-        let subs = [&range, &value, &value2, &text, &rank, &formula, &num_fmt]
-            .into_iter()
+        let bar_min = mk(window, cx, "", "");
+        let bar_max = mk(window, cx, "", "");
+        let bar_short = mk(window, cx, "0", "");
+        let bar_long = mk(window, cx, "100", "");
+        let icon_steps = default_icon_steps(ICON_SETS[0].1);
+        let icon_values: Vec<_> = (0..5)
+            .map(|k| {
+                let v = icon_steps.get(k).map(|s| s.value.value.clone()).unwrap_or_default();
+                mk(window, cx, &v, "")
+            })
+            .collect();
+        let subs = [
+            &range, &value, &value2, &text, &rank, &formula, &num_fmt, &bar_min, &bar_max,
+            &bar_short, &bar_long,
+        ]
+        .into_iter()
+        .chain(icon_values.iter())
             .map(|e| {
                 cx.subscribe_in(e, window, |this, _, ev: &InputEvent, w, cx| match ev {
                     InputEvent::Change => {
@@ -220,6 +325,13 @@ impl SheetsView {
             icon_set: 0,
             reverse: false,
             icons_only: false,
+            bar: CfBarOptions::default(),
+            bar_min,
+            bar_max,
+            bar_short,
+            bar_long,
+            icon_steps,
+            icon_values,
             format: CfFormat::PRESETS[0].1,
             stop: false,
             num_fmt,
@@ -311,10 +423,19 @@ impl SheetsView {
                 d.kind = Kind::Formula;
                 set(&d.formula, formula, window, cx);
             }
-            CfSpec::DataBar { color, gradient } => {
+            CfSpec::DataBar {
+                color,
+                gradient,
+                bar,
+            } => {
                 d.kind = Kind::DataBar;
                 d.bar_color = *color;
                 d.gradient = *gradient;
+                d.bar = bar.clone();
+                set(&d.bar_min, &bar.min.value, window, cx);
+                set(&d.bar_max, &bar.max.value, window, cx);
+                set(&d.bar_short, &bar.min_length.to_string(), window, cx);
+                set(&d.bar_long, &bar.max_length.to_string(), window, cx);
             }
             CfSpec::ColorScale { colors } => {
                 d.kind = Kind::ColorScale;
@@ -327,11 +448,21 @@ impl SheetsView {
                 set: s,
                 reverse,
                 show_value,
+                steps,
             } => {
                 d.kind = Kind::IconSet;
                 d.icon_set = ICON_SETS.iter().position(|(_, n)| n == s).unwrap_or(0);
                 d.reverse = *reverse;
                 d.icons_only = !show_value;
+                d.icon_steps = if steps.is_empty() {
+                    default_icon_steps(s)
+                } else {
+                    steps.clone()
+                };
+                for (k, e) in d.icon_values.iter().enumerate() {
+                    let v = d.icon_steps.get(k).map(|s| s.value.value.clone());
+                    set(e, &v.unwrap_or_default(), window, cx);
+                }
             }
         }
         self.cf_dialog = Some(d);
@@ -374,18 +505,49 @@ impl SheetsView {
             Kind::Formula => CfSpec::Formula {
                 formula: text(&d.formula),
             },
-            Kind::DataBar => CfSpec::DataBar {
-                color: d.bar_color,
-                gradient: d.gradient,
-            },
+            Kind::DataBar => {
+                let pct = |e: &Entity<InputState>, what: &str| -> Result<u8, String> {
+                    text(e)
+                        .trim()
+                        .trim_end_matches('%')
+                        .parse::<u8>()
+                        .ok()
+                        .filter(|v| *v <= 100)
+                        .ok_or_else(|| tf("{}: type a percentage from 0 to 100", &[&what]))
+                };
+                let mut bar = d.bar.clone();
+                bar.min.value = text(&d.bar_min);
+                bar.max.value = text(&d.bar_max);
+                bar.min_length = pct(&d.bar_short, t("Shortest bar"))?;
+                bar.max_length = pct(&d.bar_long, t("Longest bar"))?;
+                if bar.min_length > bar.max_length {
+                    return Err(t("The shortest bar can't be longer than the longest").into());
+                }
+                CfSpec::DataBar {
+                    color: d.bar_color,
+                    gradient: d.gradient,
+                    bar,
+                }
+            }
             Kind::ColorScale => CfSpec::ColorScale {
                 colors: COLOR_SCALES[d.scale].1.to_vec(),
             },
-            Kind::IconSet => CfSpec::IconSet {
-                set: ICON_SETS[d.icon_set].1.to_owned(),
-                reverse: d.reverse,
-                show_value: !d.icons_only,
-            },
+            Kind::IconSet => {
+                let set = ICON_SETS[d.icon_set].1;
+                let mut steps = d.icon_steps.clone();
+                if steps.len() != default_icon_steps(set).len() {
+                    steps = default_icon_steps(set);
+                }
+                for (k, s) in steps.iter_mut().enumerate().skip(1) {
+                    s.value.value = text(&d.icon_values[k]);
+                }
+                CfSpec::IconSet {
+                    set: set.to_owned(),
+                    reverse: d.reverse,
+                    show_value: !d.icons_only,
+                    steps,
+                }
+            }
         })
     }
 
@@ -778,40 +940,7 @@ impl SheetsView {
                     ));
             }
             Kind::DataBar => {
-                let items = DATA_BAR_COLORS
-                    .iter()
-                    .map(|(n, c)| {
-                        let c = *c;
-                        (
-                            t(n).to_owned(),
-                            c == d.bar_color,
-                            Box::new(move |d: &mut CfDialog| d.bar_color = c)
-                                as Box<dyn Fn(&mut CfDialog)>,
-                        )
-                    })
-                    .collect();
-                let name = DATA_BAR_COLORS
-                    .iter()
-                    .find(|(_, c)| *c == d.bar_color)
-                    .map(|(n, _)| t(n).to_owned())
-                    .unwrap_or_else(|| format!("#{:06X}", d.bar_color));
-                out = out
-                    .child(row(t("Bar colour"), menu_button("cf-bar", name, items), cx))
-                    .child(row(
-                        t("Fill"),
-                        choices(
-                            "cf-grad",
-                            &[(true, t("Gradient")), (false, t("Solid"))],
-                            d.gradient,
-                            view,
-                            |this, v| {
-                                if let Some(d) = this.cf_dialog.as_mut() {
-                                    d.gradient = v;
-                                }
-                            },
-                        ),
-                        cx,
-                    ));
+                out = out.child(self.render_bar_options(d, view, cx));
             }
             Kind::ColorScale => {
                 let items = COLOR_SCALES
@@ -840,68 +969,439 @@ impl SheetsView {
                 ));
             }
             Kind::IconSet => {
-                let items = ICON_SETS
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (n, _))| {
-                        (
-                            t(n).to_owned(),
-                            i == d.icon_set,
-                            Box::new(move |d: &mut CfDialog| d.icon_set = i)
-                                as Box<dyn Fn(&mut CfDialog)>,
-                        )
-                    })
-                    .collect();
-                let rv = view.clone();
-                let ov = view.clone();
-                out = out
-                    .child(row(
-                        t("Icons"),
-                        menu_button("cf-icons", t(ICON_SETS[d.icon_set].0).to_owned(), items),
-                        cx,
-                    ))
-                    .child(row(
-                        "",
-                        h_flex()
-                            .gap(SPACE_6)
-                            .child(
-                                Checkbox::new("cf-reverse")
-                                    .label(t("Reverse icon order"))
-                                    .checked(d.reverse)
-                                    .on_click(move |on, _, cx| {
-                                        let on = *on;
-                                        let _ = rv.update(cx, |this, cx| {
-                                            if let Some(d) = this.cf_dialog.as_mut() {
-                                                d.reverse = on;
-                                            }
-                                            cx.notify();
-                                        });
-                                    }),
-                            )
-                            .child(
-                                Checkbox::new("cf-icons-only")
-                                    .label(t("Show icon only"))
-                                    .checked(d.icons_only)
-                                    .on_click(move |on, _, cx| {
-                                        let on = *on;
-                                        let _ = ov.update(cx, |this, cx| {
-                                            if let Some(d) = this.cf_dialog.as_mut() {
-                                                d.icons_only = on;
-                                            }
-                                            cx.notify();
-                                        });
-                                    }),
-                            ),
-                        cx,
-                    ))
-                    .child(note(
-                        t("Thresholds split the range in equal percentages, as Excel does."),
-                        false,
-                        cx,
-                    ));
+                out = out.child(self.render_icon_options(d, view, cx));
             }
         }
         out
+    }
+
+    /// Edit Formatting Rule for a data bar: minimum and maximum, bar
+    /// appearance, negative bars and axis, direction, lengths, bar only.
+    fn render_bar_options(
+        &self,
+        d: &CfDialog,
+        view: &WeakEntity<Self>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        // A dropdown whose items each change the dialog.
+        let menu = |id: &'static str, label: String, items: Vec<MenuChoice>| {
+            menu_of(id, label, items, view)
+        };
+        let colour_menu = |id: &'static str,
+                           current: Option<u32>,
+                           none: Option<&'static str>,
+                           set: fn(&mut CfDialog, Option<u32>)| {
+            let mut items: Vec<MenuChoice> = Vec::new();
+            if let Some(none) = none {
+                items.push((
+                    t(none).to_owned(),
+                    current.is_none(),
+                    Box::new(move |d: &mut CfDialog| set(d, None)),
+                ));
+            }
+            for (n, c) in BAR_PALETTE {
+                items.push((
+                    t(n).to_owned(),
+                    current == Some(c),
+                    Box::new(move |d: &mut CfDialog| set(d, Some(c))),
+                ));
+            }
+            let label = match current {
+                None => none.map(t).unwrap_or("").to_owned(),
+                Some(c) => BAR_PALETTE
+                    .iter()
+                    .find(|(_, p)| *p == c)
+                    .map(|(n, _)| t(n).to_owned())
+                    .unwrap_or_else(|| format!("#{c:06X}")),
+            };
+            h_flex()
+                .gap(SPACE_2)
+                .child(swatch(current, cx))
+                .child(menu(id, label, items))
+        };
+        let end = |id: &'static str, max: bool, input: &Entity<InputState>| {
+            let current = if max { d.bar.max.kind } else { d.bar.min.kind };
+            let items = CfValueKind::BAR
+                .into_iter()
+                .map(|k| {
+                    let k = if max && k == CfValueKind::Lowest {
+                        CfValueKind::Highest
+                    } else {
+                        k
+                    };
+                    (
+                        t_dyn(k.label()).to_owned(),
+                        k == current,
+                        Box::new(move |d: &mut CfDialog| {
+                            if max {
+                                d.bar.max.kind = k;
+                            } else {
+                                d.bar.min.kind = k;
+                            }
+                        }) as Box<dyn Fn(&mut CfDialog)>,
+                    )
+                })
+                .collect();
+            h_flex()
+                .gap(SPACE_2)
+                .child(menu(id, t_dyn(current.label()).to_owned(), items))
+                .when(current.has_value(), |r| {
+                    r.child(div().flex_1().child(Input::new(input).small()))
+                })
+        };
+        let color_items = DATA_BAR_COLORS
+            .iter()
+            .chain(BAR_PALETTE.iter())
+            .map(|(n, c)| {
+                let c = *c;
+                (
+                    t(n).to_owned(),
+                    c == d.bar_color,
+                    Box::new(move |d: &mut CfDialog| d.bar_color = c) as Box<dyn Fn(&mut CfDialog)>,
+                )
+            })
+            .collect();
+        let name = DATA_BAR_COLORS
+            .iter()
+            .chain(BAR_PALETTE.iter())
+            .find(|(_, c)| *c == d.bar_color)
+            .map(|(n, _)| t(n).to_owned())
+            .unwrap_or_else(|| format!("#{:06X}", d.bar_color));
+        let ov = view.clone();
+        v_flex()
+            .gap(SPACE_3)
+            .child(row(t("Minimum"), end("cf-bar-min", false, &d.bar_min), cx))
+            .child(row(t("Maximum"), end("cf-bar-max", true, &d.bar_max), cx))
+            .child(row(
+                t("Bar colour"),
+                h_flex()
+                    .gap(SPACE_2)
+                    .child(swatch(Some(d.bar_color), cx))
+                    .child(menu("cf-bar", name, color_items)),
+                cx,
+            ))
+            .child(row(
+                t("Fill"),
+                choices(
+                    "cf-grad",
+                    &[(true, t("Gradient fill")), (false, t("Solid fill"))],
+                    d.gradient,
+                    view,
+                    |this, v| {
+                        if let Some(d) = this.cf_dialog.as_mut() {
+                            d.gradient = v;
+                        }
+                    },
+                ),
+                cx,
+            ))
+            .child(row(
+                t("Border"),
+                colour_menu("cf-bar-border", d.bar.border, Some(tk("No border")), |d, c| {
+                    d.bar.border = c
+                }),
+                cx,
+            ))
+            .child(row(
+                t("Negative bar fill"),
+                colour_menu(
+                    "cf-bar-negfill",
+                    d.bar.negative_fill,
+                    Some(tk("Same as positive bar")),
+                    |d, c| d.bar.negative_fill = c,
+                ),
+                cx,
+            ))
+            .when(d.bar.border.is_some(), |c| {
+                c.child(row(
+                    t("Negative bar border"),
+                    colour_menu(
+                        "cf-bar-negborder",
+                        d.bar.negative_border,
+                        Some(tk("Same as positive bar")),
+                        |d, c| d.bar.negative_border = c,
+                    ),
+                    cx,
+                ))
+            })
+            .child(row(
+                t("Axis"),
+                h_flex()
+                    .gap(SPACE_3)
+                    .child(choices(
+                        "cf-bar-axis",
+                        &[
+                            (CfBarAxis::Automatic, t("Automatic")),
+                            (CfBarAxis::Middle, t("Cell midpoint")),
+                            (CfBarAxis::None, t("None")),
+                        ],
+                        d.bar.axis,
+                        view,
+                        |this, v| {
+                            if let Some(d) = this.cf_dialog.as_mut() {
+                                d.bar.axis = v;
+                            }
+                        },
+                    ))
+                    .when(d.bar.axis != CfBarAxis::None, |r| {
+                        r.child(colour_menu(
+                            "cf-bar-axiscolor",
+                            Some(d.bar.axis_color),
+                            None,
+                            |d, c| d.bar.axis_color = c.unwrap_or(0),
+                        ))
+                    }),
+                cx,
+            ))
+            .child(row(
+                t("Bar direction"),
+                choices(
+                    "cf-bar-dir",
+                    &[
+                        (CfBarDirection::Context, t("Context")),
+                        (CfBarDirection::LeftToRight, t("Left-to-right")),
+                        (CfBarDirection::RightToLeft, t("Right-to-left")),
+                    ],
+                    d.bar.direction,
+                    view,
+                    |this, v| {
+                        if let Some(d) = this.cf_dialog.as_mut() {
+                            d.bar.direction = v;
+                        }
+                    },
+                ),
+                cx,
+            ))
+            .child(row(
+                t("Bar length (%)"),
+                h_flex()
+                    .gap(SPACE_2)
+                    .child(div().text_size(FONT_SMALL).child(t("Shortest")))
+                    .child(div().w(px(56.)).child(Input::new(&d.bar_short).small()))
+                    .child(div().text_size(FONT_SMALL).child(t("Longest")))
+                    .child(div().w(px(56.)).child(Input::new(&d.bar_long).small())),
+                cx,
+            ))
+            .child(row(
+                "",
+                Checkbox::new("cf-bar-only")
+                    .label(t("Show bar only"))
+                    .checked(d.bar.bar_only)
+                    .on_click(move |on, _, cx| {
+                        let on = *on;
+                        let _ = ov.update(cx, |this, cx| {
+                            if let Some(d) = this.cf_dialog.as_mut() {
+                                d.bar.bar_only = on;
+                            }
+                            cx.notify();
+                        });
+                    }),
+                cx,
+            ))
+    }
+
+    /// Edit Formatting Rule for an icon set: the style, reverse and icon
+    /// only, then each icon with the value it shows from, highest first.
+    fn render_icon_options(
+        &self,
+        d: &CfDialog,
+        view: &WeakEntity<Self>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let sv = view.clone();
+        let current = d.icon_set;
+        let style = Button::new("cf-icons")
+            .outline()
+            .small()
+            .label(t(ICON_SETS[d.icon_set].0))
+            .dropdown_caret(true)
+            .dropdown_menu(move |mut m, _, _| {
+                for (i, (n, _)) in ICON_SETS.iter().enumerate() {
+                    let v = sv.clone();
+                    m = m.item(PopupMenuItem::new(t(n)).checked(i == current).on_click(
+                        move |_, window, cx| {
+                            let _ = v.update(cx, |this, cx| this.cf_icon_style(i, window, cx));
+                        },
+                    ));
+                }
+                m
+            });
+        let rv = view.clone();
+        let ov = view.clone();
+        let mut out = v_flex()
+            .gap(SPACE_3)
+            .child(row(t("Icon style"), style, cx))
+            .child(row(
+                "",
+                h_flex()
+                    .gap(SPACE_6)
+                    .child(
+                        Checkbox::new("cf-reverse")
+                            .label(t("Reverse icon order"))
+                            .checked(d.reverse)
+                            .on_click(move |on, _, cx| {
+                                let on = *on;
+                                let _ = rv.update(cx, |this, cx| {
+                                    if let Some(d) = this.cf_dialog.as_mut() {
+                                        d.reverse = on;
+                                    }
+                                    cx.notify();
+                                });
+                            }),
+                    )
+                    .child(
+                        Checkbox::new("cf-icons-only")
+                            .label(t("Show icon only"))
+                            .checked(d.icons_only)
+                            .on_click(move |on, _, cx| {
+                                let on = *on;
+                                let _ = ov.update(cx, |this, cx| {
+                                    if let Some(d) = this.cf_dialog.as_mut() {
+                                        d.icons_only = on;
+                                    }
+                                    cx.notify();
+                                });
+                            }),
+                    ),
+                cx,
+            ));
+        let n = d.icon_steps.len();
+        let rating = n > 0 && sheets_engine::CfSpec::is_rating(&d.icon_steps[0].icon.set);
+        let book = &self.table.read(cx).delegate().book;
+        let choices_list = sheets_engine::icon_choices();
+        // Rows from the highest icon down, as Excel lists them.
+        for k in (0..n).rev() {
+            let shown = if d.reverse { n - 1 - k } else { k };
+            let icon = d.icon_steps[shown].icon.clone();
+            let icon_el = book
+                .set_icon(&icon.set, u32::from(icon.index))
+                .map(|i| crate::cond_paint::icon_element(i).into_any_element())
+                .unwrap_or_else(|| div().size(px(14.)).into_any_element());
+            let picker: AnyElement = if rating {
+                div().w(px(40.)).child(icon_el).into_any_element()
+            } else {
+                let v = view.clone();
+                let list = choices_list.clone();
+                let icons: Vec<_> = list
+                    .iter()
+                    .map(|c| book.set_icon(&c.set, u32::from(c.index)))
+                    .collect();
+                Button::new(("cf-icon-pick", k))
+                    .outline()
+                    .small()
+                    .child(icon_el)
+                    .dropdown_caret(true)
+                    .dropdown_menu(move |mut m, _, _| {
+                        m = m.scrollable(true).max_h(px(320.));
+                        for (c, ic) in list.iter().zip(icons.iter()) {
+                            let Some(ic) = *ic else { continue };
+                            let v = v.clone();
+                            let c = c.clone();
+                            let label = format!("{} {}", t_dyn(icon_set_label(&c.set)), c.index + 1);
+                            m = m.item(
+                                PopupMenuItem::element(move |_, _| {
+                                    h_flex()
+                                        .gap(SPACE_3)
+                                        .child(crate::cond_paint::icon_element(ic))
+                                        .child(label.clone())
+                                })
+                                .on_click(move |_, _, cx| {
+                                    let c = c.clone();
+                                    let _ = v.update(cx, |this, cx| {
+                                        if let Some(d) = this.cf_dialog.as_mut()
+                                            && let Some(s) = d.icon_steps.get_mut(shown)
+                                        {
+                                            s.icon = c;
+                                        }
+                                        cx.notify();
+                                    });
+                                }),
+                            );
+                        }
+                        m
+                    })
+                    .into_any_element()
+            };
+            let line = if k == 0 {
+                h_flex()
+                    .gap(SPACE_3)
+                    .child(picker)
+                    .child(note(t("when the value is below the next threshold"), false, cx))
+            } else {
+                let step = &d.icon_steps[k];
+                let gv = view.clone();
+                let gte = step.gte;
+                let op = Button::new(("cf-icon-op", k))
+                    .outline()
+                    .small()
+                    .label(if gte { ">=" } else { ">" })
+                    .dropdown_caret(true)
+                    .dropdown_menu(move |mut m, _, _| {
+                        for (label, on) in [(">=", true), (">", false)] {
+                            let v = gv.clone();
+                            m = m.item(PopupMenuItem::new(label).checked(on == gte).on_click(
+                                move |_, _, cx| {
+                                    let _ = v.update(cx, |this, cx| {
+                                        if let Some(s) = this
+                                            .cf_dialog
+                                            .as_mut()
+                                            .and_then(|d| d.icon_steps.get_mut(k))
+                                        {
+                                            s.gte = on;
+                                        }
+                                        cx.notify();
+                                    });
+                                },
+                            ));
+                        }
+                        m
+                    });
+                let kind = step.value.kind;
+                let items = CfValueKind::ICON
+                    .into_iter()
+                    .map(|vk| {
+                        (
+                            t_dyn(vk.label()).to_owned(),
+                            vk == kind,
+                            Box::new(move |d: &mut CfDialog| {
+                                if let Some(s) = d.icon_steps.get_mut(k) {
+                                    s.value.kind = vk;
+                                }
+                            }) as Box<dyn Fn(&mut CfDialog)>,
+                        )
+                    })
+                    .collect();
+                h_flex()
+                    .gap(SPACE_2)
+                    .child(picker)
+                    .child(op)
+                    .child(div().w(px(90.)).child(Input::new(&d.icon_values[k]).small()))
+                    .child(menu_of(
+                        ("cf-icon-kind", k),
+                        t_dyn(kind.label()).to_owned(),
+                        items,
+                        view,
+                    ))
+            };
+            out = out.child(line);
+        }
+        out
+    }
+
+    /// Icon Style picked: its icons and Excel's default thresholds.
+    fn cf_icon_style(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(d) = self.cf_dialog.as_mut() else {
+            return;
+        };
+        d.icon_set = i;
+        d.icon_steps = default_icon_steps(ICON_SETS[i].1);
+        let values: Vec<_> = d.icon_values.clone();
+        let steps = d.icon_steps.clone();
+        for (k, e) in values.iter().enumerate() {
+            let v = steps.get(k).map(|s| s.value.value.clone()).unwrap_or_default();
+            e.update(cx, |input, cx| input.set_value(v, window, cx));
+        }
+        cx.notify();
     }
 
     fn render_cf_format(
@@ -1581,7 +2081,15 @@ pub(crate) fn cf_menu(
                     m = m.item(PopupMenuItem::new(tf("{} Data Bar", &[&t(name)])).on_click(
                         move |_, w, cx| {
                             let _ = v.update(cx, |this, cx| {
-                                this.quick_cf(CfSpec::DataBar { color, gradient }, w, cx)
+                                this.quick_cf(
+                                    CfSpec::DataBar {
+                                        color,
+                                        gradient,
+                                        bar: Default::default(),
+                                    },
+                                    w,
+                                    cx,
+                                )
                             });
                         },
                     ));
@@ -1620,6 +2128,7 @@ pub(crate) fn cf_menu(
                                 set: set.to_owned(),
                                 reverse: false,
                                 show_value: true,
+                                steps: Vec::new(),
                             },
                             w,
                             cx,
