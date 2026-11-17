@@ -92,6 +92,25 @@ pub fn change_layout(
                         .items
                         .push_str(&node(&t, id, prst, &paras, fill.as_deref()));
                 }
+                Family::HorizontalPictures => {
+                    // The item's picture placeholder (empty: Kantor doesn't
+                    // carry pictures across layouts), then its text.
+                    let pid = new_id(data, 300 + i as u32);
+                    shapes.items.push_str(&scratch(
+                        &pid,
+                        "roundRect",
+                        "<a:solidFill><a:schemeClr val=\"accent1\"><a:tint val=\"50000\"/></a:schemeClr></a:solidFill><a:ln><a:solidFill><a:schemeClr val=\"lt1\"/></a:solidFill></a:ln>",
+                        "",
+                        "",
+                        "",
+                    ));
+                    new_pres.push_str(&format!(
+                        "<{d}pt modelId=\"{pid}\" type=\"pres\"><{d}prSet presAssocID=\"{id}\" presName=\"imagNode\" presStyleLbl=\"fgImgPlace1\" presStyleIdx=\"{i}\" presStyleCnt=\"{n}\"/><{d}spPr/></{d}pt>",
+                        d = model.dgm,
+                        n = model.top.len()
+                    ));
+                    shapes.items.push_str(&node(&t, id, prst, &paras, None));
+                }
                 _ => shapes.items.push_str(&node(&t, id, prst, &paras, None)),
             }
             if to.sub_boxes() && !subs.is_empty() {
@@ -124,6 +143,17 @@ pub fn change_layout(
                 "",
                 "",
             ));
+        }
+        if to == Family::HorizontalPictures {
+            let back = scratch(
+                &model.doc_id,
+                "roundRect",
+                "<a:solidFill><a:schemeClr val=\"accent1\"><a:alpha val=\"90000\"/><a:tint val=\"40000\"/></a:schemeClr></a:solidFill><a:ln><a:noFill/></a:ln>",
+                "",
+                "",
+                "",
+            );
+            shapes.back.insert_str(0, &back);
         }
         if to == Family::ContinuousBlock {
             let arrow = scratch(
@@ -161,7 +191,10 @@ struct Shapes {
 /// Each layout's shape for its items.
 fn geometry(f: Family) -> &'static str {
     match f {
-        Family::Blocks | Family::HorizontalBullets | Family::OrgChart => "rect",
+        Family::Blocks
+        | Family::HorizontalBullets
+        | Family::OrgChart
+        | Family::HorizontalPictures => "rect",
         Family::Cycle | Family::RadialCycle | Family::Venn => "ellipse",
         Family::Pyramid => "trapezoid",
         Family::StepUp => "rect",
@@ -190,6 +223,8 @@ struct DataModel<'a> {
     par: HashMap<String, String>,
     /// Presentation item → the data item it shows.
     pres: HashMap<String, String>,
+    /// Presentation items that are pictures (not templates for items).
+    pics: std::collections::HashSet<String>,
 }
 
 impl<'a> DataModel<'a> {
@@ -207,6 +242,7 @@ impl<'a> DataModel<'a> {
         let mut doc_id = String::new();
         let mut items: Vec<String> = Vec::new();
         let mut pres = HashMap::new();
+        let mut pics = std::collections::HashSet::new();
         for p in doc.descendants().filter(|n| is(*n, NS_DGM, "pt")) {
             let Some(id) = p.attribute("modelId") else {
                 continue;
@@ -215,10 +251,15 @@ impl<'a> DataModel<'a> {
                 Some("doc") => doc_id = id.to_owned(),
                 None | Some("node" | "asst") => items.push(id.to_owned()),
                 Some("pres") => {
-                    if let Some(a) =
-                        child(p, NS_DGM, "prSet").and_then(|s| s.attribute("presAssocID"))
-                    {
+                    let set = child(p, NS_DGM, "prSet");
+                    if let Some(a) = set.and_then(|s| s.attribute("presAssocID")) {
                         pres.insert(id.to_owned(), a.to_owned());
+                    }
+                    if set
+                        .and_then(|s| s.attribute("presName"))
+                        .is_some_and(|n| super::is_picture_name(&n.to_ascii_lowercase()))
+                    {
+                        pics.insert(id.to_owned());
                     }
                 }
                 _ => {}
@@ -273,6 +314,7 @@ impl<'a> DataModel<'a> {
             sib,
             par,
             pres,
+            pics,
         })
     }
 
@@ -568,8 +610,10 @@ impl OldDrawing {
                 _ => Some(s),
             })
         }
-        best(self.shapes.iter().filter(|s| target(&s.1) == id))
-            .or_else(|| best(self.shapes.iter()))
+        // Picture placeholders show no item's text: never templates.
+        let shapes = || self.shapes.iter().filter(|s| !m.pics.contains(&s.1));
+        best(shapes().filter(|s| target(&s.1) == id))
+            .or_else(|| best(shapes()))
             .map(|s| s.0.clone())
     }
 }
@@ -816,9 +860,11 @@ pub fn layout_def(f: Family) -> String {
             "<dgm:param type=\"grDir\" val=\"tL\"/><dgm:param type=\"flowDir\" val=\"row\"/><dgm:param type=\"contDir\" val=\"sameDir\"/><dgm:param type=\"off\" val=\"ctr\"/>",
         ),
         Family::Bullets => ("lin", "<dgm:param type=\"linDir\" val=\"fromT\"/>"),
-        Family::HorizontalBullets | Family::Process | Family::ContinuousBlock | Family::StepUp => {
-            ("lin", "<dgm:param type=\"linDir\" val=\"fromL\"/>")
-        }
+        Family::HorizontalBullets
+        | Family::Process
+        | Family::ContinuousBlock
+        | Family::StepUp
+        | Family::HorizontalPictures => ("lin", "<dgm:param type=\"linDir\" val=\"fromL\"/>"),
         Family::Cycle | Family::Venn => (
             "cycle",
             "<dgm:param type=\"stAng\" val=\"0\"/><dgm:param type=\"spanAng\" val=\"360\"/>",

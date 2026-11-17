@@ -540,3 +540,53 @@ fn layouts_change_keeping_items_and_text() {
     assert_eq!(items(&back, frame(&back, 5)), r);
     assert_eq!(drawn(&back, frame(&back, 4)).len(), 3);
 }
+
+/// Horizontal Picture List: laid out again, items added with an empty
+/// picture placeholder, deleted with their picture; the picture kept.
+#[test]
+fn picture_lists_take_items_with_placeholders() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let f = frame(&p, 9);
+    assert_eq!(
+        p.smartart_family(f),
+        Some(SmartArtFamily::HorizontalPictures)
+    );
+    // A background, and a picture and text per item.
+    assert_eq!(drawn(&p, f).len(), 7);
+    p.smartart_add_shape(find(&p, f, "Lake"), AddPlace::After)
+        .unwrap();
+    let d = drawn(&p, f);
+    assert_eq!(d.len(), 9, "{d:?}");
+    // The new item's text is between Lake's and Forest's, under its picture.
+    let x = |t: &str| d.iter().find(|(s, _)| s == t).unwrap().1.x;
+    let texts: Vec<&(String, slides_engine::Xfrm)> = d
+        .iter()
+        .filter(|(_, b)| b.y > 2_000_000 && b.cy < 3_000_000)
+        .collect();
+    let blank = texts.iter().find(|(t, _)| t.is_empty()).unwrap().1.x;
+    assert!(x("Lake") < blank && blank < x("Forest"), "{d:?}");
+    // For a look: KANTOR_SMARTART_PIC_OUT=/path/out.pptx.
+    if let Ok(out) = std::env::var("KANTOR_SMARTART_PIC_OUT") {
+        std::fs::write(out, p.to_bytes().unwrap()).unwrap();
+    }
+    let saved = parts(&p.to_bytes().unwrap());
+    let drawing = &saved["ppt/diagrams/drawing10.xml"];
+    assert_eq!(drawing.matches("r:embed=").count(), 1, "{drawing}");
+    assert!(saved.contains_key("ppt/diagrams/_rels/drawing10.xml.rels"));
+    assert_eq!(
+        saved["ppt/diagrams/data10.xml"]
+            .matches("presName=\"imagNode\"")
+            .count(),
+        4
+    );
+    // Deleting Lake takes its picture with it.
+    p.delete_shape(find(&p, f, "Lake")).unwrap();
+    assert_eq!(drawn(&p, f).len(), 7);
+    let saved = parts(&p.to_bytes().unwrap());
+    assert!(!saved["ppt/diagrams/drawing10.xml"].contains("r:embed="));
+    let back = Presentation::from_bytes(p.to_bytes().unwrap()).unwrap();
+    assert_eq!(
+        back.smartart_family(frame(&back, 9)),
+        Some(SmartArtFamily::HorizontalPictures)
+    );
+}
